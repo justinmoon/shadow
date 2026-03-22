@@ -4,7 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./cf_common.sh
 source "$SCRIPT_DIR/cf_common.sh"
+ensure_bootimg_shell "$@"
 
+BOOT_IMAGE=""
+INIT_BOOT_IMAGE=""
 WAIT_FOR=""
 TIMEOUT_SECS="${CF_WAIT_TIMEOUT:-180}"
 
@@ -13,6 +16,8 @@ usage() {
 Usage: scripts/cf_launch.sh [options]
 
 Options:
+  --boot PATH         Use a local boot.img override.
+  --init-boot PATH    Use a local init_boot.img override.
   --wait-for REGEX    Wait for a regex to appear in logs before returning.
   --timeout SECS      Wait timeout when --wait-for is used.
 EOF
@@ -20,6 +25,14 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --boot)
+      BOOT_IMAGE="${2:?missing value for --boot}"
+      shift 2
+      ;;
+    --init-boot)
+      INIT_BOOT_IMAGE="${2:?missing value for --init-boot}"
+      shift 2
+      ;;
     --wait-for)
       WAIT_FOR="${2:?missing value for --wait-for}"
       shift 2
@@ -45,6 +58,7 @@ ADB_PORT="$(adb_port_for_instance "$INSTANCE")"
 UUID="$(uuid_for_instance "$INSTANCE")"
 REMOTE_INSTANCE_DIR="/var/lib/cuttlefish/instances/$INSTANCE"
 REMOTE_ASSEMBLY_DIR="/var/lib/cuttlefish/assembly/$INSTANCE"
+REMOTE_WORK_DIR="$(remote_artifact_dir "$INSTANCE")"
 REMOTE_BOOT_IMAGE="/var/lib/cuttlefish/images/boot.img"
 REMOTE_INIT_BOOT_IMAGE="/var/lib/cuttlefish/images/init_boot.img"
 REMOTE_BOOTLOADER="/var/lib/cuttlefish/etc/bootloader_x86_64/bootloader.qemu"
@@ -52,13 +66,32 @@ REMOTE_LAUNCHER_LOG="$(launcher_log_path "$INSTANCE")"
 REMOTE_PID_FILE="${REMOTE_INSTANCE_DIR}/direct-launch.pid"
 
 record_instance "$INSTANCE"
+cleanup_remote_instance "$INSTANCE" "$ADB_PORT"
+
+if [[ -n "$BOOT_IMAGE" ]]; then
+  [[ -f "$BOOT_IMAGE" ]] || {
+    echo "cf_launch: boot image not found: $BOOT_IMAGE" >&2
+    exit 1
+  }
+  remote_shell "mkdir -p $(printf '%q' "$REMOTE_WORK_DIR")"
+  REMOTE_BOOT_IMAGE="${REMOTE_WORK_DIR}/boot.img"
+  copy_to_remote "$BOOT_IMAGE" "$REMOTE_BOOT_IMAGE"
+fi
+
+if [[ -n "$INIT_BOOT_IMAGE" ]]; then
+  [[ -f "$INIT_BOOT_IMAGE" ]] || {
+    echo "cf_launch: init_boot image not found: $INIT_BOOT_IMAGE" >&2
+    exit 1
+  }
+  remote_shell "mkdir -p $(printf '%q' "$REMOTE_WORK_DIR")"
+  REMOTE_INIT_BOOT_IMAGE="${REMOTE_WORK_DIR}/init_boot.img"
+  copy_to_remote "$INIT_BOOT_IMAGE" "$REMOTE_INIT_BOOT_IMAGE"
+fi
 
 printf 'Launching cuttlefish instance %s on %s\n' "$INSTANCE" "$REMOTE_HOST"
 printf '  adb: 127.0.0.1:%s\n' "$ADB_PORT"
 printf '  boot: %s\n' "$REMOTE_BOOT_IMAGE"
 printf '  init_boot: %s\n' "$REMOTE_INIT_BOOT_IMAGE"
-
-cleanup_remote_instance "$INSTANCE" "$ADB_PORT"
 
 remote_bash <<EOF
 set -euo pipefail

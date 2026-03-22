@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -u -o pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./cf_common.sh
+source "$SCRIPT_DIR/cf_common.sh"
+ensure_bootimg_shell "$@"
+
+repo_root="$(repo_root)"
+cd "$repo_root"
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+titles=()
+cmds=()
+descs=()
+
+titles+=("just commands")
+cmds+=("just --list")
+descs+=("Available repo entrypoints.")
+
+if [[ -d "$repo_root/docs" ]]; then
+  titles+=("docs")
+  cmds+=("npx -y @justinmoon/agent-tools list-docs")
+  descs+=("Project documentation index.")
+fi
+
+for i in "${!titles[@]}"; do
+  (
+    cd "$repo_root"
+    bash -lc "${cmds[$i]}"
+  ) >"$tmpdir/$i.out" 2>&1 &
+done
+
+wait
+
+for i in "${!titles[@]}"; do
+  printf '== %s ==\n' "${titles[$i]}"
+  printf '%s\n\n' "${descs[$i]}"
+  cat "$tmpdir/$i.out"
+  printf '\n'
+done

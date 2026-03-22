@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./cf_common.sh
 source "$SCRIPT_DIR/cf_common.sh"
+ensure_bootimg_shell "$@"
 
 INSTANCE="$(active_instance_name)"
 if [[ -z "$INSTANCE" ]]; then

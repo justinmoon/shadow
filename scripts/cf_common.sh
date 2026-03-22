@@ -4,6 +4,8 @@ REMOTE_HOST="${CUTTLEFISH_REMOTE_HOST:-hetzner}"
 REMOTE_HOME_CACHE="${REMOTE_HOME_CACHE:-}"
 HOST_SHORT="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo "")"
 HOST_FQDN="$(hostname -f 2>/dev/null || echo "")"
+GOOGLESOURCE_AVB_TESTKEY_URL="${GOOGLESOURCE_AVB_TESTKEY_URL:-https://android.googlesource.com/platform/external/avb/+/refs/heads/sdk-release/test/data/testkey_rsa4096.pem?format=TEXT}"
+REMOTE_FLAKE_DIR_CACHE="${REMOTE_FLAKE_DIR_CACHE:-}"
 
 repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || pwd
@@ -11,6 +13,45 @@ repo_root() {
 
 state_file() {
   printf '%s/.cuttlefish-instance\n' "$(repo_root)"
+}
+
+artifacts_dir() {
+  printf '%s/artifacts\n' "$(repo_root)"
+}
+
+stock_images_dir() {
+  printf '%s/stock\n' "$(artifacts_dir)"
+}
+
+keys_dir() {
+  printf '%s/keys\n' "$(artifacts_dir)"
+}
+
+build_dir() {
+  printf '%s/build\n' "$(repo_root)"
+}
+
+flake_path() {
+  printf '%s#bootimg\n' "$(repo_root)"
+}
+
+ensure_bootimg_shell() {
+  if [[ "${SHADOW_BOOTIMG_SHELL:-}" == "1" ]]; then
+    return 0
+  fi
+  exec nix develop "$(flake_path)" -c "$0" "$@"
+}
+
+cached_boot_image() {
+  printf '%s/boot.img\n' "$(stock_images_dir)"
+}
+
+cached_init_boot_image() {
+  printf '%s/init_boot.img\n' "$(stock_images_dir)"
+}
+
+cached_avb_testkey() {
+  printf '%s/avb_testkey_rsa4096.pem\n' "$(keys_dir)"
 }
 
 record_instance() {
@@ -114,6 +155,33 @@ remote_bash() {
     /bin/bash
   else
     ssh "$REMOTE_HOST" /bin/bash
+  fi
+}
+
+remote_flake_dir() {
+  if [[ -z "${REMOTE_FLAKE_DIR_CACHE:-}" ]]; then
+    REMOTE_FLAKE_DIR_CACHE="$(remote_home)/.cache/shadow-flake"
+  fi
+  printf '%s\n' "$REMOTE_FLAKE_DIR_CACHE"
+}
+
+sync_remote_flake() {
+  local remote_dir
+  remote_dir="$(remote_flake_dir)"
+  remote_shell "mkdir -p $(printf '%q' "$remote_dir")"
+  copy_to_remote "$(repo_root)/flake.nix" "${remote_dir}/flake.nix"
+  copy_to_remote "$(repo_root)/flake.lock" "${remote_dir}/flake.lock"
+}
+
+remote_nix_bash() {
+  local script command
+  script="$1"
+  if is_local_host; then
+    nix develop "$(flake_path)" -c bash -c "$script"
+  else
+    sync_remote_flake
+    command="cd $(printf '%q' "$(remote_flake_dir)") && nix develop .#bootimg -c bash -c $(printf '%q' "$script")"
+    ssh "$REMOTE_HOST" /bin/bash -lc "$(printf '%q' "$command")"
   fi
 }
 
