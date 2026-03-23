@@ -1,0 +1,13 @@
+[package]
+name = "shadow-ui-desktop"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+chrono.workspace = true
+glyphon.workspace = true
+pollster.workspace = true
+shadow-ui-core = { path = "../shadow-ui-core" }
+wgpu.workspace = true
+winit.workspace = true

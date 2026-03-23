@@ -1,0 +1,12 @@
+[package]
+name = "shadow-compositor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shadow-ui-core = { path = "../shadow-ui-core" }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+smithay = { version = "0.7.0", default-features = false, features = ["backend_winit", "desktop", "wayland_frontend"] }

@@ -146,7 +146,7 @@ remote_shell() {
   if is_local_host; then
     bash -lc "$script"
   else
-    ssh "$REMOTE_HOST" "bash -lc $(printf '%q' "$script")"
+    ssh "$REMOTE_HOST" /bin/bash -s <<<"$script"
   fi
 }
 
@@ -229,25 +229,143 @@ console_log_path() {
 }
 
 cleanup_remote_instance() {
-  local instance port
+  local instance port pid_file remote_work_dir tombstone_port vsock_id remote_script
   instance="$1"
   port="${2:-$(adb_port_for_instance "$instance")}"
-  remote_bash <<EOF
+  tombstone_port="$((port + 80))"
+  vsock_id="$((instance + 2))"
+  pid_file="/var/lib/cuttlefish/instances/${instance}/direct-launch.pid"
+  remote_work_dir="$(remote_artifact_dir "$instance")"
+  remote_script="$(cat <<EOF
 set -euo pipefail
 instance="$instance"
 port="$port"
-sudo pkill -f "cvd-\${instance}|launch_cvd|qemu-system-x86_64.*\${port}" >/dev/null 2>&1 || true
+tombstone_port="$tombstone_port"
+vsock_id="$vsock_id"
+pid_file="$pid_file"
+if [[ -f "\$pid_file" ]]; then
+  pid="\$(sudo cat "\$pid_file" 2>/dev/null || true)"
+  if [[ -n "\$pid" ]]; then
+    pid_args="\$(ps -o args= -p "\$pid" 2>/dev/null || true)"
+    if [[ "\$pid_args" == *"/var/lib/cuttlefish/instances/\${instance}/"* || "\$pid_args" == *"/var/lib/cuttlefish/assembly/\${instance}"* || "\$pid_args" == *"cvd-\${instance}"* || "\$pid_args" == *"$remote_work_dir"* ]]; then
+      sudo pkill -TERM -P "\$pid" >/dev/null 2>&1 || true
+      sudo kill -TERM "\$pid" >/dev/null 2>&1 || true
+      sleep 1
+      sudo pkill -KILL -P "\$pid" >/dev/null 2>&1 || true
+      sudo kill -KILL "\$pid" >/dev/null 2>&1 || true
+    fi
+  fi
+fi
+for listen_port in "\$port" "\$tombstone_port"; do
+  while read -r pid; do
+    [[ -n "\$pid" ]] || continue
+    parent="\$(ps -o ppid= -p "\$pid" 2>/dev/null | tr -d '[:space:]' || true)"
+    grandparent=""
+    if [[ -n "\$parent" ]]; then
+      grandparent="\$(ps -o ppid= -p "\$parent" 2>/dev/null | tr -d '[:space:]' || true)"
+    fi
+    for target_pid in "\$pid" "\$parent" "\$grandparent"; do
+      [[ -n "\$target_pid" ]] || continue
+      comm="\$(ps -o comm= -p "\$target_pid" 2>/dev/null | tr -d '[:space:]' || true)"
+      if [[ "\$comm" == socket_vsock* ]]; then
+        sudo kill -TERM "\$target_pid" >/dev/null 2>&1 || true
+      fi
+    done
+    sleep 1
+    for target_pid in "\$pid" "\$parent" "\$grandparent"; do
+      [[ -n "\$target_pid" ]] || continue
+      comm="\$(ps -o comm= -p "\$target_pid" 2>/dev/null | tr -d '[:space:]' || true)"
+      if [[ "\$comm" == socket_vsock* ]]; then
+        sudo kill -KILL "\$target_pid" >/dev/null 2>&1 || true
+      fi
+    done
+  done < <(
+    ps -eo pid=,comm=,args= | awk -v port="\${listen_port}" -v cid="\${vsock_id}" '
+      \$2 ~ /^socket_vsock/ &&
+      (\$0 ~ ("--server_tcp_port=" port) || \$0 ~ ("--client_tcp_port=" port) || \$0 ~ ("--server_vsock_id=" cid)) {
+        print \$1
+      }
+    ' | sort -u
+  )
+done
+while read -r pid; do
+  [[ -n "\$pid" ]] || continue
+  sudo kill -TERM "\$pid" >/dev/null 2>&1 || true
+done < <(
+  ps -eo pid=,comm=,args= | awk -v instance="\${instance}" -v workdir="$remote_work_dir" '
+    \$2 ~ /^(run_cvd|launch_cvd|assemble_cvd|qemu-system-x86|crosvm|process_sandbox|adb_connector|casimir|wmediumd_contr|kernel_log_moni|log_tee|echo_server)/ &&
+    (\$0 ~ ("cvd-" instance "([^0-9]|$)") ||
+     \$0 ~ ("/var/lib/cuttlefish/instances/" instance "(/|$)") ||
+     \$0 ~ ("/tmp/cf_(avd|env|img)_0/(cvd|env)-" instance "(/|$)") ||
+     \$0 ~ workdir) {
+      print \$1
+    }
+  ' | sort -u
+)
+sleep 1
+while read -r pid; do
+  [[ -n "\$pid" ]] || continue
+  sudo kill -KILL "\$pid" >/dev/null 2>&1 || true
+done < <(
+  ps -eo pid=,comm=,args= | awk -v instance="\${instance}" -v workdir="$remote_work_dir" '
+    \$2 ~ /^(run_cvd|launch_cvd|assemble_cvd|qemu-system-x86|crosvm|process_sandbox|adb_connector|casimir|wmediumd_contr|kernel_log_moni|log_tee|echo_server)/ &&
+    (\$0 ~ ("cvd-" instance "([^0-9]|$)") ||
+     \$0 ~ ("/var/lib/cuttlefish/instances/" instance "(/|$)") ||
+     \$0 ~ ("/tmp/cf_(avd|env|img)_0/(cvd|env)-" instance "(/|$)") ||
+     \$0 ~ workdir) {
+      print \$1
+    }
+  ' | sort -u
+)
 sudo ip tuntap del mode tap "cvd-mtap-\${instance}" >/dev/null 2>&1 || true
 sudo ip tuntap del mode tap "cvd-tap-\${instance}" >/dev/null 2>&1 || true
 sudo ip link del "cvd-eth-\${instance}" >/dev/null 2>&1 || true
 sudo rm -rf \
   "/var/lib/cuttlefish/instances/\${instance}" \
+  "/var/lib/cuttlefish/instances/\${instance}.\${instance}" \
+  "/var/lib/cuttlefish/instances/\${instance}_runtime" \
   "/var/lib/cuttlefish/assembly/\${instance}" \
   "/tmp/cf_avd_0/cvd-\${instance}" \
   "/tmp/cf_env_0/env-\${instance}" \
   "/tmp/cf_img_0/cvd-\${instance}" \
-  "$(remote_artifact_dir "$instance")"
+  "$remote_work_dir"
+while read -r pid; do
+  [[ -n "\$pid" ]] || continue
+  sudo kill -TERM "\$pid" >/dev/null 2>&1 || true
+done < <(
+  sudo lsof -nP +L1 2>/dev/null \
+    | awk -v instance="\${instance}" '\$0 ~ ("/var/lib/cuttlefish/instances/" instance "/") { print \$2 }' \
+    | sort -u
+)
+sleep 1
+while read -r pid; do
+  [[ -n "\$pid" ]] || continue
+  sudo kill -KILL "\$pid" >/dev/null 2>&1 || true
+done < <(
+  sudo lsof -nP +L1 2>/dev/null \
+    | awk -v instance="\${instance}" '\$0 ~ ("/var/lib/cuttlefish/instances/" instance "/") { print \$2 }' \
+    | sort -u
+)
 EOF
+)"
+  remote_shell "$remote_script"
+}
+
+list_remote_instances() {
+  remote_shell "$(cat <<'EOF'
+set -euo pipefail
+{
+  sudo find /var/lib/cuttlefish/instances -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null || true
+  sudo find /var/lib/cuttlefish/assembly -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null || true
+  sudo ps -eo args= 2>/dev/null || true
+} | sed -nE \
+  -e 's/^([0-9]+)(\.[0-9]+|_runtime)?$/\1/p' \
+  -e 's#.*(/var/lib/cuttlefish/(instances|assembly)/)([0-9]+)([/._].*|$)#\3#p' \
+  -e 's#.*(/tmp/cf_(avd|env|img)_0/(cvd|env)-)([0-9]+)(/.*|$)#\4#p' \
+  -e 's#.*\bcvd-([0-9]+)\b.*#\1#p' \
+  | sort -nu
+EOF
+)"
 }
 
 wait_for_remote_pattern() {
@@ -267,11 +385,15 @@ kernel_log="$(kernel_log_path "$instance")"
 kernel_log_fallback="$(kernel_log_fallback_path "$instance")"
 console_log="$(console_log_path "$instance")"
 while (( \$(date +%s) < deadline )); do
-  if [[ -f "\$launcher_log" ]] && grep -Eq 'assemble_cvd failed|Unknown target architecture|main.cc:263 assemble_cvd returned -1' "\$launcher_log"; then
+  if [[ -f "\$launcher_log" ]] && grep -Eq 'assemble_cvd failed|Unknown target architecture|main.cc:263 assemble_cvd returned -1|main.cc:297 run_cvd returned -1|Address already in use|Bind failed|Setup failed for cuttlefish::TombstoneReceiver' "\$launcher_log"; then
     tail -n 200 "\$launcher_log" >&2 || true
     exit 2
   fi
   for path in "\$kernel_log" "\$kernel_log_fallback" "\$console_log" "\$launcher_log"; do
+    if [[ -f "\$path" ]] && grep -Eq '\[shadow-init\] background payload (launch failed|exited with (exit status: [1-9]|signal: ))' "\$path"; then
+      tail -n 200 "\$path" >&2 || true
+      exit 2
+    fi
     if [[ -f "\$path" ]] && grep -Eq "\$pattern" "\$path"; then
       exit 0
     fi

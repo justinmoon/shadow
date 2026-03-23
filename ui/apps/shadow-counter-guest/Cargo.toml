@@ -1,0 +1,12 @@
+[package]
+name = "shadow-counter-guest"
+version.workspace = true
+edition.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+memmap2 = "0.9.9"
+rustix = { version = "1.1.2", features = ["fs", "mm"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+wayland-client.workspace = true
+wayland-protocols = { workspace = true, features = ["client"] }

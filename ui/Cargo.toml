@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/shadow-ui-desktop",
+    "crates/shadow-ui-core",
+    "crates/shadow-compositor",
+    "crates/shadow-compositor-guest",
+    "apps/shadow-counter",
+    "apps/shadow-counter-guest",
+]
+default-members = [
+    "crates/shadow-ui-desktop",
+    "crates/shadow-ui-core",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+bytemuck = { version = "1.24.0", features = ["derive"] }
+chrono = { version = "0.4.42", default-features = false, features = ["clock"] }
+glyphon = "0.10.0"
+pollster = "0.4.0"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+wayland-client = "0.31.13"
+wayland-protocols = "0.32.11"
+wgpu = "28.0.0"
+winit = "0.30.13"

@@ -2,4 +2,8 @@
 artifacts/
 build/
 __pycache__/
+target/
+**/target/
 worktrees/
+out/
+result

@@ -8,13 +8,22 @@ ensure_bootimg_shell "$@"
 
 INPUT_IMAGE="${INIT_BOOT_SRC:-$(cached_init_boot_image)}"
 KEY_PATH="${AVB_TEST_KEY_PATH:-$(cached_avb_testkey)}"
-WRAPPER_BINARY="${INIT_WRAPPER_BIN:-$(build_dir)/init-wrapper}"
+DEFAULT_WRAPPER_BINARY="$(build_dir)/init-wrapper"
+WRAPPER_BINARY="${INIT_WRAPPER_BIN:-$DEFAULT_WRAPPER_BINARY}"
 OUTPUT_IMAGE="${INIT_BOOT_OUT:-$(build_dir)/init_boot.wrapper.img}"
 REMOTE_TMP=""
+declare -a EXTRA_BIN_SPECS=()
+declare -a EXTRA_BIN_REMOTE_SPECS=()
+WRAPPER_BINARY_OVERRIDDEN=0
+
+if [[ -n "${INIT_WRAPPER_BIN:-}" ]]; then
+  WRAPPER_BINARY_OVERRIDDEN=1
+fi
 
 usage() {
   cat <<'EOF'
-Usage: scripts/init_boot_wrapper.sh [--input PATH] [--key PATH] [--wrapper PATH] [--output PATH]
+Usage: scripts/init_boot_wrapper.sh [--input PATH] [--key PATH] [--wrapper PATH] [--output PATH] [--extra-bin GUEST=HOST]
+       scripts/init_boot_wrapper.sh [--extra-bin-remote GUEST=REMOTE_PATH]
 
 Rebuild init_boot.img with a Rust /init wrapper that chainloads /init.stock.
 EOF
@@ -38,10 +47,19 @@ while [[ $# -gt 0 ]]; do
       ;;
     --wrapper)
       WRAPPER_BINARY="${2:?missing value for --wrapper}"
+      WRAPPER_BINARY_OVERRIDDEN=1
       shift 2
       ;;
     --output)
       OUTPUT_IMAGE="${2:?missing value for --output}"
+      shift 2
+      ;;
+    --extra-bin)
+      EXTRA_BIN_SPECS+=("${2:?missing value for --extra-bin}")
+      shift 2
+      ;;
+    --extra-bin-remote)
+      EXTRA_BIN_REMOTE_SPECS+=("${2:?missing value for --extra-bin-remote}")
       shift 2
       ;;
     -h|--help)
@@ -60,7 +78,7 @@ if [[ ! -f "$INPUT_IMAGE" || ! -f "$KEY_PATH" ]]; then
   "$SCRIPT_DIR/artifacts_fetch.sh"
 fi
 
-if [[ ! -f "$WRAPPER_BINARY" ]]; then
+if (( WRAPPER_BINARY_OVERRIDDEN == 0 )); then
   "$SCRIPT_DIR/build_init_wrapper.sh"
 fi
 
@@ -87,20 +105,91 @@ REMOTE_KEY="${REMOTE_TMP}/avb_testkey_rsa4096.pem"
 REMOTE_WRAPPER="${REMOTE_TMP}/init-wrapper"
 REMOTE_CPIO_EDIT="${REMOTE_TMP}/cpio_edit.py"
 REMOTE_OUTPUT="${REMOTE_TMP}/init_boot.wrapper.img"
+declare -a REMOTE_EXTRA_ARGS=()
+declare -a REMOTE_EXEC_PATHS=()
+declare -a REMOTE_EXISTENCE_PATHS=()
 
 copy_to_remote "$INPUT_IMAGE" "$REMOTE_INPUT"
 copy_to_remote "$KEY_PATH" "$REMOTE_KEY"
 copy_to_remote "$WRAPPER_BINARY" "$REMOTE_WRAPPER"
 copy_to_remote "$SCRIPT_DIR/cpio_edit.py" "$REMOTE_CPIO_EDIT"
 
+for spec in "${EXTRA_BIN_SPECS[@]}"; do
+  guest_path="${spec%%=*}"
+  archive_path="${guest_path#/}"
+  host_path="${spec#*=}"
+  if [[ -z "$guest_path" || -z "$archive_path" || -z "$host_path" || "$guest_path" == "$host_path" ]]; then
+    echo "init_boot_wrapper: expected --extra-bin guest-path=host-path, got: $spec" >&2
+    exit 1
+  fi
+  if [[ ! -f "$host_path" ]]; then
+    echo "init_boot_wrapper: extra binary not found: $host_path" >&2
+    exit 1
+  fi
+
+  remote_name="$(basename "$guest_path")"
+  remote_extra="${REMOTE_TMP}/${remote_name}"
+  copy_to_remote "$host_path" "$remote_extra"
+  REMOTE_EXTRA_ARGS+=("--add" "${archive_path}=${remote_extra}")
+  REMOTE_EXEC_PATHS+=("$remote_extra")
+  REMOTE_EXISTENCE_PATHS+=("$remote_extra")
+done
+
+for spec in "${EXTRA_BIN_REMOTE_SPECS[@]}"; do
+  guest_path="${spec%%=*}"
+  archive_path="${guest_path#/}"
+  remote_path="${spec#*=}"
+  if [[ -z "$guest_path" || -z "$archive_path" || -z "$remote_path" || "$guest_path" == "$remote_path" ]]; then
+    echo "init_boot_wrapper: expected --extra-bin-remote guest-path=remote-path, got: $spec" >&2
+    exit 1
+  fi
+  REMOTE_EXTRA_ARGS+=("--add" "${archive_path}=${remote_path}")
+  REMOTE_EXISTENCE_PATHS+=("$remote_path")
+done
+
 printf 'Repacking %s with Rust init wrapper on %s\n' "$INPUT_IMAGE" "$REMOTE_HOST"
 printf '  wrapper: %s\n' "$WRAPPER_BINARY"
 printf '  remote workdir: %s\n' "$REMOTE_TMP"
+for spec in "${EXTRA_BIN_SPECS[@]}"; do
+  printf '  extra: %s\n' "$spec"
+done
+for spec in "${EXTRA_BIN_REMOTE_SPECS[@]}"; do
+  printf '  extra-remote: %s\n' "$spec"
+done
+
+extra_add_args=()
+for value in "${REMOTE_EXTRA_ARGS[@]}"; do
+  extra_add_args+=("$(printf '%q' "$value")")
+done
+extra_add_args_joined="${extra_add_args[*]}"
+
+remote_exec_args=()
+for value in "${REMOTE_EXEC_PATHS[@]}"; do
+  remote_exec_args+=("$(printf '%q' "$value")")
+done
+remote_exec_args_joined="${remote_exec_args[*]}"
+
+remote_extra_paths=()
+for value in "${REMOTE_EXISTENCE_PATHS[@]}"; do
+  remote_extra_paths+=("$(printf '%q' "$value")")
+done
+remote_extra_paths_joined="${remote_extra_paths[*]}"
 
 REMOTE_SCRIPT="$(cat <<EOF
 set -euo pipefail
 cd "$REMOTE_TMP"
 chmod 0755 "$REMOTE_WRAPPER" "$REMOTE_CPIO_EDIT"
+for path in ${remote_exec_args_joined}; do
+  if [[ -n "\$path" && -f "\$path" ]]; then
+    chmod 0755 "\$path"
+  fi
+done
+for path in ${remote_extra_paths_joined}; do
+  if [[ -n "\$path" && ! -f "\$path" ]]; then
+    echo "init_boot_wrapper: remote extra binary not found: \$path" >&2
+    exit 1
+  fi
+done
 unpack_bootimg --boot_img "$REMOTE_INPUT" --format=mkbootimg > mkbootimg_args.txt
 
 case "\$(file -b out/ramdisk)" in
@@ -119,7 +208,8 @@ python3 "$REMOTE_CPIO_EDIT" \
   --input ramdisk.cpio \
   --output ramdisk.modified.cpio \
   --rename init=init.stock \
-  --add init="$REMOTE_WRAPPER"
+  --add init="$REMOTE_WRAPPER" \
+  ${extra_add_args_joined}
 
 lz4 -l -9 ramdisk.modified.cpio ramdisk.modified
 

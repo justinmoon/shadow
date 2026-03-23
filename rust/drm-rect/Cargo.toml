@@ -1,0 +1,14 @@
+[package]
+name = "drm-rect"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+drm = "0.14.1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = "symbols"

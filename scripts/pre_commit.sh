@@ -10,6 +10,7 @@ cd "$(repo_root)"
 
 bash -n scripts/*.sh
 nix flake check --no-build
+just ui-check
 just artifacts-fetch
 just init-boot-repack
 scripts/assert_repacked_identity.sh
