@@ -1,4 +1,6 @@
 #[cfg(target_os = "linux")]
+mod control;
+#[cfg(target_os = "linux")]
 mod handlers;
 #[cfg(target_os = "linux")]
 mod input;

@@ -1,3 +1,4 @@
+use shadow_ui_core::app;
 use smithay::{
     delegate_xdg_shell,
     desktop::{
@@ -21,8 +22,10 @@ impl XdgShellHandler for ShadowCompositor {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        let wl_surface = surface.wl_surface().clone();
         let window = Window::new_wayland_window(surface);
         self.handle_window_mapped(window);
+        self.refresh_toplevel_app_id(&wl_surface);
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
@@ -50,6 +53,19 @@ impl XdgShellHandler for ShadowCompositor {
         _seat: wl_seat::WlSeat,
         _serial: smithay::utils::Serial,
     ) {
+    }
+
+    fn app_id_changed(&mut self, surface: ToplevelSurface) {
+        self.refresh_toplevel_app_id(surface.wl_surface());
+    }
+
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        let wl_surface = surface.wl_surface().clone();
+        if let Some(window) = self.window_for_surface(&wl_surface) {
+            self.space.unmap_elem(&window);
+        }
+        self.forget_surface(&wl_surface);
+        self.focus_top_window(self.next_serial());
     }
 }
 
@@ -90,6 +106,20 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
 }
 
 impl ShadowCompositor {
+    fn refresh_toplevel_app_id(&mut self, surface: &WlSurface) {
+        let app_id = with_states(surface, |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .and_then(|data| data.lock().ok().and_then(|attrs| attrs.app_id.clone()))
+        });
+        let Some(app_id) = app_id.as_deref().and_then(app::app_id_from_wayland_app_id) else {
+            return;
+        };
+
+        self.remember_surface_app(surface, app_id);
+    }
+
     fn unconstrain_popup(&self, popup: &PopupSurface) {
         let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
             return;

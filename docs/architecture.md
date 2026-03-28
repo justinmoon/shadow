@@ -19,9 +19,11 @@ The current workflow has four layers:
 Alongside the boot flow, `ui/` now carries the shell workspace:
 
 1. `ui/crates/shadow-ui-core` defines shell state, app metadata, palette, and the scene graph.
-2. `ui/crates/shadow-ui-desktop` is the fast desktop host for shell iteration.
-3. `ui/crates/shadow-compositor` is the Linux-only Smithay host that starts the compositor bring-up path.
-4. `scripts/ui_smoke.sh` is the headless Linux/Hetzner runtime proof for compositor plus app launch.
+2. `ui/crates/shadow-ui-core/src/control.rs` defines the lightweight compositor control protocol used to launch apps by identity.
+3. `ui/crates/shadow-ui-desktop` is the fast desktop host for shell iteration.
+4. `ui/crates/shadow-compositor` is the Linux-only Smithay host that starts the compositor bring-up path.
+5. `scripts/ui_smoke.sh` is the headless Linux/Hetzner runtime proof for compositor plus app launch.
+6. `vm/shadow-ui-vm.nix` plus `scripts/ui_vm_*.sh` define a local macOS QEMU loop for UX work when Cuttlefish is too slow.
 
 The current milestones are:
 
@@ -37,5 +39,7 @@ The current operator ladder reflects that split:
 1. `just cf-init-wrapper` keeps the first-stage `init_boot` proof small and reliable.
 2. `just cf-drm-rect` boots stock Android, uses `adb root`, stops the Android graphics services that hold DRM master, then runs `shadow-session` plus `drm-rect`.
 3. `just cf-guest-ui-smoke` boots stock Android, uses `adb root`, starts `shadow-session` plus `shadow-compositor-guest`, auto-launches one guest Wayland client, and saves the captured frame artifact under `build/guest-ui/`.
+4. `just cf-guest-ui-drm-smoke` proves the same guest compositor path can also present to DRM/KMS.
+5. `just ui-vm-run` is the fast local macOS loop for compositor and shell UX work; it is intentionally outside CI.
 
 This is intentionally not yet a full custom userland boot. The repo is using the smallest reliable transport at each layer: first-stage wrapper for `/init` proof, then post-boot guest session launch for display and compositor iteration.

@@ -1,6 +1,9 @@
-use std::{ffi::OsString, process::Child, sync::Arc};
+use std::{collections::HashMap, ffi::OsString, path::PathBuf, process::Child, sync::Arc};
 
-use shadow_ui_core::app::COUNTER_APP;
+use shadow_ui_core::{
+    app::{AppId, COUNTER_APP},
+    control::ControlRequest,
+};
 use smithay::{
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
     input::{Seat, SeatState},
@@ -28,6 +31,7 @@ use crate::launch;
 pub struct ShadowCompositor {
     pub start_time: std::time::Instant,
     pub socket_name: OsString,
+    pub control_socket_path: PathBuf,
     pub display_handle: DisplayHandle,
     pub space: Space<Window>,
     pub loop_signal: LoopSignal,
@@ -39,7 +43,8 @@ pub struct ShadowCompositor {
     pub data_device_state: DataDeviceState,
     pub popups: PopupManager,
     pub seat: Seat<Self>,
-    launched_clients: Vec<Child>,
+    launched_apps: HashMap<AppId, Child>,
+    surface_apps: HashMap<WlSurface, AppId>,
     next_window_offset: i32,
     pub mapped_windows: usize,
     exit_on_first_window: bool,
@@ -62,12 +67,15 @@ impl ShadowCompositor {
         seat.add_keyboard(Default::default(), 200, 25).unwrap();
         seat.add_pointer();
 
+        let control_socket_path =
+            crate::control::init_listener(event_loop).expect("create compositor control socket");
         let socket_name = Self::init_wayland_listener(display, event_loop);
         let loop_signal = event_loop.get_signal();
 
         Self {
             start_time,
             socket_name,
+            control_socket_path,
             display_handle,
             space: Space::default(),
             loop_signal,
@@ -79,7 +87,8 @@ impl ShadowCompositor {
             data_device_state,
             popups,
             seat,
-            launched_clients: Vec::new(),
+            launched_apps: HashMap::new(),
+            surface_apps: HashMap::new(),
             next_window_offset: 0,
             mapped_windows: 0,
             exit_on_first_window: std::env::var_os("SHADOW_COMPOSITOR_EXIT_ON_FIRST_WINDOW")
@@ -130,11 +139,71 @@ impl ShadowCompositor {
         keyboard.set_focus(self, Option::<WlSurface>::None, serial);
     }
 
+    pub fn focus_top_window(&mut self, serial: Serial) {
+        let window = self.space.elements().last().cloned();
+        self.focus_window(window, serial);
+    }
+
+    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<Window> {
+        self.space
+            .elements()
+            .find(|candidate| candidate.toplevel().unwrap().wl_surface() == surface)
+            .cloned()
+    }
+
+    pub fn mapped_window_for_app(&self, app_id: AppId) -> Option<Window> {
+        self.surface_apps
+            .iter()
+            .find_map(|(surface, mapped_app_id)| {
+                (*mapped_app_id == app_id)
+                    .then(|| self.window_for_surface(surface))
+                    .flatten()
+            })
+    }
+
+    pub fn remember_surface_app(&mut self, surface: &WlSurface, app_id: AppId) {
+        self.surface_apps.insert(surface.clone(), app_id);
+    }
+
+    pub fn forget_surface(&mut self, surface: &WlSurface) -> Option<AppId> {
+        self.surface_apps.remove(surface)
+    }
+
     pub fn spawn_demo_client(&mut self) -> std::io::Result<()> {
-        self.reap_children();
-        let child = launch::launch_app(COUNTER_APP.id, &self.socket_name)?;
-        self.launched_clients.push(child);
+        self.launch_or_focus_app(COUNTER_APP.id)?;
         tracing::info!("[shadow-compositor] launched-demo-client");
+        Ok(())
+    }
+
+    pub fn handle_control_request(&mut self, request: ControlRequest) -> std::io::Result<()> {
+        match request {
+            ControlRequest::Launch { app_id } => self.launch_or_focus_app(app_id),
+            ControlRequest::Home => {
+                self.focus_window(None, self.next_serial());
+                Ok(())
+            }
+            ControlRequest::Switcher => Ok(()),
+        }
+    }
+
+    pub fn launch_or_focus_app(&mut self, app_id: AppId) -> std::io::Result<()> {
+        self.reap_children();
+
+        if let Some(window) = self.mapped_window_for_app(app_id) {
+            self.focus_window(Some(window), self.next_serial());
+            return Ok(());
+        }
+
+        if self.launched_apps.contains_key(&app_id) {
+            return Ok(());
+        }
+
+        let child = launch::launch_app(
+            app_id,
+            &self.socket_name,
+            self.control_socket_path.as_os_str(),
+        )?;
+        self.launched_apps.insert(app_id, child);
         Ok(())
     }
 
@@ -155,12 +224,8 @@ impl ShadowCompositor {
     }
 
     fn reap_children(&mut self) {
-        self.launched_clients
-            .retain_mut(|child| match child.try_wait() {
-                Ok(None) => true,
-                Ok(Some(_)) => false,
-                Err(_) => false,
-            });
+        self.launched_apps
+            .retain(|_, child| matches!(child.try_wait(), Ok(None)));
     }
 
     fn init_wayland_listener(display: Display<Self>, event_loop: &mut EventLoop<Self>) -> OsString {
@@ -207,9 +272,10 @@ impl ClientData for ClientState {
 
 impl Drop for ShadowCompositor {
     fn drop(&mut self) {
-        for child in &mut self.launched_clients {
+        for child in self.launched_apps.values_mut() {
             let _ = child.kill();
             let _ = child.wait();
         }
+        let _ = std::fs::remove_file(&self.control_socket_path);
     }
 }

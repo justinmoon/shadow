@@ -1,21 +1,45 @@
 {
   description = "Shadow boot bring-up tooling";
 
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+  nixConfig = {
+    extra-substituters = [ "https://microvm.cachix.org" ];
+    extra-trusted-public-keys = [
+      "microvm.cachix.org-1:oXnBc6hRE3eX5rSYdRyMYXnfzcCxC7yKPTbZXALsqys="
+    ];
   };
 
-  outputs = { self, nixpkgs }:
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    microvm = {
+      url = "github:microvm-nix/microvm.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs = { self, nixpkgs, microvm }:
     let
+      lib = nixpkgs.lib;
+      uiVmSourceEnv = builtins.getEnv "SHADOW_UI_VM_SOURCE";
+      uiVmSource =
+        if uiVmSourceEnv != "" then
+          uiVmSourceEnv
+        else
+          null;
       systems = [
         "x86_64-linux"
         "aarch64-linux"
         "x86_64-darwin"
         "aarch64-darwin"
       ];
+      darwinSystems = builtins.filter (system: lib.hasSuffix "-darwin" system) systems;
       forAllSystems = f:
-        nixpkgs.lib.genAttrs systems (system:
+        lib.genAttrs systems (system:
           f { pkgs = import nixpkgs { inherit system; }; });
+      mkUnavailablePackage = pkgs: name: message:
+        pkgs.writeShellScriptBin name ''
+          echo ${builtins.toJSON message} >&2
+          exit 1
+        '';
       mkInitWrapper = pkgs:
         let
           cross = pkgs.pkgsCross.musl64;
@@ -168,6 +192,15 @@
           '';
         };
     in {
+      nixosConfigurations =
+        lib.optionalAttrs (uiVmSource != null)
+          (lib.listToAttrs (map (hostSystem: {
+            name = "${hostSystem}-shadow-ui-vm";
+            value = import ./vm/shadow-ui-vm.nix {
+              inherit hostSystem microvm nixpkgs;
+              repoSource = uiVmSource;
+            };
+          }) darwinSystems));
       devShells = forAllSystems ({ pkgs }: {
         bootimg = mkBootimgShell pkgs;
         ui = mkUiShell pkgs;
@@ -179,6 +212,12 @@
           drm-rect = mkDrmRect pkgs;
           shadow-session = mkShadowSession pkgs;
           default = mkInitWrapper pkgs;
+          ui-vm =
+            if pkgs.stdenv.isDarwin && uiVmSource != null then
+              self.nixosConfigurations."${pkgs.stdenv.hostPlatform.system}-shadow-ui-vm".config.microvm.declaredRunner
+            else
+              mkUnavailablePackage pkgs "shadow-ui-vm-unavailable"
+                "ui-vm requires a macOS host plus SHADOW_UI_VM_SOURCE set under --impure. Use just ui-vm-run.";
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           shadow-compositor-guest = mkShadowGuestCompositor pkgs;

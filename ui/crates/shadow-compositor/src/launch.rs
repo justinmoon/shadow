@@ -5,14 +5,23 @@ use std::{
     process::{Child, Command},
 };
 
-use shadow_ui_core::app::{binary_name_for, AppId};
+use shadow_ui_core::{
+    app::{binary_name_for, AppId},
+    control,
+};
 
-pub fn launch_app(app_id: AppId, socket_name: &OsStr) -> io::Result<Child> {
+pub fn launch_app(
+    app_id: AppId,
+    socket_name: &OsStr,
+    control_socket_path: &OsStr,
+) -> io::Result<Child> {
     let Some(binary_name) = binary_name_for(app_id) else {
         return Err(io::Error::new(io::ErrorKind::NotFound, "unknown demo app"));
     };
 
-    let mut command = if let Ok(explicit) = std::env::var("SHADOW_DEMO_CLIENT") {
+    let mut command = if let Ok(explicit) = std::env::var("SHADOW_APP_CLIENT") {
+        Command::new(explicit)
+    } else if let Ok(explicit) = std::env::var("SHADOW_DEMO_CLIENT") {
         Command::new(explicit)
     } else if let Some(sibling) = sibling_binary_path(binary_name) {
         if sibling.exists() {
@@ -40,7 +49,10 @@ pub fn launch_app(app_id: AppId, socket_name: &OsStr) -> io::Result<Child> {
         ));
     };
 
-    command.env("WAYLAND_DISPLAY", socket_name).spawn()
+    command
+        .env("WAYLAND_DISPLAY", socket_name)
+        .env(control::COMPOSITOR_CONTROL_ENV, control_socket_path)
+        .spawn()
 }
 
 fn sibling_binary_path(name: &str) -> Option<PathBuf> {

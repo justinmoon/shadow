@@ -3,9 +3,9 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Local};
 
 use crate::{
+    app::HOME_TILES,
     color::{
-        BACKGROUND, ICON_BLUE, ICON_CYAN, ICON_GREEN, ICON_ORANGE, ICON_PINK, ICON_PURPLE,
-        ICON_RED, ICON_YELLOW, SURFACE, SURFACE_ACCENT, SURFACE_GLASS, SURFACE_RAISED, TEXT_MUTED,
+        BACKGROUND, SURFACE, SURFACE_ACCENT, SURFACE_GLASS, SURFACE_RAISED, TEXT_MUTED,
         TEXT_PRIMARY,
     },
     scene::{RoundedRect, Scene, TextAlign, TextBlock, TextWeight, HEIGHT, WIDTH},
@@ -60,47 +60,6 @@ impl Frame {
             && point.y <= self.y + self.h
     }
 }
-
-#[derive(Clone, Copy)]
-pub struct HomeApp {
-    pub label: &'static str,
-    pub color: crate::color::Color,
-}
-
-pub const HOME_APPS: [HomeApp; 8] = [
-    HomeApp {
-        label: "Phone",
-        color: ICON_GREEN,
-    },
-    HomeApp {
-        label: "Messages",
-        color: ICON_BLUE,
-    },
-    HomeApp {
-        label: "Camera",
-        color: ICON_ORANGE,
-    },
-    HomeApp {
-        label: "Settings",
-        color: ICON_RED,
-    },
-    HomeApp {
-        label: "Demo",
-        color: ICON_CYAN,
-    },
-    HomeApp {
-        label: "Files",
-        color: ICON_YELLOW,
-    },
-    HomeApp {
-        label: "Maps",
-        color: ICON_PINK,
-    },
-    HomeApp {
-        label: "Music",
-        color: ICON_PURPLE,
-    },
-];
 
 pub struct ShellModel {
     cursor: Option<Point>,
@@ -209,7 +168,7 @@ impl ShellModel {
     fn build_app_grid(&self, rects: &mut Vec<RoundedRect>, texts: &mut Vec<TextBlock>) {
         let grid = grid_origin();
 
-        for (index, app) in HOME_APPS.iter().enumerate() {
+        for (index, app) in HOME_TILES.iter().enumerate() {
             let frame = app_frame(index);
             let is_focused = self.focused_app == index;
             let is_hovered = self.hovered_app == Some(index);
@@ -311,7 +270,7 @@ impl ShellModel {
     }
 
     fn hit_test(&self, point: Point) -> Option<usize> {
-        HOME_APPS
+        HOME_TILES
             .iter()
             .enumerate()
             .find_map(|(index, _)| app_frame(index).contains(point).then_some(index))
@@ -473,7 +432,7 @@ fn app_frame(index: usize) -> Frame {
 
 fn move_focus(current: usize, dx: isize, dy: isize) -> usize {
     let cols = GRID_COLUMNS as isize;
-    let rows = (HOME_APPS.len() / GRID_COLUMNS) as isize;
+    let rows = (HOME_TILES.len() / GRID_COLUMNS) as isize;
     let col = current as isize % cols;
     let row = current as isize / cols;
 
@@ -483,7 +442,7 @@ fn move_focus(current: usize, dx: isize, dy: isize) -> usize {
 }
 
 fn wrap_index(current: usize, delta: isize) -> usize {
-    let len = HOME_APPS.len() as isize;
+    let len = HOME_TILES.len() as isize;
     ((current as isize + delta).rem_euclid(len)) as usize
 }
 
@@ -515,13 +474,13 @@ mod tests {
     fn tab_navigation_wraps_across_apps() {
         let mut shell = ShellModel::new();
 
-        for _ in 0..HOME_APPS.len() {
+        for _ in 0..HOME_TILES.len() {
             shell.navigate(NavAction::Next);
         }
         assert_eq!(shell.focused_app, 0);
 
         shell.navigate(NavAction::Previous);
-        assert_eq!(shell.focused_app, HOME_APPS.len() - 1);
+        assert_eq!(shell.focused_app, HOME_TILES.len() - 1);
     }
 
     #[test]

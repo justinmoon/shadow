@@ -86,6 +86,38 @@ ui-run:
 ui-smoke:
 	@scripts/ui_smoke.sh
 
+# Run the local Linux UI VM in a native macOS window
+ui-vm-run:
+	@scripts/ui_vm_run.sh
+
+# Stop the local Linux UI VM
+ui-vm-stop:
+	@scripts/ui_vm_stop.sh
+
+# SSH into the local Linux UI VM
+ui-vm-ssh *args='':
+	@scripts/ui_vm_ssh.sh {{args}}
+
+# Show the guest compositor session log
+ui-vm-logs:
+	@scripts/ui_vm_logs.sh
+
+# Show guest smoke status and relevant Shadow UI processes
+ui-vm-status:
+	@scripts/ui_vm_status.sh
+
+# Show guest greetd and smoke-service journal output
+ui-vm-journal:
+	@scripts/ui_vm_journal.sh
+
+# Launch a cargo package inside the running UI VM compositor session
+ui-vm-app-run package:
+	@scripts/ui_vm_app_run.sh {{package}}
+
+# Launch the counter app inside the running UI VM compositor session
+ui-vm-counter-run:
+	@scripts/ui_vm_app_run.sh shadow-counter
+
 # Run the nested Smithay compositor host on Linux
 compositor-run:
 	@nix develop .#ui -c cargo run --manifest-path ui/Cargo.toml -p shadow-compositor
