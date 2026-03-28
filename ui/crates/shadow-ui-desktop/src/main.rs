@@ -18,6 +18,11 @@ use winit::{
     window::{Window, WindowAttributes, WindowId},
 };
 
+#[cfg(target_os = "linux")]
+use shadow_ui_core::app::{SHELL_APP_ID, SHELL_WAYLAND_APP_ID};
+#[cfg(target_os = "linux")]
+use winit::platform::wayland::WindowAttributesExtWayland;
+
 struct AppState {
     renderer: Renderer,
     text_system: TextSystem,
@@ -33,21 +38,30 @@ struct App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
+            eprintln!("[shadow-ui-desktop] resumed with existing state");
             return;
         }
+
+        eprintln!("[shadow-ui-desktop] resumed; creating window");
 
         let attributes = WindowAttributes::default()
             .with_title("Shadow")
             .with_resizable(false)
             .with_inner_size(LogicalSize::new(WIDTH as f64, HEIGHT as f64));
+        #[cfg(target_os = "linux")]
+        let attributes = attributes.with_name(SHELL_APP_ID.as_str(), SHELL_WAYLAND_APP_ID);
         let window = Arc::new(event_loop.create_window(attributes).expect("create window"));
 
+        eprintln!("[shadow-ui-desktop] window created");
+
         let renderer = pollster::block_on(Renderer::new(window.clone()));
+        eprintln!("[shadow-ui-desktop] renderer created");
         let text_system = TextSystem::new(
             renderer.device(),
             renderer.queue(),
             renderer.surface_format(),
         );
+        eprintln!("[shadow-ui-desktop] text system created");
 
         self.state = Some(AppState {
             renderer,
@@ -57,6 +71,7 @@ impl ApplicationHandler for App {
         });
 
         window.request_redraw();
+        eprintln!("[shadow-ui-desktop] initial redraw requested");
     }
 
     fn window_event(
@@ -70,12 +85,20 @@ impl ApplicationHandler for App {
         };
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                eprintln!("[shadow-ui-desktop] close requested");
+                event_loop.exit();
+            }
             WindowEvent::Resized(size) => {
+                eprintln!(
+                    "[shadow-ui-desktop] resized to {}x{}",
+                    size.width, size.height
+                );
                 state.renderer.resize(size);
                 state.window.request_redraw();
             }
             WindowEvent::ScaleFactorChanged { .. } => {
+                eprintln!("[shadow-ui-desktop] scale factor changed");
                 state.renderer.resize(state.window.inner_size());
                 state.window.request_redraw();
             }
@@ -141,12 +164,22 @@ impl ApplicationHandler for App {
             _ => {}
         }
     }
+
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        eprintln!("[shadow-ui-desktop] suspended");
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        eprintln!("[shadow-ui-desktop] exiting");
+    }
 }
 
 fn main() {
+    eprintln!("[shadow-ui-desktop] starting");
     let event_loop = EventLoop::new().expect("create event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = App::default();
     event_loop.run_app(&mut app).expect("run app");
+    eprintln!("[shadow-ui-desktop] run_app returned");
 }

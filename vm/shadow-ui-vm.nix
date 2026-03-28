@@ -168,18 +168,22 @@ nixpkgs.lib.nixosSystem {
                 SHADOW_CONTROL_SOCKET="$control_socket" python3 - <<'PY'
 import os
 import socket
+import sys
 
 path = os.environ["SHADOW_CONTROL_SOCKET"]
-with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-    client.connect(path)
-    client.sendall(b"state\n")
-    client.shutdown(socket.SHUT_WR)
-    chunks = []
-    while True:
-        chunk = client.recv(4096)
-        if not chunk:
-            break
-        chunks.append(chunk)
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(path)
+        client.sendall(b"state\n")
+        client.shutdown(socket.SHUT_WR)
+        chunks = []
+        while True:
+            chunk = client.recv(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+except OSError:
+    sys.exit(0)
 
 for line in b"".join(chunks).decode("utf-8").splitlines():
     if line.startswith("socket="):
@@ -204,12 +208,43 @@ PY
             fi
 
             echo "shadow-ui-session: launching home shell on $nested_wayland"
-            WAYLAND_DISPLAY="$nested_wayland" \
-              SHADOW_COMPOSITOR_CONTROL="$control_socket" \
-              cargo run --locked --manifest-path ui/Cargo.toml -p shadow-ui-desktop &
-            shell_pid=$!
+            shell_failures=0
+            while kill -0 "$compositor_pid" 2>/dev/null; do
+              shell_start_ts="$(date +%s)"
+              WAYLAND_DISPLAY="$nested_wayland" \
+                SHADOW_COMPOSITOR_CONTROL="$control_socket" \
+                cargo run --locked --manifest-path ui/Cargo.toml -p shadow-ui-desktop &
+              shell_pid=$!
 
-            wait -n "$compositor_pid" "$shell_pid"
+              if wait "$shell_pid"; then
+                shell_status=0
+              else
+                shell_status=$?
+              fi
+
+              shell_runtime="$(( $(date +%s) - shell_start_ts ))"
+              echo "shadow-ui-session: home shell exited status=$shell_status runtime=$shell_runtime"'s'
+
+              if ! kill -0 "$compositor_pid" 2>/dev/null; then
+                break
+              fi
+
+              if [[ "$shell_runtime" -lt 5 ]]; then
+                shell_failures="$((shell_failures + 1))"
+              else
+                shell_failures=0
+              fi
+
+              if [[ "$shell_failures" -ge 3 ]]; then
+                echo "shadow-ui-session: home shell failed too many times" >&2
+                break
+              fi
+
+              echo "shadow-ui-session: restarting home shell"
+              sleep 1
+            done
+
+            wait "$compositor_pid"
           '';
         };
         initialSession = {

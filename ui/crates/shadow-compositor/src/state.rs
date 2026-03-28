@@ -1,7 +1,7 @@
 use std::{collections::HashMap, ffi::OsString, path::PathBuf, process::Child, sync::Arc};
 
 use shadow_ui_core::{
-    app::{AppId, COUNTER_APP},
+    app::{AppId, COUNTER_APP, SHELL_APP_ID},
     control::ControlRequest,
 };
 use smithay::{
@@ -45,6 +45,7 @@ pub struct ShadowCompositor {
     pub seat: Seat<Self>,
     launched_apps: HashMap<AppId, Child>,
     surface_apps: HashMap<WlSurface, AppId>,
+    shell_surface: Option<WlSurface>,
     focused_app: Option<AppId>,
     next_window_offset: i32,
     pub mapped_windows: usize,
@@ -90,6 +91,7 @@ impl ShadowCompositor {
             seat,
             launched_apps: HashMap::new(),
             surface_apps: HashMap::new(),
+            shell_surface: None,
             focused_app: None,
             next_window_offset: 0,
             mapped_windows: 0,
@@ -166,6 +168,9 @@ impl ShadowCompositor {
     }
 
     pub fn remember_surface_app(&mut self, surface: &WlSurface, app_id: AppId) {
+        if app_id == SHELL_APP_ID {
+            self.shell_surface = Some(surface.clone());
+        }
         self.surface_apps.insert(surface.clone(), app_id);
         if self
             .space
@@ -180,6 +185,9 @@ impl ShadowCompositor {
     }
 
     pub fn forget_surface(&mut self, surface: &WlSurface) -> Option<AppId> {
+        if self.shell_surface.as_ref() == Some(surface) {
+            self.shell_surface = None;
+        }
         let removed = self.surface_apps.remove(surface);
         if removed == self.focused_app {
             self.focused_app = None;
@@ -200,7 +208,11 @@ impl ShadowCompositor {
                 Ok("ok\n".to_string())
             }
             ControlRequest::Home => {
-                self.focus_window(None, self.next_serial());
+                if let Some(window) = self.mapped_window_for_app(SHELL_APP_ID) {
+                    self.focus_window(Some(window), self.next_serial());
+                } else {
+                    self.focus_window(None, self.next_serial());
+                }
                 Ok("ok\n".to_string())
             }
             ControlRequest::Switcher => Ok("ok\n".to_string()),
@@ -323,9 +335,15 @@ pub struct ClientState {
 }
 
 impl ClientData for ClientState {
-    fn initialized(&self, _client_id: ClientId) {}
+    fn initialized(&self, client_id: ClientId) {
+        tracing::info!("[shadow-compositor] client-initialized id={client_id:?}");
+    }
 
-    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+    fn disconnected(&self, client_id: ClientId, reason: DisconnectReason) {
+        tracing::warn!(
+            "[shadow-compositor] client-disconnected id={client_id:?} reason={reason:?}"
+        );
+    }
 }
 
 impl Drop for ShadowCompositor {

@@ -35,6 +35,8 @@ pub struct HomeTile {
 
 pub const COUNTER_APP_ID: AppId = AppId::new("counter");
 pub const COUNTER_WAYLAND_APP_ID: &str = "dev.shadow.counter";
+pub const SHELL_APP_ID: AppId = AppId::new("shell");
+pub const SHELL_WAYLAND_APP_ID: &str = "dev.shadow.shell";
 pub const COUNTER_APP: DemoApp = DemoApp {
     id: COUNTER_APP_ID,
     title: "Counter",
@@ -102,6 +104,9 @@ pub fn find_app_by_wayland_app_id(value: &str) -> Option<&'static DemoApp> {
 }
 
 pub fn app_id_from_wayland_app_id(value: &str) -> Option<AppId> {
+    if value == SHELL_WAYLAND_APP_ID {
+        return Some(SHELL_APP_ID);
+    }
     find_app_by_wayland_app_id(value).map(|app| app.id)
 }
 
@@ -113,7 +118,7 @@ pub fn binary_name_for(id: AppId) -> Option<&'static str> {
 mod tests {
     use super::{
         app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, COUNTER_APP,
-        COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, HOME_TILES,
+        COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, HOME_TILES, SHELL_APP_ID, SHELL_WAYLAND_APP_ID,
     };
 
     #[test]
@@ -126,6 +131,10 @@ mod tests {
         assert_eq!(
             app_id_from_wayland_app_id(COUNTER_WAYLAND_APP_ID),
             Some(COUNTER_APP_ID)
+        );
+        assert_eq!(
+            app_id_from_wayland_app_id(SHELL_WAYLAND_APP_ID),
+            Some(SHELL_APP_ID)
         );
         assert_eq!(HOME_TILES[4].app_id, Some(COUNTER_APP_ID));
     }
