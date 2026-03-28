@@ -18,6 +18,7 @@ nixpkgs.lib.nixosSystem {
         logDir = "${stateDir}/log";
         runtimeLibDir = "${stateDir}/runtime-libs";
         sessionLog = "${logDir}/shadow-ui-session.log";
+        buildLog = "${logDir}/shadow-ui-build.log";
         sessionEnv = "${stateDir}/shadow-ui-session-env.sh";
         guestToolPkgs = with pkgs; [
           cargo
@@ -54,6 +55,59 @@ nixpkgs.lib.nixosSystem {
         ];
         guestLibraryPath = lib.makeLibraryPath guestRuntimeLibs;
         guestLinkFlags = lib.concatMapStringsSep " " (pkg: "-L${pkg}/lib") guestRuntimeLibs;
+        shadowUiGuestEnv = pkgs.writeText "shadow-ui-env.sh" ''
+          export HOME=${homeDir}
+          export XDG_CACHE_HOME="$HOME/.cache"
+          export CARGO_TARGET_DIR=${targetDir}
+          export PKG_CONFIG_PATH="${guestPkgConfigPath}:''${PKG_CONFIG_PATH:-}"
+          export LD_LIBRARY_PATH="${runtimeLibDir}:${guestLibraryPath}:''${LD_LIBRARY_PATH:-}"
+          export LIBRARY_PATH="${guestLibraryPath}:''${LIBRARY_PATH:-}"
+          export NIX_LDFLAGS="${guestLinkFlags} ''${NIX_LDFLAGS:-}"
+          export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri:''${LIBGL_DRIVERS_PATH:-}"
+          export RUST_BACKTRACE=1
+          export XDG_RUNTIME_DIR="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+          mkdir -p "$HOME" "$XDG_CACHE_HOME" "$CARGO_TARGET_DIR" ${logDir} ${runtimeLibDir}
+          cp -fL ${pkgs.libglvnd}/lib/libEGL.so.1 ${runtimeLibDir}/libEGL.so.1
+          cp -fL ${pkgs.libglvnd}/lib/libGL.so.1 ${runtimeLibDir}/libGL.so.1
+          cp -fL ${pkgs.libglvnd}/lib/libOpenGL.so.0 ${runtimeLibDir}/libOpenGL.so.0
+          cp -fL ${pkgs.libglvnd}/lib/libGLESv2.so.2 ${runtimeLibDir}/libGLESv2.so.2
+
+          cat >${sessionEnv} <<EOF
+          export HOME="$HOME"
+          export XDG_CACHE_HOME="$XDG_CACHE_HOME"
+          export CARGO_TARGET_DIR="$CARGO_TARGET_DIR"
+          export PKG_CONFIG_PATH="$PKG_CONFIG_PATH"
+          export LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
+          export LIBRARY_PATH="$LIBRARY_PATH"
+          export NIX_LDFLAGS="$NIX_LDFLAGS"
+          export LIBGL_DRIVERS_PATH="$LIBGL_DRIVERS_PATH"
+          export RUST_BACKTRACE="$RUST_BACKTRACE"
+          export XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR"
+          EOF
+        '';
+        shadowUiWarmup = pkgs.writeShellApplication {
+          name = "shadow-ui-warmup";
+          runtimeInputs = with pkgs; [
+            bash
+            coreutils
+          ] ++ guestToolPkgs ++ guestRuntimeLibs;
+          text = ''
+            set -euo pipefail
+            # shellcheck source=/dev/null
+            source ${shadowUiGuestEnv}
+
+            cd ${repoDir}
+            : >${buildLog}
+            exec >>${buildLog} 2>&1
+
+            echo "== shadow-ui-warmup $(date --iso-8601=seconds) =="
+            cargo build --locked --manifest-path ui/Cargo.toml \
+              -p shadow-compositor \
+              -p shadow-ui-desktop \
+              -p shadow-counter
+          '';
+        };
         shadowUiSession = pkgs.writeShellApplication {
           name = "shadow-ui-session";
           runtimeInputs = with pkgs; [
@@ -62,36 +116,8 @@ nixpkgs.lib.nixosSystem {
           ] ++ guestToolPkgs ++ guestRuntimeLibs;
           text = ''
             set -euo pipefail
-
-            export HOME=${homeDir}
-            export XDG_CACHE_HOME="$HOME/.cache"
-            export CARGO_TARGET_DIR=${targetDir}
-            export PKG_CONFIG_PATH="${guestPkgConfigPath}:''${PKG_CONFIG_PATH:-}"
-            export LD_LIBRARY_PATH="${runtimeLibDir}:${guestLibraryPath}:''${LD_LIBRARY_PATH:-}"
-            export LIBRARY_PATH="${guestLibraryPath}:''${LIBRARY_PATH:-}"
-            export NIX_LDFLAGS="${guestLinkFlags} ''${NIX_LDFLAGS:-}"
-            export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri:''${LIBGL_DRIVERS_PATH:-}"
-            export RUST_BACKTRACE=1
-            export XDG_RUNTIME_DIR="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-
-            mkdir -p "$HOME" "$XDG_CACHE_HOME" "$CARGO_TARGET_DIR" ${logDir} ${runtimeLibDir}
-            cp -fL ${pkgs.libglvnd}/lib/libEGL.so.1 ${runtimeLibDir}/libEGL.so.1
-            cp -fL ${pkgs.libglvnd}/lib/libGL.so.1 ${runtimeLibDir}/libGL.so.1
-            cp -fL ${pkgs.libglvnd}/lib/libOpenGL.so.0 ${runtimeLibDir}/libOpenGL.so.0
-            cp -fL ${pkgs.libglvnd}/lib/libGLESv2.so.2 ${runtimeLibDir}/libGLESv2.so.2
-
-            cat >${sessionEnv} <<EOF
-            export HOME="$HOME"
-            export XDG_CACHE_HOME="$XDG_CACHE_HOME"
-            export CARGO_TARGET_DIR="$CARGO_TARGET_DIR"
-            export PKG_CONFIG_PATH="$PKG_CONFIG_PATH"
-            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
-            export LIBRARY_PATH="$LIBRARY_PATH"
-            export NIX_LDFLAGS="$NIX_LDFLAGS"
-            export LIBGL_DRIVERS_PATH="$LIBGL_DRIVERS_PATH"
-            export RUST_BACKTRACE="$RUST_BACKTRACE"
-            export XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR"
-            EOF
+            # shellcheck source=/dev/null
+            source ${shadowUiGuestEnv}
 
             cd ${repoDir}
             : >${sessionLog}
@@ -101,9 +127,6 @@ nixpkgs.lib.nixosSystem {
             echo "cwd: $(pwd)"
             echo "WAYLAND_DISPLAY=''${WAYLAND_DISPLAY:-unset}"
             echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
-
-            socket_snapshot="$(mktemp)"
-            find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name 'wayland-*' -printf '%f\n' | sort -V >"$socket_snapshot"
 
             cargo run --locked --manifest-path ui/Cargo.toml -p shadow-compositor &
             compositor_pid=$!
@@ -118,7 +141,6 @@ nixpkgs.lib.nixosSystem {
                 kill "$compositor_pid" 2>/dev/null || true
                 wait "$compositor_pid" 2>/dev/null || true
               fi
-              rm -f "$socket_snapshot"
             }
             trap cleanup EXIT
 
@@ -143,10 +165,27 @@ nixpkgs.lib.nixosSystem {
             nested_wayland=""
             for _ in $(seq 1 900); do
               nested_wayland="$(
-                find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name 'wayland-*' -printf '%f\n' \
-                  | sort -V \
-                  | comm -13 "$socket_snapshot" - \
-                  | tail -n 1
+                SHADOW_CONTROL_SOCKET="$control_socket" python3 - <<'PY'
+import os
+import socket
+
+path = os.environ["SHADOW_CONTROL_SOCKET"]
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+    client.connect(path)
+    client.sendall(b"state\n")
+    client.shutdown(socket.SHUT_WR)
+    chunks = []
+    while True:
+        chunk = client.recv(4096)
+        if not chunk:
+            break
+        chunks.append(chunk)
+
+for line in b"".join(chunks).decode("utf-8").splitlines():
+    if line.startswith("socket="):
+        print(line.removeprefix("socket="))
+        break
+PY
               )"
               if [[ -n "$nested_wayland" ]]; then
                 break
@@ -222,6 +261,27 @@ nixpkgs.lib.nixosSystem {
         };
 
         environment.systemPackages = guestToolPkgs;
+
+        systemd.services.shadow-ui-warmup = {
+          description = "Prebuild the Shadow UI guest binaries";
+          before = [ "greetd.service" ];
+          wantedBy = [ "multi-user.target" ];
+          serviceConfig = {
+            Type = "oneshot";
+            User = "shadow";
+            Group = "shadow";
+            StandardOutput = "journal+console";
+            StandardError = "journal+console";
+          };
+          script = ''
+            exec ${shadowUiWarmup}/bin/shadow-ui-warmup
+          '';
+        };
+
+        systemd.services.greetd = {
+          after = [ "shadow-ui-warmup.service" ];
+          requires = [ "shadow-ui-warmup.service" ];
+        };
 
         systemd.services.shadow-ui-smoke = {
           description = "Verify the Shadow UI guest session";
