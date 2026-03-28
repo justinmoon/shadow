@@ -35,6 +35,7 @@ trap cleanup EXIT
 
 cleanup
 
+just artifacts-fetch
 just pre-commit
 just ui-smoke
 

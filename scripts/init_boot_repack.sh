@@ -9,7 +9,7 @@ ensure_bootimg_shell "$@"
 INPUT_IMAGE="${INIT_BOOT_SRC:-$(cached_init_boot_image)}"
 KEY_PATH="${AVB_TEST_KEY_PATH:-$(cached_avb_testkey)}"
 OUTPUT_IMAGE="${INIT_BOOT_OUT:-$(build_dir)/init_boot.repacked.img}"
-REMOTE_TMP=""
+WORK_DIR=""
 
 usage() {
   cat <<'EOF'
@@ -20,8 +20,8 @@ EOF
 }
 
 cleanup() {
-  if [[ -n "$REMOTE_TMP" ]]; then
-    remote_shell "rm -rf $(printf '%q' "$REMOTE_TMP")" >/dev/null 2>&1 || true
+  if [[ -n "$WORK_DIR" ]]; then
+    rm -rf "$WORK_DIR"
   fi
 }
 
@@ -65,29 +65,32 @@ fi
 }
 
 mkdir -p "$(dirname "$OUTPUT_IMAGE")"
-
-REMOTE_TMP="$(remote_shell 'mktemp -d "${TMPDIR:-/tmp}/shadow-init-boot-XXXXXX"')"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/shadow-init-boot-XXXXXX")"
 trap cleanup EXIT
 
-REMOTE_INPUT="${REMOTE_TMP}/init_boot.img"
-REMOTE_KEY="${REMOTE_TMP}/avb_testkey_rsa4096.pem"
-REMOTE_OUTPUT="${REMOTE_TMP}/init_boot.repacked.img"
+LOCAL_INPUT="${WORK_DIR}/init_boot.img"
+LOCAL_KEY="${WORK_DIR}/avb_testkey_rsa4096.pem"
+LOCAL_OUTPUT="${WORK_DIR}/init_boot.repacked.img"
 
-copy_to_remote "$INPUT_IMAGE" "$REMOTE_INPUT"
-copy_to_remote "$KEY_PATH" "$REMOTE_KEY"
+cp "$INPUT_IMAGE" "$LOCAL_INPUT"
+cp "$KEY_PATH" "$LOCAL_KEY"
 
-printf 'Repacking %s on %s\n' "$INPUT_IMAGE" "$REMOTE_HOST"
-printf '  remote workdir: %s\n' "$REMOTE_TMP"
+printf 'Repacking %s locally\n' "$INPUT_IMAGE"
+printf '  workdir: %s\n' "$WORK_DIR"
 
-REMOTE_SCRIPT="$(cat <<EOF
+LOCAL_SCRIPT="$(cat <<EOF
 set -euo pipefail
-cd "$REMOTE_TMP"
-unpack_bootimg --boot_img "$REMOTE_INPUT" --format=mkbootimg > mkbootimg_args.txt
+cd "$WORK_DIR"
+unpack_bootimg --boot_img "$LOCAL_INPUT" --format=mkbootimg > mkbootimg_args.txt
 filtered_args=\$(sed 's|--output [^ ]*||g' mkbootimg_args.txt)
 eval "set -- \$filtered_args"
-mkbootimg "\$@" --output "$REMOTE_OUTPUT"
-info="\$(avbtool info_image --image "$REMOTE_INPUT")"
-partition_size="\$(stat -c %s "$REMOTE_INPUT")"
+mkbootimg "\$@" --output "$LOCAL_OUTPUT"
+info="\$(avbtool info_image --image "$LOCAL_INPUT")"
+partition_size="\$(python3 - <<'PY'
+import pathlib
+print(pathlib.Path("$LOCAL_INPUT").stat().st_size)
+PY
+)"
 algorithm="\$(printf '%s\n' "\$info" | awk -F': *' '/^Algorithm:/{print \$2; exit}')"
 rollback_index="\$(printf '%s\n' "\$info" | awk -F': *' '/^Rollback Index:/{print \$2; exit}')"
 rollback_index_location="\$(printf '%s\n' "\$info" | awk -F': *' '/^Rollback Index Location:/{print \$2; exit}')"
@@ -103,27 +106,22 @@ while IFS= read -r prop_line; do
 done < <(printf '%s\n' "\$info" | grep -E '^[[:space:]]+Prop: ')
 
 avbtool add_hash_footer \
-  --image "$REMOTE_OUTPUT" \
+  --image "$LOCAL_OUTPUT" \
   --partition_size "\$partition_size" \
   --partition_name init_boot \
   --hash_algorithm "\$hash_algorithm" \
   --salt "\$salt" \
   --algorithm "\$algorithm" \
-  --key "$REMOTE_KEY" \
+  --key "$LOCAL_KEY" \
   --rollback_index "\$rollback_index" \
   --rollback_index_location "\$rollback_index_location" \
   --flags "\$flags" \
   "\${prop_args[@]}"
-avbtool info_image --image "$REMOTE_OUTPUT" > repacked.avb.info
+avbtool info_image --image "$LOCAL_OUTPUT" > repacked.avb.info
 EOF
 )"
 
-remote_nix_bash "$REMOTE_SCRIPT"
-
-if is_local_host; then
-  cp "$REMOTE_OUTPUT" "$OUTPUT_IMAGE"
-else
-  scp -q "${REMOTE_HOST}:${REMOTE_OUTPUT}" "$OUTPUT_IMAGE"
-fi
+bash -lc "$LOCAL_SCRIPT"
+cp "$LOCAL_OUTPUT" "$OUTPUT_IMAGE"
 
 printf 'Wrote repacked image: %s\n' "$OUTPUT_IMAGE"
