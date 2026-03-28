@@ -28,11 +28,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let display: smithay::reexports::wayland_server::Display<state::ShadowCompositor> =
         smithay::reexports::wayland_server::Display::new()?;
     let mut state = state::ShadowCompositor::new(&mut event_loop, display);
+    tracing::info!(
+        socket = ?state.socket_name,
+        control = %state.control_socket_path.display(),
+        "shadow-compositor: initialized state"
+    );
 
     winit::init_winit(&mut event_loop, &mut state)?;
     std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
+    tracing::info!(
+        nested_socket = ?state.socket_name,
+        "shadow-compositor: entering event loop"
+    );
 
     event_loop.run(None, &mut state, |_| {})?;
+    tracing::info!("shadow-compositor: event loop exited");
     Ok(())
 }
 

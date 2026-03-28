@@ -84,6 +84,27 @@ The expected Linux flow is now:
 
 If the shell is still compiling or you want to bypass it entirely, the guest launch recipes above start the two prototype apps directly against the running compositor using the same cached Cargo target dir and runtime library environment as the main guest session.
 
+## Nested Compositor
+
+The next bridge step keeps `weston` as the stable outer guest compositor and runs `shadow-compositor` as a nested Wayland client inside it.
+
+Start the nested compositor:
+
+```sh
+just ui-vm-shadow-run
+just ui-vm-shadow-status
+just ui-vm-shadow-logs
+```
+
+Then launch a simple app into the nested compositor:
+
+```sh
+just ui-vm-shadow-counter-run
+just ui-vm-shadow-status-run
+```
+
+That path writes a second guest env file at `/var/lib/shadow-ui/shadow-compositor-session-env.sh` with the nested `WAYLAND_DISPLAY` and compositor control socket. `ui-vm-shadow-stop` stops just the nested compositor without rebooting the VM.
+
 In the current Nix guest this browser-engine prototype uses `epiphany` (WebKitGTK). `nixpkgs` ships an unrelated Grafana CLI as `cog`, so the Igalia Cog/WPE launcher is not available out of the box in this environment.
 
 Fastest guest debug loop:

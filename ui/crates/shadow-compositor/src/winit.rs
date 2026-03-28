@@ -26,12 +26,14 @@ pub fn init_winit(
     event_loop: &mut EventLoop<ShadowCompositor>,
     state: &mut ShadowCompositor,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    tracing::info!("shadow-compositor: creating winit backend window");
     let attributes = WinitWindow::default_attributes()
         .with_title("Shadow")
         .with_resizable(false)
         .with_inner_size(LogicalSize::new(WIDTH as f64, HEIGHT as f64))
         .with_visible(true);
     let (mut backend, winit) = winit::init_from_attributes(attributes)?;
+    tracing::info!(mode = ?backend.window_size(), "shadow-compositor: winit backend ready");
 
     let mode = Mode {
         size: backend.window_size(),
@@ -58,6 +60,7 @@ pub fn init_winit(
     state.space.map_output(&output, (0, 0));
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
+    backend.window().request_redraw();
 
     event_loop
         .handle()
@@ -113,7 +116,10 @@ pub fn init_winit(
                 let _ = state.display_handle.flush_clients();
                 backend.window().request_redraw();
             }
-            WinitEvent::CloseRequested => state.loop_signal.stop(),
+            WinitEvent::CloseRequested => {
+                tracing::warn!("shadow-compositor: received close request");
+                state.loop_signal.stop();
+            }
             _ => {}
         })?;
 

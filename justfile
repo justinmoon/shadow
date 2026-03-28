@@ -98,6 +98,30 @@ ui-vm-cog-run:
 ui-vm-blitz-run:
 	@scripts/ui_vm_app_run.sh shadow-blitz-demo
 
+# Launch the nested Smithay compositor inside the guest weston session
+ui-vm-shadow-run:
+	@scripts/ui_vm_shadow_run.sh
+
+# Stop the nested Smithay compositor inside the guest weston session
+ui-vm-shadow-stop:
+	@scripts/ui_vm_shadow_stop.sh
+
+# Show the nested Smithay compositor log
+ui-vm-shadow-logs:
+	@scripts/ui_vm_shadow_logs.sh
+
+# Show the nested Smithay compositor status and app processes
+ui-vm-shadow-status:
+	@scripts/ui_vm_shadow_status.sh
+
+# Launch the counter app inside the nested Smithay compositor
+ui-vm-shadow-counter-run:
+	@scripts/ui_vm_shadow_app_run.sh shadow-counter
+
+# Launch the status app inside the nested Smithay compositor
+ui-vm-shadow-status-run:
+	@scripts/ui_vm_shadow_app_run.sh shadow-status
+
 # Run the fast local verification gate
 pre-commit:
 	@scripts/pre_commit.sh
