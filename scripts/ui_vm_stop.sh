@@ -44,6 +44,12 @@ if [[ ! -S "$SOCKET_PATH" ]]; then
   exit 0
 fi
 
+if ! process_running; then
+  rm -f "$SOCKET_PATH"
+  echo "ui-vm-stop: removed stale VM socket"
+  exit 0
+fi
+
 mkdir -p .shadow-vm
 if [[ ! -x "$RUNNER_LINK/bin/microvm-shutdown" ]]; then
   SHADOW_UI_VM_SOURCE="$REPO_ROOT" \

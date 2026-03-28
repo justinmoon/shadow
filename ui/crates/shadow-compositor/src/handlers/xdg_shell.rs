@@ -27,6 +27,7 @@ impl XdgShellHandler for ShadowCompositor {
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let wl_surface = surface.wl_surface().clone();
         let window = Window::new_wayland_window(surface);
+        tracing::info!("shadow-compositor: new toplevel");
         self.space.map_element(
             window.clone(),
             self.window_location_for_surface(&wl_surface),
@@ -58,6 +59,7 @@ impl XdgShellHandler for ShadowCompositor {
     fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
 
     fn app_id_changed(&mut self, surface: ToplevelSurface) {
+        tracing::info!("shadow-compositor: app id changed");
         self.refresh_toplevel_app_id(surface.wl_surface());
     }
 
@@ -124,6 +126,7 @@ impl ShadowCompositor {
         let Some(app_id) = app_id.as_deref() else {
             return;
         };
+        tracing::info!(app_id, "shadow-compositor: refreshing toplevel app id");
 
         if app_id == app::DESKTOP_WAYLAND_APP_ID {
             if let Some(window) = self.window_for_surface(surface) {

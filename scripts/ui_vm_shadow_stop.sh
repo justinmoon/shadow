@@ -13,11 +13,11 @@ RUNTIME_DIR="/run/user/1000"
 
 matching_processes() {
   ps -eo pid=,comm=,args= | awk '
-    $2 == "shadow-compositor" { print $1; next }
+    $3 ~ /(^|\/)shadow-compositor([[:space:]]|$)/ { print $1; next }
     $2 == "cargo" {
       command_start = index($0, $3)
       command = substr($0, command_start)
-      if (command ~ "^cargo run( --locked)? --manifest-path ui/Cargo.toml -p shadow-compositor$") {
+      if (command ~ "(^|/)cargo run( --locked)? --manifest-path ui/Cargo.toml -p shadow-compositor$") {
         print $1
       }
     }

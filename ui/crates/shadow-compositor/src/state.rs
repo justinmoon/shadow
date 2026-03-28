@@ -119,6 +119,7 @@ impl ShadowCompositor {
                             .dispatch_clients(state)
                             .expect("dispatch clients");
                     }
+                    let _ = state.display_handle.flush_clients();
                     Ok(PostAction::Continue)
                 },
             )
@@ -246,6 +247,10 @@ impl ShadowCompositor {
 
     pub fn launch_or_focus_app(&mut self, app_id: AppId) -> std::io::Result<()> {
         self.reap_children();
+        tracing::info!(
+            app_id = app_id.as_str(),
+            "shadow-compositor: launch or focus app"
+        );
 
         if self
             .shell
@@ -276,6 +281,10 @@ impl ShadowCompositor {
             &self.socket_name,
             self.control_socket_path.as_os_str(),
         )?;
+        tracing::info!(
+            app_id = app_id.as_str(),
+            "shadow-compositor: launched child"
+        );
         self.launched_apps.insert(app_id, child);
         Ok(())
     }
@@ -330,5 +339,7 @@ pub struct ClientState {
 
 impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {}
-    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+    fn disconnected(&self, _client_id: ClientId, reason: DisconnectReason) {
+        tracing::info!(?reason, "shadow-compositor: client disconnected");
+    }
 }

@@ -25,7 +25,7 @@ matching_processes() {
     \$2 == "cargo" {
       command_start = index(\$0, \$3)
       command = substr(\$0, command_start)
-      if (command ~ ("^cargo run( --locked)? --manifest-path ui/Cargo.toml -p " package "\$")) {
+      if (command ~ ("(^|/)cargo run( --locked)? --manifest-path ui/Cargo.toml -p " package "\$")) {
         print
       }
     }

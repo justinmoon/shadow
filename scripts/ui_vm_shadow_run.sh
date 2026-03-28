@@ -11,6 +11,7 @@ LOG_DIR="$STATE_DIR/log"
 SESSION_ENV_FILE="$STATE_DIR/shadow-ui-session-env.sh"
 COMPOSITOR_ENV_FILE="$STATE_DIR/shadow-compositor-session-env.sh"
 COMPOSITOR_LOG="$LOG_DIR/shadow-compositor.log"
+COMPOSITOR_LOCK_FILE="$STATE_DIR/shadow-compositor.lock"
 COMPOSITOR_CONTROL_SOCKET_NAME="shadow-control.sock"
 OUTER_WAYLAND_DISPLAY="wayland-0"
 CARGO_INCREMENTAL=0
@@ -40,11 +41,11 @@ load_session_env() {
 
 matching_processes() {
   ps -eo pid=,comm=,args= | awk '
-    $2 == "shadow-compositor" { print; next }
+    $3 ~ /(^|\/)shadow-compositor([[:space:]]|$)/ { print; next }
     $2 == "cargo" {
       command_start = index($0, $3)
       command = substr($0, command_start)
-      if (command ~ "^cargo run( --locked)? --manifest-path ui/Cargo.toml -p shadow-compositor$") {
+      if (command ~ "(^|/)cargo run( --locked)? --manifest-path ui/Cargo.toml -p shadow-compositor$") {
         print
       }
     }
@@ -84,6 +85,10 @@ if [[ ! -S "$XDG_RUNTIME_DIR/$OUTER_WAYLAND_DISPLAY" ]]; then
   echo "ui-vm-shadow-run: missing weston socket $XDG_RUNTIME_DIR/$OUTER_WAYLAND_DISPLAY" >&2
   exit 1
 fi
+
+mkdir -p "$STATE_DIR"
+exec 9>"$COMPOSITOR_LOCK_FILE"
+flock 9
 
 control_socket="$XDG_RUNTIME_DIR/$COMPOSITOR_CONTROL_SOCKET_NAME"
 existing="$(matching_processes)"
