@@ -10,7 +10,13 @@ import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 from typing import Any
+
+
+STATE_DIR = pathlib.Path("/var/lib/shadow-ui")
+SESSION_ENV_FILE = STATE_DIR / "shadow-ui-session-env.sh"
+NESTED_ENV_FILE = STATE_DIR / "shadow-compositor-session-env.sh"
 
 
 def repo_root() -> pathlib.Path:
@@ -21,7 +27,7 @@ def state_dir() -> pathlib.Path:
     return repo_root() / ".shadow-vm"
 
 
-def socket_path() -> pathlib.Path:
+def configured_socket_path() -> pathlib.Path:
     return state_dir() / "shadow-ui-vm.sock"
 
 
@@ -80,6 +86,27 @@ def vm_repo_source(process_lines: list[str]) -> str | None:
     return None
 
 
+def vm_qmp_socket(process_lines: list[str]) -> pathlib.Path | None:
+    pattern = re.compile(r"-qmp unix:([^,]+),server,nowait")
+    for line in process_lines:
+        match = pattern.search(line)
+        if not match:
+            continue
+        raw_path = pathlib.Path(match.group(1))
+        if raw_path.is_absolute():
+            return raw_path
+        repo_source = vm_repo_source(process_lines)
+        if repo_source:
+            return pathlib.Path(repo_source) / raw_path
+        return repo_root() / raw_path
+    return None
+
+
+def socket_path() -> pathlib.Path:
+    process_lines = vm_processes()
+    return vm_qmp_socket(process_lines) or configured_socket_path()
+
+
 def qmp_request(command: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
     qmp_socket = socket_path()
     if not qmp_socket.exists():
@@ -129,16 +156,33 @@ def _qmp_read_message(client: socket.socket) -> dict[str, Any]:
             return message
 
 
-def run_remote_json(script: str) -> dict[str, Any]:
-    remote = run_remote(script, check=False)
-    payload: dict[str, Any] = {
-        "reachable": remote.returncode == 0,
-        "returncode": remote.returncode,
-        "stderr": remote.stderr.strip(),
-    }
-    if remote.returncode == 0 and remote.stdout.strip():
-        payload.update(json.loads(remote.stdout))
-    return payload
+def render_screenshot(output: pathlib.Path) -> pathlib.Path:
+    output = output.expanduser()
+    if not output.is_absolute():
+        output = repo_root() / output
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    if output.suffix.lower() == ".ppm":
+        qmp_request("screendump", {"filename": str(output)})
+        return output
+
+    with tempfile.NamedTemporaryFile(prefix="shadow-ui-vm-", suffix=".ppm", delete=False) as handle:
+        temp_path = pathlib.Path(handle.name)
+
+    try:
+        qmp_request("screendump", {"filename": str(temp_path)})
+        if output.suffix.lower() == ".png":
+            convert = run_local(
+                ["sips", "-s", "format", "png", str(temp_path), "--out", str(output)],
+                check=False,
+            )
+            if convert.returncode != 0:
+                raise RuntimeError(convert.stderr.strip() or "sips png conversion failed")
+        else:
+            output.write_bytes(temp_path.read_bytes())
+        return output
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def vm_status_payload() -> dict[str, Any]:
@@ -146,14 +190,15 @@ def vm_status_payload() -> dict[str, Any]:
     payload: dict[str, Any] = {
         "local": {
             "state_dir": str(state_dir()),
+            "configured_socket_path": str(configured_socket_path()),
             "socket_path": str(socket_path()),
             "socket_exists": socket_path().exists(),
             "vm_processes": local_processes,
             "repo_source": vm_repo_source(local_processes),
         }
     }
-    payload["remote"] = run_remote_json(
-        r"""
+
+    remote_script = r"""
 set -euo pipefail
 python3 - <<'PY'
 import json
@@ -161,12 +206,8 @@ import pathlib
 import subprocess
 
 runtime_dir = pathlib.Path("/run/user/1000")
-state_dir = pathlib.Path("/var/lib/shadow-ui")
-session_log = state_dir / "log" / "shadow-ui-session.log"
-weston_log = state_dir / "log" / "weston.log"
-control_socket = runtime_dir / "shadow-control.sock"
-session_env = state_dir / "shadow-ui-session-env.sh"
-nested_env = state_dir / "shadow-compositor-session-env.sh"
+session_log = pathlib.Path("/var/lib/shadow-ui/log/shadow-ui-session.log")
+weston_log = pathlib.Path("/var/lib/shadow-ui/log/weston.log")
 
 def cmd(*argv):
     result = subprocess.run(argv, text=True, capture_output=True, check=False)
@@ -179,36 +220,22 @@ for line in cmd("systemctl", "show", "shadow-ui-smoke.service", "-p", "ActiveSta
         service_props[key] = value
 
 process_lines = []
-needles = (
-    "weston",
-    "shadow-ui-desktop",
-    "shadow-compositor",
-    "shadow-counter",
-    "shadow-status",
-    "shadow-cog-demo",
-    "shadow-blitz-demo",
-    "epiphany",
-    "deno run",
-    "cargo run --locked --manifest-path ui/Cargo.toml",
-)
 for line in cmd("ps", "-eo", "pid=,comm=,args=")[1].splitlines():
-    if any(name in line for name in needles):
+    if any(name in line for name in ("weston", "shadow-ui-desktop", "shadow-compositor", "epiphany", "shadow-blitz-demo", "cargo run")):
         if "python3 - <<'PY'" in line:
             continue
         process_lines.append(line.strip())
 
-def tail(path):
+def tail(path, count=40):
     if not path.exists():
         return []
-    return path.read_text().splitlines()[-40:]
+    return path.read_text().splitlines()[-count:]
 
 payload = {
     "service": service_props,
     "runtime_dir": str(runtime_dir),
     "wayland_sockets": sorted(path.name for path in runtime_dir.glob("wayland-*") if path.is_socket()),
-    "outer_control_socket_exists": control_socket.exists(),
-    "outer_session_env_exists": session_env.exists(),
-    "nested_session_env_exists": nested_env.exists(),
+    "session_env_exists": pathlib.Path("/var/lib/shadow-ui/shadow-ui-session-env.sh").exists(),
     "processes": process_lines,
     "session_log_tail": tail(session_log),
     "weston_log_tail": tail(weston_log),
@@ -216,14 +243,20 @@ payload = {
 print(json.dumps(payload))
 PY
 """
-    )
+
+    remote = run_remote(remote_script, check=False)
+    payload["remote"] = {
+        "reachable": remote.returncode == 0,
+        "returncode": remote.returncode,
+        "stderr": remote.stderr.strip(),
+    }
+    if remote.returncode == 0 and remote.stdout.strip():
+        payload["remote"].update(json.loads(remote.stdout))
     return payload
 
 
 def shadow_status_payload() -> dict[str, Any]:
-    payload: dict[str, Any] = {"local": {"state_dir": str(state_dir())}}
-    payload["remote"] = run_remote_json(
-        r"""
+    remote_script = r"""
 set -euo pipefail
 python3 - <<'PY'
 import json
@@ -235,56 +268,59 @@ state_dir = pathlib.Path("/var/lib/shadow-ui")
 env_file = state_dir / "shadow-compositor-session-env.sh"
 log_file = state_dir / "log" / "shadow-compositor.log"
 
-env_map = {}
-if env_file.exists():
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line.startswith("export ") or "=" not in line:
-            continue
-        key, value = line[len("export "):].split("=", 1)
-        env_map[key] = value.strip().strip('"')
-
-wayland_display = env_map.get("WAYLAND_DISPLAY")
-control_socket = env_map.get("SHADOW_COMPOSITOR_CONTROL")
-
 def cmd(*argv):
     result = subprocess.run(argv, text=True, capture_output=True, check=False)
     return result.returncode, result.stdout, result.stderr
 
 process_lines = []
-needles = (
-    "shadow-compositor",
-    "shadow-counter",
-    "shadow-status",
-    "shadow-cog-demo",
-    "shadow-blitz-demo",
-    "epiphany",
-    "deno run",
-    "cargo run --locked --manifest-path ui/Cargo.toml",
-)
 for line in cmd("ps", "-eo", "pid=,comm=,args=")[1].splitlines():
-    if any(name in line for name in needles):
+    if any(name in line for name in ("shadow-compositor", "shadow-counter", "shadow-status", "shadow-cog-demo", "shadow-blitz-demo", "epiphany", "cargo run")):
         if "python3 - <<'PY'" in line:
             continue
         process_lines.append(line.strip())
 
-log_tail = []
-if log_file.exists():
-    log_tail = log_file.read_text().splitlines()[-60:]
+env_vars = {}
+if env_file.exists():
+    for line in env_file.read_text().splitlines():
+        if not line.startswith("export "):
+            continue
+        key, _, value = line[len("export "):].partition("=")
+        env_vars[key] = value.strip().strip('"')
+
+wayland_display = env_vars.get("WAYLAND_DISPLAY", "")
+control_socket = env_vars.get("SHADOW_COMPOSITOR_CONTROL", "")
 
 payload = {
     "env_file_exists": env_file.exists(),
+    "env_file": str(env_file),
+    "runtime_dir": env_vars.get("XDG_RUNTIME_DIR", str(runtime_dir)),
     "wayland_display": wayland_display,
     "wayland_socket_exists": bool(wayland_display) and (runtime_dir / wayland_display).is_socket(),
     "control_socket": control_socket,
     "control_socket_exists": bool(control_socket) and pathlib.Path(control_socket).is_socket(),
     "processes": process_lines,
-    "log_tail": log_tail,
+    "log_tail": log_file.read_text().splitlines()[-60:] if log_file.exists() else [],
 }
 print(json.dumps(payload))
 PY
 """
-    )
+
+    remote = run_remote(remote_script, check=False)
+    payload: dict[str, Any] = {
+        "local": {
+            "state_dir": str(state_dir()),
+            "configured_socket_path": str(configured_socket_path()),
+            "socket_path": str(socket_path()),
+            "socket_exists": socket_path().exists(),
+        },
+        "remote": {
+            "reachable": remote.returncode == 0,
+            "returncode": remote.returncode,
+            "stderr": remote.stderr.strip(),
+        },
+    }
+    if remote.returncode == 0 and remote.stdout.strip():
+        payload["remote"].update(json.loads(remote.stdout))
     return payload
 
 
@@ -292,6 +328,8 @@ def print_vm_status(payload: dict[str, Any]) -> None:
     local = payload["local"]
     remote = payload["remote"]
     print(f"socket: {'yes' if local['socket_exists'] else 'no'} ({local['socket_path']})")
+    if local["socket_path"] != local["configured_socket_path"]:
+        print(f"configured socket: {local['configured_socket_path']}")
     if local["vm_processes"]:
         print("vm process:")
         for line in local["vm_processes"]:
@@ -313,10 +351,8 @@ def print_vm_status(payload: dict[str, Any]) -> None:
         f"{service.get('ActiveState', 'unknown')}/{service.get('SubState', 'unknown')}",
         f"result={service.get('Result', 'unknown')}",
     )
+    print("session env:", "yes" if remote.get("session_env_exists") else "no")
     print("wayland sockets:", ", ".join(remote.get("wayland_sockets", [])) or "none")
-    print("outer control socket:", "yes" if remote.get("outer_control_socket_exists") else "no")
-    print("outer session env:", "yes" if remote.get("outer_session_env_exists") else "no")
-    print("nested session env:", "yes" if remote.get("nested_session_env_exists") else "no")
     print("processes:")
     for line in remote.get("processes", []):
         print(f"  {line}")
@@ -324,18 +360,19 @@ def print_vm_status(payload: dict[str, Any]) -> None:
 
 def print_shadow_status(payload: dict[str, Any]) -> None:
     remote = payload["remote"]
+    print(f"vm socket: {'yes' if payload['local']['socket_exists'] else 'no'} ({payload['local']['socket_path']})")
+    if payload["local"]["socket_path"] != payload["local"]["configured_socket_path"]:
+        print(f"configured socket: {payload['local']['configured_socket_path']}")
     print(f"remote reachable: {'yes' if remote.get('reachable') else 'no'}")
     if not remote.get("reachable"):
         if remote.get("stderr"):
             print(remote["stderr"])
         return
 
-    print("nested env:", "yes" if remote.get("env_file_exists") else "no")
+    print("nested env:", "yes" if remote.get("env_file_exists") else f"no ({remote.get('env_file')})")
     print("nested wayland:", remote.get("wayland_display") or "missing")
     print("nested wayland socket:", "yes" if remote.get("wayland_socket_exists") else "no")
-    control = remote.get("control_socket") or "missing"
-    print(f"nested control socket: {control}")
-    print("control socket exists:", "yes" if remote.get("control_socket_exists") else "no")
+    print("control socket:", "yes" if remote.get("control_socket_exists") else f"no ({remote.get('control_socket') or 'missing'})")
     print("processes:")
     for line in remote.get("processes", []):
         print(f"  {line}")
@@ -349,21 +386,21 @@ def diagnose_vm(payload: dict[str, Any]) -> list[str]:
         return issues
 
     if payload["local"].get("repo_source") not in (None, str(repo_root())):
-        issues.append(f"VM is mounted from {payload['local']['repo_source']}, not {repo_root()}.")
+        issues.append(
+            f"VM is mounted from {payload['local']['repo_source']}, not {repo_root()}."
+        )
 
     processes = "\n".join(remote.get("processes", []))
-    session_log_tail = remote.get("session_log_tail", [])
+    session_log = remote.get("session_log_tail", [])
 
     if "weston" not in processes:
         issues.append("Weston is not running in the guest session.")
-    if "shadow-ui-desktop" not in processes:
-        issues.append("shadow-ui-desktop is not running.")
-    if any("shadow-ui-desktop exited" in line for line in session_log_tail):
-        issues.append("Session log shows shadow-ui-desktop exited immediately.")
     if not remote.get("wayland_sockets"):
         issues.append("No Wayland sockets are present in the guest runtime dir.")
-    if not remote.get("outer_session_env_exists"):
-        issues.append("Outer session env file is missing.")
+    if any("shadow-ui-session: weston did not create wayland-0" in line for line in session_log):
+        issues.append("Session log shows Weston failed to create wayland-0.")
+    if any("shadow-ui-desktop exited" in line for line in session_log):
+        issues.append("Session log shows shadow-ui-desktop exited.")
     return issues
 
 
@@ -375,39 +412,30 @@ def diagnose_shadow(payload: dict[str, Any]) -> list[str]:
         return issues
 
     processes = "\n".join(remote.get("processes", []))
+    log_tail = remote.get("log_tail", [])
 
     if not remote.get("env_file_exists"):
-        issues.append("Nested compositor env file is missing.")
+        issues.append("Nested compositor env file is missing; run `shadowctl shadow run` or `just ui-vm-shadow-run`.")
     if "shadow-compositor" not in processes:
-        issues.append("Nested shadow-compositor is not running.")
+        issues.append("Nested shadow-compositor process is not running.")
     if not remote.get("wayland_socket_exists"):
         issues.append("Nested Wayland socket is missing.")
     if not remote.get("control_socket_exists"):
-        issues.append("Nested compositor control socket is missing.")
-    if not remote.get("log_tail"):
-        issues.append("Nested compositor log is empty or missing.")
+        issues.append("Nested control socket is missing.")
+    if any("panicked" in line or "thread 'main' panicked" in line for line in log_tail):
+        issues.append("Nested compositor log shows a panic.")
     return issues
 
 
-def print_doctor(label: str, issues: list[str]) -> None:
-    print()
-    if issues:
-        print(f"{label} diagnosis:")
-        for issue in issues:
-            print(f"  - {issue}")
-    else:
-        print(f"{label} diagnosis: no obvious issues detected")
-
-
-def run_package(
+def remote_package_run_script(
     *,
     package: str,
-    env_file: str,
-    log_file: str,
-    background: bool,
+    session_env_file: pathlib.Path,
+    log_file: pathlib.Path,
+    require_control_socket: bool,
+    mode: str,
     extra_env: list[str],
-) -> int:
-    mode = "background" if background else "foreground"
+) -> str:
     env_assignments = []
     for item in extra_env:
         if "=" not in item:
@@ -418,59 +446,77 @@ def run_package(
         env_assignments.append(f"{key}={shlex.quote(value)}")
     env_prefix = " ".join(env_assignments)
     env_prefix = f"{env_prefix} " if env_prefix else ""
-
-    remote_script = f"""
-set -euo pipefail
-export XDG_RUNTIME_DIR="${{XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
-session_env_file={shlex.quote(env_file)}
-package={shlex.quote(package)}
-log_file={shlex.quote(log_file)}
-
-load_session_env_from_process() {{
-  local session_pid
-  session_pid="$(pgrep -o -f 'shadow-compositor|shadow-ui-desktop' || true)"
-  if [[ -z "$session_pid" ]]; then
-    echo "shadowctl: could not find a running session process" >&2
-    exit 1
-  fi
-
-  while IFS= read -r -d '' entry; do
-    case "$entry" in
-      HOME=*|XDG_CACHE_HOME=*|CARGO_TARGET_DIR=*|PKG_CONFIG_PATH=*|LD_LIBRARY_PATH=*|LIBRARY_PATH=*|NIX_LDFLAGS=*|LIBGL_DRIVERS_PATH=*|RUST_BACKTRACE=*|XDG_RUNTIME_DIR=*|DBUS_SESSION_BUS_ADDRESS=*|GDK_BACKEND=*)
-        export "$entry"
-        ;;
-    esac
-  done <"/proc/$session_pid/environ"
-}}
-
-if [[ -f "$session_env_file" ]]; then
-  source "$session_env_file"
-else
-  load_session_env_from_process
+    control_check = ""
+    control_env = ""
+    if require_control_socket:
+        control_check = """
+if [[ ! -S "$SHADOW_COMPOSITOR_CONTROL" ]]; then
+  echo "shadowctl: missing compositor control socket $SHADOW_COMPOSITOR_CONTROL" >&2
+  exit 1
 fi
+"""
+        control_env = ' SHADOW_COMPOSITOR_CONTROL="$SHADOW_COMPOSITOR_CONTROL"'
 
-if [[ -z "${{WAYLAND_DISPLAY:-}}" ]]; then
-  echo "shadowctl: missing WAYLAND_DISPLAY after loading session env" >&2
+    return f"""
+set -euo pipefail
+session_env_file={shlex.quote(str(session_env_file))}
+log_file={shlex.quote(str(log_file))}
+package={shlex.quote(package)}
+mode={shlex.quote(mode)}
+export CARGO_BUILD_JOBS="${{CARGO_BUILD_JOBS:-1}}"
+
+if [[ ! -f "$session_env_file" ]]; then
+  echo "shadowctl: missing env file $session_env_file" >&2
   exit 1
 fi
 
-cd /work/shadow
-cmd=(env WAYLAND_DISPLAY="$WAYLAND_DISPLAY")
-if [[ -n "${{SHADOW_COMPOSITOR_CONTROL:-}}" ]]; then
-  cmd+=(SHADOW_COMPOSITOR_CONTROL="$SHADOW_COMPOSITOR_CONTROL")
-fi
-if [[ -n "${{DBUS_SESSION_BUS_ADDRESS:-}}" ]]; then
-  cmd+=(DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS")
-fi
-if [[ -n "${{GDK_BACKEND:-}}" ]]; then
-  cmd+=(GDK_BACKEND="$GDK_BACKEND")
-fi
-cmd+=({env_prefix}cargo run --locked --manifest-path ui/Cargo.toml -p "$package")
+# shellcheck disable=SC1090
+source "$session_env_file"
 
-echo "mode={mode}"
+if [[ -z "${{WAYLAND_DISPLAY:-}}" ]]; then
+  echo "shadowctl: WAYLAND_DISPLAY is not set by $session_env_file" >&2
+  exit 1
+fi
+
+if [[ -z "${{XDG_RUNTIME_DIR:-}}" ]]; then
+  echo "shadowctl: XDG_RUNTIME_DIR is not set by $session_env_file" >&2
+  exit 1
+fi
+
+if [[ ! -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]]; then
+  echo "shadowctl: missing wayland socket $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" >&2
+  exit 1
+fi
+{control_check}
+matching_processes() {{
+  ps -eo pid=,comm=,args= | awk -v package="$package" '
+    $2 == package {{ print; next }}
+    $2 == "cargo" {{
+      command_start = index($0, $3)
+      command = substr($0, command_start)
+      if (command ~ ("^cargo run( --locked)? --manifest-path ui/Cargo.toml -p " package "$")) {{
+        print
+      }}
+    }}
+  '
+}}
+
+existing="$(matching_processes)"
+if [[ -n "$existing" ]]; then
+  echo "shadowctl: $package is already running" >&2
+  printf '%s\\n' "$existing"
+  exit 0
+fi
+
+cd /work/shadow
+cmd=(env WAYLAND_DISPLAY="$WAYLAND_DISPLAY"{control_env} {env_prefix}cargo run --locked --manifest-path ui/Cargo.toml -p "$package")
+
+echo "mode=$mode"
 echo "wayland=$WAYLAND_DISPLAY"
-echo "control=${{SHADOW_COMPOSITOR_CONTROL:-}}"
-if [[ {shlex.quote("1" if background else "0")} == "1" ]]; then
+if [[ -n "${{SHADOW_COMPOSITOR_CONTROL:-}}" ]]; then
+  echo "control=$SHADOW_COMPOSITOR_CONTROL"
+fi
+if [[ "$mode" == "background" ]]; then
   nohup "${{cmd[@]}}" >"$log_file" 2>&1 </dev/null &
   sleep 1
   echo "log=$log_file"
@@ -478,13 +524,6 @@ else
   exec "${{cmd[@]}}"
 fi
 """
-
-    result = run_remote(remote_script, capture_output=not background, check=False)
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
-    return result.returncode
 
 
 def cmd_vm_status(args: argparse.Namespace) -> int:
@@ -497,11 +536,11 @@ def cmd_vm_status(args: argparse.Namespace) -> int:
 
 
 def cmd_vm_logs(args: argparse.Namespace) -> int:
-    result = run_remote(
-        f"bash -lc 'echo ==shadow-ui-session==; tail -n {args.lines} /var/lib/shadow-ui/log/shadow-ui-session.log 2>/dev/null || true; echo; echo ==weston==; tail -n {args.lines} /var/lib/shadow-ui/log/weston.log 2>/dev/null || true'",
-        capture_output=False,
-        check=False,
+    script = (
+        f"tail -n {args.lines} /var/lib/shadow-ui/log/shadow-ui-session.log 2>/dev/null || true; "
+        f"echo; echo '== weston =='; tail -n {args.lines} /var/lib/shadow-ui/log/weston.log 2>/dev/null || true"
     )
+    result = run_remote(script, capture_output=False, check=False)
     return result.returncode
 
 
@@ -518,28 +557,37 @@ def cmd_vm_doctor(args: argparse.Namespace) -> int:
         print(json.dumps({"status": payload, "issues": issues}, indent=2, sort_keys=True))
     else:
         print_vm_status(payload)
-        print_doctor("vm", issues)
+        print()
+        if issues:
+            print("diagnosis:")
+            for issue in issues:
+                print(f"  - {issue}")
+        else:
+            print("diagnosis: no obvious issues detected")
     return 0
 
 
 def cmd_vm_screenshot(args: argparse.Namespace) -> int:
-    output = pathlib.Path(args.output).expanduser()
-    if not output.is_absolute():
-        output = repo_root() / output
-    output.parent.mkdir(parents=True, exist_ok=True)
-    qmp_request("screendump", {"filename": str(output)})
+    output = render_screenshot(pathlib.Path(args.output))
     print(output)
     return 0
 
 
 def cmd_vm_run(args: argparse.Namespace) -> int:
-    return run_package(
+    script = remote_package_run_script(
         package=args.package,
-        env_file="/var/lib/shadow-ui/shadow-ui-session-env.sh",
-        log_file=f"/var/lib/shadow-ui/log/{args.package}.log",
-        background=args.background,
+        session_env_file=SESSION_ENV_FILE,
+        log_file=STATE_DIR / "log" / f"{args.package}.log",
+        require_control_socket=False,
+        mode="background" if args.background else "foreground",
         extra_env=args.env,
     )
+    result = run_remote(script, capture_output=not args.background, check=False)
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    return result.returncode
 
 
 def cmd_shadow_status(args: argparse.Namespace) -> int:
@@ -552,11 +600,8 @@ def cmd_shadow_status(args: argparse.Namespace) -> int:
 
 
 def cmd_shadow_logs(args: argparse.Namespace) -> int:
-    result = run_remote(
-        f"tail -n {args.lines} /var/lib/shadow-ui/log/shadow-compositor.log 2>/dev/null || true",
-        capture_output=False,
-        check=False,
-    )
+    script = f"tail -n {args.lines} /var/lib/shadow-ui/log/shadow-compositor.log 2>/dev/null || true"
+    result = run_remote(script, capture_output=False, check=False)
     return result.returncode
 
 
@@ -567,18 +612,31 @@ def cmd_shadow_doctor(args: argparse.Namespace) -> int:
         print(json.dumps({"status": payload, "issues": issues}, indent=2, sort_keys=True))
     else:
         print_shadow_status(payload)
-        print_doctor("shadow", issues)
+        print()
+        if issues:
+            print("diagnosis:")
+            for issue in issues:
+                print(f"  - {issue}")
+        else:
+            print("diagnosis: no obvious issues detected")
     return 0
 
 
 def cmd_shadow_run(args: argparse.Namespace) -> int:
-    return run_package(
+    script = remote_package_run_script(
         package=args.package,
-        env_file="/var/lib/shadow-ui/shadow-compositor-session-env.sh",
-        log_file=f"/var/lib/shadow-ui/log/{args.package}.shadow.log",
-        background=args.background,
+        session_env_file=NESTED_ENV_FILE,
+        log_file=STATE_DIR / "log" / f"{args.package}.shadow.log",
+        require_control_socket=True,
+        mode="background" if args.background else "foreground",
         extra_env=args.env,
     )
+    result = run_remote(script, capture_output=not args.background, check=False)
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    return result.returncode
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -588,31 +646,31 @@ def build_parser() -> argparse.ArgumentParser:
     vm = subparsers.add_parser("vm")
     vm_sub = vm.add_subparsers(dest="vm_command", required=True)
 
-    vm_status = vm_sub.add_parser("status")
-    vm_status.add_argument("--json", action="store_true")
-    vm_status.set_defaults(func=cmd_vm_status)
+    status = vm_sub.add_parser("status")
+    status.add_argument("--json", action="store_true")
+    status.set_defaults(func=cmd_vm_status)
 
-    vm_logs = vm_sub.add_parser("logs")
-    vm_logs.add_argument("--lines", type=int, default=200)
-    vm_logs.set_defaults(func=cmd_vm_logs)
+    logs = vm_sub.add_parser("logs")
+    logs.add_argument("--lines", type=int, default=200)
+    logs.set_defaults(func=cmd_vm_logs)
 
-    vm_journal = vm_sub.add_parser("journal")
-    vm_journal.add_argument("--lines", type=int, default=200)
-    vm_journal.set_defaults(func=cmd_vm_journal)
+    journal = vm_sub.add_parser("journal")
+    journal.add_argument("--lines", type=int, default=200)
+    journal.set_defaults(func=cmd_vm_journal)
 
-    vm_doctor = vm_sub.add_parser("doctor")
-    vm_doctor.add_argument("--json", action="store_true")
-    vm_doctor.set_defaults(func=cmd_vm_doctor)
+    doctor = vm_sub.add_parser("doctor")
+    doctor.add_argument("--json", action="store_true")
+    doctor.set_defaults(func=cmd_vm_doctor)
 
-    vm_screenshot = vm_sub.add_parser("screenshot")
-    vm_screenshot.add_argument("output", nargs="?", default="build/ui-vm/shadow-ui-vm.ppm")
-    vm_screenshot.set_defaults(func=cmd_vm_screenshot)
+    screenshot = vm_sub.add_parser("screenshot")
+    screenshot.add_argument("output", nargs="?", default="build/ui-vm/shadow-ui-vm.png")
+    screenshot.set_defaults(func=cmd_vm_screenshot)
 
-    vm_run = vm_sub.add_parser("run")
-    vm_run.add_argument("package")
-    vm_run.add_argument("--env", action="append", default=[])
-    vm_run.add_argument("--background", action="store_true")
-    vm_run.set_defaults(func=cmd_vm_run)
+    run = vm_sub.add_parser("run")
+    run.add_argument("package")
+    run.add_argument("--env", action="append", default=[])
+    run.add_argument("--background", action="store_true")
+    run.set_defaults(func=cmd_vm_run)
 
     shadow = subparsers.add_parser("shadow")
     shadow_sub = shadow.add_subparsers(dest="shadow_command", required=True)
