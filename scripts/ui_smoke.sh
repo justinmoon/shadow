@@ -8,6 +8,8 @@ REMOTE_DIR_CACHE="${SHADOW_UI_REMOTE_DIR:-}"
 UI_SMOKE_TMPDIR=""
 UI_SMOKE_TIMEOUT_SECS="${SHADOW_UI_SMOKE_TIMEOUT:-300}"
 UI_SMOKE_NAMESPACE="${SHADOW_UI_SMOKE_NAMESPACE:-$(basename "$REPO_ROOT")-$$}"
+UI_SMOKE_SSH_RETRIES="${SHADOW_UI_SMOKE_SSH_RETRIES:-3}"
+UI_SMOKE_SSH_RETRY_SLEEP="${SHADOW_UI_SMOKE_SSH_RETRY_SLEEP:-2}"
 
 repo_root() {
   printf '%s\n' "$REPO_ROOT"
@@ -26,7 +28,28 @@ ensure_ui_shell() {
 }
 
 remote_home() {
-  ssh "$REMOTE_HOST" 'printf %s "$HOME"'
+  remote_ssh 'printf %s "$HOME"'
+}
+
+remote_ssh() {
+  local attempt script status
+  script="${1:?remote_ssh requires a script}"
+  status=0
+  for attempt in $(seq 1 "$UI_SMOKE_SSH_RETRIES"); do
+    if ssh \
+      -o ServerAliveInterval=15 \
+      -o ServerAliveCountMax=3 \
+      "$REMOTE_HOST" \
+      /bin/bash -lc "$(printf '%q' "$script")"; then
+      return 0
+    fi
+    status=$?
+    if (( attempt == UI_SMOKE_SSH_RETRIES )); then
+      return "$status"
+    fi
+    sleep "$UI_SMOKE_SSH_RETRY_SLEEP"
+  done
+  return "$status"
 }
 
 remote_dir() {
@@ -55,7 +78,7 @@ sync_remote_tree() {
     justfile \
     scripts \
     ui \
-    | ssh "$REMOTE_HOST" "mkdir -p $(printf '%q' "$dir") && rm -rf $(printf '%q' "$dir/scripts") $(printf '%q' "$dir/ui") $(printf '%q' "$dir/flake.nix") $(printf '%q' "$dir/flake.lock") $(printf '%q' "$dir/justfile") && tar -xf - -C $(printf '%q' "$dir")"
+    | remote_ssh "mkdir -p $(printf '%q' "$dir") && rm -rf $(printf '%q' "$dir/scripts") $(printf '%q' "$dir/ui") $(printf '%q' "$dir/flake.nix") $(printf '%q' "$dir/flake.lock") $(printf '%q' "$dir/justfile") && tar -xf - -C $(printf '%q' "$dir")"
 }
 
 dump_logs() {
@@ -124,12 +147,12 @@ run_remote_smoke() {
   dir="$(remote_dir)"
   sync_remote_tree
   command="cd $(printf '%q' "$dir") && SHADOW_UI_SMOKE_REMOTE=1 SHADOW_UI_SMOKE_NAMESPACE=$(printf '%q' "$UI_SMOKE_NAMESPACE") nix develop .#ui -c bash scripts/ui_smoke.sh"
-  if ssh "$REMOTE_HOST" /bin/bash -lc "$(printf '%q' "$command")"; then
+  if remote_ssh "$command"; then
     status=0
   else
     status=$?
   fi
-  ssh "$REMOTE_HOST" "rm -rf $(printf '%q' "$dir")" >/dev/null 2>&1 || true
+  remote_ssh "rm -rf $(printf '%q' "$dir")" >/dev/null 2>&1 || true
   return "$status"
 }
 

@@ -1,6 +1,7 @@
 set export
 
-cuttlefish_remote_host := env_var_or_default("CUTTLEFISH_REMOTE_HOST", "justin@100.73.239.5")
+export CUTTLEFISH_REMOTE_HOST := env_var_or_default("CUTTLEFISH_REMOTE_HOST", "justin@100.73.239.5")
+export SHADOW_UI_REMOTE_HOST := env_var_or_default("SHADOW_UI_REMOTE_HOST", CUTTLEFISH_REMOTE_HOST)
 
 # Show available commands
 default:

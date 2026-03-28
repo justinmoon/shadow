@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 
-REMOTE_HOST="${CUTTLEFISH_REMOTE_HOST:-hetzner}"
+REMOTE_HOST="${CUTTLEFISH_REMOTE_HOST:-justin@100.73.239.5}"
 REMOTE_HOME_CACHE="${REMOTE_HOME_CACHE:-}"
 HOST_SHORT="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo "")"
 HOST_FQDN="$(hostname -f 2>/dev/null || echo "")"
 GOOGLESOURCE_AVB_TESTKEY_URL="${GOOGLESOURCE_AVB_TESTKEY_URL:-https://android.googlesource.com/platform/external/avb/+/refs/heads/sdk-release/test/data/testkey_rsa4096.pem?format=TEXT}"
 REMOTE_FLAKE_DIR_CACHE="${REMOTE_FLAKE_DIR_CACHE:-}"
+SSH_OPTS=(
+  -o BatchMode=yes
+  -o ConnectTimeout=10
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+)
 
 repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || pwd
@@ -146,7 +152,7 @@ remote_shell() {
   if is_local_host; then
     bash -lc "$script"
   else
-    ssh "$REMOTE_HOST" /bin/bash -s <<<"$script"
+    ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" /bin/bash -s <<<"$script"
   fi
 }
 
@@ -154,7 +160,7 @@ remote_bash() {
   if is_local_host; then
     /bin/bash
   else
-    ssh "$REMOTE_HOST" /bin/bash
+    ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" /bin/bash
   fi
 }
 
@@ -181,7 +187,7 @@ remote_nix_bash() {
   else
     sync_remote_flake
     command="cd $(printf '%q' "$(remote_flake_dir)") && nix develop .#bootimg -c bash -c $(printf '%q' "$script")"
-    ssh "$REMOTE_HOST" /bin/bash -lc "$(printf '%q' "$command")"
+    ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" /bin/bash -lc "$(printf '%q' "$command")"
   fi
 }
 
@@ -208,7 +214,7 @@ copy_to_remote() {
     mkdir -p "$(dirname "$dest")"
     cp "$src" "$dest"
   else
-    scp -q "$src" "${REMOTE_HOST}:$dest"
+    scp "${SSH_OPTS[@]}" -q "$src" "${REMOTE_HOST}:$dest"
   fi
 }
 
@@ -244,15 +250,15 @@ tombstone_port="$tombstone_port"
 vsock_id="$vsock_id"
 pid_file="$pid_file"
 if [[ -f "\$pid_file" ]]; then
-  pid="\$(sudo cat "\$pid_file" 2>/dev/null || true)"
+  pid="\$(sudo -n cat "\$pid_file" 2>/dev/null || true)"
   if [[ -n "\$pid" ]]; then
     pid_args="\$(ps -o args= -p "\$pid" 2>/dev/null || true)"
     if [[ "\$pid_args" == *"/var/lib/cuttlefish/instances/\${instance}/"* || "\$pid_args" == *"/var/lib/cuttlefish/assembly/\${instance}"* || "\$pid_args" == *"cvd-\${instance}"* || "\$pid_args" == *"$remote_work_dir"* ]]; then
-      sudo pkill -TERM -P "\$pid" >/dev/null 2>&1 || true
-      sudo kill -TERM "\$pid" >/dev/null 2>&1 || true
+      sudo -n pkill -TERM -P "\$pid" >/dev/null 2>&1 || true
+      sudo -n kill -TERM "\$pid" >/dev/null 2>&1 || true
       sleep 1
-      sudo pkill -KILL -P "\$pid" >/dev/null 2>&1 || true
-      sudo kill -KILL "\$pid" >/dev/null 2>&1 || true
+      sudo -n pkill -KILL -P "\$pid" >/dev/null 2>&1 || true
+      sudo -n kill -KILL "\$pid" >/dev/null 2>&1 || true
     fi
   fi
 fi
@@ -268,7 +274,7 @@ for listen_port in "\$port" "\$tombstone_port"; do
       [[ -n "\$target_pid" ]] || continue
       comm="\$(ps -o comm= -p "\$target_pid" 2>/dev/null | tr -d '[:space:]' || true)"
       if [[ "\$comm" == socket_vsock* ]]; then
-        sudo kill -TERM "\$target_pid" >/dev/null 2>&1 || true
+        sudo -n kill -TERM "\$target_pid" >/dev/null 2>&1 || true
       fi
     done
     sleep 1
@@ -276,7 +282,7 @@ for listen_port in "\$port" "\$tombstone_port"; do
       [[ -n "\$target_pid" ]] || continue
       comm="\$(ps -o comm= -p "\$target_pid" 2>/dev/null | tr -d '[:space:]' || true)"
       if [[ "\$comm" == socket_vsock* ]]; then
-        sudo kill -KILL "\$target_pid" >/dev/null 2>&1 || true
+        sudo -n kill -KILL "\$target_pid" >/dev/null 2>&1 || true
       fi
     done
   done < <(
@@ -290,7 +296,7 @@ for listen_port in "\$port" "\$tombstone_port"; do
 done
 while read -r pid; do
   [[ -n "\$pid" ]] || continue
-  sudo kill -TERM "\$pid" >/dev/null 2>&1 || true
+  sudo -n kill -TERM "\$pid" >/dev/null 2>&1 || true
 done < <(
   ps -eo pid=,comm=,args= | awk -v instance="\${instance}" -v workdir="$remote_work_dir" '
     \$2 ~ /^(run_cvd|launch_cvd|assemble_cvd|qemu-system-x86|crosvm|process_sandbox|adb_connector|casimir|wmediumd_contr|kernel_log_moni|log_tee|echo_server)/ &&
@@ -305,7 +311,7 @@ done < <(
 sleep 1
 while read -r pid; do
   [[ -n "\$pid" ]] || continue
-  sudo kill -KILL "\$pid" >/dev/null 2>&1 || true
+  sudo -n kill -KILL "\$pid" >/dev/null 2>&1 || true
 done < <(
   ps -eo pid=,comm=,args= | awk -v instance="\${instance}" -v workdir="$remote_work_dir" '
     \$2 ~ /^(run_cvd|launch_cvd|assemble_cvd|qemu-system-x86|crosvm|process_sandbox|adb_connector|casimir|wmediumd_contr|kernel_log_moni|log_tee|echo_server)/ &&
@@ -317,10 +323,10 @@ done < <(
     }
   ' | sort -u
 )
-sudo ip tuntap del mode tap "cvd-mtap-\${instance}" >/dev/null 2>&1 || true
-sudo ip tuntap del mode tap "cvd-tap-\${instance}" >/dev/null 2>&1 || true
-sudo ip link del "cvd-eth-\${instance}" >/dev/null 2>&1 || true
-sudo rm -rf \
+sudo -n ip tuntap del mode tap "cvd-mtap-\${instance}" >/dev/null 2>&1 || true
+sudo -n ip tuntap del mode tap "cvd-tap-\${instance}" >/dev/null 2>&1 || true
+sudo -n ip link del "cvd-eth-\${instance}" >/dev/null 2>&1 || true
+sudo -n rm -rf \
   "/var/lib/cuttlefish/instances/\${instance}" \
   "/var/lib/cuttlefish/instances/\${instance}.\${instance}" \
   "/var/lib/cuttlefish/instances/\${instance}_runtime" \
@@ -331,18 +337,18 @@ sudo rm -rf \
   "$remote_work_dir"
 while read -r pid; do
   [[ -n "\$pid" ]] || continue
-  sudo kill -TERM "\$pid" >/dev/null 2>&1 || true
+  sudo -n kill -TERM "\$pid" >/dev/null 2>&1 || true
 done < <(
-  sudo lsof -nP +L1 2>/dev/null \
+  sudo -n lsof -nP +L1 2>/dev/null \
     | awk -v instance="\${instance}" '\$0 ~ ("/var/lib/cuttlefish/instances/" instance "/") { print \$2 }' \
     | sort -u
 )
 sleep 1
 while read -r pid; do
   [[ -n "\$pid" ]] || continue
-  sudo kill -KILL "\$pid" >/dev/null 2>&1 || true
+  sudo -n kill -KILL "\$pid" >/dev/null 2>&1 || true
 done < <(
-  sudo lsof -nP +L1 2>/dev/null \
+  sudo -n lsof -nP +L1 2>/dev/null \
     | awk -v instance="\${instance}" '\$0 ~ ("/var/lib/cuttlefish/instances/" instance "/") { print \$2 }' \
     | sort -u
 )
@@ -355,9 +361,9 @@ list_remote_instances() {
   remote_shell "$(cat <<'EOF'
 set -euo pipefail
 {
-  sudo find /var/lib/cuttlefish/instances -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null || true
-  sudo find /var/lib/cuttlefish/assembly -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null || true
-  sudo ps -eo args= 2>/dev/null || true
+  sudo -n find /var/lib/cuttlefish/instances -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null || true
+  sudo -n find /var/lib/cuttlefish/assembly -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null || true
+  sudo -n ps -eo args= 2>/dev/null || true
 } | sed -nE \
   -e 's/^([0-9]+)(\.[0-9]+|_runtime)?$/\1/p' \
   -e 's#.*(/var/lib/cuttlefish/(instances|assembly)/)([0-9]+)([/._].*|$)#\3#p' \
