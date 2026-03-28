@@ -42,6 +42,19 @@
           CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
           RUSTFLAGS = "-C target-feature=+crt-static";
         };
+      mkShadowSession = pkgs:
+        let
+          cross = pkgs.pkgsCross.musl64;
+        in cross.rustPlatform.buildRustPackage {
+          pname = "shadow-session";
+          version = "0.1.0";
+          src = ./rust/shadow-session;
+          cargoLock.lockFile = ./rust/shadow-session/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = "x86_64-unknown-linux-musl";
+          RUSTFLAGS = "-C target-feature=+crt-static";
+        };
       mkShadowGuestCompositor = pkgs:
         let
           static = pkgs.pkgsStatic;
@@ -164,6 +177,7 @@
         {
           init-wrapper = mkInitWrapper pkgs;
           drm-rect = mkDrmRect pkgs;
+          shadow-session = mkShadowSession pkgs;
           default = mkInitWrapper pkgs;
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {

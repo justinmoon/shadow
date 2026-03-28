@@ -14,6 +14,8 @@ pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
     log_line("starting");
 
     let mut card = open_card("/dev/dri/card0")?;
+    card.acquire_master_lock()
+        .context("failed to acquire DRM master lock")?;
     let res_handles = card
         .resource_handles()
         .context("failed to fetch DRM resource handles")?;
@@ -70,6 +72,10 @@ pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
 
     if let Err(error) = card.set_crtc(crtc_handle, None, (0, 0), &[], None) {
         log_line(&format!("failed to clear crtc: {error}"));
+    }
+
+    if let Err(error) = card.release_master_lock() {
+        log_line(&format!("failed to release DRM master lock: {error}"));
     }
 
     card.destroy_framebuffer(fb_handle)

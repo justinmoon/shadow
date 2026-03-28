@@ -49,6 +49,7 @@ struct ShadowGuestCompositor {
     seat_state: SeatState<Self>,
     launched_clients: Vec<Child>,
     exit_on_first_window: bool,
+    exit_on_first_frame: bool,
     kms_display: Option<kms::KmsDisplay>,
 }
 
@@ -69,6 +70,8 @@ impl ShadowGuestCompositor {
             seat_state: SeatState::new(),
             launched_clients: Vec::new(),
             exit_on_first_window: std::env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_WINDOW")
+                .is_some(),
+            exit_on_first_frame: std::env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME")
                 .is_some(),
             kms_display: None,
         }
@@ -131,8 +134,14 @@ impl ShadowGuestCompositor {
         let mut command = std::process::Command::new(&client_path);
         command
             .env("WAYLAND_DISPLAY", &self.socket_name)
-            .env("XDG_RUNTIME_DIR", runtime_dir)
-            .env("SHADOW_GUEST_COUNTER_EXIT_ON_CONFIGURE", "1");
+            .env("XDG_RUNTIME_DIR", runtime_dir);
+
+        if let Some(value) = std::env::var_os("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE") {
+            command.env("SHADOW_GUEST_COUNTER_EXIT_ON_CONFIGURE", value);
+        }
+        if let Some(value) = std::env::var_os("SHADOW_GUEST_COUNTER_LINGER_MS") {
+            command.env("SHADOW_GUEST_COUNTER_LINGER_MS", value);
+        }
 
         let child = command.spawn()?;
         self.launched_clients.push(child);
@@ -199,6 +208,10 @@ impl ShadowGuestCompositor {
                             }
                         }
                     }
+                }
+
+                if self.exit_on_first_frame {
+                    self.loop_signal.stop();
                 }
             }
             Ok(Err(error)) => {

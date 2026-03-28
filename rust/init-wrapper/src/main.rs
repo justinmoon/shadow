@@ -34,6 +34,10 @@ fn path_exists(path: &str) -> bool {
     unsafe { libc::access(c_path.as_ptr(), libc::F_OK) == 0 }
 }
 
+fn late_session_rc_present() -> bool {
+    path_exists("/init.shadow.rc") || path_exists("/system/etc/init/shadow-session.rc")
+}
+
 fn restore_stock_init() {
     if let Err(error) = fs::rename("/init", "/init.wrapper") {
         log_line(&format!("rename(/init -> /init.wrapper) failed: {error}"));
@@ -101,6 +105,9 @@ impl BackgroundPayload {
 }
 
 fn background_payload() -> Option<BackgroundPayload> {
+    if late_session_rc_present() {
+        return None;
+    }
     if path_exists("/shadow-bootstrap") {
         return Some(BackgroundPayload::Binary("/shadow-bootstrap"));
     }
@@ -190,6 +197,11 @@ fn run_background_payload(payload: BackgroundPayload) -> ! {
 }
 
 fn maybe_launch_background_payload() {
+    if late_session_rc_present() {
+        log_line("shadow-session rc present; skipping first-stage background payload");
+        return;
+    }
+
     let Some(payload) = background_payload() else {
         return;
     };

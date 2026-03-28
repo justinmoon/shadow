@@ -22,15 +22,19 @@ build-init-wrapper:
 build-drm-rect:
 	@scripts/build_drm_rect.sh
 
+# Build the late-start guest session binary
+build-shadow-session:
+	@scripts/build_shadow_session.sh
+
 # Rebuild init_boot.img with the Rust chainloading wrapper
 init-boot-wrapper:
 	@scripts/init_boot_wrapper.sh
 
-# Rebuild init_boot.img with the Rust wrapper plus drm-rect payload
+# Rebuild init_boot.img with the Rust wrapper plus drm-rect payload (experimental)
 init-boot-drm-rect:
 	@scripts/init_boot_drm_rect.sh
 
-# Rebuild init_boot.img with the Rust wrapper plus the guest compositor/client payloads
+# Rebuild init_boot.img with the Rust wrapper plus the guest compositor/client payloads (experimental)
 init-boot-guest-ui:
 	@scripts/init_boot_guest_ui.sh
 
@@ -42,13 +46,17 @@ cf-repacked-initboot:
 cf-init-wrapper:
 	@scripts/cf_init_wrapper.sh
 
-# Boot Cuttlefish with the Rust wrapper running drm-rect before stock init
+# Boot stock Cuttlefish, then launch shadow-session + drm-rect via adb root
 cf-drm-rect:
 	@scripts/cf_drm_rect.sh
 
-# Boot Cuttlefish with the wrapper running the guest compositor/client and assert one mapped window
+# Boot stock Cuttlefish, then launch the guest compositor/client via adb root and save the captured frame artifact
 cf-guest-ui-smoke:
 	@scripts/cf_guest_ui_smoke.sh
+
+# Boot stock Cuttlefish, then launch the guest compositor/client with DRM presentation enabled
+cf-guest-ui-drm-smoke:
+	@SHADOW_GUEST_COMPOSITOR_ENABLE_DRM=1 scripts/cf_guest_ui_smoke.sh
 
 # Prune stale Cuttlefish instances on the remote host
 cf-prune:

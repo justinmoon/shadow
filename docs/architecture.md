@@ -29,4 +29,13 @@ The current milestones are:
 - prove our Rust `/init` wrapper runs before handing off to stock Android
 - keep the shell logic portable between a desktop host and a compositor host
 - prove the compositor can auto-launch one Wayland client in a headless Linux smoke before moving that session logic into the guest
-- prove the guest can launch the Rust compositor and one guest Wayland client directly from `init_boot`, with both guest markers and normal Android boot markers visible in Cuttlefish logs
+- prove a late-start Rust guest session can launch `drm_rect` after stock boot, take DRM master from the Android graphics stack, and report a successful modeset on Cuttlefish
+- prove the guest can launch the Rust compositor and one guest Wayland client after stock boot, with matching compositor/client frame checksums and a pulled frame artifact
+
+The current operator ladder reflects that split:
+
+1. `just cf-init-wrapper` keeps the first-stage `init_boot` proof small and reliable.
+2. `just cf-drm-rect` boots stock Android, uses `adb root`, stops the Android graphics services that hold DRM master, then runs `shadow-session` plus `drm-rect`.
+3. `just cf-guest-ui-smoke` boots stock Android, uses `adb root`, starts `shadow-session` plus `shadow-compositor-guest`, auto-launches one guest Wayland client, and saves the captured frame artifact under `build/guest-ui/`.
+
+This is intentionally not yet a full custom userland boot. The repo is using the smallest reliable transport at each layer: first-stage wrapper for `/init` proof, then post-boot guest session launch for display and compositor iteration.

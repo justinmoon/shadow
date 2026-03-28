@@ -6,19 +6,58 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/cf_common.sh"
 ensure_bootimg_shell "$@"
 
-OUTPUT_IMAGE="${INIT_BOOT_OUT:-$(build_dir)/init_boot.drm_rect.img}"
-DRM_MARKER="${DRM_RECT_WAIT_FOR:-shadow-drm.*success}"
-BOOT_MARKER="${CF_WAIT_FOR:-VIRTUAL_DEVICE_BOOT_COMPLETED|GUEST_BUILD_FINGERPRINT}"
-DRM_TIMEOUT_SECS="${DRM_RECT_TIMEOUT:-120}"
-BOOT_TIMEOUT_SECS="${CF_WAIT_TIMEOUT:-180}"
+DRM_RECT_BIN="${DRM_RECT_BIN:-$(build_dir)/drm-rect}"
+SHADOW_SESSION_BIN="${SHADOW_SESSION_BIN:-$(build_dir)/shadow-session}"
+ADB_REMOTE_TMP=""
+TAKEOVER_DRM="${SHADOW_GUEST_TAKEOVER_DRM:-1}"
 
-"$SCRIPT_DIR/init_boot_drm_rect.sh" --output "$OUTPUT_IMAGE"
-"$SCRIPT_DIR/cf_launch.sh" \
-  --init-boot "$OUTPUT_IMAGE" \
-  --wait-for "$DRM_MARKER" \
-  --timeout "$DRM_TIMEOUT_SECS"
+cleanup() {
+  if [[ -n "$ADB_REMOTE_TMP" ]]; then
+    remote_shell "rm -rf $(printf '%q' "$ADB_REMOTE_TMP")" >/dev/null 2>&1 || true
+  fi
+}
+
+trap cleanup EXIT
+
+if [[ ! -f "$DRM_RECT_BIN" ]]; then
+  "$SCRIPT_DIR/build_drm_rect.sh"
+fi
+
+if [[ ! -f "$SHADOW_SESSION_BIN" ]]; then
+  "$SCRIPT_DIR/build_shadow_session.sh"
+fi
+
+"$SCRIPT_DIR/cf_stock.sh"
 
 INSTANCE="$(active_instance_name)"
-printf 'Waiting for Android boot marker: %s\n' "$BOOT_MARKER"
-wait_for_remote_pattern "$INSTANCE" "$BOOT_MARKER" "$BOOT_TIMEOUT_SECS"
-printf 'Boot marker observed for instance %s\n' "$INSTANCE"
+ADB_PORT="$(adb_port_for_instance "$INSTANCE")"
+ADB_SERIAL="0.0.0.0:${ADB_PORT}"
+
+ADB_REMOTE_TMP="$(remote_shell 'mktemp -d "${TMPDIR:-/tmp}/shadow-adb-drm-rect-XXXXXX"')"
+copy_to_remote "$SHADOW_SESSION_BIN" "${ADB_REMOTE_TMP}/shadow-session"
+copy_to_remote "$DRM_RECT_BIN" "${ADB_REMOTE_TMP}/drm-rect"
+
+REMOTE_SCRIPT="$(cat <<EOF
+set -euo pipefail
+serial="$(printf '%q' "$ADB_SERIAL")"
+adb -s "\$serial" wait-for-device
+adb -s "\$serial" root >/dev/null 2>&1 || true
+sleep 2
+adb -s "\$serial" wait-for-device
+adb -s "\$serial" push "$(printf '%q' "${ADB_REMOTE_TMP}/shadow-session")" /data/local/tmp/shadow-session >/dev/null
+adb -s "\$serial" push "$(printf '%q' "${ADB_REMOTE_TMP}/drm-rect")" /data/local/tmp/drm-rect >/dev/null
+adb -s "\$serial" shell chmod 0755 /data/local/tmp/shadow-session /data/local/tmp/drm-rect
+if [[ "$(printf '%q' "$TAKEOVER_DRM")" == "1" ]]; then
+  adb -s "\$serial" shell stop surfaceflinger || true
+  adb -s "\$serial" shell stop bootanim || true
+  adb -s "\$serial" shell stop vendor.hwcomposer-3 || true
+  sleep 2
+  adb -s "\$serial" wait-for-device || true
+fi
+adb -s "\$serial" shell 'setenforce 0 >/dev/null 2>&1 || true'
+adb -s "\$serial" shell 'SHADOW_SESSION_MODE=drm-rect SHADOW_DRM_RECT_BIN=/data/local/tmp/drm-rect /data/local/tmp/shadow-session'
+EOF
+)"
+
+printf 'Launching drm_rect via adb on instance %s (%s)\n' "$INSTANCE" "$ADB_SERIAL"
+remote_nix_bash "$REMOTE_SCRIPT"

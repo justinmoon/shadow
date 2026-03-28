@@ -4,11 +4,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./cf_common.sh
 source "$SCRIPT_DIR/cf_common.sh"
+# shellcheck source=./guest_ui_common.sh
+source "$SCRIPT_DIR/guest_ui_common.sh"
 ensure_bootimg_shell "$@"
 
 OUTPUT_IMAGE="${INIT_BOOT_OUT:-$(build_dir)/init_boot.guest_ui.img}"
-REMOTE_GUEST_UI_DIR_CACHE="${REMOTE_GUEST_UI_DIR_CACHE:-}"
 GUEST_UI_NAMESPACE="${SHADOW_GUEST_UI_NAMESPACE:-$(worktree_basename)-$$}"
+SHADOW_SESSION_BIN="${SHADOW_SESSION_BIN:-$(build_dir)/shadow-session}"
+SHADOW_SESSION_RC="${SHADOW_SESSION_RC:-$(build_dir)/init.shadow.guest-ui.${GUEST_UI_NAMESPACE}.rc}"
+INIT_CUTF_CVM_RC="${INIT_CUTF_CVM_RC:-$(build_dir)/init.cutf_cvm.shadow.${GUEST_UI_NAMESPACE}.rc}"
 
 if [[ -z "${INIT_BOOT_OUT:-}" ]]; then
   OUTPUT_IMAGE="$(build_dir)/init_boot.guest_ui.${GUEST_UI_NAMESPACE}.img"
@@ -40,65 +44,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-remote_guest_ui_dir() {
-  if [[ -n "${REMOTE_GUEST_UI_DIR_CACHE:-}" ]]; then
-    printf '%s\n' "$REMOTE_GUEST_UI_DIR_CACHE"
-    return
-  fi
-
-  REMOTE_GUEST_UI_DIR_CACHE="$(remote_home)/.cache/shadow-guest-ui-${GUEST_UI_NAMESPACE}"
-  printf '%s\n' "$REMOTE_GUEST_UI_DIR_CACHE"
-}
-
-sync_remote_guest_ui_tree() {
-  local remote_dir root
-  remote_dir="$(remote_guest_ui_dir)"
-  root="$(repo_root)"
-
-  if is_local_host; then
-    printf '%s\n' "$root"
-    return
-  fi
-
-  tar \
-    --exclude=.git \
-    --exclude=artifacts \
-    --exclude=build \
-    --exclude=out \
-    --exclude=ui/target \
-    --exclude=worktrees \
-    -cf - \
-    -C "$root" \
-    flake.nix \
-    flake.lock \
-    justfile \
-    rust \
-    scripts \
-    ui \
-    | ssh "$REMOTE_HOST" \
-        "rm -rf $(printf '%q' "$remote_dir") && mkdir -p $(printf '%q' "$remote_dir") && tar -xf - -C $(printf '%q' "$remote_dir")"
-
-  printf '%s\n' "$remote_dir"
-}
-
-local_store_bin() {
-  local attr binary_name store_path
-  attr="$1"
-  binary_name="$2"
-  store_path="$(nix build "$(repo_root)#${attr}" --print-out-paths --no-link | tail -n 1)"
-  printf '%s/bin/%s\n' "$store_path" "$binary_name"
-}
-
-remote_store_bin() {
-  local repo_dir attr binary_name store_path
-  repo_dir="$1"
-  attr="$2"
-  binary_name="$3"
-  store_path="$(remote_shell "cd $(printf '%q' "$repo_dir") && nix build .#${attr} --print-out-paths --no-link | tail -n 1")"
-  store_path="$(printf '%s' "$store_path" | tr -d '[:space:]')"
-  printf '%s/bin/%s\n' "$store_path" "$binary_name"
-}
-
 main() {
   local compositor_bin counter_bin remote_dir
 
@@ -111,8 +56,28 @@ main() {
     compositor_bin="$(local_store_bin shadow-compositor-guest shadow-compositor-guest)"
     counter_bin="$(local_store_bin shadow-counter-guest shadow-counter-guest)"
 
+    if [[ ! -f "$SHADOW_SESSION_BIN" ]]; then
+      "$SCRIPT_DIR/build_shadow_session.sh"
+    fi
+
+    "$SCRIPT_DIR/write_shadow_session_rc.sh" \
+      --mode guest-ui \
+      --output "$SHADOW_SESSION_RC" \
+      --setenv SHADOW_GUEST_COMPOSITOR_ENABLE_DRM=1 \
+      --setenv SHADOW_GUEST_FRAME_PATH=/shadow-frame.ppm \
+      --setenv RUST_LOG=shadow_compositor_guest=info,shadow_counter_guest=info,smithay=warn
+
+    printf '%s\n' \
+      'import /vendor/etc/init/hw/init.cutf_cvm.rc' \
+      >"$INIT_CUTF_CVM_RC"
+    printf '\n' >>"$INIT_CUTF_CVM_RC"
+    cat "$SHADOW_SESSION_RC" >>"$INIT_CUTF_CVM_RC"
+
     "$SCRIPT_DIR/init_boot_wrapper.sh" \
       --output "$OUTPUT_IMAGE" \
+      --extra-bin /shadow-session="$SHADOW_SESSION_BIN" \
+      --extra-file /init.shadow.rc="$SHADOW_SESSION_RC" \
+      --extra-file /init.cutf_cvm.rc="$INIT_CUTF_CVM_RC" \
       --extra-bin /shadow-compositor-guest="$compositor_bin" \
       --extra-bin /shadow-counter-guest="$counter_bin"
     return
@@ -126,8 +91,28 @@ main() {
   compositor_bin="$(remote_store_bin "$remote_dir" shadow-compositor-guest shadow-compositor-guest)"
   counter_bin="$(remote_store_bin "$remote_dir" shadow-counter-guest shadow-counter-guest)"
 
+  if [[ ! -f "$SHADOW_SESSION_BIN" ]]; then
+    "$SCRIPT_DIR/build_shadow_session.sh"
+  fi
+
+  "$SCRIPT_DIR/write_shadow_session_rc.sh" \
+    --mode guest-ui \
+    --output "$SHADOW_SESSION_RC" \
+    --setenv SHADOW_GUEST_COMPOSITOR_ENABLE_DRM=1 \
+    --setenv SHADOW_GUEST_FRAME_PATH=/shadow-frame.ppm \
+    --setenv RUST_LOG=shadow_compositor_guest=info,shadow_counter_guest=info,smithay=warn
+
+  printf '%s\n' \
+    'import /vendor/etc/init/hw/init.cutf_cvm.rc' \
+    >"$INIT_CUTF_CVM_RC"
+  printf '\n' >>"$INIT_CUTF_CVM_RC"
+  cat "$SHADOW_SESSION_RC" >>"$INIT_CUTF_CVM_RC"
+
   "$SCRIPT_DIR/init_boot_wrapper.sh" \
     --output "$OUTPUT_IMAGE" \
+    --extra-bin /shadow-session="$SHADOW_SESSION_BIN" \
+    --extra-file /init.shadow.rc="$SHADOW_SESSION_RC" \
+    --extra-file /init.cutf_cvm.rc="$INIT_CUTF_CVM_RC" \
     --extra-bin-remote /shadow-compositor-guest="$compositor_bin" \
     --extra-bin-remote /shadow-counter-guest="$counter_bin"
 }

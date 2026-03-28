@@ -114,6 +114,8 @@ pub struct KmsDisplay {
 impl KmsDisplay {
     pub fn open_default() -> Result<Self> {
         let card = open_card(DRM_DEVICE_PATH)?;
+        card.acquire_master_lock()
+            .context("failed to acquire DRM master lock")?;
         let res_handles = card
             .resource_handles()
             .context("failed to fetch DRM resource handles")?;
@@ -229,6 +231,7 @@ impl KmsDisplay {
 
 impl Drop for KmsDisplay {
     fn drop(&mut self) {
+        let _ = self.card.release_master_lock();
         if let Some(fb_handle) = self.fb_handle.take() {
             let _ = self.card.destroy_framebuffer(fb_handle);
         }

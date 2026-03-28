@@ -14,6 +14,8 @@ OUTPUT_IMAGE="${INIT_BOOT_OUT:-$(build_dir)/init_boot.wrapper.img}"
 REMOTE_TMP=""
 declare -a EXTRA_BIN_SPECS=()
 declare -a EXTRA_BIN_REMOTE_SPECS=()
+declare -a EXTRA_FILE_SPECS=()
+declare -a EXTRA_FILE_REMOTE_SPECS=()
 WRAPPER_BINARY_OVERRIDDEN=0
 
 if [[ -n "${INIT_WRAPPER_BIN:-}" ]]; then
@@ -22,8 +24,9 @@ fi
 
 usage() {
   cat <<'EOF'
-Usage: scripts/init_boot_wrapper.sh [--input PATH] [--key PATH] [--wrapper PATH] [--output PATH] [--extra-bin GUEST=HOST]
-       scripts/init_boot_wrapper.sh [--extra-bin-remote GUEST=REMOTE_PATH]
+Usage: scripts/init_boot_wrapper.sh [--input PATH] [--key PATH] [--wrapper PATH] [--output PATH]
+       scripts/init_boot_wrapper.sh [--extra-bin GUEST=HOST] [--extra-bin-remote GUEST=REMOTE_PATH]
+       scripts/init_boot_wrapper.sh [--extra-file GUEST=HOST] [--extra-file-remote GUEST=REMOTE_PATH]
 
 Rebuild init_boot.img with a Rust /init wrapper that chainloads /init.stock.
 EOF
@@ -60,6 +63,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --extra-bin-remote)
       EXTRA_BIN_REMOTE_SPECS+=("${2:?missing value for --extra-bin-remote}")
+      shift 2
+      ;;
+    --extra-file)
+      EXTRA_FILE_SPECS+=("${2:?missing value for --extra-file}")
+      shift 2
+      ;;
+    --extra-file-remote)
+      EXTRA_FILE_REMOTE_SPECS+=("${2:?missing value for --extra-file-remote}")
       shift 2
       ;;
     -h|--help)
@@ -147,6 +158,38 @@ for spec in "${EXTRA_BIN_REMOTE_SPECS[@]}"; do
   REMOTE_EXISTENCE_PATHS+=("$remote_path")
 done
 
+for spec in "${EXTRA_FILE_SPECS[@]}"; do
+  guest_path="${spec%%=*}"
+  archive_path="${guest_path#/}"
+  host_path="${spec#*=}"
+  if [[ -z "$guest_path" || -z "$archive_path" || -z "$host_path" || "$guest_path" == "$host_path" ]]; then
+    echo "init_boot_wrapper: expected --extra-file guest-path=host-path, got: $spec" >&2
+    exit 1
+  fi
+  if [[ ! -f "$host_path" ]]; then
+    echo "init_boot_wrapper: extra file not found: $host_path" >&2
+    exit 1
+  fi
+
+  remote_name="$(basename "$guest_path")"
+  remote_extra="${REMOTE_TMP}/${remote_name}"
+  copy_to_remote "$host_path" "$remote_extra"
+  REMOTE_EXTRA_ARGS+=("--add" "${archive_path}=${remote_extra}")
+  REMOTE_EXISTENCE_PATHS+=("$remote_extra")
+done
+
+for spec in "${EXTRA_FILE_REMOTE_SPECS[@]}"; do
+  guest_path="${spec%%=*}"
+  archive_path="${guest_path#/}"
+  remote_path="${spec#*=}"
+  if [[ -z "$guest_path" || -z "$archive_path" || -z "$remote_path" || "$guest_path" == "$remote_path" ]]; then
+    echo "init_boot_wrapper: expected --extra-file-remote guest-path=remote-path, got: $spec" >&2
+    exit 1
+  fi
+  REMOTE_EXTRA_ARGS+=("--add" "${archive_path}=${remote_path}")
+  REMOTE_EXISTENCE_PATHS+=("$remote_path")
+done
+
 printf 'Repacking %s with Rust init wrapper on %s\n' "$INPUT_IMAGE" "$REMOTE_HOST"
 printf '  wrapper: %s\n' "$WRAPPER_BINARY"
 printf '  remote workdir: %s\n' "$REMOTE_TMP"
@@ -155,6 +198,12 @@ for spec in "${EXTRA_BIN_SPECS[@]}"; do
 done
 for spec in "${EXTRA_BIN_REMOTE_SPECS[@]}"; do
   printf '  extra-remote: %s\n' "$spec"
+done
+for spec in "${EXTRA_FILE_SPECS[@]}"; do
+  printf '  extra-file: %s\n' "$spec"
+done
+for spec in "${EXTRA_FILE_REMOTE_SPECS[@]}"; do
+  printf '  extra-file-remote: %s\n' "$spec"
 done
 
 extra_add_args=()
