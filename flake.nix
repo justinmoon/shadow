@@ -18,11 +18,47 @@
     let
       lib = nixpkgs.lib;
       uiVmSourceEnv = builtins.getEnv "SHADOW_UI_VM_SOURCE";
+      uiVmNameEnv = builtins.getEnv "SHADOW_UI_VM_NAME";
+      uiVmHostNameEnv = builtins.getEnv "SHADOW_UI_VM_HOSTNAME";
+      uiVmSshPortEnv = builtins.getEnv "SHADOW_UI_VM_SSH_PORT";
+      uiVmQmpSocketEnv = builtins.getEnv "SHADOW_UI_VM_QMP_SOCKET";
+      uiVmMacAddressEnv = builtins.getEnv "SHADOW_UI_VM_MAC_ADDRESS";
+      uiVmUuidEnv = builtins.getEnv "SHADOW_UI_VM_UUID";
       uiVmSource =
         if uiVmSourceEnv != "" then
           uiVmSourceEnv
         else
           throw "Set SHADOW_UI_VM_SOURCE and build with --impure before using the ui-vm package.";
+      uiVmName =
+        if uiVmNameEnv != "" then
+          uiVmNameEnv
+        else
+          "shadow-ui-vm";
+      uiVmHostName =
+        if uiVmHostNameEnv != "" then
+          uiVmHostNameEnv
+        else
+          uiVmName;
+      uiVmSshPort =
+        if uiVmSshPortEnv != "" then
+          builtins.fromJSON uiVmSshPortEnv
+        else
+          2222;
+      uiVmQmpSocket =
+        if uiVmQmpSocketEnv != "" then
+          uiVmQmpSocketEnv
+        else
+          ".shadow-vm/shadow-ui-vm.sock";
+      uiVmMacAddress =
+        if uiVmMacAddressEnv != "" then
+          uiVmMacAddressEnv
+        else
+          "02:00:00:10:10:01";
+      uiVmUuid =
+        if uiVmUuidEnv != "" then
+          uiVmUuidEnv
+        else
+          "";
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -142,10 +178,16 @@
     in {
       nixosConfigurations =
         lib.listToAttrs (map (hostSystem: {
-          name = "${hostSystem}-shadow-ui-vm";
+          name = "${hostSystem}-${uiVmName}";
           value = import ./vm/shadow-ui-vm.nix {
             inherit hostSystem microvm nixpkgs;
             repoSource = uiVmSource;
+            instanceName = uiVmName;
+            hostName = uiVmHostName;
+            sshPort = uiVmSshPort;
+            qmpSocket = uiVmQmpSocket;
+            macAddress = uiVmMacAddress;
+            instanceUuid = uiVmUuid;
           };
         }) darwinSystems);
       devShells = forAllSystems ({ pkgs }: {
@@ -158,7 +200,7 @@
         init-wrapper = mkInitWrapper pkgs;
         ui-vm =
           if pkgs.stdenv.isDarwin then
-            self.nixosConfigurations."${pkgs.stdenv.hostPlatform.system}-shadow-ui-vm".config.microvm.declaredRunner
+            self.nixosConfigurations."${pkgs.stdenv.hostPlatform.system}-${uiVmName}".config.microvm.declaredRunner
           else
             mkUnavailablePackage pkgs "shadow-ui-vm-unavailable"
               "ui-vm is only available on macOS hosts. Use just ui-vm-run from an Apple Silicon or Intel Mac.";

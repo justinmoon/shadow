@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -28,11 +29,69 @@ def state_dir() -> pathlib.Path:
 
 
 def configured_socket_path() -> pathlib.Path:
-    return state_dir() / "shadow-ui-vm.sock"
+    return pathlib.Path(instance_metadata()["qmp_socket"])
+
+
+def instance_env_path() -> pathlib.Path:
+    return state_dir() / "instance.env"
+
+
+def _shell_unquote(value: str) -> str:
+    value = value.strip()
+    if not value:
+        return value
+    return shlex.split(value)[0]
+
+
+def compute_instance_metadata() -> dict[str, str]:
+    root = repo_root().resolve()
+    label = re.sub(r"[^a-z0-9]+", "-", root.name.lower()).strip("-") or "shadow"
+    digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()
+    instance_id = f"{label}-{digest[:8]}"
+    vm_name = f"shadow-ui-vm-{instance_id}"
+    ssh_port = str(22000 + (int(digest[8:16], 16) % 20000))
+    qmp_socket = state_dir().resolve() / f"{vm_name}.sock"
+    return {
+        "instance_id": instance_id,
+        "vm_name": vm_name,
+        "host_name": vm_name[:63],
+        "process_pattern": f"microvm@{vm_name}",
+        "ssh_port": ssh_port,
+        "qmp_socket": str(qmp_socket),
+        "repo_source": str(root),
+    }
+
+
+def load_instance_metadata() -> dict[str, str] | None:
+    path = instance_env_path()
+    if not path.exists():
+        return None
+    values: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line.startswith("export ") or "=" not in line:
+            continue
+        key, raw_value = line[len("export "):].split("=", 1)
+        values[key] = _shell_unquote(raw_value)
+    if not values:
+        return None
+    return {
+        "instance_id": values.get("SHADOW_UI_VM_INSTANCE_ID", ""),
+        "vm_name": values.get("SHADOW_UI_VM_NAME", "shadow-ui-vm"),
+        "host_name": values.get("SHADOW_UI_VM_HOSTNAME", values.get("SHADOW_UI_VM_NAME", "shadow-ui-vm")),
+        "process_pattern": values.get("SHADOW_UI_VM_PROCESS_PATTERN", "microvm@shadow-ui-vm"),
+        "ssh_port": values.get("SHADOW_UI_VM_SSH_PORT", "2222"),
+        "qmp_socket": values.get("SHADOW_UI_VM_QMP_SOCKET", str(state_dir() / "shadow-ui-vm.sock")),
+        "repo_source": values.get("SHADOW_UI_VM_SOURCE", str(repo_root())),
+    }
+
+
+def instance_metadata() -> dict[str, str]:
+    return load_instance_metadata() or compute_instance_metadata()
 
 
 def ssh_port() -> str:
-    return os.environ.get("SHADOW_UI_VM_SSH_PORT", "2222")
+    return os.environ.get("SHADOW_UI_VM_SSH_PORT", instance_metadata()["ssh_port"])
 
 
 def ssh_base() -> list[str]:
@@ -65,7 +124,7 @@ def run_remote(
 
 
 def vm_processes() -> list[str]:
-    result = run_local(["pgrep", "-f", "microvm@shadow-ui-vm"], check=False)
+    result = run_local(["pgrep", "-f", instance_metadata()["process_pattern"]], check=False)
     if result.returncode != 0:
         return []
     pids = [pid for pid in result.stdout.split() if pid.strip()]
@@ -186,9 +245,13 @@ def render_screenshot(output: pathlib.Path) -> pathlib.Path:
 
 
 def vm_status_payload() -> dict[str, Any]:
+    metadata = instance_metadata()
     local_processes = vm_processes()
     payload: dict[str, Any] = {
         "local": {
+            "instance_id": metadata["instance_id"],
+            "vm_name": metadata["vm_name"],
+            "ssh_port": metadata["ssh_port"],
             "state_dir": str(state_dir()),
             "configured_socket_path": str(configured_socket_path()),
             "socket_path": str(socket_path()),
@@ -327,6 +390,8 @@ PY
 def print_vm_status(payload: dict[str, Any]) -> None:
     local = payload["local"]
     remote = payload["remote"]
+    print(f"instance: {local['vm_name']} ({local['instance_id']})")
+    print(f"ssh: shadow@127.0.0.1:{local['ssh_port']}")
     print(f"socket: {'yes' if local['socket_exists'] else 'no'} ({local['socket_path']})")
     if local["socket_path"] != local["configured_socket_path"]:
         print(f"configured socket: {local['configured_socket_path']}")

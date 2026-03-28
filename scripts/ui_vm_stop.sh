@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=./ui_vm_common.sh
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-RUNNER_LINK="$REPO_ROOT/.shadow-vm/ui-vm-runner"
-SOCKET_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-vm.sock"
-PROCESS_PATTERN='microvm@shadow-ui-vm'
+source "$SCRIPT_DIR/ui_vm_common.sh"
 
+ui_vm_write_identity_file
 cd "$REPO_ROOT"
 
 process_running() {
-  pgrep -f "$PROCESS_PATTERN" >/dev/null
+  pgrep -f "$SHADOW_UI_VM_PROCESS_PATTERN" >/dev/null
 }
 
 wait_for_stop() {
@@ -27,12 +26,12 @@ wait_for_stop() {
 }
 
 terminate_vm_process() {
-  pkill -TERM -f "$PROCESS_PATTERN" 2>/dev/null || true
+  pkill -TERM -f "$SHADOW_UI_VM_PROCESS_PATTERN" 2>/dev/null || true
   if wait_for_stop 3; then
     return 0
   fi
 
-  pkill -KILL -f "$PROCESS_PATTERN" 2>/dev/null || true
+  pkill -KILL -f "$SHADOW_UI_VM_PROCESS_PATTERN" 2>/dev/null || true
   wait_for_stop 3 || true
 }
 
@@ -48,6 +47,12 @@ fi
 mkdir -p .shadow-vm
 if [[ ! -x "$RUNNER_LINK/bin/microvm-shutdown" ]]; then
   SHADOW_UI_VM_SOURCE="$REPO_ROOT" \
+    SHADOW_UI_VM_NAME="$SHADOW_UI_VM_NAME" \
+    SHADOW_UI_VM_HOSTNAME="$SHADOW_UI_VM_HOSTNAME" \
+    SHADOW_UI_VM_SSH_PORT="$SHADOW_UI_VM_SSH_PORT" \
+    SHADOW_UI_VM_QMP_SOCKET="$SHADOW_UI_VM_QMP_SOCKET" \
+    SHADOW_UI_VM_MAC_ADDRESS="$SHADOW_UI_VM_MAC_ADDRESS" \
+    SHADOW_UI_VM_UUID="$SHADOW_UI_VM_UUID" \
     nix build --impure --accept-flake-config -o "$RUNNER_LINK" .#ui-vm >/dev/null
 fi
 

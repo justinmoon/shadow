@@ -1,4 +1,4 @@
-{ hostSystem, microvm, nixpkgs, repoSource }:
+{ hostSystem, microvm, nixpkgs, repoSource, instanceName, hostName, sshPort, qmpSocket, macAddress, instanceUuid ? "" }:
 
 let
   lib = nixpkgs.lib;
@@ -171,7 +171,7 @@ nixpkgs.lib.nixosSystem {
           command = "${pkgs.dbus}/bin/dbus-run-session ${shadowUiSession}/bin/shadow-ui-session";
         };
       in {
-        networking.hostName = "shadow-ui-vm";
+        networking.hostName = hostName;
         system.stateVersion = lib.trivial.release;
 
         nix.settings.experimental-features = [ "nix-command" "flakes" ];
@@ -262,7 +262,7 @@ nixpkgs.lib.nixosSystem {
           hypervisor = "qemu";
           vcpu = 4;
           mem = 4096;
-          socket = ".shadow-vm/shadow-ui-vm.sock";
+          socket = qmpSocket;
           graphics = {
             enable = true;
             backend = "cocoa";
@@ -298,18 +298,19 @@ nixpkgs.lib.nixosSystem {
             {
               type = "user";
               id = "shadow-net";
-              mac = "02:00:00:10:10:01";
+              mac = macAddress;
             }
           ];
           forwardPorts = [
             {
               from = "host";
-              host.port = 2222;
+              host.port = sshPort;
               guest.port = 22;
             }
           ];
           vmHostPackages = nixpkgs.legacyPackages.${hostSystem};
         };
+
       })
   ];
 }

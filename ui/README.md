@@ -75,6 +75,8 @@ just ui-vm-blitz-run
 
 The first guest boot or the first launch after dependency changes can spend some time compiling the compositor, shell, and demo apps inside the VM before the UI appears.
 
+Each worktree now gets its own VM identity: process name, SSH port, QMP socket, and `shadowctl` state are all scoped to the current checkout, so you can run two `ui-vm-run` sessions concurrently from different worktrees without cross-talk.
+
 The expected Linux flow is now:
 
 - VM boots into a portrait `weston` session with the home shell visible
