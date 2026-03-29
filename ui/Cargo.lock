@@ -3080,13 +3080,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shadow-cog-demo"
-version = "0.1.0"
-dependencies = [
- "url",
-]
-
-[[package]]
 name = "shadow-compositor"
 version = "0.1.0"
 dependencies = [

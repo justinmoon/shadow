@@ -7,5 +7,5 @@ exec "$SCRIPT_DIR/ui_vm_ssh.sh" '
   systemctl --no-pager --full status shadow-ui-smoke.service || true
   echo
   echo "== shadow processes =="
-  ps -ef | grep -E "weston|shadow-compositor|shadow-ui-desktop|shadow-counter|shadow-cog-demo|shadow-blitz-demo|cargo run( --locked)? --manifest-path ui/Cargo.toml" | grep -v grep || true
+  ps -ef | grep -E "weston|shadow-compositor|shadow-ui-desktop|shadow-counter|shadow-blitz-demo|cargo run( --locked)? --manifest-path ui/Cargo.toml" | grep -v grep || true
 '

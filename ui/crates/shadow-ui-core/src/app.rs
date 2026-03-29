@@ -1,4 +1,4 @@
-use crate::color::{Color, ICON_BLUE, ICON_CYAN, ICON_ORANGE, ICON_PINK, ICON_PURPLE, ICON_YELLOW};
+use crate::color::{Color, ICON_CYAN, ICON_ORANGE, ICON_PINK, ICON_PURPLE, ICON_YELLOW};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AppId(&'static str);
@@ -55,18 +55,6 @@ pub const STATUS_APP: DemoApp = DemoApp {
     prefer_cargo_run: false,
 };
 
-pub const COG_DEMO_APP_ID: AppId = AppId::new("cog-demo");
-pub const COG_DEMO_WAYLAND_APP_ID: &str = "org.gnome.Epiphany";
-pub const COG_DEMO_APP: DemoApp = DemoApp {
-    id: COG_DEMO_APP_ID,
-    title: "Web",
-    subtitle: "Cog and browser-native JS",
-    binary_name: "shadow-cog-demo",
-    wayland_app_id: COG_DEMO_WAYLAND_APP_ID,
-    icon_color: ICON_BLUE,
-    prefer_cargo_run: true,
-};
-
 pub const BLITZ_DEMO_APP_ID: AppId = AppId::new("blitz-demo");
 pub const BLITZ_DEMO_WAYLAND_APP_ID: &str = "dev.shadow.blitz";
 pub const BLITZ_DEMO_APP: DemoApp = DemoApp {
@@ -79,18 +67,13 @@ pub const BLITZ_DEMO_APP: DemoApp = DemoApp {
     prefer_cargo_run: true,
 };
 
-pub const DEMO_APPS: [DemoApp; 4] = [COUNTER_APP, STATUS_APP, COG_DEMO_APP, BLITZ_DEMO_APP];
+pub const DEMO_APPS: [DemoApp; 3] = [COUNTER_APP, STATUS_APP, BLITZ_DEMO_APP];
 pub const DESKTOP_WAYLAND_APP_ID: &str = "dev.shadow.desktop";
 
 pub const HOME_TILES: [HomeTile; 8] = [
     HomeTile {
-        label: COG_DEMO_APP.title,
-        color: COG_DEMO_APP.icon_color,
-        app_id: Some(COG_DEMO_APP.id),
-    },
-    HomeTile {
         label: "Messages",
-        color: ICON_BLUE,
+        color: ICON_CYAN,
         app_id: None,
     },
     HomeTile {
@@ -102,6 +85,11 @@ pub const HOME_TILES: [HomeTile; 8] = [
         label: STATUS_APP.title,
         color: STATUS_APP.icon_color,
         app_id: Some(STATUS_APP.id),
+    },
+    HomeTile {
+        label: "Browser",
+        color: ICON_CYAN,
+        app_id: None,
     },
     HomeTile {
         label: BLITZ_DEMO_APP.title,

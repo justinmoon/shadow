@@ -1,7 +1,0 @@
-[package]
-name = "shadow-cog-demo"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-url = "2.5"

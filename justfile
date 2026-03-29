@@ -58,10 +58,6 @@ ui-compositor-run:
 ui-counter-run:
 	@nix develop --accept-flake-config .#ui -c cargo run --manifest-path ui/Cargo.toml -p shadow-counter
 
-# Run the browser-engine demo app directly
-ui-cog-run:
-	@nix develop --accept-flake-config .#ui -c cargo run --manifest-path ui/Cargo.toml -p shadow-cog-demo
-
 # Run the Blitz + Deno demo app directly
 ui-blitz-run:
 	@nix develop --accept-flake-config .#ui -c cargo run --manifest-path ui/Cargo.toml -p shadow-blitz-demo
@@ -98,10 +94,6 @@ ui-vm-journal:
 ui-vm-screenshot output="build/ui-vm/shadow-ui-vm.ppm":
 	@scripts/shadowctl vm screenshot "{{output}}"
 
-# Launch the browser-engine prototype inside the guest compositor
-ui-vm-cog-run:
-	@scripts/ui_vm_app_run.sh shadow-cog-demo
-
 # Launch the native-renderer + Deno prototype inside the guest compositor
 ui-vm-blitz-run:
 	@scripts/ui_vm_app_run.sh shadow-blitz-demo
@@ -133,10 +125,6 @@ ui-vm-shadow-counter-run:
 # Launch the status app inside the nested Smithay compositor
 ui-vm-shadow-status-run:
 	@scripts/ui_vm_shadow_app_run.sh shadow-status
-
-# Launch the browser-engine demo inside the nested Smithay compositor
-ui-vm-shadow-cog-run:
-	@scripts/ui_vm_shadow_app_run.sh shadow-cog-demo
 
 # Launch the Blitz + Deno demo inside the nested Smithay compositor
 ui-vm-shadow-blitz-run:

@@ -25,7 +25,6 @@ nixpkgs.lib.nixosSystem {
           cargo
           clang
           deno
-          epiphany
           git
           just
           pkg-config

@@ -151,7 +151,7 @@
             wayland-protocols
             zlib
           ]);
-          shellPkgs = toolPkgs ++ runtimeLibs ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.epiphany ];
+          shellPkgs = toolPkgs ++ runtimeLibs;
           pkgConfigPath = pkgs.lib.concatStringsSep ":" [
             (pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" runtimeLibs)
             (pkgs.lib.makeSearchPathOutput "dev" "share/pkgconfig" runtimeLibs)

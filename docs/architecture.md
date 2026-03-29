@@ -25,7 +25,6 @@ The repo now also contains a UI workspace in `ui/` for the future mobile shell. 
 - `shadow-ui-desktop` for the portable desktop host.
 - `shadow-compositor` for the Linux/Wayland path built around Smithay.
 - `shadow-counter` as the first real app, split into a desktop host and a Linux Wayland-native SCTK host.
-- `shadow-cog-demo` as the browser-engine prototype using a minimal WebKitGTK browser harness today.
 - `shadow-blitz-demo` as the native-renderer prototype where Deno owns state and Rust/Blitz owns display.
 
 The intended seam with device bring-up is:
@@ -36,7 +35,6 @@ The intended seam with device bring-up is:
 
 The renderer experiments intentionally share the same shell/compositor process model:
 
-- `shadow-cog-demo` tests the “real web engine now” path with minimal host code. In the current Nix/QEMU environment it launches `epiphany`/WebKitGTK because `nixpkgs` does not ship the Igalia Cog/WPE launcher out of the box.
 - Blitz + Deno tests the “logic outside Rust, HTML/CSS as the UI DSL, native renderer applies it” path that is closer to the long-term app model.
 
 The current Blitz demo is deliberately coarse: Deno owns state, polls a simple file mailbox for native click events, and emits full HTML/CSS updates back over stdout. The Rust host swaps that subtree into a Blitz document. That is enough to prove the process split, event bridge, and native rendering loop before we commit to a finer-grained mutation protocol.

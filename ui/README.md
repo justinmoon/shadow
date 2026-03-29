@@ -9,7 +9,6 @@ Workspace layout:
 - `shadow-ui-desktop` for the current winit + wgpu host
 - `shadow-compositor` for the Linux/Wayland Smithay host
 - `shadow-counter` for the demo app: winit/wgpu on desktop hosts, Wayland-native SCTK on Linux
-- `shadow-cog-demo` for the browser-engine prototype
 - `shadow-blitz-demo` for the Blitz renderer + Deno logic prototype
 
 ## Run
@@ -39,7 +38,6 @@ The counter app itself is intentionally split by host:
 
 The two newer demos keep the same shell/compositor launch seam while swapping renderer strategy:
 
-- `shadow-cog-demo` execs a minimal browser binary against bundled HTML/CSS/JS assets to prove the browser-engine path
 - `shadow-blitz-demo` keeps state in a Deno TypeScript process and applies returned HTML/CSS to a native Blitz document
 
 The Blitz demo is intentionally pre-incremental today: TypeScript owns the state, polls a simple event mailbox for native clicks, and emits full HTML/CSS swaps back over stdout. That is enough to prove the control path before it proves a finer-grained mutation protocol.
@@ -69,7 +67,6 @@ just ui-vm-ssh
 just ui-vm-logs
 just ui-vm-status
 just ui-vm-journal
-just ui-vm-cog-run
 just ui-vm-blitz-run
 ```
 
@@ -80,8 +77,8 @@ Each worktree now gets its own VM identity: process name, SSH port, QMP socket, 
 The expected Linux flow is now:
 
 - VM boots into a `weston` session with the home shell visible
-- click `Web`, `Blitz`, `Counter`, or `Status` to open a demo app
-- the direct guest launch helpers can also start `shadow-cog-demo` and `shadow-blitz-demo` without going through the shell
+- click `Blitz`, `Counter`, or `Status` to open a demo app
+- the direct guest launch helpers can also start `shadow-blitz-demo` without going through the shell
 - app windows are ordinary Wayland clients in the same `weston` session; there is no compositor control socket in this demo path
 
 If the shell is still compiling or you want to bypass it entirely, the guest launch recipes above start the two prototype apps directly against the running compositor using the same cached Cargo target dir and runtime library environment as the main guest session.
@@ -103,13 +100,12 @@ Then launch a simple app into the nested compositor:
 ```sh
 just ui-vm-shadow-counter-run
 just ui-vm-shadow-status-run
-just ui-vm-shadow-cog-run
 just ui-vm-shadow-blitz-run
 ```
 
 That path writes a second guest env file at `/var/lib/shadow-ui/shadow-compositor-session-env.sh` with the nested `WAYLAND_DISPLAY` and compositor control socket. Nested native apps are currently mapped to the full `540x1170` output instead of the old shell-era inset so their content is not clipped. `ui-vm-shadow-stop` stops just the nested compositor without rebooting the VM.
 
-In the current Nix guest this browser-engine prototype uses `epiphany` (WebKitGTK). `nixpkgs` ships an unrelated Grafana CLI as `cog`, so the Igalia Cog/WPE launcher is not available out of the box in this environment.
+The earlier browser-engine prototype was removed after proving too flaky in the nested compositor path. The current focus is the Blitz + Deno prototype and simpler native demo clients.
 
 Fastest guest debug loop:
 

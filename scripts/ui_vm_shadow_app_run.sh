@@ -23,7 +23,6 @@ app_id_for_package() {
   case "\$1" in
     shadow-counter) echo "counter" ;;
     shadow-status) echo "status" ;;
-    shadow-cog-demo) echo "cog-demo" ;;
     shadow-blitz-demo) echo "blitz-demo" ;;
     *) return 1 ;;
   esac
