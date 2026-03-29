@@ -52,7 +52,7 @@ On macOS, the preferred compositor loop is the local VM:
 just ui-vm-run
 ```
 
-That launches a Linux guest in a native macOS window using `microvm.nix` with QEMU/HVF and a Cocoa display backend. QEMU is the chosen host path here because it gives us both a native window on macOS and a simple 9p live share of this repo into the guest, which keeps the compositor loop tight while the codebase is still moving quickly. The guest shares this live worktree into `/work/shadow`, autologins through `greetd`, starts a dedicated `weston` session, rotates the virtual output into portrait mode so the phone shell fits cleanly, and runs `shadow-ui-desktop` as a normal Wayland client inside that session.
+That launches a Linux guest in a native macOS window using `microvm.nix` with QEMU/HVF and a Cocoa display backend. QEMU is the chosen host path here because it gives us both a native window on macOS and a simple 9p live share of this repo into the guest, which keeps the compositor loop tight while the codebase is still moving quickly. The guest shares this live worktree into `/work/shadow`, autologins through `greetd`, starts a dedicated `weston` session, and runs `shadow-ui-desktop` as a normal Wayland client inside that session.
 
 The VM recreates its writable `/nix/store` overlay on each boot. Guest persistence lives in `.shadow-vm/shadow-ui-state.img`, which keeps the Cargo target dir, app state, and guest logs warm across restarts. The guest session runs `cargo run --locked --manifest-path ui/Cargo.toml -p shadow-ui-desktop` directly inside the shared repo; it does not shell into a nested guest `nix develop`.
 
@@ -79,7 +79,7 @@ Each worktree now gets its own VM identity: process name, SSH port, QMP socket, 
 
 The expected Linux flow is now:
 
-- VM boots into a portrait `weston` session with the home shell visible
+- VM boots into a `weston` session with the home shell visible
 - click `Web`, `Blitz`, `Counter`, or `Status` to open a demo app
 - the direct guest launch helpers can also start `shadow-cog-demo` and `shadow-blitz-demo` without going through the shell
 - app windows are ordinary Wayland clients in the same `weston` session; there is no compositor control socket in this demo path
@@ -103,9 +103,11 @@ Then launch a simple app into the nested compositor:
 ```sh
 just ui-vm-shadow-counter-run
 just ui-vm-shadow-status-run
+just ui-vm-shadow-cog-run
+just ui-vm-shadow-blitz-run
 ```
 
-That path writes a second guest env file at `/var/lib/shadow-ui/shadow-compositor-session-env.sh` with the nested `WAYLAND_DISPLAY` and compositor control socket. `ui-vm-shadow-stop` stops just the nested compositor without rebooting the VM.
+That path writes a second guest env file at `/var/lib/shadow-ui/shadow-compositor-session-env.sh` with the nested `WAYLAND_DISPLAY` and compositor control socket. Nested native apps are currently mapped to the full `540x1170` output instead of the old shell-era inset so their content is not clipped. `ui-vm-shadow-stop` stops just the nested compositor without rebooting the VM.
 
 In the current Nix guest this browser-engine prototype uses `epiphany` (WebKitGTK). `nixpkgs` ships an unrelated Grafana CLI as `cog`, so the Igalia Cog/WPE launcher is not available out of the box in this environment.
 

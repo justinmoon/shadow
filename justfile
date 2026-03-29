@@ -134,6 +134,14 @@ ui-vm-shadow-counter-run:
 ui-vm-shadow-status-run:
 	@scripts/ui_vm_shadow_app_run.sh shadow-status
 
+# Launch the browser-engine demo inside the nested Smithay compositor
+ui-vm-shadow-cog-run:
+	@scripts/ui_vm_shadow_app_run.sh shadow-cog-demo
+
+# Launch the Blitz + Deno demo inside the nested Smithay compositor
+ui-vm-shadow-blitz-run:
+	@scripts/ui_vm_shadow_app_run.sh shadow-blitz-demo
+
 # Run the fast local verification gate
 pre-commit:
 	@scripts/pre_commit.sh
