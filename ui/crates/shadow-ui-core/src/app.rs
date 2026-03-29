@@ -21,6 +21,7 @@ pub struct DemoApp {
     pub binary_name: &'static str,
     pub wayland_app_id: &'static str,
     pub icon_color: Color,
+    pub prefer_cargo_run: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -39,6 +40,7 @@ pub const COUNTER_APP: DemoApp = DemoApp {
     binary_name: "shadow-counter",
     wayland_app_id: COUNTER_WAYLAND_APP_ID,
     icon_color: ICON_CYAN,
+    prefer_cargo_run: false,
 };
 
 pub const STATUS_APP_ID: AppId = AppId::new("status");
@@ -50,6 +52,7 @@ pub const STATUS_APP: DemoApp = DemoApp {
     binary_name: "shadow-status",
     wayland_app_id: STATUS_WAYLAND_APP_ID,
     icon_color: ICON_YELLOW,
+    prefer_cargo_run: false,
 };
 
 pub const COG_DEMO_APP_ID: AppId = AppId::new("cog-demo");
@@ -61,6 +64,7 @@ pub const COG_DEMO_APP: DemoApp = DemoApp {
     binary_name: "shadow-cog-demo",
     wayland_app_id: COG_DEMO_WAYLAND_APP_ID,
     icon_color: ICON_BLUE,
+    prefer_cargo_run: true,
 };
 
 pub const BLITZ_DEMO_APP_ID: AppId = AppId::new("blitz-demo");
@@ -72,6 +76,7 @@ pub const BLITZ_DEMO_APP: DemoApp = DemoApp {
     binary_name: "shadow-blitz-demo",
     wayland_app_id: BLITZ_DEMO_WAYLAND_APP_ID,
     icon_color: ICON_PINK,
+    prefer_cargo_run: true,
 };
 
 pub const DEMO_APPS: [DemoApp; 4] = [COUNTER_APP, STATUS_APP, COG_DEMO_APP, BLITZ_DEMO_APP];

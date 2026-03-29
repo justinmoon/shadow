@@ -18,7 +18,7 @@ pub fn launch_app(
             format!("unknown app id: {}", app_id.as_str()),
         )
     })?;
-    let mut command = launch_command(app.binary_name, "SHADOW_APP_CLIENT")?;
+    let mut command = launch_command(app.binary_name, app.prefer_cargo_run, "SHADOW_APP_CLIENT")?;
     tracing::info!(
         app_id = app_id.as_str(),
         binary = app.binary_name,
@@ -37,9 +37,27 @@ fn sibling_binary_path(name: &str) -> Option<PathBuf> {
     Some(current.with_file_name(name))
 }
 
-fn launch_command(binary_name: &str, override_var: &str) -> io::Result<Command> {
+fn launch_command(
+    binary_name: &str,
+    prefer_cargo_run: bool,
+    override_var: &str,
+) -> io::Result<Command> {
     if let Ok(explicit) = std::env::var(override_var) {
         return Ok(Command::new(explicit));
+    }
+
+    if prefer_cargo_run {
+        if let Some(manifest) = workspace_manifest() {
+            let mut command = Command::new("cargo");
+            command.args([
+                "run",
+                "--manifest-path",
+                manifest.to_string_lossy().as_ref(),
+                "-p",
+                binary_name,
+            ]);
+            return Ok(command);
+        }
     }
 
     if let Some(sibling) = sibling_binary_path(binary_name) {
