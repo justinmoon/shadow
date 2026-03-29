@@ -47,7 +47,7 @@ impl CompositorHandler for ShadowCompositor {
             }
         }
 
-        xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
+        xdg_shell::handle_commit(self, surface);
     }
 }
 

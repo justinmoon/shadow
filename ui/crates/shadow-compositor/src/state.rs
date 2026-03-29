@@ -19,7 +19,7 @@ use smithay::{
             Display, DisplayHandle,
         },
     },
-    utils::{Logical, Point, Serial, SERIAL_COUNTER},
+    utils::{Logical, Point, Rectangle, Serial, SERIAL_COUNTER},
     wayland::{
         compositor::with_states,
         compositor::{CompositorClientState, CompositorState},
@@ -295,7 +295,36 @@ impl ShadowCompositor {
         (0, 0)
     }
 
-    pub fn sync_window_positions(&mut self) {}
+    pub fn app_window_geometry(&self) -> Rectangle<i32, Logical> {
+        self.space
+            .outputs()
+            .next()
+            .and_then(|output| self.space.output_geometry(output))
+            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (WIDTH as i32, HEIGHT as i32).into()))
+    }
+
+    pub fn sync_window_positions(&mut self) {
+        let location = self.app_window_location();
+        let geometry = self.app_window_geometry();
+
+        for window in self.space.elements().cloned().collect::<Vec<_>>() {
+            let Some(surface) = window.toplevel() else {
+                continue;
+            };
+            if self.home_window().is_some_and(|home| home == window) {
+                self.space
+                    .map_element(window.clone(), self.home_window_location(), false);
+                continue;
+            }
+
+            self.space.map_element(window.clone(), location, false);
+            surface.with_pending_state(|state| {
+                state.bounds = Some(geometry.size);
+                state.size = Some(geometry.size);
+            });
+            surface.send_configure();
+        }
+    }
 
     pub fn next_serial(&self) -> Serial {
         SERIAL_COUNTER.next_serial()

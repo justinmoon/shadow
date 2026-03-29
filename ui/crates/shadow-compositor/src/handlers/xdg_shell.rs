@@ -3,10 +3,11 @@
 use shadow_ui_core::app;
 use smithay::{
     delegate_xdg_shell,
-    desktop::{
-        find_popup_root_surface, get_popup_toplevel_coords, PopupKind, PopupManager, Space, Window,
+    desktop::{find_popup_root_surface, get_popup_toplevel_coords, PopupKind, Window},
+    reexports::{
+        wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_server::protocol::{wl_seat, wl_surface::WlSurface},
     },
-    reexports::wayland_server::protocol::{wl_seat, wl_surface::WlSurface},
     utils::Serial,
     wayland::{
         compositor::with_states,
@@ -81,8 +82,9 @@ impl XdgShellHandler for ShadowCompositor {
 
 delegate_xdg_shell!(ShadowCompositor);
 
-pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: &WlSurface) {
-    if let Some(window) = space
+pub fn handle_commit(state: &mut ShadowCompositor, surface: &WlSurface) {
+    if let Some(window) = state
+        .space
         .elements()
         .find(|window| window.toplevel().unwrap().wl_surface() == surface)
         .cloned()
@@ -98,12 +100,19 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
         });
 
         if !initial_configure_sent {
-            window.toplevel().unwrap().send_configure();
+            let geometry = state.app_window_geometry();
+            let toplevel = window.toplevel().unwrap();
+            toplevel.with_pending_state(|state| {
+                state.bounds = Some(geometry.size);
+                state.size = Some(geometry.size);
+                state.states.set(xdg_toplevel::State::Maximized);
+            });
+            toplevel.send_configure();
         }
     }
 
-    popups.commit(surface);
-    if let Some(popup) = popups.find_popup(surface) {
+    state.popups.commit(surface);
+    if let Some(popup) = state.popups.find_popup(surface) {
         match popup {
             PopupKind::Xdg(surface) => {
                 if !surface.is_initial_configure_sent() {
@@ -143,6 +152,16 @@ impl ShadowCompositor {
 
         self.remember_surface_app(surface, app_id);
         self.shell.set_foreground_app(Some(app_id));
+        if let Some(window) = self.window_for_surface(surface) {
+            let geometry = self.app_window_geometry();
+            let toplevel = window.toplevel().unwrap();
+            toplevel.with_pending_state(|state| {
+                state.bounds = Some(geometry.size);
+                state.size = Some(geometry.size);
+                state.states.set(xdg_toplevel::State::Maximized);
+            });
+            toplevel.send_pending_configure();
+        }
     }
 
     fn window_location_for_surface(&self, surface: &WlSurface) -> (i32, i32) {
@@ -160,7 +179,7 @@ impl ShadowCompositor {
         }
     }
 
-    fn home_window_location(&self) -> (i32, i32) {
+    pub(crate) fn home_window_location(&self) -> (i32, i32) {
         (0, 0)
     }
 
