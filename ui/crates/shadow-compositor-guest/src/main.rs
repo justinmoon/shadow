@@ -1,7 +1,12 @@
 mod kms;
 
 use std::time::Duration;
-use std::{ffi::OsString, process::Child, sync::Arc};
+use std::{
+    ffi::OsString,
+    os::{fd::AsRawFd, unix::net::UnixStream},
+    process::Child,
+    sync::Arc,
+};
 
 use smithay::{
     backend::renderer::utils::{on_commit_buffer_handler, with_renderer_surface_state},
@@ -13,7 +18,7 @@ use smithay::{
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::{wl_buffer, wl_seat, wl_surface::WlSurface},
-            Client, Display, DisplayHandle,
+            BindError, Client, Display, DisplayHandle,
         },
     },
     utils::Serial,
@@ -28,6 +33,12 @@ use smithay::{
     },
 };
 
+#[derive(Clone, Debug)]
+enum WaylandTransport {
+    NamedSocket(OsString),
+    DirectClientFd,
+}
+
 fn init_logging() {
     if let Ok(filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
         tracing_subscriber::fmt().with_env_filter(filter).init();
@@ -39,7 +50,7 @@ fn init_logging() {
 }
 
 struct ShadowGuestCompositor {
-    socket_name: OsString,
+    transport: WaylandTransport,
     display_handle: DisplayHandle,
     space: Space<Window>,
     loop_signal: LoopSignal,
@@ -56,11 +67,11 @@ struct ShadowGuestCompositor {
 impl ShadowGuestCompositor {
     fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> Self {
         let display_handle = display.handle();
-        let socket_name = Self::init_wayland_listener(display, event_loop);
+        let transport = Self::init_wayland_transport(display, event_loop);
         let loop_signal = event_loop.get_signal();
 
         Self {
-            socket_name,
+            transport,
             display_handle: display_handle.clone(),
             space: Space::default(),
             loop_signal,
@@ -95,8 +106,42 @@ impl ShadowGuestCompositor {
         self.kms_display.as_mut()
     }
 
-    fn init_wayland_listener(display: Display<Self>, event_loop: &mut EventLoop<Self>) -> OsString {
-        let listener = ListeningSocketSource::new_auto().expect("create wayland socket");
+    fn init_wayland_transport(
+        display: Display<Self>,
+        event_loop: &mut EventLoop<Self>,
+    ) -> WaylandTransport {
+        Self::insert_display_source(display, event_loop);
+
+        let requested =
+            std::env::var("SHADOW_GUEST_COMPOSITOR_TRANSPORT").unwrap_or_else(|_| "auto".into());
+        match requested.as_str() {
+            "socket" => WaylandTransport::NamedSocket(Self::insert_wayland_listener(event_loop)),
+            "direct" => {
+                tracing::info!("[shadow-guest-compositor] transport=direct-client-fd");
+                WaylandTransport::DirectClientFd
+            }
+            "auto" => match Self::try_insert_wayland_listener(event_loop) {
+                Ok(socket_name) => WaylandTransport::NamedSocket(socket_name),
+                Err(BindError::PermissionDenied) => {
+                    tracing::warn!(
+                        "[shadow-guest-compositor] socket transport denied; falling back to direct client fd"
+                    );
+                    WaylandTransport::DirectClientFd
+                }
+                Err(error) => panic!("create wayland socket: {error}"),
+            },
+            other => panic!("unknown SHADOW_GUEST_COMPOSITOR_TRANSPORT={other}"),
+        }
+    }
+
+    fn insert_wayland_listener(event_loop: &mut EventLoop<Self>) -> OsString {
+        Self::try_insert_wayland_listener(event_loop).expect("create wayland socket")
+    }
+
+    fn try_insert_wayland_listener(
+        event_loop: &mut EventLoop<Self>,
+    ) -> Result<OsString, BindError> {
+        let listener = ListeningSocketSource::new_auto()?;
         let socket_name = listener.socket_name().to_os_string();
         let handle = event_loop.handle();
 
@@ -109,6 +154,16 @@ impl ShadowGuestCompositor {
             })
             .expect("insert wayland socket");
 
+        tracing::info!(
+            "[shadow-guest-compositor] transport=named-socket socket={}",
+            socket_name.to_string_lossy()
+        );
+
+        Ok(socket_name)
+    }
+
+    fn insert_display_source(display: Display<Self>, event_loop: &mut EventLoop<Self>) {
+        let handle = event_loop.handle();
         handle
             .insert_source(
                 Generic::new(display, Interest::READ, Mode::Level),
@@ -121,8 +176,6 @@ impl ShadowGuestCompositor {
                 },
             )
             .expect("insert wayland display");
-
-        socket_name
     }
 
     fn spawn_client(&mut self) -> std::io::Result<()> {
@@ -132,9 +185,32 @@ impl ShadowGuestCompositor {
             .unwrap_or_else(|_| "/data/local/tmp/shadow-runtime".into());
 
         let mut command = std::process::Command::new(&client_path);
-        command
-            .env("WAYLAND_DISPLAY", &self.socket_name)
-            .env("XDG_RUNTIME_DIR", runtime_dir);
+        command.env("XDG_RUNTIME_DIR", runtime_dir);
+
+        match &self.transport {
+            WaylandTransport::NamedSocket(socket_name) => {
+                command.env("WAYLAND_DISPLAY", socket_name);
+            }
+            WaylandTransport::DirectClientFd => {
+                let (server_stream, client_stream) = UnixStream::pair()?;
+                clear_cloexec(&client_stream)?;
+                let raw_fd = client_stream.as_raw_fd();
+                command
+                    .env_remove("WAYLAND_DISPLAY")
+                    .env("WAYLAND_SOCKET", raw_fd.to_string());
+                self.display_handle
+                    .insert_client(server_stream, Arc::new(ClientState::default()))
+                    .expect("insert wayland client");
+                let child = command.spawn()?;
+                drop(client_stream);
+                self.launched_clients.push(child);
+                tracing::info!(
+                    "[shadow-guest-compositor] launched-client={} transport=direct-client-fd fd={raw_fd}",
+                    client_path
+                );
+                return Ok(());
+            }
+        }
 
         if let Some(value) = std::env::var_os("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE") {
             command.env("SHADOW_GUEST_COUNTER_EXIT_ON_CONFIGURE", value);
@@ -145,7 +221,9 @@ impl ShadowGuestCompositor {
 
         let child = command.spawn()?;
         self.launched_clients.push(child);
-        tracing::info!("[shadow-guest-compositor] launched-client={client_path}");
+        tracing::info!(
+            "[shadow-guest-compositor] launched-client={client_path} transport=named-socket"
+        );
         Ok(())
     }
 
@@ -224,6 +302,20 @@ impl ShadowGuestCompositor {
 
         buffer.release();
     }
+}
+
+fn clear_cloexec(stream: &UnixStream) -> std::io::Result<()> {
+    let fd = stream.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let updated = flags & !libc::FD_CLOEXEC;
+    let result = unsafe { libc::fcntl(fd, libc::F_SETFD, updated) };
+    if result < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -368,10 +460,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let display: Display<ShadowGuestCompositor> = Display::new()?;
     let mut state = ShadowGuestCompositor::new(&mut event_loop, display);
 
-    tracing::info!(
-        "[shadow-guest-compositor] listening-socket={}",
-        state.socket_name.to_string_lossy()
-    );
+    match &state.transport {
+        WaylandTransport::NamedSocket(socket_name) => tracing::info!(
+            "[shadow-guest-compositor] transport=named-socket socket={}",
+            socket_name.to_string_lossy()
+        ),
+        WaylandTransport::DirectClientFd => {
+            tracing::info!("[shadow-guest-compositor] transport=direct-client-fd")
+        }
+    }
     state.spawn_client()?;
     event_loop.run(None, &mut state, |_| {})?;
     Ok(())

@@ -50,7 +50,7 @@ pixel_adb "$serial" shell \
 set +e
 session_output="$(
   pixel_adb "$serial" shell \
-    "env SHADOW_SESSION_MODE=guest-ui SHADOW_RUNTIME_DIR=$runtime_dir SHADOW_GUEST_COMPOSITOR_BIN=$compositor_dst SHADOW_GUEST_CLIENT=$counter_dst SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME=1 SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE=1 SHADOW_GUEST_COUNTER_LINGER_MS=500 SHADOW_GUEST_FRAME_PATH=$frame_path RUST_LOG=shadow_compositor_guest=info,shadow_counter_guest=info,smithay=warn $session_dst" \
+    "env SHADOW_SESSION_MODE=guest-ui SHADOW_RUNTIME_DIR=$runtime_dir SHADOW_GUEST_COMPOSITOR_BIN=$compositor_dst SHADOW_GUEST_CLIENT=$counter_dst SHADOW_GUEST_COMPOSITOR_TRANSPORT=direct SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME=1 SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE=1 SHADOW_GUEST_COUNTER_LINGER_MS=500 SHADOW_GUEST_FRAME_PATH=$frame_path RUST_LOG=shadow_compositor_guest=info,shadow_counter_guest=info,smithay=warn $session_dst" \
     2>&1
 )"
 session_status="$?"
