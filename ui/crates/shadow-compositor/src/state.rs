@@ -290,7 +290,9 @@ impl ShadowCompositor {
     }
 
     pub fn app_window_location(&self) -> (i32, i32) {
-        (78, 176)
+        // Foreground apps currently own the full nested output. Mapping them with shell-era
+        // insets clips the surface because the shell is not rendered underneath.
+        (0, 0)
     }
 
     pub fn sync_window_positions(&mut self) {}

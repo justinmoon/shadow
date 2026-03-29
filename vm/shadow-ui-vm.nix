@@ -90,20 +90,6 @@ nixpkgs.lib.nixosSystem {
             cp -fL ${pkgs.libglvnd}/lib/libGL.so.1 ${runtimeLibDir}/libGL.so.1
             cp -fL ${pkgs.libglvnd}/lib/libOpenGL.so.0 ${runtimeLibDir}/libOpenGL.so.0
             cp -fL ${pkgs.libglvnd}/lib/libGLESv2.so.2 ${runtimeLibDir}/libGLESv2.so.2
-            cat >${sessionEnv} <<EOF
-            export HOME="$HOME"
-            export XDG_CACHE_HOME="$XDG_CACHE_HOME"
-            export CARGO_TARGET_DIR="$CARGO_TARGET_DIR"
-            export PKG_CONFIG_PATH="$PKG_CONFIG_PATH"
-            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
-            export LIBRARY_PATH="$LIBRARY_PATH"
-            export NIX_LDFLAGS="$NIX_LDFLAGS"
-            export LIBGL_DRIVERS_PATH="$LIBGL_DRIVERS_PATH"
-            export RUST_BACKTRACE="$RUST_BACKTRACE"
-            export XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR"
-            export DBUS_SESSION_BUS_ADDRESS="''${DBUS_SESSION_BUS_ADDRESS:-}"
-            export GDK_BACKEND="$GDK_BACKEND"
-            EOF
             cd ${repoDir}
             : >${sessionLog}
             exec >>${sessionLog} 2>&1
@@ -118,6 +104,7 @@ nixpkgs.lib.nixosSystem {
 
             [output]
             name=Virtual-1
+            mode=800x1280
             transform=normal
             EOF
 
@@ -149,6 +136,22 @@ nixpkgs.lib.nixosSystem {
               cat ${westonLog} >&2 || true
               exit 1
             fi
+
+            cat >${sessionEnv} <<EOF
+            export HOME="$HOME"
+            export XDG_CACHE_HOME="$XDG_CACHE_HOME"
+            export CARGO_TARGET_DIR="$CARGO_TARGET_DIR"
+            export PKG_CONFIG_PATH="$PKG_CONFIG_PATH"
+            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
+            export LIBRARY_PATH="$LIBRARY_PATH"
+            export NIX_LDFLAGS="$NIX_LDFLAGS"
+            export LIBGL_DRIVERS_PATH="$LIBGL_DRIVERS_PATH"
+            export RUST_BACKTRACE="$RUST_BACKTRACE"
+            export XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR"
+            export DBUS_SESSION_BUS_ADDRESS="''${DBUS_SESSION_BUS_ADDRESS:-}"
+            export GDK_BACKEND="$GDK_BACKEND"
+            export WAYLAND_DISPLAY="$WAYLAND_DISPLAY"
+            EOF
 
             cargo run --locked --manifest-path ui/Cargo.toml -p shadow-ui-desktop &
             shell_pid=$!
