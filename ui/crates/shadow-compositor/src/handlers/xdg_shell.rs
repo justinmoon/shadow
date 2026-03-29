@@ -28,7 +28,16 @@ impl XdgShellHandler for ShadowCompositor {
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let wl_surface = surface.wl_surface().clone();
         let window = Window::new_wayland_window(surface);
-        tracing::info!("shadow-compositor: new toplevel");
+        let raw_app_id = with_states(&wl_surface, |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .and_then(|data| data.lock().ok().and_then(|attrs| attrs.app_id.clone()))
+        });
+        tracing::info!(
+            raw_app_id = raw_app_id.as_deref(),
+            "shadow-compositor: new toplevel"
+        );
         self.space.map_element(
             window.clone(),
             self.window_location_for_surface(&wl_surface),
@@ -133,6 +142,7 @@ impl ShadowCompositor {
                 .and_then(|data| data.lock().ok().and_then(|attrs| attrs.app_id.clone()))
         });
         let Some(app_id) = app_id.as_deref() else {
+            tracing::info!("shadow-compositor: toplevel still has no app id");
             return;
         };
         tracing::info!(app_id, "shadow-compositor: refreshing toplevel app id");
@@ -149,6 +159,15 @@ impl ShadowCompositor {
         let Some(app_id) = app::app_id_from_wayland_app_id(app_id) else {
             return;
         };
+
+        if let Some(current_app_id) = self.shell.foreground_app() {
+            if current_app_id != app_id {
+                if let Some(current_window) = self.mapped_window_for_app(current_app_id) {
+                    self.space.unmap_elem(&current_window);
+                    self.shelved_windows.insert(current_app_id, current_window);
+                }
+            }
+        }
 
         self.remember_surface_app(surface, app_id);
         self.shell.set_foreground_app(Some(app_id));

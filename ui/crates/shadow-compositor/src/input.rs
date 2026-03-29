@@ -28,8 +28,9 @@ impl ShadowCompositor {
             InputEvent::Keyboard { event, .. } => {
                 let serial = SERIAL_COUNTER.next_serial();
                 let time = Event::time_msec(&event);
-                let allow_shell_nav = self.shell.foreground_app().is_none();
-                let has_foreground_app = self.shell.foreground_app().is_some();
+                let has_mapped_app_window = self.has_mapped_app_window();
+                let allow_shell_nav = !has_mapped_app_window;
+                let has_foreground_app = has_mapped_app_window;
                 let keyboard = self.seat.get_keyboard().unwrap();
 
                 let intent = keyboard

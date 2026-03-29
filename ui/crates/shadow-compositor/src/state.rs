@@ -194,6 +194,26 @@ impl ShadowCompositor {
         self.surface_apps.get(surface).copied()
     }
 
+    pub fn is_home_surface(&self, surface: &WlSurface) -> bool {
+        let app_id = with_states(surface, |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .and_then(|data| data.lock().ok().and_then(|attrs| attrs.app_id.clone()))
+        });
+        app_id.as_deref() == Some(shadow_ui_core::app::DESKTOP_WAYLAND_APP_ID)
+    }
+
+    pub fn is_home_window(&self, window: &Window) -> bool {
+        self.is_home_surface(window.toplevel().unwrap().wl_surface())
+    }
+
+    pub fn has_mapped_app_window(&self) -> bool {
+        self.space
+            .elements()
+            .any(|window| !self.is_home_window(window))
+    }
+
     pub fn remember_surface_app(&mut self, surface: &WlSurface, app_id: AppId) {
         self.surface_apps.insert(surface.clone(), app_id);
         self.shell.set_app_running(app_id, true);
@@ -252,14 +272,6 @@ impl ShadowCompositor {
             "shadow-compositor: launch or focus app"
         );
 
-        if self
-            .shell
-            .foreground_app()
-            .is_some_and(|current| current != app_id)
-        {
-            self.go_home();
-        }
-
         if let Some(window) = self.mapped_window_for_app(app_id) {
             self.focus_window(Some(window), self.next_serial());
             return Ok(());
@@ -311,7 +323,7 @@ impl ShadowCompositor {
             let Some(surface) = window.toplevel() else {
                 continue;
             };
-            if self.home_window().is_some_and(|home| home == window) {
+            if self.is_home_window(&window) {
                 self.space
                     .map_element(window.clone(), self.home_window_location(), false);
                 continue;
@@ -338,16 +350,7 @@ impl ShadowCompositor {
     fn home_window(&self) -> Option<Window> {
         self.space
             .elements()
-            .find(|window| {
-                let surface = window.toplevel().unwrap().wl_surface();
-                let app_id = with_states(surface, |states| {
-                    states
-                        .data_map
-                        .get::<XdgToplevelSurfaceData>()
-                        .and_then(|data| data.lock().ok().and_then(|attrs| attrs.app_id.clone()))
-                });
-                app_id.as_deref() == Some(shadow_ui_core::app::DESKTOP_WAYLAND_APP_ID)
-            })
+            .find(|window| self.is_home_window(window))
             .cloned()
     }
 }
