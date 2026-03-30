@@ -13,5 +13,8 @@ fi
 PIXEL_GUEST_CLIENT_ARTIFACT="$(pixel_blitz_demo_artifact)" \
 PIXEL_GUEST_CLIENT_DST="$(pixel_blitz_demo_dst)" \
 PIXEL_COMPOSITOR_MARKER='[shadow-guest-compositor] presented-frame' \
-PIXEL_CLIENT_MARKER='[shadow-blitz-demo] static-document-ready' \
+PIXEL_CLIENT_MARKER='[shadow-blitz-demo] dynamic-document-ready' \
+PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME='' \
+PIXEL_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT=1 \
+PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
   "$SCRIPT_DIR/pixel_guest_ui_drm.sh"

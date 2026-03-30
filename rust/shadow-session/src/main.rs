@@ -189,6 +189,9 @@ fn run_guest_ui() -> ! {
     if let Some(value) = env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_WINDOW") {
         command.env("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_WINDOW", value);
     }
+    if let Some(value) = env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT") {
+        command.env("SHADOW_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT", value);
+    }
     if let Some(value) = env::var_os("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE") {
         command.env("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE", value);
     }

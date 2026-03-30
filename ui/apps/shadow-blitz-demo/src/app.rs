@@ -54,7 +54,7 @@ impl BlitzApplication {
 
     fn handle_blitz_shell_event(
         &mut self,
-        _event_loop: &dyn ActiveEventLoop,
+        event_loop: &dyn ActiveEventLoop,
         event: BlitzShellEvent,
     ) {
         let Some(window) = self.window.as_mut() else {
@@ -69,6 +69,11 @@ impl BlitzApplication {
                 window.request_redraw();
             }
             _ => {}
+        }
+
+        if window.downcast_doc_mut::<StaticDocument>().should_exit() {
+            self.window.take();
+            event_loop.exit();
         }
     }
 }

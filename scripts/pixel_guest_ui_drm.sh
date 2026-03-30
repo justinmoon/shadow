@@ -17,6 +17,11 @@ runtime_dir="$(pixel_runtime_dir)"
 session_dst="$(pixel_session_dst)"
 compositor_dst="$(pixel_compositor_dst)"
 client_dst="$(pixel_guest_client_dst)"
+compositor_exit_on_first_frame="${PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME-1}"
+compositor_exit_on_client_disconnect="${PIXEL_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT-}"
+client_exit_on_configure="${PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE-1}"
+counter_linger_ms="${PIXEL_GUEST_COUNTER_LINGER_MS-500}"
+session_timeout_secs="${PIXEL_GUEST_SESSION_TIMEOUT_SECS-}"
 logcat_pid=""
 
 cleanup() {
@@ -43,7 +48,7 @@ phone_script="$(
   cat <<EOF
 $(pixel_takeover_stop_services_script)
 rm -rf $runtime_dir && mkdir -p $runtime_dir && chmod 700 $runtime_dir && rm -f $frame_path
-env SHADOW_SESSION_MODE=guest-ui SHADOW_RUNTIME_DIR=$runtime_dir SHADOW_GUEST_COMPOSITOR_BIN=$compositor_dst SHADOW_GUEST_CLIENT=$client_dst SHADOW_GUEST_COMPOSITOR_TRANSPORT=direct SHADOW_GUEST_COMPOSITOR_ENABLE_DRM=1 SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME=1 SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE=1 SHADOW_GUEST_COUNTER_LINGER_MS=500 SHADOW_GUEST_FRAME_PATH=$frame_path RUST_LOG=shadow_compositor_guest=info,shadow_counter_guest=info,smithay=warn $session_dst
+${session_timeout_secs:+timeout $session_timeout_secs }env SHADOW_SESSION_MODE=guest-ui SHADOW_RUNTIME_DIR=$runtime_dir SHADOW_GUEST_COMPOSITOR_BIN=$compositor_dst SHADOW_GUEST_CLIENT=$client_dst SHADOW_GUEST_COMPOSITOR_TRANSPORT=direct SHADOW_GUEST_COMPOSITOR_ENABLE_DRM=1 ${compositor_exit_on_first_frame:+SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME=$compositor_exit_on_first_frame }${compositor_exit_on_client_disconnect:+SHADOW_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT=$compositor_exit_on_client_disconnect }${client_exit_on_configure:+SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE=$client_exit_on_configure }${counter_linger_ms:+SHADOW_GUEST_COUNTER_LINGER_MS=$counter_linger_ms }SHADOW_GUEST_FRAME_PATH=$frame_path RUST_LOG=shadow_compositor_guest=info,shadow_counter_guest=info,smithay=warn $session_dst
 status=\$?
 $(pixel_takeover_start_services_script)
 exit \$status

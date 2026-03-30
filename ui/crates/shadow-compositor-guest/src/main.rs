@@ -61,14 +61,21 @@ struct ShadowGuestCompositor {
     launched_clients: Vec<Child>,
     exit_on_first_window: bool,
     exit_on_first_frame: bool,
+    exit_on_client_disconnect: bool,
     kms_display: Option<kms::KmsDisplay>,
 }
 
 impl ShadowGuestCompositor {
     fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> Self {
         let display_handle = display.handle();
-        let transport = Self::init_wayland_transport(display, event_loop);
         let loop_signal = event_loop.get_signal();
+        let exit_on_client_disconnect =
+            std::env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT").is_some();
+        let transport = Self::init_wayland_transport(
+            display,
+            event_loop,
+            exit_on_client_disconnect.then_some(loop_signal.clone()),
+        );
 
         Self {
             transport,
@@ -84,6 +91,7 @@ impl ShadowGuestCompositor {
                 .is_some(),
             exit_on_first_frame: std::env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME")
                 .is_some(),
+            exit_on_client_disconnect,
             kms_display: None,
         }
     }
@@ -109,18 +117,22 @@ impl ShadowGuestCompositor {
     fn init_wayland_transport(
         display: Display<Self>,
         event_loop: &mut EventLoop<Self>,
+        disconnect_signal: Option<LoopSignal>,
     ) -> WaylandTransport {
         Self::insert_display_source(display, event_loop);
 
         let requested =
             std::env::var("SHADOW_GUEST_COMPOSITOR_TRANSPORT").unwrap_or_else(|_| "auto".into());
         match requested.as_str() {
-            "socket" => WaylandTransport::NamedSocket(Self::insert_wayland_listener(event_loop)),
+            "socket" => WaylandTransport::NamedSocket(Self::insert_wayland_listener(
+                event_loop,
+                disconnect_signal,
+            )),
             "direct" => {
                 tracing::info!("[shadow-guest-compositor] transport=direct-client-fd");
                 WaylandTransport::DirectClientFd
             }
-            "auto" => match Self::try_insert_wayland_listener(event_loop) {
+            "auto" => match Self::try_insert_wayland_listener(event_loop, disconnect_signal) {
                 Ok(socket_name) => WaylandTransport::NamedSocket(socket_name),
                 Err(BindError::PermissionDenied) => {
                     tracing::warn!(
@@ -134,12 +146,17 @@ impl ShadowGuestCompositor {
         }
     }
 
-    fn insert_wayland_listener(event_loop: &mut EventLoop<Self>) -> OsString {
-        Self::try_insert_wayland_listener(event_loop).expect("create wayland socket")
+    fn insert_wayland_listener(
+        event_loop: &mut EventLoop<Self>,
+        disconnect_signal: Option<LoopSignal>,
+    ) -> OsString {
+        Self::try_insert_wayland_listener(event_loop, disconnect_signal)
+            .expect("create wayland socket")
     }
 
     fn try_insert_wayland_listener(
         event_loop: &mut EventLoop<Self>,
+        disconnect_signal: Option<LoopSignal>,
     ) -> Result<OsString, BindError> {
         let listener = ListeningSocketSource::new_auto()?;
         let socket_name = listener.socket_name().to_os_string();
@@ -149,7 +166,10 @@ impl ShadowGuestCompositor {
             .insert_source(listener, move |client_stream, _, state| {
                 state
                     .display_handle
-                    .insert_client(client_stream, Arc::new(ClientState::default()))
+                    .insert_client(
+                        client_stream,
+                        Arc::new(ClientState::new(disconnect_signal.clone())),
+                    )
                     .expect("insert wayland client");
             })
             .expect("insert wayland socket");
@@ -199,7 +219,13 @@ impl ShadowGuestCompositor {
                     .env_remove("WAYLAND_DISPLAY")
                     .env("WAYLAND_SOCKET", raw_fd.to_string());
                 self.display_handle
-                    .insert_client(server_stream, Arc::new(ClientState::default()))
+                    .insert_client(
+                        server_stream,
+                        Arc::new(ClientState::new(
+                            self.exit_on_client_disconnect
+                                .then_some(self.loop_signal.clone()),
+                        )),
+                    )
                     .expect("insert wayland client");
                 let child = command.spawn()?;
                 drop(client_stream);
@@ -318,15 +344,29 @@ fn clear_cloexec(stream: &UnixStream) -> std::io::Result<()> {
     Ok(())
 }
 
-#[derive(Default)]
 struct ClientState {
     compositor_state: CompositorClientState,
+    disconnect_signal: Option<LoopSignal>,
+}
+
+impl ClientState {
+    fn new(disconnect_signal: Option<LoopSignal>) -> Self {
+        Self {
+            compositor_state: CompositorClientState::default(),
+            disconnect_signal,
+        }
+    }
 }
 
 impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {}
 
-    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {
+        if let Some(loop_signal) = &self.disconnect_signal {
+            tracing::info!("[shadow-guest-compositor] client-disconnected");
+            loop_signal.stop();
+        }
+    }
 }
 
 impl SeatHandler for ShadowGuestCompositor {
