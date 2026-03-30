@@ -12,6 +12,10 @@ pixel_artifacts_dir() {
   printf '%s/artifacts\n' "$(pixel_dir)"
 }
 
+pixel_root_dir() {
+  printf '%s/root\n' "$(pixel_dir)"
+}
+
 pixel_runs_dir() {
   printf '%s/runs\n' "$(pixel_dir)"
 }
@@ -26,6 +30,10 @@ pixel_timestamp() {
 
 pixel_connected_serials() {
   adb devices | awk 'NR > 1 && $2 == "device" { print $1 }'
+}
+
+pixel_connected_sideload_serials() {
+  adb devices | awk 'NR > 1 && $2 == "sideload" { print $1 }'
 }
 
 pixel_resolve_serial() {
@@ -58,11 +66,48 @@ pixel_resolve_serial() {
   esac
 }
 
+pixel_resolve_sideload_serial() {
+  local requested
+  requested="${PIXEL_SERIAL:-}"
+
+  if [[ -n "$requested" ]]; then
+    if pixel_connected_sideload_serials | grep -Fxq "$requested"; then
+      printf '%s\n' "$requested"
+      return 0
+    fi
+    echo "pixel: requested PIXEL_SERIAL is not connected in adb sideload mode: $requested" >&2
+    return 1
+  fi
+
+  mapfile -t serials < <(pixel_connected_sideload_serials)
+  case "${#serials[@]}" in
+    0)
+      echo "pixel: no adb sideload device detected" >&2
+      return 1
+      ;;
+    1)
+      printf '%s\n' "${serials[0]}"
+      ;;
+    *)
+      echo "pixel: multiple adb sideload devices detected; set PIXEL_SERIAL" >&2
+      printf '  %s\n' "${serials[@]}" >&2
+      return 1
+      ;;
+  esac
+}
+
 pixel_adb() {
   local serial
   serial="$1"
   shift
   adb -s "$serial" "$@"
+}
+
+pixel_fastboot() {
+  local serial
+  serial="$1"
+  shift
+  fastboot -s "$serial" "$@"
 }
 
 pixel_prop() {
@@ -73,7 +118,7 @@ pixel_prop() {
 }
 
 pixel_prepare_dirs() {
-  mkdir -p "$(pixel_artifacts_dir)" "$(pixel_runs_dir)"
+  mkdir -p "$(pixel_artifacts_dir)" "$(pixel_runs_dir)" "$(pixel_root_dir)"
 }
 
 pixel_prepare_run_dir() {
@@ -149,8 +194,114 @@ pixel_runtime_dir() {
   printf '%s\n' "${PIXEL_RUNTIME_DIR:-/data/local/tmp/shadow-runtime}"
 }
 
+pixel_download_dir_device() {
+  printf '%s\n' "${PIXEL_DOWNLOAD_DIR_DEVICE:-/storage/emulated/0/Download}"
+}
+
 pixel_frame_path() {
   printf '%s\n' "${PIXEL_FRAME_PATH:-/data/local/tmp/shadow-frame.ppm}"
+}
+
+pixel_root_ota_url() {
+  printf '%s\n' "${PIXEL_ROOT_OTA_URL:-https://ota.googlezip.net/packages/ota-api/package/c4e85817eb7653336a8fe2de681618a9e004b1fb.zip}"
+}
+
+pixel_root_ota_zip() {
+  printf '%s/%s\n' "$(pixel_root_dir)" "${PIXEL_ROOT_OTA_FILENAME:-sunfish-TQ3A.230805.001.S2-full-ota.zip}"
+}
+
+pixel_root_payload_bin() {
+  printf '%s/payload.bin\n' "$(pixel_root_dir)"
+}
+
+pixel_root_payload_extract_dir() {
+  printf '%s/payload-extracted\n' "$(pixel_root_dir)"
+}
+
+pixel_root_stock_boot_img() {
+  printf '%s/boot.img\n' "$(pixel_root_dir)"
+}
+
+pixel_root_magisk_apk() {
+  printf '%s/Magisk.apk\n' "$(pixel_root_dir)"
+}
+
+pixel_root_magisk_info_json() {
+  printf '%s/magisk-release.json\n' "$(pixel_root_dir)"
+}
+
+pixel_root_patched_boot_img() {
+  printf '%s/magisk_patched.img\n' "$(pixel_root_dir)"
+}
+
+pixel_root_magisk_patch_assets_dir() {
+  printf '%s/magisk-device-assets\n' "$(pixel_root_dir)"
+}
+
+pixel_root_patch_log() {
+  printf '%s/magisk-patch.log\n' "$(pixel_root_dir)"
+}
+
+pixel_root_device_patch_dir() {
+  printf '%s\n' "${PIXEL_ROOT_DEVICE_PATCH_DIR:-/data/local/tmp/shadow-magisk-patch}"
+}
+
+pixel_root_device_patched_boot_img() {
+  printf '%s/new-boot.img\n' "$(pixel_root_device_patch_dir)"
+}
+
+pixel_root_device_boot_img() {
+  printf '%s\n' "${PIXEL_ROOT_DEVICE_BOOT_IMG:-$(pixel_download_dir_device)/shadow-stock-boot.img}"
+}
+
+pixel_root_device_patched_glob() {
+  printf '%s\n' "${PIXEL_ROOT_DEVICE_PATCHED_GLOB:-$(pixel_download_dir_device)/magisk_patched*.img}"
+}
+
+pixel_root_expected_fingerprint() {
+  printf '%s\n' "${PIXEL_ROOT_EXPECTED_FINGERPRINT:-google/sunfish/sunfish:13/TQ3A.230805.001.S2/12655424:user/release-keys}"
+}
+
+pixel_require_expected_fingerprint() {
+  local serial context expected actual
+  serial="$1"
+  context="$2"
+  expected="$(pixel_root_expected_fingerprint)"
+  actual="$(pixel_prop "$serial" ro.build.fingerprint)"
+
+  if [[ "$actual" == "$expected" ]]; then
+    return 0
+  fi
+
+  cat <<EOF >&2
+$context: device fingerprint does not match the cached stock boot image.
+expected: $expected
+actual:   $actual
+
+Run 'just pixel-ota-sideload' first, let Android boot, re-enable USB debugging, then retry.
+EOF
+  return 1
+}
+
+pixel_slot_suffix_to_letter() {
+  case "$1" in
+    _a)
+      printf 'a\n'
+      ;;
+    _b)
+      printf 'b\n'
+      ;;
+    *)
+      echo "pixel: unknown slot suffix: $1" >&2
+      return 1
+      ;;
+  esac
+}
+
+pixel_boot_partition_for_slot() {
+  local slot_letter
+  slot_letter="$(pixel_slot_suffix_to_letter "$1")"
+  printf 'boot_%s\n' "$slot_letter"
 }
 
 pixel_expected_checksum() {
@@ -236,4 +387,68 @@ with open(output, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=2, sort_keys=True)
     fh.write("\n")
 PY
+}
+
+pixel_download_file() {
+  local url output
+  url="$1"
+  output="$2"
+  curl -L --fail --retry 3 --retry-delay 2 -o "$output.tmp" "$url"
+  mv "$output.tmp" "$output"
+}
+
+pixel_wait_for_fastboot() {
+  local serial timeout
+  serial="$1"
+  timeout="${2:-60}"
+  for _ in $(seq 1 "$timeout"); do
+    if fastboot devices | awk '$2 == "fastboot" { print $1 }' | grep -Fxq "$serial"; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "pixel: timed out waiting for fastboot device $serial" >&2
+  return 1
+}
+
+pixel_wait_for_adb() {
+  local serial timeout
+  serial="$1"
+  timeout="${2:-120}"
+  for _ in $(seq 1 "$timeout"); do
+    if pixel_connected_serials | grep -Fxq "$serial"; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "pixel: timed out waiting for adb device $serial" >&2
+  return 1
+}
+
+pixel_wait_for_sideload() {
+  local serial timeout
+  serial="$1"
+  timeout="${2:-300}"
+  for _ in $(seq 1 "$timeout"); do
+    if pixel_connected_sideload_serials | grep -Fxq "$serial"; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "pixel: timed out waiting for adb sideload mode on $serial" >&2
+  return 1
+}
+
+pixel_wait_for_boot_completed() {
+  local serial timeout
+  serial="$1"
+  timeout="${2:-240}"
+  for _ in $(seq 1 "$timeout"); do
+    if [[ "$(pixel_prop "$serial" sys.boot_completed)" == "1" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "pixel: timed out waiting for Android boot completion on $serial" >&2
+  return 1
 }

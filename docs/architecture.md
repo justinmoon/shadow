@@ -59,6 +59,15 @@ This also sets the current boundary for the Blitz + Deno demo on device:
 2. Official Deno Linux arm64 releases are dynamically linked against GNU libc (`/lib/ld-linux-aarch64.so.1`) and do not execute in the stock Android shell environment on the Pixel 4a.
 3. Reaching full Blitz-on-device therefore needs one more runtime layer beyond the current Pixel compositor loop: either a Deno build/package that actually runs on the device shell, or a replacement/embedded JS runtime seam.
 
+For the newly unlocked-and-rooted Pixel track, the intended operator ladder is now:
+
+1. `just pixel-root-prep` downloads the exact full OTA, extracts the matching `boot.img`, and caches the current Magisk APK.
+2. `just pixel-ota-sideload` is still the only step that needs direct interaction on the phone, because recovery has to be put into `Apply from ADB`.
+3. `just pixel-root-patch` unpacks Magisk's own patch assets from the APK, pushes them to `/data/local/tmp`, runs `boot_patch.sh` under `adb shell`, and pulls the resulting `new-boot.img` back to the host.
+4. `just pixel-root-flash` flashes the patched image to the explicit active-slot `boot_a` or `boot_b` partition, reboots Android, installs the Magisk app, and verifies `su`.
+
+This removes the old requirement to manually patch `boot.img` inside the Magisk app, while keeping `just pixel-root-stage` as a fallback if the non-interactive patch path ever breaks.
+
 For the local VM specifically, the first visible frame can lag behind boot because the guest may still be compiling `shadow-ui-desktop` or app binaries from the mounted source tree. The current operator contract is:
 
 1. `just ui-vm-run` launches the VM window.

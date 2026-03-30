@@ -137,8 +137,10 @@
             nix
             nodejs
             openssh
+            payload-dumper-go
             python3
             rustc
+            unzip
             zig
           ];
         in pkgs.mkShell {

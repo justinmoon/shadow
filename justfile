@@ -171,6 +171,30 @@ pixel-verify run_dir="":
 pixel-loop:
 	@scripts/pixel_loop.sh
 
+# Download/cache the official Pixel 4a OTA, extract boot.img, and fetch the latest Magisk APK
+pixel-root-prep:
+	@scripts/pixel_root_prep.sh
+
+# Reboot to recovery and sideload the cached official Pixel 4a OTA once the phone enters adb sideload mode
+pixel-ota-sideload:
+	@scripts/pixel_ota_sideload.sh
+
+# Run Magisk's boot patcher non-interactively on the device and pull the patched boot image locally
+pixel-root-patch:
+	@scripts/pixel_root_patch.sh
+
+# Manual fallback: install Magisk on the phone and push the exact stock boot.img into Downloads for patching
+pixel-root-stage:
+	@scripts/pixel_root_stage.sh
+
+# Flash the locally prepared patched boot image and reboot back to Android
+pixel-root-flash:
+	@scripts/pixel_root_flash.sh
+
+# Verify whether root is active on the connected Pixel
+pixel-root-check:
+	@scripts/pixel_root_check.sh
+
 # Run the nested Smithay compositor host on Linux
 compositor-run:
 	@nix develop .#ui -c cargo run --manifest-path ui/Cargo.toml -p shadow-compositor

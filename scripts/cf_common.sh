@@ -42,10 +42,13 @@ flake_path() {
 }
 
 ensure_bootimg_shell() {
-  if [[ "${SHADOW_BOOTIMG_SHELL:-}" == "1" ]]; then
+  if [[ "${SHADOW_BOOTIMG_SHELL:-}" == "1" ]] \
+    && command -v adb >/dev/null 2>&1 \
+    && command -v just >/dev/null 2>&1 \
+    && command -v payload-dumper-go >/dev/null 2>&1; then
     return 0
   fi
-  exec nix develop "$(flake_path)" -c "$0" "$@"
+  exec env -u SHADOW_BOOTIMG_SHELL nix develop "$(flake_path)" -c "$0" "$@"
 }
 
 cached_boot_image() {
