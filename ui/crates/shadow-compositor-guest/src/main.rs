@@ -206,6 +206,15 @@ impl ShadowGuestCompositor {
 
         let mut command = std::process::Command::new(&client_path);
         command.env("XDG_RUNTIME_DIR", runtime_dir);
+        if let Some(value) = std::env::var("SHADOW_GUEST_CLIENT_ENV").ok() {
+            for assignment in value.split_whitespace() {
+                if let Some((key, env_value)) = assignment.split_once('=') {
+                    if !key.is_empty() {
+                        command.env(key, env_value);
+                    }
+                }
+            }
+        }
 
         match &self.transport {
             WaylandTransport::NamedSocket(socket_name) => {

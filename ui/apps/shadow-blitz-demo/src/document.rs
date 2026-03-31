@@ -1,4 +1,5 @@
 use std::{
+    env,
     sync::{
         mpsc::{channel, Receiver, Sender},
         Arc,
@@ -162,19 +163,29 @@ enum TimerEvent {
 }
 
 fn spawn_dynamic_timer(timer_tx: Sender<TimerEvent>, waker: Waker) {
+    let delay = duration_from_env("SHADOW_BLITZ_DYNAMIC_DELAY_MS", 900);
     thread::spawn(move || {
-        thread::sleep(Duration::from_millis(900));
+        thread::sleep(delay);
         let _ = timer_tx.send(TimerEvent::AdvanceToDynamic);
         waker.wake_by_ref();
     });
 }
 
 fn spawn_exit_timer(timer_tx: Sender<TimerEvent>, waker: Waker) {
+    let delay = duration_from_env("SHADOW_BLITZ_EXIT_DELAY_MS", 1400);
     thread::spawn(move || {
-        thread::sleep(Duration::from_millis(1400));
+        thread::sleep(delay);
         let _ = timer_tx.send(TimerEvent::RequestExit);
         waker.wake_by_ref();
     });
+}
+
+fn duration_from_env(key: &str, default_ms: u64) -> Duration {
+    let millis = env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(default_ms);
+    Duration::from_millis(millis)
 }
 
 fn template_document() -> HtmlDocument {

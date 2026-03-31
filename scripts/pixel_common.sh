@@ -166,6 +166,7 @@ start vendor.qti.hardware.display.allocator || true
 start vendor.hwcomposer-2-4 || true
 start surfaceflinger || true
 start bootanim || true
+setenforce 1 >/dev/null 2>&1 || true
 EOF
 }
 

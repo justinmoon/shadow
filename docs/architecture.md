@@ -46,6 +46,7 @@ The current operator ladder reflects that split:
 7. `just pixel-doctor` / `pixel-build` / `pixel-push` / `pixel-run` / `pixel-loop` are the current real-device operator ladder for post-boot iteration on a plugged-in Pixel.
 8. `just pixel-drm-rect` is the first rooted visible-screen proof on the Pixel: stop the Android display services, take DRM master, modeset the panel, then hand control back.
 9. `just pixel-guest-ui-drm` reuses that rooted display-takeover seam for the real compositor path and proves the guest compositor plus counter client can render to the phone panel, not just to an offscreen artifact.
+10. `just pixel-*-hold` plus `just pixel-restore-android` split takeover from restore so the panel can stay under our control long enough for human-visible QA instead of immediately jumping back to Android.
 
 This is intentionally not yet a full custom userland boot. The repo is using the smallest reliable transport at each layer: first-stage wrapper for `/init` proof, then post-boot guest session launch for display and compositor iteration.
 
@@ -75,6 +76,7 @@ One device-specific detail emerged on the real Pixel 4a:
 1. Stopping only `surfaceflinger` is not enough to free the panel for DRM/KMS takeover.
 2. The working rooted handoff currently stops `surfaceflinger`, `bootanim`, `vendor.hwcomposer-2-4`, and `vendor.qti.hardware.display.allocator`.
 3. On this Qualcomm display stack, a connector can also report an encoder without a current CRTC even though the panel is usable; the KMS path now falls back to the first CRTC allowed by `possible_crtcs`.
+4. For rooted QA, leaving Android stopped is sometimes the right behavior. The new hold-mode loop is `just pixel-...-hold` to seize the panel, inspect the result, then `just pixel-restore-android` to hand control back.
 
 For the local VM specifically, the first visible frame can lag behind boot because the guest may still be compiling `shadow-ui-desktop` or app binaries from the mounted source tree. The current operator contract is:
 

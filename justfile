@@ -179,13 +179,29 @@ pixel-loop:
 pixel-drm-rect:
 	@scripts/pixel_drm_rect.sh
 
+# Stop the Android display stack on the rooted Pixel, run the direct DRM takeover proof, and leave Android stopped
+pixel-drm-rect-hold:
+	@PIXEL_TAKEOVER_RESTORE_ANDROID= scripts/pixel_drm_rect.sh
+
 # Stop the Android display stack on the rooted Pixel and run the guest compositor plus client on the real panel
 pixel-guest-ui-drm:
 	@scripts/pixel_guest_ui_drm.sh
 
+# Stop the Android display stack on the rooted Pixel, run the guest compositor plus client on the real panel, and leave Android stopped
+pixel-guest-ui-drm-hold:
+	@PIXEL_TAKEOVER_RESTORE_ANDROID= scripts/pixel_guest_ui_drm.sh
+
 # Run the static Blitz demo on the rooted Pixel through the guest compositor DRM path
 pixel-blitz-demo-drm:
 	@scripts/pixel_blitz_demo_drm.sh
+
+# Run the static Blitz demo on the rooted Pixel through the guest compositor DRM path and leave Android stopped
+pixel-blitz-demo-drm-hold:
+	@PIXEL_TAKEOVER_RESTORE_ANDROID= PIXEL_GUEST_SESSION_TIMEOUT_SECS= PIXEL_BLITZ_EXIT_DELAY_MS=600000 scripts/pixel_blitz_demo_drm.sh
+
+# Restore the Android display stack after a hold-mode rooted takeover run
+pixel-restore-android:
+	@scripts/pixel_restore_android.sh
 
 # Download/cache the official Pixel 4a OTA, extract boot.img, and fetch the latest Magisk APK
 pixel-root-prep:

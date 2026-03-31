@@ -13,6 +13,8 @@ session_output_path="$run_dir/session-output.txt"
 status_path="$run_dir/status.json"
 drm_artifact="$(pixel_artifact_path drm-rect)"
 session_artifact="$(pixel_session_artifact)"
+restore_android="${PIXEL_TAKEOVER_RESTORE_ANDROID-1}"
+restore_delay_secs="${PIXEL_TAKEOVER_RESTORE_DELAY_SECS-}"
 logcat_pid=""
 
 cleanup() {
@@ -50,7 +52,8 @@ phone_script="$(
 $(pixel_takeover_stop_services_script)
 SHADOW_SESSION_MODE=drm-rect SHADOW_DRM_RECT_BIN=/data/local/tmp/drm-rect /data/local/tmp/shadow-session
 status=\$?
-$(pixel_takeover_start_services_script)
+${restore_delay_secs:+sleep $restore_delay_secs}
+$(if [[ -n "$restore_android" ]]; then pixel_takeover_start_services_script; fi)
 exit \$status
 EOF
 )"
@@ -69,11 +72,14 @@ logcat_pid=""
 drm_success=false
 if [[ "$session_status" -eq 0 ]] && grep -Fq "[shadow-drm] success" "$session_output_path"; then
   drm_success=true
+elif [[ -z "$restore_android" ]] && grep -Fq "[shadow-drm] success" "$session_output_path"; then
+  drm_success=true
 fi
 
 pixel_write_status_json "$status_path" \
   run_dir="$run_dir" \
   session_exit="$session_status" \
+  android_restored="$([[ -n "$restore_android" ]] && echo true || echo false)" \
   drm_success="$drm_success"
 
 cat "$status_path"

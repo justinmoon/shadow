@@ -201,6 +201,9 @@ fn run_guest_ui() -> ! {
     if let Some(value) = env::var_os("SHADOW_GUEST_FRAME_PATH") {
         command.env("SHADOW_GUEST_FRAME_PATH", value);
     }
+    if let Some(value) = env::var_os("SHADOW_GUEST_CLIENT_ENV") {
+        command.env("SHADOW_GUEST_CLIENT_ENV", value);
+    }
 
     run_command(command, &compositor_bin);
 }
