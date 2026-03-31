@@ -25,11 +25,14 @@ fi
 compositor_ok=false
 client_ok=false
 frame_ok=false
+require_client_marker="${PIXEL_VERIFY_REQUIRE_CLIENT_MARKER-1}"
 
 if grep -Fq "$compositor_marker" "$session_output"; then
   compositor_ok=true
 fi
-if grep -Fq "$client_marker" "$session_output"; then
+if [[ -z "$require_client_marker" ]]; then
+  client_ok=true
+elif grep -Fq "$client_marker" "$session_output"; then
   client_ok=true
 fi
 if [[ -s "$frame_artifact" ]]; then

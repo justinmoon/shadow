@@ -169,11 +169,40 @@ wait_for_service_state() {
 }
 
 kill_stale_shadow_processes() {
-  pkill -x shadow-blitz-demo || true
-  pkill -x shadow-counter-guest || true
-  pkill -x shadow-compositor-guest || true
-  pkill -x drm-rect || true
-  pkill -x shadow-session || true
+  shadow_process_pids() {
+    name="$1"
+    ps -A | awk -v name="$name" '$NF == name { print $2 }'
+  }
+
+  kill_named_shadow_process() {
+    name="$1"
+    attempts="${2:-10}"
+    count=0
+
+    for pid in $(shadow_process_pids "$name"); do
+      kill "$pid" >/dev/null 2>&1 || true
+    done
+    while [ "$count" -lt "$attempts" ]; do
+      if [ -z "$(shadow_process_pids "$name")" ]; then
+        return 0
+      fi
+      count=$((count + 1))
+      sleep 0.2
+    done
+
+    for pid in $(shadow_process_pids "$name"); do
+      kill -KILL "$pid" >/dev/null 2>&1 || true
+    done
+    while [ -n "$(shadow_process_pids "$name")" ]; do
+      sleep 0.1
+    done
+  }
+
+  kill_named_shadow_process shadow-blitz-demo
+  kill_named_shadow_process shadow-counter-guest
+  kill_named_shadow_process shadow-compositor-guest
+  kill_named_shadow_process drm-rect
+  kill_named_shadow_process shadow-session
 }
 
 stop_service_and_wait() {
@@ -210,11 +239,40 @@ wait_for_service_state() {
 }
 
 kill_stale_shadow_processes() {
-  pkill -x shadow-blitz-demo || true
-  pkill -x shadow-counter-guest || true
-  pkill -x shadow-compositor-guest || true
-  pkill -x drm-rect || true
-  pkill -x shadow-session || true
+  shadow_process_pids() {
+    name="$1"
+    ps -A | awk -v name="$name" '$NF == name { print $2 }'
+  }
+
+  kill_named_shadow_process() {
+    name="$1"
+    attempts="${2:-10}"
+    count=0
+
+    for pid in $(shadow_process_pids "$name"); do
+      kill "$pid" >/dev/null 2>&1 || true
+    done
+    while [ "$count" -lt "$attempts" ]; do
+      if [ -z "$(shadow_process_pids "$name")" ]; then
+        return 0
+      fi
+      count=$((count + 1))
+      sleep 0.2
+    done
+
+    for pid in $(shadow_process_pids "$name"); do
+      kill -KILL "$pid" >/dev/null 2>&1 || true
+    done
+    while [ -n "$(shadow_process_pids "$name")" ]; do
+      sleep 0.1
+    done
+  }
+
+  kill_named_shadow_process shadow-blitz-demo
+  kill_named_shadow_process shadow-counter-guest
+  kill_named_shadow_process shadow-compositor-guest
+  kill_named_shadow_process drm-rect
+  kill_named_shadow_process shadow-session
 }
 
 start_service_and_wait() {
@@ -237,6 +295,84 @@ pixel_prop() {
   serial="$1"
   key="$2"
   pixel_adb "$serial" shell getprop "$key" | tr -d '\r'
+}
+
+pixel_service_state() {
+  local serial service
+  serial="$1"
+  service="$2"
+  pixel_prop "$serial" "init.svc.$service"
+}
+
+pixel_display_services_stopped() {
+  local serial service
+  serial="$1"
+  for service in surfaceflinger vendor.hwcomposer-2-4 vendor.qti.hardware.display.allocator; do
+    if [[ "$(pixel_service_state "$serial" "$service")" != "stopped" ]]; then
+      return 1
+    fi
+  done
+}
+
+pixel_display_services_running() {
+  local serial service
+  serial="$1"
+  for service in surfaceflinger vendor.hwcomposer-2-4 vendor.qti.hardware.display.allocator; do
+    if [[ "$(pixel_service_state "$serial" "$service")" != "running" ]]; then
+      return 1
+    fi
+  done
+}
+
+pixel_takeover_processes_absent() {
+  local serial process_name
+  serial="$1"
+  for process_name in shadow-blitz-demo shadow-counter-guest shadow-compositor-guest drm-rect shadow-session; do
+    if pixel_root_process_exists "$serial" "$process_name" >/dev/null 2>&1; then
+      return 1
+    fi
+  done
+}
+
+pixel_android_display_restored() {
+  local serial
+  serial="$1"
+  [[ "$(pixel_service_state "$serial" surfaceflinger)" == "running" ]] || return 1
+  pixel_takeover_processes_absent "$serial"
+}
+
+pixel_root_process_exists() {
+  local serial process_name
+  serial="$1"
+  process_name="$2"
+  pixel_root_shell "$serial" "ps -A | awk -v name='$process_name' '\$NF == name { found=1 } END { exit(found ? 0 : 1) }'"
+}
+
+pixel_root_file_nonempty() {
+  local serial path
+  serial="$1"
+  path="$2"
+  pixel_root_shell "$serial" "[ -s '$path' ]"
+}
+
+pixel_wait_for_condition() {
+  local timeout_secs sleep_secs deadline
+  timeout_secs="$1"
+  sleep_secs="$2"
+  shift 2
+
+  deadline=$((SECONDS + timeout_secs))
+  while (( SECONDS < deadline )); do
+    if "$@"; then
+      return 0
+    fi
+    sleep "$sleep_secs"
+  done
+
+  if "$@"; then
+    return 0
+  fi
+  return 1
 }
 
 pixel_prepare_dirs() {

@@ -27,15 +27,35 @@ cleanup() {
 
 trap cleanup EXIT
 
+build_device_binary() {
+  local attr binary out_link output_path file_output
+  attr="$1"
+  binary="$2"
+  out_link="$(pixel_dir)/${binary}-result"
+  output_path="$(pixel_artifact_path "$binary")"
+
+  rm -f "$out_link"
+  nix build "$(repo_root)#${attr}" --out-link "$out_link"
+  cp "$out_link/bin/$binary" "$output_path"
+  chmod 0755 "$output_path"
+
+  file_output="$(file "$output_path")"
+  printf '%s\n' "$file_output"
+  if [[ "$file_output" != *"ARM aarch64"* ]]; then
+    echo "pixel_drm_rect: expected an arm64 binary, got: $file_output" >&2
+    exit 1
+  fi
+  if [[ "$file_output" == *"dynamically linked"* ]]; then
+    echo "pixel_drm_rect: expected a static binary, got a dynamic one: $file_output" >&2
+    exit 1
+  fi
+}
+
 if [[ ! -f "$session_artifact" ]]; then
-  "$SCRIPT_DIR/pixel_build.sh"
+  build_device_binary shadow-session-device shadow-session
 fi
 
-out_link="$(pixel_dir)/drm-rect-result"
-rm -f "$out_link"
-nix build "$(repo_root)#drm-rect-device" --out-link "$out_link"
-cp "$out_link/bin/drm-rect" "$drm_artifact"
-chmod 0755 "$drm_artifact"
+build_device_binary drm-rect-device drm-rect
 
 pixel_adb "$serial" push "$session_artifact" /data/local/tmp/shadow-session >/dev/null
 pixel_adb "$serial" push "$drm_artifact" /data/local/tmp/drm-rect >/dev/null

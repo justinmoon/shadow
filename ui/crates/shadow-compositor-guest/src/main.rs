@@ -62,6 +62,7 @@ struct ShadowGuestCompositor {
     exit_on_first_window: bool,
     exit_on_first_frame: bool,
     exit_on_client_disconnect: bool,
+    selftest_drm: bool,
     kms_display: Option<kms::KmsDisplay>,
 }
 
@@ -92,6 +93,7 @@ impl ShadowGuestCompositor {
             exit_on_first_frame: std::env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME")
                 .is_some(),
             exit_on_client_disconnect,
+            selftest_drm: std::env::var_os("SHADOW_GUEST_COMPOSITOR_SELFTEST_DRM").is_some(),
             kms_display: None,
         }
     }
@@ -270,6 +272,55 @@ impl ShadowGuestCompositor {
         }
     }
 
+    fn publish_frame(&mut self, frame: &kms::CapturedFrame, frame_marker: &str) {
+        let checksum = kms::frame_checksum(frame);
+        tracing::info!(
+            "[shadow-guest-compositor] {frame_marker} checksum={checksum:016x} size={}x{}",
+            frame.width,
+            frame.height
+        );
+
+        let artifact_path =
+            std::env::var("SHADOW_GUEST_FRAME_PATH").unwrap_or_else(|_| "/shadow-frame.ppm".into());
+        match kms::write_frame_ppm(frame, &artifact_path) {
+            Ok(()) => {
+                tracing::info!(
+                    "[shadow-guest-compositor] wrote-frame-artifact path={} checksum={checksum:016x} size={}x{}",
+                    artifact_path,
+                    frame.width,
+                    frame.height
+                );
+            }
+            Err(error) => {
+                tracing::warn!("[shadow-guest-compositor] capture-write failed: {error}");
+            }
+        }
+
+        if std::env::var_os("SHADOW_GUEST_COMPOSITOR_ENABLE_DRM").is_some() {
+            if let Some(display) = self.ensure_kms_display() {
+                match display.present_frame(frame) {
+                    Ok(()) => tracing::info!("[shadow-guest-compositor] presented-frame"),
+                    Err(error) => {
+                        tracing::warn!("[shadow-guest-compositor] present-frame failed: {error}")
+                    }
+                }
+            }
+        }
+
+        if self.exit_on_first_frame {
+            self.loop_signal.stop();
+        }
+    }
+
+    fn run_drm_selftest(&mut self) {
+        let Some(display) = self.ensure_kms_display() else {
+            return;
+        };
+        let (width, height) = display.dimensions();
+        let frame = kms::build_selftest_frame(width, height);
+        self.publish_frame(&frame, "selftest-frame-generated");
+    }
+
     fn take_surface_buffer(
         &self,
         surface: &WlSurface,
@@ -287,45 +338,7 @@ impl ShadowGuestCompositor {
 
         match capture_result {
             Ok(Ok(frame)) => {
-                let checksum = kms::frame_checksum(&frame);
-                tracing::info!(
-                    "[shadow-guest-compositor] captured-frame checksum={checksum:016x} size={}x{}",
-                    frame.width,
-                    frame.height
-                );
-
-                let artifact_path = std::env::var("SHADOW_GUEST_FRAME_PATH")
-                    .unwrap_or_else(|_| "/shadow-frame.ppm".into());
-                match kms::write_frame_ppm(&frame, &artifact_path) {
-                    Ok(()) => {
-                        tracing::info!(
-                            "[shadow-guest-compositor] wrote-frame-artifact path={} checksum={checksum:016x} size={}x{}",
-                            artifact_path,
-                            frame.width,
-                            frame.height
-                        );
-                    }
-                    Err(error) => {
-                        tracing::warn!("[shadow-guest-compositor] capture-write failed: {error}");
-                    }
-                }
-
-                if std::env::var_os("SHADOW_GUEST_COMPOSITOR_ENABLE_DRM").is_some() {
-                    if let Some(display) = self.ensure_kms_display() {
-                        match display.present_frame(&frame) {
-                            Ok(()) => tracing::info!("[shadow-guest-compositor] presented-frame"),
-                            Err(error) => {
-                                tracing::warn!(
-                                    "[shadow-guest-compositor] present-frame failed: {error}"
-                                )
-                            }
-                        }
-                    }
-                }
-
-                if self.exit_on_first_frame {
-                    self.loop_signal.stop();
-                }
+                self.publish_frame(&frame, "captured-frame");
             }
             Ok(Err(error)) => {
                 tracing::warn!("[shadow-guest-compositor] capture-frame failed: {error}");
@@ -518,7 +531,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!("[shadow-guest-compositor] transport=direct-client-fd")
         }
     }
-    state.spawn_client()?;
+    if state.selftest_drm {
+        tracing::info!("[shadow-guest-compositor] selftest-drm enabled");
+        state.run_drm_selftest();
+        if state.exit_on_first_frame {
+            return Ok(());
+        }
+    } else {
+        state.spawn_client()?;
+    }
     event_loop.run(None, &mut state, |_| {})?;
     Ok(())
 }
