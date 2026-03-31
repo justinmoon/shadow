@@ -157,6 +157,7 @@ stop bootanim || true
 stop vendor.hwcomposer-2-4 || true
 stop vendor.qti.hardware.display.allocator || true
 setenforce 0 >/dev/null 2>&1 || true
+sleep 2
 EOF
 }
 

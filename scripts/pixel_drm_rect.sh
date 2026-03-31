@@ -15,6 +15,7 @@ drm_artifact="$(pixel_artifact_path drm-rect)"
 session_artifact="$(pixel_session_artifact)"
 restore_android="${PIXEL_TAKEOVER_RESTORE_ANDROID-1}"
 restore_delay_secs="${PIXEL_TAKEOVER_RESTORE_DELAY_SECS-}"
+drm_hold_secs="${SHADOW_DRM_RECT_HOLD_SECS-}"
 logcat_pid=""
 
 cleanup() {
@@ -30,13 +31,11 @@ if [[ ! -f "$session_artifact" ]]; then
   "$SCRIPT_DIR/pixel_build.sh"
 fi
 
-if [[ ! -f "$drm_artifact" ]]; then
-  out_link="$(pixel_dir)/drm-rect-result"
-  rm -f "$out_link"
-  nix build "$(repo_root)#drm-rect-device" --out-link "$out_link"
-  cp "$out_link/bin/drm-rect" "$drm_artifact"
-  chmod 0755 "$drm_artifact"
-fi
+out_link="$(pixel_dir)/drm-rect-result"
+rm -f "$out_link"
+nix build "$(repo_root)#drm-rect-device" --out-link "$out_link"
+cp "$out_link/bin/drm-rect" "$drm_artifact"
+chmod 0755 "$drm_artifact"
 
 pixel_adb "$serial" push "$session_artifact" /data/local/tmp/shadow-session >/dev/null
 pixel_adb "$serial" push "$drm_artifact" /data/local/tmp/drm-rect >/dev/null
@@ -50,7 +49,7 @@ logcat_pid="$!"
 phone_script="$(
   cat <<EOF
 $(pixel_takeover_stop_services_script)
-SHADOW_SESSION_MODE=drm-rect SHADOW_DRM_RECT_BIN=/data/local/tmp/drm-rect /data/local/tmp/shadow-session
+${drm_hold_secs:+SHADOW_DRM_RECT_HOLD_SECS=$drm_hold_secs }SHADOW_SESSION_MODE=drm-rect SHADOW_DRM_RECT_BIN=/data/local/tmp/drm-rect /data/local/tmp/shadow-session
 status=\$?
 ${restore_delay_secs:+sleep $restore_delay_secs}
 $(if [[ -n "$restore_android" ]]; then pixel_takeover_start_services_script; fi)

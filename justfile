@@ -181,7 +181,7 @@ pixel-drm-rect:
 
 # Stop the Android display stack on the rooted Pixel, run the direct DRM takeover proof, and leave Android stopped
 pixel-drm-rect-hold:
-	@PIXEL_TAKEOVER_RESTORE_ANDROID= scripts/pixel_drm_rect.sh
+	@PIXEL_TAKEOVER_RESTORE_ANDROID= SHADOW_DRM_RECT_HOLD_SECS=600 scripts/pixel_drm_rect.sh
 
 # Stop the Android display stack on the rooted Pixel and run the guest compositor plus client on the real panel
 pixel-guest-ui-drm:
