@@ -152,20 +152,81 @@ pixel_root_shell() {
 
 pixel_takeover_stop_services_script() {
   cat <<'EOF'
-stop surfaceflinger || true
-stop bootanim || true
-stop vendor.hwcomposer-2-4 || true
-stop vendor.qti.hardware.display.allocator || true
+wait_for_service_state() {
+  service="$1"
+  expected="$2"
+  attempts="${3:-40}"
+  count=0
+  while [ "$count" -lt "$attempts" ]; do
+    current="$(getprop "init.svc.$service" | tr -d '\r')"
+    if [ "$current" = "$expected" ]; then
+      return 0
+    fi
+    count=$((count + 1))
+    sleep 0.2
+  done
+  return 1
+}
+
+kill_stale_shadow_processes() {
+  pkill -x shadow-blitz-demo || true
+  pkill -x shadow-counter-guest || true
+  pkill -x shadow-compositor-guest || true
+  pkill -x drm-rect || true
+  pkill -x shadow-session || true
+}
+
+stop_service_and_wait() {
+  service="$1"
+  stop "$service" || true
+  wait_for_service_state "$service" stopped 50 || true
+}
+
+kill_stale_shadow_processes
+stop_service_and_wait surfaceflinger
+stop_service_and_wait bootanim
+stop_service_and_wait vendor.hwcomposer-2-4
+stop_service_and_wait vendor.qti.hardware.display.allocator
 setenforce 0 >/dev/null 2>&1 || true
-sleep 2
 EOF
 }
 
 pixel_takeover_start_services_script() {
   cat <<'EOF'
-start vendor.qti.hardware.display.allocator || true
-start vendor.hwcomposer-2-4 || true
-start surfaceflinger || true
+wait_for_service_state() {
+  service="$1"
+  expected="$2"
+  attempts="${3:-40}"
+  count=0
+  while [ "$count" -lt "$attempts" ]; do
+    current="$(getprop "init.svc.$service" | tr -d '\r')"
+    if [ "$current" = "$expected" ]; then
+      return 0
+    fi
+    count=$((count + 1))
+    sleep 0.2
+  done
+  return 1
+}
+
+kill_stale_shadow_processes() {
+  pkill -x shadow-blitz-demo || true
+  pkill -x shadow-counter-guest || true
+  pkill -x shadow-compositor-guest || true
+  pkill -x drm-rect || true
+  pkill -x shadow-session || true
+}
+
+start_service_and_wait() {
+  service="$1"
+  start "$service" || true
+  wait_for_service_state "$service" running 50 || true
+}
+
+kill_stale_shadow_processes
+start_service_and_wait vendor.qti.hardware.display.allocator
+start_service_and_wait vendor.hwcomposer-2-4
+start_service_and_wait surfaceflinger
 start bootanim || true
 setenforce 1 >/dev/null 2>&1 || true
 EOF
