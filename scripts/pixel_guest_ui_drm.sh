@@ -38,6 +38,7 @@ process_checkpoint_timeout_secs="${PIXEL_GUEST_PROCESS_CHECKPOINT_TIMEOUT_SECS-1
 compositor_marker_timeout_secs="${PIXEL_GUEST_COMPOSITOR_MARKER_TIMEOUT_SECS-20}"
 client_marker_timeout_secs="${PIXEL_GUEST_CLIENT_MARKER_TIMEOUT_SECS-20}"
 frame_checkpoint_timeout_secs="${PIXEL_GUEST_FRAME_CHECKPOINT_TIMEOUT_SECS-20}"
+restore_checkpoint_timeout_secs="${PIXEL_GUEST_RESTORE_CHECKPOINT_TIMEOUT_SECS-20}"
 logcat_pid=""
 session_pid=""
 session_status=""
@@ -270,10 +271,15 @@ if [[ "$frame_on_device" != true && -s "$frame_artifact" ]]; then
 fi
 
 if [[ -n "$restore_android" && "$android_restored" != true ]]; then
-  if pixel_wait_for_condition 10 1 pixel_android_display_restored "$serial"; then
+  if pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_restored "$serial"; then
     android_restored=true
   else
-    failure_message="${failure_message:-timed out waiting for Android display stack restore}"
+    restore_android_now || true
+    if pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_restored "$serial"; then
+      android_restored=true
+    else
+      failure_message="${failure_message:-timed out waiting for Android display stack restore}"
+    fi
   fi
 fi
 

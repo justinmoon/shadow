@@ -34,6 +34,7 @@ pub struct StaticDocument {
     should_exit: bool,
     last_waker: Option<Waker>,
     timer_started: bool,
+    static_only: bool,
     timer_tx: Sender<TimerEvent>,
     timer_rx: Receiver<TimerEvent>,
 }
@@ -41,17 +42,22 @@ pub struct StaticDocument {
 impl StaticDocument {
     pub fn new() -> Self {
         let (timer_tx, timer_rx) = channel();
+        let static_only = env::var_os("SHADOW_BLITZ_STATIC_ONLY").is_some();
         let mut document = Self {
             inner: template_document(),
             phase: DemoPhase::Static,
             should_exit: false,
             last_waker: None,
             timer_started: false,
+            static_only,
             timer_tx,
             timer_rx,
         };
         document.apply_render();
         eprintln!("[shadow-blitz-demo] static-document-ready");
+        if static_only {
+            eprintln!("[shadow-blitz-demo] static-only-mode");
+        }
         document
     }
 
@@ -88,6 +94,18 @@ impl StaticDocument {
         }
 
         self.timer_started = true;
+        if self.static_only {
+            if let Some(delay) = optional_duration_from_env("SHADOW_BLITZ_EXIT_DELAY_MS") {
+                spawn_timer(
+                    self.timer_tx.clone(),
+                    task_context.waker().clone(),
+                    delay,
+                    TimerEvent::RequestExit,
+                );
+            }
+            return;
+        }
+
         spawn_dynamic_timer(self.timer_tx.clone(), task_context.waker().clone());
     }
 
@@ -164,18 +182,18 @@ enum TimerEvent {
 
 fn spawn_dynamic_timer(timer_tx: Sender<TimerEvent>, waker: Waker) {
     let delay = duration_from_env("SHADOW_BLITZ_DYNAMIC_DELAY_MS", 900);
-    thread::spawn(move || {
-        thread::sleep(delay);
-        let _ = timer_tx.send(TimerEvent::AdvanceToDynamic);
-        waker.wake_by_ref();
-    });
+    spawn_timer(timer_tx, waker, delay, TimerEvent::AdvanceToDynamic);
 }
 
 fn spawn_exit_timer(timer_tx: Sender<TimerEvent>, waker: Waker) {
     let delay = duration_from_env("SHADOW_BLITZ_EXIT_DELAY_MS", 1400);
+    spawn_timer(timer_tx, waker, delay, TimerEvent::RequestExit);
+}
+
+fn spawn_timer(timer_tx: Sender<TimerEvent>, waker: Waker, delay: Duration, event: TimerEvent) {
     thread::spawn(move || {
         thread::sleep(delay);
-        let _ = timer_tx.send(TimerEvent::RequestExit);
+        let _ = timer_tx.send(event);
         waker.wake_by_ref();
     });
 }
@@ -186,6 +204,15 @@ fn duration_from_env(key: &str, default_ms: u64) -> Duration {
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(default_ms);
     Duration::from_millis(millis)
+}
+
+fn optional_duration_from_env(key: &str) -> Option<Duration> {
+    let value = env::var(key).ok()?;
+    if value.is_empty() {
+        return None;
+    }
+
+    value.parse::<u64>().ok().map(Duration::from_millis)
 }
 
 fn template_document() -> HtmlDocument {
