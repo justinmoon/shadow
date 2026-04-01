@@ -1,8 +1,12 @@
 use std::{collections::HashMap, ffi::OsString, path::PathBuf, process::Child, sync::Arc};
 
 use shadow_ui_core::{
-    app::{AppId, COUNTER_APP, SHELL_APP_ID},
+    app::AppId,
     control::ControlRequest,
+    scene::{
+        APP_VIEWPORT_HEIGHT, APP_VIEWPORT_WIDTH, APP_VIEWPORT_X, APP_VIEWPORT_Y, HEIGHT, WIDTH,
+    },
+    shell::{ShellAction, ShellEvent, ShellModel},
 };
 use smithay::{
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
@@ -15,7 +19,7 @@ use smithay::{
             Display, DisplayHandle,
         },
     },
-    utils::{Logical, Point, Serial, SERIAL_COUNTER},
+    utils::{Logical, Point, Serial, Size, SERIAL_COUNTER},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         output::OutputManagerState,
@@ -26,7 +30,7 @@ use smithay::{
     },
 };
 
-use crate::launch;
+use crate::{launch, shell::ShellSurface};
 
 pub struct ShadowCompositor {
     pub start_time: std::time::Instant,
@@ -43,12 +47,12 @@ pub struct ShadowCompositor {
     pub data_device_state: DataDeviceState,
     pub popups: PopupManager,
     pub seat: Seat<Self>,
+    pub shell: ShellModel,
+    pub shell_surface: ShellSurface,
     launched_apps: HashMap<AppId, Child>,
     surface_apps: HashMap<WlSurface, AppId>,
-    shell_surface: Option<WlSurface>,
+    pub(crate) shelved_windows: HashMap<AppId, Window>,
     focused_app: Option<AppId>,
-    next_window_offset: i32,
-    pub mapped_windows: usize,
     exit_on_first_window: bool,
 }
 
@@ -65,7 +69,7 @@ impl ShadowCompositor {
         let popups = PopupManager::default();
 
         let mut seat_state = SeatState::new();
-        let mut seat: Seat<Self> = seat_state.new_wl_seat(&display_handle, "shadow");
+        let mut seat = seat_state.new_wl_seat(&display_handle, "shadow");
         seat.add_keyboard(Default::default(), 200, 25).unwrap();
         seat.add_pointer();
 
@@ -89,21 +93,44 @@ impl ShadowCompositor {
             data_device_state,
             popups,
             seat,
+            shell: ShellModel::new(),
+            shell_surface: ShellSurface::new(WIDTH as u32, HEIGHT as u32),
             launched_apps: HashMap::new(),
             surface_apps: HashMap::new(),
-            shell_surface: None,
+            shelved_windows: HashMap::new(),
             focused_app: None,
-            next_window_offset: 0,
-            mapped_windows: 0,
             exit_on_first_window: std::env::var_os("SHADOW_COMPOSITOR_EXIT_ON_FIRST_WINDOW")
                 .is_some(),
         }
     }
 
-    pub fn next_window_location(&mut self) -> (i32, i32) {
-        let offset = self.next_window_offset;
-        self.next_window_offset = (self.next_window_offset + 36) % 180;
-        (72 + offset, 132 + offset / 2)
+    pub fn app_window_location(&self) -> (i32, i32) {
+        let (shell_x, shell_y) = self.shell_location();
+        (
+            shell_x + APP_VIEWPORT_X.round() as i32,
+            shell_y + APP_VIEWPORT_Y.round() as i32,
+        )
+    }
+
+    pub fn app_window_size(&self) -> Size<i32, Logical> {
+        (
+            APP_VIEWPORT_WIDTH.round() as i32,
+            APP_VIEWPORT_HEIGHT.round() as i32,
+        )
+            .into()
+    }
+
+    pub fn shell_location(&self) -> (i32, i32) {
+        self.centered_location((WIDTH as i32, HEIGHT as i32).into())
+    }
+
+    pub fn shell_local_point(&self, position: Point<f64, Logical>) -> Option<(f32, f32)> {
+        let (origin_x, origin_y) = self.shell_location();
+        let local_x = position.x - origin_x as f64;
+        let local_y = position.y - origin_y as f64;
+
+        ((0.0..=WIDTH as f64).contains(&local_x) && (0.0..=HEIGHT as f64).contains(&local_y))
+            .then_some((local_x as f32, local_y as f32))
     }
 
     pub fn surface_under(
@@ -126,6 +153,7 @@ impl ShadowCompositor {
             self.space.raise_element(&window, true);
             let focused_surface = window.toplevel().unwrap().wl_surface().clone();
             self.focused_app = self.surface_apps.get(&focused_surface).copied();
+            self.shell.set_foreground_app(self.focused_app);
 
             self.space.elements().for_each(|candidate| {
                 let is_active = candidate.toplevel().unwrap().wl_surface() == &focused_surface;
@@ -142,6 +170,7 @@ impl ShadowCompositor {
             candidate.toplevel().unwrap().send_pending_configure();
         });
         self.focused_app = None;
+        self.shell.set_foreground_app(None);
         keyboard.set_focus(self, Option::<WlSurface>::None, serial);
     }
 
@@ -168,10 +197,8 @@ impl ShadowCompositor {
     }
 
     pub fn remember_surface_app(&mut self, surface: &WlSurface, app_id: AppId) {
-        if app_id == SHELL_APP_ID {
-            self.shell_surface = Some(surface.clone());
-        }
         self.surface_apps.insert(surface.clone(), app_id);
+        self.shell.set_app_running(app_id, true);
         if self
             .space
             .elements()
@@ -181,22 +208,22 @@ impl ShadowCompositor {
             .unwrap_or(false)
         {
             self.focused_app = Some(app_id);
+            self.shell.set_foreground_app(Some(app_id));
         }
     }
 
     pub fn forget_surface(&mut self, surface: &WlSurface) -> Option<AppId> {
-        if self.shell_surface.as_ref() == Some(surface) {
-            self.shell_surface = None;
-        }
         let removed = self.surface_apps.remove(surface);
         if removed == self.focused_app {
             self.focused_app = None;
+            self.shell.set_foreground_app(None);
         }
         removed
     }
 
     pub fn spawn_demo_client(&mut self) -> std::io::Result<()> {
-        self.launch_or_focus_app(COUNTER_APP.id)?;
+        let counter = shadow_ui_core::app::COUNTER_APP_ID;
+        self.launch_or_focus_app(counter)?;
         tracing::info!("[shadow-compositor] launched-demo-client");
         Ok(())
     }
@@ -208,11 +235,7 @@ impl ShadowCompositor {
                 Ok("ok\n".to_string())
             }
             ControlRequest::Home => {
-                if let Some(window) = self.mapped_window_for_app(SHELL_APP_ID) {
-                    self.focus_window(Some(window), self.next_serial());
-                } else {
-                    self.focus_window(None, self.next_serial());
-                }
+                self.go_home();
                 Ok("ok\n".to_string())
             }
             ControlRequest::Switcher => Ok("ok\n".to_string()),
@@ -220,10 +243,56 @@ impl ShadowCompositor {
         }
     }
 
+    pub fn handle_shell_event(&mut self, event: ShellEvent) {
+        if let Some(action) = self.shell.handle(event) {
+            self.handle_shell_action(action);
+        }
+    }
+
+    pub fn handle_shell_action(&mut self, action: ShellAction) {
+        match action {
+            ShellAction::Launch { app_id } => {
+                if let Err(error) = self.launch_or_focus_app(app_id) {
+                    tracing::warn!("failed to launch/focus {}: {error}", app_id.as_str());
+                }
+            }
+            ShellAction::Home => self.go_home(),
+        }
+    }
+
+    pub fn go_home(&mut self) {
+        let Some(app_id) = self.focused_app else {
+            self.focus_window(None, self.next_serial());
+            return;
+        };
+
+        if let Some(window) = self.mapped_window_for_app(app_id) {
+            self.space.unmap_elem(&window);
+            self.shelved_windows.insert(app_id, window);
+        }
+
+        self.focus_window(None, self.next_serial());
+    }
+
     pub fn launch_or_focus_app(&mut self, app_id: AppId) -> std::io::Result<()> {
         self.reap_children();
 
+        if self
+            .shell
+            .foreground_app()
+            .is_some_and(|current| current != app_id)
+        {
+            self.go_home();
+        }
+
         if let Some(window) = self.mapped_window_for_app(app_id) {
+            self.focus_window(Some(window), self.next_serial());
+            return Ok(());
+        }
+
+        if let Some(window) = self.shelved_windows.remove(&app_id) {
+            self.space
+                .map_element(window.clone(), self.app_window_location(), false);
             self.focus_window(Some(window), self.next_serial());
             return Ok(());
         }
@@ -246,9 +315,8 @@ impl ShadowCompositor {
     }
 
     pub fn handle_window_mapped(&mut self, window: Window) {
-        let location = self.next_window_location();
-        self.space.map_element(window.clone(), location, false);
-        self.mapped_windows += 1;
+        self.space
+            .map_element(window.clone(), self.app_window_location(), false);
         self.focus_window(Some(window), self.next_serial());
         tracing::info!("[shadow-compositor] mapped-window");
 
@@ -270,17 +338,19 @@ impl ShadowCompositor {
         let launched = self.launched_app_ids();
         format!(
             "focused={focused}\nmapped={mapped}\nlaunched={launched}\nwindows={}\nsocket={}\n",
-            self.mapped_windows,
+            self.space.elements().count(),
             self.socket_name.to_string_lossy(),
         )
     }
 
     fn mapped_app_ids(&self) -> String {
         let mut app_ids: Vec<_> = self
-            .surface_apps
-            .values()
-            .copied()
-            .map(AppId::as_str)
+            .space
+            .elements()
+            .filter_map(|window| {
+                let surface = window.toplevel()?.wl_surface().clone();
+                self.surface_apps.get(&surface).copied().map(AppId::as_str)
+            })
             .collect();
         app_ids.sort_unstable();
         app_ids.dedup();
@@ -296,6 +366,19 @@ impl ShadowCompositor {
             .collect();
         app_ids.sort_unstable();
         app_ids.join(",")
+    }
+
+    fn centered_location(&self, size: Size<i32, Logical>) -> (i32, i32) {
+        self.space
+            .outputs()
+            .next()
+            .and_then(|output| self.space.output_geometry(output))
+            .map(|geometry| {
+                let x = geometry.loc.x + ((geometry.size.w - size.w).max(0) / 2);
+                let y = geometry.loc.y + ((geometry.size.h - size.h).max(0) / 2);
+                (x, y)
+            })
+            .unwrap_or((0, 0))
     }
 
     fn init_wayland_listener(display: Display<Self>, event_loop: &mut EventLoop<Self>) -> OsString {
@@ -323,26 +406,9 @@ impl ShadowCompositor {
                     Ok(PostAction::Continue)
                 },
             )
-            .expect("insert display");
+            .expect("insert wayland display");
 
         socket_name
-    }
-}
-
-#[derive(Default)]
-pub struct ClientState {
-    pub compositor_state: CompositorClientState,
-}
-
-impl ClientData for ClientState {
-    fn initialized(&self, client_id: ClientId) {
-        tracing::info!("[shadow-compositor] client-initialized id={client_id:?}");
-    }
-
-    fn disconnected(&self, client_id: ClientId, reason: DisconnectReason) {
-        tracing::warn!(
-            "[shadow-compositor] client-disconnected id={client_id:?} reason={reason:?}"
-        );
     }
 }
 
@@ -352,6 +418,20 @@ impl Drop for ShadowCompositor {
             let _ = child.kill();
             let _ = child.wait();
         }
+
         let _ = std::fs::remove_file(&self.control_socket_path);
+    }
+}
+
+#[derive(Default)]
+pub struct ClientState {
+    pub compositor_state: CompositorClientState,
+}
+
+impl ClientData for ClientState {
+    fn initialized(&self, _client_id: ClientId) {}
+
+    fn disconnected(&self, _client_id: ClientId, reason: DisconnectReason) {
+        tracing::info!(?reason, "shadow-compositor: client disconnected");
     }
 }

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/shadow-ui-desktop",
     "crates/shadow-ui-core",
+    "crates/shadow-ui-software",
     "crates/shadow-compositor",
     "crates/shadow-compositor-guest",
     "apps/shadow-blitz-demo",
@@ -21,6 +22,7 @@ edition = "2021"
 [workspace.dependencies]
 bytemuck = { version = "1.24.0", features = ["derive"] }
 chrono = { version = "0.4.42", default-features = false, features = ["clock"] }
+font8x8 = "0.3.1"
 glyphon = "0.10.0"
 pollster = "0.4.0"
 tracing = "0.1.41"

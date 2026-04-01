@@ -1,4 +1,5 @@
 mod color;
+mod layout;
 mod model;
 
 #[cfg(not(target_os = "linux"))]

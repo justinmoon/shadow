@@ -3010,7 +3010,9 @@ dependencies = [
 name = "shadow-compositor"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "shadow-ui-core",
+ "shadow-ui-software",
  "smithay",
  "tracing",
  "tracing-subscriber",
@@ -3070,6 +3072,14 @@ dependencies = [
  "shadow-ui-core",
  "wgpu",
  "winit 0.30.13",
+]
+
+[[package]]
+name = "shadow-ui-software"
+version = "0.1.0"
+dependencies = [
+ "font8x8",
+ "shadow-ui-core",
 ]
 
 [[package]]
@@ -3210,12 +3220,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0512da38f5e2b31201a93524adb8d3136276fa4fe4aafab4e1f727a82b534cc0"
 dependencies = [
  "bitflags 2.11.0",
+ "bytemuck",
  "calloop 0.14.4",
  "calloop-wayland-source 0.4.1",
  "cursor-icon",
  "libc",
  "log",
  "memmap2",
+ "pkg-config",
  "rustix 1.1.4",
  "thiserror 2.0.18",
  "wayland-backend",
@@ -3227,6 +3239,7 @@ dependencies = [
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "wayland-scanner",
+ "xkbcommon",
  "xkeysym",
 ]
 
@@ -5132,6 +5145,9 @@ name = "xkeysym"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "xml-rs"

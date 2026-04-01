@@ -7,6 +7,10 @@ mod input;
 #[cfg(target_os = "linux")]
 mod launch;
 #[cfg(target_os = "linux")]
+mod render;
+#[cfg(target_os = "linux")]
+mod shell;
+#[cfg(target_os = "linux")]
 mod state;
 #[cfg(target_os = "linux")]
 mod winit_backend;
@@ -46,8 +50,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "[shadow-compositor] listening-socket={}",
         state.socket_name.to_string_lossy()
     );
-    if let Err(error) = state.spawn_demo_client() {
-        tracing::warn!("failed to launch demo client: {error}");
+    if std::env::var_os("SHADOW_COMPOSITOR_AUTO_LAUNCH").is_some() {
+        if let Err(error) = state.spawn_demo_client() {
+            tracing::warn!("failed to launch demo client: {error}");
+        }
     }
 
     event_loop.run(None, &mut state, |_| {})?;

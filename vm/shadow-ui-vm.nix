@@ -104,7 +104,6 @@ nixpkgs.lib.nixosSystem {
             echo "== shadow-ui-warmup $(date --iso-8601=seconds) =="
             cargo build --locked --manifest-path ui/Cargo.toml \
               -p shadow-compositor \
-              -p shadow-ui-desktop \
               -p shadow-counter
           '';
         };
@@ -130,13 +129,8 @@ nixpkgs.lib.nixosSystem {
 
             cargo run --locked --manifest-path ui/Cargo.toml -p shadow-compositor &
             compositor_pid=$!
-            shell_pid=""
 
             cleanup() {
-              if [[ -n "$shell_pid" ]] && kill -0 "$shell_pid" 2>/dev/null; then
-                kill "$shell_pid" 2>/dev/null || true
-                wait "$shell_pid" 2>/dev/null || true
-              fi
               if kill -0 "$compositor_pid" 2>/dev/null; then
                 kill "$compositor_pid" 2>/dev/null || true
                 wait "$compositor_pid" 2>/dev/null || true
@@ -207,43 +201,22 @@ PY
               exit 1
             fi
 
-            echo "shadow-ui-session: launching home shell on $nested_wayland"
-            shell_failures=0
-            while kill -0 "$compositor_pid" 2>/dev/null; do
-              shell_start_ts="$(date +%s)"
-              WAYLAND_DISPLAY="$nested_wayland" \
-                SHADOW_COMPOSITOR_CONTROL="$control_socket" \
-                cargo run --locked --manifest-path ui/Cargo.toml -p shadow-ui-desktop &
-              shell_pid=$!
+            printf '%s\n' \
+              "export HOME=\"$HOME\"" \
+              "export XDG_CACHE_HOME=\"$XDG_CACHE_HOME\"" \
+              "export CARGO_TARGET_DIR=\"$CARGO_TARGET_DIR\"" \
+              "export PKG_CONFIG_PATH=\"$PKG_CONFIG_PATH\"" \
+              "export LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH\"" \
+              "export LIBRARY_PATH=\"$LIBRARY_PATH\"" \
+              "export NIX_LDFLAGS=\"$NIX_LDFLAGS\"" \
+              "export LIBGL_DRIVERS_PATH=\"$LIBGL_DRIVERS_PATH\"" \
+              "export RUST_BACKTRACE=\"$RUST_BACKTRACE\"" \
+              "export XDG_RUNTIME_DIR=\"$XDG_RUNTIME_DIR\"" \
+              "export WAYLAND_DISPLAY=\"$nested_wayland\"" \
+              "export SHADOW_COMPOSITOR_CONTROL=\"$control_socket\"" \
+              >${sessionEnv}
 
-              if wait "$shell_pid"; then
-                shell_status=0
-              else
-                shell_status=$?
-              fi
-
-              shell_runtime="$(( $(date +%s) - shell_start_ts ))"
-              echo "shadow-ui-session: home shell exited status=$shell_status runtime=$shell_runtime"'s'
-
-              if ! kill -0 "$compositor_pid" 2>/dev/null; then
-                break
-              fi
-
-              if [[ "$shell_runtime" -lt 5 ]]; then
-                shell_failures="$((shell_failures + 1))"
-              else
-                shell_failures=0
-              fi
-
-              if [[ "$shell_failures" -ge 3 ]]; then
-                echo "shadow-ui-session: home shell failed too many times" >&2
-                break
-              fi
-
-              echo "shadow-ui-session: restarting home shell"
-              sleep 1
-            done
-
+            echo "shadow-ui-session: compositor ready on $nested_wayland"
             wait "$compositor_pid"
           '';
         };
@@ -329,17 +302,19 @@ PY
           };
           script = ''
             for _ in $(seq 1 600); do
+              uid="$(id -u shadow 2>/dev/null || id -u)"
+              runtime_dir="/run/user/$uid"
               process_snapshot="$(ps -eo args=)"
               if grep -Fq '/bin/cage --' <<<"$process_snapshot" \
                 && grep -Eq '(^|/)shadow-compositor($| )|cargo run( --locked)? --manifest-path ui/Cargo.toml -p shadow-compositor' <<<"$process_snapshot" \
-                && grep -Eq '(^|/)shadow-ui-desktop($| )|cargo run( --locked)? --manifest-path ui/Cargo.toml -p shadow-ui-desktop' <<<"$process_snapshot"; then
-                echo "shadow-ui smoke: compositor and shell are running"
+                && [[ -S "$runtime_dir/shadow-control.sock" ]]; then
+                echo "shadow-ui smoke: compositor is running"
                 exit 0
               fi
               sleep 1
             done
 
-            echo "shadow-ui smoke: compositor/shell did not appear" >&2
+            echo "shadow-ui smoke: compositor did not appear" >&2
             echo "shadow-ui smoke: relevant processes:" >&2
             ps -ef | grep -E 'greetd|cage|shadow-|cargo run --manifest-path ui/Cargo.toml' | grep -v grep >&2 || true
             echo "shadow-ui smoke: greetd status:" >&2
@@ -369,9 +344,21 @@ PY
           mem = 4096;
           socket = ".shadow-vm/shadow-ui-vm.sock";
           graphics = {
-            enable = true;
+            enable = false;
             backend = "cocoa";
           };
+          qemu.extraArgs = [
+            "-display"
+            "cocoa,zoom-to-fit=on"
+            "-device"
+            "virtio-gpu,xres=640,yres=1220"
+            "-device"
+            "qemu-xhci"
+            "-device"
+            "usb-tablet"
+            "-device"
+            "usb-kbd"
+          ];
           writableStoreOverlay = "/nix/.rw-store";
           volumes = [
             {

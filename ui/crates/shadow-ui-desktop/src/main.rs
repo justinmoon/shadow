@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use renderer::Renderer;
 use shadow_ui_core::{
+    control::{self, ControlRequest},
     scene::{HEIGHT, WIDTH},
-    shell::{NavAction, PointerButtonState, ShellModel},
+    shell::{NavAction, PointerButtonState, ShellAction, ShellEvent, ShellModel, ShellStatus},
 };
 use text::TextSystem;
 use winit::{
@@ -28,6 +29,17 @@ struct AppState {
     text_system: TextSystem,
     shell: ShellModel,
     window: Arc<Window>,
+}
+
+fn handle_shell_action(action: ShellAction) {
+    let request = match action {
+        ShellAction::Launch { app_id } => ControlRequest::Launch { app_id },
+        ShellAction::Home => ControlRequest::Home,
+    };
+
+    if let Err(error) = control::request(request) {
+        eprintln!("[shadow-ui-desktop] failed to send control request: {error}");
+    }
 }
 
 #[derive(Default)]
@@ -104,11 +116,14 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let logical = position.to_logical::<f32>(state.window.scale_factor());
-                state.shell.pointer_moved(logical.x, logical.y);
+                let _ = state.shell.handle(ShellEvent::PointerMoved {
+                    x: logical.x,
+                    y: logical.y,
+                });
                 state.window.request_redraw();
             }
             WindowEvent::CursorLeft { .. } => {
-                state.shell.pointer_left();
+                let _ = state.shell.handle(ShellEvent::PointerLeft);
                 state.window.request_redraw();
             }
             WindowEvent::MouseInput {
@@ -120,7 +135,9 @@ impl ApplicationHandler for App {
                     ElementState::Pressed => PointerButtonState::Pressed,
                     ElementState::Released => PointerButtonState::Released,
                 };
-                state.shell.pointer_button(state_change);
+                if let Some(action) = state.shell.handle(ShellEvent::PointerButton(state_change)) {
+                    handle_shell_action(action);
+                }
                 state.window.request_redraw();
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -135,17 +152,22 @@ impl ApplicationHandler for App {
                                 Some(NavAction::Activate)
                             }
                             winit::keyboard::KeyCode::Tab => Some(NavAction::Next),
+                            winit::keyboard::KeyCode::Home => Some(NavAction::Home),
                             _ => None,
                         };
                         if let Some(action) = action {
-                            state.shell.navigate(action);
+                            if let Some(shell_action) =
+                                state.shell.handle(ShellEvent::Navigate(action))
+                            {
+                                handle_shell_action(shell_action);
+                            }
                             state.window.request_redraw();
                         }
                     }
                 }
             }
             WindowEvent::RedrawRequested => {
-                let scene = state.shell.scene(chrono::Local::now());
+                let scene = state.shell.scene(&ShellStatus::demo(chrono::Local::now()));
                 match state.renderer.render(
                     &scene,
                     &mut state.text_system,

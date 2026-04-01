@@ -1,12 +1,9 @@
 use std::time::Duration;
 
-use shadow_ui_core::color::BACKGROUND;
+use shadow_ui_core::{color::BACKGROUND, shell::ShellStatus};
 use smithay::{
     backend::{
-        renderer::{
-            damage::OutputDamageTracker, element::surface::WaylandSurfaceRenderElement,
-            gles::GlesRenderer,
-        },
+        renderer::damage::OutputDamageTracker,
         winit::{self, WinitEvent},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
@@ -14,7 +11,9 @@ use smithay::{
     utils::{Rectangle, Transform},
 };
 
-use crate::state::ShadowCompositor;
+use crate::{render, state::ShadowCompositor};
+
+const NESTED_OUTPUT_TRANSFORM: Transform = Transform::Normal;
 
 pub fn init_winit(
     event_loop: &mut EventLoop<ShadowCompositor>,
@@ -38,7 +37,7 @@ pub fn init_winit(
     let _global = output.create_global::<ShadowCompositor>(&state.display_handle);
     output.change_current_state(
         Some(mode),
-        Some(Transform::Normal),
+        Some(NESTED_OUTPUT_TRANSFORM),
         None,
         Some((0, 0).into()),
     );
@@ -46,6 +45,7 @@ pub fn init_winit(
     state.space.map_output(&output, (0, 0));
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
+    backend.window().request_redraw();
 
     event_loop
         .handle()
@@ -56,7 +56,7 @@ pub fn init_winit(
                         size,
                         refresh: 60_000,
                     }),
-                    None,
+                    Some(NESTED_OUTPUT_TRANSFORM),
                     None,
                     None,
                 );
@@ -65,24 +65,23 @@ pub fn init_winit(
             WinitEvent::Redraw => {
                 let size = backend.window_size();
                 let damage = Rectangle::from_size(size);
+                let scene = state.shell.scene(&ShellStatus::demo(chrono::Local::now()));
+                let shell_location = state.shell_location();
 
                 {
                     let (renderer, mut framebuffer) = backend.bind().unwrap();
-                    smithay::desktop::space::render_output::<
-                        _,
-                        WaylandSurfaceRenderElement<GlesRenderer>,
-                        _,
-                        _,
-                    >(
+                    render::render_output(
                         &output,
+                        &state.space,
+                        &scene,
+                        &mut state.shell_surface,
+                        shell_location,
                         renderer,
                         &mut framebuffer,
-                        1.0,
-                        0,
-                        [&state.space],
-                        &[],
                         &mut damage_tracker,
+                        0,
                         BACKGROUND.linear_rgba(),
+                        true,
                     )
                     .unwrap();
                 }

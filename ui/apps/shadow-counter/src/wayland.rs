@@ -3,17 +3,17 @@
 use std::{convert::TryInto, time::Duration};
 
 use font8x8::{UnicodeFonts, BASIC_FONTS};
-use shadow_ui_core::app::COUNTER_WAYLAND_APP_ID;
-use smithay_client_toolkit::reexports::calloop::EventLoop;
-use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
+use shadow_ui_core::app;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_output, delegate_pointer, delegate_registry, delegate_seat,
-    delegate_shm, delegate_xdg_shell, delegate_xdg_window,
+    delegate_compositor, delegate_keyboard, delegate_output, delegate_pointer, delegate_registry,
+    delegate_seat, delegate_shm, delegate_xdg_shell, delegate_xdg_window,
     output::{OutputHandler, OutputState},
+    reexports::{calloop::EventLoop, calloop_wayland_source::WaylandSource},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
+        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
         pointer::{PointerEvent, PointerEventKind, PointerHandler},
         Capability, SeatHandler, SeatState,
     },
@@ -31,66 +31,68 @@ use smithay_client_toolkit::{
 };
 use wayland_client::{
     globals::registry_queue_init,
-    protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
     Connection, QueueHandle,
 };
 
-use crate::{color, model::CounterModel};
+use crate::{
+    color, layout,
+    model::{CounterAction, CounterButtonState, CounterModel},
+};
 
-const WINDOW_WIDTH: u32 = 360;
-const WINDOW_HEIGHT: u32 = 420;
+const WINDOW_WIDTH: u32 = layout::WINDOW_WIDTH;
+const WINDOW_HEIGHT: u32 = layout::WINDOW_HEIGHT;
 
 pub fn run() {
-    eprintln!("[shadow-counter] connecting");
-    let connection = Connection::connect_to_env().expect("connect to compositor");
-    let (globals, event_queue) = registry_queue_init(&connection).expect("load globals");
-    let queue_handle = event_queue.handle();
-
+    let connection = Connection::connect_to_env().expect("connect to wayland compositor");
+    let (globals, event_queue) = registry_queue_init(&connection).expect("init registry");
+    let qh = event_queue.handle();
     let mut event_loop: EventLoop<CounterWaylandApp> =
-        EventLoop::try_new().expect("create event loop");
-    WaylandSource::new(connection.clone(), event_queue)
-        .insert(event_loop.handle())
+        EventLoop::try_new().expect("create wayland event loop");
+    let loop_handle = event_loop.handle();
+    WaylandSource::new(connection, event_queue)
+        .insert(loop_handle.clone())
         .expect("insert wayland source");
 
-    let compositor = CompositorState::bind(&globals, &queue_handle).expect("bind compositor");
-    let xdg_shell = XdgShell::bind(&globals, &queue_handle).expect("bind xdg shell");
-    let shm = Shm::bind(&globals, &queue_handle).expect("bind shm");
-    let surface = compositor.create_surface(&queue_handle);
-    let window = xdg_shell.create_window(surface, WindowDecorations::RequestServer, &queue_handle);
+    let compositor = CompositorState::bind(&globals, &qh).expect("bind wl_compositor");
+    let xdg_shell = XdgShell::bind(&globals, &qh).expect("bind xdg shell");
+    let shm = Shm::bind(&globals, &qh).expect("bind wl_shm");
+
+    let surface = compositor.create_surface(&qh);
+    let window = xdg_shell.create_window(surface, WindowDecorations::RequestServer, &qh);
     window.set_title("Shadow Counter");
-    window.set_app_id(COUNTER_WAYLAND_APP_ID);
+    window.set_app_id(app::COUNTER_WAYLAND_APP_ID);
     window.set_min_size(Some((WINDOW_WIDTH, WINDOW_HEIGHT)));
+    window.set_max_size(Some((WINDOW_WIDTH, WINDOW_HEIGHT)));
     window.commit();
-    eprintln!("[shadow-counter] surface-committed");
 
     let pool =
-        SlotPool::new((WINDOW_WIDTH * WINDOW_HEIGHT * 4) as usize, &shm).expect("create shm pool");
+        SlotPool::new(buffer_len(WINDOW_WIDTH, WINDOW_HEIGHT), &shm).expect("create shm slot pool");
 
     let mut app = CounterWaylandApp {
         registry_state: RegistryState::new(&globals),
-        seat_state: SeatState::new(&globals, &queue_handle),
-        output_state: OutputState::new(&globals, &queue_handle),
+        seat_state: SeatState::new(&globals, &qh),
+        output_state: OutputState::new(&globals, &qh),
         shm,
-        exit: false,
-        first_configure: true,
         pool,
         width: WINDOW_WIDTH,
         height: WINDOW_HEIGHT,
         buffer: None,
         window,
+        keyboard: None,
         pointer: None,
+        loop_handle,
         model: CounterModel::new(),
         frame_pending: false,
         needs_redraw: false,
+        exit: false,
     };
 
     while !app.exit {
         event_loop
             .dispatch(Duration::from_millis(16), &mut app)
-            .expect("dispatch");
+            .expect("dispatch wayland events");
     }
-
-    eprintln!("[shadow-counter] exiting");
 }
 
 struct CounterWaylandApp {
@@ -98,21 +100,27 @@ struct CounterWaylandApp {
     seat_state: SeatState,
     output_state: OutputState,
     shm: Shm,
-    exit: bool,
-    first_configure: bool,
     pool: SlotPool,
     width: u32,
     height: u32,
     buffer: Option<Buffer>,
     window: Window,
+    keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
+    loop_handle: smithay_client_toolkit::reexports::calloop::LoopHandle<'static, Self>,
     model: CounterModel,
     frame_pending: bool,
     needs_redraw: bool,
+    exit: bool,
 }
 
 impl CounterWaylandApp {
     fn request_redraw(&mut self, qh: &QueueHandle<Self>) {
+        if self.width == 0 || self.height == 0 {
+            self.needs_redraw = false;
+            return;
+        }
+
         self.needs_redraw = true;
         if !self.frame_pending {
             self.draw(qh);
@@ -120,6 +128,13 @@ impl CounterWaylandApp {
     }
 
     fn draw(&mut self, qh: &QueueHandle<Self>) {
+        if self.width == 0 || self.height == 0 {
+            self.needs_redraw = false;
+            return;
+        }
+
+        self.ensure_pool_capacity();
+
         let stride = self.width as i32 * 4;
         let buffer = self.buffer.get_or_insert_with(|| {
             self.pool
@@ -165,6 +180,18 @@ impl CounterWaylandApp {
         self.frame_pending = true;
         self.needs_redraw = false;
     }
+
+    fn ensure_pool_capacity(&mut self) {
+        let required = buffer_len(self.width, self.height);
+        if self.pool.len() < required {
+            self.pool.resize(required).expect("resize shm slot pool");
+        }
+    }
+}
+
+fn handle_action(app: &mut CounterWaylandApp, action: CounterAction) {
+    let CounterAction::Close = action;
+    app.exit = true;
 }
 
 impl CompositorHandler for CounterWaylandApp {
@@ -248,6 +275,40 @@ impl OutputHandler for CounterWaylandApp {
     }
 }
 
+impl WindowHandler for CounterWaylandApp {
+    fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &Window) {
+        self.exit = true;
+    }
+
+    fn configure(
+        &mut self,
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+        _window: &Window,
+        configure: WindowConfigure,
+        _serial: u32,
+    ) {
+        let next_width = configure
+            .new_size
+            .0
+            .map(|value| value.get())
+            .unwrap_or(self.width);
+        let next_height = configure
+            .new_size
+            .1
+            .map(|value| value.get())
+            .unwrap_or(self.height);
+
+        if next_width != self.width || next_height != self.height {
+            self.width = next_width;
+            self.height = next_height;
+            self.buffer = None;
+        }
+
+        self.request_redraw(qh);
+    }
+}
+
 impl SeatHandler for CounterWaylandApp {
     fn seat_state(&mut self) -> &mut SeatState {
         &mut self.seat_state
@@ -262,6 +323,20 @@ impl SeatHandler for CounterWaylandApp {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
+        if capability == Capability::Keyboard && self.keyboard.is_none() {
+            let keyboard = self
+                .seat_state
+                .get_keyboard_with_repeat(
+                    qh,
+                    &seat,
+                    None,
+                    self.loop_handle.clone(),
+                    Box::new(|_, _, _| {}),
+                )
+                .expect("create keyboard");
+            self.keyboard = Some(keyboard);
+        }
+
         if capability == Capability::Pointer && self.pointer.is_none() {
             let pointer = self
                 .seat_state
@@ -278,6 +353,12 @@ impl SeatHandler for CounterWaylandApp {
         _: wl_seat::WlSeat,
         capability: Capability,
     ) {
+        if capability == Capability::Keyboard {
+            if let Some(keyboard) = self.keyboard.take() {
+                keyboard.release();
+            }
+        }
+
         if capability == Capability::Pointer {
             if let Some(pointer) = self.pointer.take() {
                 pointer.release();
@@ -288,36 +369,89 @@ impl SeatHandler for CounterWaylandApp {
     fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
 }
 
-impl WindowHandler for CounterWaylandApp {
-    fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &Window) {
-        self.exit = true;
+impl KeyboardHandler for CounterWaylandApp {
+    fn enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: &wl_surface::WlSurface,
+        _: u32,
+        _: &[u32],
+        _: &[Keysym],
+    ) {
     }
 
-    fn configure(
+    fn leave(
+        &mut self,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: &wl_surface::WlSurface,
+        _: u32,
+    ) {
+        self.model.cancel_press();
+        self.request_redraw(qh);
+    }
+
+    fn press_key(
         &mut self,
         _conn: &Connection,
         qh: &QueueHandle<Self>,
-        _window: &Window,
-        configure: WindowConfigure,
-        _serial: u32,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        event: KeyEvent,
     ) {
-        let first_configure = self.first_configure;
-        self.first_configure = false;
-        self.buffer = None;
-        self.width = configure
-            .new_size
-            .0
-            .map(|value| value.get())
-            .unwrap_or(WINDOW_WIDTH);
-        self.height = configure
-            .new_size
-            .1
-            .map(|value| value.get())
-            .unwrap_or(WINDOW_HEIGHT);
-        if first_configure {
-            eprintln!("[shadow-counter] configured");
+        match event.keysym {
+            Keysym::Escape => {
+                let action = self.model.close_action();
+                handle_action(self, action);
+            }
+            Keysym::space | Keysym::Return | Keysym::KP_Enter => {
+                self.model.activate_pressed();
+                self.request_redraw(qh);
+            }
+            _ => {}
         }
-        self.request_redraw(qh);
+    }
+
+    fn repeat_key(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        _: KeyEvent,
+    ) {
+    }
+
+    fn release_key(
+        &mut self,
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        event: KeyEvent,
+    ) {
+        match event.keysym {
+            Keysym::space | Keysym::Return | Keysym::KP_Enter => {
+                self.model.activate_released();
+                self.request_redraw(qh);
+            }
+            _ => {}
+        }
+    }
+
+    fn update_modifiers(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        _: Modifiers,
+        _: RawModifiers,
+        _: u32,
+    ) {
     }
 }
 
@@ -335,19 +469,51 @@ impl PointerHandler for CounterWaylandApp {
             }
 
             match event.kind {
+                PointerEventKind::Enter { .. }
+                | PointerEventKind::Motion { .. }
+                | PointerEventKind::Press { .. }
+                | PointerEventKind::Release { .. } => {
+                    self.model.pointer_moved(
+                        event.position.0 as f32,
+                        event.position.1 as f32,
+                        self.width as f32,
+                        self.height as f32,
+                    );
+                }
+                PointerEventKind::Leave { .. } | PointerEventKind::Axis { .. } => {}
+            }
+
+            match event.kind {
+                PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => {
+                    self.request_redraw(qh);
+                }
                 PointerEventKind::Press { .. } => {
-                    self.model.press();
+                    let action = self.model.pointer_button(
+                        CounterButtonState::Pressed,
+                        self.width as f32,
+                        self.height as f32,
+                    );
+                    if let Some(action) = action {
+                        handle_action(self, action);
+                    }
                     self.request_redraw(qh);
                 }
                 PointerEventKind::Release { .. } => {
-                    self.model.release();
+                    let action = self.model.pointer_button(
+                        CounterButtonState::Released,
+                        self.width as f32,
+                        self.height as f32,
+                    );
+                    if let Some(action) = action {
+                        handle_action(self, action);
+                    }
                     self.request_redraw(qh);
                 }
                 PointerEventKind::Leave { .. } => {
-                    self.model.cancel_press();
+                    self.model.pointer_left();
                     self.request_redraw(qh);
                 }
-                _ => {}
+                PointerEventKind::Axis { .. } => {}
             }
         }
     }
@@ -363,6 +529,7 @@ delegate_compositor!(CounterWaylandApp);
 delegate_output!(CounterWaylandApp);
 delegate_shm!(CounterWaylandApp);
 delegate_seat!(CounterWaylandApp);
+delegate_keyboard!(CounterWaylandApp);
 delegate_pointer!(CounterWaylandApp);
 delegate_xdg_shell!(CounterWaylandApp);
 delegate_xdg_window!(CounterWaylandApp);
@@ -376,15 +543,33 @@ impl ProvidesRegistryState for CounterWaylandApp {
     registry_handlers![OutputState, SeatState];
 }
 
+fn buffer_len(width: u32, height: u32) -> usize {
+    (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|value| value.checked_mul(4))
+        .expect("buffer size overflow")
+}
+
 fn render_ui(canvas: &mut [u8], width: u32, height: u32, model: &CounterModel) {
+    let width_f = width as f32;
+    let height_f = height as f32;
+    let hero_card = layout::hero_card_frame(width_f);
+    let body_card = layout::count_card_frame(width_f, height_f);
+    let accent_card = layout::accent_card_frame(width_f);
+    let tap_button = layout::tap_button_frame(width_f, height_f);
     let background = pack_color(color::BACKGROUND);
     let surface_top = pack_color(color::SURFACE_TOP);
     let surface_card = pack_color(color::SURFACE_CARD);
-    let accent = pack_color(if model.pressed() {
-        color::ACCENT_PRESSED
-    } else {
-        color::ACCENT
-    });
+    let accent_panel = pack_color(color::ACCENT_PANEL);
+    let accent = pack_color(
+        if model.pressed_target() == Some(layout::CounterTarget::Tap) {
+            color::ACCENT_PRESSED
+        } else if model.hovered_target() == Some(layout::CounterTarget::Tap) {
+            color::ACCENT_HOVER
+        } else {
+            color::ACCENT
+        },
+    );
     let primary = pack_color(color::TEXT_PRIMARY);
     let muted = pack_color(color::TEXT_MUTED);
 
@@ -393,67 +578,110 @@ fn render_ui(canvas: &mut [u8], width: u32, height: u32, model: &CounterModel) {
         canvas,
         width,
         height,
-        24,
-        24,
-        width as i32 - 48,
-        84,
+        hero_card.x as i32,
+        hero_card.y as i32,
+        hero_card.w as i32,
+        hero_card.h as i32,
         surface_top,
     );
     fill_rect(
         canvas,
         width,
         height,
-        26,
-        134,
-        width as i32 - 52,
-        470,
+        body_card.x as i32,
+        body_card.y as i32,
+        body_card.w as i32,
+        body_card.h as i32,
         surface_card,
     );
     fill_rect(
         canvas,
         width,
         height,
-        92,
-        if model.pressed() { 438 } else { 430 },
-        width as i32 - 184,
-        74,
+        accent_card.x as i32,
+        accent_card.y as i32,
+        accent_card.w as i32,
+        accent_card.h as i32,
+        accent_panel,
+    );
+    fill_rect(
+        canvas,
+        width,
+        height,
+        tap_button.x as i32,
+        tap_button.y as i32,
+        tap_button.w as i32,
+        tap_button.h as i32,
         accent,
     );
 
-    draw_centered_text(
+    draw_text(
         canvas,
         width,
         height,
-        238,
-        8,
-        &model.count().to_string(),
+        hero_card.x as i32 + 24,
+        hero_card.y as i32 + 28,
+        2,
+        "COUNTER DEMO",
+        muted,
+    );
+    draw_text(
+        canvas,
+        width,
+        height,
+        hero_card.x as i32 + 24,
+        hero_card.y as i32 + 70,
+        4,
+        "COUNT",
         primary,
     );
+    draw_text(
+        canvas,
+        width,
+        height,
+        hero_card.x as i32 + 24,
+        hero_card.y as i32 + 118,
+        2,
+        "Inside the shell",
+        muted,
+    );
+    draw_centered_text(canvas, width, height, 276, 2, "LIVE COUNT", muted);
+
+    let count = model.count().to_string();
+    draw_centered_text(canvas, width, height, 392, 10, &count, primary);
     draw_centered_text(
         canvas,
         width,
         height,
-        352,
+        598,
         2,
-        "CLICK OR SPACE / ENTER",
+        if model.tap_pressed() {
+            "RELEASE TO INCREMENT"
+        } else {
+            "TAP THE BUTTON TO COUNT"
+        },
         muted,
     );
     draw_centered_text(
         canvas,
         width,
         height,
-        if model.pressed() { 466 } else { 458 },
-        3,
-        if model.pressed() { "RELEASE" } else { "TAP" },
+        tap_button.y as i32 + 27,
+        4,
+        if model.tap_pressed() {
+            "RELEASE"
+        } else {
+            "TAP"
+        },
         primary,
     );
     draw_centered_text(
         canvas,
         width,
         height,
-        650,
+        height as i32 - 168,
         2,
-        "SMITHAY CLIENT TOOLKIT",
+        "Shell pill returns home",
         muted,
     );
 }
@@ -481,8 +709,9 @@ fn fill_rect(
     let y1 = (y + rect_height).min(height as i32).max(0) as u32;
 
     for row in y0..y1 {
+        let flipped_row = height.saturating_sub(1).saturating_sub(row);
         for col in x0..x1 {
-            let index = ((row * width + col) * 4) as usize;
+            let index = ((flipped_row * width + col) * 4) as usize;
             canvas[index..index + 4].copy_from_slice(&color.to_le_bytes());
         }
     }

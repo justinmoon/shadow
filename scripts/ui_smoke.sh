@@ -112,6 +112,7 @@ run_local_linux_smoke() {
   (
     cd "$REPO_ROOT"
     export SHADOW_COMPOSITOR_HEADLESS=1
+    export SHADOW_COMPOSITOR_AUTO_LAUNCH=1
     export RUST_LOG="${RUST_LOG:-shadow_compositor=info,smithay=warn}"
     cargo run --manifest-path ui/Cargo.toml -p shadow-compositor
   ) >"$compositor_log" 2>&1 &

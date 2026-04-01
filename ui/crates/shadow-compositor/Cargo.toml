@@ -4,7 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+chrono.workspace = true
 shadow-ui-core = { path = "../shadow-ui-core" }
+shadow-ui-software = { path = "../shadow-ui-software" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

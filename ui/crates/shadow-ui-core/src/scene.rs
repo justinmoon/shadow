@@ -2,6 +2,10 @@ use crate::color::Color;
 
 pub const WIDTH: f32 = 540.0;
 pub const HEIGHT: f32 = 1170.0;
+pub const APP_VIEWPORT_X: f32 = 24.0;
+pub const APP_VIEWPORT_Y: f32 = 156.0;
+pub const APP_VIEWPORT_WIDTH: f32 = WIDTH - APP_VIEWPORT_X * 2.0;
+pub const APP_VIEWPORT_HEIGHT: f32 = HEIGHT - APP_VIEWPORT_Y - 104.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct RoundedRect {

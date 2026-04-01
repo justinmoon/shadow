@@ -22,6 +22,8 @@ impl XdgShellHandler for ShadowCompositor {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        self.configure_app_toplevel(&surface);
+        let _ = surface.send_pending_configure();
         let wl_surface = surface.wl_surface().clone();
         let window = Window::new_wayland_window(surface);
         self.handle_window_mapped(window);
@@ -64,7 +66,10 @@ impl XdgShellHandler for ShadowCompositor {
         if let Some(window) = self.window_for_surface(&wl_surface) {
             self.space.unmap_elem(&window);
         }
-        self.forget_surface(&wl_surface);
+        if let Some(app_id) = self.forget_surface(&wl_surface) {
+            self.shelved_windows.remove(&app_id);
+            self.shell.set_app_running(app_id, false);
+        }
         self.focus_top_window(self.next_serial());
     }
 }
@@ -106,6 +111,14 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
 }
 
 impl ShadowCompositor {
+    fn configure_app_toplevel(&self, surface: &ToplevelSurface) {
+        let size = self.app_window_size();
+        surface.with_pending_state(|state| {
+            state.size = Some(size);
+            state.bounds = Some(size);
+        });
+    }
+
     fn refresh_toplevel_app_id(&mut self, surface: &WlSurface) {
         let app_id = with_states(surface, |states| {
             states

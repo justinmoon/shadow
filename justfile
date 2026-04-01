@@ -135,6 +135,10 @@ ui-vm-screenshot output="build/ui-vm/shadow-ui-vm.ppm":
 ui-vm-open app="counter":
 	@scripts/shadowctl vm open "{{app}}"
 
+# Ask the compositor to shelf the foreground app and return home
+ui-vm-home:
+	@scripts/shadowctl vm home
+
 # Query the local UI VM via shadowctl
 shadowctl *args='':
 	@scripts/shadowctl {{args}}
