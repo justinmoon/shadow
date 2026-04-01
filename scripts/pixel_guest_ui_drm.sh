@@ -99,6 +99,22 @@ client_start_observed() {
   return 1
 }
 
+compositor_start_observed() {
+  local serial compositor_name
+  serial="$1"
+  compositor_name="$2"
+
+  if pixel_root_process_exists "$serial" "$compositor_name"; then
+    return 0
+  fi
+
+  if session_output_has_marker "$(pixel_compositor_marker)"; then
+    return 0
+  fi
+
+  return 1
+}
+
 wait_for_checkpoint() {
   local description timeout_secs
   description="$1"
@@ -169,10 +185,10 @@ else
 fi
 
 if [[ -z "$failure_message" && -n "$expect_compositor_process" ]]; then
-  if wait_for_checkpoint "$compositor_name process started" "$process_checkpoint_timeout_secs" pixel_root_process_exists "$serial" "$compositor_name"; then
+  if wait_for_checkpoint "$compositor_name startup observed" "$process_checkpoint_timeout_secs" compositor_start_observed "$serial" "$compositor_name"; then
     compositor_started=true
   else
-    failure_message="timed out waiting for $compositor_name to start"
+    failure_message="timed out waiting for $compositor_name startup"
   fi
 fi
 

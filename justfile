@@ -195,6 +195,10 @@ pixel-guest-ui-drm-selftest:
 pixel-guest-ui-drm-fullscreen:
 	@scripts/pixel_guest_ui_drm_fullscreen.sh
 
+# Stop the Android display stack on the rooted Pixel and run a centered 384x720 guest client pattern on the real panel
+pixel-guest-ui-drm-blitz-size:
+	@scripts/pixel_guest_ui_drm_blitz_size.sh
+
 # Stop the Android display stack on the rooted Pixel, run the guest compositor plus client on the real panel, and leave Android stopped
 pixel-guest-ui-drm-hold:
 	@PIXEL_TAKEOVER_RESTORE_ANDROID= scripts/pixel_guest_ui_drm.sh
@@ -206,6 +210,10 @@ pixel-guest-ui-drm-selftest-hold:
 # Stop the Android display stack on the rooted Pixel, run a full-screen guest client pattern on the real panel, and leave Android stopped
 pixel-guest-ui-drm-fullscreen-hold:
 	@PIXEL_TAKEOVER_RESTORE_ANDROID= PIXEL_GUEST_SESSION_TIMEOUT_SECS= PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME= PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE= scripts/pixel_guest_ui_drm_fullscreen.sh
+
+# Stop the Android display stack on the rooted Pixel, run a centered 384x720 guest client pattern on the real panel, and leave Android stopped
+pixel-guest-ui-drm-blitz-size-hold:
+	@PIXEL_TAKEOVER_RESTORE_ANDROID= PIXEL_GUEST_SESSION_TIMEOUT_SECS= PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME= PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE= scripts/pixel_guest_ui_drm_blitz_size.sh
 
 # Run the static Blitz demo on the rooted Pixel through the guest compositor DRM path
 pixel-blitz-demo-drm:

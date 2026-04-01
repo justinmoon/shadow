@@ -281,11 +281,22 @@ start_service_and_wait() {
   wait_for_service_state "$service" running 50 || true
 }
 
+boot_completed() {
+  [ "$(getprop sys.boot_completed | tr -d '\r')" = "1" ] \
+    || [ "$(getprop dev.bootcomplete | tr -d '\r')" = "1" ]
+}
+
 kill_stale_shadow_processes
 start_service_and_wait vendor.qti.hardware.display.allocator
 start_service_and_wait vendor.hwcomposer-2-4
 start_service_and_wait surfaceflinger
-start bootanim || true
+if boot_completed; then
+  setprop service.bootanim.exit 1 || true
+  stop bootanim || true
+  wait_for_service_state bootanim stopped 50 || true
+else
+  start_service_and_wait bootanim
+fi
 setenforce 1 >/dev/null 2>&1 || true
 EOF
 }
@@ -324,6 +335,12 @@ pixel_display_services_running() {
   done
 }
 
+pixel_bootanim_stopped() {
+  local serial
+  serial="$1"
+  [[ "$(pixel_service_state "$serial" bootanim)" == "stopped" ]]
+}
+
 pixel_display_size() {
   local serial size
   serial="$1"
@@ -355,6 +372,9 @@ pixel_android_display_restored() {
   local serial
   serial="$1"
   [[ "$(pixel_service_state "$serial" surfaceflinger)" == "running" ]] || return 1
+  if [[ "$(pixel_prop "$serial" sys.boot_completed)" == "1" || "$(pixel_prop "$serial" dev.bootcomplete)" == "1" ]]; then
+    pixel_bootanim_stopped "$serial" || return 1
+  fi
   pixel_takeover_processes_absent "$serial"
 }
 
