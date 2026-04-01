@@ -1,0 +1,8 @@
+[package]
+name = "deno-core-smoke"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+deno_core = { version = "=0.393.0", default-features = false, features = ["include_icu_data", "reactor-tokio"] }
+v8 = "=146.8.0"

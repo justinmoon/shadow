@@ -155,12 +155,30 @@
           doCheck = false;
           strictDeps = true;
           CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
-          nativeBuildInputs =
-            lib.optionals cross.stdenv.buildPlatform.isDarwin [ cross.buildPackages.libiconv ];
-          NIX_LDFLAGS =
-            lib.optionalString cross.stdenv.buildPlatform.isDarwin "-L${cross.buildPackages.libiconv}/lib -liconv";
+          depsBuildBuild =
+            lib.optionals cross.stdenv.buildPlatform.isDarwin [
+              cross.buildPackages.stdenv.cc
+              cross.buildPackages.libiconv
+            ];
           RUSTY_V8_ARCHIVE = mkRustyV8ArchiveFor cross;
           meta.mainProgram = "rusty-v8-smoke";
+        };
+      mkDenoCoreSmokeFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "deno-core-smoke";
+          version = "0.1.0";
+          src = ./rust/deno-core-smoke;
+          cargoLock.lockFile = ./rust/deno-core-smoke/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          depsBuildBuild =
+            lib.optionals cross.stdenv.buildPlatform.isDarwin [
+              cross.buildPackages.stdenv.cc
+              cross.buildPackages.libiconv
+            ];
+          RUSTY_V8_ARCHIVE = mkRustyV8ArchiveFor cross;
+          meta.mainProgram = "deno-core-smoke";
         };
       mkInitWrapper = pkgs: mkInitWrapperFor pkgs.pkgsCross.musl64;
       mkDrmRect = pkgs: mkDrmRectFor pkgs.pkgsCross.musl64;
@@ -297,6 +315,11 @@
         {
           init-wrapper = mkInitWrapper pkgs;
           drm-rect = mkDrmRect pkgs;
+          deno-core-smoke = mkDenoCoreSmokeFor pkgs;
+          deno-core-smoke-aarch64-linux-gnu =
+            mkDenoCoreSmokeFor pkgs.pkgsCross.aarch64-multiplatform;
+          deno-core-smoke-x86_64-linux-gnu =
+            mkDenoCoreSmokeFor pkgs.pkgsCross.gnu64;
           rusty-v8-smoke = mkRustyV8SmokeFor pkgs;
           rusty-v8-smoke-aarch64-linux-gnu =
             mkRustyV8SmokeFor pkgs.pkgsCross.aarch64-multiplatform;

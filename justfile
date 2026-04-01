@@ -91,13 +91,25 @@ runtime-shell:
 runtime-rusty-v8-smoke:
 	@nix run --accept-flake-config .#rusty-v8-smoke
 
+# Run the minimal Deno Core smoke binary on the current host
+runtime-deno-core-smoke:
+	@nix run --accept-flake-config .#deno-core-smoke
+
 # Build the minimal Rusty V8 smoke binary for x86_64 Linux
 runtime-rusty-v8-smoke-x86_64-linux-gnu:
 	@nix build --accept-flake-config .#rusty-v8-smoke-x86_64-linux-gnu
 
+# Build the minimal Deno Core smoke binary for x86_64 Linux
+runtime-deno-core-smoke-x86_64-linux-gnu:
+	@nix build --accept-flake-config .#deno-core-smoke-x86_64-linux-gnu
+
 # Build the minimal Rusty V8 smoke binary for aarch64 Linux
 runtime-rusty-v8-smoke-aarch64-linux-gnu:
 	@nix build --accept-flake-config .#rusty-v8-smoke-aarch64-linux-gnu
+
+# Build the minimal Deno Core smoke binary for aarch64 Linux
+runtime-deno-core-smoke-aarch64-linux-gnu:
+	@nix build --accept-flake-config .#deno-core-smoke-aarch64-linux-gnu
 
 # Run the Shadow desktop UI host
 ui-run:
