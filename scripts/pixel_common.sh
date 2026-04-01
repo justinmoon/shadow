@@ -324,6 +324,23 @@ pixel_display_services_running() {
   done
 }
 
+pixel_display_size() {
+  local serial size
+  serial="$1"
+  size="$(
+    pixel_adb "$serial" shell wm size 2>/dev/null \
+      | tr -d '\r' \
+      | grep -Eo '[0-9]+x[0-9]+' \
+      | head -n1 \
+      || true
+  )"
+  if [[ -z "$size" ]]; then
+    echo "pixel: failed to determine display size via 'wm size'" >&2
+    return 1
+  fi
+  printf '%s\n' "$size"
+}
+
 pixel_takeover_processes_absent() {
   local serial process_name
   serial="$1"

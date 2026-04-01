@@ -83,6 +83,22 @@ session_still_running() {
   [[ -n "${session_pid:-}" ]] && kill -0 "$session_pid" >/dev/null 2>&1
 }
 
+client_start_observed() {
+  local serial client_name
+  serial="$1"
+  client_name="$2"
+
+  if pixel_root_process_exists "$serial" "$client_name"; then
+    return 0
+  fi
+
+  if [[ -n "$expect_client_marker" ]] && session_output_has_marker "$(pixel_client_marker)"; then
+    return 0
+  fi
+
+  return 1
+}
+
 wait_for_checkpoint() {
   local description timeout_secs
   description="$1"
@@ -161,10 +177,10 @@ if [[ -z "$failure_message" && -n "$expect_compositor_process" ]]; then
 fi
 
 if [[ -z "$failure_message" && -n "$expect_client_process" ]]; then
-  if wait_for_checkpoint "$client_name process started" "$process_checkpoint_timeout_secs" pixel_root_process_exists "$serial" "$client_name"; then
+  if wait_for_checkpoint "$client_name startup observed" "$process_checkpoint_timeout_secs" client_start_observed "$serial" "$client_name"; then
     client_started=true
   else
-    failure_message="timed out waiting for $client_name to start"
+    failure_message="timed out waiting for $client_name startup"
   fi
 fi
 
