@@ -8,3 +8,4 @@ worktrees/
 out/
 result
 .shadow-vm/
+.direnv/

@@ -120,8 +120,8 @@ run_local_linux_smoke() {
 
   start="$(date +%s)"
   while true; do
-    if grep -Fq '[shadow-compositor] mapped-window' "$compositor_log" \
-      && grep -Fq '[shadow-counter] configured' "$compositor_log"; then
+    if grep -Fq '[shadow-compositor] launched-demo-client' "$compositor_log" \
+      && grep -Fq '[shadow-compositor] mapped-window' "$compositor_log"; then
       printf 'UI smoke passed. Logs: %s\n' "$tmpdir"
       return 0
     fi
