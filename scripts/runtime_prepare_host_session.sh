@@ -47,5 +47,6 @@ print(json.dumps({
     "inputPath": input_path,
     "runtimeHostBackend": backend,
     "runtimeHostBinaryPath": runtime_host_binary_path,
+    "runtimeHostBinaryName": os.path.basename(runtime_host_binary_path),
 }, indent=2))
 PY

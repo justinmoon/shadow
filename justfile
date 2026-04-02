@@ -103,49 +103,68 @@ runtime-deno-runtime-smoke:
 runtime-app-compile-smoke:
 	@nix develop .#runtime -c scripts/runtime_app_compile_smoke.sh
 
-# Run the first app document payload through the Deno Core host seam
-runtime-app-document-smoke:
-	@nix develop .#runtime -c scripts/runtime_app_document_smoke.sh
+# Run the first app document payload through the selected host seam
+runtime-app-document-smoke backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_document_smoke.sh
 
 # Run the first app document payload through the Deno Runtime host seam
 runtime-app-document-smoke-deno-runtime:
-	@SHADOW_RUNTIME_HOST_BACKEND=deno-runtime nix develop .#runtime -c scripts/runtime_app_document_smoke.sh
+	@just runtime-app-document-smoke deno-runtime
 
-# Run the first host-dispatched click through the bundled app runtime seam
-runtime-app-click-smoke:
-	@nix develop .#runtime -c scripts/runtime_app_click_smoke.sh
+# Run the first host-dispatched click through the selected bundled app runtime seam
+runtime-app-click-smoke backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_click_smoke.sh
 
 # Run the first host-dispatched click through the bundled app runtime seam on Deno Runtime
 runtime-app-click-smoke-deno-runtime:
-	@SHADOW_RUNTIME_HOST_BACKEND=deno-runtime nix develop .#runtime -c scripts/runtime_app_click_smoke.sh
+	@just runtime-app-click-smoke deno-runtime
 
-# Run the first host-dispatched change event through the bundled app runtime seam
-runtime-app-input-smoke:
-	@nix develop .#runtime -c scripts/runtime_app_input_smoke.sh
+# Run the first host-dispatched change event through the selected bundled app runtime seam
+runtime-app-input-smoke backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_input_smoke.sh
 
 # Run the first host-dispatched change event through the bundled app runtime seam on Deno Runtime
 runtime-app-input-smoke-deno-runtime:
-	@SHADOW_RUNTIME_HOST_BACKEND=deno-runtime nix develop .#runtime -c scripts/runtime_app_input_smoke.sh
+	@just runtime-app-input-smoke deno-runtime
+
+# Run the focus -> input -> blur text behavior smoke through the selected bundled app runtime seam
+runtime-app-focus-smoke backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_focus_smoke.sh
+
+# Run the focus -> input -> blur text behavior smoke through the bundled app runtime seam on Deno Runtime
+runtime-app-focus-smoke-deno-runtime:
+	@just runtime-app-focus-smoke deno-runtime
 
 # Run the fixed-frame Blitz document smoke for app payload swapping
 runtime-app-blitz-document-smoke:
 	@scripts/runtime_app_blitz_document_smoke.sh
 
-# Run the host-visible runtime demo window
-runtime-app-host-run:
-	@scripts/runtime_app_host_run.sh
+# Run the host-visible runtime demo window on the selected backend
+runtime-app-host-run backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" scripts/runtime_app_host_run.sh
 
 # Run the host-visible runtime demo window on Deno Runtime
 runtime-app-host-run-deno-runtime:
-	@SHADOW_RUNTIME_HOST_BACKEND=deno-runtime scripts/runtime_app_host_run.sh
+	@just runtime-app-host-run deno-runtime
 
-# Run the host-visible runtime demo with an auto-exit smoke timer
-runtime-app-host-smoke:
-	@scripts/runtime_app_host_smoke.sh
+# Run the host-visible runtime demo with an auto-exit smoke timer on the selected backend
+runtime-app-host-smoke backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" scripts/runtime_app_host_smoke.sh
 
 # Run the host-visible runtime demo with an auto-exit smoke timer on Deno Runtime
 runtime-app-host-smoke-deno-runtime:
-	@SHADOW_RUNTIME_HOST_BACKEND=deno-runtime scripts/runtime_app_host_smoke.sh
+	@just runtime-app-host-smoke deno-runtime
+
+# Run the document/click/input/focus smokes on both host backends
+runtime-app-backend-parity-smoke:
+	@just runtime-app-document-smoke deno-core
+	@just runtime-app-click-smoke deno-core
+	@just runtime-app-input-smoke deno-core
+	@just runtime-app-focus-smoke deno-core
+	@just runtime-app-document-smoke deno-runtime
+	@just runtime-app-click-smoke deno-runtime
+	@just runtime-app-input-smoke deno-runtime
+	@just runtime-app-focus-smoke deno-runtime
 
 # Build the minimal Rusty V8 smoke binary for x86_64 Linux
 runtime-rusty-v8-smoke-x86_64-linux-gnu:

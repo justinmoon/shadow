@@ -12,7 +12,7 @@ use blitz_traits::events::UiEvent;
 use serde::{Deserialize, Serialize};
 
 use crate::frame::template_document;
-use crate::runtime_session::{RuntimeDispatchEvent, RuntimeSession};
+use crate::runtime_session::{RuntimeDispatchEvent, RuntimePointerEvent, RuntimeSession};
 
 const STYLE_SELECTOR: &str = "#shadow-blitz-style";
 const ROOT_SELECTOR: &str = "#shadow-blitz-root";
@@ -202,6 +202,11 @@ impl RuntimeDocument {
             target_id,
             event_type: String::from("click"),
             value: None,
+            pointer: Some(RuntimePointerEvent {
+                client_x: Some(pointer.client_x()),
+                client_y: Some(pointer.client_y()),
+                is_primary: Some(pointer.is_primary),
+            }),
         })
     }
 
@@ -395,6 +400,7 @@ fn auto_click_event_from_env(runtime_session_enabled: bool) -> Option<RuntimeDis
         target_id,
         event_type: String::from("click"),
         value: None,
+        pointer: None,
     })
 }
 #[cfg(test)]

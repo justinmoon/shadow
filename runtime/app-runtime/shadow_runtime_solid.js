@@ -257,7 +257,42 @@ function normalizeRuntimeEvent(event) {
   if (typeof event.value === "string") {
     normalizedEvent.value = event.value;
   }
+  const pointer = normalizeRuntimePointer(event.pointer);
+  if (pointer) {
+    normalizedEvent.pointer = pointer;
+  }
   return normalizedEvent;
+}
+
+function normalizeRuntimePointer(pointer) {
+  if (pointer == null) {
+    return null;
+  }
+  if (typeof pointer !== "object") {
+    throw new TypeError("runtime event pointer must be an object");
+  }
+
+  const normalizedPointer = {};
+  if ("clientX" in pointer) {
+    if (typeof pointer.clientX !== "number") {
+      throw new TypeError("runtime event pointer clientX must be a number");
+    }
+    normalizedPointer.clientX = pointer.clientX;
+  }
+  if ("clientY" in pointer) {
+    if (typeof pointer.clientY !== "number") {
+      throw new TypeError("runtime event pointer clientY must be a number");
+    }
+    normalizedPointer.clientY = pointer.clientY;
+  }
+  if ("isPrimary" in pointer) {
+    if (typeof pointer.isPrimary !== "boolean") {
+      throw new TypeError("runtime event pointer isPrimary must be a boolean");
+    }
+    normalizedPointer.isPrimary = pointer.isPrimary;
+  }
+
+  return Object.keys(normalizedPointer).length === 0 ? null : normalizedPointer;
 }
 
 function findNodeByShadowId(node, targetId) {
@@ -292,12 +327,23 @@ function applyRuntimeEventState(node, event) {
 }
 
 function createRuntimeEvent(targetNode, event) {
+  let defaultPrevented = false;
   return {
     currentTarget: targetNode,
-    preventDefault() {},
+    get defaultPrevented() {
+      return defaultPrevented;
+    },
+    preventDefault() {
+      defaultPrevented = true;
+    },
     target: targetNode,
     targetId: event.targetId,
     type: event.type,
+    value: "value" in event ? event.value : targetNode.value,
+    pointer: event.pointer ?? null,
+    clientX: event.pointer?.clientX ?? 0,
+    clientY: event.pointer?.clientY ?? 0,
+    isPrimary: event.pointer?.isPrimary ?? false,
   };
 }
 

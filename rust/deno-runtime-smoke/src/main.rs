@@ -258,6 +258,18 @@ struct RuntimeDispatchEvent {
     event_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pointer: Option<RuntimePointerEvent>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RuntimePointerEvent {
+    #[serde(rename = "clientX", skip_serializing_if = "Option::is_none")]
+    client_x: Option<f32>,
+    #[serde(rename = "clientY", skip_serializing_if = "Option::is_none")]
+    client_y: Option<f32>,
+    #[serde(rename = "isPrimary", skip_serializing_if = "Option::is_none")]
+    is_primary: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
