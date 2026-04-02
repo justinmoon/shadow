@@ -23,9 +23,10 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
 6. Done: run the `deno_core` seam on the real phone.
 7. Next: decide whether to stabilize the first GNU envelope or retarget toward a more self-contained payload.
 8. Next: split app-model work into `todos/app-runtime.md`; keep this note on runtime substrate.
-9. Later: add the minimum compile / module-loader hooks the app-runtime lane actually needs.
-10. Later: add `deno_runtime` only after the lower seams are stable and the app-runtime lane justifies it.
-11. Later: support the chosen Blitz document bridge from `todos/app-runtime.md`.
+9. Done: load the first compiled Solid-universal app bundle through host `deno_core` and return a document payload from JS back to Rust.
+10. Next: decide whether the first app host keeps file-relative bundle wiring or needs a custom module-loader alias before Blitz integration.
+11. Later: add `deno_runtime` only after the lower seams are stable and the app-runtime lane justifies it.
+12. Later: support the chosen Blitz document bridge from `todos/app-runtime.md`.
 
 ## Open Questions
 

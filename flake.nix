@@ -280,6 +280,7 @@
             clippy
             cmake
             coreutils
+            deno
             findutils
             gn
             gnugrep

@@ -1,32 +1,16 @@
 use std::{
     env,
-    sync::{
-        mpsc::{channel, Receiver, Sender},
-        Arc,
-    },
+    sync::mpsc::{channel, Receiver, Sender},
     task::{Context, Waker},
     thread,
     time::Duration,
 };
 
-use blitz_dom::{DocGuard, DocGuardMut, Document, DocumentConfig};
-use blitz_html::{HtmlDocument, HtmlProvider};
+use blitz_dom::{DocGuard, DocGuardMut, Document};
+use blitz_html::HtmlDocument;
 use blitz_traits::events::UiEvent;
 
-const FRAME_HTML: &str = r#"
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Shadow Blitz Demo</title>
-    <style id="shadow-blitz-style"></style>
-  </head>
-  <body>
-    <main id="shadow-blitz-root"></main>
-  </body>
-</html>
-"#;
+use crate::frame::template_document;
 
 pub struct StaticDocument {
     inner: HtmlDocument,
@@ -213,16 +197,6 @@ fn optional_duration_from_env(key: &str) -> Option<Duration> {
     }
 
     value.parse::<u64>().ok().map(Duration::from_millis)
-}
-
-fn template_document() -> HtmlDocument {
-    HtmlDocument::from_html(
-        FRAME_HTML,
-        DocumentConfig {
-            html_parser_provider: Some(Arc::new(HtmlProvider) as _),
-            ..Default::default()
-        },
-    )
 }
 
 fn static_css() -> &'static str {

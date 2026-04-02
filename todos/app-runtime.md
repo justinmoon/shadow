@@ -37,26 +37,27 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## MVP Ladder
 
-1. Host-only TSX compile smoke.
-   Run Babel + Solid preset. Cache compiled JS.
-2. `deno_core` load compiled module.
-   No display yet. Return first document payload.
-3. Rust `BlitzRuntimeDocument`.
-   Fixed frame. Swap `<style>` and app root via inner HTML.
-4. Host visible proof.
-   Launch one sample app. First frame on desktop host.
-5. Click round-trip.
-   Native click -> JS handler -> rerender.
-6. Basic form / input path.
-   Prefer uncontrolled, or `change` / `submit` first.
-7. Rooted Pixel proof.
-   Same transport on the real panel.
-8. Re-evaluate full snapshots.
-   Keep them if fast enough. Add patch lane only if needed.
+- [x] Host-only TSX compile smoke.
+  `just runtime-app-compile-smoke` runs Deno + Babel + Solid universal mode and caches compiled JS under `build/runtime/app-compile-smoke/`.
+- [x] `deno_core` load compiled module.
+  `just runtime-app-document-smoke` bundles the compiled app with a tiny renderer shim, runs it through `nix run .#deno-core-smoke`, and returns the first `{ html, css }` payload on host.
+- [x] Rust `BlitzRuntimeDocument`.
+  `just runtime-app-blitz-document-smoke` proves a fixed-frame Blitz document can swap the `<style>` and app root inner HTML from a runtime payload.
+- [ ] Host visible proof.
+  Launch one sample app. First frame on desktop host.
+- [ ] Click round-trip.
+  Native click -> JS handler -> rerender.
+- [ ] Basic form / input path.
+  Prefer uncontrolled, or `change` / `submit` first.
+- [ ] Rooted Pixel proof.
+  Same transport on the real panel.
+- [ ] Re-evaluate full snapshots.
+  Keep them if fast enough. Add patch lane only if needed.
 
 ## Open Questions
 
-- Compile cache key / format?
+- Is a source-plus-config hash enough once imports start affecting compiled output?
+- Do we keep file-relative bundle wiring for the first app host, or add a custom module-loader alias before Blitz integration?
 - Universal renderer vs SSR string renderer for v0?
 - CSS scoping model?
 - Input / focus / caret strategy?
