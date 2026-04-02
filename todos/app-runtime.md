@@ -91,13 +91,12 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
 
 - [x] Rooted Pixel raw touch seam.
   `just pixel-touch-input-smoke` auto-detects the direct-touch evdev node, records its `getevent -pl` descriptor under `build/pixel/touch/`, and captures one raw touch sequence. Default mode injects one rooted `sendevent` tap so the seam is self-verifying; set `PIXEL_TOUCH_SMOKE_MODE=manual` and tap the screen yourself to prove the same capture path with a real finger.
-- [~] Single-contact pointer backend in `shadow-compositor-guest`.
 - [x] Single-contact pointer backend in `shadow-compositor-guest`.
   The rooted guest compositor now creates a real Smithay seat plus pointer, detects the direct-touch panel, starts a rooted touch-reader helper, and forwards one active contact as pointer motion plus primary button press/release. On the rooted Pixel, `session-output.txt` now shows live `touch-reader-event` and `touch-input` lines during takeover instead of stalling at `touch-ready`.
 - [x] Panel-to-client coordinate mapping.
   The compositor now mirrors the same centered/cropped rect that `kms.rs` uses for presentation so panel-space touches land in client-space coordinates. Unit tests still cover the math, and rooted-Pixel session logs now show in-bounds touches producing mapped client coordinates while out-of-bounds / `0,0` contacts are rejected as `touch-outside-content`.
 - [~] Manual rooted-Pixel tap on the runtime demo.
-  `just pixel-runtime-app-drm-hold` now builds the current compositor/session artifacts, launches the runtime Blitz card on the real panel, keeps takeover active for manual finger taps, and leaves Android stopped until `just pixel-restore-android`. One real-finger `Count` button proof is still the remaining manual QA step; synthetic `sendevent` injection on this panel is flaky about emitting X/Y updates.
+  `just pixel-runtime-app-drm-hold` now builds the current compositor/session artifacts, launches the runtime Blitz card on the real panel, keeps takeover active for manual finger taps, and leaves Android stopped until `just pixel-restore-android`. The current device demo is intentionally shape-driven so tap QA is visible even while Blitz text rendering on device is still imperfect. One real-finger proof with the new visible state is still the remaining manual QA step; synthetic `sendevent` injection on this panel is flaky about emitting X/Y updates.
 - [ ] Re-evaluate touch + text-entry UX.
   Once physical taps work, decide whether full snapshots still feel acceptable for text entry, focus changes, and more animated app flows.
 

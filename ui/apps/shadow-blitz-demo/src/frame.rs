@@ -10,6 +10,22 @@ pub const FRAME_HTML: &str = r#"
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Shadow Blitz Demo</title>
+    <style>
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        width: 100%;
+        background: #08121b;
+      }
+
+      body {
+        overflow: hidden;
+      }
+
+      #shadow-blitz-root {
+        min-height: 100vh;
+      }
+    </style>
     <style id="shadow-blitz-style"></style>
   </head>
   <body>
