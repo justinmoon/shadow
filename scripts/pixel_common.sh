@@ -470,6 +470,14 @@ pixel_blitz_demo_artifact() {
   pixel_artifact_path shadow-blitz-demo
 }
 
+pixel_runtime_app_bundle_artifact() {
+  pixel_artifact_path shadow-runtime-app-bundle.js
+}
+
+pixel_runtime_host_bundle_artifact_dir() {
+  pixel_artifact_path shadow-runtime-gnu
+}
+
 pixel_guest_client_artifact() {
   if [[ -n "${PIXEL_GUEST_CLIENT_ARTIFACT:-}" ]]; then
     printf '%s\n' "$PIXEL_GUEST_CLIENT_ARTIFACT"
@@ -508,6 +516,18 @@ pixel_runtime_dir() {
 
 pixel_runtime_linux_dir() {
   printf '%s\n' "${PIXEL_RUNTIME_LINUX_DIR:-/data/local/tmp/shadow-runtime-gnu}"
+}
+
+pixel_runtime_app_bundle_dst() {
+  printf '%s/runtime-app-bundle.js\n' "$(pixel_runtime_linux_dir)"
+}
+
+pixel_runtime_host_binary_dst() {
+  printf '%s/deno-core-smoke\n' "$(pixel_runtime_linux_dir)"
+}
+
+pixel_runtime_host_launcher_dst() {
+  printf '%s/run-deno-core-smoke\n' "$(pixel_runtime_linux_dir)"
 }
 
 pixel_download_dir_device() {
@@ -672,6 +692,14 @@ pixel_require_runtime_artifacts() {
       missing=1
     fi
   done
+  if [[ -n "${PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT:-}" && ! -f "${PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT}" ]]; then
+    echo "pixel: missing runtime app bundle artifact: ${PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT}" >&2
+    missing=1
+  fi
+  if [[ -n "${PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR:-}" && ! -d "${PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR}" ]]; then
+    echo "pixel: missing runtime host bundle artifact dir: ${PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR}" >&2
+    missing=1
+  fi
   return "$missing"
 }
 

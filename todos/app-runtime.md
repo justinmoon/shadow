@@ -49,10 +49,10 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
   `just runtime-app-click-smoke` keeps the app alive inside one `deno_core` session, dispatches a host click event to `data-shadow-id="counter"`, and verifies the rerendered HTML updates from `Count 1` to `Count 2`.
 - [x] Basic form / input path.
   `just runtime-app-input-smoke` keeps a second app alive inside one `deno_core` session, dispatches a host `change` event with a string `value`, and verifies both the `<input value=...>` attribute and preview text rerender.
-- [ ] Rooted Pixel proof.
-  Same transport on the real panel.
-- [ ] Re-evaluate full snapshots.
-  Keep them if fast enough. Add patch lane only if needed.
+- [x] Rooted Pixel proof.
+  `just pixel-runtime-app-drm` stages the bundled app JS plus the GNU-wrapped `deno-core-smoke` helper, pushes them to the rooted phone, and proves the runtime-mode Blitz demo reaches the real panel through the existing guest compositor DRM path. `just pixel-runtime-app-click-drm` proves the same device path survives one auto-dispatched runtime click.
+- [x] Re-evaluate full snapshots.
+  Keep them for MVP. Host and rooted-Pixel click rerenders are good enough for the current card-sized app flows, so there is no reason to add a Rust-side patch bridge yet.
 
 ## Open Questions
 
@@ -65,6 +65,7 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
 - Do we keep `change`-plus-string-value as the first transport, or add richer form payloads before Blitz integration?
 - When to expose sqlite / fs / network ops?
 - When does the device lane need more than `deno_core`?
+- When do full snapshots stop being acceptable for text entry, scrolling, or animation-heavy apps?
 
 ## Pivot Signals
 

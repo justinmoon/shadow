@@ -323,6 +323,18 @@ pixel-root-check:
 pixel-runtime-deno-core-smoke:
 	@scripts/pixel_runtime_deno_core_smoke.sh
 
+# Stage the runtime app bundle plus GNU-wrapped deno_core helper for Pixel use
+pixel-prepare-runtime-app-artifacts:
+	@scripts/pixel_prepare_runtime_app_artifacts.sh
+
+# Run the runtime-mode Blitz demo on the rooted Pixel through the guest compositor DRM path
+pixel-runtime-app-drm:
+	@scripts/pixel_runtime_app_drm.sh
+
+# Run the runtime-mode Blitz demo on the rooted Pixel and auto-dispatch one runtime click
+pixel-runtime-app-click-drm:
+	@scripts/pixel_runtime_app_click_drm.sh
+
 # Run the nested Smithay compositor host on Linux
 compositor-run:
 	@nix develop .#ui -c cargo run --manifest-path ui/Cargo.toml -p shadow-compositor

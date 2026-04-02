@@ -4,35 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./pixel_common.sh
 source "$SCRIPT_DIR/pixel_common.sh"
+# shellcheck source=./pixel_runtime_linux_bundle_common.sh
+source "$SCRIPT_DIR/pixel_runtime_linux_bundle_common.sh"
 ensure_bootimg_shell "$@"
-
-binary_interpreter() {
-  local binary
-  binary="$1"
-  llvm-readelf -lW "$binary" | sed -n 's/^      \[Requesting program interpreter: \(.*\)\]$/\1/p' | head -n1
-}
-
-binary_needed_libs() {
-  local binary
-  binary="$1"
-  llvm-readelf -dW "$binary" | sed -n 's/^.*Shared library: \[\(.*\)\]$/\1/p'
-}
-
-find_runtime_file_in_closure() {
-  local name closure_path candidate
-  name="$1"
-
-  for closure_path in "${closure_paths[@]}"; do
-    candidate="$(find "$closure_path" -type f -name "$name" -print -quit 2>/dev/null || true)"
-    if [[ -n "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-
-  echo "pixel_runtime_deno_core_smoke: missing runtime file in closure: $name" >&2
-  return 1
-}
 
 serial="$(pixel_resolve_serial)"
 run_dir="$(pixel_prepare_named_run_dir "$(pixel_runtime_runs_dir)")"
@@ -80,50 +54,25 @@ fi
 root_ok=true
 printf '%s\n' "$root_id" >"$root_id_path"
 
-mkdir -p "$(dirname "$out_link")"
-rm -f "$out_link"
-nix build --accept-flake-config "$package_ref" --out-link "$out_link"
-
-binary_host_path="$out_link/bin/$binary_name"
-modules_host_dir="$out_link/lib/$binary_name/modules"
-
-file_output="$(file "$binary_host_path")"
-printf '%s\n' "$file_output" | tee "$binary_file_path"
-if [[ "$file_output" != *"ARM aarch64"* || "$file_output" != *"dynamically linked"* ]]; then
-  echo "pixel_runtime_deno_core_smoke: expected a dynamic arm64 Linux binary, got: $file_output" >&2
-  exit 1
-fi
-binary_ok=true
-
+stage_deno_core_linux_bundle "$package_ref" "$out_link" "$bundle_dir" "$binary_name"
+binary_host_path="$PIXEL_RUNTIME_STAGE_BINARY_HOST_PATH"
+interpreter_path="$PIXEL_RUNTIME_STAGE_INTERPRETER_PATH"
+loader_name="$PIXEL_RUNTIME_STAGE_LOADER_NAME"
+modules_host_dir="$bundle_dir/modules"
+file "$binary_host_path" | tee "$binary_file_path"
 llvm-readelf -lW "$binary_host_path" >"$program_headers_path"
 llvm-readelf -dW "$binary_host_path" >"$dynamic_section_path"
-mapfile -t closure_paths < <(nix-store -qR "$out_link")
-printf '%s\n' "${closure_paths[@]}" >"$closure_path"
-
-interpreter_path="$(binary_interpreter "$binary_host_path")"
-if [[ -z "$interpreter_path" || ! -f "$interpreter_path" ]]; then
-  echo "pixel_runtime_deno_core_smoke: could not resolve ELF interpreter" >&2
-  exit 1
-fi
-loader_name="$(basename "$interpreter_path")"
-
-mkdir -p "$bundle_lib_dir"
-cp "$binary_host_path" "$bundle_dir/$binary_name"
-cp -r "$modules_host_dir" "$bundle_dir/modules"
-cp "$interpreter_path" "$bundle_lib_dir/$loader_name"
+printf '%s\n' "${PIXEL_RUNTIME_CLOSURE_PATHS[@]}" >"$closure_path"
 printf '%s -> %s\n' "$interpreter_path" "$bundle_lib_dir/$loader_name" >"$bundle_manifest_path"
-
 while IFS= read -r needed_lib; do
   [[ -n "$needed_lib" ]] || continue
   if [[ "$needed_lib" == "$loader_name" ]]; then
     continue
   fi
   lib_source_path="$(find_runtime_file_in_closure "$needed_lib")"
-  cp "$lib_source_path" "$bundle_lib_dir/$needed_lib"
   printf '%s -> %s\n' "$lib_source_path" "$bundle_lib_dir/$needed_lib" >>"$bundle_manifest_path"
 done < <(binary_needed_libs "$binary_host_path")
-
-chmod 0755 "$bundle_dir/$binary_name" "$bundle_lib_dir/$loader_name"
+binary_ok=true
 bundle_ok=true
 
 if {
