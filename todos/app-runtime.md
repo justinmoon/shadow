@@ -47,8 +47,8 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
   `just runtime-app-host-run` launches a runtime-mode Blitz window on the desktop host, and `just runtime-app-host-smoke` exercises the same path with an auto-exit timer.
 - [x] Click round-trip.
   `just runtime-app-click-smoke` keeps the app alive inside one `deno_core` session, dispatches a host click event to `data-shadow-id="counter"`, and verifies the rerendered HTML updates from `Count 1` to `Count 2`.
-- [ ] Basic form / input path.
-  Prefer uncontrolled, or `change` / `submit` first.
+- [x] Basic form / input path.
+  `just runtime-app-input-smoke` keeps a second app alive inside one `deno_core` session, dispatches a host `change` event with a string `value`, and verifies both the `<input value=...>` attribute and preview text rerender.
 - [ ] Rooted Pixel proof.
   Same transport on the real panel.
 - [ ] Re-evaluate full snapshots.
@@ -62,6 +62,7 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
 - CSS scoping model?
 - Input / focus / caret strategy?
 - Event payload shape?
+- Do we keep `change`-plus-string-value as the first transport, or add richer form payloads before Blitz integration?
 - When to expose sqlite / fs / network ops?
 - When does the device lane need more than `deno_core`?
 

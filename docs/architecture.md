@@ -54,6 +54,7 @@ The current operator ladder reflects that split:
 15. `just runtime-app-blitz-document-smoke` is the first Rust-side Blitz bridge rung: it proves a fixed-frame `HtmlDocument` can swap runtime CSS and app HTML into persistent frame slots before a visible host window is involved.
 16. `just runtime-app-host-run` and `just runtime-app-host-smoke` are the first visible host proof: launch a runtime-mode Blitz window backed by the new frame seam, with the smoke variant auto-exiting after the first host frame.
 17. `just runtime-app-click-smoke` is the first reactive host proof: keep the bundled app alive inside one `deno_core` session, dispatch a host click into the JS handler table, and verify the rerendered HTML snapshot changes.
+18. `just runtime-app-input-smoke` is the first text-input host proof: dispatch a host `change` event with a string value into the same bundled runtime seam and verify both the form control state and rendered preview update.
 
 This is intentionally not yet a full custom userland boot. The repo is using the smallest reliable transport at each layer: first-stage wrapper for `/init` proof, then post-boot guest session launch for display and compositor iteration.
 
@@ -73,7 +74,8 @@ This also sets the current boundary for the Blitz + Deno demo on device:
 6. The first proven Rust-side Blitz seam on the host is now a fixed frame with stable style/root slots: mutate those slots with `set_inner_html`, keep the outer document persistent, and leave visible host integration for the next rung.
 7. The first visible host proof now composes that seam into a real window: runtime-shaped payload, persistent Blitz frame, and a sample app card rendered on screen without the browser.
 8. The first reactive host proof now keeps JS state inside one embedded runtime session: host-dispatched click events target `data-shadow-id` nodes, JS handlers mutate Solid state, and the app emits a fresh HTML snapshot.
-9. Reaching full Blitz-on-device still needs more runtime work beyond the current Pixel compositor loop: either stabilize that Linux userspace envelope for the real runtime, retarget to a more self-contained payload, or replace the subprocess model with an embedded JS runtime seam.
+9. The first form/input proof keeps that same contract intentionally small: host `change` events may carry a string `value`, the runtime updates the target element state before invoking the JS handler, and the app emits the next HTML snapshot.
+10. Reaching full Blitz-on-device still needs more runtime work beyond the current Pixel compositor loop: either stabilize that Linux userspace envelope for the real runtime, retarget to a more self-contained payload, or replace the subprocess model with an embedded JS runtime seam.
 
 For the newly unlocked-and-rooted Pixel track, the intended operator ladder is now:
 

@@ -107,6 +107,10 @@ runtime-app-document-smoke:
 runtime-app-click-smoke:
 	@nix develop .#runtime -c scripts/runtime_app_click_smoke.sh
 
+# Run the first host-dispatched change event through the bundled app runtime seam
+runtime-app-input-smoke:
+	@nix develop .#runtime -c scripts/runtime_app_input_smoke.sh
+
 # Run the fixed-frame Blitz document smoke for app payload swapping
 runtime-app-blitz-document-smoke:
 	@scripts/runtime_app_blitz_document_smoke.sh

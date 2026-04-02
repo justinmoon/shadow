@@ -107,7 +107,7 @@ export function renderToDocument(root) {
 }
 
 function hostCreateElement(tagName) {
-  return {
+  const node = {
     attributes: Object.create(null),
     children: [],
     kind: "element",
@@ -115,6 +115,8 @@ function hostCreateElement(tagName) {
     parent: null,
     tagName,
   };
+  attachElementAccessors(node);
+  return node;
 }
 
 function hostCreateTextNode(value) {
@@ -228,23 +230,15 @@ function isTextNode(node) {
 
 function dispatchRuntimeEvent(root, event) {
   const normalizedEvent = normalizeRuntimeEvent(event);
-  if (normalizedEvent.type !== "click") {
-    return;
-  }
-
   const targetNode = findNodeByShadowId(root, normalizedEvent.targetId);
   if (!targetNode) {
     return;
   }
 
-  const clickHandler = targetNode.listeners.click;
-  if (typeof clickHandler === "function") {
-    clickHandler({
-      currentTarget: targetNode,
-      target: targetNode,
-      targetId: normalizedEvent.targetId,
-      type: "click",
-    });
+  applyRuntimeEventState(targetNode, normalizedEvent);
+  const handler = targetNode.listeners[normalizedEvent.type];
+  if (typeof handler === "function") {
+    handler(createRuntimeEvent(targetNode, normalizedEvent));
   }
 }
 
@@ -259,7 +253,11 @@ function normalizeRuntimeEvent(event) {
     throw new TypeError("runtime event requires string type and targetId");
   }
 
-  return { targetId, type };
+  const normalizedEvent = { targetId, type };
+  if (typeof event.value === "string") {
+    normalizedEvent.value = event.value;
+  }
+  return normalizedEvent;
 }
 
 function findNodeByShadowId(node, targetId) {
@@ -285,6 +283,22 @@ function findNodeByShadowId(node, targetId) {
 
 function renderMountToDocument(root) {
   return renderToDocument(root);
+}
+
+function applyRuntimeEventState(node, event) {
+  if ((event.type === "change" || event.type === "input") && "value" in event) {
+    node.value = event.value;
+  }
+}
+
+function createRuntimeEvent(targetNode, event) {
+  return {
+    currentTarget: targetNode,
+    preventDefault() {},
+    target: targetNode,
+    targetId: event.targetId,
+    type: event.type,
+  };
 }
 
 function resolveAnchorIndex(parent, anchor) {
@@ -364,6 +378,46 @@ function assertTextNode(node, operation) {
   if (!node || node.kind !== "text") {
     throw new TypeError(`${operation} expects a text node`);
   }
+}
+
+function attachElementAccessors(node) {
+  Object.defineProperties(node, {
+    value: {
+      enumerable: false,
+      get() {
+        return node.attributes.value ?? "";
+      },
+      set(nextValue) {
+        if (nextValue == null) {
+          delete node.attributes.value;
+          return;
+        }
+        node.attributes.value = String(nextValue);
+      },
+    },
+    name: {
+      enumerable: false,
+      get() {
+        return node.attributes.name ?? "";
+      },
+      set(nextValue) {
+        if (nextValue == null) {
+          delete node.attributes.name;
+          return;
+        }
+        node.attributes.name = String(nextValue);
+      },
+    },
+  });
+
+  node.getAttribute = (name) => node.attributes[name] ?? null;
+  node.setAttribute = (name, value) => {
+    if (value == null) {
+      delete node.attributes[name];
+      return;
+    }
+    node.attributes[name] = String(value);
+  };
 }
 
 function createRenderer({

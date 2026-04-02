@@ -10,7 +10,6 @@ export const DEFAULT_MODULE_NAME = "@shadow/app-runtime-solid";
 const EXPECTED_TOKENS = [
   "createElement",
   "createTextNode",
-  "createComponent",
   "setProp",
 ];
 
