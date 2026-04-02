@@ -12,6 +12,40 @@ SSH_OPTS=(
   -o StrictHostKeyChecking=no
   -o UserKnownHostsFile=/dev/null
 )
+SSH_RETRIES="${SHADOW_SSH_RETRIES:-3}"
+SSH_RETRY_SLEEP="${SHADOW_SSH_RETRY_SLEEP:-2}"
+
+ssh_retry() {
+  local status attempt
+  status=0
+  for attempt in $(seq 1 "$SSH_RETRIES"); do
+    if ssh "${SSH_OPTS[@]}" "$@"; then
+      return 0
+    fi
+    status=$?
+    if (( attempt == SSH_RETRIES )); then
+      return "$status"
+    fi
+    sleep "$SSH_RETRY_SLEEP"
+  done
+  return "$status"
+}
+
+scp_retry() {
+  local status attempt
+  status=0
+  for attempt in $(seq 1 "$SSH_RETRIES"); do
+    if scp "${SSH_OPTS[@]}" -q "$@"; then
+      return 0
+    fi
+    status=$?
+    if (( attempt == SSH_RETRIES )); then
+      return "$status"
+    fi
+    sleep "$SSH_RETRY_SLEEP"
+  done
+  return "$status"
+}
 
 repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || pwd
@@ -155,7 +189,7 @@ remote_shell() {
   if is_local_host; then
     bash -lc "$script"
   else
-    ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" /bin/bash -s <<<"$script"
+    ssh_retry "$REMOTE_HOST" /bin/bash -s <<<"$script"
   fi
 }
 
@@ -163,7 +197,7 @@ remote_bash() {
   if is_local_host; then
     /bin/bash
   else
-    ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" /bin/bash
+    ssh_retry "$REMOTE_HOST" /bin/bash
   fi
 }
 
@@ -190,7 +224,7 @@ remote_nix_bash() {
   else
     sync_remote_flake
     command="cd $(printf '%q' "$(remote_flake_dir)") && nix develop .#bootimg -c bash -c $(printf '%q' "$script")"
-    ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" /bin/bash -lc "$(printf '%q' "$command")"
+    ssh_retry "$REMOTE_HOST" /bin/bash -lc "$(printf '%q' "$command")"
   fi
 }
 
@@ -217,7 +251,7 @@ copy_to_remote() {
     mkdir -p "$(dirname "$dest")"
     cp "$src" "$dest"
   else
-    scp "${SSH_OPTS[@]}" -q "$src" "${REMOTE_HOST}:$dest"
+    scp_retry "$src" "${REMOTE_HOST}:$dest"
   fi
 }
 

@@ -38,7 +38,7 @@ sync_remote_guest_ui_tree() {
     rust \
     scripts \
     ui \
-    | ssh "$REMOTE_HOST" \
+    | ssh_retry "$REMOTE_HOST" \
         "rm -rf $(printf '%q' "$remote_dir") && mkdir -p $(printf '%q' "$remote_dir") && tar -xf - -C $(printf '%q' "$remote_dir")"
 
   printf '%s\n' "$remote_dir"

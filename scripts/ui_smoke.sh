@@ -10,6 +10,14 @@ UI_SMOKE_TIMEOUT_SECS="${SHADOW_UI_SMOKE_TIMEOUT:-300}"
 UI_SMOKE_NAMESPACE="${SHADOW_UI_SMOKE_NAMESPACE:-$(basename "$REPO_ROOT")-$$}"
 UI_SMOKE_SSH_RETRIES="${SHADOW_UI_SMOKE_SSH_RETRIES:-3}"
 UI_SMOKE_SSH_RETRY_SLEEP="${SHADOW_UI_SMOKE_SSH_RETRY_SLEEP:-2}"
+UI_SMOKE_SSH_OPTS=(
+  -o BatchMode=yes
+  -o ConnectTimeout=10
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=3
+)
 
 repo_root() {
   printf '%s\n' "$REPO_ROOT"
@@ -37,8 +45,7 @@ remote_ssh() {
   status=0
   for attempt in $(seq 1 "$UI_SMOKE_SSH_RETRIES"); do
     if ssh \
-      -o ServerAliveInterval=15 \
-      -o ServerAliveCountMax=3 \
+      "${UI_SMOKE_SSH_OPTS[@]}" \
       "$REMOTE_HOST" \
       /bin/bash -lc "$(printf '%q' "$script")"; then
       return 0

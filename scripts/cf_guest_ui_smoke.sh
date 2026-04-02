@@ -21,6 +21,7 @@ DEFAULT_CLIENT_MARKER="[shadow-guest-counter] frame-committed checksum=${EXPECTE
 CLIENT_MARKER="${SHADOW_GUEST_CLIENT_WAIT_FOR:-$DEFAULT_CLIENT_MARKER}"
 GUEST_TIMEOUT_SECS="${SHADOW_GUEST_UI_TIMEOUT:-180}"
 SHADOW_SESSION_BIN="${SHADOW_SESSION_BIN:-$(build_dir)/shadow-session}"
+ADB_WAIT_TIMEOUT="${SHADOW_ADB_WAIT_TIMEOUT:-30}"
 ADB_REMOTE_TMP=""
 REMOTE_UI_REPO=""
 REMOTE_FRAME_COPY=""
@@ -83,10 +84,10 @@ client_marker=$(printf '%q' "$CLIENT_MARKER")
 enable_drm=$(printf '%q' "$ENABLE_DRM")
 artifact_copy=$(printf '%q' "$REMOTE_FRAME_COPY")
 
-adb -s "\$serial" wait-for-device
+timeout $(printf '%q' "$ADB_WAIT_TIMEOUT") adb -s "\$serial" wait-for-device
 adb -s "\$serial" root >/dev/null 2>&1 || true
 sleep 2
-adb -s "\$serial" wait-for-device
+timeout $(printf '%q' "$ADB_WAIT_TIMEOUT") adb -s "\$serial" wait-for-device
 adb -s "\$serial" push "\$session_src" "\$session_dst" >/dev/null
 adb -s "\$serial" push "$(printf '%q' "$COMPOSITOR_BIN")" "\$compositor_dst" >/dev/null
 adb -s "\$serial" push "$(printf '%q' "$COUNTER_BIN")" "\$counter_dst" >/dev/null
@@ -96,7 +97,7 @@ if [[ "\$enable_drm" == "1" ]]; then
   adb -s "\$serial" shell stop bootanim || true
   adb -s "\$serial" shell stop vendor.hwcomposer-3 || true
   sleep 2
-  adb -s "\$serial" wait-for-device || true
+  timeout $(printf '%q' "$ADB_WAIT_TIMEOUT") adb -s "\$serial" wait-for-device || true
 fi
 adb -s "\$serial" shell 'setenforce 0 >/dev/null 2>&1 || true'
 adb -s "\$serial" shell "rm -rf \$runtime_dir && mkdir -p \$runtime_dir && chmod 700 \$runtime_dir && rm -f \$log_path \$frame_path"
@@ -124,6 +125,6 @@ mkdir -p "$(dirname "$LOCAL_FRAME_PATH")"
 if is_local_host; then
   cp "$REMOTE_FRAME_COPY" "$LOCAL_FRAME_PATH"
 else
-  scp -q "${REMOTE_HOST}:$REMOTE_FRAME_COPY" "$LOCAL_FRAME_PATH"
+  scp_retry "${REMOTE_HOST}:$REMOTE_FRAME_COPY" "$LOCAL_FRAME_PATH"
 fi
 printf 'Saved guest frame artifact to %s\n' "$LOCAL_FRAME_PATH"
