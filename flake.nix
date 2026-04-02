@@ -205,6 +205,7 @@
             gnused
             gzip
             just
+            llvmPackages.bintools
             lz4
             nix
             nodejs
@@ -284,6 +285,7 @@
             gnugrep
             gnused
             just
+            llvmPackages.bintools
             ninja
             pkg-config
             python3

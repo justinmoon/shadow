@@ -18,14 +18,15 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
    Eval JS, file-backed ES modules, top-level `await`, host + GNU cross builds.
 4. Done: first host/runtime protocol seam.
    Tiny async extension op from JS into Rust and back.
-5. Next: pick the phone execution envelope.
-   Most likely `gnu` userspace-on-device or a later `musl` retarget.
-6. Next: run the `deno_core` seam on the real phone.
-7. Later: add `deno_runtime` only after the lower seams are stable.
-8. Later: feed Blitz documents from the runtime seam.
+5. Done: first phone execution envelope.
+   Rooted Android shell launches a GNU/Linux binary by pushing the loader plus the small glibc closure beside it.
+6. Done: run the `deno_core` seam on the real phone.
+7. Next: decide whether to stabilize the first GNU envelope or retarget toward a more self-contained payload.
+8. Later: add `deno_runtime` only after the lower seams are stable.
+9. Later: feed Blitz documents from the runtime seam.
 
 ## Open Questions
 
 - Can we rely on upstream `rusty_v8` archives for the first seams?
-- When do we switch from `gnu` convenience to a more self-contained payload?
+- When do we switch from the first GNU envelope to a more self-contained payload?
 - Which minimum runtime features does Blitz actually need first?

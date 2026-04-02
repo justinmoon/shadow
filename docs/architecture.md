@@ -48,6 +48,7 @@ The current operator ladder reflects that split:
 9. `just pixel-guest-ui-drm-selftest` is the first compositor-owned rooted visible-screen rung on the Pixel: same display takeover seam, same guest compositor KMS code, but no Wayland client yet.
 10. `just pixel-guest-ui-drm` reuses that rooted display-takeover seam for the real compositor path and proves the guest compositor plus counter client can render to the phone panel, not just to an offscreen artifact.
 11. `just pixel-*-hold` plus `just pixel-restore-android` split takeover from restore so the panel can stay under our control long enough for human-visible QA instead of immediately jumping back to Android.
+12. `just pixel-runtime-deno-core-smoke` is the first runtime-on-device rung that does not touch the display stack: it proves a minimal `deno_core` binary plus file-backed JS modules can execute on the rooted phone through a Linux/glibc envelope.
 
 This is intentionally not yet a full custom userland boot. The repo is using the smallest reliable transport at each layer: first-stage wrapper for `/init` proof, then post-boot guest session launch for display and compositor iteration.
 
@@ -61,7 +62,8 @@ This also sets the current boundary for the Blitz + Deno demo on device:
 
 1. The sibling Blitz prototype launches `deno` as a subprocess and reads its TypeScript entrypoint from the source tree at runtime.
 2. Official Deno Linux arm64 releases are dynamically linked against GNU libc (`/lib/ld-linux-aarch64.so.1`) and do not execute in the stock Android shell environment on the Pixel 4a.
-3. Reaching full Blitz-on-device therefore needs one more runtime layer beyond the current Pixel compositor loop: either a Deno build/package that actually runs on the device shell, or a replacement/embedded JS runtime seam.
+3. The first proven device-side runtime seam in this repo is now a rooted GNU envelope: push a Linux ARM64 binary, its ELF loader, the small glibc closure it needs, and its JS modules into `/data/local/tmp`, then invoke the loader directly.
+4. Reaching full Blitz-on-device still needs more runtime work beyond the current Pixel compositor loop: either stabilize that Linux userspace envelope for the real runtime, retarget to a more self-contained payload, or replace the subprocess model with an embedded JS runtime seam.
 
 For the newly unlocked-and-rooted Pixel track, the intended operator ladder is now:
 

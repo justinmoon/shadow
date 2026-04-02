@@ -506,6 +506,10 @@ pixel_runtime_dir() {
   printf '%s\n' "${PIXEL_RUNTIME_DIR:-/data/local/tmp/shadow-runtime}"
 }
 
+pixel_runtime_linux_dir() {
+  printf '%s\n' "${PIXEL_RUNTIME_LINUX_DIR:-/data/local/tmp/shadow-runtime-gnu}"
+}
+
 pixel_download_dir_device() {
   printf '%s\n' "${PIXEL_DOWNLOAD_DIR_DEVICE:-/storage/emulated/0/Download}"
 }
@@ -520,6 +524,10 @@ pixel_drm_runs_dir() {
 
 pixel_drm_guest_runs_dir() {
   printf '%s/drm-guest\n' "$(pixel_dir)"
+}
+
+pixel_runtime_runs_dir() {
+  printf '%s/runtime\n' "$(pixel_dir)"
 }
 
 pixel_root_ota_url() {

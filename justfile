@@ -291,6 +291,10 @@ pixel-root-flash:
 pixel-root-check:
 	@scripts/pixel_root_check.sh
 
+# Run the minimal Deno Core smoke binary on the rooted Pixel through the GNU runtime envelope
+pixel-runtime-deno-core-smoke:
+	@scripts/pixel_runtime_deno_core_smoke.sh
+
 # Run the nested Smithay compositor host on Linux
 compositor-run:
 	@nix develop .#ui -c cargo run --manifest-path ui/Cargo.toml -p shadow-compositor
