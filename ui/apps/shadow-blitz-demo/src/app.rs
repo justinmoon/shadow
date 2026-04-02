@@ -2,6 +2,7 @@ use anyrender_vello_cpu::VelloCpuWindowRenderer;
 use blitz_shell::{
     create_default_event_loop, BlitzShellEvent, BlitzShellProxy, View, WindowConfig,
 };
+use std::env;
 use std::sync::mpsc::Receiver;
 use winit::{
     application::ApplicationHandler,
@@ -12,26 +13,76 @@ use winit::{
 };
 
 use crate::document::StaticDocument;
+use crate::runtime_document::RuntimeDocument;
 
 #[cfg(target_os = "linux")]
 use winit::platform::wayland::WindowAttributesWayland;
 
 #[cfg(target_os = "linux")]
 const BLITZ_DEMO_WAYLAND_APP_ID: &str = "dev.shadow.blitz";
+#[cfg(target_os = "linux")]
+const RUNTIME_DEMO_WAYLAND_APP_ID: &str = "dev.shadow.runtime";
 
 pub fn run() {
+    let demo_mode = DemoMode::from_env();
     let event_loop = create_default_event_loop();
     let (proxy, receiver) = BlitzShellProxy::new(event_loop.create_proxy());
     let window = WindowConfig::with_attributes(
-        Box::new(StaticDocument::new()),
+        demo_mode.document(),
         VelloCpuWindowRenderer::new(),
-        window_attributes(),
+        window_attributes(demo_mode),
     );
-    let application = BlitzApplication::new(proxy, receiver, window);
+    let application = BlitzApplication::new(proxy, receiver, window, demo_mode);
     event_loop.run_app(application).expect("run blitz app");
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DemoMode {
+    Static,
+    Runtime,
+}
+
+impl DemoMode {
+    fn from_env() -> Self {
+        match env::var("SHADOW_BLITZ_DEMO_MODE").ok().as_deref() {
+            Some("runtime") => Self::Runtime,
+            _ => Self::Static,
+        }
+    }
+
+    fn document(self) -> Box<dyn blitz_dom::Document> {
+        match self {
+            Self::Static => Box::new(StaticDocument::new()),
+            Self::Runtime => Box::new(RuntimeDocument::new(RuntimeDocument::sample_payload())),
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Static => "Shadow Blitz Demo",
+            Self::Runtime => "Shadow Runtime Demo",
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wayland_app_id(self) -> &'static str {
+        match self {
+            Self::Static => BLITZ_DEMO_WAYLAND_APP_ID,
+            Self::Runtime => RUNTIME_DEMO_WAYLAND_APP_ID,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wayland_instance_name(self) -> &'static str {
+        match self {
+            Self::Static => "shadow-blitz-demo",
+            Self::Runtime => "shadow-runtime-demo",
+        }
+    }
+}
+
 struct BlitzApplication {
+    demo_mode: DemoMode,
     proxy: BlitzShellProxy,
     event_queue: Receiver<BlitzShellEvent>,
     pending_window: Option<WindowConfig<VelloCpuWindowRenderer>>,
@@ -43,8 +94,10 @@ impl BlitzApplication {
         proxy: BlitzShellProxy,
         event_queue: Receiver<BlitzShellEvent>,
         window: WindowConfig<VelloCpuWindowRenderer>,
+        demo_mode: DemoMode,
     ) -> Self {
         Self {
+            demo_mode,
             proxy,
             event_queue,
             pending_window: Some(window),
@@ -71,7 +124,7 @@ impl BlitzApplication {
             _ => {}
         }
 
-        if window.downcast_doc_mut::<StaticDocument>().should_exit() {
+        if document_should_exit(self.demo_mode, window) {
             self.window.take();
             event_loop.exit();
         }
@@ -129,19 +182,28 @@ impl ApplicationHandler for BlitzApplication {
     }
 }
 
-fn window_attributes() -> WindowAttributes {
+fn window_attributes(demo_mode: DemoMode) -> WindowAttributes {
     let attributes = WindowAttributes::default()
-        .with_title("Shadow Blitz Demo")
+        .with_title(demo_mode.title())
         .with_resizable(false)
         .with_surface_size(LogicalSize::new(384.0, 720.0));
 
     #[cfg(target_os = "linux")]
     {
-        let wayland_attributes = WindowAttributesWayland::default()
-            .with_name(BLITZ_DEMO_WAYLAND_APP_ID, "shadow-blitz-demo");
+        let wayland_attributes = WindowAttributesWayland::default().with_name(
+            demo_mode.wayland_app_id(),
+            demo_mode.wayland_instance_name(),
+        );
         return attributes.with_platform_attributes(Box::new(wayland_attributes));
     }
 
     #[allow(unreachable_code)]
     attributes
+}
+
+fn document_should_exit(demo_mode: DemoMode, window: &mut View<VelloCpuWindowRenderer>) -> bool {
+    match demo_mode {
+        DemoMode::Static => window.downcast_doc_mut::<StaticDocument>().should_exit(),
+        DemoMode::Runtime => window.downcast_doc_mut::<RuntimeDocument>().should_exit(),
+    }
 }

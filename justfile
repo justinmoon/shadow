@@ -107,6 +107,14 @@ runtime-app-document-smoke:
 runtime-app-blitz-document-smoke:
 	@scripts/runtime_app_blitz_document_smoke.sh
 
+# Run the host-visible runtime demo window
+runtime-app-host-run:
+	@scripts/runtime_app_host_run.sh
+
+# Run the host-visible runtime demo with an auto-exit smoke timer
+runtime-app-host-smoke:
+	@scripts/runtime_app_host_smoke.sh
+
 # Build the minimal Rusty V8 smoke binary for x86_64 Linux
 runtime-rusty-v8-smoke-x86_64-linux-gnu:
 	@nix build --accept-flake-config .#rusty-v8-smoke-x86_64-linux-gnu
