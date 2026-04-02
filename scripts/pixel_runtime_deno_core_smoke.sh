@@ -8,16 +8,20 @@ source "$SCRIPT_DIR/pixel_common.sh"
 source "$SCRIPT_DIR/pixel_runtime_linux_bundle_common.sh"
 ensure_bootimg_shell "$@"
 
+log_prefix="${PIXEL_RUNTIME_LOG_PREFIX:-pixel_runtime_linux_smoke}"
+success_label="${PIXEL_RUNTIME_SUCCESS_LABEL:-Pixel Linux runtime smoke}"
 serial="$(pixel_resolve_serial)"
 run_dir="$(pixel_prepare_named_run_dir "$(pixel_runtime_runs_dir)")"
 device_dir="$(pixel_runtime_linux_dir)"
-package_ref="$(repo_root)#deno-core-smoke-aarch64-linux-gnu"
-out_link="$(pixel_dir)/deno-core-smoke-aarch64-linux-gnu-result"
-binary_name="deno-core-smoke"
+package_attr="${PIXEL_RUNTIME_PACKAGE_ATTR:-deno-core-smoke-aarch64-linux-gnu}"
+package_ref="$(repo_root)#$package_attr"
+binary_name="${PIXEL_RUNTIME_BINARY_NAME:-deno-core-smoke}"
+out_link="$(pixel_dir)/${binary_name}-result"
 binary_host_path=""
 binary_device_path="$device_dir/$binary_name"
 modules_host_dir=""
-module_device_path="$device_dir/modules/main.js"
+module_relative_path="${PIXEL_RUNTIME_MODULE_RELATIVE_PATH:-modules/main.js}"
+module_device_path="$device_dir/$module_relative_path"
 bundle_dir="$run_dir/shadow-runtime-gnu"
 bundle_lib_dir="$bundle_dir/lib"
 bundle_manifest_path="$run_dir/bundle-manifest.txt"
@@ -38,6 +42,8 @@ output_ok=false
 interpreter_path=""
 loader_name=""
 failure_message=""
+expected_output_prefix="${PIXEL_RUNTIME_EXPECT_OUTPUT_PREFIX:-deno_core host-op ok:}"
+expected_result="${PIXEL_RUNTIME_EXPECT_RESULT:-result=HELLO FROM HOST OP AND FILE MODULE}"
 
 pixel_prepare_dirs
 pixel_capture_props "$serial" "$run_dir/device-props.txt"
@@ -48,7 +54,7 @@ root_id="$(pixel_root_id "$serial")"
 root_status="$?"
 set -e
 if [[ "$root_status" -ne 0 ]]; then
-  echo "pixel_runtime_deno_core_smoke: root is required; run 'just pixel-root-check'" >&2
+  echo "$log_prefix: root is required; run 'just pixel-root-check'" >&2
   exit 1
 fi
 root_ok=true
@@ -98,10 +104,9 @@ if [[ "$push_ok" == true ]]; then
   run_status="$?"
   set -e
 
-  expected_result="result=HELLO FROM HOST OP AND FILE MODULE"
   expected_module="module=file://$module_device_path"
   if [[ "$run_status" -eq 0 ]] \
-    && grep -Fq 'deno_core host-op ok:' "$session_output_path" \
+    && grep -Fq "$expected_output_prefix" "$session_output_path" \
     && grep -Fq "$expected_module" "$session_output_path" \
     && grep -Fq "$expected_result" "$session_output_path"; then
     output_ok=true
@@ -129,9 +134,9 @@ pixel_write_status_json "$run_dir/status.json" \
 cat "$run_dir/status.json"
 
 if [[ "$output_ok" != true ]]; then
-  [[ -n "$failure_message" ]] && echo "pixel_runtime_deno_core_smoke: $failure_message" >&2
-  echo "pixel_runtime_deno_core_smoke: device runtime smoke failed; see $run_dir" >&2
+  [[ -n "$failure_message" ]] && echo "$log_prefix: $failure_message" >&2
+  echo "$log_prefix: device runtime smoke failed; see $run_dir" >&2
   exit 1
 fi
 
-printf 'Pixel Deno Core runtime smoke succeeded: %s\n' "$run_dir"
+printf '%s succeeded: %s\n' "$success_label" "$run_dir"

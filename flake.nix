@@ -184,6 +184,52 @@
           '';
           meta.mainProgram = "deno-core-smoke";
         };
+      mkDenoRuntimeSnapshotFor = buildPkgs: targetTriple:
+        buildPkgs.rustPlatform.buildRustPackage {
+          pname = "deno-runtime-snapshot";
+          version = "0.1.0";
+          src = ./rust/deno-runtime-snapshot;
+          cargoLock.lockFile = ./rust/deno-runtime-snapshot/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = buildPkgs.stdenv.hostPlatform.config;
+          depsBuildBuild =
+            lib.optionals buildPkgs.stdenv.buildPlatform.isDarwin [
+              buildPkgs.stdenv.cc
+              buildPkgs.libiconv
+            ];
+          RUSTY_V8_ARCHIVE = mkRustyV8ArchiveFor buildPkgs;
+          postInstall = ''
+            "$out/bin/deno-runtime-snapshot" "$out/RUNTIME_SNAPSHOT.bin" ${lib.escapeShellArg targetTriple}
+          '';
+          meta.mainProgram = "deno-runtime-snapshot";
+        };
+      mkDenoRuntimeSmokeFor = cross:
+        let
+          runtimeSnapshot =
+            mkDenoRuntimeSnapshotFor cross.buildPackages cross.stdenv.hostPlatform.rust.rustcTarget;
+        in cross.rustPlatform.buildRustPackage {
+          pname = "deno-runtime-smoke";
+          version = "0.1.0";
+          src = ./rust/deno-runtime-smoke;
+          cargoLock.lockFile = ./rust/deno-runtime-smoke/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          nativeBuildInputs = [ cross.rustPlatform.bindgenHook ];
+          depsBuildBuild =
+            lib.optionals cross.stdenv.buildPlatform.isDarwin [
+              cross.buildPackages.stdenv.cc
+              cross.buildPackages.libiconv
+            ];
+          DENO_RUNTIME_SMOKE_SNAPSHOT_SOURCE = "${runtimeSnapshot}/RUNTIME_SNAPSHOT.bin";
+          RUSTY_V8_ARCHIVE = mkRustyV8ArchiveFor cross;
+          postInstall = ''
+            mkdir -p "$out/lib/deno-runtime-smoke"
+            cp -r "$src/modules" "$out/lib/deno-runtime-smoke/"
+          '';
+          meta.mainProgram = "deno-runtime-smoke";
+        };
       mkInitWrapper = pkgs: mkInitWrapperFor pkgs.pkgsCross.musl64;
       mkDrmRect = pkgs: mkDrmRectFor pkgs.pkgsCross.musl64;
       mkShadowSession = pkgs: mkShadowSessionFor pkgs.pkgsCross.musl64;
@@ -327,6 +373,11 @@
             mkDenoCoreSmokeFor pkgs.pkgsCross.aarch64-multiplatform;
           deno-core-smoke-x86_64-linux-gnu =
             mkDenoCoreSmokeFor pkgs.pkgsCross.gnu64;
+          deno-runtime-smoke = mkDenoRuntimeSmokeFor pkgs;
+          deno-runtime-smoke-aarch64-linux-gnu =
+            mkDenoRuntimeSmokeFor pkgs.pkgsCross.aarch64-multiplatform;
+          deno-runtime-smoke-x86_64-linux-gnu =
+            mkDenoRuntimeSmokeFor pkgs.pkgsCross.gnu64;
           rusty-v8-smoke = mkRustyV8SmokeFor pkgs;
           rusty-v8-smoke-aarch64-linux-gnu =
             mkRustyV8SmokeFor pkgs.pkgsCross.aarch64-multiplatform;

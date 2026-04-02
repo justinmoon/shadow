@@ -1,0 +1,9 @@
+[package]
+name = "deno-runtime-snapshot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+deno_core = { version = "=0.393.0", default-features = false, features = ["include_icu_data", "reactor-tokio"] }
+deno_runtime = { version = "=0.248.0", features = ["include_js_files_for_snapshotting", "only_snapshotted_js_sources", "snapshot"] }
+deno_error = "=0.7.1"

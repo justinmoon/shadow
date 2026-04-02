@@ -95,6 +95,10 @@ runtime-rusty-v8-smoke:
 runtime-deno-core-smoke:
 	@nix run --accept-flake-config .#deno-core-smoke
 
+# Run the minimal Deno Runtime smoke binary on the current host
+runtime-deno-runtime-smoke:
+	@nix run --accept-flake-config .#deno-runtime-smoke
+
 # Run the host-only Solid TSX compile smoke
 runtime-app-compile-smoke:
 	@nix develop .#runtime -c scripts/runtime_app_compile_smoke.sh
@@ -131,6 +135,10 @@ runtime-rusty-v8-smoke-x86_64-linux-gnu:
 runtime-deno-core-smoke-x86_64-linux-gnu:
 	@nix build --accept-flake-config .#deno-core-smoke-x86_64-linux-gnu
 
+# Build the minimal Deno Runtime smoke binary for x86_64 Linux
+runtime-deno-runtime-smoke-x86_64-linux-gnu:
+	@nix build --accept-flake-config .#deno-runtime-smoke-x86_64-linux-gnu
+
 # Build the minimal Rusty V8 smoke binary for aarch64 Linux
 runtime-rusty-v8-smoke-aarch64-linux-gnu:
 	@nix build --accept-flake-config .#rusty-v8-smoke-aarch64-linux-gnu
@@ -138,6 +146,10 @@ runtime-rusty-v8-smoke-aarch64-linux-gnu:
 # Build the minimal Deno Core smoke binary for aarch64 Linux
 runtime-deno-core-smoke-aarch64-linux-gnu:
 	@nix build --accept-flake-config .#deno-core-smoke-aarch64-linux-gnu
+
+# Build the minimal Deno Runtime smoke binary for aarch64 Linux
+runtime-deno-runtime-smoke-aarch64-linux-gnu:
+	@nix build --accept-flake-config .#deno-runtime-smoke-aarch64-linux-gnu
 
 # Run the Shadow desktop UI host
 ui-run:
@@ -321,7 +333,11 @@ pixel-root-check:
 
 # Run the minimal Deno Core smoke binary on the rooted Pixel through the GNU runtime envelope
 pixel-runtime-deno-core-smoke:
-	@scripts/pixel_runtime_deno_core_smoke.sh
+	@PIXEL_RUNTIME_LOG_PREFIX=pixel_runtime_deno_core_smoke PIXEL_RUNTIME_SUCCESS_LABEL='Pixel Deno Core runtime smoke' scripts/pixel_runtime_deno_core_smoke.sh
+
+# Run the minimal Deno Runtime smoke binary on the rooted Pixel through the GNU runtime envelope
+pixel-runtime-deno-runtime-smoke:
+	@PIXEL_RUNTIME_LOG_PREFIX=pixel_runtime_deno_runtime_smoke PIXEL_RUNTIME_SUCCESS_LABEL='Pixel Deno Runtime smoke' PIXEL_RUNTIME_PACKAGE_ATTR=deno-runtime-smoke-aarch64-linux-gnu PIXEL_RUNTIME_BINARY_NAME=deno-runtime-smoke PIXEL_RUNTIME_MODULE_RELATIVE_PATH=modules/main.js PIXEL_RUNTIME_EXPECT_OUTPUT_PREFIX='deno_runtime ok:' PIXEL_RUNTIME_EXPECT_RESULT='result=HELLO FROM DENO_RUNTIME AND DENO_RUNTIME FILE' scripts/pixel_runtime_deno_core_smoke.sh
 
 # Stage the runtime app bundle plus GNU-wrapped deno_core helper for Pixel use
 pixel-prepare-runtime-app-artifacts:
