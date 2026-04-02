@@ -95,6 +95,10 @@ runtime-rusty-v8-smoke:
 runtime-deno-core-smoke:
 	@nix run --accept-flake-config .#deno-core-smoke
 
+# Run the host-only Solid TSX compile smoke
+runtime-app-compile-smoke:
+	@nix develop .#runtime -c scripts/runtime_app_compile_smoke.sh
+
 # Build the minimal Rusty V8 smoke binary for x86_64 Linux
 runtime-rusty-v8-smoke-x86_64-linux-gnu:
 	@nix build --accept-flake-config .#rusty-v8-smoke-x86_64-linux-gnu

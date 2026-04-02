@@ -23,7 +23,7 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
 6. Done: run the `deno_core` seam on the real phone.
 7. Next: decide whether to stabilize the first GNU envelope or retarget toward a more self-contained payload.
 8. Next: split app-model work into `todos/app-runtime.md`; keep this note on runtime substrate.
-9. Later: add the minimum compile / module-loader hooks the app-runtime lane actually needs.
+9. Next: wire the host-only Solid TSX compile smoke from `just runtime-app-compile-smoke` into the `deno_core` module-loader seam the app-runtime lane actually needs.
 10. Later: add `deno_runtime` only after the lower seams are stable and the app-runtime lane justifies it.
 11. Later: support the chosen Blitz document bridge from `todos/app-runtime.md`.
 

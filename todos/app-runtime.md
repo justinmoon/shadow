@@ -37,9 +37,9 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## MVP Ladder
 
-1. Host-only TSX compile smoke.
-   Run Babel + Solid preset. Cache compiled JS.
-2. `deno_core` load compiled module.
+1. Done: host-only TSX compile smoke.
+   `just runtime-app-compile-smoke` runs Deno + Babel + Solid universal mode and caches compiled JS under `build/runtime/app-compile-smoke/`.
+2. Next: `deno_core` load compiled module.
    No display yet. Return first document payload.
 3. Rust `BlitzRuntimeDocument`.
    Fixed frame. Swap `<style>` and app root via inner HTML.
@@ -56,7 +56,7 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## Open Questions
 
-- Compile cache key / format?
+- Is a source-plus-config hash enough once imports start affecting compiled output?
 - Universal renderer vs SSR string renderer for v0?
 - CSS scoping model?
 - Input / focus / caret strategy?
