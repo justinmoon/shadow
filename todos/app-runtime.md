@@ -41,18 +41,21 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
 - Required: `{ type, targetId }`.
 - Text-like events may also include `value`.
 - Boolean form events may also include `checked`.
+- Text-like events may also include `selection: { start?, end?, direction? }`.
 - Pointer-derived events may also include `pointer: { clientX?, clientY?, isPrimary? }`.
 - JS handlers receive:
   - `event.type`
   - `event.targetId`
   - `event.value` plus `event.currentTarget.value`
   - `event.checked` plus `event.currentTarget.checked`
+  - `event.selection`, `event.selectionStart`, `event.selectionEnd`, `event.selectionDirection`
   - `event.pointer`, `event.clientX`, `event.clientY`, `event.isPrimary`
   - `event.target` / `event.currentTarget`
 - Current transport examples:
   - click: `{ "type": "click", "targetId": "counter" }`
   - input: `{ "type": "input", "targetId": "draft", "value": "hello" }`
   - checkbox change: `{ "type": "change", "targetId": "alerts", "checked": true }`
+  - text selection: `{ "type": "input", "targetId": "draft", "selection": { "start": 6, "end": 11, "direction": "forward" } }`
   - future pointer click: `{ "type": "click", "targetId": "counter", "pointer": { "clientX": 120.0, "clientY": 280.0, "isPrimary": true } }`
 
 ## MVP Ladder
@@ -73,10 +76,12 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
   `just runtime-app-focus-smoke` now keeps a third app alive inside one runtime session, dispatches `focus -> input -> blur`, and verifies the session contract carries enough state for the next text-entry seam without claiming caret support.
 - [x] Boolean form / checkbox path.
   `just runtime-app-toggle-smoke` now keeps a checkbox app alive inside one runtime session, dispatches `change` with `checked: true/false`, and verifies the boolean control state plus handler payload rerender on both backends.
+- [x] Selection metadata host smoke.
+  `just runtime-app-selection-smoke` now keeps a text input app alive inside one runtime session, dispatches `input` with `selection.start/end/direction`, and verifies the JS handler sees both range selections and collapsed carets on both backends.
 - [x] Host helper backend swap.
   The same bundled app/session contract now also runs on `deno_runtime`: `just runtime-app-document-smoke-deno-runtime`, `just runtime-app-click-smoke-deno-runtime`, `just runtime-app-input-smoke-deno-runtime`, and `just runtime-app-host-smoke-deno-runtime` all pass without changing the Blitz-side protocol.
 - [x] Host backend parity smoke.
-  `just runtime-app-backend-parity-smoke` now runs the document, click, input, focus, and toggle smokes on both `deno_core` and `deno_runtime` so backend drift is easier to catch.
+  `just runtime-app-backend-parity-smoke` now runs the document, click, input, focus, toggle, and selection smokes on both `deno_core` and `deno_runtime` so backend drift is easier to catch.
 - [x] Rooted Pixel proof.
   `just pixel-runtime-app-drm` stages the bundled app JS plus the GNU-wrapped `deno-core-smoke` helper, pushes them to the rooted phone, and proves the runtime-mode Blitz demo reaches the real panel through the existing guest compositor DRM path. `just pixel-runtime-app-click-drm` proves the same device path survives one auto-dispatched runtime click.
 - [x] Re-evaluate full snapshots.
@@ -102,7 +107,7 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
 - Universal renderer vs SSR string renderer for v0?
 - CSS scoping model?
 - Input / focus / caret strategy?
-- When do we need richer text payloads like selection state before Blitz integration?
+- When do we need composition / IME payloads beyond selection state?
 - When to expose sqlite / fs / network ops?
 - When does the device lane need more than `deno_core`, now that the same host contract also works on `deno_runtime`?
 - When do full snapshots stop being acceptable for text entry, scrolling, or animation-heavy apps?

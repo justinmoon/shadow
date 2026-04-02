@@ -203,6 +203,7 @@ impl RuntimeDocument {
             event_type: String::from("click"),
             value: None,
             checked: None,
+            selection: None,
             pointer: Some(RuntimePointerEvent {
                 client_x: Some(pointer.client_x()),
                 client_y: Some(pointer.client_y()),
@@ -402,6 +403,7 @@ fn auto_click_event_from_env(runtime_session_enabled: bool) -> Option<RuntimeDis
         event_type: String::from("click"),
         value: None,
         checked: None,
+        selection: None,
         pointer: None,
     })
 }

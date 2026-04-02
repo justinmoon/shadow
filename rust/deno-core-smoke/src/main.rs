@@ -237,7 +237,19 @@ struct RuntimeDispatchEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     checked: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    selection: Option<RuntimeSelectionEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pointer: Option<RuntimePointerEvent>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RuntimeSelectionEvent {
+    #[serde(rename = "start", skip_serializing_if = "Option::is_none")]
+    start: Option<u32>,
+    #[serde(rename = "end", skip_serializing_if = "Option::is_none")]
+    end: Option<u32>,
+    #[serde(rename = "direction", skip_serializing_if = "Option::is_none")]
+    direction: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

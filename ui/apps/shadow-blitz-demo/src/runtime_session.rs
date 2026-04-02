@@ -117,7 +117,19 @@ pub struct RuntimeDispatchEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checked: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<RuntimeSelectionEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pointer: Option<RuntimePointerEvent>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RuntimeSelectionEvent {
+    #[serde(rename = "start", skip_serializing_if = "Option::is_none")]
+    pub start: Option<u32>,
+    #[serde(rename = "end", skip_serializing_if = "Option::is_none")]
+    pub end: Option<u32>,
+    #[serde(rename = "direction", skip_serializing_if = "Option::is_none")]
+    pub direction: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -264,11 +264,51 @@ function normalizeRuntimeEvent(event) {
   if (typeof event.checked === "boolean") {
     normalizedEvent.checked = event.checked;
   }
+  const selection = normalizeRuntimeSelection(event.selection);
+  if (selection) {
+    normalizedEvent.selection = selection;
+  }
   const pointer = normalizeRuntimePointer(event.pointer);
   if (pointer) {
     normalizedEvent.pointer = pointer;
   }
   return normalizedEvent;
+}
+
+function normalizeRuntimeSelection(selection) {
+  if (selection == null) {
+    return null;
+  }
+  if (typeof selection !== "object") {
+    throw new TypeError("runtime event selection must be an object");
+  }
+
+  const normalizedSelection = {};
+  if ("start" in selection) {
+    if (!Number.isInteger(selection.start) || selection.start < 0) {
+      throw new TypeError("runtime event selection start must be a non-negative integer");
+    }
+    normalizedSelection.start = selection.start;
+  }
+  if ("end" in selection) {
+    if (!Number.isInteger(selection.end) || selection.end < 0) {
+      throw new TypeError("runtime event selection end must be a non-negative integer");
+    }
+    normalizedSelection.end = selection.end;
+  }
+  if ("direction" in selection) {
+    if (
+      typeof selection.direction !== "string" ||
+      !["forward", "backward", "none"].includes(selection.direction)
+    ) {
+      throw new TypeError(
+        "runtime event selection direction must be forward, backward, or none",
+      );
+    }
+    normalizedSelection.direction = selection.direction;
+  }
+
+  return Object.keys(normalizedSelection).length === 0 ? null : normalizedSelection;
 }
 
 function normalizeRuntimePointer(pointer) {
@@ -334,10 +374,24 @@ function applyRuntimeEventState(node, event) {
   if ((event.type === "change" || event.type === "input") && "checked" in event) {
     node.checked = event.checked;
   }
+  if ((event.type === "change" || event.type === "input") && "selection" in event) {
+    if ("start" in event.selection) {
+      node.selectionStart = event.selection.start;
+    }
+    if ("end" in event.selection) {
+      node.selectionEnd = event.selection.end;
+    }
+    if ("direction" in event.selection) {
+      node.selectionDirection = event.selection.direction;
+    }
+  }
 }
 
 function createRuntimeEvent(targetNode, event) {
   let defaultPrevented = false;
+  const selection = "selection" in event
+    ? event.selection
+    : readRuntimeSelection(targetNode);
   return {
     currentTarget: targetNode,
     get defaultPrevented() {
@@ -351,6 +405,10 @@ function createRuntimeEvent(targetNode, event) {
     type: event.type,
     value: "value" in event ? event.value : targetNode.value,
     checked: "checked" in event ? event.checked : targetNode.checked,
+    selection,
+    selectionStart: selection?.start ?? targetNode.selectionStart,
+    selectionEnd: selection?.end ?? targetNode.selectionEnd,
+    selectionDirection: selection?.direction ?? targetNode.selectionDirection,
     pointer: event.pointer ?? null,
     clientX: event.pointer?.clientX ?? 0,
     clientY: event.pointer?.clientY ?? 0,
@@ -438,6 +496,12 @@ function assertTextNode(node, operation) {
 }
 
 function attachElementAccessors(node) {
+  node.selectionState = {
+    direction: null,
+    end: null,
+    start: null,
+  };
+
   Object.defineProperties(node, {
     value: {
       enumerable: false,
@@ -491,6 +555,45 @@ function attachElementAccessors(node) {
         node.attributes.type = String(nextValue);
       },
     },
+    selectionStart: {
+      enumerable: false,
+      get() {
+        return node.selectionState.start;
+      },
+      set(nextValue) {
+        if (nextValue == null) {
+          node.selectionState.start = null;
+          return;
+        }
+        node.selectionState.start = Number(nextValue);
+      },
+    },
+    selectionEnd: {
+      enumerable: false,
+      get() {
+        return node.selectionState.end;
+      },
+      set(nextValue) {
+        if (nextValue == null) {
+          node.selectionState.end = null;
+          return;
+        }
+        node.selectionState.end = Number(nextValue);
+      },
+    },
+    selectionDirection: {
+      enumerable: false,
+      get() {
+        return node.selectionState.direction;
+      },
+      set(nextValue) {
+        if (nextValue == null) {
+          node.selectionState.direction = null;
+          return;
+        }
+        node.selectionState.direction = String(nextValue);
+      },
+    },
   });
 
   node.getAttribute = (name) => node.attributes[name] ?? null;
@@ -501,6 +604,20 @@ function attachElementAccessors(node) {
     }
     node.attributes[name] = String(value);
   };
+}
+
+function readRuntimeSelection(node) {
+  const selection = {};
+  if (node.selectionStart != null) {
+    selection.start = node.selectionStart;
+  }
+  if (node.selectionEnd != null) {
+    selection.end = node.selectionEnd;
+  }
+  if (node.selectionDirection != null) {
+    selection.direction = node.selectionDirection;
+  }
+  return Object.keys(selection).length === 0 ? null : selection;
 }
 
 function createRenderer({

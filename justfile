@@ -143,6 +143,14 @@ runtime-app-toggle-smoke backend="deno-core":
 runtime-app-toggle-smoke-deno-runtime:
 	@just runtime-app-toggle-smoke deno-runtime
 
+# Run the text selection metadata smoke through the selected bundled app runtime seam
+runtime-app-selection-smoke backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_selection_smoke.sh
+
+# Run the text selection metadata smoke through the bundled app runtime seam on Deno Runtime
+runtime-app-selection-smoke-deno-runtime:
+	@just runtime-app-selection-smoke deno-runtime
+
 # Run the fixed-frame Blitz document smoke for app payload swapping
 runtime-app-blitz-document-smoke:
 	@scripts/runtime_app_blitz_document_smoke.sh
@@ -170,11 +178,13 @@ runtime-app-backend-parity-smoke:
 	@just runtime-app-input-smoke deno-core
 	@just runtime-app-focus-smoke deno-core
 	@just runtime-app-toggle-smoke deno-core
+	@just runtime-app-selection-smoke deno-core
 	@just runtime-app-document-smoke deno-runtime
 	@just runtime-app-click-smoke deno-runtime
 	@just runtime-app-input-smoke deno-runtime
 	@just runtime-app-focus-smoke deno-runtime
 	@just runtime-app-toggle-smoke deno-runtime
+	@just runtime-app-selection-smoke deno-runtime
 
 # Build the minimal Rusty V8 smoke binary for x86_64 Linux
 runtime-rusty-v8-smoke-x86_64-linux-gnu:
