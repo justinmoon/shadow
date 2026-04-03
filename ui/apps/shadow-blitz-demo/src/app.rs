@@ -226,6 +226,7 @@ impl ApplicationHandler for BlitzApplication {
         if let Some(window) = self.window.as_mut() {
             window.handle_winit_event(event);
             handle_runtime_pointer_button(self.demo_mode, window, runtime_pointer_button);
+            request_runtime_redraw(self.demo_mode, window);
         }
 
         self.proxy.send_event(BlitzShellEvent::Poll { window_id });
@@ -413,6 +414,25 @@ fn handle_runtime_pointer_button(
             event.client_x,
             event.client_y,
         );
+}
+
+fn request_runtime_redraw(demo_mode: DemoMode, window: &mut View<VelloCpuWindowRenderer>) {
+    if demo_mode != DemoMode::Runtime {
+        return;
+    }
+
+    let redraw_requested = window
+        .downcast_doc_mut::<RuntimeDocument>()
+        .take_redraw_requested();
+    if !redraw_requested {
+        return;
+    }
+
+    runtime_log(format!(
+        "request-redraw source=runtime-dispatch window={:?}",
+        window.window_id()
+    ));
+    window.request_redraw();
 }
 
 fn handle_runtime_embedder_event(

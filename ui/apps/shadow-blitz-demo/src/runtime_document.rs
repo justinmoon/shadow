@@ -111,9 +111,12 @@ pub struct RuntimeDocument {
     touch_anywhere_target_id: Option<String>,
     armed_pointer_target_id: Option<String>,
     skip_next_raw_pointer_release: bool,
+    skip_next_ui_pointer_release: bool,
     should_exit: bool,
     timer_started: bool,
     touch_signal_timer_started: bool,
+    redraw_requested: bool,
+    activate_on_pointer_down: bool,
     timer_tx: Sender<RuntimeTimerEvent>,
     timer_rx: Receiver<RuntimeTimerEvent>,
 }
@@ -164,9 +167,12 @@ impl RuntimeDocument {
                 .filter(|value| !value.is_empty()),
             armed_pointer_target_id: None,
             skip_next_raw_pointer_release: false,
+            skip_next_ui_pointer_release: false,
             should_exit: false,
             timer_started: false,
             touch_signal_timer_started: false,
+            redraw_requested: false,
+            activate_on_pointer_down: env::var_os("SHADOW_BLITZ_TOUCH_ACTIVATE_ON_DOWN").is_some(),
             timer_tx,
             timer_rx,
         };
@@ -231,6 +237,18 @@ impl RuntimeDocument {
                 );
             }
             UiEvent::PointerUp(pointer) => {
+                if self.skip_next_ui_pointer_release {
+                    self.skip_next_ui_pointer_release = false;
+                    self.skip_next_raw_pointer_release = true;
+                    self.debug_state.ui_seen = true;
+                    eprintln!(
+                        "[shadow-runtime-demo] ui-pointer-up-skipped x={} y={} primary={}",
+                        pointer.client_x(),
+                        pointer.client_y(),
+                        pointer.is_primary
+                    );
+                    return;
+                }
                 self.skip_next_raw_pointer_release = true;
                 self.debug_state.ui_seen = true;
                 eprintln!(
@@ -265,6 +283,31 @@ impl RuntimeDocument {
                         pointer.client_y(),
                         self.armed_pointer_target_id.as_deref().unwrap_or("<none>")
                     );
+                    if self.activate_on_pointer_down {
+                        let Some(target_id) = self.armed_pointer_target_id.take() else {
+                            return None;
+                        };
+                        self.skip_next_ui_pointer_release = true;
+                        self.skip_next_raw_pointer_release = true;
+                        eprintln!(
+                            "[shadow-runtime-demo] ui-pointer-down-activate x={} y={} target={}",
+                            pointer.client_x(),
+                            pointer.client_y(),
+                            target_id
+                        );
+                        return Some(RuntimeDispatchEvent {
+                            target_id,
+                            event_type: String::from("click"),
+                            value: None,
+                            checked: None,
+                            selection: None,
+                            pointer: Some(RuntimePointerEvent {
+                                client_x: Some(pointer.client_x()),
+                                client_y: Some(pointer.client_y()),
+                                is_primary: Some(pointer.is_primary),
+                            }),
+                        });
+                    }
                 }
                 None
             }
@@ -406,6 +449,7 @@ impl RuntimeDocument {
         self.replace_document(payload);
         self.debug_state.click_seen = true;
         self.refresh_debug_overlay();
+        self.redraw_requested = true;
         runtime_log(format!(
             "runtime-event-dispatched source={} type={} target={}",
             source, event.event_type, event.target_id
@@ -595,6 +639,12 @@ impl RuntimeDocument {
 
     pub fn check_touch_signal(&mut self) -> bool {
         self.handle_touch_signal_tick()
+    }
+
+    pub fn take_redraw_requested(&mut self) -> bool {
+        let redraw_requested = self.redraw_requested;
+        self.redraw_requested = false;
+        redraw_requested
     }
 
     fn prime_touch_signal(&mut self) {
