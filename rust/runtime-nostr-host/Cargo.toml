@@ -6,4 +6,5 @@ edition = "2021"
 [dependencies]
 deno_core = { version = "=0.393.0", default-features = false, features = ["include_icu_data"] }
 deno_error = "=0.7.1"
+rusqlite = "0.37.0"
 serde = { version = "1.0.228", features = ["derive"] }

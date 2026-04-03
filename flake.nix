@@ -174,6 +174,8 @@
           doCheck = false;
           strictDeps = true;
           CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          nativeBuildInputs = [ cross.buildPackages.pkg-config ];
+          buildInputs = [ cross.sqlite ];
           depsBuildBuild =
             lib.optionals cross.stdenv.buildPlatform.isDarwin [
               cross.buildPackages.stdenv.cc
@@ -340,6 +342,7 @@
             python3
             rustc
             rustfmt
+            sqlite
           ] ++ lib.optionals pkgs.stdenv.isDarwin [ lld ];
         in pkgs.mkShell {
           packages = toolPkgs;

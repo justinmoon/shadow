@@ -155,6 +155,10 @@ runtime-app-selection-smoke-deno-runtime:
 runtime-app-nostr-smoke backend="deno-core":
 	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_nostr_smoke.sh
 
+# Run the default-backend Nostr cache/persistence smoke through the OS API seam
+runtime-app-nostr-cache-smoke:
+	@nix develop .#runtime -c scripts/runtime_app_nostr_cache_smoke.sh
+
 # Run the first OS-level Nostr API smoke through the bundled app runtime seam on Deno Runtime
 runtime-app-nostr-smoke-deno-runtime:
 	@just runtime-app-nostr-smoke deno-runtime

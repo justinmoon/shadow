@@ -84,6 +84,8 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
   `just runtime-app-backend-parity-smoke` now runs the document, click, input, focus, toggle, and selection smokes on both `deno_core` and `deno_runtime` so backend drift is easier to catch.
 - [x] Host OS API seam.
   `just runtime-app-nostr-smoke` proves a runtime app can call a tiny OS-owned API module (`@shadow/app-runtime-os`) for `listKind1` / `publishKind1` without embedding Nostr logic in the app bundle. The app-facing API stays stable while the default helper backend now hosts the mock service below JS; the alternate backend keeps a temporary fallback until we decide it is worth deeper promotion.
+- [x] Default-backend Nostr cache seam.
+  `just runtime-app-nostr-cache-smoke` now gives the default `deno_core` helper a sqlite-backed mock Nostr store, proves a published note survives a fresh helper process, and verifies author-filtered feed queries without changing the app-facing OS API.
 - [x] Rooted Pixel proof.
   `just pixel-runtime-app-drm` stages the bundled app JS plus the GNU-wrapped `deno-core-smoke` helper, pushes them to the rooted phone, and proves the runtime-mode Blitz demo reaches the real panel through the existing guest compositor DRM path. `just pixel-runtime-app-click-drm` proves the same device path survives one auto-dispatched runtime click.
 - [x] Re-evaluate full snapshots.
