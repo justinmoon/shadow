@@ -1,9 +1,11 @@
 use std::env;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
+use crate::log::runtime_log;
 use crate::runtime_document::RuntimeDocumentPayload;
 
 const RUNTIME_APP_BUNDLE_PATH_ENV: &str = "SHADOW_RUNTIME_APP_BUNDLE_PATH";
@@ -74,6 +76,7 @@ impl RuntimeSession {
     }
 
     fn send_request(&mut self, request: &SessionRequest) -> Result<RuntimeDocumentPayload, String> {
+        let started = Instant::now();
         let encoded =
             serde_json::to_string(request).map_err(|error| format!("encode request: {error}"))?;
         writeln!(self.stdin, "{encoded}")
@@ -89,11 +92,24 @@ impl RuntimeSession {
             return Err(String::from("runtime host closed its stdout pipe"));
         }
 
+        runtime_log(format!(
+            "runtime-session-response op={} elapsed_ms={}",
+            session_request_name(request),
+            started.elapsed().as_millis()
+        ));
+
         match serde_json::from_str::<SessionResponse>(line.trim_end()) {
             Ok(SessionResponse::Ok { payload }) => Ok(payload),
             Ok(SessionResponse::Error { message }) => Err(message),
             Err(error) => Err(format!("decode response: {error}")),
         }
+    }
+}
+
+fn session_request_name(request: &SessionRequest) -> &'static str {
+    match request {
+        SessionRequest::Render => "render",
+        SessionRequest::Dispatch { .. } => "dispatch",
     }
 }
 

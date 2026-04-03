@@ -2,17 +2,19 @@ use anyrender_vello_cpu::VelloCpuWindowRenderer;
 use blitz_shell::{
     create_default_event_loop, BlitzShellEvent, BlitzShellProxy, View, WindowConfig,
 };
-use std::env;
 use std::sync::mpsc::Receiver;
+use std::sync::Arc;
+use std::{env, thread, time::Duration};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
-    event::WindowEvent,
+    event::{ButtonSource, ElementState, MouseButton, WindowEvent},
     event_loop::ActiveEventLoop,
     window::{WindowAttributes, WindowId},
 };
 
 use crate::document::StaticDocument;
+use crate::log::runtime_log;
 use crate::runtime_document::RuntimeDocument;
 
 #[cfg(target_os = "linux")]
@@ -87,6 +89,8 @@ struct BlitzApplication {
     event_queue: Receiver<BlitzShellEvent>,
     pending_window: Option<WindowConfig<VelloCpuWindowRenderer>>,
     window: Option<View<VelloCpuWindowRenderer>>,
+    runtime_poll_thread_started: bool,
+    runtime_touch_signal_thread_started: bool,
 }
 
 impl BlitzApplication {
@@ -102,6 +106,8 @@ impl BlitzApplication {
             event_queue,
             pending_window: Some(window),
             window: None,
+            runtime_poll_thread_started: false,
+            runtime_touch_signal_thread_started: false,
         }
     }
 
@@ -116,10 +122,24 @@ impl BlitzApplication {
 
         match event {
             BlitzShellEvent::Poll { window_id } if window.window_id() == window_id => {
-                let _ = window.poll();
+                if window.poll() {
+                    runtime_log(format!("poll-changed window={window_id:?}"));
+                    window.request_redraw();
+                    runtime_log(format!("request-redraw source=poll window={window_id:?}"));
+                }
             }
             BlitzShellEvent::RequestRedraw { doc_id } if window.doc.id() == doc_id => {
                 window.request_redraw();
+                runtime_log(format!("request-redraw source=doc doc_id={doc_id}"));
+            }
+            BlitzShellEvent::Embedder(data) => {
+                if handle_runtime_embedder_event(self.demo_mode, window, data) {
+                    window.request_redraw();
+                    runtime_log(format!(
+                        "request-redraw source=embedder window={:?}",
+                        window.window_id()
+                    ));
+                }
             }
             _ => {}
         }
@@ -133,16 +153,45 @@ impl BlitzApplication {
 
 impl ApplicationHandler for BlitzApplication {
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
+        runtime_log("can-create-surfaces");
         if let Some(window) = self.window.as_mut() {
+            runtime_log(format!(
+                "resume-existing-window window={:?}",
+                window.window_id()
+            ));
             window.resume();
-            let _ = window.poll();
+            let window_id = window.window_id();
+            self.ensure_runtime_poll_thread(window_id);
+            self.ensure_runtime_touch_signal_thread();
+            self.proxy.send_event(BlitzShellEvent::Poll { window_id });
+            runtime_log(format!(
+                "request-poll source=can-create-existing window={window_id:?}"
+            ));
         }
 
         if let Some(config) = self.pending_window.take() {
+            runtime_log("init-pending-window");
+            runtime_log("view-init-start");
             let mut window = View::init(config, event_loop, &self.proxy);
+            runtime_log(format!("view-init-done window={:?}", window.window_id()));
+            runtime_log(format!(
+                "window-resume-start window={:?}",
+                window.window_id()
+            ));
             window.resume();
-            let _ = window.poll();
+            runtime_log(format!(
+                "window-resume-done window={:?}",
+                window.window_id()
+            ));
+            let window_id = window.window_id();
             self.window = Some(window);
+            self.ensure_runtime_poll_thread(window_id);
+            self.ensure_runtime_touch_signal_thread();
+            self.proxy.send_event(BlitzShellEvent::Poll { window_id });
+            runtime_log(format!(
+                "request-poll source=can-create-new window={window_id:?}"
+            ));
+            runtime_log(format!("window-ready window={window_id:?}"));
         }
     }
 
@@ -162,6 +211,12 @@ impl ApplicationHandler for BlitzApplication {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        log_pointer_window_event(&event);
+        let runtime_pointer_button = self
+            .window
+            .as_ref()
+            .and_then(|window| runtime_pointer_button_event(window, &event));
+
         if matches!(event, WindowEvent::CloseRequested) {
             self.window.take();
             event_loop.exit();
@@ -170,6 +225,7 @@ impl ApplicationHandler for BlitzApplication {
 
         if let Some(window) = self.window.as_mut() {
             window.handle_winit_event(event);
+            handle_runtime_pointer_button(self.demo_mode, window, runtime_pointer_button);
         }
 
         self.proxy.send_event(BlitzShellEvent::Poll { window_id });
@@ -180,6 +236,58 @@ impl ApplicationHandler for BlitzApplication {
             self.handle_blitz_shell_event(event_loop, event);
         }
     }
+}
+
+impl BlitzApplication {
+    fn ensure_runtime_poll_thread(&mut self, window_id: WindowId) {
+        if self.demo_mode != DemoMode::Runtime || self.runtime_poll_thread_started {
+            return;
+        }
+
+        self.runtime_poll_thread_started = true;
+        let proxy = self.proxy.clone();
+        let interval = env::var("SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(40);
+
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_millis(interval));
+            proxy.send_event(BlitzShellEvent::Poll { window_id });
+        });
+    }
+
+    fn ensure_runtime_touch_signal_thread(&mut self) {
+        if self.demo_mode != DemoMode::Runtime || self.runtime_touch_signal_thread_started {
+            return;
+        }
+        if env::var_os("SHADOW_BLITZ_TOUCH_SIGNAL_PATH").is_none() {
+            return;
+        }
+
+        self.runtime_touch_signal_thread_started = true;
+        let proxy = self.proxy.clone();
+        let interval = env::var("SHADOW_BLITZ_TOUCH_SIGNAL_POLL_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(40);
+        eprintln!("[shadow-runtime-demo] touch-signal-thread-start interval_ms={interval}");
+        runtime_log(format!("touch-signal-thread-start interval_ms={interval}"));
+
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_millis(interval));
+            proxy.send_event(BlitzShellEvent::embedder_event(
+                RuntimeEmbedderEvent::TouchSignalTick,
+            ));
+        });
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RuntimeEmbedderEvent {
+    TouchSignalTick,
 }
 
 fn window_attributes(demo_mode: DemoMode) -> WindowAttributes {
@@ -205,5 +313,130 @@ fn document_should_exit(demo_mode: DemoMode, window: &mut View<VelloCpuWindowRen
     match demo_mode {
         DemoMode::Static => window.downcast_doc_mut::<StaticDocument>().should_exit(),
         DemoMode::Runtime => window.downcast_doc_mut::<RuntimeDocument>().should_exit(),
+    }
+}
+
+fn log_pointer_window_event(event: &WindowEvent) {
+    if env::var_os("SHADOW_BLITZ_LOG_WINIT_POINTER").is_none() {
+        return;
+    }
+
+    match event {
+        WindowEvent::RedrawRequested => {
+            runtime_log("winit-redraw-requested");
+        }
+        WindowEvent::PointerMoved {
+            position,
+            source,
+            primary,
+            ..
+        } => {
+            eprintln!(
+                "[shadow-runtime-demo] winit-pointer-moved x={:.1} y={:.1} primary={} source={:?}",
+                position.x, position.y, primary, source
+            );
+        }
+        WindowEvent::PointerButton {
+            button,
+            state,
+            position,
+            primary,
+            ..
+        } => {
+            eprintln!(
+                "[shadow-runtime-demo] winit-pointer-button state={:?} x={:.1} y={:.1} primary={} button={:?}",
+                state,
+                position.x,
+                position.y,
+                primary,
+                button
+            );
+        }
+        _ => {}
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RuntimePointerButtonEvent {
+    pressed: bool,
+    is_primary: bool,
+    client_x: f32,
+    client_y: f32,
+}
+
+fn runtime_pointer_button_event(
+    window: &View<VelloCpuWindowRenderer>,
+    event: &WindowEvent,
+) -> Option<RuntimePointerButtonEvent> {
+    let WindowEvent::PointerButton {
+        button,
+        state,
+        primary,
+        position,
+        ..
+    } = event
+    else {
+        return None;
+    };
+
+    let ButtonSource::Mouse(MouseButton::Left) = button else {
+        return None;
+    };
+
+    let coords = window.pointer_coords(*position);
+    Some(RuntimePointerButtonEvent {
+        pressed: matches!(state, ElementState::Pressed),
+        is_primary: *primary,
+        client_x: coords.client_x,
+        client_y: coords.client_y,
+    })
+}
+
+fn handle_runtime_pointer_button(
+    demo_mode: DemoMode,
+    window: &mut View<VelloCpuWindowRenderer>,
+    event: Option<RuntimePointerButtonEvent>,
+) {
+    if demo_mode != DemoMode::Runtime || env::var_os("SHADOW_BLITZ_RAW_POINTER_FALLBACK").is_none()
+    {
+        return;
+    }
+    let Some(event) = event else {
+        return;
+    };
+
+    window
+        .downcast_doc_mut::<RuntimeDocument>()
+        .handle_raw_pointer_button(
+            event.pressed,
+            event.is_primary,
+            event.client_x,
+            event.client_y,
+        );
+}
+
+fn handle_runtime_embedder_event(
+    demo_mode: DemoMode,
+    window: &mut View<VelloCpuWindowRenderer>,
+    data: Arc<dyn std::any::Any + Send + Sync>,
+) -> bool {
+    if demo_mode != DemoMode::Runtime {
+        return false;
+    }
+
+    let Some(event) = data.downcast_ref::<RuntimeEmbedderEvent>() else {
+        return false;
+    };
+
+    match event {
+        RuntimeEmbedderEvent::TouchSignalTick => {
+            let changed = window
+                .downcast_doc_mut::<RuntimeDocument>()
+                .check_touch_signal();
+            if changed {
+                runtime_log("touch-signal-redraw-requested");
+            }
+            changed
+        }
     }
 }

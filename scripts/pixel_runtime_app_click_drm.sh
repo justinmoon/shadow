@@ -8,7 +8,7 @@ ensure_bootimg_shell "$@"
 
 : "${PIXEL_BLITZ_RUNTIME_AUTO_CLICK_TARGET:=counter}"
 
-PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS='[shadow-runtime-demo] runtime-event-dispatched source=auto type=click target='"$PIXEL_BLITZ_RUNTIME_AUTO_CLICK_TARGET" \
+PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS='runtime-event-dispatched source=auto type=click target='"$PIXEL_BLITZ_RUNTIME_AUTO_CLICK_TARGET" \
 PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV=$(
   cat <<EOF
 SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=$PIXEL_BLITZ_RUNTIME_AUTO_CLICK_TARGET

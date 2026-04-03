@@ -196,6 +196,66 @@ pub fn map_normalized_touch_to_frame(
     frame_width: u32,
     frame_height: u32,
 ) -> Option<(f64, f64)> {
+    let FrameMapping {
+        copy_height,
+        copy_width,
+        dst_x,
+        dst_y,
+        src_x,
+        src_y,
+    } = frame_mapping(panel_width, panel_height, frame_width, frame_height)?;
+
+    let panel_x = normalized_x.clamp(0.0, 1.0) * f64::from(panel_width.saturating_sub(1));
+    let panel_y = normalized_y.clamp(0.0, 1.0) * f64::from(panel_height.saturating_sub(1));
+    let copy_width_f = f64::from(copy_width);
+    let copy_height_f = f64::from(copy_height);
+    let dst_x_f = f64::from(dst_x);
+    let dst_y_f = f64::from(dst_y);
+
+    if panel_x < dst_x_f
+        || panel_x >= dst_x_f + copy_width_f
+        || panel_y < dst_y_f
+        || panel_y >= dst_y_f + copy_height_f
+    {
+        return None;
+    }
+
+    Some((
+        f64::from(src_x) + (panel_x - dst_x_f),
+        f64::from(src_y) + (panel_y - dst_y_f),
+    ))
+}
+
+pub fn frame_content_rect(
+    panel_width: u32,
+    panel_height: u32,
+    frame_width: u32,
+    frame_height: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    let mapping = frame_mapping(panel_width, panel_height, frame_width, frame_height)?;
+    Some((
+        mapping.dst_x,
+        mapping.dst_y,
+        mapping.copy_width,
+        mapping.copy_height,
+    ))
+}
+
+struct FrameMapping {
+    copy_width: u32,
+    copy_height: u32,
+    dst_x: u32,
+    dst_y: u32,
+    src_x: u32,
+    src_y: u32,
+}
+
+fn frame_mapping(
+    panel_width: u32,
+    panel_height: u32,
+    frame_width: u32,
+    frame_height: u32,
+) -> Option<FrameMapping> {
     if panel_width == 0 || panel_height == 0 || frame_width == 0 || frame_height == 0 {
         return None;
     }
@@ -223,25 +283,14 @@ pub fn map_normalized_touch_to_frame(
         0
     };
 
-    let panel_x = normalized_x.clamp(0.0, 1.0) * f64::from(panel_width.saturating_sub(1));
-    let panel_y = normalized_y.clamp(0.0, 1.0) * f64::from(panel_height.saturating_sub(1));
-    let copy_width_f = f64::from(copy_width);
-    let copy_height_f = f64::from(copy_height);
-    let dst_x_f = f64::from(dst_x);
-    let dst_y_f = f64::from(dst_y);
-
-    if panel_x < dst_x_f
-        || panel_x >= dst_x_f + copy_width_f
-        || panel_y < dst_y_f
-        || panel_y >= dst_y_f + copy_height_f
-    {
-        return None;
-    }
-
-    Some((
-        f64::from(src_x) + (panel_x - dst_x_f),
-        f64::from(src_y) + (panel_y - dst_y_f),
-    ))
+    Some(FrameMapping {
+        copy_width,
+        copy_height,
+        dst_x,
+        dst_y,
+        src_x,
+        src_y,
+    })
 }
 
 fn run_touch_reader(info: TouchDeviceInfo, sender: Sender<TouchInputEvent>) -> Result<()> {

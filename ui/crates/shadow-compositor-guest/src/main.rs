@@ -1,12 +1,14 @@
 mod kms;
 mod touch;
 
-use std::time::Duration;
 use std::{
     ffi::OsString,
+    fs,
     os::{fd::AsRawFd, unix::net::UnixStream},
+    path::PathBuf,
     process::Child,
     sync::Arc,
+    time::Duration,
 };
 
 use smithay::{
@@ -73,6 +75,8 @@ struct ShadowGuestCompositor {
     selftest_drm: bool,
     kms_display: Option<kms::KmsDisplay>,
     last_frame_size: Option<(u32, u32)>,
+    touch_signal_counter: u64,
+    touch_signal_path: Option<PathBuf>,
 }
 
 impl ShadowGuestCompositor {
@@ -109,7 +113,17 @@ impl ShadowGuestCompositor {
             selftest_drm: std::env::var_os("SHADOW_GUEST_COMPOSITOR_SELFTEST_DRM").is_some(),
             kms_display: None,
             last_frame_size: None,
+            touch_signal_counter: 0,
+            touch_signal_path: std::env::var_os("SHADOW_GUEST_TOUCH_SIGNAL_PATH")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from),
         };
+        if let Some(path) = state.touch_signal_path.as_ref() {
+            tracing::info!(
+                "[shadow-guest-compositor] touch-signal-ready path={}",
+                path.display()
+            );
+        }
         state.insert_touch_source(event_loop);
         state
     }
@@ -283,6 +297,7 @@ impl ShadowGuestCompositor {
     fn handle_window_mapped(&mut self, window: Window) {
         self.space.map_element(window, (0, 0), false);
         tracing::info!("[shadow-guest-compositor] mapped-window");
+        self.log_window_state("mapped-window");
         if self.exit_on_first_window {
             self.loop_signal.stop();
         }
@@ -321,6 +336,7 @@ impl ShadowGuestCompositor {
     }
 
     fn handle_touch_input(&mut self, event: touch::TouchInputEvent) {
+        self.signal_touch_event(&event);
         let pointer = self.seat.get_pointer().expect("guest seat pointer");
         let serial = SERIAL_COUNTER.next_serial();
 
@@ -334,6 +350,7 @@ impl ShadowGuestCompositor {
                 );
                 let Some(position) = self.touch_position(event.normalized_x, event.normalized_y)
                 else {
+                    self.log_touch_mapping(event.normalized_x, event.normalized_y);
                     tracing::info!(
                         "[shadow-guest-compositor] touch-outside-content normalized={:.3},{:.3}",
                         event.normalized_x,
@@ -349,6 +366,12 @@ impl ShadowGuestCompositor {
                     position.y,
                     under.is_some()
                 );
+                if under.is_none() && matches!(event.phase, touch::TouchPhase::Down) {
+                    self.log_window_state("touch-miss");
+                }
+                if matches!(event.phase, touch::TouchPhase::Down) {
+                    self.raise_window_for_pointer_focus(under.as_ref().map(|(surface, _)| surface));
+                }
                 pointer.motion(
                     self,
                     under,
@@ -370,6 +393,7 @@ impl ShadowGuestCompositor {
                     );
                 }
                 pointer.frame(self);
+                self.flush_wayland_clients();
             }
             touch::TouchPhase::Up => {
                 tracing::info!("[shadow-guest-compositor] touch-input phase=Up");
@@ -383,6 +407,7 @@ impl ShadowGuestCompositor {
                     },
                 );
                 pointer.frame(self);
+                self.flush_wayland_clients();
             }
         }
     }
@@ -405,6 +430,64 @@ impl ShadowGuestCompositor {
         Some((x, y).into())
     }
 
+    fn signal_touch_event(&mut self, event: &touch::TouchInputEvent) {
+        if !matches!(event.phase, touch::TouchPhase::Down) {
+            return;
+        }
+        let Some(path) = self.touch_signal_path.as_ref() else {
+            return;
+        };
+
+        self.touch_signal_counter = self.touch_signal_counter.saturating_add(1);
+        let token = self.touch_signal_counter.to_string();
+        match fs::write(path, &token) {
+            Ok(()) => tracing::info!(
+                "[shadow-guest-compositor] touch-signal-write counter={} path={} normalized={:.3},{:.3}",
+                token,
+                path.display(),
+                event.normalized_x,
+                event.normalized_y
+            ),
+            Err(error) => tracing::warn!(
+                "[shadow-guest-compositor] touch-signal-write-failed path={} error={error}",
+                path.display()
+            ),
+        }
+    }
+
+    fn log_touch_mapping(&mut self, normalized_x: f64, normalized_y: f64) {
+        if std::env::var_os("SHADOW_GUEST_LOG_TOUCH_GEOMETRY").is_none() {
+            return;
+        }
+        let Some((frame_width, frame_height)) = self.last_frame_size else {
+            return;
+        };
+        let Some(display) = self.ensure_kms_display() else {
+            return;
+        };
+        let (panel_width, panel_height) = display.dimensions();
+        let Some((dst_x, dst_y, copy_width, copy_height)) =
+            touch::frame_content_rect(panel_width, panel_height, frame_width, frame_height)
+        else {
+            return;
+        };
+        let panel_x = normalized_x.clamp(0.0, 1.0) * f64::from(panel_width.saturating_sub(1));
+        let panel_y = normalized_y.clamp(0.0, 1.0) * f64::from(panel_height.saturating_sub(1));
+        tracing::info!(
+            "[shadow-guest-compositor] touch-content-rect panel={}x{} frame={}x{} rect={}x{}+{},{} panel_xy={:.1},{:.1}",
+            panel_width,
+            panel_height,
+            frame_width,
+            frame_height,
+            copy_width,
+            copy_height,
+            dst_x,
+            dst_y,
+            panel_x,
+            panel_y
+        );
+    }
+
     fn surface_under(
         &self,
         position: Point<f64, Logical>,
@@ -418,6 +501,58 @@ impl ShadowGuestCompositor {
             })
     }
 
+    fn raise_window_for_pointer_focus(&mut self, surface: Option<&WlSurface>) {
+        let Some(surface) = surface else {
+            return;
+        };
+        let root_surface = self.root_surface(surface);
+        let Some(window) = self
+            .space
+            .elements()
+            .find(|candidate| candidate.toplevel().unwrap().wl_surface() == &root_surface)
+            .cloned()
+        else {
+            return;
+        };
+
+        self.space.raise_element(&window, true);
+        self.space.elements().for_each(|candidate| {
+            let is_active = candidate.toplevel().unwrap().wl_surface() == &root_surface;
+            candidate.set_activated(is_active);
+            candidate.toplevel().unwrap().send_pending_configure();
+        });
+    }
+
+    fn root_surface(&self, surface: &WlSurface) -> WlSurface {
+        let mut root_surface = surface.clone();
+        while let Some(parent) = get_parent(&root_surface) {
+            root_surface = parent;
+        }
+        root_surface
+    }
+
+    fn flush_wayland_clients(&mut self) {
+        if let Err(error) = self.display_handle.flush_clients() {
+            tracing::warn!("[shadow-guest-compositor] flush-clients failed: {error}");
+        }
+    }
+
+    fn log_window_state(&self, reason: &str) {
+        for (index, window) in self.space.elements().enumerate() {
+            let location = self.space.element_location(window);
+            let bbox = self.space.element_bbox(window);
+            let geometry = self.space.element_geometry(window);
+            tracing::info!(
+                "[shadow-guest-compositor] window-state reason={} index={} location={:?} bbox={:?} geometry={:?}",
+                reason,
+                index,
+                location,
+                bbox,
+                geometry
+            );
+        }
+    }
+
     fn publish_frame(&mut self, frame: &kms::CapturedFrame, frame_marker: &str) {
         self.last_frame_size = Some((frame.width, frame.height));
         let checksum = kms::frame_checksum(frame);
@@ -426,6 +561,24 @@ impl ShadowGuestCompositor {
             frame.width,
             frame.height
         );
+        if let Some(display) = self.ensure_kms_display() {
+            let (panel_width, panel_height) = display.dimensions();
+            if let Some((dst_x, dst_y, copy_width, copy_height)) =
+                touch::frame_content_rect(panel_width, panel_height, frame.width, frame.height)
+            {
+                tracing::info!(
+                    "[shadow-guest-compositor] frame-content-rect panel={}x{} frame={}x{} rect={}x{}+{},{}",
+                    panel_width,
+                    panel_height,
+                    frame.width,
+                    frame.height,
+                    copy_width,
+                    copy_height,
+                    dst_x,
+                    dst_y
+                );
+            }
+        }
 
         let artifact_path =
             std::env::var("SHADOW_GUEST_FRAME_PATH").unwrap_or_else(|_| "/shadow-frame.ppm".into());

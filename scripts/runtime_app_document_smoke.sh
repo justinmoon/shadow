@@ -44,7 +44,7 @@ for line in reversed(payload.splitlines()):
     required_fragments = [
         "<main class=\"shell\" style=\"",
         "Shadow Runtime Smoke",
-        "Tap the button on the phone screen.",
+        "First successful tap latches the card warm.",
         "data-shadow-id=\"counter\"",
         "Count 1",
     ]
