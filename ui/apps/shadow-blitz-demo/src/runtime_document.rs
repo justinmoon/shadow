@@ -104,6 +104,7 @@ pub struct RuntimeDocument {
     payload: RuntimeDocumentPayload,
     frame_nodes: FrameNodes,
     debug_state: DebugOverlayState,
+    debug_overlay_enabled: bool,
     touch_signal_path: Option<PathBuf>,
     last_touch_signal_token: Option<String>,
     runtime_session: Option<RuntimeSession>,
@@ -156,6 +157,7 @@ impl RuntimeDocument {
             payload,
             frame_nodes,
             debug_state: DebugOverlayState::default(),
+            debug_overlay_enabled: debug_overlay_enabled(),
             touch_signal_path: env::var_os("SHADOW_BLITZ_TOUCH_SIGNAL_PATH")
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from),
@@ -210,7 +212,11 @@ impl RuntimeDocument {
             self.payload.css.as_deref().unwrap_or(""),
         );
         mutator.set_inner_html(self.frame_nodes.root_id, &self.payload.html);
-        mutator.set_inner_html(self.frame_nodes.debug_id, &debug_overlay_html);
+        if self.debug_overlay_enabled {
+            mutator.set_inner_html(self.frame_nodes.debug_id, &debug_overlay_html);
+        } else {
+            mutator.set_inner_html(self.frame_nodes.debug_id, "");
+        }
         drop(mutator);
         self.log_target_hitmap("counter");
     }
@@ -489,6 +495,9 @@ impl RuntimeDocument {
     }
 
     fn refresh_debug_overlay(&mut self) {
+        if !self.debug_overlay_enabled {
+            return;
+        }
         let debug_overlay_html = self.debug_overlay_html();
         let mut mutator = self.inner.mutate();
         mutator.set_inner_html(self.frame_nodes.debug_id, &debug_overlay_html);
@@ -844,6 +853,13 @@ fn optional_duration_from_env(key: &str) -> Option<Duration> {
     }
 
     value.parse::<u64>().ok().map(Duration::from_millis)
+}
+
+fn debug_overlay_enabled() -> bool {
+    !matches!(
+        env::var("SHADOW_BLITZ_DEBUG_OVERLAY").ok().as_deref(),
+        Some("0") | Some("false") | Some("off")
+    )
 }
 
 fn auto_click_event_from_env(runtime_session_enabled: bool) -> Option<RuntimeDispatchEvent> {

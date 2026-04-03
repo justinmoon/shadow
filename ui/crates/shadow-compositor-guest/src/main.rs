@@ -8,7 +8,7 @@ use std::{
     path::PathBuf,
     process::Child,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use smithay::{
@@ -31,8 +31,9 @@ use smithay::{
     utils::{Logical, Point, Serial, SERIAL_COUNTER},
     wayland::{
         compositor::{
-            get_parent, is_sync_subsurface, with_states, CompositorClientState, CompositorHandler,
-            CompositorState,
+            get_parent, is_sync_subsurface, with_states, with_surface_tree_downward,
+            CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes,
+            TraversalAction,
         },
         shell::xdg::{ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData},
         shm::{with_buffer_contents, ShmHandler, ShmState},
@@ -59,6 +60,7 @@ fn init_logging() {
 }
 
 struct ShadowGuestCompositor {
+    start_time: Instant,
     transport: WaylandTransport,
     display_handle: DisplayHandle,
     space: Space<Window>,
@@ -95,6 +97,7 @@ impl ShadowGuestCompositor {
         seat.add_pointer();
 
         let mut state = Self {
+            start_time: Instant::now(),
             transport,
             display_handle: display_handle.clone(),
             space: Space::default(),
@@ -630,6 +633,7 @@ impl ShadowGuestCompositor {
 
     fn present_surface(&mut self, surface: &WlSurface) {
         let Some(buffer) = self.take_surface_buffer(surface) else {
+            self.send_frame_callbacks(surface);
             return;
         };
         let capture_result = with_buffer_contents(&buffer, |ptr, len, data| {
@@ -649,6 +653,30 @@ impl ShadowGuestCompositor {
         }
 
         buffer.release();
+        self.send_frame_callbacks(surface);
+    }
+
+    fn send_frame_callbacks(&mut self, surface: &WlSurface) {
+        let elapsed = self.start_time.elapsed();
+        with_surface_tree_downward(
+            surface,
+            (),
+            |_, _, &()| TraversalAction::DoChildren(()),
+            |_surface, states, &()| {
+                for callback in states
+                    .cached_state
+                    .get::<SurfaceAttributes>()
+                    .current()
+                    .frame_callbacks
+                    .drain(..)
+                {
+                    callback.done(elapsed.as_millis() as u32);
+                }
+            },
+            |_, _, &()| true,
+        );
+        self.space.refresh();
+        self.flush_wayland_clients();
     }
 }
 
@@ -774,6 +802,7 @@ impl XdgShellHandler for ShadowGuestCompositor {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        surface.send_configure();
         let window = Window::new_wayland_window(surface);
         self.handle_window_mapped(window);
     }

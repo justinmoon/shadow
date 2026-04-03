@@ -5,7 +5,7 @@
 use anyrender::{ImageRenderer, WindowHandle, WindowRenderer};
 use debug_timer::debug_timer;
 use softbuffer::{Context, Surface};
-use std::{num::NonZero, sync::Arc};
+use std::{num::NonZero, sync::Arc, time::Instant};
 
 // Simple struct to hold the state of the renderer
 pub struct ActiveRenderState {
@@ -55,8 +55,21 @@ impl<Renderer: ImageRenderer> WindowRenderer for SoftbufferWindowRenderer<Render
     }
 
     fn resume(&mut self, window_handle: Arc<dyn WindowHandle>, width: u32, height: u32) {
+        let start = Instant::now();
+        eprintln!(
+            "[shadow-softbuffer +{:>6}ms] resume-start size={}x{}",
+            0, width, height
+        );
         let context = Context::new(window_handle.clone()).unwrap();
+        eprintln!(
+            "[shadow-softbuffer +{:>6}ms] context-new",
+            start.elapsed().as_millis()
+        );
         let surface = Surface::new(&context, window_handle.clone()).unwrap();
+        eprintln!(
+            "[shadow-softbuffer +{:>6}ms] surface-new",
+            start.elapsed().as_millis()
+        );
         self.render_state = RenderState::Active(ActiveRenderState {
             _context: context,
             surface,
@@ -64,6 +77,10 @@ impl<Renderer: ImageRenderer> WindowRenderer for SoftbufferWindowRenderer<Render
         self.window_handle = Some(window_handle);
 
         self.set_size(width, height);
+        eprintln!(
+            "[shadow-softbuffer +{:>6}ms] resume-done",
+            start.elapsed().as_millis()
+        );
     }
 
     fn suspend(&mut self) {
@@ -72,6 +89,11 @@ impl<Renderer: ImageRenderer> WindowRenderer for SoftbufferWindowRenderer<Render
 
     fn set_size(&mut self, physical_width: u32, physical_height: u32) {
         if let RenderState::Active(state) = &mut self.render_state {
+            let start = Instant::now();
+            eprintln!(
+                "[shadow-softbuffer +{:>6}ms] set-size-start {}x{}",
+                0, physical_width, physical_height
+            );
             state
                 .surface
                 .resize(
@@ -79,7 +101,15 @@ impl<Renderer: ImageRenderer> WindowRenderer for SoftbufferWindowRenderer<Render
                     NonZero::new(physical_height.max(1)).unwrap(),
                 )
                 .unwrap();
+            eprintln!(
+                "[shadow-softbuffer +{:>6}ms] surface-resize-done",
+                start.elapsed().as_millis()
+            );
             self.renderer.resize(physical_width, physical_height);
+            eprintln!(
+                "[shadow-softbuffer +{:>6}ms] renderer-resize-done",
+                start.elapsed().as_millis()
+            );
         };
     }
 
@@ -87,16 +117,26 @@ impl<Renderer: ImageRenderer> WindowRenderer for SoftbufferWindowRenderer<Render
         let RenderState::Active(state) = &mut self.render_state else {
             return;
         };
+        let start = Instant::now();
+        eprintln!("[shadow-softbuffer +{:>6}ms] render-start", 0);
 
         debug_timer!(timer, feature = "log_frame_times");
 
         let Ok(mut surface_buffer) = state.surface.buffer_mut() else {
             return;
         };
+        eprintln!(
+            "[shadow-softbuffer +{:>6}ms] buffer-mut-done",
+            start.elapsed().as_millis()
+        );
         timer.record_time("buffer_mut");
 
         // Paint
         self.renderer.render_to_vec(draw_fn, &mut self.buffer);
+        eprintln!(
+            "[shadow-softbuffer +{:>6}ms] render-to-vec-done",
+            start.elapsed().as_millis()
+        );
         timer.record_time("render");
 
         let out = surface_buffer.as_mut();
@@ -113,9 +153,17 @@ impl<Renderer: ImageRenderer> WindowRenderer for SoftbufferWindowRenderer<Render
                 *dest = (r as u32) << 16 | (g as u32) << 8 | b as u32;
             }
         }
+        eprintln!(
+            "[shadow-softbuffer +{:>6}ms] swizzle-done",
+            start.elapsed().as_millis()
+        );
         timer.record_time("swizel");
 
         surface_buffer.present().unwrap();
+        eprintln!(
+            "[shadow-softbuffer +{:>6}ms] present-done",
+            start.elapsed().as_millis()
+        );
         timer.record_time("present");
         timer.print_times("softbuffer: ");
 

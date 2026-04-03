@@ -44,6 +44,10 @@ pub const FRAME_HTML: &str = r#"
         pointer-events: none;
       }
 
+      #shadow-blitz-debug:empty {
+        display: none;
+      }
+
       .shadow-debug-lane {
         width: 22px;
         height: 14px;

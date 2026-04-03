@@ -45,11 +45,11 @@ for line in reversed(payload.splitlines()):
     document = json.loads(match.group(1))
     html = document.get("html") or ""
     required_fragments = [
-        "<main class=\"shell\" style=\"",
-        "Shadow Runtime Smoke",
-        "First successful tap latches the card warm.",
+        "<main class=\"shell\"",
+        "data-shadow-state=\"warm\"",
+        "data-shadow-count=\"2\"",
         "data-shadow-id=\"counter\"",
-        "Count 2",
+        "data-shadow-card=\"warm\"",
     ]
     for fragment in required_fragments:
         if fragment not in html:

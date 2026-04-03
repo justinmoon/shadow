@@ -89,6 +89,7 @@ struct BlitzApplication {
     event_queue: Receiver<BlitzShellEvent>,
     pending_window: Option<WindowConfig<VelloCpuWindowRenderer>>,
     window: Option<View<VelloCpuWindowRenderer>>,
+    runtime_resume_pending: bool,
     runtime_poll_thread_started: bool,
     runtime_touch_signal_thread_started: bool,
 }
@@ -106,6 +107,7 @@ impl BlitzApplication {
             event_queue,
             pending_window: Some(window),
             window: None,
+            runtime_resume_pending: false,
             runtime_poll_thread_started: false,
             runtime_touch_signal_thread_started: false,
         }
@@ -124,21 +126,15 @@ impl BlitzApplication {
             BlitzShellEvent::Poll { window_id } if window.window_id() == window_id => {
                 if window.poll() {
                     runtime_log(format!("poll-changed window={window_id:?}"));
-                    window.request_redraw();
-                    runtime_log(format!("request-redraw source=poll window={window_id:?}"));
+                    redraw_window(self.demo_mode, window, "poll");
                 }
             }
             BlitzShellEvent::RequestRedraw { doc_id } if window.doc.id() == doc_id => {
-                window.request_redraw();
-                runtime_log(format!("request-redraw source=doc doc_id={doc_id}"));
+                redraw_window(self.demo_mode, window, "doc");
             }
             BlitzShellEvent::Embedder(data) => {
                 if handle_runtime_embedder_event(self.demo_mode, window, data) {
-                    window.request_redraw();
-                    runtime_log(format!(
-                        "request-redraw source=embedder window={:?}",
-                        window.window_id()
-                    ));
+                    redraw_window(self.demo_mode, window, "embedder");
                 }
             }
             _ => {}
@@ -174,24 +170,24 @@ impl ApplicationHandler for BlitzApplication {
             runtime_log("view-init-start");
             let mut window = View::init(config, event_loop, &self.proxy);
             runtime_log(format!("view-init-done window={:?}", window.window_id()));
-            runtime_log(format!(
-                "window-resume-start window={:?}",
-                window.window_id()
-            ));
-            window.resume();
-            runtime_log(format!(
-                "window-resume-done window={:?}",
-                window.window_id()
-            ));
             let window_id = window.window_id();
-            self.window = Some(window);
-            self.ensure_runtime_poll_thread(window_id);
-            self.ensure_runtime_touch_signal_thread();
-            self.proxy.send_event(BlitzShellEvent::Poll { window_id });
-            runtime_log(format!(
-                "request-poll source=can-create-new window={window_id:?}"
-            ));
-            runtime_log(format!("window-ready window={window_id:?}"));
+            if self.demo_mode == DemoMode::Runtime {
+                self.runtime_resume_pending = true;
+                runtime_log(format!("window-resume-deferred window={window_id:?}"));
+                self.window = Some(window);
+            } else {
+                runtime_log(format!("window-resume-start window={window_id:?}"));
+                window.resume();
+                runtime_log(format!("window-resume-done window={window_id:?}"));
+                self.window = Some(window);
+                self.ensure_runtime_poll_thread(window_id);
+                self.ensure_runtime_touch_signal_thread();
+                self.proxy.send_event(BlitzShellEvent::Poll { window_id });
+                runtime_log(format!(
+                    "request-poll source=can-create-new window={window_id:?}"
+                ));
+                runtime_log(format!("window-ready window={window_id:?}"));
+            }
         }
     }
 
@@ -211,6 +207,7 @@ impl ApplicationHandler for BlitzApplication {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        self.maybe_resume_runtime_window(window_id, &event);
         log_pointer_window_event(&event);
         let runtime_pointer_button = self
             .window
@@ -283,6 +280,75 @@ impl BlitzApplication {
                 RuntimeEmbedderEvent::TouchSignalTick,
             ));
         });
+    }
+
+    fn maybe_resume_runtime_window(&mut self, window_id: WindowId, event: &WindowEvent) {
+        if self.demo_mode != DemoMode::Runtime || !self.runtime_resume_pending {
+            return;
+        }
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        if window.window_id() != window_id {
+            return;
+        }
+
+        runtime_log(format!(
+            "window-resume-trigger window={window_id:?} event={}",
+            window_event_name(event)
+        ));
+        self.runtime_resume_pending = false;
+        self.ensure_runtime_poll_thread(window_id);
+        self.ensure_runtime_touch_signal_thread();
+
+        let window = self.window.as_mut().expect("runtime window before resume");
+        runtime_log(format!("window-resume-start window={window_id:?}"));
+        window.resume();
+        runtime_log(format!("window-resume-done window={window_id:?}"));
+        let changed = window.poll();
+        runtime_log(format!(
+            "post-resume-poll window={window_id:?} changed={changed}"
+        ));
+        if changed {
+            redraw_window(self.demo_mode, window, "post-resume-poll");
+        }
+        self.proxy.send_event(BlitzShellEvent::Poll { window_id });
+        runtime_log(format!(
+            "request-poll source=deferred-resume window={window_id:?}"
+        ));
+        runtime_log(format!("window-ready window={window_id:?}"));
+    }
+}
+
+fn window_event_name(event: &WindowEvent) -> &'static str {
+    match event {
+        WindowEvent::RedrawRequested => "RedrawRequested",
+        WindowEvent::SurfaceResized(_) => "SurfaceResized",
+        WindowEvent::ScaleFactorChanged { .. } => "ScaleFactorChanged",
+        WindowEvent::Occluded(_) => "Occluded",
+        WindowEvent::ThemeChanged(_) => "ThemeChanged",
+        WindowEvent::PointerEntered { .. } => "PointerEntered",
+        WindowEvent::PointerMoved { .. } => "PointerMoved",
+        WindowEvent::PointerButton { .. } => "PointerButton",
+        WindowEvent::PointerLeft { .. } => "PointerLeft",
+        WindowEvent::ModifiersChanged(_) => "ModifiersChanged",
+        WindowEvent::Focused(_) => "Focused",
+        WindowEvent::ActivationTokenDone { .. } => "ActivationTokenDone",
+        WindowEvent::Moved(_) => "Moved",
+        WindowEvent::CloseRequested => "CloseRequested",
+        WindowEvent::Destroyed => "Destroyed",
+        WindowEvent::Ime(_) => "Ime",
+        WindowEvent::KeyboardInput { .. } => "KeyboardInput",
+        WindowEvent::MouseWheel { .. } => "MouseWheel",
+        WindowEvent::TouchpadPressure { .. } => "TouchpadPressure",
+        WindowEvent::PinchGesture { .. } => "PinchGesture",
+        WindowEvent::PanGesture { .. } => "PanGesture",
+        WindowEvent::DoubleTapGesture { .. } => "DoubleTapGesture",
+        WindowEvent::RotationGesture { .. } => "RotationGesture",
+        WindowEvent::DragEntered { .. } => "DragEntered",
+        WindowEvent::DragMoved { .. } => "DragMoved",
+        WindowEvent::DragDropped { .. } => "DragDropped",
+        WindowEvent::DragLeft { .. } => "DragLeft",
     }
 }
 
@@ -428,8 +494,23 @@ fn request_runtime_redraw(demo_mode: DemoMode, window: &mut View<VelloCpuWindowR
         return;
     }
 
+    redraw_window(demo_mode, window, "runtime-dispatch");
+}
+
+fn redraw_window(demo_mode: DemoMode, window: &mut View<VelloCpuWindowRenderer>, source: &str) {
+    if demo_mode == DemoMode::Runtime {
+        runtime_log(format!(
+            "redraw-now source={} window={:?}",
+            source,
+            window.window_id()
+        ));
+        window.redraw();
+        return;
+    }
+
     runtime_log(format!(
-        "request-redraw source=runtime-dispatch window={:?}",
+        "request-redraw source={} window={:?}",
+        source,
         window.window_id()
     ));
     window.request_redraw();

@@ -9,7 +9,6 @@ export const DEFAULT_CACHE_DIR = "build/runtime/app-compile-smoke";
 export const DEFAULT_MODULE_NAME = "@shadow/app-runtime-solid";
 const EXPECTED_TOKENS = [
   "createElement",
-  "createTextNode",
   "setProp",
 ];
 
