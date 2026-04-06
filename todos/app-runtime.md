@@ -99,10 +99,19 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
   The rooted guest compositor now creates a real Smithay seat plus pointer, detects the direct-touch panel, starts a rooted touch-reader helper, and forwards one active contact as pointer motion plus primary button press/release. On the rooted Pixel, `session-output.txt` now shows live `touch-reader-event` and `touch-input` lines during takeover instead of stalling at `touch-ready`.
 - [x] Panel-to-client coordinate mapping.
   The compositor now mirrors the same centered/cropped rect that `kms.rs` uses for presentation so panel-space touches land in client-space coordinates. Unit tests still cover the math, and rooted-Pixel session logs now show in-bounds touches producing mapped client coordinates while out-of-bounds / `0,0` contacts are rejected as `touch-outside-content`.
-- [~] Manual rooted-Pixel tap on the runtime demo.
-  `just pixel-runtime-app-drm-hold` now builds the current compositor/session artifacts, launches the runtime Blitz card on the real panel, keeps takeover active for manual finger taps, and leaves Android stopped until `just pixel-restore-android`. The current device demo is intentionally shape-driven so tap QA is visible even while Blitz text rendering on device is still imperfect. One real-finger proof with the new visible state is still the remaining manual QA step; synthetic `sendevent` injection on this panel is flaky about emitting X/Y updates.
+- [x] Manual rooted-Pixel tap on the runtime demo.
+  `just pixel-runtime-app-drm-hold` now builds the current compositor/session artifacts, launches the runtime Blitz card on the real panel, keeps takeover active for manual finger taps, and leaves Android stopped until `just pixel-restore-android`. The current device demo is intentionally shape-driven so tap QA is visible even while Blitz text rendering on device is still imperfect. Manual QA on the rooted Pixel now shows repeatable blue -> orange transitions from real finger taps; the remaining work is hitbox cleanup and text-entry UX, not “does touch work at all?”
 - [ ] Re-evaluate touch + text-entry UX.
   Once physical taps work, decide whether full snapshots still feel acceptable for text entry, focus changes, and more animated app flows.
+
+## Renderer Spike
+
+- [x] Host GPU renderer spike.
+  `just runtime-app-host-smoke renderer=gpu` and `just runtime-app-host-smoke-gpu` now target the same runtime session/document seam with `anyrender_vello` on host. The same runtime app/session contract auto-clicks and rerenders through the GPU renderer without changing the Blitz-side protocol.
+- [x] Linux compositor / VM GPU proof.
+  `just runtime-app-compositor-smoke-gpu` now proves the GPU variant can run as a Wayland client under the existing Smithay compositor smoke. The success condition is launch -> map -> runtime ready -> auto-click dispatch, not a client-side `exit-requested` marker.
+- [x] Rooted-Pixel GPU viability decision.
+  Keep the rooted-Pixel runtime lane on CPU for now. Host GPU and Linux compositor GPU both work, which isolates the remaining device blocker to `shadow-compositor-guest`: it still consumes SHM buffers only, so a client-side GPU swap cannot help the Pixel path until the guest compositor grows dmabuf or an equivalent GPU buffer import path.
 
 ## Open Questions
 

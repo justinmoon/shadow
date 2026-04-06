@@ -15,7 +15,7 @@ runtime_host_package_attr="${SHADOW_RUNTIME_HOST_PACKAGE_ATTR_OVERRIDE:-$SHADOW_
 runtime_host_binary_name="${SHADOW_RUNTIME_HOST_BINARY_NAME_OVERRIDE:-$SHADOW_RUNTIME_HOST_BINARY_NAME}"
 
 bundle_json="$(
-  nix develop "${REPO_FLAKE_REF}#runtime" -c deno run --quiet \
+  nix develop --accept-flake-config "${REPO_FLAKE_REF}#runtime" -c deno run --quiet \
     --allow-env --allow-read --allow-write --allow-run \
     scripts/runtime_prepare_app_bundle.ts \
     --input "$INPUT_PATH" \

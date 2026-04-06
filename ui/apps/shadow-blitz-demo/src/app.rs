@@ -1,4 +1,16 @@
-use anyrender_vello_cpu::VelloCpuWindowRenderer;
+#[cfg(all(feature = "gpu", any(feature = "cpu", feature = "hybrid")))]
+compile_error!("shadow-blitz-demo renderer features are mutually exclusive");
+#[cfg(all(feature = "hybrid", feature = "cpu"))]
+compile_error!("shadow-blitz-demo renderer features are mutually exclusive");
+#[cfg(not(any(feature = "cpu", feature = "gpu", feature = "hybrid")))]
+compile_error!("enable one shadow-blitz-demo renderer feature");
+
+#[cfg(feature = "gpu")]
+use anyrender_vello::VelloWindowRenderer as WindowRenderer;
+#[cfg(all(not(feature = "gpu"), not(feature = "hybrid"), feature = "cpu"))]
+use anyrender_vello_cpu::VelloCpuWindowRenderer as WindowRenderer;
+#[cfg(all(not(feature = "gpu"), feature = "hybrid"))]
+use anyrender_vello_hybrid::VelloHybridWindowRenderer as WindowRenderer;
 use blitz_shell::{
     create_default_event_loop, BlitzShellEvent, BlitzShellProxy, View, WindowConfig,
 };
@@ -31,7 +43,7 @@ pub fn run() {
     let (proxy, receiver) = BlitzShellProxy::new(event_loop.create_proxy());
     let window = WindowConfig::with_attributes(
         demo_mode.document(),
-        VelloCpuWindowRenderer::new(),
+        WindowRenderer::new(),
         window_attributes(demo_mode),
     );
     let application = BlitzApplication::new(proxy, receiver, window, demo_mode);
@@ -87,8 +99,8 @@ struct BlitzApplication {
     demo_mode: DemoMode,
     proxy: BlitzShellProxy,
     event_queue: Receiver<BlitzShellEvent>,
-    pending_window: Option<WindowConfig<VelloCpuWindowRenderer>>,
-    window: Option<View<VelloCpuWindowRenderer>>,
+    pending_window: Option<WindowConfig<WindowRenderer>>,
+    window: Option<View<WindowRenderer>>,
     runtime_resume_pending: bool,
     runtime_poll_thread_started: bool,
     runtime_touch_signal_thread_started: bool,
@@ -98,7 +110,7 @@ impl BlitzApplication {
     fn new(
         proxy: BlitzShellProxy,
         event_queue: Receiver<BlitzShellEvent>,
-        window: WindowConfig<VelloCpuWindowRenderer>,
+        window: WindowConfig<WindowRenderer>,
         demo_mode: DemoMode,
     ) -> Self {
         Self {
@@ -376,7 +388,7 @@ fn window_attributes(demo_mode: DemoMode) -> WindowAttributes {
     attributes
 }
 
-fn document_should_exit(demo_mode: DemoMode, window: &mut View<VelloCpuWindowRenderer>) -> bool {
+fn document_should_exit(demo_mode: DemoMode, window: &mut View<WindowRenderer>) -> bool {
     match demo_mode {
         DemoMode::Static => window.downcast_doc_mut::<StaticDocument>().should_exit(),
         DemoMode::Runtime => window.downcast_doc_mut::<RuntimeDocument>().should_exit(),
@@ -432,7 +444,7 @@ struct RuntimePointerButtonEvent {
 }
 
 fn runtime_pointer_button_event(
-    window: &View<VelloCpuWindowRenderer>,
+    window: &View<WindowRenderer>,
     event: &WindowEvent,
 ) -> Option<RuntimePointerButtonEvent> {
     let WindowEvent::PointerButton {
@@ -461,7 +473,7 @@ fn runtime_pointer_button_event(
 
 fn handle_runtime_pointer_button(
     demo_mode: DemoMode,
-    window: &mut View<VelloCpuWindowRenderer>,
+    window: &mut View<WindowRenderer>,
     event: Option<RuntimePointerButtonEvent>,
 ) {
     if demo_mode != DemoMode::Runtime || env::var_os("SHADOW_BLITZ_RAW_POINTER_FALLBACK").is_none()
@@ -482,7 +494,7 @@ fn handle_runtime_pointer_button(
         );
 }
 
-fn request_runtime_redraw(demo_mode: DemoMode, window: &mut View<VelloCpuWindowRenderer>) {
+fn request_runtime_redraw(demo_mode: DemoMode, window: &mut View<WindowRenderer>) {
     if demo_mode != DemoMode::Runtime {
         return;
     }
@@ -497,7 +509,7 @@ fn request_runtime_redraw(demo_mode: DemoMode, window: &mut View<VelloCpuWindowR
     redraw_window(demo_mode, window, "runtime-dispatch");
 }
 
-fn redraw_window(demo_mode: DemoMode, window: &mut View<VelloCpuWindowRenderer>, source: &str) {
+fn redraw_window(demo_mode: DemoMode, window: &mut View<WindowRenderer>, source: &str) {
     if demo_mode == DemoMode::Runtime {
         runtime_log(format!(
             "redraw-now source={} window={:?}",
@@ -518,7 +530,7 @@ fn redraw_window(demo_mode: DemoMode, window: &mut View<VelloCpuWindowRenderer>,
 
 fn handle_runtime_embedder_event(
     demo_mode: DemoMode,
-    window: &mut View<VelloCpuWindowRenderer>,
+    window: &mut View<WindowRenderer>,
     data: Arc<dyn std::any::Any + Send + Sync>,
 ) -> bool {
     if demo_mode != DemoMode::Runtime {

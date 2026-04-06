@@ -3,12 +3,20 @@ name = "shadow-blitz-demo"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["cpu"]
+cpu = ["dep:anyrender_vello_cpu", "anyrender_vello_cpu/softbuffer_window_renderer"]
+gpu = ["dep:anyrender_vello"]
+hybrid = ["dep:anyrender_vello_hybrid"]
+
 [dependencies]
-anyrender_vello_cpu = { version = "0.9", features = ["softbuffer_window_renderer"] }
-blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "589d8a3a260bf64194b989febcf23d77442ffe61", package = "blitz-dom", default-features = false }
-blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "589d8a3a260bf64194b989febcf23d77442ffe61", package = "blitz-html", default-features = false }
-blitz-shell = { git = "https://github.com/DioxusLabs/blitz", rev = "589d8a3a260bf64194b989febcf23d77442ffe61", package = "blitz-shell", default-features = false }
-blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "589d8a3a260bf64194b989febcf23d77442ffe61", package = "blitz-traits", default-features = false }
+anyrender_vello = { version = "0.8", optional = true }
+anyrender_vello_cpu = { version = "0.10", optional = true }
+anyrender_vello_hybrid = { version = "0.3", optional = true }
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-dom", default-features = false }
+blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-html", default-features = false }
+blitz-shell = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-shell", default-features = false }
+blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-traits", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 shadow-ui-core = { path = "../../crates/shadow-ui-core" }

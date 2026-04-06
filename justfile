@@ -172,20 +172,36 @@ runtime-app-blitz-document-smoke:
 	@scripts/runtime_app_blitz_document_smoke.sh
 
 # Run the host-visible runtime demo window on the selected backend
-runtime-app-host-run backend="deno-core":
-	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" scripts/runtime_app_host_run.sh
+runtime-app-host-run backend="deno-core" renderer="cpu":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" SHADOW_BLITZ_RENDERER="{{renderer}}" scripts/runtime_app_host_run.sh
 
 # Run the host-visible runtime demo window on Deno Runtime
 runtime-app-host-run-deno-runtime:
 	@just runtime-app-host-run deno-runtime
 
+# Run the host-visible runtime demo window with the GPU Vello renderer
+runtime-app-host-run-gpu backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" SHADOW_BLITZ_RENDERER="gpu" scripts/runtime_app_host_run.sh
+
 # Run the host-visible runtime demo with an auto-exit smoke timer on the selected backend
-runtime-app-host-smoke backend="deno-core":
-	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" scripts/runtime_app_host_smoke.sh
+runtime-app-host-smoke backend="deno-core" renderer="cpu":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" SHADOW_BLITZ_RENDERER="{{renderer}}" scripts/runtime_app_host_smoke.sh
 
 # Run the host-visible runtime demo with an auto-exit smoke timer on Deno Runtime
 runtime-app-host-smoke-deno-runtime:
 	@just runtime-app-host-smoke deno-runtime
+
+# Run the host-visible runtime demo with the GPU Vello renderer
+runtime-app-host-smoke-gpu backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" SHADOW_BLITZ_RENDERER="gpu" scripts/runtime_app_host_smoke.sh
+
+# Run the GPU runtime demo as a Wayland client under the Smithay compositor smoke path
+runtime-app-compositor-smoke-gpu:
+	@scripts/runtime_app_compositor_smoke.sh
+
+# Run the static GPU Blitz demo as a Wayland client under the Smithay compositor smoke path
+blitz-demo-compositor-smoke-gpu:
+	@scripts/blitz_demo_compositor_smoke.sh
 
 # Run the document/click/input/focus smokes on both host backends
 runtime-app-backend-parity-smoke:

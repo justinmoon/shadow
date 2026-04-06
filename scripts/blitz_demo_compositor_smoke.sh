@@ -5,12 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REMOTE_HOST="${SHADOW_UI_REMOTE_HOST:-${CUTTLEFISH_REMOTE_HOST:-hetzner}}"
 REMOTE_DIR_CACHE="${SHADOW_UI_REMOTE_DIR:-}"
-UI_SMOKE_TMPDIR=""
-UI_SMOKE_TIMEOUT_SECS="${SHADOW_UI_SMOKE_TIMEOUT:-300}"
-UI_SMOKE_NAMESPACE="${SHADOW_UI_SMOKE_NAMESPACE:-$(basename "$REPO_ROOT")-$$}"
-UI_SMOKE_SSH_RETRIES="${SHADOW_UI_SMOKE_SSH_RETRIES:-3}"
-UI_SMOKE_SSH_RETRY_SLEEP="${SHADOW_UI_SMOKE_SSH_RETRY_SLEEP:-2}"
-UI_SMOKE_SSH_OPTS=(
+BLITZ_DEMO_COMPOSITOR_TMPDIR=""
+BLITZ_DEMO_COMPOSITOR_TIMEOUT_SECS="${SHADOW_UI_SMOKE_TIMEOUT:-300}"
+BLITZ_DEMO_COMPOSITOR_NAMESPACE="${SHADOW_UI_SMOKE_NAMESPACE:-$(basename "$REPO_ROOT")-$$}"
+BLITZ_DEMO_COMPOSITOR_SSH_RETRIES="${SHADOW_UI_SMOKE_SSH_RETRIES:-3}"
+BLITZ_DEMO_COMPOSITOR_SSH_RETRY_SLEEP="${SHADOW_UI_SMOKE_SSH_RETRY_SLEEP:-2}"
+BLITZ_DEMO_COMPOSITOR_SSH_OPTS=(
   -o BatchMode=yes
   -o ConnectTimeout=10
   -o StrictHostKeyChecking=no
@@ -32,7 +32,7 @@ ensure_ui_shell() {
     return 0
   fi
 
-  exec nix develop --accept-flake-config "$(flake_path)" -c "$0" "$@"
+  exec nix develop "$(flake_path)" -c "$0" "$@"
 }
 
 remote_home() {
@@ -43,18 +43,18 @@ remote_ssh() {
   local attempt script status
   script="${1:?remote_ssh requires a script}"
   status=0
-  for attempt in $(seq 1 "$UI_SMOKE_SSH_RETRIES"); do
+  for attempt in $(seq 1 "$BLITZ_DEMO_COMPOSITOR_SSH_RETRIES"); do
     if ssh \
-      "${UI_SMOKE_SSH_OPTS[@]}" \
+      "${BLITZ_DEMO_COMPOSITOR_SSH_OPTS[@]}" \
       "$REMOTE_HOST" \
       /bin/bash -lc "$(printf '%q' "$script")"; then
       return 0
     fi
     status=$?
-    if (( attempt == UI_SMOKE_SSH_RETRIES )); then
+    if (( attempt == BLITZ_DEMO_COMPOSITOR_SSH_RETRIES )); then
       return "$status"
     fi
-    sleep "$UI_SMOKE_SSH_RETRY_SLEEP"
+    sleep "$BLITZ_DEMO_COMPOSITOR_SSH_RETRY_SLEEP"
   done
   return "$status"
 }
@@ -65,7 +65,7 @@ remote_dir() {
     return
   fi
 
-  REMOTE_DIR_CACHE="$(remote_home)/.cache/shadow-ui-smoke-${UI_SMOKE_NAMESPACE}"
+  REMOTE_DIR_CACHE="$(remote_home)/.cache/shadow-blitz-demo-ui-smoke-${BLITZ_DEMO_COMPOSITOR_NAMESPACE}"
   printf '%s\n' "$REMOTE_DIR_CACHE"
 }
 
@@ -93,66 +93,80 @@ dump_logs() {
   dir="$1"
   if [[ -f "$dir/compositor.log" ]]; then
     printf '\n== compositor.log ==\n'
-    sed -n '1,320p' "$dir/compositor.log"
+    sed -n '1,360p' "$dir/compositor.log"
   fi
+}
+
+required_markers_seen() {
+  local log_path marker
+  log_path="$1"
+  for marker in \
+    '[shadow-compositor] launched-demo-client' \
+    '[shadow-compositor] mapped-window' \
+    '[shadow-blitz-demo] static-document-ready' \
+    '[shadow-blitz-demo] dynamic-document-ready'
+  do
+    if ! grep -Fq "$marker" "$log_path"; then
+      return 1
+    fi
+  done
+  return 0
 }
 
 run_local_linux_smoke() {
   local tmpdir runtime_dir compositor_log compositor_pid start now
 
-  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/shadow-ui-smoke.XXXXXX")"
-  runtime_dir="$tmpdir/xdg-runtime"
-  UI_SMOKE_TMPDIR="$tmpdir"
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/shadow-blitz-demo-ui-smoke.XXXXXX")"
+  BLITZ_DEMO_COMPOSITOR_TMPDIR="$tmpdir"
   runtime_dir="$tmpdir/runtime"
   mkdir -p "$runtime_dir"
   chmod 700 "$runtime_dir"
   compositor_log="$tmpdir/compositor.log"
   compositor_pid=""
 
-  mkdir -p "$runtime_dir"
-  chmod 700 "$runtime_dir"
-
   cleanup() {
     if [[ -n "${compositor_pid:-}" ]]; then
       kill "$compositor_pid" 2>/dev/null || true
       wait "$compositor_pid" 2>/dev/null || true
     fi
-    if [[ -n "${UI_SMOKE_TMPDIR:-}" ]]; then
-      rm -rf "$UI_SMOKE_TMPDIR"
+    if [[ -n "${BLITZ_DEMO_COMPOSITOR_TMPDIR:-}" ]]; then
+      rm -rf "$BLITZ_DEMO_COMPOSITOR_TMPDIR"
     fi
   }
   trap cleanup EXIT
 
   (
     cd "$REPO_ROOT"
-    export XDG_RUNTIME_DIR="$runtime_dir"
-    export SHADOW_COMPOSITOR_HEADLESS=1
+    export SHADOW_APP_CLIENT="$REPO_ROOT/scripts/runtime_app_wayland_client.sh"
+    export SHADOW_BLITZ_DEMO_MODE=static
+    export SHADOW_BLITZ_RENDERER=gpu
+    export SHADOW_BLITZ_DYNAMIC_DELAY_MS="${SHADOW_BLITZ_DYNAMIC_DELAY_MS:-350}"
+    export SHADOW_BLITZ_EXIT_DELAY_MS="${SHADOW_BLITZ_EXIT_DELAY_MS:-700}"
     export SHADOW_COMPOSITOR_AUTO_LAUNCH=1
+    export SHADOW_COMPOSITOR_HEADLESS=1
     export XDG_RUNTIME_DIR="$runtime_dir"
     export RUST_LOG="${RUST_LOG:-shadow_compositor=info,smithay=warn}"
-    cargo build --manifest-path ui/Cargo.toml -p shadow-compositor -p shadow-blitz-demo
     cargo run --manifest-path ui/Cargo.toml -p shadow-compositor
   ) >"$compositor_log" 2>&1 &
   compositor_pid=$!
 
   start="$(date +%s)"
   while true; do
-    if grep -Fq '[shadow-compositor] launched-demo-client' "$compositor_log" \
-      && grep -Fq '[shadow-compositor] mapped-window' "$compositor_log"; then
-      printf 'UI smoke passed. Logs: %s\n' "$tmpdir"
+    if required_markers_seen "$compositor_log"; then
+      printf 'Blitz demo compositor smoke passed. Logs: %s\n' "$tmpdir"
       return 0
     fi
 
     if ! kill -0 "$compositor_pid" 2>/dev/null; then
       dump_logs "$tmpdir"
-      echo "shadow-compositor exited before smoke markers appeared" >&2
+      echo "shadow-compositor exited before GPU Blitz smoke markers appeared" >&2
       return 1
     fi
 
     now="$(date +%s)"
-    if (( now - start > UI_SMOKE_TIMEOUT_SECS )); then
+    if (( now - start > BLITZ_DEMO_COMPOSITOR_TIMEOUT_SECS )); then
       dump_logs "$tmpdir"
-      echo "timed out waiting for compositor smoke markers" >&2
+      echo "timed out waiting for GPU Blitz compositor smoke markers" >&2
       return 1
     fi
 
@@ -164,7 +178,7 @@ run_remote_smoke() {
   local dir command status
   dir="$(remote_dir)"
   sync_remote_tree
-  command="cd $(printf '%q' "$dir") && SHADOW_UI_SMOKE_REMOTE=1 SHADOW_UI_SMOKE_NAMESPACE=$(printf '%q' "$UI_SMOKE_NAMESPACE") nix develop --accept-flake-config .#ui -c bash scripts/ui_smoke.sh"
+  command="cd $(printf '%q' "$dir") && SHADOW_UI_SMOKE_REMOTE=1 SHADOW_UI_SMOKE_NAMESPACE=$(printf '%q' "$BLITZ_DEMO_COMPOSITOR_NAMESPACE") nix develop --accept-flake-config .#ui -c bash scripts/blitz_demo_compositor_smoke.sh"
   if remote_ssh "$command"; then
     status=0
   else

@@ -12,7 +12,7 @@
 [package]
 edition = "2024"
 name = "softbuffer_window_renderer"
-version = "0.2.1"
+version = "0.3.0"
 build = false
 autolib = false
 autobins = false
@@ -35,7 +35,7 @@ name = "softbuffer_window_renderer"
 path = "src/lib.rs"
 
 [dependencies.anyrender]
-version = "0.7.0"
+version = "0.8.0"
 
 [dependencies.debug_timer]
 version = "0.1.1"
