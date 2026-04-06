@@ -1,7 +1,0 @@
-[package]
-name = "rusty-v8-smoke"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-v8 = "=146.8.0"

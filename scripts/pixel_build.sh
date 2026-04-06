@@ -87,7 +87,7 @@ copy_remote_binary() {
 
 pixel_prepare_dirs
 build_one shadow-session-device shadow-session
-"$SCRIPT_DIR/pixel_build_blitz_demo.sh"
+"$SCRIPT_DIR/pixel_build_guest_client.sh"
 
 if [[ "$(uname -s)" == "Linux" ]]; then
   build_one shadow-compositor-guest-device shadow-compositor-guest

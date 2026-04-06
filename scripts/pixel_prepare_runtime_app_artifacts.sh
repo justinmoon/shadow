@@ -10,8 +10,8 @@ ensure_bootimg_shell "$@"
 
 pixel_prepare_dirs
 repo="$(repo_root)"
-input_path="${PIXEL_RUNTIME_APP_INPUT_PATH:-runtime/app-compile-smoke/app.tsx}"
-cache_dir="${PIXEL_RUNTIME_APP_CACHE_DIR:-build/runtime/pixel-app}"
+input_path="${PIXEL_RUNTIME_APP_INPUT_PATH:-runtime/app-counter/app.tsx}"
+cache_dir="${PIXEL_RUNTIME_APP_CACHE_DIR:-build/runtime/pixel-counter}"
 bundle_artifact="$(pixel_runtime_app_bundle_artifact)"
 host_bundle_dir="$(pixel_runtime_host_bundle_artifact_dir)"
 host_bundle_out_link="$(pixel_dir)/deno-core-smoke-aarch64-linux-gnu-result"

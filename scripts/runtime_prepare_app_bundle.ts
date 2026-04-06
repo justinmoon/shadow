@@ -7,8 +7,8 @@ import {
   DEFAULT_MODULE_NAME,
 } from "./runtime_compile_solid.ts";
 
-const DEFAULT_CACHE_DIR = "build/runtime/app-document-smoke";
-const DEFAULT_INPUT_PATH = "runtime/app-compile-smoke/app.tsx";
+const DEFAULT_CACHE_DIR = "build/runtime/app-counter";
+const DEFAULT_INPUT_PATH = "runtime/app-counter/app.tsx";
 const OS_MODULE_ALIAS = "@shadow/app-runtime-os";
 const OS_MODULE_NAME = "./shadow_runtime_os.js";
 const OS_SOURCE_PATH = "runtime/app-runtime/shadow_runtime_os.js";

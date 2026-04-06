@@ -23,7 +23,6 @@ exports = {
     "SHADOW_BLITZ_DEMO_MODE": "runtime",
     "SHADOW_RUNTIME_APP_BUNDLE_PATH": bundle_path,
     "SHADOW_RUNTIME_HOST_BINARY_PATH": data["runtimeHostBinaryPath"],
-    "SHADOW_RUNTIME_HOST_BACKEND": data["runtimeHostBackend"],
 }
 
 for key, value in exports.items():

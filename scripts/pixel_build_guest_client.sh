@@ -61,11 +61,11 @@ chmod 0755 "$output_path"
 file_output="$(file "$output_path")"
 printf '%s\n' "$file_output"
 if [[ "$file_output" != *"ARM aarch64"* ]]; then
-  echo "pixel_build_blitz_demo: expected an arm64 binary, got: $file_output" >&2
+  echo "pixel_build_guest_client: expected an arm64 binary, got: $file_output" >&2
   exit 1
 fi
 if [[ "$file_output" == *"dynamically linked"* ]]; then
-  echo "pixel_build_blitz_demo: expected a static binary, got a dynamic one: $file_output" >&2
+  echo "pixel_build_guest_client: expected a static binary, got a dynamic one: $file_output" >&2
   exit 1
 fi
 

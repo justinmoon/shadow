@@ -142,7 +142,6 @@ nixpkgs.lib.nixosSystem {
               eval "$runtime_env_exports"
               echo "runtime env source=guest-fallback"
             fi
-            echo "runtime backend=$SHADOW_RUNTIME_HOST_BACKEND"
             echo "runtime bundle=$SHADOW_RUNTIME_APP_BUNDLE_PATH"
             echo "runtime host=$SHADOW_RUNTIME_HOST_BINARY_PATH"
 
@@ -234,7 +233,6 @@ PY
               "export SHADOW_BLITZ_DEMO_MODE=\"$SHADOW_BLITZ_DEMO_MODE\"" \
               "export SHADOW_RUNTIME_APP_BUNDLE_PATH=\"$SHADOW_RUNTIME_APP_BUNDLE_PATH\"" \
               "export SHADOW_RUNTIME_HOST_BINARY_PATH=\"$SHADOW_RUNTIME_HOST_BINARY_PATH\"" \
-              "export SHADOW_RUNTIME_HOST_BACKEND=\"$SHADOW_RUNTIME_HOST_BACKEND\"" \
               "export WAYLAND_DISPLAY=\"$nested_wayland\"" \
               "export SHADOW_COMPOSITOR_CONTROL=\"$control_socket\"" \
               >${sessionEnv}
