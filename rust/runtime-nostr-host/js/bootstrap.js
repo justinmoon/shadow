@@ -7,6 +7,9 @@ function installShadowRuntimeOs() {
     listKind1(query = {}) {
       return core.ops.op_runtime_nostr_list_kind1(query);
     },
+    syncKind1(request = {}) {
+      return core.ops.op_runtime_nostr_sync_kind1(request);
+    },
     publishKind1(request = {}) {
       return core.ops.op_runtime_nostr_publish_kind1(request);
     },

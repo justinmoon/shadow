@@ -107,11 +107,23 @@ pixel-runtime-app-nostr-gm-drm:
 pixel-runtime-app-nostr-gm-drm-hold:
 	@scripts/pixel_runtime_app_nostr_gm_drm_hold.sh
 
+# Run the timeline runtime demo on the rooted Pixel through the guest compositor DRM path
+pixel-runtime-app-nostr-timeline-drm:
+	@scripts/pixel_runtime_app_nostr_timeline_drm.sh
+
+# Run the timeline runtime demo on the rooted Pixel, keep the panel seized, and leave Android stopped
+pixel-runtime-app-nostr-timeline-drm-hold:
+	@scripts/pixel_runtime_app_nostr_timeline_drm_hold.sh
+
 # Run the tap-driven GM runtime app under the current host runtime backend
 runtime-app-nostr-gm-smoke:
 	@SHADOW_RUNTIME_APP_INPUT_PATH=runtime/app-nostr-gm/app.tsx \
 	SHADOW_RUNTIME_APP_CACHE_DIR=build/runtime/app-nostr-gm \
 	scripts/runtime_app_nostr_gm_smoke.sh
+
+# Run the timeline runtime app against a local relay and keyboard-driven compose flow
+runtime-app-nostr-timeline-smoke:
+	@scripts/runtime_app_nostr_timeline_smoke.sh
 
 # Run the English keyboard runtime smoke under the current host runtime backend
 runtime-app-keyboard-smoke:

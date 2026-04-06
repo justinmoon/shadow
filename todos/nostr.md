@@ -25,7 +25,10 @@ Living note. Revise it as the OS/runtime boundary gets clearer.
   Keep the same app-facing API, but back it from the default runtime helper / Rust side instead of bootstrap JS.
 - [x] Add sqlite-backed local cache and feed queries.
   `just runtime-app-nostr-cache-smoke` proves the default backend persists published kind 1 notes across fresh helper processes and still serves author-filtered feed queries through the same OS API.
+- [x] Add real relay fetch for kind 1 events.
+  `just runtime-app-nostr-timeline-smoke` now starts a local `nak` relay, seeds deterministic kind 1 notes, syncs them through the OS-owned `syncKind1` API, and verifies the runtime timeline app renders both relay-backed notes and a keyboard-composed local note.
+- [x] Prove the same API on the rooted Pixel runtime app lane.
+  `just pixel-runtime-app-nostr-gm-drm` and `just pixel-runtime-app-nostr-timeline-drm` now stage the same app/runtime seam on the rooted Pixel through the guest compositor DRM path. The GM path is interactive and publish-capable; the timeline path now renders full-screen on device and reaches repeated presented frames with real relay-backed sync.
 - [ ] Remove the temporary `deno_runtime` fallback for this seam.
-- [ ] Add real relay fetch for kind 1 events.
 - [ ] Add OS-owned signer boundary for publishing.
-- [ ] Prove the same API on the rooted Pixel runtime app lane.
+- [ ] Add richer timeline behaviors: paging/scrolling, explicit refresh UX, and compose/send once the keyboard/device-input lane is ready.

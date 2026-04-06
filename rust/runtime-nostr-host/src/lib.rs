@@ -1,4 +1,5 @@
 mod relay_publish;
+mod relay_sync;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -15,6 +16,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::relay_publish::PublishEphemeralKind1Request;
 use crate::relay_publish::PublishedKind1Receipt;
+use crate::relay_sync::SyncKind1Request;
+use crate::relay_sync::SyncedKind1Receipt;
 
 const DEFAULT_PUBLISH_PUBKEY: &str = "npub-shadow-os";
 const NOSTR_DB_PATH_ENV: &str = "SHADOW_RUNTIME_NOSTR_DB_PATH";
@@ -286,7 +289,7 @@ impl SqliteNostrService {
         Ok(event)
     }
 
-    fn store_kind1_event(&self, event: &Kind1Event) -> Result<(), String> {
+    fn store_kind1_event(&self, event: &Kind1Event) -> Result<bool, String> {
         let next_sequence: u64 = self
             .connection
             .query_row(
@@ -296,7 +299,8 @@ impl SqliteNostrService {
             )
             .map_err(|error| format!("runtime nostr host: load next sqlite sequence: {error}"))?;
 
-        self.connection
+        let inserted = self
+            .connection
             .execute(
                 "
                 INSERT OR IGNORE INTO nostr_kind1_events (
@@ -324,7 +328,7 @@ impl SqliteNostrService {
                 )
             })?;
 
-        Ok(())
+        Ok(inserted > 0)
     }
 }
 
@@ -350,6 +354,29 @@ fn op_runtime_nostr_publish_kind1(
         .borrow::<NostrHostState>()
         .service()?
         .publish_kind1(request)
+}
+
+#[op2]
+#[serde]
+async fn op_runtime_nostr_sync_kind1(
+    #[serde] request: SyncKind1Request,
+) -> Result<SyncedKind1Receipt, JsErrorBox> {
+    let fetched = relay_sync::sync_kind1(request)
+        .await
+        .map_err(JsErrorBox::generic)?;
+    let service = SqliteNostrService::from_env().map_err(JsErrorBox::generic)?;
+    let mut imported_count = 0_usize;
+    for event in fetched.events.iter() {
+        if service.store_kind1_event(event).map_err(JsErrorBox::generic)? {
+            imported_count += 1;
+        }
+    }
+
+    Ok(SyncedKind1Receipt {
+        relay_urls: fetched.relay_urls,
+        fetched_count: fetched.events.len(),
+        imported_count,
+    })
 }
 
 #[op2]
@@ -405,6 +432,7 @@ extension!(
     ops = [
         op_runtime_nostr_list_kind1,
         op_runtime_nostr_publish_kind1,
+        op_runtime_nostr_sync_kind1,
         op_runtime_nostr_publish_ephemeral_kind1
     ],
     esm_entry_point = "ext:runtime_nostr_host_extension/bootstrap.js",

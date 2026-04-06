@@ -91,8 +91,12 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
   `just runtime-app-nostr-cache-smoke` now gives the default `deno_core` helper a sqlite-backed mock Nostr store, proves a published note survives a fresh helper process, and verifies author-filtered feed queries without changing the app-facing OS API.
 - [x] English keyboard host smoke.
   `just runtime-app-keyboard-smoke` now proves the current runtime contract can carry focus, keydown metadata, plain text input, and selection updates for an English text field without claiming IME support.
+- [x] Runtime timeline + keyboard compose smoke.
+  `just runtime-app-nostr-timeline-smoke` now drives a timeline-style app through one runtime session: it syncs relay-backed notes via the OS-owned Nostr API, focuses the compose field, enters English text, and posts with `Enter`.
 - [x] Rooted Pixel proof.
   `just pixel-runtime-app-drm` stages the bundled app JS plus the GNU-wrapped `deno-core-smoke` helper, pushes them to the rooted phone, and proves the runtime-mode Blitz demo reaches the real panel through the existing guest compositor DRM path. `just pixel-runtime-app-click-drm` proves the same device path survives one auto-dispatched runtime click.
+- [x] Rooted Pixel timeline / Nostr app proof.
+  The rooted Pixel lane now renders both the tap-driven GM app and the full-screen timeline app through the same runtime/document contract. The GM flow is interactive and publish-capable on device; the timeline app proves the feed-style layout and real runtime bundle survive the real panel path.
 - [x] Re-evaluate full snapshots.
   Keep them for MVP. Host and rooted-Pixel click rerenders are good enough for the current card-sized app flows, so there is no reason to add a Rust-side patch bridge yet.
 

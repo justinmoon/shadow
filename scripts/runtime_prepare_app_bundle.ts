@@ -24,6 +24,7 @@ type CliOptions = {
 async function main() {
   const options = parseArgs(Deno.args);
   const cwd = Deno.cwd();
+  const runtimeAppConfig = readRuntimeAppConfig();
   const compileOptions: CompileSolidModuleOptions = {
     cacheDir: options.cacheDir,
     expectCacheHit: options.expectCacheHit,
@@ -41,7 +42,7 @@ async function main() {
   await Deno.copyFile(rendererSourcePath, rendererPath);
   await Deno.copyFile(osSourcePath, osPath);
   await rewriteRuntimeAliasImports(compiled.outputPath);
-  await Deno.writeTextFile(runnerPath, buildRunnerSource());
+  await Deno.writeTextFile(runnerPath, buildRunnerSource(runtimeAppConfig));
   await bundleRunner(runnerPath, bundlePath);
 
   console.log(
@@ -62,7 +63,10 @@ async function main() {
   );
 }
 
-function buildRunnerSource(): string {
+function buildRunnerSource(runtimeAppConfig: unknown): string {
+  const runtimeConfigLiteral = runtimeAppConfig == null
+    ? "null"
+    : JSON.stringify(runtimeAppConfig);
   return `import * as appModule from "./app.js";
 import { ensureShadowRuntimeOs } from "./shadow_runtime_os.js";
 import { createRuntimeApp } from "./shadow_runtime_solid.js";
@@ -75,8 +79,12 @@ const runtimeDocumentCss =
   typeof appModule.runtimeDocumentCss === "string"
     ? appModule.runtimeDocumentCss
     : null;
+const runtimeAppConfig = ${runtimeConfigLiteral};
 
 ensureShadowRuntimeOs();
+if (runtimeAppConfig !== null) {
+  globalThis.SHADOW_RUNTIME_APP_CONFIG = runtimeAppConfig;
+}
 const runtimeApp = createRuntimeApp(renderApp, { css: runtimeDocumentCss });
 const documentPayload = runtimeApp.renderDocument();
 globalThis.SHADOW_RUNTIME_APP = runtimeApp;
@@ -93,6 +101,20 @@ globalThis.SHADOW_RUNTIME_HOST = {
 };
 globalThis.RUNTIME_APP_DOCUMENT = documentPayload;
 `;
+}
+
+function readRuntimeAppConfig(): unknown {
+  const value = Deno.env.get("SHADOW_RUNTIME_APP_CONFIG_JSON");
+  if (value == null || value.trim() === "") {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`invalid SHADOW_RUNTIME_APP_CONFIG_JSON: ${message}`);
+  }
 }
 
 async function rewriteRuntimeAliasImports(outputPath: string) {

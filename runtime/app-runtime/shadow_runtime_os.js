@@ -35,6 +35,10 @@ export function listKind1(query = {}) {
   return getNostrApi().listKind1(query);
 }
 
+export function syncKind1(request = {}) {
+  return getNostrApi().syncKind1(request);
+}
+
 export function publishKind1(request) {
   return getNostrApi().publishKind1(request);
 }
@@ -68,6 +72,17 @@ function createMockNostrOs() {
     nostr: {
       listKind1(query = {}) {
         return queryKind1Events(events, query);
+      },
+      syncKind1(request = {}) {
+        const relayUrls = Array.isArray(request?.relayUrls) &&
+            request.relayUrls.length > 0
+          ? request.relayUrls.map(String)
+          : ["wss://relay.primal.net/", "wss://relay.damus.io/"];
+        return {
+          fetchedCount: 0,
+          importedCount: 0,
+          relayUrls,
+        };
       },
       publishKind1(request) {
         const content = typeof request?.content === "string"
