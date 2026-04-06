@@ -199,9 +199,7 @@ kill_stale_shadow_processes() {
   }
 
   kill_named_shadow_process shadow-blitz-demo
-  kill_named_shadow_process shadow-counter-guest
   kill_named_shadow_process shadow-compositor-guest
-  kill_named_shadow_process drm-rect
   kill_named_shadow_process shadow-session
 }
 
@@ -269,9 +267,7 @@ kill_stale_shadow_processes() {
   }
 
   kill_named_shadow_process shadow-blitz-demo
-  kill_named_shadow_process shadow-counter-guest
   kill_named_shadow_process shadow-compositor-guest
-  kill_named_shadow_process drm-rect
   kill_named_shadow_process shadow-session
 }
 
@@ -361,7 +357,7 @@ pixel_display_size() {
 pixel_takeover_processes_absent() {
   local serial process_name
   serial="$1"
-  for process_name in shadow-blitz-demo shadow-counter-guest shadow-compositor-guest drm-rect shadow-session; do
+  for process_name in shadow-blitz-demo shadow-compositor-guest shadow-session; do
     if pixel_root_process_exists "$serial" "$process_name" >/dev/null 2>&1; then
       return 1
     fi
@@ -462,14 +458,6 @@ pixel_compositor_artifact() {
   pixel_artifact_path shadow-compositor-guest
 }
 
-pixel_counter_artifact() {
-  pixel_artifact_path shadow-counter-guest
-}
-
-pixel_blitz_demo_artifact() {
-  pixel_artifact_path shadow-blitz-demo
-}
-
 pixel_runtime_app_bundle_artifact() {
   pixel_artifact_path shadow-runtime-app-bundle.js
 }
@@ -482,7 +470,7 @@ pixel_guest_client_artifact() {
   if [[ -n "${PIXEL_GUEST_CLIENT_ARTIFACT:-}" ]]; then
     printf '%s\n' "$PIXEL_GUEST_CLIENT_ARTIFACT"
   else
-    pixel_counter_artifact
+    pixel_artifact_path shadow-blitz-demo
   fi
 }
 
@@ -494,19 +482,11 @@ pixel_compositor_dst() {
   printf '%s\n' "${PIXEL_COMPOSITOR_DST:-/data/local/tmp/shadow-compositor-guest}"
 }
 
-pixel_counter_dst() {
-  printf '%s\n' "${PIXEL_COUNTER_DST:-/data/local/tmp/shadow-counter-guest}"
-}
-
-pixel_blitz_demo_dst() {
-  printf '%s\n' "${PIXEL_BLITZ_DEMO_DST:-/data/local/tmp/shadow-blitz-demo}"
-}
-
 pixel_guest_client_dst() {
   if [[ -n "${PIXEL_GUEST_CLIENT_DST:-}" ]]; then
     printf '%s\n' "$PIXEL_GUEST_CLIENT_DST"
   else
-    pixel_counter_dst
+    printf '%s\n' "/data/local/tmp/shadow-blitz-demo"
   fi
 }
 

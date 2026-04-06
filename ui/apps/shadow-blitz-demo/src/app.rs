@@ -92,7 +92,7 @@ impl DemoMode {
     fn wayland_instance_name(self) -> &'static str {
         match self {
             Self::Static => "shadow-blitz-demo",
-            Self::Runtime => "shadow-counter",
+            Self::Runtime => "shadow-blitz-demo",
         }
     }
 }

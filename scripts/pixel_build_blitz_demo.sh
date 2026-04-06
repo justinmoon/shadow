@@ -8,9 +8,9 @@ ensure_bootimg_shell "$@"
 
 pixel_prepare_dirs
 repo="$(repo_root)"
-output_path="$(pixel_blitz_demo_artifact)"
+output_path="$(pixel_guest_client_artifact)"
 target="aarch64-unknown-linux-musl"
-profile="${PIXEL_BLITZ_DEMO_PROFILE:-debug}"
+profile="${PIXEL_GUEST_CLIENT_PROFILE:-debug}"
 toolchain_bin_dir="$(dirname "$(rustup which cargo)")"
 binary_path="$repo/ui/target/$target/$profile/shadow-blitz-demo"
 release_flag=""

@@ -87,10 +87,10 @@ copy_remote_binary() {
 
 pixel_prepare_dirs
 build_one shadow-session-device shadow-session
+"$SCRIPT_DIR/pixel_build_blitz_demo.sh"
 
 if [[ "$(uname -s)" == "Linux" ]]; then
   build_one shadow-compositor-guest-device shadow-compositor-guest
-  build_one shadow-counter-guest-device shadow-counter-guest
 else
   remote_repo=""
   cleanup_remote_repo() {
@@ -99,7 +99,7 @@ else
   }
   trap cleanup_remote_repo EXIT
 
-  for attr in shadow-compositor-guest-device shadow-counter-guest-device; do
+  for attr in shadow-compositor-guest-device; do
     binary_name="${attr%-device}"
     if copy_linux_package_binary "$attr" "$binary_name"; then
       continue

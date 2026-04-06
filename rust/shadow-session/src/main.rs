@@ -8,7 +8,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const GUEST_RUNTIME_CLIENT_BIN: &str = "/shadow-blitz-demo";
-const GUEST_LEGACY_CLIENT_BIN: &str = "/shadow-counter-guest";
 
 fn log_stdio(message: &str) {
     let line = format!("[shadow-session] {message}\n");
@@ -112,48 +111,15 @@ fn prepare_guest_runtime_dir() -> Result<&'static str, String> {
     Ok(Box::leak(runtime_dir.into_boxed_str()))
 }
 
-#[derive(Clone, Copy, Debug)]
-enum SessionMode {
-    DrmRect,
-    GuestUi,
-}
-
-impl SessionMode {
-    fn detect() -> Result<Self, String> {
-        match env::var("SHADOW_SESSION_MODE").ok().as_deref() {
-            Some("drm-rect") => Ok(Self::DrmRect),
-            Some("guest-ui") => Ok(Self::GuestUi),
-            Some(other) => Err(format!("unknown SHADOW_SESSION_MODE={other}")),
-            None if path_exists("/shadow-compositor-guest")
-                && (path_exists(GUEST_RUNTIME_CLIENT_BIN)
-                    || path_exists(GUEST_LEGACY_CLIENT_BIN)) =>
-            {
-                Ok(Self::GuestUi)
-            }
-            None if path_exists("/drm-rect") => Ok(Self::DrmRect),
-            None => Err("could not detect a session mode".into()),
+fn detect_guest_ui_mode() -> Result<(), String> {
+    match env::var("SHADOW_SESSION_MODE").ok().as_deref() {
+        Some("guest-ui") => Ok(()),
+        Some(other) => Err(format!("unknown SHADOW_SESSION_MODE={other}")),
+        None if path_exists("/shadow-compositor-guest") && path_exists(GUEST_RUNTIME_CLIENT_BIN) => {
+            Ok(())
         }
+        None => Err("could not detect a guest UI session".into()),
     }
-}
-
-fn default_guest_client_bin() -> &'static str {
-    if path_exists(GUEST_RUNTIME_CLIENT_BIN) {
-        GUEST_RUNTIME_CLIENT_BIN
-    } else {
-        GUEST_LEGACY_CLIENT_BIN
-    }
-}
-
-fn run_drm_rect() -> ! {
-    let drm_rect_bin = env::var("SHADOW_DRM_RECT_BIN").unwrap_or_else(|_| "/drm-rect".into());
-    let found = wait_for_path("/dev/dri/card0", Duration::from_secs(180));
-    if !found {
-        log_dir_snapshot("/dev");
-        log_dir_snapshot("/dev/dri");
-        log_dir_snapshot("/dev/graphics");
-    }
-
-    run_command(Command::new(&drm_rect_bin), &drm_rect_bin);
 }
 
 fn run_guest_ui() -> ! {
@@ -178,7 +144,7 @@ fn run_guest_ui() -> ! {
     let compositor_bin = env::var("SHADOW_GUEST_COMPOSITOR_BIN")
         .unwrap_or_else(|_| "/shadow-compositor-guest".into());
     let guest_client =
-        env::var("SHADOW_GUEST_CLIENT").unwrap_or_else(|_| default_guest_client_bin().into());
+        env::var("SHADOW_GUEST_CLIENT").unwrap_or_else(|_| GUEST_RUNTIME_CLIENT_BIN.into());
     let mut command = Command::new(&compositor_bin);
     command
         .env("XDG_RUNTIME_DIR", runtime_dir)
@@ -187,7 +153,7 @@ fn run_guest_ui() -> ! {
         .env(
             "RUST_LOG",
             env::var("RUST_LOG").unwrap_or_else(|_| {
-                "shadow_compositor_guest=info,shadow_blitz_demo=info,shadow_counter_guest=info,smithay=warn".into()
+                "shadow_compositor_guest=info,shadow_blitz_demo=info,smithay=warn".into()
             }),
         );
 
@@ -212,9 +178,7 @@ fn run_guest_ui() -> ! {
     if let Some(value) = env::var_os("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE") {
         command.env("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE", value);
     }
-    if let Some(value) = env::var_os("SHADOW_GUEST_CLIENT_LINGER_MS")
-        .or_else(|| env::var_os("SHADOW_GUEST_COUNTER_LINGER_MS"))
-    {
+    if let Some(value) = env::var_os("SHADOW_GUEST_CLIENT_LINGER_MS") {
         command.env("SHADOW_GUEST_CLIENT_LINGER_MS", value);
     }
     if let Some(value) = env::var_os("SHADOW_GUEST_FRAME_PATH") {
@@ -233,18 +197,11 @@ fn run_guest_ui() -> ! {
 fn main() {
     log_stdio("session bootstrapping");
 
-    let mode = match SessionMode::detect() {
-        Ok(mode) => mode,
-        Err(error) => {
-            log_line(&error);
-            process::exit(1);
-        }
-    };
-
-    log_line(&format!("mode {mode:?}"));
-
-    match mode {
-        SessionMode::DrmRect => run_drm_rect(),
-        SessionMode::GuestUi => run_guest_ui(),
+    if let Err(error) = detect_guest_ui_mode() {
+        log_line(&error);
+        process::exit(1);
     }
+
+    log_line("mode GuestUi");
+    run_guest_ui()
 }

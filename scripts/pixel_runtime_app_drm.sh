@@ -7,7 +7,6 @@ source "$SCRIPT_DIR/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 "$SCRIPT_DIR/pixel_build.sh"
-"$SCRIPT_DIR/pixel_build_blitz_demo.sh"
 "$SCRIPT_DIR/pixel_prepare_runtime_app_artifacts.sh"
 
 : "${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS:=12000}"
@@ -50,8 +49,6 @@ if [[ -n "$extra_required_markers" ]]; then
   required_markers="${required_markers}"$'\n'"${extra_required_markers}"
 fi
 
-PIXEL_GUEST_CLIENT_ARTIFACT="$(pixel_blitz_demo_artifact)" \
-PIXEL_GUEST_CLIENT_DST="$(pixel_blitz_demo_dst)" \
 PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_runtime_host_bundle_artifact_dir)" \
 PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT="$(pixel_runtime_app_bundle_artifact)" \
 PIXEL_COMPOSITOR_MARKER='[shadow-guest-compositor] presented-frame' \

@@ -5,7 +5,7 @@ use std::{
     ffi::OsString,
     fs,
     os::{fd::AsRawFd, unix::net::UnixStream},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Child,
     sync::Arc,
     time::{Duration, Instant},
@@ -43,14 +43,9 @@ use smithay::{
 
 const BTN_LEFT: u32 = 0x110;
 const GUEST_RUNTIME_CLIENT_BIN: &str = "/data/local/tmp/shadow-blitz-demo";
-const GUEST_LEGACY_CLIENT_BIN: &str = "/data/local/tmp/shadow-counter-guest";
 
 fn default_guest_client_path() -> String {
-    if Path::new(GUEST_RUNTIME_CLIENT_BIN).exists() {
-        GUEST_RUNTIME_CLIENT_BIN.into()
-    } else {
-        GUEST_LEGACY_CLIENT_BIN.into()
-    }
+    GUEST_RUNTIME_CLIENT_BIN.into()
 }
 
 #[derive(Clone, Debug)]
@@ -275,17 +270,11 @@ impl ShadowGuestCompositor {
                 }
             }
         }
-        if let Some(value) = std::env::var_os("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE")
-            .or_else(|| std::env::var_os("SHADOW_GUEST_COUNTER_EXIT_ON_CONFIGURE"))
-        {
-            command.env("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE", value.clone());
-            command.env("SHADOW_GUEST_COUNTER_EXIT_ON_CONFIGURE", value);
+        if let Some(value) = std::env::var_os("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE") {
+            command.env("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE", value);
         }
-        if let Some(value) = std::env::var_os("SHADOW_GUEST_CLIENT_LINGER_MS")
-            .or_else(|| std::env::var_os("SHADOW_GUEST_COUNTER_LINGER_MS"))
-        {
-            command.env("SHADOW_GUEST_CLIENT_LINGER_MS", value.clone());
-            command.env("SHADOW_GUEST_COUNTER_LINGER_MS", value);
+        if let Some(value) = std::env::var_os("SHADOW_GUEST_CLIENT_LINGER_MS") {
+            command.env("SHADOW_GUEST_CLIENT_LINGER_MS", value);
         }
 
         match &self.transport {

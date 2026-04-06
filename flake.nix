@@ -36,18 +36,17 @@
         lib.genAttrs systems (system:
           f { pkgs = import nixpkgs { inherit system; }; });
       uiBlitzOutputHashes = {
-        "blitz-dom-0.2.2" = "sha256-12kCCerl+ZhcEyGHOYQ0Rez1U+WY/KRFISVYu6PTrXY=";
-        "blitz-html-0.2.0" = "sha256-12kCCerl+ZhcEyGHOYQ0Rez1U+WY/KRFISVYu6PTrXY=";
-        "blitz-paint-0.2.1" = "sha256-12kCCerl+ZhcEyGHOYQ0Rez1U+WY/KRFISVYu6PTrXY=";
-        "blitz-shell-0.2.2" = "sha256-12kCCerl+ZhcEyGHOYQ0Rez1U+WY/KRFISVYu6PTrXY=";
-        "blitz-traits-0.2.0" = "sha256-12kCCerl+ZhcEyGHOYQ0Rez1U+WY/KRFISVYu6PTrXY=";
-        "debug_timer-0.1.3" = "sha256-12kCCerl+ZhcEyGHOYQ0Rez1U+WY/KRFISVYu6PTrXY=";
-        "fontique-0.7.0" = "sha256-F5+3iH+5seYqG0MDK2FjP8N5DTIfAXFuG8hOaP9JqDY=";
-        "parley-0.7.0" = "sha256-F5+3iH+5seYqG0MDK2FjP8N5DTIfAXFuG8hOaP9JqDY=";
-        "parley_data-0.0.0" = "sha256-F5+3iH+5seYqG0MDK2FjP8N5DTIfAXFuG8hOaP9JqDY=";
-        "stylo_taffy-0.2.0" = "sha256-12kCCerl+ZhcEyGHOYQ0Rez1U+WY/KRFISVYu6PTrXY=";
-        "taffy-0.9.2" = "sha256-ySHniRTk6gOvZ4Kdb5oY7ihBzmKFbWBpeRiS9MXeeZM=";
-        "text_primitives-0.1.0" = "sha256-F5+3iH+5seYqG0MDK2FjP8N5DTIfAXFuG8hOaP9JqDY=";
+        "blitz-dom-0.2.2" = "sha256-RWQ5RpapA5ZmxJ9+LuUlL+RTwBcHRgZDM7Kok6yHpi8=";
+        "blitz-html-0.2.0" = "sha256-RWQ5RpapA5ZmxJ9+LuUlL+RTwBcHRgZDM7Kok6yHpi8=";
+        "blitz-paint-0.2.1" = "sha256-RWQ5RpapA5ZmxJ9+LuUlL+RTwBcHRgZDM7Kok6yHpi8=";
+        "blitz-shell-0.2.2" = "sha256-RWQ5RpapA5ZmxJ9+LuUlL+RTwBcHRgZDM7Kok6yHpi8=";
+        "blitz-traits-0.2.0" = "sha256-RWQ5RpapA5ZmxJ9+LuUlL+RTwBcHRgZDM7Kok6yHpi8=";
+        "debug_timer-0.1.3" = "sha256-RWQ5RpapA5ZmxJ9+LuUlL+RTwBcHRgZDM7Kok6yHpi8=";
+        "fontique-0.8.0" = "sha256-dhczFDIFbcl2mMUtTIZaeaTtXWTHNw1fl2xgVcp93NE=";
+        "parley-0.8.0" = "sha256-dhczFDIFbcl2mMUtTIZaeaTtXWTHNw1fl2xgVcp93NE=";
+        "parley_data-0.8.0" = "sha256-dhczFDIFbcl2mMUtTIZaeaTtXWTHNw1fl2xgVcp93NE=";
+        "stylo_taffy-0.2.0" = "sha256-RWQ5RpapA5ZmxJ9+LuUlL+RTwBcHRgZDM7Kok6yHpi8=";
+        "taffy-0.9.2" = "sha256-PrLnNpo6pjChOKUzc1KgN7uxxAbGhY4tFffVMf2ZXbc=";
       };
       rustyV8ReleaseVersion = "146.8.0";
       rustyV8ReleaseShas = {
@@ -67,28 +66,6 @@
           url = "https://github.com/denoland/rusty_v8/releases/download/v${rustyV8ReleaseVersion}/librusty_v8_release_${cross.stdenv.hostPlatform.rust.rustcTarget}.a.gz";
           sha256 = rustyV8ReleaseShas.${cross.stdenv.hostPlatform.system};
           meta.sourceProvenance = with lib.sourceTypes; [ binaryNativeCode ];
-        };
-      mkInitWrapperFor = cross:
-        cross.rustPlatform.buildRustPackage {
-          pname = "init-wrapper";
-          version = "0.1.0";
-          src = ./rust/init-wrapper;
-          cargoLock.lockFile = ./rust/init-wrapper/Cargo.lock;
-          doCheck = false;
-          strictDeps = true;
-          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
-          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
-        };
-      mkDrmRectFor = cross:
-        cross.rustPlatform.buildRustPackage {
-          pname = "drm-rect";
-          version = "0.1.0";
-          src = ./rust/drm-rect;
-          cargoLock.lockFile = ./rust/drm-rect/Cargo.lock;
-          doCheck = false;
-          strictDeps = true;
-          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
-          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
         };
       mkShadowSessionFor = cross:
         cross.rustPlatform.buildRustPackage {
@@ -122,29 +99,6 @@
           cargoInstallFlags = [ "-p" "shadow-compositor-guest" ];
           nativeBuildInputs = [ cross.buildPackages.pkg-config ];
           buildInputs = lib.optionals cross.stdenv.hostPlatform.isLinux [ staticXkbcommon ];
-        };
-      mkShadowGuestCounterFor = cross:
-        cross.rustPlatform.buildRustPackage {
-          pname = "shadow-counter-guest";
-          version = "0.1.0";
-          src = ./ui;
-          cargoLock = {
-            lockFile = ./ui/Cargo.lock;
-            outputHashes = uiBlitzOutputHashes;
-          };
-          doCheck = false;
-          strictDeps = true;
-          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
-          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
-          cargoBuildFlags = [ "-p" "shadow-counter-guest" ];
-          cargoInstallFlags = [ "-p" "shadow-counter-guest" ];
-          nativeBuildInputs = [ cross.buildPackages.pkg-config ];
-          buildInputs = [
-            cross.wayland
-            cross.expat
-            cross.libffi
-          ];
-          PKG_CONFIG_ALL_STATIC = "1";
         };
       mkRustyV8SmokeFor = cross:
         cross.rustPlatform.buildRustPackage {
@@ -233,11 +187,8 @@
           '';
           meta.mainProgram = "deno-runtime-smoke";
         };
-      mkInitWrapper = pkgs: mkInitWrapperFor pkgs.pkgsCross.musl64;
-      mkDrmRect = pkgs: mkDrmRectFor pkgs.pkgsCross.musl64;
       mkShadowSession = pkgs: mkShadowSessionFor pkgs.pkgsCross.musl64;
       mkShadowGuestCompositor = pkgs: mkShadowGuestCompositorFor pkgs.pkgsStatic;
-      mkShadowGuestCounter = pkgs: mkShadowGuestCounterFor pkgs.pkgsStatic;
       mkBootimgShell = pkgs:
         let
           toolPkgs = with pkgs; [
@@ -371,8 +322,6 @@
       });
       packages = forAllSystems ({ pkgs }:
         {
-          init-wrapper = mkInitWrapper pkgs;
-          drm-rect = mkDrmRect pkgs;
           deno-core-smoke = mkDenoCoreSmokeFor pkgs;
           deno-core-smoke-aarch64-linux-gnu =
             mkDenoCoreSmokeFor pkgs.pkgsCross.aarch64-multiplatform;
@@ -389,10 +338,8 @@
           rusty-v8-smoke-x86_64-linux-gnu =
             mkRustyV8SmokeFor pkgs.pkgsCross.gnu64;
           shadow-session = mkShadowSession pkgs;
-          init-wrapper-device = mkInitWrapperFor pkgs.pkgsCross.aarch64-multiplatform-musl;
-          drm-rect-device = mkDrmRectFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           shadow-session-device = mkShadowSessionFor pkgs.pkgsCross.aarch64-multiplatform-musl;
-          default = mkInitWrapper pkgs;
+          default = mkShadowSession pkgs;
           ui-vm =
             if pkgs.stdenv.isDarwin && uiVmSource != null then
               self.nixosConfigurations."${pkgs.stdenv.hostPlatform.system}-shadow-ui-vm".config.microvm.declaredRunner
@@ -402,11 +349,8 @@
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           shadow-compositor-guest = mkShadowGuestCompositor pkgs;
-          shadow-counter-guest = mkShadowGuestCounter pkgs;
           shadow-compositor-guest-device =
             mkShadowGuestCompositorFor pkgs.pkgsCross.aarch64-multiplatform-musl;
-          shadow-counter-guest-device =
-            mkShadowGuestCounterFor pkgs.pkgsCross.aarch64-multiplatform-musl;
         });
     };
 }

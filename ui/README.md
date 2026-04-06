@@ -1,47 +1,33 @@
 # Shadow UI
 
-The UI workspace is the seam between early boot bring-up and the eventual phone shell.
+The UI workspace now supports one shell/app model through two surfaces:
 
-It currently has three layers:
+- `shadow-compositor` inside the QEMU VM shell flow
+- `shadow-compositor-guest` on the rooted Pixel DRM flow
 
-- `crates/shadow-ui-core`: reusable shell state, scene graph, palette, and app metadata
-- `crates/shadow-ui-desktop`: fast `winit + wgpu + glyphon` desktop host for iteration
-- `crates/shadow-compositor`: Smithay-based nested compositor host for Linux
+The only app client that matters is `shadow-blitz-demo`, running in runtime mode for the demo paths.
 
-## Run The Desktop Host
+## Main Commands
 
-The repo default shell stays pointed at `bootimg` so the existing bring-up workflow does not change.
-
-Use the UI shell explicitly:
+From the repo root:
 
 ```sh
-nix develop .#ui
-cargo run --manifest-path ui/Cargo.toml -p shadow-ui-desktop
+just ui-check
+just ui-smoke
+just ui-vm-run
+just ui-vm-open counter
 ```
 
-Or from the repo root:
+For the rooted Pixel path:
 
 ```sh
-just ui-run
-```
-
-## Run The Compositor
-
-On Linux hosts:
-
-```sh
-nix develop .#ui
-cargo run --manifest-path ui/Cargo.toml -p shadow-compositor
-```
-
-Or from the repo root:
-
-```sh
-just compositor-run
+just pixel-build
+just pixel-prepare-runtime-app-artifacts
+just pixel-runtime-app-drm
 ```
 
 ## Controls
 
-- Mouse: hover and click app tiles
+- Mouse: hover and click app tiles in the VM shell
 - Keyboard: arrow keys or `Tab` to move focus
 - Keyboard: `Enter` or `Space` to activate the focused tile

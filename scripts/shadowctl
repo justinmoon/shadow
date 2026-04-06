@@ -82,7 +82,7 @@ def vm_repo_source(process_lines: list[str]) -> str | None:
 
 def running_apps(process_lines: list[str]) -> list[str]:
     apps: list[str] = []
-    names = ("shadow-counter", "shadow-blitz-demo")
+    names = ("shadow-blitz-demo",)
     for line in process_lines:
         for name in names:
             if f" {name}" in f" {line}" or name in line:
@@ -178,7 +178,7 @@ for line in cmd("systemctl", "show", "shadow-ui-smoke.service", "-p", "ActiveSta
 
 process_lines = []
 for line in cmd("ps", "-eo", "pid=,comm=,args=")[1].splitlines():
-    if any(name in line for name in ("shadow-compositor", "shadow-counter", "shadow-blitz-demo", "cargo run")):
+        if any(name in line for name in ("shadow-compositor", "shadow-blitz-demo", "cargo run")):
         if "python3 - <<'PY'" in line:
             continue
         process_lines.append(line.strip())
