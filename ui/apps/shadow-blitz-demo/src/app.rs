@@ -23,7 +23,7 @@ use winit::platform::wayland::WindowAttributesWayland;
 #[cfg(target_os = "linux")]
 const BLITZ_DEMO_WAYLAND_APP_ID: &str = "dev.shadow.blitz";
 #[cfg(target_os = "linux")]
-const RUNTIME_DEMO_WAYLAND_APP_ID: &str = "dev.shadow.runtime";
+const RUNTIME_DEMO_WAYLAND_APP_ID: &str = "dev.shadow.counter";
 
 pub fn run() {
     let demo_mode = DemoMode::from_env();
@@ -62,7 +62,7 @@ impl DemoMode {
     fn title(self) -> &'static str {
         match self {
             Self::Static => "Shadow Blitz Demo",
-            Self::Runtime => "Shadow Runtime Demo",
+            Self::Runtime => "Shadow Counter",
         }
     }
 
@@ -78,7 +78,7 @@ impl DemoMode {
     fn wayland_instance_name(self) -> &'static str {
         match self {
             Self::Static => "shadow-blitz-demo",
-            Self::Runtime => "shadow-runtime-demo",
+            Self::Runtime => "shadow-counter",
         }
     }
 }

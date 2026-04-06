@@ -6,7 +6,7 @@ use std::{
 };
 
 use shadow_ui_core::{
-    app::{binary_name_for, AppId},
+    app::{binary_name_for, launch_env_for, AppId},
     control,
 };
 
@@ -51,8 +51,15 @@ pub fn launch_app(
 
     command
         .env("WAYLAND_DISPLAY", socket_name)
-        .env(control::COMPOSITOR_CONTROL_ENV, control_socket_path)
-        .spawn()
+        .env(control::COMPOSITOR_CONTROL_ENV, control_socket_path);
+
+    if let Some(env_pairs) = launch_env_for(app_id) {
+        for (key, value) in env_pairs {
+            command.env(key, value);
+        }
+    }
+
+    command.spawn()
 }
 
 fn sibling_binary_path(name: &str) -> Option<PathBuf> {

@@ -20,6 +20,8 @@ nixpkgs.lib.nixosSystem {
         sessionLog = "${logDir}/shadow-ui-session.log";
         buildLog = "${logDir}/shadow-ui-build.log";
         sessionEnv = "${stateDir}/shadow-ui-session-env.sh";
+        runtimeHostEnvScript = "${repoDir}/.shadow-vm/runtime-host-session-env.sh";
+        runtimeFallbackEnvScript = "${repoDir}/scripts/runtime_prepare_host_session_env.sh";
         guestToolPkgs = with pkgs; [
           cargo
           clang
@@ -104,7 +106,7 @@ nixpkgs.lib.nixosSystem {
             echo "== shadow-ui-warmup $(date --iso-8601=seconds) =="
             cargo build --locked --manifest-path ui/Cargo.toml \
               -p shadow-compositor \
-              -p shadow-counter
+              -p shadow-blitz-demo
           '';
         };
         shadowUiSession = pkgs.writeShellApplication {
@@ -126,6 +128,23 @@ nixpkgs.lib.nixosSystem {
             echo "cwd: $(pwd)"
             echo "WAYLAND_DISPLAY=''${WAYLAND_DISPLAY:-unset}"
             echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+
+            echo "preparing runtime app session"
+            if [[ -f ${runtimeHostEnvScript} ]]; then
+              # The host prepares these env exports before launching QEMU so the
+              # guest session can start the compositor without an extra nix
+              # resolution step on first frame.
+              # shellcheck source=/dev/null
+              source ${runtimeHostEnvScript}
+              echo "runtime env source=host-cache"
+            else
+              runtime_env_exports="$(SHADOW_RUNTIME_FLAKE_REF=path:${repoDir} ${runtimeFallbackEnvScript})"
+              eval "$runtime_env_exports"
+              echo "runtime env source=guest-fallback"
+            fi
+            echo "runtime backend=$SHADOW_RUNTIME_HOST_BACKEND"
+            echo "runtime bundle=$SHADOW_RUNTIME_APP_BUNDLE_PATH"
+            echo "runtime host=$SHADOW_RUNTIME_HOST_BINARY_PATH"
 
             cargo run --locked --manifest-path ui/Cargo.toml -p shadow-compositor &
             compositor_pid=$!
@@ -212,6 +231,10 @@ PY
               "export LIBGL_DRIVERS_PATH=\"$LIBGL_DRIVERS_PATH\"" \
               "export RUST_BACKTRACE=\"$RUST_BACKTRACE\"" \
               "export XDG_RUNTIME_DIR=\"$XDG_RUNTIME_DIR\"" \
+              "export SHADOW_BLITZ_DEMO_MODE=\"$SHADOW_BLITZ_DEMO_MODE\"" \
+              "export SHADOW_RUNTIME_APP_BUNDLE_PATH=\"$SHADOW_RUNTIME_APP_BUNDLE_PATH\"" \
+              "export SHADOW_RUNTIME_HOST_BINARY_PATH=\"$SHADOW_RUNTIME_HOST_BINARY_PATH\"" \
+              "export SHADOW_RUNTIME_HOST_BACKEND=\"$SHADOW_RUNTIME_HOST_BACKEND\"" \
               "export WAYLAND_DISPLAY=\"$nested_wayland\"" \
               "export SHADOW_COMPOSITOR_CONTROL=\"$control_socket\"" \
               >${sessionEnv}

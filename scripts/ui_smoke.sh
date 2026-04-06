@@ -98,12 +98,16 @@ dump_logs() {
 }
 
 run_local_linux_smoke() {
-  local tmpdir compositor_log compositor_pid start now
+  local tmpdir runtime_dir compositor_log compositor_pid start now
 
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/shadow-ui-smoke.XXXXXX")"
+  runtime_dir="$tmpdir/xdg-runtime"
   UI_SMOKE_TMPDIR="$tmpdir"
   compositor_log="$tmpdir/compositor.log"
   compositor_pid=""
+
+  mkdir -p "$runtime_dir"
+  chmod 700 "$runtime_dir"
 
   cleanup() {
     if [[ -n "${compositor_pid:-}" ]]; then
@@ -118,9 +122,11 @@ run_local_linux_smoke() {
 
   (
     cd "$REPO_ROOT"
+    export XDG_RUNTIME_DIR="$runtime_dir"
     export SHADOW_COMPOSITOR_HEADLESS=1
     export SHADOW_COMPOSITOR_AUTO_LAUNCH=1
     export RUST_LOG="${RUST_LOG:-shadow_compositor=info,smithay=warn}"
+    cargo build --manifest-path ui/Cargo.toml -p shadow-compositor -p shadow-blitz-demo
     cargo run --manifest-path ui/Cargo.toml -p shadow-compositor
   ) >"$compositor_log" 2>&1 &
   compositor_pid=$!

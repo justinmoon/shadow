@@ -24,6 +24,7 @@ pub struct DemoApp {
     pub binary_name: &'static str,
     pub wayland_app_id: &'static str,
     pub icon_color: Color,
+    pub launch_env: &'static [(&'static str, &'static str)],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,10 +41,11 @@ pub const SHELL_WAYLAND_APP_ID: &str = "dev.shadow.shell";
 pub const COUNTER_APP: DemoApp = DemoApp {
     id: COUNTER_APP_ID,
     title: "Counter",
-    subtitle: "Tap tracker",
-    binary_name: "shadow-counter",
+    subtitle: "Solid runtime",
+    binary_name: "shadow-blitz-demo",
     wayland_app_id: COUNTER_WAYLAND_APP_ID,
     icon_color: ICON_CYAN,
+    launch_env: &[("SHADOW_BLITZ_DEMO_MODE", "runtime")],
 };
 
 pub const DEMO_APPS: [DemoApp; 1] = [COUNTER_APP];
@@ -114,11 +116,16 @@ pub fn binary_name_for(id: AppId) -> Option<&'static str> {
     find_app(id).map(|app| app.binary_name)
 }
 
+pub fn launch_env_for(id: AppId) -> Option<&'static [(&'static str, &'static str)]> {
+    find_app(id).map(|app| app.launch_env)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, COUNTER_APP,
-        COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, HOME_TILES, SHELL_APP_ID, SHELL_WAYLAND_APP_ID,
+        app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, launch_env_for,
+        COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, HOME_TILES, SHELL_APP_ID,
+        SHELL_WAYLAND_APP_ID,
     };
 
     #[test]
@@ -127,7 +134,11 @@ mod tests {
         assert_eq!(app, &COUNTER_APP);
         assert_eq!(COUNTER_APP_ID.as_str(), "counter");
         assert_eq!(find_app_by_str("counter"), Some(&COUNTER_APP));
-        assert_eq!(binary_name_for(COUNTER_APP_ID), Some("shadow-counter"));
+        assert_eq!(binary_name_for(COUNTER_APP_ID), Some("shadow-blitz-demo"));
+        assert_eq!(
+            launch_env_for(COUNTER_APP_ID),
+            Some(&[("SHADOW_BLITZ_DEMO_MODE", "runtime")][..])
+        );
         assert_eq!(
             app_id_from_wayland_app_id(COUNTER_WAYLAND_APP_ID),
             Some(COUNTER_APP_ID)

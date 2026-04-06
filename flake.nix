@@ -289,6 +289,7 @@
             just
             openssh
             pkg-config
+            python3
             rustc
             rustfmt
             zig

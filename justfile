@@ -288,9 +288,9 @@ shadowctl *args='':
 ui-vm-app-run package:
 	@scripts/ui_vm_app_run.sh {{package}}
 
-# Launch the counter app inside the running UI VM compositor session
+# Launch the counter runtime app inside the running UI VM compositor session
 ui-vm-counter-run:
-	@scripts/ui_vm_app_run.sh shadow-counter
+	@scripts/ui_vm_app_run.sh shadow-blitz-demo
 
 # Inspect the connected Pixel and report whether the post-boot loop can run
 pixel-doctor:
