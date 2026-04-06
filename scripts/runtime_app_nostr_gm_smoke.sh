@@ -70,7 +70,8 @@ if "GM sent" not in clicked_html and "Relay publish failed" not in clicked_html:
     raise SystemExit("runtime-app-nostr-gm-smoke: click did not transition to success/error state")
 
 print(json.dumps({
-    "backend": session["runtimeHostBackend"],
+    "runtimeHostPackageAttr": session["runtimeHostPackageAttr"],
+    "runtimeHostBinaryName": session["runtimeHostBinaryName"],
     "bundlePath": bundle_path,
     "result": "GM sent" if "GM sent" in clicked_html else "Relay publish failed",
 }, indent=2))
