@@ -158,6 +158,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - wire app launch/home UX on top of the new shell mode
   - The remaining technical cleanup is narrower:
     - revalidate app-specific Wayland app-id/title overrides on a fresh rooted run after the current shell launch path change
+    - finish the first two shell interaction regressions on device:
+      - drag inside the app viewport should scroll, not text-select
+      - switching from one runtime app to another should not keep stacking full GPU clients
 
 ## What Is Proven vs. What Is Not
 
@@ -215,6 +218,20 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Touch on the outer shell path should feel like one tap, not a press/release two-step.
   - The shell touch path now emits one shell tap action per touch gesture instead of double-activating on down/up.
   - Mouse / pointer semantics stay unchanged.
+- The next shell polish seam is app-viewport gesture correctness.
+  - Root cause:
+    - the guest compositor still synthesized finger drags inside runtime apps as left-mouse drags
+  - chosen fix:
+    - track app touch gestures in the guest compositor
+    - treat small gestures as taps
+    - synthesize Smithay `AxisFrame` finger scroll events once drag crosses a threshold
+- The current slow shell app-switch path is not mostly shell chrome; it is process policy.
+  - Root cause:
+    - the Pixel shell shelves the previous runtime app but leaves it alive
+    - opening a different app then pays a second full GPU runtime app cold start
+  - chosen fix:
+    - keep the Pixel shell single-live-app for now
+    - terminate non-target runtime apps before launching/focusing another app
 
 ## Best Known Numbers
 

@@ -28,7 +28,7 @@ use shadow_ui_core::{
 use shell::{AppFrame, GuestShellSurface};
 use smithay::{
     backend::allocator::{dmabuf::Dmabuf, Buffer as AllocatorBuffer, Format, Fourcc, Modifier},
-    backend::input::ButtonState,
+    backend::input::{Axis, AxisSource, ButtonState},
     backend::renderer::{
         buffer_dimensions,
         utils::{on_commit_buffer_handler, with_renderer_surface_state},
@@ -38,7 +38,7 @@ use smithay::{
     delegate_xdg_shell,
     desktop::{Space, Window, WindowSurfaceType},
     input::{
-        pointer::{ButtonEvent, MotionEvent},
+        pointer::{AxisFrame, ButtonEvent, MotionEvent},
         Seat, SeatHandler, SeatState,
     },
     reexports::{
@@ -68,6 +68,7 @@ const BTN_LEFT: u32 = 0x110;
 const GUEST_RUNTIME_CLIENT_BIN: &str = "/data/local/tmp/shadow-blitz-demo";
 const DEFAULT_TOPLEVEL_WIDTH: i32 = APP_VIEWPORT_WIDTH_PX as i32;
 const DEFAULT_TOPLEVEL_HEIGHT: i32 = APP_VIEWPORT_HEIGHT_PX as i32;
+const APP_TOUCH_SCROLL_THRESHOLD: f64 = 18.0;
 
 pub(crate) fn default_guest_client_path() -> String {
     GUEST_RUNTIME_CLIENT_BIN.into()
@@ -77,6 +78,13 @@ pub(crate) fn default_guest_client_path() -> String {
 enum WaylandTransport {
     NamedSocket(OsString),
     DirectClientFd,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AppTouchGesture {
+    start: Point<f64, Logical>,
+    last: Point<f64, Logical>,
+    scrolling: bool,
 }
 
 fn init_logging() {
@@ -113,6 +121,7 @@ struct ShadowGuestCompositor {
     shell: ShellModel,
     shell_surface: GuestShellSurface,
     shell_touch_active: bool,
+    app_touch_gesture: Option<AppTouchGesture>,
     pub(crate) control_socket_path: PathBuf,
     exit_on_first_window: bool,
     exit_on_first_frame: bool,
@@ -177,6 +186,7 @@ impl ShadowGuestCompositor {
             shell: ShellModel::new(),
             shell_surface: GuestShellSurface::new(WIDTH as u32, HEIGHT as u32),
             shell_touch_active: false,
+            app_touch_gesture: None,
             control_socket_path,
             exit_on_first_window: std::env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_WINDOW")
                 .is_some(),
@@ -649,12 +659,80 @@ impl ShadowGuestCompositor {
         self.publish_visible_shell_frame("shell-home-frame");
     }
 
+    fn terminate_app(&mut self, app_id: AppId) {
+        if let Some(window) = self.mapped_window_for_app(app_id) {
+            self.space.unmap_elem(&window);
+        }
+        self.shelved_windows.remove(&app_id);
+
+        let surfaces: Vec<_> = self
+            .surface_apps
+            .iter()
+            .filter_map(|(surface, mapped_app_id)| {
+                (*mapped_app_id == app_id).then_some(surface.clone())
+            })
+            .collect();
+        for surface in surfaces {
+            let _ = self.surface_apps.remove(&surface);
+        }
+
+        if self.focused_app == Some(app_id) {
+            self.focused_app = None;
+            self.shell.set_foreground_app(None);
+        }
+        self.shell.set_app_running(app_id, false);
+        self.app_frames.remove(&app_id);
+
+        if let Some(mut child) = self.launched_apps.remove(&app_id) {
+            let pid = child.id();
+            if let Err(error) = child.kill() {
+                tracing::warn!(
+                    "[shadow-guest-compositor] launched-app-kill-error app={} pid={} error={error}",
+                    app_id.as_str(),
+                    pid
+                );
+            }
+            if let Err(error) = child.wait() {
+                tracing::warn!(
+                    "[shadow-guest-compositor] launched-app-wait-error app={} pid={} error={error}",
+                    app_id.as_str(),
+                    pid
+                );
+            } else {
+                tracing::info!(
+                    "[shadow-guest-compositor] launched-app-terminated app={} pid={}",
+                    app_id.as_str(),
+                    pid
+                );
+            }
+        }
+    }
+
+    fn terminate_other_apps(&mut self, keep_app: AppId) {
+        let mut to_terminate: Vec<_> = self
+            .launched_apps
+            .keys()
+            .chain(self.shelved_windows.keys())
+            .chain(self.surface_apps.values())
+            .copied()
+            .filter(|app_id| *app_id != keep_app)
+            .collect();
+        to_terminate.sort_by_key(|app_id| app_id.as_str().to_string());
+        to_terminate.dedup();
+
+        for app_id in to_terminate {
+            self.terminate_app(app_id);
+        }
+    }
+
     fn launch_or_focus_app(&mut self, app_id: AppId) -> std::io::Result<()> {
         self.reap_exited_clients();
 
         if self.focused_app.is_some_and(|current| current != app_id) {
             self.go_home();
         }
+
+        self.terminate_other_apps(app_id);
 
         if let Some(window) = self.mapped_window_for_app(app_id) {
             self.focus_window(Some(window));
@@ -802,6 +880,19 @@ impl ShadowGuestCompositor {
                         self.shell_touch_active = false;
                         self.publish_visible_shell_frame("shell-touch-frame");
                     }
+                    if let Some(gesture) = self.app_touch_gesture.take() {
+                        if gesture.scrolling {
+                            pointer.axis(
+                                self,
+                                AxisFrame::new(event.time_msec)
+                                    .source(AxisSource::Finger)
+                                    .stop(Axis::Horizontal)
+                                    .stop(Axis::Vertical),
+                            );
+                            pointer.frame(self);
+                            self.flush_wayland_clients();
+                        }
+                    }
                     self.log_touch_mapping(event.normalized_x, event.normalized_y);
                     tracing::info!(
                         "[shadow-guest-compositor] touch-outside-content normalized={:.3},{:.3}",
@@ -811,7 +902,25 @@ impl ShadowGuestCompositor {
                     return;
                 };
                 let shell_point = self.shell_captures_point(position);
-                if self.shell_touch_active || shell_point.is_some() {
+                let shell_handles_touch = match event.phase {
+                    touch::TouchPhase::Down => shell_point.is_some(),
+                    touch::TouchPhase::Move => self.shell_touch_active,
+                    touch::TouchPhase::Up => false,
+                };
+                if shell_handles_touch {
+                    if let Some(gesture) = self.app_touch_gesture.take() {
+                        if gesture.scrolling {
+                            pointer.axis(
+                                self,
+                                AxisFrame::new(event.time_msec)
+                                    .source(AxisSource::Finger)
+                                    .stop(Axis::Horizontal)
+                                    .stop(Axis::Vertical),
+                            );
+                            pointer.frame(self);
+                            self.flush_wayland_clients();
+                        }
+                    }
                     let (x, y) = self
                         .shell_local_point(position)
                         .unwrap_or((position.x as f32, position.y as f32));
@@ -841,31 +950,76 @@ impl ShadowGuestCompositor {
                 if under.is_none() && matches!(event.phase, touch::TouchPhase::Down) {
                     self.log_window_state("touch-miss");
                 }
-                if matches!(event.phase, touch::TouchPhase::Down) {
-                    self.raise_window_for_pointer_focus(under.as_ref().map(|(surface, _)| surface));
+                match event.phase {
+                    touch::TouchPhase::Down => {
+                        if under.is_none() {
+                            return;
+                        }
+                        self.raise_window_for_pointer_focus(
+                            under.as_ref().map(|(surface, _)| surface),
+                        );
+                        pointer.motion(
+                            self,
+                            under,
+                            &MotionEvent {
+                                location: position,
+                                serial,
+                                time: event.time_msec,
+                            },
+                        );
+                        self.app_touch_gesture = Some(AppTouchGesture {
+                            start: position,
+                            last: position,
+                            scrolling: false,
+                        });
+                        pointer.frame(self);
+                        self.flush_wayland_clients();
+                    }
+                    touch::TouchPhase::Move => {
+                        let Some(mut gesture) = self.app_touch_gesture.take() else {
+                            return;
+                        };
+
+                        pointer.motion(
+                            self,
+                            under,
+                            &MotionEvent {
+                                location: position,
+                                serial,
+                                time: event.time_msec,
+                            },
+                        );
+
+                        let total_dx = position.x - gesture.start.x;
+                        let total_dy = position.y - gesture.start.y;
+                        if !gesture.scrolling
+                            && (total_dx.abs() >= APP_TOUCH_SCROLL_THRESHOLD
+                                || total_dy.abs() >= APP_TOUCH_SCROLL_THRESHOLD)
+                        {
+                            gesture.scrolling = true;
+                        }
+
+                        if gesture.scrolling {
+                            let delta_x = position.x - gesture.last.x;
+                            let delta_y = position.y - gesture.last.y;
+                            let mut axis =
+                                AxisFrame::new(event.time_msec).source(AxisSource::Finger);
+                            if delta_x.abs() > f64::EPSILON {
+                                axis = axis.value(Axis::Horizontal, delta_x);
+                            }
+                            if delta_y.abs() > f64::EPSILON {
+                                axis = axis.value(Axis::Vertical, delta_y);
+                            }
+                            pointer.axis(self, axis);
+                        }
+
+                        gesture.last = position;
+                        self.app_touch_gesture = Some(gesture);
+                        pointer.frame(self);
+                        self.flush_wayland_clients();
+                    }
+                    touch::TouchPhase::Up => unreachable!(),
                 }
-                pointer.motion(
-                    self,
-                    under,
-                    &MotionEvent {
-                        location: position,
-                        serial,
-                        time: event.time_msec,
-                    },
-                );
-                if matches!(event.phase, touch::TouchPhase::Down) {
-                    pointer.button(
-                        self,
-                        &ButtonEvent {
-                            button: BTN_LEFT,
-                            state: ButtonState::Pressed,
-                            serial,
-                            time: event.time_msec,
-                        },
-                    );
-                }
-                pointer.frame(self);
-                self.flush_wayland_clients();
             }
             touch::TouchPhase::Up => {
                 if self.shell_touch_active {
@@ -892,15 +1046,58 @@ impl ShadowGuestCompositor {
                     self.handle_shell_event(ShellEvent::PointerLeft);
                 }
                 tracing::info!("[shadow-guest-compositor] touch-input phase=Up");
-                pointer.button(
-                    self,
-                    &ButtonEvent {
-                        button: BTN_LEFT,
-                        state: ButtonState::Released,
-                        serial,
-                        time: event.time_msec,
-                    },
-                );
+                if let Some(gesture) = self.app_touch_gesture.take() {
+                    if let Some(position) =
+                        self.touch_position(event.normalized_x, event.normalized_y)
+                    {
+                        let under = self.surface_under(position);
+                        pointer.motion(
+                            self,
+                            under.clone(),
+                            &MotionEvent {
+                                location: position,
+                                serial,
+                                time: event.time_msec,
+                            },
+                        );
+                        if gesture.scrolling {
+                            pointer.axis(
+                                self,
+                                AxisFrame::new(event.time_msec)
+                                    .source(AxisSource::Finger)
+                                    .stop(Axis::Horizontal)
+                                    .stop(Axis::Vertical),
+                            );
+                        } else if under.is_some() {
+                            pointer.button(
+                                self,
+                                &ButtonEvent {
+                                    button: BTN_LEFT,
+                                    state: ButtonState::Pressed,
+                                    serial,
+                                    time: event.time_msec,
+                                },
+                            );
+                            pointer.button(
+                                self,
+                                &ButtonEvent {
+                                    button: BTN_LEFT,
+                                    state: ButtonState::Released,
+                                    serial,
+                                    time: event.time_msec,
+                                },
+                            );
+                        }
+                    } else if gesture.scrolling {
+                        pointer.axis(
+                            self,
+                            AxisFrame::new(event.time_msec)
+                                .source(AxisSource::Finger)
+                                .stop(Axis::Horizontal)
+                                .stop(Axis::Vertical),
+                        );
+                    }
+                }
                 pointer.frame(self);
                 self.flush_wayland_clients();
             }
