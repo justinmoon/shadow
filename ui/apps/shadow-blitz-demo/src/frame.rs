@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{env, path::PathBuf, sync::Arc, time::Instant};
 
 use blitz_dom::{DocumentConfig, FontContext};
 use blitz_html::{HtmlDocument, HtmlProvider};
@@ -92,6 +92,7 @@ pub const FRAME_HTML: &str = r#"
 "#;
 
 pub fn template_document() -> HtmlDocument {
+    let start = Instant::now();
     let mut config = DocumentConfig {
         html_parser_provider: Some(Arc::new(HtmlProvider) as _),
         ..Default::default()
@@ -100,22 +101,74 @@ pub fn template_document() -> HtmlDocument {
         config.font_ctx = Some(font_ctx);
     }
 
-    HtmlDocument::from_html(FRAME_HTML, config)
+    let document = HtmlDocument::from_html(FRAME_HTML, config);
+    eprintln!(
+        "[shadow-blitz-demo] template-document-ready elapsed_ms={}",
+        start.elapsed().as_millis()
+    );
+    document
 }
 
 fn android_font_context() -> Option<FontContext> {
-    let font_dirs = android_font_dirs();
-    if font_dirs.is_empty() {
-        return None;
-    }
+    match android_font_loading_mode() {
+        AndroidFontMode::Disabled => {
+            eprintln!("[shadow-blitz-demo] android-font-loading disabled");
+            None
+        }
+        AndroidFontMode::Curated => {
+            let font_paths = android_curated_font_paths();
+            if font_paths.is_empty() {
+                eprintln!("[shadow-blitz-demo] curated-android-fonts missing");
+                return None;
+            }
 
-    let mut font_ctx = FontContext::new();
-    font_ctx.collection.load_fonts_from_paths(&font_dirs);
-    eprintln!(
-        "[shadow-blitz-demo] registered-android-font-dirs count={}",
-        font_dirs.len()
-    );
-    Some(font_ctx)
+            let start = Instant::now();
+            let mut font_ctx = FontContext::new();
+            font_ctx.collection.load_fonts_from_paths(&font_paths);
+            eprintln!(
+                "[shadow-blitz-demo] registered-curated-android-fonts count={} elapsed_ms={}",
+                font_paths.len(),
+                start.elapsed().as_millis()
+            );
+            Some(font_ctx)
+        }
+        AndroidFontMode::Scan => {
+            let font_dirs = android_font_dirs();
+            if font_dirs.is_empty() {
+                return None;
+            }
+
+            let start = Instant::now();
+            let mut font_ctx = FontContext::new();
+            font_ctx.collection.load_fonts_from_paths(&font_dirs);
+            eprintln!(
+                "[shadow-blitz-demo] registered-android-font-dirs count={} elapsed_ms={}",
+                font_dirs.len(),
+                start.elapsed().as_millis()
+            );
+            Some(font_ctx)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AndroidFontMode {
+    Disabled,
+    Curated,
+    Scan,
+}
+
+fn android_font_loading_mode() -> AndroidFontMode {
+    match env::var("SHADOW_BLITZ_ANDROID_FONTS")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+    {
+        Some("0") | Some("false") | Some("off") | Some("none") => AndroidFontMode::Disabled,
+        Some("scan") | Some("system") | Some("all") => AndroidFontMode::Scan,
+        Some("curated") | Some("1") | Some("true") | Some("on") | None => AndroidFontMode::Curated,
+        Some(_) => AndroidFontMode::Curated,
+    }
 }
 
 fn android_font_dirs() -> Vec<PathBuf> {
@@ -137,4 +190,23 @@ fn android_font_dirs() -> Vec<PathBuf> {
 
     font_dirs.sort();
     font_dirs
+}
+
+fn android_curated_font_paths() -> Vec<PathBuf> {
+    const FONT_FILES: &[&str] = &[
+        "/system/fonts/DroidSans.ttf",
+        "/system/fonts/DroidSans-Bold.ttf",
+        "/system/fonts/DroidSansMono.ttf",
+        "/system/fonts/NotoColorEmoji.ttf",
+    ];
+
+    let mut font_paths = Vec::new();
+    for font_file in FONT_FILES {
+        let path = PathBuf::from(font_file);
+        if path.is_file() {
+            font_paths.push(path);
+        }
+    }
+
+    font_paths
 }

@@ -31,7 +31,9 @@ pub struct SoftbufferWindowRenderer<Renderer: ImageRenderer> {
 impl<Renderer: ImageRenderer> SoftbufferWindowRenderer<Renderer> {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        Self::with_renderer(Renderer::new(0, 0))
+        // Seed GPU-capable renderers with a non-zero surface so they do not
+        // allocate a zero-sized texture before the real window size arrives.
+        Self::with_renderer(Renderer::new(1, 1))
     }
 
     pub fn with_renderer<R: ImageRenderer>(renderer: R) -> SoftbufferWindowRenderer<R> {
@@ -90,22 +92,24 @@ impl<Renderer: ImageRenderer> WindowRenderer for SoftbufferWindowRenderer<Render
     fn set_size(&mut self, physical_width: u32, physical_height: u32) {
         if let RenderState::Active(state) = &mut self.render_state {
             let start = Instant::now();
+            let clamped_width = physical_width.max(1);
+            let clamped_height = physical_height.max(1);
             eprintln!(
-                "[shadow-softbuffer +{:>6}ms] set-size-start {}x{}",
-                0, physical_width, physical_height
+                "[shadow-softbuffer +{:>6}ms] set-size-start raw={}x{} effective={}x{}",
+                0, physical_width, physical_height, clamped_width, clamped_height
             );
             state
                 .surface
                 .resize(
-                    NonZero::new(physical_width.max(1)).unwrap(),
-                    NonZero::new(physical_height.max(1)).unwrap(),
+                    NonZero::new(clamped_width).unwrap(),
+                    NonZero::new(clamped_height).unwrap(),
                 )
                 .unwrap();
             eprintln!(
                 "[shadow-softbuffer +{:>6}ms] surface-resize-done",
                 start.elapsed().as_millis()
             );
-            self.renderer.resize(physical_width, physical_height);
+            self.renderer.resize(clamped_width, clamped_height);
             eprintln!(
                 "[shadow-softbuffer +{:>6}ms] renderer-resize-done",
                 start.elapsed().as_millis()
