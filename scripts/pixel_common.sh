@@ -585,8 +585,16 @@ pixel_shell_runs_dir() {
   printf '%s/shell\n' "$(pixel_dir)"
 }
 
+pixel_audio_runs_dir() {
+  printf '%s/audio\n' "$(pixel_dir)"
+}
+
 pixel_touch_runs_dir() {
   printf '%s/touch\n' "$(pixel_dir)"
+}
+
+pixel_audio_linux_dir() {
+  printf '%s\n' "${PIXEL_AUDIO_LINUX_DIR:-/data/local/tmp/shadow-audio-spike-gnu}"
 }
 
 pixel_touchscreen_event_device() {

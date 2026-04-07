@@ -352,6 +352,10 @@ pixel-runtime-deno-core-smoke:
 pixel-runtime-deno-runtime-smoke:
 	@PIXEL_RUNTIME_LOG_PREFIX=pixel_runtime_deno_runtime_smoke PIXEL_RUNTIME_SUCCESS_LABEL='Pixel Deno Runtime smoke' PIXEL_RUNTIME_PACKAGE_ATTR=deno-runtime-smoke-aarch64-linux-gnu PIXEL_RUNTIME_BINARY_NAME=deno-runtime-smoke PIXEL_RUNTIME_MODULE_RELATIVE_PATH=modules/main.js PIXEL_RUNTIME_EXPECT_OUTPUT_PREFIX='deno_runtime ok:' PIXEL_RUNTIME_EXPECT_RESULT='result=HELLO FROM DENO_RUNTIME AND DENO_RUNTIME FILE' scripts/pixel_runtime_deno_core_smoke.sh
 
+# Run the first rooted-Pixel Linux-direct audio output spike through the GNU runtime envelope
+pixel-linux-audio-spike:
+	@scripts/pixel_linux_audio_spike.sh
+
 # Run the runtime-mode Blitz demo on the rooted Pixel and auto-dispatch one runtime click
 pixel-runtime-app-click-drm:
 	@scripts/pixel_runtime_app_click_drm.sh

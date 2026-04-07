@@ -240,6 +240,21 @@
           RUSTY_V8_ARCHIVE = mkRustyV8ArchiveFor cross;
           meta.mainProgram = "shadow-runtime-host";
         };
+      mkShadowLinuxAudioSpikeFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "shadow-linux-audio-spike";
+          version = "0.1.0";
+          src = ./.;
+          cargoRoot = "rust/shadow-linux-audio-spike";
+          buildAndTestSubdir = "rust/shadow-linux-audio-spike";
+          cargoLock.lockFile = ./rust/shadow-linux-audio-spike/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          nativeBuildInputs = [ cross.buildPackages.pkg-config ];
+          buildInputs = [ cross.alsa-lib ];
+          meta.mainProgram = "shadow-linux-audio-spike";
+        };
       mkShadowSession = pkgs: mkShadowSessionFor pkgs.pkgsCross.musl64;
       mkDrmRect = pkgs: mkDrmRectFor pkgs.pkgsCross.musl64;
       mkShadowGuestCompositor = pkgs: mkShadowGuestCompositorFor pkgs.pkgsStatic;
@@ -377,6 +392,8 @@
       });
       packages = forAllSystems ({ pkgs }:
         {
+          shadow-linux-audio-spike-aarch64-linux-gnu =
+            mkShadowLinuxAudioSpikeFor pkgs.pkgsCross.aarch64-multiplatform;
           shadow-runtime-host = mkShadowRuntimeHostFor pkgs;
           shadow-runtime-host-aarch64-linux-gnu =
             mkShadowRuntimeHostFor pkgs.pkgsCross.aarch64-multiplatform;

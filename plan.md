@@ -1,0 +1,81 @@
+Living plan. Revise it as we learn. Do not treat this as a fixed contract.
+
+## Scope
+
+- Add the first app-facing sound API for runtime apps.
+- First target: rooted Pixel runtime lane.
+- MVP: play, pause, stop, and release one MP3-backed player from an app.
+- Keep the app-facing API stable across host and Pixel even if the backend differs.
+- Shipping preference order:
+  Linux-native if it proves stable on the device, otherwise Android-native C++.
+- JVM-backed playback is acceptable only as a demo/unblocker lane, not the intended shipped backend.
+- Non-goals for v0: recording, mixing graphs, browser-compatible Web Audio, perfect AV sync, or ultra-low-latency synth input.
+
+## Approach
+
+- Keep sound below the existing OS API seam: apps call `@shadow/app-runtime-os`, not a renderer-specific hook.
+- Add `Shadow.os.audio` beside `Shadow.os.nostr`.
+- Keep audio off the render/dispatch JSON contract; use async OS ops and let the existing `renderIfDirty()` poll pick up UI state changes.
+- Treat the rooted Pixel backend as a two-spike decision:
+  1. quick falsifiable Linux-direct probe from the current GNU helper
+  2. native Android/bionic bridge, expected to be the shipping path if the Linux probe is brittle
+- Do not commit to a shipped JVM backend.
+- Preferred shipped Pixel backend: a tiny Android-native C++ bridge that uses Android audio APIs from a bionic process.
+- Preferred native stack: Oboe on top of AAudio where available.
+- For compressed assets, keep decode separate from output:
+  - simplest native MVP: decode MP3 in-process to PCM, then feed Oboe
+  - platform-native growth path: `AMediaExtractor` / `AMediaCodec` decode to PCM, then feed Oboe/AAudio
+- Temporary demo/unblocker path: framework `MediaPlayer` for local-file or URL-backed MP3 playback.
+- Connect `shadow-runtime-host` to the chosen bridge over a narrow IPC seam. Prefer a local socket or stdio-like command protocol over coupling audio to the Blitz client.
+- Start with one active player and file-backed sources. Add multi-player or SFX-specialized paths only after the single-track seam is proven.
+- Add asset staging so runtime apps can ship audio files next to the bundled JS on host and Pixel.
+
+## Milestones
+
+- [ ] Backend decision proved on hardware.
+  Compare Linux-direct playback against a native Android/bionic bridge during rooted takeover and choose the shipped path.
+- [ ] App-facing audio API agreed.
+  Land a small handle-based `Shadow.os.audio` contract before writing platform code.
+- [ ] Host/mock backend.
+  Add a mock or no-op backend so app code and host smokes can land before Pixel audio is fully wired.
+- [ ] Pixel audio bridge MVP.
+  Build the native Android/bionic bridge, point it at a staged MP3, and prove audible playback through the normal device route.
+- [ ] Runtime host extension.
+  Add a `runtime-audio-host` crate/ops and inject `Shadow.os.audio` into `shadow-runtime-host`.
+- [ ] Asset pipeline.
+  Copy audio assets during app bundling and expose stable file URIs or manifest IDs.
+- [ ] Smokes and operator recipes.
+  Add host API smoke, visible runtime smoke, and rooted Pixel manual/automated sound proof.
+- [ ] Productize.
+  Add volume, loop, seek, focus/interruption policy, and decide whether tiny UI sounds need a second fast path.
+
+## Near-Term Steps
+
+- [x] Run the Linux-direct probe first.
+  `just pixel-linux-audio-spike` now runs end-to-end on the rooted Pixel and produced audible output. The current narrow proof is synthesized PCM tone playback through ALSA `plughw:0,0` with a Pixel-specific `speaker-mm1` mixer route during takeover.
+- [ ] Prove the native Android bridge shape on a real Pixel.
+  During rooted takeover, play a known MP3 through a bionic-native helper from `adb shell` and confirm the speaker path still works.
+- [ ] Pick packaging and IPC.
+  Preferred shipped shape: `shadow-audio-bridge` native daemon plus local socket. Demo fallback: `app_process` with a tiny Java entrypoint.
+- [ ] Lock the MVP API.
+  Prefer `createPlayer`, `play`, `pause`, `stop`, `release`, and `getStatus` over raw PCM streaming for v0.
+- [ ] Add one demo app.
+  Create `runtime/app-sound-smoke/app.tsx` with Play, Pause, Stop, Loop, and visible status/error state.
+- [ ] Add one operator command.
+  Add a `just runtime-app-sound-smoke` host path and a `just pixel-runtime-app-sound-drm` rooted device path.
+
+## Implementation Notes
+
+- The current runtime seam is already the right insertion point:
+  `@shadow/app-runtime-os` -> bundled JS helper -> `shadow-runtime-host` extension -> platform service.
+- `runtime/app-runtime/shadow_runtime_os.js` is the obvious home for the JS-side audio wrapper and mock fallback.
+- `rust/runtime-nostr-host` is the pattern to copy for a new `runtime-audio-host` crate.
+- `scripts/runtime_prepare_app_bundle.ts` and `scripts/pixel_prepare_runtime_app_artifacts.sh` are the current staging seams for bundle-adjacent assets.
+- The rooted Pixel takeover scripts stop display services, not audio services, so Android-owned playback should survive the current takeover model.
+- The current helper is glibc/Linux, so a serious Android-native audio path likely means a second device-side process built against bionic and spoken to over IPC.
+- Direct Linux audio from the GNU helper is still worth one quick spike, but it is not the default shipping bet: no desktop audio server, device-specific routing, and it bypasses Android audio policy/HAL behavior.
+- The first Linux-direct spike stays intentionally narrow: synthesized PCM tone, ALSA device candidates discovered from `/proc/asound/pcm`, copied `share/alsa` and an optional `lib/alsa-lib` plugin dir into the GNU bundle, and JSON summary capture under a dedicated Pixel run dir.
+- The GNU launcher for the audio spike must not `chroot`; the process needs the device's real `/dev/snd` and `/proc/asound` surfaces to stay visible.
+- The probe must not count proxy or hostless PCM success as "sound works." On this device, the actual audible proof came from `MultiMedia1` / `plughw:0,0` after applying the speaker route controls, while `AFE-PROXY` accepted PCM without audible output.
+- If we need a shipped native path, Android’s current guidance is to target Oboe or AAudio rather than new OpenSL ES designs.
+- Start with file or URI playback, not PCM streaming. If we later need synthesis or latency-critical SFX, add a separate streaming/SFX API instead of overloading the MP3 path.
