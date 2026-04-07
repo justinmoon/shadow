@@ -4,22 +4,51 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-cd "$REPO_ROOT"
-session_json="$("$SCRIPT_DIR/runtime_prepare_host_session.sh")"
+asset_json="$("$SCRIPT_DIR/prepare_sound_demo_assets.sh")"
+runtime_app_config_json="$(
+  ASSET_JSON="$asset_json" python3 - <<'PY'
+import json
+import os
 
-SESSION_JSON="$session_json" python3 - <<'PY'
+asset = json.loads(os.environ["ASSET_JSON"])
+print(json.dumps({"source": asset["source"]}))
+PY
+)"
+asset_dir="$(
+  ASSET_JSON="$asset_json" python3 - <<'PY'
+import json
+import os
+
+asset = json.loads(os.environ["ASSET_JSON"])
+print(asset["assetDir"])
+PY
+)"
+
+cd "$REPO_ROOT"
+session_json="$(
+  SHADOW_RUNTIME_APP_CONFIG_JSON="$runtime_app_config_json" \
+  SHADOW_RUNTIME_APP_INPUT_PATH="runtime/app-sound-smoke/app.tsx" \
+  SHADOW_RUNTIME_APP_CACHE_DIR="build/runtime/app-sound-smoke-host" \
+    "$SCRIPT_DIR/runtime_prepare_host_session.sh"
+)"
+
+ASSET_DIR="$asset_dir" SESSION_JSON="$session_json" python3 - <<'PY'
 import json
 import os
 import subprocess
 import time
 
 session = json.loads(os.environ["SESSION_JSON"])
+asset_dir = os.environ["ASSET_DIR"]
 bundle_path = session["bundlePath"]
 binary_path = session["runtimeHostBinaryPath"]
+process_env = dict(os.environ)
+process_env["SHADOW_RUNTIME_BUNDLE_DIR"] = asset_dir
 
 process = subprocess.Popen(
     [binary_path, "--session", bundle_path],
     stdin=subprocess.PIPE,
+    env=process_env,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
     text=True,
@@ -103,6 +132,8 @@ if "State:</span> idle" not in prepared_html:
     raise SystemExit("runtime-app-sound-smoke: prepare click did not surface idle state")
 if "Backend:</span> memory" not in prepared_html:
     raise SystemExit("runtime-app-sound-smoke: host smoke should use memory backend")
+if "Source:</span> file / audio/demo-tone.wav" not in prepared_html:
+    raise SystemExit("runtime-app-sound-smoke: expected file-backed source label")
 if "State:</span> playing" not in playing_html:
     raise SystemExit("runtime-app-sound-smoke: play click did not surface playing state")
 if "State:</span> stopped" not in stopped_html:

@@ -12,10 +12,31 @@ type AudioStatus = {
   backend: string;
   durationMs: number;
   error?: string;
-  frequencyHz: number;
+  frequencyHz?: number;
   id: number;
+  path?: string;
   sourceKind: string;
   state: string;
+};
+
+type ToneSourceConfig = {
+  kind: "tone";
+  durationMs: number;
+  frequencyHz: number;
+};
+
+type FileSourceConfig = {
+  kind: "file";
+  durationMs: number;
+  path: string;
+};
+
+type AudioSourceConfig = ToneSourceConfig | FileSourceConfig;
+
+type RuntimeAppConfig = {
+  source?: Partial<ToneSourceConfig & FileSourceConfig> & {
+    kind?: string;
+  };
 };
 
 type CommandKind =
@@ -30,7 +51,7 @@ const DEFAULT_SOURCE = {
   kind: "tone",
   durationMs: 2_600,
   frequencyHz: 440,
-};
+} satisfies ToneSourceConfig;
 
 export const runtimeDocumentCss = `
 :root {
@@ -190,7 +211,55 @@ body {
 }
 `;
 
+function readAppSourceConfig(): AudioSourceConfig {
+  const runtimeConfig = (globalThis as Record<string, unknown>)
+    .SHADOW_RUNTIME_APP_CONFIG as RuntimeAppConfig | undefined;
+  const source = runtimeConfig?.source;
+  if (source?.kind === "file" && typeof source.path === "string" &&
+    source.path.trim()) {
+    return {
+      durationMs: normalizeDurationMs(source.durationMs),
+      kind: "file",
+      path: source.path.trim(),
+    };
+  }
+
+  return {
+    durationMs: normalizeDurationMs(source?.durationMs),
+    frequencyHz: normalizeFrequencyHz(source?.frequencyHz),
+    kind: "tone",
+  };
+}
+
+function normalizeDurationMs(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : DEFAULT_SOURCE.durationMs;
+}
+
+function normalizeFrequencyHz(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : DEFAULT_SOURCE.frequencyHz;
+}
+
+function isFileSource(
+  source: AudioSourceConfig | AudioStatus,
+): source is FileSourceConfig | AudioStatus {
+  return "sourceKind" in source ? source.sourceKind === "file" : source.kind === "file";
+}
+
+function formatSourceLabel(source: AudioSourceConfig | AudioStatus): string {
+  if (isFileSource(source)) {
+    return source.path ?? "missing-path";
+  }
+  return `${source.frequencyHz ?? DEFAULT_SOURCE.frequencyHz} Hz / ${
+    source.durationMs
+  } ms`;
+}
+
 export default function renderApp() {
+  const appSource = readAppSourceConfig();
   const [status, setStatus] = createSignal<AudioStatus | null>(null);
   const [busy, setBusy] = createSignal<CommandKind | null>(null);
   const [message, setMessage] = createSignal(
@@ -205,7 +274,7 @@ export default function renderApp() {
     }
 
     const created = await createPlayer({
-      source: DEFAULT_SOURCE,
+      source: appSource,
     }) as AudioStatus;
     setStatus(created);
     return created;
@@ -222,7 +291,9 @@ export default function renderApp() {
         case "prepare":
           nextStatus = await ensurePlayer(true);
           setMessage(
-            "Player ready. On Pixel, Play should trigger the Linux tone helper.",
+            appSource.kind === "file"
+              ? "Player ready. Play should trigger the staged file-backed helper."
+              : "Player ready. On Pixel, Play should trigger the Linux tone helper.",
           );
           break;
         case "play":
@@ -289,13 +360,8 @@ export default function renderApp() {
   const statusValue = () => currentStatus()?.state ?? "missing";
   const backendValue = () => currentStatus()?.backend ?? "missing";
   const playerIdValue = () => currentStatus()?.id ?? "n/a";
-  const toneLabel = () => {
-    const current = currentStatus();
-    if (!current) {
-      return `${DEFAULT_SOURCE.frequencyHz} Hz / ${DEFAULT_SOURCE.durationMs} ms`;
-    }
-    return `${current.frequencyHz} Hz / ${current.durationMs} ms`;
-  };
+  const sourceLabel = () => formatSourceLabel(currentStatus() ?? appSource);
+  const sourceKindLabel = () => currentStatus()?.sourceKind ?? appSource.kind;
 
   return (
     <main class="sound-shell">
@@ -304,8 +370,8 @@ export default function renderApp() {
         <h1 class="sound-headline">Linux audio seam</h1>
         <p class="sound-body">
           Runtime app buttons drive `Shadow.os.audio`. Host uses an in-memory
-          backend; the Pixel sound lane switches to the rooted Linux tone
-          helper.
+          backend; the Pixel sound lane switches to the rooted Linux{" "}
+          {appSource.kind === "file" ? "file" : "tone"} helper.
         </p>
 
         <div class="sound-status">
@@ -319,7 +385,8 @@ export default function renderApp() {
             <span class="sound-status-label">Player:</span> {playerIdValue()}
           </p>
           <p class="sound-status-line">
-            <span class="sound-status-label">Source:</span> tone / {toneLabel()}
+            <span class="sound-status-label">Source:</span> {sourceKindLabel()}{" "}
+            / {sourceLabel()}
           </p>
         </div>
 
@@ -379,9 +446,13 @@ export default function renderApp() {
         </p>
 
         <div class="sound-meta">
-          <span class="sound-chip">tone-backed MVP</span>
+          <span class="sound-chip">
+            {appSource.kind === "file" ? "file-backed demo" : "tone-backed MVP"}
+          </span>
           <span class="sound-chip">pause via signal</span>
-          <span class="sound-chip">MP3/file path next</span>
+          <span class="sound-chip">
+            {appSource.kind === "file" ? "bundle-relative path" : "MP3/file path next"}
+          </span>
         </div>
       </section>
     </main>

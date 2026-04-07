@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::env;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -10,6 +12,7 @@ use deno_error::JsErrorBox;
 use serde::{Deserialize, Serialize};
 
 const AUDIO_BACKEND_ENV: &str = "SHADOW_RUNTIME_AUDIO_BACKEND";
+const AUDIO_BUNDLE_DIR_ENV: &str = "SHADOW_RUNTIME_BUNDLE_DIR";
 const AUDIO_SPIKE_BINARY_ENV: &str = "SHADOW_RUNTIME_AUDIO_SPIKE_BINARY";
 const DEFAULT_DURATION_MS: u32 = 2_400;
 const DEFAULT_FREQUENCY_HZ: u32 = 440;
@@ -53,7 +56,7 @@ impl AudioHostService {
         &mut self,
         request: CreatePlayerRequest,
     ) -> Result<AudioPlayerStatus, JsErrorBox> {
-        let source = ToneSource::try_from(request.source)?;
+        let source = AudioSource::try_from(request.source)?;
         let id = self.next_id;
         self.next_id = self
             .next_id
@@ -155,11 +158,11 @@ struct AudioPlayer {
     id: u32,
     last_error: Option<String>,
     runtime: PlayerRuntime,
-    source: ToneSource,
+    source: AudioSource,
 }
 
 impl AudioPlayer {
-    fn new(id: u32, source: ToneSource, backend: &AudioBackend) -> Self {
+    fn new(id: u32, source: AudioSource, backend: &AudioBackend) -> Self {
         let runtime = match backend {
             AudioBackend::Memory => PlayerRuntime::Memory(MemoryPlayerRuntime::default()),
             AudioBackend::LinuxSpike { .. } => {
@@ -197,11 +200,12 @@ impl AudioPlayer {
         self.runtime.reconcile(&self.source, &mut self.last_error);
         AudioPlayerStatus {
             backend: String::from(backend.name()),
-            duration_ms: self.source.duration_ms,
+            duration_ms: self.source.duration_ms(),
             error: self.last_error.clone(),
-            frequency_hz: self.source.frequency_hz,
+            frequency_hz: self.source.frequency_hz(),
             id: self.id,
-            source_kind: String::from("tone"),
+            path: self.source.path().map(str::to_owned),
+            source_kind: String::from(self.source.kind()),
             state: String::from(self.runtime.state().as_str()),
         }
     }
@@ -216,7 +220,7 @@ enum PlayerRuntime {
 impl PlayerRuntime {
     fn play(
         &mut self,
-        source: &ToneSource,
+        source: &AudioSource,
         backend: &AudioBackend,
         last_error: &mut Option<String>,
     ) -> Result<(), JsErrorBox> {
@@ -247,7 +251,7 @@ impl PlayerRuntime {
         }
     }
 
-    fn reconcile(&mut self, source: &ToneSource, last_error: &mut Option<String>) {
+    fn reconcile(&mut self, source: &AudioSource, last_error: &mut Option<String>) {
         match self {
             Self::Memory(runtime) => runtime.reconcile(source),
             Self::LinuxSpike(runtime) => runtime.reconcile(last_error),
@@ -282,7 +286,7 @@ impl Default for MemoryPlayerRuntime {
 impl MemoryPlayerRuntime {
     fn play(
         &mut self,
-        _source: &ToneSource,
+        _source: &AudioSource,
         last_error: &mut Option<String>,
     ) -> Result<(), JsErrorBox> {
         if self.state == PlayerState::Released {
@@ -338,7 +342,7 @@ impl MemoryPlayerRuntime {
         Ok(())
     }
 
-    fn reconcile(&mut self, source: &ToneSource) {
+    fn reconcile(&mut self, source: &AudioSource) {
         if self.state != PlayerState::Playing {
             return;
         }
@@ -372,7 +376,7 @@ impl Default for LinuxSpikePlayerRuntime {
 impl LinuxSpikePlayerRuntime {
     fn play(
         &mut self,
-        source: &ToneSource,
+        source: &AudioSource,
         backend: &AudioBackend,
         last_error: &mut Option<String>,
     ) -> Result<(), JsErrorBox> {
@@ -403,29 +407,47 @@ impl LinuxSpikePlayerRuntime {
             }
         };
 
-        let child = Command::new(binary_path)
-            .env(
-                "SHADOW_AUDIO_SPIKE_DURATION_MS",
-                source.duration_ms.to_string(),
-            )
-            .env(
-                "SHADOW_AUDIO_SPIKE_FREQUENCY_HZ",
-                source.frequency_hz.to_string(),
-            )
+        let mut command = Command::new(binary_path);
+        command
+            .env("SHADOW_AUDIO_SPIKE_DURATION_MS", source.duration_ms().to_string())
+            .env("SHADOW_AUDIO_SPIKE_SOURCE_KIND", source.kind())
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|error| {
-                JsErrorBox::generic(format!("audio.play spawn linux spike helper: {error}"))
-            })?;
-        eprintln!(
-            "runtime-audio-host linux-spike-spawn binary={} duration_ms={} frequency_hz={} pid={}",
-            binary_path,
-            source.duration_ms,
-            source.frequency_hz,
-            child.id()
-        );
+            .stderr(Stdio::inherit());
+        match source {
+            AudioSource::Tone(source) => {
+                command.env(
+                    "SHADOW_AUDIO_SPIKE_FREQUENCY_HZ",
+                    source.frequency_hz.to_string(),
+                );
+            }
+            AudioSource::File(source) => {
+                command.env("SHADOW_AUDIO_SPIKE_FILE_PATH", &source.resolved_path);
+            }
+        }
+        let child = command.spawn().map_err(|error| {
+            JsErrorBox::generic(format!("audio.play spawn linux spike helper: {error}"))
+        })?;
+        match source {
+            AudioSource::Tone(source) => {
+                eprintln!(
+                    "runtime-audio-host linux-spike-spawn binary={} kind=tone duration_ms={} frequency_hz={} pid={}",
+                    binary_path,
+                    source.duration_ms,
+                    source.frequency_hz,
+                    child.id()
+                );
+            }
+            AudioSource::File(source) => {
+                eprintln!(
+                    "runtime-audio-host linux-spike-spawn binary={} kind=file duration_ms={} path={} pid={}",
+                    binary_path,
+                    source.duration_ms,
+                    source.path,
+                    child.id()
+                );
+            }
+        }
         self.child = Some(child);
         self.state = PlayerState::Playing;
         *last_error = None;
@@ -528,15 +550,56 @@ impl PlayerState {
 }
 
 #[derive(Clone, Debug)]
+enum AudioSource {
+    Tone(ToneSource),
+    File(FileSource),
+}
+
+impl AudioSource {
+    fn duration(&self) -> Duration {
+        Duration::from_millis(u64::from(self.duration_ms()))
+    }
+
+    fn duration_ms(&self) -> u32 {
+        match self {
+            Self::Tone(source) => source.duration_ms,
+            Self::File(source) => source.duration_ms,
+        }
+    }
+
+    fn frequency_hz(&self) -> Option<u32> {
+        match self {
+            Self::Tone(source) => Some(source.frequency_hz),
+            Self::File(_) => None,
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Tone(_) => "tone",
+            Self::File(_) => "file",
+        }
+    }
+
+    fn path(&self) -> Option<&str> {
+        match self {
+            Self::Tone(_) => None,
+            Self::File(source) => Some(source.path.as_str()),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 struct ToneSource {
     duration_ms: u32,
     frequency_hz: u32,
 }
 
-impl ToneSource {
-    fn duration(&self) -> Duration {
-        Duration::from_millis(u64::from(self.duration_ms))
-    }
+#[derive(Clone, Debug)]
+struct FileSource {
+    duration_ms: u32,
+    path: String,
+    resolved_path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -561,6 +624,7 @@ struct AudioSourceRequest {
     duration_ms: u32,
     #[serde(default = "default_frequency_hz")]
     frequency_hz: u32,
+    path: Option<String>,
 }
 
 impl Default for AudioSourceRequest {
@@ -569,35 +633,53 @@ impl Default for AudioSourceRequest {
             kind: default_audio_source_kind(),
             duration_ms: default_duration_ms(),
             frequency_hz: default_frequency_hz(),
+            path: None,
         }
     }
 }
 
-impl TryFrom<AudioSourceRequest> for ToneSource {
+impl TryFrom<AudioSourceRequest> for AudioSource {
     type Error = JsErrorBox;
 
     fn try_from(request: AudioSourceRequest) -> Result<Self, Self::Error> {
-        if request.kind != "tone" {
-            return Err(JsErrorBox::generic(format!(
-                "audio.createPlayer does not support source kind '{}'",
-                request.kind
-            )));
-        }
         if request.duration_ms == 0 {
             return Err(JsErrorBox::type_error(
                 "audio.createPlayer requires source.durationMs > 0",
             ));
         }
-        if request.frequency_hz == 0 {
-            return Err(JsErrorBox::type_error(
-                "audio.createPlayer requires source.frequencyHz > 0",
-            ));
+        match request.kind.as_str() {
+            "tone" => {
+                if request.frequency_hz == 0 {
+                    return Err(JsErrorBox::type_error(
+                        "audio.createPlayer requires source.frequencyHz > 0",
+                    ));
+                }
+                Ok(Self::Tone(ToneSource {
+                    duration_ms: request.duration_ms,
+                    frequency_hz: request.frequency_hz,
+                }))
+            }
+            "file" => {
+                let path = request
+                    .path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        JsErrorBox::type_error("audio.createPlayer requires source.path")
+                    })?
+                    .to_owned();
+                Ok(Self::File(FileSource {
+                    duration_ms: request.duration_ms,
+                    resolved_path: resolve_source_path(Some(path.clone()))?,
+                    path,
+                }))
+            }
+            _ => Err(JsErrorBox::generic(format!(
+                "audio.createPlayer does not support source kind '{}'",
+                request.kind
+            ))),
         }
-
-        Ok(Self {
-            duration_ms: request.duration_ms,
-            frequency_hz: request.frequency_hz,
-        })
     }
 }
 
@@ -608,8 +690,11 @@ struct AudioPlayerStatus {
     duration_ms: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
-    frequency_hz: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frequency_hz: Option<u32>,
     id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
     source_kind: String,
     state: String,
 }
@@ -696,6 +781,29 @@ fn default_duration_ms() -> u32 {
 
 fn default_frequency_hz() -> u32 {
     DEFAULT_FREQUENCY_HZ
+}
+
+fn resolve_source_path(path: Option<String>) -> Result<String, JsErrorBox> {
+    let trimmed = path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| JsErrorBox::type_error("audio.createPlayer requires source.path"))?;
+    let candidate = PathBuf::from(trimmed);
+    if candidate.is_absolute() {
+        return Ok(candidate.display().to_string());
+    }
+
+    let bundle_dir = env::var(AUDIO_BUNDLE_DIR_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            JsErrorBox::generic(format!(
+                "audio.createPlayer requires {AUDIO_BUNDLE_DIR_ENV} for relative source.path values"
+            ))
+        })?;
+    Ok(Path::new(&bundle_dir).join(candidate).display().to_string())
 }
 
 fn send_signal(child: &Child, signal: i32) -> Result<(), JsErrorBox> {

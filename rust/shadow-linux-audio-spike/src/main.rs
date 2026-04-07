@@ -2,7 +2,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::error::Error;
 use std::f32::consts::TAU;
-use std::fs;
+use std::fs::{self, File};
+use std::io::ErrorKind;
 use std::path::Path;
 use std::time::Instant;
 
@@ -11,6 +12,13 @@ use alsa::hctl::HCtl;
 use alsa::pcm::{Access, Format, HwParams, PCM};
 use alsa::{Direction, ValueOr};
 use serde::Serialize;
+use symphonia::core::audio::SampleBuffer;
+use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
 
 const DEFAULT_DEVICE_CANDIDATES: [&str; 2] = ["default", "sysdefault"];
 
@@ -27,10 +35,21 @@ fn run() -> Result<(), Box<dyn Error>> {
     let requested_frequency_hz = read_env_u32("SHADOW_AUDIO_SPIKE_FREQUENCY_HZ", 440);
     let requested_rate_hz = read_env_u32("SHADOW_AUDIO_SPIKE_RATE", 48_000);
     let requested_channels = read_env_u32("SHADOW_AUDIO_SPIKE_CHANNELS", 2);
+    let source_kind = read_env_string("SHADOW_AUDIO_SPIKE_SOURCE_KIND")
+        .unwrap_or_else(|| String::from("tone"));
+    let requested_file_path = read_env_string("SHADOW_AUDIO_SPIKE_FILE_PATH");
     let summary_path = env::var("SHADOW_AUDIO_SPIKE_SUMMARY_PATH").ok();
     let cwd = env::current_dir()
         .ok()
         .map(|path| path.display().to_string());
+    let prepared_playback = prepare_playback(
+        &source_kind,
+        requested_duration_ms,
+        requested_frequency_hz,
+        requested_rate_hz,
+        requested_channels,
+        requested_file_path.as_deref(),
+    )?;
 
     let mut device_candidates = Vec::new();
     if let Ok(device) = env::var("SHADOW_AUDIO_SPIKE_DEVICE") {
@@ -67,11 +86,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     println!(
-        "audio-spike-start duration_ms={} frequency_hz={} rate_hz={} channels={} device_candidates={}",
-        requested_duration_ms,
-        requested_frequency_hz,
-        requested_rate_hz,
-        requested_channels,
+        "audio-spike-start source_kind={} source_path={} duration_ms={} frequency_hz={} rate_hz={} channels={} device_candidates={}",
+        prepared_playback.source_kind,
+        sanitize_log_field(prepared_playback.source_path.as_deref().unwrap_or("none")),
+        prepared_playback.duration_ms,
+        prepared_playback.frequency_hz.unwrap_or(0),
+        prepared_playback.rate_hz,
+        prepared_playback.channels,
         device_candidates.join(",")
     );
 
@@ -91,21 +112,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             .map(str::to_owned);
         let attempt_result = match route_plan_for_device(device) {
             Some(route_plan) => with_route_plan(route_plan, || {
-                play_tone(
-                    device,
-                    requested_duration_ms,
-                    requested_frequency_hz as f32,
-                    requested_rate_hz,
-                    requested_channels,
-                )
+                play_prepared_samples(device, &prepared_playback)
             }),
-            None => play_tone(
-                device,
-                requested_duration_ms,
-                requested_frequency_hz as f32,
-                requested_rate_hz,
-                requested_channels,
-            ),
+            None => play_prepared_samples(device, &prepared_playback),
         };
         match attempt_result {
             Ok(result) => {
@@ -173,10 +182,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         proc_asound_devices,
         proc_asound_entries,
         proc_asound_pcm,
-        requested_channels,
-        requested_duration_ms,
-        requested_frequency_hz,
-        requested_rate_hz,
+        requested_channels: prepared_playback.channels,
+        requested_duration_ms: prepared_playback.duration_ms,
+        requested_frequency_hz: prepared_playback.frequency_hz.unwrap_or(0),
+        requested_rate_hz: prepared_playback.rate_hz,
+        source_kind: prepared_playback.source_kind.clone(),
+        source_path: prepared_playback.source_path.clone(),
         success,
         summary_path: summary_path.clone(),
     };
@@ -197,17 +208,126 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn play_tone(
-    device: &str,
+fn prepare_playback(
+    source_kind: &str,
+    duration_ms: u32,
+    frequency_hz: u32,
+    rate_hz: u32,
+    channels: u32,
+    file_path: Option<&str>,
+) -> Result<PreparedPlayback, Box<dyn Error>> {
+    match source_kind {
+        "tone" => Ok(build_tone_playback(
+            duration_ms,
+            frequency_hz as f32,
+            rate_hz,
+            channels,
+        )),
+        "file" => decode_audio_file(file_path.ok_or_else(|| {
+            "SHADOW_AUDIO_SPIKE_FILE_PATH is required when SHADOW_AUDIO_SPIKE_SOURCE_KIND=file"
+        })?),
+        _ => Err(format!("unsupported SHADOW_AUDIO_SPIKE_SOURCE_KIND '{source_kind}'").into()),
+    }
+}
+
+fn build_tone_playback(
     duration_ms: u32,
     frequency_hz: f32,
-    requested_rate_hz: u32,
-    requested_channels: u32,
+    rate_hz: u32,
+    channels: u32,
+) -> PreparedPlayback {
+    let frames_requested = ((u64::from(rate_hz) * u64::from(duration_ms)) / 1000) as usize;
+    PreparedPlayback {
+        channels,
+        duration_ms,
+        frequency_hz: Some(frequency_hz.round() as u32),
+        rate_hz,
+        samples: render_tone_chunk(0, frames_requested, rate_hz, channels, frequency_hz),
+        source_kind: String::from("tone"),
+        source_path: None,
+    }
+}
+
+fn decode_audio_file(path: &str) -> Result<PreparedPlayback, Box<dyn Error>> {
+    let file = File::open(path)?;
+    let media_source = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(extension) = Path::new(path).extension().and_then(|value| value.to_str()) {
+        hint.with_extension(extension);
+    }
+
+    let probed = symphonia::default::get_probe().format(
+        &hint,
+        media_source,
+        &FormatOptions::default(),
+        &MetadataOptions::default(),
+    )?;
+    let mut format = probed.format;
+    let track = format.default_track().ok_or("audio-spike file decode needs a default track")?;
+    let track_id = track.id;
+    let codec_params = &track.codec_params;
+    let sample_rate_hz = codec_params
+        .sample_rate
+        .ok_or("audio-spike file decode needs a sample rate")?;
+    let channels = codec_params
+        .channels
+        .ok_or("audio-spike file decode needs channel metadata")?
+        .count() as u32;
+    let mut decoder =
+        symphonia::default::get_codecs().make(codec_params, &DecoderOptions::default())?;
+    let mut samples = Vec::new();
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(SymphoniaError::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => {
+                break;
+            }
+            Err(error) => return Err(Box::new(error)),
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        let decoded = match decoder.decode(&packet) {
+            Ok(decoded) => decoded,
+            Err(SymphoniaError::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => {
+                break;
+            }
+            Err(SymphoniaError::DecodeError(error)) => {
+                return Err(format!("audio-spike file decode error: {error}").into());
+            }
+            Err(error) => return Err(Box::new(error)),
+        };
+        let mut buffer = SampleBuffer::<i16>::new(decoded.capacity() as u64, *decoded.spec());
+        buffer.copy_interleaved_ref(decoded);
+        samples.extend_from_slice(buffer.samples());
+    }
+
+    if samples.is_empty() {
+        return Err("audio-spike decoded file produced no audio samples".into());
+    }
+
+    let frames_requested = samples.len() / channels as usize;
+    Ok(PreparedPlayback {
+        channels,
+        duration_ms: ((frames_requested as u64) * 1000 / u64::from(sample_rate_hz)) as u32,
+        frequency_hz: None,
+        rate_hz: sample_rate_hz,
+        samples,
+        source_kind: String::from("file"),
+        source_path: Some(path.to_owned()),
+    })
+}
+
+fn play_prepared_samples(
+    device: &str,
+    playback: &PreparedPlayback,
 ) -> Result<PlaybackResult, Box<dyn Error>> {
     let pcm = PCM::new(device, Direction::Playback, false)?;
     let hwp = HwParams::any(&pcm)?;
-    hwp.set_channels(requested_channels)?;
-    hwp.set_rate(requested_rate_hz, ValueOr::Nearest)?;
+    hwp.set_channels(playback.channels)?;
+    hwp.set_rate(playback.rate_hz, ValueOr::Nearest)?;
     hwp.set_format(Format::s16())?;
     hwp.set_access(Access::RWInterleaved)?;
     pcm.hw_params(&hwp)?;
@@ -217,27 +337,29 @@ fn play_tone(
     let actual_channels = current.get_channels()?;
     let buffer_frames = current.get_buffer_size()?;
     let period_frames = current.get_period_size()?;
-    let frames_requested = ((u64::from(actual_rate_hz) * u64::from(duration_ms)) / 1000) as usize;
+    if actual_channels != playback.channels {
+        return Err(format!(
+            "audio-spike device {device} negotiated {actual_channels} channels for {}-channel input",
+            playback.channels
+        )
+        .into());
+    }
     let frames_per_chunk = usize::try_from(period_frames.max(1)).unwrap_or(256);
 
     let io = pcm.io_i16()?;
     pcm.prepare()?;
 
-    let mut frames_written = 0usize;
-    while frames_written < frames_requested {
-        let frames_this_chunk = frames_per_chunk.min(frames_requested - frames_written);
-        let samples = render_tone_chunk(
-            frames_written,
-            frames_this_chunk,
-            actual_rate_hz,
-            actual_channels,
-            frequency_hz,
-        );
-        let mut sample_offset = 0usize;
-        while sample_offset < samples.len() {
-            match io.writei(&samples[sample_offset..]) {
+    let mut sample_offset = 0usize;
+    while sample_offset < playback.samples.len() {
+        let remaining_frames = (playback.samples.len() - sample_offset) / playback.channels as usize;
+        let frames_this_chunk = frames_per_chunk.min(remaining_frames);
+        let chunk_end = sample_offset + (frames_this_chunk * playback.channels as usize);
+        let chunk = &playback.samples[sample_offset..chunk_end];
+        let mut chunk_offset = 0usize;
+        while chunk_offset < chunk.len() {
+            match io.writei(&chunk[chunk_offset..]) {
                 Ok(written_frames) => {
-                    sample_offset += written_frames * actual_channels as usize;
+                    chunk_offset += written_frames * actual_channels as usize;
                 }
                 Err(error) if error.errno() == libc::EPIPE => {
                     pcm.prepare()?;
@@ -245,7 +367,7 @@ fn play_tone(
                 Err(error) => return Err(Box::new(error)),
             }
         }
-        frames_written += frames_this_chunk;
+        sample_offset = chunk_end;
     }
 
     pcm.drain()?;
@@ -255,7 +377,7 @@ fn play_tone(
         actual_rate_hz,
         buffer_frames,
         device: None,
-        frames_requested,
+        frames_requested: playback.samples.len() / playback.channels as usize,
         period_frames,
     })
 }
@@ -475,6 +597,13 @@ fn read_env_u32(name: &str, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
+fn read_env_string(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
 fn list_tree_entries(path: &str) -> Vec<String> {
     let root = Path::new(path);
     let Ok(entries) = fs::read_dir(root) else {
@@ -515,8 +644,21 @@ struct AudioSpikeSummary {
     requested_duration_ms: u32,
     requested_frequency_hz: u32,
     requested_rate_hz: u32,
+    source_kind: String,
+    source_path: Option<String>,
     success: bool,
     summary_path: Option<String>,
+}
+
+#[derive(Debug)]
+struct PreparedPlayback {
+    channels: u32,
+    duration_ms: u32,
+    frequency_hz: Option<u32>,
+    rate_hz: u32,
+    samples: Vec<i16>,
+    source_kind: String,
+    source_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

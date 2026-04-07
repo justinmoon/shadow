@@ -61,7 +61,8 @@ The current operator ladder reflects that split:
 22. `just pixel-runtime-app-drm` remains as a narrower fallback/probe rung for direct runtime-app work on the rooted phone: fit the shell app viewport contract into the real panel, pass the same fitted size to both the guest compositor and the runtime client, and prove the runtime-mode Blitz demo reaches the real panel.
 23. `just pixel-runtime-app-click-drm` proves the rooted panel path survives one runtime click dispatch and rerender before Android display services are restored.
 24. `just pixel-touch-input-smoke` is the first rooted input seam for the app-runtime lane: auto-detect the direct-touch evdev node, capture one raw touch sequence, and prove the phone panel can feed usable contact data back into our stack.
-25. `just runtime-app-sound-smoke` plus `just pixel-runtime-app-sound-drm` are the first runtime-audio seam: a runtime app now calls `Shadow.os.audio`, the host proves the handle API against an in-memory backend, and the rooted Pixel sound lane swaps to the Linux-direct tone helper without adding a JVM bridge.
+25. `just runtime-app-sound-smoke` plus `just pixel-runtime-app-sound-drm` are the first runtime-audio seam: a runtime app now calls `Shadow.os.audio`, the host proves the handle API against an in-memory backend, and the rooted Pixel sound lane swaps to the Linux-direct helper without adding a JVM bridge.
+26. That sound lane is no longer tone-only. The sound demo now stages one generated audio file into the runtime bundle, passes a bundle-relative `source.kind="file"` path through the same OS API seam, and rooted Pixel auto-click runs prove the runtime host spawns the file-backed Linux helper on the phone panel path.
 
 This is intentionally not yet a full custom userland boot. The repo is using the smallest reliable transport at each layer: first-stage wrapper for `/init` proof, then post-boot guest session launch for display and compositor iteration.
 
@@ -95,6 +96,7 @@ This also sets the current boundary for the Blitz + Deno demo on device:
 20. The rooted Pixel shell lane now has a matching control seam too. `scripts/pixel_shellctl.sh` resolves the rooted runtime dir, connects to `shadow-control.sock` with Toybox `nc -U`, and can return raw or JSON control state for live launch/home/reopen proofs.
 21. Host scroll already rides the native Blitz path: `WindowEvent::MouseWheel` becomes `UiEvent::Wheel`, overflow containers scroll without a runtime JSON event, and the runtime wrapper now cancels synthetic click dispatch after a drag / pan gesture crosses a small movement threshold.
 22. Runtime audio now has its first vertical seam too. `runtime/app-runtime/shadow_runtime_os.js` exports `Shadow.os.audio`, `rust/runtime-audio-host` injects that API into the embedded runtime host, host smokes use a small in-memory backend, and the rooted Pixel sound app flips to the Linux-direct helper path without adding a JVM bridge.
+23. The first staged file-backed proof is now landed on top of that seam. `scripts/prepare_sound_demo_assets.sh` generates `audio/demo-tone.wav`, the runtime sound app receives that as a bundle-relative `file` source through `SHADOW_RUNTIME_APP_CONFIG_JSON`, `runtime-audio-host` resolves it via `SHADOW_RUNTIME_BUNDLE_DIR`, and the Linux helper decodes the file in-process before writing PCM to ALSA.
 
 For the newly unlocked-and-rooted Pixel track, the intended operator ladder is now:
 

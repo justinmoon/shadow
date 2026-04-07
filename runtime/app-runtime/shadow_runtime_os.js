@@ -207,6 +207,8 @@ function createMockAudioApi() {
         durationMs: source.durationMs,
         frequencyHz: source.frequencyHz,
         id: nextId,
+        path: source.path,
+        sourceKind: source.kind,
         state: "idle",
       });
       players.set(nextId, {
@@ -214,7 +216,9 @@ function createMockAudioApi() {
         elapsedBeforePauseMs: 0,
         frequencyHz: source.frequencyHz,
         finishedAtMs: null,
+        path: source.path,
         startedAtMs: null,
+        sourceKind: source.kind,
         state: "idle",
       });
       nextId += 1;
@@ -280,27 +284,37 @@ function normalizeAudioSource(source) {
   const kind = typeof source?.kind === "string" && source.kind.trim()
     ? source.kind.trim()
     : "tone";
-  if (kind !== "tone") {
-    throw new TypeError(
-      `audio.createPlayer does not support source kind: ${kind}`,
-    );
-  }
-
   const durationMs = normalizePositiveNumber(
     source?.durationMs,
     2400,
     "durationMs",
   );
-  const frequencyHz = normalizePositiveNumber(
-    source?.frequencyHz,
-    440,
-    "frequencyHz",
+  if (kind === "tone") {
+    const frequencyHz = normalizePositiveNumber(
+      source?.frequencyHz,
+      440,
+      "frequencyHz",
+    );
+    return {
+      durationMs,
+      frequencyHz,
+      kind,
+      path: undefined,
+    };
+  }
+  if (kind === "file") {
+    const path = normalizeNonEmptyString(source?.path, "path");
+    return {
+      durationMs,
+      frequencyHz: undefined,
+      kind,
+      path,
+    };
+  }
+
+  throw new TypeError(
+    `audio.createPlayer does not support source kind: ${kind}`,
   );
-  return {
-    durationMs,
-    frequencyHz,
-    kind,
-  };
 }
 
 function normalizePositiveNumber(value, fallback, label) {
@@ -311,6 +325,13 @@ function normalizePositiveNumber(value, fallback, label) {
     throw new TypeError(`audio.createPlayer requires positive ${label}`);
   }
   return Math.round(value);
+}
+
+function normalizeNonEmptyString(value, label) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new TypeError(`audio.createPlayer requires non-empty ${label}`);
+  }
+  return value.trim();
 }
 
 function requireAudioPlayer(players, id, opName) {
@@ -343,6 +364,8 @@ function buildAudioStatusFromMockPlayer(id, player) {
     durationMs: player.durationMs,
     frequencyHz: player.frequencyHz,
     id,
+    path: player.path,
+    sourceKind: player.sourceKind,
     state: player.state,
   });
 }
@@ -352,6 +375,8 @@ function buildAudioStatus({
   durationMs,
   frequencyHz,
   id,
+  path,
+  sourceKind,
   state,
 }) {
   return {
@@ -359,7 +384,8 @@ function buildAudioStatus({
     durationMs,
     frequencyHz,
     id,
-    sourceKind: "tone",
+    path,
+    sourceKind,
     state,
   };
 }
