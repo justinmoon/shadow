@@ -62,6 +62,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Repeated Pixel runs skip the old `~1.19GB` runtime helper tar push when the helper bundle fingerprint matches.
   - Validated output:
     - `Runtime helper dir cacheHit -> /data/local/tmp/shadow-runtime-gnu`
+- [x] The runtime app bundle push path now has a real device-side cache hit.
+  - Repeated warm runs now skip re-pushing `runtime-app-bundle.js` when the device-side fingerprint matches.
+  - Validated output:
+    - `Runtime app bundle cacheHit -> /data/local/tmp/shadow-runtime-gnu/runtime-app-bundle.js`
 - [x] Timeline incremental rendering on the hardware-backed GPU lane is now measured directly.
   - Dedicated recipe:
     - `just pixel-runtime-app-nostr-timeline-click-drm`
@@ -89,12 +93,21 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - SHM-oriented handoff/presentation in the compositor path
 - [~] The GPU timeline recipe is much more reproducible now, but not completely polished.
   - The client GPU bundle now has a real local cache hit path.
-  - The runtime host bundle/device push path is still heavy.
+  - The runtime host bundle/device push path now has a real repeated-run cache-hit path.
+  - Explicit operator hooks:
+    - `just pixel-gpu-warm`
+    - `just pixel-runtime-app-nostr-timeline-gpu-smoke`
 - [ ] The true `gpu` client renderer path is not the proven operator lane yet.
   - The proven lane today is `gpu_softbuffer`.
   - Existing direct-`gpu` Pixel runs fail at `window.resume() -> wgpu_context.create_surface() -> NoCompatibleDevice`.
 - [ ] The guest compositor does not yet import/present dmabuf-backed client buffers on the rooted Pixel path.
-- [ ] There is not yet a one-command Pixel GPU timeline smoke that is both fast and independent of flaky remote rebuilds.
+- [~] The Pixel GPU timeline smoke is now explicit, but cold runs can still spend time building.
+  - Operator hooks:
+    - `just pixel-gpu-warm`
+    - `just pixel-runtime-app-nostr-timeline-gpu-smoke`
+  - Remaining polish:
+    - reduce cold-start build churn further
+    - keep repeated warm runs boring
 - [ ] The direct `gpu` lane does not yet have a clear go/no-go decision.
   - We still need to decide whether to promote it, keep `gpu_softbuffer`, or declare direct present not worth further effort on this Pixel.
 
@@ -124,6 +137,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Vulkan backend
   - KGSL-preferred setup
   - `gpu_softbuffer`
+- The remaining warm-path slop is now mostly cold rebuild invalidation, not operator ambiguity.
+  - `shadow-runtime-host` is still packaged from `src = ./.`, so unrelated repo edits can invalidate the host derivation and force one cold rebuild.
+  - repeated warm runs should now short-circuit before the old host-bundle restage/push path once the new bundle manifest is in place.
 - The product bar for interaction is already met on the proven lane.
   - Remaining GPU work is now about closure and confidence, not rescuing a broken UX.
 - The current compositor path still looks SHM-oriented from the outside.
@@ -191,7 +207,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - local GPU bundle cache hits now work
   - runtime helper device-side cache hits now work too
   - new warm/prebuild entrypoint exists for the Pixel GPU timeline lane
-  - remaining slop is the slower first-paint path on the full startup-sync timeline recipe
+  - explicit warm/smoke recipes now force the proven `gpu_softbuffer` lane instead of silently inheriting a caller override
+  - remaining slop is mostly cold `shadow-runtime-host` rebuild invalidation and the slower first-paint path on the full startup-sync timeline recipe
 
 ### 5. Eliminate SHM as the limiting compositor transport
 
@@ -228,7 +245,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
    - Current status:
      - client GPU bundle caching: good
      - runtime helper device-side caching: good
-     - `just pixel-gpu-warm` now prebuilds the current Pixel GPU timeline lane without launching it
+      - `just pixel-gpu-warm` now prebuilds the current Pixel GPU timeline lane without launching it
+      - `just pixel-runtime-app-nostr-timeline-gpu-smoke` runs the proven lane explicitly
 
 4. Keep measuring incremental latency, not just startup.
    - Need:
@@ -324,6 +342,13 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - hardware-backed Turnip/KGSL runtime path landed
 - `9cc5e21`:
   - curated Android font mode restored runtime text on Pixel
+- `685b6a1`:
+  - `just pixel-gpu-warm` landed as the obvious prebuild hook for the current proven lane
+- `Phase A operator follow-up`:
+  - fixed the prepare-only env mismatch so the warm path actually exercises the existing Pixel runtime prep flow
+  - added explicit `gpu_softbuffer` operator recipes for warm/smoke on the proven lane
+  - added a runtime-host bundle manifest so repeated warm runs can reuse the local staged host bundle before the old restage path
+  - fixed the device-side runtime app bundle cache check so repeated warm runs now reach `Runtime app bundle cacheHit`
 - `2026-04-07 direct-gpu probe cleanup`:
   - the static direct-`gpu` probe infrastructure had two real bugs:
     - it was not auto-picking the cached Turnip tarball the way the runtime Pixel path does

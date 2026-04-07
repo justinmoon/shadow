@@ -354,13 +354,21 @@ pixel-runtime-app-nostr-timeline-drm:
 pixel-runtime-app-nostr-timeline-click-drm:
 	@scripts/pixel_runtime_app_nostr_timeline_click_drm.sh
 
+# Warm the rooted Pixel timeline GPU artifacts and device-side runtime cache without taking over the display
+pixel-runtime-app-nostr-timeline-gpu-warm:
+	@PIXEL_RUNTIME_APP_RENDERER=gpu_softbuffer scripts/pixel_gpu_warm.sh
+
+# Run the timeline runtime demo on the rooted Pixel through the proven GPU lane and auto-dispatch one quick-gm click
+pixel-runtime-app-nostr-timeline-gpu-smoke:
+	@PIXEL_RUNTIME_APP_RENDERER=gpu_softbuffer scripts/pixel_runtime_app_nostr_timeline_click_drm.sh
+
 # Run the timeline runtime demo on the rooted Pixel, keep the panel seized, and leave Android stopped
 pixel-runtime-app-nostr-timeline-drm-hold:
 	@scripts/pixel_runtime_app_nostr_timeline_drm_hold.sh
 
 # Warm Pixel GPU artifacts without launching the device session
 pixel-gpu-warm:
-	@scripts/pixel_gpu_warm.sh
+	@just pixel-runtime-app-nostr-timeline-gpu-warm
 
 # Run the tap-driven GM runtime app under the current host runtime backend
 runtime-app-nostr-gm-smoke:

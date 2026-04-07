@@ -121,11 +121,6 @@ esac
 
 env "${runtime_prepare_extra_env[@]}" "$SCRIPT_DIR/pixel_prepare_runtime_app_artifacts.sh"
 
-if [[ "${PIXEL_RUNTIME_APP_PREPARE_ONLY:-}" == "1" ]]; then
-  echo "pixel_runtime_app_drm: prepare-only mode complete" >&2
-  exit 0
-fi
-
 : "${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS:=12000}"
 : "${PIXEL_GUEST_SESSION_TIMEOUT_SECS:=20}"
 extra_guest_env="${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}"
@@ -190,6 +185,15 @@ runtime_session_env="$(printf '%s\n' "$runtime_session_env" | tr '\n' ' ' | sed 
 required_markers='runtime-session-ready'
 if [[ -n "$extra_required_markers" ]]; then
   required_markers="${required_markers}"$'\n'"${extra_required_markers}"
+fi
+
+if [[ -n "${PIXEL_RUNTIME_APP_PREP_ONLY-}" || -n "${PIXEL_RUNTIME_APP_PREPARE_ONLY-}" ]]; then
+  PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
+  PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
+  PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_runtime_host_bundle_artifact_dir)" \
+  PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT="$(pixel_runtime_app_bundle_artifact)" \
+    "$SCRIPT_DIR/pixel_push.sh"
+  exit 0
 fi
 
 PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
