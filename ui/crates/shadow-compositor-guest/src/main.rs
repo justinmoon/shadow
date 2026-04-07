@@ -812,11 +812,11 @@ impl ShadowGuestCompositor {
                         x,
                         y
                     );
+                    self.handle_shell_event(ShellEvent::PointerMoved { x, y });
                     if matches!(event.phase, touch::TouchPhase::Down) {
                         self.shell_touch_active = true;
-                        self.handle_shell_event(ShellEvent::TouchTap { x, y });
-                        self.publish_visible_shell_frame("shell-touch-frame");
                     }
+                    self.publish_visible_shell_frame("shell-touch-frame");
                     return;
                 }
                 self.shell_touch_active = false;
@@ -860,8 +860,24 @@ impl ShadowGuestCompositor {
             }
             touch::TouchPhase::Up => {
                 if self.shell_touch_active {
+                    if let Some(position) =
+                        self.touch_position(event.normalized_x, event.normalized_y)
+                    {
+                        if let Some((x, y)) = self.shell_local_point(position) {
+                            tracing::info!(
+                                "[shadow-guest-compositor] touch-shell phase=Up x={:.1} y={:.1}",
+                                x,
+                                y
+                            );
+                            self.handle_shell_event(ShellEvent::TouchTap { x, y });
+                        } else {
+                            self.handle_shell_event(ShellEvent::PointerLeft);
+                        }
+                    } else {
+                        self.handle_shell_event(ShellEvent::PointerLeft);
+                    }
                     self.shell_touch_active = false;
-                    self.handle_shell_event(ShellEvent::PointerLeft);
+                    self.publish_visible_shell_frame("shell-touch-frame");
                     return;
                 } else {
                     self.handle_shell_event(ShellEvent::PointerLeft);
