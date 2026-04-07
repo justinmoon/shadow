@@ -198,7 +198,6 @@ impl DemoMode {
         match self {
             Self::Static => Cow::Borrowed("shadow-blitz-demo"),
             Self::Runtime => env::var("SHADOW_BLITZ_WAYLAND_INSTANCE")
-                .map(Cow::Owned)
                 .or_else(|_| {
                     env::var("SHADOW_BLITZ_WAYLAND_APP_ID").map(|app_id| {
                         app_id
