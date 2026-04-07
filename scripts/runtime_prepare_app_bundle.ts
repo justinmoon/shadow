@@ -9,6 +9,7 @@ import {
 
 const DEFAULT_CACHE_DIR = "build/runtime/app-counter";
 const DEFAULT_INPUT_PATH = "runtime/app-counter/app.tsx";
+const ASSET_DIR_NAME = "assets";
 const OS_MODULE_ALIAS = "@shadow/app-runtime-os";
 const OS_MODULE_NAME = "./shadow_runtime_os.js";
 const OS_SOURCE_PATH = "runtime/app-runtime/shadow_runtime_os.js";
@@ -38,9 +39,12 @@ async function main() {
   const osPath = path.join(compiled.cacheDir, "shadow_runtime_os.js");
   const runnerPath = path.join(compiled.cacheDir, "runner.js");
   const bundlePath = path.join(compiled.cacheDir, "bundle.js");
+  const sourceAssetDir = path.join(path.dirname(compiled.inputPath), ASSET_DIR_NAME);
+  const bundleAssetDir = path.join(compiled.cacheDir, ASSET_DIR_NAME);
 
   await Deno.copyFile(rendererSourcePath, rendererPath);
   await Deno.copyFile(osSourcePath, osPath);
+  await syncSiblingAssets(sourceAssetDir, bundleAssetDir);
   await rewriteRuntimeAliasImports(compiled.outputPath);
   await Deno.writeTextFile(runnerPath, buildRunnerSource(runtimeAppConfig));
   await bundleRunner(runnerPath, bundlePath);
@@ -49,8 +53,12 @@ async function main() {
     JSON.stringify(
       {
         bundlePath: path.relative(cwd, bundlePath),
+        bundleDir: path.relative(cwd, compiled.cacheDir),
         cacheDir: path.relative(cwd, compiled.cacheDir),
         cacheHit: compiled.cacheHit,
+        assetDir: await dirExists(bundleAssetDir)
+          ? path.relative(cwd, bundleAssetDir)
+          : null,
         inputPath: path.relative(cwd, compiled.inputPath),
         outputPath: path.relative(cwd, compiled.outputPath),
         osPath: path.relative(cwd, osPath),
@@ -61,6 +69,17 @@ async function main() {
       2,
     ),
   );
+}
+
+async function syncSiblingAssets(
+  sourceDir: string,
+  targetDir: string,
+): Promise<void> {
+  await removeDirIfExists(targetDir);
+  if (!await dirExists(sourceDir)) {
+    return;
+  }
+  await copyDirRecursive(sourceDir, targetDir);
 }
 
 function buildRunnerSource(runtimeAppConfig: unknown): string {
@@ -103,6 +122,43 @@ globalThis.RUNTIME_APP_DOCUMENT = documentPayload;
 `;
 }
 
+async function copyDirRecursive(sourceDir: string, targetDir: string): Promise<void> {
+  await Deno.mkdir(targetDir, { recursive: true });
+  for await (const entry of Deno.readDir(sourceDir)) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+    if (entry.isDirectory) {
+      await copyDirRecursive(sourcePath, targetPath);
+      continue;
+    }
+    if (entry.isFile) {
+      await Deno.copyFile(sourcePath, targetPath);
+      continue;
+    }
+    if (entry.isSymlink) {
+      const resolvedPath = await Deno.realPath(sourcePath);
+      const stat = await Deno.stat(resolvedPath);
+      if (stat.isDirectory) {
+        await copyDirRecursive(resolvedPath, targetPath);
+      } else {
+        await Deno.copyFile(resolvedPath, targetPath);
+      }
+    }
+  }
+}
+
+async function dirExists(dirPath: string): Promise<boolean> {
+  try {
+    const stat = await Deno.stat(dirPath);
+    return stat.isDirectory;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return false;
+    }
+    throw error;
+  }
+}
+
 function readRuntimeAppConfig(): unknown {
   const value = Deno.env.get("SHADOW_RUNTIME_APP_CONFIG_JSON");
   if (value == null || value.trim() === "") {
@@ -114,6 +170,17 @@ function readRuntimeAppConfig(): unknown {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`invalid SHADOW_RUNTIME_APP_CONFIG_JSON: ${message}`);
+  }
+}
+
+async function removeDirIfExists(dirPath: string): Promise<void> {
+  try {
+    await Deno.remove(dirPath, { recursive: true });
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return;
+    }
+    throw error;
   }
 }
 

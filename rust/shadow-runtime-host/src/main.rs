@@ -1,5 +1,6 @@
 use std::env;
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use deno_core::anyhow::{anyhow, Context, Result};
@@ -21,9 +22,29 @@ fn main() -> Result<()> {
 }
 
 async fn run() -> Result<()> {
-    let main_module = resolve_main_module(parse_session_module_path()?)?;
+    let session_module_path = parse_session_module_path()?;
+    configure_runtime_bundle_dir(&session_module_path)?;
+    let main_module = resolve_main_module(session_module_path)?;
     let mut runtime = load_runtime(&main_module).await?;
     run_session(&mut runtime).await
+}
+
+fn configure_runtime_bundle_dir(session_module_path: &str) -> Result<()> {
+    if env::var_os("SHADOW_RUNTIME_BUNDLE_DIR").is_some() {
+        return Ok(());
+    }
+
+    let cwd = env::current_dir().context("get current working directory")?;
+    let bundle_path = if PathBuf::from(session_module_path).is_absolute() {
+        PathBuf::from(session_module_path)
+    } else {
+        cwd.join(session_module_path)
+    };
+    let bundle_dir = bundle_path
+        .parent()
+        .ok_or_else(|| anyhow!("runtime session bundle path has no parent directory"))?;
+    env::set_var("SHADOW_RUNTIME_BUNDLE_DIR", bundle_dir);
+    Ok(())
 }
 
 async fn load_runtime(main_module: &Url) -> Result<JsRuntime> {

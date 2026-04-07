@@ -28,6 +28,8 @@ host_bundle_manifest_path="$host_bundle_dir/.bundle-manifest.json"
 runtime_manifest_path="$host_bundle_dir/.runtime-bundle-manifest.json"
 bundle_json=""
 bundle_source_path=""
+bundle_dir=""
+bundle_asset_dir=""
 host_bundle_cache_hit=0
 host_bundle_source_fingerprint=""
 runtime_helper_content_fingerprint=""
@@ -51,6 +53,27 @@ data = json.load(sys.stdin)
 print(os.path.abspath(data["bundlePath"]))
 '
 )"
+bundle_dir="$(
+  printf '%s\n' "$bundle_json" | python3 -c '
+import json
+import os
+import sys
+
+data = json.load(sys.stdin)
+print(os.path.abspath(data["bundleDir"]))
+'
+)"
+bundle_asset_dir="$(
+  printf '%s\n' "$bundle_json" | python3 -c '
+import json
+import os
+import sys
+
+data = json.load(sys.stdin)
+asset_dir = data.get("assetDir")
+print(os.path.abspath(asset_dir) if asset_dir else "")
+'
+)"
 
 mkdir -p "$(dirname "$bundle_artifact")"
 cp "$bundle_source_path" "$bundle_artifact"
@@ -69,29 +92,36 @@ host_bundle_source_fingerprint="$(
     "$package_ref" \
     "$repo/flake.nix" \
     "$repo/flake.lock" \
-    "audio_enabled=$audio_enabled" \
-    "audio_package_ref=$audio_package_ref" \
     "$repo/rust/shadow-runtime-host" \
     "$repo/rust/shadow-runtime-host/Cargo.lock" \
     "$repo/rust/runtime-audio-host" \
-    "$repo/rust/shadow-linux-audio-spike" \
     "$repo/rust/runtime-nostr-host" \
+    "$repo/rust/shadow-linux-audio-spike" \
     "$repo/rust/vendor/temporal_rs" \
     "$SCRIPT_DIR/pixel_prepare_runtime_app_artifacts.sh" \
     "$SCRIPT_DIR/pixel_runtime_linux_bundle_common.sh" \
-    "${extra_bundle_dir:-__no_extra_bundle__}"
+    "${bundle_asset_dir:-__no_bundle_assets__}" \
+    "${extra_bundle_dir:-__no_extra_bundle__}" \
+    "__pixel_runtime_enable_linux_audio__${audio_enabled}" \
+    "__pixel_runtime_audio_package_ref__${audio_package_ref}"
 )"
 
 if [[ "${PIXEL_FORCE_LINUX_BUNDLE_REBUILD-}" != 1 ]] \
   && [[ -d "$host_bundle_dir" ]] \
   && [[ -x "$host_launcher_artifact" ]] \
   && [[ -f "$host_bundle_dir/$host_binary_name" ]] \
-  && { [[ "$audio_enabled" != "1" ]] \
-    || { [[ -x "$audio_launcher_artifact" ]] && [[ -f "$host_bundle_dir/$audio_binary_name" ]]; }; } \
   && runtime_bundle_manifest_matches "$host_bundle_manifest_path" "$host_bundle_source_fingerprint"; then
   host_bundle_cache_hit=1
-  printf 'Runtime host bundle cacheHit -> %s\n' "$host_bundle_dir"
-else
+  if [[ "$audio_enabled" == "1" ]] \
+    && { [[ ! -x "$audio_launcher_artifact" ]] || [[ ! -f "$host_bundle_dir/$audio_binary_name" ]]; }; then
+    host_bundle_cache_hit=0
+  fi
+  if [[ "$host_bundle_cache_hit" == "1" ]]; then
+    printf 'Runtime host bundle cacheHit -> %s\n' "$host_bundle_dir"
+  fi
+fi
+
+if [[ "$host_bundle_cache_hit" != "1" ]]; then
   stage_runtime_host_linux_bundle "$package_ref" "$host_bundle_out_link" "$host_bundle_dir" "$host_binary_name"
   if [[ "$audio_enabled" == "1" ]]; then
     nix build --accept-flake-config "$audio_package_ref" --out-link "$audio_out_link"
@@ -104,6 +134,12 @@ else
     copy_closure_dir_into_bundle "share/alsa" "$host_bundle_dir/share/alsa"
     mkdir -p "$host_bundle_dir/lib/alsa-lib"
     copy_closure_dir_into_bundle "lib/alsa-lib" "$host_bundle_dir/lib/alsa-lib" optional
+  fi
+
+  if [[ -n "$bundle_asset_dir" && -d "$bundle_asset_dir" ]]; then
+    chmod -R u+w "$host_bundle_dir" 2>/dev/null || true
+    rm -rf "$host_bundle_dir/assets"
+    cp -R "$bundle_asset_dir" "$host_bundle_dir/assets"
   fi
 
   if [[ -n "$extra_bundle_dir" ]]; then
@@ -134,15 +170,15 @@ if [ "\$#" -ne 2 ] || [ "\$1" != "--session" ]; then
 fi
 EOF
 
-if [[ "$audio_enabled" == "1" ]]; then
-  cat >>"$host_launcher_artifact" <<EOF
+  if [[ "$audio_enabled" == "1" ]]; then
+    cat >>"$host_launcher_artifact" <<EOF
 export SHADOW_RUNTIME_AUDIO_BACKEND="\${SHADOW_RUNTIME_AUDIO_BACKEND:-linux_spike}"
 export SHADOW_RUNTIME_AUDIO_SPIKE_BINARY="\$DIR/run-$audio_binary_name"
 export SHADOW_RUNTIME_BUNDLE_DIR="\$DIR"
 exec "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$DIR/$host_binary_name" "\$@"
 EOF
-else
-  cat >>"$host_launcher_artifact" <<EOF
+  else
+    cat >>"$host_launcher_artifact" <<EOF
 if command -v chroot >/dev/null 2>&1; then
   case "\$2" in
     "\$DIR"/*) set -- "\$1" "/\${2#\$DIR/}" ;;
@@ -151,8 +187,8 @@ if command -v chroot >/dev/null 2>&1; then
 fi
 exec "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$DIR/$host_binary_name" "\$@"
 EOF
-fi
-chmod 0755 "$host_launcher_artifact"
+  fi
+  chmod 0755 "$host_launcher_artifact"
 
   write_runtime_bundle_manifest \
     "$host_bundle_manifest_path" \
@@ -172,21 +208,22 @@ PY
   )"
 fi
 
-if [[ -z "$runtime_helper_content_fingerprint" || "$host_bundle_cache_hit" != 1 ]]; then
+if [[ -z "$runtime_helper_content_fingerprint" || "$host_bundle_cache_hit" != "1" ]]; then
   runtime_helper_content_fingerprint="$(
     runtime_bundle_directory_fingerprint "$host_bundle_dir"
   )"
-  python3 - "$runtime_manifest_path" "$runtime_helper_content_fingerprint" "$input_path" "$extra_bundle_dir" <<'PY'
+  python3 - "$runtime_manifest_path" "$runtime_helper_content_fingerprint" "$input_path" "$bundle_asset_dir" "$extra_bundle_dir" <<'PY'
 import json
 import os
 import sys
 from datetime import datetime, timezone
 
-manifest_path, content_fingerprint, input_path, extra_bundle_dir = sys.argv[1:5]
+manifest_path, content_fingerprint, input_path, bundle_asset_dir, extra_bundle_dir = sys.argv[1:6]
 manifest = {
     "contentFingerprint": content_fingerprint,
     "generatedAt": datetime.now(timezone.utc).isoformat(),
     "inputPath": input_path,
+    "runtimeBundleAssetDir": os.path.abspath(bundle_asset_dir) if bundle_asset_dir else None,
     "runtimeExtraBundleArtifactDir": os.path.abspath(extra_bundle_dir) if extra_bundle_dir else None,
 }
 with open(manifest_path, "w", encoding="utf-8") as handle:
@@ -195,16 +232,18 @@ with open(manifest_path, "w", encoding="utf-8") as handle:
 PY
 fi
 
-python3 - "$bundle_artifact" "$host_bundle_dir" "$input_path" "$extra_bundle_dir" "$host_bundle_cache_hit" <<'PY'
+python3 - "$bundle_artifact" "$bundle_dir" "$bundle_asset_dir" "$host_bundle_dir" "$input_path" "$extra_bundle_dir" "$host_bundle_cache_hit" <<'PY'
 import json
 import os
 import sys
 
-bundle_artifact, host_bundle_dir, input_path, extra_bundle_dir, host_bundle_cache_hit = sys.argv[1:6]
+bundle_artifact, bundle_dir, bundle_asset_dir, host_bundle_dir, input_path, extra_bundle_dir, host_bundle_cache_hit = sys.argv[1:8]
 print(json.dumps({
     "runtimeHostBundleCacheHit": host_bundle_cache_hit == "1",
     "runtimeHelperContentFingerprint": json.load(open(os.path.join(host_bundle_dir, ".runtime-bundle-manifest.json"), "r", encoding="utf-8"))["contentFingerprint"],
     "inputPath": input_path,
+    "runtimeBundleAssetDir": os.path.abspath(bundle_asset_dir) if bundle_asset_dir else None,
+    "runtimeBundleDir": os.path.abspath(bundle_dir),
     "runtimeExtraBundleArtifactDir": os.path.abspath(extra_bundle_dir) if extra_bundle_dir else None,
     "runtimeAppBundleArtifact": os.path.abspath(bundle_artifact),
     "runtimeAppBundleDevicePath": "/data/local/tmp/shadow-runtime-gnu/runtime-app-bundle.js",

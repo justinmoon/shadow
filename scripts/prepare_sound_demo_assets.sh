@@ -3,16 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ASSET_DIR="${SHADOW_SOUND_DEMO_ASSET_DIR:-$REPO_ROOT/build/runtime/app-sound-smoke-assets}"
-AUDIO_DIR="$ASSET_DIR/audio"
 DEFAULT_SOURCE_ASSET_PATH="$REPO_ROOT/runtime/app-sound-smoke/assets/demo-tone.mp3"
 SOURCE_ASSET_PATH="${SHADOW_SOUND_DEMO_SOURCE_ASSET_PATH:-$DEFAULT_SOURCE_ASSET_PATH}"
-OUTPUT_BASENAME="${SHADOW_SOUND_DEMO_OUTPUT_BASENAME:-$(basename "$SOURCE_ASSET_PATH")}"
-OUTPUT_PATH="$AUDIO_DIR/$OUTPUT_BASENAME"
+SOURCE_PATH_IN_BUNDLE="${SHADOW_SOUND_DEMO_SOURCE_PATH_IN_BUNDLE:-assets/$(basename "$SOURCE_ASSET_PATH")}"
 DURATION_MS="${SHADOW_SOUND_DEMO_DURATION_MS:-2640}"
 EXPECTED_SHA256="${SHADOW_SOUND_DEMO_EXPECTED_SHA256:-d060e3aede3e768da2c246bda3471866d0e8e9125e32380e34325548a7629fc9}"
 
-mkdir -p "$AUDIO_DIR"
 if [[ -n "${SHADOW_SOUND_DEMO_SOURCE_ASSET_PATH-}" || -n "${SHADOW_SOUND_DEMO_EXPECTED_SHA256-}" ]]; then
   if [[ -z "${SHADOW_SOUND_DEMO_DURATION_MS-}" ]]; then
     echo "prepare_sound_demo_assets: custom source/hash requires SHADOW_SOUND_DEMO_DURATION_MS" >&2
@@ -43,21 +39,16 @@ if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
   exit 1
 fi
 
-cp "$SOURCE_ASSET_PATH" "$OUTPUT_PATH"
-chmod 0644 "$OUTPUT_PATH"
-
-python3 - "$ASSET_DIR" "$OUTPUT_PATH" "$DURATION_MS" <<'PY'
+python3 - "$DURATION_MS" "$SOURCE_PATH_IN_BUNDLE" <<'PY'
 import json
-import os
 import sys
 
-asset_dir, output_path, duration_ms = sys.argv[1:4]
+duration_ms, source_path = sys.argv[1:3]
 print(json.dumps({
-    "assetDir": os.path.abspath(asset_dir),
     "source": {
         "durationMs": int(duration_ms),
         "kind": "file",
-        "path": os.path.relpath(output_path, asset_dir),
+        "path": source_path,
     },
 }, indent=2))
 PY

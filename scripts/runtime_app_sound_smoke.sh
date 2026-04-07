@@ -23,15 +23,6 @@ asset = json.loads(os.environ["ASSET_JSON"])
 print(asset["source"]["path"])
 PY
 )"
-asset_dir="$(
-  ASSET_JSON="$asset_json" python3 - <<'PY'
-import json
-import os
-
-asset = json.loads(os.environ["ASSET_JSON"])
-print(asset["assetDir"])
-PY
-)"
 fake_linux_spike_binary="$REPO_ROOT/scripts/runtime_audio_linux_spike_fake.sh"
 
 cd "$REPO_ROOT"
@@ -42,7 +33,6 @@ session_json="$(
     "$SCRIPT_DIR/runtime_prepare_host_session.sh"
 )"
 
-ASSET_DIR="$asset_dir" \
 ASSET_SOURCE_PATH="$asset_source_path" \
 FAKE_LINUX_SPIKE_BINARY="$fake_linux_spike_binary" \
 SESSION_JSON="$session_json" \
@@ -53,14 +43,12 @@ import subprocess
 import time
 
 session = json.loads(os.environ["SESSION_JSON"])
-asset_dir = os.environ["ASSET_DIR"]
 asset_source_path = os.environ["ASSET_SOURCE_PATH"]
 fake_linux_spike_binary = os.environ["FAKE_LINUX_SPIKE_BINARY"]
 bundle_path = session["bundlePath"]
 binary_path = session["runtimeHostBinaryPath"]
 def run_scenario(name, extra_env):
     process_env = dict(os.environ)
-    process_env["SHADOW_RUNTIME_BUNDLE_DIR"] = asset_dir
     process_env.update(extra_env)
     process = subprocess.Popen(
         [binary_path, "--session", bundle_path],

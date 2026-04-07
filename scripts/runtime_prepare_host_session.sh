@@ -29,20 +29,31 @@ data = json.load(sys.stdin)
 print(os.path.abspath(data["bundlePath"]))
 '
 )"
+bundle_dir="$(
+  printf '%s\n' "$bundle_json" | python3 -c '
+import json
+import os
+import sys
+
+data = json.load(sys.stdin)
+print(os.path.abspath(data["bundleDir"]))
+'
+)"
 
 runtime_host_prefix="$(
   nix build --accept-flake-config "${REPO_FLAKE_REF}#${runtime_host_package_attr}" --no-link --print-out-paths
 )"
 runtime_host_binary_path="${runtime_host_prefix}/bin/${runtime_host_binary_name}"
 
-python3 - "$bundle_path" "$runtime_host_binary_path" "$INPUT_PATH" "$CACHE_DIR" "$runtime_host_package_attr" <<'PY'
+python3 - "$bundle_path" "$bundle_dir" "$runtime_host_binary_path" "$INPUT_PATH" "$CACHE_DIR" "$runtime_host_package_attr" <<'PY'
 import json
 import os
 import sys
 
-bundle_path, runtime_host_binary_path, input_path, cache_dir, package_attr = sys.argv[1:6]
+bundle_path, bundle_dir, runtime_host_binary_path, input_path, cache_dir, package_attr = sys.argv[1:7]
 print(json.dumps({
     "bundlePath": bundle_path,
+    "bundleDir": bundle_dir,
     "cacheDir": cache_dir,
     "inputPath": input_path,
     "runtimeHostPackageAttr": package_attr,
