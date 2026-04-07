@@ -1000,8 +1000,10 @@ impl ShadowGuestCompositor {
                         }
 
                         if gesture.scrolling {
-                            let delta_x = position.x - gesture.last.x;
-                            let delta_y = position.y - gesture.last.y;
+                            // Touch scrolling should move content with the finger:
+                            // dragging up scrolls the page up, dragging down scrolls it down.
+                            let delta_x = gesture.last.x - position.x;
+                            let delta_y = gesture.last.y - position.y;
                             let mut axis =
                                 AxisFrame::new(event.time_msec).source(AxisSource::Finger);
                             if delta_x.abs() > f64::EPSILON {
