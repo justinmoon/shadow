@@ -15,11 +15,6 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Keep the rooted Pixel as the primary truth environment.
 - Prefer the narrowest path that is measurably fast on device.
 - Treat shell/home unification as a separate project from GPU closure.
-- For Pixel shell/home unification, do not use nested `shadow-compositor` as the primary plan.
-  - Preferred substrate:
-    - the existing outer `shadow-compositor-guest`
-    - plus a real shell/frontend path that reuses the same runtime bundles
-  - Nested compositor-on-compositor remains a diagnostic fallback only.
 - Separate two questions:
   - Is the client using real hardware-backed GPU rendering?
   - Is the compositor path still forcing a slower SHM handoff?
@@ -102,9 +97,6 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Explicit operator hooks:
     - `just pixel-gpu-warm`
     - `just pixel-runtime-app-nostr-timeline-gpu-smoke`
-  - Shell follow-up seam:
-    - `just pixel-prepare-shell-runtime-artifacts`
-    - prepares counter + timeline bundles plus a shell-specific runtime host bundle without launching nested EGL
 - [~] The direct runtime GPU probe/matrix seam now exists.
   - New operator hooks:
     - `just pixel-runtime-app-drm-gpu-probe`
@@ -175,13 +167,6 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - the bundled Turnip library does contain Wayland WSI entrypoints
   - the direct path gets past adapter discovery and then dies in surface configure/present territory
   - the likely next seam is compositor protocol support and presentation compatibility, not basic Vulkan adapter discovery
-- The first Pixel shell unification attempt clarified a separate substrate decision.
-  - Running nested `shadow-compositor` inside the rooted guest compositor gets farther than before, but currently dies in nested EGL init with `Egl(DisplayNotSupported)`.
-  - That makes nested compositor-on-compositor look like the wrong default substrate for Pixel shell work.
-  - The better plan is:
-    - keep the proven outer `shadow-compositor-guest`
-    - stage multiple runtime bundles once
-    - run the shell/home frontend as a regular Pixel client or port the shell scene/lifecycle into the outer guest compositor
 - Historical direct-`gpu` runs now classify much better under the updated summary parser.
   - Reparsed run:
     - `build/pixel/drm-guest/20260407T163153Z`
@@ -293,17 +278,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
      - client GPU bundle caching: good
      - runtime helper device-side caching: good
       - `just pixel-gpu-warm` now prebuilds the current Pixel GPU timeline lane without launching it
+      - `just pixel-runtime-app-nostr-timeline-gpu-smoke` runs the proven lane explicitly
 
-4. Keep Pixel shell work on the right substrate.
-   - Do not spend more time trying to make nested `shadow-compositor` the shipping Pixel shell path unless a narrow diagnostic proves it is suddenly tractable.
-   - Prefer:
-     - reusable multi-app runtime staging
-     - shell/home logic on the outer guest compositor path
-   - First reusable seam:
-     - `just pixel-prepare-shell-runtime-artifacts`
-     - stage counter + timeline runtime bundles into a shell-specific runtime host bundle without launching nested EGL
-
-5. Keep measuring incremental latency, not just startup.
+4. Keep measuring incremental latency, not just startup.
    - Need:
      - tap-to-updated-frame
      - text-render correctness
@@ -311,7 +288,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
    - Current best proof:
      - timeline quick action updates in `~62ms`
 
-6. Defer startup polish unless it blocks product work.
+5. Defer startup polish unless it blocks product work.
    - Current note:
      - warmed click lane already reached `408ms`
      - first paint is no longer the main blocker
@@ -423,15 +400,6 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - and then the client dies during `Surface::configure()` before first frame
   - this reproduces across:
     - `vulkan_kgsl_first`
-- `2026-04-07 shell substrate follow-up`:
-  - nested `shadow-compositor` is no longer the default Pixel shell plan
-  - a reusable prep seam now stages:
-    - the shared runtime host bundle
-    - counter runtime bundle
-    - timeline runtime bundle
-  - that seam intentionally avoids launching nested EGL and keeps future shell work on the proven outer guest-compositor path
-- continued direct-`gpu` finding:
-  - the `Surface::configure()` failure reproduces across:
     - `vulkan_kgsl`
     - `vulkan_drm`
   - the explicit-capability fallback (`Mailbox`, `Opaque`, matching `Bgra8Unorm`) did not fix it

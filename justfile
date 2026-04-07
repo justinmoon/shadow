@@ -330,10 +330,6 @@ pixel-push:
 pixel-prepare-runtime-app-artifacts:
 	@scripts/pixel_prepare_runtime_app_artifacts.sh
 
-# Stage a reusable multi-app runtime host bundle for future Pixel shell/home work
-pixel-prepare-shell-runtime-artifacts:
-	@scripts/pixel_prepare_shell_runtime_artifacts.sh
-
 # Run the runtime-mode Blitz demo on the rooted Pixel through the guest compositor DRM path
 pixel-runtime-app-drm:
 	@scripts/pixel_runtime_app_drm.sh
