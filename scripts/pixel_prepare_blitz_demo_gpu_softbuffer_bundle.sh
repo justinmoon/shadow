@@ -9,6 +9,11 @@ source "$SCRIPT_DIR/pixel_runtime_linux_bundle_common.sh"
 ensure_bootimg_shell "$@"
 
 pixel_prepare_dirs
+default_turnip_tarball="$(pixel_dir)/vendor/turnip_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
+if [[ -z "${PIXEL_VENDOR_TURNIP_TARBALL-}" && -f "$default_turnip_tarball" ]]; then
+  PIXEL_VENDOR_TURNIP_TARBALL="$default_turnip_tarball"
+  export PIXEL_VENDOR_TURNIP_TARBALL
+fi
 repo="$(repo_root)"
 bundle_dir="$(pixel_artifact_path shadow-blitz-demo-gnu)"
 bundle_out_link="$(pixel_dir)/shadow-blitz-demo-aarch64-linux-gnu-gpu-softbuffer-result"
@@ -34,7 +39,9 @@ bundle_fingerprint="$(
     "$repo/ui/Cargo.toml" \
     "$repo/ui/Cargo.lock" \
     "$repo/ui/apps/shadow-blitz-demo" \
+    "$repo/ui/third_party/anyrender_vello" \
     "$repo/ui/third_party/softbuffer_window_renderer" \
+    "$repo/ui/third_party/wgpu_context" \
     "$SCRIPT_DIR/pixel_prepare_blitz_demo_gpu_softbuffer_bundle.sh" \
     "$SCRIPT_DIR/pixel_runtime_linux_bundle_common.sh" \
     "$SCRIPT_DIR/pixel_build_openlog_preload.sh" \

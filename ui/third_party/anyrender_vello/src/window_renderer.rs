@@ -128,6 +128,10 @@ impl WindowRenderer for VelloWindowRenderer {
     }
 
     fn resume(&mut self, window_handle: Arc<dyn WindowHandle>, width: u32, height: u32) {
+        eprintln!(
+            "[shadow-anyrender-vello] resume-start width={} height={}",
+            width, height
+        );
         // Create wgpu_context::SurfaceRenderer
         let render_surface = pollster::block_on(self.wgpu_context.create_surface(
             window_handle.clone(),
@@ -156,8 +160,18 @@ impl WindowRenderer for VelloWindowRenderer {
                 panic!("Error creating surface: {error:#}");
             }
         };
+        let adapter_info = render_surface.device_handle.adapter.get_info();
+        eprintln!(
+            "[shadow-anyrender-vello] resume-surface-ready backend={:?} device_type={:?} name={:?} driver={:?} driver_info={:?}",
+            adapter_info.backend,
+            adapter_info.device_type,
+            adapter_info.name,
+            adapter_info.driver,
+            adapter_info.driver_info
+        );
 
         // Create vello::Renderer
+        eprintln!("[shadow-anyrender-vello] renderer-new-begin");
         let renderer = VelloRenderer::new(
             render_surface.device(),
             RendererOptions {
@@ -169,12 +183,15 @@ impl WindowRenderer for VelloWindowRenderer {
             },
         )
         .unwrap();
+        eprintln!("[shadow-anyrender-vello] renderer-new-done");
 
         // Resume custom paint sources
+        eprintln!("[shadow-anyrender-vello] custom-paint-resume-begin");
         let device_handle = &render_surface.device_handle;
         for source in self.custom_paint_sources.values_mut() {
             source.resume(device_handle)
         }
+        eprintln!("[shadow-anyrender-vello] custom-paint-resume-done");
 
         // Set state to Active
         self.window_handle = Some(window_handle);
@@ -182,6 +199,7 @@ impl WindowRenderer for VelloWindowRenderer {
             renderer,
             render_surface,
         });
+        eprintln!("[shadow-anyrender-vello] resume-done");
     }
 
     fn suspend(&mut self) {

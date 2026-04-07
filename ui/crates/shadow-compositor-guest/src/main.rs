@@ -289,10 +289,32 @@ impl ShadowGuestCompositor {
                         display.get_mut().dispatch_clients(state).unwrap();
                     }
                     let _ = state.display_handle.flush_clients();
+                    state.reap_exited_clients();
                     Ok(PostAction::Continue)
                 },
             )
             .expect("insert wayland display");
+    }
+
+    fn reap_exited_clients(&mut self) {
+        self.launched_clients
+            .retain_mut(|child| match child.try_wait() {
+                Ok(Some(status)) => {
+                    tracing::info!(
+                        "[shadow-guest-compositor] launched-client-exited pid={} status={status}",
+                        child.id()
+                    );
+                    false
+                }
+                Ok(None) => true,
+                Err(error) => {
+                    tracing::warn!(
+                        "[shadow-guest-compositor] launched-client-wait-error pid={} error={error}",
+                        child.id()
+                    );
+                    false
+                }
+            });
     }
 
     fn spawn_client(&mut self) -> std::io::Result<()> {
@@ -866,9 +888,9 @@ impl ClientState {
 impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {}
 
-    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {
+    fn disconnected(&self, _client_id: ClientId, reason: DisconnectReason) {
         if let Some(loop_signal) = &self.disconnect_signal {
-            tracing::info!("[shadow-guest-compositor] client-disconnected");
+            tracing::info!("[shadow-guest-compositor] client-disconnected reason={reason:?}");
             loop_signal.stop();
         }
     }

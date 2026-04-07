@@ -109,21 +109,25 @@ impl<'s> SurfaceRenderer<'s> {
         device_handle: DeviceHandle,
         dev_id: usize,
     ) -> Result<SurfaceRenderer<'w>, WgpuContextError> {
+        let capabilities = surface.get_capabilities(&device_handle.adapter);
+
         // Convert SurfaceRendererConfiguration to SurfaceConfiguration.
         // The difference is that `format` is a Vec in SurfaceRendererConfiguration and a single value in SurfaceConfiguration
         let surface_config = SurfaceConfiguration {
             usage: surface_renderer_config.usage,
-            format: surface
-                .get_capabilities(&device_handle.adapter)
+            format: capabilities
                 .formats
                 .into_iter()
                 .find(|it| surface_renderer_config.formats.contains(it))
                 .ok_or(WgpuContextError::UnsupportedSurfaceFormat)?,
             width: surface_renderer_config.width,
             height: surface_renderer_config.height,
-            present_mode: surface_renderer_config.present_mode,
+            present_mode: pick_present_mode(
+                &capabilities.present_modes,
+                surface_renderer_config.present_mode,
+            ),
             desired_maximum_frame_latency: surface_renderer_config.desired_maximum_frame_latency,
-            alpha_mode: surface_renderer_config.alpha_mode,
+            alpha_mode: pick_alpha_mode(&capabilities.alpha_modes, surface_renderer_config.alpha_mode),
             view_formats: surface_renderer_config.view_formats,
         };
 
@@ -149,7 +153,16 @@ impl<'s> SurfaceRenderer<'s> {
             current_surface_texture: None,
             intermediate_texture,
         };
+        eprintln!(
+            "[shadow-wgpu-context] surface-renderer-new configure-begin format={:?} width={} height={} present_mode={:?} alpha_mode={:?}",
+            surface.config.format,
+            surface.config.width,
+            surface.config.height,
+            surface.config.present_mode,
+            surface.config.alpha_mode
+        );
         surface.configure();
+        eprintln!("[shadow-wgpu-context] surface-renderer-new configure-done");
         Ok(surface)
     }
 
@@ -185,8 +198,17 @@ impl<'s> SurfaceRenderer<'s> {
     }
 
     fn configure(&self) {
+        eprintln!(
+            "[shadow-wgpu-context] surface-configure width={} height={} format={:?} present_mode={:?} alpha_mode={:?}",
+            self.config.width,
+            self.config.height,
+            self.config.format,
+            self.config.present_mode,
+            self.config.alpha_mode
+        );
         self.surface
             .configure(&self.device_handle.device, &self.config);
+        eprintln!("[shadow-wgpu-context] surface-configure-done");
     }
 
     pub fn clear_surface_texture(&mut self) {
@@ -285,4 +307,42 @@ impl<'s> SurfaceRenderer<'s> {
         );
         self.device_handle.queue.submit([encoder.finish()]);
     }
+}
+
+fn pick_present_mode(supported: &[PresentMode], requested: PresentMode) -> PresentMode {
+    if supported.contains(&requested) {
+        return requested;
+    }
+
+    match requested {
+        PresentMode::AutoVsync => supported
+            .iter()
+            .copied()
+            .find(|mode| matches!(mode, PresentMode::Fifo | PresentMode::Mailbox))
+            .or_else(|| supported.first().copied())
+            .unwrap_or(PresentMode::Fifo),
+        PresentMode::AutoNoVsync => supported
+            .iter()
+            .copied()
+            .find(|mode| matches!(mode, PresentMode::Immediate | PresentMode::Mailbox))
+            .or_else(|| supported.first().copied())
+            .unwrap_or(PresentMode::Fifo),
+        _ => supported.first().copied().unwrap_or(requested),
+    }
+}
+
+fn pick_alpha_mode(
+    supported: &[CompositeAlphaMode],
+    requested: CompositeAlphaMode,
+) -> CompositeAlphaMode {
+    if supported.contains(&requested) {
+        return requested;
+    }
+
+    supported
+        .iter()
+        .copied()
+        .find(|mode| matches!(mode, CompositeAlphaMode::Opaque | CompositeAlphaMode::PreMultiplied))
+        .or_else(|| supported.first().copied())
+        .unwrap_or(requested)
 }

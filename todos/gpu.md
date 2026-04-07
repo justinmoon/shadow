@@ -301,6 +301,39 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - hardware-backed Turnip/KGSL runtime path landed
 - `9cc5e21`:
   - curated Android font mode restored runtime text on Pixel
+- `2026-04-07 direct-gpu probe cleanup`:
+  - the static direct-`gpu` probe infrastructure had two real bugs:
+    - it was not auto-picking the cached Turnip tarball the way the runtime Pixel path does
+    - its bundle cache fingerprint did not include `ui/third_party/anyrender_vello` or `ui/third_party/wgpu_context`, so renderer/probe changes could be silently ignored
+  - both are now fixed in the local worktree
+  - the guest compositor now logs client disconnect reasons and reaps exited children during Wayland dispatch
+  - the vendored renderer stack now logs:
+    - successful surface/adaptor selection
+    - the exact `SurfaceRenderer::configure()` step
+    - whether Vello renderer init is reached
+- latest rooted-Pixel direct-`gpu` finding:
+  - with the corrected Turnip bundle, direct Vulkan no longer fails at adapter discovery
+  - it now reaches:
+    - real hardware adapter selection
+    - surface capabilities query
+    - `SurfaceRenderer::configure()`
+  - and then the client dies during `Surface::configure()` before first frame
+  - this reproduces across:
+    - `vulkan_kgsl_first`
+    - `vulkan_kgsl`
+    - `vulkan_drm`
+  - the explicit-capability fallback (`Mailbox`, `Opaque`, matching `Bgra8Unorm`) did not fix it
+  - current inference:
+    - the remaining direct Vulkan blocker is below our app logic and below adapter selection
+    - it is in the Turnip + Wayland surface configure/present path on this Pixel GNU userspace stack
+- current best proven path remains:
+  - `gpu_softbuffer`
+  - hardware-backed client GPU on Turnip/KGSL
+  - fast incremental updates on the rooted Pixel
+- next experiment queued:
+  - direct `gpu` with cached vendor Mesa on the `gl_kgsl` profile
+  - rationale:
+    - if direct Vulkan WSI is the broken seam but hardware-backed EGL/GL works, that may still satisfy the product requirement for direct GPU presentation on this device
 - Current truth:
   - GPU requirement is not satisfied by `cpu`
   - GPU requirement is partially satisfied today:
