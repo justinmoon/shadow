@@ -9,6 +9,8 @@ use android_service::{
     wait_for_interface,
 };
 #[cfg(target_os = "android")]
+use camera_aidl::device::{self, ICameraDeviceCallback, RequestTemplate};
+#[cfg(target_os = "android")]
 use camera_aidl::provider::{self, ICameraProvider, ICameraProviderCallback};
 use serde_json::json;
 use std::env;
@@ -46,6 +48,7 @@ fn main() {
         "ping" => make_response("ping", &argv),
         "info" => make_response("info", &argv),
         "list" => make_list_response(&argv),
+        "open" => make_open_response(&argv),
         other => make_error(other, &argv, "unsupported command"),
     };
 
@@ -92,17 +95,16 @@ fn make_list_response(argv: &[OsString]) -> serde_json::Value {
     let interface_name = "android.hardware.camera.provider.ICameraProvider";
     let declared_instances: Vec<String> = match get_declared_instances(interface_name) {
         Ok(instances) => instances,
-        Err(status) => return list_error(argv, "get_declared_instances", &status),
+        Err(status) => return command_error("list", argv, "get_declared_instances", &status),
     };
 
-    let service_name = argv_strings.first().cloned().unwrap_or_else(|| {
-        String::from("android.hardware.camera.provider.ICameraProvider/internal/0")
-    });
+    let (service_name, requested_camera) = resolve_provider_args(&argv_strings);
 
     let is_declared_value = match is_declared(&service_name) {
         Ok(value) => value,
         Err(status) => {
-            return list_error_with_context(
+            return command_error_with_context(
+                "list",
                 argv,
                 "is_declared",
                 &status,
@@ -116,7 +118,8 @@ fn make_list_response(argv: &[OsString]) -> serde_json::Value {
         match wait_for_interface::<dyn ICameraProvider>(&service_name) {
             Ok(provider) => provider,
             Err(status) => {
-                return list_error_with_context(
+                return command_error_with_context(
+                    "list",
                     argv,
                     "wait_for_interface",
                     &status,
@@ -132,7 +135,8 @@ fn make_list_response(argv: &[OsString]) -> serde_json::Value {
     });
 
     if let Err(status) = provider.set_callback(&callback) {
-        return list_error_with_context(
+        return command_error_with_context(
+            "list",
             argv,
             "set_callback",
             &status,
@@ -146,7 +150,8 @@ fn make_list_response(argv: &[OsString]) -> serde_json::Value {
     let camera_ids: Vec<String> = match provider.get_camera_id_list() {
         Ok(camera_ids) => camera_ids,
         Err(status) => {
-            return list_error_with_context(
+            return command_error_with_context(
+                "list",
                 argv,
                 "get_camera_id_list",
                 &status,
@@ -184,7 +189,8 @@ fn make_list_response(argv: &[OsString]) -> serde_json::Value {
                 }
             }
             Err(status) => {
-                return list_error_with_context(
+                return command_error_with_context(
+                    "list",
                     argv,
                     "get_camera_device_interface",
                     &status,
@@ -213,6 +219,7 @@ fn make_list_response(argv: &[OsString]) -> serde_json::Value {
         "isDeclared": is_declared_value,
         "declaredInstances": declared_instances,
         "cameraIds": camera_ids,
+        "requestedCamera": requested_camera,
         "selectedCamera": selected_camera,
         "selectedResourceCost": selected_resource_cost,
         "selectedCharacteristics": selected_characteristics,
@@ -221,12 +228,249 @@ fn make_list_response(argv: &[OsString]) -> serde_json::Value {
 }
 
 #[cfg(target_os = "android")]
-fn list_error(argv: &[OsString], step: &str, status: &binder::Status) -> serde_json::Value {
-    list_error_with_context(argv, step, status, None, "")
+fn make_open_response(argv: &[OsString]) -> serde_json::Value {
+    set_thread_pool_max_thread_count(1);
+    start_thread_pool();
+
+    let argv_strings = argv_strings(argv);
+    let interface_name = "android.hardware.camera.provider.ICameraProvider";
+    let declared_instances: Vec<String> = match get_declared_instances(interface_name) {
+        Ok(instances) => instances,
+        Err(status) => return command_error("open", argv, "get_declared_instances", &status),
+    };
+
+    let (service_name, requested_camera) = resolve_provider_args(&argv_strings);
+    let is_declared_value = match is_declared(&service_name) {
+        Ok(value) => value,
+        Err(status) => {
+            return command_error_with_context(
+                "open",
+                argv,
+                "is_declared",
+                &status,
+                Some(&declared_instances),
+                &service_name,
+            );
+        }
+    };
+
+    let provider: binder::Strong<dyn ICameraProvider> =
+        match wait_for_interface::<dyn ICameraProvider>(&service_name) {
+            Ok(provider) => provider,
+            Err(status) => {
+                return command_error_with_context(
+                    "open",
+                    argv,
+                    "wait_for_interface",
+                    &status,
+                    Some(&declared_instances),
+                    &service_name,
+                );
+            }
+        };
+
+    let provider_callback_log = Arc::new(Mutex::new(Vec::new()));
+    let provider_callback = provider::new_callback(CallbackRecorder {
+        events: Arc::clone(&provider_callback_log),
+    });
+
+    if let Err(status) = provider.set_callback(&provider_callback) {
+        return command_error_with_context(
+            "open",
+            argv,
+            "set_callback",
+            &status,
+            Some(&declared_instances),
+            &service_name,
+        );
+    }
+
+    if let Err(status) = provider.notify_device_state_change(provider::DEVICE_STATE_NORMAL) {
+        return command_error_with_context(
+            "open",
+            argv,
+            "notify_device_state_change",
+            &status,
+            Some(&declared_instances),
+            &service_name,
+        );
+    }
+
+    std::thread::sleep(Duration::from_millis(250));
+
+    let camera_ids: Vec<String> = match provider.get_camera_id_list() {
+        Ok(camera_ids) => camera_ids,
+        Err(status) => {
+            return command_error_with_context(
+                "open",
+                argv,
+                "get_camera_id_list",
+                &status,
+                Some(&declared_instances),
+                &service_name,
+            );
+        }
+    };
+
+    let selected_camera = requested_camera
+        .clone()
+        .or_else(|| select_camera(&camera_ids));
+    let Some(camera_id) = selected_camera.clone() else {
+        return json!({
+            "ok": false,
+            "command": "open",
+            "pid": std::process::id(),
+            "cwd": current_dir_string(),
+            "argv": argv_strings,
+            "serviceName": service_name,
+            "declaredInstances": declared_instances,
+            "cameraIds": camera_ids,
+            "error": "no camera devices returned by provider",
+        });
+    };
+
+    let device = match provider.get_camera_device_interface(&camera_id) {
+        Ok(device) => device,
+        Err(status) => {
+            return command_error_with_context(
+                "open",
+                argv,
+                "get_camera_device_interface",
+                &status,
+                Some(&declared_instances),
+                &service_name,
+            );
+        }
+    };
+
+    let selected_resource_cost = match device.get_resource_cost() {
+        Ok(resource_cost) => json!({
+            "resourceCost": resource_cost.resource_cost,
+            "conflictingDevices": resource_cost.conflicting_devices,
+        }),
+        Err(status) => status_json(&status),
+    };
+
+    let selected_characteristics = match device.get_camera_characteristics() {
+        Ok(characteristics) => json!({
+            "bytes": characteristics.metadata.len(),
+            "hexPreview": hex_preview(&characteristics.metadata, 48),
+        }),
+        Err(status) => status_json(&status),
+    };
+
+    let device_default_request_settings = match device
+        .construct_default_request_settings(RequestTemplate::STILL_CAPTURE)
+    {
+        Ok(settings) => Some(json!({
+            "source": "device",
+            "template": "STILL_CAPTURE",
+            "templateValue": RequestTemplate::STILL_CAPTURE.0,
+            "bytes": settings.metadata.len(),
+            "hexPreview": hex_preview(&settings.metadata, 48),
+        })),
+        Err(status) => Some(status_json(&status)),
+    };
+
+    let device_callback_log = Arc::new(Mutex::new(Vec::new()));
+    let device_callback = device::new_callback(DeviceCallbackRecorder {
+        events: Arc::clone(&device_callback_log),
+    });
+
+    let session = match device.open(&device_callback) {
+        Ok(session) => session,
+        Err(status) => {
+            return command_error_with_context(
+                "open",
+                argv,
+                "open",
+                &status,
+                Some(&declared_instances),
+                &service_name,
+            );
+        }
+    };
+
+    let default_request_settings = match session
+        .construct_default_request_settings(RequestTemplate::STILL_CAPTURE)
+    {
+        Ok(settings) => json!({
+            "source": "session",
+            "template": "STILL_CAPTURE",
+            "templateValue": RequestTemplate::STILL_CAPTURE.0,
+            "bytes": settings.metadata.len(),
+            "hexPreview": hex_preview(&settings.metadata, 48),
+        }),
+        Err(status) => {
+            return command_error_with_context(
+                "open",
+                argv,
+                "session_construct_default_request_settings",
+                &status,
+                Some(&declared_instances),
+                &service_name,
+            );
+        }
+    };
+
+    let session_closed = match session.close() {
+        Ok(()) => true,
+        Err(status) => {
+            return command_error_with_context(
+                "open",
+                argv,
+                "close",
+                &status,
+                Some(&declared_instances),
+                &service_name,
+            );
+        }
+    };
+
+    std::thread::sleep(Duration::from_millis(250));
+
+    let provider_callback_events = provider_callback_log
+        .lock()
+        .map(|events| events.clone())
+        .unwrap_or_default();
+    let device_callback_events = device_callback_log
+        .lock()
+        .map(|events| events.clone())
+        .unwrap_or_default();
+
+    json!({
+        "ok": true,
+        "command": "open",
+        "pid": std::process::id(),
+        "cwd": current_dir_string(),
+        "argv": argv_strings,
+        "interface": interface_name,
+        "serviceName": service_name,
+        "isDeclared": is_declared_value,
+        "declaredInstances": declared_instances,
+        "cameraIds": camera_ids,
+        "requestedCamera": requested_camera,
+        "selectedCamera": camera_id,
+        "selectedResourceCost": selected_resource_cost,
+        "selectedCharacteristics": selected_characteristics,
+        "deviceState": "DEVICE_STATE_NORMAL",
+        "deviceDefaultRequestSettings": device_default_request_settings,
+        "defaultRequestSettings": default_request_settings,
+        "sessionOpened": true,
+        "sessionClosed": session_closed,
+        "providerCallbackEvents": provider_callback_events,
+        "deviceCallbackEvents": device_callback_events,
+    })
 }
 
 #[cfg(target_os = "android")]
-fn list_error_with_context(
+fn command_error(command: &str, argv: &[OsString], step: &str, status: &binder::Status) -> serde_json::Value {
+    command_error_with_context(command, argv, step, status, None, "")
+}
+
+#[cfg(target_os = "android")]
+fn command_error_with_context(
+    command: &str,
     argv: &[OsString],
     step: &str,
     status: &binder::Status,
@@ -235,7 +479,7 @@ fn list_error_with_context(
 ) -> serde_json::Value {
     let mut value = json!({
         "ok": false,
-        "command": "list",
+        "command": command,
         "pid": std::process::id(),
         "cwd": current_dir_string(),
         "argv": argv_strings(argv),
@@ -262,13 +506,27 @@ fn status_json(status: &binder::Status) -> serde_json::Value {
 }
 
 #[cfg(target_os = "android")]
-#[cfg(target_os = "android")]
 fn select_camera(camera_ids: &[String]) -> Option<String> {
     camera_ids
         .iter()
         .find(|camera_id| camera_id.ends_with("/0"))
         .cloned()
         .or_else(|| camera_ids.first().cloned())
+}
+
+#[cfg(target_os = "android")]
+fn resolve_provider_args(argv: &[String]) -> (String, Option<String>) {
+    const DEFAULT_SERVICE: &str =
+        "android.hardware.camera.provider.ICameraProvider/internal/0";
+    const PROVIDER_PREFIX: &str = "android.hardware.camera.provider.ICameraProvider/";
+
+    match argv.first() {
+        Some(first) if first.starts_with(PROVIDER_PREFIX) => {
+            (first.clone(), argv.get(1).cloned())
+        }
+        Some(first) => (String::from(DEFAULT_SERVICE), Some(first.clone())),
+        None => (String::from(DEFAULT_SERVICE), None),
+    }
 }
 
 fn argv_strings(argv: &[OsString]) -> Vec<String> {
@@ -284,7 +542,6 @@ fn current_dir_string() -> Option<String> {
 }
 
 #[cfg(target_os = "android")]
-#[cfg(target_os = "android")]
 fn hex_preview(bytes: &[u8], limit: usize) -> String {
     let mut preview = String::with_capacity(limit * 2 + if bytes.len() > limit { 3 } else { 0 });
     for byte in bytes.iter().take(limit) {
@@ -298,7 +555,6 @@ fn hex_preview(bytes: &[u8], limit: usize) -> String {
 }
 
 #[cfg(target_os = "android")]
-#[cfg(target_os = "android")]
 fn nibble_to_hex(nibble: u8) -> char {
     match nibble {
         0..=9 => (b'0' + nibble) as char,
@@ -307,7 +563,6 @@ fn nibble_to_hex(nibble: u8) -> char {
     }
 }
 
-#[cfg(target_os = "android")]
 #[cfg(target_os = "android")]
 fn escape_json(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
@@ -403,6 +658,50 @@ impl CallbackRecorder {
     fn push_event(&self, event: CallbackEvent) {
         if let Ok(mut events) = self.events.lock() {
             events.push(event);
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[derive(Clone)]
+struct DeviceCallbackRecorder {
+    events: Arc<Mutex<Vec<String>>>,
+}
+
+#[cfg(target_os = "android")]
+impl binder::Interface for DeviceCallbackRecorder {}
+
+#[cfg(target_os = "android")]
+impl ICameraDeviceCallback for DeviceCallbackRecorder {
+    fn notify(&self) -> binder::Result<()> {
+        self.push_event("notify");
+        Ok(())
+    }
+
+    fn process_capture_result(&self) -> binder::Result<()> {
+        self.push_event("processCaptureResult");
+        Ok(())
+    }
+
+    fn request_stream_buffers(&self) -> binder::Result<()> {
+        self.push_event("requestStreamBuffers");
+        Err(binder::Status::new_service_specific_error_str(
+            -38,
+            Some("requestStreamBuffers is not implemented"),
+        ))
+    }
+
+    fn return_stream_buffers(&self) -> binder::Result<()> {
+        self.push_event("returnStreamBuffers");
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "android")]
+impl DeviceCallbackRecorder {
+    fn push_event(&self, event: &str) {
+        if let Ok(mut events) = self.events.lock() {
+            events.push(String::from(event));
         }
     }
 }

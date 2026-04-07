@@ -34,10 +34,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Proven on-device on `0B191JEC203253`: `just pixel-camera-rs-run list` reaches `android.hardware.camera.provider.ICameraProvider/internal/0`, enumerates `device@1.1/internal/0` and `device@1.1/internal/1`, reads rear-camera resource cost `33`, and reads `21312` bytes of static metadata.
   - Saved structured artifacts under `build/pixel/camera-rs/20260407T210041Z/`.
 
-- [ ] M2: Minimal open/configure path.
-  - Add provider/device callbacks.
-  - Open rear camera, build default `STILL_CAPTURE` settings.
-  - Configure one JPEG output stream; no preview stream.
+- [~] M2: Minimal open/configure path.
+  - Added provider/device callback stubs plus `notifyDeviceStateChange`, `open`, session `close`, and session `constructDefaultRequestSettings`.
+  - Proven on-device on `0B191JEC203253`: provider notify works, rear camera open works, session-level `STILL_CAPTURE` default settings return `2528` bytes, and session close works.
+  - Remaining work: configure one JPEG output stream; no preview stream.
 
 - [ ] M3: Buffer plus still-capture proof outside takeover.
   - Allocate/import buffers, submit one request, receive result callback, write one JPEG on device.
@@ -67,7 +67,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Implemented as a dedicated `android` dev shell rather than a `pkgsCross` package path.
 - [x] Add first Pixel script to run the helper under `su`.
 - [x] Implement a `list` command: declared instances, provider wait/open, rear camera name dump.
-- [ ] Verify whether request/result metadata can stay inline before investing in FMQ helpers.
+- [x] Verify whether request/result metadata can stay inline before investing in FMQ helpers.
+  - Current open/default-settings probe stays on the inline Binder path. FMQ is still deferred until `configureStreams` / `processCaptureRequest` force it.
 
 ## Implementation Notes
 
@@ -81,4 +82,6 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - FMQ note: session AIDL exposes request/result metadata queues. Defer queue support until the device forces it; first spike should try inline metadata paths.
 - Apple Silicon note: `pkgsCross.*android*` was the wrong tool here. `android-nixpkgs` + `cargo-ndk` works on this host; the helper now builds through `nix develop .#android`.
 - Binder note: the Android NDK stub contains the `android-binder` crate’s required symbols only at API level 31+, while newer service-manager/process helpers still need runtime lookup from the device’s `libbinder_ndk.so`.
-- Next seam after M1: open rear camera through the provider/device boundary and see whether default request settings plus one JPEG stream can stay on the inline-metadata path.
+- Live Pixel note: `ICameraDevice.constructDefaultRequestSettings` is not implemented on the `device@1.1/internal/*` handles returned by this Pixel 4a. That method was added in later frozen camera-device AIDL versions, so the working path here is `device.open()` followed by session-level `constructDefaultRequestSettings`.
+- Current proof artifacts for the open/session-default seam live under `build/pixel/camera-rs/20260407T211917Z/`.
+- Next seam after M2: hand-write the minimum `StreamConfiguration` / `HalStream` / buffer-handle parcelables needed to configure one JPEG BLOB stream and see whether capture can still avoid FMQ for the first request.
