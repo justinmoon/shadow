@@ -280,6 +280,30 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
                         "runtime-app-nostr-timeline-smoke: keyboard compose submission missing "
                         f"fragment: {fragment}",
                     )
+
+            if process.stdin is not None:
+                process.stdin.close()
+            process.wait(timeout=10)
+
+            process = subprocess.Popen(
+                [session["runtimeHostBinaryPath"], "--session", session["bundlePath"]],
+                cwd=REPO_ROOT,
+                env=runtime_env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            restarted = send(process, {"op": "render"})
+            restarted_html = restarted["payload"]["html"]
+            if "GM from keyboard" not in restarted_html:
+                raise SystemExit(
+                    "runtime-app-nostr-timeline-smoke: restart lost cached posted note",
+                )
+            if "Draft: (empty)" not in restarted_html:
+                raise SystemExit(
+                    "runtime-app-nostr-timeline-smoke: restart should reset live draft state",
+                )
         finally:
             if process.stdin is not None:
                 process.stdin.close()

@@ -328,6 +328,7 @@ def parse_control_state(response: str) -> dict[str, Any]:
         "focused": state.get("focused") or None,
         "mapped": [item for item in state.get("mapped", "").split(",") if item],
         "launched": [item for item in state.get("launched", "").split(",") if item],
+        "shelved": [item for item in state.get("shelved", "").split(",") if item],
         "windows": int(state.get("windows", "0")),
         "socket": state.get("socket") or None,
     }
@@ -395,6 +396,7 @@ def cmd_vm_state(args: argparse.Namespace) -> int:
             "focused": None,
             "mapped": payload["remote"].get("running_apps", []),
             "launched": payload["remote"].get("running_apps", []),
+            "shelved": [],
             "windows": 0,
             "socket": None,
             "compile_in_progress": payload["remote"].get("compile_in_progress"),
@@ -407,6 +409,7 @@ def cmd_vm_state(args: argparse.Namespace) -> int:
         print(f"focused={state['focused'] or ''}")
         print(f"mapped={','.join(state['mapped'])}")
         print(f"launched={','.join(state['launched'])}")
+        print(f"shelved={','.join(state['shelved'])}")
         print(f"windows={state['windows']}")
         print(f"socket={state['socket'] or ''}")
     return 0

@@ -63,6 +63,10 @@ ui-vm-wait-ready:
 ui-vm-screenshot output="build/ui-vm/shadow-ui-vm.ppm":
 	@scripts/shadowctl vm screenshot "{{output}}"
 
+# Prove the timeline app launches, shelves warm, and reopens in the local UI VM
+ui-vm-timeline-smoke:
+	@scripts/ui_vm_timeline_smoke.sh
+
 # Ask the compositor to open an app by ID
 ui-vm-open app="counter":
 	@scripts/shadowctl vm open "{{app}}"

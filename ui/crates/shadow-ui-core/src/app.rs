@@ -16,8 +16,10 @@ impl AppId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DemoApp {
     pub id: AppId,
+    pub icon_label: &'static str,
     pub title: &'static str,
     pub subtitle: &'static str,
+    pub lifecycle_hint: &'static str,
     pub binary_name: &'static str,
     pub wayland_app_id: &'static str,
     pub window_title: &'static str,
@@ -43,8 +45,10 @@ pub const SHELL_APP_ID: AppId = AppId::new("shell");
 pub const SHELL_WAYLAND_APP_ID: &str = "dev.shadow.shell";
 pub const COUNTER_APP: DemoApp = DemoApp {
     id: COUNTER_APP_ID,
+    icon_label: "01",
     title: "Counter",
-    subtitle: "Solid runtime",
+    subtitle: "Counter demo",
+    lifecycle_hint: "Shelving keeps the live counter warm until the app exits.",
     binary_name: "shadow-blitz-demo",
     wayland_app_id: COUNTER_WAYLAND_APP_ID,
     window_title: COUNTER_WINDOW_TITLE,
@@ -55,8 +59,10 @@ pub const COUNTER_APP: DemoApp = DemoApp {
 };
 pub const TIMELINE_APP: DemoApp = DemoApp {
     id: TIMELINE_APP_ID,
+    icon_label: "TL",
     title: "Timeline",
-    subtitle: "Local Nostr client",
+    subtitle: "Local Nostr cache",
+    lifecycle_hint: "Shelving keeps the live draft warm. Full restart reloads cached notes.",
     binary_name: "shadow-blitz-demo",
     wayland_app_id: TIMELINE_WAYLAND_APP_ID,
     window_title: TIMELINE_WINDOW_TITLE,
@@ -110,6 +116,8 @@ mod tests {
         assert_eq!(COUNTER_APP_ID.as_str(), "counter");
         assert_eq!(find_app_by_str("counter"), Some(&COUNTER_APP));
         assert_eq!(binary_name_for(COUNTER_APP_ID), Some("shadow-blitz-demo"));
+        assert_eq!(app.icon_label, "01");
+        assert!(app.lifecycle_hint.contains("live counter"));
         assert_eq!(
             app_id_from_wayland_app_id(COUNTER_WAYLAND_APP_ID),
             Some(COUNTER_APP_ID)
@@ -128,6 +136,8 @@ mod tests {
         assert_eq!(TIMELINE_APP_ID.as_str(), "timeline");
         assert_eq!(find_app_by_str("timeline"), Some(&TIMELINE_APP));
         assert_eq!(binary_name_for(TIMELINE_APP_ID), Some("shadow-blitz-demo"));
+        assert_eq!(app.icon_label, "TL");
+        assert!(app.lifecycle_hint.contains("live draft"));
         assert_eq!(
             app_id_from_wayland_app_id(TIMELINE_WAYLAND_APP_ID),
             Some(TIMELINE_APP_ID)

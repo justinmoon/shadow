@@ -22,6 +22,7 @@ const APP_PANEL_Y: f32 = 420.0;
 const APP_PANEL_HEIGHT: f32 = 640.0;
 const APP_ICON_SIZE: f32 = 96.0;
 const APP_LABEL_HEIGHT: f32 = 24.0;
+const APP_SUBTITLE_HEIGHT: f32 = 18.0;
 const APP_HEADER_Y: f32 = 86.0;
 const APP_HEADER_HEIGHT: f32 = 70.0;
 const APP_CHROME_BOTTOM_Y: f32 = APP_VIEWPORT_Y + APP_VIEWPORT_HEIGHT + 22.0;
@@ -307,7 +308,7 @@ impl ShellModel {
             color: TEXT_MUTED,
         });
         texts.push(TextBlock {
-            content: "Running".to_string(),
+            content: "Warm".to_string(),
             left: 392.0,
             top: 106.0,
             width: 98.0,
@@ -319,13 +320,13 @@ impl ShellModel {
             color: TEXT_PRIMARY,
         });
         texts.push(TextBlock {
-            content: "Esc/Home returns".to_string(),
+            content: app.lifecycle_hint.to_string(),
             left: 52.0,
-            top: APP_CHROME_BOTTOM_Y + 18.0,
+            top: APP_CHROME_BOTTOM_Y + 16.0,
             width: 436.0,
-            height: 18.0,
-            size: 14.0,
-            line_height: 16.0,
+            height: 22.0,
+            size: 13.0,
+            line_height: 15.0,
             align: TextAlign::Center,
             weight: TextWeight::Normal,
             color: TEXT_MUTED,
@@ -649,7 +650,10 @@ fn build_panel_header(
             let app = find_app(app_id).expect("foreground app metadata");
             (
                 format!("{} live", app.title),
-                format!("Tap the pill or press Home to shelf it. {}.", app.subtitle),
+                format!(
+                    "Tap the pill or press Home to shelf it. {}",
+                    app.lifecycle_hint
+                ),
             )
         }
         None if model.running_apps().is_empty() => (
@@ -659,7 +663,7 @@ fn build_panel_header(
         None => (
             "Home stack".to_string(),
             format!(
-                "{} app(s) warm in the background.",
+                "{} warm app(s) waiting. Relaunch resumes state.",
                 model.running_apps().len()
             ),
         ),
@@ -768,6 +772,19 @@ fn build_app_grid(rects: &mut Vec<RoundedRect>, texts: &mut Vec<TextBlock>, mode
             TEXT_PRIMARY.with_alpha(0.16),
         ));
 
+        texts.push(TextBlock {
+            content: app.icon_label.to_string(),
+            left: icon_x,
+            top: icon_y + 22.0,
+            width: icon_size,
+            height: 48.0,
+            size: 42.0,
+            line_height: 44.0,
+            align: TextAlign::Center,
+            weight: TextWeight::Bold,
+            color: TEXT_PRIMARY.with_alpha(0.92),
+        });
+
         if is_running {
             rects.push(RoundedRect::new(
                 frame.x + frame.w * 0.5 - 18.0,
@@ -791,13 +808,25 @@ fn build_app_grid(rects: &mut Vec<RoundedRect>, texts: &mut Vec<TextBlock>, mode
             height: APP_LABEL_HEIGHT,
             size: 12.0,
             line_height: 14.0,
-            align: TextAlign::Left,
+            align: TextAlign::Center,
             weight: if is_foreground || is_focused {
                 TextWeight::Semibold
             } else {
                 TextWeight::Normal
             },
             color: TEXT_PRIMARY,
+        });
+        texts.push(TextBlock {
+            content: app.subtitle.to_string(),
+            left: frame.x + 8.0,
+            top: frame.y + APP_ICON_SIZE + 40.0,
+            width: frame.w - 16.0,
+            height: APP_SUBTITLE_HEIGHT,
+            size: 10.0,
+            line_height: 12.0,
+            align: TextAlign::Center,
+            weight: TextWeight::Normal,
+            color: TEXT_MUTED,
         });
     }
 

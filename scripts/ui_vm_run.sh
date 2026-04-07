@@ -43,7 +43,8 @@ fi
 
 rm -f .shadow-vm/nix-store-overlay.img
 if [[ ! -s "$RUNTIME_ENV_PATH" || -n "${SHADOW_UI_VM_REFRESH_RUNTIME_ENV:-}" ]] \
-  || ! grep -Fq 'SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null; then
+  || ! grep -Fq 'SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
+  || ! grep -Fq 'SHADOW_RUNTIME_NOSTR_DB_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null; then
   runtime_env_tmp="$(mktemp "$REPO_ROOT/.shadow-vm/runtime-host-session-env.XXXXXX")"
   SHADOW_RUNTIME_APP_BUNDLE_REWRITE_FROM="$REPO_ROOT" \
   SHADOW_RUNTIME_APP_BUNDLE_REWRITE_TO="/work/shadow" \

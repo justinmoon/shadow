@@ -336,8 +336,9 @@ impl ShadowCompositor {
         let focused = self.focused_app.map(AppId::as_str).unwrap_or("");
         let mapped = self.mapped_app_ids();
         let launched = self.launched_app_ids();
+        let shelved = self.shelved_app_ids();
         format!(
-            "focused={focused}\nmapped={mapped}\nlaunched={launched}\nwindows={}\nsocket={}\n",
+            "focused={focused}\nmapped={mapped}\nlaunched={launched}\nshelved={shelved}\nwindows={}\nsocket={}\n",
             self.space.elements().count(),
             self.socket_name.to_string_lossy(),
         )
@@ -360,6 +361,17 @@ impl ShadowCompositor {
     fn launched_app_ids(&self) -> String {
         let mut app_ids: Vec<_> = self
             .launched_apps
+            .keys()
+            .copied()
+            .map(AppId::as_str)
+            .collect();
+        app_ids.sort_unstable();
+        app_ids.join(",")
+    }
+
+    fn shelved_app_ids(&self) -> String {
+        let mut app_ids: Vec<_> = self
+            .shelved_windows
             .keys()
             .copied()
             .map(AppId::as_str)

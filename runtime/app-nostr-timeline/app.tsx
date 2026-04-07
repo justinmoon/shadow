@@ -21,7 +21,15 @@ type SyncReceipt = {
   relayUrls: string[];
 };
 
+type DemoNoteConfig = {
+  content: string;
+  createdAt: number;
+  id?: string;
+  pubkey: string;
+};
+
 type TimelineConfig = {
+  demoNotes?: DemoNoteConfig[];
   limit?: number;
   relayUrls?: string[];
   syncOnStart?: boolean;
@@ -34,8 +42,33 @@ type StatusState =
   | { kind: "ready"; message: string }
   | { kind: "error"; message: string };
 
+type FeedSource = "cached" | "demo" | "empty" | "live";
+
 const DEFAULT_RELAY_URLS = ["wss://relay.primal.net/", "wss://relay.damus.io/"];
 const DEFAULT_LIMIT = 12;
+const DEFAULT_DEMO_NOTES: DemoNoteConfig[] = [
+  {
+    id: "shadow-demo-welcome",
+    pubkey: "shadow-demo",
+    createdAt: 1_775_529_600,
+    content:
+      "Welcome to Shadow. This timeline starts with a local demo feed so the app always opens with something real-looking in the shell.",
+  },
+  {
+    id: "shadow-demo-warm",
+    pubkey: "shadow-shell",
+    createdAt: 1_775_526_000,
+    content:
+      "Press Home to shelf the app warm. Reopening from the homescreen keeps the current session alive, including any draft text.",
+  },
+  {
+    id: "shadow-demo-refresh",
+    pubkey: "shadow-runtime",
+    createdAt: 1_775_522_400,
+    content:
+      "Use Refresh for relay sync. A cold restart reloads cached notes first, then falls back to this demo feed when the local store is empty.",
+  },
+];
 const SHELL_STYLE =
   'min-height:100vh;display:flex;flex-direction:column;padding:24px;gap:20px;background:radial-gradient(circle at top, rgba(56, 189, 248, 0.16), transparent 36%),linear-gradient(180deg, #020617 0%, #082032 45%, #0f172a 100%);color:#e2e8f0;font:500 16px/1.45 "Google Sans","Roboto","Droid Sans","Noto Sans","DejaVu Sans",sans-serif;box-sizing:border-box';
 const HERO_STYLE =
@@ -52,7 +85,8 @@ const COMPOSE_INPUT_STYLE =
   'width:100%;min-height:88px;border-radius:24px;border:1px solid rgba(148, 163, 184, 0.25);background:rgba(15, 23, 42, 0.9);color:#f8fafc;padding:22px 24px;font:inherit;font-size:28px;box-sizing:border-box';
 const COMPOSE_META_STYLE =
   "display:flex;flex-wrap:wrap;gap:16px;color:#94a3b8;font-size:18px";
-const COMPOSE_HINT_STYLE = "margin:0;color:#7dd3fc;font-size:18px;line-height:1.35";
+const SESSION_NOTE_STYLE =
+  "margin:0;padding:18px 20px;border-radius:24px;background:rgba(8, 47, 73, 0.34);border:1px solid rgba(125, 211, 252, 0.14);color:#cbd5e1;font-size:18px;line-height:1.35";
 const FEED_STYLE = "display:flex;flex-direction:column;gap:16px";
 const FEED_EMPTY_STYLE =
   "margin:0;padding:28px 22px;border-radius:28px;background:rgba(2, 6, 23, 0.68);color:#bfdbfe;font-size:24px";
@@ -321,13 +355,15 @@ function composeStyle(focused: boolean) {
 
 export function renderApp() {
   const config = readTimelineConfig();
-  const [notes, setNotes] = createSignal<Kind1Event[]>(loadCachedNotes(config.limit));
+  const initialFeed = loadInitialFeed(config);
+  const [notes, setNotes] = createSignal<Kind1Event[]>(initialFeed.notes);
   const [draft, setDraft] = createSignal("");
+  const [feedSource, setFeedSource] = createSignal<FeedSource>(initialFeed.source);
   const [focused, setFocused] = createSignal(false);
   const [selection, setSelection] = createSignal("0-0:none");
   const [status, setStatus] = createSignal<StatusState>({
     kind: "idle",
-    message: `Cached ${notes().length} note${notes().length === 1 ? "" : "s"}.`,
+    message: initialStatusMessage(initialFeed.source, initialFeed.notes.length),
   });
 
   onMount(() => {
@@ -350,13 +386,26 @@ export function renderApp() {
         limit: config.limit,
         relayUrls: config.relayUrls,
       }) as SyncReceipt;
-          const nextNotes = loadCachedNotes(config.limit);
-      setNotes(nextNotes);
-      setStatus({
-        kind: "ready",
-        message:
-          `Fetched ${receipt.fetchedCount} note${receipt.fetchedCount === 1 ? "" : "s"}, imported ${receipt.importedCount}.`,
-      });
+      const nextNotes = loadCachedNotes(config.limit);
+      if (nextNotes.length > 0) {
+        setFeedSource("live");
+        setNotes(nextNotes);
+        setStatus({
+          kind: "ready",
+          message:
+            `Fetched ${receipt.fetchedCount} note${receipt.fetchedCount === 1 ? "" : "s"}, imported ${receipt.importedCount}.`,
+        });
+      } else {
+        const demoNotes = materializeDemoNotes(config.demoNotes, config.limit);
+        setFeedSource(demoNotes.length > 0 ? "demo" : "empty");
+        setNotes(demoNotes);
+        setStatus({
+          kind: "ready",
+          message: demoNotes.length > 0
+            ? "No relay notes yet. Keeping the local demo feed warm."
+            : "No relay notes yet.",
+        });
+      }
     } catch (error) {
       setStatus({
         kind: "error",
@@ -385,6 +434,7 @@ export function renderApp() {
     setDraft("");
     setSelection("0-0:none");
     const nextNotes = loadCachedNotes(config.limit);
+    setFeedSource("live");
     setNotes(nextNotes);
     setStatus({
       kind: "ready",
@@ -464,9 +514,14 @@ export function renderApp() {
         <div class="timeline-compose-meta" style={COMPOSE_META_STYLE}>
           <span>Focus: {focused() ? "focused" : "blurred"}</span>
           <span>Draft: {draft() || "(empty)"}</span>
+          <span>Feed: {feedSourceLabel(feedSource())}</span>
           <span>Selection: {selection()}</span>
           <span>Notes: {notes().length}</span>
         </div>
+        <p class="timeline-compose-hint" style={SESSION_NOTE_STYLE}>
+          Home shelves this app warm and keeps the in-memory draft. A cold restart reloads the
+          cached timeline first, then falls back to the local demo feed when the store is empty.
+        </p>
       </section>
 
       <section class="timeline-feed" style={FEED_STYLE}>
@@ -499,12 +554,37 @@ function loadCachedNotes(limit: number): Kind1Event[] {
   return listKind1({ limit }) as Kind1Event[];
 }
 
+function loadInitialFeed(config: Required<TimelineConfig>): {
+  notes: Kind1Event[];
+  source: FeedSource;
+} {
+  const cachedNotes = loadCachedNotes(config.limit);
+  if (cachedNotes.length > 0) {
+    return { notes: cachedNotes, source: "cached" };
+  }
+
+  const demoNotes = materializeDemoNotes(config.demoNotes, config.limit);
+  if (demoNotes.length > 0) {
+    return { notes: demoNotes, source: "demo" };
+  }
+
+  return { notes: [], source: "empty" };
+}
+
 function readTimelineConfig(): Required<TimelineConfig> {
   const value = (
     globalThis as typeof globalThis & {
       SHADOW_RUNTIME_APP_CONFIG?: TimelineConfig;
     }
   ).SHADOW_RUNTIME_APP_CONFIG;
+  const demoNotes = Array.isArray(value?.demoNotes) && value.demoNotes.length > 0
+    ? value.demoNotes.map((note) => ({
+      content: String(note.content),
+      createdAt: Number(note.createdAt),
+      id: note.id == null ? undefined : String(note.id),
+      pubkey: String(note.pubkey),
+    }))
+    : DEFAULT_DEMO_NOTES;
   const relayUrls = Array.isArray(value?.relayUrls) && value.relayUrls.length > 0
     ? value.relayUrls.map(String)
     : DEFAULT_RELAY_URLS;
@@ -512,11 +592,47 @@ function readTimelineConfig(): Required<TimelineConfig> {
     ? Math.floor(value.limit)
     : DEFAULT_LIMIT;
   const syncOnStart = value?.syncOnStart !== false;
-  return { limit, relayUrls, syncOnStart };
+  return { demoNotes, limit, relayUrls, syncOnStart };
 }
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function feedSourceLabel(source: FeedSource): string {
+  switch (source) {
+    case "cached":
+      return "cached";
+    case "demo":
+      return "demo";
+    case "live":
+      return "live";
+    case "empty":
+    default:
+      return "empty";
+  }
+}
+
+function initialStatusMessage(source: FeedSource, count: number): string {
+  switch (source) {
+    case "cached":
+      return `Warm cache ready with ${count} note${count === 1 ? "" : "s"}.`;
+    case "demo":
+      return "Showing the local demo feed. Refresh for relays or post locally.";
+    case "empty":
+    default:
+      return "Timeline is empty. Refresh from relays or post the first note.";
+  }
+}
+
+function materializeDemoNotes(demoNotes: DemoNoteConfig[], limit: number): Kind1Event[] {
+  return demoNotes.slice(0, limit).map((note, index) => ({
+    content: note.content,
+    created_at: note.createdAt,
+    id: note.id ?? `shadow-demo-note-${index}`,
+    kind: 1,
+    pubkey: note.pubkey,
+  }));
 }
 
 function shortPubkey(pubkey: string): string {
