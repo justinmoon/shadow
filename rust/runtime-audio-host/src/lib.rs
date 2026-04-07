@@ -412,7 +412,7 @@ impl LinuxSpikePlayerRuntime {
             .env("SHADOW_AUDIO_SPIKE_DURATION_MS", source.duration_ms().to_string())
             .env("SHADOW_AUDIO_SPIKE_SOURCE_KIND", source.kind())
             .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
+            .stdout(Stdio::null())
             .stderr(Stdio::inherit());
         match source {
             AudioSource::Tone(source) => {

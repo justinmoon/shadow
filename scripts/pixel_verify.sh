@@ -28,6 +28,8 @@ frame_ok=false
 require_client_marker="${PIXEL_VERIFY_REQUIRE_CLIENT_MARKER-1}"
 required_markers_raw="${PIXEL_VERIFY_REQUIRED_MARKERS-}"
 required_markers_ok=true
+forbidden_markers_raw="${PIXEL_VERIFY_FORBIDDEN_MARKERS-}"
+forbidden_markers_clear=true
 
 if grep -Fq "$compositor_marker" "$session_output"; then
   compositor_ok=true
@@ -49,9 +51,18 @@ if [[ -n "$required_markers_raw" ]]; then
     fi
   done <<< "$required_markers_raw"
 fi
+if [[ -n "$forbidden_markers_raw" ]]; then
+  while IFS= read -r marker; do
+    [[ -n "$marker" ]] || continue
+    if grep -Fq "$marker" "$session_output"; then
+      forbidden_markers_clear=false
+      break
+    fi
+  done <<< "$forbidden_markers_raw"
+fi
 
 success=false
-if [[ "$compositor_ok" == true && "$client_ok" == true && "$required_markers_ok" == true && "$frame_ok" == true ]]; then
+if [[ "$compositor_ok" == true && "$client_ok" == true && "$required_markers_ok" == true && "$forbidden_markers_clear" == true && "$frame_ok" == true ]]; then
   success=true
 fi
 
@@ -60,6 +71,7 @@ pixel_write_status_json "$run_dir/status.json" \
   compositor_marker_seen="$compositor_ok" \
   client_marker_seen="$client_ok" \
   required_markers_seen="$required_markers_ok" \
+  forbidden_markers_clear="$forbidden_markers_clear" \
   frame_artifact_present="$frame_ok" \
   success="$success"
 

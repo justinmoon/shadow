@@ -136,6 +136,7 @@ env "${runtime_prepare_extra_env[@]}" "$SCRIPT_DIR/pixel_prepare_runtime_app_art
 extra_guest_env="${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}"
 extra_session_env="${PIXEL_RUNTIME_APP_EXTRA_SESSION_ENV-}"
 extra_required_markers="${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS-}"
+extra_forbidden_markers="${PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS-}"
 touch_signal_path="$(pixel_runtime_dir)/touch-signal"
 runtime_home_dir="$(pixel_runtime_linux_dir)/home"
 runtime_cache_dir="$runtime_home_dir/.cache"
@@ -201,6 +202,11 @@ if [[ -n "$extra_required_markers" ]]; then
   required_markers="${required_markers}"$'\n'"${extra_required_markers}"
 fi
 
+forbidden_markers='[shadow-runtime-demo] runtime-event-error:'
+if [[ -n "$extra_forbidden_markers" ]]; then
+  forbidden_markers="${forbidden_markers}"$'\n'"${extra_forbidden_markers}"
+fi
+
 if [[ -n "${PIXEL_RUNTIME_APP_PREP_ONLY-}" || -n "${PIXEL_RUNTIME_APP_PREPARE_ONLY-}" ]]; then
   PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
   PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
@@ -224,5 +230,6 @@ PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
 PIXEL_GUEST_CLIENT_ENV="$runtime_guest_env" \
 PIXEL_GUEST_SESSION_ENV="$runtime_session_env" \
 PIXEL_GUEST_PRECREATE_DIRS="$runtime_home_dir $runtime_cache_dir $runtime_cache_dir/mesa $runtime_config_dir" \
+PIXEL_VERIFY_FORBIDDEN_MARKERS="$forbidden_markers" \
 PIXEL_RUNTIME_SUMMARY_RENDERER="$PIXEL_RUNTIME_APP_RENDERER" \
   "$SCRIPT_DIR/pixel_guest_ui_drm.sh"

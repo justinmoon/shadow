@@ -39,6 +39,7 @@ expect_compositor_process="${PIXEL_GUEST_EXPECT_COMPOSITOR_PROCESS-1}"
 expect_client_process="${PIXEL_GUEST_EXPECT_CLIENT_PROCESS-1}"
 expect_client_marker="${PIXEL_GUEST_EXPECT_CLIENT_MARKER-1}"
 verify_require_client_marker="${PIXEL_VERIFY_REQUIRE_CLIENT_MARKER-1}"
+verify_forbidden_markers="${PIXEL_VERIFY_FORBIDDEN_MARKERS-}"
 restore_android="${PIXEL_TAKEOVER_RESTORE_ANDROID-1}"
 restore_delay_secs="${PIXEL_TAKEOVER_RESTORE_DELAY_SECS-}"
 stop_checkpoint_timeout_secs="${PIXEL_GUEST_STOP_CHECKPOINT_TIMEOUT_SECS-15}"
@@ -66,6 +67,7 @@ client_started=false
 compositor_marker_seen=false
 client_marker_seen=false
 required_markers_seen=false
+forbidden_markers_clear=true
 frame_on_device=false
 android_restored=false
 checkpoint_failure_kind=""
@@ -115,6 +117,19 @@ required_markers_all_seen() {
       return 1
     fi
   done <<< "$required_markers_raw"
+  return 0
+}
+
+forbidden_markers_absent() {
+  local marker
+
+  [[ -n "$verify_forbidden_markers" ]] || return 0
+  while IFS= read -r marker; do
+    [[ -n "$marker" ]] || continue
+    if session_output_has_marker "$marker"; then
+      return 1
+    fi
+  done <<< "$verify_forbidden_markers"
   return 0
 }
 
@@ -331,6 +346,7 @@ pixel_capture_processes "$serial" "$run_dir/processes-after.txt"
 set +e
 PIXEL_VERIFY_REQUIRE_CLIENT_MARKER="$verify_require_client_marker" \
 PIXEL_VERIFY_REQUIRED_MARKERS="$required_markers_raw" \
+PIXEL_VERIFY_FORBIDDEN_MARKERS="$verify_forbidden_markers" \
 PIXEL_RUN_DIR="$run_dir" \
   "$SCRIPT_DIR/pixel_verify.sh"
 verify_status="$?"
@@ -344,6 +360,9 @@ if [[ "$client_marker_seen" != true ]] && session_output_has_marker "$(pixel_cli
 fi
 if [[ "$required_markers_seen" != true ]] && required_markers_all_seen; then
   required_markers_seen=true
+fi
+if [[ "$forbidden_markers_clear" != false ]] && ! forbidden_markers_absent; then
+  forbidden_markers_clear=false
 fi
 if [[ "$frame_on_device" != true && -s "$frame_artifact" ]]; then
   frame_on_device=true
@@ -382,9 +401,11 @@ pixel_write_status_json "$run_dir/status.json" \
   client_process_started="$client_started" \
   client_marker_expected="$([[ -n "$expect_client_marker" ]] && echo true || echo false)" \
   required_markers_expected="$([[ -n "$required_markers_raw" ]] && echo true || echo false)" \
+  forbidden_markers_expected="$([[ -n "$verify_forbidden_markers" ]] && echo true || echo false)" \
   compositor_marker_seen="$compositor_marker_seen" \
   client_marker_seen="$client_marker_seen" \
   required_markers_seen="$required_markers_seen" \
+  forbidden_markers_clear="$forbidden_markers_clear" \
   frame_on_device="$frame_on_device" \
   presented_frame="$presented" \
   session_ok="$session_ok" \

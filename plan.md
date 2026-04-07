@@ -64,9 +64,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Add one operator command.
   Add a `just runtime-app-sound-smoke` host path and a `just pixel-runtime-app-sound-drm` rooted device path.
 - [x] Prove staged file-backed playback.
-  The runtime sound app now accepts a configured `file` source, stages `audio/demo-tone.wav` into the runtime bundle, and auto-clicked Pixel runs spawn the file-backed Linux helper instead of the tone-only path.
-- [ ] Swap the demo asset to a compressed file.
-  The helper now has a real file decode path; next seam is a deterministic MP3 test/demo asset rather than the generated WAV placeholder.
+  The runtime sound app now accepts a configured `file` source, stages a bundle-relative audio file into the runtime bundle, and auto-clicked Pixel runs spawn the file-backed Linux helper instead of the tone-only path.
+- [x] Swap the demo asset to a compressed file.
+  The staged demo asset is now the checked-in MP3 fixture `audio/demo-tone.mp3`, not the generated WAV placeholder.
 
 ## Implementation Notes
 
@@ -86,7 +86,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The safest regression boundary is a sound-only no-`chroot` launcher. Keep the existing runtime-app launcher behavior unchanged for non-audio apps until the broader Pixel runtime lane is revalidated on the real phone.
 - `runtime-audio-host` now owns the first durable contract: `createPlayer`, `play`, `pause`, `stop`, `release`, and `getStatus`, with a memory backend on host and a `linux_spike` backend on the rooted Pixel lane.
 - The current rooted Pixel proof is now app-level and audible: the sound demo auto-clicked `play`, `Shadow.os.audio` spawned `run-shadow-linux-audio-spike`, and the device speaker emitted the tone during the rooted runtime session.
-- The current runtime demo is file-backed too: `scripts/prepare_sound_demo_assets.sh` generates `audio/demo-tone.wav`, host smoke and Pixel runs point the app at `source.kind=file`, and `runtime-audio-host` resolves bundle-relative paths through `SHADOW_RUNTIME_BUNDLE_DIR`.
+- The current runtime demo is file-backed too: `scripts/prepare_sound_demo_assets.sh` now hash-checks and copies the checked-in MP3 fixture to `audio/demo-tone.mp3`, host smoke and Pixel runs point the app at `source.kind=file`, and `runtime-audio-host` resolves bundle-relative paths through `SHADOW_RUNTIME_BUNDLE_DIR`.
 - The Linux helper now accepts both `tone` and `file` sources. File decode is in-process via Symphonia, while ALSA routing/output stays the same as the audible tone spike.
+- The compressed demo fixture is reproducible: `scripts/generate_sound_demo_fixture.sh` rebuilds it under Nix with `ffmpeg`, and `scripts/prepare_sound_demo_assets.sh` refuses unexpected hashes.
+- `just runtime-app-sound-smoke` now covers two host-side contracts: the normal `memory` backend UI flow and a fake `linux_spike` helper that writes junk to stdout, so stdio pollution in the audio helper path fails locally instead of waiting for a Pixel run.
+- Rooted Pixel runtime-app runs now also forbid `[shadow-runtime-demo] runtime-event-error:` in `session-output.txt`, so protocol decode errors no longer hide behind otherwise successful marker/frame checks.
 - If we need a shipped native path, Android’s current guidance is to target Oboe or AAudio rather than new OpenSL ES designs.
 - Start with file or URI playback, not PCM streaming. If we later need synthesis or latency-critical SFX, add a separate streaming/SFX API instead of overloading the MP3 path.
