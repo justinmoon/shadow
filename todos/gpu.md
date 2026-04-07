@@ -198,6 +198,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - operator wiring
     - app-launch UX
     - deciding when to switch `run <serial>` over
+- The first shell touch polish seam is now explicit.
+  - Touch on the outer shell path should feel like one tap, not a press/release two-step.
+  - The shell touch path now activates on touch-down and ignores the old release-side shell action.
+  - Mouse / pointer semantics stay unchanged.
 
 ## Best Known Numbers
 
@@ -304,6 +308,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 4. Keep Pixel shell work on the right substrate.
    - Current status:
      - validated on device
+     - shell touch semantics tightened so tap activates on touch-down
    - Do not spend more time trying to make nested `shadow-compositor` the shipping Pixel shell path unless a narrow diagnostic proves it is suddenly tractable.
    - Prefer:
      - shell/home logic on the outer guest compositor path

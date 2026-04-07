@@ -1,6 +1,5 @@
-use shadow_ui_core::{
-    color::Color,
-    scene::{Scene, APP_VIEWPORT_HEIGHT, APP_VIEWPORT_WIDTH, APP_VIEWPORT_X, APP_VIEWPORT_Y},
+use shadow_ui_core::scene::{
+    Scene, APP_VIEWPORT_HEIGHT, APP_VIEWPORT_WIDTH, APP_VIEWPORT_X, APP_VIEWPORT_Y,
 };
 use shadow_ui_software::SoftwareRenderer;
 
@@ -135,6 +134,7 @@ fn blend_bgra_pixel(target: &mut [u8], source: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shadow_ui_core::color::Color;
     use shadow_ui_core::scene::Scene;
 
     #[test]

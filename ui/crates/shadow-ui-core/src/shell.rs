@@ -53,6 +53,7 @@ pub enum ShellEvent {
     PointerMoved { x: f32, y: f32 },
     PointerLeft,
     PointerButton(PointerButtonState),
+    TouchTap { x: f32, y: f32 },
     Navigate(NavAction),
 }
 
@@ -156,6 +157,7 @@ impl ShellModel {
                 None
             }
             ShellEvent::PointerButton(state) => self.pointer_button(state),
+            ShellEvent::TouchTap { x, y } => self.touch_tap(Point { x, y }),
             ShellEvent::Navigate(action) => self.navigate(action),
         }
     }
@@ -308,6 +310,19 @@ impl ShellModel {
                 }
             }
         }
+    }
+
+    fn touch_tap(&mut self, point: Point) -> Option<ShellAction> {
+        self.cursor = None;
+        self.hovered_target = None;
+        self.pressed_target = None;
+
+        let target = self.hit_test(point);
+        if let Some(Target::App(index)) = target {
+            self.focused_tile = index;
+        }
+
+        target.and_then(|target| self.activate_target(target))
     }
 
     fn navigate(&mut self, action: NavAction) -> Option<ShellAction> {
@@ -851,5 +866,19 @@ mod tests {
             shell.handle(ShellEvent::Navigate(NavAction::Home)),
             Some(ShellAction::Home)
         );
+    }
+
+    #[test]
+    fn touch_tap_launches_immediately() {
+        let mut shell = ShellModel::new();
+
+        assert_eq!(
+            shell.handle(ShellEvent::TouchTap { x: 226.0, y: 617.0 }),
+            Some(ShellAction::Launch {
+                app_id: COUNTER_APP_ID
+            })
+        );
+        assert_eq!(shell.focused_tile, 0);
+        assert_eq!(shell.pressed_target, None);
     }
 }
