@@ -86,8 +86,21 @@ copy_remote_binary() {
 }
 
 pixel_prepare_dirs
-build_one shadow-session-device shadow-session
-"$SCRIPT_DIR/pixel_build_guest_client.sh"
+: "${PIXEL_BUILD_INCLUDE_SESSION:=1}"
+: "${PIXEL_BUILD_INCLUDE_GUEST_CLIENT:=1}"
+: "${PIXEL_BUILD_INCLUDE_GUEST_COMPOSITOR:=1}"
+
+if [[ "$PIXEL_BUILD_INCLUDE_SESSION" == 1 ]]; then
+  build_one shadow-session-device shadow-session
+fi
+
+if [[ "$PIXEL_BUILD_INCLUDE_GUEST_CLIENT" == 1 ]]; then
+  "$SCRIPT_DIR/pixel_build_guest_client.sh"
+fi
+
+if [[ "$PIXEL_BUILD_INCLUDE_GUEST_COMPOSITOR" != 1 ]]; then
+  exit 0
+fi
 
 if [[ "$(uname -s)" == "Linux" ]]; then
   build_one shadow-compositor-guest-device shadow-compositor-guest
