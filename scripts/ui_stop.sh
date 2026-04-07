@@ -6,6 +6,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 target="${1:-desktop}"
 
 case "$target" in
+  target=*)
+    target="${target#target=}"
+    ;;
+esac
+
+case "$target" in
   desktop|vm|pixel)
     ;;
   *)

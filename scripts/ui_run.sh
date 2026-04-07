@@ -8,6 +8,24 @@ target="${1:-desktop}"
 app="${2:-timeline}"
 hold="${3:-1}"
 
+strip_named_prefixes() {
+  case "$target" in
+    target=*)
+      target="${target#target=}"
+      ;;
+  esac
+  case "$app" in
+    app=*)
+      app="${app#app=}"
+      ;;
+  esac
+  case "$hold" in
+    hold=*)
+      hold="${hold#hold=}"
+      ;;
+  esac
+}
+
 resolve_target() {
   case "$target" in
     desktop|vm|pixel)
@@ -19,6 +37,7 @@ resolve_target() {
   esac
 }
 
+strip_named_prefixes
 resolve_target
 
 run_desktop() {
