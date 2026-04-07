@@ -180,9 +180,12 @@ runtime-deno-core-smoke-aarch64-linux-gnu:
 runtime-deno-runtime-smoke-aarch64-linux-gnu:
 	@nix build --accept-flake-config .#deno-runtime-smoke-aarch64-linux-gnu
 
-# Run the Shadow desktop UI host
-ui-run:
-	@nix develop .#ui -c cargo run --manifest-path ui/Cargo.toml -p shadow-ui-desktop
+# Run the Shadow UI on the selected target.
+# target=desktop runs the local desktop host
+# target=vm runs the local Linux VM shell
+# target=pixel currently runs the rooted Pixel timeline app, not the full shell/home stack yet
+ui-run target="desktop" app="timeline" hold="1":
+	@scripts/ui_run.sh "{{target}}" "{{app}}" "{{hold}}"
 
 # Run the nested compositor and demo app under a headless Linux host
 ui-smoke:
@@ -191,6 +194,12 @@ ui-smoke:
 # Run the local Linux UI VM in a native macOS window
 ui-vm-run:
 	@scripts/ui_vm_run.sh
+
+# Stop the selected UI target.
+# target=vm stops the VM
+# target=pixel restores Android after a hold-mode takeover
+ui-stop target="desktop":
+	@scripts/ui_stop.sh "{{target}}"
 
 # Stop the local Linux UI VM
 ui-vm-stop:
