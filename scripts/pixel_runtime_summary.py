@@ -27,6 +27,11 @@ OPENLOG_IOCTL_RE = re.compile(r"\[shadow-openlog\] ioctl kind=(\S+)\s")
 RUNTIME_LOG_RE = re.compile(r"\[shadow-runtime-demo ts_ms=(\d+)\s+\+\s*\d+ms\]")
 STATIC_READY_RE = re.compile(r"\[shadow-blitz-demo\] static-document-ready")
 TIMESTAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)")
+DISPLAY_ENV_WGPU_RE = re.compile(r"wgpu_backend_env=Some\(\"([^\"]+)\"\)")
+DISPLAY_ENV_PRELOAD_RE = re.compile(r"shadow_linux_ld_preload=Some\(\"([^\"]+)\"\)")
+NO_COMPAT_DEVICE_RE = re.compile(r"No compatible device found: (.+)$")
+EGL_DRI2_FAIL_RE = re.compile(r"libEGL warning: egl: failed to create dri2 screen")
+BUFFER_TYPE_RE = re.compile(r"\[shadow-guest-compositor\] buffer-observed type=(\S+) size=")
 
 
 def strip_ansi(value: str) -> str:
@@ -97,6 +102,11 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
     boot_checksum = None
     fallback_start_wall_ms = None
     inferred_mode = None
+    env_wgpu_backend = None
+    env_preload = None
+    probe_error = None
+    egl_dri2_failed = False
+    buffer_type = None
     openlog = {
         "dri_open_count": 0,
         "kgsl_open_count": 0,
@@ -119,6 +129,14 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
         runtime_log_match = RUNTIME_LOG_RE.search(line)
         if runtime_log_match and fallback_start_wall_ms is None:
             fallback_start_wall_ms = int(runtime_log_match.group(1))
+
+        display_env_backend_match = DISPLAY_ENV_WGPU_RE.search(line)
+        if display_env_backend_match and env_wgpu_backend is None:
+            env_wgpu_backend = display_env_backend_match.group(1)
+
+        display_env_preload_match = DISPLAY_ENV_PRELOAD_RE.search(line)
+        if display_env_preload_match and env_preload is None:
+            env_preload = display_env_preload_match.group(1)
 
         match = CLIENT_SUMMARY_RE.search(line)
         if match:
@@ -145,6 +163,15 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
 
         if STATIC_READY_RE.search(line):
             inferred_mode = "static"
+            continue
+
+        no_compat_match = NO_COMPAT_DEVICE_RE.search(line)
+        if no_compat_match and probe_error is None:
+            probe_error = no_compat_match.group(1)
+            continue
+
+        if EGL_DRI2_FAIL_RE.search(line):
+            egl_dri2_failed = True
             continue
 
         openlog_path_match = OPENLOG_PATH_RE.search(line)
@@ -180,6 +207,10 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
                 }
             )
 
+        buffer_type_match = BUFFER_TYPE_RE.search(line)
+        if buffer_type_match and buffer_type is None:
+            buffer_type = buffer_type_match.group(1)
+
     effective_renderer = (
         renderer
         or (client_summary or {}).get("renderer")
@@ -206,6 +237,22 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
             "probe_error": None,
         }
 
+    summary_source = (client_summary or {}).get("source")
+    software_backed = (client_summary or {}).get("software_backed")
+    if software_backed is None:
+        if (
+            effective_renderer == "gpu_softbuffer"
+            and openlog["dri_open_count"] > 0
+            and openlog["kgsl_open_count"] == 0
+            and egl_dri2_failed
+            and buffer_type == "shm"
+        ):
+            software_backed = True
+            summary_source = "openlog-egl-shm"
+
+    if probe_error is None:
+        probe_error = (client_summary or {}).get("probe_error")
+
     first_visible_ms, first_visible_checksum = compute_first_visible_ms(
         client_start, captures, boot_checksum
     )
@@ -217,17 +264,17 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
         "run_dir": str(session_output.parent),
         "renderer": effective_renderer,
         "mode": (client_summary or client_start or {}).get("mode") or inferred_mode,
-        "wgpu_backend": (client_summary or {}).get("backend"),
+        "wgpu_backend": (client_summary or {}).get("backend") or env_wgpu_backend,
         "adapter_name": (client_summary or {}).get("adapter_name"),
         "driver": (client_summary or {}).get("driver"),
         "driver_info": (client_summary or {}).get("driver_info"),
         "device_type": (client_summary or {}).get("device_type"),
-        "software_backed": (client_summary or {}).get("software_backed"),
+        "software_backed": software_backed,
         "hardware_backed": None
-        if (client_summary or {}).get("software_backed") is None
-        else not bool((client_summary or {}).get("software_backed")),
-        "summary_source": (client_summary or {}).get("source"),
-        "probe_error": (client_summary or {}).get("probe_error"),
+        if software_backed is None
+        else not bool(software_backed),
+        "summary_source": summary_source,
+        "probe_error": probe_error,
         "first_visible_frame_ms": first_visible_ms,
         "first_visible_frame_checksum": first_visible_checksum,
         "click_to_updated_frame_ms": click_latency_ms,
@@ -244,6 +291,9 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
         "openlog_kgsl_open_count": openlog["kgsl_open_count"],
         "openlog_dri_ioctl_count": openlog["dri_ioctl_count"],
         "openlog_kgsl_ioctl_count": openlog["kgsl_ioctl_count"],
+        "env_preload": env_preload,
+        "egl_dri2_failed": egl_dri2_failed,
+        "observed_buffer_type": buffer_type,
     }
     return summary
 

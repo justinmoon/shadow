@@ -130,6 +130,9 @@ fill_linux_bundle_runtime_deps "$bundle_dir"
 cat >"$launcher_artifact" <<EOF
 #!/system/bin/sh
 DIR=\$(cd "\$(dirname "\$0")" && pwd)
+GNU_LD_PRELOAD="\${SHADOW_LINUX_LD_PRELOAD:-}"
+
+unset LD_PRELOAD
 
 export HOME="\${HOME:-\$DIR/home}"
 export XDG_CACHE_HOME="\${XDG_CACHE_HOME:-\$HOME/.cache}"
@@ -142,6 +145,10 @@ export WGPU_BACKEND="\${WGPU_BACKEND:-vulkan}"
 export VK_ICD_FILENAMES="\$DIR/share/vulkan/icd.d/freedreno_icd.aarch64.json"
 
 mkdir -p "\$HOME" "\$XDG_CACHE_HOME" "\$XDG_CONFIG_HOME" "\$MESA_SHADER_CACHE_DIR"
+
+if [ -n "\$GNU_LD_PRELOAD" ]; then
+  exec env LD_PRELOAD="\$GNU_LD_PRELOAD" "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$DIR/shadow-blitz-demo" "\$@"
+fi
 
 exec "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$DIR/shadow-blitz-demo" "\$@"
 EOF

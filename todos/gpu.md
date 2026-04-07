@@ -263,18 +263,41 @@ Status:
 
 Status:
 
-- In progress.
+- In progress, but the real backend picture is much sharper now.
 - `scripts/pixel_blitz_demo_static_drm_gpu_probe.sh` now runs the static Pixel GPU probe profiles and writes a per-batch `matrix-summary.json`.
 - `just pixel-blitz-demo-static-drm-gpu-probe` runs a selected profile.
 - `just pixel-blitz-demo-static-drm-gpu-matrix` runs the default profile set.
 - The default probe profiles are now intended to stay non-invasive so they measure the real static client path. The `_early_probe` variants keep the old adapter-summary experiment available, but no longer poison the default matrix.
 - The matrix payload now distinguishes `success` from `classified` and `measured` so a successful static run is not misread as a completed backend classification.
 - The probe wrapper no longer hangs forever after a good run. `pixel_guest_ui_drm.sh` now bounds the post-success session wait and forces cleanup / host-side Android restore if the rooted shell never returns on its own.
-- Current rooted-Pixel static `gl` probe result:
+- The runtime bundle transport is now fixed too:
+  - `pixel_push.sh` no longer recursively `adb push`es the giant GNU bundle tree
+  - it stages one tar archive, extracts it on-device under root, and then normalizes permissions
+  - this removed the false-negative bundle/push failures that were masking the real GPU behavior
+- The rooted-Pixel static `gl` probe is now honestly classified:
   - run success: yes
-  - backend classified: no
-  - first visible frame: about `10.2s`
-  - implication: the static `gpu_softbuffer` lane is still alive, but it is nowhere near usable and still needs real backend classification plus a path away from the giant first-frame stall.
+  - backend: `gl`
+  - `/dev/kgsl-3d0`: not opened
+  - `/dev/dri/renderD128` and `/dev/dri/card0`: opened
+  - `libEGL`: `failed to create dri2 screen`
+  - compositor buffer type: `shm`
+  - first visible frame: about `11.6s`
+  - conclusion: this path is software-backed fallback, not usable hardware acceleration
+- The rooted-Pixel static `vulkan_drm` probe is now honestly classified:
+  - run success: no
+  - backend: `vulkan`
+  - failure: `NoCompatibleDevice`
+  - no visible frame
+- The rooted-Pixel static `vulkan_kgsl_first` probe is now honestly classified:
+  - run success: no
+  - backend: `vulkan`
+  - `/dev/kgsl-3d0`: opened
+  - failure: `NoCompatibleDevice`
+  - no visible frame
+- The KGSL-first probe needed one launcher fix:
+  - raw `LD_PRELOAD` hit `/system/bin/sh` first and failed because the preload library is glibc-linked
+  - the launcher now accepts `SHADOW_LINUX_LD_PRELOAD` and applies it only inside the GNU payload
+  - this removed the bionic/glibc preload collision and let the KGSL probe reach the actual adapter-discovery seam
 
 ### Phase 2. Exhaust the rooted Pixel GPU paths in order
 
@@ -331,7 +354,11 @@ Status:
 
 ### Immediate Next Steps
 
-- Add the compact Pixel GPU summary output.
-- Re-run the minimal static GPU client on the rooted Pixel and classify the actual adapter/backend.
-- Attempt the most targeted KGSL-first Vulkan experiment we can support.
-- If that still produces no real hardware adapter, do the Android-native / bionic GPU proof next.
+- Keep the compact Pixel GPU summary output and use it as the default measurement lane.
+- Do not spend more time pretending the current GNU `gl` path might become fast; it is now clearly DRI-only software fallback on this phone.
+- Treat the current rooted GNU `vulkan` result as: KGSL is reachable, but still not sufficient for `wgpu` / Vello adapter creation.
+- Next real seam:
+  - small Android-native / bionic Vulkan proof on the Pixel
+  - prove whether the vendor Adreno stack can produce a real hardware adapter there
+- If that works, evaluate a thin Android-native launcher beneath the current app-runtime model.
+- If that still fails, stop burning time on this Pixel GPU path and move to the replacement-device criteria above.

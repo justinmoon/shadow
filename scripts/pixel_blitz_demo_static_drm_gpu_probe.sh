@@ -42,16 +42,20 @@ case_guest_env() {
   case "$base_profile" in
     gl)
       printf '%s\n' \
-        'WGPU_BACKEND=gl'
+        'WGPU_BACKEND=gl' \
+        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
       ;;
     vulkan_drm)
       printf '%s\n' \
-        'WGPU_BACKEND=vulkan'
+        'WGPU_BACKEND=vulkan' \
+        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
       ;;
     vulkan_kgsl_first)
       printf '%s\n' \
         'WGPU_BACKEND=vulkan' \
-        "LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so" \
+        'MESA_LOADER_DRIVER_OVERRIDE=kgsl' \
+        'TU_DEBUG=noconform' \
+        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so" \
         'SHADOW_OPENLOG_DENY_DRI=1'
       ;;
     *)
