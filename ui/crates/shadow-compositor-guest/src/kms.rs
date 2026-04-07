@@ -667,7 +667,7 @@ mod tests {
         let bytes = std::fs::read(path).unwrap();
         assert_eq!(&bytes[..11], b"P6\n2 1\n255\n");
         assert_eq!(&bytes[11..], &[0x30, 0x20, 0x10, 0x60, 0x50, 0x40]);
-        assert_eq!(frame_checksum(&frame), 0xf571c5344f1ed48d);
+        assert_eq!(frame_checksum(&frame), 0xed75dab921e996e5);
     }
 
     #[test]

@@ -299,19 +299,20 @@
             rustfmt
             zig
           ];
-          runtimeLibs = pkgs.lib.optionals pkgs.stdenv.isLinux (with pkgs; [
-            libdrm
-            libGL
-            libxkbcommon
-            mesa
-            vulkan-loader
-            wayland
-            wayland-protocols
-            libx11
-            libxcursor
-            libxi
-            libxrandr
-          ]);
+          runtimeLibs =
+            (with pkgs; [ libxkbcommon ])
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux (with pkgs; [
+              libdrm
+              libGL
+              mesa
+              vulkan-loader
+              wayland
+              wayland-protocols
+              libx11
+              libxcursor
+              libxi
+              libxrandr
+            ]);
           shellPkgs = toolPkgs ++ runtimeLibs;
           pkgConfigPath = pkgs.lib.makeSearchPath "lib/pkgconfig" runtimeLibs;
         in pkgs.mkShell {
@@ -321,8 +322,8 @@
             export PATH="${pkgs.lib.makeBinPath toolPkgs}:$PATH"
             export IN_NIX_SHELL=1
             export SHADOW_UI_SHELL=1
+            export PKG_CONFIG_PATH="${pkgConfigPath}:''${PKG_CONFIG_PATH:-}"
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
-              export PKG_CONFIG_PATH="${pkgConfigPath}:''${PKG_CONFIG_PATH:-}"
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath runtimeLibs}:''${LD_LIBRARY_PATH:-}"
             ''}
           '';
