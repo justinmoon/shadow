@@ -34,10 +34,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Proven on-device on `0B191JEC203253`: `just pixel-camera-rs-run list` reaches `android.hardware.camera.provider.ICameraProvider/internal/0`, enumerates `device@1.1/internal/0` and `device@1.1/internal/1`, reads rear-camera resource cost `33`, and reads `21312` bytes of static metadata.
   - Saved structured artifacts under `build/pixel/camera-rs/20260407T210041Z/`.
 
-- [~] M2: Minimal open/configure path.
+- [x] M2: Minimal open/configure path.
   - Added provider/device callback stubs plus `notifyDeviceStateChange`, `open`, session `close`, and session `constructDefaultRequestSettings`.
   - Proven on-device on `0B191JEC203253`: provider notify works, rear camera open works, session-level `STILL_CAPTURE` default settings return `2528` bytes, and session close works.
-  - Remaining work: configure one JPEG output stream; no preview stream.
+  - Proven on-device on `0B191JEC203253`: `session.configureStreams()` accepts one JPEG BLOB output stream (`640x480`, `JFIF`, `8 MiB` buffer size) and returns `maxBuffers=8`, `overrideFormat=BLOB`, `overrideDataSpace=JFIF`, and producer usage `131075`.
 
 - [ ] M3: Buffer plus still-capture proof outside takeover.
   - Allocate/import buffers, submit one request, receive result callback, write one JPEG on device.
@@ -84,4 +84,6 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Binder note: the Android NDK stub contains the `android-binder` crate’s required symbols only at API level 31+, while newer service-manager/process helpers still need runtime lookup from the device’s `libbinder_ndk.so`.
 - Live Pixel note: `ICameraDevice.constructDefaultRequestSettings` is not implemented on the `device@1.1/internal/*` handles returned by this Pixel 4a. That method was added in later frozen camera-device AIDL versions, so the working path here is `device.open()` followed by session-level `constructDefaultRequestSettings`.
 - Current proof artifacts for the open/session-default seam live under `build/pixel/camera-rs/20260407T211917Z/`.
-- Next seam after M2: hand-write the minimum `StreamConfiguration` / `HalStream` / buffer-handle parcelables needed to configure one JPEG BLOB stream and see whether capture can still avoid FMQ for the first request.
+- Current proof artifacts for the configure seam live under `build/pixel/camera-rs/20260407T212712Z/`.
+- The returned JPEG `HalStream` for the first stream reports `producerUsage=131075`, `consumerUsage=0`, `maxBuffers=8`, `overrideFormat=BLOB`, and `overrideDataSpace=JFIF`. That is enough to start buffer allocation without touching vendor-private metadata.
+- Next seam after M2: add `NativeHandle` / `StreamBuffer` / `CaptureRequest` plus one gralloc-backed buffer, submit one still request with inline metadata, and parse `processCaptureResult` just enough to honor the release fence and read the JPEG blob footer.

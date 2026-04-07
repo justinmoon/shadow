@@ -109,8 +109,69 @@ pub mod common {
     binder::impl_deserialize_for_parcelable!(CameraResourceCost);
 }
 
+pub mod graphics {
+    use super::*;
+
+    declare_binder_enum! {
+        #[repr(C, align(4))]
+        PixelFormat : [i32; 2] {
+            UNSPECIFIED = 0,
+            BLOB = 0x21,
+        }
+    }
+
+    declare_binder_enum! {
+        #[repr(C, align(8))]
+        BufferUsage : [i64; 4] {
+            CPU_READ_NEVER = 0,
+            CPU_READ_RARELY = 2,
+            CPU_READ_OFTEN = 3,
+            CAMERA_OUTPUT = 131072,
+        }
+    }
+
+    declare_binder_enum! {
+        #[repr(C, align(4))]
+        Dataspace : [i32; 2] {
+            UNKNOWN = 0x0,
+            JFIF = 146931712,
+        }
+    }
+}
+
+pub mod metadata {
+    use super::*;
+
+    declare_binder_enum! {
+        #[repr(C, align(4))]
+        SensorPixelMode : [i32; 2] {
+            ANDROID_SENSOR_PIXEL_MODE_DEFAULT = 0,
+            ANDROID_SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION = 1,
+        }
+    }
+
+    declare_binder_enum! {
+        #[repr(C, align(8))]
+        RequestAvailableDynamicRangeProfilesMap : [i64; 1] {
+            ANDROID_REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_STANDARD = 0x1,
+        }
+    }
+
+    declare_binder_enum! {
+        #[repr(C, align(8))]
+        ScalerAvailableStreamUseCases : [i64; 2] {
+            ANDROID_SCALER_AVAILABLE_STREAM_USE_CASES_DEFAULT = 0x0,
+            ANDROID_SCALER_AVAILABLE_STREAM_USE_CASES_STILL_CAPTURE = 0x2,
+        }
+    }
+}
+
 pub mod device {
     use super::common::CameraResourceCost;
+    use super::graphics::{BufferUsage, Dataspace, PixelFormat};
+    use super::metadata::{
+        RequestAvailableDynamicRangeProfilesMap, ScalerAvailableStreamUseCases, SensorPixelMode,
+    };
     use super::*;
 
     declare_binder_enum! {
@@ -157,6 +218,296 @@ pub mod device {
 
     binder::impl_serialize_for_parcelable!(CameraMetadata);
     binder::impl_deserialize_for_parcelable!(CameraMetadata);
+
+    declare_binder_enum! {
+        #[repr(C, align(4))]
+        StreamType : [i32; 2] {
+            OUTPUT = 0,
+            INPUT = 1,
+        }
+    }
+
+    declare_binder_enum! {
+        #[repr(C, align(4))]
+        StreamRotation : [i32; 4] {
+            ROTATION_0 = 0,
+            ROTATION_90 = 1,
+            ROTATION_180 = 2,
+            ROTATION_270 = 3,
+        }
+    }
+
+    declare_binder_enum! {
+        #[repr(C, align(4))]
+        StreamConfigurationMode : [i32; 10] {
+            NORMAL_MODE = 0,
+            CONSTRAINED_HIGH_SPEED_MODE = 1,
+            VENDOR_MODE_0 = 32768,
+            VENDOR_MODE_1 = 32769,
+            VENDOR_MODE_2 = 32770,
+            VENDOR_MODE_3 = 32771,
+            VENDOR_MODE_4 = 32772,
+            VENDOR_MODE_5 = 32773,
+            VENDOR_MODE_6 = 32774,
+            VENDOR_MODE_7 = 32775,
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct Stream {
+        pub id: i32,
+        pub stream_type: StreamType,
+        pub width: i32,
+        pub height: i32,
+        pub format: PixelFormat,
+        pub usage: BufferUsage,
+        pub data_space: Dataspace,
+        pub rotation: StreamRotation,
+        pub physical_camera_id: String,
+        pub buffer_size: i32,
+        pub group_id: i32,
+        pub sensor_pixel_modes_used: Vec<SensorPixelMode>,
+        pub dynamic_range_profile: RequestAvailableDynamicRangeProfilesMap,
+        pub use_case: ScalerAvailableStreamUseCases,
+    }
+
+    impl Default for Stream {
+        fn default() -> Self {
+            Self {
+                id: 0,
+                stream_type: StreamType::OUTPUT,
+                width: 0,
+                height: 0,
+                format: PixelFormat::UNSPECIFIED,
+                usage: BufferUsage::CPU_READ_NEVER,
+                data_space: Dataspace::UNKNOWN,
+                rotation: StreamRotation::ROTATION_0,
+                physical_camera_id: String::new(),
+                buffer_size: 0,
+                group_id: 0,
+                sensor_pixel_modes_used: Vec::new(),
+                dynamic_range_profile:
+                    RequestAvailableDynamicRangeProfilesMap::
+                        ANDROID_REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_STANDARD,
+                use_case:
+                    ScalerAvailableStreamUseCases::
+                        ANDROID_SCALER_AVAILABLE_STREAM_USE_CASES_DEFAULT,
+            }
+        }
+    }
+
+    impl binder::Parcelable for Stream {
+        fn write_to_parcel(
+            &self,
+            parcel: &mut BorrowedParcel<'_>,
+        ) -> std::result::Result<(), StatusCode> {
+            parcel.sized_write(|subparcel| {
+                subparcel.write(&self.id)?;
+                subparcel.write(&self.stream_type)?;
+                subparcel.write(&self.width)?;
+                subparcel.write(&self.height)?;
+                subparcel.write(&self.format)?;
+                subparcel.write(&self.usage)?;
+                subparcel.write(&self.data_space)?;
+                subparcel.write(&self.rotation)?;
+                subparcel.write(&self.physical_camera_id)?;
+                subparcel.write(&self.buffer_size)?;
+                subparcel.write(&self.group_id)?;
+                subparcel.write(&self.sensor_pixel_modes_used)?;
+                subparcel.write(&self.dynamic_range_profile)?;
+                subparcel.write(&self.use_case)?;
+                Ok(())
+            })
+        }
+
+        fn read_from_parcel(
+            &mut self,
+            parcel: &BorrowedParcel<'_>,
+        ) -> std::result::Result<(), StatusCode> {
+            parcel.sized_read(|subparcel| {
+                if subparcel.has_more_data() {
+                    self.id = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.stream_type = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.width = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.height = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.format = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.usage = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.data_space = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.rotation = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.physical_camera_id = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.buffer_size = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.group_id = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.sensor_pixel_modes_used = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.dynamic_range_profile = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.use_case = subparcel.read()?;
+                }
+                Ok(())
+            })
+        }
+    }
+
+    binder::impl_serialize_for_parcelable!(Stream);
+    binder::impl_deserialize_for_parcelable!(Stream);
+
+    #[derive(Debug, Clone, Default)]
+    pub struct StreamConfiguration {
+        pub streams: Vec<Stream>,
+        pub operation_mode: StreamConfigurationMode,
+        pub session_params: CameraMetadata,
+        pub stream_config_counter: i32,
+        pub multi_resolution_input_image: bool,
+    }
+
+    impl binder::Parcelable for StreamConfiguration {
+        fn write_to_parcel(
+            &self,
+            parcel: &mut BorrowedParcel<'_>,
+        ) -> std::result::Result<(), StatusCode> {
+            parcel.sized_write(|subparcel| {
+                subparcel.write(&self.streams)?;
+                subparcel.write(&self.operation_mode)?;
+                subparcel.write(&self.session_params)?;
+                subparcel.write(&self.stream_config_counter)?;
+                subparcel.write(&self.multi_resolution_input_image)?;
+                Ok(())
+            })
+        }
+
+        fn read_from_parcel(
+            &mut self,
+            parcel: &BorrowedParcel<'_>,
+        ) -> std::result::Result<(), StatusCode> {
+            parcel.sized_read(|subparcel| {
+                if subparcel.has_more_data() {
+                    self.streams = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.operation_mode = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.session_params = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.stream_config_counter = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.multi_resolution_input_image = subparcel.read()?;
+                }
+                Ok(())
+            })
+        }
+    }
+
+    binder::impl_serialize_for_parcelable!(StreamConfiguration);
+    binder::impl_deserialize_for_parcelable!(StreamConfiguration);
+
+    #[derive(Debug, Clone)]
+    pub struct HalStream {
+        pub id: i32,
+        pub override_format: PixelFormat,
+        pub producer_usage: BufferUsage,
+        pub consumer_usage: BufferUsage,
+        pub max_buffers: i32,
+        pub override_data_space: Dataspace,
+        pub physical_camera_id: String,
+        pub support_offline: bool,
+    }
+
+    impl Default for HalStream {
+        fn default() -> Self {
+            Self {
+                id: 0,
+                override_format: PixelFormat::UNSPECIFIED,
+                producer_usage: BufferUsage::CPU_READ_NEVER,
+                consumer_usage: BufferUsage::CPU_READ_NEVER,
+                max_buffers: 0,
+                override_data_space: Dataspace::UNKNOWN,
+                physical_camera_id: String::new(),
+                support_offline: false,
+            }
+        }
+    }
+
+    impl binder::Parcelable for HalStream {
+        fn write_to_parcel(
+            &self,
+            parcel: &mut BorrowedParcel<'_>,
+        ) -> std::result::Result<(), StatusCode> {
+            parcel.sized_write(|subparcel| {
+                subparcel.write(&self.id)?;
+                subparcel.write(&self.override_format)?;
+                subparcel.write(&self.producer_usage)?;
+                subparcel.write(&self.consumer_usage)?;
+                subparcel.write(&self.max_buffers)?;
+                subparcel.write(&self.override_data_space)?;
+                subparcel.write(&self.physical_camera_id)?;
+                subparcel.write(&self.support_offline)?;
+                Ok(())
+            })
+        }
+
+        fn read_from_parcel(
+            &mut self,
+            parcel: &BorrowedParcel<'_>,
+        ) -> std::result::Result<(), StatusCode> {
+            parcel.sized_read(|subparcel| {
+                if subparcel.has_more_data() {
+                    self.id = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.override_format = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.producer_usage = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.consumer_usage = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.max_buffers = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.override_data_space = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.physical_camera_id = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.support_offline = subparcel.read()?;
+                }
+                Ok(())
+            })
+        }
+    }
+
+    binder::impl_serialize_for_parcelable!(HalStream);
+    binder::impl_deserialize_for_parcelable!(HalStream);
 
     declare_binder_interface! {
         ICameraDeviceCallback["android.hardware.camera.device.ICameraDeviceCallback"] {
@@ -269,6 +620,10 @@ pub mod device {
 
     pub trait ICameraDeviceSession: binder::Interface + Send {
         fn close(&self) -> binder::Result<()>;
+        fn configure_streams(
+            &self,
+            requested_configuration: &StreamConfiguration,
+        ) -> binder::Result<Vec<HalStream>>;
         fn construct_default_request_settings(
             &self,
             template: RequestTemplate,
@@ -279,6 +634,7 @@ pub mod device {
         use super::*;
 
         pub const CLOSE: TransactionCode = FIRST_CALL_TRANSACTION + 0;
+        pub const CONFIGURE_STREAMS: TransactionCode = FIRST_CALL_TRANSACTION + 1;
         pub const CONSTRUCT_DEFAULT_REQUEST_SETTINGS: TransactionCode =
             FIRST_CALL_TRANSACTION + 2;
     }
@@ -290,6 +646,20 @@ pub mod device {
                 .binder
                 .submit_transact(session_transactions::CLOSE, data, 0);
             super::read_aidl_status(reply)
+        }
+
+        fn configure_streams(
+            &self,
+            requested_configuration: &StreamConfiguration,
+        ) -> binder::Result<Vec<HalStream>> {
+            let mut data = self.binder.prepare_transact()?;
+            data.write(requested_configuration)?;
+            let reply = self.binder.submit_transact(
+                session_transactions::CONFIGURE_STREAMS,
+                data,
+                0,
+            );
+            super::read_aidl_reply(reply)
         }
 
         fn construct_default_request_settings(
@@ -312,6 +682,13 @@ pub mod device {
             self.0.close()
         }
 
+        fn configure_streams(
+            &self,
+            requested_configuration: &StreamConfiguration,
+        ) -> binder::Result<Vec<HalStream>> {
+            self.0.configure_streams(requested_configuration)
+        }
+
         fn construct_default_request_settings(
             &self,
             template: RequestTemplate,
@@ -328,6 +705,13 @@ pub mod device {
     ) -> std::result::Result<(), StatusCode> {
         match code {
             session_transactions::CLOSE => super::write_aidl_status(reply, service.close()),
+            session_transactions::CONFIGURE_STREAMS => {
+                let requested_configuration: StreamConfiguration = data.read()?;
+                super::write_aidl_value(
+                    reply,
+                    service.configure_streams(&requested_configuration),
+                )
+            }
             session_transactions::CONSTRUCT_DEFAULT_REQUEST_SETTINGS => {
                 let template: RequestTemplate = data.read()?;
                 super::write_aidl_value(
@@ -349,6 +733,10 @@ pub mod device {
     pub trait ICameraDevice: binder::Interface + Send {
         fn get_camera_characteristics(&self) -> binder::Result<CameraMetadata>;
         fn get_resource_cost(&self) -> binder::Result<CameraResourceCost>;
+        fn is_stream_combination_supported(
+            &self,
+            streams: &StreamConfiguration,
+        ) -> binder::Result<bool>;
         fn open(
             &self,
             callback: &Strong<dyn ICameraDeviceCallback>,
@@ -364,6 +752,7 @@ pub mod device {
 
         pub const GET_CAMERA_CHARACTERISTICS: TransactionCode = FIRST_CALL_TRANSACTION + 0;
         pub const GET_RESOURCE_COST: TransactionCode = FIRST_CALL_TRANSACTION + 2;
+        pub const IS_STREAM_COMBINATION_SUPPORTED: TransactionCode = FIRST_CALL_TRANSACTION + 3;
         pub const OPEN: TransactionCode = FIRST_CALL_TRANSACTION + 4;
         pub const CONSTRUCT_DEFAULT_REQUEST_SETTINGS: TransactionCode =
             FIRST_CALL_TRANSACTION + 9;
@@ -383,6 +772,20 @@ pub mod device {
             let reply = self
                 .binder
                 .submit_transact(transactions::GET_RESOURCE_COST, data, 0);
+            super::read_aidl_reply(reply)
+        }
+
+        fn is_stream_combination_supported(
+            &self,
+            streams: &StreamConfiguration,
+        ) -> binder::Result<bool> {
+            let mut data = self.binder.prepare_transact()?;
+            data.write(streams)?;
+            let reply = self.binder.submit_transact(
+                transactions::IS_STREAM_COMBINATION_SUPPORTED,
+                data,
+                0,
+            );
             super::read_aidl_reply(reply)
         }
 
@@ -420,6 +823,13 @@ pub mod device {
             self.0.get_resource_cost()
         }
 
+        fn is_stream_combination_supported(
+            &self,
+            streams: &StreamConfiguration,
+        ) -> binder::Result<bool> {
+            self.0.is_stream_combination_supported(streams)
+        }
+
         fn open(
             &self,
             callback: &Strong<dyn ICameraDeviceCallback>,
@@ -447,6 +857,10 @@ pub mod device {
             }
             transactions::GET_RESOURCE_COST => {
                 super::write_aidl_value(reply, service.get_resource_cost())
+            }
+            transactions::IS_STREAM_COMBINATION_SUPPORTED => {
+                let streams: StreamConfiguration = data.read()?;
+                super::write_aidl_value(reply, service.is_stream_combination_supported(&streams))
             }
             transactions::OPEN => {
                 let callback: Strong<dyn ICameraDeviceCallback> = data.read()?;
