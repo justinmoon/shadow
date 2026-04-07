@@ -14,6 +14,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Keep the current Solid + Deno + Blitz app model.
 - Keep the rooted Pixel as the primary truth environment.
 - Prefer the narrowest path that is measurably fast on device.
+- Treat shell/home unification as a separate project from GPU closure.
 - Separate two questions:
   - Is the client using real hardware-backed GPU rendering?
   - Is the compositor path still forcing a slower SHM handoff?
@@ -76,10 +77,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ### Not Done
 
-- [~] First visible app frame is still too slow.
-  - The default timeline path with startup sync is still slower than we want.
-  - Warmed / isolated click-lane runs now reached `first_visible_frame_ms=408`.
-  - Initial first paint matters less than incremental update speed for this feature.
+- [~] First visible app frame is still slower than ideal.
+  - This matters less than incremental latency for the current product bar.
+  - Warmed / isolated click-lane runs already reached `first_visible_frame_ms=408`.
+  - Startup polish is no longer the main blocking seam.
 - [~] End-to-end GPU presentation is not proved.
   - The rooted Pixel client is hardware-backed.
   - The guest compositor still reports `observed_buffer_type=shm`.
@@ -94,6 +95,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Existing direct-`gpu` Pixel runs fail at `window.resume() -> wgpu_context.create_surface() -> NoCompatibleDevice`.
 - [ ] The guest compositor does not yet import/present dmabuf-backed client buffers on the rooted Pixel path.
 - [ ] There is not yet a one-command Pixel GPU timeline smoke that is both fast and independent of flaky remote rebuilds.
+- [ ] The direct `gpu` lane does not yet have a clear go/no-go decision.
+  - We still need to decide whether to promote it, keep `gpu_softbuffer`, or declare direct present not worth further effort on this Pixel.
 
 ## What Is Proven vs. What Is Not
 
@@ -121,10 +124,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Vulkan backend
   - KGSL-preferred setup
   - `gpu_softbuffer`
+- The product bar for interaction is already met on the proven lane.
+  - Remaining GPU work is now about closure and confidence, not rescuing a broken UX.
 - The current compositor path still looks SHM-oriented from the outside.
 - The direct `gpu` failure is now narrower than before:
   - the bundled Turnip library does contain Wayland WSI entrypoints
-  - the direct path still fails when `wgpu` asks for a surface-compatible adapter
+  - the direct path gets past adapter discovery and then dies in surface configure/present territory
   - the likely next seam is compositor protocol support and presentation compatibility, not basic Vulkan adapter discovery
 
 ## Best Known Numbers
@@ -185,6 +190,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - x86_64-builder dependency is removed from the GPU bundle path
   - local GPU bundle cache hits now work
   - runtime helper device-side cache hits now work too
+  - new warm/prebuild entrypoint exists for the Pixel GPU timeline lane
   - remaining slop is the slower first-paint path on the full startup-sync timeline recipe
 
 ### 5. Eliminate SHM as the limiting compositor transport
@@ -193,48 +199,50 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Notes:
   - this is the main remaining architectural gap if we want true end-to-end GPU presentation
 
+### 6. Make an explicit direct-`gpu` decision
+
+- [ ] Not done.
+- Notes:
+  - direct `gpu` is no longer a vague future wish
+  - it now has a narrow failing seam
+  - the remaining work is to decide whether it is salvageable enough to ship on this Pixel
+
 ## Near-Term Steps
 
-1. Revalidate the Nostr timeline app on the proven hardware-backed GPU lane.
-   - Command target:
-     - `pixel-runtime-app-nostr-timeline-drm`
-   - Requirement:
-     - do not rely on `cpu`
-     - confirm text, first frame, and interaction on the actual Turnip/KGSL lane
-
-2. Keep the fast operator path warm and stable.
+1. Finish the direct-`gpu` investigation.
+   - Focus:
+     - `Surface::configure()` / direct present failure on the rooted Pixel
    - Goal:
-     - repeated GPU runs should avoid rebuild churn and giant repushes
-   - Status:
-      - done for the client GPU bundle
-      - done for the runtime helper push path
-      - now focus on keeping the warm click lane stable
+     - either a stable direct `gpu` lane
+     - or hard evidence that `gpu_softbuffer` should remain the supported path on this device
 
-3. Keep measuring incremental latency on the GPU timeline path.
+2. Finish the compositor transport seam.
+   - Add or finish linux-dmabuf import/presentation in `shadow-compositor-guest`.
+   - Re-run buffer classification and stop only when:
+     - result is no longer `type=shm`
+     - or we can defend that SHM is not the remaining product bottleneck
+
+3. Keep the known-good GPU lane boring and reproducible.
+   - Goal:
+     - repeated GPU runs avoid rebuild churn and giant repushes
+   - Current status:
+     - client GPU bundle caching: good
+     - runtime helper device-side caching: good
+     - `just pixel-gpu-warm` now prebuilds the current Pixel GPU timeline lane without launching it
+
+4. Keep measuring incremental latency, not just startup.
    - Need:
      - tap-to-updated-frame
      - text-render correctness
      - cache-hit stability
    - Current best proof:
-     - `quick-gm` auto click updates in `~62ms`
+     - timeline quick action updates in `~62ms`
 
-4. Decide how much first-paint optimization is actually required.
-   - Candidate seams:
-     - startup bundle warm path
-     - pipeline/shader warm path
-     - reduce work before first present
-     - avoid unnecessary runtime-side initial sync blocking visible first paint
+5. Defer startup polish unless it blocks product work.
    - Current note:
-     - the warmed click lane already reached `408ms`
-     - the full startup-sync timeline path is still slower
-     - this is secondary to fast incremental updates
-
-5. Start the compositor transport seam.
-   - Add or finish linux-dmabuf import/presentation in `shadow-compositor-guest`.
-   - Re-run buffer classification and stop only when the result is no longer `type=shm`, or when we can prove that staying SHM does not materially hurt the real device path.
-   - Also validate the protocol globals that direct Turnip Wayland presentation appears to care about:
-     - `wp_presentation`
-     - explicit sync / syncobj feasibility on this DRM stack
+     - warmed click lane already reached `408ms`
+     - first paint is no longer the main blocker
+     - prioritize direct `gpu` and compositor closure first
 
 ## Plan To Finish This Project
 
@@ -246,19 +254,23 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - avoid unnecessary remote rebuilds when known-good GPU artifacts already exist
   - add a dedicated Pixel GPU timeline smoke that writes the same compact summary as the counter demo
   - make the default operator commands use the cached/proven GPU artifacts whenever possible
+  - keep `pixel-gpu-warm` as the obvious prebuild hook for the Pixel GPU lane
 - Exit:
   - we can run the timeline app repeatedly on the GPU lane without rebuild roulette
 
-### Phase B. Make startup fast enough
+### Phase B. Decide direct `gpu`
 
 - Goal:
-  - first visible frame under `500ms`
+  - know whether direct `gpu` is a real shipping path on this Pixel
 - Work:
-  - profile startup on the GPU timeline lane
-  - remove pre-first-paint work that does not need to block the first frame
-  - warm or cache the pieces that actually move the first-paint needle
+  - keep pushing the narrowed surface configure/present seam
+  - validate compositor globals/protocol needs
+  - compare `gpu` against `gpu_softbuffer` with the same measurement tooling
 - Exit:
-  - repeated real-device runs land well below `500ms`
+  - either:
+    - direct `gpu` is stable enough to promote
+  - or:
+    - we explicitly standardize on `gpu_softbuffer` for this Pixel
 
 ### Phase C. Finish end-to-end GPU presentation
 
@@ -282,12 +294,23 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - or:
     - we have hard evidence that SHM is not the remaining bottleneck and the current proven path already meets the product bar
 
-### Phase D. Decide whether Pixel remains viable
+### Phase D. Startup and operator polish
+
+- Goal:
+  - remove remaining friction without reopening solved seams
+- Work:
+  - warm/prebuild command for Pixel GPU artifacts
+  - cache-hit visibility in operator scripts
+  - only then chase first visible frame if it still matters
+- Exit:
+  - the default GPU operator lane is boring, predictable, and fast enough to use casually
+
+### Phase E. Decide whether Pixel remains viable
 
 - Keep the Pixel if:
   - hardware-backed GPU remains stable
-  - first visible frame gets under `500ms`
   - interaction remains instant
+  - the proven lane stays reproducible
   - the remaining compositor transport story is acceptable or fixable
 
 - Escalate to a different device only if:
@@ -330,15 +353,17 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `gpu_softbuffer`
   - hardware-backed client GPU on Turnip/KGSL
   - fast incremental updates on the rooted Pixel
-- next experiment queued:
-  - direct `gpu` with cached vendor Mesa on the `gl_kgsl` profile
-  - rationale:
-    - if direct Vulkan WSI is the broken seam but hardware-backed EGL/GL works, that may still satisfy the product requirement for direct GPU presentation on this device
 - Current truth:
   - GPU requirement is not satisfied by `cpu`
   - GPU requirement is partially satisfied today:
     - real hardware-backed client GPU is proved
     - true end-to-end GPU presentation is not yet proved
+- Current recommendation:
+  - treat shell/home unification as a separate integration project
+  - keep the GPU closure lane narrowly focused on:
+    - direct `gpu`
+    - compositor transport
+    - reproducibility
 
 ## Further Improvements
 

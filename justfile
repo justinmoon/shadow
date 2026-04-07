@@ -358,6 +358,10 @@ pixel-runtime-app-nostr-timeline-click-drm:
 pixel-runtime-app-nostr-timeline-drm-hold:
 	@scripts/pixel_runtime_app_nostr_timeline_drm_hold.sh
 
+# Warm Pixel GPU artifacts without launching the device session
+pixel-gpu-warm:
+	@scripts/pixel_gpu_warm.sh
+
 # Run the tap-driven GM runtime app under the current host runtime backend
 runtime-app-nostr-gm-smoke:
 	@SHADOW_RUNTIME_APP_INPUT_PATH=runtime/app-nostr-gm/app.tsx \

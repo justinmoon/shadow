@@ -121,6 +121,11 @@ esac
 
 env "${runtime_prepare_extra_env[@]}" "$SCRIPT_DIR/pixel_prepare_runtime_app_artifacts.sh"
 
+if [[ "${PIXEL_RUNTIME_APP_PREPARE_ONLY:-}" == "1" ]]; then
+  echo "pixel_runtime_app_drm: prepare-only mode complete" >&2
+  exit 0
+fi
+
 : "${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS:=12000}"
 : "${PIXEL_GUEST_SESSION_TIMEOUT_SECS:=20}"
 extra_guest_env="${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}"
