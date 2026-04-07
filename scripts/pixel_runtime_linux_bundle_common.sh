@@ -1,5 +1,139 @@
 #!/usr/bin/env bash
 
+runtime_bundle_file_hash() {
+  local path
+  path="$1"
+
+  if [[ ! -f "$path" ]]; then
+    printf 'missing\n'
+    return 0
+  fi
+
+  shasum -a 256 "$path" | awk '{print $1}'
+}
+
+normalize_runtime_bundle_input_path() {
+  local path
+  path="$1"
+
+  if [[ -z "$path" || ! -e "$path" ]]; then
+    printf '%s\n' "$path"
+    return 0
+  fi
+
+  python3 - "$path" <<'PY'
+import os
+import sys
+
+print(os.path.realpath(sys.argv[1]))
+PY
+}
+
+runtime_bundle_source_fingerprint() {
+  local package_ref path file file_hash
+  package_ref="$1"
+  shift
+
+  {
+    printf 'package_ref %s\n' "$package_ref"
+
+    for path in "$@"; do
+      if [[ -d "$path" ]]; then
+        while IFS= read -r file; do
+          [[ -f "$file" ]] || continue
+          file_hash="$(runtime_bundle_file_hash "$file")"
+          printf 'file %s %s\n' "$file_hash" "$file"
+        done < <(find "$path" -type f | LC_ALL=C sort)
+        continue
+      fi
+
+      file_hash="$(runtime_bundle_file_hash "$path")"
+      printf 'file %s %s\n' "$file_hash" "$path"
+    done
+  } | shasum -a 256 | awk '{print $1}'
+}
+
+runtime_bundle_manifest_matches() {
+  local manifest_path expected_fingerprint
+  manifest_path="$1"
+  expected_fingerprint="$2"
+
+  [[ -f "$manifest_path" ]] || return 1
+
+  python3 - "$manifest_path" "$expected_fingerprint" <<'PY'
+import json
+import sys
+
+manifest_path, expected_fingerprint = sys.argv[1:3]
+with open(manifest_path, "r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+raise SystemExit(0 if manifest.get("fingerprint") == expected_fingerprint else 1)
+PY
+}
+
+write_runtime_bundle_manifest() {
+  local manifest_path fingerprint package_ref vendor_mesa_tarball vendor_turnip_tarball
+  manifest_path="$1"
+  fingerprint="$2"
+  package_ref="$3"
+  vendor_mesa_tarball="${4-}"
+  vendor_turnip_tarball="${5-}"
+
+  python3 - "$manifest_path" "$fingerprint" "$package_ref" "$vendor_mesa_tarball" "$vendor_turnip_tarball" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+manifest_path, fingerprint, package_ref, vendor_mesa_tarball, vendor_turnip_tarball = sys.argv[1:6]
+manifest = {
+    "fingerprint": fingerprint,
+    "generatedAt": datetime.now(timezone.utc).isoformat(),
+    "packageRef": package_ref,
+    "vendorMesaTarball": vendor_mesa_tarball or None,
+    "vendorTurnipTarball": vendor_turnip_tarball or None,
+}
+with open(manifest_path, "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2)
+    handle.write("\n")
+PY
+}
+
+reuse_cached_runtime_bundle() {
+  local manifest_path expected_fingerprint bundle_dir launcher_artifact launcher_device_path package_ref
+  manifest_path="$1"
+  expected_fingerprint="$2"
+  bundle_dir="$3"
+  launcher_artifact="$4"
+  launcher_device_path="$5"
+  package_ref="$6"
+
+  if [[ "${PIXEL_FORCE_LINUX_BUNDLE_REBUILD-}" == 1 ]]; then
+    return 1
+  fi
+
+  [[ -d "$bundle_dir" ]] || return 1
+  [[ -x "$launcher_artifact" ]] || return 1
+  [[ -f "$bundle_dir/shadow-blitz-demo" ]] || return 1
+
+  runtime_bundle_manifest_matches "$manifest_path" "$expected_fingerprint" || return 1
+
+  python3 - "$bundle_dir" "$launcher_artifact" "$launcher_device_path" "$package_ref" <<'PY'
+import json
+import os
+import sys
+
+bundle_dir, launcher_artifact, launcher_device_path, package_ref = sys.argv[1:5]
+print(json.dumps({
+    "bundleArtifactDir": os.path.abspath(bundle_dir),
+    "cacheHit": True,
+    "clientLauncherArtifact": os.path.abspath(launcher_artifact),
+    "clientLauncherDevicePath": launcher_device_path,
+    "packageRef": package_ref,
+}, indent=2))
+PY
+  return 0
+}
+
 runtime_closure_has_path() {
   local candidate existing
   candidate="$1"

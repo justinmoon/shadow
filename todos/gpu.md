@@ -1,389 +1,267 @@
-# GPU Integration Notes
+# GPU Plan
 
-Living note. This is not a polished design doc. It exists to capture what was tried, what was proved, what failed, and what should happen next.
+Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
-## Goal
+## Scope
 
-- Get the app-runtime lane rendering fast enough on the rooted Pixel 4a that interaction feels instant to a human.
-- Prefer a simple fast path over a fancy architecture.
-- Use real GPU acceleration if it is available and materially better.
+- Rooted Pixel 4a runtime apps must use hardware-backed GPU rendering by default.
+- Interaction must feel instant to a human.
+- Text must render correctly on real device builds.
+- CPU is allowed as a diagnostic fallback, not as the end state.
 
-## Current Conclusion
+## Approach
 
-- True hardware-backed rendering now works on the rooted Pixel 4a through the `gpu_softbuffer` renderer plus the vendor Turnip Vulkan ICD on the KGSL path.
-- The current rooted Pixel runtime operator path now defaults to that Turnip/KGSL lane when the cached vendor Turnip tarball is present.
-- The rooted Pixel runtime demo now reaches first visible app frame in about `0.94s` and auto-click-to-visible-update in about `38ms` on the real panel in the default operator path.
-- The remaining issue is not “can we get GPU at all?” anymore. The remaining issues are:
-  - boot-to-first-app-frame polish
-  - continued SHM presentation in the compositor path
-  - whether the true `gpu` client path can beat the now-working `gpu_softbuffer` Vulkan lane enough to matter
-- Phase 1 of the finish plan is now in place:
-  - the Blitz client emits compact `gpu-summary-start` / `gpu-summary-client` markers
-  - the rooted Pixel session writes a compact `gpu-summary.json` with renderer, backend, adapter, software-vs-hardware classification, first-visible-frame latency, and click-to-updated-frame latency
+- Keep the current Solid + Deno + Blitz app model.
+- Keep the rooted Pixel as the primary truth environment.
+- Prefer the narrowest path that is measurably fast on device.
+- Separate two questions:
+  - Is the client using real hardware-backed GPU rendering?
+  - Is the compositor path still forcing a slower SHM handoff?
 
-## What We Tried
+## Current State
 
-## 1. Host GPU renderer spike
+### Done
 
-- Swapped the host-visible runtime demo from `anyrender_vello_cpu` to `anyrender_vello`.
-- Proved the same Solid + Deno + Blitz runtime session contract works with the GPU renderer on host.
-- Result: host GPU path works. This proved the app model was not the problem.
+- [x] Host GPU renderer path proved.
+- [x] Linux compositor control-plane GPU smoke proved.
+- [x] Rooted Pixel hardware-backed client GPU path proved.
+  - Proven lane: `gpu_softbuffer` + Vulkan + Turnip + KGSL.
+  - Validated adapter:
+    - `Turnip Adreno (TM) 618`
+    - `turnip Mesa driver`
+    - `hardware_backed=true`
+- [x] Rooted Pixel runtime operator path defaults to the proven Turnip/KGSL lane when the cached vendor Turnip tarball is present.
+- [x] Rooted Pixel runtime interaction is now fast enough for taps.
+  - Best validated runtime numbers:
+    - `first_visible_frame_ms=943`
+    - `click_to_updated_frame_ms=38`
+  - Source run:
+    - `build/pixel/drm-guest/20260407T114828Z`
+- [x] Rooted Pixel timeline text regression is fixed.
+  - Root cause:
+    - `SHADOW_BLITZ_ANDROID_FONTS=0` disabled all Android fonts in the runtime path.
+  - Fix:
+    - curated Android font mode in `ui/apps/shadow-blitz-demo/src/frame.rs`
+    - runtime path defaults to `SHADOW_BLITZ_ANDROID_FONTS=curated`
+  - Validated frame:
+    - `build/pixel/drm-guest/20260407T125643Z/shadow-frame.png`
+- [x] The Nostr timeline app is revalidated on the real hardware-backed GPU lane.
+  - Validated run:
+    - `build/pixel/drm-guest/20260407T140202Z`
+  - Result:
+    - `renderer=gpu_softbuffer`
+    - `wgpu_backend=Vulkan`
+    - `adapter_name=Turnip Adreno (TM) 618`
+    - `hardware_backed=true`
+    - text is visible again on the GPU path
+- [x] The GPU bundle path no longer depends on the flaky x86_64 Linux builder.
+  - GPU bundle prep now targets `aarch64-linux` by default.
+  - The local GPU bundle is now fingerprinted and reused on cache hits.
+- [x] Fast local gate is green after the font fix.
+  - `just ui-check`
+  - `just pre-commit`
 
-## 2. Linux compositor GPU client spike
+### Not Done
 
-- Ran the GPU Blitz client under the Linux Smithay compositor smoke.
-- Added smoke coverage for:
-  - host GPU renderer
-  - compositor GPU runtime demo
-  - static GPU guest compositor smoke
-- Result: the GPU client launches and maps under Linux, but the smoke host was not a trustworthy hardware GPU environment.
+- [~] First visible app frame is still too slow.
+  - Current best proven runtime number is about `943ms`.
+  - Target is comfortably under `500ms`.
+- [~] End-to-end GPU presentation is not proved.
+  - The rooted Pixel client is hardware-backed.
+  - The guest compositor still reports `observed_buffer_type=shm`.
+  - So the current proof is:
+    - GPU render in the client
+    - SHM-oriented handoff/presentation in the compositor path
+- [~] The GPU timeline recipe is much more reproducible now, but not completely polished.
+  - The client GPU bundle now has a real local cache hit path.
+  - The runtime host bundle/device push path is still heavy.
+- [ ] The true `gpu` client renderer path is not the proven operator lane yet.
+  - The proven lane today is `gpu_softbuffer`.
+- [ ] The guest compositor does not yet import/present dmabuf-backed client buffers on the rooted Pixel path.
+- [ ] There is not yet a one-command Pixel GPU timeline smoke that is both fast and independent of flaky remote rebuilds.
 
-## 3. Guest compositor dmabuf-awareness spike
+## What Is Proven vs. What Is Not
 
-- Added linux-dmabuf awareness and buffer classification to `shadow-compositor-guest`.
-- Added logging so the compositor could say whether a committed client buffer was SHM or DMA-backed.
-- Result: on the Linux smoke host, the so-called GPU client still landed as `type=shm`, not `type=dma`.
-- Interpretation: Smithay is not the blocker here; the current client/driver/backend path is.
+### Proven
 
-## 4. Rooted Pixel static `wgpu` smoke
+- The Pixel can run the runtime client on real Adreno hardware through Turnip/KGSL.
+- The runtime app model is not the performance blocker.
+- The renderer can react fast once the first frame is on screen.
+- The timeline app can render correct text on device after the curated-font fix.
 
-- Built a GNU-wrapped static Blitz demo for the rooted Pixel.
-- Launched it under `shadow-compositor-guest`.
-- Proved the phone panel could present captured `384x720` frames from that lane.
-- Result: useful visible-screen proof, but not proof of real hardware acceleration.
+### Not Proven
 
-## 5. Tried Vulkan / Turnip on the rooted Pixel
+- That the compositor path is truly end-to-end GPU.
+- That the `gpu` lane beats `gpu_softbuffer` enough to justify switching.
+- That we can consistently hold first visible frame below `500ms`.
+- That the timeline GPU recipe is fully robust against rebuild/builder churn.
 
-- Bundled the Vulkan loader, Turnip / Freedreno pieces, and related driver manifests.
-- Forced `WGPU_BACKEND=vulkan`.
-- Added instrumentation and root-side probes to see what the device nodes and driver stack actually looked like.
-- First result:
-  - `libvulkan_freedreno.so` loaded
-  - `vkEnumeratePhysicalDevices` still failed
-  - Turnip did not produce a usable Vulkan device in this environment
-- Final result after the bundle/ICD fixes:
-  - the static rooted probe now reports `adapter_name="Turnip Adreno (TM) 618"`
-  - `hardware_backed=true`
-  - `wgpu_backend="Vulkan"`
-  - `/dev/kgsl-3d0` is opened and used from the rooted GNU client path
+## Important Findings
 
-## 6. Probed the rooted Pixel DRM/KMS capabilities directly
-
-- Added `just pixel-drm-probe`.
-- Inspected `/dev/dri/card0`, `/dev/dri/renderD128`, and `/dev/kgsl-3d0`.
-- Result:
-  - `/dev/dri/card0` and `/dev/dri/renderD128` reported `name=msm_drm`
-  - `DRM_CAP_SYNCOBJ=0`
-  - timeline syncobj returned `EINVAL`
-  - `/dev/kgsl-3d0` opened fine
-- Interpretation: this matches the suspicion that the rooted Pixel's Linux DRM path is too weak for the Turnip path we wanted.
-
-## 7. Tried GL through the GNU runtime bundle
-
-- Built a GNU-wrapped Blitz path that set:
-  - `WGPU_BACKEND=gl`
-  - `LIBGL_DRIVERS_PATH`
-  - EGL vendor manifests
-  - Vulkan / GL runtime bundle plumbing
-- Added the softbuffer image-renderer path for the rooted device:
-  - `gpu_softbuffer`
-- Result:
-  - this path worked functionally
-  - but Mesa fell back to surfaceless `swrast`
-  - so it was still software-backed, not real hardware acceleration
-
-## 8. Improved the GNU runtime bundle itself
-
-- Switched from the older Deno-host bundling helper to the shared runtime-host Linux bundle helper.
-- Added:
-  - `HOME`
-  - `XDG_CACHE_HOME`
-  - `XDG_CONFIG_HOME`
-  - `MESA_SHADER_CACHE_DIR`
-- Precreated those directories on-device.
-- Flattened bundle symlinks and filled runtime deps more aggressively.
-- Result:
-  - Mesa shader cache is now actually populated on-device
-  - but this did not solve the giant first-frame stall in the `gpu_softbuffer` path
-
-## 9. Added boot splash / compositor-visible startup feedback
-
-- Added a compositor-side DRM boot splash frame.
-- Published it before the client was ready.
-- Result:
-  - this improved perceived startup because the panel no longer sat blank
-  - but it did not solve the real first interactive frame latency
-
-## 10. Measured the real performance bottleneck
-
-- Added targeted timing logs around:
-  - runtime session startup
-  - document creation
-  - render-to-vec
-  - present
-  - dispatch and rerender
-- Main finding on rooted Pixel `gpu_softbuffer`:
-  - runtime session was fast
-  - touch / dispatch were fast
-  - the first visible render was awful, around `8.3s`
-  - subsequent renders were much faster
-- Conclusion: the app model was fine; the rooted Pixel `gpu_softbuffer` startup path was the real problem.
-
-## 11. Benchmarked the plain CPU renderer on the rooted Pixel
-
-- Fixed the Pixel runtime launcher so it could target `cpu` as well as `gpu_softbuffer`.
-- Ran apples-to-apples rooted device smokes with the CPU renderer.
-- Result:
-  - first `render_to_vec` dropped from roughly `8.3s` to roughly `0.33s`
-  - this immediately proved that `gpu_softbuffer` under current rooted Pixel conditions was the wrong default
-
-## 12. Removed self-inflicted startup slop from the Pixel runtime demo
-
-- Removed the unconditional startup-only target hitmap scan.
-- Disabled Android system-font loading for the Pixel runtime demo.
-- Disabled the old default 40ms app-side runtime poll thread.
-- Disabled the duplicate document-side touch-signal timer unless explicitly enabled.
-- Result on rooted Pixel:
-  - runtime session ready: about `86ms`
-  - document ready: about `120ms`
-  - first visible app frame: about `0.68s`
-  - auto-click dispatch to visible updated frame: about `0.35s`
-
-## What Worked
-
-- Host GPU renderer path.
-- Linux compositor GPU client smoke as a control-plane proof.
-- Rooted Pixel static `wgpu` visible-screen proof.
-- Rooted Pixel `gpu_softbuffer` as a diagnostic lane.
-- Rooted Pixel Turnip/KGSL Vulkan path for both:
-  - static GPU probe
-  - runtime app auto-click lane
-- Rooted Pixel runtime auto-click with hardware-backed rendering:
-  - first visible app frame about `943ms`
-  - click-to-updated-frame about `38ms`
-
-## What Did Not Work
-
-- The earlier Vulkan/Turnip attempts before the bundle fixes.
-- The GL `gpu_softbuffer` path on the rooted Pixel; it still falls back to software.
-- The current true-`gpu` rooted GNU lane; it still needs more work than the proven `gpu_softbuffer` Vulkan path.
-- Relying on Mesa shader cache alone to make the old software-backed path acceptable.
-
-## Why The Current Fast Path Is Turnip + `gpu_softbuffer`
-
-- The rooted Pixel GPU story is now good enough on one narrow path:
+- The big early latency problem was not Deno. It was rendering/presentation.
+- The earlier missing-text timeline screenshots were not a Nostr data bug. They were a font-loading configuration bug.
+- The current rooted Pixel GPU story is real, but narrow:
   - vendor Turnip ICD
   - Vulkan backend
   - KGSL-preferred setup
-  - `gpu_softbuffer` client renderer
-- That path is still compositor-observed `type=shm`, but the renderer itself is hardware-backed and the rerender latency is now in the “feels instant” range.
-- So the simplest fast solution today is:
-  - keep the runtime/app model
-  - keep the rooted compositor path
-  - default the Pixel runtime lane to the proven Turnip/KGSL `gpu_softbuffer` path
-  - keep CPU as the fallback when the vendor Turnip tarball is absent
-
-## Current Operator Guidance
-
-- Rooted Pixel runtime demo default:
-  - `gpu_softbuffer` + Vulkan + KGSL + vendor Turnip, when `build/pixel/vendor/turnip_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz` is present
-  - otherwise fall back to `cpu`
-- Keep the true `gpu` lane as an explicit experiment / probe path
-- Treat the real device-performance target as:
-  - first visible frame under 1s, with immediate boot splash
-  - rerender under 100ms
-
-## Remaining GPU Questions
-
-- Can we reduce first visible app frame from `~943ms` toward `<=500ms` without losing the proven Turnip/KGSL path?
-- Can the guest compositor ever import a truly GPU-backed client buffer on the rooted Pixel path instead of compositor-observed `shm`?
-- Does the true `gpu` client path eventually beat the proven `gpu_softbuffer` Vulkan lane enough to justify the extra complexity?
-- Is an Android-native / bionic GPU client path still worth exploring once the current rooted GNU Vulkan lane already feels good enough interactively?
-
-## Recommended Next Steps
-
-- Keep the Turnip/KGSL runtime lane as the default rooted Pixel path.
-- Keep the GPU probe tools and notes in-tree.
-- Attack startup polish next:
-  - reduce first app frame below `1s`
-  - ideally below `500ms`
-- Then attack transport quality:
-  - understand why the compositor still sees `type=shm`
-  - only widen into true dmabuf import if it materially improves the real device path
-
-## Files Touched During This Investigation
-
-- `scripts/pixel_runtime_app_drm.sh`
-- `scripts/pixel_prepare_blitz_demo_gpu_softbuffer_bundle.sh`
-- `scripts/pixel_runtime_linux_bundle_common.sh`
-- `scripts/pixel_drm_probe.sh`
-- `scripts/pixel_openlog_preload.c`
-- `ui/apps/shadow-blitz-demo/src/app.rs`
-- `ui/apps/shadow-blitz-demo/src/frame.rs`
-- `ui/apps/shadow-blitz-demo/src/runtime_document.rs`
-- `ui/crates/shadow-compositor-guest/src/kms.rs`
-- `ui/crates/shadow-compositor-guest/src/main.rs`
+  - `gpu_softbuffer`
+- The current compositor path still looks SHM-oriented from the outside.
 
 ## Best Known Numbers
 
-- Rooted Pixel runtime GPU probe, static client:
-  - `hardware_backed=true`
-  - `adapter_name="Turnip Adreno (TM) 618"`
-  - `first_visible_frame_ms=1422`
-- Rooted Pixel runtime app, default Turnip/KGSL operator path:
-  - `hardware_backed=true`
+- Rooted Pixel runtime GPU path:
   - `first_visible_frame_ms=943`
   - `click_to_updated_frame_ms=38`
-- Old rooted Pixel `gpu_softbuffer` first frame: roughly `8.3s`
+  - `hardware_backed=true`
+  - run: `build/pixel/drm-guest/20260407T114828Z`
+- Rooted Pixel static GPU probe:
+  - `first_visible_frame_ms=1422`
+  - `hardware_backed=true`
+  - run: `build/pixel/drm-guest/20260407T112741Z`
+- Rooted Pixel timeline text fix validation:
+  - curated font registration: `count=4 elapsed_ms=1`
+  - first visible frame under CPU validation: `2582ms`
+  - frame: `build/pixel/drm-guest/20260407T125643Z`
+- Rooted Pixel timeline on the hardware-backed GPU lane:
+  - `first_visible_frame_ms=1861`
+  - `hardware_backed=true`
+  - `renderer=gpu_softbuffer`
+  - `wgpu_backend=Vulkan`
+  - run: `build/pixel/drm-guest/20260407T140202Z`
 
-## Plan To Finish This Feature
+## Milestones
 
-Hard requirement:
+### 1. Prove hardware-backed client GPU on Pixel
 
-- GPU rendering is still the target end state.
-- The current CPU path is a pragmatic stopgap so the runtime demo is usable while the real GPU work continues.
-- We should only accept the current state as "finished" if the Pixel is actually using hardware-backed rendering and interaction feels instant.
+- [x] Done.
+- Notes:
+  - commit `3d92b70`
+  - Turnip/KGSL Vulkan path is real
 
-Success bar:
+### 2. Make runtime interaction fast enough to feel instant
 
-- First visible app frame comfortably under `500ms`.
-- Tap / click to visible update under `100ms`, ideally closer to one frame budget.
-- No Mesa `swrast` fallback in the production device path.
-- A reproducible operator command that uses the fast hardware-backed path by default.
+- [~] Mostly done.
+- Notes:
+  - tap-to-visible update is good
+  - startup is still not good enough
 
-### Phase 1. Tighten observability around the real backend
+### 3. Restore correct runtime text on Pixel
 
-- Add one compact Pixel smoke summary that prints:
-  - selected renderer
-  - `wgpu` backend
-  - adapter name / driver
-  - whether the client path is software or hardware-backed
-  - first visible frame latency
-  - click-to-updated-frame latency
-- Log this directly from the Blitz client and the rooted session so we do not need to infer it from long raw logs.
-- Keep the current CPU default until the GPU lane can beat it reliably.
+- [x] Done.
+- Notes:
+  - commit `9cc5e21`
+  - curated Android fonts replaced the previous all-off setting
 
-Status:
+### 4. Make GPU timeline path reproducible and operator-safe
 
-- Done.
-- `scripts/pixel_runtime_summary.py` now emits `gpu-summary.json` for rooted runs.
-- The summary includes backend, adapter, software-vs-hardware classification, first-visible-frame latency, click latency, and now openlog visibility for `/dev/dri` vs `/dev/kgsl`.
+- [~] In progress.
+- Notes:
+  - hardware-backed GPU timeline path is revalidated
+  - x86_64-builder dependency is removed from the GPU bundle path
+  - local GPU bundle cache hits now work
+  - remaining slop is startup time and heavy runtime-support repushes
 
-### Phase 2. Build an honest static rooted-Pixel GPU probe harness
+### 5. Eliminate SHM as the limiting compositor transport
 
-- Add a script-only probe lane for the static GNU `wgpu` client.
-- Keep the base bundle fixed and vary only the backend profile / env, so we can compare runs without changing too many variables at once.
-- First profiles:
-  - `gl`
-  - `vulkan_drm`
-  - `vulkan_kgsl_first`
-  - optional `_early_probe` variants when we explicitly want the crashy early adapter-init diagnostics
-- For each profile, record:
-  - run dir
-  - session status
-  - parsed `gpu-summary.json`
-  - whether `/dev/dri` or `/dev/kgsl` was opened or denied
-    - note: current openlog visibility is session-wide, not yet perfectly client-scoped
-- Write one matrix summary artifact per probe batch so the next seam is driven by facts, not hand-reading raw logs.
+- [ ] Not done.
+- Notes:
+  - this is the main remaining architectural gap if we want true end-to-end GPU presentation
 
-Status:
+## Near-Term Steps
 
-- In progress, but the real backend picture is much sharper now.
-- `scripts/pixel_blitz_demo_static_drm_gpu_probe.sh` now runs the static Pixel GPU probe profiles and writes a per-batch `matrix-summary.json`.
-- `just pixel-blitz-demo-static-drm-gpu-probe` runs a selected profile.
-- `just pixel-blitz-demo-static-drm-gpu-matrix` runs the default profile set.
-- The default probe profiles are now intended to stay non-invasive so they measure the real static client path. The `_early_probe` variants keep the old adapter-summary experiment available, but no longer poison the default matrix.
-- The matrix payload now distinguishes `success` from `classified` and `measured` so a successful static run is not misread as a completed backend classification.
-- The probe wrapper no longer hangs forever after a good run. `pixel_guest_ui_drm.sh` now bounds the post-success session wait and forces cleanup / host-side Android restore if the rooted shell never returns on its own.
-- The runtime bundle transport is now fixed too:
-  - `pixel_push.sh` no longer recursively `adb push`es the giant GNU bundle tree
-  - it stages one tar archive, extracts it on-device under root, and then normalizes permissions
-  - this removed the false-negative bundle/push failures that were masking the real GPU behavior
-- The rooted-Pixel static `gl` probe is now honestly classified:
-  - run success: yes
-  - backend: `gl`
-  - `/dev/kgsl-3d0`: not opened
-  - `/dev/dri/renderD128` and `/dev/dri/card0`: opened
-  - `libEGL`: `failed to create dri2 screen`
-  - compositor buffer type: `shm`
-  - first visible frame: about `11.6s`
-  - conclusion: this path is software-backed fallback, not usable hardware acceleration
-- The rooted-Pixel static `vulkan_drm` probe is now honestly classified:
-  - run success: no
-  - backend: `vulkan`
-  - failure: `NoCompatibleDevice`
-  - no visible frame
-- The rooted-Pixel static `vulkan_kgsl_first` probe is now honestly classified:
-  - run success: no
-  - backend: `vulkan`
-  - `/dev/kgsl-3d0`: opened
-  - failure: `NoCompatibleDevice`
-  - no visible frame
-- The KGSL-first probe needed one launcher fix:
-  - raw `LD_PRELOAD` hit `/system/bin/sh` first and failed because the preload library is glibc-linked
-  - the launcher now accepts `SHADOW_LINUX_LD_PRELOAD` and applies it only inside the GNU payload
-  - this removed the bionic/glibc preload collision and let the KGSL probe reach the actual adapter-discovery seam
+1. Revalidate the Nostr timeline app on the proven hardware-backed GPU lane.
+   - Command target:
+     - `pixel-runtime-app-nostr-timeline-drm`
+   - Requirement:
+     - do not rely on `cpu`
+     - confirm text, first frame, and interaction on the actual Turnip/KGSL lane
 
-### Phase 2. Exhaust the rooted Pixel GPU paths in order
+2. Remove flaky rebuild dependence from the Pixel GPU operator path.
+   - Goal:
+     - if the known-good GPU bundle is already built, do not force an x86_64 Linux remote rebuild just to run the timeline app
+   - Why:
+     - this is currently blocking fast validation and making GPU status look worse than it is
+   - Status:
+      - mostly done for the client GPU bundle
+      - next is the runtime support / push path
 
-- Prove or disprove a usable rooted Vulkan path under the current Linux/GNU environment.
-- Try the smallest possible static client first, not the full runtime app:
-  - `wgpu` + Vello window renderer
-  - `wgpu` + image renderer
-  - minimal clear-color / rect-only test before text
-- Explicitly test these backend configurations:
-  - Vulkan through the DRM render node path
-  - Vulkan through any KGSL-usable path we can coerce
-  - GL path with current GNU bundle
-- Record for each:
-  - adapter selected
-  - whether it is `swrast`
-  - first-frame latency
-  - whether presentation is stable
+3. Measure startup on the GPU timeline path with the same summary discipline used for the counter runtime app.
+   - Need:
+     - first visible frame
+     - first relay-backed content frame
+     - tap-to-updated-frame
+     - text-render correctness
 
-### Phase 3. If hardware-backed Vulkan becomes real, wire the fast app path
+4. Push first visible frame below `500ms`.
+   - Candidate seams:
+     - startup bundle warm path
+     - pipeline/shader warm path
+     - reduce work before first present
+     - avoid unnecessary runtime-side initial sync blocking visible first paint
 
-- Once a static hardware-backed client works on the Pixel, switch the runtime demo from the CPU renderer to the true GPU renderer on device.
-- Re-measure the real metrics on the rooted Pixel with the runtime demo:
-  - launch to first visible frame
-  - tap to updated frame
-  - repeated rerenders
-- Only then remove the CPU default.
+5. Start the compositor transport seam.
+   - Add or finish linux-dmabuf import/presentation in `shadow-compositor-guest`.
+   - Re-run buffer classification and stop only when the result is no longer `type=shm`, or when we can prove that staying SHM does not materially hurt the real device path.
 
-### Phase 4. If the GNU/Linux path cannot reach real hardware, try the narrower escape hatch
+## Plan To Finish This Project
 
-- Build a very small Android-native / bionic GPU proof instead of pushing harder on the current GNU userspace bundle.
+### Phase A. Make the proven Pixel GPU lane reproducible
+
 - Goal:
-  - vendor Adreno Vulkan stack
-  - hardware adapter selection
-  - simple visible frame on the panel
-- If that works, evaluate whether the app client can live behind a thin Android-native launcher while keeping the current app-runtime model above it.
+  - same hardware-backed Turnip/KGSL path every run
+- Work:
+  - avoid unnecessary remote rebuilds when known-good GPU artifacts already exist
+  - add a dedicated Pixel GPU timeline smoke that writes the same compact summary as the counter demo
+  - make the default operator commands use the cached/proven GPU artifacts whenever possible
+- Exit:
+  - we can run the timeline app repeatedly on the GPU lane without rebuild roulette
 
-### Phase 5. Decide whether the Pixel is a dead end
+### Phase B. Make startup fast enough
 
-- Stop if all of these remain true after the KGSL / Android-native spikes:
-  - Vulkan still cannot produce a real hardware adapter
-  - GL still falls back to `swrast`
-  - every "GPU" path is slower or more fragile than the CPU path
-- If that happens, the honest conclusion is:
-  - the app model is fine
-  - this Pixel 4a bring-up path is the blocker
-  - we should move to a different device rather than keep burning time here
+- Goal:
+  - first visible frame under `500ms`
+- Work:
+  - profile startup on the GPU timeline lane
+  - remove pre-first-paint work that does not need to block the first frame
+  - warm or cache the pieces that actually move the first-paint needle
+- Exit:
+  - repeated real-device runs land well below `500ms`
 
-### What A Replacement Device Must Have
+### Phase C. Finish end-to-end GPU presentation
 
-- Unlockable / rootable without heroic effort.
-- A GPU stack that exposes a usable hardware-backed path from our target environment.
-- Preferably a Linux-visible render node with modern syncobj support.
-- If not, then an Android-native Vulkan path we can realistically target without rewriting the whole app model.
+- Goal:
+  - real GPU client plus GPU-friendly compositor transport
+- Work:
+  - finish dmabuf import/presentation support in `shadow-compositor-guest`
+  - re-run buffer classification on Pixel
+  - compare `gpu` vs `gpu_softbuffer`
+- Exit:
+  - either:
+    - compositor-observed buffer type is no longer SHM
+  - or:
+    - we have hard evidence that SHM is not the remaining bottleneck and the current proven path already meets the product bar
 
-### Immediate Next Steps
+### Phase D. Decide whether Pixel remains viable
 
-- Keep the compact Pixel GPU summary output and use it as the default measurement lane.
-- Do not spend more time pretending the current GNU `gl` path might become fast; it is now clearly DRI-only software fallback on this phone.
-- Treat the current rooted GNU `vulkan` result as: KGSL is reachable, but still not sufficient for `wgpu` / Vello adapter creation.
-- Next real seam:
-  - small Android-native / bionic Vulkan proof on the Pixel
-  - prove whether the vendor Adreno stack can produce a real hardware adapter there
-- If that works, evaluate a thin Android-native launcher beneath the current app-runtime model.
-- If that still fails, stop burning time on this Pixel GPU path and move to the replacement-device criteria above.
+- Keep the Pixel if:
+  - hardware-backed GPU remains stable
+  - first visible frame gets under `500ms`
+  - interaction remains instant
+  - the remaining compositor transport story is acceptable or fixable
+
+- Escalate to a different device only if:
+  - the Pixel GPU lane stops being reproducible
+  - Turnip/KGSL cannot be kept stable enough for operator use
+  - or the compositor transport gap cannot be closed and is still visibly harming the device UX after the narrower fixes above
+
+## Implementation Notes
+
+- `3d92b70`:
+  - hardware-backed Turnip/KGSL runtime path landed
+- `9cc5e21`:
+  - curated Android font mode restored runtime text on Pixel
+- Current truth:
+  - GPU requirement is not satisfied by `cpu`
+  - GPU requirement is partially satisfied today:
+    - real hardware-backed client GPU is proved
+    - true end-to-end GPU presentation is not yet proved

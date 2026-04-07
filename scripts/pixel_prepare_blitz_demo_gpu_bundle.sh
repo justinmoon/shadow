@@ -16,9 +16,12 @@ launcher_artifact="$(pixel_artifact_path run-shadow-blitz-demo-gpu)"
 openlog_preload_artifact="$(pixel_artifact_path shadow-openlog-preload.so)"
 vendor_mesa_tarball="${PIXEL_VENDOR_MESA_TARBALL-}"
 vendor_turnip_tarball="${PIXEL_VENDOR_TURNIP_TARBALL-}"
-package_system="${PIXEL_LINUX_BUILD_SYSTEM:-x86_64-linux}"
+vendor_mesa_tarball="$(normalize_runtime_bundle_input_path "$vendor_mesa_tarball")"
+vendor_turnip_tarball="$(normalize_runtime_bundle_input_path "$vendor_turnip_tarball")"
+package_system="${PIXEL_LINUX_BUILD_SYSTEM:-aarch64-linux}"
 package_ref="$repo#packages.${package_system}.shadow-blitz-demo-aarch64-linux-gnu-gpu"
 bundle_device_dir="$(pixel_runtime_linux_dir)"
+bundle_manifest="$bundle_dir/.bundle-manifest.json"
 vendor_mesa_package_refs=(
   "nixpkgs#pkgsCross.aarch64-multiplatform.libx11"
   "nixpkgs#pkgsCross.aarch64-multiplatform.libxcb"
@@ -34,6 +37,31 @@ vendor_turnip_package_refs=(
   "nixpkgs#pkgsCross.aarch64-multiplatform.zstd.out"
   "nixpkgs#pkgsCross.aarch64-multiplatform.stdenv.cc.cc.lib"
 )
+bundle_fingerprint="$(
+  runtime_bundle_source_fingerprint \
+    "$package_ref" \
+    "$repo/flake.nix" \
+    "$repo/ui/Cargo.toml" \
+    "$repo/ui/Cargo.lock" \
+    "$repo/ui/apps/shadow-blitz-demo" \
+    "$repo/ui/third_party/softbuffer_window_renderer" \
+    "$SCRIPT_DIR/pixel_prepare_blitz_demo_gpu_bundle.sh" \
+    "$SCRIPT_DIR/pixel_runtime_linux_bundle_common.sh" \
+    "$SCRIPT_DIR/pixel_build_openlog_preload.sh" \
+    "$SCRIPT_DIR/pixel_openlog_preload.c" \
+    "${vendor_mesa_tarball:-__no_vendor_mesa__}" \
+    "${vendor_turnip_tarball:-__no_vendor_turnip__}"
+)"
+
+if reuse_cached_runtime_bundle \
+  "$bundle_manifest" \
+  "$bundle_fingerprint" \
+  "$bundle_dir" \
+  "$launcher_artifact" \
+  "$bundle_device_dir/run-shadow-blitz-demo" \
+  "$package_ref"; then
+  exit 0
+fi
 
 copy_optional_tree_from_closure() {
   local relative_path closure_path source_path destination_path copied
@@ -269,6 +297,12 @@ fi
 exec "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$DIR/shadow-blitz-demo" "\$@"
 EOF
 chmod 0755 "$launcher_artifact"
+write_runtime_bundle_manifest \
+  "$bundle_manifest" \
+  "$bundle_fingerprint" \
+  "$package_ref" \
+  "$vendor_mesa_tarball" \
+  "$vendor_turnip_tarball"
 
 python3 - "$bundle_dir" "$launcher_artifact" "$bundle_device_dir" "$package_ref" <<'PY'
 import json
