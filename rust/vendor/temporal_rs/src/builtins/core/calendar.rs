@@ -24,10 +24,9 @@ use icu_calendar::{
 };
 use icu_calendar::{
     cal::{HijriTabularEpoch, HijriTabularLeapYears},
-    options::DateDurationUnit as IcuUnit,
     options::{
-        DateAddOptions, DateDifferenceOptions, DateFromFieldsOptions, MissingFieldsStrategy,
-        Overflow as IcuOverflow,
+        DateAddOptions, DateDifferenceOptions, DateDurationUnit as IcuUnit,
+        DateFromFieldsOptions, MissingFieldsStrategy, Overflow as IcuOverflow,
     },
     preferences::CalendarAlgorithm,
     types::DateDuration as IcuDateDuration,

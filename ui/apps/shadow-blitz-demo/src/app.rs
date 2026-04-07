@@ -1,19 +1,37 @@
-#[cfg(all(feature = "gpu", any(feature = "cpu", feature = "hybrid")))]
+#[cfg(any(
+    all(feature = "cpu", feature = "gpu"),
+    all(feature = "cpu", feature = "gpu_softbuffer"),
+    all(feature = "cpu", feature = "hybrid"),
+    all(feature = "gpu", feature = "gpu_softbuffer"),
+    all(feature = "gpu", feature = "hybrid"),
+    all(feature = "gpu_softbuffer", feature = "hybrid"),
+))]
 compile_error!("shadow-blitz-demo renderer features are mutually exclusive");
-#[cfg(all(feature = "hybrid", feature = "cpu"))]
-compile_error!("shadow-blitz-demo renderer features are mutually exclusive");
-#[cfg(not(any(feature = "cpu", feature = "gpu", feature = "hybrid")))]
+#[cfg(not(any(
+    feature = "cpu",
+    feature = "gpu",
+    feature = "gpu_softbuffer",
+    feature = "hybrid"
+)))]
 compile_error!("enable one shadow-blitz-demo renderer feature");
 
 #[cfg(feature = "gpu")]
 use anyrender_vello::VelloWindowRenderer as WindowRenderer;
+#[cfg(feature = "gpu_softbuffer")]
+type WindowRenderer =
+    softbuffer_window_renderer::SoftbufferWindowRenderer<anyrender_vello::VelloImageRenderer>;
 #[cfg(all(not(feature = "gpu"), not(feature = "hybrid"), feature = "cpu"))]
 use anyrender_vello_cpu::VelloCpuWindowRenderer as WindowRenderer;
-#[cfg(all(not(feature = "gpu"), feature = "hybrid"))]
+#[cfg(all(
+    not(feature = "gpu"),
+    not(feature = "gpu_softbuffer"),
+    feature = "hybrid"
+))]
 use anyrender_vello_hybrid::VelloHybridWindowRenderer as WindowRenderer;
 use blitz_shell::{
     create_default_event_loop, BlitzShellEvent, BlitzShellProxy, View, WindowConfig,
 };
+use serde::Serialize;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::{env, thread, time::Duration};
@@ -25,36 +43,151 @@ use winit::{
     window::{WindowAttributes, WindowId},
 };
 
-use crate::log::runtime_log;
+use crate::document::StaticDocument;
+use crate::log::{runtime_log, runtime_log_json, runtime_wall_ms};
 use crate::runtime_document::RuntimeDocument;
 
 #[cfg(target_os = "linux")]
 use winit::platform::wayland::WindowAttributesWayland;
 
 #[cfg(target_os = "linux")]
-const DEFAULT_WAYLAND_APP_ID: &str = "dev.shadow.counter";
-const DEFAULT_APP_TITLE: &str = "Shadow Counter";
-const DEFAULT_SURFACE_WIDTH: u32 = 384;
-const DEFAULT_SURFACE_HEIGHT: u32 = 720;
+const BLITZ_DEMO_WAYLAND_APP_ID: &str = "dev.shadow.blitz";
+#[cfg(target_os = "linux")]
+const RUNTIME_DEMO_WAYLAND_APP_ID: &str = "dev.shadow.counter";
 
 pub fn run() {
+    init_gpu_logging();
+    install_panic_hook();
+    runtime_log("startup-stage=run-begin");
+    let demo_mode = DemoMode::from_env();
+    runtime_log("startup-stage=demo-mode-ready");
+    log_runtime_summary_start(demo_mode);
+    runtime_log("startup-stage=summary-start-done");
+    log_display_env();
+    runtime_log("startup-stage=display-env-done");
+    if renderer_summary_probe_enabled() {
+        runtime_log("startup-stage=renderer-summary-probe-begin");
+        log_renderer_summary_probe(demo_mode);
+        runtime_log("startup-stage=renderer-summary-probe-end");
+    } else {
+        runtime_log("startup-stage=cpu-summary-begin");
+        log_cpu_renderer_summary(demo_mode);
+        runtime_log("startup-stage=cpu-summary-end");
+    }
+    if env::var_os("SHADOW_BLITZ_GPU_PROBE").is_some() {
+        runtime_log("startup-stage=wgpu-probe-begin");
+        log_wgpu_probe(demo_mode);
+        runtime_log("startup-stage=wgpu-probe-end");
+    } else {
+        runtime_log("wgpu-probe-skipped");
+    }
+    runtime_log("startup-stage=create-event-loop-begin");
     let event_loop = create_default_event_loop();
+    runtime_log("startup-stage=create-event-loop-done");
     let (proxy, receiver) = BlitzShellProxy::new(event_loop.create_proxy());
+    runtime_log("startup-stage=proxy-ready");
     let window = WindowConfig::with_attributes(
-        Box::new(RuntimeDocument::from_env()),
+        demo_mode.document(),
         WindowRenderer::new(),
-        window_attributes(),
+        window_attributes(demo_mode),
     );
-    let application = BlitzApplication::new(proxy, receiver, window);
-    event_loop.run_app(application).expect("run blitz app");
+    runtime_log("startup-stage=window-config-ready");
+    let application = BlitzApplication::new(proxy, receiver, window, demo_mode);
+    runtime_log("startup-stage=run-app-begin");
+    if let Err(error) = event_loop.run_app(application) {
+        runtime_log(format!("run-app-error: {error:?}"));
+        eprintln!("[shadow-blitz-demo] run-app-error: {error:?}");
+    }
+}
+
+fn install_panic_hook() {
+    static PANIC_HOOK_INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+    PANIC_HOOK_INSTALLED.get_or_init(|| {
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            runtime_log(format!("panic-hook {panic_info}"));
+            default_hook(panic_info);
+        }));
+    });
+}
+
+fn log_display_env() {
+    runtime_log(format!(
+        "display-env wayland_display={:?} wayland_socket={:?} display={:?} xdg_runtime_dir={:?} home={:?} xdg_cache_home={:?} xdg_config_home={:?} mesa_shader_cache_dir={:?} wgpu_backend_env={:?} vk_icd_filenames={:?} shadow_linux_ld_preload={:?}",
+        env::var("WAYLAND_DISPLAY").ok(),
+        env::var("WAYLAND_SOCKET").ok(),
+        env::var("DISPLAY").ok(),
+        env::var("XDG_RUNTIME_DIR").ok(),
+        env::var("HOME").ok(),
+        env::var("XDG_CACHE_HOME").ok(),
+        env::var("XDG_CONFIG_HOME").ok(),
+        env::var("MESA_SHADER_CACHE_DIR").ok(),
+        env::var("WGPU_BACKEND").ok(),
+        env::var("VK_ICD_FILENAMES").ok(),
+        env::var("SHADOW_LINUX_LD_PRELOAD").ok(),
+    ));
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DemoMode {
+    Static,
+    Runtime,
+}
+
+impl DemoMode {
+    fn from_env() -> Self {
+        match env::var("SHADOW_BLITZ_DEMO_MODE").ok().as_deref() {
+            Some("runtime") => Self::Runtime,
+            _ => Self::Static,
+        }
+    }
+
+    fn document(self) -> Box<dyn blitz_dom::Document> {
+        match self {
+            Self::Static => Box::new(StaticDocument::new()),
+            Self::Runtime => Box::new(RuntimeDocument::from_env()),
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Static => "Shadow Blitz Demo",
+            Self::Runtime => "Shadow Counter",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Static => "static",
+            Self::Runtime => "runtime",
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wayland_app_id(self) -> &'static str {
+        match self {
+            Self::Static => BLITZ_DEMO_WAYLAND_APP_ID,
+            Self::Runtime => RUNTIME_DEMO_WAYLAND_APP_ID,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wayland_instance_name(self) -> &'static str {
+        match self {
+            Self::Static => "shadow-blitz-demo",
+            Self::Runtime => "shadow-counter",
+        }
+    }
 }
 
 struct BlitzApplication {
+    demo_mode: DemoMode,
     proxy: BlitzShellProxy,
     event_queue: Receiver<BlitzShellEvent>,
     pending_window: Option<WindowConfig<WindowRenderer>>,
     window: Option<View<WindowRenderer>>,
-    runtime_resume_pending: bool,
+    resume_pending: bool,
     runtime_poll_thread_started: bool,
     runtime_touch_signal_thread_started: bool,
 }
@@ -64,13 +197,15 @@ impl BlitzApplication {
         proxy: BlitzShellProxy,
         event_queue: Receiver<BlitzShellEvent>,
         window: WindowConfig<WindowRenderer>,
+        demo_mode: DemoMode,
     ) -> Self {
         Self {
+            demo_mode,
             proxy,
             event_queue,
             pending_window: Some(window),
             window: None,
-            runtime_resume_pending: false,
+            resume_pending: false,
             runtime_poll_thread_started: false,
             runtime_touch_signal_thread_started: false,
         }
@@ -89,21 +224,21 @@ impl BlitzApplication {
             BlitzShellEvent::Poll { window_id } if window.window_id() == window_id => {
                 if window.poll() {
                     runtime_log(format!("poll-changed window={window_id:?}"));
-                    redraw_window(window, "poll");
+                    redraw_window(self.demo_mode, window, "poll");
                 }
             }
             BlitzShellEvent::RequestRedraw { doc_id } if window.doc.id() == doc_id => {
-                redraw_window(window, "doc");
+                redraw_window(self.demo_mode, window, "doc");
             }
             BlitzShellEvent::Embedder(data) => {
-                if handle_runtime_embedder_event(window, data) {
-                    redraw_window(window, "embedder");
+                if handle_runtime_embedder_event(self.demo_mode, window, data) {
+                    redraw_window(self.demo_mode, window, "embedder");
                 }
             }
             _ => {}
         }
 
-        if document_should_exit(window) {
+        if document_should_exit(self.demo_mode, window) {
             self.window.take();
             event_loop.exit();
         }
@@ -119,6 +254,7 @@ impl ApplicationHandler for BlitzApplication {
                 window.window_id()
             ));
             window.resume();
+            log_renderer_backend(window, "resume-existing-window");
             let window_id = window.window_id();
             self.ensure_runtime_poll_thread(window_id);
             self.ensure_runtime_touch_signal_thread();
@@ -131,12 +267,27 @@ impl ApplicationHandler for BlitzApplication {
         if let Some(config) = self.pending_window.take() {
             runtime_log("init-pending-window");
             runtime_log("view-init-start");
-            let window = View::init(config, event_loop, &self.proxy);
+            let mut window = View::init(config, event_loop, &self.proxy);
+            runtime_log(format!("view-init-done window={:?}", window.window_id()));
             let window_id = window.window_id();
-            runtime_log(format!("view-init-done window={window_id:?}"));
-            self.runtime_resume_pending = true;
-            runtime_log(format!("window-resume-deferred window={window_id:?}"));
-            self.window = Some(window);
+            if self.should_defer_initial_resume() {
+                self.resume_pending = true;
+                runtime_log(format!("window-resume-deferred window={window_id:?}"));
+                self.window = Some(window);
+            } else {
+                runtime_log(format!("window-resume-start window={window_id:?}"));
+                window.resume();
+                log_renderer_backend(&window, "resume-new-window");
+                runtime_log(format!("window-resume-done window={window_id:?}"));
+                self.window = Some(window);
+                self.ensure_runtime_poll_thread(window_id);
+                self.ensure_runtime_touch_signal_thread();
+                self.proxy.send_event(BlitzShellEvent::Poll { window_id });
+                runtime_log(format!(
+                    "request-poll source=can-create-new window={window_id:?}"
+                ));
+                runtime_log(format!("window-ready window={window_id:?}"));
+            }
         }
     }
 
@@ -156,7 +307,7 @@ impl ApplicationHandler for BlitzApplication {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        self.maybe_resume_runtime_window(window_id, &event);
+        self.maybe_resume_deferred_window(window_id, &event);
         log_pointer_window_event(&event);
         let runtime_pointer_button = self
             .window
@@ -171,8 +322,8 @@ impl ApplicationHandler for BlitzApplication {
 
         if let Some(window) = self.window.as_mut() {
             window.handle_winit_event(event);
-            handle_runtime_pointer_button(window, runtime_pointer_button);
-            request_runtime_redraw(window);
+            handle_runtime_pointer_button(self.demo_mode, window, runtime_pointer_button);
+            request_runtime_redraw(self.demo_mode, window);
         }
 
         self.proxy.send_event(BlitzShellEvent::Poll { window_id });
@@ -186,19 +337,26 @@ impl ApplicationHandler for BlitzApplication {
 }
 
 impl BlitzApplication {
+    fn should_defer_initial_resume(&self) -> bool {
+        self.demo_mode == DemoMode::Runtime || renderer_name() == "gpu"
+    }
+
     fn ensure_runtime_poll_thread(&mut self, window_id: WindowId) {
-        if self.runtime_poll_thread_started {
+        if self.demo_mode != DemoMode::Runtime || self.runtime_poll_thread_started {
             return;
         }
 
-        self.runtime_poll_thread_started = true;
-        let proxy = self.proxy.clone();
-        let interval = env::var("SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS")
+        let Some(interval) = env::var("SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value > 0)
-            .unwrap_or(40);
+        else {
+            runtime_log("runtime-poll-thread-disabled");
+            return;
+        };
 
+        self.runtime_poll_thread_started = true;
+        let proxy = self.proxy.clone();
         thread::spawn(move || loop {
             thread::sleep(Duration::from_millis(interval));
             proxy.send_event(BlitzShellEvent::Poll { window_id });
@@ -206,7 +364,7 @@ impl BlitzApplication {
     }
 
     fn ensure_runtime_touch_signal_thread(&mut self) {
-        if self.runtime_touch_signal_thread_started {
+        if self.demo_mode != DemoMode::Runtime || self.runtime_touch_signal_thread_started {
             return;
         }
         if env::var_os("SHADOW_BLITZ_TOUCH_SIGNAL_PATH").is_none() {
@@ -231,8 +389,8 @@ impl BlitzApplication {
         });
     }
 
-    fn maybe_resume_runtime_window(&mut self, window_id: WindowId, event: &WindowEvent) {
-        if !self.runtime_resume_pending {
+    fn maybe_resume_deferred_window(&mut self, window_id: WindowId, event: &WindowEvent) {
+        if !self.resume_pending {
             return;
         }
         let Some(window) = self.window.as_ref() else {
@@ -246,20 +404,21 @@ impl BlitzApplication {
             "window-resume-trigger window={window_id:?} event={}",
             window_event_name(event)
         ));
-        self.runtime_resume_pending = false;
+        self.resume_pending = false;
         self.ensure_runtime_poll_thread(window_id);
         self.ensure_runtime_touch_signal_thread();
 
-        let window = self.window.as_mut().expect("runtime window before resume");
+        let window = self.window.as_mut().expect("window before deferred resume");
         runtime_log(format!("window-resume-start window={window_id:?}"));
         window.resume();
+        log_renderer_backend(window, "resume-deferred-window");
         runtime_log(format!("window-resume-done window={window_id:?}"));
         let changed = window.poll();
         runtime_log(format!(
             "post-resume-poll window={window_id:?} changed={changed}"
         ));
         if changed {
-            redraw_window(window, "post-resume-poll");
+            redraw_window(self.demo_mode, window, "post-resume-poll");
         }
         self.proxy.send_event(BlitzShellEvent::Poll { window_id });
         runtime_log(format!(
@@ -301,25 +460,264 @@ fn window_event_name(event: &WindowEvent) -> &'static str {
     }
 }
 
+#[cfg(any(feature = "gpu", feature = "hybrid"))]
+fn log_renderer_backend(window: &View<WindowRenderer>, source: &str) {
+    let Some(device_handle) = window.renderer.current_device_handle() else {
+        runtime_log(format!("renderer-backend source={source} state=suspended"));
+        return;
+    };
+
+    let info = device_handle.adapter.get_info();
+    runtime_log(format!(
+        "renderer-backend source={source} backend={backend:?} device_type={device_type:?} name={name:?} driver={driver:?} driver_info={driver_info:?} vendor=0x{vendor:04x} device=0x{device:04x} env_backend={env_backend:?} env_adapter={env_adapter:?}",
+        backend = info.backend,
+        device_type = info.device_type,
+        name = info.name,
+        driver = info.driver,
+        driver_info = info.driver_info,
+        vendor = info.vendor,
+        device = info.device,
+        env_backend = env::var("WGPU_BACKEND").ok(),
+        env_adapter = env::var("WGPU_ADAPTER_NAME").ok(),
+    ));
+    log_adapter_summary(renderer_name(), None, &info, "live");
+}
+
+#[cfg(all(not(feature = "gpu"), not(feature = "hybrid")))]
+fn log_renderer_backend(_window: &View<WindowRenderer>, _source: &str) {}
+
+#[cfg(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid"))]
+fn init_gpu_logging() {
+    let mut builder =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
+    builder.format_timestamp_millis();
+    let _ = builder.try_init();
+}
+
+#[cfg(not(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid")))]
+fn init_gpu_logging() {}
+
+#[derive(Serialize)]
+struct RuntimeSummaryStart<'a> {
+    renderer: &'a str,
+    mode: &'a str,
+    wall_ms: u128,
+}
+
+#[derive(Serialize)]
+struct ClientRendererSummary<'a> {
+    renderer: &'a str,
+    mode: &'a str,
+    backend: Option<String>,
+    device_type: Option<String>,
+    adapter_name: Option<String>,
+    driver: Option<String>,
+    driver_info: Option<String>,
+    software_backed: bool,
+    source: &'a str,
+    probe_error: Option<String>,
+}
+
+fn renderer_name() -> &'static str {
+    #[cfg(feature = "gpu")]
+    {
+        return "gpu";
+    }
+    #[cfg(feature = "gpu_softbuffer")]
+    {
+        return "gpu_softbuffer";
+    }
+    #[cfg(feature = "hybrid")]
+    {
+        return "hybrid";
+    }
+    #[cfg(feature = "cpu")]
+    {
+        return "cpu";
+    }
+}
+
+fn log_runtime_summary_start(demo_mode: DemoMode) {
+    let summary = RuntimeSummaryStart {
+        renderer: renderer_name(),
+        mode: demo_mode.label(),
+        wall_ms: runtime_wall_ms(),
+    };
+    runtime_log_json("gpu-summary-start", &summary);
+}
+
+fn log_cpu_renderer_summary(demo_mode: DemoMode) {
+    if renderer_name() != "cpu" {
+        return;
+    }
+
+    let summary = ClientRendererSummary {
+        renderer: renderer_name(),
+        mode: demo_mode.label(),
+        backend: None,
+        device_type: None,
+        adapter_name: None,
+        driver: None,
+        driver_info: None,
+        software_backed: true,
+        source: "cpu",
+        probe_error: None,
+    };
+    runtime_log_json("gpu-summary-client", &summary);
+}
+
+fn renderer_summary_probe_enabled() -> bool {
+    env::var_os("SHADOW_BLITZ_GPU_SUMMARY").is_some()
+}
+
+#[cfg(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid"))]
+fn log_wgpu_probe(demo_mode: DemoMode) {
+    let descriptor = wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::from_env().unwrap_or_default(),
+        flags: wgpu::InstanceFlags::from_build_config().with_env(),
+        backend_options: wgpu::BackendOptions::from_env_or_default(),
+        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+    };
+    runtime_log(format!(
+        "wgpu-probe-start mode={demo_mode:?} backends={:?} flags={:?} env_backend={:?} env_adapter={:?} env_vk_icd={:?}",
+        descriptor.backends,
+        descriptor.flags,
+        env::var("WGPU_BACKEND").ok(),
+        env::var("WGPU_ADAPTER_NAME").ok(),
+        env::var("VK_ICD_FILENAMES").ok(),
+    ));
+
+    let instance = wgpu::Instance::new(&descriptor);
+    let adapters = pollster::block_on(instance.enumerate_adapters(descriptor.backends));
+    runtime_log(format!("wgpu-probe-adapters count={}", adapters.len()));
+    for (index, adapter) in adapters.into_iter().enumerate() {
+        let info = adapter.get_info();
+        runtime_log(format!(
+            "wgpu-probe-adapter index={index} backend={backend:?} device_type={device_type:?} name={name:?} driver={driver:?} driver_info={driver_info:?} vendor=0x{vendor:04x} device=0x{device:04x}",
+            backend = info.backend,
+            device_type = info.device_type,
+            name = info.name,
+            driver = info.driver,
+            driver_info = info.driver_info,
+            vendor = info.vendor,
+            device = info.device,
+        ));
+    }
+
+    match pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
+        &instance, None,
+    )) {
+        Ok(adapter) => {
+            let info = adapter.get_info();
+            runtime_log(format!(
+                "wgpu-probe-selected backend={backend:?} device_type={device_type:?} name={name:?} driver={driver:?} driver_info={driver_info:?}",
+                backend = info.backend,
+                device_type = info.device_type,
+                name = info.name,
+                driver = info.driver,
+                driver_info = info.driver_info,
+            ));
+        }
+        Err(error) => {
+            runtime_log(format!("wgpu-probe-selected error={error:?}"));
+        }
+    }
+}
+
+#[cfg(not(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid")))]
+fn log_wgpu_probe(_demo_mode: DemoMode) {}
+
+#[cfg(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid"))]
+fn log_renderer_summary_probe(demo_mode: DemoMode) {
+    let descriptor = wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::from_env().unwrap_or_default(),
+        flags: wgpu::InstanceFlags::from_build_config().with_env(),
+        backend_options: wgpu::BackendOptions::from_env_or_default(),
+        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+    };
+    let instance = wgpu::Instance::new(&descriptor);
+
+    match pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
+        &instance, None,
+    )) {
+        Ok(adapter) => {
+            let info = adapter.get_info();
+            log_adapter_summary(renderer_name(), Some(demo_mode.label()), &info, "probe");
+        }
+        Err(error) => {
+            let summary = ClientRendererSummary {
+                renderer: renderer_name(),
+                mode: demo_mode.label(),
+                backend: None,
+                device_type: None,
+                adapter_name: None,
+                driver: None,
+                driver_info: None,
+                software_backed: true,
+                source: "probe",
+                probe_error: Some(format!("{error:?}")),
+            };
+            runtime_log_json("gpu-summary-client", &summary);
+        }
+    }
+}
+
+#[cfg(not(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid")))]
+fn log_renderer_summary_probe(demo_mode: DemoMode) {
+    log_cpu_renderer_summary(demo_mode);
+}
+
+#[cfg(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid"))]
+fn log_adapter_summary(renderer: &str, mode: Option<&str>, info: &wgpu::AdapterInfo, source: &str) {
+    let summary = ClientRendererSummary {
+        renderer,
+        mode: mode.unwrap_or("runtime"),
+        backend: Some(format!("{:?}", info.backend)),
+        device_type: Some(format!("{:?}", info.device_type)),
+        adapter_name: Some(info.name.clone()),
+        driver: Some(info.driver.clone()),
+        driver_info: Some(info.driver_info.clone()),
+        software_backed: adapter_is_software(info),
+        source,
+        probe_error: None,
+    };
+    runtime_log_json("gpu-summary-client", &summary);
+}
+
+#[cfg(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid"))]
+fn adapter_is_software(info: &wgpu::AdapterInfo) -> bool {
+    if matches!(info.device_type, wgpu::DeviceType::Cpu) {
+        return true;
+    }
+
+    let haystack = format!(
+        "{} {} {}",
+        info.name.to_ascii_lowercase(),
+        info.driver.to_ascii_lowercase(),
+        info.driver_info.to_ascii_lowercase()
+    );
+    ["llvmpipe", "lavapipe", "swrast", "swiftshader", "software"]
+        .iter()
+        .any(|needle| haystack.contains(needle))
+}
+
 #[derive(Clone, Copy, Debug)]
 enum RuntimeEmbedderEvent {
     TouchSignalTick,
 }
 
-fn window_attributes() -> WindowAttributes {
-    let (surface_width, surface_height) = surface_size_from_env();
+fn window_attributes(demo_mode: DemoMode) -> WindowAttributes {
     let attributes = WindowAttributes::default()
-        .with_title(app_title())
+        .with_title(demo_mode.title())
         .with_resizable(false)
-        .with_surface_size(LogicalSize::new(
-            surface_width as f64,
-            surface_height as f64,
-        ));
+        .with_surface_size(LogicalSize::new(384.0, 720.0));
 
     #[cfg(target_os = "linux")]
     {
-        let wayland_attributes =
-            WindowAttributesWayland::default().with_name(wayland_app_id(), "shadow-blitz-demo");
+        let wayland_attributes = WindowAttributesWayland::default().with_name(
+            demo_mode.wayland_app_id(),
+            demo_mode.wayland_instance_name(),
+        );
         return attributes.with_platform_attributes(Box::new(wayland_attributes));
     }
 
@@ -327,32 +725,11 @@ fn window_attributes() -> WindowAttributes {
     attributes
 }
 
-fn app_title() -> String {
-    env::var("SHADOW_BLITZ_APP_TITLE").unwrap_or_else(|_| String::from(DEFAULT_APP_TITLE))
-}
-
-#[cfg(target_os = "linux")]
-fn wayland_app_id() -> String {
-    env::var("SHADOW_BLITZ_WAYLAND_APP_ID").unwrap_or_else(|_| String::from(DEFAULT_WAYLAND_APP_ID))
-}
-
-fn surface_size_from_env() -> (u32, u32) {
-    (
-        surface_dimension_from_env("SHADOW_BLITZ_SURFACE_WIDTH", DEFAULT_SURFACE_WIDTH),
-        surface_dimension_from_env("SHADOW_BLITZ_SURFACE_HEIGHT", DEFAULT_SURFACE_HEIGHT),
-    )
-}
-
-fn surface_dimension_from_env(key: &str, default: u32) -> u32 {
-    env::var(key)
-        .ok()
-        .and_then(|value| value.trim().parse::<u32>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
-}
-
-fn document_should_exit(window: &mut View<WindowRenderer>) -> bool {
-    window.downcast_doc_mut::<RuntimeDocument>().should_exit()
+fn document_should_exit(demo_mode: DemoMode, window: &mut View<WindowRenderer>) -> bool {
+    match demo_mode {
+        DemoMode::Static => window.downcast_doc_mut::<StaticDocument>().should_exit(),
+        DemoMode::Runtime => window.downcast_doc_mut::<RuntimeDocument>().should_exit(),
+    }
 }
 
 fn log_pointer_window_event(event: &WindowEvent) {
@@ -432,10 +809,12 @@ fn runtime_pointer_button_event(
 }
 
 fn handle_runtime_pointer_button(
+    demo_mode: DemoMode,
     window: &mut View<WindowRenderer>,
     event: Option<RuntimePointerButtonEvent>,
 ) {
-    if env::var_os("SHADOW_BLITZ_RAW_POINTER_FALLBACK").is_none() {
+    if demo_mode != DemoMode::Runtime || env::var_os("SHADOW_BLITZ_RAW_POINTER_FALLBACK").is_none()
+    {
         return;
     }
     let Some(event) = event else {
@@ -452,7 +831,11 @@ fn handle_runtime_pointer_button(
         );
 }
 
-fn request_runtime_redraw(window: &mut View<WindowRenderer>) {
+fn request_runtime_redraw(demo_mode: DemoMode, window: &mut View<WindowRenderer>) {
+    if demo_mode != DemoMode::Runtime {
+        return;
+    }
+
     let redraw_requested = window
         .downcast_doc_mut::<RuntimeDocument>()
         .take_redraw_requested();
@@ -460,22 +843,37 @@ fn request_runtime_redraw(window: &mut View<WindowRenderer>) {
         return;
     }
 
-    redraw_window(window, "runtime-dispatch");
+    redraw_window(demo_mode, window, "runtime-dispatch");
 }
 
-fn redraw_window(window: &mut View<WindowRenderer>, source: &str) {
+fn redraw_window(demo_mode: DemoMode, window: &mut View<WindowRenderer>, source: &str) {
+    if demo_mode == DemoMode::Runtime {
+        runtime_log(format!(
+            "redraw-now source={} window={:?}",
+            source,
+            window.window_id()
+        ));
+        window.redraw();
+        return;
+    }
+
     runtime_log(format!(
-        "redraw-now source={} window={:?}",
+        "request-redraw source={} window={:?}",
         source,
         window.window_id()
     ));
-    window.redraw();
+    window.request_redraw();
 }
 
 fn handle_runtime_embedder_event(
+    demo_mode: DemoMode,
     window: &mut View<WindowRenderer>,
     data: Arc<dyn std::any::Any + Send + Sync>,
 ) -> bool {
+    if demo_mode != DemoMode::Runtime {
+        return false;
+    }
+
     let Some(event) = data.downcast_ref::<RuntimeEmbedderEvent>() else {
         return false;
     };

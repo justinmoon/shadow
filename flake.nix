@@ -98,8 +98,127 @@
           RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
           cargoBuildFlags = [ "-p" "shadow-compositor-guest" ];
           cargoInstallFlags = [ "-p" "shadow-compositor-guest" ];
-          nativeBuildInputs = [ cross.buildPackages.pkg-config ];
+          nativeBuildInputs = [
+            cross.buildPackages.pkg-config
+            cross.buildPackages.python3
+          ];
           buildInputs = lib.optionals cross.stdenv.hostPlatform.isLinux [ staticXkbcommon ];
+        };
+      mkDrmRectFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "drm-rect";
+          version = "0.1.0";
+          src = ./rust/drm-rect;
+          cargoLock.lockFile = ./rust/drm-rect/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
+        };
+      mkShadowGuestCounterFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "shadow-counter-guest";
+          version = "0.1.0";
+          src = ./ui;
+          cargoLock = {
+            lockFile = ./ui/Cargo.lock;
+            outputHashes = uiBlitzOutputHashes;
+          };
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
+          cargoBuildFlags = [ "-p" "shadow-counter-guest" ];
+          cargoInstallFlags = [ "-p" "shadow-counter-guest" ];
+          nativeBuildInputs = [
+            cross.buildPackages.pkg-config
+            cross.buildPackages.python3
+          ];
+          buildInputs = [
+            cross.wayland
+            cross.expat
+            cross.libffi
+          ];
+          PKG_CONFIG_ALL_STATIC = "1";
+        };
+      mkShadowBlitzDemoFor = cross: rendererFeature:
+        let
+          rendererSuffix = lib.replaceStrings [ "_" ] [ "-" ] rendererFeature;
+        in cross.rustPlatform.buildRustPackage {
+          pname = "shadow-blitz-demo-${rendererSuffix}";
+          version = "0.1.0";
+          src = ./ui;
+          cargoLock = {
+            lockFile = ./ui/Cargo.lock;
+            outputHashes = uiBlitzOutputHashes;
+          };
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          PYTHON3 = "${cross.buildPackages.python3}/bin/python3";
+          cargoBuildFlags = [
+            "-p"
+            "shadow-blitz-demo"
+            "--no-default-features"
+            "--features"
+            rendererFeature
+          ];
+          cargoInstallFlags = [
+            "-p"
+            "shadow-blitz-demo"
+            "--no-default-features"
+            "--features"
+            rendererFeature
+          ];
+          nativeBuildInputs = [ cross.buildPackages.pkg-config ];
+          depsBuildBuild =
+            lib.optionals cross.stdenv.buildPlatform.isDarwin [
+              cross.buildPackages.stdenv.cc
+              cross.buildPackages.libiconv
+            ];
+          buildInputs = [
+            cross.expat
+            cross.fontconfig
+            cross.freetype
+            cross.libdrm
+            cross.libffi
+            cross.libglvnd
+            cross.libxkbcommon
+            cross.mesa.drivers
+            cross.vulkan-loader
+            cross.wayland
+            cross.wayland-protocols
+          ];
+          postInstall = ''
+            mkdir -p "$out/runtime-libs"
+            ln -s "${cross.expat}" "$out/runtime-libs/expat"
+            ln -s "${cross.fontconfig}" "$out/runtime-libs/fontconfig"
+            ln -s "${cross.freetype}" "$out/runtime-libs/freetype"
+            ln -s "${cross.libdrm}" "$out/runtime-libs/libdrm"
+            ln -s "${cross.libffi}" "$out/runtime-libs/libffi"
+            ln -s "${cross.libglvnd}" "$out/runtime-libs/libglvnd"
+            ln -s "${cross.libxkbcommon}" "$out/runtime-libs/libxkbcommon"
+            ln -s "${cross.mesa.drivers}" "$out/runtime-libs/mesa-drivers"
+            ln -s "${cross.vulkan-loader}" "$out/runtime-libs/vulkan-loader"
+            ln -s "${cross.wayland}" "$out/runtime-libs/wayland"
+            ln -s "${cross.wayland-protocols}" "$out/runtime-libs/wayland-protocols"
+            if [ -d "${cross.mesa.drivers}/lib/dri" ]; then
+              mkdir -p "$out/lib"
+              ln -s "${cross.mesa.drivers}/lib/dri" "$out/lib/dri"
+            fi
+            if [ -d "${cross.mesa.drivers}/share/vulkan/icd.d" ]; then
+              mkdir -p "$out/share/vulkan"
+              ln -s "${cross.mesa.drivers}/share/vulkan/icd.d" "$out/share/vulkan/icd.d"
+            fi
+            if [ -d "${cross.mesa.drivers}/share/glvnd/egl_vendor.d" ]; then
+              mkdir -p "$out/share/glvnd"
+              ln -s "${cross.mesa.drivers}/share/glvnd/egl_vendor.d" "$out/share/glvnd/egl_vendor.d"
+            elif [ -d "${cross.libglvnd}/share/glvnd/egl_vendor.d" ]; then
+              mkdir -p "$out/share/glvnd"
+              ln -s "${cross.libglvnd}/share/glvnd/egl_vendor.d" "$out/share/glvnd/egl_vendor.d"
+            fi
+          '';
+          meta.mainProgram = "shadow-blitz-demo";
         };
       mkShadowRuntimeHostFor = cross:
         cross.rustPlatform.buildRustPackage {
@@ -122,6 +241,7 @@
           meta.mainProgram = "shadow-runtime-host";
         };
       mkShadowSession = pkgs: mkShadowSessionFor pkgs.pkgsCross.musl64;
+      mkDrmRect = pkgs: mkDrmRectFor pkgs.pkgsCross.musl64;
       mkShadowGuestCompositor = pkgs: mkShadowGuestCompositorFor pkgs.pkgsStatic;
       mkBootimgShell = pkgs:
         let
@@ -261,6 +381,8 @@
             mkShadowRuntimeHostFor pkgs.pkgsCross.aarch64-multiplatform;
           shadow-runtime-host-x86_64-linux-gnu =
             mkShadowRuntimeHostFor pkgs.pkgsCross.gnu64;
+          drm-rect = mkDrmRect pkgs;
+          drm-rect-device = mkDrmRectFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           shadow-session = mkShadowSession pkgs;
           shadow-session-device = mkShadowSessionFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           default = mkShadowSession pkgs;
@@ -272,6 +394,8 @@
                 "ui-vm requires a macOS host plus SHADOW_UI_VM_SOURCE set under --impure. Use just ui-vm-run.";
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          shadow-blitz-demo-aarch64-linux-gnu-gpu-softbuffer =
+            mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform "gpu_softbuffer";
           shadow-compositor-guest = mkShadowGuestCompositor pkgs;
           shadow-compositor-guest-device =
             mkShadowGuestCompositorFor pkgs.pkgsCross.aarch64-multiplatform-musl;

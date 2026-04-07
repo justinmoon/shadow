@@ -32,12 +32,18 @@ binary_needed_libs() {
   llvm-readelf -dW "$binary" | sed -n 's/^.*Shared library: \[\(.*\)\]$/\1/p'
 }
 
+is_elf_file() {
+  local path
+  path="$1"
+  file "$path" | grep -q 'ELF '
+}
+
 find_runtime_file_in_closure() {
   local name closure_path candidate
   name="$1"
 
   for closure_path in "${PIXEL_RUNTIME_CLOSURE_PATHS[@]}"; do
-    candidate="$(find "$closure_path" -type f -name "$name" -print -quit 2>/dev/null || true)"
+    candidate="$(find -L "$closure_path" -type f -name "$name" -print -quit 2>/dev/null || true)"
     if [[ -n "$candidate" ]]; then
       printf '%s\n' "$candidate"
       return 0
@@ -46,6 +52,44 @@ find_runtime_file_in_closure() {
 
   echo "pixel runtime bundle: missing runtime file in closure: $name" >&2
   return 1
+}
+
+stage_runtime_host_linux_bundle() {
+fill_linux_bundle_runtime_deps() {
+  local bundle_dir bundle_lib_dir loader_name
+  local -a dependency_queue
+  local current_path needed_lib destination_path lib_source_path
+
+  bundle_dir="$1"
+  bundle_lib_dir="$bundle_dir/lib"
+  loader_name="${PIXEL_RUNTIME_STAGE_LOADER_NAME:-}"
+
+  mapfile -t dependency_queue < <(find "$bundle_dir" -type f -print)
+
+  while [[ "${#dependency_queue[@]}" -gt 0 ]]; do
+    current_path="${dependency_queue[0]}"
+    dependency_queue=("${dependency_queue[@]:1}")
+
+    if [[ ! -f "$current_path" ]] || ! is_elf_file "$current_path"; then
+      continue
+    fi
+
+    while IFS= read -r needed_lib; do
+      [[ -n "$needed_lib" ]] || continue
+      if [[ -n "$loader_name" && "$needed_lib" == "$loader_name" ]]; then
+        continue
+      fi
+
+      destination_path="$bundle_lib_dir/$needed_lib"
+      if [[ -f "$destination_path" ]]; then
+        continue
+      fi
+
+      lib_source_path="$(find_runtime_file_in_closure "$needed_lib")"
+      cp "$lib_source_path" "$destination_path"
+      dependency_queue+=("$destination_path")
+    done < <(binary_needed_libs "$current_path")
+  done
 }
 
 stage_runtime_host_linux_bundle() {

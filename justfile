@@ -331,3 +331,23 @@ pixel-root-flash:
 # Verify whether root is active on the connected Pixel
 pixel-root-check:
 	@scripts/pixel_root_check.sh
+
+# Probe the rooted Pixel DRM/KMS nodes and report driver capabilities relevant to Turnip
+pixel-drm-probe:
+	@scripts/pixel_drm_probe.sh
+
+# Run the minimal Deno Core smoke binary on the rooted Pixel through the GNU runtime envelope
+pixel-runtime-deno-core-smoke:
+	@PIXEL_RUNTIME_LOG_PREFIX=pixel_runtime_deno_core_smoke PIXEL_RUNTIME_SUCCESS_LABEL='Pixel Deno Core runtime smoke' scripts/pixel_runtime_deno_core_smoke.sh
+
+# Run the minimal Deno Runtime smoke binary on the rooted Pixel through the GNU runtime envelope
+pixel-runtime-deno-runtime-smoke:
+	@PIXEL_RUNTIME_LOG_PREFIX=pixel_runtime_deno_runtime_smoke PIXEL_RUNTIME_SUCCESS_LABEL='Pixel Deno Runtime smoke' PIXEL_RUNTIME_PACKAGE_ATTR=deno-runtime-smoke-aarch64-linux-gnu PIXEL_RUNTIME_BINARY_NAME=deno-runtime-smoke PIXEL_RUNTIME_MODULE_RELATIVE_PATH=modules/main.js PIXEL_RUNTIME_EXPECT_OUTPUT_PREFIX='deno_runtime ok:' PIXEL_RUNTIME_EXPECT_RESULT='result=HELLO FROM DENO_RUNTIME AND DENO_RUNTIME FILE' scripts/pixel_runtime_deno_core_smoke.sh
+
+# Run the runtime-mode Blitz demo on the rooted Pixel and auto-dispatch one runtime click
+pixel-runtime-app-click-drm:
+	@scripts/pixel_runtime_app_click_drm.sh
+
+# Detect the rooted Pixel touchscreen and capture one raw touch sequence
+pixel-touch-input-smoke:
+	@scripts/pixel_touch_input_smoke.sh

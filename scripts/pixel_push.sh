@@ -15,14 +15,6 @@ if ! pixel_require_runtime_artifacts; then
 fi
 
 printf 'Pushing device artifacts to %s\n' "$serial"
-pixel_adb "$serial" push "$(pixel_session_artifact)" "$(pixel_session_dst)" >/dev/null
-pixel_adb "$serial" push "$(pixel_compositor_artifact)" "$(pixel_compositor_dst)" >/dev/null
-pixel_adb "$serial" push "$(pixel_guest_client_artifact)" "$(pixel_guest_client_dst)" >/dev/null
-pixel_adb "$serial" shell chmod 0755 \
-  "$(pixel_session_dst)" \
-  "$(pixel_compositor_dst)" \
-  "$(pixel_guest_client_dst)"
-
 if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_bundle_artifact" ]]; then
   runtime_linux_dir="$(pixel_runtime_linux_dir)"
   printf 'Pushing runtime support to %s\n' "$serial"
@@ -42,6 +34,14 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_bundle_artifact
     printf 'Pushed runtime app bundle -> %s\n' "$(pixel_runtime_app_bundle_dst)"
   fi
 fi
+
+pixel_adb "$serial" push "$(pixel_session_artifact)" "$(pixel_session_dst)" >/dev/null
+pixel_adb "$serial" push "$(pixel_compositor_artifact)" "$(pixel_compositor_dst)" >/dev/null
+pixel_adb "$serial" push "$(pixel_guest_client_artifact)" "$(pixel_guest_client_dst)" >/dev/null
+pixel_adb "$serial" shell chmod 0755 \
+  "$(pixel_session_dst)" \
+  "$(pixel_compositor_dst)" \
+  "$(pixel_guest_client_dst)"
 
 printf 'Pushed %s\n' "$(pixel_session_dst)"
 printf 'Pushed %s\n' "$(pixel_compositor_dst)"

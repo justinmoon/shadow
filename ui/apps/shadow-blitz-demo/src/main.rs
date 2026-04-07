@@ -1,4 +1,5 @@
 mod app;
+mod document;
 mod frame;
 mod log;
 mod runtime_document;

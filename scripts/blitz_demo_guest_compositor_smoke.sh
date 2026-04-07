@@ -9,6 +9,8 @@ GUEST_BLITZ_SMOKE_TMPDIR=""
 GUEST_BLITZ_SMOKE_TIMEOUT_SECS="${SHADOW_UI_SMOKE_TIMEOUT:-300}"
 GUEST_BLITZ_SMOKE_NAMESPACE="${SHADOW_UI_SMOKE_NAMESPACE:-$(basename "$REPO_ROOT")-$$}"
 EXPECTED_BUFFER_TYPE="${SHADOW_GUEST_EXPECTED_BUFFER_TYPE:-dma}"
+WGPU_BACKEND_OVERRIDE="${WGPU_BACKEND:-}"
+WGPU_ADAPTER_NAME_OVERRIDE="${WGPU_ADAPTER_NAME:-}"
 GUEST_BLITZ_SMOKE_SSH_RETRIES="${SHADOW_UI_SMOKE_SSH_RETRIES:-3}"
 GUEST_BLITZ_SMOKE_SSH_RETRY_SLEEP="${SHADOW_UI_SMOKE_SSH_RETRY_SLEEP:-2}"
 GUEST_BLITZ_SMOKE_SSH_OPTS=(
@@ -134,6 +136,7 @@ unexpected_buffer_type_seen() {
 
 run_local_linux_smoke() {
   local tmpdir runtime_dir compositor_log compositor_pid start now
+  local -a guest_client_env
 
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/shadow-guest-blitz-ui-smoke.XXXXXX")"
   GUEST_BLITZ_SMOKE_TMPDIR="$tmpdir"
@@ -154,10 +157,21 @@ run_local_linux_smoke() {
   }
   trap cleanup EXIT
 
+  guest_client_env=(
+    "SHADOW_BLITZ_DEMO_MODE=static"
+    "SHADOW_BLITZ_RENDERER=gpu"
+  )
+  if [[ -n "$WGPU_BACKEND_OVERRIDE" ]]; then
+    guest_client_env+=("WGPU_BACKEND=$WGPU_BACKEND_OVERRIDE")
+  fi
+  if [[ -n "$WGPU_ADAPTER_NAME_OVERRIDE" ]]; then
+    guest_client_env+=("WGPU_ADAPTER_NAME=$WGPU_ADAPTER_NAME_OVERRIDE")
+  fi
+
   (
     cd "$REPO_ROOT"
     export SHADOW_GUEST_CLIENT="$REPO_ROOT/scripts/runtime_app_wayland_client.sh"
-    export SHADOW_GUEST_CLIENT_ENV='SHADOW_BLITZ_DEMO_MODE=static SHADOW_BLITZ_RENDERER=gpu'
+    export SHADOW_GUEST_CLIENT_ENV="${guest_client_env[*]}"
     export SHADOW_GUEST_COMPOSITOR_TRANSPORT=direct
     export SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_DMA_BUFFER=1
     export XDG_RUNTIME_DIR="$runtime_dir"
@@ -202,9 +216,22 @@ run_local_linux_smoke() {
 
 run_remote_smoke() {
   local dir command status
+  local -a env_prefix
   dir="$(remote_dir)"
   sync_remote_tree
-  command="cd $(printf '%q' "$dir") && SHADOW_UI_SMOKE_REMOTE=1 SHADOW_UI_SMOKE_NAMESPACE=$(printf '%q' "$GUEST_BLITZ_SMOKE_NAMESPACE") SHADOW_UI_SMOKE_TIMEOUT=$(printf '%q' "$GUEST_BLITZ_SMOKE_TIMEOUT_SECS") SHADOW_GUEST_EXPECTED_BUFFER_TYPE=$(printf '%q' "$EXPECTED_BUFFER_TYPE") nix develop --accept-flake-config .#ui -c bash scripts/blitz_demo_guest_compositor_smoke.sh"
+  env_prefix=(
+    "SHADOW_UI_SMOKE_REMOTE=1"
+    "SHADOW_UI_SMOKE_NAMESPACE=$(printf '%q' "$GUEST_BLITZ_SMOKE_NAMESPACE")"
+    "SHADOW_UI_SMOKE_TIMEOUT=$(printf '%q' "$GUEST_BLITZ_SMOKE_TIMEOUT_SECS")"
+    "SHADOW_GUEST_EXPECTED_BUFFER_TYPE=$(printf '%q' "$EXPECTED_BUFFER_TYPE")"
+  )
+  if [[ -n "$WGPU_BACKEND_OVERRIDE" ]]; then
+    env_prefix+=("WGPU_BACKEND=$(printf '%q' "$WGPU_BACKEND_OVERRIDE")")
+  fi
+  if [[ -n "$WGPU_ADAPTER_NAME_OVERRIDE" ]]; then
+    env_prefix+=("WGPU_ADAPTER_NAME=$(printf '%q' "$WGPU_ADAPTER_NAME_OVERRIDE")")
+  fi
+  command="cd $(printf '%q' "$dir") && ${env_prefix[*]} nix develop --accept-flake-config .#ui -c bash scripts/blitz_demo_guest_compositor_smoke.sh"
   if remote_ssh "$command"; then
     status=0
   else

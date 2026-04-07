@@ -122,7 +122,11 @@ Living note. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Guest compositor dmabuf-awareness spike.
   `shadow-compositor-guest` now advertises a small linux-dmabuf global, logs imported dmabufs, classifies each committed client buffer, and has a dedicated smoke at `just blitz-demo-guest-compositor-smoke-gpu`. Current result: on the headless Linux smoke host, the static GPU Blitz demo still submits `type=shm`, not `type=dma`, so the next unknown is the client/driver path rather than whether Smithay can recognize dmabufs.
 - [x] Rooted-Pixel GPU viability decision.
-  Keep the rooted-Pixel runtime lane on CPU for now. Host GPU and Linux compositor GPU both work, which isolates the remaining device blocker to `shadow-compositor-guest`: it still consumes SHM buffers only, so a client-side GPU swap cannot help the Pixel path until the guest compositor grows dmabuf or an equivalent GPU buffer import path.
+  The rooted Pixel now also has a working static `wgpu` smoke via `scripts/pixel_blitz_demo_static_drm_gpu_softbuffer.sh`: the GNU-wrapped Blitz demo launches under `shadow-compositor-guest`, the compositor captures `384x720` frames, and the panel presents them. But this is not the final acceleration answer yet. Current state:
+  - `WGPU_BACKEND=gl` works on the rooted Pixel through the softbuffer path, but Mesa still falls back to surfaceless `swrast`, so this is a functional device proof, not true hardware acceleration.
+  - `WGPU_BACKEND=vulkan` still fails inside `libvulkan_freedreno.so` at `vkEnumeratePhysicalDevices`, so Turnip / Freedreno Vulkan is still the real device blocker.
+  - `just pixel-drm-probe` now shows why the default DRM render-node path is suspect on this phone: both `/dev/dri/card0` and `/dev/dri/renderD128` report `name=msm_drm` with `syncobj value=0`, and `timeline-syncobj` returns `EINVAL`. That matches Turnip's own `DRM_CAP_SYNCOBJ` requirement and strongly suggests the rooted Pixel's Linux DRM node is too old for the current Mesa/Turnip DRM path.
+  - The rooted Pixel runtime app lane now also runs on `gpu_softbuffer`: cold first frame is still bad at about `8.3s`, but once the app is already on screen the rooted device now rerenders in about `37ms` GPU-softbuffer time and about `75ms` end-to-end from touch-signal detection to presented frame. That is good enough for interactive feel, even though the path is still software-backed and not true hardware acceleration.
 
 ## Open Questions
 
