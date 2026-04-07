@@ -39,9 +39,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Proven on-device on `0B191JEC203253`: provider notify works, rear camera open works, session-level `STILL_CAPTURE` default settings return `2528` bytes, and session close works.
   - Proven on-device on `0B191JEC203253`: `session.configureStreams()` accepts one JPEG BLOB output stream (`640x480`, `JFIF`, `8 MiB` buffer size) and returns `maxBuffers=8`, `overrideFormat=BLOB`, `overrideDataSpace=JFIF`, and producer usage `131075`.
 
-- [ ] M3: Buffer plus still-capture proof outside takeover.
-  - Allocate/import buffers, submit one request, receive result callback, write one JPEG on device.
-  - Pull JPEG plus logs back to host.
+- [x] M3: Buffer plus still-capture proof outside takeover.
+  - Added HAL buffer-manager callback handling for `requestStreamBuffers` / `returnStreamBuffers`, plus helper-side buffer tracking keyed by camera buffer id.
+  - Added Android `AHardwareBuffer` allocation/import glue for JPEG BLOB buffers and enough result handling to wait for the returned buffer, honor the release fence, and parse the JPEG blob footer.
+  - Proven on-device on `09051JEC202061`: `just pixel-camera-rs-run capture` returns `ok=true`, writes `/data/local/tmp/shadow-camera-provider-host-capture.jpg`, and records an `8081` byte JPEG plus structured callback traces under `build/pixel/camera-rs/20260407T223757Z/`.
 
 - [ ] M4: Takeover proof.
   - Rerun the same helper during the current display-stop takeover.
@@ -86,4 +87,6 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Current proof artifacts for the open/session-default seam live under `build/pixel/camera-rs/20260407T211917Z/`.
 - Current proof artifacts for the configure seam live under `build/pixel/camera-rs/20260407T212712Z/`.
 - The returned JPEG `HalStream` for the first stream reports `producerUsage=131075`, `consumerUsage=0`, `maxBuffers=8`, `overrideFormat=BLOB`, and `overrideDataSpace=JFIF`. That is enough to start buffer allocation without touching vendor-private metadata.
-- Next seam after M2: add `NativeHandle` / `StreamBuffer` / `CaptureRequest` plus one gralloc-backed buffer, submit one still request with inline metadata, and parse `processCaptureResult` just enough to honor the release fence and read the JPEG blob footer.
+- The live Pixel 4a requests JPEG buffers through `requestStreamBuffers()` on this provider path even though the returned `HalStream.enableHalBufferManager` bit is `false`. That suggests the device is operating under the newer session-wide AIDL buffer-manager mode rather than the per-stream opt-in bit.
+- Current proof artifacts for the first successful standalone capture live under `build/pixel/camera-rs/20260407T223757Z/`.
+- Next seam after M3: rerun the same standalone helper while the rooted display-takeover path is active and determine whether provider-level capture survives the current `surfaceflinger` stop sequence.

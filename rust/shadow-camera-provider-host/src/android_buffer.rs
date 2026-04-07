@@ -25,6 +25,7 @@ unsafe extern "C" {
     fn AHardwareBuffer_getNativeHandle(buffer: *const c_void) -> *const NativeHandleRaw;
 }
 
+#[derive(Clone)]
 pub struct AllocatedCaptureBuffer {
     pub buffer: HardwareBufferRef,
     pub aidl_handle: AidlNativeHandle,
@@ -32,6 +33,12 @@ pub struct AllocatedCaptureBuffer {
     pub allocation_width: usize,
     pub allocation_usage: u64,
 }
+
+// `AHardwareBuffer` is a reference-counted NDK object intended to be shared
+// across threads and processes. The Rust wrapper does not currently mark it as
+// `Send`/`Sync`, so the helper carries that guarantee at the owned buffer seam.
+unsafe impl Send for AllocatedCaptureBuffer {}
+unsafe impl Sync for AllocatedCaptureBuffer {}
 
 pub fn allocate_jpeg_capture_buffer(
     requested_stream: &Stream,

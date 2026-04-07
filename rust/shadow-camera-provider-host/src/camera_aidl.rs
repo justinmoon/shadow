@@ -125,10 +125,6 @@ pub mod common {
             self.fds.is_empty() && self.ints.is_empty()
         }
 
-        pub fn into_first_parcel_file_descriptor(self) -> Option<ParcelFileDescriptor> {
-            self.fds.into_iter().next()
-        }
-
         pub fn dup_first_owned_fd(&self) -> io::Result<Option<OwnedFd>> {
             let Some(parcel_fd) = self.fds.first() else {
                 return Ok(None);
@@ -545,6 +541,7 @@ pub mod device {
         pub override_data_space: Dataspace,
         pub physical_camera_id: String,
         pub support_offline: bool,
+        pub enable_hal_buffer_manager: bool,
     }
 
     impl Default for HalStream {
@@ -558,6 +555,7 @@ pub mod device {
                 override_data_space: Dataspace::UNKNOWN,
                 physical_camera_id: String::new(),
                 support_offline: false,
+                enable_hal_buffer_manager: false,
             }
         }
     }
@@ -576,6 +574,7 @@ pub mod device {
                 subparcel.write(&self.override_data_space)?;
                 subparcel.write(&self.physical_camera_id)?;
                 subparcel.write(&self.support_offline)?;
+                subparcel.write(&self.enable_hal_buffer_manager)?;
                 Ok(())
             })
         }
@@ -608,6 +607,9 @@ pub mod device {
                 }
                 if subparcel.has_more_data() {
                     self.support_offline = subparcel.read()?;
+                }
+                if subparcel.has_more_data() {
+                    self.enable_hal_buffer_manager = subparcel.read()?;
                 }
                 Ok(())
             })
@@ -1011,34 +1013,30 @@ pub mod device {
             &self,
             parcel: &mut BorrowedParcel<'_>,
         ) -> std::result::Result<(), StatusCode> {
-            parcel.sized_write(|subparcel| {
-                match self {
-                    Self::Error(message) => {
-                        subparcel.write(&0_i32)?;
-                        subparcel.write(message)?;
-                    }
-                    Self::Shutter(message) => {
-                        subparcel.write(&1_i32)?;
-                        subparcel.write(message)?;
-                    }
+            match self {
+                Self::Error(message) => {
+                    parcel.write(&0_i32)?;
+                    parcel.write(message)?;
                 }
-                Ok(())
-            })
+                Self::Shutter(message) => {
+                    parcel.write(&1_i32)?;
+                    parcel.write(message)?;
+                }
+            }
+            Ok(())
         }
 
         fn read_from_parcel(
             &mut self,
             parcel: &BorrowedParcel<'_>,
         ) -> std::result::Result<(), StatusCode> {
-            parcel.sized_read(|subparcel| {
-                let tag: i32 = subparcel.read()?;
-                *self = match tag {
-                    0 => Self::Error(subparcel.read()?),
-                    1 => Self::Shutter(subparcel.read()?),
-                    _ => return Err(StatusCode::BAD_VALUE),
-                };
-                Ok(())
-            })
+            let tag: i32 = parcel.read()?;
+            *self = match tag {
+                0 => Self::Error(parcel.read()?),
+                1 => Self::Shutter(parcel.read()?),
+                _ => return Err(StatusCode::BAD_VALUE),
+            };
+            Ok(())
         }
     }
 
@@ -1120,34 +1118,30 @@ pub mod device {
             &self,
             parcel: &mut BorrowedParcel<'_>,
         ) -> std::result::Result<(), StatusCode> {
-            parcel.sized_write(|subparcel| {
-                match self {
-                    Self::Error(error) => {
-                        subparcel.write(&0_i32)?;
-                        subparcel.write(error)?;
-                    }
-                    Self::Buffers(buffers) => {
-                        subparcel.write(&1_i32)?;
-                        subparcel.write(buffers)?;
-                    }
+            match self {
+                Self::Error(error) => {
+                    parcel.write(&0_i32)?;
+                    parcel.write(error)?;
                 }
-                Ok(())
-            })
+                Self::Buffers(buffers) => {
+                    parcel.write(&1_i32)?;
+                    parcel.write(buffers)?;
+                }
+            }
+            Ok(())
         }
 
         fn read_from_parcel(
             &mut self,
             parcel: &BorrowedParcel<'_>,
         ) -> std::result::Result<(), StatusCode> {
-            parcel.sized_read(|subparcel| {
-                let tag: i32 = subparcel.read()?;
-                *self = match tag {
-                    0 => Self::Error(subparcel.read()?),
-                    1 => Self::Buffers(subparcel.read()?),
-                    _ => return Err(StatusCode::BAD_VALUE),
-                };
-                Ok(())
-            })
+            let tag: i32 = parcel.read()?;
+            *self = match tag {
+                0 => Self::Error(parcel.read()?),
+                1 => Self::Buffers(parcel.read()?),
+                _ => return Err(StatusCode::BAD_VALUE),
+            };
+            Ok(())
         }
     }
 
@@ -1190,6 +1184,21 @@ pub mod device {
 
     binder::impl_serialize_for_parcelable!(StreamBufferRet);
     binder::impl_deserialize_for_parcelable!(StreamBufferRet);
+
+    #[derive(Clone, Debug)]
+    pub struct BufferRequestResponse {
+        pub status: BufferRequestStatus,
+        pub buffers: Vec<StreamBufferRet>,
+    }
+
+    impl Default for BufferRequestResponse {
+        fn default() -> Self {
+            Self {
+                status: BufferRequestStatus::FAILED_UNKNOWN,
+                buffers: Vec::new(),
+            }
+        }
+    }
 
     #[derive(Clone, Debug, Default)]
     pub struct BufferCache {
@@ -1242,8 +1251,11 @@ pub mod device {
     pub trait ICameraDeviceCallback: binder::Interface + Send {
         fn notify(&self, msgs: &[NotifyMsg]) -> binder::Result<()>;
         fn process_capture_result(&self, results: &[CaptureResult]) -> binder::Result<()>;
-        fn request_stream_buffers(&self) -> binder::Result<()>;
-        fn return_stream_buffers(&self) -> binder::Result<()>;
+        fn request_stream_buffers(
+            &self,
+            buffer_requests: &[BufferRequest],
+        ) -> binder::Result<BufferRequestResponse>;
+        fn return_stream_buffers(&self, buffers: &[StreamBuffer]) -> binder::Result<()>;
     }
 
     mod callback_transactions {
@@ -1278,18 +1290,31 @@ pub mod device {
             super::read_aidl_status(reply)
         }
 
-        fn request_stream_buffers(&self) -> binder::Result<()> {
-            let data = self.binder.prepare_transact()?;
+        fn request_stream_buffers(
+            &self,
+            buffer_requests: &[BufferRequest],
+        ) -> binder::Result<BufferRequestResponse> {
+            let mut data = self.binder.prepare_transact()?;
+            data.write(&buffer_requests.to_vec())?;
             let reply = self.binder.submit_transact(
                 callback_transactions::REQUEST_STREAM_BUFFERS,
                 data,
                 0,
             );
-            super::read_aidl_status(reply)
+            let reply = reply?;
+            let status: Status = reply.read()?;
+            if !status.is_ok() {
+                return Err(status);
+            }
+            Ok(BufferRequestResponse {
+                status: reply.read()?,
+                buffers: reply.read()?,
+            })
         }
 
-        fn return_stream_buffers(&self) -> binder::Result<()> {
-            let data = self.binder.prepare_transact()?;
+        fn return_stream_buffers(&self, buffers: &[StreamBuffer]) -> binder::Result<()> {
+            let mut data = self.binder.prepare_transact()?;
+            data.write(&buffers.to_vec())?;
             let reply = self.binder.submit_transact(
                 callback_transactions::RETURN_STREAM_BUFFERS,
                 data,
@@ -1308,12 +1333,15 @@ pub mod device {
             self.0.process_capture_result(results)
         }
 
-        fn request_stream_buffers(&self) -> binder::Result<()> {
-            self.0.request_stream_buffers()
+        fn request_stream_buffers(
+            &self,
+            buffer_requests: &[BufferRequest],
+        ) -> binder::Result<BufferRequestResponse> {
+            self.0.request_stream_buffers(buffer_requests)
         }
 
-        fn return_stream_buffers(&self) -> binder::Result<()> {
-            self.0.return_stream_buffers()
+        fn return_stream_buffers(&self, buffers: &[StreamBuffer]) -> binder::Result<()> {
+            self.0.return_stream_buffers(buffers)
         }
     }
 
@@ -1333,20 +1361,20 @@ pub mod device {
                 super::write_aidl_status(reply, service.process_capture_result(&results))
             }
             callback_transactions::REQUEST_STREAM_BUFFERS => {
-                let _buffer_requests: Vec<BufferRequest> = data.read()?;
-                match service.request_stream_buffers() {
-                    Ok(()) => {
+                let buffer_requests: Vec<BufferRequest> = data.read()?;
+                match service.request_stream_buffers(&buffer_requests) {
+                    Ok(response) => {
                         reply.write(&Status::ok())?;
-                        reply.write(&BufferRequestStatus::FAILED_CONFIGURING)?;
-                        reply.write(&Vec::<StreamBufferRet>::new())?;
+                        reply.write(&response.status)?;
+                        reply.write(&response.buffers)?;
                         Ok(())
                     }
                     Err(status) => reply.write(&status),
                 }
             }
             callback_transactions::RETURN_STREAM_BUFFERS => {
-                let _buffers: Vec<StreamBuffer> = data.read()?;
-                super::write_aidl_status(reply, service.return_stream_buffers())
+                let buffers: Vec<StreamBuffer> = data.read()?;
+                super::write_aidl_status(reply, service.return_stream_buffers(&buffers))
             }
             callback_transactions::GET_INTERFACE_VERSION => {
                 super::write_aidl_value(reply, Ok(CALLBACK_INTERFACE_VERSION))

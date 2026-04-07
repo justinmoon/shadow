@@ -17,9 +17,10 @@ use android_service::{
 };
 #[cfg(target_os = "android")]
 use camera_aidl::device::{
-    self, BufferStatus, CaptureRequest, CaptureResult, ICameraDeviceCallback, NotifyMsg,
-    RequestTemplate, Stream, StreamBuffer, StreamConfiguration,
-    StreamConfigurationMode, StreamRotation, StreamType,
+    self, BufferRequest, BufferRequestResponse, BufferRequestStatus, BufferStatus,
+    CaptureRequest, CaptureResult, ICameraDeviceCallback, NotifyMsg, RequestTemplate, Stream,
+    StreamBuffer, StreamBufferRequestError, StreamBufferRet, StreamBuffersVal,
+    StreamConfiguration, StreamConfigurationMode, StreamRotation, StreamType,
 };
 #[cfg(target_os = "android")]
 use camera_aidl::graphics::{BufferUsage, Dataspace, PixelFormat};
@@ -30,6 +31,8 @@ use camera_aidl::metadata::{
 #[cfg(target_os = "android")]
 use camera_aidl::provider::{self, ICameraProvider, ICameraProviderCallback};
 use serde_json::json;
+#[cfg(target_os = "android")]
+use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 #[cfg(target_os = "android")]
@@ -399,6 +402,7 @@ fn make_open_response(argv: &[OsString]) -> serde_json::Value {
     let device_callback = device::new_callback(DeviceCallbackRecorder {
         events: Arc::clone(&device_callback_log),
         capture_wait: None,
+        capture_buffer_manager: None,
     });
 
     let session = match device.open(&device_callback) {
@@ -623,6 +627,7 @@ fn make_configure_response(argv: &[OsString]) -> serde_json::Value {
     let device_callback = device::new_callback(DeviceCallbackRecorder {
         events: Arc::clone(&device_callback_log),
         capture_wait: None,
+        capture_buffer_manager: None,
     });
 
     let session = match device.open(&device_callback) {
@@ -851,14 +856,13 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         Err(status) => status_json(&status),
     };
 
-    let capture_wait = Arc::new((
-        Mutex::new(CaptureWaitState::new(1, 1)),
-        Condvar::new(),
-    ));
+    let capture_wait = Arc::new((Mutex::new(CaptureWaitState::new(1, 1)), Condvar::new()));
+    let capture_buffer_manager = Arc::new(Mutex::new(None));
     let device_callback_log = Arc::new(Mutex::new(Vec::new()));
     let device_callback = device::new_callback(DeviceCallbackRecorder {
         events: Arc::clone(&device_callback_log),
         capture_wait: Some(Arc::clone(&capture_wait)),
+        capture_buffer_manager: Some(Arc::clone(&capture_buffer_manager)),
     });
 
     let session = match device.open(&device_callback) {
@@ -950,22 +954,36 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
                 )
             })?;
 
-        let capture_buffer = allocate_jpeg_capture_buffer(requested_stream, hal_stream).map_err(|error| {
-            command_message_with_context(
-                "capture",
-                argv,
-                "allocate_jpeg_capture_buffer",
-                &error.to_string(),
-                Some(&declared_instances),
-                &service_name,
-            )
-        })?;
-
-        let allocated_buffer_json = capture_buffer_json(&capture_buffer);
         let output_path = PathBuf::from(DEFAULT_CAPTURE_PATH);
+        // The live Pixel 4a requests still-capture buffers through the HAL
+        // buffer manager on this provider path. Keep the spike on that path
+        // until we add metadata-based mode detection.
+        let use_hal_buffer_manager = true;
 
-        let capture_request =
-            build_capture_request(1, default_request_settings, requested_stream.id, &capture_buffer);
+        {
+            let mut guard = capture_buffer_manager.lock().map_err(|_| {
+                command_message_with_context(
+                    "capture",
+                    argv,
+                    "capture_buffer_manager_lock",
+                    "capture buffer manager mutex was poisoned",
+                    Some(&declared_instances),
+                    &service_name,
+                )
+            })?;
+            *guard = Some(CaptureBufferManager::new(
+                requested_stream.clone(),
+                hal_stream.clone(),
+            ));
+        }
+
+        let capture_request = build_capture_request(
+            1,
+            default_request_settings,
+            requested_stream.id,
+            use_hal_buffer_manager,
+            None,
+        );
 
         let processed_request_count =
             match session.process_capture_request(&[capture_request], &[]) {
@@ -996,7 +1014,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
 
         let capture_completion_json = capture_completion_json(&wait_snapshot.completion);
         if wait_snapshot.completion.buffer_status != BufferStatus::OK.0 {
-            return Err(command_message_with_context(
+            let mut value = command_message_with_context(
                 "capture",
                 argv,
                 "capture_result_status",
@@ -1006,8 +1024,30 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
                 ),
                 Some(&declared_instances),
                 &service_name,
-            ));
+            );
+            value["halStreams"] = json!(hal_streams_json(&hal_streams));
+            value["allocatedBuffer"] = json!(serde_json::Value::Null);
+            value["processedRequestCount"] = json!(processed_request_count);
+            value["captureCompletion"] = capture_completion_json;
+            value["requestStreamBufferEvents"] = json!(wait_snapshot.requested_buffer_events);
+            value["returnStreamBufferEvents"] = json!(wait_snapshot.returned_buffer_events);
+            value["captureResultEvents"] = json!(wait_snapshot.result_events);
+            value["captureNotifyEvents"] = json!(wait_snapshot.notify_events);
+            return Err(value);
         }
+
+        let capture_buffer =
+            take_capture_buffer(&capture_buffer_manager, wait_snapshot.completion.buffer_id)
+                .map_err(|error| {
+                    command_message_with_context(
+                        "capture",
+                        argv,
+                        "take_capture_buffer",
+                        &error,
+                        Some(&declared_instances),
+                        &service_name,
+                    )
+                })?;
 
         let bytes_written = write_jpeg_from_buffer(
             &capture_buffer.buffer,
@@ -1029,7 +1069,9 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
             default_request_settings: default_request_settings_json,
             requested_configuration: requested_configuration_json,
             hal_streams: hal_streams_json(&hal_streams),
-            allocated_buffer: allocated_buffer_json,
+            allocated_buffer: capture_buffer_json(&capture_buffer),
+            requested_buffer_events: wait_snapshot.requested_buffer_events,
+            returned_buffer_events: wait_snapshot.returned_buffer_events,
             processed_request_count,
             result_events: wait_snapshot.result_events,
             notify_events: wait_snapshot.notify_events,
@@ -1068,6 +1110,23 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         .lock()
         .map(|events| events.clone())
         .unwrap_or_default();
+    let (capture_wait_state, _) = &*capture_wait;
+    let (
+        pending_request_stream_buffer_events,
+        pending_return_stream_buffer_events,
+        pending_capture_result_events,
+        pending_capture_notify_events,
+    ) = capture_wait_state
+        .lock()
+        .map(|state| {
+            (
+                state.requested_buffer_events.clone(),
+                state.returned_buffer_events.clone(),
+                state.result_events.clone(),
+                state.notify_events.clone(),
+            )
+        })
+        .unwrap_or_default();
 
     match capture_execution {
         Ok(execution) => json!({
@@ -1090,6 +1149,8 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
             "requestedConfiguration": execution.requested_configuration,
             "halStreams": execution.hal_streams,
             "allocatedBuffer": execution.allocated_buffer,
+            "requestStreamBufferEvents": execution.requested_buffer_events,
+            "returnStreamBufferEvents": execution.returned_buffer_events,
             "processedRequestCount": execution.processed_request_count,
             "captureCompletion": execution.capture_completion,
             "captureResultEvents": execution.result_events,
@@ -1111,6 +1172,10 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
             value["deviceState"] = json!("DEVICE_STATE_NORMAL");
             value["sessionOpened"] = json!(true);
             value["sessionClosed"] = json!(session_closed);
+            value["requestStreamBufferEvents"] = json!(pending_request_stream_buffer_events);
+            value["returnStreamBufferEvents"] = json!(pending_return_stream_buffer_events);
+            value["captureResultEvents"] = json!(pending_capture_result_events);
+            value["captureNotifyEvents"] = json!(pending_capture_notify_events);
             value["providerCallbackEvents"] = json!(provider_callback_events);
             value["deviceCallbackEvents"] = json!(device_callback_events);
             value
@@ -1251,23 +1316,45 @@ fn build_capture_request(
     frame_number: i32,
     settings: device::CameraMetadata,
     stream_id: i32,
-    capture_buffer: &AllocatedCaptureBuffer,
+    use_hal_buffer_manager: bool,
+    capture_buffer: Option<&AllocatedCaptureBuffer>,
 ) -> CaptureRequest {
-    CaptureRequest {
-        frame_number,
-        fmq_settings_size: 0,
-        settings,
-        input_buffer: StreamBuffer::default(),
-        input_width: 0,
-        input_height: 0,
-        output_buffers: vec![StreamBuffer {
+    let output_buffer = if use_hal_buffer_manager {
+        StreamBuffer {
+            stream_id,
+            buffer_id: 0,
+            buffer: camera_aidl::common::NativeHandle::empty(),
+            status: BufferStatus::OK,
+            acquire_fence: camera_aidl::common::NativeHandle::empty(),
+            release_fence: camera_aidl::common::NativeHandle::empty(),
+        }
+    } else {
+        let capture_buffer = capture_buffer.expect("framework-managed capture requires a buffer");
+        StreamBuffer {
             stream_id,
             buffer_id: capture_buffer.buffer_id,
             buffer: capture_buffer.aidl_handle.clone(),
             status: BufferStatus::OK,
             acquire_fence: camera_aidl::common::NativeHandle::empty(),
             release_fence: camera_aidl::common::NativeHandle::empty(),
-        }],
+        }
+    };
+
+    CaptureRequest {
+        frame_number,
+        fmq_settings_size: 0,
+        settings,
+        input_buffer: StreamBuffer {
+            stream_id: -1,
+            buffer_id: 0,
+            buffer: camera_aidl::common::NativeHandle::empty(),
+            status: BufferStatus::ERROR,
+            acquire_fence: camera_aidl::common::NativeHandle::empty(),
+            release_fence: camera_aidl::common::NativeHandle::empty(),
+        },
+        input_width: 0,
+        input_height: 0,
+        output_buffers: vec![output_buffer],
         physical_camera_settings: Vec::new(),
     }
 }
@@ -1303,6 +1390,8 @@ fn wait_for_capture_completion(
         if let Some(completion) = guard.completion.take() {
             return Ok(CaptureWaitSnapshot {
                 completion,
+                requested_buffer_events: guard.requested_buffer_events.clone(),
+                returned_buffer_events: guard.returned_buffer_events.clone(),
                 result_events: guard.result_events.clone(),
                 notify_events: guard.notify_events.clone(),
                 wait_duration_ms: started.elapsed().as_millis(),
@@ -1395,6 +1484,7 @@ fn hal_streams_json(hal_streams: &[device::HalStream]) -> Vec<serde_json::Value>
                 "overrideDataSpaceDebug": format!("{:?}", hal_stream.override_data_space),
                 "physicalCameraId": hal_stream.physical_camera_id,
                 "supportOffline": hal_stream.support_offline,
+                "enableHalBufferManager": hal_stream.enable_hal_buffer_manager,
             })
         })
         .collect()
@@ -1539,6 +1629,8 @@ struct CaptureExecution {
     requested_configuration: serde_json::Value,
     hal_streams: Vec<serde_json::Value>,
     allocated_buffer: serde_json::Value,
+    requested_buffer_events: Vec<serde_json::Value>,
+    returned_buffer_events: Vec<serde_json::Value>,
     processed_request_count: i32,
     result_events: Vec<serde_json::Value>,
     notify_events: Vec<serde_json::Value>,
@@ -1556,6 +1648,8 @@ struct CaptureWaitState {
     target_frame_number: i32,
     target_stream_id: i32,
     completion: Option<CaptureCompletion>,
+    requested_buffer_events: Vec<serde_json::Value>,
+    returned_buffer_events: Vec<serde_json::Value>,
     result_events: Vec<serde_json::Value>,
     notify_events: Vec<serde_json::Value>,
     errors: Vec<String>,
@@ -1568,6 +1662,8 @@ impl CaptureWaitState {
             target_frame_number,
             target_stream_id,
             completion: None,
+            requested_buffer_events: Vec::new(),
+            returned_buffer_events: Vec::new(),
             result_events: Vec::new(),
             notify_events: Vec::new(),
             errors: Vec::new(),
@@ -1591,6 +1687,8 @@ struct CaptureCompletion {
 #[cfg(target_os = "android")]
 struct CaptureWaitSnapshot {
     completion: CaptureCompletion,
+    requested_buffer_events: Vec<serde_json::Value>,
+    returned_buffer_events: Vec<serde_json::Value>,
     result_events: Vec<serde_json::Value>,
     notify_events: Vec<serde_json::Value>,
     wait_duration_ms: u128,
@@ -1601,6 +1699,7 @@ struct CaptureWaitSnapshot {
 struct DeviceCallbackRecorder {
     events: Arc<Mutex<Vec<String>>>,
     capture_wait: Option<CaptureWaitHandle>,
+    capture_buffer_manager: Option<CaptureBufferManagerHandle>,
 }
 
 #[cfg(target_os = "android")]
@@ -1715,13 +1814,97 @@ impl ICameraDeviceCallback for DeviceCallbackRecorder {
         Ok(())
     }
 
-    fn request_stream_buffers(&self) -> binder::Result<()> {
-        self.push_event("requestStreamBuffers");
-        Ok(())
+    fn request_stream_buffers(
+        &self,
+        buffer_requests: &[BufferRequest],
+    ) -> binder::Result<BufferRequestResponse> {
+        self.push_event(format!("requestStreamBuffers({})", buffer_requests.len()));
+
+        let response = if let Some(capture_buffer_manager) = &self.capture_buffer_manager {
+            let mut guard = capture_buffer_manager.lock().map_err(|_| {
+                binder::Status::new_service_specific_error_str(
+                    -1,
+                    Some("capture buffer manager mutex was poisoned"),
+                )
+            })?;
+
+            match guard.as_mut() {
+                Some(buffer_manager) => buffer_manager.request_buffers(buffer_requests),
+                None => BufferRequestResponse {
+                    status: BufferRequestStatus::FAILED_CONFIGURING,
+                    buffers: Vec::new(),
+                },
+            }
+        } else {
+            BufferRequestResponse {
+                status: BufferRequestStatus::FAILED_CONFIGURING,
+                buffers: Vec::new(),
+            }
+        };
+
+        if let Some(capture_wait) = &self.capture_wait {
+            let (state, condvar) = &**capture_wait;
+            if let Ok(mut guard) = state.lock() {
+                guard.requested_buffer_events.push(json!({
+                    "requests": buffer_requests.iter().map(|request| {
+                        json!({
+                            "streamId": request.stream_id,
+                            "numBuffersRequested": request.num_buffers_requested,
+                        })
+                    }).collect::<Vec<_>>(),
+                    "status": response.status.0,
+                    "statusDebug": format!("{:?}", response.status),
+                    "buffers": response.buffers.iter().map(stream_buffer_ret_json).collect::<Vec<_>>(),
+                }));
+                if response.status.0 != BufferRequestStatus::OK.0 {
+                    guard.errors.push(format!(
+                        "requestStreamBuffers returned {}",
+                        format!("{:?}", response.status)
+                    ));
+                }
+                condvar.notify_all();
+            }
+        }
+
+        Ok(response)
     }
 
-    fn return_stream_buffers(&self) -> binder::Result<()> {
-        self.push_event("returnStreamBuffers");
+    fn return_stream_buffers(&self, buffers: &[StreamBuffer]) -> binder::Result<()> {
+        self.push_event(format!("returnStreamBuffers({})", buffers.len()));
+
+        let unknown_buffers = if let Some(capture_buffer_manager) = &self.capture_buffer_manager {
+            let mut guard = capture_buffer_manager.lock().map_err(|_| {
+                binder::Status::new_service_specific_error_str(
+                    -1,
+                    Some("capture buffer manager mutex was poisoned"),
+                )
+            })?;
+
+            match guard.as_mut() {
+                Some(buffer_manager) => buffer_manager.return_buffers(buffers),
+                None => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+
+        if let Some(capture_wait) = &self.capture_wait {
+            let (state, condvar) = &**capture_wait;
+            if let Ok(mut guard) = state.lock() {
+                guard.returned_buffer_events.push(json!({
+                    "buffers": buffers.iter().map(stream_buffer_json).collect::<Vec<_>>(),
+                    "unknownBufferIds": unknown_buffers,
+                }));
+                if !unknown_buffers.is_empty() {
+                    guard.errors.push(format!(
+                        "returnStreamBuffers reported unknown buffer ids: {}",
+                        unknown_buffers.join(", ")
+                    ));
+                }
+                condvar.notify_all();
+            }
+        }
+
         Ok(())
     }
 }
@@ -1733,4 +1916,183 @@ impl DeviceCallbackRecorder {
             events.push(event.into());
         }
     }
+}
+
+#[cfg(target_os = "android")]
+struct CaptureBufferManager {
+    requested_stream: Stream,
+    hal_stream: device::HalStream,
+    allocated_buffers: HashMap<i64, AllocatedCaptureBuffer>,
+}
+
+#[cfg(target_os = "android")]
+type CaptureBufferManagerHandle = Arc<Mutex<Option<CaptureBufferManager>>>;
+
+#[cfg(target_os = "android")]
+impl CaptureBufferManager {
+    fn new(requested_stream: Stream, hal_stream: device::HalStream) -> Self {
+        Self {
+            requested_stream,
+            hal_stream,
+            allocated_buffers: HashMap::new(),
+        }
+    }
+
+    fn request_buffers(&mut self, buffer_requests: &[BufferRequest]) -> BufferRequestResponse {
+        if buffer_requests.is_empty() {
+            return BufferRequestResponse {
+                status: BufferRequestStatus::OK,
+                buffers: Vec::new(),
+            };
+        }
+
+        let mut seen_streams = HashMap::<i32, ()>::new();
+        let mut buffer_replies = Vec::with_capacity(buffer_requests.len());
+        let mut all_requests_succeeded = true;
+        let mut one_request_succeeded = false;
+
+        for buffer_request in buffer_requests {
+            if buffer_request.num_buffers_requested < 0
+                || seen_streams.insert(buffer_request.stream_id, ()).is_some()
+                || buffer_request.stream_id != self.requested_stream.id
+            {
+                return BufferRequestResponse {
+                    status: BufferRequestStatus::FAILED_ILLEGAL_ARGUMENTS,
+                    buffers: Vec::new(),
+                };
+            }
+
+            let outstanding_after_request =
+                self.allocated_buffers.len() + buffer_request.num_buffers_requested as usize;
+            if outstanding_after_request > self.hal_stream.max_buffers as usize {
+                all_requests_succeeded = false;
+                buffer_replies.push(StreamBufferRet {
+                    stream_id: buffer_request.stream_id,
+                    val: StreamBuffersVal::Error(StreamBufferRequestError::MAX_BUFFER_EXCEEDED),
+                });
+                continue;
+            }
+
+            let mut allocated_stream_buffers = Vec::with_capacity(
+                usize::try_from(buffer_request.num_buffers_requested).unwrap_or_default(),
+            );
+            let mut allocated_buffer_ids = Vec::new();
+            let mut request_failed = false;
+
+            for _ in 0..buffer_request.num_buffers_requested {
+                match allocate_jpeg_capture_buffer(&self.requested_stream, &self.hal_stream) {
+                    Ok(capture_buffer) => {
+                        allocated_buffer_ids.push(capture_buffer.buffer_id);
+                        allocated_stream_buffers.push(StreamBuffer {
+                            stream_id: self.requested_stream.id,
+                            buffer_id: capture_buffer.buffer_id,
+                            buffer: capture_buffer.aidl_handle.clone(),
+                            status: BufferStatus::OK,
+                            acquire_fence: camera_aidl::common::NativeHandle::empty(),
+                            release_fence: camera_aidl::common::NativeHandle::empty(),
+                        });
+                        self.allocated_buffers
+                            .insert(capture_buffer.buffer_id, capture_buffer);
+                    }
+                    Err(_) => {
+                        request_failed = true;
+                        break;
+                    }
+                }
+            }
+
+            if request_failed {
+                all_requests_succeeded = false;
+                for buffer_id in allocated_buffer_ids {
+                    self.allocated_buffers.remove(&buffer_id);
+                }
+                buffer_replies.push(StreamBufferRet {
+                    stream_id: buffer_request.stream_id,
+                    val: StreamBuffersVal::Error(StreamBufferRequestError::UNKNOWN_ERROR),
+                });
+                continue;
+            }
+
+            one_request_succeeded = true;
+            buffer_replies.push(StreamBufferRet {
+                stream_id: buffer_request.stream_id,
+                val: StreamBuffersVal::Buffers(allocated_stream_buffers),
+            });
+        }
+
+        BufferRequestResponse {
+            status: if all_requests_succeeded {
+                BufferRequestStatus::OK
+            } else if one_request_succeeded {
+                BufferRequestStatus::FAILED_PARTIAL
+            } else {
+                BufferRequestStatus::FAILED_UNKNOWN
+            },
+            buffers: buffer_replies,
+        }
+    }
+
+    fn return_buffers(&mut self, buffers: &[StreamBuffer]) -> Vec<String> {
+        let mut unknown_buffers = Vec::new();
+        for buffer in buffers {
+            if buffer.buffer_id == 0 {
+                continue;
+            }
+            if self.allocated_buffers.remove(&buffer.buffer_id).is_none() {
+                unknown_buffers.push(format!("{}:{}", buffer.stream_id, buffer.buffer_id));
+            }
+        }
+        unknown_buffers
+    }
+
+    fn take_buffer(&mut self, buffer_id: i64) -> Option<AllocatedCaptureBuffer> {
+        self.allocated_buffers.remove(&buffer_id)
+    }
+}
+
+#[cfg(target_os = "android")]
+fn stream_buffer_ret_json(buffer_ret: &StreamBufferRet) -> serde_json::Value {
+    json!({
+        "streamId": buffer_ret.stream_id,
+        "val": match &buffer_ret.val {
+            StreamBuffersVal::Error(error) => json!({
+                "kind": "error",
+                "error": error.0,
+                "errorDebug": format!("{:?}", error),
+            }),
+            StreamBuffersVal::Buffers(buffers) => json!({
+                "kind": "buffers",
+                "buffers": buffers.iter().map(stream_buffer_json).collect::<Vec<_>>(),
+            }),
+        },
+    })
+}
+
+#[cfg(target_os = "android")]
+fn stream_buffer_json(buffer: &StreamBuffer) -> serde_json::Value {
+    json!({
+        "streamId": buffer.stream_id,
+        "bufferId": buffer.buffer_id,
+        "status": buffer.status.0,
+        "statusDebug": format!("{:?}", buffer.status),
+        "hasBufferHandle": !buffer.buffer.is_empty(),
+        "hasAcquireFence": !buffer.acquire_fence.is_empty(),
+        "hasReleaseFence": !buffer.release_fence.is_empty(),
+    })
+}
+
+#[cfg(target_os = "android")]
+fn take_capture_buffer(
+    capture_buffer_manager: &CaptureBufferManagerHandle,
+    buffer_id: i64,
+) -> Result<AllocatedCaptureBuffer, String> {
+    let mut guard = capture_buffer_manager
+        .lock()
+        .map_err(|_| String::from("capture buffer manager mutex was poisoned"))?;
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| String::from("capture buffer manager was not configured"))?;
+    manager
+        .take_buffer(buffer_id)
+        .ok_or_else(|| format!("capture buffer {} was not found", buffer_id))
 }
