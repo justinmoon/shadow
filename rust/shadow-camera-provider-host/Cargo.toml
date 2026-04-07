@@ -8,5 +8,6 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 
 [target.'cfg(target_os = "android")'.dependencies]
-binder = { package = "android-binder", version = "0.1.1" }
+binder = { package = "android-binder", path = "../../third_party/android-binder" }
 libc = "0.2.184"
+ndk = { version = "0.9.0", features = ["api-level-31"] }
