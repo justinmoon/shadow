@@ -334,6 +334,14 @@ pixel-prepare-runtime-app-artifacts:
 pixel-runtime-app-drm:
 	@scripts/pixel_runtime_app_drm.sh
 
+# Run one rooted-Pixel runtime direct-gpu probe case with the selected backend profile
+pixel-runtime-app-drm-gpu-probe profile="vulkan_kgsl_first":
+	@PIXEL_RUNTIME_GPU_RENDERER=gpu scripts/pixel_runtime_app_drm_gpu_probe.sh "{{profile}}"
+
+# Run the rooted-Pixel runtime direct-gpu probe matrix across the current default profiles
+pixel-runtime-app-drm-gpu-matrix:
+	@PIXEL_RUNTIME_GPU_RENDERER=gpu scripts/pixel_runtime_app_drm_gpu_matrix.sh
+
 # Run the runtime-mode Blitz demo on the rooted Pixel, keep the panel seized, and leave Android stopped
 pixel-runtime-app-drm-hold:
 	@scripts/pixel_runtime_app_drm_hold.sh

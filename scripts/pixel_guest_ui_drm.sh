@@ -7,7 +7,12 @@ source "$SCRIPT_DIR/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
-run_dir="$(pixel_prepare_named_run_dir "$(pixel_drm_guest_runs_dir)")"
+run_dir="${PIXEL_GUEST_RUN_DIR-}"
+if [[ -z "$run_dir" ]]; then
+  run_dir="$(pixel_prepare_named_run_dir "$(pixel_drm_guest_runs_dir)")"
+else
+  mkdir -p "$run_dir"
+fi
 logcat_path="$run_dir/logcat.txt"
 session_output_path="$run_dir/session-output.txt"
 checkpoint_log_path="$run_dir/checkpoints.txt"
@@ -63,6 +68,9 @@ client_marker_seen=false
 required_markers_seen=false
 frame_on_device=false
 android_restored=false
+checkpoint_failure_kind=""
+checkpoint_failure_description=""
+checkpoint_failure_message=""
 
 cleanup() {
   if [[ -n "${session_pid:-}" && "${startup_ok:-false}" != true && "${android_restored:-false}" != true ]]; then
@@ -148,6 +156,10 @@ wait_for_checkpoint() {
   timeout_secs="$2"
   shift 2
 
+  checkpoint_failure_kind=""
+  checkpoint_failure_description=""
+  checkpoint_failure_message=""
+
   checkpoint_note "expecting: $description"
   if pixel_wait_for_condition "$timeout_secs" 1 "$@"; then
     checkpoint_note "observed: $description"
@@ -156,9 +168,15 @@ wait_for_checkpoint() {
 
   if ! session_still_running; then
     wait "$session_pid" >/dev/null 2>&1 || session_status="$?"
-    checkpoint_note "failed: session exited before checkpoint: $description"
+    checkpoint_failure_kind="session-exited-before-checkpoint"
+    checkpoint_failure_description="$description"
+    checkpoint_failure_message="session exited before checkpoint: $description"
+    checkpoint_note "failed: $checkpoint_failure_message"
   else
-    checkpoint_note "failed: timed out waiting for checkpoint: $description"
+    checkpoint_failure_kind="checkpoint-timeout"
+    checkpoint_failure_description="$description"
+    checkpoint_failure_message="timed out waiting for checkpoint: $description"
+    checkpoint_note "failed: $checkpoint_failure_message"
   fi
   return 1
 }
@@ -220,7 +238,7 @@ if [[ -z "$failure_message" && -n "$expect_compositor_process" ]]; then
   if wait_for_checkpoint "$compositor_name startup observed" "$process_checkpoint_timeout_secs" compositor_start_observed "$serial" "$compositor_name"; then
     compositor_started=true
   else
-    failure_message="timed out waiting for $compositor_name startup"
+    failure_message="$checkpoint_failure_message"
   fi
 fi
 
@@ -228,7 +246,7 @@ if [[ -z "$failure_message" && -n "$expect_client_process" ]]; then
   if wait_for_checkpoint "$client_name startup observed" "$process_checkpoint_timeout_secs" client_start_observed "$serial" "$client_name"; then
     client_started=true
   else
-    failure_message="timed out waiting for $client_name startup"
+    failure_message="$checkpoint_failure_message"
   fi
 fi
 
@@ -238,7 +256,7 @@ if [[ -z "$failure_message" ]]; then
     compositor_marker_seen=true
     presented=true
   else
-    failure_message="timed out waiting for compositor marker: $compositor_marker"
+    failure_message="$checkpoint_failure_message"
   fi
 fi
 
@@ -247,7 +265,7 @@ if [[ -z "$failure_message" && -n "$expect_client_marker" ]]; then
   if wait_for_checkpoint "client marker seen" "$client_marker_timeout_secs" session_output_has_marker "$client_marker"; then
     client_marker_seen=true
   else
-    failure_message="timed out waiting for client marker: $client_marker"
+    failure_message="$checkpoint_failure_message"
   fi
 fi
 
@@ -257,7 +275,7 @@ if [[ -z "$failure_message" && -n "$required_markers_raw" ]]; then
     if wait_for_checkpoint "required marker seen" "$required_marker_timeout_secs" session_output_has_marker "$required_marker"; then
       :
     else
-      failure_message="timed out waiting for required marker: $required_marker"
+      failure_message="$checkpoint_failure_message"
       break
     fi
   done <<< "$required_markers_raw"
@@ -270,7 +288,7 @@ if [[ -z "$failure_message" ]]; then
   if wait_for_checkpoint "frame artifact written on device" "$frame_checkpoint_timeout_secs" pixel_root_file_nonempty "$serial" "$frame_path"; then
     frame_on_device=true
   else
-    failure_message="timed out waiting for non-empty on-device frame artifact: $frame_path"
+    failure_message="$checkpoint_failure_message"
   fi
 fi
 
@@ -371,6 +389,8 @@ pixel_write_status_json "$run_dir/status.json" \
   presented_frame="$presented" \
   session_ok="$session_ok" \
   android_restored="$android_restored" \
+  failure_kind="$checkpoint_failure_kind" \
+  failure_description="$checkpoint_failure_description" \
   failure_message="$failure_message" \
   success="$([[ "$session_ok" == true && "$verify_status" -eq 0 && "$presented" == true ]] && echo true || echo false)"
 

@@ -105,12 +105,14 @@ run_case() {
   local profile="$1"
   local case_log="$probe_dir/${profile}.log"
   local case_json="$probe_dir/${profile}.json"
-  local latest_before latest_after run_dir case_status required_markers=""
+  local run_dir="$probe_dir/run-$(printf '%s' "$profile" | tr -c 'A-Za-z0-9._-' '_')"
+  local case_status required_markers=""
   local -a guest_env_lines=()
   local -a env_vars=(
     "PIXEL_RUNTIME_SUMMARY_RENDERER=$renderer"
     "PIXEL_GUEST_EXPECT_COMPOSITOR_PROCESS="
     "PIXEL_GUEST_EXPECT_CLIENT_PROCESS="
+    "PIXEL_GUEST_RUN_DIR=$run_dir"
   )
 
   while IFS= read -r env_line; do
@@ -131,7 +133,8 @@ run_case() {
     env_vars+=("PIXEL_GUEST_CLIENT_ENV=${guest_env_lines[*]}")
   fi
 
-  latest_before="$(ls -1dt "$(pixel_drm_guest_runs_dir)"/* 2>/dev/null | head -n 1 || true)"
+  rm -rf "$run_dir"
+  mkdir -p "$run_dir"
 
   printf 'pixel static gpu probe: profile=%s\n' "$profile" | tee "$case_log"
   if [[ "${#guest_env_lines[@]}" -gt 0 ]]; then
@@ -145,12 +148,6 @@ run_case() {
     "$launcher_script" >>"$case_log" 2>&1
   case_status="$?"
   set -e
-
-  latest_after="$(ls -1dt "$(pixel_drm_guest_runs_dir)"/* 2>/dev/null | head -n 1 || true)"
-  run_dir="$latest_after"
-  if [[ -n "$latest_before" && "$latest_after" == "$latest_before" ]]; then
-    run_dir=""
-  fi
 
   python3 - "$profile" "$case_status" "$run_dir" "$case_json" <<'PY'
 import json
@@ -179,6 +176,8 @@ payload = {
     "summary": summary,
     "classified": bool((summary or {}).get("summary_source")),
     "measured": (summary or {}).get("first_visible_frame_ms") is not None,
+    "failure_kind": (status or {}).get("failure_kind"),
+    "failure_description": (status or {}).get("failure_description"),
     "success": exit_status == 0 and bool((status or {}).get("success")),
 }
 

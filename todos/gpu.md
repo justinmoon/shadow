@@ -97,6 +97,26 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Explicit operator hooks:
     - `just pixel-gpu-warm`
     - `just pixel-runtime-app-nostr-timeline-gpu-smoke`
+- [~] The direct runtime GPU probe/matrix seam now exists.
+  - New operator hooks:
+    - `just pixel-runtime-app-drm-gpu-probe`
+    - `just pixel-runtime-app-drm-gpu-matrix`
+  - The summary output now reports:
+    - `startup_stage_last`
+    - `startup_stage_count`
+    - `failure_phase`
+    - `failure_reason`
+    - `adapter_ok`
+    - `surface_ok`
+    - `configure_ok`
+    - `present_ok`
+  - The probe wrapper now passes an explicit run dir into the rooted session.
+    - This removed the old `latest before / latest after` race.
+  - The rooted session status now preserves:
+    - `failure_kind`
+    - `failure_description`
+  - Remaining work:
+    - finish one fresh rooted-Pixel probe run after the current cold direct-`gpu` bundle build completes
 - [ ] The true `gpu` client renderer path is not the proven operator lane yet.
   - The proven lane today is `gpu_softbuffer`.
   - Existing direct-`gpu` Pixel runs fail at `window.resume() -> wgpu_context.create_surface() -> NoCompatibleDevice`.
@@ -147,6 +167,16 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - the bundled Turnip library does contain Wayland WSI entrypoints
   - the direct path gets past adapter discovery and then dies in surface configure/present territory
   - the likely next seam is compositor protocol support and presentation compatibility, not basic Vulkan adapter discovery
+- Historical direct-`gpu` runs now classify much better under the updated summary parser.
+  - Reparsed run:
+    - `build/pixel/drm-guest/20260407T163153Z`
+  - Current classified result:
+    - `adapter_ok=true`
+    - `surface_ok=true`
+    - `configure_ok=false`
+    - `present_ok=false`
+    - `failure_phase=surface-configure-entry`
+    - `failure_reason=client-disconnect:ConnectionClosed`
 
 ## Best Known Numbers
 
@@ -209,6 +239,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - new warm/prebuild entrypoint exists for the Pixel GPU timeline lane
   - explicit warm/smoke recipes now force the proven `gpu_softbuffer` lane instead of silently inheriting a caller override
   - remaining slop is mostly cold `shadow-runtime-host` rebuild invalidation and the slower first-paint path on the full startup-sync timeline recipe
+  - direct-GPU probe/matrix recipes now exist and emit richer startup/failure-phase summary fields
 
 ### 5. Eliminate SHM as the limiting compositor transport
 
@@ -218,10 +249,11 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ### 6. Make an explicit direct-`gpu` decision
 
-- [ ] Not done.
+- [~] In progress.
 - Notes:
   - direct `gpu` is no longer a vague future wish
   - it now has a narrow failing seam
+  - the decision tooling now preserves the real failure kind and explicit run ownership
   - the remaining work is to decide whether it is salvageable enough to ship on this Pixel
 
 ## Near-Term Steps
