@@ -78,6 +78,16 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Fast local gate is green after the font fix.
   - `just ui-check`
   - `just pre-commit`
+- [x] The outer guest-compositor shell/home substrate now boots on the real Pixel.
+  - validated rooted run:
+    - `build/pixel/drm-guest/20260407T211034Z`
+  - key markers:
+    - `[shadow-guest-compositor] shell-home-frame checksum=ca820ee8b8d600b7 size=540x1170`
+    - `[shadow-guest-compositor] presented-frame`
+  - new operator hooks:
+    - `just pixel-prepare-shell-runtime-artifacts`
+    - `just pixel-shell-drm`
+    - `just pixel-shell-drm-hold`
 
 ### Not Done
 
@@ -130,6 +140,11 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - keep repeated warm runs boring
 - [ ] The direct `gpu` lane does not yet have a clear go/no-go decision.
   - We still need to decide whether to promote it, keep `gpu_softbuffer`, or declare direct present not worth further effort on this Pixel.
+- [~] Pixel shell/home operator unification is still unfinished.
+  - The graphics substrate now works on device.
+  - Remaining work is operator integration:
+    - make `run <serial>` use this shell path
+    - wire app launch/home UX on top of the new shell mode
 
 ## What Is Proven vs. What Is Not
 
@@ -177,6 +192,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - `present_ok=false`
     - `failure_phase=surface-configure-entry`
     - `failure_reason=client-disconnect:ConnectionClosed`
+- The Pixel shell problem is no longer blocked on nested EGL.
+  - The outer guest compositor can already present the home scene directly on the phone.
+  - Remaining shell work moved up-stack:
+    - operator wiring
+    - app-launch UX
+    - deciding when to switch `run <serial>` over
 
 ## Best Known Numbers
 
@@ -281,6 +302,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
       - `just pixel-runtime-app-nostr-timeline-gpu-smoke` runs the proven lane explicitly
 
 4. Keep Pixel shell work on the right substrate.
+   - Current status:
+     - validated on device
    - Do not spend more time trying to make nested `shadow-compositor` the shipping Pixel shell path unless a narrow diagnostic proves it is suddenly tractable.
    - Prefer:
      - shell/home logic on the outer guest compositor path
@@ -289,8 +312,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
      - `shadow-compositor-guest` now has app launch/focus/shelving/control
      - shell mode now software-composes the existing home scene plus the current app viewport on the outer guest compositor path
    - Next shell seam:
-     - add a truthful Pixel operator path for shell mode
-     - validate the shell path live on device before widening `run <serial>`
+     - widen the operator path from dedicated `pixel-shell-drm*` commands into `run <serial>`
+     - keep app launch/home UX truthful on top of the new shell mode
 
 5. Keep measuring incremental latency, not just startup.
    - Need:
@@ -436,6 +459,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - render the existing `shadow_ui_core::ShellModel` scene directly there
     - composite the focused app frame into the app viewport
   - this avoids the nested EGL failure mode entirely
+  - real rooted-device proof now exists:
+    - `build/pixel/drm-guest/20260407T211034Z`
+    - the home scene reached `shell-home-frame` and `presented-frame`
   - current remaining shell work is operator/live-validation work, not another compositor-in-compositor experiment
 - current best proven path remains:
   - `gpu_softbuffer`
