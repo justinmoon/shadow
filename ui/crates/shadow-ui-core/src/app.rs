@@ -1,7 +1,4 @@
-use crate::color::{
-    Color, ICON_BLUE, ICON_CYAN, ICON_GREEN, ICON_ORANGE, ICON_PINK, ICON_PURPLE, ICON_RED,
-    ICON_YELLOW,
-};
+use crate::color::{Color, ICON_CYAN, ICON_ORANGE};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AppId(&'static str);
@@ -23,18 +20,25 @@ pub struct DemoApp {
     pub subtitle: &'static str,
     pub binary_name: &'static str,
     pub wayland_app_id: &'static str,
+    pub window_title: &'static str,
+    pub runtime_bundle_env: &'static str,
+    pub runtime_input_path: &'static str,
+    pub runtime_cache_dir: &'static str,
     pub icon_color: Color,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HomeTile {
-    pub label: &'static str,
-    pub color: Color,
-    pub app_id: Option<AppId>,
 }
 
 pub const COUNTER_APP_ID: AppId = AppId::new("counter");
 pub const COUNTER_WAYLAND_APP_ID: &str = "dev.shadow.counter";
+pub const COUNTER_WINDOW_TITLE: &str = "Shadow Counter";
+pub const COUNTER_RUNTIME_BUNDLE_ENV: &str = "SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH";
+pub const COUNTER_RUNTIME_INPUT_PATH: &str = "runtime/app-counter/app.tsx";
+pub const COUNTER_RUNTIME_CACHE_DIR: &str = "build/runtime/app-counter-host";
+pub const TIMELINE_APP_ID: AppId = AppId::new("timeline");
+pub const TIMELINE_WAYLAND_APP_ID: &str = "dev.shadow.timeline";
+pub const TIMELINE_WINDOW_TITLE: &str = "Shadow Timeline";
+pub const TIMELINE_RUNTIME_BUNDLE_ENV: &str = "SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH";
+pub const TIMELINE_RUNTIME_INPUT_PATH: &str = "runtime/app-nostr-timeline/app.tsx";
+pub const TIMELINE_RUNTIME_CACHE_DIR: &str = "build/runtime/app-nostr-timeline-host";
 pub const SHELL_APP_ID: AppId = AppId::new("shell");
 pub const SHELL_WAYLAND_APP_ID: &str = "dev.shadow.shell";
 pub const COUNTER_APP: DemoApp = DemoApp {
@@ -43,53 +47,26 @@ pub const COUNTER_APP: DemoApp = DemoApp {
     subtitle: "Solid runtime",
     binary_name: "shadow-blitz-demo",
     wayland_app_id: COUNTER_WAYLAND_APP_ID,
+    window_title: COUNTER_WINDOW_TITLE,
+    runtime_bundle_env: COUNTER_RUNTIME_BUNDLE_ENV,
+    runtime_input_path: COUNTER_RUNTIME_INPUT_PATH,
+    runtime_cache_dir: COUNTER_RUNTIME_CACHE_DIR,
     icon_color: ICON_CYAN,
 };
+pub const TIMELINE_APP: DemoApp = DemoApp {
+    id: TIMELINE_APP_ID,
+    title: "Timeline",
+    subtitle: "Local Nostr client",
+    binary_name: "shadow-blitz-demo",
+    wayland_app_id: TIMELINE_WAYLAND_APP_ID,
+    window_title: TIMELINE_WINDOW_TITLE,
+    runtime_bundle_env: TIMELINE_RUNTIME_BUNDLE_ENV,
+    runtime_input_path: TIMELINE_RUNTIME_INPUT_PATH,
+    runtime_cache_dir: TIMELINE_RUNTIME_CACHE_DIR,
+    icon_color: ICON_ORANGE,
+};
 
-pub const DEMO_APPS: [DemoApp; 1] = [COUNTER_APP];
-
-pub const HOME_TILES: [HomeTile; 8] = [
-    HomeTile {
-        label: "Phone",
-        color: ICON_GREEN,
-        app_id: None,
-    },
-    HomeTile {
-        label: "Messages",
-        color: ICON_BLUE,
-        app_id: None,
-    },
-    HomeTile {
-        label: "Camera",
-        color: ICON_ORANGE,
-        app_id: None,
-    },
-    HomeTile {
-        label: "Settings",
-        color: ICON_RED,
-        app_id: None,
-    },
-    HomeTile {
-        label: COUNTER_APP.title,
-        color: COUNTER_APP.icon_color,
-        app_id: Some(COUNTER_APP.id),
-    },
-    HomeTile {
-        label: "Files",
-        color: ICON_YELLOW,
-        app_id: None,
-    },
-    HomeTile {
-        label: "Maps",
-        color: ICON_PINK,
-        app_id: None,
-    },
-    HomeTile {
-        label: "Music",
-        color: ICON_PURPLE,
-        app_id: None,
-    },
-];
+pub const DEMO_APPS: [DemoApp; 2] = [COUNTER_APP, TIMELINE_APP];
 
 pub fn find_app(id: AppId) -> Option<&'static DemoApp> {
     DEMO_APPS.iter().find(|app| app.id == id)
@@ -114,11 +91,16 @@ pub fn binary_name_for(id: AppId) -> Option<&'static str> {
     find_app(id).map(|app| app.binary_name)
 }
 
+pub fn home_apps() -> &'static [DemoApp] {
+    &DEMO_APPS
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, COUNTER_APP,
-        COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, HOME_TILES, SHELL_APP_ID, SHELL_WAYLAND_APP_ID,
+        app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, home_apps,
+        COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, SHELL_APP_ID, SHELL_WAYLAND_APP_ID,
+        TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID,
     };
 
     #[test]
@@ -136,6 +118,20 @@ mod tests {
             app_id_from_wayland_app_id(SHELL_WAYLAND_APP_ID),
             Some(SHELL_APP_ID)
         );
-        assert_eq!(HOME_TILES[4].app_id, Some(COUNTER_APP_ID));
+        assert_eq!(home_apps()[0].id, COUNTER_APP_ID);
+    }
+
+    #[test]
+    fn timeline_app_lookup_round_trips() {
+        let app = find_app(TIMELINE_APP_ID).expect("timeline app present");
+        assert_eq!(app, &TIMELINE_APP);
+        assert_eq!(TIMELINE_APP_ID.as_str(), "timeline");
+        assert_eq!(find_app_by_str("timeline"), Some(&TIMELINE_APP));
+        assert_eq!(binary_name_for(TIMELINE_APP_ID), Some("shadow-blitz-demo"));
+        assert_eq!(
+            app_id_from_wayland_app_id(TIMELINE_WAYLAND_APP_ID),
+            Some(TIMELINE_APP_ID)
+        );
+        assert_eq!(home_apps()[1].id, TIMELINE_APP_ID);
     }
 }

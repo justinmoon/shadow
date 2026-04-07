@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Local};
 
 use crate::{
-    app::{find_app, AppId, HOME_TILES},
+    app::{find_app, home_apps, AppId},
     color::{
         BACKGROUND, SURFACE, SURFACE_ACCENT, SURFACE_GLASS, SURFACE_RAISED, TEXT_MUTED,
         TEXT_PRIMARY,
@@ -23,11 +23,13 @@ const APP_PANEL_HEIGHT: f32 = 640.0;
 const APP_ICON_SIZE: f32 = 96.0;
 const APP_LABEL_HEIGHT: f32 = 24.0;
 const APP_HEADER_Y: f32 = 86.0;
-const APP_HEADER_HEIGHT: f32 = 58.0;
+const APP_HEADER_HEIGHT: f32 = 70.0;
 const APP_CHROME_BOTTOM_Y: f32 = APP_VIEWPORT_Y + APP_VIEWPORT_HEIGHT + 22.0;
 const APP_CHROME_BOTTOM_HEIGHT: f32 = 54.0;
 const APP_FRAME_SIDE_WIDTH: f32 = 18.0;
 const GRID_COLUMNS: usize = 4;
+const APP_GRID_SPACING_X: f32 = 18.0;
+const APP_GRID_STEP_X: f32 = APP_ICON_SIZE + APP_GRID_SPACING_X + 8.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavAction {
@@ -283,8 +285,8 @@ impl ShellModel {
         texts.push(TextBlock {
             content: app.title.to_string(),
             left: 48.0,
-            top: 100.0,
-            width: 220.0,
+            top: 96.0,
+            width: 240.0,
             height: 24.0,
             size: 24.0,
             line_height: 26.0,
@@ -294,12 +296,12 @@ impl ShellModel {
         });
         texts.push(TextBlock {
             content: app.subtitle.to_string(),
-            left: 176.0,
-            top: 106.0,
-            width: 150.0,
-            height: 20.0,
-            size: 14.0,
-            line_height: 18.0,
+            left: 48.0,
+            top: 122.0,
+            width: 220.0,
+            height: 16.0,
+            size: 12.0,
+            line_height: 14.0,
             align: TextAlign::Left,
             weight: TextWeight::Normal,
             color: TEXT_MUTED,
@@ -430,7 +432,8 @@ impl ShellModel {
         self.last_activated = Some((target, Instant::now()));
 
         match target {
-            Target::App(index) => HOME_TILES[index].app_id.map(|app_id| {
+            Target::App(index) => home_apps().get(index).map(|app| {
+                let app_id = app.id;
                 self.touch_recent(app_id);
                 ShellAction::Launch { app_id }
             }),
@@ -451,7 +454,7 @@ impl ShellModel {
                 .then_some(Target::HomeIndicator);
         }
 
-        HOME_TILES
+        home_apps()
             .iter()
             .enumerate()
             .find_map(|(index, _)| {
@@ -476,33 +479,36 @@ impl ShellModel {
 }
 
 fn first_launchable_tile() -> usize {
-    HOME_TILES
-        .iter()
-        .enumerate()
-        .find_map(|(index, tile)| tile.app_id.map(|_| index))
-        .unwrap_or(0)
+    0
 }
 
 fn tile_index_for_app(app_id: AppId) -> Option<usize> {
-    HOME_TILES
+    home_apps()
         .iter()
         .enumerate()
-        .find_map(|(index, tile)| (tile.app_id == Some(app_id)).then_some(index))
+        .find_map(|(index, app)| (app.id == app_id).then_some(index))
 }
 
 fn move_focus(current: usize, dx: isize, dy: isize) -> usize {
+    let app_count = home_apps().len();
+    if app_count <= 1 {
+        return 0;
+    }
     let cols = GRID_COLUMNS as isize;
-    let rows = (HOME_TILES.len() / GRID_COLUMNS) as isize;
+    let rows = app_count.div_ceil(GRID_COLUMNS) as isize;
     let col = current as isize % cols;
     let row = current as isize / cols;
 
     let next_col = (col + dx).clamp(0, cols - 1);
     let next_row = (row + dy).clamp(0, rows - 1);
-    (next_row * cols + next_col) as usize
+    ((next_row * cols + next_col) as usize).min(app_count.saturating_sub(1))
 }
 
 fn wrap_index(current: usize, delta: isize) -> usize {
-    let len = HOME_TILES.len() as isize;
+    let len = home_apps().len() as isize;
+    if len <= 1 {
+        return 0;
+    }
     ((current as isize + delta).rem_euclid(len)) as usize
 }
 
@@ -695,16 +701,16 @@ fn build_panel_header(
 }
 
 fn build_app_grid(rects: &mut Vec<RoundedRect>, texts: &mut Vec<TextBlock>, model: &ShellModel) {
-    for (index, tile) in HOME_TILES.iter().enumerate() {
+    for (index, app) in home_apps().iter().enumerate() {
         let frame = app_frame(index);
         let target = Target::App(index);
         let is_focused = model.focused_tile == index;
         let is_hovered = model.hovered_target == Some(target);
         let is_pressed = model.pressed_target == Some(target);
         let is_active = model.last_activated.map(|(target, _)| target) == Some(target);
-        let app_id = tile.app_id;
-        let is_running = app_id.is_some_and(|app_id| model.app_is_running(app_id));
-        let is_foreground = app_id.is_some_and(|app_id| model.app_is_foreground(app_id));
+        let app_id = app.id;
+        let is_running = model.app_is_running(app_id);
+        let is_foreground = model.app_is_foreground(app_id);
 
         let halo_alpha = if is_pressed {
             0.34
@@ -746,7 +752,12 @@ fn build_app_grid(rects: &mut Vec<RoundedRect>, texts: &mut Vec<TextBlock>, mode
         let icon_y = frame.y + 10.0 + (APP_ICON_SIZE - icon_size) * 0.5;
 
         rects.push(RoundedRect::new(
-            icon_x, icon_y, icon_size, icon_size, 26.0, tile.color,
+            icon_x,
+            icon_y,
+            icon_size,
+            icon_size,
+            26.0,
+            app.icon_color,
         ));
         rects.push(RoundedRect::new(
             icon_x + 16.0,
@@ -773,14 +784,14 @@ fn build_app_grid(rects: &mut Vec<RoundedRect>, texts: &mut Vec<TextBlock>, mode
         }
 
         texts.push(TextBlock {
-            content: tile.label.to_string(),
-            left: frame.x,
+            content: app.title.to_string(),
+            left: frame.x + 8.0,
             top: frame.y + APP_ICON_SIZE + 22.0,
-            width: frame.w,
+            width: frame.w - 16.0,
             height: APP_LABEL_HEIGHT,
-            size: 15.0,
-            line_height: 18.0,
-            align: TextAlign::Center,
+            size: 12.0,
+            line_height: 14.0,
+            align: TextAlign::Left,
             weight: if is_foreground || is_focused {
                 TextWeight::Semibold
             } else {
@@ -847,11 +858,18 @@ fn app_viewport_frame() -> Frame {
 
 fn app_frame(index: usize) -> Frame {
     let origin = grid_origin();
+    let app_count = home_apps().len();
     let col = index % GRID_COLUMNS;
     let row = index / GRID_COLUMNS;
+    let row_start = row * GRID_COLUMNS;
+    let row_count = app_count.saturating_sub(row_start).min(GRID_COLUMNS).max(1);
+    let row_width = APP_ICON_SIZE + 8.0 + (APP_GRID_STEP_X * row_count as f32) - APP_GRID_STEP_X;
+    let full_width =
+        APP_ICON_SIZE + 8.0 + (APP_GRID_STEP_X * GRID_COLUMNS as f32) - APP_GRID_STEP_X;
+    let row_origin_x = origin.x + ((full_width - row_width) * 0.5);
 
     Frame {
-        x: origin.x + col as f32 * 110.0,
+        x: row_origin_x + col as f32 * APP_GRID_STEP_X,
         y: origin.y + row as f32 * 164.0,
         w: 104.0,
         h: 142.0,
@@ -870,7 +888,7 @@ fn home_indicator_frame() -> Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::COUNTER_APP_ID;
+    use crate::app::{COUNTER_APP_ID, TIMELINE_APP_ID};
 
     #[test]
     fn launch_tile_returns_launch_action() {
@@ -880,6 +898,21 @@ mod tests {
             shell.handle(ShellEvent::Navigate(NavAction::Activate)),
             Some(ShellAction::Launch {
                 app_id: COUNTER_APP_ID,
+            })
+        );
+    }
+
+    #[test]
+    fn navigation_reaches_timeline_with_two_apps() {
+        let mut shell = ShellModel::new();
+
+        assert_eq!(shell.focused_tile, 0);
+        assert_eq!(shell.handle(ShellEvent::Navigate(NavAction::Right)), None);
+        assert_eq!(shell.focused_tile, 1);
+        assert_eq!(
+            shell.handle(ShellEvent::Navigate(NavAction::Activate)),
+            Some(ShellAction::Launch {
+                app_id: TIMELINE_APP_ID,
             })
         );
     }

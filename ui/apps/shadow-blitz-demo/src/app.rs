@@ -32,8 +32,8 @@ use crate::runtime_document::RuntimeDocument;
 use winit::platform::wayland::WindowAttributesWayland;
 
 #[cfg(target_os = "linux")]
-const COUNTER_WAYLAND_APP_ID: &str = "dev.shadow.counter";
-const APP_TITLE: &str = "Shadow Counter";
+const DEFAULT_WAYLAND_APP_ID: &str = "dev.shadow.counter";
+const DEFAULT_APP_TITLE: &str = "Shadow Counter";
 const DEFAULT_SURFACE_WIDTH: u32 = 384;
 const DEFAULT_SURFACE_HEIGHT: u32 = 720;
 
@@ -309,7 +309,7 @@ enum RuntimeEmbedderEvent {
 fn window_attributes() -> WindowAttributes {
     let (surface_width, surface_height) = surface_size_from_env();
     let attributes = WindowAttributes::default()
-        .with_title(APP_TITLE)
+        .with_title(app_title())
         .with_resizable(false)
         .with_surface_size(LogicalSize::new(
             surface_width as f64,
@@ -318,13 +318,22 @@ fn window_attributes() -> WindowAttributes {
 
     #[cfg(target_os = "linux")]
     {
-        let wayland_attributes = WindowAttributesWayland::default()
-            .with_name(COUNTER_WAYLAND_APP_ID, "shadow-blitz-demo");
+        let wayland_attributes =
+            WindowAttributesWayland::default().with_name(wayland_app_id(), "shadow-blitz-demo");
         return attributes.with_platform_attributes(Box::new(wayland_attributes));
     }
 
     #[allow(unreachable_code)]
     attributes
+}
+
+fn app_title() -> String {
+    env::var("SHADOW_BLITZ_APP_TITLE").unwrap_or_else(|_| String::from(DEFAULT_APP_TITLE))
+}
+
+#[cfg(target_os = "linux")]
+fn wayland_app_id() -> String {
+    env::var("SHADOW_BLITZ_WAYLAND_APP_ID").unwrap_or_else(|_| String::from(DEFAULT_WAYLAND_APP_ID))
 }
 
 fn surface_size_from_env() -> (u32, u32) {

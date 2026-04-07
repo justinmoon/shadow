@@ -6,7 +6,7 @@ use std::{
 };
 
 use shadow_ui_core::{
-    app::{binary_name_for, AppId},
+    app::{find_app, AppId},
     control,
 };
 
@@ -15,9 +15,16 @@ pub fn launch_app(
     socket_name: &OsStr,
     control_socket_path: &OsStr,
 ) -> io::Result<Child> {
-    let Some(binary_name) = binary_name_for(app_id) else {
+    let Some(app) = find_app(app_id) else {
         return Err(io::Error::new(io::ErrorKind::NotFound, "unknown demo app"));
     };
+    let binary_name = app.binary_name;
+    let runtime_bundle_path = std::env::var(app.runtime_bundle_env).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("missing runtime bundle env {}", app.runtime_bundle_env),
+        )
+    })?;
 
     let mut command = if let Ok(explicit) = std::env::var("SHADOW_APP_CLIENT") {
         Command::new(explicit)
@@ -51,7 +58,10 @@ pub fn launch_app(
 
     command
         .env("WAYLAND_DISPLAY", socket_name)
-        .env(control::COMPOSITOR_CONTROL_ENV, control_socket_path);
+        .env(control::COMPOSITOR_CONTROL_ENV, control_socket_path)
+        .env("SHADOW_BLITZ_APP_TITLE", app.window_title)
+        .env("SHADOW_BLITZ_WAYLAND_APP_ID", app.wayland_app_id)
+        .env("SHADOW_RUNTIME_APP_BUNDLE_PATH", runtime_bundle_path);
 
     command.spawn()
 }

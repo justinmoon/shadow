@@ -71,7 +71,7 @@ pub fn request_response(request: ControlRequest) -> io::Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::ControlRequest;
-    use crate::app::COUNTER_APP_ID;
+    use crate::app::{COUNTER_APP_ID, TIMELINE_APP_ID};
 
     #[test]
     fn launch_request_round_trips() {
@@ -81,6 +81,16 @@ mod tests {
 
         assert_eq!(request.encode(), "launch counter\n");
         assert_eq!(ControlRequest::parse("launch counter"), Some(request));
+    }
+
+    #[test]
+    fn timeline_launch_request_round_trips() {
+        let request = ControlRequest::Launch {
+            app_id: TIMELINE_APP_ID,
+        };
+
+        assert_eq!(request.encode(), "launch timeline\n");
+        assert_eq!(ControlRequest::parse("launch timeline"), Some(request));
     }
 
     #[test]

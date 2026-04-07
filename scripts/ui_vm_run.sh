@@ -42,7 +42,8 @@ if [[ -S "$SOCKET_PATH" ]]; then
 fi
 
 rm -f .shadow-vm/nix-store-overlay.img
-if [[ ! -s "$RUNTIME_ENV_PATH" || -n "${SHADOW_UI_VM_REFRESH_RUNTIME_ENV:-}" ]]; then
+if [[ ! -s "$RUNTIME_ENV_PATH" || -n "${SHADOW_UI_VM_REFRESH_RUNTIME_ENV:-}" ]] \
+  || ! grep -Fq 'SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null; then
   runtime_env_tmp="$(mktemp "$REPO_ROOT/.shadow-vm/runtime-host-session-env.XXXXXX")"
   SHADOW_RUNTIME_APP_BUNDLE_REWRITE_FROM="$REPO_ROOT" \
   SHADOW_RUNTIME_APP_BUNDLE_REWRITE_TO="/work/shadow" \
@@ -50,6 +51,7 @@ if [[ ! -s "$RUNTIME_ENV_PATH" || -n "${SHADOW_UI_VM_REFRESH_RUNTIME_ENV:-}" ]];
   SHADOW_RUNTIME_HOST_BINARY_NAME_OVERRIDE="${SHADOW_UI_VM_RUNTIME_HOST_BINARY_NAME:-shadow-runtime-host}" \
     ./scripts/runtime_prepare_host_session_env.sh >"$runtime_env_tmp"
   mv "$runtime_env_tmp" "$RUNTIME_ENV_PATH"
+  chmod 0644 "$RUNTIME_ENV_PATH"
   runtime_env_tmp=""
 fi
 SHADOW_UI_VM_SOURCE="$REPO_ROOT" \
