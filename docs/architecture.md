@@ -54,9 +54,10 @@ The current operator ladder reflects that split:
 15. `just runtime-app-keyboard-smoke` is the narrow bundled-host rung: it proves focus, keydown, text input, selection metadata, and blur semantics through the live runtime session.
 16. `just runtime-app-nostr-gm-smoke` is the async host rung: it proves a click can drive the current Nostr publish seam and surface a completion state back into the app.
 17. `just runtime-app-nostr-timeline-smoke` is the main host proving ground: it proves relay sync, keyboard-driven compose, and cold-restart cache reload through the same bundled runtime contract.
-18. `just pixel-runtime-app-drm` stages that same bundled app plus a GNU-wrapped runtime host helper for the rooted phone, fits the shell app viewport contract into the real panel, passes the same fitted size to both the guest compositor and the runtime client, and proves the runtime-mode Blitz demo reaches the real panel.
-19. `just pixel-runtime-app-click-drm` proves the rooted panel path survives one runtime click dispatch and rerender before Android display services are restored.
-20. `just pixel-touch-input-smoke` is the first rooted input seam for the app-runtime lane: auto-detect the direct-touch evdev node, capture one raw touch sequence, and prove the phone panel can feed usable contact data back into our stack.
+18. `just pixel-shell-drm` is now the primary rooted Pixel shell rung: stage the counter and timeline runtime bundles plus the GNU-wrapped helper, boot the guest compositor into the home scene, and present the real shell/home path on the phone panel. `just run app=timeline target=pixel` now uses that same shell rung and asks the shell to open `timeline`.
+19. `just pixel-runtime-app-drm` remains as a narrower fallback/probe rung for direct runtime-app work on the rooted phone: fit the shell app viewport contract into the real panel, pass the same fitted size to both the guest compositor and the runtime client, and prove the runtime-mode Blitz demo reaches the real panel.
+20. `just pixel-runtime-app-click-drm` proves the rooted panel path survives one runtime click dispatch and rerender before Android display services are restored.
+21. `just pixel-touch-input-smoke` is the first rooted input seam for the app-runtime lane: auto-detect the direct-touch evdev node, capture one raw touch sequence, and prove the phone panel can feed usable contact data back into our stack.
 
 This is intentionally not yet a full custom userland boot. The repo is using the smallest reliable transport at each layer: first-stage wrapper for `/init` proof, then post-boot guest session launch for display and compositor iteration.
 
@@ -86,7 +87,8 @@ This also sets the current boundary for the Blitz + Deno demo on device:
 16. The compositor still observes client buffers as `type=shm` on the successful GPU path, so the next renderer-quality seam is transport/import quality rather than “can the rooted Pixel do hardware-backed rendering at all?”
 17. Full-root HTML snapshots still win the MVP tradeoff after the device proof. Host and rooted-Pixel click rerenders both complete fast enough that a Rust-side patch bridge would be premature; the next pressure point is likely text input, focus, or more animated apps rather than simple card flows.
 18. Touch now works end-to-end on the rooted Pixel path: the guest compositor creates a real Smithay seat plus pointer, detects the direct-touch panel, starts a rooted helper that tails the touchscreen evdev node, applies the same centered/cropped panel-to-client mapping that KMS presentation uses, and the runtime demo visibly flips state from a real finger tap.
-19. Host scroll already rides the native Blitz path: `WindowEvent::MouseWheel` becomes `UiEvent::Wheel`, overflow containers scroll without a runtime JSON event, and the runtime wrapper now cancels synthetic click dispatch after a drag / pan gesture crosses a small movement threshold.
+19. The rooted Pixel now also has a real shell/home rung. `scripts/pixel_shell_drm.sh` stages the counter + timeline bundles plus the runtime host helper, sets `SHADOW_GUEST_START_APP_ID=shell`, and boots the guest compositor into the home scene instead of the older direct-runtime timeline path. When `PIXEL_SHELL_START_APP_ID=timeline` is present, the guest compositor stays in shell mode and then launches `timeline` through that same shell path.
+20. Host scroll already rides the native Blitz path: `WindowEvent::MouseWheel` becomes `UiEvent::Wheel`, overflow containers scroll without a runtime JSON event, and the runtime wrapper now cancels synthetic click dispatch after a drag / pan gesture crosses a small movement threshold.
 
 For the newly unlocked-and-rooted Pixel track, the intended operator ladder is now:
 

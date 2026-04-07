@@ -88,7 +88,8 @@ runtime-deno-runtime-smoke-aarch64-linux-gnu:
 # Primary operator entrypoint.
 # target=desktop runs the local desktop host
 # target=vm runs the local Linux VM shell
-# target=pixel runs the rooted Pixel timeline app
+# target=pixel runs the rooted Pixel shell/home scene
+# app=timeline keeps the familiar Pixel entrypoint and opens timeline through the shell
 # target=<serial> implies Pixel and exports PIXEL_SERIAL automatically
 ui-run target="desktop" app="timeline" hold="1":
 	@scripts/ui_run.sh "{{target}}" "{{app}}" "{{hold}}"

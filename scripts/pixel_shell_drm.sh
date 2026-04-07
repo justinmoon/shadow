@@ -62,9 +62,11 @@ env "${runtime_prepare_extra_env[@]}" "$SCRIPT_DIR/pixel_prepare_shell_runtime_a
 extra_guest_env="${PIXEL_SHELL_EXTRA_GUEST_CLIENT_ENV-}"
 extra_session_env="${PIXEL_SHELL_EXTRA_SESSION_ENV-}"
 extra_required_markers="${PIXEL_SHELL_EXTRA_REQUIRED_MARKERS-}"
+shell_start_app_id="${PIXEL_SHELL_START_APP_ID-}"
 runtime_home_dir="$(pixel_runtime_linux_dir)/home"
 runtime_cache_dir="$runtime_home_dir/.cache"
 runtime_config_dir="$runtime_home_dir/.config"
+expect_client_process=''
 
 shell_guest_env=$(
   cat <<EOF
@@ -103,6 +105,11 @@ SHADOW_RUNTIME_HOST_BINARY_PATH=$(pixel_runtime_host_launcher_dst)
 SHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM=1
 EOF
 )
+if [[ -n "$shell_start_app_id" ]]; then
+  shell_session_env="${shell_session_env}"$'\n'"SHADOW_GUEST_SHELL_START_APP_ID=$shell_start_app_id"
+  expect_client_process=1
+  extra_required_markers="${extra_required_markers}"$'\n''[shadow-guest-compositor] mapped-window'
+fi
 if [[ -n "$extra_session_env" ]]; then
   shell_session_env="${shell_session_env}"$'\n'"${extra_session_env}"
 fi
@@ -118,7 +125,7 @@ PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
 PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_shell_runtime_host_bundle_artifact_dir)" \
 PIXEL_COMPOSITOR_MARKER='[shadow-guest-compositor] presented-frame' \
 PIXEL_GUEST_REQUIRED_MARKERS="$required_markers" \
-PIXEL_GUEST_EXPECT_CLIENT_PROCESS='' \
+PIXEL_GUEST_EXPECT_CLIENT_PROCESS="$expect_client_process" \
 PIXEL_GUEST_EXPECT_CLIENT_MARKER='' \
 PIXEL_VERIFY_REQUIRE_CLIENT_MARKER='' \
 PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME='' \

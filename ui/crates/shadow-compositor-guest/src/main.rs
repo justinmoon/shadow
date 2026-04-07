@@ -1711,6 +1711,15 @@ impl Drop for ShadowGuestCompositor {
     }
 }
 
+fn shell_start_app_id_from_env() -> Option<app::AppId> {
+    std::env::var("SHADOW_GUEST_SHELL_START_APP_ID")
+        .ok()
+        .as_deref()
+        .and_then(app::find_app_by_str)
+        .map(|app| app.id)
+        .filter(|app_id| *app_id != app::SHELL_APP_ID)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging();
     let mut event_loop: EventLoop<ShadowGuestCompositor> = EventLoop::try_new()?;
@@ -1740,6 +1749,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if state.shell_enabled {
             tracing::info!("[shadow-guest-compositor] shell-mode enabled");
             state.publish_visible_shell_frame("shell-home-frame");
+            if let Some(app_id) = shell_start_app_id_from_env() {
+                tracing::info!(
+                    "[shadow-guest-compositor] shell-start-app-id={}",
+                    app_id.as_str()
+                );
+                state.launch_or_focus_app(app_id)?;
+            }
         } else if let Some(app_id) = std::env::var("SHADOW_GUEST_START_APP_ID")
             .ok()
             .as_deref()
@@ -1758,4 +1774,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     event_loop.run(None, &mut state, |_| {})?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_start_app_id_from_env;
+    use shadow_ui_core::app::{COUNTER_APP_ID, TIMELINE_APP_ID};
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_shell_start_app_env(value: Option<&str>, check: impl FnOnce()) {
+        let _guard = env_lock().lock().expect("lock shell-start env");
+        let key = "SHADOW_GUEST_SHELL_START_APP_ID";
+        let previous = std::env::var_os(key);
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+
+        check();
+
+        match previous {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn shell_start_app_env_resolves_runtime_apps() {
+        with_shell_start_app_env(Some("timeline"), || {
+            assert_eq!(shell_start_app_id_from_env(), Some(TIMELINE_APP_ID));
+        });
+        with_shell_start_app_env(Some("counter"), || {
+            assert_eq!(shell_start_app_id_from_env(), Some(COUNTER_APP_ID));
+        });
+    }
+
+    #[test]
+    fn shell_start_app_env_ignores_missing_unknown_and_shell() {
+        for value in [None, Some("nope"), Some("shell")] {
+            with_shell_start_app_env(value, || {
+                assert_eq!(shell_start_app_id_from_env(), None);
+            });
+        }
+    }
 }

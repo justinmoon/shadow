@@ -72,6 +72,26 @@ resolve_target() {
 parse_args "$@"
 resolve_target
 
+exec_or_echo() {
+  local command="$1"
+  shift || true
+  local env_assignment
+
+  if [[ -n "${SHADOW_UI_RUN_ECHO_EXEC-}" ]]; then
+    for env_assignment in "$@"; do
+      printf 'env=%s\n' "$env_assignment"
+    done
+    printf 'command=%s\n' "$command"
+    return 0
+  fi
+
+  if [[ "$#" -gt 0 ]]; then
+    exec env "$@" "$command"
+  fi
+
+  exec "$command"
+}
+
 run_desktop() {
   cd "$REPO_ROOT"
   nix develop .#ui -c cargo run --manifest-path ui/Cargo.toml -p shadow-ui-desktop
@@ -85,18 +105,28 @@ run_vm() {
 }
 
 run_pixel() {
-  if [[ "$app" != "timeline" ]]; then
-    echo "ui-run: target=pixel currently supports only app=timeline" >&2
-    exit 1
-  fi
+  local -a shell_env=()
 
-  echo "ui-run: target=pixel currently launches the runtime timeline app, not the full home shell" >&2
+  case "$app" in
+    shell)
+      echo "ui-run: target=pixel launches the full home shell" >&2
+      ;;
+    timeline)
+      echo "ui-run: target=pixel launches the full home shell and asks it to open timeline" >&2
+      shell_env=("PIXEL_SHELL_START_APP_ID=timeline")
+      ;;
+    *)
+      echo "ui-run: target=pixel currently supports app=shell or app=timeline" >&2
+      exit 1
+      ;;
+  esac
 
   if [[ "$hold" == "1" ]]; then
-    exec "$SCRIPT_DIR/pixel_runtime_app_nostr_timeline_drm_hold.sh"
+    exec_or_echo "$SCRIPT_DIR/pixel_shell_drm_hold.sh" "${shell_env[@]}"
+    return 0
   fi
 
-  exec "$SCRIPT_DIR/pixel_runtime_app_nostr_timeline_drm.sh"
+  exec_or_echo "$SCRIPT_DIR/pixel_shell_drm.sh" "${shell_env[@]}"
 }
 
 case "$target" in
