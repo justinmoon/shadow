@@ -8,6 +8,7 @@ use std::{
 use shadow_ui_core::{
     app::{find_app, AppId},
     control,
+    scene::{APP_VIEWPORT_HEIGHT, APP_VIEWPORT_WIDTH},
 };
 
 pub fn launch_app(
@@ -61,6 +62,14 @@ pub fn launch_app(
         .env(control::COMPOSITOR_CONTROL_ENV, control_socket_path)
         .env("SHADOW_BLITZ_APP_TITLE", app.window_title)
         .env("SHADOW_BLITZ_WAYLAND_APP_ID", app.wayland_app_id)
+        .env(
+            "SHADOW_BLITZ_SURFACE_WIDTH",
+            runtime_surface_width().to_string(),
+        )
+        .env(
+            "SHADOW_BLITZ_SURFACE_HEIGHT",
+            runtime_surface_height().to_string(),
+        )
         .env("SHADOW_RUNTIME_APP_BUNDLE_PATH", runtime_bundle_path);
 
     command.spawn()
@@ -104,4 +113,23 @@ fn find_manifest_upwards(start: &Path) -> Option<PathBuf> {
     }
 
     None
+}
+
+fn runtime_surface_width() -> u32 {
+    APP_VIEWPORT_WIDTH.round() as u32
+}
+
+fn runtime_surface_height() -> u32 {
+    APP_VIEWPORT_HEIGHT.round() as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{runtime_surface_height, runtime_surface_width};
+
+    #[test]
+    fn runtime_surface_dimensions_match_shell_viewport() {
+        assert_eq!(runtime_surface_width(), 492);
+        assert_eq!(runtime_surface_height(), 910);
+    }
 }
