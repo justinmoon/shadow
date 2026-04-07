@@ -280,6 +280,10 @@ pixel-runtime-app-nostr-gm-drm-hold:
 pixel-runtime-app-nostr-timeline-drm:
 	@scripts/pixel_runtime_app_nostr_timeline_drm.sh
 
+# Run the timeline runtime demo on the rooted Pixel and auto-dispatch one quick-gm click
+pixel-runtime-app-nostr-timeline-click-drm:
+	@scripts/pixel_runtime_app_nostr_timeline_click_drm.sh
+
 # Run the timeline runtime demo on the rooted Pixel, keep the panel seized, and leave Android stopped
 pixel-runtime-app-nostr-timeline-drm-hold:
 	@scripts/pixel_runtime_app_nostr_timeline_drm_hold.sh

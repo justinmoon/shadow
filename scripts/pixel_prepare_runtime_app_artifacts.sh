@@ -19,6 +19,7 @@ host_binary_name="shadow-runtime-host"
 host_launcher_artifact="$host_bundle_dir/run-shadow-runtime-host"
 package_ref="$repo#shadow-runtime-host-aarch64-linux-gnu"
 extra_bundle_dir="${PIXEL_RUNTIME_EXTRA_BUNDLE_ARTIFACT_DIR-}"
+runtime_manifest_path="$host_bundle_dir/.runtime-bundle-manifest.json"
 bundle_json=""
 bundle_source_path=""
 
@@ -75,6 +76,28 @@ exec "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$
 EOF
 chmod 0755 "$host_launcher_artifact"
 
+runtime_helper_content_fingerprint="$(
+  runtime_bundle_directory_fingerprint "$host_bundle_dir"
+)"
+
+python3 - "$runtime_manifest_path" "$runtime_helper_content_fingerprint" "$input_path" "$extra_bundle_dir" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+manifest_path, content_fingerprint, input_path, extra_bundle_dir = sys.argv[1:5]
+manifest = {
+    "contentFingerprint": content_fingerprint,
+    "generatedAt": datetime.now(timezone.utc).isoformat(),
+    "inputPath": input_path,
+    "runtimeExtraBundleArtifactDir": os.path.abspath(extra_bundle_dir) if extra_bundle_dir else None,
+}
+with open(manifest_path, "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2)
+    handle.write("\n")
+PY
+
 python3 - "$bundle_artifact" "$host_bundle_dir" "$input_path" "$extra_bundle_dir" <<'PY'
 import json
 import os
@@ -82,6 +105,7 @@ import sys
 
 bundle_artifact, host_bundle_dir, input_path, extra_bundle_dir = sys.argv[1:5]
 print(json.dumps({
+    "runtimeHelperContentFingerprint": json.load(open(os.path.join(host_bundle_dir, ".runtime-bundle-manifest.json"), "r", encoding="utf-8"))["contentFingerprint"],
     "inputPath": input_path,
     "runtimeExtraBundleArtifactDir": os.path.abspath(extra_bundle_dir) if extra_bundle_dir else None,
     "runtimeAppBundleArtifact": os.path.abspath(bundle_artifact),

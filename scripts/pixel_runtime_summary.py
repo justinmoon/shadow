@@ -13,8 +13,7 @@ CLIENT_SUMMARY_RE = re.compile(
     r"\[shadow-runtime-demo[^\]]*\+\s*\d+ms\] gpu-summary-client (\{.*\})$"
 )
 DISPATCH_RE = re.compile(
-    r"\[shadow-runtime-demo[^\]]*\+\s*\d+ms\] runtime-dispatch-start "
-    r"source=(\S+) type=(\S+) target=(\S+) wall_ms=(\d+)"
+    r"runtime-dispatch-start source=(\S+) type=(\S+) target=(\S+) wall_ms=(\d+)"
 )
 BOOT_SPLASH_RE = re.compile(
     r"\[shadow-guest-compositor\] boot-splash-frame-generated checksum=([0-9a-f]+) size=([0-9]+x[0-9]+)"

@@ -53,6 +53,19 @@ runtime_bundle_source_fingerprint() {
   } | shasum -a 256 | awk '{print $1}'
 }
 
+runtime_bundle_directory_fingerprint() {
+  local dir
+  dir="$1"
+
+  (
+    cd "$dir"
+    find . -type f | LC_ALL=C sort | while IFS= read -r file; do
+      file="${file#./}"
+      printf 'file %s %s\n' "$(runtime_bundle_file_hash "$dir/$file")" "$file"
+    done
+  ) | shasum -a 256 | awk '{print $1}'
+}
+
 runtime_bundle_manifest_matches() {
   local manifest_path expected_fingerprint
   manifest_path="$1"

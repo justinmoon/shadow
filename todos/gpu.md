@@ -57,6 +57,19 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] The GPU bundle path no longer depends on the flaky x86_64 Linux builder.
   - GPU bundle prep now targets `aarch64-linux` by default.
   - The local GPU bundle is now fingerprinted and reused on cache hits.
+- [x] The runtime helper push path now has a real device-side cache hit.
+  - Repeated Pixel runs skip the old `~1.19GB` runtime helper tar push when the helper bundle fingerprint matches.
+  - Validated output:
+    - `Runtime helper dir cacheHit -> /data/local/tmp/shadow-runtime-gnu`
+- [x] Timeline incremental rendering on the hardware-backed GPU lane is now measured directly.
+  - Dedicated recipe:
+    - `just pixel-runtime-app-nostr-timeline-click-drm`
+  - Validated repeated real-device runs:
+    - `click_to_updated_frame_ms=63`
+    - `click_to_updated_frame_ms=62`
+  - Source runs:
+    - `build/pixel/drm-guest/20260407T142739Z`
+    - `build/pixel/drm-guest/20260407T142843Z`
 - [x] Fast local gate is green after the font fix.
   - `just ui-check`
   - `just pre-commit`
@@ -64,8 +77,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 ### Not Done
 
 - [~] First visible app frame is still too slow.
-  - Current best proven runtime number is about `943ms`.
-  - Target is comfortably under `500ms`.
+  - The default timeline path with startup sync is still slower than we want.
+  - Warmed / isolated click-lane runs now reached `first_visible_frame_ms=408`.
+  - Initial first paint matters less than incremental update speed for this feature.
 - [~] End-to-end GPU presentation is not proved.
   - The rooted Pixel client is hardware-backed.
   - The guest compositor still reports `observed_buffer_type=shm`.
@@ -87,6 +101,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The Pixel can run the runtime client on real Adreno hardware through Turnip/KGSL.
 - The runtime app model is not the performance blocker.
 - The renderer can react fast once the first frame is on screen.
+- The timeline app can now prove fast incremental updates on the real GPU path.
 - The timeline app can render correct text on device after the curated-font fix.
 
 ### Not Proven
@@ -114,6 +129,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `click_to_updated_frame_ms=38`
   - `hardware_backed=true`
   - run: `build/pixel/drm-guest/20260407T114828Z`
+- Rooted Pixel timeline incremental click on the hardware-backed GPU lane:
+  - `click_to_updated_frame_ms=62`
+  - `hardware_backed=true`
+  - run: `build/pixel/drm-guest/20260407T142843Z`
 - Rooted Pixel static GPU probe:
   - `first_visible_frame_ms=1422`
   - `hardware_backed=true`
@@ -143,7 +162,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [~] Mostly done.
 - Notes:
   - tap-to-visible update is good
-  - startup is still not good enough
+  - timeline quick-gm update is now about `62ms` on the real GPU lane
+  - startup still has work depending on which operator path we optimize for
 
 ### 3. Restore correct runtime text on Pixel
 
@@ -159,7 +179,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - hardware-backed GPU timeline path is revalidated
   - x86_64-builder dependency is removed from the GPU bundle path
   - local GPU bundle cache hits now work
-  - remaining slop is startup time and heavy runtime-support repushes
+  - runtime helper device-side cache hits now work too
+  - remaining slop is the slower first-paint path on the full startup-sync timeline recipe
 
 ### 5. Eliminate SHM as the limiting compositor transport
 
@@ -176,28 +197,32 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
      - do not rely on `cpu`
      - confirm text, first frame, and interaction on the actual Turnip/KGSL lane
 
-2. Remove flaky rebuild dependence from the Pixel GPU operator path.
+2. Keep the fast operator path warm and stable.
    - Goal:
-     - if the known-good GPU bundle is already built, do not force an x86_64 Linux remote rebuild just to run the timeline app
-   - Why:
-     - this is currently blocking fast validation and making GPU status look worse than it is
+     - repeated GPU runs should avoid rebuild churn and giant repushes
    - Status:
-      - mostly done for the client GPU bundle
-      - next is the runtime support / push path
+      - done for the client GPU bundle
+      - done for the runtime helper push path
+      - now focus on keeping the warm click lane stable
 
-3. Measure startup on the GPU timeline path with the same summary discipline used for the counter runtime app.
+3. Keep measuring incremental latency on the GPU timeline path.
    - Need:
-     - first visible frame
-     - first relay-backed content frame
      - tap-to-updated-frame
      - text-render correctness
+     - cache-hit stability
+   - Current best proof:
+     - `quick-gm` auto click updates in `~62ms`
 
-4. Push first visible frame below `500ms`.
+4. Decide how much first-paint optimization is actually required.
    - Candidate seams:
      - startup bundle warm path
      - pipeline/shader warm path
      - reduce work before first present
      - avoid unnecessary runtime-side initial sync blocking visible first paint
+   - Current note:
+     - the warmed click lane already reached `408ms`
+     - the full startup-sync timeline path is still slower
+     - this is secondary to fast incremental updates
 
 5. Start the compositor transport seam.
    - Add or finish linux-dmabuf import/presentation in `shadow-compositor-guest`.
