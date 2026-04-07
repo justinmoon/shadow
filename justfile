@@ -180,12 +180,17 @@ runtime-deno-core-smoke-aarch64-linux-gnu:
 runtime-deno-runtime-smoke-aarch64-linux-gnu:
 	@nix build --accept-flake-config .#deno-runtime-smoke-aarch64-linux-gnu
 
-# Run the Shadow UI on the selected target.
+# Primary operator entrypoint.
 # target=desktop runs the local desktop host
 # target=vm runs the local Linux VM shell
-# target=pixel currently runs the rooted Pixel timeline app, not the full shell/home stack yet
+# target=pixel runs the rooted Pixel timeline app
+# target=<serial> implies Pixel and exports PIXEL_SERIAL automatically
 ui-run target="desktop" app="timeline" hold="1":
 	@scripts/ui_run.sh "{{target}}" "{{app}}" "{{hold}}"
+
+# Alias for ui-run
+run target="desktop" app="timeline" hold="1":
+	@just ui-run "{{target}}" "{{app}}" "{{hold}}"
 
 # Run the nested compositor and demo app under a headless Linux host
 ui-smoke:
@@ -195,59 +200,115 @@ ui-smoke:
 ui-vm-run:
 	@scripts/ui_vm_run.sh
 
+# Alias for the local Linux UI VM runner
+vm-run:
+	@just ui-vm-run
+
 # Stop the selected UI target.
 # target=vm stops the VM
 # target=pixel restores Android after a hold-mode takeover
 ui-stop target="desktop":
 	@scripts/ui_stop.sh "{{target}}"
 
+# Alias for ui-stop
+stop target="desktop":
+	@just ui-stop "{{target}}"
+
 # Stop the local Linux UI VM
 ui-vm-stop:
 	@scripts/ui_vm_stop.sh
+
+# Alias for the local Linux UI VM stop command
+vm-stop:
+	@just ui-vm-stop
 
 # SSH into the local Linux UI VM
 ui-vm-ssh *args='':
 	@scripts/ui_vm_ssh.sh {{args}}
 
+# Alias for ui-vm-ssh
+vm-ssh *args='':
+	@just ui-vm-ssh {{args}}
+
 # Show the guest compositor session log
 ui-vm-logs:
 	@scripts/ui_vm_logs.sh
+
+# Alias for ui-vm-logs
+vm-logs:
+	@just ui-vm-logs
 
 # Show guest smoke status and relevant Shadow UI processes
 ui-vm-status:
 	@scripts/ui_vm_status.sh
 
+# Alias for ui-vm-status
+vm-status:
+	@just ui-vm-status
+
 # Show guest greetd and smoke-service journal output
 ui-vm-journal:
 	@scripts/ui_vm_journal.sh
+
+# Alias for ui-vm-journal
+vm-journal:
+	@just ui-vm-journal
 
 # Diagnose the local UI VM via shadowctl
 ui-vm-doctor:
 	@scripts/shadowctl vm doctor
 
+# Alias for ui-vm-doctor
+vm-doctor:
+	@just ui-vm-doctor
+
 # Show machine-readable UI VM state
 ui-vm-state:
 	@scripts/shadowctl vm state --json
+
+# Alias for ui-vm-state
+vm-state:
+	@just ui-vm-state
 
 # Wait for the UI VM session to reach steady state
 ui-vm-wait-ready:
 	@scripts/shadowctl vm wait-ready
 
+# Alias for ui-vm-wait-ready
+vm-wait-ready:
+	@just ui-vm-wait-ready
+
 # Save a screenshot of the local UI VM window via QMP
 ui-vm-screenshot output="build/ui-vm/shadow-ui-vm.ppm":
 	@scripts/shadowctl vm screenshot "{{output}}"
+
+# Alias for ui-vm-screenshot
+vm-screenshot output="build/ui-vm/shadow-ui-vm.ppm":
+	@just ui-vm-screenshot "{{output}}"
 
 # Prove the timeline app launches, shelves warm, and reopens in the local UI VM
 ui-vm-timeline-smoke:
 	@scripts/ui_vm_timeline_smoke.sh
 
+# Alias for ui-vm-timeline-smoke
+vm-timeline-smoke:
+	@just ui-vm-timeline-smoke
+
 # Ask the compositor to open an app by ID
 ui-vm-open app="counter":
 	@scripts/shadowctl vm open "{{app}}"
 
+# Alias for ui-vm-open
+vm-open app="counter":
+	@just ui-vm-open "{{app}}"
+
 # Ask the compositor to shelf the foreground app and return home
 ui-vm-home:
 	@scripts/shadowctl vm home
+
+# Alias for ui-vm-home
+vm-home:
+	@just ui-vm-home
 
 # Query the local UI VM via shadowctl
 shadowctl *args='':

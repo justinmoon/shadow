@@ -8,6 +8,19 @@ target="${1:-desktop}"
 app="${2:-timeline}"
 hold="${3:-1}"
 
+resolve_target() {
+  case "$target" in
+    desktop|vm|pixel)
+      ;;
+    *)
+      export PIXEL_SERIAL="$target"
+      target="pixel"
+      ;;
+  esac
+}
+
+resolve_target
+
 run_desktop() {
   cd "$REPO_ROOT"
   nix develop .#ui -c cargo run --manifest-path ui/Cargo.toml -p shadow-ui-desktop
@@ -46,7 +59,7 @@ case "$target" in
     run_pixel
     ;;
   *)
-    echo "ui-run: unsupported target '$target' (expected desktop, vm, or pixel)" >&2
+    echo "ui-run: unsupported target '$target'" >&2
     exit 1
     ;;
 esac
