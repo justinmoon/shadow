@@ -23,6 +23,10 @@ ui-check:
 runtime-shell:
 	@nix develop .#runtime
 
+# Enter the Nix shell for Android-native helper work
+android-shell:
+	@nix develop .#android
+
 # Run the minimal Rusty V8 smoke binary on the current host
 runtime-rusty-v8-smoke:
 	@nix run --accept-flake-config .#rusty-v8-smoke
@@ -236,6 +240,10 @@ pixel-build:
 # Push the latest Pixel runtime demo artifacts to the connected device
 pixel-push:
 	@scripts/pixel_push.sh
+
+# Build, push, and run the Android-native Rust camera helper under su on the rooted Pixel
+pixel-camera-rs-run *args='':
+	@scripts/pixel_camera_rs_run.sh {{args}}
 
 # Stage the runtime app bundle plus GNU-wrapped helper for Pixel use
 pixel-prepare-runtime-app-artifacts:

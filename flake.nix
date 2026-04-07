@@ -10,13 +10,21 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    android-nixpkgs = {
+      url = "github:tadfisher/android-nixpkgs";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     microvm = {
       url = "github:microvm-nix/microvm.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, microvm }:
+  outputs = { self, nixpkgs, android-nixpkgs, microvm, rust-overlay }:
     let
       lib = nixpkgs.lib;
       uiVmSourceEnv = builtins.getEnv "SHADOW_UI_VM_SOURCE";
@@ -33,8 +41,32 @@
       ];
       darwinSystems = builtins.filter (system: lib.hasSuffix "-darwin" system) systems;
       forAllSystems = f:
-        lib.genAttrs systems (system:
-          f { pkgs = import nixpkgs { inherit system; }; });
+        lib.genAttrs systems (
+          system:
+          let
+            pkgs = import nixpkgs { inherit system; };
+            androidDevPkgs = import nixpkgs {
+              inherit system;
+              overlays = [ (import rust-overlay) ];
+            };
+            androidSdk =
+              if builtins.hasAttr system android-nixpkgs.sdk then
+                android-nixpkgs.sdk.${system} (
+                  sdkPkgs:
+                  with sdkPkgs;
+                  [
+                    cmdline-tools-latest
+                    platform-tools
+                    ndk-28-2-13676358
+                  ]
+                )
+              else
+                null;
+          in
+            f {
+              inherit androidDevPkgs androidSdk pkgs;
+            }
+        );
       uiBlitzOutputHashes = {
         "blitz-dom-0.2.2" = "sha256-RWQ5RpapA5ZmxJ9+LuUlL+RTwBcHRgZDM7Kok6yHpi8=";
         "blitz-html-0.2.0" = "sha256-RWQ5RpapA5ZmxJ9+LuUlL+RTwBcHRgZDM7Kok6yHpi8=";
@@ -255,9 +287,55 @@
           buildInputs = [ cross.alsa-lib ];
           meta.mainProgram = "shadow-linux-audio-spike";
         };
+      mkShadowCameraProviderHostFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "shadow-camera-provider-host";
+          version = "0.1.0";
+          src = ./.;
+          cargoRoot = "rust/shadow-camera-provider-host";
+          buildAndTestSubdir = "rust/shadow-camera-provider-host";
+          cargoLock.lockFile = ./rust/shadow-camera-provider-host/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          meta.mainProgram = "shadow-camera-provider-host";
+        };
       mkShadowSession = pkgs: mkShadowSessionFor pkgs.pkgsCross.musl64;
       mkDrmRect = pkgs: mkDrmRectFor pkgs.pkgsCross.musl64;
       mkShadowGuestCompositor = pkgs: mkShadowGuestCompositorFor pkgs.pkgsStatic;
+      mkAndroidShell = pkgs: androidSdk:
+        let
+          rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+            extensions = [ "rust-src" ];
+            targets = [ "aarch64-linux-android" ];
+          };
+          toolPkgs = [
+            androidSdk
+            rustToolchain
+            pkgs.bash
+            pkgs.cargo-ndk
+            pkgs.coreutils
+            pkgs.findutils
+            pkgs.gnugrep
+            pkgs.gnused
+            pkgs.jdk17_headless
+            pkgs.just
+            pkgs.pkg-config
+            pkgs.python3
+          ];
+        in
+        pkgs.mkShell {
+          packages = toolPkgs;
+
+          shellHook = ''
+            export PATH="${pkgs.lib.makeBinPath toolPkgs}:$PATH"
+            export IN_NIX_SHELL=1
+            export SHADOW_ANDROID_SHELL=1
+            export ANDROID_HOME=${androidSdk}/share/android-sdk
+            export ANDROID_SDK_ROOT=${androidSdk}/share/android-sdk
+            export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          '';
+        };
       mkBootimgShell = pkgs:
         let
           toolPkgs = with pkgs; [
@@ -384,16 +462,23 @@
               repoSource = uiVmSource;
             };
           }) darwinSystems));
-      devShells = forAllSystems ({ pkgs }: {
+      devShells = forAllSystems ({ androidDevPkgs, androidSdk, pkgs }: {
+        android =
+          if androidSdk != null then
+            mkAndroidShell androidDevPkgs androidSdk
+          else
+            mkUnavailablePackage pkgs "shadow-android-shell-unavailable"
+              "android shell requires android-nixpkgs support for this host";
         bootimg = mkBootimgShell pkgs;
         runtime = mkRuntimeShell pkgs;
         ui = mkUiShell pkgs;
         default = mkBootimgShell pkgs;
       });
-      packages = forAllSystems ({ pkgs }:
+      packages = forAllSystems ({ pkgs, ... }:
         {
           shadow-linux-audio-spike-aarch64-linux-gnu =
             mkShadowLinuxAudioSpikeFor pkgs.pkgsCross.aarch64-multiplatform;
+          shadow-camera-provider-host = mkShadowCameraProviderHostFor pkgs;
           shadow-runtime-host = mkShadowRuntimeHostFor pkgs;
           shadow-runtime-host-aarch64-linux-gnu =
             mkShadowRuntimeHostFor pkgs.pkgsCross.aarch64-multiplatform;
