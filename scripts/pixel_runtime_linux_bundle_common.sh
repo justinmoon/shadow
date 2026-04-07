@@ -1,5 +1,44 @@
 #!/usr/bin/env bash
 
+runtime_closure_has_path() {
+  local candidate existing
+  candidate="$1"
+
+  for existing in "${PIXEL_RUNTIME_CLOSURE_PATHS[@]}"; do
+    if [[ "$existing" == "$candidate" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+append_runtime_closure_paths() {
+  local path
+
+  for path in "$@"; do
+    [[ -n "$path" ]] || continue
+    if runtime_closure_has_path "$path"; then
+      continue
+    fi
+    PIXEL_RUNTIME_CLOSURE_PATHS+=("$path")
+  done
+}
+
+append_runtime_closure_from_package_ref() {
+  local package_ref out_path
+  local -a output_paths closure_paths
+
+  package_ref="$1"
+  mapfile -t output_paths < <(nix build --accept-flake-config --no-link --print-out-paths "$package_ref")
+
+  for out_path in "${output_paths[@]}"; do
+    append_runtime_closure_paths "$out_path"
+    mapfile -t closure_paths < <(nix-store -qR "$out_path")
+    append_runtime_closure_paths "${closure_paths[@]}"
+  done
+}
+
 copy_runtime_optional_file() {
   local source_path dest_path
   source_path="$1"

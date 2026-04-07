@@ -93,6 +93,10 @@ session_still_running() {
   [[ -n "${session_pid:-}" ]] && kill -0 "$session_pid" >/dev/null 2>&1
 }
 
+session_not_running() {
+  ! session_still_running
+}
+
 required_markers_all_seen() {
   local marker
 
@@ -282,7 +286,7 @@ else
 fi
 
 if [[ -z "${session_status:-}" ]]; then
-  if pixel_wait_for_condition "$session_exit_timeout_secs" 1 ! session_still_running; then
+  if pixel_wait_for_condition "$session_exit_timeout_secs" 1 session_not_running; then
     set +e
     wait "$session_pid"
     session_status="$?"

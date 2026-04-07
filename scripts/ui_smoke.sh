@@ -86,9 +86,8 @@ sync_remote_tree() {
     runtime \
     rust \
     scripts \
-    third_party \
     ui \
-    | remote_ssh "mkdir -p $(printf '%q' "$dir") && rm -rf $(printf '%q' "$dir/runtime") $(printf '%q' "$dir/rust") $(printf '%q' "$dir/scripts") $(printf '%q' "$dir/third_party") $(printf '%q' "$dir/ui") $(printf '%q' "$dir/flake.nix") $(printf '%q' "$dir/flake.lock") $(printf '%q' "$dir/justfile") && tar -xf - -C $(printf '%q' "$dir")"
+    | remote_ssh "mkdir -p $(printf '%q' "$dir") && rm -rf $(printf '%q' "$dir/runtime") $(printf '%q' "$dir/rust") $(printf '%q' "$dir/scripts") $(printf '%q' "$dir/ui") $(printf '%q' "$dir/flake.nix") $(printf '%q' "$dir/flake.lock") $(printf '%q' "$dir/justfile") && tar -xf - -C $(printf '%q' "$dir")"
 }
 
 dump_logs() {

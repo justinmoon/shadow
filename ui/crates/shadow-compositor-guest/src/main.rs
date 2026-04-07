@@ -49,6 +49,8 @@ use smithay::{
 
 const BTN_LEFT: u32 = 0x110;
 const GUEST_RUNTIME_CLIENT_BIN: &str = "/data/local/tmp/shadow-blitz-demo";
+const DEFAULT_TOPLEVEL_WIDTH: i32 = 384;
+const DEFAULT_TOPLEVEL_HEIGHT: i32 = 720;
 
 fn default_guest_client_path() -> String {
     GUEST_RUNTIME_CLIENT_BIN.into()
@@ -592,6 +594,33 @@ impl ShadowGuestCompositor {
         }
     }
 
+    fn configured_toplevel_size(&self) -> smithay::utils::Size<i32, Logical> {
+        let width = std::env::var("SHADOW_GUEST_COMPOSITOR_TOPLEVEL_WIDTH")
+            .ok()
+            .and_then(|value| value.parse::<i32>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_TOPLEVEL_WIDTH);
+        let height = std::env::var("SHADOW_GUEST_COMPOSITOR_TOPLEVEL_HEIGHT")
+            .ok()
+            .and_then(|value| value.parse::<i32>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_TOPLEVEL_HEIGHT);
+        (width, height).into()
+    }
+
+    fn configure_toplevel(&self, surface: &ToplevelSurface) {
+        let size = self.configured_toplevel_size();
+        surface.with_pending_state(|state| {
+            state.size = Some(size);
+            state.bounds = Some(size);
+        });
+        tracing::info!(
+            "[shadow-guest-compositor] configure-toplevel size={}x{}",
+            size.w,
+            size.h
+        );
+    }
+
     fn log_window_state(&self, reason: &str) {
         for (index, window) in self.space.elements().enumerate() {
             let location = self.space.element_location(window);
@@ -898,7 +927,8 @@ impl CompositorHandler for ShadowGuestCompositor {
                     .initial_configure_sent
             });
             if !initial_configure_sent {
-                window.toplevel().unwrap().send_configure();
+                self.configure_toplevel(window.toplevel().unwrap());
+                let _ = window.toplevel().unwrap().send_pending_configure();
             }
             tracing::info!("[shadow-guest-compositor] committed-window");
         }
@@ -947,7 +977,8 @@ impl XdgShellHandler for ShadowGuestCompositor {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        surface.send_configure();
+        self.configure_toplevel(&surface);
+        let _ = surface.send_pending_configure();
         let window = Window::new_wayland_window(surface);
         self.handle_window_mapped(window);
     }

@@ -10,6 +10,19 @@ use crate::runtime_document::RuntimeDocumentPayload;
 
 const RUNTIME_APP_BUNDLE_PATH_ENV: &str = "SHADOW_RUNTIME_APP_BUNDLE_PATH";
 const RUNTIME_HOST_BINARY_PATH_ENV: &str = "SHADOW_RUNTIME_HOST_BINARY_PATH";
+const RUNTIME_HOST_CLEAN_ENV: &[&str] = &[
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "LIBGL_DRIVERS_PATH",
+    "__EGL_VENDOR_LIBRARY_DIRS",
+    "VK_ICD_FILENAMES",
+    "WGPU_BACKEND",
+    "MESA_LOADER_DRIVER_OVERRIDE",
+    "MESA_SHADER_CACHE_DIR",
+    "SHADOW_LINUX_LD_PRELOAD",
+    "SHADOW_OPENLOG_DENY_DRI",
+    "TU_DEBUG",
+];
 
 pub struct RuntimeSession {
     child: Child,
@@ -65,7 +78,11 @@ impl RuntimeSession {
     }
 
     fn spawn(host_binary_path: String, bundle_path: String) -> Result<Self, String> {
-        let mut child = Command::new(&host_binary_path)
+        let mut command = Command::new(&host_binary_path);
+        for key in RUNTIME_HOST_CLEAN_ENV {
+            command.env_remove(key);
+        }
+        let mut child = command
             .arg("--session")
             .arg(&bundle_path)
             .stdin(Stdio::piped())

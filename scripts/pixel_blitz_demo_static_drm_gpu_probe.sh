@@ -11,6 +11,7 @@ pixel_prepare_dirs
 probe_root="$(pixel_dir)/gpu-probe"
 probe_dir="$(pixel_prepare_named_run_dir "$probe_root")"
 profiles_raw="${PIXEL_STATIC_GPU_PROFILES-}"
+renderer="${PIXEL_STATIC_GPU_RENDERER-gpu_softbuffer}"
 
 if [[ -z "$profiles_raw" ]]; then
   if [[ -n "${PIXEL_STATIC_GPU_PROFILE-}" ]]; then
@@ -26,7 +27,28 @@ if [[ "${#profiles[@]}" -eq 0 ]]; then
   exit 1
 fi
 
-"$SCRIPT_DIR/pixel_prepare_blitz_demo_gpu_softbuffer_bundle.sh"
+#
+# Rebuild the rooted guest/session binaries before probing so compositor-side
+# fixes are not masked by stale pushed artifacts.
+#
+"$SCRIPT_DIR/pixel_build.sh"
+
+case "$renderer" in
+  gpu_softbuffer)
+    prepare_script="$SCRIPT_DIR/pixel_prepare_blitz_demo_gpu_softbuffer_bundle.sh"
+    launcher_script="$SCRIPT_DIR/pixel_blitz_demo_static_drm_gpu_softbuffer.sh"
+    ;;
+  gpu)
+    prepare_script="$SCRIPT_DIR/pixel_prepare_blitz_demo_gpu_bundle.sh"
+    launcher_script="$SCRIPT_DIR/pixel_blitz_demo_static_drm_gpu.sh"
+    ;;
+  *)
+    echo "pixel_blitz_demo_static_drm_gpu_probe: unsupported PIXEL_STATIC_GPU_RENDERER: $renderer" >&2
+    exit 1
+    ;;
+esac
+
+"$prepare_script"
 
 case_guest_env() {
   local profile="$1"
@@ -45,9 +67,23 @@ case_guest_env() {
         'WGPU_BACKEND=gl' \
         "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
       ;;
+    gl_kgsl)
+      printf '%s\n' \
+        'WGPU_BACKEND=gl' \
+        'MESA_LOADER_DRIVER_OVERRIDE=kgsl' \
+        'TU_DEBUG=noconform' \
+        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
+      ;;
     vulkan_drm)
       printf '%s\n' \
         'WGPU_BACKEND=vulkan' \
+        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
+      ;;
+    vulkan_kgsl)
+      printf '%s\n' \
+        'WGPU_BACKEND=vulkan' \
+        'MESA_LOADER_DRIVER_OVERRIDE=kgsl' \
+        'TU_DEBUG=noconform' \
         "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
       ;;
     vulkan_kgsl_first)
@@ -72,7 +108,7 @@ run_case() {
   local latest_before latest_after run_dir case_status required_markers=""
   local -a guest_env_lines=()
   local -a env_vars=(
-    "PIXEL_RUNTIME_SUMMARY_RENDERER=gpu_softbuffer"
+    "PIXEL_RUNTIME_SUMMARY_RENDERER=$renderer"
     "PIXEL_GUEST_EXPECT_COMPOSITOR_PROCESS="
     "PIXEL_GUEST_EXPECT_CLIENT_PROCESS="
   )
@@ -106,7 +142,7 @@ run_case() {
 
   set +e
   env "${env_vars[@]}" \
-    "$SCRIPT_DIR/pixel_blitz_demo_static_drm_gpu_softbuffer.sh" >>"$case_log" 2>&1
+    "$launcher_script" >>"$case_log" 2>&1
   case_status="$?"
   set -e
 

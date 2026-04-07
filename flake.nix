@@ -394,6 +394,8 @@
                 "ui-vm requires a macOS host plus SHADOW_UI_VM_SOURCE set under --impure. Use just ui-vm-run.";
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          shadow-blitz-demo-aarch64-linux-gnu-gpu =
+            mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform "gpu";
           shadow-blitz-demo-aarch64-linux-gnu-gpu-softbuffer =
             mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform "gpu_softbuffer";
           shadow-compositor-guest = mkShadowGuestCompositor pkgs;

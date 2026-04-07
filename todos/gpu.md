@@ -10,10 +10,13 @@ Living note. This is not a polished design doc. It exists to capture what was tr
 
 ## Current Conclusion
 
-- True hardware GPU acceleration on the rooted Pixel is still not working under the current GNU/glibc userspace bundle.
-- The best current real-device UX path is the plain CPU renderer.
-- The rooted Pixel runtime demo now reaches first visible app frame in about `0.68s` and auto-click-to-visible-update in about `0.35s` on the real panel.
-- `gpu_softbuffer` remains useful as a probe lane, not as the default operator path.
+- True hardware-backed rendering now works on the rooted Pixel 4a through the `gpu_softbuffer` renderer plus the vendor Turnip Vulkan ICD on the KGSL path.
+- The current rooted Pixel runtime operator path now defaults to that Turnip/KGSL lane when the cached vendor Turnip tarball is present.
+- The rooted Pixel runtime demo now reaches first visible app frame in about `0.94s` and auto-click-to-visible-update in about `38ms` on the real panel in the default operator path.
+- The remaining issue is not “can we get GPU at all?” anymore. The remaining issues are:
+  - boot-to-first-app-frame polish
+  - continued SHM presentation in the compositor path
+  - whether the true `gpu` client path can beat the now-working `gpu_softbuffer` Vulkan lane enough to matter
 - Phase 1 of the finish plan is now in place:
   - the Blitz client emits compact `gpu-summary-start` / `gpu-summary-client` markers
   - the rooted Pixel session writes a compact `gpu-summary.json` with renderer, backend, adapter, software-vs-hardware classification, first-visible-frame latency, and click-to-updated-frame latency
@@ -54,10 +57,15 @@ Living note. This is not a polished design doc. It exists to capture what was tr
 - Bundled the Vulkan loader, Turnip / Freedreno pieces, and related driver manifests.
 - Forced `WGPU_BACKEND=vulkan`.
 - Added instrumentation and root-side probes to see what the device nodes and driver stack actually looked like.
-- Result:
+- First result:
   - `libvulkan_freedreno.so` loaded
   - `vkEnumeratePhysicalDevices` still failed
   - Turnip did not produce a usable Vulkan device in this environment
+- Final result after the bundle/ICD fixes:
+  - the static rooted probe now reports `adapter_name="Turnip Adreno (TM) 618"`
+  - `hardware_backed=true`
+  - `wgpu_backend="Vulkan"`
+  - `/dev/kgsl-3d0` is opened and used from the rooted GNU client path
 
 ## 6. Probed the rooted Pixel DRM/KMS capabilities directly
 
@@ -147,48 +155,61 @@ Living note. This is not a polished design doc. It exists to capture what was tr
 - Linux compositor GPU client smoke as a control-plane proof.
 - Rooted Pixel static `wgpu` visible-screen proof.
 - Rooted Pixel `gpu_softbuffer` as a diagnostic lane.
-- Rooted Pixel CPU renderer as the actually fast default path.
+- Rooted Pixel Turnip/KGSL Vulkan path for both:
+  - static GPU probe
+  - runtime app auto-click lane
+- Rooted Pixel runtime auto-click with hardware-backed rendering:
+  - first visible app frame about `943ms`
+  - click-to-updated-frame about `38ms`
 
 ## What Did Not Work
 
-- Real Turnip/Freedreno Vulkan device creation under the current rooted GNU userspace.
-- Using the rooted Pixel `gpu_softbuffer` path as the default fast path.
-- Relying on Mesa shader cache alone to make `gpu_softbuffer` cold-start acceptable.
+- The earlier Vulkan/Turnip attempts before the bundle fixes.
+- The GL `gpu_softbuffer` path on the rooted Pixel; it still falls back to software.
+- The current true-`gpu` rooted GNU lane; it still needs more work than the proven `gpu_softbuffer` Vulkan path.
+- Relying on Mesa shader cache alone to make the old software-backed path acceptable.
 
-## Why The Current Fast Path Is CPU
+## Why The Current Fast Path Is Turnip + `gpu_softbuffer`
 
-- The rooted Pixel GPU story is still blocked by low-level driver/backend reality, not by Solid, Deno, or Blitz.
-- Under the current GNU userspace:
-  - `gpu_softbuffer` is functional but software-backed
-  - Vulkan / Turnip is not usable
-- So the simplest fast solution is:
+- The rooted Pixel GPU story is now good enough on one narrow path:
+  - vendor Turnip ICD
+  - Vulkan backend
+  - KGSL-preferred setup
+  - `gpu_softbuffer` client renderer
+- That path is still compositor-observed `type=shm`, but the renderer itself is hardware-backed and the rerender latency is now in the “feels instant” range.
+- So the simplest fast solution today is:
   - keep the runtime/app model
   - keep the rooted compositor path
-  - use the CPU renderer by default on device
+  - default the Pixel runtime lane to the proven Turnip/KGSL `gpu_softbuffer` path
+  - keep CPU as the fallback when the vendor Turnip tarball is absent
 
 ## Current Operator Guidance
 
-- Rooted Pixel runtime demo default: `cpu`
-- Keep `gpu_softbuffer` as an explicit experiment / probe path
+- Rooted Pixel runtime demo default:
+  - `gpu_softbuffer` + Vulkan + KGSL + vendor Turnip, when `build/pixel/vendor/turnip_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz` is present
+  - otherwise fall back to `cpu`
+- Keep the true `gpu` lane as an explicit experiment / probe path
 - Treat the real device-performance target as:
-  - first visible frame under 1s
-  - rerender around a few hundred ms or better
+  - first visible frame under 1s, with immediate boot splash
+  - rerender under 100ms
 
 ## Remaining GPU Questions
 
-- Can the rooted Pixel use a different Vulkan path that prefers KGSL successfully?
-- Is an Android-native / bionic GPU client path required for real Adreno acceleration?
-- Can the guest compositor ever import a truly GPU-backed client buffer on the rooted Pixel path?
-- If true hardware acceleration becomes available, does it materially beat the current CPU path enough to justify the extra complexity?
+- Can we reduce first visible app frame from `~943ms` toward `<=500ms` without losing the proven Turnip/KGSL path?
+- Can the guest compositor ever import a truly GPU-backed client buffer on the rooted Pixel path instead of compositor-observed `shm`?
+- Does the true `gpu` client path eventually beat the proven `gpu_softbuffer` Vulkan lane enough to justify the extra complexity?
+- Is an Android-native / bionic GPU client path still worth exploring once the current rooted GNU Vulkan lane already feels good enough interactively?
 
 ## Recommended Next Steps
 
-- Keep the Pixel runtime demo on the CPU renderer by default.
+- Keep the Turnip/KGSL runtime lane as the default rooted Pixel path.
 - Keep the GPU probe tools and notes in-tree.
-- Do not block app-runtime progress on true GPU acceleration.
-- Only revisit the GPU lane when there is a credible way to get:
-  - a real Vulkan device on the rooted Pixel
-  - or a real Android-native GPU client path
+- Attack startup polish next:
+  - reduce first app frame below `1s`
+  - ideally below `500ms`
+- Then attack transport quality:
+  - understand why the compositor still sees `type=shm`
+  - only widen into true dmabuf import if it materially improves the real device path
 
 ## Files Touched During This Investigation
 
@@ -205,10 +226,14 @@ Living note. This is not a polished design doc. It exists to capture what was tr
 
 ## Best Known Numbers
 
-- Rooted Pixel runtime session ready: `~86ms`
-- Rooted Pixel runtime document ready: `~120ms`
-- Rooted Pixel first visible app frame: `~0.68s`
-- Rooted Pixel auto-click to visible updated frame: `~0.35s`
+- Rooted Pixel runtime GPU probe, static client:
+  - `hardware_backed=true`
+  - `adapter_name="Turnip Adreno (TM) 618"`
+  - `first_visible_frame_ms=1422`
+- Rooted Pixel runtime app, default Turnip/KGSL operator path:
+  - `hardware_backed=true`
+  - `first_visible_frame_ms=943`
+  - `click_to_updated_frame_ms=38`
 - Old rooted Pixel `gpu_softbuffer` first frame: roughly `8.3s`
 
 ## Plan To Finish This Feature

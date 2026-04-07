@@ -10,14 +10,23 @@ ensure_bootimg_shell "$@"
 
 pixel_prepare_dirs
 repo="$(repo_root)"
-bundle_dir="$(pixel_artifact_path shadow-blitz-demo-gnu)"
-bundle_out_link="$(pixel_dir)/shadow-blitz-demo-aarch64-linux-gnu-gpu-softbuffer-result"
-launcher_artifact="$(pixel_artifact_path run-shadow-blitz-demo-gpu-softbuffer)"
+bundle_dir="$(pixel_artifact_path shadow-blitz-demo-gpu-gnu)"
+bundle_out_link="$(pixel_dir)/shadow-blitz-demo-aarch64-linux-gnu-gpu-result"
+launcher_artifact="$(pixel_artifact_path run-shadow-blitz-demo-gpu)"
 openlog_preload_artifact="$(pixel_artifact_path shadow-openlog-preload.so)"
+vendor_mesa_tarball="${PIXEL_VENDOR_MESA_TARBALL-}"
 vendor_turnip_tarball="${PIXEL_VENDOR_TURNIP_TARBALL-}"
 package_system="${PIXEL_LINUX_BUILD_SYSTEM:-x86_64-linux}"
-package_ref="$repo#packages.${package_system}.shadow-blitz-demo-aarch64-linux-gnu-gpu-softbuffer"
+package_ref="$repo#packages.${package_system}.shadow-blitz-demo-aarch64-linux-gnu-gpu"
 bundle_device_dir="$(pixel_runtime_linux_dir)"
+vendor_mesa_package_refs=(
+  "nixpkgs#pkgsCross.aarch64-multiplatform.libx11"
+  "nixpkgs#pkgsCross.aarch64-multiplatform.libxcb"
+  "nixpkgs#pkgsCross.aarch64-multiplatform.libxshmfence"
+  "nixpkgs#pkgsCross.aarch64-multiplatform.llvmPackages_19.libllvm"
+  "nixpkgs#pkgsCross.aarch64-multiplatform.zstd.out"
+  "nixpkgs#pkgsCross.aarch64-multiplatform.lm_sensors.out"
+)
 vendor_turnip_package_refs=(
   "nixpkgs#pkgsCross.aarch64-multiplatform.libx11"
   "nixpkgs#pkgsCross.aarch64-multiplatform.libxcb"
@@ -122,6 +131,69 @@ stage_openlog_preload() {
   cp -L "$openlog_preload_artifact" "$bundle_dir/lib/shadow-openlog-preload.so"
 }
 
+overlay_vendor_mesa_tarball() {
+  local tarball="$1"
+  local temp_dir="$bundle_dir/.vendor-mesa-overlay"
+  local source_root
+
+  [[ -n "$tarball" ]] || return 0
+  if [[ ! -f "$tarball" ]]; then
+    echo "pixel_prepare_blitz_demo_gpu_bundle: missing PIXEL_VENDOR_MESA_TARBALL: $tarball" >&2
+    return 1
+  fi
+
+  rm -rf "$temp_dir"
+  mkdir -p "$temp_dir"
+  tar -xzf "$tarball" -C "$temp_dir"
+  source_root="$temp_dir/usr"
+
+  chmod -R u+w "$bundle_dir" 2>/dev/null || true
+  mkdir -p "$bundle_dir/lib" "$bundle_dir/lib/dri" "$bundle_dir/share/vulkan/icd.d" \
+    "$bundle_dir/share/glvnd/egl_vendor.d" "$bundle_dir/share/drirc.d"
+
+  if [[ -d "$source_root/lib/aarch64-linux-gnu" ]]; then
+    find "$source_root/lib/aarch64-linux-gnu" -maxdepth 1 -type f \
+      \( \
+        -name 'libEGL*' -o \
+        -name 'libGLES*' -o \
+        -name 'libGLX_mesa*' -o \
+        -name 'libgallium*' -o \
+        -name 'libglapi*' -o \
+        -name 'libgbm*' -o \
+        -name 'libvulkan_freedreno.so*' -o \
+        -name 'libwayland-egl.so*' -o \
+        -name 'dri_gbm.so' -o \
+        -name '*_dri.so' \
+      \) \
+      -exec cp -Lf {} "$bundle_dir/lib/" \;
+
+    if [[ -d "$source_root/lib/aarch64-linux-gnu/dri" ]]; then
+      cp -LRf "$source_root/lib/aarch64-linux-gnu/dri"/. "$bundle_dir/lib/dri"/
+    fi
+  fi
+
+  if [[ -d "$source_root/share/vulkan/icd.d" ]]; then
+    cp -LRf "$source_root/share/vulkan/icd.d"/. "$bundle_dir/share/vulkan/icd.d"/
+  fi
+  if [[ -d "$source_root/share/glvnd/egl_vendor.d" ]]; then
+    cp -LRf "$source_root/share/glvnd/egl_vendor.d"/. "$bundle_dir/share/glvnd/egl_vendor.d"/
+  fi
+  if [[ -d "$source_root/share/drirc.d" ]]; then
+    cp -LRf "$source_root/share/drirc.d"/. "$bundle_dir/share/drirc.d"/
+  fi
+
+  rm -rf "$temp_dir"
+}
+
+append_vendor_mesa_runtime_closure() {
+  local package_ref
+
+  [[ -n "$vendor_mesa_tarball" ]] || return 0
+  for package_ref in "${vendor_mesa_package_refs[@]}"; do
+    append_runtime_closure_from_package_ref "$package_ref"
+  done
+}
+
 append_vendor_turnip_runtime_closure() {
   local package_ref
 
@@ -136,7 +208,7 @@ overlay_vendor_turnip_tarball() {
 
   [[ -n "$tarball" ]] || return 0
   if [[ ! -f "$tarball" ]]; then
-    echo "pixel_prepare_blitz_demo_gpu_softbuffer_bundle: missing PIXEL_VENDOR_TURNIP_TARBALL: $tarball" >&2
+    echo "pixel_prepare_blitz_demo_gpu_bundle: missing PIXEL_VENDOR_TURNIP_TARBALL: $tarball" >&2
     return 1
   fi
 
@@ -162,7 +234,9 @@ copy_runtime_libs_from_package_output
 copy_optional_tree_from_closure "lib/dri" || true
 copy_optional_tree_from_closure "share/vulkan/icd.d" || true
 copy_optional_tree_from_closure "share/glvnd/egl_vendor.d" || true
+append_vendor_mesa_runtime_closure
 append_vendor_turnip_runtime_closure
+overlay_vendor_mesa_tarball "$vendor_mesa_tarball"
 overlay_vendor_turnip_tarball "$vendor_turnip_tarball"
 rewrite_bundle_driver_manifests
 flatten_bundle_file_symlinks
