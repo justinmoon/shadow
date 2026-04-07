@@ -43,6 +43,7 @@ expect_client_marker="${PIXEL_GUEST_EXPECT_CLIENT_MARKER-1}"
 verify_require_client_marker="${PIXEL_VERIFY_REQUIRE_CLIENT_MARKER-1}"
 verify_forbidden_markers="${PIXEL_VERIFY_FORBIDDEN_MARKERS-}"
 restore_android="${PIXEL_TAKEOVER_RESTORE_ANDROID-1}"
+stop_allocator="${PIXEL_TAKEOVER_STOP_ALLOCATOR-1}"
 restore_delay_secs="${PIXEL_TAKEOVER_RESTORE_DELAY_SECS-}"
 stop_checkpoint_timeout_secs="${PIXEL_GUEST_STOP_CHECKPOINT_TIMEOUT_SECS-15}"
 process_checkpoint_timeout_secs="${PIXEL_GUEST_PROCESS_CHECKPOINT_TIMEOUT_SECS-15}"
@@ -75,6 +76,14 @@ android_restored=false
 checkpoint_failure_kind=""
 checkpoint_failure_description=""
 checkpoint_failure_message=""
+
+display_services_stopped_condition() {
+  if [[ "$stop_allocator" == "0" ]]; then
+    pixel_display_services_stopped_keep_allocator "$serial"
+    return
+  fi
+  pixel_display_services_stopped "$serial"
+}
 
 cleanup() {
   if [[ -n "${session_pid:-}" && "${startup_ok:-false}" != true && "${android_restored:-false}" != true ]]; then
@@ -229,7 +238,7 @@ logcat_pid="$!"
 
 phone_script="$(
   cat <<EOF
-$(pixel_takeover_stop_services_script)
+$(pixel_takeover_stop_services_script "$stop_allocator")
 rm -rf $runtime_dir && mkdir -p $runtime_dir && chmod 700 $runtime_dir && rm -f $frame_path
 ${guest_precreate_dirs:+for prep_dir in $guest_precreate_dirs; do mkdir -p "\$prep_dir"; done}
 ${session_timeout_secs:+timeout $session_timeout_secs }env ${guest_session_env:+$guest_session_env }XKB_CONFIG_ROOT=$xkb_config_root SHADOW_SESSION_MODE=guest-ui SHADOW_RUNTIME_DIR=$runtime_dir SHADOW_GUEST_COMPOSITOR_BIN=$compositor_dst SHADOW_GUEST_CLIENT=$client_dst SHADOW_GUEST_COMPOSITOR_TRANSPORT=$guest_transport SHADOW_GUEST_COMPOSITOR_ENABLE_DRM=1 ${guest_selftest_drm:+SHADOW_GUEST_COMPOSITOR_SELFTEST_DRM=$guest_selftest_drm }${compositor_exit_on_first_frame:+SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME=$compositor_exit_on_first_frame }${compositor_exit_on_client_disconnect:+SHADOW_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT=$compositor_exit_on_client_disconnect }${client_exit_on_configure:+SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE=$client_exit_on_configure }${client_linger_ms:+SHADOW_GUEST_CLIENT_LINGER_MS=$client_linger_ms }${guest_client_env_quoted:+SHADOW_GUEST_CLIENT_ENV=$guest_client_env_quoted }SHADOW_GUEST_FRAME_PATH=$frame_path RUST_LOG=shadow_compositor_guest=info,shadow_blitz_demo=info,smithay=warn $session_dst
@@ -245,10 +254,15 @@ pixel_root_shell "$serial" "$phone_script" >"$session_output_path" 2>&1 &
 session_pid="$!"
 set -e
 
-if wait_for_checkpoint "Android display services stopped" "$stop_checkpoint_timeout_secs" pixel_display_services_stopped "$serial"; then
+stop_description="Android display services stopped"
+if [[ "$stop_allocator" == "0" ]]; then
+  stop_description="Android display services stopped with allocator preserved"
+fi
+
+if wait_for_checkpoint "$stop_description" "$stop_checkpoint_timeout_secs" display_services_stopped_condition; then
   services_stopped=true
 else
-  failure_message="timed out waiting for Android display services to stop"
+  failure_message="timed out waiting for $stop_description"
 fi
 
 if [[ -z "$failure_message" && -n "$expect_compositor_process" ]]; then

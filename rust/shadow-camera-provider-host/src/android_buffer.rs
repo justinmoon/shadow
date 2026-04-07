@@ -1,7 +1,9 @@
 use crate::camera_aidl::common::NativeHandle as AidlNativeHandle;
 use crate::camera_aidl::device::{HalStream, Stream};
 use binder::ParcelFileDescriptor;
-use ndk::hardware_buffer::{HardwareBuffer, HardwareBufferDesc, HardwareBufferRef, HardwareBufferUsage};
+use ndk::hardware_buffer::{
+    HardwareBuffer, HardwareBufferDesc, HardwareBufferRef, HardwareBufferUsage,
+};
 use ndk::hardware_buffer_format::HardwareBufferFormat;
 use std::ffi::c_void;
 use std::io::{self, Error, ErrorKind};
@@ -51,11 +53,16 @@ pub fn allocate_jpeg_capture_buffer(
         )
     })?;
 
-    let allocation_width_u32 = u32::try_from(allocation_width)
-        .map_err(|_| Error::new(ErrorKind::InvalidInput, "jpeg stream buffer_size overflowed u32"))?;
+    let allocation_width_u32 = u32::try_from(allocation_width).map_err(|_| {
+        Error::new(
+            ErrorKind::InvalidInput,
+            "jpeg stream buffer_size overflowed u32",
+        )
+    })?;
 
-    let allocation_usage =
-        (requested_stream.usage.0 as u64) | (hal_stream.producer_usage.0 as u64) | (hal_stream.consumer_usage.0 as u64);
+    let allocation_usage = (requested_stream.usage.0 as u64)
+        | (hal_stream.producer_usage.0 as u64)
+        | (hal_stream.consumer_usage.0 as u64);
 
     let buffer = HardwareBuffer::allocate(HardwareBufferDesc {
         width: allocation_width_u32,
@@ -89,7 +96,8 @@ pub fn write_jpeg_from_buffer(
     let locked_ptr = buffer.lock(HardwareBufferUsage::CPU_READ_OFTEN, release_fence, None)?;
 
     let jpeg_bytes = (|| -> io::Result<Vec<u8>> {
-        let bytes = unsafe { std::slice::from_raw_parts(locked_ptr.cast::<u8>(), allocation_width) };
+        let bytes =
+            unsafe { std::slice::from_raw_parts(locked_ptr.cast::<u8>(), allocation_width) };
         let jpeg_size = parse_jpeg_blob_size(bytes).ok_or_else(|| {
             Error::new(
                 ErrorKind::InvalidData,
@@ -160,7 +168,9 @@ fn clone_native_handle(buffer: &HardwareBufferRef) -> io::Result<AidlNativeHandl
     unsafe { raw_native_handle_to_aidl(raw_handle) }
 }
 
-unsafe fn raw_native_handle_to_aidl(handle: *const NativeHandleRaw) -> io::Result<AidlNativeHandle> {
+unsafe fn raw_native_handle_to_aidl(
+    handle: *const NativeHandleRaw,
+) -> io::Result<AidlNativeHandle> {
     let raw = unsafe { &*handle };
     let num_fds = usize::try_from(raw.num_fds)
         .map_err(|_| Error::new(ErrorKind::InvalidData, "native handle numFds overflowed"))?;

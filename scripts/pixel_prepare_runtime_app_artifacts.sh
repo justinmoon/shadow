@@ -94,6 +94,7 @@ host_bundle_source_fingerprint="$(
     "$package_ref" \
     "$repo/flake.nix" \
     "$repo/flake.lock" \
+    "$repo/rust/runtime-camera-host" \
     "$repo/rust/shadow-runtime-host" \
     "$repo/rust/shadow-runtime-host/Cargo.lock" \
     "$repo/rust/runtime-audio-host" \

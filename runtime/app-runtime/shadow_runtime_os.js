@@ -18,6 +18,14 @@ export function publishEphemeralKind1(request) {
   return getNostrApi().publishEphemeralKind1(request);
 }
 
+export function listCameras() {
+  return getCameraApi().listCameras();
+}
+
+export function captureStill(request = {}) {
+  return getCameraApi().captureStill(request);
+}
+
 export function createPlayer(request = {}) {
   return getAudioApi().createPlayer(request);
 }
@@ -80,6 +88,14 @@ function requireShadowOs() {
     throw new Error("Shadow.os is not installed by the runtime host");
   }
   return os;
+}
+
+function getCameraApi() {
+  const camera = requireShadowOs().camera;
+  if (!camera) {
+    throw new Error("Shadow.os.camera is not installed by the runtime host");
+  }
+  return camera;
 }
 
 function getNostrApi() {

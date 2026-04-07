@@ -55,6 +55,13 @@ check_dispatch_case \
   app=podcast target=vm
 
 check_dispatch_case \
+  vm_camera_open \
+  0 \
+  "$(printf 'env=SHADOW_UI_VM_START_APP_ID=camera\ncommand=%s' "$SCRIPT_DIR/ui_vm_run.sh")" \
+  "" \
+  app=camera target=vm
+
+check_dispatch_case \
   vm_cashu_open \
   0 \
   "$(printf 'env=SHADOW_UI_VM_START_APP_ID=cashu\ncommand=%s' "$SCRIPT_DIR/ui_vm_run.sh")" \
@@ -74,6 +81,13 @@ check_dispatch_case \
   "$(printf 'env=PIXEL_SHELL_START_APP_ID=timeline\ncommand=%s' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
   "target=pixel launches the full home shell and asks it to open timeline" \
   app=timeline target=pixel
+
+check_dispatch_case \
+  pixel_camera_hold \
+  0 \
+  "$(printf 'env=PIXEL_SHELL_START_APP_ID=camera\ncommand=%s' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "target=pixel launches the full home shell and asks it to open camera" \
+  app=camera target=pixel
 
 check_dispatch_case \
   pixel_podcast_hold \
@@ -100,14 +114,14 @@ check_dispatch_case \
   pixel_unknown_rejected \
   1 \
   "" \
-  "target=pixel currently supports app=shell, app=counter, app=timeline, app=podcast, or app=cashu" \
+  "target=pixel currently supports app=shell, app=counter, app=timeline, app=camera, app=podcast, or app=cashu" \
   app=unknown target=pixel
 
 check_dispatch_case \
   desktop_unknown_rejected \
   1 \
   "" \
-  "target=vm currently supports app=shell, app=counter, app=timeline, app=podcast, or app=cashu" \
+  "target=vm currently supports app=shell, app=counter, app=timeline, app=camera, app=podcast, or app=cashu" \
   app=unknown target=desktop
 
 printf 'ui_run_dispatch_smoke: ok\n'

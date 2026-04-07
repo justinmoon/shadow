@@ -62,9 +62,101 @@ runtime-app-cashu-wallet-smoke:
 # Run the currently supported bundled host runtime smokes
 runtime-app-host-smokes:
 	@just runtime-app-keyboard-smoke
+	@just runtime-app-camera-smoke
 	@just runtime-app-nostr-gm-smoke
 	@just runtime-app-nostr-timeline-smoke
 	@just runtime-app-cashu-wallet-smoke
+# Run the first host-dispatched click through the selected bundled app runtime seam
+runtime-app-click-smoke backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_click_smoke.sh
+
+# Run the first host-dispatched click through the bundled app runtime seam on Deno Runtime
+runtime-app-click-smoke-deno-runtime:
+	@just runtime-app-click-smoke deno-runtime
+
+# Run the first host-dispatched change event through the selected bundled app runtime seam
+runtime-app-input-smoke backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_input_smoke.sh
+
+# Run the first host-dispatched change event through the bundled app runtime seam on Deno Runtime
+runtime-app-input-smoke-deno-runtime:
+	@just runtime-app-input-smoke deno-runtime
+
+# Run the focus -> input -> blur text behavior smoke through the selected bundled app runtime seam
+runtime-app-focus-smoke backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_focus_smoke.sh
+
+# Run the focus -> input -> blur text behavior smoke through the bundled app runtime seam on Deno Runtime
+runtime-app-focus-smoke-deno-runtime:
+	@just runtime-app-focus-smoke deno-runtime
+
+# Run the checkbox / boolean form smoke through the selected bundled app runtime seam
+runtime-app-toggle-smoke backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_toggle_smoke.sh
+
+# Run the checkbox / boolean form smoke through the bundled app runtime seam on Deno Runtime
+runtime-app-toggle-smoke-deno-runtime:
+	@just runtime-app-toggle-smoke deno-runtime
+
+# Run the text selection metadata smoke through the selected bundled app runtime seam
+runtime-app-selection-smoke backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_selection_smoke.sh
+
+# Run the text selection metadata smoke through the bundled app runtime seam on Deno Runtime
+runtime-app-selection-smoke-deno-runtime:
+	@just runtime-app-selection-smoke deno-runtime
+
+# Run the first OS-level Nostr API smoke through the selected bundled app runtime seam
+runtime-app-nostr-smoke backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_nostr_smoke.sh
+
+# Run the camera OS API smoke through the bundled app runtime seam
+runtime-app-camera-smoke:
+	@nix develop .#runtime -c scripts/runtime_app_camera_smoke.sh
+
+# Run the default-backend Nostr cache/persistence smoke through the OS API seam
+runtime-app-nostr-cache-smoke:
+	@nix develop .#runtime -c scripts/runtime_app_nostr_cache_smoke.sh
+
+# Run the first OS-level Nostr API smoke through the bundled app runtime seam on Deno Runtime
+runtime-app-nostr-smoke-deno-runtime:
+	@just runtime-app-nostr-smoke deno-runtime
+
+# Run the fixed-frame Blitz document smoke for app payload swapping
+runtime-app-blitz-document-smoke:
+	@scripts/runtime_app_blitz_document_smoke.sh
+
+# Run the host-visible runtime demo window on the selected backend
+runtime-app-host-run backend="deno-core" renderer="cpu":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" SHADOW_BLITZ_RENDERER="{{renderer}}" scripts/runtime_app_host_run.sh
+
+# Run the host-visible runtime demo window on Deno Runtime
+runtime-app-host-run-deno-runtime:
+	@just runtime-app-host-run deno-runtime
+
+# Run the host-visible runtime demo window with the GPU Vello renderer
+runtime-app-host-run-gpu backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" SHADOW_BLITZ_RENDERER="gpu" scripts/runtime_app_host_run.sh
+
+# Run the host-visible runtime demo with an auto-exit smoke timer on the selected backend
+runtime-app-host-smoke backend="deno-core" renderer="cpu":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" SHADOW_BLITZ_RENDERER="{{renderer}}" scripts/runtime_app_host_smoke.sh
+
+# Run the host-visible runtime demo with an auto-exit smoke timer on Deno Runtime
+runtime-app-host-smoke-deno-runtime:
+	@just runtime-app-host-smoke deno-runtime
+
+# Run the host-visible runtime demo with the GPU Vello renderer
+runtime-app-host-smoke-gpu backend="deno-core":
+	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" SHADOW_BLITZ_RENDERER="gpu" scripts/runtime_app_host_smoke.sh
+
+# Run the GPU runtime demo as a Wayland client under the Smithay compositor smoke path
+runtime-app-compositor-smoke-gpu:
+	@scripts/runtime_app_compositor_smoke.sh
+
+# Run the static GPU Blitz demo as a Wayland client under the Smithay compositor smoke path
+blitz-demo-compositor-smoke-gpu:
+	@scripts/blitz_demo_compositor_smoke.sh
 
 # Run the static GPU Blitz demo as a Wayland client under the guest compositor smoke path
 blitz-demo-guest-compositor-smoke-gpu:
@@ -99,6 +191,7 @@ runtime-deno-runtime-smoke-aarch64-linux-gnu:
 # target=vm runs the local Linux VM shell
 # target=pixel runs the rooted Pixel shell/home scene
 # app=shell is the default operator entrypoint
+# app=counter, app=timeline, app=camera, app=podcast, or app=cashu asks the shell to foreground that app after launch
 # target=<serial> implies Pixel and exports PIXEL_SERIAL automatically
 ui-run target="desktop" app="shell" hold="1":
 	@scripts/ui_run.sh "{{target}}" "{{app}}" "{{hold}}"
@@ -248,6 +341,14 @@ pixel-camera-rs-run *args='':
 # Run the Android-native Rust camera helper during rooted display takeover while keeping gralloc alive
 pixel-camera-rs-takeover *args='capture':
 	@scripts/pixel_camera_rs_takeover.sh {{args}}
+
+# Run the runtime-mode camera app on the rooted Pixel through the guest compositor DRM path
+pixel-runtime-app-camera-drm:
+	@scripts/pixel_runtime_app_camera_drm.sh
+
+# Run the runtime-mode camera app on the rooted Pixel and auto-dispatch one capture click
+pixel-runtime-app-camera-click-drm:
+	@scripts/pixel_runtime_app_camera_click_drm.sh
 
 # Stage the runtime app bundle plus GNU-wrapped helper for Pixel use
 pixel-prepare-runtime-app-artifacts:

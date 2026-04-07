@@ -35,6 +35,12 @@ pub const COUNTER_WINDOW_TITLE: &str = "Shadow Counter";
 pub const COUNTER_RUNTIME_BUNDLE_ENV: &str = "SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH";
 pub const COUNTER_RUNTIME_INPUT_PATH: &str = "runtime/app-counter/app.tsx";
 pub const COUNTER_RUNTIME_CACHE_DIR: &str = "build/runtime/app-counter-host";
+pub const CAMERA_APP_ID: AppId = AppId::new("camera");
+pub const CAMERA_WAYLAND_APP_ID: &str = "dev.shadow.camera";
+pub const CAMERA_WINDOW_TITLE: &str = "Shadow Camera";
+pub const CAMERA_RUNTIME_BUNDLE_ENV: &str = "SHADOW_RUNTIME_APP_CAMERA_BUNDLE_PATH";
+pub const CAMERA_RUNTIME_INPUT_PATH: &str = "runtime/app-camera/app.tsx";
+pub const CAMERA_RUNTIME_CACHE_DIR: &str = "build/runtime/app-camera-host";
 pub const TIMELINE_APP_ID: AppId = AppId::new("timeline");
 pub const TIMELINE_WAYLAND_APP_ID: &str = "dev.shadow.timeline";
 pub const TIMELINE_WINDOW_TITLE: &str = "Shadow Timeline";
@@ -55,6 +61,7 @@ pub const CASHU_RUNTIME_INPUT_PATH: &str = "runtime/app-cashu-wallet/app.tsx";
 pub const CASHU_RUNTIME_CACHE_DIR: &str = "build/runtime/app-cashu-wallet-host";
 pub const SHELL_APP_ID: AppId = AppId::new("shell");
 pub const SHELL_WAYLAND_APP_ID: &str = "dev.shadow.shell";
+
 pub const COUNTER_APP: DemoApp = DemoApp {
     id: COUNTER_APP_ID,
     icon_label: "01",
@@ -69,6 +76,22 @@ pub const COUNTER_APP: DemoApp = DemoApp {
     runtime_cache_dir: COUNTER_RUNTIME_CACHE_DIR,
     icon_color: ICON_CYAN,
 };
+
+pub const CAMERA_APP: DemoApp = DemoApp {
+    id: CAMERA_APP_ID,
+    icon_label: "CM",
+    title: "Camera",
+    subtitle: "Take and review a photo",
+    lifecycle_hint: "The latest captured frame stays visible while the app remains warm.",
+    binary_name: "shadow-blitz-demo",
+    wayland_app_id: CAMERA_WAYLAND_APP_ID,
+    window_title: CAMERA_WINDOW_TITLE,
+    runtime_bundle_env: CAMERA_RUNTIME_BUNDLE_ENV,
+    runtime_input_path: CAMERA_RUNTIME_INPUT_PATH,
+    runtime_cache_dir: CAMERA_RUNTIME_CACHE_DIR,
+    icon_color: ICON_ORANGE,
+};
+
 pub const TIMELINE_APP: DemoApp = DemoApp {
     id: TIMELINE_APP_ID,
     icon_label: "TL",
@@ -83,6 +106,7 @@ pub const TIMELINE_APP: DemoApp = DemoApp {
     runtime_cache_dir: TIMELINE_RUNTIME_CACHE_DIR,
     icon_color: ICON_ORANGE,
 };
+
 pub const PODCAST_APP: DemoApp = DemoApp {
     id: PODCAST_APP_ID,
     icon_label: "NS",
@@ -97,6 +121,7 @@ pub const PODCAST_APP: DemoApp = DemoApp {
     runtime_cache_dir: PODCAST_RUNTIME_CACHE_DIR,
     icon_color: ICON_PINK,
 };
+
 pub const CASHU_APP: DemoApp = DemoApp {
     id: CASHU_APP_ID,
     icon_label: "CU",
@@ -112,7 +137,7 @@ pub const CASHU_APP: DemoApp = DemoApp {
     icon_color: ICON_GREEN,
 };
 
-pub const DEMO_APPS: [DemoApp; 4] = [COUNTER_APP, TIMELINE_APP, PODCAST_APP, CASHU_APP];
+pub const DEMO_APPS: [DemoApp; 5] = [COUNTER_APP, CAMERA_APP, TIMELINE_APP, PODCAST_APP, CASHU_APP];
 
 pub fn find_app(id: AppId) -> Option<&'static DemoApp> {
     DEMO_APPS.iter().find(|app| app.id == id)
@@ -145,9 +170,10 @@ pub fn home_apps() -> &'static [DemoApp] {
 mod tests {
     use super::{
         app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, home_apps,
-        CASHU_APP, CASHU_APP_ID, CASHU_WAYLAND_APP_ID, COUNTER_APP, COUNTER_APP_ID,
-        COUNTER_WAYLAND_APP_ID, PODCAST_APP, PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, SHELL_APP_ID,
-        SHELL_WAYLAND_APP_ID, TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID,
+        CAMERA_APP, CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP, CASHU_APP_ID,
+        CASHU_WAYLAND_APP_ID, COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, PODCAST_APP,
+        PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, SHELL_APP_ID, SHELL_WAYLAND_APP_ID,
+        TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID,
     };
 
     #[test]
@@ -171,6 +197,22 @@ mod tests {
     }
 
     #[test]
+    fn camera_app_lookup_round_trips() {
+        let app = find_app(CAMERA_APP_ID).expect("camera app present");
+        assert_eq!(app, &CAMERA_APP);
+        assert_eq!(CAMERA_APP_ID.as_str(), "camera");
+        assert_eq!(find_app_by_str("camera"), Some(&CAMERA_APP));
+        assert_eq!(binary_name_for(CAMERA_APP_ID), Some("shadow-blitz-demo"));
+        assert_eq!(app.icon_label, "CM");
+        assert!(app.lifecycle_hint.contains("captured frame"));
+        assert_eq!(
+            app_id_from_wayland_app_id(CAMERA_WAYLAND_APP_ID),
+            Some(CAMERA_APP_ID)
+        );
+        assert_eq!(home_apps()[1].id, CAMERA_APP_ID);
+    }
+
+    #[test]
     fn timeline_app_lookup_round_trips() {
         let app = find_app(TIMELINE_APP_ID).expect("timeline app present");
         assert_eq!(app, &TIMELINE_APP);
@@ -183,7 +225,7 @@ mod tests {
             app_id_from_wayland_app_id(TIMELINE_WAYLAND_APP_ID),
             Some(TIMELINE_APP_ID)
         );
-        assert_eq!(home_apps()[1].id, TIMELINE_APP_ID);
+        assert_eq!(home_apps()[2].id, TIMELINE_APP_ID);
     }
 
     #[test]
@@ -199,7 +241,7 @@ mod tests {
             app_id_from_wayland_app_id(PODCAST_WAYLAND_APP_ID),
             Some(PODCAST_APP_ID)
         );
-        assert_eq!(home_apps()[2].id, PODCAST_APP_ID);
+        assert_eq!(home_apps()[3].id, PODCAST_APP_ID);
     }
 
     #[test]
@@ -215,6 +257,6 @@ mod tests {
             app_id_from_wayland_app_id(CASHU_WAYLAND_APP_ID),
             Some(CASHU_APP_ID)
         );
-        assert_eq!(home_apps()[3].id, CASHU_APP_ID);
+        assert_eq!(home_apps()[4].id, CASHU_APP_ID);
     }
 }

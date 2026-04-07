@@ -331,6 +331,17 @@ pixel_display_services_stopped() {
   done
 }
 
+pixel_display_services_stopped_keep_allocator() {
+  local serial service
+  serial="$1"
+  for service in surfaceflinger vendor.hwcomposer-2-4; do
+    if [[ "$(pixel_service_state "$serial" "$service")" != "stopped" ]]; then
+      return 1
+    fi
+  done
+  [[ "$(pixel_service_state "$serial" vendor.qti.hardware.display.allocator)" == "running" ]]
+}
+
 pixel_display_services_running() {
   local serial service
   serial="$1"
@@ -503,6 +514,10 @@ pixel_runtime_counter_bundle_artifact() {
   pixel_artifact_path shadow-runtime-app-counter-bundle.js
 }
 
+pixel_runtime_camera_bundle_artifact() {
+  pixel_artifact_path shadow-runtime-app-camera-bundle.js
+}
+
 pixel_runtime_timeline_bundle_artifact() {
   pixel_artifact_path shadow-runtime-app-timeline-bundle.js
 }
@@ -565,6 +580,10 @@ pixel_runtime_app_bundle_dst() {
 
 pixel_runtime_counter_bundle_dst() {
   printf '%s/runtime-app-counter-bundle.js\n' "$(pixel_runtime_linux_dir)"
+}
+
+pixel_runtime_camera_bundle_dst() {
+  printf '%s/runtime-app-camera-bundle.js\n' "$(pixel_runtime_linux_dir)"
 }
 
 pixel_runtime_timeline_bundle_dst() {

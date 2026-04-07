@@ -827,7 +827,7 @@ fn home_indicator_frame() -> Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{COUNTER_APP_ID, TIMELINE_APP_ID};
+    use crate::app::{CAMERA_APP_ID, COUNTER_APP_ID, TIMELINE_APP_ID};
 
     #[test]
     fn launch_tile_returns_launch_action() {
@@ -842,12 +842,20 @@ mod tests {
     }
 
     #[test]
-    fn navigation_reaches_timeline_with_two_apps() {
+    fn navigation_reaches_camera_before_timeline() {
         let mut shell = ShellModel::new();
 
         assert_eq!(shell.focused_tile, 0);
         assert_eq!(shell.handle(ShellEvent::Navigate(NavAction::Right)), None);
         assert_eq!(shell.focused_tile, 1);
+        assert_eq!(
+            shell.handle(ShellEvent::Navigate(NavAction::Activate)),
+            Some(ShellAction::Launch {
+                app_id: CAMERA_APP_ID,
+            })
+        );
+        assert_eq!(shell.handle(ShellEvent::Navigate(NavAction::Right)), None);
+        assert_eq!(shell.focused_tile, 2);
         assert_eq!(
             shell.handle(ShellEvent::Navigate(NavAction::Activate)),
             Some(ShellAction::Launch {
@@ -871,12 +879,12 @@ mod tests {
     #[test]
     fn touch_tap_launches_immediately() {
         let mut shell = ShellModel::new();
-        let counter_frame = app_frame(0);
+        let counter_tile = app_frame(0);
 
         assert_eq!(
             shell.handle(ShellEvent::TouchTap {
-                x: counter_frame.x + counter_frame.w * 0.5,
-                y: counter_frame.y + counter_frame.h * 0.5,
+                x: counter_tile.x + counter_tile.w * 0.5,
+                y: counter_tile.y + counter_tile.h * 0.5,
             }),
             Some(ShellAction::Launch {
                 app_id: COUNTER_APP_ID

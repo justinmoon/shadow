@@ -130,7 +130,8 @@ pub mod common {
                 return Ok(None);
             };
 
-            let duplicated = unsafe { libc::fcntl(parcel_fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
+            let duplicated =
+                unsafe { libc::fcntl(parcel_fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
             if duplicated < 0 {
                 Err(io::Error::last_os_error())
             } else {
@@ -1282,11 +1283,9 @@ pub mod device {
         fn process_capture_result(&self, results: &[CaptureResult]) -> binder::Result<()> {
             let mut data = self.binder.prepare_transact()?;
             data.write(&results.to_vec())?;
-            let reply = self.binder.submit_transact(
-                callback_transactions::PROCESS_CAPTURE_RESULT,
-                data,
-                0,
-            );
+            let reply =
+                self.binder
+                    .submit_transact(callback_transactions::PROCESS_CAPTURE_RESULT, data, 0);
             super::read_aidl_status(reply)
         }
 
@@ -1296,11 +1295,9 @@ pub mod device {
         ) -> binder::Result<BufferRequestResponse> {
             let mut data = self.binder.prepare_transact()?;
             data.write(&buffer_requests.to_vec())?;
-            let reply = self.binder.submit_transact(
-                callback_transactions::REQUEST_STREAM_BUFFERS,
-                data,
-                0,
-            );
+            let reply =
+                self.binder
+                    .submit_transact(callback_transactions::REQUEST_STREAM_BUFFERS, data, 0);
             let reply = reply?;
             let status: Status = reply.read()?;
             if !status.is_ok() {
@@ -1315,11 +1312,9 @@ pub mod device {
         fn return_stream_buffers(&self, buffers: &[StreamBuffer]) -> binder::Result<()> {
             let mut data = self.binder.prepare_transact()?;
             data.write(&buffers.to_vec())?;
-            let reply = self.binder.submit_transact(
-                callback_transactions::RETURN_STREAM_BUFFERS,
-                data,
-                0,
-            );
+            let reply =
+                self.binder
+                    .submit_transact(callback_transactions::RETURN_STREAM_BUFFERS, data, 0);
             super::read_aidl_status(reply)
         }
     }
@@ -1415,8 +1410,7 @@ pub mod device {
 
         pub const CLOSE: TransactionCode = FIRST_CALL_TRANSACTION + 0;
         pub const CONFIGURE_STREAMS: TransactionCode = FIRST_CALL_TRANSACTION + 1;
-        pub const CONSTRUCT_DEFAULT_REQUEST_SETTINGS: TransactionCode =
-            FIRST_CALL_TRANSACTION + 2;
+        pub const CONSTRUCT_DEFAULT_REQUEST_SETTINGS: TransactionCode = FIRST_CALL_TRANSACTION + 2;
         pub const PROCESS_CAPTURE_REQUEST: TransactionCode = FIRST_CALL_TRANSACTION + 7;
     }
 
@@ -1435,11 +1429,9 @@ pub mod device {
         ) -> binder::Result<Vec<HalStream>> {
             let mut data = self.binder.prepare_transact()?;
             data.write(requested_configuration)?;
-            let reply = self.binder.submit_transact(
-                session_transactions::CONFIGURE_STREAMS,
-                data,
-                0,
-            );
+            let reply =
+                self.binder
+                    .submit_transact(session_transactions::CONFIGURE_STREAMS, data, 0);
             super::read_aidl_reply(reply)
         }
 
@@ -1465,11 +1457,9 @@ pub mod device {
             let mut data = self.binder.prepare_transact()?;
             data.write(&requests.to_vec())?;
             data.write(&caches_to_remove.to_vec())?;
-            let reply = self.binder.submit_transact(
-                session_transactions::PROCESS_CAPTURE_REQUEST,
-                data,
-                0,
-            );
+            let reply =
+                self.binder
+                    .submit_transact(session_transactions::PROCESS_CAPTURE_REQUEST, data, 0);
             super::read_aidl_reply(reply)
         }
     }
@@ -1512,17 +1502,11 @@ pub mod device {
             session_transactions::CLOSE => super::write_aidl_status(reply, service.close()),
             session_transactions::CONFIGURE_STREAMS => {
                 let requested_configuration: StreamConfiguration = data.read()?;
-                super::write_aidl_value(
-                    reply,
-                    service.configure_streams(&requested_configuration),
-                )
+                super::write_aidl_value(reply, service.configure_streams(&requested_configuration))
             }
             session_transactions::CONSTRUCT_DEFAULT_REQUEST_SETTINGS => {
                 let template: RequestTemplate = data.read()?;
-                super::write_aidl_value(
-                    reply,
-                    service.construct_default_request_settings(template),
-                )
+                super::write_aidl_value(reply, service.construct_default_request_settings(template))
             }
             session_transactions::PROCESS_CAPTURE_REQUEST => {
                 let requests: Vec<CaptureRequest> = data.read()?;
@@ -1567,8 +1551,7 @@ pub mod device {
         pub const GET_RESOURCE_COST: TransactionCode = FIRST_CALL_TRANSACTION + 2;
         pub const IS_STREAM_COMBINATION_SUPPORTED: TransactionCode = FIRST_CALL_TRANSACTION + 3;
         pub const OPEN: TransactionCode = FIRST_CALL_TRANSACTION + 4;
-        pub const CONSTRUCT_DEFAULT_REQUEST_SETTINGS: TransactionCode =
-            FIRST_CALL_TRANSACTION + 9;
+        pub const CONSTRUCT_DEFAULT_REQUEST_SETTINGS: TransactionCode = FIRST_CALL_TRANSACTION + 9;
     }
 
     impl ICameraDevice for BpCameraDevice {
@@ -1594,11 +1577,9 @@ pub mod device {
         ) -> binder::Result<bool> {
             let mut data = self.binder.prepare_transact()?;
             data.write(streams)?;
-            let reply = self.binder.submit_transact(
-                transactions::IS_STREAM_COMBINATION_SUPPORTED,
-                data,
-                0,
-            );
+            let reply =
+                self.binder
+                    .submit_transact(transactions::IS_STREAM_COMBINATION_SUPPORTED, data, 0);
             super::read_aidl_reply(reply)
         }
 

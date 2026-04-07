@@ -16,11 +16,15 @@ use android_service::{
     wait_for_interface,
 };
 #[cfg(target_os = "android")]
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+#[cfg(target_os = "android")]
+use base64::Engine as _;
+#[cfg(target_os = "android")]
 use camera_aidl::device::{
-    self, BufferRequest, BufferRequestResponse, BufferRequestStatus, BufferStatus,
-    CaptureRequest, CaptureResult, ICameraDeviceCallback, NotifyMsg, RequestTemplate, Stream,
-    StreamBuffer, StreamBufferRequestError, StreamBufferRet, StreamBuffersVal,
-    StreamConfiguration, StreamConfigurationMode, StreamRotation, StreamType,
+    self, BufferRequest, BufferRequestResponse, BufferRequestStatus, BufferStatus, CaptureRequest,
+    CaptureResult, ICameraDeviceCallback, NotifyMsg, RequestTemplate, Stream, StreamBuffer,
+    StreamBufferRequestError, StreamBufferRet, StreamBuffersVal, StreamConfiguration,
+    StreamConfigurationMode, StreamRotation, StreamType,
 };
 #[cfg(target_os = "android")]
 use camera_aidl::graphics::{BufferUsage, Dataspace, PixelFormat};
@@ -30,11 +34,19 @@ use camera_aidl::metadata::{
 };
 #[cfg(target_os = "android")]
 use camera_aidl::provider::{self, ICameraProvider, ICameraProviderCallback};
+#[cfg(target_os = "android")]
+use serde::Deserialize;
 use serde_json::json;
 #[cfg(target_os = "android")]
 use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
+#[cfg(target_os = "android")]
+use std::fs;
+#[cfg(target_os = "android")]
+use std::io::{BufRead, BufReader, Write};
+#[cfg(target_os = "android")]
+use std::net::{TcpListener, TcpStream};
 #[cfg(target_os = "android")]
 use std::os::fd::OwnedFd;
 #[cfg(target_os = "android")]
@@ -75,6 +87,7 @@ fn main() {
         "open" => make_open_response(&argv),
         "configure" => make_configure_response(&argv),
         "capture" => make_capture_response(&argv),
+        "serve" => run_socket_server(&argv),
         other => make_error(other, &argv, "unsupported command"),
     };
 
@@ -110,6 +123,125 @@ fn make_error(command: &str, argv: &[OsString], error: &str) -> serde_json::Valu
         "argv": argv_strings(argv),
         "error": error,
     })
+}
+
+#[cfg(target_os = "android")]
+#[derive(Debug, Deserialize)]
+struct SocketBrokerRequest {
+    command: String,
+    #[serde(rename = "cameraId")]
+    camera_id: Option<String>,
+}
+
+#[cfg(target_os = "android")]
+fn run_socket_server(argv: &[OsString]) -> serde_json::Value {
+    let argv_strings = argv_strings(argv);
+    let bind_addr = argv_strings
+        .first()
+        .cloned()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| String::from("127.0.0.1:37656"));
+
+    let listener = match TcpListener::bind(&bind_addr) {
+        Ok(listener) => listener,
+        Err(error) => {
+            return make_error(
+                "serve",
+                argv,
+                &format!("bind socket server {bind_addr}: {error}"),
+            );
+        }
+    };
+
+    eprintln!("[shadow-camera-provider-host] socket-server-listening addr={bind_addr}");
+
+    loop {
+        let (stream, peer) = match listener.accept() {
+            Ok(result) => result,
+            Err(error) => {
+                eprintln!("[shadow-camera-provider-host] socket-server-accept-error: {error}");
+                continue;
+            }
+        };
+        eprintln!("[shadow-camera-provider-host] socket-server-accepted peer={peer}");
+        if let Err(error) = handle_socket_client(stream) {
+            eprintln!("[shadow-camera-provider-host] socket-server-client-error: {error}");
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+fn handle_socket_client(mut stream: TcpStream) -> Result<(), String> {
+    let peer = stream
+        .peer_addr()
+        .map(|addr| addr.to_string())
+        .unwrap_or_else(|_| String::from("<unknown>"));
+    let mut reader = BufReader::new(
+        stream
+            .try_clone()
+            .map_err(|error| format!("clone client stream: {error}"))?,
+    );
+    let mut request_line = String::new();
+    let bytes = reader
+        .read_line(&mut request_line)
+        .map_err(|error| format!("read client request: {error}"))?;
+    if bytes == 0 {
+        return Ok(());
+    }
+
+    let request: SocketBrokerRequest = serde_json::from_str(request_line.trim_end())
+        .map_err(|error| format!("decode client request: {error}"))?;
+    let argv = request
+        .camera_id
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+
+    let mut response = match request.command.as_str() {
+        "ping" => make_response("ping", &argv),
+        "list" => make_list_response(&argv),
+        "capture" => make_capture_response(&argv),
+        other => make_error(other, &argv, "unsupported socket command"),
+    };
+
+    if request.command == "capture" {
+        attach_capture_image_data(&mut response);
+    }
+
+    let encoded =
+        serde_json::to_string(&response).map_err(|error| format!("encode response: {error}"))?;
+    writeln!(stream, "{encoded}")
+        .and_then(|_| stream.flush())
+        .map_err(|error| format!("write response to {peer}: {error}"))
+}
+
+#[cfg(target_os = "android")]
+fn attach_capture_image_data(response: &mut serde_json::Value) {
+    if response.get("ok").and_then(|value| value.as_bool()) != Some(true) {
+        return;
+    }
+
+    let Some(output_path) = response
+        .get("outputPath")
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+    else {
+        response["ok"] = json!(false);
+        response["error"] = json!("capture response missing outputPath");
+        return;
+    };
+
+    match fs::read(&output_path) {
+        Ok(bytes) => {
+            response["imageBase64"] = json!(BASE64_STANDARD.encode(bytes));
+            response["mimeType"] = json!("image/jpeg");
+            let _ = fs::remove_file(&output_path);
+        }
+        Err(error) => {
+            response["ok"] = json!(false);
+            response["error"] = json!(format!("read captured image {output_path}: {error}"));
+        }
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -385,18 +517,17 @@ fn make_open_response(argv: &[OsString]) -> serde_json::Value {
         Err(status) => status_json(&status),
     };
 
-    let device_default_request_settings = match device
-        .construct_default_request_settings(RequestTemplate::STILL_CAPTURE)
-    {
-        Ok(settings) => Some(json!({
-            "source": "device",
-            "template": "STILL_CAPTURE",
-            "templateValue": RequestTemplate::STILL_CAPTURE.0,
-            "bytes": settings.metadata.len(),
-            "hexPreview": hex_preview(&settings.metadata, 48),
-        })),
-        Err(status) => Some(status_json(&status)),
-    };
+    let device_default_request_settings =
+        match device.construct_default_request_settings(RequestTemplate::STILL_CAPTURE) {
+            Ok(settings) => Some(json!({
+                "source": "device",
+                "template": "STILL_CAPTURE",
+                "templateValue": RequestTemplate::STILL_CAPTURE.0,
+                "bytes": settings.metadata.len(),
+                "hexPreview": hex_preview(&settings.metadata, 48),
+            })),
+            Err(status) => Some(status_json(&status)),
+        };
 
     let device_callback_log = Arc::new(Mutex::new(Vec::new()));
     let device_callback = device::new_callback(DeviceCallbackRecorder {
@@ -419,27 +550,26 @@ fn make_open_response(argv: &[OsString]) -> serde_json::Value {
         }
     };
 
-    let default_request_settings = match session
-        .construct_default_request_settings(RequestTemplate::STILL_CAPTURE)
-    {
-        Ok(settings) => json!({
-            "source": "session",
-            "template": "STILL_CAPTURE",
-            "templateValue": RequestTemplate::STILL_CAPTURE.0,
-            "bytes": settings.metadata.len(),
-            "hexPreview": hex_preview(&settings.metadata, 48),
-        }),
-        Err(status) => {
-            return command_error_with_context(
-                "open",
-                argv,
-                "session_construct_default_request_settings",
-                &status,
-                Some(&declared_instances),
-                &service_name,
-            );
-        }
-    };
+    let default_request_settings =
+        match session.construct_default_request_settings(RequestTemplate::STILL_CAPTURE) {
+            Ok(settings) => json!({
+                "source": "session",
+                "template": "STILL_CAPTURE",
+                "templateValue": RequestTemplate::STILL_CAPTURE.0,
+                "bytes": settings.metadata.len(),
+                "hexPreview": hex_preview(&settings.metadata, 48),
+            }),
+            Err(status) => {
+                return command_error_with_context(
+                    "open",
+                    argv,
+                    "session_construct_default_request_settings",
+                    &status,
+                    Some(&declared_instances),
+                    &service_name,
+                );
+            }
+        };
 
     let session_closed = match session.close() {
         Ok(()) => true,
@@ -919,19 +1049,16 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
             }
         };
 
-        let requested_stream = requested_configuration
-            .streams
-            .first()
-            .ok_or_else(|| {
-                command_message_with_context(
-                    "capture",
-                    argv,
-                    "build_jpeg_stream_configuration",
-                    "requested configuration did not include any streams",
-                    Some(&declared_instances),
-                    &service_name,
-                )
-            })?;
+        let requested_stream = requested_configuration.streams.first().ok_or_else(|| {
+            command_message_with_context(
+                "capture",
+                argv,
+                "build_jpeg_stream_configuration",
+                "requested configuration did not include any streams",
+                Some(&declared_instances),
+                &service_name,
+            )
+        })?;
 
         {
             let (state, _) = &*capture_wait;
@@ -985,23 +1112,23 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
             None,
         );
 
-        let processed_request_count =
-            match session.process_capture_request(&[capture_request], &[]) {
-                Ok(count) => count,
-                Err(status) => {
-                    return Err(command_error_with_context(
-                        "capture",
-                        argv,
-                        "process_capture_request",
-                        &status,
-                        Some(&declared_instances),
-                        &service_name,
-                    ));
-                }
-            };
+        let processed_request_count = match session.process_capture_request(&[capture_request], &[])
+        {
+            Ok(count) => count,
+            Err(status) => {
+                return Err(command_error_with_context(
+                    "capture",
+                    argv,
+                    "process_capture_request",
+                    &status,
+                    Some(&declared_instances),
+                    &service_name,
+                ));
+            }
+        };
 
-        let wait_snapshot =
-            wait_for_capture_completion(&capture_wait, Duration::from_secs(10)).map_err(|error| {
+        let wait_snapshot = wait_for_capture_completion(&capture_wait, Duration::from_secs(10))
+            .map_err(|error| {
                 command_message_with_context(
                     "capture",
                     argv,
@@ -1184,7 +1311,12 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
 }
 
 #[cfg(target_os = "android")]
-fn command_error(command: &str, argv: &[OsString], step: &str, status: &binder::Status) -> serde_json::Value {
+fn command_error(
+    command: &str,
+    argv: &[OsString],
+    step: &str,
+    status: &binder::Status,
+) -> serde_json::Value {
     command_error_with_context(command, argv, step, status, None, "")
 }
 
@@ -1263,14 +1395,11 @@ fn select_camera(camera_ids: &[String]) -> Option<String> {
 
 #[cfg(target_os = "android")]
 fn resolve_provider_args(argv: &[String]) -> (String, Option<String>) {
-    const DEFAULT_SERVICE: &str =
-        "android.hardware.camera.provider.ICameraProvider/internal/0";
+    const DEFAULT_SERVICE: &str = "android.hardware.camera.provider.ICameraProvider/internal/0";
     const PROVIDER_PREFIX: &str = "android.hardware.camera.provider.ICameraProvider/";
 
     match argv.first() {
-        Some(first) if first.starts_with(PROVIDER_PREFIX) => {
-            (first.clone(), argv.get(1).cloned())
-        }
+        Some(first) if first.starts_with(PROVIDER_PREFIX) => (first.clone(), argv.get(1).cloned()),
         Some(first) => (String::from(DEFAULT_SERVICE), Some(first.clone())),
         None => (String::from(DEFAULT_SERVICE), None),
     }
@@ -1400,7 +1529,9 @@ fn wait_for_capture_completion(
 
         let now = Instant::now();
         if now >= deadline {
-            return Err(String::from("timed out waiting for a capture result buffer"));
+            return Err(String::from(
+                "timed out waiting for a capture result buffer",
+            ));
         }
 
         let wait_duration = deadline.saturating_duration_since(now);
@@ -1410,7 +1541,9 @@ fn wait_for_capture_completion(
         guard = next_guard;
 
         if wait_result.timed_out() && guard.completion.is_none() && guard.errors.is_empty() {
-            return Err(String::from("timed out waiting for a capture result buffer"));
+            return Err(String::from(
+                "timed out waiting for a capture result buffer",
+            ));
         }
     }
 }
@@ -1773,7 +1906,9 @@ impl ICameraDeviceCallback for DeviceCallbackRecorder {
                         }).collect::<Vec<_>>(),
                     }));
 
-                    if guard.completion.is_some() || result.frame_number != guard.target_frame_number {
+                    if guard.completion.is_some()
+                        || result.frame_number != guard.target_frame_number
+                    {
                         continue;
                     }
 

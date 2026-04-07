@@ -14,6 +14,11 @@ counter_session_json="$(
   SHADOW_RUNTIME_APP_CACHE_DIR="build/runtime/app-counter-host" \
     "$SCRIPT_DIR/runtime_prepare_host_session.sh"
 )"
+camera_session_json="$(
+  SHADOW_RUNTIME_APP_INPUT_PATH="runtime/app-camera/app.tsx" \
+  SHADOW_RUNTIME_APP_CACHE_DIR="build/runtime/app-camera-host" \
+    "$SCRIPT_DIR/runtime_prepare_host_session.sh"
+)"
 timeline_session_json="$(
   SHADOW_RUNTIME_APP_CONFIG_JSON='{"limit":12,"syncOnStart":false}' \
   SHADOW_RUNTIME_APP_INPUT_PATH="runtime/app-nostr-timeline/app.tsx" \
@@ -68,6 +73,7 @@ fi
 
 DEFAULT_SESSION_JSON="$default_session_json" \
 COUNTER_SESSION_JSON="$counter_session_json" \
+CAMERA_SESSION_JSON="$camera_session_json" \
 TIMELINE_SESSION_JSON="$timeline_session_json" \
 CASHU_SESSION_JSON="$cashu_session_json" \
 PODCAST_SESSION_JSON="$podcast_session_json" \
@@ -78,6 +84,7 @@ import shlex
 
 default_session = json.loads(os.environ["DEFAULT_SESSION_JSON"])
 counter_session = json.loads(os.environ["COUNTER_SESSION_JSON"])
+camera_session = json.loads(os.environ["CAMERA_SESSION_JSON"])
 timeline_session = json.loads(os.environ["TIMELINE_SESSION_JSON"])
 cashu_session = json.loads(os.environ["CASHU_SESSION_JSON"])
 podcast_session_json = os.environ.get("PODCAST_SESSION_JSON", "").strip()
@@ -99,6 +106,7 @@ if state_dir == "/var/lib/shadow-ui" and not os.path.isdir("/var/lib/shadow-ui")
 exports = {
     "SHADOW_RUNTIME_APP_BUNDLE_PATH": rewrite(default_session["bundlePath"]),
     "SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH": rewrite(counter_session["bundlePath"]),
+    "SHADOW_RUNTIME_APP_CAMERA_BUNDLE_PATH": rewrite(camera_session["bundlePath"]),
     "SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH": rewrite(timeline_session["bundlePath"]),
     "SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH": rewrite(cashu_session["bundlePath"]),
     "SHADOW_RUNTIME_HOST_BINARY_PATH": default_session["runtimeHostBinaryPath"],
