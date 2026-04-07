@@ -151,6 +151,12 @@ pixel_root_shell() {
 }
 
 pixel_takeover_stop_services_script() {
+  local stop_allocator
+  stop_allocator="${1:-1}"
+  local allocator_stop_line=""
+  if [[ "$stop_allocator" != "0" ]]; then
+    allocator_stop_line="stop_service_and_wait vendor.qti.hardware.display.allocator"
+  fi
   cat <<'EOF'
 wait_for_service_state() {
   service="$1"
@@ -213,7 +219,11 @@ kill_stale_shadow_processes
 stop_service_and_wait surfaceflinger
 stop_service_and_wait bootanim
 stop_service_and_wait vendor.hwcomposer-2-4
-stop_service_and_wait vendor.qti.hardware.display.allocator
+EOF
+  if [[ -n "$allocator_stop_line" ]]; then
+    printf '%s\n' "$allocator_stop_line"
+  fi
+  cat <<'EOF'
 setenforce 0 >/dev/null 2>&1 || true
 EOF
 }
@@ -842,6 +852,33 @@ for item in sys.argv[2:]:
 with open(output, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=2, sort_keys=True)
     fh.write("\n")
+PY
+}
+
+pixel_last_json_ok() {
+  local input
+  input="$1"
+  python3 - "$input" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+payload = None
+
+with open(path, "r", encoding="utf-8", errors="replace") as fh:
+    for raw_line in fh:
+        line = raw_line.strip()
+        if not line.startswith("{") or not line.endswith("}"):
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+if not isinstance(payload, dict) or "ok" not in payload:
+    sys.exit(2)
+
+sys.exit(0 if payload.get("ok") is True else 1)
 PY
 }
 

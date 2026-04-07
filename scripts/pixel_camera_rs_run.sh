@@ -79,12 +79,22 @@ pixel_root_shell "$serial" "$(cat "$device_command_path")" >"$device_output_path
 run_status="$?"
 set -e
 
+helper_status=1
+if [[ "$run_status" -eq 0 ]]; then
+  if pixel_last_json_ok "$device_output_path"; then
+    helper_status=0
+  else
+    helper_status="$?"
+  fi
+fi
+
 pixel_write_status_json "$run_dir/status.json" \
   androidShell="$android_shell_ref" \
   androidPlatform="$android_platform" \
   androidTarget="$android_target" \
   command="$command" \
   deviceBinary="$device_binary" \
+  helperSucceeded="$([[ "$helper_status" -eq 0 ]] && printf true || printf false)" \
   profile="$profile" \
   runSucceeded="$([[ "$run_status" -eq 0 ]] && printf true || printf false)" \
   serial="$serial"
@@ -96,3 +106,8 @@ fi
 
 cat "$device_output_path"
 printf '[camera-rs] success -> %s\n' "$run_dir" | tee -a "$checkpoint_log_path"
+
+if [[ "$helper_status" -ne 0 ]]; then
+  echo "pixel_camera_rs_run: helper reported ok=false; see $device_output_path" >&2
+  exit 1
+fi

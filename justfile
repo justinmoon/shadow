@@ -245,6 +245,10 @@ pixel-push:
 pixel-camera-rs-run *args='':
 	@scripts/pixel_camera_rs_run.sh {{args}}
 
+# Run the Android-native Rust camera helper during rooted display takeover while keeping gralloc alive
+pixel-camera-rs-takeover *args='capture':
+	@scripts/pixel_camera_rs_takeover.sh {{args}}
+
 # Stage the runtime app bundle plus GNU-wrapped helper for Pixel use
 pixel-prepare-runtime-app-artifacts:
 	@scripts/pixel_prepare_runtime_app_artifacts.sh

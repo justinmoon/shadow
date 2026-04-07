@@ -42,17 +42,18 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] M3: Buffer plus still-capture proof outside takeover.
   - Added HAL buffer-manager callback handling for `requestStreamBuffers` / `returnStreamBuffers`, plus helper-side buffer tracking keyed by camera buffer id.
   - Added Android `AHardwareBuffer` allocation/import glue for JPEG BLOB buffers and enough result handling to wait for the returned buffer, honor the release fence, and parse the JPEG blob footer.
-  - Proven on-device on `09051JEC202061`: `just pixel-camera-rs-run capture` returns `ok=true`, writes `/data/local/tmp/shadow-camera-provider-host-capture.jpg`, and records an `8081` byte JPEG plus structured callback traces under `build/pixel/camera-rs/20260407T223757Z/`.
+  - Proven on-device on `09051JEC202061`: `just pixel-camera-rs-run capture` returns `ok=true`, writes `/data/local/tmp/shadow-camera-provider-host-capture.jpg`, and records an `8080` byte JPEG plus structured callback traces under `build/pixel/camera-rs/20260407T224159Z/`.
 
-- [ ] M4: Takeover proof.
-  - Rerun the same helper during the current display-stop takeover.
-  - Record whether the provider-level path survives `surfaceflinger` / `system_server` instability.
-  - Only adjust takeover once the no-takeover baseline exists.
+- [x] M4: Takeover proof.
+  - Full current display-stop takeover still fails for direct provider capture when it also stops `vendor.qti.hardware.display.allocator`: the helper enters the camera session, then stalls in capture while the device repeatedly fails to find the graphics allocator service and later drives `system_server` into ANR/watchdog handling.
+  - Reduced takeover works: stopping `surfaceflinger` + `vendor.hwcomposer-2-4` while leaving the allocator service running still allows the standalone Rust helper to capture a JPEG successfully on `09051JEC202061`.
+  - Architectural result: the provider-level Rust path does not need `SurfaceFlinger`, but it does still need gralloc/allocator service availability on this Pixel.
 
-- [ ] M5: Operator integration.
-  - Add `just` / script entrypoints for build, push, list, capture, and restore.
-  - Make logs and checkpoints easy to diff against existing Pixel runs.
-  - Run `just pre-commit`.
+- [x] M5: Operator integration.
+  - Added `scripts/pixel_camera_rs_takeover.sh` plus `just pixel-camera-rs-takeover` for the proven reduced-stop camera takeover lane.
+  - Kept the generic display takeover default unchanged; `pixel_takeover_stop_services_script` is now parameterized so camera-specific flows can keep the allocator alive without weakening the DRM/KMS path.
+  - Proven on-device on `09051JEC202061`: `just pixel-camera-rs-takeover` captures successfully while `surfaceflinger` and HWC are still stopped, then restores Android cleanly. Artifacts live under `build/pixel/camera-rs-takeover/20260407T224750Z/`.
+  - `just pre-commit` passed during iteration.
 
 - [ ] M6: Runtime integration decision.
   - If standalone capture works, decide whether to expose camera through Shadow runtime OS APIs.
@@ -87,6 +88,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Current proof artifacts for the open/session-default seam live under `build/pixel/camera-rs/20260407T211917Z/`.
 - Current proof artifacts for the configure seam live under `build/pixel/camera-rs/20260407T212712Z/`.
 - The returned JPEG `HalStream` for the first stream reports `producerUsage=131075`, `consumerUsage=0`, `maxBuffers=8`, `overrideFormat=BLOB`, and `overrideDataSpace=JFIF`. That is enough to start buffer allocation without touching vendor-private metadata.
-- The live Pixel 4a requests JPEG buffers through `requestStreamBuffers()` on this provider path even though the returned `HalStream.enableHalBufferManager` bit is `false`. That suggests the device is operating under the newer session-wide AIDL buffer-manager mode rather than the per-stream opt-in bit.
-- Current proof artifacts for the first successful standalone capture live under `build/pixel/camera-rs/20260407T223757Z/`.
-- Next seam after M3: rerun the same standalone helper while the rooted display-takeover path is active and determine whether provider-level capture survives the current `surfaceflinger` stop sequence.
+- `dumpsys media.camera` on `09051JEC202061` reports `android.info.supportedBufferManagementVersion = HIDL_DEVICE_3_5` for both exposed cameras. On this Pixel 4a, the correct still-capture path is therefore AIDL provider/device/session transport plus HAL buffer-manager callbacks, even though the returned `HalStream.enableHalBufferManager` bit is `false`.
+- Current proof artifacts for the first successful standalone capture live under `build/pixel/camera-rs/20260407T224159Z/`.
+- Current full-stop takeover artifacts live under `build/pixel/camera-rs-takeover/20260407T223956Z/`; that run demonstrates allocator-driven failure under the existing DRM stop sequence.
+- Current reduced-stop takeover artifacts live under `build/pixel/camera-rs-partial-stop/20260407T224255Z/` and `build/pixel/camera-rs-takeover/20260407T224750Z/`; those runs demonstrate successful capture with `surfaceflinger` and HWC stopped but the allocator still running.
+- Next seam after M5: decide whether to integrate this reduced-stop camera takeover lane into Shadow runtime orchestration or keep it as a standalone operator proof while we scope the eventual app/runtime boundary.
