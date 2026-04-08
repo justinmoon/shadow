@@ -474,6 +474,18 @@ def cmd_vm_run(args: argparse.Namespace) -> int:
         env_assignments.append(f"{key}={shlex.quote(value)}")
     env_prefix = " ".join(env_assignments)
     env_prefix = f"{env_prefix} " if env_prefix else ""
+    cargo_args = [
+        "cargo",
+        "run",
+        "--locked",
+        "--manifest-path",
+        "ui/Cargo.toml",
+        "-p",
+        package,
+    ]
+    if package == "shadow-blitz-demo":
+        cargo_args.extend(["--features", "host_system_fonts"])
+    cargo_cmd = " ".join(shlex.quote(part) for part in cargo_args)
 
     remote_script = f"""
 set -euo pipefail
@@ -519,7 +531,7 @@ if [[ ! -S "$control_socket" ]]; then
 fi
 
 cd /work/shadow
-cmd=(env WAYLAND_DISPLAY="$wayland_socket" SHADOW_COMPOSITOR_CONTROL="$control_socket" {env_prefix}cargo run --locked --manifest-path ui/Cargo.toml -p "$package")
+cmd=(env WAYLAND_DISPLAY="$wayland_socket" SHADOW_COMPOSITOR_CONTROL="$control_socket" {env_prefix}{cargo_cmd})
 
 echo "mode={mode}"
 echo "wayland=$wayland_socket"

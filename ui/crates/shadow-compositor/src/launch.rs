@@ -43,6 +43,9 @@ pub fn launch_app(
                 "-p",
                 binary_name,
             ]);
+            if binary_name == "shadow-blitz-demo" {
+                command.args(["--features", "host_system_fonts"]);
+            }
             command
         } else {
             return Err(io::Error::new(

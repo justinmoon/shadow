@@ -30,7 +30,9 @@ if [[ "$profile" == "release" ]]; then
 fi
 
 case "$renderer" in
-  cpu) ;;
+  cpu)
+    cargo_renderer_args=(--no-default-features --features cpu)
+    ;;
   gpu)
     cargo_renderer_args=(--no-default-features --features gpu)
     ;;

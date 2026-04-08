@@ -78,6 +78,17 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Fast local gate is green after the font fix.
   - `just ui-check`
   - `just pre-commit`
+- [x] Host font discovery is no longer leaking into the Pixel musl guest-client build.
+  - Root cause of the regression on `just run <serial>`:
+    - enabling `blitz-dom/system_fonts` globally pulled in `yeslogic-fontconfig-sys`
+    - the static `aarch64-unknown-linux-musl` Pixel guest-client build has no declarative `fontconfig.pc`, so the build died before device launch
+  - Fix:
+    - add a local `host_system_fonts` feature on `shadow-blitz-demo`
+    - only enable that feature on VM/desktop host launch paths
+    - keep the Pixel musl guest-client path explicitly on `--no-default-features --features cpu`
+  - Result:
+    - VM/desktop keep readable text through the host/guest system-font path
+    - Pixel musl builds stay on curated/bundled fonts and no longer depend on fontconfig
 - [x] The outer guest-compositor shell/home substrate now boots fullscreen on the real Pixel.
   - validated rooted run:
     - `build/pixel/drm-guest/20260407T214327Z`
@@ -237,7 +248,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `shadow-runtime-host` is still packaged from `src = ./.`, so unrelated repo edits can invalidate the host derivation and force one cold rebuild.
   - repeated warm runs should now short-circuit before the old host-bundle restage/push path once the new bundle manifest is in place.
 - The product bar for interaction is already met on the proven lane.
-  - Remaining GPU work is now about closure and confidence, not rescuing a broken UX.
+- Remaining GPU work is now about closure and confidence, not rescuing a broken UX.
+- The VM/desktop font fallback and the Pixel runtime font path must stay split.
+  - VM/desktop can use a declarative system-font environment.
+  - Pixel runtime/shell bundles must keep shipping their own curated fonts instead of depending on host font discovery.
 - The current compositor path still looks SHM-oriented from the outside.
 - The direct `gpu` failure is now narrower than before:
   - the bundled Turnip library does contain Wayland WSI entrypoints

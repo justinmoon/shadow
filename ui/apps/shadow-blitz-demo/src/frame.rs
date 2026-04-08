@@ -151,7 +151,10 @@ fn platform_font_context() -> Option<FontContext> {
 }
 
 fn system_font_context(reason: &str) -> Option<FontContext> {
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[cfg(all(
+        feature = "host_system_fonts",
+        any(target_os = "linux", target_os = "macos", target_os = "windows")
+    ))]
     {
         let start = Instant::now();
         let font_ctx = FontContext::default();
@@ -163,7 +166,10 @@ fn system_font_context(reason: &str) -> Option<FontContext> {
         Some(font_ctx)
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    #[cfg(not(all(
+        feature = "host_system_fonts",
+        any(target_os = "linux", target_os = "macos", target_os = "windows")
+    )))]
     {
         eprintln!("[shadow-blitz-demo] system-font-context-unavailable reason={reason}");
         None

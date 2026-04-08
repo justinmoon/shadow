@@ -106,9 +106,10 @@ nixpkgs.lib.nixosSystem {
             echo "== shadow-ui-warmup $(date --iso-8601=seconds) =="
             cargo clean --manifest-path ui/Cargo.toml -p shadow-compositor
             cargo clean --manifest-path ui/Cargo.toml -p shadow-blitz-demo
+            cargo build --locked --manifest-path ui/Cargo.toml -p shadow-compositor
             cargo build --locked --manifest-path ui/Cargo.toml \
-              -p shadow-compositor \
-              -p shadow-blitz-demo
+              -p shadow-blitz-demo \
+              --features host_system_fonts
           '';
         };
         shadowUiSession = pkgs.writeShellApplication {

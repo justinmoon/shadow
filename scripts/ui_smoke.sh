@@ -135,7 +135,8 @@ run_local_linux_smoke() {
     export RUST_LOG="${RUST_LOG:-shadow_compositor=info,smithay=warn}"
     scripts/runtime_prepare_host_session_env.sh >"$runtime_env"
     source "$runtime_env"
-    cargo build --manifest-path ui/Cargo.toml -p shadow-compositor -p shadow-blitz-demo
+    cargo build --manifest-path ui/Cargo.toml -p shadow-compositor
+    cargo build --manifest-path ui/Cargo.toml -p shadow-blitz-demo --features host_system_fonts
     cargo run --manifest-path ui/Cargo.toml -p shadow-compositor
   ) >"$compositor_log" 2>&1 &
   compositor_pid=$!
