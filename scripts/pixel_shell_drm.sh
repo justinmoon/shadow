@@ -24,11 +24,16 @@ if [[ -z "${PIXEL_VENDOR_TURNIP_TARBALL-}" && -f "$default_turnip_tarball" ]]; t
 fi
 
 if [[ -z "${PIXEL_SHELL_RENDERER-}" ]]; then
-  if [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
-    PIXEL_SHELL_RENDERER="gpu_softbuffer"
-  else
-    PIXEL_SHELL_RENDERER="cpu"
-  fi
+  cat >&2 <<'EOF'
+pixel_shell_drm: PIXEL_SHELL_RENDERER is required.
+Set PIXEL_SHELL_RENDERER explicitly to one of:
+  cpu
+  gpu_softbuffer
+
+Example:
+  PIXEL_SHELL_RENDERER=gpu_softbuffer just run <serial>
+EOF
+  exit 1
 fi
 
 build_include_guest_client=1

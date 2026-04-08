@@ -34,6 +34,7 @@ PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 ||
 (
   cd "$REPO_ROOT"
   PIXEL_SERIAL="$serial" \
+  PIXEL_SHELL_RENDERER=gpu_softbuffer \
   PIXEL_SHELL_START_APP_ID=camera \
   PIXEL_SHELL_EXTRA_GUEST_CLIENT_ENV='SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=capture' \
   PIXEL_SHELL_EXTRA_REQUIRED_MARKERS='runtime-event-dispatched source=auto type=click target=capture' \
