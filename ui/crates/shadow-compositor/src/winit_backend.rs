@@ -13,7 +13,7 @@ use smithay::{
 
 use crate::{render, state::ShadowCompositor};
 
-const NESTED_OUTPUT_TRANSFORM: Transform = Transform::Normal;
+const NESTED_OUTPUT_TRANSFORM: Transform = Transform::Flipped180;
 
 pub fn init_winit(
     event_loop: &mut EventLoop<ShadowCompositor>,

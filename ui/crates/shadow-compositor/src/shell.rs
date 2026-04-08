@@ -28,7 +28,7 @@ impl ShellSurface {
                 Fourcc::Argb8888,
                 (width as i32, height as i32),
                 1,
-                Transform::Flipped180,
+                Transform::Normal,
                 None,
             ),
             renderer: SoftwareRenderer::new(width, height),
