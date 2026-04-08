@@ -1,14 +1,18 @@
 use std::env;
 use std::io::ErrorKind;
 use std::io::{BufRead, BufReader, Write};
+use std::io::Cursor;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use deno_core::extension;
 use deno_core::op2;
 use deno_core::Extension;
 use deno_error::JsErrorBox;
+use image::ImageFormat;
 use serde::{Deserialize, Serialize};
 
 const CAMERA_ENDPOINT_ENV: &str = "SHADOW_RUNTIME_CAMERA_ENDPOINT";
@@ -67,6 +71,8 @@ struct BrokerCaptureResponse {
     ok: bool,
     #[serde(rename = "bytesWritten", default)]
     bytes_written: usize,
+    #[serde(rename = "displayRotationDegrees", default)]
+    display_rotation_degrees: u16,
     error: Option<String>,
     #[serde(rename = "imageBase64")]
     image_base64: Option<String>,
@@ -170,14 +176,20 @@ impl CameraHostConfig {
             .selected_camera
             .or(request.camera_id)
             .unwrap_or_else(|| String::from(MOCK_CAMERA_ID));
+        let (image_data_url, final_mime_type, final_bytes) = build_capture_image_data_url(
+            &image_base64,
+            &mime_type,
+            response.display_rotation_degrees,
+            response.bytes_written,
+        )?;
 
         Ok(CaptureStillReceipt {
-            bytes: response.bytes_written,
+            bytes: final_bytes,
             camera_id,
             captured_at_ms: unix_time_ms(),
-            image_data_url: format!("data:{mime_type};base64,{image_base64}"),
+            image_data_url,
             is_mock: false,
-            mime_type,
+            mime_type: final_mime_type,
         })
     }
 
@@ -355,6 +367,79 @@ fn unix_time_ms() -> u64 {
         .as_millis() as u64
 }
 
+fn build_capture_image_data_url(
+    image_base64: &str,
+    mime_type: &str,
+    display_rotation_degrees: u16,
+    fallback_bytes: usize,
+) -> Result<(String, String, usize), String> {
+    let normalized_rotation = normalize_rotation_degrees(display_rotation_degrees);
+    if normalized_rotation == 0 {
+        return Ok((
+            format!("data:{mime_type};base64,{image_base64}"),
+            String::from(mime_type),
+            fallback_bytes,
+        ));
+    }
+
+    let format = match image_format_for_mime_type(mime_type) {
+        Some(format) => format,
+        None => {
+            return Ok((
+                format!("data:{mime_type};base64,{image_base64}"),
+                String::from(mime_type),
+                fallback_bytes,
+            ));
+        }
+    };
+
+    let image_bytes = BASE64_STANDARD
+        .decode(image_base64)
+        .map_err(|error| format!("decode captured image base64: {error}"))?;
+    let image = image::load_from_memory_with_format(&image_bytes, format)
+        .map_err(|error| format!("decode captured image: {error}"))?;
+    let rotated = match normalized_rotation {
+        90 => image.rotate90(),
+        180 => image.rotate180(),
+        270 => image.rotate270(),
+        _ => image,
+    };
+
+    let mut encoded = Cursor::new(Vec::new());
+    rotated
+        .write_to(&mut encoded, ImageFormat::Png)
+        .map_err(|error| format!("encode rotated captured image: {error}"))?;
+    let output_bytes = encoded.into_inner();
+    let output_mime = String::from("image/png");
+
+    Ok((
+        format!(
+            "data:{output_mime};base64,{}",
+            BASE64_STANDARD.encode(&output_bytes)
+        ),
+        output_mime,
+        output_bytes.len(),
+    ))
+}
+
+fn image_format_for_mime_type(mime_type: &str) -> Option<ImageFormat> {
+    match mime_type {
+        "image/jpeg" | "image/jpg" => Some(ImageFormat::Jpeg),
+        "image/png" => Some(ImageFormat::Png),
+        _ => None,
+    }
+}
+
+fn normalize_rotation_degrees(rotation_degrees: u16) -> u16 {
+    match rotation_degrees % 360 {
+        0 => 0,
+        90 => 90,
+        180 => 180,
+        270 => 270,
+        _ => 0,
+    }
+}
+
 extension!(
     runtime_camera_host_extension,
     ops = [
@@ -367,4 +452,61 @@ extension!(
 
 pub fn init_extension() -> Extension {
     runtime_camera_host_extension::init()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_capture_image_data_url, image_format_for_mime_type, normalize_rotation_degrees,
+        BASE64_STANDARD,
+    };
+    use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
+    use std::io::Cursor;
+
+    fn sample_png_base64(width: u32, height: u32) -> String {
+        let image = DynamicImage::ImageRgb8(ImageBuffer::from_fn(width, height, |x, _| {
+            if x == 0 {
+                Rgb([255, 0, 0])
+            } else {
+                Rgb([0, 0, 255])
+            }
+        }));
+        let mut output = Cursor::new(Vec::new());
+        image.write_to(&mut output, ImageFormat::Png).unwrap();
+        BASE64_STANDARD.encode(output.into_inner())
+    }
+
+    #[test]
+    fn normalizes_only_quarter_turn_rotations() {
+        assert_eq!(normalize_rotation_degrees(0), 0);
+        assert_eq!(normalize_rotation_degrees(90), 90);
+        assert_eq!(normalize_rotation_degrees(180), 180);
+        assert_eq!(normalize_rotation_degrees(270), 270);
+        assert_eq!(normalize_rotation_degrees(450), 90);
+        assert_eq!(normalize_rotation_degrees(45), 0);
+    }
+
+    #[test]
+    fn maps_supported_mime_types_to_image_formats() {
+        assert_eq!(image_format_for_mime_type("image/jpeg"), Some(ImageFormat::Jpeg));
+        assert_eq!(image_format_for_mime_type("image/png"), Some(ImageFormat::Png));
+        assert_eq!(image_format_for_mime_type("image/webp"), None);
+    }
+
+    #[test]
+    fn rotates_captured_images_and_reencodes_as_png() {
+        let source = sample_png_base64(2, 1);
+        let (data_url, mime_type, bytes) =
+            build_capture_image_data_url(&source, "image/png", 90, 0).unwrap();
+
+        assert_eq!(mime_type, "image/png");
+        assert!(bytes > 0);
+        let prefix = "data:image/png;base64,";
+        assert!(data_url.starts_with(prefix));
+
+        let decoded = BASE64_STANDARD.decode(&data_url[prefix.len()..]).unwrap();
+        let rotated = image::load_from_memory_with_format(&decoded, ImageFormat::Png).unwrap();
+        assert_eq!(rotated.width(), 1);
+        assert_eq!(rotated.height(), 2);
+    }
 }

@@ -4,6 +4,8 @@ mod android_buffer;
 mod android_service;
 #[cfg(target_os = "android")]
 mod camera_aidl;
+#[cfg(target_os = "android")]
+mod camera_metadata;
 
 #[cfg(target_os = "android")]
 use android_buffer::{
@@ -26,6 +28,8 @@ use camera_aidl::device::{
     StreamBufferRequestError, StreamBufferRet, StreamBuffersVal, StreamConfiguration,
     StreamConfigurationMode, StreamRotation, StreamType,
 };
+#[cfg(target_os = "android")]
+use camera_metadata::sensor_orientation_degrees;
 #[cfg(target_os = "android")]
 use camera_aidl::graphics::{BufferUsage, Dataspace, PixelFormat};
 #[cfg(target_os = "android")]
@@ -978,13 +982,19 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         Err(status) => status_json(&status),
     };
 
-    let selected_characteristics = match device.get_camera_characteristics() {
-        Ok(characteristics) => json!({
-            "bytes": characteristics.metadata.len(),
-            "hexPreview": hex_preview(&characteristics.metadata, 48),
-        }),
-        Err(status) => status_json(&status),
-    };
+    // The current Shadow shell is portrait-fixed, so the static sensor
+    // orientation is enough to un-rotate the rendered still for this lane.
+    let (selected_characteristics, selected_display_rotation_degrees) =
+        match device.get_camera_characteristics() {
+            Ok(characteristics) => (
+                json!({
+                    "bytes": characteristics.metadata.len(),
+                    "hexPreview": hex_preview(&characteristics.metadata, 48),
+                }),
+                sensor_orientation_degrees(&characteristics),
+            ),
+            Err(status) => (status_json(&status), None),
+        };
 
     let capture_wait = Arc::new((Mutex::new(CaptureWaitState::new(1, 1)), Condvar::new()));
     let capture_buffer_manager = Arc::new(Mutex::new(None));
@@ -1256,40 +1266,46 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         .unwrap_or_default();
 
     match capture_execution {
-        Ok(execution) => json!({
-            "ok": true,
-            "command": "capture",
-            "pid": std::process::id(),
-            "cwd": current_dir_string(),
-            "argv": argv_strings,
-            "interface": interface_name,
-            "serviceName": service_name,
-            "isDeclared": is_declared_value,
-            "declaredInstances": declared_instances,
-            "cameraIds": camera_ids,
-            "requestedCamera": requested_camera,
-            "selectedCamera": camera_id,
-            "selectedResourceCost": selected_resource_cost,
-            "selectedCharacteristics": selected_characteristics,
-            "deviceState": "DEVICE_STATE_NORMAL",
-            "defaultRequestSettings": execution.default_request_settings,
-            "requestedConfiguration": execution.requested_configuration,
-            "halStreams": execution.hal_streams,
-            "allocatedBuffer": execution.allocated_buffer,
-            "requestStreamBufferEvents": execution.requested_buffer_events,
-            "returnStreamBufferEvents": execution.returned_buffer_events,
-            "processedRequestCount": execution.processed_request_count,
-            "captureCompletion": execution.capture_completion,
-            "captureResultEvents": execution.result_events,
-            "captureNotifyEvents": execution.notify_events,
-            "outputPath": execution.output_path,
-            "bytesWritten": execution.bytes_written,
-            "waitDurationMs": execution.wait_duration_ms,
-            "sessionOpened": true,
-            "sessionClosed": session_closed,
-            "providerCallbackEvents": provider_callback_events,
-            "deviceCallbackEvents": device_callback_events,
-        }),
+        Ok(execution) => {
+            let mut value = json!({
+                "ok": true,
+                "command": "capture",
+                "pid": std::process::id(),
+                "cwd": current_dir_string(),
+                "argv": argv_strings,
+                "interface": interface_name,
+                "serviceName": service_name,
+                "isDeclared": is_declared_value,
+                "declaredInstances": declared_instances,
+                "cameraIds": camera_ids,
+                "requestedCamera": requested_camera,
+                "selectedCamera": camera_id,
+                "selectedResourceCost": selected_resource_cost,
+                "selectedCharacteristics": selected_characteristics,
+                "deviceState": "DEVICE_STATE_NORMAL",
+                "defaultRequestSettings": execution.default_request_settings,
+                "requestedConfiguration": execution.requested_configuration,
+                "halStreams": execution.hal_streams,
+                "allocatedBuffer": execution.allocated_buffer,
+                "requestStreamBufferEvents": execution.requested_buffer_events,
+                "returnStreamBufferEvents": execution.returned_buffer_events,
+                "processedRequestCount": execution.processed_request_count,
+                "captureCompletion": execution.capture_completion,
+                "captureResultEvents": execution.result_events,
+                "captureNotifyEvents": execution.notify_events,
+                "outputPath": execution.output_path,
+                "bytesWritten": execution.bytes_written,
+                "waitDurationMs": execution.wait_duration_ms,
+                "sessionOpened": true,
+                "sessionClosed": session_closed,
+                "providerCallbackEvents": provider_callback_events,
+                "deviceCallbackEvents": device_callback_events,
+            });
+            if let Some(rotation_degrees) = selected_display_rotation_degrees {
+                value["displayRotationDegrees"] = json!(rotation_degrees);
+            }
+            value
+        }
         Err(mut value) => {
             value["cameraIds"] = json!(camera_ids);
             value["requestedCamera"] = json!(requested_camera);
