@@ -137,7 +137,13 @@ pub const CASHU_APP: DemoApp = DemoApp {
     icon_color: ICON_GREEN,
 };
 
-pub const DEMO_APPS: [DemoApp; 5] = [COUNTER_APP, CAMERA_APP, TIMELINE_APP, PODCAST_APP, CASHU_APP];
+pub const DEMO_APPS: [DemoApp; 5] = [
+    COUNTER_APP,
+    CAMERA_APP,
+    TIMELINE_APP,
+    PODCAST_APP,
+    CASHU_APP,
+];
 
 pub fn find_app(id: AppId) -> Option<&'static DemoApp> {
     DEMO_APPS.iter().find(|app| app.id == id)
@@ -172,8 +178,8 @@ mod tests {
         app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, home_apps,
         CAMERA_APP, CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP, CASHU_APP_ID,
         CASHU_WAYLAND_APP_ID, COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, PODCAST_APP,
-        PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, SHELL_APP_ID, SHELL_WAYLAND_APP_ID,
-        TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID,
+        PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, SHELL_APP_ID, SHELL_WAYLAND_APP_ID, TIMELINE_APP,
+        TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID,
     };
 
     #[test]
