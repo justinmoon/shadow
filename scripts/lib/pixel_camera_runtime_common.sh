@@ -75,3 +75,15 @@ pixel_camera_runtime_cleanup_broker() {
     fi
   " >/dev/null 2>&1 || true
 }
+
+pixel_camera_runtime_cleanup_command() {
+  local daemon_pid_path
+  daemon_pid_path="$(pixel_camera_runtime_daemon_pid_path)"
+
+  cat <<EOF
+if [ -f '$daemon_pid_path' ]; then
+  kill \$(cat '$daemon_pid_path') >/dev/null 2>&1 || true
+  rm -f '$daemon_pid_path'
+fi
+EOF
+}

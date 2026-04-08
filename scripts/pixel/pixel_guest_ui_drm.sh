@@ -35,6 +35,7 @@ guest_session_env="${PIXEL_GUEST_SESSION_ENV-}"
 frame_capture_mode="${PIXEL_GUEST_FRAME_CAPTURE_MODE-}"
 guest_precreate_dirs="${PIXEL_GUEST_PRECREATE_DIRS-}"
 guest_pre_session_device_script="${PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT-}"
+guest_post_session_device_script="${PIXEL_GUEST_POST_SESSION_DEVICE_SCRIPT-}"
 expect_compositor_process="${PIXEL_GUEST_EXPECT_COMPOSITOR_PROCESS-1}"
 expect_client_process="${PIXEL_GUEST_EXPECT_CLIENT_PROCESS-1}"
 expect_client_marker="${PIXEL_GUEST_EXPECT_CLIENT_MARKER-1}"
@@ -120,6 +121,9 @@ cleanup() {
       kill "$session_pid" >/dev/null 2>&1 || true
       wait "$session_pid" >/dev/null 2>&1 || true
     fi
+  fi
+  if [[ -n "$guest_post_session_device_script" ]]; then
+    pixel_root_shell "$serial" "$guest_post_session_device_script" >/dev/null 2>&1 || true
   fi
   if [[ -n "${logcat_pid:-}" ]]; then
     kill "$logcat_pid" >/dev/null 2>&1 || true

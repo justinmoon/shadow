@@ -51,6 +51,7 @@ parse_args "$@"
 serial="$(pixel_resolve_serial)"
 camera_endpoint=""
 camera_start_command=""
+camera_cleanup_command=""
 
 if (( shell_stage_only == 1 && shell_run_only == 1 )); then
   echo "pixel_shell_drm: --run-only cannot be combined with --stage-only" >&2
@@ -67,6 +68,7 @@ fi
 if (( camera_runtime_enabled == 1 )); then
   camera_endpoint="$(pixel_camera_runtime_endpoint)"
   camera_start_command="$(pixel_camera_runtime_start_command "$camera_endpoint")"
+  camera_cleanup_command="$(pixel_camera_runtime_cleanup_command)"
 fi
 
 default_turnip_tarball="$(pixel_dir)/vendor/turnip_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
@@ -88,12 +90,6 @@ build_include_guest_client=1
 if [[ "$PIXEL_SHELL_RENDERER" == "gpu_softbuffer" ]]; then
   build_include_guest_client=0
 fi
-
-cleanup() {
-  pixel_camera_runtime_cleanup_broker "$serial"
-}
-
-trap cleanup EXIT
 
 if (( shell_run_only == 0 )); then
   PIXEL_BUILD_INCLUDE_GUEST_CLIENT="$build_include_guest_client" \
@@ -202,21 +198,23 @@ if (( shell_stage_only == 1 )); then
   exit 0
 fi
 
-PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
-PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
-PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_shell_runtime_host_bundle_artifact_dir)" \
-PIXEL_COMPOSITOR_MARKER='[shadow-guest-compositor] presented-frame' \
-PIXEL_GUEST_REQUIRED_MARKERS="$required_markers" \
-PIXEL_GUEST_EXPECT_CLIENT_PROCESS="$expect_client_process" \
-PIXEL_GUEST_EXPECT_CLIENT_MARKER='' \
-PIXEL_VERIFY_REQUIRE_CLIENT_MARKER='' \
-PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME='' \
-PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
-PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
-PIXEL_GUEST_CLIENT_ENV="$shell_guest_env" \
-PIXEL_GUEST_SESSION_ENV="$shell_session_env" \
-PIXEL_GUEST_PRECREATE_DIRS="$(pixel_runtime_precreate_dirs_lines)" \
-PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT="$camera_start_command" \
-PIXEL_TAKEOVER_STOP_ALLOCATOR="${PIXEL_TAKEOVER_STOP_ALLOCATOR:-0}" \
-PIXEL_GUEST_SKIP_PUSH="$([[ "$shell_run_only" == 1 ]] && printf 1 || true)" \
-  "$SCRIPT_DIR/pixel/pixel_guest_ui_drm.sh"
+exec env \
+  PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
+  PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
+  PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_shell_runtime_host_bundle_artifact_dir)" \
+  PIXEL_COMPOSITOR_MARKER='[shadow-guest-compositor] presented-frame' \
+  PIXEL_GUEST_REQUIRED_MARKERS="$required_markers" \
+  PIXEL_GUEST_EXPECT_CLIENT_PROCESS="$expect_client_process" \
+  PIXEL_GUEST_EXPECT_CLIENT_MARKER='' \
+  PIXEL_VERIFY_REQUIRE_CLIENT_MARKER='' \
+  PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME='' \
+  PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
+  PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
+  PIXEL_GUEST_CLIENT_ENV="$shell_guest_env" \
+  PIXEL_GUEST_SESSION_ENV="$shell_session_env" \
+  PIXEL_GUEST_PRECREATE_DIRS="$(pixel_runtime_precreate_dirs_lines)" \
+  PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT="$camera_start_command" \
+  PIXEL_GUEST_POST_SESSION_DEVICE_SCRIPT="$camera_cleanup_command" \
+  PIXEL_TAKEOVER_STOP_ALLOCATOR="${PIXEL_TAKEOVER_STOP_ALLOCATOR:-0}" \
+  PIXEL_GUEST_SKIP_PUSH="$([[ "$shell_run_only" == 1 ]] && printf 1 || true)" \
+  "$SCRIPT_DIR/pixel_guest_ui_drm.sh"
