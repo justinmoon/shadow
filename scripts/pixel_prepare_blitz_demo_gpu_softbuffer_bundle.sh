@@ -209,6 +209,8 @@ cat >"$launcher_artifact" <<EOF
 #!/system/bin/sh
 DIR=\$(cd "\$(dirname "\$0")" && pwd)
 GNU_LD_PRELOAD="\${SHADOW_LINUX_LD_PRELOAD:-}"
+RUNTIME_HOST_PATH="\${SHADOW_RUNTIME_HOST_BINARY_PATH:-}"
+RUNTIME_BUNDLE_PATH="\${SHADOW_RUNTIME_APP_BUNDLE_PATH:-}"
 
 unset LD_PRELOAD
 
@@ -224,6 +226,36 @@ export VK_ICD_FILENAMES="\$DIR/share/vulkan/icd.d/freedreno_icd.aarch64.json"
 
 mkdir -p "\$HOME" "\$XDG_CACHE_HOME" "\$XDG_CONFIG_HOME" "\$MESA_SHADER_CACHE_DIR"
 
+if command -v chroot >/dev/null 2>&1; then
+  case "\$GNU_LD_PRELOAD" in
+    "\$DIR"/*) GNU_LD_PRELOAD="/\${GNU_LD_PRELOAD#\$DIR/}" ;;
+  esac
+  case "\$RUNTIME_HOST_PATH" in
+    "\$DIR"/run-shadow-runtime-host) RUNTIME_HOST_PATH="/shadow-runtime-host" ;;
+    "${bundle_device_dir}"/run-shadow-runtime-host) RUNTIME_HOST_PATH="/shadow-runtime-host" ;;
+    "\$DIR"/*) RUNTIME_HOST_PATH="/\${RUNTIME_HOST_PATH#\$DIR/}" ;;
+    "${bundle_device_dir}"/*) RUNTIME_HOST_PATH="/\${RUNTIME_HOST_PATH#${bundle_device_dir}/}" ;;
+  esac
+  case "\$RUNTIME_BUNDLE_PATH" in
+    "\$DIR"/*) RUNTIME_BUNDLE_PATH="/\${RUNTIME_BUNDLE_PATH#\$DIR/}" ;;
+    "${bundle_device_dir}"/*) RUNTIME_BUNDLE_PATH="/\${RUNTIME_BUNDLE_PATH#${bundle_device_dir}/}" ;;
+  esac
+  export XKB_CONFIG_EXTRA_PATH="\${XKB_CONFIG_EXTRA_PATH:-/etc/xkb}"
+  export XKB_CONFIG_ROOT="\${XKB_CONFIG_ROOT:-/etc/X11/xkb}"
+  export SHADOW_RUNTIME_HOST_BINARY_PATH="\$RUNTIME_HOST_PATH"
+  export SHADOW_RUNTIME_APP_BUNDLE_PATH="\$RUNTIME_BUNDLE_PATH"
+  export SHADOW_RUNTIME_HOST_STAGE_LOADER_PATH="/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME"
+  export SHADOW_RUNTIME_HOST_STAGE_LIBRARY_PATH="/lib"
+  if [ -n "\$GNU_LD_PRELOAD" ]; then
+    exec chroot "\$DIR" "/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --preload "\$GNU_LD_PRELOAD" --library-path /lib "/shadow-blitz-demo" "\$@"
+  fi
+  exec chroot "\$DIR" "/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path /lib "/shadow-blitz-demo" "\$@"
+fi
+
+export XKB_CONFIG_EXTRA_PATH="\${XKB_CONFIG_EXTRA_PATH:-\$DIR/etc/xkb}"
+export XKB_CONFIG_ROOT="\${XKB_CONFIG_ROOT:-\$DIR/share/X11/xkb}"
+unset SHADOW_RUNTIME_HOST_STAGE_LOADER_PATH
+unset SHADOW_RUNTIME_HOST_STAGE_LIBRARY_PATH
 if [ -n "\$GNU_LD_PRELOAD" ]; then
   exec env LD_PRELOAD="\$GNU_LD_PRELOAD" "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$DIR/shadow-blitz-demo" "\$@"
 fi

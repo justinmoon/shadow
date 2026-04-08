@@ -9,6 +9,7 @@ cpu = ["dep:anyrender_vello_cpu", "anyrender_vello_cpu/softbuffer_window_rendere
 gpu = ["dep:anyrender_vello", "dep:wgpu", "dep:pollster", "dep:env_logger"]
 gpu_softbuffer = [
   "dep:anyrender_vello",
+  "dep:anyrender_vello_cpu",
   "dep:softbuffer_window_renderer",
   "dep:wgpu",
   "dep:pollster",

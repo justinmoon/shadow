@@ -141,6 +141,7 @@ touch_signal_path="$(pixel_runtime_dir)/touch-signal"
 runtime_home_dir="$(pixel_runtime_linux_dir)/home"
 runtime_cache_dir="$runtime_home_dir/.cache"
 runtime_config_dir="$runtime_home_dir/.config"
+xkb_config_root="$(pixel_runtime_linux_dir)/share/X11/xkb"
 
 runtime_guest_env=$(
   cat <<EOF
@@ -160,6 +161,7 @@ SHADOW_RUNTIME_HOST_BINARY_PATH=$(pixel_runtime_host_launcher_dst)
 HOME=$runtime_home_dir
 XDG_CACHE_HOME=$runtime_cache_dir
 XDG_CONFIG_HOME=$runtime_config_dir
+XKB_CONFIG_ROOT=$xkb_config_root
 EOF
 )
 if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu_softbuffer" || "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then

@@ -176,6 +176,18 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
       - startup regression from the keyboard-seat change is fixed by staging `xkeyboard-config` into the rooted bundle and exporting `XKB_CONFIG_ROOT`
       - seat focus is fixed in the guest compositor
       - if soft keyboard still does not appear after that, the remaining gap is likely missing Wayland text-input / input-method support on the rooted guest-compositor path
+    - keep the shell-launched Timeline app on the proven GPU lane
+      - restored worktrees can lose the cached Turnip / vendor Mesa tarballs under `build/pixel/vendor`
+      - without those tarballs the shell path silently falls back to `WGPU_BACKEND=gl`, which crashes in `NoCompatibleDevice`
+      - the shell GPU launcher now also carries the chroot-specific runtime host / XKB fixes needed for shell-launched runtime apps
+      - the `gpu_softbuffer` shell path now uses the CPU image-render fallback (`VelloCpuImageRenderer`) so avatar/image rendering does not crash after `runtime-document-ready`
+      - validated rooted run:
+        - `build/pixel/drm-guest/20260408T001551Z`
+      - key markers:
+        - `runtime-session-ready`
+        - `runtime-document-ready`
+        - `captured-frame checksum=45a631d62bd2656d size=532x1074`
+        - no `NoCompatibleDevice` panic
 
 ## What Is Proven vs. What Is Not
 
@@ -256,6 +268,15 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - stage real XKB data into the rooted runtime bundle and export `XKB_CONFIG_ROOT` for the session
   - remaining question:
     - whether the rooted Pixel soft keyboard still needs explicit Wayland text-input/input-method support beyond correct seat focus
+- The shell Timeline black-screen bug was a stack of smaller GPU/runtime issues, not one failure.
+  - on the restored worktree the cached Turnip / Mesa tarballs were gone, so the shell path fell back to `WGPU_BACKEND=gl`
+  - the chrooted GPU launcher then needed:
+    - staged XKB data
+    - root-relative runtime app bundle paths
+    - stage-loader runtime-host spawn
+    - `--preload` instead of leaking `LD_PRELOAD` onto Android `chroot`
+  - after that the remaining crash was inside `anyrender_vello::VelloImageRenderer`, which tried to create a second GPU context for image rendering and died with `NoCompatibleDevice`
+  - the practical fix is to keep the GPU window path but use `VelloCpuImageRenderer` for `gpu_softbuffer` image rendering
 
 ## Best Known Numbers
 

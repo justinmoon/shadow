@@ -18,8 +18,9 @@ compile_error!("enable one shadow-blitz-demo renderer feature");
 #[cfg(feature = "gpu")]
 use anyrender_vello::VelloWindowRenderer as WindowRenderer;
 #[cfg(feature = "gpu_softbuffer")]
-type WindowRenderer =
-    softbuffer_window_renderer::SoftbufferWindowRenderer<anyrender_vello::VelloImageRenderer>;
+type WindowRenderer = softbuffer_window_renderer::SoftbufferWindowRenderer<
+    anyrender_vello_cpu::VelloCpuImageRenderer,
+>;
 #[cfg(all(not(feature = "gpu"), not(feature = "hybrid"), feature = "cpu"))]
 use anyrender_vello_cpu::VelloCpuWindowRenderer as WindowRenderer;
 #[cfg(all(

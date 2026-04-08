@@ -41,9 +41,13 @@ stage_runtime_bundle_xkb_config() {
   xkb_dest_dir="$bundle_dir/share/X11/xkb"
 
   mkdir -p "$(dirname "$xkb_dest_dir")"
-  chmod -R u+w "$bundle_dir/share" 2>/dev/null || true
+  mkdir -p "$bundle_dir/etc" "$bundle_dir/etc/X11"
+  chmod -R u+w "$bundle_dir/share" "$bundle_dir/etc" 2>/dev/null || true
   rm -rf "$xkb_dest_dir"
   cp -LR "$xkb_source_dir" "$xkb_dest_dir"
+  rm -rf "$bundle_dir/etc/xkb" "$bundle_dir/etc/X11/xkb"
+  ln -s ../share/X11/xkb "$bundle_dir/etc/xkb"
+  ln -s ../../share/X11/xkb "$bundle_dir/etc/X11/xkb"
 }
 
 normalize_runtime_bundle_input_path() {

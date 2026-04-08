@@ -67,6 +67,7 @@ runtime_home_dir="$(pixel_runtime_linux_dir)/home"
 runtime_cache_dir="$runtime_home_dir/.cache"
 runtime_config_dir="$runtime_home_dir/.config"
 expect_client_process=''
+xkb_config_root="$(pixel_runtime_linux_dir)/share/X11/xkb"
 
 shell_guest_env=$(
   cat <<EOF
@@ -77,6 +78,7 @@ SHADOW_BLITZ_ANDROID_FONTS=${SHADOW_BLITZ_ANDROID_FONTS:-curated}
 HOME=$runtime_home_dir
 XDG_CACHE_HOME=$runtime_cache_dir
 XDG_CONFIG_HOME=$runtime_config_dir
+XKB_CONFIG_ROOT=$xkb_config_root
 EOF
 )
 if [[ "$PIXEL_SHELL_RENDERER" == "gpu_softbuffer" ]]; then
@@ -130,7 +132,6 @@ PIXEL_GUEST_EXPECT_CLIENT_PROCESS="$expect_client_process" \
 PIXEL_GUEST_EXPECT_CLIENT_MARKER='' \
 PIXEL_VERIFY_REQUIRE_CLIENT_MARKER='' \
 PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME='' \
-PIXEL_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT=1 \
 PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
 PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
 PIXEL_GUEST_CLIENT_ENV="$shell_guest_env" \

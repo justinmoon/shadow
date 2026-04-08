@@ -10,6 +10,8 @@ use crate::runtime_document::RuntimeDocumentPayload;
 
 const RUNTIME_APP_BUNDLE_PATH_ENV: &str = "SHADOW_RUNTIME_APP_BUNDLE_PATH";
 const RUNTIME_HOST_BINARY_PATH_ENV: &str = "SHADOW_RUNTIME_HOST_BINARY_PATH";
+const RUNTIME_HOST_STAGE_LOADER_PATH_ENV: &str = "SHADOW_RUNTIME_HOST_STAGE_LOADER_PATH";
+const RUNTIME_HOST_STAGE_LIBRARY_PATH_ENV: &str = "SHADOW_RUNTIME_HOST_STAGE_LIBRARY_PATH";
 const RUNTIME_HOST_CLEAN_ENV: &[&str] = &[
     "LD_LIBRARY_PATH",
     "LD_PRELOAD",
@@ -21,6 +23,8 @@ const RUNTIME_HOST_CLEAN_ENV: &[&str] = &[
     "MESA_SHADER_CACHE_DIR",
     "SHADOW_LINUX_LD_PRELOAD",
     "SHADOW_OPENLOG_DENY_DRI",
+    RUNTIME_HOST_STAGE_LOADER_PATH_ENV,
+    RUNTIME_HOST_STAGE_LIBRARY_PATH_ENV,
     "TU_DEBUG",
 ];
 
@@ -78,7 +82,20 @@ impl RuntimeSession {
     }
 
     fn spawn(host_binary_path: String, bundle_path: String) -> Result<Self, String> {
-        let mut command = Command::new(&host_binary_path);
+        let stage_loader_path = env::var(RUNTIME_HOST_STAGE_LOADER_PATH_ENV).ok();
+        let stage_library_path = env::var(RUNTIME_HOST_STAGE_LIBRARY_PATH_ENV).ok();
+
+        let mut command = match stage_loader_path {
+            Some(loader_path) => {
+                let mut command = Command::new(&loader_path);
+                if let Some(library_path) = stage_library_path.as_deref() {
+                    command.arg("--library-path").arg(library_path);
+                }
+                command.arg(&host_binary_path);
+                command
+            }
+            None => Command::new(&host_binary_path),
+        };
         for key in RUNTIME_HOST_CLEAN_ENV {
             command.env_remove(key);
         }
