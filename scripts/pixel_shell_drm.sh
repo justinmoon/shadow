@@ -57,8 +57,8 @@ esac
 
 env "${runtime_prepare_extra_env[@]}" "$SCRIPT_DIR/pixel_prepare_shell_runtime_artifacts.sh"
 
-: "${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS:=300000}"
-: "${PIXEL_GUEST_SESSION_TIMEOUT_SECS:=60}"
+PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS="${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS-}"
+PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS-}"
 extra_guest_env="${PIXEL_SHELL_EXTRA_GUEST_CLIENT_ENV-}"
 extra_session_env="${PIXEL_SHELL_EXTRA_SESSION_ENV-}"
 extra_required_markers="${PIXEL_SHELL_EXTRA_REQUIRED_MARKERS-}"
@@ -72,7 +72,6 @@ xkb_config_root="$(pixel_runtime_linux_dir)/share/X11/xkb"
 shell_guest_env=$(
   cat <<EOF
 SHADOW_BLITZ_DEMO_MODE=runtime
-SHADOW_BLITZ_RUNTIME_EXIT_DELAY_MS=$PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS
 SHADOW_BLITZ_DEBUG_OVERLAY=0
 SHADOW_BLITZ_ANDROID_FONTS=${SHADOW_BLITZ_ANDROID_FONTS:-curated}
 HOME=$runtime_home_dir
@@ -81,6 +80,9 @@ XDG_CONFIG_HOME=$runtime_config_dir
 XKB_CONFIG_ROOT=$xkb_config_root
 EOF
 )
+if [[ -n "$PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS" ]]; then
+  shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_BLITZ_RUNTIME_EXIT_DELAY_MS=$PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS"
+fi
 if [[ "$PIXEL_SHELL_RENDERER" == "gpu_softbuffer" ]]; then
   shell_guest_env="${shell_guest_env}"$'\n'"MESA_SHADER_CACHE_DIR=$runtime_cache_dir/mesa"
   if [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
