@@ -97,7 +97,7 @@ pub fn template_document() -> HtmlDocument {
         html_parser_provider: Some(Arc::new(HtmlProvider) as _),
         ..Default::default()
     };
-    if let Some(font_ctx) = android_font_context() {
+    if let Some(font_ctx) = platform_font_context() {
         config.font_ctx = Some(font_ctx);
     }
 
@@ -109,7 +109,7 @@ pub fn template_document() -> HtmlDocument {
     document
 }
 
-fn android_font_context() -> Option<FontContext> {
+fn platform_font_context() -> Option<FontContext> {
     match android_font_loading_mode() {
         AndroidFontMode::Disabled => {
             eprintln!("[shadow-blitz-demo] android-font-loading disabled");
@@ -118,8 +118,7 @@ fn android_font_context() -> Option<FontContext> {
         AndroidFontMode::Curated => {
             let font_paths = android_curated_font_paths();
             if font_paths.is_empty() {
-                eprintln!("[shadow-blitz-demo] curated-android-fonts missing");
-                return None;
+                return system_font_context("curated-android-fonts-missing");
             }
 
             let start = Instant::now();
@@ -135,7 +134,7 @@ fn android_font_context() -> Option<FontContext> {
         AndroidFontMode::Scan => {
             let font_dirs = android_font_dirs();
             if font_dirs.is_empty() {
-                return None;
+                return system_font_context("android-font-dirs-missing");
             }
 
             let start = Instant::now();
@@ -148,6 +147,26 @@ fn android_font_context() -> Option<FontContext> {
             );
             Some(font_ctx)
         }
+    }
+}
+
+fn system_font_context(reason: &str) -> Option<FontContext> {
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+        let start = Instant::now();
+        let font_ctx = FontContext::default();
+        eprintln!(
+            "[shadow-blitz-demo] system-font-context-ready reason={} elapsed_ms={}",
+            reason,
+            start.elapsed().as_millis()
+        );
+        Some(font_ctx)
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        eprintln!("[shadow-blitz-demo] system-font-context-unavailable reason={reason}");
+        None
     }
 }
 
