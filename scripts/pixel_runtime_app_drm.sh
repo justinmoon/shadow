@@ -27,20 +27,9 @@ if [[ -z "${PIXEL_VENDOR_TURNIP_TARBALL-}" && -f "$default_turnip_tarball" ]]; t
   export PIXEL_VENDOR_TURNIP_TARBALL
 fi
 
-if [[ -z "${PIXEL_RUNTIME_APP_RENDERER-}" ]]; then
-  cat >&2 <<'EOF'
-pixel_runtime_app_drm: PIXEL_RUNTIME_APP_RENDERER is required.
-Set PIXEL_RUNTIME_APP_RENDERER explicitly to one of:
-  cpu
-  gpu
-  gpu_softbuffer
-  hybrid
-
-Example:
-  PIXEL_RUNTIME_APP_RENDERER=gpu_softbuffer just pixel-runtime-app-camera-drm
-EOF
-  exit 1
-fi
+# Deterministic default. Never infer renderer mode from optional GPU assets.
+# CPU stays opt-in through PIXEL_RUNTIME_APP_RENDERER=cpu.
+: "${PIXEL_RUNTIME_APP_RENDERER:=gpu_softbuffer}"
 
 build_include_guest_client=1
 if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu_softbuffer" || "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then

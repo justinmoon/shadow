@@ -23,18 +23,9 @@ if [[ -z "${PIXEL_VENDOR_TURNIP_TARBALL-}" && -f "$default_turnip_tarball" ]]; t
   export PIXEL_VENDOR_TURNIP_TARBALL
 fi
 
-if [[ -z "${PIXEL_SHELL_RENDERER-}" ]]; then
-  cat >&2 <<'EOF'
-pixel_shell_drm: PIXEL_SHELL_RENDERER is required.
-Set PIXEL_SHELL_RENDERER explicitly to one of:
-  cpu
-  gpu_softbuffer
-
-Example:
-  PIXEL_SHELL_RENDERER=gpu_softbuffer just run <serial>
-EOF
-  exit 1
-fi
+# Deterministic default. Never infer renderer mode from optional GPU assets.
+# CPU stays opt-in through PIXEL_SHELL_RENDERER=cpu.
+: "${PIXEL_SHELL_RENDERER:=gpu_softbuffer}"
 
 build_include_guest_client=1
 if [[ "$PIXEL_SHELL_RENDERER" == "gpu_softbuffer" ]]; then
