@@ -184,6 +184,23 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
       - common runtime payload now carries active editable metadata (`textInput`)
       - `shadow-blitz-demo` runtime mode now renders a generic bottom keyboard overlay and synthesizes `keydown` + `input` + `blur` through the existing runtime session path
       - Pixel shell/runtime launchers now enable that path declaratively with `SHADOW_BLITZ_SOFTWARE_KEYBOARD=1`
+      - real root cause of the latest failure was not stale device bundles:
+        - `rust/shadow-runtime-host` had drifted to a `RuntimeDocumentPayload` with only `html` + `css`
+        - the runtime JS was still producing `textInput`, but the host session contract silently dropped it before the client could render the keyboard
+      - fix:
+        - restore `textInput` to the host-side payload struct
+        - add a host regression test for payload decode
+        - tighten `runtime-app-keyboard-smoke` so it fails if focused responses lose `textInput`
+      - architecture note:
+        - the recurring footgun here is not just stale device bundles; it is runtime-session schema drift across three layers:
+          - runtime JS payload
+          - `rust/shadow-runtime-host`
+          - `shadow-blitz-demo` runtime client
+        - the immediate guardrails are the new host unit test plus the tighter keyboard smoke
+        - the cleaner follow-up is to extract a shared runtime-session protocol type so host/client cannot silently diverge on fields like `textInput`
+      - local proofs now green:
+        - direct host-session probe for `runtime/app-keyboard-smoke/app.tsx` returns `textInput.targetId == "draft"`
+        - `cargo test --manifest-path rust/shadow-runtime-host/Cargo.toml runtime_document_payload_preserves_text_input -- --nocapture`
       - local regression coverage exists for:
         - keyboard overlay rendering
         - keyboard tap dispatching `keydown` + `input`

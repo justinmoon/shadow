@@ -256,6 +256,22 @@ struct RuntimeKeyboardEvent {
 struct RuntimeDocumentPayload {
     html: String,
     css: Option<String>,
+    #[serde(default, rename = "textInput", skip_serializing_if = "Option::is_none")]
+    text_input: Option<RuntimeTextInputPayload>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RuntimeTextInputPayload {
+    #[serde(rename = "targetId")]
+    target_id: String,
+    #[serde(default)]
+    value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    selection: Option<RuntimeSelectionEvent>,
+    #[serde(default, rename = "inputMode", skip_serializing_if = "Option::is_none")]
+    input_mode: Option<String>,
+    #[serde(default)]
+    multiline: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -264,4 +280,33 @@ enum SessionResponse {
     Ok { payload: RuntimeDocumentPayload },
     NoUpdate,
     Error { message: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RuntimeDocumentPayload;
+
+    #[test]
+    fn runtime_document_payload_preserves_text_input() {
+        let payload = serde_json::from_str::<RuntimeDocumentPayload>(
+            r#"{
+                "html":"<input data-shadow-id=\"draft\" />",
+                "css":null,
+                "textInput":{
+                    "targetId":"draft",
+                    "value":"gm",
+                    "selection":{"start":2,"end":2,"direction":"none"},
+                    "inputMode":"text",
+                    "multiline":false
+                }
+            }"#,
+        )
+        .expect("decode payload");
+
+        let text_input = payload.text_input.expect("text input payload");
+        assert_eq!(text_input.target_id, "draft");
+        assert_eq!(text_input.value, "gm");
+        assert_eq!(text_input.input_mode.as_deref(), Some("text"));
+        assert!(!text_input.multiline);
+    }
 }

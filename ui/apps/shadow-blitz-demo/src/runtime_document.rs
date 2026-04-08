@@ -1238,10 +1238,21 @@ fn touch_signal_timer_enabled() -> bool {
 }
 
 fn software_keyboard_enabled() -> bool {
-    matches!(
-        env::var("SHADOW_BLITZ_SOFTWARE_KEYBOARD").ok().as_deref(),
-        Some("1") | Some("true") | Some("on")
-    )
+    match env::var("SHADOW_BLITZ_SOFTWARE_KEYBOARD")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+    {
+        Some("1") | Some("true") | Some("on") => true,
+        Some("0") | Some("false") | Some("off") => false,
+        _ => matches!(
+            env::var("SHADOW_GUEST_KEYBOARD_SEAT")
+                .ok()
+                .as_deref()
+                .map(str::trim),
+            Some("0")
+        ),
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1854,7 +1865,9 @@ mod tests {
         MouseEventButtons, PointerCoords, UiEvent,
     };
 
-    use super::{RuntimeDocument, RuntimeDocumentPayload, RuntimeTextInputPayload};
+    use super::{
+        software_keyboard_enabled, RuntimeDocument, RuntimeDocumentPayload, RuntimeTextInputPayload,
+    };
     use crate::runtime_session::RuntimeSelectionEvent;
     use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
 
@@ -1904,6 +1917,24 @@ mod tests {
             match previous {
                 Some(value) => env::set_var("SHADOW_BLITZ_SOFTWARE_KEYBOARD", value),
                 None => env::remove_var("SHADOW_BLITZ_SOFTWARE_KEYBOARD"),
+            }
+        }
+        result
+    }
+
+    fn with_env_var<T>(key: &str, value: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let previous = env::var(key).ok();
+        unsafe {
+            match value {
+                Some(value) => env::set_var(key, value),
+                None => env::remove_var(key),
+            }
+        }
+        let result = f();
+        unsafe {
+            match previous {
+                Some(value) => env::set_var(key, value),
+                None => env::remove_var(key),
             }
         }
         result
@@ -2348,5 +2379,25 @@ mod tests {
 
         assert_eq!(image.width, 1);
         assert_eq!(image.height, 1);
+    }
+
+    #[test]
+    fn software_keyboard_defaults_on_without_keyboard_seat() {
+        let _guard = test_guard();
+        with_env_var("SHADOW_BLITZ_SOFTWARE_KEYBOARD", None, || {
+            with_env_var("SHADOW_GUEST_KEYBOARD_SEAT", Some("0"), || {
+                assert!(software_keyboard_enabled());
+            });
+        });
+    }
+
+    #[test]
+    fn software_keyboard_defaults_off_with_keyboard_seat() {
+        let _guard = test_guard();
+        with_env_var("SHADOW_BLITZ_SOFTWARE_KEYBOARD", None, || {
+            with_env_var("SHADOW_GUEST_KEYBOARD_SEAT", Some("1"), || {
+                assert!(!software_keyboard_enabled());
+            });
+        });
     }
 }

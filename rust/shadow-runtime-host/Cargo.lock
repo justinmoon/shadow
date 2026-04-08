@@ -2798,7 +2798,7 @@ dependencies = [
 name = "runtime-camera-host"
 version = "0.1.0"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "deno_core",
  "deno_error",
  "image",
@@ -3174,8 +3174,8 @@ version = "0.1.0"
 dependencies = [
  "deno_core",
  "runtime-audio-host",
- "runtime-cashu-host",
  "runtime-camera-host",
+ "runtime-cashu-host",
  "runtime-nostr-host",
  "serde",
  "serde_json",

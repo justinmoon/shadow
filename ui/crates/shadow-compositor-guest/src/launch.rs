@@ -33,10 +33,10 @@ pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Resul
         .env("SHADOW_BLITZ_APP_TITLE", app.window_title)
         .env("SHADOW_BLITZ_WAYLAND_APP_ID", app.wayland_app_id)
         .env("SHADOW_RUNTIME_APP_BUNDLE_PATH", runtime_bundle_path);
+    apply_software_keyboard_policy(&mut command);
 
     state.spawn_wayland_command(command, &client_path)
 }
-
 pub fn spawn_client(state: &mut ShadowGuestCompositor) -> io::Result<Child> {
     let client_path = state.client_config.app_client_path.clone();
     let mut command = Command::new(&client_path);
@@ -46,6 +46,21 @@ pub fn spawn_client(state: &mut ShadowGuestCompositor) -> io::Result<Child> {
         state.control_socket_path.as_os_str(),
     )?;
     state.spawn_wayland_command(command, &client_path)
+}
+
+fn apply_software_keyboard_policy(command: &mut Command) {
+    let keyboard_seat_enabled = std::env::var_os("SHADOW_GUEST_ENABLE_KEYBOARD_SEAT").is_some();
+    command.env(
+        "SHADOW_GUEST_KEYBOARD_SEAT",
+        if keyboard_seat_enabled { "1" } else { "0" },
+    );
+    if !keyboard_seat_enabled {
+        let enabled = std::env::var("SHADOW_BLITZ_SOFTWARE_KEYBOARD")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| String::from("1"));
+        command.env("SHADOW_BLITZ_SOFTWARE_KEYBOARD", enabled);
+    }
 }
 
 fn configure_guest_client_command(

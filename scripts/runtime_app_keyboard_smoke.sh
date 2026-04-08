@@ -47,6 +47,7 @@ def send(request):
 
 initial = send({"op": "render"})
 focused = send({"op": "dispatch", "event": {"targetId": "draft", "type": "focus"}})
+focused_text_input = focused.get("textInput")
 send({
     "op": "dispatch",
     "event": {
@@ -138,6 +139,13 @@ if "English text seam" not in initial_html:
     raise SystemExit("runtime-app-keyboard-smoke: initial render missing keyboard headline")
 if "Focus: focused" not in focused_html:
     raise SystemExit("runtime-app-keyboard-smoke: focus event did not update state")
+if focused_text_input is None:
+    raise SystemExit("runtime-app-keyboard-smoke: focus response missing textInput payload")
+if focused_text_input.get("targetId") != "draft":
+    raise SystemExit(
+        "runtime-app-keyboard-smoke: unexpected textInput target "
+        f"{json.dumps(focused_text_input)}",
+    )
 
 expected_fragments = [
     "Focus: blurred",
