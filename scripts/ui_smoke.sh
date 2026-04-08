@@ -7,6 +7,7 @@ REMOTE_HOST="${SHADOW_UI_REMOTE_HOST:-${CUTTLEFISH_REMOTE_HOST:-hetzner}}"
 REMOTE_DIR_CACHE="${SHADOW_UI_REMOTE_DIR:-}"
 UI_SMOKE_TMPDIR=""
 UI_SMOKE_TIMEOUT_SECS="${SHADOW_UI_SMOKE_TIMEOUT:-300}"
+UI_SMOKE_PREP_TIMEOUT_SECS="${SHADOW_UI_SMOKE_PREP_TIMEOUT:-900}"
 UI_SMOKE_NAMESPACE="${SHADOW_UI_SMOKE_NAMESPACE:-$(basename "$REPO_ROOT")-$$}"
 UI_SMOKE_SSH_RETRIES="${SHADOW_UI_SMOKE_SSH_RETRIES:-3}"
 UI_SMOKE_SSH_RETRY_SLEEP="${SHADOW_UI_SMOKE_SSH_RETRY_SLEEP:-2}"
@@ -100,7 +101,7 @@ dump_logs() {
 }
 
 run_local_linux_smoke() {
-  local tmpdir runtime_dir runtime_env compositor_log compositor_pid start now
+  local tmpdir runtime_dir runtime_env compositor_log compositor_pid start now smoke_start
 
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/shadow-ui-smoke.XXXXXX")"
   runtime_dir="$tmpdir/xdg-runtime"
@@ -142,6 +143,7 @@ run_local_linux_smoke() {
   compositor_pid=$!
 
   start="$(date +%s)"
+  smoke_start=0
   while true; do
     if grep -Fq '[shadow-compositor] launched-demo-client' "$compositor_log" \
       && grep -Fq '[shadow-compositor] mapped-window' "$compositor_log"; then
@@ -156,7 +158,17 @@ run_local_linux_smoke() {
     fi
 
     now="$(date +%s)"
-    if (( now - start > UI_SMOKE_TIMEOUT_SECS )); then
+    if (( smoke_start == 0 )) && grep -Fq '[shadow-compositor]' "$compositor_log"; then
+      smoke_start="$now"
+    fi
+
+    if (( smoke_start == 0 )) && (( now - start > UI_SMOKE_PREP_TIMEOUT_SECS )); then
+      dump_logs "$tmpdir"
+      echo "timed out waiting for compositor startup" >&2
+      return 1
+    fi
+
+    if (( smoke_start != 0 )) && (( now - smoke_start > UI_SMOKE_TIMEOUT_SECS )); then
       dump_logs "$tmpdir"
       echo "timed out waiting for compositor smoke markers" >&2
       return 1
