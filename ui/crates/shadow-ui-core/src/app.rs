@@ -1,4 +1,4 @@
-use crate::color::{Color, ICON_CYAN, ICON_ORANGE, ICON_PINK};
+use crate::color::{Color, ICON_CYAN, ICON_GREEN, ICON_ORANGE, ICON_PINK};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AppId(&'static str);
@@ -47,6 +47,12 @@ pub const PODCAST_WINDOW_TITLE: &str = "No Solutions Player";
 pub const PODCAST_RUNTIME_BUNDLE_ENV: &str = "SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH";
 pub const PODCAST_RUNTIME_INPUT_PATH: &str = "runtime/app-podcast-player/app.tsx";
 pub const PODCAST_RUNTIME_CACHE_DIR: &str = "build/runtime/app-podcast-player-host";
+pub const CASHU_APP_ID: AppId = AppId::new("cashu");
+pub const CASHU_WAYLAND_APP_ID: &str = "dev.shadow.cashu";
+pub const CASHU_WINDOW_TITLE: &str = "Shadow Cashu";
+pub const CASHU_RUNTIME_BUNDLE_ENV: &str = "SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH";
+pub const CASHU_RUNTIME_INPUT_PATH: &str = "runtime/app-cashu-wallet/app.tsx";
+pub const CASHU_RUNTIME_CACHE_DIR: &str = "build/runtime/app-cashu-wallet-host";
 pub const SHELL_APP_ID: AppId = AppId::new("shell");
 pub const SHELL_WAYLAND_APP_ID: &str = "dev.shadow.shell";
 pub const COUNTER_APP: DemoApp = DemoApp {
@@ -91,8 +97,22 @@ pub const PODCAST_APP: DemoApp = DemoApp {
     runtime_cache_dir: PODCAST_RUNTIME_CACHE_DIR,
     icon_color: ICON_PINK,
 };
+pub const CASHU_APP: DemoApp = DemoApp {
+    id: CASHU_APP_ID,
+    icon_label: "CU",
+    title: "Cashu",
+    subtitle: "Wallet + Lightning",
+    lifecycle_hint: "Shelving keeps your trusted mints and draft flows one tap away.",
+    binary_name: "shadow-blitz-demo",
+    wayland_app_id: CASHU_WAYLAND_APP_ID,
+    window_title: CASHU_WINDOW_TITLE,
+    runtime_bundle_env: CASHU_RUNTIME_BUNDLE_ENV,
+    runtime_input_path: CASHU_RUNTIME_INPUT_PATH,
+    runtime_cache_dir: CASHU_RUNTIME_CACHE_DIR,
+    icon_color: ICON_GREEN,
+};
 
-pub const DEMO_APPS: [DemoApp; 3] = [COUNTER_APP, TIMELINE_APP, PODCAST_APP];
+pub const DEMO_APPS: [DemoApp; 4] = [COUNTER_APP, TIMELINE_APP, PODCAST_APP, CASHU_APP];
 
 pub fn find_app(id: AppId) -> Option<&'static DemoApp> {
     DEMO_APPS.iter().find(|app| app.id == id)
@@ -125,9 +145,9 @@ pub fn home_apps() -> &'static [DemoApp] {
 mod tests {
     use super::{
         app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, home_apps,
-        COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, PODCAST_APP, PODCAST_APP_ID,
-        PODCAST_WAYLAND_APP_ID, SHELL_APP_ID, SHELL_WAYLAND_APP_ID, TIMELINE_APP, TIMELINE_APP_ID,
-        TIMELINE_WAYLAND_APP_ID,
+        CASHU_APP, CASHU_APP_ID, CASHU_WAYLAND_APP_ID, COUNTER_APP, COUNTER_APP_ID,
+        COUNTER_WAYLAND_APP_ID, PODCAST_APP, PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, SHELL_APP_ID,
+        SHELL_WAYLAND_APP_ID, TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID,
     };
 
     #[test]
@@ -180,5 +200,21 @@ mod tests {
             Some(PODCAST_APP_ID)
         );
         assert_eq!(home_apps()[2].id, PODCAST_APP_ID);
+    }
+
+    #[test]
+    fn cashu_app_lookup_round_trips() {
+        let app = find_app(CASHU_APP_ID).expect("cashu app present");
+        assert_eq!(app, &CASHU_APP);
+        assert_eq!(CASHU_APP_ID.as_str(), "cashu");
+        assert_eq!(find_app_by_str("cashu"), Some(&CASHU_APP));
+        assert_eq!(binary_name_for(CASHU_APP_ID), Some("shadow-blitz-demo"));
+        assert_eq!(app.icon_label, "CU");
+        assert!(app.lifecycle_hint.contains("trusted mints"));
+        assert_eq!(
+            app_id_from_wayland_app_id(CASHU_WAYLAND_APP_ID),
+            Some(CASHU_APP_ID)
+        );
+        assert_eq!(home_apps()[3].id, CASHU_APP_ID);
     }
 }

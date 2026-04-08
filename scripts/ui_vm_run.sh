@@ -44,37 +44,33 @@ if [[ -S "$SOCKET_PATH" ]]; then
 fi
 
 rm -f .shadow-vm/nix-store-overlay.img
-if [[ ! -s "$RUNTIME_ENV_PATH" || -n "${SHADOW_UI_VM_REFRESH_RUNTIME_ENV:-}" ]] \
-  || ! grep -Fq 'SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
-  || { [[ "$ui_vm_enable_podcast_app" == "1" ]] && ! grep -Fq 'SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null; } \
-  || { [[ "$ui_vm_start_app_id" == "shell" ]] && grep -Fq 'SHADOW_COMPOSITOR_AUTO_LAUNCH=' "$RUNTIME_ENV_PATH" 2>/dev/null; } \
-  || { [[ "$ui_vm_start_app_id" != "shell" ]] && ! grep -Fq "SHADOW_COMPOSITOR_START_APP_ID=$ui_vm_start_app_id" "$RUNTIME_ENV_PATH" 2>/dev/null; } \
-  || ! grep -Fq 'SHADOW_RUNTIME_NOSTR_DB_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null; then
-  runtime_env_tmp="$(mktemp "$REPO_ROOT/.shadow-vm/runtime-host-session-env.XXXXXX")"
-  SHADOW_RUNTIME_APP_BUNDLE_REWRITE_FROM="$REPO_ROOT" \
-  SHADOW_RUNTIME_APP_BUNDLE_REWRITE_TO="/work/shadow" \
-  SHADOW_RUNTIME_ENABLE_PODCAST_APP="$ui_vm_enable_podcast_app" \
-  SHADOW_RUNTIME_HOST_PACKAGE_ATTR_OVERRIDE="${SHADOW_UI_VM_RUNTIME_HOST_PACKAGE_ATTR:-$ui_vm_runtime_host_package_attr_default}" \
-  SHADOW_RUNTIME_HOST_BINARY_NAME_OVERRIDE="${SHADOW_UI_VM_RUNTIME_HOST_BINARY_NAME:-shadow-runtime-host}" \
-    ./scripts/runtime_prepare_host_session_env.sh >"$runtime_env_tmp"
-  case "$ui_vm_start_app_id" in
-    shell)
-      ;;
-    counter|timeline|podcast)
-      {
-        printf 'export SHADOW_COMPOSITOR_AUTO_LAUNCH=1\n'
-        printf 'export SHADOW_COMPOSITOR_START_APP_ID=%q\n' "$ui_vm_start_app_id"
-      } >>"$runtime_env_tmp"
-      ;;
-    *)
-      echo "ui-vm-run: unsupported SHADOW_UI_VM_START_APP_ID=$ui_vm_start_app_id" >&2
-      exit 1
-      ;;
-  esac
-  mv "$runtime_env_tmp" "$RUNTIME_ENV_PATH"
-  chmod 0644 "$RUNTIME_ENV_PATH"
-  runtime_env_tmp=""
-fi
+runtime_env_tmp="$(mktemp "$REPO_ROOT/.shadow-vm/runtime-host-session-env.XXXXXX")"
+SHADOW_RUNTIME_APP_BUNDLE_REWRITE_FROM="$REPO_ROOT" \
+SHADOW_RUNTIME_APP_BUNDLE_REWRITE_TO="/work/shadow" \
+SHADOW_RUNTIME_ENABLE_PODCAST_APP="$ui_vm_enable_podcast_app" \
+SHADOW_RUNTIME_HOST_PACKAGE_ATTR_OVERRIDE="${SHADOW_UI_VM_RUNTIME_HOST_PACKAGE_ATTR:-$ui_vm_runtime_host_package_attr_default}" \
+SHADOW_RUNTIME_HOST_BINARY_NAME_OVERRIDE="${SHADOW_UI_VM_RUNTIME_HOST_BINARY_NAME:-shadow-runtime-host}" \
+  ./scripts/runtime_prepare_host_session_env.sh >"$runtime_env_tmp"
+
+case "$ui_vm_start_app_id" in
+  shell)
+    ;;
+  counter|timeline|podcast|cashu)
+    {
+      printf 'export SHADOW_COMPOSITOR_AUTO_LAUNCH=1\n'
+      printf 'export SHADOW_COMPOSITOR_START_APP_ID=%q\n' "$ui_vm_start_app_id"
+    } >>"$runtime_env_tmp"
+    ;;
+  *)
+    echo "ui-vm-run: unsupported SHADOW_UI_VM_START_APP_ID=$ui_vm_start_app_id" >&2
+    exit 1
+    ;;
+esac
+
+mv "$runtime_env_tmp" "$RUNTIME_ENV_PATH"
+chmod 0644 "$RUNTIME_ENV_PATH"
+runtime_env_tmp=""
+
 SHADOW_UI_VM_SOURCE="$REPO_ROOT" \
   nix build --impure --accept-flake-config -o "$RUNNER_LINK" .#ui-vm >/dev/null
 

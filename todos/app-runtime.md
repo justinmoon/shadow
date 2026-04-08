@@ -5,12 +5,17 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 ## Scope
 
 - Finish the runtime app platform until the next serious app can reuse it.
-- Keep the Nostr timeline app as the proving ground.
-- Do not start the Bitcoin wallet tranche until viewport, input, lifecycle, and capability seams are solid enough.
+- Keep the Nostr timeline app as the precedent, not the only proving ground.
+- Start a simple Cashu wallet now that viewport, input, and lifecycle are solid enough.
+- Build things we actually want to use; generalize only after both `nostr` and `cashu` feel real.
+- First Cashu target is now in: trusted-mint wallet with durable seed/db state, Lightning funding, token send/receive, and Lightning pay flows.
+- Next Cashu pressure should be restart/shell proofs and better operator ergonomics, not premature generalization.
 
 ## Current Position
 
 - `counter` and `timeline` are real shell apps in the VM/home flow.
+- The current app-facing host seam already exists in one concrete domain: `Shadow.os.nostr`.
+- `Shadow.os.cashu` now exists as the second concrete runtime-host domain, backed by CDK plus a durable mnemonic + `redb` wallet store.
 - `deno_core` remains the default runtime helper. `deno_runtime` is proven, but not promoted.
 - Rooted Pixel real shell now has a primary operator lane (`pixel-shell-drm` and `ui-run target=pixel`).
 - The direct rooted Pixel runtime-app scripts still exist, but they are now fallback/probe lanes rather than the main operator path.
@@ -20,8 +25,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - `just runtime-app-host-smokes` is now the truthful host proof surface.
 - The runtime viewport contract is now unified around the shell app viewport (`540x1106` today). Pixel fits that viewport into the real panel instead of using raw panel size as the app surface.
 - Host proofs already exist for focus, keyboard input, selection metadata, relay sync, and restart/cache reload.
+- `just runtime-app-cashu-wallet-smoke` is now green against a local `cdk-mintd` fakewallet mint: trust mint, mint invoice into balance, send token, receive token, pay Lightning invoice, then remint it.
 - Host wheel scroll already works through Blitz's native `UiEvent::Wheel` path; the runtime wrapper now suppresses drag / pan gestures from turning into synthetic runtime clicks.
 - The VM shelve/reopen lane is green again on the current machine.
+- `cdk` is now cloned locally at `~/code/oss/cdk` for Cashu wallet work.
 
 ## Stable Bets
 
@@ -32,12 +39,18 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Events are routed by stable app-owned ids.
 - App/runtime owns text mutation semantics.
 - `deno_core` remains the pragmatic default until a real feature forces promotion.
+- Domain-shaped OS APIs are fine for now: `Shadow.os.<domain>`, not a generalized capability framework.
 
 ## Approach
 
-- Make the operator/docs/check surface truthful before widening the contract again.
-- Attack one seam at a time: operator truth, viewport contract, scroll/input parity, Pixel lane decision, then capability shaping.
-- Prefer proofs on real host/VM/Pixel lanes over stdio-only coverage when picking the next chunk.
+- Copy the Nostr layering for Cashu before abstracting anything:
+  - JS runtime shim installs `Shadow.os.cashu`.
+  - Deno bootstrap maps tiny Cashu methods to Rust ops.
+  - Rust host owns persistence, CDK integration, and request validation.
+  - runtime apps keep importing thin wrappers from `@shadow/app-runtime-os`.
+- Attack one seam at a time: Cashu host state, tiny app API, wallet app flow, then live-mint proof.
+- Prefer a truthful host proof surface before shell/Pixel polish for the wallet lane.
+- Assume one trusted mint and sats-only in the first slice unless a real use-case forces more.
 - Keep app/runtime APIs pre-alpha: optimize for fast iteration and clean design, not backwards compatibility.
 
 ## Milestones
@@ -46,7 +59,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Unify runtime viewport sizing across shell, Blitz host window, compositor launch, VM, and Pixel.
 - [x] Finish the remaining real-app input gap: host wheel / pan proof and live VM/compositor shelve/reopen proof are both in.
 - [x] Decide the near-term Pixel lane so device work stops splitting: push the real shell on device; keep direct runtime-app paths as fallback/probe lanes only.
-- [ ] Keep the OS capability seam small, reusable, and easy to change while we iterate quickly toward a good app API.
+- [x] Land a host-only `Shadow.os.cashu` seam backed by CDK with durable seed + wallet state.
+- [x] Ship a runtime Cashu wallet app that can add a trusted mint, show balance, receive a token, and send a token.
+- [x] Add Lightning invoice funding and payment flows so the wallet is actually useful.
+- [ ] Revisit shared capability conventions only after both `Shadow.os.nostr` and `Shadow.os.cashu` feel real in app code.
 
 ## Near-Term Steps
 
@@ -54,12 +70,27 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Move the host window and Pixel runtime scripts off hardcoded `384x720` and raw panel sizing onto one shared viewport contract.
 - [x] Prove the existing host wheel / pan path and stop drag gestures from collapsing into synthetic runtime clicks.
 - [x] Add a Pixel shell-side app launch/control hook so `app=timeline` opens through the real shell path instead of only booting home.
-- [ ] Decide whether any app actually needs a JS-facing wheel/scroll event shape, now that host and VM/native scroll lanes are both proven.
 - [x] Add a real rooted-Pixel shell lifecycle proof (`timeline` -> home -> reopen) so the primary device lane is validated past first launch.
 - [x] Re-check the VM shelve/reopen lane after the viewport cleanup and decide whether it needs extra runtime-specific assertions.
+- [x] Define the first Cashu wallet contract around one trusted mint, sats, durable seed storage, and a durable wallet db.
+- [x] Add a new Rust runtime host extension beside `runtime-nostr-host` and compose it into `shadow-runtime-host`.
+- [x] Extend `shadow_runtime_os.js` and the runtime bootstrap so apps can call a tiny `Shadow.os.cashu` surface through `@shadow/app-runtime-os`.
+- [x] Build the first runtime Cashu wallet app with the minimal flows: add mint, balance, receive pasted token, send token.
+- [x] Add a deterministic host smoke for Cashu persistence and wallet actions before any Pixel-specific wallet work.
+- [ ] Prove Cashu wallet restart persistence through a real host-session relaunch and a shell relaunch.
+- [ ] Run the Cashu wallet through the VM / Pixel shell lane as the next operator proof, not a special direct-runtime path.
 
 ## Implementation Notes
 
+- 2026-04-08: The next serious app is now the Cashu wallet, not a generic capability exercise.
+  - The current Nostr path already proves the shape we should copy: `shadow_runtime_os.js` exposes domain wrappers, the Deno bootstrap installs `Shadow.os.<domain>`, and a Rust extension crate owns the real host behavior.
+  - `cdk` is cloned locally at `~/code/oss/cdk` (`v0.16.0` tag exists; HEAD is `94d06f46` on 2026-04-07). Its README and CLI surface are explicit that the project is alpha, which matches this repo's pre-alpha posture.
+  - The smallest wallet slice that looks useful is not the whole mint/melt surface. Start with durable wallet state plus trusted-mint balance / receive / send. Add invoice minting only after that lane is solid.
+- 2026-04-08: The first usable Cashu wallet tranche is now in.
+  - `shadow_runtime_os.js` is now a thin hard-require bridge. It no longer carries app-side mock/fallback behavior for `nostr` or `cashu`; if the runtime host does not install `Shadow.os.<domain>`, the app fails loudly.
+  - `runtime-cashu-host` now keeps one session-scoped CDK repository in Deno op state instead of reopening `redb` on every call. That fixed the `Database already open. Cannot acquire lock.` failure and matches the intended host architecture better.
+  - The durable wallet store is `redb` (`wallet.redb`) plus a file-backed BIP39 mnemonic under `SHADOW_RUNTIME_CASHU_DATA_DIR`. `cdk-sqlite` was intentionally skipped because it collided with the existing Nostr sqlite seam on `libsqlite3-sys`.
+  - `scripts/runtime_app_cashu_wallet_smoke.sh` now boots a local `cdk-mintd` fakewallet mint, proves trusted-mint persistence and wallet actions through the live runtime host, and finishes with invoice funding plus invoice payment using the wallet itself.
 - 2026-04-07: `just runtime-app-keyboard-smoke` passed. That already covers focus, keyboard input, and selection metadata on the bundled host seam.
 - 2026-04-07: `just runtime-app-nostr-timeline-smoke` passed. That proves relay sync, keyboard compose, restart behavior, and cache-backed timeline reload on the host runtime seam.
 - 2026-04-07: The old split host commands (`runtime-app-document-smoke`, `runtime-app-click-smoke`, `runtime-app-input-smoke`, `runtime-app-focus-smoke`, `runtime-app-toggle-smoke`, `runtime-app-selection-smoke`, `runtime-app-host-smoke`, `runtime-app-compositor-smoke-gpu`) were removed from the live `just` surface because their scripts no longer exist.
@@ -93,6 +124,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 ## Current Runtime Contract
 
 - JS -> Rust: `{ html, css? }`
+- `Shadow.os.nostr` and `Shadow.os.cashu` both exist today as concrete host domains.
 - Rust -> JS events always include:
   - `type`
   - `targetId`
@@ -106,7 +138,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## What Is Out Of Scope Right Now
 
-- Adding more apps just to prove variety.
+- Adding more apps just to prove variety beyond the Cashu wallet tranche.
 - Promoting `deno_runtime` by default without concrete feature pressure.
 - Perfect browser compatibility.
 - IME / composition correctness.

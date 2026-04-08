@@ -105,14 +105,14 @@ run_desktop() {
   case "$app" in
     shell)
       ;;
-    counter|timeline|podcast)
+    counter|timeline|podcast|cashu)
       compositor_env=(
         "SHADOW_COMPOSITOR_AUTO_LAUNCH=1"
         "SHADOW_COMPOSITOR_START_APP_ID=$app"
       )
       ;;
     *)
-      echo "ui-run: target=desktop currently supports app=shell, app=counter, app=timeline, or app=podcast" >&2
+      echo "ui-run: target=desktop currently supports app=shell, app=counter, app=timeline, app=podcast, or app=cashu" >&2
       exit 1
       ;;
   esac
@@ -149,13 +149,13 @@ run_vm() {
       exec_or_echo "$SCRIPT_DIR/ui_vm_run.sh"
       return 0
       ;;
-    counter|timeline|podcast)
+    counter|timeline|podcast|cashu)
       echo "ui-run: target=vm auto-opens app=$app through the guest shell session" >&2
       exec_or_echo "$SCRIPT_DIR/ui_vm_run.sh" "SHADOW_UI_VM_START_APP_ID=$app"
       return 0
       ;;
     *)
-      echo "ui-run: target=vm currently supports app=shell, app=counter, app=timeline, or app=podcast" >&2
+      echo "ui-run: target=vm currently supports app=shell, app=counter, app=timeline, app=podcast, or app=cashu" >&2
       exit 1
       ;;
   esac
@@ -168,16 +168,12 @@ run_pixel() {
     shell)
       echo "ui-run: target=pixel launches the full home shell" >&2
       ;;
-    timeline)
-      echo "ui-run: target=pixel launches the full home shell and asks it to open timeline" >&2
-      shell_env=("PIXEL_SHELL_START_APP_ID=timeline")
-      ;;
-    podcast)
-      echo "ui-run: target=pixel launches the full home shell and asks it to open podcast" >&2
-      shell_env=("PIXEL_SHELL_START_APP_ID=podcast")
+    counter|timeline|podcast|cashu)
+      echo "ui-run: target=pixel launches the full home shell and asks it to open $app" >&2
+      shell_env=("PIXEL_SHELL_START_APP_ID=$app")
       ;;
     *)
-      echo "ui-run: target=pixel currently supports app=shell, app=timeline, or app=podcast" >&2
+      echo "ui-run: target=pixel currently supports app=shell, app=counter, app=timeline, app=podcast, or app=cashu" >&2
       exit 1
       ;;
   esac

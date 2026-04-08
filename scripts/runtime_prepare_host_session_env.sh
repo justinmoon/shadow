@@ -20,6 +20,11 @@ timeline_session_json="$(
   SHADOW_RUNTIME_APP_CACHE_DIR="build/runtime/app-nostr-timeline-host" \
     "$SCRIPT_DIR/runtime_prepare_host_session.sh"
 )"
+cashu_session_json="$(
+  SHADOW_RUNTIME_APP_INPUT_PATH="runtime/app-cashu-wallet/app.tsx" \
+  SHADOW_RUNTIME_APP_CACHE_DIR="build/runtime/app-cashu-wallet-host" \
+    "$SCRIPT_DIR/runtime_prepare_host_session.sh"
+)"
 
 if [[ "$enable_podcast_app" == "1" ]]; then
   podcast_asset_json="$("$SCRIPT_DIR/prepare_podcast_player_demo_assets.sh")"
@@ -64,6 +69,7 @@ fi
 DEFAULT_SESSION_JSON="$default_session_json" \
 COUNTER_SESSION_JSON="$counter_session_json" \
 TIMELINE_SESSION_JSON="$timeline_session_json" \
+CASHU_SESSION_JSON="$cashu_session_json" \
 PODCAST_SESSION_JSON="$podcast_session_json" \
 python3 - <<'PY'
 import json
@@ -73,6 +79,7 @@ import shlex
 default_session = json.loads(os.environ["DEFAULT_SESSION_JSON"])
 counter_session = json.loads(os.environ["COUNTER_SESSION_JSON"])
 timeline_session = json.loads(os.environ["TIMELINE_SESSION_JSON"])
+cashu_session = json.loads(os.environ["CASHU_SESSION_JSON"])
 podcast_session_json = os.environ.get("PODCAST_SESSION_JSON", "").strip()
 rewrite_from = os.environ.get("SHADOW_RUNTIME_APP_BUNDLE_REWRITE_FROM")
 rewrite_to = os.environ.get("SHADOW_RUNTIME_APP_BUNDLE_REWRITE_TO")
@@ -83,11 +90,14 @@ def rewrite(path: str) -> str:
         return rewrite_to + path[len(rewrite_from):]
     return path
 
+
 exports = {
     "SHADOW_RUNTIME_APP_BUNDLE_PATH": rewrite(default_session["bundlePath"]),
     "SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH": rewrite(counter_session["bundlePath"]),
     "SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH": rewrite(timeline_session["bundlePath"]),
+    "SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH": rewrite(cashu_session["bundlePath"]),
     "SHADOW_RUNTIME_HOST_BINARY_PATH": default_session["runtimeHostBinaryPath"],
+    "SHADOW_RUNTIME_CASHU_DATA_DIR": "/var/lib/shadow-ui/runtime-cashu",
     "SHADOW_RUNTIME_NOSTR_DB_PATH": "/var/lib/shadow-ui/runtime-nostr.sqlite3",
 }
 

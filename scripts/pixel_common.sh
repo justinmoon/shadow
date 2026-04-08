@@ -501,6 +501,10 @@ pixel_runtime_podcast_bundle_artifact() {
   pixel_artifact_path shadow-runtime-app-podcast-bundle.js
 }
 
+pixel_runtime_cashu_bundle_artifact() {
+  pixel_artifact_path shadow-runtime-app-cashu-bundle.js
+}
+
 pixel_runtime_host_bundle_artifact_dir() {
   pixel_artifact_path shadow-runtime-gnu
 }
@@ -559,6 +563,10 @@ pixel_runtime_timeline_bundle_dst() {
 
 pixel_runtime_podcast_bundle_dst() {
   printf '%s/runtime-app-podcast-bundle.js\n' "$(pixel_runtime_linux_dir)"
+}
+
+pixel_runtime_cashu_bundle_dst() {
+  printf '%s/runtime-app-cashu-bundle.js\n' "$(pixel_runtime_linux_dir)"
 }
 
 pixel_runtime_host_binary_dst() {

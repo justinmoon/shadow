@@ -1,0 +1,15 @@
+[package]
+name = "runtime-cashu-host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bip39 = "2.2.0"
+cdk = { version = "0.16.0", default-features = false, features = ["wallet"] }
+cdk-redb = { version = "0.16.0", default-features = false, features = ["wallet"] }
+deno_core = { version = "=0.393.0", default-features = false, features = ["include_icu_data"] }
+deno_error = "=0.7.1"
+getrandom = "0.2.16"
+qrcodegen = "1.8.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"

@@ -10,6 +10,7 @@ REPO_FLAKE_REF="${SHADOW_RUNTIME_FLAKE_REF:-${REPO_ROOT}}"
 cd "$REPO_ROOT"
 runtime_host_package_attr="${SHADOW_RUNTIME_HOST_PACKAGE_ATTR_OVERRIDE:-shadow-runtime-host}"
 runtime_host_binary_name="${SHADOW_RUNTIME_HOST_BINARY_NAME_OVERRIDE:-shadow-runtime-host}"
+runtime_host_binary_override="${SHADOW_RUNTIME_HOST_BINARY_PATH_OVERRIDE:-}"
 
 bundle_json="$(
   nix develop --accept-flake-config "${REPO_FLAKE_REF}#runtime" -c deno run --quiet \
@@ -40,10 +41,14 @@ print(os.path.abspath(data["bundleDir"]))
 '
 )"
 
-runtime_host_prefix="$(
-  nix build --accept-flake-config "${REPO_FLAKE_REF}#${runtime_host_package_attr}" --no-link --print-out-paths
-)"
-runtime_host_binary_path="${runtime_host_prefix}/bin/${runtime_host_binary_name}"
+if [[ -n "$runtime_host_binary_override" ]]; then
+  runtime_host_binary_path="$runtime_host_binary_override"
+else
+  runtime_host_prefix="$(
+    nix build --accept-flake-config "${REPO_FLAKE_REF}#${runtime_host_package_attr}" --no-link --print-out-paths
+  )"
+  runtime_host_binary_path="${runtime_host_prefix}/bin/${runtime_host_binary_name}"
+fi
 
 python3 - "$bundle_path" "$bundle_dir" "$runtime_host_binary_path" "$INPUT_PATH" "$CACHE_DIR" "$runtime_host_package_attr" <<'PY'
 import json

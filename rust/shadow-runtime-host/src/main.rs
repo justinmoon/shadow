@@ -53,6 +53,7 @@ async fn load_runtime(main_module: &Url) -> Result<JsRuntime> {
         extensions: vec![
             runtime_nostr_host::init_extension(),
             runtime_audio_host::init_extension(),
+            runtime_cashu_host::init_extension(),
         ],
         ..Default::default()
     });

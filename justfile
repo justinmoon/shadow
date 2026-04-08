@@ -51,11 +51,16 @@ runtime-app-nostr-gm-smoke:
 runtime-app-nostr-timeline-smoke:
 	@scripts/runtime_app_nostr_timeline_smoke.sh
 
+# Run the Cashu wallet runtime app against a local fakewallet mint and prove fund/send/receive/pay flows
+runtime-app-cashu-wallet-smoke:
+	@scripts/runtime_app_cashu_wallet_smoke.sh
+
 # Run the currently supported bundled host runtime smokes
 runtime-app-host-smokes:
 	@just runtime-app-keyboard-smoke
 	@just runtime-app-nostr-gm-smoke
 	@just runtime-app-nostr-timeline-smoke
+	@just runtime-app-cashu-wallet-smoke
 
 # Run the static GPU Blitz demo as a Wayland client under the guest compositor smoke path
 blitz-demo-guest-compositor-smoke-gpu:

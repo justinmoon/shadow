@@ -55,6 +55,20 @@ check_dispatch_case \
   app=podcast target=vm
 
 check_dispatch_case \
+  vm_cashu_open \
+  0 \
+  "$(printf 'env=SHADOW_UI_VM_START_APP_ID=cashu\ncommand=%s' "$SCRIPT_DIR/ui_vm_run.sh")" \
+  "" \
+  app=cashu target=vm
+
+check_dispatch_case \
+  pixel_counter_hold \
+  0 \
+  "$(printf 'env=PIXEL_SHELL_START_APP_ID=counter\ncommand=%s' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "target=pixel launches the full home shell and asks it to open counter" \
+  app=counter target=pixel
+
+check_dispatch_case \
   pixel_timeline_hold \
   0 \
   "$(printf 'env=PIXEL_SHELL_START_APP_ID=timeline\ncommand=%s' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
@@ -69,6 +83,13 @@ check_dispatch_case \
   app=podcast target=pixel
 
 check_dispatch_case \
+  pixel_cashu_hold \
+  0 \
+  "$(printf 'env=PIXEL_SHELL_START_APP_ID=cashu\ncommand=%s' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "target=pixel launches the full home shell and asks it to open cashu" \
+  app=cashu target=pixel
+
+check_dispatch_case \
   pixel_shell_no_hold \
   0 \
   "command=$SCRIPT_DIR/pixel_shell_drm.sh" \
@@ -76,17 +97,17 @@ check_dispatch_case \
   app=shell target=pixel hold=0
 
 check_dispatch_case \
-  pixel_counter_rejected \
+  pixel_unknown_rejected \
   1 \
   "" \
-  "target=pixel currently supports app=shell, app=timeline, or app=podcast" \
-  app=counter target=pixel
+  "target=pixel currently supports app=shell, app=counter, app=timeline, app=podcast, or app=cashu" \
+  app=unknown target=pixel
 
 check_dispatch_case \
   desktop_unknown_rejected \
   1 \
   "" \
-  "target=vm currently supports app=shell, app=counter, app=timeline, or app=podcast" \
+  "target=vm currently supports app=shell, app=counter, app=timeline, app=podcast, or app=cashu" \
   app=unknown target=desktop
 
 printf 'ui_run_dispatch_smoke: ok\n'
