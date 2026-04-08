@@ -302,6 +302,14 @@ ui-vm-timeline-smoke:
 vm-timeline-smoke:
 	@just ui-vm-timeline-smoke
 
+# Prove the camera app can boot as the initial foreground app in the local UI VM
+ui-vm-camera-smoke:
+	@scripts/ui_vm_camera_smoke.sh
+
+# Alias for ui-vm-camera-smoke
+vm-camera-smoke:
+	@just ui-vm-camera-smoke
+
 # Ask the compositor to open an app by ID
 ui-vm-open app="counter":
 	@scripts/shadowctl vm open "{{app}}"
