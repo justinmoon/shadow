@@ -8,7 +8,5 @@ ensure_bootimg_shell "$@"
 
 cd "$(repo_root)"
 
-export SHADOW_UI_SMOKE_NAMESPACE="${SHADOW_UI_SMOKE_NAMESPACE:-ci-$(worktree_basename)-ui-smoke-$$}"
-
-just pre-commit
-just ui-smoke
+# Keep nightly truthful until the heavier lanes exist.
+just pre-merge

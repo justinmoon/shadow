@@ -21,17 +21,17 @@ cleanup
   "$SCRIPT_DIR/ui_vm_run.sh"
 ) >"$RUN_LOG" 2>&1 &
 
-"$SCRIPT_DIR/shadowctl" vm wait-ready
-"$SCRIPT_DIR/shadowctl" vm open timeline >/dev/null
+"$SCRIPT_DIR/shadowctl" wait-ready -t vm
+"$SCRIPT_DIR/shadowctl" open timeline -t vm >/dev/null
 sleep 2
-state_after_open="$("$SCRIPT_DIR/shadowctl" vm state --json)"
-"$SCRIPT_DIR/shadowctl" vm home >/dev/null
+state_after_open="$("$SCRIPT_DIR/shadowctl" state -t vm --json)"
+"$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
 sleep 1
-state_after_home="$("$SCRIPT_DIR/shadowctl" vm state --json)"
-"$SCRIPT_DIR/shadowctl" vm open timeline >/dev/null
+state_after_home="$("$SCRIPT_DIR/shadowctl" state -t vm --json)"
+"$SCRIPT_DIR/shadowctl" open timeline -t vm >/dev/null
 sleep 2
-state_after_reopen="$("$SCRIPT_DIR/shadowctl" vm state --json)"
-"$SCRIPT_DIR/shadowctl" vm screenshot "$SHOT_PATH" >/dev/null
+state_after_reopen="$("$SCRIPT_DIR/shadowctl" state -t vm --json)"
+"$SCRIPT_DIR/shadowctl" screenshot -t vm "$SHOT_PATH" >/dev/null
 
 STATE_AFTER_OPEN="$state_after_open" \
 STATE_AFTER_HOME="$state_after_home" \

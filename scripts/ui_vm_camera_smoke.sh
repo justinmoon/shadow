@@ -21,10 +21,10 @@ cleanup
   SHADOW_UI_VM_START_APP_ID=camera "$SCRIPT_DIR/ui_vm_run.sh"
 ) >"$RUN_LOG" 2>&1 &
 
-"$SCRIPT_DIR/shadowctl" vm wait-ready
+"$SCRIPT_DIR/shadowctl" wait-ready -t vm
 sleep 2
-state_after_boot="$("$SCRIPT_DIR/shadowctl" vm state --json)"
-"$SCRIPT_DIR/shadowctl" vm screenshot "$SHOT_PATH" >/dev/null
+state_after_boot="$("$SCRIPT_DIR/shadowctl" state -t vm --json)"
+"$SCRIPT_DIR/shadowctl" screenshot -t vm "$SHOT_PATH" >/dev/null
 
 STATE_AFTER_BOOT="$state_after_boot" \
 SHOT_PATH="$SHOT_PATH" \

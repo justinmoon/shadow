@@ -10,7 +10,20 @@ import shlex
 import socket
 import subprocess
 import sys
+import time
+from dataclasses import dataclass
 from typing import Any
+
+
+PIXEL_DEFAULT_RUNTIME_DIR = "/data/local/tmp/shadow-runtime"
+GETPROP_RE = re.compile(r"^\[([^\]]+)\]: \[(.*)\]$")
+
+
+@dataclass(frozen=True)
+class TargetRef:
+    id: str
+    kind: str
+    serial: str | None = None
 
 
 def repo_root() -> pathlib.Path:
@@ -21,7 +34,7 @@ def state_dir() -> pathlib.Path:
     return repo_root() / ".shadow-vm"
 
 
-def socket_path() -> pathlib.Path:
+def qmp_socket_path() -> pathlib.Path:
     return state_dir() / "shadow-ui-vm.sock"
 
 
@@ -44,8 +57,19 @@ def ssh_base() -> list[str]:
     ]
 
 
-def run_local(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, text=True, capture_output=True, check=check)
+def run_local(
+    command: list[str],
+    *,
+    text: bool = True,
+    capture_output: bool = True,
+    check: bool = True,
+) -> subprocess.CompletedProcess[Any]:
+    return subprocess.run(
+        command,
+        text=text,
+        capture_output=capture_output,
+        check=check,
+    )
 
 
 def run_remote(
@@ -91,7 +115,7 @@ def running_apps(process_lines: list[str]) -> list[str]:
 
 
 def qmp_request(command: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-    qmp_socket = socket_path()
+    qmp_socket = qmp_socket_path()
     if not qmp_socket.exists():
         raise FileNotFoundError(f"shadowctl: missing QMP socket {qmp_socket}")
 
@@ -142,13 +166,15 @@ def _qmp_read_message(client: socket.socket) -> dict[str, Any]:
 def vm_status_payload() -> dict[str, Any]:
     local_processes = vm_processes()
     payload: dict[str, Any] = {
+        "kind": "vm",
+        "target": "vm",
         "local": {
             "state_dir": str(state_dir()),
-            "socket_path": str(socket_path()),
-            "socket_exists": socket_path().exists(),
+            "socket_path": str(qmp_socket_path()),
+            "socket_exists": qmp_socket_path().exists(),
             "vm_processes": local_processes,
             "repo_source": vm_repo_source(local_processes),
-        }
+        },
     }
 
     remote_script = r"""
@@ -223,7 +249,7 @@ PY
     return payload
 
 
-def print_status(payload: dict[str, Any]) -> None:
+def print_vm_status(payload: dict[str, Any]) -> None:
     local = payload["local"]
     remote = payload["remote"]
     print(f"socket: {'yes' if local['socket_exists'] else 'no'} ({local['socket_path']})")
@@ -260,7 +286,7 @@ def print_status(payload: dict[str, Any]) -> None:
         print(f"  {line}")
 
 
-def diagnose(payload: dict[str, Any]) -> list[str]:
+def diagnose_vm(payload: dict[str, Any]) -> list[str]:
     issues: list[str] = []
     remote = payload["remote"]
     if not remote.get("reachable"):
@@ -273,18 +299,18 @@ def diagnose(payload: dict[str, Any]) -> list[str]:
         )
 
     processes = "\n".join(remote.get("processes", []))
-    log_tail = remote.get("session_log_tail", [])
-
     if not remote.get("control_socket_exists"):
         issues.append("Compositor control socket is missing.")
     if not remote.get("wayland_sockets"):
         issues.append("No Wayland sockets are present in the guest runtime dir.")
     if remote.get("compile_in_progress") and not remote.get("ui_ready"):
         issues.append("Guest UI build is still in progress; blank compositor background is expected.")
+    if "shadow-compositor" not in processes and remote.get("ui_ready"):
+        issues.append("Control socket exists but shadow-compositor is not visible in the guest process list.")
     return issues
 
 
-def control_request(command: str) -> subprocess.CompletedProcess[str]:
+def vm_control_request(command: str) -> subprocess.CompletedProcess[str]:
     script = f"""
 set -euo pipefail
 export XDG_RUNTIME_DIR="${{XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
@@ -324,44 +350,386 @@ def parse_control_state(response: str) -> dict[str, Any]:
         key, value = line.split("=", 1)
         state[key] = value
 
+    control_socket = state.get("control_socket") or state.get("socket") or None
     return {
         "focused": state.get("focused") or None,
         "mapped": [item for item in state.get("mapped", "").split(",") if item],
         "launched": [item for item in state.get("launched", "").split(",") if item],
         "shelved": [item for item in state.get("shelved", "").split(",") if item],
         "windows": int(state.get("windows", "0")),
-        "socket": state.get("socket") or None,
+        "transport": state.get("transport") or None,
+        "control_socket": control_socket,
+        "socket": control_socket,
     }
 
 
-def cmd_vm_status(args: argparse.Namespace) -> int:
-    payload = vm_status_payload()
+def print_control_state(state: dict[str, Any]) -> None:
+    print(f"focused={state.get('focused') or ''}")
+    print(f"mapped={','.join(state.get('mapped', []))}")
+    print(f"launched={','.join(state.get('launched', []))}")
+    print(f"shelved={','.join(state.get('shelved', []))}")
+    print(f"windows={state.get('windows', 0)}")
+    print(f"transport={state.get('transport') or ''}")
+    print(f"control_socket={state.get('control_socket') or ''}")
+    print(f"socket={state.get('socket') or ''}")
+
+
+def adb_devices() -> list[dict[str, str]]:
+    result = run_local(["adb", "devices"], check=False)
+    if result.returncode != 0:
+        message = result.stderr.strip() or result.stdout.strip() or "adb devices failed"
+        raise RuntimeError(f"shadowctl: {message}")
+
+    devices: list[dict[str, str]] = []
+    for raw_line in result.stdout.splitlines()[1:]:
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        serial = parts[0]
+        state = parts[1] if len(parts) > 1 else "unknown"
+        devices.append(
+            {
+                "id": serial,
+                "kind": "pixel",
+                "state": state,
+            }
+        )
+    return devices
+
+
+def adb_device_map() -> dict[str, str]:
+    return {entry["id"]: entry["state"] for entry in adb_devices()}
+
+
+def resolve_pixel_serial(requested: str | None) -> str:
+    devices = adb_device_map()
+
+    if requested:
+        if requested not in devices:
+            raise SystemExit(
+                f"shadowctl: requested target {requested!r} is not connected; run 'shadowctl devices'"
+            )
+        if devices[requested] != "device":
+            raise SystemExit(
+                f"shadowctl: target {requested!r} is present via adb but not ready (state={devices[requested]})"
+            )
+        return requested
+
+    ready = [serial for serial, state in devices.items() if state == "device"]
+    if not ready:
+        raise SystemExit("shadowctl: no authorized adb device detected")
+    if len(ready) > 1:
+        joined = "\n  ".join(ready)
+        raise SystemExit(
+            "shadowctl: multiple adb devices detected; pass --target with one of:\n"
+            f"  {joined}"
+        )
+    return ready[0]
+
+
+def resolve_target(requested: str | None, *, default_kind: str = "vm") -> TargetRef:
+    effective = requested or default_kind
+    if effective == "vm":
+        return TargetRef(id="vm", kind="vm")
+    if effective == "pixel":
+        serial = resolve_pixel_serial(None)
+        return TargetRef(id=serial, kind="pixel", serial=serial)
+    if effective.startswith("pixel:"):
+        serial = resolve_pixel_serial(effective.split(":", 1)[1])
+        return TargetRef(id=serial, kind="pixel", serial=serial)
+
+    devices = adb_device_map()
+    if effective in devices:
+        serial = resolve_pixel_serial(effective)
+        return TargetRef(id=serial, kind="pixel", serial=serial)
+
+    raise SystemExit(
+        f"shadowctl: unknown target {effective!r}; run 'shadowctl devices' for valid ids"
+    )
+
+
+def pixel_runtime_dir() -> str:
+    return os.environ.get("PIXEL_RUNTIME_DIR", PIXEL_DEFAULT_RUNTIME_DIR)
+
+
+def pixel_control_socket_path() -> str:
+    return f"{pixel_runtime_dir()}/shadow-control.sock"
+
+
+def pixel_adb(
+    serial: str,
+    *argv: str,
+    text: bool = True,
+    capture_output: bool = True,
+    check: bool = True,
+) -> subprocess.CompletedProcess[Any]:
+    return run_local(
+        ["adb", "-s", serial, *argv],
+        text=text,
+        capture_output=capture_output,
+        check=check,
+    )
+
+
+def pixel_su_candidates() -> list[str]:
+    primary = os.environ.get("PIXEL_SU_BIN", "/debug_ramdisk/su")
+    return [primary, "su"] if primary != "su" else ["su"]
+
+
+def pixel_root_command(
+    serial: str,
+    command: str,
+    *,
+    text: bool = True,
+    capture_output: bool = True,
+) -> subprocess.CompletedProcess[Any]:
+    last_result: subprocess.CompletedProcess[Any] | None = None
+    for su_bin in pixel_su_candidates():
+        last_result = pixel_adb(
+            serial,
+            "shell",
+            f"{su_bin} 0 sh -c {shlex.quote(command)}",
+            text=text,
+            capture_output=capture_output,
+            check=False,
+        )
+        if last_result.returncode == 0:
+            return last_result
+        stderr = ""
+        stdout = ""
+        if isinstance(last_result.stderr, str):
+            stderr = last_result.stderr
+        if isinstance(last_result.stdout, str):
+            stdout = last_result.stdout
+        failure_output = f"{stderr}\n{stdout}"
+        if "inaccessible or not found" not in failure_output and "not found" not in failure_output:
+            return last_result
+    if last_result is None:
+        raise RuntimeError("shadowctl: no Pixel root transport candidates configured")
+    return last_result
+
+
+def pixel_root_id(serial: str) -> str | None:
+    result = pixel_root_command(serial, "id")
+    if result.returncode != 0:
+        return None
+    output = str(result.stdout).replace("\r", "").strip()
+    return output or None
+
+
+def pixel_root_test(serial: str, command: str) -> bool:
+    return pixel_root_command(serial, command, capture_output=True).returncode == 0
+
+
+def pixel_control_request(serial: str, command: str) -> subprocess.CompletedProcess[str]:
+    control_socket = pixel_control_socket_path()
+    phone_script = (
+        f"control_socket={shlex.quote(control_socket)}; "
+        'if [ ! -S "$control_socket" ]; then '
+        'echo "shadowctl: missing compositor control socket $control_socket" >&2; '
+        "exit 1; "
+        "fi; "
+        f"printf '%s\\n' {shlex.quote(command)} | nc -U \"$control_socket\""
+    )
+    return pixel_root_command(serial, phone_script)
+
+
+def pixel_getprops(serial: str) -> dict[str, str]:
+    result = pixel_adb(serial, "shell", "getprop", check=False)
+    if result.returncode != 0:
+        message = result.stderr.strip() or result.stdout.strip() or "adb shell getprop failed"
+        raise RuntimeError(f"shadowctl: {message}")
+    props: dict[str, str] = {}
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.replace("\r", "").strip()
+        match = GETPROP_RE.match(line)
+        if match:
+            props[match.group(1)] = match.group(2)
+    return props
+
+
+def pixel_status_payload(target: TargetRef) -> dict[str, Any]:
+    serial = target.serial or target.id
+    props = pixel_getprops(serial)
+    shell_id_result = pixel_adb(serial, "shell", "id", check=False)
+    shell_id = shell_id_result.stdout.replace("\r", "").strip() or None
+    su_user = pixel_root_id(serial)
+    control_socket = pixel_control_socket_path()
+    control_socket_exists = False
+    state: dict[str, Any] | None = None
+    state_error: str | None = None
+
+    if su_user:
+        control_socket_exists = pixel_root_test(serial, f"[ -S {shlex.quote(control_socket)} ]")
+        if control_socket_exists:
+            state_result = pixel_control_request(serial, "state")
+            if state_result.returncode == 0:
+                state = parse_control_state(state_result.stdout)
+            else:
+                state_error = (state_result.stderr or state_result.stdout).strip()
+
+    return {
+        "kind": "pixel",
+        "target": target.id,
+        "serial": serial,
+        "adb_state": "device",
+        "model": props.get("ro.product.model"),
+        "device": props.get("ro.product.device"),
+        "fingerprint": props.get("ro.build.fingerprint"),
+        "cpu_abi": props.get("ro.product.cpu.abi"),
+        "boot_completed": props.get("sys.boot_completed") or props.get("dev.bootcomplete") or "0",
+        "slot_suffix": props.get("ro.boot.slot_suffix") or "unknown",
+        "flash_locked": props.get("ro.boot.flash.locked") or "unknown",
+        "verified_boot_state": props.get("ro.boot.verifiedbootstate") or "unknown",
+        "debuggable": props.get("ro.debuggable") or "unknown",
+        "shell_user": shell_id,
+        "su_available": su_user is not None,
+        "su_user": su_user,
+        "control_socket": control_socket,
+        "control_socket_exists": control_socket_exists,
+        "ui_ready": state is not None,
+        "state": state,
+        "state_error": state_error,
+    }
+
+
+def print_pixel_status(payload: dict[str, Any]) -> None:
+    print(f"serial: {payload['serial']}")
+    print(f"model: {payload.get('model') or 'unknown'}")
+    print(f"device: {payload.get('device') or 'unknown'}")
+    print(f"fingerprint: {payload.get('fingerprint') or 'unknown'}")
+    print(f"cpu_abi: {payload.get('cpu_abi') or 'unknown'}")
+    print(f"boot_completed: {payload.get('boot_completed') or '0'}")
+    print(f"slot_suffix: {payload.get('slot_suffix') or 'unknown'}")
+    print(f"flash_locked: {payload.get('flash_locked') or 'unknown'}")
+    print(f"verified_boot_state: {payload.get('verified_boot_state') or 'unknown'}")
+    print(f"debuggable: {payload.get('debuggable') or 'unknown'}")
+    print(f"shell_user: {payload.get('shell_user') or 'unknown'}")
+    print(f"su_available: {'yes' if payload.get('su_available') else 'no'}")
+    if payload.get("su_user"):
+        print(f"su_user: {payload['su_user']}")
+    print(
+        f"control socket: {'yes' if payload.get('control_socket_exists') else 'no'} "
+        f"({payload.get('control_socket')})"
+    )
+    print(f"ui ready: {'yes' if payload.get('ui_ready') else 'no'}")
+    state = payload.get("state")
+    if state:
+        print(f"focused: {state.get('focused') or ''}")
+        print("mapped:", ", ".join(state.get("mapped", [])) or "none")
+        print("shelved:", ", ".join(state.get("shelved", [])) or "none")
+    elif payload.get("state_error"):
+        print(f"state error: {payload['state_error']}")
+
+
+def diagnose_pixel(payload: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    if payload.get("boot_completed") != "1":
+        issues.append("Android boot has not completed yet.")
+    if not payload.get("su_available"):
+        issues.append("Root shell is unavailable.")
+    if payload.get("su_available") and not payload.get("control_socket_exists"):
+        issues.append("Shadow shell control socket is not live on the device.")
+    if payload.get("control_socket_exists") and not payload.get("ui_ready"):
+        issues.append("Control socket exists but the shell did not answer a state request.")
+    return issues
+
+
+def device_entries() -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    local_processes = vm_processes()
+    if local_processes or qmp_socket_path().exists():
+        entries.append(
+            {
+                "id": "vm",
+                "kind": "vm",
+                "state": "running",
+            }
+        )
+    entries.extend(adb_devices())
+    return entries
+
+
+def print_device_entries(entries: list[dict[str, Any]]) -> None:
+    if not entries:
+        print("no running targets found")
+        return
+    print("id\tkind\tstate")
+    for entry in entries:
+        print(f"{entry['id']}\t{entry['kind']}\t{entry['state']}")
+
+
+def control_request_for(target: TargetRef, command: str) -> subprocess.CompletedProcess[str]:
+    if target.kind == "vm":
+        return vm_control_request(command)
+    serial = target.serial or target.id
+    return pixel_control_request(serial, command)
+
+
+def cmd_devices(args: argparse.Namespace) -> int:
+    entries = device_entries()
     if args.json:
-      print(json.dumps(payload, indent=2, sort_keys=True))
+        print(json.dumps(entries, indent=2, sort_keys=True))
     else:
-      print_status(payload)
+        print_device_entries(entries)
     return 0
 
 
-def cmd_vm_logs(args: argparse.Namespace) -> int:
-    script = f"tail -n {args.lines} /var/lib/shadow-ui/log/shadow-ui-session.log"
-    result = run_remote(script, capture_output=False, check=False)
+def cmd_status(args: argparse.Namespace) -> int:
+    target = args.target_ref
+    payload = vm_status_payload() if target.kind == "vm" else pixel_status_payload(target)
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        if target.kind == "vm":
+            print_vm_status(payload)
+        else:
+            print_pixel_status(payload)
+    return 0
+
+
+def cmd_logs(args: argparse.Namespace) -> int:
+    target = args.target_ref
+    if target.kind == "vm":
+        script = f"tail -n {args.lines} /var/lib/shadow-ui/log/shadow-ui-session.log"
+        result = run_remote(script, capture_output=False, check=False)
+        return result.returncode
+    serial = target.serial or target.id
+    result = pixel_adb(serial, "logcat", "-d", "-t", str(args.lines), capture_output=False, check=False)
     return result.returncode
 
 
-def cmd_vm_journal(args: argparse.Namespace) -> int:
+def cmd_journal(args: argparse.Namespace) -> int:
     script = f"journalctl -b -u greetd.service -u shadow-ui-smoke.service --no-pager -n {args.lines}"
     result = run_remote(script, capture_output=False, check=False)
     return result.returncode
 
 
-def cmd_vm_doctor(args: argparse.Namespace) -> int:
-    payload = vm_status_payload()
-    issues = diagnose(payload)
+def cmd_doctor(args: argparse.Namespace) -> int:
+    target = args.target_ref
+    if target.kind == "vm":
+        payload = vm_status_payload()
+        issues = diagnose_vm(payload)
+        if args.json:
+            print(json.dumps({"status": payload, "issues": issues}, indent=2, sort_keys=True))
+        else:
+            print_vm_status(payload)
+            print()
+            if issues:
+                print("diagnosis:")
+                for issue in issues:
+                    print(f"  - {issue}")
+            else:
+                print("diagnosis: no obvious issues detected")
+        return 0
+
+    payload = pixel_status_payload(target)
+    issues = diagnose_pixel(payload)
     if args.json:
         print(json.dumps({"status": payload, "issues": issues}, indent=2, sort_keys=True))
     else:
-        print_status(payload)
+        print_pixel_status(payload)
         print()
         if issues:
             print("diagnosis:")
@@ -372,51 +740,82 @@ def cmd_vm_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_vm_screenshot(args: argparse.Namespace) -> int:
-    output = pathlib.Path(args.output).expanduser()
-    if not output.is_absolute():
-        output = repo_root() / output
+def resolve_output_path(target: TargetRef, output: str | None) -> pathlib.Path:
+    if output:
+        path = pathlib.Path(output).expanduser()
+        if not path.is_absolute():
+            path = repo_root() / path
+        return path
+    if target.kind == "vm":
+        return repo_root() / "build/ui-vm/shadow-ui-vm.ppm"
+    serial = target.serial or target.id
+    return repo_root() / f"build/pixel/{serial}-screenshot.png"
+
+
+def cmd_screenshot(args: argparse.Namespace) -> int:
+    target = args.target_ref
+    output = resolve_output_path(target, args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    qmp_request("screendump", {"filename": str(output)})
+
+    if target.kind == "vm":
+        qmp_request("screendump", {"filename": str(output)})
+        print(output)
+        return 0
+
+    serial = target.serial or target.id
+    result = pixel_adb(serial, "exec-out", "screencap", "-p", text=False, check=False)
+    if result.returncode != 0:
+        if result.stderr:
+            sys.stderr.write(result.stderr.decode("utf-8", errors="replace"))
+        return result.returncode
+    output.write_bytes(result.stdout)
     print(output)
     return 0
 
 
-def cmd_vm_state(args: argparse.Namespace) -> int:
-    payload = vm_status_payload()
-    if payload["remote"].get("control_socket_exists"):
-        result = control_request("state")
+def cmd_state(args: argparse.Namespace) -> int:
+    target = args.target_ref
+    if target.kind == "vm":
+        payload = vm_status_payload()
+        if payload["remote"].get("control_socket_exists"):
+            result = vm_control_request("state")
+            if result.returncode != 0:
+                if result.stderr:
+                    print(result.stderr, end="", file=sys.stderr)
+                return result.returncode
+            state = parse_control_state(result.stdout)
+        else:
+            state = {
+                "focused": None,
+                "mapped": payload["remote"].get("running_apps", []),
+                "launched": payload["remote"].get("running_apps", []),
+                "shelved": [],
+                "windows": 0,
+                "transport": None,
+                "control_socket": None,
+                "socket": None,
+                "compile_in_progress": payload["remote"].get("compile_in_progress"),
+                "ui_ready": payload["remote"].get("ui_ready"),
+                "remote_reachable": payload["remote"].get("reachable"),
+            }
+    else:
+        result = pixel_control_request(target.serial or target.id, "state")
         if result.returncode != 0:
             if result.stderr:
                 print(result.stderr, end="", file=sys.stderr)
             return result.returncode
         state = parse_control_state(result.stdout)
-    else:
-        state = {
-            "focused": None,
-            "mapped": payload["remote"].get("running_apps", []),
-            "launched": payload["remote"].get("running_apps", []),
-            "shelved": [],
-            "windows": 0,
-            "socket": None,
-            "compile_in_progress": payload["remote"].get("compile_in_progress"),
-            "ui_ready": payload["remote"].get("ui_ready"),
-            "remote_reachable": payload["remote"].get("reachable"),
-        }
+
+    state["kind"] = target.kind
+    state["target"] = target.id
     if args.json:
         print(json.dumps(state, indent=2, sort_keys=True))
     else:
-        print(f"focused={state['focused'] or ''}")
-        print(f"mapped={','.join(state['mapped'])}")
-        print(f"launched={','.join(state['launched'])}")
-        print(f"shelved={','.join(state['shelved'])}")
-        print(f"windows={state['windows']}")
-        print(f"socket={state['socket'] or ''}")
+        print_control_state(state)
     return 0
 
 
-def cmd_vm_open(args: argparse.Namespace) -> int:
-    result = control_request(f"launch {args.app_id}")
+def _print_control_result(result: subprocess.CompletedProcess[str]) -> int:
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
@@ -424,42 +823,52 @@ def cmd_vm_open(args: argparse.Namespace) -> int:
     return result.returncode
 
 
-def cmd_vm_home(_args: argparse.Namespace) -> int:
-    result = control_request("home")
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
-    return result.returncode
+def cmd_open(args: argparse.Namespace) -> int:
+    return _print_control_result(control_request_for(args.target_ref, f"launch {args.app_id}"))
 
 
-def cmd_vm_switcher(_args: argparse.Namespace) -> int:
-    result = control_request("switcher")
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
-    return result.returncode
+def cmd_home(args: argparse.Namespace) -> int:
+    return _print_control_result(control_request_for(args.target_ref, "home"))
 
 
-def cmd_vm_wait_ready(args: argparse.Namespace) -> int:
-    import time
+def cmd_switcher(args: argparse.Namespace) -> int:
+    return _print_control_result(control_request_for(args.target_ref, "switcher"))
 
+
+def cmd_tap(args: argparse.Namespace) -> int:
+    return _print_control_result(control_request_for(args.target_ref, f"tap {args.x} {args.y}"))
+
+
+def cmd_wait_ready(args: argparse.Namespace) -> int:
+    target = args.target_ref
     deadline = time.time() + args.timeout
-    while time.time() < deadline:
-        payload = vm_status_payload()
-        if payload["remote"].get("ui_ready"):
-            if args.json:
-                print(json.dumps(payload, indent=2, sort_keys=True))
-            else:
-                print("ui ready")
-            return 0
-        time.sleep(args.interval)
+
+    if target.kind == "vm":
+        while time.time() < deadline:
+            payload = vm_status_payload()
+            if payload["remote"].get("ui_ready"):
+                if args.json:
+                    print(json.dumps(payload, indent=2, sort_keys=True))
+                else:
+                    print("ui ready")
+                return 0
+            time.sleep(args.interval)
+    else:
+        serial = target.serial or target.id
+        while time.time() < deadline:
+            if pixel_control_request(serial, "state").returncode == 0:
+                if args.json:
+                    print(json.dumps(pixel_status_payload(target), indent=2, sort_keys=True))
+                else:
+                    print("ui ready")
+                return 0
+            time.sleep(args.interval)
+
     print("shadowctl: timed out waiting for UI readiness", file=sys.stderr)
     return 1
 
 
-def cmd_vm_run(args: argparse.Namespace) -> int:
+def cmd_run(args: argparse.Namespace) -> int:
     package = args.package
     log_file = f"/var/lib/shadow-ui/log/{package}.log"
     session_env_file = "/var/lib/shadow-ui/shadow-ui-session-env.sh"
@@ -546,80 +955,294 @@ fi
 """
 
     result = run_remote(remote_script, capture_output=not args.background, check=False)
-    if args.background:
-        if result.stdout:
-            print(result.stdout, end="")
-        if result.stderr:
-            print(result.stderr, end="", file=sys.stderr)
-        return result.returncode
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
+    return _print_control_result(result)
+
+
+def cmd_root_check(args: argparse.Namespace) -> int:
+    serial = args.target_ref.serial or args.target_ref.id
+    su_user = pixel_root_id(serial)
+    if su_user:
+        print("root: yes")
+        print(f"su_user: {su_user}")
+        return 0
+
+    print("root: no")
+    print()
+    print("If the phone just booted a patched Magisk image, open the Magisk app once.")
+    print("If Magisk asks for additional setup or environment fix, accept it and let it reboot.")
+    print("Then run:")
+    print(f"  shadowctl root-check --target {serial}")
+    return 1
+
+
+def cmd_restore_android(args: argparse.Namespace) -> int:
+    serial = args.target_ref.serial or args.target_ref.id
+    env = os.environ.copy()
+    env["PIXEL_SERIAL"] = serial
+    result = subprocess.run(
+        [str(repo_root() / "scripts/pixel_restore_android.sh")],
+        text=True,
+        check=False,
+        env=env,
+    )
     return result.returncode
 
 
+def extract_target(argv: list[str]) -> tuple[str | None, list[str]]:
+    target: str | None = None
+    filtered: list[str] = []
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg in ("-t", "--target"):
+            if index + 1 >= len(argv):
+                raise SystemExit("shadowctl: missing value for --target")
+            target = argv[index + 1]
+            index += 2
+            continue
+        if arg.startswith("--target="):
+            target = arg.split("=", 1)[1]
+            index += 1
+            continue
+        if arg.startswith("-t") and len(arg) > 2:
+            target = arg[2:]
+            index += 1
+            continue
+        filtered.append(arg)
+        index += 1
+
+    if filtered and filtered[0] in {"vm", "pixel"} and target is None:
+        target = filtered[0]
+        filtered = filtered[1:]
+    return target, filtered
+
+
+def add_command(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+    name: str,
+    help_text: str,
+    func: Any,
+    *,
+    supported_target_kinds: tuple[str, ...] = (),
+    parents: tuple[argparse.ArgumentParser, ...] = (),
+) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        name,
+        help=help_text,
+        description=help_text,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        parents=list(parents),
+    )
+    if supported_target_kinds:
+        parser.epilog = f"targets: {', '.join(supported_target_kinds)}"
+    parser.set_defaults(func=func, supported_target_kinds=supported_target_kinds)
+    return parser
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="shadowctl")
+    target_help = (
+        "Target id. Use `vm`, `pixel`, or a specific adb serial from `shadowctl devices`."
+    )
+    parser = argparse.ArgumentParser(
+        prog="shadowctl",
+        description="Shadow development CLI.",
+        epilog=(
+            "target ids:\n"
+            "  vm            local UI VM\n"
+            "  pixel         the sole authorized adb device when exactly one is attached\n"
+            "  <serial>      a specific adb device serial from `shadowctl devices`"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("-t", "--target", metavar="TARGET", help=target_help)
+    target_parser = argparse.ArgumentParser(add_help=False)
+    target_parser.add_argument("-t", "--target", metavar="TARGET", help=target_help)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    vm = subparsers.add_parser("vm")
-    vm_sub = vm.add_subparsers(dest="vm_command", required=True)
+    devices = add_command(
+        subparsers,
+        "devices",
+        "List running development targets and the ids accepted by --target.",
+        cmd_devices,
+    )
+    devices.add_argument("--json", action="store_true")
 
-    status = vm_sub.add_parser("status")
+    status = add_command(
+        subparsers,
+        "status",
+        "Show target status.",
+        cmd_status,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
     status.add_argument("--json", action="store_true")
-    status.set_defaults(func=cmd_vm_status)
 
-    logs = vm_sub.add_parser("logs")
+    logs = add_command(
+        subparsers,
+        "logs",
+        "Show recent target logs.",
+        cmd_logs,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
     logs.add_argument("--lines", type=int, default=200)
-    logs.set_defaults(func=cmd_vm_logs)
 
-    journal = vm_sub.add_parser("journal")
+    journal = add_command(
+        subparsers,
+        "journal",
+        "Show guest journal output.",
+        cmd_journal,
+        supported_target_kinds=("vm",),
+        parents=(target_parser,),
+    )
     journal.add_argument("--lines", type=int, default=200)
-    journal.set_defaults(func=cmd_vm_journal)
 
-    doctor = vm_sub.add_parser("doctor")
+    doctor = add_command(
+        subparsers,
+        "doctor",
+        "Diagnose target readiness.",
+        cmd_doctor,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
     doctor.add_argument("--json", action="store_true")
-    doctor.set_defaults(func=cmd_vm_doctor)
 
-    state = vm_sub.add_parser("state")
+    state = add_command(
+        subparsers,
+        "state",
+        "Show compositor control state.",
+        cmd_state,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
     state.add_argument("--json", action="store_true")
-    state.set_defaults(func=cmd_vm_state)
 
-    screenshot = vm_sub.add_parser("screenshot")
-    screenshot.add_argument("output", nargs="?", default="build/ui-vm/shadow-ui-vm.ppm")
-    screenshot.set_defaults(func=cmd_vm_screenshot)
+    screenshot = add_command(
+        subparsers,
+        "screenshot",
+        "Capture a screenshot from the target.",
+        cmd_screenshot,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
+    screenshot.add_argument("output", nargs="?")
 
-    open_cmd = vm_sub.add_parser("open")
+    open_cmd = add_command(
+        subparsers,
+        "open",
+        "Launch an app through the target shell.",
+        cmd_open,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
     open_cmd.add_argument("app_id")
-    open_cmd.set_defaults(func=cmd_vm_open)
 
-    home = vm_sub.add_parser("home")
-    home.set_defaults(func=cmd_vm_home)
+    add_command(
+        subparsers,
+        "home",
+        "Return to the home shell scene.",
+        cmd_home,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
 
-    switcher = vm_sub.add_parser("switcher")
-    switcher.set_defaults(func=cmd_vm_switcher)
+    add_command(
+        subparsers,
+        "switcher",
+        "Open the shell switcher.",
+        cmd_switcher,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
 
-    wait_ready = vm_sub.add_parser("wait-ready")
+    tap = add_command(
+        subparsers,
+        "tap",
+        "Dispatch a shell tap at panel coordinates.",
+        cmd_tap,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
+    tap.add_argument("x", type=int)
+    tap.add_argument("y", type=int)
+
+    wait_ready = add_command(
+        subparsers,
+        "wait-ready",
+        "Wait for the target shell control surface to become ready.",
+        cmd_wait_ready,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
     wait_ready.add_argument("--timeout", type=int, default=300)
     wait_ready.add_argument("--interval", type=float, default=1.0)
     wait_ready.add_argument("--json", action="store_true")
-    wait_ready.set_defaults(func=cmd_vm_wait_ready)
 
-    run = vm_sub.add_parser("run")
+    run = add_command(
+        subparsers,
+        "run",
+        "Run a package inside the VM session.",
+        cmd_run,
+        supported_target_kinds=("vm",),
+        parents=(target_parser,),
+    )
     run.add_argument("package")
     run.add_argument("--env", action="append", default=[])
     run.add_argument("--background", action="store_true")
-    run.set_defaults(func=cmd_vm_run)
+
+    add_command(
+        subparsers,
+        "root-check",
+        "Verify that Pixel root access is available.",
+        cmd_root_check,
+        supported_target_kinds=("pixel",),
+        parents=(target_parser,),
+    )
+
+    add_command(
+        subparsers,
+        "restore-android",
+        "Restore Android display services on a Pixel target.",
+        cmd_restore_android,
+        supported_target_kinds=("pixel",),
+        parents=(target_parser,),
+    )
 
     return parser
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    requested_target, filtered_argv = extract_target(raw_argv)
+
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(filtered_argv)
+    supported_target_kinds = tuple(getattr(args, "supported_target_kinds", ()))
+
+    if supported_target_kinds:
+        default_kind = supported_target_kinds[0] if len(supported_target_kinds) == 1 else "vm"
+        target_ref = resolve_target(requested_target, default_kind=default_kind)
+        if target_ref.kind not in supported_target_kinds:
+            supported = ", ".join(supported_target_kinds)
+            print(
+                f"shadowctl: {args.command} supports targets: {supported}; "
+                f"got {target_ref.id} ({target_ref.kind})",
+                file=sys.stderr,
+            )
+            return 2
+        args.target_ref = target_ref
+    elif requested_target is not None:
+        print(f"shadowctl: {args.command} does not accept --target", file=sys.stderr)
+        return 2
+
     return args.func(args)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except (FileNotFoundError, RuntimeError) as exc:
+        print(exc, file=sys.stderr)
+        raise SystemExit(1)
+    except KeyboardInterrupt:
+        raise SystemExit(130)

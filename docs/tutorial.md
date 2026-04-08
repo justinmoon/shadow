@@ -37,7 +37,7 @@ just vm-home             # Return to the home screen
 just vm-stop             # Shut down the VM
 ```
 
-Behind these recipes, `scripts/shadowctl` is a Python CLI that speaks QMP (QEMU Machine Protocol) for VM control and SSH for guest commands.
+Behind these recipes, `scripts/shadowctl` is the unified Python CLI for VM and rooted-Pixel iteration. In the devshell, `sc` is a thin wrapper on `PATH` that runs it; use `-t vm`, `-t pixel`, or an explicit Pixel serial from `shadowctl devices`.
 
 ### Rooted Pixel
 
@@ -457,5 +457,6 @@ Key checks:
 just pre-commit    # Fast local gate (formatting, tests, compile)
 just ui-check      # UI workspace checks
 just ui-smoke      # Headless Linux compositor smoke test
-just ci            # Full CI gate (pre-commit + smoke)
+just pre-merge     # Required branch gate (pre-commit + smoke)
+just nightly       # Current nightly gate (currently mirrors pre-merge)
 ```

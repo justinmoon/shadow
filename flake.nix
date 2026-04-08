@@ -303,6 +303,15 @@
       mkShadowSession = pkgs: mkShadowSessionFor pkgs.pkgsCross.musl64;
       mkDrmRect = pkgs: mkDrmRectFor pkgs.pkgsCross.musl64;
       mkShadowGuestCompositor = pkgs: mkShadowGuestCompositorFor pkgs.pkgsStatic;
+      shadowCliShellHook = ''
+        shadow_root="$PWD"
+        if git_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+          shadow_root="$git_root"
+        fi
+        if [ -d "$shadow_root/scripts" ]; then
+          export PATH="$shadow_root/scripts:$PATH"
+        fi
+      '';
       mkAndroidShell = pkgs: androidSdk:
         let
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
@@ -334,6 +343,7 @@
             export ANDROID_HOME=${androidSdk}/share/android-sdk
             export ANDROID_SDK_ROOT=${androidSdk}/share/android-sdk
             export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+            ${shadowCliShellHook}
           '';
         };
       mkBootimgShell = pkgs:
@@ -370,11 +380,13 @@
             export PATH="${pkgs.lib.makeBinPath toolPkgs}:$PATH"
             export IN_NIX_SHELL=1
             export SHADOW_BOOTIMG_SHELL=1
+            ${shadowCliShellHook}
           '';
         };
       mkUiShell = pkgs:
         let
           toolPkgs = with pkgs; [
+            android-tools
             bash
             cargo
             cargo-zigbuild
@@ -419,11 +431,13 @@
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath runtimeLibs}:''${LD_LIBRARY_PATH:-}"
             ''}
+            ${shadowCliShellHook}
           '';
         };
       mkRuntimeShell = pkgs:
         let
           toolPkgs = with pkgs; [
+            android-tools
             bash
             cargo
             clippy
@@ -450,6 +464,7 @@
             export PATH="${pkgs.lib.makeBinPath toolPkgs}:$PATH"
             export IN_NIX_SHELL=1
             export SHADOW_RUNTIME_SHELL=1
+            ${shadowCliShellHook}
           '';
         };
     in {

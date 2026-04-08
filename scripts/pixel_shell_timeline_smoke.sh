@@ -42,7 +42,7 @@ capture_state_json() {
   if ! session_still_running; then
     return 1
   fi
-  if ! output="$(PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_shellctl.sh" state --json 2>/dev/null)"; then
+  if ! output="$("$SCRIPT_DIR/shadowctl" --target "$serial" state --json 2>/dev/null)"; then
     return 1
   fi
   latest_state_json="$output"
@@ -146,12 +146,12 @@ wait_for_state "timeline launch through rooted Pixel shell" 60 \
   state_matches timeline timeline '' '' timeline
 printf '%s\n' "$latest_state_json" >"$state_after_open_path"
 
-PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_shellctl.sh" home >/dev/null
+"$SCRIPT_DIR/shadowctl" --target "$serial" home >/dev/null
 wait_for_state "timeline shelved after home" 30 \
   state_matches '' '' timeline timeline ''
 printf '%s\n' "$latest_state_json" >"$state_after_home_path"
 
-PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_shellctl.sh" open timeline >/dev/null
+"$SCRIPT_DIR/shadowctl" --target "$serial" open timeline >/dev/null
 wait_for_state "timeline reopen through rooted Pixel shell" 30 \
   state_matches timeline timeline '' '' timeline
 printf '%s\n' "$latest_state_json" >"$state_after_reopen_path"

@@ -11,9 +11,17 @@ default:
 pre-commit:
 	@scripts/pre_commit.sh
 
-# Run the canonical repo verification gate
-ci:
-	@scripts/ci.sh
+# Run the required branch gate
+pre-merge:
+	@scripts/pre_merge.sh
+
+# Run the current nightly gate. It mirrors pre-merge until heavier lanes land.
+nightly:
+	@scripts/nightly.sh
+
+# Rebase this worktree branch onto root master, run pre-merge, and fast-forward root master if green
+land:
+	@scripts/land.sh
 
 # Run UI formatting, tests, and compile checks
 ui-check:
@@ -264,7 +272,7 @@ vm-journal:
 
 # Diagnose the local UI VM via shadowctl
 ui-vm-doctor:
-	@scripts/shadowctl vm doctor
+	@scripts/shadowctl doctor -t vm
 
 # Alias for ui-vm-doctor
 vm-doctor:
@@ -272,7 +280,7 @@ vm-doctor:
 
 # Show machine-readable UI VM state
 ui-vm-state:
-	@scripts/shadowctl vm state --json
+	@scripts/shadowctl state -t vm --json
 
 # Alias for ui-vm-state
 vm-state:
@@ -280,7 +288,7 @@ vm-state:
 
 # Wait for the UI VM session to reach steady state
 ui-vm-wait-ready:
-	@scripts/shadowctl vm wait-ready
+	@scripts/shadowctl wait-ready -t vm
 
 # Alias for ui-vm-wait-ready
 vm-wait-ready:
@@ -288,7 +296,7 @@ vm-wait-ready:
 
 # Save a screenshot of the local UI VM window via QMP
 ui-vm-screenshot output="build/ui-vm/shadow-ui-vm.ppm":
-	@scripts/shadowctl vm screenshot "{{output}}"
+	@scripts/shadowctl screenshot -t vm "{{output}}"
 
 # Alias for ui-vm-screenshot
 vm-screenshot output="build/ui-vm/shadow-ui-vm.ppm":
@@ -312,7 +320,7 @@ vm-camera-smoke:
 
 # Ask the compositor to open an app by ID
 ui-vm-open app="counter":
-	@scripts/shadowctl vm open "{{app}}"
+	@scripts/shadowctl open "{{app}}" -t vm
 
 # Alias for ui-vm-open
 vm-open app="counter":
@@ -320,7 +328,7 @@ vm-open app="counter":
 
 # Ask the compositor to shelf the foreground app and return home
 ui-vm-home:
-	@scripts/shadowctl vm home
+	@scripts/shadowctl home -t vm
 
 # Alias for ui-vm-home
 vm-home:
@@ -380,7 +388,7 @@ pixel-shell-drm-hold:
 
 # Send control requests to the rooted Pixel shell compositor
 pixel-shellctl *args='':
-	@scripts/pixel_shellctl.sh {{args}}
+	@scripts/shadowctl -t pixel {{args}}
 
 # Prove timeline launch, home, and reopen on the rooted Pixel shell lane
 pixel-shell-timeline-smoke:
