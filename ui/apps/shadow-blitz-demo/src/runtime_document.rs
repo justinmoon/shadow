@@ -15,18 +15,46 @@ use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
 
 use crate::frame::template_document;
 use crate::log::{runtime_log, runtime_wall_ms};
-use crate::runtime_session::{RuntimeDispatchEvent, RuntimePointerEvent, RuntimeSession};
+use crate::runtime_session::{
+    RuntimeDispatchEvent, RuntimeKeyboardEvent, RuntimePointerEvent, RuntimeSelectionEvent,
+    RuntimeSession,
+};
 
 const STYLE_SELECTOR: &str = "#shadow-blitz-style";
 const ROOT_SELECTOR: &str = "#shadow-blitz-root";
 const DEBUG_SELECTOR: &str = "#shadow-blitz-debug";
+const KEYBOARD_SELECTOR: &str = "#shadow-blitz-keyboard";
 const DEFAULT_SURFACE_WIDTH: u32 = APP_VIEWPORT_WIDTH_PX;
 const DEFAULT_SURFACE_HEIGHT: u32 = APP_VIEWPORT_HEIGHT_PX;
 const CLICK_CANCEL_DISTANCE_PX: f32 = 8.0;
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+const SOFT_KEYBOARD_TARGET_PREFIX: &str = "__shadow_keyboard__";
+const SOFT_KEYBOARD_SPACER_HEIGHT_PX: u32 = 360;
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct RuntimeDocumentPayload {
     pub html: String,
     pub css: Option<String>,
+    #[serde(default, rename = "textInput", skip_serializing_if = "Option::is_none")]
+    pub text_input: Option<RuntimeTextInputPayload>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct RuntimeTextInputPayload {
+    #[serde(rename = "targetId")]
+    pub target_id: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<RuntimeSelectionEvent>,
+    #[serde(default, rename = "inputMode", skip_serializing_if = "Option::is_none")]
+    pub input_mode: Option<String>,
+    #[serde(default)]
+    pub multiline: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ShadowTarget {
+    target_id: String,
+    editable: bool,
 }
 
 pub struct RuntimeDocument {
@@ -50,10 +78,13 @@ pub struct RuntimeDocument {
     touch_signal_timer_started: bool,
     redraw_requested: bool,
     activate_on_pointer_down: bool,
+    soft_keyboard_enabled: bool,
     timer_tx: Sender<RuntimeTimerEvent>,
     timer_rx: Receiver<RuntimeTimerEvent>,
     #[cfg(test)]
     last_dispatched_runtime_event: Option<RuntimeDispatchEvent>,
+    #[cfg(test)]
+    dispatched_runtime_events: Vec<RuntimeDispatchEvent>,
 }
 
 impl RuntimeDocument {
@@ -106,10 +137,13 @@ impl RuntimeDocument {
             touch_signal_timer_started: false,
             redraw_requested: false,
             activate_on_pointer_down: env::var_os("SHADOW_BLITZ_TOUCH_ACTIVATE_ON_DOWN").is_some(),
+            soft_keyboard_enabled: software_keyboard_enabled(),
             timer_tx,
             timer_rx,
             #[cfg(test)]
             last_dispatched_runtime_event: None,
+            #[cfg(test)]
+            dispatched_runtime_events: Vec::new(),
         };
         document.apply_render();
         document.prime_touch_signal();
@@ -133,12 +167,24 @@ impl RuntimeDocument {
     fn apply_render(&mut self) {
         let render_start = Instant::now();
         let debug_overlay_html = self.debug_overlay_html();
+        let keyboard_html = self.soft_keyboard_html();
+        let root_html = if keyboard_html.is_empty() {
+            self.payload.html.clone()
+        } else {
+            format!(
+                "{}{}{}",
+                self.payload.html,
+                soft_keyboard_spacer_html(),
+                keyboard_html
+            )
+        };
         let mut mutator = self.inner.mutate();
         mutator.set_inner_html(
             self.frame_nodes.style_id,
             self.payload.css.as_deref().unwrap_or(""),
         );
-        mutator.set_inner_html(self.frame_nodes.root_id, &self.payload.html);
+        mutator.set_inner_html(self.frame_nodes.root_id, &root_html);
+        mutator.set_inner_html(self.frame_nodes.keyboard_id, "");
         if self.debug_overlay_enabled {
             mutator.set_inner_html(self.frame_nodes.debug_id, &debug_overlay_html);
         } else {
@@ -246,6 +292,12 @@ impl RuntimeDocument {
                         self.armed_pointer_dragged = false;
                         self.skip_next_ui_pointer_release = true;
                         self.skip_next_raw_pointer_release = true;
+                        if let Some(action) = soft_keyboard_action_from_target(&target_id) {
+                            if let Err(error) = self.handle_soft_keyboard_action(action, "osk") {
+                                eprintln!("[shadow-runtime-demo] runtime-event-error: {error}");
+                            }
+                            return None;
+                        }
                         eprintln!(
                             "[shadow-runtime-demo] ui-pointer-down-activate x={} y={} target={}",
                             pointer.client_x(),
@@ -287,20 +339,36 @@ impl RuntimeDocument {
                 let armed_target_id = self.armed_pointer_target_id.take();
                 self.armed_pointer_press_position = None;
                 self.armed_pointer_dragged = false;
-                let released_target_id =
-                    self.shadow_target_id_at(pointer.client_x(), pointer.client_y());
-                let Some(target_id) =
-                    self.resolve_click_target(armed_target_id.clone(), released_target_id.clone())
-                else {
+                let released_target = self.shadow_target_at(pointer.client_x(), pointer.client_y());
+                let Some(target_id) = self.resolve_click_target(
+                    armed_target_id.clone(),
+                    released_target
+                        .as_ref()
+                        .map(|target| target.target_id.clone()),
+                ) else {
+                    if self.soft_keyboard_text_input().is_some() {
+                        if let Err(error) = self.blur_active_text_input("ui-blur-empty") {
+                            eprintln!("[shadow-runtime-demo] runtime-event-error: {error}");
+                        }
+                    }
                     eprintln!(
                         "[shadow-runtime-demo] runtime-hit-miss x={} y={} armed={} target={}",
                         pointer.client_x(),
                         pointer.client_y(),
                         armed_target_id.as_deref().unwrap_or("<none>"),
-                        released_target_id.as_deref().unwrap_or("<none>")
+                        released_target
+                            .as_ref()
+                            .map(|target| target.target_id.as_str())
+                            .unwrap_or("<none>")
                     );
                     return None;
                 };
+                if let Some(action) = soft_keyboard_action_from_target(&target_id) {
+                    if let Err(error) = self.handle_soft_keyboard_action(action, "osk") {
+                        eprintln!("[shadow-runtime-demo] runtime-event-error: {error}");
+                    }
+                    return None;
+                }
 
                 Some(RuntimeDispatchEvent {
                     target_id,
@@ -359,18 +427,35 @@ impl RuntimeDocument {
         let armed_target_id = self.armed_pointer_target_id.take();
         self.armed_pointer_press_position = None;
         self.armed_pointer_dragged = false;
-        let released_target_id = self.shadow_target_id_at(client_x, client_y);
+        let released_target = self.shadow_target_at(client_x, client_y);
         eprintln!(
             "[shadow-runtime-demo] raw-pointer-up x={client_x} y={client_y} armed={} target={}",
             armed_target_id.as_deref().unwrap_or("<none>"),
-            released_target_id.as_deref().unwrap_or("<none>")
+            released_target
+                .as_ref()
+                .map(|target| target.target_id.as_str())
+                .unwrap_or("<none>")
         );
 
-        let Some(target_id) =
-            self.resolve_click_target(armed_target_id, released_target_id.clone())
-        else {
+        let Some(target_id) = self.resolve_click_target(
+            armed_target_id,
+            released_target
+                .as_ref()
+                .map(|target| target.target_id.clone()),
+        ) else {
+            if self.soft_keyboard_text_input().is_some() {
+                if let Err(error) = self.blur_active_text_input("raw-blur-empty") {
+                    eprintln!("[shadow-runtime-demo] runtime-event-error: {error}");
+                }
+            }
             return;
         };
+        if let Some(action) = soft_keyboard_action_from_target(&target_id) {
+            if let Err(error) = self.handle_soft_keyboard_action(action, "osk") {
+                eprintln!("[shadow-runtime-demo] runtime-event-error: {error}");
+            }
+            return;
+        }
 
         let runtime_event = RuntimeDispatchEvent {
             target_id,
@@ -391,23 +476,37 @@ impl RuntimeDocument {
         }
     }
 
-    fn shadow_target_id_at(&self, x: f32, y: f32) -> Option<String> {
+    fn shadow_target_at(&self, x: f32, y: f32) -> Option<ShadowTarget> {
         let hit = self.inner.hit(x, y)?;
         let mut node_id = Some(hit.node_id);
 
         while let Some(id) = node_id {
             let node = self.inner.get_node(id)?;
-            if let Some(target_id) = node.attrs().and_then(|attrs| {
-                attrs.iter().find_map(|attr| {
-                    (attr.name.local.as_ref() == "data-shadow-id").then_some(attr.value.to_string())
+            if let Some(target) = node.attrs().and_then(|attrs| {
+                let mut target_id = None;
+                let mut editable = false;
+                for attr in attrs {
+                    match attr.name.local.as_ref() {
+                        "data-shadow-id" => target_id = Some(attr.value.to_string()),
+                        "data-shadow-editable" => editable = attr.value == "1",
+                        _ => {}
+                    }
+                }
+                target_id.map(|target_id| ShadowTarget {
+                    target_id,
+                    editable,
                 })
             }) {
-                return Some(target_id);
+                return Some(target);
             }
             node_id = node.parent;
         }
 
         None
+    }
+
+    fn shadow_target_id_at(&self, x: f32, y: f32) -> Option<String> {
+        self.shadow_target_at(x, y).map(|target| target.target_id)
     }
 
     fn dispatch_runtime_event(
@@ -418,6 +517,7 @@ impl RuntimeDocument {
         #[cfg(test)]
         {
             self.last_dispatched_runtime_event = Some(event.clone());
+            self.dispatched_runtime_events.push(event.clone());
         }
 
         let Some(runtime_session) = self.runtime_session.as_mut() else {
@@ -444,6 +544,115 @@ impl RuntimeDocument {
             runtime_wall_ms()
         ));
         Ok(true)
+    }
+
+    fn blur_active_text_input(&mut self, source: &str) -> Result<bool, String> {
+        let Some(text_input) = self.soft_keyboard_text_input().cloned() else {
+            return Ok(false);
+        };
+        self.dispatch_runtime_event(
+            RuntimeDispatchEvent {
+                target_id: text_input.target_id,
+                event_type: String::from("blur"),
+                value: None,
+                checked: None,
+                selection: None,
+                pointer: None,
+                keyboard: None,
+            },
+            source,
+        )
+    }
+
+    fn handle_soft_keyboard_action(
+        &mut self,
+        action: SoftKeyboardAction,
+        source: &str,
+    ) -> Result<bool, String> {
+        let Some(text_input) = self.soft_keyboard_text_input().cloned() else {
+            return Ok(false);
+        };
+        let mut updated = false;
+
+        if let Some(keyboard) = keyboard_event_for_action(&action) {
+            updated |= self.dispatch_runtime_event(
+                RuntimeDispatchEvent {
+                    target_id: text_input.target_id.clone(),
+                    event_type: String::from("keydown"),
+                    value: None,
+                    checked: None,
+                    selection: None,
+                    pointer: None,
+                    keyboard: Some(keyboard),
+                },
+                source,
+            )?;
+        }
+
+        match action {
+            SoftKeyboardAction::Hide => {
+                updated |= self.blur_active_text_input(source)?;
+            }
+            SoftKeyboardAction::Enter if !text_input.multiline => {}
+            SoftKeyboardAction::Backspace
+            | SoftKeyboardAction::Enter
+            | SoftKeyboardAction::Insert(_) => {
+                if let Some((value, selection)) = apply_text_input_action(&text_input, &action) {
+                    updated |= self.dispatch_runtime_event(
+                        RuntimeDispatchEvent {
+                            target_id: text_input.target_id,
+                            event_type: String::from("input"),
+                            value: Some(value),
+                            checked: None,
+                            selection: Some(selection),
+                            pointer: None,
+                            keyboard: None,
+                        },
+                        source,
+                    )?;
+                }
+            }
+        }
+
+        Ok(updated)
+    }
+
+    fn soft_keyboard_text_input(&self) -> Option<&RuntimeTextInputPayload> {
+        self.soft_keyboard_enabled
+            .then_some(self.payload.text_input.as_ref())
+            .flatten()
+    }
+
+    fn soft_keyboard_html(&self) -> String {
+        let Some(text_input) = self.soft_keyboard_text_input() else {
+            return String::new();
+        };
+
+        let rows = soft_keyboard_rows(text_input.input_mode.as_deref());
+        let mut markup = String::from(
+            r#"<div class="shadow-keyboard-host"><div class="shadow-keyboard-panel">"#,
+        );
+        for row in rows {
+            markup.push_str(r#"<div class="shadow-keyboard-row">"#);
+            for key in row.iter().copied() {
+                markup.push_str(&soft_keyboard_button_html(key));
+            }
+            markup.push_str("</div>");
+        }
+        markup.push_str("</div></div>");
+        markup
+    }
+
+    fn soft_keyboard_target_id_at(&self, x: f32, y: f32) -> Option<String> {
+        let text_input = self.soft_keyboard_text_input()?;
+        let (surface_width, surface_height) = runtime_surface_size();
+        soft_keyboard_key_frames(
+            text_input.input_mode.as_deref(),
+            surface_width,
+            surface_height,
+        )
+        .into_iter()
+        .find_map(|(key, frame)| frame.contains(x, y).then(|| String::from(key.target_id)))
     }
 
     fn arm_pointer_target(&mut self, target_id: Option<String>, client_x: f32, client_y: f32) {
@@ -480,6 +689,9 @@ impl RuntimeDocument {
     }
 
     fn arm_target_for_pointer(&self, client_x: f32, client_y: f32, source: &str) -> Option<String> {
+        if let Some(target_id) = self.soft_keyboard_target_id_at(client_x, client_y) {
+            return Some(target_id);
+        }
         let hit_target_id = self.shadow_target_id_at(client_x, client_y);
         if hit_target_id.is_some() {
             return hit_target_id;
@@ -810,6 +1022,26 @@ impl RuntimeDocument {
     fn take_last_runtime_event(&mut self) -> Option<RuntimeDispatchEvent> {
         self.last_dispatched_runtime_event.take()
     }
+
+    #[cfg(test)]
+    fn take_dispatched_runtime_events(&mut self) -> Vec<RuntimeDispatchEvent> {
+        std::mem::take(&mut self.dispatched_runtime_events)
+    }
+
+    #[cfg(test)]
+    fn soft_keyboard_point_for_target(&self, target_id: &str) -> Option<(f32, f32)> {
+        let text_input = self.soft_keyboard_text_input()?;
+        let (surface_width, surface_height) = runtime_surface_size();
+        soft_keyboard_key_frames(
+            text_input.input_mode.as_deref(),
+            surface_width,
+            surface_height,
+        )
+        .into_iter()
+        .find_map(|(key, frame)| {
+            (key.target_id == target_id).then(|| (frame.center_x(), frame.center_y()))
+        })
+    }
 }
 
 impl Document for RuntimeDocument {
@@ -871,6 +1103,7 @@ struct FrameNodes {
     style_id: usize,
     root_id: usize,
     debug_id: usize,
+    keyboard_id: usize,
 }
 
 impl FrameNodes {
@@ -887,10 +1120,15 @@ impl FrameNodes {
             .query_selector(DEBUG_SELECTOR)
             .expect("parse debug selector")
             .expect("debug node");
+        let keyboard_id = document
+            .query_selector(KEYBOARD_SELECTOR)
+            .expect("parse keyboard selector")
+            .expect("keyboard node");
         Self {
             style_id,
             root_id,
             debug_id,
+            keyboard_id,
         }
     }
 }
@@ -965,6 +1203,565 @@ fn touch_signal_timer_enabled() -> bool {
     )
 }
 
+fn software_keyboard_enabled() -> bool {
+    matches!(
+        env::var("SHADOW_BLITZ_SOFTWARE_KEYBOARD").ok().as_deref(),
+        Some("1") | Some("true") | Some("on")
+    )
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SoftKeyboardAction {
+    Insert(String),
+    Backspace,
+    Enter,
+    Hide,
+}
+
+#[derive(Clone, Copy)]
+struct SoftKeyboardKey {
+    label: &'static str,
+    target_id: &'static str,
+}
+
+const TEXT_KEYBOARD_ROWS: &[&[SoftKeyboardKey]] = &[
+    &[
+        SoftKeyboardKey {
+            label: "1",
+            target_id: "__shadow_keyboard__1",
+        },
+        SoftKeyboardKey {
+            label: "2",
+            target_id: "__shadow_keyboard__2",
+        },
+        SoftKeyboardKey {
+            label: "3",
+            target_id: "__shadow_keyboard__3",
+        },
+        SoftKeyboardKey {
+            label: "4",
+            target_id: "__shadow_keyboard__4",
+        },
+        SoftKeyboardKey {
+            label: "5",
+            target_id: "__shadow_keyboard__5",
+        },
+        SoftKeyboardKey {
+            label: "6",
+            target_id: "__shadow_keyboard__6",
+        },
+        SoftKeyboardKey {
+            label: "7",
+            target_id: "__shadow_keyboard__7",
+        },
+        SoftKeyboardKey {
+            label: "8",
+            target_id: "__shadow_keyboard__8",
+        },
+        SoftKeyboardKey {
+            label: "9",
+            target_id: "__shadow_keyboard__9",
+        },
+        SoftKeyboardKey {
+            label: "0",
+            target_id: "__shadow_keyboard__0",
+        },
+    ],
+    &[
+        SoftKeyboardKey {
+            label: "q",
+            target_id: "__shadow_keyboard__q",
+        },
+        SoftKeyboardKey {
+            label: "w",
+            target_id: "__shadow_keyboard__w",
+        },
+        SoftKeyboardKey {
+            label: "e",
+            target_id: "__shadow_keyboard__e",
+        },
+        SoftKeyboardKey {
+            label: "r",
+            target_id: "__shadow_keyboard__r",
+        },
+        SoftKeyboardKey {
+            label: "t",
+            target_id: "__shadow_keyboard__t",
+        },
+        SoftKeyboardKey {
+            label: "y",
+            target_id: "__shadow_keyboard__y",
+        },
+        SoftKeyboardKey {
+            label: "u",
+            target_id: "__shadow_keyboard__u",
+        },
+        SoftKeyboardKey {
+            label: "i",
+            target_id: "__shadow_keyboard__i",
+        },
+        SoftKeyboardKey {
+            label: "o",
+            target_id: "__shadow_keyboard__o",
+        },
+        SoftKeyboardKey {
+            label: "p",
+            target_id: "__shadow_keyboard__p",
+        },
+    ],
+    &[
+        SoftKeyboardKey {
+            label: "a",
+            target_id: "__shadow_keyboard__a",
+        },
+        SoftKeyboardKey {
+            label: "s",
+            target_id: "__shadow_keyboard__s",
+        },
+        SoftKeyboardKey {
+            label: "d",
+            target_id: "__shadow_keyboard__d",
+        },
+        SoftKeyboardKey {
+            label: "f",
+            target_id: "__shadow_keyboard__f",
+        },
+        SoftKeyboardKey {
+            label: "g",
+            target_id: "__shadow_keyboard__g",
+        },
+        SoftKeyboardKey {
+            label: "h",
+            target_id: "__shadow_keyboard__h",
+        },
+        SoftKeyboardKey {
+            label: "j",
+            target_id: "__shadow_keyboard__j",
+        },
+        SoftKeyboardKey {
+            label: "k",
+            target_id: "__shadow_keyboard__k",
+        },
+        SoftKeyboardKey {
+            label: "l",
+            target_id: "__shadow_keyboard__l",
+        },
+    ],
+    &[
+        SoftKeyboardKey {
+            label: "z",
+            target_id: "__shadow_keyboard__z",
+        },
+        SoftKeyboardKey {
+            label: "x",
+            target_id: "__shadow_keyboard__x",
+        },
+        SoftKeyboardKey {
+            label: "c",
+            target_id: "__shadow_keyboard__c",
+        },
+        SoftKeyboardKey {
+            label: "v",
+            target_id: "__shadow_keyboard__v",
+        },
+        SoftKeyboardKey {
+            label: "b",
+            target_id: "__shadow_keyboard__b",
+        },
+        SoftKeyboardKey {
+            label: "n",
+            target_id: "__shadow_keyboard__n",
+        },
+        SoftKeyboardKey {
+            label: "m",
+            target_id: "__shadow_keyboard__m",
+        },
+        SoftKeyboardKey {
+            label: "@",
+            target_id: "__shadow_keyboard__at",
+        },
+        SoftKeyboardKey {
+            label: ".",
+            target_id: "__shadow_keyboard__period",
+        },
+    ],
+    &[
+        SoftKeyboardKey {
+            label: "/",
+            target_id: "__shadow_keyboard__slash",
+        },
+        SoftKeyboardKey {
+            label: ":",
+            target_id: "__shadow_keyboard__colon",
+        },
+        SoftKeyboardKey {
+            label: "-",
+            target_id: "__shadow_keyboard__minus",
+        },
+        SoftKeyboardKey {
+            label: "_",
+            target_id: "__shadow_keyboard__underscore",
+        },
+        SoftKeyboardKey {
+            label: "?",
+            target_id: "__shadow_keyboard__question",
+        },
+        SoftKeyboardKey {
+            label: "=",
+            target_id: "__shadow_keyboard__equals",
+        },
+        SoftKeyboardKey {
+            label: "#",
+            target_id: "__shadow_keyboard__hash",
+        },
+    ],
+    &[
+        SoftKeyboardKey {
+            label: "space",
+            target_id: "__shadow_keyboard__space",
+        },
+        SoftKeyboardKey {
+            label: "delete",
+            target_id: "__shadow_keyboard__backspace",
+        },
+        SoftKeyboardKey {
+            label: "enter",
+            target_id: "__shadow_keyboard__enter",
+        },
+        SoftKeyboardKey {
+            label: "hide",
+            target_id: "__shadow_keyboard__hide",
+        },
+    ],
+];
+
+const NUMERIC_KEYBOARD_ROWS: &[&[SoftKeyboardKey]] = &[
+    &[
+        SoftKeyboardKey {
+            label: "1",
+            target_id: "__shadow_keyboard__1",
+        },
+        SoftKeyboardKey {
+            label: "2",
+            target_id: "__shadow_keyboard__2",
+        },
+        SoftKeyboardKey {
+            label: "3",
+            target_id: "__shadow_keyboard__3",
+        },
+    ],
+    &[
+        SoftKeyboardKey {
+            label: "4",
+            target_id: "__shadow_keyboard__4",
+        },
+        SoftKeyboardKey {
+            label: "5",
+            target_id: "__shadow_keyboard__5",
+        },
+        SoftKeyboardKey {
+            label: "6",
+            target_id: "__shadow_keyboard__6",
+        },
+    ],
+    &[
+        SoftKeyboardKey {
+            label: "7",
+            target_id: "__shadow_keyboard__7",
+        },
+        SoftKeyboardKey {
+            label: "8",
+            target_id: "__shadow_keyboard__8",
+        },
+        SoftKeyboardKey {
+            label: "9",
+            target_id: "__shadow_keyboard__9",
+        },
+    ],
+    &[
+        SoftKeyboardKey {
+            label: ".",
+            target_id: "__shadow_keyboard__period",
+        },
+        SoftKeyboardKey {
+            label: "0",
+            target_id: "__shadow_keyboard__0",
+        },
+        SoftKeyboardKey {
+            label: "delete",
+            target_id: "__shadow_keyboard__backspace",
+        },
+    ],
+    &[
+        SoftKeyboardKey {
+            label: "enter",
+            target_id: "__shadow_keyboard__enter",
+        },
+        SoftKeyboardKey {
+            label: "hide",
+            target_id: "__shadow_keyboard__hide",
+        },
+    ],
+];
+
+fn soft_keyboard_rows(input_mode: Option<&str>) -> &'static [&'static [SoftKeyboardKey]] {
+    match input_mode {
+        Some("numeric") | Some("decimal") => NUMERIC_KEYBOARD_ROWS,
+        _ => TEXT_KEYBOARD_ROWS,
+    }
+}
+
+fn soft_keyboard_button_html(key: SoftKeyboardKey) -> String {
+    let class_name = if key.target_id.ends_with("space") {
+        "shadow-keyboard-key shadow-keyboard-key-wide"
+    } else {
+        "shadow-keyboard-key"
+    };
+    format!(
+        r#"<button class="{class_name}" data-shadow-id="{}">{}</button>"#,
+        key.target_id, key.label
+    )
+}
+
+fn soft_keyboard_spacer_html() -> String {
+    format!(
+        r#"<div class="shadow-keyboard-spacer" style="height:{}px"></div>"#,
+        SOFT_KEYBOARD_SPACER_HEIGHT_PX
+    )
+}
+
+fn soft_keyboard_action_from_target(target_id: &str) -> Option<SoftKeyboardAction> {
+    let suffix = target_id.strip_prefix(SOFT_KEYBOARD_TARGET_PREFIX)?;
+    match suffix {
+        "space" => Some(SoftKeyboardAction::Insert(String::from(" "))),
+        "backspace" => Some(SoftKeyboardAction::Backspace),
+        "enter" => Some(SoftKeyboardAction::Enter),
+        "hide" => Some(SoftKeyboardAction::Hide),
+        "at" => Some(SoftKeyboardAction::Insert(String::from("@"))),
+        "period" => Some(SoftKeyboardAction::Insert(String::from("."))),
+        "slash" => Some(SoftKeyboardAction::Insert(String::from("/"))),
+        "colon" => Some(SoftKeyboardAction::Insert(String::from(":"))),
+        "minus" => Some(SoftKeyboardAction::Insert(String::from("-"))),
+        "underscore" => Some(SoftKeyboardAction::Insert(String::from("_"))),
+        "question" => Some(SoftKeyboardAction::Insert(String::from("?"))),
+        "equals" => Some(SoftKeyboardAction::Insert(String::from("="))),
+        "hash" => Some(SoftKeyboardAction::Insert(String::from("#"))),
+        value if value.len() == 1 => Some(SoftKeyboardAction::Insert(value.to_string())),
+        _ => None,
+    }
+}
+
+fn keyboard_event_for_action(action: &SoftKeyboardAction) -> Option<RuntimeKeyboardEvent> {
+    match action {
+        SoftKeyboardAction::Insert(value) => Some(RuntimeKeyboardEvent {
+            key: Some(value.clone()),
+            code: Some(runtime_key_code(value)),
+            alt_key: Some(false),
+            ctrl_key: Some(false),
+            meta_key: Some(false),
+            shift_key: Some(matches!(value.as_str(), ":" | "?" | "_" | "@" | "#")),
+        }),
+        SoftKeyboardAction::Backspace => Some(RuntimeKeyboardEvent {
+            key: Some(String::from("Backspace")),
+            code: Some(String::from("Backspace")),
+            alt_key: Some(false),
+            ctrl_key: Some(false),
+            meta_key: Some(false),
+            shift_key: Some(false),
+        }),
+        SoftKeyboardAction::Enter => Some(RuntimeKeyboardEvent {
+            key: Some(String::from("Enter")),
+            code: Some(String::from("Enter")),
+            alt_key: Some(false),
+            ctrl_key: Some(false),
+            meta_key: Some(false),
+            shift_key: Some(false),
+        }),
+        SoftKeyboardAction::Hide => None,
+    }
+}
+
+fn runtime_key_code(value: &str) -> String {
+    match value {
+        " " => String::from("Space"),
+        "." => String::from("Period"),
+        "/" | "?" => String::from("Slash"),
+        ":" => String::from("Semicolon"),
+        "-" | "_" => String::from("Minus"),
+        "=" => String::from("Equal"),
+        "@" => String::from("Digit2"),
+        "#" => String::from("Digit3"),
+        _ if value.len() == 1 && value.chars().all(|c| c.is_ascii_alphabetic()) => {
+            format!("Key{}", value.to_ascii_uppercase())
+        }
+        _ if value.len() == 1 && value.chars().all(|c| c.is_ascii_digit()) => {
+            format!("Digit{value}")
+        }
+        _ => String::from("Unidentified"),
+    }
+}
+
+fn apply_text_input_action(
+    text_input: &RuntimeTextInputPayload,
+    action: &SoftKeyboardAction,
+) -> Option<(String, RuntimeSelectionEvent)> {
+    let value = text_input.value.as_str();
+    let total_chars = value.chars().count() as u32;
+    let selection = text_input.selection.as_ref();
+    let mut start = selection
+        .and_then(|selection| selection.start)
+        .unwrap_or(total_chars);
+    let mut end = selection
+        .and_then(|selection| selection.end)
+        .unwrap_or(start);
+    if end < start {
+        std::mem::swap(&mut start, &mut end);
+    }
+    start = start.min(total_chars);
+    end = end.min(total_chars);
+
+    let start_byte = char_index_to_byte(value, start);
+    let end_byte = char_index_to_byte(value, end);
+
+    match action {
+        SoftKeyboardAction::Hide => None,
+        SoftKeyboardAction::Enter if !text_input.multiline => None,
+        SoftKeyboardAction::Enter => Some(apply_text_input_replacement(
+            value, start_byte, end_byte, "\n",
+        )),
+        SoftKeyboardAction::Insert(inserted) => Some(apply_text_input_replacement(
+            value, start_byte, end_byte, inserted,
+        )),
+        SoftKeyboardAction::Backspace => {
+            if start != end {
+                Some(apply_text_input_replacement(
+                    value, start_byte, end_byte, "",
+                ))
+            } else if start == 0 {
+                None
+            } else {
+                let previous_start = char_index_to_byte(value, start - 1);
+                Some(apply_text_input_replacement(
+                    value,
+                    previous_start,
+                    start_byte,
+                    "",
+                ))
+            }
+        }
+    }
+}
+
+fn apply_text_input_replacement(
+    value: &str,
+    start_byte: usize,
+    end_byte: usize,
+    inserted: &str,
+) -> (String, RuntimeSelectionEvent) {
+    let mut next_value = String::with_capacity(value.len() + inserted.len());
+    next_value.push_str(&value[..start_byte]);
+    next_value.push_str(inserted);
+    next_value.push_str(&value[end_byte..]);
+    let cursor_chars = (value[..start_byte].chars().count() + inserted.chars().count()) as u32;
+    (
+        next_value,
+        RuntimeSelectionEvent {
+            start: Some(cursor_chars),
+            end: Some(cursor_chars),
+            direction: Some(String::from("none")),
+        },
+    )
+}
+
+fn char_index_to_byte(value: &str, char_index: u32) -> usize {
+    if char_index == 0 {
+        return 0;
+    }
+    value
+        .char_indices()
+        .nth(char_index as usize)
+        .map(|(index, _)| index)
+        .unwrap_or_else(|| value.len())
+}
+
+#[derive(Clone, Copy)]
+struct SoftKeyboardFrame {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+impl SoftKeyboardFrame {
+    fn contains(self, x: f32, y: f32) -> bool {
+        x >= self.x && x <= self.x + self.width && y >= self.y && y <= self.y + self.height
+    }
+
+    #[cfg(test)]
+    fn center_x(self) -> f32 {
+        self.x + self.width * 0.5
+    }
+
+    #[cfg(test)]
+    fn center_y(self) -> f32 {
+        self.y + self.height * 0.5
+    }
+}
+
+fn soft_keyboard_key_frames(
+    input_mode: Option<&str>,
+    surface_width: u32,
+    surface_height: u32,
+) -> Vec<(SoftKeyboardKey, SoftKeyboardFrame)> {
+    const PANEL_INSET_X: f32 = 18.0;
+    const PANEL_INSET_BOTTOM: f32 = 18.0;
+    const PANEL_PADDING: f32 = 14.0;
+    const ROW_GAP: f32 = 10.0;
+    const KEY_GAP: f32 = 8.0;
+    const KEY_HEIGHT: f32 = 58.0;
+
+    let rows = soft_keyboard_rows(input_mode);
+    let panel_width = surface_width as f32 - PANEL_INSET_X * 2.0;
+    let panel_height = PANEL_PADDING * 2.0
+        + KEY_HEIGHT * rows.len() as f32
+        + ROW_GAP * rows.len().saturating_sub(1) as f32;
+    let panel_y = surface_height as f32 - PANEL_INSET_BOTTOM - panel_height;
+    let content_x = PANEL_INSET_X + PANEL_PADDING;
+    let content_width = panel_width - PANEL_PADDING * 2.0;
+
+    let mut frames = Vec::new();
+    for (row_index, row) in rows.iter().enumerate() {
+        let weight_sum: f32 = row.iter().map(|key| soft_keyboard_key_weight(*key)).sum();
+        let total_gap = KEY_GAP * row.len().saturating_sub(1) as f32;
+        let unit_width = (content_width - total_gap) / weight_sum.max(1.0);
+        let y = panel_y + PANEL_PADDING + row_index as f32 * (KEY_HEIGHT + ROW_GAP);
+        let mut x = content_x;
+        for key in row.iter().copied() {
+            let width = unit_width * soft_keyboard_key_weight(key);
+            frames.push((
+                key,
+                SoftKeyboardFrame {
+                    x,
+                    y,
+                    width,
+                    height: KEY_HEIGHT,
+                },
+            ));
+            x += width + KEY_GAP;
+        }
+    }
+
+    frames
+}
+
+fn soft_keyboard_key_weight(key: SoftKeyboardKey) -> f32 {
+    if key.target_id.ends_with("space") {
+        2.0
+    } else {
+        1.0
+    }
+}
+
 fn auto_click_event_from_env(runtime_session_enabled: bool) -> Option<RuntimeDispatchEvent> {
     if !runtime_session_enabled {
         return None;
@@ -1012,7 +1809,10 @@ fn runtime_surface_dimension(key: &str, default: u32) -> u32 {
 }
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, MutexGuard};
+    use std::{
+        env,
+        sync::{Mutex, MutexGuard},
+    };
 
     use blitz_dom::Document as _;
     use blitz_traits::events::{
@@ -1020,7 +1820,8 @@ mod tests {
         MouseEventButtons, PointerCoords, UiEvent,
     };
 
-    use super::{RuntimeDocument, RuntimeDocumentPayload};
+    use super::{RuntimeDocument, RuntimeDocumentPayload, RuntimeTextInputPayload};
+    use crate::runtime_session::RuntimeSelectionEvent;
     use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
 
     fn test_guard() -> MutexGuard<'static, ()> {
@@ -1059,12 +1860,46 @@ mod tests {
         }
     }
 
+    fn with_software_keyboard_enabled<T>(f: impl FnOnce() -> T) -> T {
+        let previous = env::var("SHADOW_BLITZ_SOFTWARE_KEYBOARD").ok();
+        unsafe {
+            env::set_var("SHADOW_BLITZ_SOFTWARE_KEYBOARD", "1");
+        }
+        let result = f();
+        unsafe {
+            match previous {
+                Some(value) => env::set_var("SHADOW_BLITZ_SOFTWARE_KEYBOARD", value),
+                None => env::remove_var("SHADOW_BLITZ_SOFTWARE_KEYBOARD"),
+            }
+        }
+        result
+    }
+
+    fn text_input_payload(html: &str, value: &str, target_id: &str) -> RuntimeDocumentPayload {
+        RuntimeDocumentPayload {
+            html: String::from(html),
+            css: None,
+            text_input: Some(RuntimeTextInputPayload {
+                target_id: String::from(target_id),
+                value: String::from(value),
+                selection: Some(RuntimeSelectionEvent {
+                    start: Some(value.chars().count() as u32),
+                    end: Some(value.chars().count() as u32),
+                    direction: Some(String::from("none")),
+                }),
+                input_mode: None,
+                multiline: false,
+            }),
+        }
+    }
+
     fn scrollable_payload() -> RuntimeDocumentPayload {
         RuntimeDocumentPayload {
             html: String::from(
                 r#"<main style="width:100%;height:100%;display:block;background:#020617"><section data-shadow-id="scroller" style="width:100%;height:100%;overflow-y:auto;display:block"><div style="height:2400px;background:linear-gradient(180deg,#38bdf8 0%,#0f172a 100%)"></div></section></main>"#,
             ),
             css: None,
+            text_input: None,
         }
     }
 
@@ -1074,6 +1909,7 @@ mod tests {
                 r#"<main style="width:100%;display:block;background:#020617"><div data-shadow-id="content" style="width:100%;height:2400px;background:linear-gradient(180deg,#38bdf8 0%,#0f172a 100%)"></div></main>"#,
             ),
             css: None,
+            text_input: None,
         }
     }
 
@@ -1083,6 +1919,7 @@ mod tests {
         let payload = RuntimeDocumentPayload {
             html: String::from(r#"<section class="screen"><h1>Hello</h1></section>"#),
             css: Some(String::from("body { color: red; }")),
+            text_input: None,
         };
         let document = RuntimeDocument::with_runtime(payload.clone(), None);
 
@@ -1103,6 +1940,7 @@ mod tests {
             RuntimeDocumentPayload {
                 html: String::from("<p>Before</p>"),
                 css: Some(String::from("body { color: red; }")),
+                text_input: None,
             },
             None,
         );
@@ -1110,6 +1948,7 @@ mod tests {
         document.replace_document(RuntimeDocumentPayload {
             html: String::from(r#"<article data-app="next">After</article>"#),
             css: None,
+            text_input: None,
         });
 
         assert_eq!(document.node_text_content("#shadow-blitz-style"), "");
@@ -1126,6 +1965,7 @@ mod tests {
             RuntimeDocumentPayload {
                 html: String::from(r#"<button data-shadow-id="counter">Count 1</button>"#),
                 css: None,
+                text_input: None,
             },
             None,
         );
@@ -1146,6 +1986,7 @@ mod tests {
                 RuntimeDocumentPayload {
                     html: String::new(),
                     css: None,
+                    text_input: None,
                 },
                 None
             )
@@ -1162,6 +2003,7 @@ mod tests {
                 RuntimeDocumentPayload {
                     html: String::new(),
                     css: None,
+                    text_input: None,
                 },
                 None
             )
@@ -1179,6 +2021,7 @@ mod tests {
                     r#"<main style="width:100%;height:100%;display:flex;justify-content:center;align-items:center;background:#10293a"><section data-shadow-id="counter" style="display:block;width:280px;height:240px;background:#2fb8ff"></section></main>"#,
                 ),
                 css: None,
+                text_input: None,
             },
             None,
         );
@@ -1337,6 +2180,7 @@ mod tests {
             RuntimeDocumentPayload {
                 html: String::from(r#"<button data-shadow-id="counter">Count 1</button>"#),
                 css: None,
+                text_input: None,
             },
             None,
         );
@@ -1360,5 +2204,79 @@ mod tests {
         let runtime_event = document.take_last_runtime_event().expect("runtime click");
         assert_eq!(runtime_event.event_type, "click");
         assert_eq!(runtime_event.target_id, "counter");
+    }
+
+    #[test]
+    fn software_keyboard_renders_when_text_input_active() {
+        let _guard = test_guard();
+        with_software_keyboard_enabled(|| {
+            let document = RuntimeDocument::with_runtime(
+                text_input_payload(
+                    r#"<input data-shadow-id="draft" value="gm" />"#,
+                    "gm",
+                    "draft",
+                ),
+                None,
+            );
+
+            let root_html = document.node_outer_html("#shadow-blitz-root");
+            assert!(root_html.contains("__shadow_keyboard__a"));
+            assert!(root_html.contains("__shadow_keyboard__space"));
+        });
+    }
+
+    #[test]
+    fn software_keyboard_key_dispatches_keydown_and_input() {
+        let _guard = test_guard();
+        with_software_keyboard_enabled(|| {
+            let mut document = RuntimeDocument::with_runtime(
+                text_input_payload(
+                    r#"<input data-shadow-id="draft" value="gm" />"#,
+                    "gm",
+                    "draft",
+                ),
+                None,
+            );
+            let (client_x, client_y) = document
+                .soft_keyboard_point_for_target("__shadow_keyboard__a")
+                .expect("keyboard key point");
+
+            document.handle_ui_event(UiEvent::PointerDown(pointer_event(
+                BlitzPointerId::Mouse,
+                MouseEventButton::Main,
+                MouseEventButtons::Primary,
+                client_x,
+                client_y,
+            )));
+            document.handle_ui_event(UiEvent::PointerUp(pointer_event(
+                BlitzPointerId::Mouse,
+                MouseEventButton::Main,
+                MouseEventButtons::None,
+                client_x,
+                client_y,
+            )));
+
+            let events = document.take_dispatched_runtime_events();
+            assert_eq!(events.len(), 2);
+            assert_eq!(events[0].event_type, "keydown");
+            assert_eq!(events[0].target_id, "draft");
+            assert_eq!(
+                events[0]
+                    .keyboard
+                    .as_ref()
+                    .and_then(|keyboard| keyboard.key.as_deref()),
+                Some("a")
+            );
+            assert_eq!(events[1].event_type, "input");
+            assert_eq!(events[1].target_id, "draft");
+            assert_eq!(events[1].value.as_deref(), Some("gma"));
+            assert_eq!(
+                events[1]
+                    .selection
+                    .as_ref()
+                    .and_then(|selection| selection.start),
+                Some(3)
+            );
+        });
     }
 }

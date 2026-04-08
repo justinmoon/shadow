@@ -85,6 +85,7 @@ export function createRuntimeApp(renderApp, options = {}) {
   const mount = hostCreateElement(ROOT_TAG);
   const dispose = render(() => renderApp(), mount);
   const css = typeof options.css === "string" ? options.css : null;
+  const runtimeState = createRuntimeState();
   let dirty = false;
   const invalidate = () => {
     dirty = true;
@@ -93,8 +94,8 @@ export function createRuntimeApp(renderApp, options = {}) {
 
   return {
     dispatch(event) {
-      dispatchRuntimeEvent(mount, event);
-      return renderMountToDocument(mount, css);
+      dispatchRuntimeEvent(mount, event, runtimeState);
+      return renderMountToDocument(mount, css, runtimeState);
     },
     dispose() {
       if (activeRuntimeInvalidator === invalidate) {
@@ -107,10 +108,10 @@ export function createRuntimeApp(renderApp, options = {}) {
         return null;
       }
       dirty = false;
-      return renderMountToDocument(mount, css);
+      return renderMountToDocument(mount, css, runtimeState);
     },
     renderDocument() {
-      return renderMountToDocument(mount, css);
+      return renderMountToDocument(mount, css, runtimeState);
     },
   };
 }
@@ -126,6 +127,13 @@ export function renderToDocument(root, options = {}) {
   return {
     css: typeof options.css === "string" ? options.css : null,
     html: nodes.map((node) => serializeNode(node)).join(""),
+    textInput: serializeRuntimeTextInput(root, options.runtimeState),
+  };
+}
+
+function createRuntimeState() {
+  return {
+    activeEditableTargetId: null,
   };
 }
 
@@ -255,23 +263,17 @@ function isTextNode(node) {
   return node?.kind === "text";
 }
 
-function dispatchRuntimeEvent(root, event) {
+function dispatchRuntimeEvent(root, event, runtimeState = null) {
   const normalizedEvent = normalizeRuntimeEvent(event);
   const targetNode = findNodeByShadowId(root, normalizedEvent.targetId);
   if (!targetNode) {
     return;
   }
 
+  syncEditableFocus(root, targetNode, normalizedEvent, runtimeState);
   applyRuntimeEventState(targetNode, normalizedEvent);
-  const handler = targetNode.listeners[normalizedEvent.type];
-  if (typeof handler === "function") {
-    const handlerResult = handler(createRuntimeEvent(targetNode, normalizedEvent));
-    if (handlerResult != null && typeof handlerResult.then === "function") {
-      void handlerResult.catch((error) => {
-        console.error("runtime event handler rejected", error);
-      });
-    }
-  }
+  dispatchRuntimeListener(targetNode, normalizedEvent);
+  syncRuntimeTextInputState(root, runtimeState);
 }
 
 function normalizeRuntimeEvent(event) {
@@ -436,8 +438,8 @@ function findNodeByShadowId(node, targetId) {
   return null;
 }
 
-function renderMountToDocument(root, css = null) {
-  return renderToDocument(root, { css });
+function renderMountToDocument(root, css = null, runtimeState = null) {
+  return renderToDocument(root, { css, runtimeState });
 }
 
 function applyRuntimeEventState(node, event) {
@@ -462,6 +464,149 @@ function applyRuntimeEventState(node, event) {
       node.selectionDirection = event.selection.direction;
     }
   }
+}
+
+function dispatchRuntimeListener(targetNode, event) {
+  const handler = targetNode.listeners[event.type];
+  if (typeof handler !== "function") {
+    return;
+  }
+  const handlerResult = handler(createRuntimeEvent(targetNode, event));
+  if (handlerResult != null && typeof handlerResult.then === "function") {
+    void handlerResult.catch((error) => {
+      console.error("runtime event handler rejected", error);
+    });
+  }
+}
+
+function syncEditableFocus(root, targetNode, event, runtimeState) {
+  if (!runtimeState) {
+    return;
+  }
+
+  if (event.type === "blur") {
+    if (runtimeState.activeEditableTargetId === event.targetId) {
+      runtimeState.activeEditableTargetId = null;
+    }
+    return;
+  }
+
+  if (event.type === "focus") {
+    if (isEditableNode(targetNode)) {
+      runtimeState.activeEditableTargetId = event.targetId;
+    }
+    return;
+  }
+
+  if (event.type !== "click") {
+    return;
+  }
+
+  const nextEditableTargetId = isEditableNode(targetNode) ? event.targetId : null;
+  if (runtimeState.activeEditableTargetId === nextEditableTargetId) {
+    return;
+  }
+
+  if (runtimeState.activeEditableTargetId) {
+    const activeNode = findNodeByShadowId(root, runtimeState.activeEditableTargetId);
+    if (activeNode) {
+      dispatchRuntimeListener(activeNode, {
+        targetId: runtimeState.activeEditableTargetId,
+        type: "blur",
+      });
+    }
+    runtimeState.activeEditableTargetId = null;
+  }
+
+  if (nextEditableTargetId) {
+    runtimeState.activeEditableTargetId = nextEditableTargetId;
+    dispatchRuntimeListener(targetNode, {
+      targetId: nextEditableTargetId,
+      type: "focus",
+    });
+  }
+}
+
+function syncRuntimeTextInputState(root, runtimeState) {
+  if (!runtimeState) {
+    return;
+  }
+  if (!runtimeState.activeEditableTargetId) {
+    return;
+  }
+  const activeNode = findNodeByShadowId(root, runtimeState.activeEditableTargetId);
+  if (!isEditableNode(activeNode)) {
+    runtimeState.activeEditableTargetId = null;
+  }
+}
+
+function serializeRuntimeTextInput(root, runtimeState) {
+  if (!runtimeState?.activeEditableTargetId) {
+    return null;
+  }
+
+  const targetNode = findNodeByShadowId(root, runtimeState.activeEditableTargetId);
+  if (!isEditableNode(targetNode)) {
+    runtimeState.activeEditableTargetId = null;
+    return null;
+  }
+
+  return {
+    targetId: runtimeState.activeEditableTargetId,
+    value: targetNode.value ?? "",
+    selection: readRuntimeSelection(targetNode),
+    inputMode: resolveRuntimeInputMode(targetNode),
+    multiline: isMultilineNode(targetNode),
+  };
+}
+
+function isEditableNode(node) {
+  if (!node || node.kind !== "element") {
+    return false;
+  }
+
+  if (node.attributes["data-shadow-editable"] === "1") {
+    return true;
+  }
+
+  const tagName = typeof node.tagName === "string"
+    ? node.tagName.toLowerCase()
+    : "";
+  return tagName === "input" || tagName === "textarea";
+}
+
+function isMultilineNode(node) {
+  if (!node || node.kind !== "element") {
+    return false;
+  }
+  return node.attributes["data-shadow-multiline"] === "1"
+    || String(node.tagName || "").toLowerCase() === "textarea";
+}
+
+function resolveRuntimeInputMode(node) {
+  if (!node || node.kind !== "element") {
+    return null;
+  }
+
+  const attrInputMode = node.attributes["data-shadow-inputmode"]
+    ?? node.attributes.inputmode
+    ?? node.attributes.inputMode
+    ?? null;
+  if (typeof attrInputMode === "string" && attrInputMode.length > 0) {
+    return attrInputMode;
+  }
+
+  const type = String(node.attributes.type ?? "").toLowerCase();
+  if (type === "number" || type === "tel") {
+    return "numeric";
+  }
+  if (type === "email") {
+    return "email";
+  }
+  if (type === "url") {
+    return "url";
+  }
+  return null;
 }
 
 function createRuntimeEvent(targetNode, event) {
@@ -585,6 +730,12 @@ function attachElementAccessors(node) {
     end: null,
     start: null,
   };
+  if (node.tagName === "input" || node.tagName === "textarea") {
+    node.attributes["data-shadow-editable"] = "1";
+  }
+  if (node.tagName === "textarea") {
+    node.attributes["data-shadow-multiline"] = "1";
+  }
 
   Object.defineProperties(node, {
     value: {
@@ -637,6 +788,23 @@ function attachElementAccessors(node) {
           return;
         }
         node.attributes.type = String(nextValue);
+      },
+    },
+    inputMode: {
+      enumerable: false,
+      get() {
+        return node.attributes.inputMode ?? node.attributes.inputmode ?? "";
+      },
+      set(nextValue) {
+        if (nextValue == null || nextValue === "") {
+          delete node.attributes.inputMode;
+          delete node.attributes.inputmode;
+          delete node.attributes["data-shadow-inputmode"];
+          return;
+        }
+        const value = String(nextValue);
+        node.attributes.inputMode = value;
+        node.attributes["data-shadow-inputmode"] = value;
       },
     },
     selectionStart: {

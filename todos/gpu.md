@@ -177,10 +177,20 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `run <serial>` now uses the shell path.
   - Home/app launch/app switching are working on device.
   - The remaining technical cleanup is narrower:
-    - restore compose-field keyboard behavior on device
+    - [~] restore compose-field keyboard behavior on device
       - startup regression from the keyboard-seat change is fixed by staging `xkeyboard-config` into the rooted bundle and exporting `XKB_CONFIG_ROOT`
       - seat focus is fixed in the guest compositor
-      - if soft keyboard still does not appear after that, the remaining gap is likely missing Wayland text-input / input-method support on the rooted guest-compositor path
+      - rooted Wayland still has no natural IME/input-method client, so the current closure path is a runtime-owned software keyboard rather than more compositor IME surgery
+      - common runtime payload now carries active editable metadata (`textInput`)
+      - `shadow-blitz-demo` runtime mode now renders a generic bottom keyboard overlay and synthesizes `keydown` + `input` + `blur` through the existing runtime session path
+      - Pixel shell/runtime launchers now enable that path declaratively with `SHADOW_BLITZ_SOFTWARE_KEYBOARD=1`
+      - local regression coverage exists for:
+        - keyboard overlay rendering
+        - keyboard tap dispatching `keydown` + `input`
+        - bundled host runtime smoke:
+          - `just runtime-app-keyboard-smoke`
+      - still pending:
+        - fresh live Pixel proof that tapping compose/input fields now yields usable text entry end to end
     - keep app identity/app-id overrides truthful on fresh rooted runs
     - keep the shell operator path boring and explicit
       - `run <serial>` now holds indefinitely by default

@@ -192,7 +192,7 @@ pub struct RuntimeDispatchEvent {
     pub keyboard: Option<RuntimeKeyboardEvent>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RuntimeSelectionEvent {
     #[serde(rename = "start", skip_serializing_if = "Option::is_none")]
     pub start: Option<u32>,

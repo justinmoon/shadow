@@ -50,6 +50,56 @@ pub const FRAME_HTML: &str = r#"
         display: none;
       }
 
+      #shadow-blitz-keyboard {
+        position: fixed;
+        left: 18px;
+        right: 18px;
+        bottom: 18px;
+        z-index: 2147483646;
+      }
+
+      #shadow-blitz-keyboard:empty {
+        display: none;
+      }
+
+      .shadow-keyboard-host {
+        position: fixed;
+        left: 18px;
+        right: 18px;
+        bottom: 18px;
+        z-index: 2147483646;
+      }
+
+      .shadow-keyboard-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 14px;
+        border-radius: 28px;
+        background: rgba(3, 7, 18, 0.94);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        box-shadow: 0 26px 80px rgba(0, 0, 0, 0.44);
+      }
+
+      .shadow-keyboard-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .shadow-keyboard-key {
+        flex: 1 1 0;
+        min-height: 58px;
+        border: none;
+        border-radius: 18px;
+        background: rgba(15, 23, 42, 0.94);
+        color: #e2e8f0;
+        font: 700 22px/1 "Google Sans", "Roboto", "Droid Sans", "Noto Sans", sans-serif;
+      }
+
+      .shadow-keyboard-key-wide {
+        flex: 2 1 0;
+      }
+
       .shadow-debug-lane {
         width: 22px;
         height: 14px;
@@ -87,6 +137,7 @@ pub const FRAME_HTML: &str = r#"
   </head>
   <body>
     <main id="shadow-blitz-root"></main>
+    <aside id="shadow-blitz-keyboard"></aside>
     <aside id="shadow-blitz-debug"></aside>
   </body>
 </html>
