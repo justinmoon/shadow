@@ -80,11 +80,11 @@ check_case named_normal pixel timeline 1 "" target=pixel app=timeline 1
 check_case named_reversed pixel timeline 1 "" app=timeline target=pixel 1
 check_case named_with_hold pixel timeline 0 "" app=timeline target=pixel hold=0
 check_case serial_shortcut pixel timeline 1 TESTSERIAL TESTSERIAL timeline 1
-check_case defaults desktop podcast 1 "" 
+check_case defaults desktop shell 1 "" 
 
 check_just_run_case just_named_normal pixel timeline 1 "" app=timeline target=pixel
 check_just_run_case just_named_reversed pixel timeline 1 "" target=pixel app=timeline
 check_just_run_case just_positional pixel timeline 1 "" pixel timeline
-check_just_run_case just_defaults desktop podcast 1 ""
+check_just_run_case just_defaults desktop shell 1 ""
 
 printf 'ui_run_arg_smoke: ok\n'

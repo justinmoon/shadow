@@ -113,8 +113,8 @@ EOF
 )
 if [[ -n "$shell_start_app_id" ]]; then
   shell_session_env="${shell_session_env}"$'\n'"SHADOW_GUEST_SHELL_START_APP_ID=$shell_start_app_id"
-  expect_client_process=1
   extra_required_markers="${extra_required_markers}"$'\n''[shadow-guest-compositor] mapped-window'
+  extra_required_markers="${extra_required_markers}"$'\n'"[shadow-guest-compositor] surface-app-tracked app=$shell_start_app_id"
 fi
 if [[ -n "$extra_session_env" ]]; then
   shell_session_env="${shell_session_env}"$'\n'"${extra_session_env}"

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 target="desktop"
-app="podcast"
+app="shell"
 hold="1"
 
 parse_args() {
@@ -16,7 +16,7 @@ parse_args() {
   local hold_set=0
 
   target="desktop"
-  app="podcast"
+  app="shell"
   hold="1"
 
   for arg in "$@"; do

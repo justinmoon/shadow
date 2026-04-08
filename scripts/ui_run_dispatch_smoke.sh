@@ -34,11 +34,11 @@ check_dispatch_case() {
 }
 
 check_dispatch_case \
-  desktop_podcast_default \
+  desktop_shell_default \
   0 \
-  "$(printf 'env=SHADOW_UI_VM_START_APP_ID=podcast\ncommand=%s' "$SCRIPT_DIR/ui_vm_run.sh")" \
+  "command=$SCRIPT_DIR/ui_vm_run.sh" \
   "target=desktop uses the VM on" \
-  app=podcast target=desktop
+  app=shell target=desktop
 
 check_dispatch_case \
   desktop_shell \

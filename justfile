@@ -94,13 +94,13 @@ runtime-deno-runtime-smoke-aarch64-linux-gnu:
 # target=desktop runs the Linux desktop host when available, otherwise the local VM fallback
 # target=vm runs the local Linux VM shell
 # target=pixel runs the rooted Pixel shell/home scene
-# app=podcast opens the podcast player by default on supported targets
+# app=shell is the default operator entrypoint
 # target=<serial> implies Pixel and exports PIXEL_SERIAL automatically
-ui-run target="desktop" app="podcast" hold="1":
+ui-run target="desktop" app="shell" hold="1":
 	@scripts/ui_run.sh "{{target}}" "{{app}}" "{{hold}}"
 
 # Alias for ui-run
-run target="desktop" app="podcast" hold="1":
+run target="desktop" app="shell" hold="1":
 	@just ui-run "{{target}}" "{{app}}" "{{hold}}"
 
 # Run the nested compositor and demo app under a headless Linux host

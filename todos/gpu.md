@@ -196,6 +196,16 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
       - fix:
         - shell sessions no longer request `EXIT_ON_CLIENT_DISCONNECT`
         - guest compositor ignores that knob in shell mode even if it is accidentally set
+    - keep shell auto-open startup checks truthful
+      - root cause of the apparent `run <serial>` "podcast crash":
+        - the shell successfully auto-opened the requested app and mapped a window
+        - the wrapper was still waiting for a direct client-process checkpoint that is not reliable on this chrooted shell path
+        - that false timeout triggered Android restore and made the app look like it crashed
+      - fix:
+        - shell auto-open now validates shell-level markers instead:
+          - `mapped-window`
+          - `surface-app-tracked app=<id>`
+        - `run` / `ui-run` default back to `app=shell`
 
 ## What Is Proven vs. What Is Not
 
