@@ -26,7 +26,8 @@ pub const FRAME_HTML: &str = r#"
       #shadow-blitz-root {
         width: 100%;
         height: 100%;
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
         background: #08121b;
       }
 

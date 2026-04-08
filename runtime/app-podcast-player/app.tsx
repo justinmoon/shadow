@@ -75,17 +75,22 @@ body {
 }
 
 #shadow-blitz-root {
-  min-height: 100vh;
+  width: 100%;
+  height: 100%;
 }
 
 .podcast-shell {
-  min-height: 100vh;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
   padding: 22px;
 }
 
 .podcast-card {
   display: flex;
-  min-height: calc(100vh - 44px);
+  min-height: calc(100% - 44px);
   flex-direction: column;
   gap: 18px;
   border: 1px solid rgba(56, 189, 248, 0.16);

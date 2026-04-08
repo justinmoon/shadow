@@ -801,6 +801,12 @@ impl RuntimeDocument {
     }
 
     #[cfg(test)]
+    fn root_scroll_top(&self) -> Option<f64> {
+        let node_id = self.inner.query_selector(ROOT_SELECTOR).ok().flatten()?;
+        Some(self.inner.get_node(node_id)?.scroll_offset.y)
+    }
+
+    #[cfg(test)]
     fn take_last_runtime_event(&mut self) -> Option<RuntimeDispatchEvent> {
         self.last_dispatched_runtime_event.take()
     }
@@ -1062,6 +1068,15 @@ mod tests {
         }
     }
 
+    fn root_scroll_payload() -> RuntimeDocumentPayload {
+        RuntimeDocumentPayload {
+            html: String::from(
+                r#"<main style="width:100%;display:block;background:#020617"><div data-shadow-id="content" style="width:100%;height:2400px;background:linear-gradient(180deg,#38bdf8 0%,#0f172a 100%)"></div></main>"#,
+            ),
+            css: None,
+        }
+    }
+
     #[test]
     fn runtime_document_renders_initial_payload_into_fixed_frame() {
         let _guard = test_guard();
@@ -1264,6 +1279,53 @@ mod tests {
                 .unwrap_or_default()
                 > 0.0,
             "touch pan should advance the scroll container"
+        );
+        assert!(document.take_last_runtime_event().is_none());
+    }
+
+    #[test]
+    fn finger_pan_scrolls_root_without_explicit_scroll_container() {
+        let _guard = test_guard();
+        let mut document = RuntimeDocument::with_runtime(root_scroll_payload(), None);
+        let client_x = APP_VIEWPORT_WIDTH_PX as f32 / 2.0;
+        let client_y = APP_VIEWPORT_HEIGHT_PX as f32 / 2.0;
+
+        assert_eq!(
+            document.target_at(client_x, client_y).as_deref(),
+            Some("content")
+        );
+        document.handle_ui_event(UiEvent::PointerDown(pointer_event(
+            BlitzPointerId::Finger(1),
+            MouseEventButton::Main,
+            MouseEventButtons::Primary,
+            client_x,
+            client_y,
+        )));
+        document.handle_ui_event(UiEvent::PointerMove(pointer_event(
+            BlitzPointerId::Finger(1),
+            MouseEventButton::Main,
+            MouseEventButtons::Primary,
+            client_x,
+            client_y - 96.0,
+        )));
+        document.handle_ui_event(UiEvent::PointerMove(pointer_event(
+            BlitzPointerId::Finger(1),
+            MouseEventButton::Main,
+            MouseEventButtons::Primary,
+            client_x,
+            client_y - 192.0,
+        )));
+        document.handle_ui_event(UiEvent::PointerUp(pointer_event(
+            BlitzPointerId::Finger(1),
+            MouseEventButton::Main,
+            MouseEventButtons::None,
+            client_x,
+            client_y - 192.0,
+        )));
+
+        assert!(
+            document.root_scroll_top().unwrap_or_default() > 0.0,
+            "touch pan should advance the root scroll container"
         );
         assert!(document.take_last_runtime_event().is_none());
     }

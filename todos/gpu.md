@@ -182,6 +182,16 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - revalidate app-specific Wayland app-id/title overrides on a fresh rooted run after the current shell launch path change
     - finish the first two shell interaction regressions on device:
       - drag inside the app viewport should scroll, not text-select
+      - runtime apps that are taller than the viewport must opt into the same shell scroll contract
+        - root cause of the remaining `Timeline scrolls, Podcast/Cashu do not` mismatch:
+          - Podcast and Cashu never declared a scrollable shell viewport
+          - the compositor was correctly sending finger-axis events into layouts with nowhere to scroll
+        - fix:
+          - make the runtime root scroller (`#shadow-blitz-root`) vertically scrollable by default
+          - add a regression test for finger-pan scrolling on the root scroll container with no explicit inner scroller
+          - normalize the app shell CSS for those apps to the same contract as Timeline
+          - `#shadow-blitz-root { width:100%; height:100% }`
+          - shell container `height:100%; overflow-y:auto`
       - switching from one runtime app to another should not keep stacking full GPU clients
     - restore compose-field keyboard behavior on device
       - startup regression from the keyboard-seat change is fixed by staging `xkeyboard-config` into the rooted bundle and exporting `XKB_CONFIG_ROOT`

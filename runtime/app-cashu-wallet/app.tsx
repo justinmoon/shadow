@@ -111,14 +111,15 @@ body {
 
 #shadow-blitz-root {
   width: 100%;
-  min-height: 100vh;
+  height: 100%;
 }
 
 .wallet-shell {
   width: 100%;
-  min-height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
   gap: 20px;
   padding: 24px;
 }
