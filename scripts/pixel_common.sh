@@ -150,29 +150,97 @@ pixel_root_shell() {
   return 1
 }
 
-pixel_takeover_stop_services_script() {
-  local stop_allocator
-  stop_allocator="${1:-1}"
-  local allocator_stop_line=""
-  if [[ "$stop_allocator" != "0" ]]; then
-    allocator_stop_line="stop_service_and_wait vendor.qti.hardware.display.allocator"
-  fi
+pixel_takeover_display_service_helpers_script() {
   cat <<'EOF'
+service_process_exists() {
+  name="$1"
+  ps -A | awk -v name="$name" '$NF == name { found=1 } END { exit(found ? 0 : 1) }'
+}
+
+service_binary_exists() {
+  name="$1"
+  for path in "/vendor/bin/hw/$name" "/vendor/bin/$name" "/system/bin/$name" "/system_ext/bin/$name"; do
+    if [ -e "$path" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+service_is_known() {
+  service="$1"
+  current="$(getprop "init.svc.$service" | tr -d '\r')"
+  if [ "$current" = running ]; then
+    return 0
+  fi
+  service_process_exists "$service" || service_binary_exists "$service"
+}
+
+service_is_running() {
+  service="$1"
+  current="$(getprop "init.svc.$service" | tr -d '\r')"
+  if [ "$current" = running ]; then
+    return 0
+  fi
+  service_process_exists "$service"
+}
+
+service_is_stopped() {
+  service="$1"
+  ! service_is_running "$service"
+}
+
+any_service_running() {
+  for service in "$@"; do
+    [ -n "$service" ] || continue
+    if service_is_running "$service"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+all_services_stopped() {
+  for service in "$@"; do
+    [ -n "$service" ] || continue
+    if service_is_running "$service"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
 wait_for_service_state() {
   service="$1"
   expected="$2"
   attempts="${3:-40}"
   count=0
   while [ "$count" -lt "$attempts" ]; do
-    current="$(getprop "init.svc.$service" | tr -d '\r')"
-    if [ "$current" = "$expected" ]; then
-      return 0
+    if [ "$expected" = running ]; then
+      if service_is_running "$service"; then
+        return 0
+      fi
+    else
+      if service_is_stopped "$service"; then
+        return 0
+      fi
     fi
     count=$((count + 1))
     sleep 0.2
   done
   return 1
 }
+
+EOF
+}
+
+pixel_takeover_stop_services_script() {
+  local stop_allocator
+  stop_allocator="${1:-1}"
+  cat <<'EOF'
+EOF
+  pixel_takeover_display_service_helpers_script
+  cat <<'EOF'
 
 kill_stale_shadow_processes() {
   shadow_process_pids() {
@@ -218,10 +286,27 @@ stop_service_and_wait() {
 kill_stale_shadow_processes
 stop_service_and_wait surfaceflinger
 stop_service_and_wait bootanim
-stop_service_and_wait vendor.hwcomposer-2-4
+for service in \
+  vendor.hwcomposer-2-4 \
+  android.hardware.graphics.composer@2.4-service-sm8150 \
+  android.hardware.graphics.composer@2.4-service
+do
+  if service_is_known "$service"; then
+    stop_service_and_wait "$service"
+  fi
+done
 EOF
-  if [[ -n "$allocator_stop_line" ]]; then
-    printf '%s\n' "$allocator_stop_line"
+  if [[ "$stop_allocator" != "0" ]]; then
+    cat <<'EOF'
+for service in \
+  vendor.qti.hardware.display.allocator \
+  vendor.qti.hardware.display.allocator-service
+do
+  if service_is_known "$service"; then
+    stop_service_and_wait "$service"
+  fi
+done
+EOF
   fi
   cat <<'EOF'
 setenforce 0 >/dev/null 2>&1 || true
@@ -230,21 +315,9 @@ EOF
 
 pixel_takeover_start_services_script() {
   cat <<'EOF'
-wait_for_service_state() {
-  service="$1"
-  expected="$2"
-  attempts="${3:-40}"
-  count=0
-  while [ "$count" -lt "$attempts" ]; do
-    current="$(getprop "init.svc.$service" | tr -d '\r')"
-    if [ "$current" = "$expected" ]; then
-      return 0
-    fi
-    count=$((count + 1))
-    sleep 0.2
-  done
-  return 1
-}
+EOF
+  pixel_takeover_display_service_helpers_script
+  cat <<'EOF'
 
 kill_stale_shadow_processes() {
   shadow_process_pids() {
@@ -293,8 +366,23 @@ boot_completed() {
 }
 
 kill_stale_shadow_processes
-start_service_and_wait vendor.qti.hardware.display.allocator
-start_service_and_wait vendor.hwcomposer-2-4
+for service in \
+  vendor.qti.hardware.display.allocator \
+  vendor.qti.hardware.display.allocator-service
+do
+  if service_is_known "$service"; then
+    start_service_and_wait "$service"
+  fi
+done
+for service in \
+  vendor.hwcomposer-2-4 \
+  android.hardware.graphics.composer@2.4-service-sm8150 \
+  android.hardware.graphics.composer@2.4-service
+do
+  if service_is_known "$service"; then
+    start_service_and_wait "$service"
+  fi
+done
 start_service_and_wait surfaceflinger
 if boot_completed; then
   setprop service.bootanim.exit 1 || true
@@ -321,35 +409,116 @@ pixel_service_state() {
   pixel_prop "$serial" "init.svc.$service"
 }
 
-pixel_display_services_stopped() {
+pixel_graphics_composer_service_candidates() {
+  printf '%s\n' \
+    vendor.hwcomposer-2-4 \
+    android.hardware.graphics.composer@2.4-service-sm8150 \
+    android.hardware.graphics.composer@2.4-service
+}
+
+pixel_display_allocator_service_candidates() {
+  printf '%s\n' \
+    vendor.qti.hardware.display.allocator \
+    vendor.qti.hardware.display.allocator-service
+}
+
+pixel_named_service_binary_exists() {
+  local serial service quoted_service
+  serial="$1"
+  service="$2"
+  quoted_service="$(printf '%q' "$service")"
+  pixel_root_shell "$serial" "
+    service=$quoted_service
+    for path in \"/vendor/bin/hw/\$service\" \"/vendor/bin/\$service\" \"/system/bin/\$service\" \"/system_ext/bin/\$service\"; do
+      [ -e \"\$path\" ] && exit 0
+    done
+    exit 1
+  "
+}
+
+pixel_named_service_known() {
   local serial service
   serial="$1"
-  for service in surfaceflinger vendor.hwcomposer-2-4 vendor.qti.hardware.display.allocator; do
-    if [[ "$(pixel_service_state "$serial" "$service")" != "stopped" ]]; then
+  service="$2"
+  [[ "$(pixel_service_state "$serial" "$service")" == "running" ]] \
+    || pixel_root_process_exists "$serial" "$service" >/dev/null 2>&1 \
+    || pixel_named_service_binary_exists "$serial" "$service" >/dev/null 2>&1
+}
+
+pixel_named_service_running() {
+  local serial service state
+  serial="$1"
+  service="$2"
+  state="$(pixel_service_state "$serial" "$service")"
+  if [[ "$state" == "running" ]]; then
+    return 0
+  fi
+  pixel_root_process_exists "$serial" "$service" >/dev/null 2>&1
+}
+
+pixel_any_named_service_running() {
+  local serial service
+  serial="$1"
+  shift
+  for service in "$@"; do
+    [[ -n "$service" ]] || continue
+    if pixel_named_service_running "$serial" "$service"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+pixel_all_named_services_stopped() {
+  local serial service
+  serial="$1"
+  shift
+  for service in "$@"; do
+    [[ -n "$service" ]] || continue
+    if pixel_named_service_running "$serial" "$service"; then
       return 1
     fi
   done
+  return 0
+}
+
+pixel_display_services_stopped() {
+  local serial
+  serial="$1"
+  pixel_all_named_services_stopped "$serial" surfaceflinger || return 1
+  pixel_all_named_services_stopped "$serial" \
+    vendor.hwcomposer-2-4 \
+    android.hardware.graphics.composer@2.4-service-sm8150 \
+    android.hardware.graphics.composer@2.4-service || return 1
+  pixel_all_named_services_stopped "$serial" \
+    vendor.qti.hardware.display.allocator \
+    vendor.qti.hardware.display.allocator-service
 }
 
 pixel_display_services_stopped_keep_allocator() {
-  local serial service
+  local serial
   serial="$1"
-  for service in surfaceflinger vendor.hwcomposer-2-4; do
-    if [[ "$(pixel_service_state "$serial" "$service")" != "stopped" ]]; then
-      return 1
-    fi
-  done
-  [[ "$(pixel_service_state "$serial" vendor.qti.hardware.display.allocator)" == "running" ]]
+  pixel_all_named_services_stopped "$serial" surfaceflinger || return 1
+  pixel_all_named_services_stopped "$serial" \
+    vendor.hwcomposer-2-4 \
+    android.hardware.graphics.composer@2.4-service-sm8150 \
+    android.hardware.graphics.composer@2.4-service || return 1
+  pixel_any_named_service_running "$serial" \
+    vendor.qti.hardware.display.allocator \
+    vendor.qti.hardware.display.allocator-service
 }
 
 pixel_display_services_running() {
-  local serial service
+  local serial
   serial="$1"
-  for service in surfaceflinger vendor.hwcomposer-2-4 vendor.qti.hardware.display.allocator; do
-    if [[ "$(pixel_service_state "$serial" "$service")" != "running" ]]; then
-      return 1
-    fi
-  done
+  pixel_any_named_service_running "$serial" surfaceflinger || return 1
+  pixel_any_named_service_running "$serial" \
+    vendor.hwcomposer-2-4 \
+    android.hardware.graphics.composer@2.4-service-sm8150 \
+    android.hardware.graphics.composer@2.4-service || return 1
+  pixel_any_named_service_running "$serial" \
+    vendor.qti.hardware.display.allocator \
+    vendor.qti.hardware.display.allocator-service
 }
 
 pixel_bootanim_stopped() {
