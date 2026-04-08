@@ -173,30 +173,24 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - keep repeated warm runs boring
 - [ ] The direct `gpu` lane does not yet have a clear go/no-go decision.
   - We still need to decide whether to promote it, keep `gpu_softbuffer`, or declare direct present not worth further effort on this Pixel.
-- [~] Pixel shell/home operator unification is still unfinished.
-  - The graphics substrate now works on device.
-  - Remaining work is operator integration:
-    - make `run <serial>` use this shell path
-    - wire app launch/home UX on top of the new shell mode
+- [~] Pixel shell/home operator unification is largely done, with one major interaction gap left.
+  - `run <serial>` now uses the shell path.
+  - Home/app launch/app switching are working on device.
   - The remaining technical cleanup is narrower:
-    - revalidate app-specific Wayland app-id/title overrides on a fresh rooted run after the current shell launch path change
-    - finish the first two shell interaction regressions on device:
-      - drag inside the app viewport should scroll, not text-select
-      - runtime apps that are taller than the viewport must opt into the same shell scroll contract
-        - root cause of the remaining `Timeline scrolls, Podcast/Cashu do not` mismatch:
-          - Podcast and Cashu never declared a scrollable shell viewport
-          - the compositor was correctly sending finger-axis events into layouts with nowhere to scroll
-        - fix:
-          - make the runtime root scroller (`#shadow-blitz-root`) vertically scrollable by default
-          - add a regression test for finger-pan scrolling on the root scroll container with no explicit inner scroller
-          - normalize the app shell CSS for those apps to the same contract as Timeline
-          - `#shadow-blitz-root { width:100%; height:100% }`
-          - shell container `height:100%; overflow-y:auto`
-      - switching from one runtime app to another should not keep stacking full GPU clients
     - restore compose-field keyboard behavior on device
       - startup regression from the keyboard-seat change is fixed by staging `xkeyboard-config` into the rooted bundle and exporting `XKB_CONFIG_ROOT`
       - seat focus is fixed in the guest compositor
       - if soft keyboard still does not appear after that, the remaining gap is likely missing Wayland text-input / input-method support on the rooted guest-compositor path
+    - keep app identity/app-id overrides truthful on fresh rooted runs
+    - keep the shell operator path boring and explicit
+      - `run <serial>` now holds indefinitely by default
+      - shell session lifetime defaults were removed
+      - only startup/checkpoint waits remain, so failed boots still error out instead of hanging forever before first frame
+    - keep shell scrolling generic instead of app-by-app
+      - drag inside the app viewport now scrolls instead of text-selecting
+      - runtime root scrolling is enabled by default via `#shadow-blitz-root`
+      - explicit app shell viewport contracts were normalized for Podcast and Cashu
+      - regression coverage now includes root-level finger-pan scrolling without an explicit inner scroll container
     - keep the shell-launched Timeline app on the proven GPU lane
       - restored worktrees can lose the cached Turnip / vendor Mesa tarballs under `build/pixel/vendor`
       - without those tarballs the shell path silently falls back to `WGPU_BACKEND=gl`, which crashes in `NoCompatibleDevice`
