@@ -34,6 +34,7 @@ host_bundle_cache_hit=0
 host_bundle_source_fingerprint=""
 runtime_helper_content_fingerprint=""
 xkb_source_dir="$(runtime_bundle_xkb_source_dir)"
+android_font_source_dir="$(runtime_bundle_android_font_source_dir)"
 
 bundle_json="$(
   nix develop "$repo"#runtime -c deno run --quiet \
@@ -103,6 +104,7 @@ host_bundle_source_fingerprint="$(
     "$SCRIPT_DIR/pixel_runtime_linux_bundle_common.sh" \
     "${bundle_asset_dir:-__no_bundle_assets__}" \
     "$xkb_source_dir" \
+    "$android_font_source_dir" \
     "${extra_bundle_dir:-__no_extra_bundle__}" \
     "__pixel_runtime_enable_linux_audio__${audio_enabled}" \
     "__pixel_runtime_audio_package_ref__${audio_package_ref}"
@@ -135,6 +137,7 @@ if [[ "$host_bundle_cache_hit" != "1" ]]; then
   fi
   fill_linux_bundle_runtime_deps "$host_bundle_dir"
   stage_runtime_bundle_xkb_config "$host_bundle_dir"
+  stage_runtime_bundle_android_fonts "$host_bundle_dir"
   if [[ "$audio_enabled" == "1" ]]; then
     copy_closure_dir_into_bundle "share/alsa" "$host_bundle_dir/share/alsa"
     mkdir -p "$host_bundle_dir/lib/alsa-lib"

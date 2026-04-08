@@ -33,6 +33,7 @@ package_ref="$repo#packages.${package_system}.shadow-blitz-demo-aarch64-linux-gn
 bundle_device_dir="$(pixel_runtime_linux_dir)"
 bundle_manifest="$bundle_dir/.bundle-manifest.json"
 xkb_source_dir="$(runtime_bundle_xkb_source_dir)"
+android_font_source_dir="$(runtime_bundle_android_font_source_dir)"
 vendor_mesa_package_refs=(
   "nixpkgs#pkgsCross.aarch64-multiplatform.libx11"
   "nixpkgs#pkgsCross.aarch64-multiplatform.libxcb"
@@ -63,6 +64,7 @@ bundle_fingerprint="$(
     "$SCRIPT_DIR/pixel_build_openlog_preload.sh" \
     "$SCRIPT_DIR/pixel_openlog_preload.c" \
     "$xkb_source_dir" \
+    "$android_font_source_dir" \
     "${vendor_mesa_tarball:-__no_vendor_mesa__}" \
     "${vendor_turnip_tarball:-__no_vendor_turnip__}"
 )"
@@ -285,6 +287,7 @@ flatten_bundle_file_symlinks
 chmod -R u+w "$bundle_dir" 2>/dev/null || true
 fill_linux_bundle_runtime_deps "$bundle_dir"
 stage_runtime_bundle_xkb_config "$bundle_dir"
+stage_runtime_bundle_android_fonts "$bundle_dir"
 
 cat >"$launcher_artifact" <<EOF
 #!/system/bin/sh

@@ -34,6 +34,48 @@ runtime_bundle_xkb_source_dir() {
   printf '%s\n' "$PIXEL_XKB_CONFIG_SOURCE_DIR"
 }
 
+runtime_bundle_android_font_source_dir() {
+  local font_cache_dir roboto_store roboto_mono_store emoji_store
+  local -a sources
+
+  if [[ -n "${PIXEL_ANDROID_FONT_SOURCE_DIR-}" ]]; then
+    printf '%s\n' "$PIXEL_ANDROID_FONT_SOURCE_DIR"
+    return 0
+  fi
+
+  roboto_store="$(
+    nix build --accept-flake-config --no-link --print-out-paths 'nixpkgs#roboto' | tail -n 1
+  )"
+  roboto_mono_store="$(
+    nix build --accept-flake-config --no-link --print-out-paths 'nixpkgs#roboto-mono' | tail -n 1
+  )"
+  emoji_store="$(
+    nix build --accept-flake-config --no-link --print-out-paths 'nixpkgs#noto-fonts-color-emoji' | tail -n 1
+  )"
+  font_cache_dir="$(pixel_dir)/vendor/android-fonts/nix-curated"
+
+  mkdir -p "$font_cache_dir"
+  sources=(
+    "$roboto_store/share/fonts/truetype/Roboto-Regular.ttf:$font_cache_dir/DroidSans.ttf"
+    "$roboto_store/share/fonts/truetype/Roboto-Bold.ttf:$font_cache_dir/DroidSans-Bold.ttf"
+    "$roboto_mono_store/share/fonts/truetype/RobotoMono/RobotoMono-Regular.ttf:$font_cache_dir/DroidSansMono.ttf"
+    "$emoji_store/share/fonts/noto/NotoColorEmoji.ttf:$font_cache_dir/NotoColorEmoji.ttf"
+  )
+
+  local mapping source_path dest_path
+  for mapping in "${sources[@]}"; do
+    source_path="${mapping%%:*}"
+    dest_path="${mapping#*:}"
+    if [[ "${PIXEL_FORCE_ANDROID_FONT_REFRESH-}" == 1 || ! -s "$dest_path" ]]; then
+      cp -L "$source_path" "$dest_path"
+    fi
+  done
+
+  PIXEL_ANDROID_FONT_SOURCE_DIR="$font_cache_dir"
+  export PIXEL_ANDROID_FONT_SOURCE_DIR
+  printf '%s\n' "$PIXEL_ANDROID_FONT_SOURCE_DIR"
+}
+
 stage_runtime_bundle_xkb_config() {
   local bundle_dir xkb_source_dir xkb_dest_dir
   bundle_dir="$1"
@@ -48,6 +90,27 @@ stage_runtime_bundle_xkb_config() {
   rm -rf "$bundle_dir/etc/xkb" "$bundle_dir/etc/X11/xkb"
   ln -s ../share/X11/xkb "$bundle_dir/etc/xkb"
   ln -s ../../share/X11/xkb "$bundle_dir/etc/X11/xkb"
+}
+
+stage_runtime_bundle_android_fonts() {
+  local bundle_dir font_source_dir font_dest_dir font_file
+  local -a font_files
+
+  bundle_dir="$1"
+  font_source_dir="$(runtime_bundle_android_font_source_dir)"
+  font_dest_dir="$bundle_dir/system/fonts"
+  font_files=(
+    "DroidSans.ttf"
+    "DroidSans-Bold.ttf"
+    "DroidSansMono.ttf"
+    "NotoColorEmoji.ttf"
+  )
+
+  mkdir -p "$font_dest_dir"
+  chmod -R u+w "$bundle_dir/system" 2>/dev/null || true
+  for font_file in "${font_files[@]}"; do
+    cp -L "$font_source_dir/$font_file" "$font_dest_dir/$font_file"
+  done
 }
 
 normalize_runtime_bundle_input_path() {
@@ -167,6 +230,7 @@ reuse_cached_runtime_bundle() {
   [[ -f "$bundle_dir/shadow-blitz-demo" ]] || return 1
   [[ -d "$bundle_dir/share/X11/xkb" ]] || return 1
   [[ ! -L "$bundle_dir/share/X11/xkb" ]] || return 1
+  [[ -f "$bundle_dir/system/fonts/DroidSans.ttf" ]] || return 1
 
   runtime_bundle_manifest_matches "$manifest_path" "$expected_fingerprint" || return 1
 

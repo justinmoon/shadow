@@ -419,6 +419,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - avoid unnecessary remote rebuilds when known-good GPU artifacts already exist
   - add a dedicated Pixel GPU timeline smoke that writes the same compact summary as the counter demo
   - make the default operator commands use the cached/proven GPU artifacts whenever possible
+  - keep shell/runtime font assets host-built and reproducible, not copied from one live device
   - keep `pixel-gpu-warm` as the obvious prebuild hook for the Pixel GPU lane
 - Exit:
   - we can run the timeline app repeatedly on the GPU lane without rebuild roulette
@@ -526,6 +527,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - the better plan is:
     - keep the proven outer `shadow-compositor-guest`
     - run the shell/home frontend as a regular Pixel client or port the shell scene/lifecycle into the outer guest compositor
+- `2026-04-08 shell timeline font follow-up`:
+  - the shell-launched Timeline app did render, but text looked wrong because the chrooted GNU bundle had no curated Android fonts at `/system/fonts/...`
+  - the fix should stay declarative:
+    - stage a tiny curated font set from Nix store packages into the runtime bundles
+    - do not copy fonts from whichever handset happened to be connected
+  - this should make a fresh device behave the same as the current one
 - `2026-04-07 guest compositor shell substrate`:
   - next seam is not the full home UI yet
   - it is:
