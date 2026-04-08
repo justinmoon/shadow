@@ -4,38 +4,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./pixel_common.sh
 source "$SCRIPT_DIR/pixel_common.sh"
+# shellcheck source=./pixel_camera_runtime_common.sh
+source "$SCRIPT_DIR/pixel_camera_runtime_common.sh"
 ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
-camera_endpoint="${PIXEL_RUNTIME_CAMERA_ENDPOINT:-127.0.0.1:37656}"
-device_binary="${PIXEL_CAMERA_RS_DEVICE_BINARY:-/data/local/tmp/shadow-camera-provider-host}"
-daemon_pid_path="/data/local/tmp/shadow-camera-provider-host-serve.pid"
-daemon_log_path="/data/local/tmp/shadow-camera-provider-host-serve.log"
+camera_endpoint="$(pixel_camera_runtime_endpoint)"
 
 cleanup() {
-  pixel_root_shell "$serial" "
-    if [ -f '$daemon_pid_path' ]; then
-      kill \$(cat '$daemon_pid_path') >/dev/null 2>&1 || true
-      rm -f '$daemon_pid_path'
-    fi
-  " >/dev/null 2>&1 || true
+  pixel_camera_runtime_cleanup_broker "$serial"
 }
 
 trap cleanup EXIT
 
-"$SCRIPT_DIR/pixel_camera_rs_run.sh" ping >/dev/null
-
-pixel_root_shell "$serial" "
-  if [ -f '$daemon_pid_path' ]; then
-    kill \$(cat '$daemon_pid_path') >/dev/null 2>&1 || true
-  fi
-  rm -f '$daemon_pid_path' '$daemon_log_path'
-  chmod 0755 '$device_binary'
-  nohup '$device_binary' serve '$camera_endpoint' >'$daemon_log_path' 2>&1 &
-  echo \$! > '$daemon_pid_path'
-  sleep 1
-  kill -0 \$(cat '$daemon_pid_path')
-" >/dev/null
+pixel_camera_runtime_prepare_broker "$serial" "$camera_endpoint"
 
 panel_size="$(pixel_display_size "$serial")"
 panel_width="${panel_size%x*}"

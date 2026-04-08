@@ -1,6 +1,8 @@
 use std::env;
+use std::io::ErrorKind;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use deno_core::extension;
@@ -12,6 +14,8 @@ use serde::{Deserialize, Serialize};
 const CAMERA_ENDPOINT_ENV: &str = "SHADOW_RUNTIME_CAMERA_ENDPOINT";
 const CAMERA_TIMEOUT_MS_ENV: &str = "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS";
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+const CONNECT_RETRY_ATTEMPTS: usize = 10;
+const CONNECT_RETRY_DELAY_MS: u64 = 250;
 const MOCK_CAMERA_ID: &str = "mock/rear/0";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -187,7 +191,7 @@ impl CameraHostConfig {
         let address = addrs
             .next()
             .ok_or_else(|| format!("camera endpoint {endpoint} did not resolve"))?;
-        let mut stream = TcpStream::connect_timeout(&address, self.timeout)
+        let mut stream = connect_with_retry(address, self.timeout)
             .map_err(|error| format!("connect camera endpoint {endpoint}: {error}"))?;
         stream
             .set_read_timeout(Some(self.timeout))
@@ -216,6 +220,41 @@ impl CameraHostConfig {
         serde_json::from_str::<Response>(line.trim_end())
             .map_err(|error| format!("decode camera response: {error}"))
     }
+}
+
+fn connect_with_retry(
+    address: std::net::SocketAddr,
+    timeout: Duration,
+) -> Result<TcpStream, std::io::Error> {
+    let mut last_error = None;
+    for attempt in 0..CONNECT_RETRY_ATTEMPTS {
+        match TcpStream::connect_timeout(&address, timeout) {
+            Ok(stream) => return Ok(stream),
+            Err(error) if should_retry_connect(&error) && attempt + 1 < CONNECT_RETRY_ATTEMPTS => {
+                last_error = Some(error);
+                thread::sleep(Duration::from_millis(CONNECT_RETRY_DELAY_MS));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        std::io::Error::new(
+            ErrorKind::TimedOut,
+            "camera endpoint retry budget exhausted",
+        )
+    }))
+}
+
+fn should_retry_connect(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::ConnectionRefused
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::ConnectionReset
+            | ErrorKind::Interrupted
+            | ErrorKind::TimedOut
+    )
 }
 
 #[op2]

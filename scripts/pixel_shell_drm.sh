@@ -4,7 +4,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./pixel_common.sh
 source "$SCRIPT_DIR/pixel_common.sh"
+# shellcheck source=./pixel_camera_runtime_common.sh
+source "$SCRIPT_DIR/pixel_camera_runtime_common.sh"
 ensure_bootimg_shell "$@"
+
+serial="$(pixel_resolve_serial)"
+camera_endpoint="$(pixel_camera_runtime_endpoint)"
+camera_start_command="$(pixel_camera_runtime_start_command "$camera_endpoint")"
 
 default_turnip_tarball="$(pixel_dir)/vendor/turnip_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
 default_mesa_tarball="$(pixel_dir)/vendor/mesa-for-android-container_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
@@ -29,6 +35,12 @@ build_include_guest_client=1
 if [[ "$PIXEL_SHELL_RENDERER" == "gpu_softbuffer" ]]; then
   build_include_guest_client=0
 fi
+
+cleanup() {
+  pixel_camera_runtime_cleanup_broker "$serial"
+}
+
+trap cleanup EXIT
 
 PIXEL_BUILD_INCLUDE_GUEST_CLIENT="$build_include_guest_client" \
   "$SCRIPT_DIR/pixel_build.sh"
@@ -56,6 +68,7 @@ case "$PIXEL_SHELL_RENDERER" in
 esac
 
 env "${runtime_prepare_extra_env[@]}" "$SCRIPT_DIR/pixel_prepare_shell_runtime_artifacts.sh"
+pixel_camera_runtime_prepare_helper "$serial"
 
 PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS="${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS-}"
 PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS-}"
@@ -72,8 +85,10 @@ xkb_config_root="$(pixel_runtime_linux_dir)/share/X11/xkb"
 shell_guest_env=$(
   cat <<EOF
 SHADOW_BLITZ_DEMO_MODE=runtime
+SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS=${SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS:-100}
 SHADOW_BLITZ_DEBUG_OVERLAY=0
 SHADOW_BLITZ_ANDROID_FONTS=${SHADOW_BLITZ_ANDROID_FONTS:-curated}
+SHADOW_RUNTIME_CAMERA_ENDPOINT=$camera_endpoint
 HOME=$runtime_home_dir
 XDG_CACHE_HOME=$runtime_cache_dir
 XDG_CONFIG_HOME=$runtime_config_dir
@@ -108,7 +123,6 @@ SHADOW_RUNTIME_APP_CAMERA_BUNDLE_PATH=$(pixel_runtime_camera_bundle_dst)
 SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH=$(pixel_runtime_timeline_bundle_dst)
 SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=$(pixel_runtime_podcast_bundle_dst)
 SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH=$(pixel_runtime_cashu_bundle_dst)
-SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=$(pixel_runtime_podcast_bundle_dst)
 SHADOW_RUNTIME_HOST_BINARY_PATH=$(pixel_runtime_host_launcher_dst)
 SHADOW_RUNTIME_CASHU_DATA_DIR=$(pixel_runtime_dir)/cashu
 SHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM=1
@@ -143,4 +157,6 @@ PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
 PIXEL_GUEST_CLIENT_ENV="$shell_guest_env" \
 PIXEL_GUEST_SESSION_ENV="$shell_session_env" \
 PIXEL_GUEST_PRECREATE_DIRS="$runtime_home_dir $runtime_cache_dir $runtime_cache_dir/mesa $runtime_config_dir" \
+PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT="$camera_start_command" \
+PIXEL_TAKEOVER_STOP_ALLOCATOR="${PIXEL_TAKEOVER_STOP_ALLOCATOR:-0}" \
   "$SCRIPT_DIR/pixel_guest_ui_drm.sh"

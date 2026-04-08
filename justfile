@@ -378,6 +378,10 @@ pixel-shellctl *args='':
 pixel-shell-timeline-smoke:
 	@scripts/pixel_shell_timeline_smoke.sh
 
+# Prove camera launch and one live capture on the rooted Pixel shell lane
+pixel-shell-camera-smoke:
+	@scripts/pixel_shell_camera_smoke.sh
+
 # Run one rooted-Pixel runtime direct-gpu probe case with the selected backend profile
 pixel-runtime-app-drm-gpu-probe profile="vulkan_kgsl_first":
 	@PIXEL_RUNTIME_GPU_RENDERER=gpu scripts/pixel_runtime_app_drm_gpu_probe.sh "{{profile}}"
