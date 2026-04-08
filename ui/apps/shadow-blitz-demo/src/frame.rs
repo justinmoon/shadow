@@ -2,6 +2,7 @@ use std::{env, path::PathBuf, sync::Arc, time::Instant};
 
 use blitz_dom::{DocumentConfig, FontContext};
 use blitz_html::{HtmlDocument, HtmlProvider};
+use blitz_shell::DataUriNetProvider;
 
 pub const FRAME_HTML: &str = r#"
 <!doctype html>
@@ -147,6 +148,7 @@ pub fn template_document() -> HtmlDocument {
     let start = Instant::now();
     let mut config = DocumentConfig {
         html_parser_provider: Some(Arc::new(HtmlProvider) as _),
+        net_provider: Some(DataUriNetProvider::shared(None)),
         ..Default::default()
     };
     if let Some(font_ctx) = platform_font_context() {

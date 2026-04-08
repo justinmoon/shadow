@@ -775,6 +775,7 @@ impl ShadowGuestCompositor {
                 self.launch_or_focus_app(app_id)?;
                 Ok("ok\n".to_string())
             }
+            ControlRequest::Tap { x, y } => self.handle_control_tap(x, y),
             ControlRequest::Home => {
                 self.go_home();
                 Ok("ok\n".to_string())
@@ -782,6 +783,80 @@ impl ShadowGuestCompositor {
             ControlRequest::Switcher => Ok("ok\n".to_string()),
             ControlRequest::State => Ok(self.control_state_response()),
         }
+    }
+
+    fn handle_control_tap(&mut self, x: i32, y: i32) -> std::io::Result<String> {
+        let position = Point::<f64, Logical>::from((f64::from(x), f64::from(y)));
+        let time = self.start_time.elapsed().as_millis() as u32;
+
+        if let Some((shell_x, shell_y)) = self
+            .shell_captures_point(position)
+            .and_then(|_| self.shell_local_point(position))
+        {
+            tracing::info!(
+                "[shadow-guest-compositor] control-tap-shell x={} y={} local_x={:.1} local_y={:.1}",
+                x,
+                y,
+                shell_x,
+                shell_y
+            );
+            self.handle_shell_event(ShellEvent::PointerMoved {
+                x: shell_x,
+                y: shell_y,
+            });
+            self.handle_shell_event(ShellEvent::TouchTap {
+                x: shell_x,
+                y: shell_y,
+            });
+            self.publish_visible_shell_frame("control-tap-shell-frame");
+            return Ok("ok\n".to_string());
+        }
+
+        let Some(under) = self.surface_under(position) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("tap target {x},{y} is outside the current content"),
+            ));
+        };
+
+        tracing::info!(
+            "[shadow-guest-compositor] control-tap-app x={} y={} surface=true",
+            x,
+            y
+        );
+        let serial = SERIAL_COUNTER.next_serial();
+        let pointer = self.seat.get_pointer().expect("guest seat pointer");
+        self.raise_window_for_pointer_focus(Some(&under.0));
+        pointer.motion(
+            self,
+            Some(under.clone()),
+            &MotionEvent {
+                location: position,
+                serial,
+                time,
+            },
+        );
+        pointer.button(
+            self,
+            &ButtonEvent {
+                button: BTN_LEFT,
+                state: ButtonState::Pressed,
+                serial,
+                time,
+            },
+        );
+        pointer.button(
+            self,
+            &ButtonEvent {
+                button: BTN_LEFT,
+                state: ButtonState::Released,
+                serial,
+                time,
+            },
+        );
+        pointer.frame(self);
+        self.flush_wayland_clients();
+        Ok("ok\n".to_string())
     }
 
     fn control_state_response(&mut self) -> String {

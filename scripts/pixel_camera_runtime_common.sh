@@ -29,7 +29,7 @@ pixel_camera_runtime_prepare_helper() {
   serial="${1:?pixel_camera_runtime_prepare_helper requires a serial}"
   helper_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pixel_camera_rs_run.sh"
 
-  "$helper_script" ping >/dev/null
+  PIXEL_SERIAL="$serial" "$helper_script" ping >/dev/null
 }
 
 pixel_camera_runtime_start_command() {

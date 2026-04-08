@@ -11,7 +11,7 @@ json=0
 
 usage() {
   cat <<'EOF' >&2
-usage: pixel_shellctl.sh {state [--json]|home|switcher|open <app>}
+usage: pixel_shellctl.sh {state [--json]|home|switcher|open <app>|tap <x> <y>}
 EOF
   exit 1
 }
@@ -37,6 +37,10 @@ case "${1-}" in
   open)
     [[ "$#" -eq 2 ]] || usage
     request="launch $2"
+    ;;
+  tap)
+    [[ "$#" -eq 3 ]] || usage
+    request="tap $2 $3"
     ;;
   *)
     usage

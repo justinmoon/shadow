@@ -12,6 +12,7 @@ pub const COMPOSITOR_CONTROL_SOCKET: &str = "shadow-control.sock";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlRequest {
     Launch { app_id: AppId },
+    Tap { x: i32, y: i32 },
     Home,
     Switcher,
     State,
@@ -21,6 +22,7 @@ impl ControlRequest {
     pub fn encode(self) -> String {
         match self {
             Self::Launch { app_id } => format!("launch {}\n", app_id.as_str()),
+            Self::Tap { x, y } => format!("tap {x} {y}\n"),
             Self::Home => "home\n".to_string(),
             Self::Switcher => "switcher\n".to_string(),
             Self::State => "state\n".to_string(),
@@ -29,13 +31,17 @@ impl ControlRequest {
 
     pub fn parse(input: &str) -> Option<Self> {
         let mut parts = input.split_whitespace();
-        match (parts.next(), parts.next(), parts.next()) {
-            (Some("launch"), Some(app_id), None) => Some(Self::Launch {
+        match (parts.next(), parts.next(), parts.next(), parts.next()) {
+            (Some("launch"), Some(app_id), None, None) => Some(Self::Launch {
                 app_id: app::find_app_by_str(app_id)?.id,
             }),
-            (Some("home"), None, None) => Some(Self::Home),
-            (Some("switcher"), None, None) => Some(Self::Switcher),
-            (Some("state"), None, None) => Some(Self::State),
+            (Some("tap"), Some(x), Some(y), None) => Some(Self::Tap {
+                x: x.parse().ok()?,
+                y: y.parse().ok()?,
+            }),
+            (Some("home"), None, None, None) => Some(Self::Home),
+            (Some("switcher"), None, None, None) => Some(Self::Switcher),
+            (Some("state"), None, None, None) => Some(Self::State),
             _ => None,
         }
     }
@@ -91,6 +97,14 @@ mod tests {
 
         assert_eq!(request.encode(), "launch timeline\n");
         assert_eq!(ControlRequest::parse("launch timeline"), Some(request));
+    }
+
+    #[test]
+    fn tap_request_round_trips() {
+        let request = ControlRequest::Tap { x: 270, y: 768 };
+
+        assert_eq!(request.encode(), "tap 270 768\n");
+        assert_eq!(ControlRequest::parse("tap 270 768"), Some(request));
     }
 
     #[test]

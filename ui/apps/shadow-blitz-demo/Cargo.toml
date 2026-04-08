@@ -25,8 +25,9 @@ anyrender_vello_hybrid = { version = "0.3", optional = true }
 softbuffer_window_renderer = { path = "../../third_party/softbuffer_window_renderer", optional = true }
 blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-dom", default-features = false }
 blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-html", default-features = false }
-blitz-shell = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-shell", default-features = false }
+blitz-shell = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-shell", default-features = false, features = ["data-uri"] }
 blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-traits", default-features = false }
+image = { version = "0.25.6", default-features = false, features = ["jpeg", "png"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 shadow-ui-core = { path = "../../crates/shadow-ui-core" }

@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use blitz_dom::{DocGuard, DocGuardMut, Document};
+use blitz_dom::{local_name, ns, DocGuard, DocGuardMut, Document, QualName};
 use blitz_html::HtmlDocument;
 use blitz_traits::events::UiEvent;
 use serde::{Deserialize, Serialize};
@@ -191,6 +191,7 @@ impl RuntimeDocument {
             mutator.set_inner_html(self.frame_nodes.debug_id, "");
         }
         drop(mutator);
+        self.reload_runtime_images();
         runtime_log(format!(
             "apply-render-dom-updated elapsed_ms={}",
             render_start.elapsed().as_millis()
@@ -207,6 +208,39 @@ impl RuntimeDocument {
             "apply-render-complete elapsed_ms={}",
             render_start.elapsed().as_millis()
         ));
+    }
+
+    fn reload_runtime_images(&mut self) {
+        let image_nodes = self
+            .inner
+            .query_selector_all("img")
+            .expect("image selector should parse");
+        if image_nodes.is_empty() {
+            return;
+        }
+
+        let image_sources = image_nodes
+            .into_iter()
+            .filter_map(|node_id| {
+                self.inner
+                    .get_node(node_id)
+                    .and_then(|node| node.attr(local_name!("src")))
+                    .filter(|src| !src.is_empty())
+                    .map(|src| (node_id, src.to_owned()))
+            })
+            .collect::<Vec<_>>();
+        if image_sources.is_empty() {
+            return;
+        }
+
+        let mut mutator = self.inner.mutate();
+        for (node_id, src) in image_sources {
+            mutator.set_attribute(
+                node_id,
+                QualName::new(None, ns!(html), local_name!("src")),
+                &src,
+            );
+        }
     }
 
     fn handle_runtime_ui_event(&mut self, event: UiEvent) {
@@ -2278,5 +2312,41 @@ mod tests {
                 Some(3)
             );
         });
+    }
+
+    #[test]
+    fn data_uri_img_loads_into_runtime_document() {
+        let _guard = test_guard();
+        let mut document = RuntimeDocument::with_runtime(
+            RuntimeDocumentPayload {
+                html: String::from(
+                    r#"<img data-shadow-id="preview" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAAaADAAQAAAABAAAAAQAAAAD5Ip3+AAAADElEQVQIHWP4z8AAAAMBAQBb2/lEAAAAAElFTkSuQmCC" alt="preview" />"#,
+                ),
+                css: None,
+                text_input: None,
+            },
+            None,
+        );
+        let preview_id = document
+            .inner
+            .query_selector(r#"[data-shadow-id="preview"]"#)
+            .expect("preview selector should parse")
+            .expect("preview node should exist");
+
+        for _ in 0..3 {
+            document.inner.resolve(0.0);
+        }
+
+        let preview = document
+            .inner
+            .get_node(preview_id)
+            .expect("preview node should still exist");
+        let image = preview
+            .element_data()
+            .and_then(|element| element.raster_image_data())
+            .expect("preview image should decode after resolve");
+
+        assert_eq!(image.width, 1);
+        assert_eq!(image.height, 1);
     }
 }
