@@ -337,7 +337,12 @@ else
 fi
 
 if [[ -z "${session_status:-}" ]]; then
-  if pixel_wait_for_condition "$session_exit_timeout_secs" 1 session_not_running; then
+  if [[ -z "$session_exit_timeout_secs" ]]; then
+    set +e
+    wait "$session_pid"
+    session_status="$?"
+    set -e
+  elif pixel_wait_for_condition "$session_exit_timeout_secs" 1 session_not_running; then
     set +e
     wait "$session_pid"
     session_status="$?"

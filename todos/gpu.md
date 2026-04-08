@@ -196,6 +196,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
       - `run <serial>` now holds indefinitely by default
       - shell session lifetime defaults were removed
       - only startup/checkpoint waits remain, so failed boots still error out instead of hanging forever before first frame
+      - rooted shell now defaults to a pointer-only seat again
+      - `wl_keyboard` is opt-in for future IME experiments because the half-configured keyboard seat was wedging `winit-wayland` client startup on-device
     - keep shell scrolling generic instead of app-by-app
       - drag inside the app viewport now scrolls instead of text-selecting
       - runtime root scrolling is enabled by default via `#shadow-blitz-root`
