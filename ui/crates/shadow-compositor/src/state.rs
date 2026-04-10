@@ -9,8 +9,12 @@ use shadow_ui_core::{
     shell::{ShellAction, ShellEvent, ShellModel},
 };
 use smithay::{
+    backend::input::ButtonState,
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
-    input::{Seat, SeatState},
+    input::{
+        pointer::{ButtonEvent, MotionEvent},
+        Seat, SeatState,
+    },
     reexports::{
         calloop::{generic::Generic, EventLoop, Interest, LoopSignal, Mode, PostAction},
         wayland_server::{
@@ -21,7 +25,7 @@ use smithay::{
     },
     utils::{Logical, Point, Serial, Size, SERIAL_COUNTER},
     wayland::{
-        compositor::{CompositorClientState, CompositorState},
+        compositor::{get_parent, CompositorClientState, CompositorState},
         output::OutputManagerState,
         selection::data_device::DataDeviceState,
         shell::xdg::XdgShellState,
@@ -31,6 +35,8 @@ use smithay::{
 };
 
 use crate::{launch, shell::ShellSurface};
+
+const BTN_LEFT: u32 = 0x110;
 
 pub struct ShadowCompositor {
     pub start_time: std::time::Instant,
@@ -133,6 +139,11 @@ impl ShadowCompositor {
             .then_some((local_x as f32, local_y as f32))
     }
 
+    pub fn shell_captures_point(&self, position: Point<f64, Logical>) -> Option<(f32, f32)> {
+        let (x, y) = self.shell_local_point(position)?;
+        self.shell.captures_point(x, y).then_some((x, y))
+    }
+
     pub fn surface_under(
         &self,
         pos: Point<f64, Logical>,
@@ -144,6 +155,14 @@ impl ShadowCompositor {
                     .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
                     .map(|(surface, point)| (surface, (point + location).to_f64()))
             })
+    }
+
+    pub fn root_surface(&self, surface: &WlSurface) -> WlSurface {
+        let mut root = surface.clone();
+        while let Some(parent) = get_parent(&root) {
+            root = parent;
+        }
+        root
     }
 
     pub fn focus_window(&mut self, window: Option<Window>, serial: Serial) {
@@ -177,6 +196,23 @@ impl ShadowCompositor {
     pub fn focus_top_window(&mut self, serial: Serial) {
         let window = self.space.elements().last().cloned();
         self.focus_window(window, serial);
+    }
+
+    pub fn raise_window_for_pointer_focus(&mut self, surface: Option<&WlSurface>, serial: Serial) {
+        let Some(surface) = surface else {
+            return;
+        };
+        let root_surface = self.root_surface(surface);
+        let Some(window) = self
+            .space
+            .elements()
+            .find(|candidate| candidate.toplevel().unwrap().wl_surface() == &root_surface)
+            .cloned()
+        else {
+            return;
+        };
+
+        self.focus_window(Some(window), serial);
     }
 
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<Window> {
@@ -233,6 +269,7 @@ impl ShadowCompositor {
                 self.launch_or_focus_app(app_id)?;
                 Ok("ok\n".to_string())
             }
+            ControlRequest::Tap { x, y } => self.handle_control_tap(x, y),
             ControlRequest::Home => {
                 self.go_home();
                 Ok("ok\n".to_string())
@@ -240,6 +277,64 @@ impl ShadowCompositor {
             ControlRequest::Switcher => Ok("ok\n".to_string()),
             ControlRequest::State => Ok(self.control_state_response()),
         }
+    }
+
+    fn handle_control_tap(&mut self, x: i32, y: i32) -> std::io::Result<String> {
+        let position = Point::<f64, Logical>::from((f64::from(x), f64::from(y)));
+        let time = self.start_time.elapsed().as_millis() as u32;
+
+        if let Some((shell_x, shell_y)) = self.shell_captures_point(position) {
+            self.handle_shell_event(ShellEvent::PointerMoved {
+                x: shell_x,
+                y: shell_y,
+            });
+            self.handle_shell_event(ShellEvent::TouchTap {
+                x: shell_x,
+                y: shell_y,
+            });
+            return Ok("ok\n".to_string());
+        }
+
+        let Some(under) = self.surface_under(position) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("tap target {x},{y} is outside the current content"),
+            ));
+        };
+
+        let serial = SERIAL_COUNTER.next_serial();
+        let pointer = self.seat.get_pointer().expect("seat pointer");
+        self.raise_window_for_pointer_focus(Some(&under.0), serial);
+        pointer.motion(
+            self,
+            Some(under.clone()),
+            &MotionEvent {
+                location: position,
+                serial,
+                time,
+            },
+        );
+        pointer.button(
+            self,
+            &ButtonEvent {
+                button: BTN_LEFT,
+                state: ButtonState::Pressed,
+                serial,
+                time,
+            },
+        );
+        pointer.button(
+            self,
+            &ButtonEvent {
+                button: BTN_LEFT,
+                state: ButtonState::Released,
+                serial,
+                time,
+            },
+        );
+        pointer.frame(self);
+        self.flush_wayland_clients();
+        Ok("ok\n".to_string())
     }
 
     pub fn handle_shell_event(&mut self, event: ShellEvent) {
@@ -390,6 +485,12 @@ impl ShadowCompositor {
                 (x, y)
             })
             .unwrap_or((0, 0))
+    }
+
+    fn flush_wayland_clients(&mut self) {
+        if let Err(error) = self.display_handle.flush_clients() {
+            tracing::warn!("[shadow-compositor] flush-clients failed: {error}");
+        }
     }
 
     fn init_wayland_listener(display: Display<Self>, event_loop: &mut EventLoop<Self>) -> OsString {

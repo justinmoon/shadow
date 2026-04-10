@@ -73,23 +73,23 @@ else:
 
     if [[ -n "$runtime_helper_content_fingerprint" && "$runtime_helper_content_fingerprint" == "$runtime_device_content_fingerprint" ]]; then
       printf 'Runtime helper dir cacheHit -> %s\n' "$runtime_linux_dir"
-    else
-      runtime_bundle_archive_host="$(mktemp "${TMPDIR:-/tmp}/shadow-runtime-bundle.XXXXXX.tar")"
-      runtime_bundle_archive_device="/data/local/tmp/$(basename "$runtime_bundle_archive_host")"
-      COPYFILE_DISABLE=1 tar \
-        --format=ustar \
+	    else
+	      runtime_bundle_archive_host="$(mktemp "${TMPDIR:-/tmp}/shadow-runtime-bundle.XXXXXX.tar")"
+	      runtime_bundle_archive_device="/data/local/tmp/$(basename "$runtime_bundle_archive_host")"
+	      COPYFILE_DISABLE=1 tar \
+	        --format=ustar \
         --numeric-owner \
         --owner=0 \
         --group=0 \
         --no-xattrs \
-        -C "$runtime_host_bundle_artifact_dir" \
-        -cf "$runtime_bundle_archive_host" \
-        .
-      pixel_root_shell "$serial" "rm -rf '$runtime_linux_dir' '$runtime_bundle_archive_device'"
-      pixel_adb "$serial" push "$runtime_bundle_archive_host" "$runtime_bundle_archive_device" >/dev/null
-      pixel_root_shell "$serial" "mkdir -p '$runtime_linux_dir' && /system/bin/tar -xf '$runtime_bundle_archive_device' -C '$runtime_linux_dir' && chown -R shell:shell '$runtime_linux_dir' && find '$runtime_linux_dir' -type d -exec chmod 0755 {} + && find '$runtime_linux_dir' -type f -exec chmod 0755 {} + && rm -f '$runtime_bundle_archive_device'"
-    fi
-  else
+	        -C "$runtime_host_bundle_artifact_dir" \
+	        -cf "$runtime_bundle_archive_host" \
+	        .
+	      pixel_root_shell "$serial" "umount -l '$runtime_linux_dir/etc' >/dev/null 2>&1 || true; mkdir -p '$runtime_linux_dir'; rm -f '$runtime_bundle_archive_device'"
+	      pixel_adb "$serial" push "$runtime_bundle_archive_host" "$runtime_bundle_archive_device" >/dev/null
+	      pixel_root_shell "$serial" "umount -l '$runtime_linux_dir/etc' >/dev/null 2>&1 || true; mkdir -p '$runtime_linux_dir' && /system/bin/tar -xf '$runtime_bundle_archive_device' -C '$runtime_linux_dir' && chown -R shell:shell '$runtime_linux_dir' && find '$runtime_linux_dir' -type d -exec chmod 0755 {} + && find '$runtime_linux_dir' -type f -exec chmod 0755 {} + && rm -f '$runtime_bundle_archive_device'"
+	    fi
+	  else
     pixel_root_shell "$serial" "rm -rf '$runtime_linux_dir'"
     pixel_adb "$serial" shell "mkdir -p '$runtime_linux_dir'"
   fi

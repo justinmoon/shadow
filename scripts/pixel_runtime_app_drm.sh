@@ -155,6 +155,7 @@ SHADOW_BLITZ_SOFTWARE_KEYBOARD=${SHADOW_BLITZ_SOFTWARE_KEYBOARD:-1}
 SHADOW_BLITZ_GPU_SUMMARY=1
 SHADOW_RUNTIME_APP_BUNDLE_PATH=$(pixel_runtime_app_bundle_dst)
 SHADOW_RUNTIME_HOST_BINARY_PATH=$(pixel_runtime_host_launcher_dst)
+SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_dir)/runtime-nostr.sqlite3
 HOME=$runtime_home_dir
 XDG_CACHE_HOME=$runtime_cache_dir
 XDG_CONFIG_HOME=$runtime_config_dir

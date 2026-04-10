@@ -48,6 +48,8 @@ if [[ ! -s "$RUNTIME_ENV_PATH" || -n "${SHADOW_UI_VM_REFRESH_RUNTIME_ENV:-}" ]] 
   || ! grep -Fq 'SHADOW_RUNTIME_APP_CAMERA_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
   || ! grep -Fq 'SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
   || ! grep -Fq 'SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
+  || ! grep -Fq 'SHADOW_RUNTIME_CASHU_DATA_DIR=/var/lib/shadow-ui/runtime-cashu' "$RUNTIME_ENV_PATH" 2>/dev/null \
+  || ! grep -Fq 'SHADOW_RUNTIME_NOSTR_DB_PATH=/var/lib/shadow-ui/runtime-nostr.sqlite3' "$RUNTIME_ENV_PATH" 2>/dev/null \
   || { [[ "$ui_vm_enable_podcast_app" == "1" ]] && ! grep -Fq 'SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null; } \
   || { [[ "$ui_vm_start_app_id" == "shell" ]] && grep -Fq 'SHADOW_COMPOSITOR_AUTO_LAUNCH=' "$RUNTIME_ENV_PATH" 2>/dev/null; } \
   || { [[ "$ui_vm_start_app_id" != "shell" ]] && ! grep -Fq "SHADOW_COMPOSITOR_START_APP_ID=$ui_vm_start_app_id" "$RUNTIME_ENV_PATH" 2>/dev/null; } \
@@ -55,6 +57,7 @@ if [[ ! -s "$RUNTIME_ENV_PATH" || -n "${SHADOW_UI_VM_REFRESH_RUNTIME_ENV:-}" ]] 
   runtime_env_tmp="$(mktemp "$REPO_ROOT/.shadow-vm/runtime-host-session-env.XXXXXX")"
   SHADOW_RUNTIME_APP_BUNDLE_REWRITE_FROM="$REPO_ROOT" \
   SHADOW_RUNTIME_APP_BUNDLE_REWRITE_TO="/work/shadow" \
+  SHADOW_STATE_DIR="/var/lib/shadow-ui" \
   SHADOW_RUNTIME_ENABLE_PODCAST_APP="$ui_vm_enable_podcast_app" \
   SHADOW_RUNTIME_HOST_PACKAGE_ATTR_OVERRIDE="${SHADOW_UI_VM_RUNTIME_HOST_PACKAGE_ATTR:-$ui_vm_runtime_host_package_attr_default}" \
   SHADOW_RUNTIME_HOST_BINARY_NAME_OVERRIDE="${SHADOW_UI_VM_RUNTIME_HOST_BINARY_NAME:-shadow-runtime-host}" \

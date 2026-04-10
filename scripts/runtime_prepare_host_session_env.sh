@@ -20,7 +20,7 @@ camera_session_json="$(
     "$SCRIPT_DIR/runtime_prepare_host_session.sh"
 )"
 timeline_session_json="$(
-  SHADOW_RUNTIME_APP_CONFIG_JSON='{"limit":12,"syncOnStart":false}' \
+  SHADOW_RUNTIME_APP_CONFIG_JSON='{"limit":12,"syncOnStart":true}' \
   SHADOW_RUNTIME_APP_INPUT_PATH="runtime/app-nostr-timeline/app.tsx" \
   SHADOW_RUNTIME_APP_CACHE_DIR="build/runtime/app-nostr-timeline-host" \
     "$SCRIPT_DIR/runtime_prepare_host_session.sh"
@@ -98,10 +98,14 @@ def rewrite(path: str) -> str:
     return path
 
 
-state_dir = os.environ.get("SHADOW_STATE_DIR") or "/var/lib/shadow-ui"
-if state_dir == "/var/lib/shadow-ui" and not os.path.isdir("/var/lib/shadow-ui"):
-    xdg = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
-    state_dir = os.path.join(xdg, "shadow-ui")
+state_dir_override = os.environ.get("SHADOW_STATE_DIR")
+if state_dir_override:
+    state_dir = state_dir_override
+else:
+    state_dir = "/var/lib/shadow-ui"
+    if not os.path.isdir("/var/lib/shadow-ui"):
+        xdg = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+        state_dir = os.path.join(xdg, "shadow-ui")
 
 exports = {
     "SHADOW_RUNTIME_APP_BUNDLE_PATH": rewrite(default_session["bundlePath"]),

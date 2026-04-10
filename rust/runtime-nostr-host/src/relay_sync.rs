@@ -57,8 +57,20 @@ pub async fn sync_kind1(request: SyncKind1Request) -> Result<FetchedKind1Batch, 
 
     let connect_output = client.try_connect(Duration::from_secs(4)).await;
     if connect_output.success.is_empty() {
+        let mut failed_relays = connect_output
+            .failed
+            .iter()
+            .map(|(relay_url, error)| format!("{relay_url} ({error})"))
+            .collect::<Vec<_>>();
+        failed_relays.sort();
         client.shutdown().await;
-        return Err(String::from("nostr.syncKind1 could not connect to any relay"));
+        if failed_relays.is_empty() {
+            return Err(String::from("nostr.syncKind1 could not connect to any relay"));
+        }
+        return Err(format!(
+            "nostr.syncKind1 could not connect to any relay: {}",
+            failed_relays.join(", ")
+        ));
     }
 
     let events = client

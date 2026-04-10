@@ -50,7 +50,7 @@ cashu_bundle_artifact="$(pixel_runtime_cashu_bundle_artifact)"
 
 timeline_config_json="${SHADOW_RUNTIME_APP_TIMELINE_CONFIG_JSON-}"
 if [[ -z "$timeline_config_json" ]]; then
-  timeline_config_json='{"limit":12,"syncOnStart":false}'
+  timeline_config_json='{"limit":12,"syncOnStart":true}'
 fi
 
 prepare_bundle() {
@@ -250,6 +250,17 @@ EOF
 export SHADOW_RUNTIME_AUDIO_BACKEND="\${SHADOW_RUNTIME_AUDIO_BACKEND:-linux_spike}"
 export SHADOW_RUNTIME_AUDIO_SPIKE_BINARY="\$DIR/run-$audio_binary_name"
 export SHADOW_RUNTIME_BUNDLE_DIR="\$DIR"
+if command -v unshare >/dev/null 2>&1 && command -v mount >/dev/null 2>&1; then
+  exec unshare -m /system/bin/sh -c '
+    DIR="\$1"
+    LOADER="\$2"
+    BINARY="\$3"
+    shift 3
+    mount --make-rprivate / >/dev/null 2>&1 || true
+    mount -o bind "\$DIR/etc" /system/etc >/dev/null 2>&1 || true
+    exec "\$DIR/lib/\$LOADER" --library-path "\$DIR/lib" "\$DIR/\$BINARY" "\$@"
+  ' sh "\$DIR" "$PIXEL_RUNTIME_STAGE_LOADER_NAME" "$host_binary_name" "\$@"
+fi
 exec "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$DIR/$host_binary_name" "\$@"
 EOF
   else

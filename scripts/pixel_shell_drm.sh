@@ -122,6 +122,7 @@ SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=$(pixel_runtime_podcast_bundle_dst)
 SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH=$(pixel_runtime_cashu_bundle_dst)
 SHADOW_RUNTIME_HOST_BINARY_PATH=$(pixel_runtime_host_launcher_dst)
 SHADOW_RUNTIME_CASHU_DATA_DIR=$(pixel_runtime_dir)/cashu
+SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_dir)/runtime-nostr.sqlite3
 SHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM=1
 EOF
 )

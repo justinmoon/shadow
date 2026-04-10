@@ -145,8 +145,12 @@ nixpkgs.lib.nixosSystem {
               eval "$runtime_env_exports"
               echo "runtime env source=guest-fallback"
             fi
+            export SHADOW_RUNTIME_CASHU_DATA_DIR=${stateDir}/runtime-cashu
+            export SHADOW_RUNTIME_NOSTR_DB_PATH=${stateDir}/runtime-nostr.sqlite3
             echo "runtime bundle=$SHADOW_RUNTIME_APP_BUNDLE_PATH"
             echo "runtime host=$SHADOW_RUNTIME_HOST_BINARY_PATH"
+            echo "runtime nostr db=$SHADOW_RUNTIME_NOSTR_DB_PATH"
+            echo "runtime cashu dir=$SHADOW_RUNTIME_CASHU_DATA_DIR"
 
             cargo run --locked --manifest-path ui/Cargo.toml -p shadow-compositor &
             compositor_pid=$!
