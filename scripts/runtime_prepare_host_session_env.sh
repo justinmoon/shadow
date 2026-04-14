@@ -97,7 +97,6 @@ def rewrite(path: str) -> str:
         return rewrite_to + path[len(rewrite_from):]
     return path
 
-
 state_dir_override = os.environ.get("SHADOW_STATE_DIR")
 if state_dir_override:
     state_dir = state_dir_override

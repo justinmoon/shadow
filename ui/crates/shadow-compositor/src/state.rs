@@ -282,7 +282,6 @@ impl ShadowCompositor {
     fn handle_control_tap(&mut self, x: i32, y: i32) -> std::io::Result<String> {
         let position = Point::<f64, Logical>::from((f64::from(x), f64::from(y)));
         let time = self.start_time.elapsed().as_millis() as u32;
-
         if let Some((shell_x, shell_y)) = self.shell_captures_point(position) {
             self.handle_shell_event(ShellEvent::PointerMoved {
                 x: shell_x,

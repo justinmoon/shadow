@@ -456,7 +456,8 @@ Key checks:
 ```bash
 just pre-commit    # Fast local gate (formatting, tests, compile)
 just ui-check      # UI workspace checks
-just ui-smoke      # Headless Linux compositor smoke test
-just pre-merge     # Required branch gate (pre-commit + smoke)
+just ui-vm-smoke   # Local VM shell/app smoke used by pre-merge
+just ui-smoke      # Manual Linux compositor smoke test
+just pre-merge     # Required branch gate (pre-commit + VM smoke)
 just nightly       # Current nightly gate (currently mirrors pre-merge)
 ```

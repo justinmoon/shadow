@@ -8,7 +8,7 @@ ensure_bootimg_shell "$@"
 
 cd "$(repo_root)"
 
-export SHADOW_UI_SMOKE_NAMESPACE="${SHADOW_UI_SMOKE_NAMESPACE:-pre-merge-$(worktree_basename)-ui-smoke-$$}"
+export NIX_BUILDERS=
 
 just pre-commit
-just ui-smoke
+just ui-vm-smoke

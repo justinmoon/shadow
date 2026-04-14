@@ -212,6 +212,14 @@ run target="desktop" app="shell" hold="1":
 ui-smoke:
 	@scripts/ui_smoke.sh
 
+# Run the local VM smoke used by pre-merge
+ui-vm-smoke:
+	@scripts/ui_vm_smoke.sh
+
+# Alias for ui-vm-smoke
+vm-smoke:
+	@just ui-vm-smoke
+
 # Run the local Linux UI VM in a native macOS window
 ui-vm-run:
 	@scripts/ui_vm_run.sh

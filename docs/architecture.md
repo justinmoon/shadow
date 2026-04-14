@@ -41,7 +41,7 @@ The current operator ladder reflects that split:
 2. `just cf-drm-rect` boots stock Android, uses `adb root`, stops the Android graphics services that hold DRM master, then runs `shadow-session` plus `drm-rect`.
 3. `just cf-guest-ui-smoke` boots stock Android, uses `adb root`, starts `shadow-session` plus `shadow-compositor-guest`, auto-launches one guest Wayland client, and saves the captured frame artifact under `build/guest-ui/`.
 4. `just cf-guest-ui-drm-smoke` proves the same guest compositor path can also present to DRM/KMS.
-5. `just ui-vm-run` is the fast local macOS loop for compositor and shell UX work; it is intentionally outside CI.
+5. `just ui-vm-run` is the fast local macOS loop for compositor and shell UX work, and `just ui-vm-smoke` is now the required local branch-gate rung.
 6. `scripts/shadowctl` is the current unified operator CLI for the local VM and rooted Pixel. The `just ui-vm-*` recipes are thin VM presets over `shadowctl -t vm ...`.
 7. `just runtime-app-host-smokes` is the current bundled host-runtime proof surface: it runs the keyboard, GM, timeline, and Cashu wallet smokes that exercise the live app contract end to end.
 8. `just pixel-doctor` / `pixel-build` / `pixel-push` are the current real-device operator ladder for post-boot iteration on a plugged-in Pixel.
@@ -121,4 +121,5 @@ For the local VM specifically, the first visible frame can lag behind boot becau
 1. `just ui-vm-run` launches the VM window.
 2. `just ui-vm-doctor` explains whether the compositor is still compiling or already live.
 3. `just ui-vm-wait-ready` blocks until the compositor control socket and the nested Wayland session are usable.
-4. `just ui-vm-screenshot` captures the current QEMU window via QMP for outside-in inspection.
+4. `just ui-vm-smoke` is the current branch-gate proof on macOS: timeline launch/home/reopen plus camera and podcast launch in one VM boot.
+5. `just ui-vm-screenshot` captures the current QEMU window via QMP for outside-in inspection.
