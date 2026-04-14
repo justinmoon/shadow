@@ -432,34 +432,7 @@ impl ShadowGuestCompositor {
     }
 
     fn spawn_client(&mut self) -> std::io::Result<()> {
-        let client_path =
-            std::env::var("SHADOW_GUEST_CLIENT").unwrap_or_else(|_| default_guest_client_path());
-        let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .unwrap_or_else(|_| "/data/local/tmp/shadow-runtime".into());
-
-        let mut command = std::process::Command::new(&client_path);
-        command.env("XDG_RUNTIME_DIR", runtime_dir);
-        command.env(
-            shadow_ui_core::control::COMPOSITOR_CONTROL_ENV,
-            self.control_socket_path.as_os_str(),
-        );
-        if let Some(value) = std::env::var("SHADOW_GUEST_CLIENT_ENV").ok() {
-            for assignment in value.split_whitespace() {
-                if let Some((key, env_value)) = assignment.split_once('=') {
-                    if !key.is_empty() {
-                        command.env(key, env_value);
-                    }
-                }
-            }
-        }
-        if let Some(value) = std::env::var_os("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE") {
-            command.env("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE", value);
-        }
-        if let Some(value) = std::env::var_os("SHADOW_GUEST_CLIENT_LINGER_MS") {
-            command.env("SHADOW_GUEST_CLIENT_LINGER_MS", value);
-        }
-
-        let child = self.spawn_wayland_command(command, &client_path)?;
+        let child = launch::spawn_client(self)?;
         self.launched_clients.push(child);
         Ok(())
     }
@@ -1883,15 +1856,15 @@ mod tests {
         let key = "SHADOW_GUEST_SHELL_START_APP_ID";
         let previous = std::env::var_os(key);
         match value {
-            Some(value) => std::env::set_var(key, value),
-            None => std::env::remove_var(key),
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
         }
 
         check();
 
         match previous {
-            Some(value) => std::env::set_var(key, value),
-            None => std::env::remove_var(key),
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
         }
     }
 

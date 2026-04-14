@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/shadow-ui-core",
     "crates/shadow-ui-software",
+    "crates/shadow-compositor-common",
     "crates/shadow-compositor",
     "crates/shadow-compositor-guest",
     "apps/shadow-blitz-demo",

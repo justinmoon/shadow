@@ -2,6 +2,8 @@
 
 Shadow is a custom mobile OS stack built from the ground up. We take a rooted Android phone, stop the Android display server, and run our own compositor, runtime, and apps directly on the Linux kernel. This tutorial explains every layer of the system.
 
+For the current supported operator surface, start with [docs/architecture.md](/Users/justin/code/shadow/worktrees/cleanup/docs/architecture.md). That doc now defines the front door: local VM/QEMU shell/home plus app launch and rooted-Pixel shell/home plus app launch, with `just run target=...` / `just stop target=...` as the target-aware session entrypoints. This tutorial still carries older bring-up and probe material for deeper context.
+
 ---
 
 ## Development Environments

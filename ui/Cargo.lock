@@ -3195,11 +3195,21 @@ name = "shadow-compositor"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "shadow-compositor-common",
  "shadow-ui-core",
  "shadow-ui-software",
  "smithay",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "shadow-compositor-common"
+version = "0.1.0"
+dependencies = [
+ "shadow-ui-core",
+ "smithay",
+ "tracing",
 ]
 
 [[package]]
@@ -3211,6 +3221,7 @@ dependencies = [
  "drm",
  "evdev",
  "libc",
+ "shadow-compositor-common",
  "shadow-ui-core",
  "shadow-ui-software",
  "smithay",

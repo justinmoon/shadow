@@ -3,9 +3,55 @@ set export
 export CUTTLEFISH_REMOTE_HOST := env_var_or_default("CUTTLEFISH_REMOTE_HOST", "justin@100.73.239.5")
 export SHADOW_UI_REMOTE_HOST := env_var_or_default("SHADOW_UI_REMOTE_HOST", CUTTLEFISH_REMOTE_HOST)
 
-# Show available commands
-default:
-	@just --list
+# Show the supported operator surface by default
+default: help
+
+# Show the supported VM/QEMU and rooted-Pixel operator surface
+help:
+	@printf '%s\n' \
+	'Shadow supported operator surface' \
+	'' \
+	'Core:' \
+	'  just pre-commit' \
+	'  just ui-check' \
+	'  just pre-merge' \
+	'  just land' \
+	'' \
+	'VM / QEMU:' \
+	'  just run target=vm [app=shell|counter|timeline|camera|podcast|cashu]' \
+	'  just stop target=vm' \
+	'  just vm-doctor' \
+	'  just vm-status' \
+	'  just vm-logs' \
+	'  just vm-journal' \
+	'  just vm-wait-ready' \
+	'  just vm-open app=<app>' \
+	'  just vm-home' \
+	'  just vm-screenshot' \
+	'  just vm-smoke' \
+	'' \
+	'Rooted Pixel:' \
+	'  just pixel-doctor' \
+	'  just pixel-build' \
+	'  just pixel-stage shell' \
+	'  just run target=pixel [app=shell|counter|timeline|camera|podcast|cashu]' \
+	'  just pixel-shell-drm-hold' \
+	'  just stop target=pixel' \
+	'  just shadowctl state|open <app>|home|switcher -t pixel' \
+	'  just pixel-ci [quick|shell|timeline|camera|sound|podcast|runtime|full]' \
+	'' \
+	'Shared CLI:' \
+	'  just shadowctl <subcommand> -t vm' \
+	'  just shadowctl <subcommand> -t pixel' \
+	'' \
+	'Preferred public session entrypoints are `just run target=...` and `just stop target=...`.' \
+	'Older `vm-*` and `ui-vm-*` names remain for compatibility.' \
+	'Historical, probe, and one-off recipes still exist but are not the front door.' \
+	'Run `just help-all` for the full recipe list.'
+
+# Show the full recipe list, including historical bring-up and probe lanes
+help-all:
+	@just --list --unsorted
 
 # Run the fast local gate
 pre-commit:
@@ -202,7 +248,7 @@ runtime-deno-core-smoke-aarch64-linux-gnu:
 runtime-deno-runtime-smoke-aarch64-linux-gnu:
 	@nix build --accept-flake-config .#deno-runtime-smoke-aarch64-linux-gnu
 
-# Primary operator entrypoint.
+# Compatibility operator entrypoint for the older shell-script path.
 # target=desktop runs the Linux desktop host when available, otherwise the local VM fallback
 # target=vm runs the local Linux VM shell
 # target=pixel runs the rooted Pixel shell/home scene
@@ -212,9 +258,17 @@ runtime-deno-runtime-smoke-aarch64-linux-gnu:
 ui-run target="desktop" app="shell" hold="1":
 	@scripts/ui_run.sh "{{target}}" "{{app}}" "{{hold}}"
 
-# Alias for ui-run
-run target="desktop" app="shell" hold="1":
-	@just ui-run "{{target}}" "{{app}}" "{{hold}}"
+# Primary target-aware shell/session entrypoint.
+# target=vm runs the local Linux VM shell.
+# target=pixel runs the rooted Pixel shell/home scene.
+# target=<serial> implies Pixel and exports PIXEL_SERIAL via shadowctl.
+# target=desktop remains a compatibility alias and now routes to the VM path.
+run target="vm" app="shell" hold="1":
+	@if [ -n "${SHADOW_UI_RUN_ECHO_EXEC-}" ]; then \
+		exec scripts/shadowctl --dry-run start "{{target}}" "{{app}}" "{{hold}}"; \
+	else \
+		exec scripts/shadowctl start "{{target}}" "{{app}}" "{{hold}}"; \
+	fi
 
 # Run the nested compositor and demo app under a headless Linux host
 ui-smoke:
@@ -230,25 +284,30 @@ vm-smoke:
 
 # Run the local Linux UI VM in a native macOS window
 ui-vm-run:
-	@scripts/ui_vm_run.sh
+	@scripts/shadowctl start vm
 
 # Alias for the local Linux UI VM runner
 vm-run:
 	@just ui-vm-run
 
-# Stop the selected UI target.
+# Compatibility stop path for the older shell-script wrapper.
 # target=vm stops the VM
 # target=pixel restores Android after a hold-mode takeover
 ui-stop target="desktop":
 	@scripts/ui_stop.sh "{{target}}"
 
-# Alias for ui-stop
-stop target="desktop":
-	@just ui-stop "{{target}}"
+# Primary target-aware stop entrypoint.
+# target=desktop remains a compatibility alias and now routes to the VM path.
+stop target="vm":
+	@if [ -n "${SHADOW_UI_STOP_ECHO_EXEC-}" ]; then \
+		exec scripts/shadowctl --dry-run stop "{{target}}"; \
+	else \
+		exec scripts/shadowctl stop "{{target}}"; \
+	fi
 
 # Stop the local Linux UI VM
 ui-vm-stop:
-	@scripts/ui_vm_stop.sh
+	@scripts/shadowctl stop vm
 
 # Alias for the local Linux UI VM stop command
 vm-stop:
@@ -264,7 +323,7 @@ vm-ssh *args='':
 
 # Show the guest compositor session log
 ui-vm-logs:
-	@scripts/ui_vm_logs.sh
+	@scripts/shadowctl logs -t vm
 
 # Alias for ui-vm-logs
 vm-logs:
@@ -350,7 +409,7 @@ ui-vm-home:
 vm-home:
 	@just ui-vm-home
 
-# Query the local UI VM via shadowctl
+# Run the shared VM/Pixel operator CLI
 shadowctl *args='':
 	@scripts/shadowctl {{args}}
 

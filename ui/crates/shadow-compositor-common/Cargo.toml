@@ -1,0 +1,9 @@
+[package]
+name = "shadow-compositor-common"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shadow-ui-core = { path = "../shadow-ui-core" }
+smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend"] }
+tracing.workspace = true

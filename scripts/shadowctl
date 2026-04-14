@@ -17,6 +17,7 @@ from typing import Any
 
 PIXEL_DEFAULT_RUNTIME_DIR = "/data/local/tmp/shadow-runtime"
 GETPROP_RE = re.compile(r"^\[([^\]]+)\]: \[(.*)\]$")
+SUPPORTED_SESSION_APPS = ("shell", "counter", "timeline", "camera", "podcast", "cashu")
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,63 @@ def run_remote(
 ) -> subprocess.CompletedProcess[str]:
     command = ssh_base() + [shlex.join(["bash", "-lc", script])]
     return subprocess.run(command, text=True, capture_output=capture_output, check=check)
+
+
+def run_local_script(
+    command: list[str | pathlib.Path],
+    *,
+    env_assignments: list[tuple[str, str]] | None = None,
+    dry_run: bool = False,
+) -> int:
+    if dry_run:
+        for key, value in env_assignments or []:
+            print(f"env={key}={value}")
+        print(f"command={shlex.join([str(part) for part in command])}")
+        return 0
+
+    env = os.environ.copy()
+    for key, value in env_assignments or []:
+        env[key] = value
+    result = subprocess.run([str(part) for part in command], check=False, env=env)
+    return result.returncode
+
+
+def require_session_app(app_id: str) -> None:
+    if app_id not in SUPPORTED_SESSION_APPS:
+        supported = ", ".join(f"app={app}" for app in SUPPORTED_SESSION_APPS)
+        raise SystemExit(f"shadowctl: unsupported app {app_id!r}; expected one of {supported}")
+
+
+def session_start_command(
+    target: TargetRef,
+    *,
+    app_id: str,
+    hold: int,
+) -> tuple[list[pathlib.Path], list[tuple[str, str]]]:
+    require_session_app(app_id)
+    scripts_dir = repo_root() / "scripts"
+
+    if target.kind == "vm":
+        env: list[tuple[str, str]] = []
+        if app_id != "shell":
+            env.append(("SHADOW_UI_VM_START_APP_ID", app_id))
+        return ([scripts_dir / "ui_vm_run.sh"], env)
+
+    serial = target.serial or target.id
+    env = [("PIXEL_SERIAL", serial)]
+    if app_id != "shell":
+        env.append(("PIXEL_SHELL_START_APP_ID", app_id))
+    script_name = "pixel_shell_drm_hold.sh" if hold else "pixel_shell_drm.sh"
+    return ([scripts_dir / script_name], env)
+
+
+def session_stop_command(target: TargetRef) -> tuple[list[pathlib.Path], list[tuple[str, str]]]:
+    scripts_dir = repo_root() / "scripts"
+    if target.kind == "vm":
+        return ([scripts_dir / "ui_vm_stop.sh"], [])
+
+    serial = target.serial or target.id
+    return ([scripts_dir / "pixel_restore_android.sh"], [("PIXEL_SERIAL", serial)])
 
 
 def vm_processes() -> list[str]:
@@ -430,7 +488,7 @@ def resolve_pixel_serial(requested: str | None) -> str:
 
 def resolve_target(requested: str | None, *, default_kind: str = "vm") -> TargetRef:
     effective = requested or default_kind
-    if effective == "vm":
+    if effective in {"vm", "desktop"}:
         return TargetRef(id="vm", kind="vm")
     if effective == "pixel":
         serial = resolve_pixel_serial(None)
@@ -447,6 +505,27 @@ def resolve_target(requested: str | None, *, default_kind: str = "vm") -> Target
     raise SystemExit(
         f"shadowctl: unknown target {effective!r}; run 'shadowctl devices' for valid ids"
     )
+
+
+def synthetic_target_for_dry_run(
+    requested: str | None,
+    *,
+    enabled: bool,
+    command_name: str,
+    default_kind: str,
+) -> TargetRef | None:
+    if not enabled or command_name not in {"start", "stop"}:
+        return None
+
+    effective = requested or default_kind
+    if effective in {"vm", "desktop"}:
+        return TargetRef(id="vm", kind="vm")
+    if effective == "pixel":
+        return TargetRef(id="pixel", kind="pixel", serial="pixel")
+    if effective.startswith("pixel:"):
+        serial = effective.split(":", 1)[1] or "pixel"
+        return TargetRef(id=serial, kind="pixel", serial=serial)
+    return TargetRef(id=effective, kind="pixel", serial=effective)
 
 
 def pixel_runtime_dir() -> str:
@@ -868,6 +947,21 @@ def cmd_wait_ready(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_start(args: argparse.Namespace) -> int:
+    app, hold = normalize_start_legacy_args(args)
+    command, env = session_start_command(
+        args.target_ref,
+        app_id=app,
+        hold=hold,
+    )
+    return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    command, env = session_stop_command(args.target_ref)
+    return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     package = args.package
     log_file = f"/var/lib/shadow-ui/log/{package}.log"
@@ -1008,13 +1102,73 @@ def extract_target(argv: list[str]) -> tuple[str | None, list[str]]:
             target = arg[2:]
             index += 1
             continue
+        if arg.startswith("target="):
+            target = arg.split("=", 1)[1]
+            index += 1
+            continue
         filtered.append(arg)
         index += 1
 
     if filtered and filtered[0] in {"vm", "pixel"} and target is None:
         target = filtered[0]
         filtered = filtered[1:]
+    elif len(filtered) >= 2 and filtered[0] in {"start", "stop"} and target is None:
+        candidate = filtered[1]
+        if candidate and not candidate.startswith("-") and "=" not in candidate:
+            target = candidate
+            filtered = [filtered[0], *filtered[2:]]
     return target, filtered
+
+
+def parse_hold_value(raw: str) -> int:
+    if raw not in {"0", "1"}:
+        raise SystemExit(f"shadowctl: expected hold value 0 or 1, got {raw!r}")
+    return int(raw)
+
+
+def normalize_start_legacy_args(args: argparse.Namespace) -> tuple[str, int]:
+    app = args.app
+    hold = args.hold
+    app_set = app != "shell"
+    hold_set = hold != 1
+    positional: list[str] = []
+
+    for raw in args.legacy_args:
+        if raw.startswith("app="):
+            app = raw.split("=", 1)[1]
+            app_set = True
+            continue
+        if raw.startswith("hold="):
+            hold = parse_hold_value(raw.split("=", 1)[1])
+            hold_set = True
+            continue
+        if raw.startswith("target="):
+            continue
+        positional.append(raw)
+
+    for raw in positional:
+        if not app_set:
+            app = raw
+            app_set = True
+            continue
+        if not hold_set:
+            hold = parse_hold_value(raw)
+            hold_set = True
+            continue
+
+    require_session_app(app)
+    return app, hold
+
+
+def extract_global_dry_run(argv: list[str]) -> tuple[bool, list[str]]:
+    dry_run = False
+    filtered: list[str] = []
+    for arg in argv:
+        if arg == "--dry-run":
+            dry_run = True
+            continue
+        filtered.append(arg)
+    return dry_run, filtered
 
 
 def add_command(
@@ -1178,6 +1332,29 @@ def build_parser() -> argparse.ArgumentParser:
     wait_ready.add_argument("--interval", type=float, default=1.0)
     wait_ready.add_argument("--json", action="store_true")
 
+    start = add_command(
+        subparsers,
+        "start",
+        "Start the target shell session.",
+        cmd_start,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
+    start.add_argument("--app", choices=SUPPORTED_SESSION_APPS, default="shell")
+    start.add_argument("--hold", type=int, choices=(0, 1), default=1)
+    start.add_argument("--dry-run", action="store_true")
+    start.add_argument("legacy_args", nargs="*")
+
+    stop = add_command(
+        subparsers,
+        "stop",
+        "Stop the target shell session or restore Android.",
+        cmd_stop,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
+    stop.add_argument("--dry-run", action="store_true")
+
     run = add_command(
         subparsers,
         "run",
@@ -1213,15 +1390,27 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    global_dry_run, raw_argv = extract_global_dry_run(raw_argv)
     requested_target, filtered_argv = extract_target(raw_argv)
 
     parser = build_parser()
     args = parser.parse_args(filtered_argv)
+    if global_dry_run:
+        if not hasattr(args, "dry_run"):
+            parser.error("--dry-run is only supported with start and stop")
+        args.dry_run = True
     supported_target_kinds = tuple(getattr(args, "supported_target_kinds", ()))
 
     if supported_target_kinds:
         default_kind = supported_target_kinds[0] if len(supported_target_kinds) == 1 else "vm"
-        target_ref = resolve_target(requested_target, default_kind=default_kind)
+        target_ref = synthetic_target_for_dry_run(
+            requested_target,
+            enabled=bool(getattr(args, "dry_run", False)),
+            command_name=args.command,
+            default_kind=default_kind,
+        )
+        if target_ref is None:
+            target_ref = resolve_target(requested_target, default_kind=default_kind)
         if target_ref.kind not in supported_target_kinds:
             supported = ", ".join(supported_target_kinds)
             print(

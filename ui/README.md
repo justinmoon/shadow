@@ -1,11 +1,11 @@
 # Shadow UI
 
-The UI workspace now supports one shell/app model through two surfaces:
+The UI workspace now supports one shell/app model through two supported surfaces:
 
-- `shadow-compositor` inside the QEMU VM shell flow
-- `shadow-compositor-guest` on the rooted Pixel DRM flow
+- local QEMU VM shell/home plus app launch
+- rooted Pixel shell/home plus app launch
 
-The only app client that matters is `shadow-blitz-demo`, running in runtime mode for the demo paths.
+`shadow-compositor` backs the VM loop. `shadow-compositor-guest` backs VM guest and rooted-Pixel sessions. The app client that matters for the supported shell/app path is `shadow-blitz-demo` in runtime mode.
 
 ## Main Commands
 
@@ -13,18 +13,23 @@ From the repo root:
 
 ```sh
 just ui-check
-just ui-smoke
-just ui-vm-run
-just ui-vm-open counter
+just run target=vm app=shell
+just vm-open app=counter
+just stop target=vm
+just vm-smoke
 ```
 
 For the rooted Pixel path:
 
 ```sh
+just pixel-doctor
 just pixel-build
-just pixel-prepare-runtime-app-artifacts
-just pixel-runtime-app-drm
+just run target=pixel app=shell
+just stop target=pixel
+just pixel-shell-timeline-smoke
 ```
+
+Older `vm-*` / `ui-vm-*` names and lower-level runtime/probe commands still exist, but they are no longer the preferred front door.
 
 ## Controls
 

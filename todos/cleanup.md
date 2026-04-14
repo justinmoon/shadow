@@ -1,0 +1,129 @@
+# Cleanup Plan
+
+Living plan. Revise it as we learn. Do not treat this as a fixed contract.
+
+## Scope
+
+- Treat rooted Pixel shell/home plus app launch and local QEMU shell/home plus app launch as the only supported operator surface.
+- Aggressively delete env vars, scripts, recipes, and fallbacks that do not serve that surface.
+- Promote `scripts/shadowctl` into the primary operator CLI for VM and Pixel work.
+- Remove the worst duplicated compositor code and decompose the guest compositor only as needed to support the reduced surface cleanly.
+
+## Approach
+
+- Delete first. Anything not required to boot home shell, open apps, inspect state, or restore the device is a delete candidate.
+- Move reusable operator behavior into `shadowctl`; keep `just` as thin wrappers only.
+- Minimize ambient env. Launchers should compute a small typed config once and hand it off explicitly.
+- Extract shared compositor helpers before broad guest-compositor rewrites so later cleanup is mechanical.
+- Keep the cleanup verifiable on the two target lanes only: VM/QEMU shell and rooted Pixel shell.
+
+## Todo
+
+- [~] Wait for the `shadowctl` refactor in `../ci` to land or become stable enough to target.
+  - Another agent is already refactoring `shadowctl` to work with VMs and Pixels.
+  - Do not start broad shell-script consolidation or deletion before that interface is real.
+  - Once it lands, review the new command surface and update this checklist before deleting wrappers.
+- [ ] Audit every file under `scripts/` and classify it as `keep`, `move into shadowctl`, `keep as private helper`, or `delete`.
+  - Current surface: 95 files in `scripts/`, 51 of them Pixel-prefixed.
+  - Default decision is `delete` unless the file is required for the Pixel shell lane, the QEMU shell lane, or build/staging needed by those lanes.
+  - This audit can proceed before the `shadowctl` refactor lands, but actual deletion should wait.
+  - Record the result directly in this plan as the audit lands.
+- [ ] Define the supported operator contract in plain terms.
+  - VM/QEMU: run, stop, status, logs, screenshot, open app, go home, wait-ready.
+  - Pixel: doctor, build/stage, run shell, hold/restore, status/logs, open app, go home.
+  - Anything else needs a strong justification or should be deleted.
+- [~] Collapse the public command surface.
+  - `just` currently exposes 131 recipes, and about 60 of them are explicitly `smoke`, `probe`, `hold`, `warm`, or `spike` lanes.
+  - 2026-04-14 first front-door batch landed: default `just` now shows a curated supported-surface help screen, and `just help-all` is the explicit full recipe list.
+  - Default `just` output should show the supported operator contract only, not the full bring-up archive.
+  - Delete obsolete probes where possible; otherwise move them behind an internal namespace or private docs so they stop reading like product surface.
+- [~] Integrate with the new `shadowctl` shape and make it the primary CLI for both VM and Pixel.
+  - Align with the `../ci` refactor instead of creating a competing CLI surface here.
+  - 2026-04-14 routing batch landed: `shadowctl start` / `shadowctl stop` now own the target-aware VM and rooted-Pixel session start/stop seam, and public `just run target=...` / `just stop target=...` route through them.
+  - Move repeated SSH/ADB/device/session/control logic out of ad hoc shell scripts and into `shadowctl`.
+  - `shadowctl` still delegates start/stop to the legacy script layer today. Routing is centralized; runtime policy is not yet.
+  - Make `just` recipes thin wrappers around `shadowctl`, not around one-off shell scripts.
+- [~] Standardize target naming and routing.
+  - `vm`, `ui-vm`, `desktop`, `pixel`, and serial-overloaded `target=` are too many ways to describe the same operator surfaces.
+  - 2026-04-14 routing batch landed: public session entry now prefers `target=vm` and `target=pixel`, and `shadowctl` normalizes legacy positional and `target=` token forms into that seam.
+  - Pick one target vocabulary in `shadowctl`, `just`, docs, and scripts, then delete aliases and fallback naming.
+  - `desktop`, `ui-run` / `ui-stop`, and `ui-vm-*` still exist as compatibility layers and should be deleted or demoted after the remaining wrappers move cleanly.
+  - Preserve compatibility only long enough to land the cleanup safely; do not keep permanent synonym layers.
+- [ ] Collapse the env-var surface to the minimum needed for shell/home and app launch.
+  - Introduce one typed `LaunchConfig` / `SessionConfig`.
+  - Delete env vars that only exist for historical probes, alternate transports, direct runtime-app lanes, or debugging experiments.
+  - Replace `SHADOW_GUEST_CLIENT_ENV` and other stringly env blobs with structured config.
+  - Separate true debug toggles from product launch config.
+- [ ] Make app/runtime launch metadata single-source.
+  - Stop duplicating app ids, bundle env names, input paths, and cache dirs across Rust and shell.
+  - Make script/CLI staging consume generated metadata instead of hardcoded parallel tables.
+- [x] Extract shared compositor plumbing.
+  - Deduplicate `control.rs` and `launch.rs` logic between `shadow-compositor` and `shadow-compositor-guest`.
+  - Centralize client-path resolution, runtime-dir resolution, and env-override parsing.
+- [ ] Decompose `shadow-compositor-guest` after config and shared helpers exist.
+  - Move constructor-time env reads into a typed config loader.
+  - Split transport, launch policy, shell startup, touch/input, and DRM seams out of `main.rs`.
+- [ ] Delete obsolete scripts and just recipes once `shadowctl` covers the kept operator surface.
+  - Blocked on the `shadowctl` refactor above.
+  - Remove grep-based VM env cache logic and other brittle script-only policy.
+  - Remove direct runtime-app / probe / smoke entrypoints that no longer belong to the supported product surface.
+- [ ] Consolidate standalone Rust crates and Nix packaging after the entrypoint surface shrinks.
+  - There are 9 binaries under `/rust` and 5 separate `Cargo.lock` files today.
+  - Move them under one workspace or otherwise centralize dependency and lint policy so shared code can actually be shared.
+  - Replace the repetitive per-crate `buildRustPackage` blocks in `flake.nix` with a smaller number of reusable builders.
+- [~] Rewrite top-level docs around the supported system instead of the bring-up history.
+  - `docs/architecture.md` should explain the current VM and rooted-Pixel model, the operator contract, and where config lives.
+  - 2026-04-14 first front-door batch landed: `docs/architecture.md` now explains the supported VM/QEMU and rooted-Pixel operator model and pushes historical/probe lanes out of the front door.
+  - Move the long historical ladder, dead rungs, and old transport/probe details into a separate history or internal note if they are still worth keeping.
+  - Keep the front-door docs short enough that operators can see what is actually supported.
+- [ ] Revisit repo-level cleanup after the surface area drops.
+  - Rust workspace consolidation under `/rust`.
+  - Flake simplification driven by fewer entrypoints.
+  - Justfile cleanup once thin wrappers replace the current script fan-out.
+
+## Implementation Notes
+
+- The plan intentionally uses one checklist now. No separate near-term section.
+- Current script count: 95 total files under `scripts/`; 51 are `pixel_*`.
+- `just` currently exposes 131 recipes. Roughly 60 include `smoke`, `probe`, `hold`, `warm`, or `spike` in the name, which is a strong signal that the public surface is carrying a lot of internal bring-up lanes.
+- `scripts/shadowctl` is already 1248 lines and carries real VM and Pixel target logic, but the `just` layer still bypasses it for most Pixel flows.
+- `justfile` is 537 lines, `flake.nix` is 524 lines, and `shadow-compositor-guest/src/main.rs` is 1892 lines. The sprawl is not only in env vars; it is also in public entrypoints and historical orchestration.
+- `/rust` currently contains 9 crates and 5 lockfiles, which blocks straightforward dependency sharing and forces repetitive Nix packaging.
+- `docs/architecture.md` is also doing too much. It mixes current architecture, operator guidance, and a large amount of historical bring-up detail in one front-door doc.
+- `shadowctl` already has real VM and Pixel target abstractions, but the public operator surface is still inconsistent because `just` and many Pixel recipes bypass it.
+- Another agent is currently refactoring `shadowctl` in `../ci` to clean up and strengthen the shared VM/Pixel path. Treat that work as the dependency for script consolidation and deletion here.
+- The highest-value cleanup seam is launch/config plus script deletion. That work unlocks most of the other simplifications.
+- Existing host-session prep is the best current nucleus: `scripts/runtime_prepare_host_session.sh` and `scripts/runtime_prepare_host_session_env.sh` already centralize some bundle/runtime-host staging, but they stop too early and then hand off raw env again.
+- `shadow-compositor` and `shadow-compositor-guest` duplicate control/launch code today. Extract that before large behavior edits in guest compositor code.
+- 2026-04-14: First front-door cleanup batch landed.
+  - `just` no longer dumps the full recipe list by default. The default view is now a curated VM/QEMU + rooted-Pixel operator surface, and `just help-all` is the explicit escape hatch for the full list.
+  - `docs/architecture.md` now describes the supported system and cleanup direction instead of enumerating the full historical bring-up ladder.
+  - `AGENTS.md`, `docs/tutorial.md`, and `ui/README.md` now point readers back to that supported VM/Pixel front door instead of only the older `ui-vm-*` and direct-runtime language.
+  - This chunk did not delete scripts or compatibility wrappers yet. `ui-vm-*`, runtime host smokes, and other bring-up lanes still exist; they are just no longer the advertised front door.
+- 2026-04-14: Second front-door cleanup batch landed.
+  - Public `just run target=...` and `just stop target=...` now route through `shadowctl start` / `shadowctl stop` instead of directly through the older shell wrappers.
+  - `shadowctl` now owns legacy target/app/hold normalization for VM, Pixel, and serial-target forms, so the compatibility burden is concentrated in one place instead of spread across `just`.
+  - `ui-run`, `ui-stop`, and most `ui-vm-*` aliases still exist as compatibility wrappers. They are no longer the preferred front door, but they are not deleted yet.
+  - `ui-vm-status` and `ui-vm-journal` intentionally stay on their direct scripts for now because the existing output is richer than the summarized `shadowctl` replacements.
+  - Added dry-run coverage for the new `shadowctl start` / `shadowctl stop` seam in `scripts/ui_run_arg_smoke.sh`.
+- 2026-04-08: First bounded Rust/UI cleanup chunk landed.
+  - Added `ui/crates/shadow-compositor-common` as the shared home for compositor control-listener plumbing and launch helpers.
+  - `shadow-compositor` and `shadow-compositor-guest` now share control socket setup plus common launch helpers instead of carrying copy-pasted implementations.
+  - Guest client env parsing is now centralized and validated in one place instead of duplicated in two files.
+  - Small intentional cleanup in this chunk: guest direct-client launch now uses the same client-path resolution as guest app launch, and guest control socket setup now uses the guest runtime-dir fallback instead of a separate temp-dir fallback.
+  - Review caveat: `SHADOW_GUEST_CLIENT_ENV` is still a raw whitespace-split transport, and it now fails hard on malformed tokens instead of ignoring them. Hidden producers still exist in `rust/shadow-session` and script-driven guest launch lanes.
+  - Review caveat: fallback policy is still not unified. The host and guest client fallback chains remain different by call site, and runtime-dir policy is still selected per call site rather than by one typed contract.
+  - Validation:
+    - `nix develop .#ui -c cargo test --manifest-path ui/Cargo.toml -p shadow-compositor-common`
+    - `nix develop .#ui -c cargo check --manifest-path ui/Cargo.toml -p shadow-compositor-common -p shadow-compositor-guest -p shadow-compositor`
+    - `just ui-check`
+    - `just pre-commit`
+    - `just ui-smoke` was inconclusive on the remote Linux path after the compositor exited before smoke markers while the staged build path reported an interrupted `shadow-runtime-host` derivation. Do not treat Linux smoke as green from this run.
+- Current drift examples to remove:
+  - App metadata duplicated in `ui/crates/shadow-ui-core/src/app.rs`, `scripts/runtime_prepare_host_session_env.sh`, and Pixel artifact prep scripts.
+  - Inconsistent client fallback chains across desktop compositor, guest compositor, and guest session wrapper.
+  - Inconsistent runtime-dir fallbacks across compositor launch/control paths.
+  - Same touch-signal concept split across `SHADOW_GUEST_*` and `SHADOW_BLITZ_*` naming.
+- `shadow-compositor-guest/src/main.rs` is currently too large to reason about safely. Shared helpers are now extracted; the next safe Rust seam is a typed guest startup config loader so later env deletion and `main.rs` splits are mechanical.
+- If a capability is needed by many scripts, it belongs in `shadowctl`.
+- Desktop-host-only and historical probe/debug lanes should not be preserved by default just because they once helped bring the system up.
