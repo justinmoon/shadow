@@ -66,13 +66,22 @@ def send_raw(request):
     process.stdin.write(json.dumps(request) + "\n")
     process.stdin.flush()
     assert process.stdout is not None
-    line = process.stdout.readline()
-    if not line:
-        stderr = process.stderr.read() if process.stderr is not None else ""
-        raise SystemExit(
-            f"runtime-app-podcast-player-smoke: runtime host closed stdout\n{stderr}",
-        )
-    return json.loads(line)
+    while True:
+        line = process.stdout.readline()
+        if not line:
+            stderr = process.stderr.read() if process.stderr is not None else ""
+            raise SystemExit(
+                f"runtime-app-podcast-player-smoke: runtime host closed stdout\n{stderr}",
+            )
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError as error:
+            if line.startswith("[shadow-runtime-"):
+                continue
+            raise SystemExit(
+                "runtime-app-podcast-player-smoke: decode response: "
+                f"{error}\nline={line!r}"
+            ) from error
 
 def send_ok(request):
     response = send_raw(request)

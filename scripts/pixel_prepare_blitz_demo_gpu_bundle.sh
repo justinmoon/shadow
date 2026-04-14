@@ -315,8 +315,6 @@ if command -v chroot >/dev/null 2>&1; then
     "\$DIR"/*) GNU_LD_PRELOAD="/\${GNU_LD_PRELOAD#\$DIR/}" ;;
   esac
   case "\$RUNTIME_HOST_PATH" in
-    "\$DIR"/run-shadow-runtime-host) RUNTIME_HOST_PATH="/shadow-runtime-host" ;;
-    "${bundle_device_dir}"/run-shadow-runtime-host) RUNTIME_HOST_PATH="/shadow-runtime-host" ;;
     "\$DIR"/*) RUNTIME_HOST_PATH="/\${RUNTIME_HOST_PATH#\$DIR/}" ;;
     "${bundle_device_dir}"/*) RUNTIME_HOST_PATH="/\${RUNTIME_HOST_PATH#${bundle_device_dir}/}" ;;
   esac
@@ -328,8 +326,8 @@ if command -v chroot >/dev/null 2>&1; then
   export XKB_CONFIG_ROOT="\${XKB_CONFIG_ROOT:-/etc/X11/xkb}"
   export SHADOW_RUNTIME_HOST_BINARY_PATH="\$RUNTIME_HOST_PATH"
   export SHADOW_RUNTIME_APP_BUNDLE_PATH="\$RUNTIME_BUNDLE_PATH"
-  export SHADOW_RUNTIME_HOST_STAGE_LOADER_PATH="/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME"
-  export SHADOW_RUNTIME_HOST_STAGE_LIBRARY_PATH="/lib"
+  unset SHADOW_RUNTIME_HOST_STAGE_LOADER_PATH
+  unset SHADOW_RUNTIME_HOST_STAGE_LIBRARY_PATH
   if [ -n "\$GNU_LD_PRELOAD" ]; then
     exec chroot "\$DIR" "/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --preload "\$GNU_LD_PRELOAD" --library-path /lib "/shadow-blitz-demo" "\$@"
   fi

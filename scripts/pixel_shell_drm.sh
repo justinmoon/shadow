@@ -9,8 +9,27 @@ source "$SCRIPT_DIR/pixel_camera_runtime_common.sh"
 ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
-camera_endpoint="$(pixel_camera_runtime_endpoint)"
-camera_start_command="$(pixel_camera_runtime_start_command "$camera_endpoint")"
+shell_stage_only=0
+shell_run_only=0
+shell_start_app_id="${PIXEL_SHELL_START_APP_ID-}"
+camera_runtime_enabled="${PIXEL_SHELL_ENABLE_CAMERA_RUNTIME-1}"
+camera_endpoint=""
+camera_start_command=""
+
+if [[ -n "${PIXEL_SHELL_PREP_ONLY-}" || -n "${PIXEL_SHELL_STAGE_ONLY-}" ]]; then
+  shell_stage_only=1
+fi
+if [[ -n "${PIXEL_SHELL_RUN_ONLY-}" ]]; then
+  shell_run_only=1
+fi
+if (( shell_stage_only == 1 && shell_run_only == 1 )); then
+  echo "pixel_shell_drm: PIXEL_SHELL_RUN_ONLY cannot be combined with prep/stage-only mode" >&2
+  exit 64
+fi
+if [[ "$camera_runtime_enabled" == "1" ]]; then
+  camera_endpoint="$(pixel_camera_runtime_endpoint)"
+  camera_start_command="$(pixel_camera_runtime_start_command "$camera_endpoint")"
+fi
 
 default_turnip_tarball="$(pixel_dir)/vendor/turnip_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
 default_mesa_tarball="$(pixel_dir)/vendor/mesa-for-android-container_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
@@ -38,8 +57,10 @@ cleanup() {
 
 trap cleanup EXIT
 
-PIXEL_BUILD_INCLUDE_GUEST_CLIENT="$build_include_guest_client" \
-  "$SCRIPT_DIR/pixel_build.sh"
+if (( shell_run_only == 0 )); then
+  PIXEL_BUILD_INCLUDE_GUEST_CLIENT="$build_include_guest_client" \
+    "$SCRIPT_DIR/pixel_build.sh"
+fi
 
 guest_client_artifact="$(pixel_guest_client_artifact)"
 guest_client_dst="$(pixel_guest_client_dst)"
@@ -47,10 +68,14 @@ runtime_prepare_extra_env=()
 
 case "$PIXEL_SHELL_RENDERER" in
   cpu)
-    PIXEL_BLITZ_RENDERER=cpu "$SCRIPT_DIR/pixel_build_guest_client.sh"
+    if (( shell_run_only == 0 )); then
+      PIXEL_BLITZ_RENDERER=cpu "$SCRIPT_DIR/pixel_build_guest_client.sh"
+    fi
     ;;
   gpu_softbuffer)
-    "$SCRIPT_DIR/pixel_prepare_blitz_demo_gpu_softbuffer_bundle.sh"
+    if (( shell_run_only == 0 )); then
+      "$SCRIPT_DIR/pixel_prepare_blitz_demo_gpu_softbuffer_bundle.sh"
+    fi
     guest_client_artifact="$(pixel_artifact_path run-shadow-blitz-demo-gpu-softbuffer)"
     guest_client_dst="$(pixel_runtime_linux_dir)/run-shadow-blitz-demo"
     runtime_prepare_extra_env=(
@@ -63,15 +88,18 @@ case "$PIXEL_SHELL_RENDERER" in
     ;;
 esac
 
-env "${runtime_prepare_extra_env[@]}" "$SCRIPT_DIR/pixel_prepare_shell_runtime_artifacts.sh"
-pixel_camera_runtime_prepare_helper "$serial"
+if (( shell_run_only == 0 )); then
+  env "${runtime_prepare_extra_env[@]}" "$SCRIPT_DIR/pixel_prepare_shell_runtime_artifacts.sh"
+  if [[ "$camera_runtime_enabled" == "1" ]]; then
+    pixel_camera_runtime_prepare_helper "$serial"
+  fi
+fi
 
 PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS="${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS-}"
 PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS-}"
 extra_guest_env="${PIXEL_SHELL_EXTRA_GUEST_CLIENT_ENV-}"
 extra_session_env="${PIXEL_SHELL_EXTRA_SESSION_ENV-}"
 extra_required_markers="${PIXEL_SHELL_EXTRA_REQUIRED_MARKERS-}"
-shell_start_app_id="${PIXEL_SHELL_START_APP_ID-}"
 runtime_home_dir="$(pixel_runtime_linux_dir)/home"
 runtime_cache_dir="$runtime_home_dir/.cache"
 runtime_config_dir="$runtime_home_dir/.config"
@@ -84,7 +112,6 @@ SHADOW_BLITZ_DEMO_MODE=runtime
 SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS=${SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS:-100}
 SHADOW_BLITZ_DEBUG_OVERLAY=0
 SHADOW_BLITZ_ANDROID_FONTS=${SHADOW_BLITZ_ANDROID_FONTS:-curated}
-SHADOW_RUNTIME_CAMERA_ENDPOINT=$camera_endpoint
 SHADOW_BLITZ_SOFTWARE_KEYBOARD=${SHADOW_BLITZ_SOFTWARE_KEYBOARD:-1}
 HOME=$runtime_home_dir
 XDG_CACHE_HOME=$runtime_cache_dir
@@ -92,6 +119,9 @@ XDG_CONFIG_HOME=$runtime_config_dir
 XKB_CONFIG_ROOT=$xkb_config_root
 EOF
 )
+if [[ "$camera_runtime_enabled" == "1" ]]; then
+  shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_RUNTIME_CAMERA_ENDPOINT=$camera_endpoint"
+fi
 if [[ -n "$PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS" ]]; then
   shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_BLITZ_RUNTIME_EXIT_DELAY_MS=$PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS"
 fi
@@ -141,6 +171,14 @@ if [[ -n "$extra_required_markers" ]]; then
   required_markers="${required_markers}"$'\n'"${extra_required_markers}"
 fi
 
+if (( shell_stage_only == 1 )); then
+  PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
+  PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
+  PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_shell_runtime_host_bundle_artifact_dir)" \
+    "$SCRIPT_DIR/pixel_push.sh"
+  exit 0
+fi
+
 PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
 PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
 PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_shell_runtime_host_bundle_artifact_dir)" \
@@ -157,4 +195,5 @@ PIXEL_GUEST_SESSION_ENV="$shell_session_env" \
 PIXEL_GUEST_PRECREATE_DIRS="$runtime_home_dir $runtime_cache_dir $runtime_cache_dir/mesa $runtime_config_dir" \
 PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT="$camera_start_command" \
 PIXEL_TAKEOVER_STOP_ALLOCATOR="${PIXEL_TAKEOVER_STOP_ALLOCATOR:-0}" \
+PIXEL_GUEST_SKIP_PUSH="$([[ "$shell_run_only" == 1 ]] && printf 1 || true)" \
   "$SCRIPT_DIR/pixel_guest_ui_drm.sh"

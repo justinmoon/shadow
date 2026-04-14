@@ -20,12 +20,21 @@ asset = json.loads(os.environ["ASSET_JSON"])
 print(json.dumps({"source": asset["source"]}))
 PY
 )}"
+source_path_in_bundle="$(
+  ASSET_JSON="$asset_json" python3 - <<'PY'
+import json
+import os
+
+asset = json.loads(os.environ["ASSET_JSON"])
+print(asset["source"]["path"])
+PY
+)"
 
 sound_guest_env=$(
   cat <<EOF
 SHADOW_BLITZ_SURFACE_WIDTH=$panel_width
 SHADOW_BLITZ_SURFACE_HEIGHT=$panel_height
-SHADOW_BLITZ_TOUCH_ANYWHERE_TARGET=play
+SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=play
 EOF
 )
 
@@ -34,10 +43,27 @@ if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}" ]]; then
 fi
 sound_guest_env="$(printf '%s\n' "$sound_guest_env" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
 
+required_markers=$(
+  cat <<EOF
+runtime-event-dispatched source=auto type=click target=play
+[shadow-runtime-audio-smoke] command=play state=playing backend=linux_spike source_kind=file path=$source_path_in_bundle
+EOF
+)
+if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS-}" ]]; then
+  required_markers="${required_markers}"$'\n'"${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS}"
+fi
+
+forbidden_markers='[shadow-runtime-audio-smoke] command=play error='
+if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS-}" ]]; then
+  forbidden_markers="${forbidden_markers}"$'\n'"${PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS}"
+fi
+
 PIXEL_RUNTIME_ENABLE_LINUX_AUDIO=1 \
 PIXEL_RUNTIME_APP_INPUT_PATH="runtime/app-sound-smoke/app.tsx" \
 PIXEL_RUNTIME_APP_CACHE_DIR="build/runtime/pixel-app-sound-smoke" \
 PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV="$sound_guest_env" \
+PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS="$required_markers" \
+PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS="$forbidden_markers" \
 SHADOW_RUNTIME_APP_CONFIG_JSON="$runtime_app_config_json" \
 PIXEL_GUEST_COMPOSITOR_MARKER_TIMEOUT_SECS="${PIXEL_GUEST_COMPOSITOR_MARKER_TIMEOUT_SECS:-45}" \
 PIXEL_GUEST_FRAME_CHECKPOINT_TIMEOUT_SECS="${PIXEL_GUEST_FRAME_CHECKPOINT_TIMEOUT_SECS:-45}" \

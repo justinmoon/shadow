@@ -459,5 +459,5 @@ just ui-check      # UI workspace checks
 just ui-vm-smoke   # Local VM shell/app smoke used by pre-merge
 just ui-smoke      # Manual Linux compositor smoke test
 just pre-merge     # Required branch gate (pre-commit + VM smoke)
-just nightly       # Current nightly gate (currently mirrors pre-merge)
+just pixel-ci      # Rooted-Pixel CI suite runner (`quick|camera|sound|podcast|full`)
 ```

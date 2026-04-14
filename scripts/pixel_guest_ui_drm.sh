@@ -43,6 +43,7 @@ expect_client_process="${PIXEL_GUEST_EXPECT_CLIENT_PROCESS-1}"
 expect_client_marker="${PIXEL_GUEST_EXPECT_CLIENT_MARKER-1}"
 verify_require_client_marker="${PIXEL_VERIFY_REQUIRE_CLIENT_MARKER-1}"
 verify_forbidden_markers="${PIXEL_VERIFY_FORBIDDEN_MARKERS-}"
+skip_push="${PIXEL_GUEST_SKIP_PUSH-}"
 restore_android="${PIXEL_TAKEOVER_RESTORE_ANDROID-1}"
 stop_allocator="${PIXEL_TAKEOVER_STOP_ALLOCATOR-1}"
 restore_delay_secs="${PIXEL_TAKEOVER_RESTORE_DELAY_SECS-}"
@@ -222,10 +223,12 @@ restore_android_now() {
   return 1
 }
 
-if ! pixel_require_runtime_artifacts; then
-  "$SCRIPT_DIR/pixel_build.sh"
+if [[ -z "$skip_push" ]]; then
+  if ! pixel_require_runtime_artifacts; then
+    "$SCRIPT_DIR/pixel_build.sh"
+  fi
+  "$SCRIPT_DIR/pixel_push.sh"
 fi
-"$SCRIPT_DIR/pixel_push.sh"
 
 if [[ -n "$guest_client_env" ]]; then
   guest_client_env_quoted="$(printf '%q' "$guest_client_env")"

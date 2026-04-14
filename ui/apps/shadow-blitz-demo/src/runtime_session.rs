@@ -12,6 +12,7 @@ const RUNTIME_APP_BUNDLE_PATH_ENV: &str = "SHADOW_RUNTIME_APP_BUNDLE_PATH";
 const RUNTIME_HOST_BINARY_PATH_ENV: &str = "SHADOW_RUNTIME_HOST_BINARY_PATH";
 const RUNTIME_HOST_STAGE_LOADER_PATH_ENV: &str = "SHADOW_RUNTIME_HOST_STAGE_LOADER_PATH";
 const RUNTIME_HOST_STAGE_LIBRARY_PATH_ENV: &str = "SHADOW_RUNTIME_HOST_STAGE_LIBRARY_PATH";
+const RUNTIME_DIAGNOSTIC_PREFIX: &str = "[shadow-runtime-";
 const RUNTIME_HOST_CLEAN_ENV: &[&str] = &[
     "LD_LIBRARY_PATH",
     "LD_PRELOAD",
@@ -137,14 +138,24 @@ impl RuntimeSession {
             .and_then(|_| self.stdin.flush())
             .map_err(|error| format!("write request: {error}"))?;
 
-        let mut line = String::new();
-        let bytes = self
-            .stdout
-            .read_line(&mut line)
-            .map_err(|error| format!("read response: {error}"))?;
-        if bytes == 0 {
-            return Err(String::from("runtime host closed its stdout pipe"));
-        }
+        let line = loop {
+            let mut line = String::new();
+            let bytes = self
+                .stdout
+                .read_line(&mut line)
+                .map_err(|error| format!("read response: {error}"))?;
+            if bytes == 0 {
+                return Err(String::from("runtime host closed its stdout pipe"));
+            }
+
+            let trimmed = line.trim_end();
+            if trimmed.starts_with(RUNTIME_DIAGNOSTIC_PREFIX) {
+                runtime_log(trimmed);
+                continue;
+            }
+
+            break line;
+        };
 
         runtime_log(format!(
             "runtime-session-response op={} elapsed_ms={}",

@@ -21,4 +21,12 @@ When the user asks to land the current worktree branch:
 - runs `just pre-merge`
 - fast-forwards the root repo's `master` branch only if the gate passes
 
+When a rooted Pixel is available and the diff clearly touches device-specific lanes, recommend a matching `just pixel-ci <subset>` run before landing, but do not make it a hard requirement. Examples:
+
+- shell / compositor / launch-control changes: `just pixel-ci shell`
+- camera app or camera host changes: `just pixel-ci camera`
+- runtime audio changes: `just pixel-ci sound`
+- podcast player changes: `just pixel-ci podcast`
+- broad rooted-Pixel or takeover changes: `just pixel-ci full`
+
 If the script fails, report the exact failing step and stop before merging.

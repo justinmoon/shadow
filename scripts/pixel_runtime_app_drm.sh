@@ -30,14 +30,29 @@ fi
 # Deterministic default. Never infer renderer mode from optional GPU assets.
 # CPU stays opt-in through PIXEL_RUNTIME_APP_RENDERER=cpu.
 : "${PIXEL_RUNTIME_APP_RENDERER:=gpu_softbuffer}"
+runtime_stage_only=0
+runtime_run_only=0
+
+if [[ -n "${PIXEL_RUNTIME_APP_PREP_ONLY-}" || -n "${PIXEL_RUNTIME_APP_PREPARE_ONLY-}" || -n "${PIXEL_RUNTIME_APP_STAGE_ONLY-}" ]]; then
+  runtime_stage_only=1
+fi
+if [[ -n "${PIXEL_RUNTIME_APP_RUN_ONLY-}" ]]; then
+  runtime_run_only=1
+fi
+if (( runtime_stage_only == 1 && runtime_run_only == 1 )); then
+  echo "pixel_runtime_app_drm: PIXEL_RUNTIME_APP_RUN_ONLY cannot be combined with prep/stage-only mode" >&2
+  exit 64
+fi
 
 build_include_guest_client=1
 if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu_softbuffer" || "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
   build_include_guest_client=0
 fi
 
-PIXEL_BUILD_INCLUDE_GUEST_CLIENT="$build_include_guest_client" \
-  "$SCRIPT_DIR/pixel_build.sh"
+if (( runtime_run_only == 0 )); then
+  PIXEL_BUILD_INCLUDE_GUEST_CLIENT="$build_include_guest_client" \
+    "$SCRIPT_DIR/pixel_build.sh"
+fi
 
 guest_client_artifact="$(pixel_guest_client_artifact)"
 guest_client_dst="$(pixel_guest_client_dst)"
@@ -91,10 +106,14 @@ runtime_gpu_profile_lines() {
 
 case "$PIXEL_RUNTIME_APP_RENDERER" in
   cpu)
-    PIXEL_BLITZ_RENDERER=cpu "$SCRIPT_DIR/pixel_build_guest_client.sh"
+    if (( runtime_run_only == 0 )); then
+      PIXEL_BLITZ_RENDERER=cpu "$SCRIPT_DIR/pixel_build_guest_client.sh"
+    fi
     ;;
   gpu)
-    "$SCRIPT_DIR/pixel_prepare_blitz_demo_gpu_bundle.sh"
+    if (( runtime_run_only == 0 )); then
+      "$SCRIPT_DIR/pixel_prepare_blitz_demo_gpu_bundle.sh"
+    fi
     guest_client_artifact="$(pixel_artifact_path run-shadow-blitz-demo-gpu)"
     guest_client_dst="$(pixel_runtime_linux_dir)/run-shadow-blitz-demo"
     runtime_prepare_extra_env=(
@@ -109,10 +128,14 @@ case "$PIXEL_RUNTIME_APP_RENDERER" in
     fi
     ;;
   hybrid)
-    PIXEL_BLITZ_RENDERER=hybrid "$SCRIPT_DIR/pixel_build_guest_client.sh"
+    if (( runtime_run_only == 0 )); then
+      PIXEL_BLITZ_RENDERER=hybrid "$SCRIPT_DIR/pixel_build_guest_client.sh"
+    fi
     ;;
   gpu_softbuffer)
-    "$SCRIPT_DIR/pixel_prepare_blitz_demo_gpu_softbuffer_bundle.sh"
+    if (( runtime_run_only == 0 )); then
+      "$SCRIPT_DIR/pixel_prepare_blitz_demo_gpu_softbuffer_bundle.sh"
+    fi
     guest_client_artifact="$(pixel_artifact_path run-shadow-blitz-demo-gpu-softbuffer)"
     guest_client_dst="$(pixel_runtime_linux_dir)/run-shadow-blitz-demo"
     runtime_prepare_extra_env=(
@@ -125,7 +148,9 @@ case "$PIXEL_RUNTIME_APP_RENDERER" in
     ;;
 esac
 
-env "${runtime_prepare_extra_env[@]}" "$SCRIPT_DIR/pixel_prepare_runtime_app_artifacts.sh"
+if (( runtime_run_only == 0 )); then
+  env "${runtime_prepare_extra_env[@]}" "$SCRIPT_DIR/pixel_prepare_runtime_app_artifacts.sh"
+fi
 
 : "${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS:=12000}"
 : "${PIXEL_GUEST_SESSION_TIMEOUT_SECS:=20}"
@@ -207,7 +232,7 @@ if [[ -n "$extra_forbidden_markers" ]]; then
   forbidden_markers="${forbidden_markers}"$'\n'"${extra_forbidden_markers}"
 fi
 
-if [[ -n "${PIXEL_RUNTIME_APP_PREP_ONLY-}" || -n "${PIXEL_RUNTIME_APP_PREPARE_ONLY-}" ]]; then
+if (( runtime_stage_only == 1 )); then
   PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
   PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
   PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_runtime_host_bundle_artifact_dir)" \
@@ -232,4 +257,5 @@ PIXEL_GUEST_SESSION_ENV="$runtime_session_env" \
 PIXEL_GUEST_PRECREATE_DIRS="$runtime_home_dir $runtime_cache_dir $runtime_cache_dir/mesa $runtime_config_dir" \
 PIXEL_VERIFY_FORBIDDEN_MARKERS="$forbidden_markers" \
 PIXEL_RUNTIME_SUMMARY_RENDERER="$PIXEL_RUNTIME_APP_RENDERER" \
+PIXEL_GUEST_SKIP_PUSH="$([[ "$runtime_run_only" == 1 ]] && printf 1 || true)" \
   "$SCRIPT_DIR/pixel_guest_ui_drm.sh"

@@ -311,6 +311,27 @@ function formatDuration(durationMs: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function logPodcastStatus(
+  command: CommandKind,
+  nextStatus: AudioStatus | null,
+  episodeId: string | null,
+  fallbackPath?: string,
+) {
+  if (!nextStatus) {
+    return;
+  }
+  const normalizedCommand = command.startsWith("play:") ? "play" : command;
+  const parts = [
+    "[shadow-runtime-podcast-player]",
+    `command=${normalizedCommand}`,
+    `episode=${episodeId ?? "none"}`,
+    `state=${nextStatus.state}`,
+    `backend=${nextStatus.backend}`,
+    `path=${nextStatus.path ?? fallbackPath ?? "n/a"}`,
+  ];
+  console.error(parts.join(" "));
+}
+
 export default function renderApp() {
   const config = readAppConfig();
   const [status, setStatus] = createSignal<AudioStatus | null>(null);
@@ -404,6 +425,12 @@ export default function renderApp() {
 
       if (nextStatus) {
         setStatus(nextStatus);
+        logPodcastStatus(
+          command,
+          nextStatus,
+          activeEpisodeId() ?? episode?.id ?? null,
+          episode?.path,
+        );
       }
     } catch (nextError) {
       const nextMessage = nextError instanceof Error
@@ -411,6 +438,12 @@ export default function renderApp() {
         : String(nextError);
       setError(nextMessage);
       setMessage("Podcast command failed.");
+      const normalizedCommand = command.startsWith("play:") ? "play" : command;
+      console.error(
+        `[shadow-runtime-podcast-player] command=${normalizedCommand} error=${
+          JSON.stringify(nextMessage)
+        }`,
+      );
     } finally {
       setBusy(null);
       invalidateRuntimeApp();

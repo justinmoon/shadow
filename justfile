@@ -15,9 +15,17 @@ pre-commit:
 pre-merge:
 	@scripts/pre_merge.sh
 
-# Run the current nightly gate. It mirrors pre-merge until heavier lanes land.
-nightly:
-	@scripts/nightly.sh
+# Run the rooted-Pixel CI lane. Examples: `just pixel-ci`, `just pixel-ci camera`, `just pixel-ci --target <serial>`
+pixel-ci *args='':
+	@scripts/pixel_ci.sh {{args}}
+
+# Stage rooted-Pixel artifacts without executing the suite. Examples: `just pixel-stage sound`
+pixel-stage *args='':
+	@scripts/pixel_ci.sh --stage-only {{args}}
+
+# Execute a rooted-Pixel suite against already-staged artifacts. Examples: `just pixel-run sound`
+pixel-run *args='':
+	@scripts/pixel_ci.sh --run-only {{args}}
 
 # Rebase this worktree branch onto root master, run pre-merge, and fast-forward root master if green
 land:

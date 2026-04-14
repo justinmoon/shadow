@@ -9,3 +9,4 @@ out/
 result
 .shadow-vm/
 .direnv/
+node_modules/

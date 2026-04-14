@@ -64,6 +64,7 @@ The current operator ladder reflects that split:
 25. `just pixel-touch-input-smoke` is the first rooted input seam for the app-runtime lane: auto-detect the direct-touch evdev node, capture one raw touch sequence, and prove the phone panel can feed usable contact data back into our stack.
 26. `just runtime-app-sound-smoke` plus `just pixel-runtime-app-sound-drm` are the first runtime-audio seam: a runtime app now calls `Shadow.os.audio`, the host proves the handle API against an in-memory backend and locally guards the `linux_spike` stdio contract, and the rooted Pixel sound lane swaps to the Linux-direct helper without adding a JVM bridge.
 27. That sound lane is no longer tone-only. The sound demo now uses a checked-in MP3 fixture under `runtime/app-sound-smoke/assets/`, runtime bundle prep copies sibling `assets/` beside `bundle.js` on host and Pixel, and rooted Pixel auto-click runs prove the runtime host can spawn the file-backed Linux helper and reach audible playback on the real panel path.
+28. `just pixel-ci suite=<subset>` is the current real-device hardware gate: one rooted Pixel can now run targeted suites (`camera`, `sound`, `podcast`, `shell`) or the full chain in one timed orchestrator, while `just pre-merge` stays VM-backed and fast enough for normal iteration.
 
 This is intentionally not yet a full custom userland boot. The repo is using the smallest reliable transport at each layer: first-stage wrapper for `/init` proof, then post-boot guest session launch for display and compositor iteration.
 

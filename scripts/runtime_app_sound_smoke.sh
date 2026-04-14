@@ -64,18 +64,21 @@ def run_scenario(name, extra_env):
         process.stdin.write(json.dumps(request) + "\n")
         process.stdin.flush()
         assert process.stdout is not None
-        line = process.stdout.readline()
-        if not line:
-            stderr = process.stderr.read() if process.stderr is not None else ""
-            raise SystemExit(
-                f"runtime-app-sound-smoke ({name}): runtime host closed stdout\n{stderr}",
-            )
-        try:
-            return json.loads(line)
-        except json.JSONDecodeError as error:
-            raise SystemExit(
-                f"runtime-app-sound-smoke ({name}): decode response: {error}\nline={line!r}",
-            ) from error
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                stderr = process.stderr.read() if process.stderr is not None else ""
+                raise SystemExit(
+                    f"runtime-app-sound-smoke ({name}): runtime host closed stdout\n{stderr}",
+                )
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError as error:
+                if line.startswith("[shadow-runtime-"):
+                    continue
+                raise SystemExit(
+                    f"runtime-app-sound-smoke ({name}): decode response: {error}\nline={line!r}",
+                ) from error
 
     def send_ok(request):
         response = send_raw(request)

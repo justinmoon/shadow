@@ -14,7 +14,8 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - Run `just ui-vm-smoke` when you want the same local VM shell/app smoke that backs `just pre-merge`.
 - Run `just ui-smoke` only when you explicitly want the Linux-host proof outside the required CI gate.
 - Use `just ui-vm-run` / `just ui-vm-*` for local macOS QEMU iteration.
-- Use `just pixel-runtime-app-drm` / `just pixel-runtime-app-drm-hold` / `just pixel-restore-android` for the rooted Pixel path.
+- Use `just pixel-ci <suite>` for rooted-Pixel CI subsets (`quick`, `shell`, `timeline`, `camera`, `sound`, `podcast`, `runtime`, `full`).
+- Use `just pixel-runtime-app-drm` / `just pixel-runtime-app-drm-hold` / `just pixel-restore-android` for lower-level rooted Pixel iteration.
 - Run `just pre-merge` before handoff and before claiming the repo is green.
 
 ## Current Checks
@@ -26,5 +27,6 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - `scripts/shadowctl` is the flat operator CLI behind the VM diagnostics and rooted-Pixel shell control recipes; use `-t vm` or a Pixel serial as needed.
 - `just pre-commit` runs shell syntax checks, flake evaluation, and `just ui-check`.
 - `just pre-merge` runs `just pre-commit` and `just ui-vm-smoke`.
-- `just nightly` currently mirrors `just pre-merge` until heavier lanes land.
+- `just pixel-ci full` runs the current rooted-Pixel CI lane: timeline lifecycle, camera capture, runtime sound, and runtime podcast playback on a connected rooted device.
+- `just pixel-ci <subset>` is the preferred ad hoc hardware gate for invasive app- or device-specific changes before landing.
 - `just land` wraps `scripts/land.sh` and is the only allowed path to merge a worktree branch into the root `master`.

@@ -527,6 +527,14 @@ pixel_bootanim_stopped() {
   [[ "$(pixel_service_state "$serial" bootanim)" == "stopped" ]]
 }
 
+pixel_android_window_service_ready() {
+  local serial
+  serial="$1"
+  pixel_adb "$serial" shell wm size 2>/dev/null \
+    | tr -d '\r' \
+    | grep -Eq '[0-9]+x[0-9]+'
+}
+
 pixel_display_size() {
   local serial size
   serial="$1"
@@ -561,6 +569,7 @@ pixel_android_display_restored() {
   if [[ "$(pixel_prop "$serial" sys.boot_completed)" == "1" || "$(pixel_prop "$serial" dev.bootcomplete)" == "1" ]]; then
     pixel_bootanim_stopped "$serial" || return 1
   fi
+  pixel_android_window_service_ready "$serial" || return 1
   pixel_takeover_processes_absent "$serial"
 }
 

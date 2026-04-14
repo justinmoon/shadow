@@ -258,6 +258,21 @@ function formatSourceLabel(source: AudioSourceConfig | AudioStatus): string {
   } ms`;
 }
 
+function logAudioStatus(command: CommandKind, nextStatus: AudioStatus | null) {
+  if (!nextStatus) {
+    return;
+  }
+  const parts = [
+    "[shadow-runtime-audio-smoke]",
+    `command=${command}`,
+    `state=${nextStatus.state}`,
+    `backend=${nextStatus.backend}`,
+    `source_kind=${nextStatus.sourceKind}`,
+    `path=${nextStatus.path ?? "n/a"}`,
+  ];
+  console.error(parts.join(" "));
+}
+
 export default function renderApp() {
   const appSource = readAppSourceConfig();
   const [status, setStatus] = createSignal<AudioStatus | null>(null);
@@ -342,6 +357,7 @@ export default function renderApp() {
 
       if (nextStatus) {
         setStatus(nextStatus);
+        logAudioStatus(command, nextStatus);
       }
     } catch (nextError) {
       const nextMessage = nextError instanceof Error
@@ -349,6 +365,11 @@ export default function renderApp() {
         : String(nextError);
       setError(nextMessage);
       setMessage("Audio command failed.");
+      console.error(
+        `[shadow-runtime-audio-smoke] command=${command} error=${
+          JSON.stringify(nextMessage)
+        }`,
+      );
     } finally {
       setBusy(null);
       invalidateRuntimeApp();
