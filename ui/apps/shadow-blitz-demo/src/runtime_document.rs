@@ -10,7 +10,7 @@ use std::{
 use blitz_dom::{local_name, ns, DocGuard, DocGuardMut, Document, QualName};
 use blitz_html::HtmlDocument;
 use blitz_traits::events::UiEvent;
-use serde::{Deserialize, Serialize};
+pub use shadow_runtime_protocol::{RuntimeDocumentPayload, RuntimeTextInputPayload};
 use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
 
 use crate::frame::template_document;
@@ -29,27 +29,6 @@ const DEFAULT_SURFACE_HEIGHT: u32 = APP_VIEWPORT_HEIGHT_PX;
 const CLICK_CANCEL_DISTANCE_PX: f32 = 8.0;
 const SOFT_KEYBOARD_TARGET_PREFIX: &str = "__shadow_keyboard__";
 const SOFT_KEYBOARD_SPACER_HEIGHT_PX: u32 = 360;
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-pub struct RuntimeDocumentPayload {
-    pub html: String,
-    pub css: Option<String>,
-    #[serde(default, rename = "textInput", skip_serializing_if = "Option::is_none")]
-    pub text_input: Option<RuntimeTextInputPayload>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-pub struct RuntimeTextInputPayload {
-    #[serde(rename = "targetId")]
-    pub target_id: String,
-    #[serde(default)]
-    pub value: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selection: Option<RuntimeSelectionEvent>,
-    #[serde(default, rename = "inputMode", skip_serializing_if = "Option::is_none")]
-    pub input_mode: Option<String>,
-    #[serde(default)]
-    pub multiline: bool,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ShadowTarget {

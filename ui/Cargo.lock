@@ -3184,6 +3184,7 @@ dependencies = [
  "pollster",
  "serde",
  "serde_json",
+ "shadow-runtime-protocol",
  "shadow-ui-core",
  "softbuffer_window_renderer",
  "wgpu",
@@ -3228,6 +3229,13 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "shadow-runtime-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

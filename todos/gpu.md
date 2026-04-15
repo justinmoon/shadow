@@ -191,6 +191,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
         - restore `textInput` to the host-side payload struct
         - add a host regression test for payload decode
         - tighten `runtime-app-keyboard-smoke` so it fails if focused responses lose `textInput`
+        - extract a shared `shadow-runtime-protocol` crate for runtime session request/response/document payload/event types
+          - both `rust/shadow-runtime-host` and `shadow-blitz-demo` now compile against the same serde contract
+          - this removes the specific host/client schema-drift class that dropped `textInput`
         - route on-screen keyboard taps through normal DOM hit-testing first
           - old behavior gave the software keyboard a parallel synthetic hit map based on assumed surface dimensions
           - that duplicated geometry drifted from the real shell app surface on device
@@ -202,11 +205,11 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
           - runtime JS payload
           - `rust/shadow-runtime-host`
           - `shadow-blitz-demo` runtime client
-        - the immediate guardrails are the new host unit test plus the tighter keyboard smoke
-        - the cleaner follow-up is to extract a shared runtime-session protocol type so host/client cannot silently diverge on fields like `textInput`
+        - the immediate guardrails are the new shared protocol crate, host unit test, and tighter keyboard smoke
       - local proofs now green:
         - direct host-session probe for `runtime/app-keyboard-smoke/app.tsx` returns `textInput.targetId == "draft"`
         - `cargo test --manifest-path rust/shadow-runtime-host/Cargo.toml runtime_document_payload_preserves_text_input -- --nocapture`
+        - `cargo test --manifest-path rust/shadow-runtime-protocol/Cargo.toml`
       - local regression coverage exists for:
         - keyboard overlay rendering
         - keyboard tap dispatching `keydown` + `input`

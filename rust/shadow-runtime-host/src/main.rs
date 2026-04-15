@@ -7,7 +7,7 @@ use deno_core::anyhow::{anyhow, Context, Result};
 use deno_core::url::Url;
 use deno_core::v8;
 use deno_core::{FsModuleLoader, JsRuntime, PollEventLoopOptions, RuntimeOptions};
-use serde::{Deserialize, Serialize};
+use shadow_runtime_protocol::{RuntimeDocumentPayload, SessionRequest, SessionResponse};
 
 const RENDER_EXPR: &str = "globalThis.SHADOW_RUNTIME_HOST.render()";
 const RENDER_IF_DIRTY_EXPR: &str = "globalThis.SHADOW_RUNTIME_HOST.renderIfDirty()";
@@ -188,98 +188,6 @@ fn resolve_main_module(path: String) -> Result<Url> {
     let cwd = env::current_dir().context("get current working directory")?;
     deno_core::resolve_path(&path, &cwd)
         .with_context(|| format!("resolve module path {path} from {}", cwd.display()))
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-enum SessionRequest {
-    Render,
-    RenderIfDirty,
-    Dispatch { event: RuntimeDispatchEvent },
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct RuntimeDispatchEvent {
-    #[serde(rename = "targetId")]
-    target_id: String,
-    #[serde(rename = "type")]
-    event_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    value: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    checked: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    selection: Option<RuntimeSelectionEvent>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pointer: Option<RuntimePointerEvent>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    keyboard: Option<RuntimeKeyboardEvent>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct RuntimeSelectionEvent {
-    #[serde(rename = "start", skip_serializing_if = "Option::is_none")]
-    start: Option<u32>,
-    #[serde(rename = "end", skip_serializing_if = "Option::is_none")]
-    end: Option<u32>,
-    #[serde(rename = "direction", skip_serializing_if = "Option::is_none")]
-    direction: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct RuntimePointerEvent {
-    #[serde(rename = "clientX", skip_serializing_if = "Option::is_none")]
-    client_x: Option<f32>,
-    #[serde(rename = "clientY", skip_serializing_if = "Option::is_none")]
-    client_y: Option<f32>,
-    #[serde(rename = "isPrimary", skip_serializing_if = "Option::is_none")]
-    is_primary: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct RuntimeKeyboardEvent {
-    #[serde(rename = "key", skip_serializing_if = "Option::is_none")]
-    key: Option<String>,
-    #[serde(rename = "code", skip_serializing_if = "Option::is_none")]
-    code: Option<String>,
-    #[serde(rename = "altKey", skip_serializing_if = "Option::is_none")]
-    alt_key: Option<bool>,
-    #[serde(rename = "ctrlKey", skip_serializing_if = "Option::is_none")]
-    ctrl_key: Option<bool>,
-    #[serde(rename = "metaKey", skip_serializing_if = "Option::is_none")]
-    meta_key: Option<bool>,
-    #[serde(rename = "shiftKey", skip_serializing_if = "Option::is_none")]
-    shift_key: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct RuntimeDocumentPayload {
-    html: String,
-    css: Option<String>,
-    #[serde(default, rename = "textInput", skip_serializing_if = "Option::is_none")]
-    text_input: Option<RuntimeTextInputPayload>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct RuntimeTextInputPayload {
-    #[serde(rename = "targetId")]
-    target_id: String,
-    #[serde(default)]
-    value: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    selection: Option<RuntimeSelectionEvent>,
-    #[serde(default, rename = "inputMode", skip_serializing_if = "Option::is_none")]
-    input_mode: Option<String>,
-    #[serde(default)]
-    multiline: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-enum SessionResponse {
-    Ok { payload: RuntimeDocumentPayload },
-    NoUpdate,
-    Error { message: String },
 }
 
 #[cfg(test)]

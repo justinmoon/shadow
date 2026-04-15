@@ -9,6 +9,7 @@ runtime-audio-host = { path = "../runtime-audio-host" }
 runtime-cashu-host = { path = "../runtime-cashu-host" }
 runtime-camera-host = { path = "../runtime-camera-host" }
 runtime-nostr-host = { path = "../runtime-nostr-host" }
+shadow-runtime-protocol = { path = "../shadow-runtime-protocol" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 tokio = { version = "1.50.0", features = ["rt"] }

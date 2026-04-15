@@ -3,10 +3,13 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
+use shadow_runtime_protocol::{RuntimeDocumentPayload, SessionRequest, SessionResponse};
 
 use crate::log::runtime_log;
-use crate::runtime_document::RuntimeDocumentPayload;
+
+pub use shadow_runtime_protocol::{
+    RuntimeDispatchEvent, RuntimeKeyboardEvent, RuntimePointerEvent, RuntimeSelectionEvent,
+};
 
 const RUNTIME_APP_BUNDLE_PATH_ENV: &str = "SHADOW_RUNTIME_APP_BUNDLE_PATH";
 const RUNTIME_HOST_BINARY_PATH_ENV: &str = "SHADOW_RUNTIME_HOST_BINARY_PATH";
@@ -190,74 +193,4 @@ impl Drop for RuntimeSession {
         }
         let _ = self.child.wait();
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct RuntimeDispatchEvent {
-    #[serde(rename = "targetId")]
-    pub target_id: String,
-    #[serde(rename = "type")]
-    pub event_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub value: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub checked: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selection: Option<RuntimeSelectionEvent>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pointer: Option<RuntimePointerEvent>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub keyboard: Option<RuntimeKeyboardEvent>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct RuntimeSelectionEvent {
-    #[serde(rename = "start", skip_serializing_if = "Option::is_none")]
-    pub start: Option<u32>,
-    #[serde(rename = "end", skip_serializing_if = "Option::is_none")]
-    pub end: Option<u32>,
-    #[serde(rename = "direction", skip_serializing_if = "Option::is_none")]
-    pub direction: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct RuntimePointerEvent {
-    #[serde(rename = "clientX", skip_serializing_if = "Option::is_none")]
-    pub client_x: Option<f32>,
-    #[serde(rename = "clientY", skip_serializing_if = "Option::is_none")]
-    pub client_y: Option<f32>,
-    #[serde(rename = "isPrimary", skip_serializing_if = "Option::is_none")]
-    pub is_primary: Option<bool>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct RuntimeKeyboardEvent {
-    #[serde(rename = "key", skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
-    #[serde(rename = "code", skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-    #[serde(rename = "altKey", skip_serializing_if = "Option::is_none")]
-    pub alt_key: Option<bool>,
-    #[serde(rename = "ctrlKey", skip_serializing_if = "Option::is_none")]
-    pub ctrl_key: Option<bool>,
-    #[serde(rename = "metaKey", skip_serializing_if = "Option::is_none")]
-    pub meta_key: Option<bool>,
-    #[serde(rename = "shiftKey", skip_serializing_if = "Option::is_none")]
-    pub shift_key: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-enum SessionRequest {
-    Render,
-    RenderIfDirty,
-    Dispatch { event: RuntimeDispatchEvent },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-enum SessionResponse {
-    Ok { payload: RuntimeDocumentPayload },
-    NoUpdate,
-    Error { message: String },
 }

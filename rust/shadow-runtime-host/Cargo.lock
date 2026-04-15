@@ -3179,8 +3179,16 @@ dependencies = [
  "runtime-nostr-host",
  "serde",
  "serde_json",
+ "shadow-runtime-protocol",
  "tokio",
  "v8",
+]
+
+[[package]]
+name = "shadow-runtime-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
