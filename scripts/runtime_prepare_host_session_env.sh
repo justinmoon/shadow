@@ -90,6 +90,7 @@ cashu_session = json.loads(os.environ["CASHU_SESSION_JSON"])
 podcast_session_json = os.environ.get("PODCAST_SESSION_JSON", "").strip()
 rewrite_from = os.environ.get("SHADOW_RUNTIME_APP_BUNDLE_REWRITE_FROM")
 rewrite_to = os.environ.get("SHADOW_RUNTIME_APP_BUNDLE_REWRITE_TO")
+audio_backend = os.environ.get("SHADOW_RUNTIME_AUDIO_BACKEND", "").strip()
 
 
 def rewrite(path: str) -> str:
@@ -120,6 +121,9 @@ exports = {
 if podcast_session_json:
     podcast_session = json.loads(podcast_session_json)
     exports["SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH"] = rewrite(podcast_session["bundlePath"])
+
+if audio_backend:
+    exports["SHADOW_RUNTIME_AUDIO_BACKEND"] = audio_backend
 
 for key, value in exports.items():
     print(f"export {key}={shlex.quote(str(value))}")

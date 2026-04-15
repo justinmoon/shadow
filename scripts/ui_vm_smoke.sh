@@ -125,7 +125,7 @@ export NIX_BUILDERS=
 
 (
   cd "$REPO_ROOT"
-  "$SCRIPT_DIR/ui_vm_run.sh"
+  SHADOW_RUNTIME_AUDIO_BACKEND=memory "$SCRIPT_DIR/ui_vm_run.sh"
 ) >"$RUN_LOG" 2>&1 &
 ui_vm_run_pid=$!
 

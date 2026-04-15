@@ -13,6 +13,7 @@ runtime_env_tmp=""
 ui_vm_enable_podcast_app="${SHADOW_UI_VM_ENABLE_PODCAST_APP:-1}"
 ui_vm_start_app_id="${SHADOW_UI_VM_START_APP_ID:-shell}"
 ui_vm_state_dir="/var/lib/shadow-ui"
+runtime_audio_backend="${SHADOW_RUNTIME_AUDIO_BACKEND:-}"
 
 case "$(uname -m)" in
   arm64|aarch64)
@@ -54,11 +55,14 @@ if [[ ! -s "$RUNTIME_ENV_PATH" || -n "${SHADOW_UI_VM_REFRESH_RUNTIME_ENV:-}" ]] 
   || { [[ "$ui_vm_enable_podcast_app" == "1" ]] && ! grep -Fq 'SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null; } \
   || { [[ "$ui_vm_start_app_id" == "shell" ]] && grep -Fq 'SHADOW_COMPOSITOR_AUTO_LAUNCH=' "$RUNTIME_ENV_PATH" 2>/dev/null; } \
   || { [[ "$ui_vm_start_app_id" != "shell" ]] && ! grep -Fq "SHADOW_COMPOSITOR_START_APP_ID=$ui_vm_start_app_id" "$RUNTIME_ENV_PATH" 2>/dev/null; } \
+  || { [[ -z "$runtime_audio_backend" ]] && grep -Fq 'SHADOW_RUNTIME_AUDIO_BACKEND=' "$RUNTIME_ENV_PATH" 2>/dev/null; } \
+  || { [[ -n "$runtime_audio_backend" ]] && ! grep -Fqx "export SHADOW_RUNTIME_AUDIO_BACKEND=$runtime_audio_backend" "$RUNTIME_ENV_PATH" 2>/dev/null; } \
   || ! grep -Fq "SHADOW_RUNTIME_CASHU_DATA_DIR=$ui_vm_state_dir/runtime-cashu" "$RUNTIME_ENV_PATH" 2>/dev/null \
   || ! grep -Fq "SHADOW_RUNTIME_NOSTR_DB_PATH=$ui_vm_state_dir/runtime-nostr.sqlite3" "$RUNTIME_ENV_PATH" 2>/dev/null; then
   runtime_env_tmp="$(mktemp "$REPO_ROOT/.shadow-vm/runtime-host-session-env.XXXXXX")"
   SHADOW_RUNTIME_APP_BUNDLE_REWRITE_FROM="$REPO_ROOT" \
   SHADOW_RUNTIME_APP_BUNDLE_REWRITE_TO="/work/shadow" \
+  SHADOW_RUNTIME_AUDIO_BACKEND="$runtime_audio_backend" \
   SHADOW_STATE_DIR="/var/lib/shadow-ui" \
   SHADOW_RUNTIME_ENABLE_PODCAST_APP="$ui_vm_enable_podcast_app" \
   SHADOW_STATE_DIR="$ui_vm_state_dir" \
