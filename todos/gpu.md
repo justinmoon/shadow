@@ -191,6 +191,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
         - restore `textInput` to the host-side payload struct
         - add a host regression test for payload decode
         - tighten `runtime-app-keyboard-smoke` so it fails if focused responses lose `textInput`
+        - route on-screen keyboard taps through normal DOM hit-testing first
+          - old behavior gave the software keyboard a parallel synthetic hit map based on assumed surface dimensions
+          - that duplicated geometry drifted from the real shell app surface on device
+          - compose focus worked because it used normal DOM hit-testing; keyboard taps did not
+          - new behavior prefers `shadow_target_at(...)` and only keeps the synthetic key-frame path as a fallback
+        - add regression coverage on a non-default surface size so software-keyboard taps keep working when the shell/client surface is not exactly the nominal viewport size
       - architecture note:
         - the recurring footgun here is not just stale device bundles; it is runtime-session schema drift across three layers:
           - runtime JS payload

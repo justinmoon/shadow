@@ -365,6 +365,7 @@ impl ApplicationHandler for BlitzApplication {
         }
 
         if let Some(window) = self.window.as_mut() {
+            update_runtime_surface_size(self.demo_mode, window, &event);
             window.handle_winit_event(event);
             handle_runtime_pointer_button(self.demo_mode, window, runtime_pointer_button);
             request_runtime_redraw(self.demo_mode, window);
@@ -956,6 +957,22 @@ fn handle_runtime_pointer_button(
             event.client_x,
             event.client_y,
         );
+}
+
+fn update_runtime_surface_size(
+    demo_mode: DemoMode,
+    window: &mut View<WindowRenderer>,
+    event: &WindowEvent,
+) {
+    if demo_mode != DemoMode::Runtime {
+        return;
+    }
+    let WindowEvent::SurfaceResized(size) = event else {
+        return;
+    };
+    window
+        .downcast_doc_mut::<RuntimeDocument>()
+        .update_surface_size(size.width, size.height);
 }
 
 fn request_runtime_redraw(demo_mode: DemoMode, window: &mut View<WindowRenderer>) {

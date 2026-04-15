@@ -60,6 +60,7 @@ struct ShadowTarget {
 pub struct RuntimeDocument {
     inner: HtmlDocument,
     payload: RuntimeDocumentPayload,
+    surface_size: (u32, u32),
     frame_nodes: FrameNodes,
     debug_state: DebugOverlayState,
     debug_overlay_enabled: bool,
@@ -115,6 +116,7 @@ impl RuntimeDocument {
         let mut document = Self {
             inner,
             payload,
+            surface_size: runtime_surface_size(),
             frame_nodes,
             debug_state: DebugOverlayState::default(),
             debug_overlay_enabled: debug_overlay_enabled(),
@@ -162,6 +164,13 @@ impl RuntimeDocument {
     pub fn replace_document(&mut self, payload: RuntimeDocumentPayload) {
         self.payload = payload;
         self.apply_render();
+    }
+
+    pub fn update_surface_size(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        self.surface_size = (width, height);
     }
 
     fn apply_render(&mut self) {
@@ -679,7 +688,7 @@ impl RuntimeDocument {
 
     fn soft_keyboard_target_id_at(&self, x: f32, y: f32) -> Option<String> {
         let text_input = self.soft_keyboard_text_input()?;
-        let (surface_width, surface_height) = runtime_surface_size();
+        let (surface_width, surface_height) = self.surface_size;
         soft_keyboard_key_frames(
             text_input.input_mode.as_deref(),
             surface_width,
@@ -723,12 +732,17 @@ impl RuntimeDocument {
     }
 
     fn arm_target_for_pointer(&self, client_x: f32, client_y: f32, source: &str) -> Option<String> {
-        if let Some(target_id) = self.soft_keyboard_target_id_at(client_x, client_y) {
-            return Some(target_id);
-        }
         let hit_target_id = self.shadow_target_id_at(client_x, client_y);
         if hit_target_id.is_some() {
             return hit_target_id;
+        }
+
+        if let Some(target_id) = self.soft_keyboard_target_id_at(client_x, client_y) {
+            eprintln!(
+                "[shadow-runtime-demo] {}-pointer-keyboard-fallback x={} y={} target={}",
+                source, client_x, client_y, target_id
+            );
+            return Some(target_id);
         }
 
         let fallback_target_id = self.touch_anywhere_target_id.clone();
@@ -1001,7 +1015,7 @@ impl RuntimeDocument {
 
     #[cfg(test)]
     fn point_for_target(&mut self, target_id: &str) -> (f32, f32) {
-        let (surface_width, surface_height) = runtime_surface_size();
+        let (surface_width, surface_height) = self.surface_size;
         let mut inner = self.inner_mut();
         inner.set_viewport(blitz_traits::shell::Viewport::new(
             surface_width,
@@ -1025,7 +1039,7 @@ impl RuntimeDocument {
 
     #[cfg(test)]
     fn target_at(&mut self, x: f32, y: f32) -> Option<String> {
-        let (surface_width, surface_height) = runtime_surface_size();
+        let (surface_width, surface_height) = self.surface_size;
         let mut inner = self.inner_mut();
         inner.set_viewport(blitz_traits::shell::Viewport::new(
             surface_width,
@@ -1037,6 +1051,21 @@ impl RuntimeDocument {
         drop(inner);
 
         self.shadow_target_id_at(x, y)
+    }
+
+    #[cfg(test)]
+    fn soft_keyboard_point_for_target(&self, target_id: &str) -> Option<(f32, f32)> {
+        let text_input = self.soft_keyboard_text_input()?;
+        let (surface_width, surface_height) = self.surface_size;
+        soft_keyboard_key_frames(
+            text_input.input_mode.as_deref(),
+            surface_width,
+            surface_height,
+        )
+        .into_iter()
+        .find_map(|(key, frame)| {
+            (key.target_id == target_id).then(|| (frame.center_x(), frame.center_y()))
+        })
     }
 
     #[cfg(test)]
@@ -1060,21 +1089,6 @@ impl RuntimeDocument {
     #[cfg(test)]
     fn take_dispatched_runtime_events(&mut self) -> Vec<RuntimeDispatchEvent> {
         std::mem::take(&mut self.dispatched_runtime_events)
-    }
-
-    #[cfg(test)]
-    fn soft_keyboard_point_for_target(&self, target_id: &str) -> Option<(f32, f32)> {
-        let text_input = self.soft_keyboard_text_input()?;
-        let (surface_width, surface_height) = runtime_surface_size();
-        soft_keyboard_key_frames(
-            text_input.input_mode.as_deref(),
-            surface_width,
-            surface_height,
-        )
-        .into_iter()
-        .find_map(|(key, frame)| {
-            (key.target_id == target_id).then(|| (frame.center_x(), frame.center_y()))
-        })
     }
 }
 
@@ -2302,6 +2316,7 @@ mod tests {
                 ),
                 None,
             );
+            document.update_surface_size(532, 1074);
             let (client_x, client_y) = document
                 .soft_keyboard_point_for_target("__shadow_keyboard__a")
                 .expect("keyboard key point");
