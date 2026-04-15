@@ -75,6 +75,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [ ] Make app/runtime launch metadata single-source.
   - Stop duplicating app ids, bundle env names, input paths, and cache dirs across Rust and shell.
   - 2026-04-15 operator app-list cleanup landed: the supported shell/home launch app ids now live in `scripts/session_apps.txt`, and `shadowctl`, `ui_run.sh`, `ui_vm_run.sh`, `pixel_shell_drm.sh`, plus the dispatch/arg smokes all consume that shared list instead of carrying parallel hardcoded tables.
+  - 2026-04-15 VM env-surface cleanup landed: `ui_vm_run.sh` no longer accepts `SHADOW_UI_VM_ENABLE_PODCAST_APP`, `SHADOW_UI_VM_REFRESH_RUNTIME_ENV`, `SHADOW_UI_VM_RUNTIME_HOST_PACKAGE_ATTR`, or `SHADOW_UI_VM_RUNTIME_HOST_BINARY_NAME`; the supported VM lane always stages the podcast app, refreshes runtime env by content drift, and picks the guest runtime-host package from the host arch in one place.
   - Make script/CLI staging consume generated metadata instead of hardcoded parallel tables.
 - [x] Extract shared compositor plumbing.
   - Deduplicate `control.rs` and `launch.rs` logic between `shadow-compositor` and `shadow-compositor-guest`.

@@ -105,7 +105,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - 2026-04-07: The VM shelve/reopen smoke is green again.
   - The shell launch regression was that `shadow-compositor` spawned `shadow-blitz-demo` without forcing runtime mode, so the self-exiting static demo launched instead of the real runtime app.
   - `shadow-blitz-demo` now honors launch-provided title and Wayland app-id overrides, and the compositor sets runtime mode plus app-specific launch env.
-  - `ui-vm-timeline-smoke` no longer forces `SHADOW_UI_VM_REFRESH_RUNTIME_ENV=1` on every run, so it validates the live VM lane instead of first spending minutes rebuilding the aarch64 runtime host unless the operator explicitly asks for that refresh.
+  - `ui-vm-timeline-smoke` no longer forces a runtime-env rebuild on every run, so it validates the live VM lane instead of first spending minutes rebuilding the aarch64 runtime host.
 - 2026-04-07: The near-term Pixel lane is now the real shell/home path.
   - `pixel-shell-drm` is the primary rooted-Pixel operator rung, and `ui-run target=pixel` now routes there instead of to the old direct-runtime timeline path.
   - The old direct runtime-app Pixel scripts remain in the repo as fallback/probe tools for narrower runtime or GPU work.

@@ -14,7 +14,6 @@ source "$SCRIPT_DIR/session_apps.sh"
 cd "$REPO_ROOT"
 mkdir -p .shadow-vm
 runtime_env_tmp=""
-ui_vm_enable_podcast_app="${SHADOW_UI_VM_ENABLE_PODCAST_APP:-1}"
 ui_vm_start_app_id="${SHADOW_UI_VM_START_APP_ID:-shell}"
 ui_vm_state_dir="/var/lib/shadow-ui"
 ui_vm_ssh_port_value="${SHADOW_UI_VM_SSH_PORT:-$(ui_vm_ssh_port)}"
@@ -22,10 +21,10 @@ runtime_audio_backend="${SHADOW_RUNTIME_AUDIO_BACKEND:-}"
 
 case "$(uname -m)" in
   arm64|aarch64)
-    ui_vm_runtime_host_package_attr_default="shadow-runtime-host-aarch64-linux-gnu"
+    ui_vm_runtime_host_package_attr="shadow-runtime-host-aarch64-linux-gnu"
     ;;
   x86_64)
-    ui_vm_runtime_host_package_attr_default="shadow-runtime-host-x86_64-linux-gnu"
+    ui_vm_runtime_host_package_attr="shadow-runtime-host-x86_64-linux-gnu"
     ;;
   *)
     echo "ui-vm-run: unsupported host arch $(uname -m) for runtime host package selection" >&2
@@ -52,13 +51,13 @@ if [[ -S "$SOCKET_PATH" ]]; then
 fi
 
 rm -f .shadow-vm/nix-store-overlay.img
-if [[ ! -s "$RUNTIME_ENV_PATH" || -n "${SHADOW_UI_VM_REFRESH_RUNTIME_ENV:-}" ]] \
+if [[ ! -s "$RUNTIME_ENV_PATH" ]] \
   || ! grep -Fq 'SHADOW_RUNTIME_APP_CAMERA_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
   || ! grep -Fq 'SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
   || ! grep -Fq 'SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
+  || ! grep -Fq 'SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
   || ! grep -Fq 'SHADOW_RUNTIME_CASHU_DATA_DIR=/var/lib/shadow-ui/runtime-cashu' "$RUNTIME_ENV_PATH" 2>/dev/null \
   || ! grep -Fq 'SHADOW_RUNTIME_NOSTR_DB_PATH=/var/lib/shadow-ui/runtime-nostr.sqlite3' "$RUNTIME_ENV_PATH" 2>/dev/null \
-  || { [[ "$ui_vm_enable_podcast_app" == "1" ]] && ! grep -Fq 'SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null; } \
   || { [[ "$ui_vm_start_app_id" == "shell" ]] && grep -Fq 'SHADOW_COMPOSITOR_AUTO_LAUNCH=' "$RUNTIME_ENV_PATH" 2>/dev/null; } \
   || { [[ "$ui_vm_start_app_id" != "shell" ]] && ! grep -Fq "SHADOW_COMPOSITOR_START_APP_ID=$ui_vm_start_app_id" "$RUNTIME_ENV_PATH" 2>/dev/null; } \
   || { [[ -z "$runtime_audio_backend" ]] && grep -Fq 'SHADOW_RUNTIME_AUDIO_BACKEND=' "$RUNTIME_ENV_PATH" 2>/dev/null; } \
@@ -69,11 +68,9 @@ if [[ ! -s "$RUNTIME_ENV_PATH" || -n "${SHADOW_UI_VM_REFRESH_RUNTIME_ENV:-}" ]] 
   SHADOW_RUNTIME_APP_BUNDLE_REWRITE_FROM="$REPO_ROOT" \
   SHADOW_RUNTIME_APP_BUNDLE_REWRITE_TO="/work/shadow" \
   SHADOW_RUNTIME_AUDIO_BACKEND="$runtime_audio_backend" \
-  SHADOW_STATE_DIR="/var/lib/shadow-ui" \
-  SHADOW_RUNTIME_ENABLE_PODCAST_APP="$ui_vm_enable_podcast_app" \
+  SHADOW_RUNTIME_ENABLE_PODCAST_APP=1 \
   SHADOW_STATE_DIR="$ui_vm_state_dir" \
-  SHADOW_RUNTIME_HOST_PACKAGE_ATTR_OVERRIDE="${SHADOW_UI_VM_RUNTIME_HOST_PACKAGE_ATTR:-$ui_vm_runtime_host_package_attr_default}" \
-  SHADOW_RUNTIME_HOST_BINARY_NAME_OVERRIDE="${SHADOW_UI_VM_RUNTIME_HOST_BINARY_NAME:-shadow-runtime-host}" \
+  SHADOW_RUNTIME_HOST_PACKAGE_ATTR_OVERRIDE="$ui_vm_runtime_host_package_attr" \
     ./scripts/runtime_prepare_host_session_env.sh >"$runtime_env_tmp"
   if shadow_session_app_is_shell "$ui_vm_start_app_id"; then
     :
