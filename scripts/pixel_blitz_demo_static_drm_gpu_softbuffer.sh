@@ -12,22 +12,15 @@ gpu_bundle_dir="$(pixel_artifact_path shadow-blitz-demo-gnu)"
 gpu_launcher_artifact="$(pixel_artifact_path run-shadow-blitz-demo-gpu-softbuffer)"
 gpu_launcher_dst="$(pixel_runtime_linux_dir)/run-shadow-blitz-demo"
 compositor_marker="${PIXEL_COMPOSITOR_MARKER-[shadow-guest-compositor] presented-frame}"
-runtime_home_dir="$(pixel_runtime_linux_dir)/home"
-runtime_cache_dir="$runtime_home_dir/.cache"
-runtime_config_dir="$runtime_home_dir/.config"
-runtime_shader_cache_dir="$runtime_cache_dir/mesa"
-xkb_config_root="$(pixel_runtime_linux_dir)/share/X11/xkb"
+runtime_shader_cache_dir="$(pixel_runtime_mesa_cache_dir)"
 extra_precreate_dirs="${PIXEL_GUEST_PRECREATE_DIRS-}"
 
 guest_client_env=$(
   cat <<EOF
 SHADOW_BLITZ_STATIC_ONLY=1
 WGPU_BACKEND=${WGPU_BACKEND:-gl}
-HOME=$runtime_home_dir
-XDG_CACHE_HOME=$runtime_cache_dir
-XDG_CONFIG_HOME=$runtime_config_dir
+$(pixel_runtime_linux_user_env_lines)
 MESA_SHADER_CACHE_DIR=$runtime_shader_cache_dir
-XKB_CONFIG_ROOT=$xkb_config_root
 EOF
 )
 
@@ -36,17 +29,16 @@ if [[ ! -d "$gpu_bundle_dir" || ! -x "$gpu_launcher_artifact" ]]; then
 fi
 
 if [[ -n "$blitz_exit_delay_ms" ]]; then
-  guest_client_env="$guest_client_env SHADOW_BLITZ_EXIT_DELAY_MS=$blitz_exit_delay_ms"
+  guest_client_env="${guest_client_env}"$'\n'"SHADOW_BLITZ_EXIT_DELAY_MS=$blitz_exit_delay_ms"
 fi
 
 if [[ -n "${PIXEL_GUEST_CLIENT_ENV-}" ]]; then
-  guest_client_env="$guest_client_env ${PIXEL_GUEST_CLIENT_ENV}"
+  guest_client_env="${guest_client_env}"$'\n'"${PIXEL_GUEST_CLIENT_ENV}"
 fi
-guest_client_env="$(printf '%s\n' "$guest_client_env" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
 
-guest_precreate_dirs="$runtime_home_dir $runtime_cache_dir $runtime_shader_cache_dir $runtime_config_dir"
+guest_precreate_dirs="$(pixel_runtime_precreate_dirs_lines)"
 if [[ -n "$extra_precreate_dirs" ]]; then
-  guest_precreate_dirs="$guest_precreate_dirs $extra_precreate_dirs"
+  guest_precreate_dirs="${guest_precreate_dirs}"$'\n'"${extra_precreate_dirs}"
 fi
 
 PIXEL_GUEST_CLIENT_ARTIFACT="$gpu_launcher_artifact" \
