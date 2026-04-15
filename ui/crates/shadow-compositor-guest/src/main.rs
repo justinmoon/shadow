@@ -129,7 +129,6 @@ struct ShadowGuestCompositor {
     exit_on_first_frame: bool,
     exit_on_client_disconnect: bool,
     exit_on_first_dma_buffer: bool,
-    selftest_drm: bool,
     boot_splash_drm: bool,
     kms_display: Option<kms::KmsDisplay>,
     last_frame_size: Option<(u32, u32)>,
@@ -203,7 +202,6 @@ impl ShadowGuestCompositor {
             exit_on_first_frame: config.exit_on_first_frame,
             exit_on_client_disconnect,
             exit_on_first_dma_buffer: config.exit_on_first_dma_buffer,
-            selftest_drm: config.selftest_drm,
             boot_splash_drm: config.boot_splash_drm,
             kms_display: None,
             last_frame_size: None,
@@ -1400,15 +1398,6 @@ impl ShadowGuestCompositor {
         }
     }
 
-    fn run_drm_selftest(&mut self) {
-        let Some(display) = self.ensure_kms_display() else {
-            return;
-        };
-        let (width, height) = display.dimensions();
-        let frame = kms::build_selftest_frame(width, height);
-        self.publish_frame(&frame, "selftest-frame-generated");
-    }
-
     fn run_boot_splash(&mut self) {
         let Some(display) = self.ensure_kms_display() else {
             return;
@@ -1775,39 +1764,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!("[shadow-guest-compositor] transport=direct-client-fd")
         }
     }
-    if state.selftest_drm {
-        tracing::info!("[shadow-guest-compositor] selftest-drm enabled");
-        state.run_drm_selftest();
-        if state.exit_on_first_frame {
-            return Ok(());
-        }
-    } else {
-        if state.boot_splash_drm {
-            tracing::info!("[shadow-guest-compositor] boot-splash-drm enabled");
-            state.run_boot_splash();
-        }
-        match config.startup_action {
-            StartupAction::Shell { start_app_id } => {
-                tracing::info!("[shadow-guest-compositor] shell-mode enabled");
-                state.publish_visible_shell_frame("shell-home-frame");
-                if let Some(app_id) = start_app_id {
-                    tracing::info!(
-                        "[shadow-guest-compositor] shell-start-app-id={}",
-                        app_id.as_str()
-                    );
-                    state.launch_or_focus_app(app_id)?;
-                }
-            }
-            StartupAction::App { app_id } => {
+    if state.boot_splash_drm {
+        tracing::info!("[shadow-guest-compositor] boot-splash-drm enabled");
+        state.run_boot_splash();
+    }
+    match config.startup_action {
+        StartupAction::Shell { start_app_id } => {
+            tracing::info!("[shadow-guest-compositor] shell-mode enabled");
+            state.publish_visible_shell_frame("shell-home-frame");
+            if let Some(app_id) = start_app_id {
                 tracing::info!(
-                    "[shadow-guest-compositor] start-app-id={} control_socket={}",
-                    app_id.as_str(),
-                    state.control_socket_path.display()
+                    "[shadow-guest-compositor] shell-start-app-id={}",
+                    app_id.as_str()
                 );
                 state.launch_or_focus_app(app_id)?;
             }
-            StartupAction::Client => state.spawn_client()?,
         }
+        StartupAction::App { app_id } => {
+            tracing::info!(
+                "[shadow-guest-compositor] start-app-id={} control_socket={}",
+                app_id.as_str(),
+                state.control_socket_path.display()
+            );
+            state.launch_or_focus_app(app_id)?;
+        }
+        StartupAction::Client => state.spawn_client()?,
     }
     event_loop.run(None, &mut state, |_| {})?;
     Ok(())

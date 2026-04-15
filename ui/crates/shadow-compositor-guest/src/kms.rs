@@ -15,7 +15,6 @@ use std::time::{Duration, Instant};
 const DRM_DEVICE_PATH: &str = "/dev/dri/card0";
 const BYTES_PER_PIXEL: usize = 4;
 const BACKGROUND_PIXEL: [u8; 4] = [0x18, 0x12, 0x10, 0xFF];
-const SELFTEST_BORDER_PX: u32 = 24;
 const BOOT_SPLASH_WIDTH: u32 = 384;
 const BOOT_SPLASH_HEIGHT: u32 = 720;
 
@@ -101,45 +100,6 @@ pub fn write_frame_ppm(frame: &CapturedFrame, path: impl AsRef<Path>) -> Result<
 
     fs::write(path, ppm)
         .with_context(|| format!("failed to write ppm artifact to {}", path.display()))
-}
-
-pub fn build_selftest_frame(width: u32, height: u32) -> CapturedFrame {
-    let stride = width * BYTES_PER_PIXEL as u32;
-    let mut pixels = vec![0_u8; usize::try_from(u64::from(stride) * u64::from(height)).unwrap()];
-
-    for y in 0..height {
-        for x in 0..width {
-            let border = x < SELFTEST_BORDER_PX
-                || y < SELFTEST_BORDER_PX
-                || x >= width.saturating_sub(SELFTEST_BORDER_PX)
-                || y >= height.saturating_sub(SELFTEST_BORDER_PX);
-
-            let (r, g, b) = if border {
-                (0xFF, 0xFF, 0xFF)
-            } else if y < height / 3 {
-                (0xFF, 0x8A, 0x1A)
-            } else if y < (height * 2) / 3 {
-                (0x08, 0xE8, 0xFF)
-            } else {
-                (0xFF, 0x2D, 0x55)
-            };
-
-            let offset = (usize::try_from(y).unwrap() * usize::try_from(stride).unwrap())
-                + (usize::try_from(x).unwrap() * BYTES_PER_PIXEL);
-            pixels[offset] = b;
-            pixels[offset + 1] = g;
-            pixels[offset + 2] = r;
-            pixels[offset + 3] = 0xFF;
-        }
-    }
-
-    CapturedFrame {
-        width,
-        height,
-        stride,
-        format: wl_shm::Format::Xrgb8888,
-        pixels,
-    }
 }
 
 pub fn build_boot_splash_frame(panel_width: u32, panel_height: u32) -> CapturedFrame {
