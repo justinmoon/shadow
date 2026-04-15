@@ -4,12 +4,25 @@ use shadow_ui_core::scene::{
 };
 use shadow_ui_software::SoftwareRenderer;
 use smithay::reexports::wayland_server::protocol::wl_shm;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::time::Duration;
 
 pub struct GuestShellSurface {
     width: u32,
     height: u32,
     renderer: SoftwareRenderer,
+    base_pixels: Vec<u8>,
     pixels: Vec<u8>,
+    last_scene_key: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ShellRenderStats {
+    pub scene_cache_hit: bool,
+    pub scene_render: Duration,
+    pub base_copy: Duration,
+    pub app_composite: Duration,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -27,7 +40,9 @@ impl GuestShellSurface {
             width,
             height,
             renderer: SoftwareRenderer::new(width, height),
+            base_pixels: vec![0; (width * height * 4) as usize],
             pixels: vec![0; (width * height * 4) as usize],
+            last_scene_key: None,
         }
     }
 
@@ -39,30 +54,60 @@ impl GuestShellSurface {
         self.width = width;
         self.height = height;
         self.renderer.resize(width, height);
+        self.base_pixels
+            .resize((width as usize) * (height as usize) * 4, 0);
         self.pixels
             .resize((width as usize) * (height as usize) * 4, 0);
+        self.last_scene_key = None;
     }
 
     #[cfg(test)]
     pub fn render_scene(&mut self, scene: &Scene) -> &[u8] {
-        self.render_scene_with_app_frame(scene, None)
+        self.render_scene_with_app_frame(scene, None);
+        &self.pixels
+    }
+
+    pub fn take_pixels(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.pixels)
+    }
+
+    pub fn restore_pixels(&mut self, mut pixels: Vec<u8>) {
+        if pixels.len() != (self.width as usize) * (self.height as usize) * 4 {
+            pixels.resize((self.width as usize) * (self.height as usize) * 4, 0);
+        }
+        self.pixels = pixels;
     }
 
     pub fn render_scene_with_app_frame(
         &mut self,
         scene: &Scene,
         app_frame: Option<AppFrame<'_>>,
-    ) -> &[u8] {
-        self.renderer.resize(self.width, self.height);
-        let scaled_scene = scale_scene(scene, self.width, self.height);
-        let scene_pixels = self.renderer.render(&scaled_scene);
-        self.pixels.copy_from_slice(scene_pixels);
-
-        if let Some(app_frame) = app_frame {
-            composite_app_frame(&mut self.pixels, self.width, self.height, app_frame);
+    ) -> ShellRenderStats {
+        let mut stats = ShellRenderStats::default();
+        let scene_key = scene_cache_key(scene, self.width, self.height);
+        if self.last_scene_key != Some(scene_key) {
+            let scene_render_start = std::time::Instant::now();
+            self.renderer.resize(self.width, self.height);
+            let scaled_scene = scale_scene(scene, self.width, self.height);
+            let scene_pixels = self.renderer.render(&scaled_scene);
+            self.base_pixels.copy_from_slice(scene_pixels);
+            stats.scene_render = scene_render_start.elapsed();
+            self.last_scene_key = Some(scene_key);
+        } else {
+            stats.scene_cache_hit = true;
         }
 
-        &self.pixels
+        let base_copy_start = std::time::Instant::now();
+        self.pixels.copy_from_slice(&self.base_pixels);
+        stats.base_copy = base_copy_start.elapsed();
+
+        if let Some(app_frame) = app_frame {
+            let app_composite_start = std::time::Instant::now();
+            composite_app_frame(&mut self.pixels, self.width, self.height, app_frame);
+            stats.app_composite = app_composite_start.elapsed();
+        }
+
+        stats
     }
 }
 
@@ -198,6 +243,48 @@ fn scale_scene(scene: &Scene, target_width: u32, target_height: u32) -> Scene {
     }
 }
 
+fn scene_cache_key(scene: &Scene, target_width: u32, target_height: u32) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    target_width.hash(&mut hasher);
+    target_height.hash(&mut hasher);
+    scene.clear_color.rgba8().hash(&mut hasher);
+    scene.rects.len().hash(&mut hasher);
+    scene.texts.len().hash(&mut hasher);
+
+    for rect in &scene.rects {
+        rect.x.to_bits().hash(&mut hasher);
+        rect.y.to_bits().hash(&mut hasher);
+        rect.width.to_bits().hash(&mut hasher);
+        rect.height.to_bits().hash(&mut hasher);
+        rect.radius.to_bits().hash(&mut hasher);
+        rect.color.rgba8().hash(&mut hasher);
+    }
+
+    for text in &scene.texts {
+        text.content.hash(&mut hasher);
+        text.left.to_bits().hash(&mut hasher);
+        text.top.to_bits().hash(&mut hasher);
+        text.width.to_bits().hash(&mut hasher);
+        text.height.to_bits().hash(&mut hasher);
+        text.size.to_bits().hash(&mut hasher);
+        text.line_height.to_bits().hash(&mut hasher);
+        text.color.rgba8().hash(&mut hasher);
+        match text.align {
+            shadow_ui_core::scene::TextAlign::Left => 0_u8,
+            shadow_ui_core::scene::TextAlign::Center => 1_u8,
+        }
+        .hash(&mut hasher);
+        match text.weight {
+            shadow_ui_core::scene::TextWeight::Normal => 0_u8,
+            shadow_ui_core::scene::TextWeight::Semibold => 1_u8,
+            shadow_ui_core::scene::TextWeight::Bold => 2_u8,
+        }
+        .hash(&mut hasher);
+    }
+
+    hasher.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +347,21 @@ mod tests {
         composite_app_frame(&mut target, 1, 1, app_frame);
 
         assert_eq!(target, vec![1, 2, 3, 0]);
+    }
+
+    #[test]
+    fn render_scene_reuses_cached_base_when_scene_is_unchanged() {
+        let scene = Scene {
+            clear_color: Color::rgba(255, 0, 0, 255),
+            rects: Vec::new(),
+            texts: Vec::new(),
+        };
+        let mut surface = GuestShellSurface::new(2, 2);
+
+        let first = surface.render_scene_with_app_frame(&scene, None);
+        assert!(!first.scene_cache_hit);
+
+        let second = surface.render_scene_with_app_frame(&scene, None);
+        assert!(second.scene_cache_hit);
     }
 }

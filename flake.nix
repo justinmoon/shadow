@@ -80,6 +80,17 @@
       shadowLinuxAudioSpikeSrc = repoSourceFromPrefixes [
         "rust/shadow-linux-audio-spike"
       ];
+      shadowBlitzDemoSrc = repoSourceFromPrefixes [
+        "ui/Cargo.toml"
+        "ui/Cargo.lock"
+        "ui/apps/shadow-blitz-demo"
+        "ui/crates/shadow-ui-core"
+        "ui/third_party/anyrender_vello"
+        "ui/third_party/softbuffer_window_renderer"
+        "ui/third_party/wgpu_context"
+        "ui/third_party/winit"
+        "rust/shadow-runtime-protocol"
+      ];
       darwinSystems = builtins.filter (system: lib.hasSuffix "-darwin" system) systems;
       forAllSystems = f:
         lib.genAttrs systems (
@@ -283,7 +294,7 @@
             else
               "shadow-blitz-demo-${suffix}";
           version = "0.1.0";
-          src = ./.;
+          src = shadowBlitzDemoSrc;
           cargoRoot = "ui";
           buildAndTestSubdir = "ui";
           cargoLock = {
@@ -302,7 +313,26 @@
             "-p"
             "shadow-blitz-demo"
           ] ++ defaultFeatureArgs ++ featureArgs;
-          nativeBuildInputs = [ cross.buildPackages.pkg-config ];
+          nativeBuildInputs = [
+            cross.buildPackages.pkg-config
+            cross.buildPackages.python3
+          ];
+          postPatch = ''
+            python3 - <<'PY'
+            from pathlib import Path
+            import re
+
+            cargo_toml = Path("ui/Cargo.toml")
+            data = cargo_toml.read_text()
+            data = re.sub(
+                r"members = \[\n(?:    \".*\",\n)+\]",
+                'members = [\n    "crates/shadow-ui-core",\n    "apps/shadow-blitz-demo",\n]',
+                data,
+                count=1,
+            )
+            cargo_toml.write_text(data)
+            PY
+          '';
           depsBuildBuild =
             lib.optionals cross.stdenv.buildPlatform.isDarwin [
               cross.buildPackages.stdenv.cc

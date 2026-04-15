@@ -48,7 +48,7 @@ use smithay::{
         calloop::{channel, generic::Generic, EventLoop, Interest, LoopSignal, Mode, PostAction},
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
-            protocol::{wl_buffer, wl_seat, wl_shm, wl_surface::WlSurface},
+            protocol::{wl_buffer, wl_seat, wl_surface::WlSurface},
             BindError, Client, Display, DisplayHandle,
         },
     },
@@ -680,18 +680,30 @@ impl ShadowGuestCompositor {
                 pixels: &frame.pixels,
             })
         });
-        let pixels = self
+        let shell_stats = self
             .shell_surface
-            .render_scene_with_app_frame(&scene, app_frame)
-            .to_vec();
-        let frame = kms::captured_frame_from_pixels(
-            render_width,
-            render_height,
-            pixels,
-            wl_shm::Format::Xrgb8888,
-        )
-        .expect("shell scene pixels match frame dimensions");
-        self.publish_frame(frame, frame_marker);
+            .render_scene_with_app_frame(&scene, app_frame);
+        let shell_total =
+            shell_stats.scene_render + shell_stats.base_copy + shell_stats.app_composite;
+        if shell_total.as_millis() >= 8 {
+            tracing::info!(
+                "[shadow-guest-compositor] shell-frame-stats cache_hit={} scene_render_ms={} base_copy_ms={} app_composite_ms={} total_ms={}",
+                shell_stats.scene_cache_hit,
+                shell_stats.scene_render.as_millis(),
+                shell_stats.base_copy.as_millis(),
+                shell_stats.app_composite.as_millis(),
+                shell_total.as_millis()
+            );
+        }
+        let pixels = self.shell_surface.take_pixels();
+        let frame = kms::CapturedFrameView {
+            width: render_width,
+            height: render_height,
+            stride: render_width * 4,
+            pixels: &pixels,
+        };
+        self.publish_frame_view(frame, frame_marker);
+        self.shell_surface.restore_pixels(pixels);
     }
 
     fn window_for_surface(&self, surface: &WlSurface) -> Option<Window> {
@@ -1601,9 +1613,35 @@ impl ShadowGuestCompositor {
         }
     }
 
-    fn publish_frame(&mut self, frame: kms::CapturedFrame, frame_marker: &str) {
+    fn publish_frame(&mut self, frame: &kms::CapturedFrame, frame_marker: &str) {
+        self.publish_frame_view(frame.view(), frame_marker);
+        self.last_published_frame = Some(frame.clone());
+    }
+
+    fn publish_frame_view(&mut self, frame: kms::CapturedFrameView<'_>, frame_marker: &str) {
+        self.record_frame_view(frame, frame_marker);
+
+        if self.drm_enabled {
+            if let Some(display) = self.ensure_kms_display() {
+                match display.present_frame_view(frame) {
+                    Ok(()) => tracing::info!("[shadow-guest-compositor] presented-frame"),
+                    Err(error) => {
+                        tracing::warn!("[shadow-guest-compositor] present-frame failed: {error}")
+                    }
+                }
+            }
+        }
+
+        self.record_touch_present(frame_marker);
+
+        if self.exit_on_first_frame {
+            self.loop_signal.stop();
+        }
+    }
+
+    fn record_frame_view(&mut self, frame: kms::CapturedFrameView<'_>, frame_marker: &str) {
         self.last_frame_size = Some((frame.width, frame.height));
-        let checksum = kms::frame_checksum(&frame);
+        let checksum = kms::frame_view_checksum(frame);
         tracing::info!(
             "[shadow-guest-compositor] {frame_marker} checksum={checksum:016x} size={}x{}",
             frame.width,
@@ -1629,7 +1667,7 @@ impl ShadowGuestCompositor {
         }
 
         if self.frame_artifacts_enabled {
-            match kms::write_frame_ppm(&frame, &self.frame_artifact_path) {
+            match kms::write_frame_view_ppm(frame, &self.frame_artifact_path) {
                 Ok(()) => {
                     tracing::info!(
                         "[shadow-guest-compositor] wrote-frame-artifact path={} checksum={checksum:016x} size={}x{}",
@@ -1643,23 +1681,6 @@ impl ShadowGuestCompositor {
                 }
             }
         }
-
-        if self.drm_enabled {
-            if let Some(display) = self.ensure_kms_display() {
-                match display.present_frame(&frame) {
-                    Ok(()) => tracing::info!("[shadow-guest-compositor] presented-frame"),
-                    Err(error) => {
-                        tracing::warn!("[shadow-guest-compositor] present-frame failed: {error}")
-                    }
-                }
-            }
-        }
-        self.record_touch_present(frame_marker);
-
-        if self.exit_on_first_frame {
-            self.loop_signal.stop();
-        }
-        self.last_published_frame = Some(frame);
     }
 
     fn run_boot_splash(&mut self) {
@@ -1668,7 +1689,7 @@ impl ShadowGuestCompositor {
         };
         let (panel_width, panel_height) = display.dimensions();
         let frame = kms::build_boot_splash_frame(panel_width, panel_height);
-        self.publish_frame(frame, "boot-splash-frame-generated");
+        self.publish_frame(&frame, "boot-splash-frame-generated");
     }
 
     fn take_surface_buffer(
@@ -1728,15 +1749,58 @@ impl ShadowGuestCompositor {
             return;
         };
         let observed_type = self.observe_surface_buffer(&buffer);
-        if !matches!(observed_type, Some(BufferType::Shm)) {
-            if matches!(observed_type, Some(BufferType::Dma)) {
-                tracing::warn!("[shadow-guest-compositor] dmabuf-frame-capture-not-supported-yet");
-            } else {
-                tracing::warn!(
-                    "[shadow-guest-compositor] unsupported-frame-buffer type={:?}",
-                    observed_type
-                );
+        if matches!(observed_type, Some(BufferType::Dma)) {
+            let dmabuf = get_dmabuf(&buffer).expect("dmabuf-managed buffer");
+            let mut directly_presented = false;
+
+            if self.drm_enabled && !self.shell_enabled {
+                if let Some(display) = self.ensure_kms_display() {
+                    match display.present_dmabuf(&dmabuf) {
+                        Ok(()) => {
+                            directly_presented = true;
+                            tracing::info!(
+                                "[shadow-guest-compositor] presented-dmabuf-direct size={}x{}",
+                                dmabuf.size().w,
+                                dmabuf.size().h
+                            );
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                "[shadow-guest-compositor] present-dmabuf failed: {error}"
+                            );
+                        }
+                    }
+                }
             }
+
+            match kms::capture_dmabuf_frame(&dmabuf) {
+                Ok(frame) => {
+                    if self.shell_enabled {
+                        let app_id = self.surface_apps.get(surface).copied();
+                        if let Some(app_id) = app_id {
+                            self.app_frames.insert(app_id, frame);
+                        }
+                        self.publish_visible_shell_frame("captured-dmabuf-frame");
+                    } else if directly_presented {
+                        self.record_frame_view(frame.view(), "captured-dmabuf-frame");
+                    } else {
+                        self.publish_frame(&frame, "captured-dmabuf-frame");
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!("[shadow-guest-compositor] capture-dmabuf failed: {error}");
+                }
+            }
+
+            buffer.release();
+            self.send_frame_callbacks(surface);
+            return;
+        }
+        if !matches!(observed_type, Some(BufferType::Shm)) {
+            tracing::warn!(
+                "[shadow-guest-compositor] unsupported-frame-buffer type={:?}",
+                observed_type
+            );
             buffer.release();
             self.send_frame_callbacks(surface);
             return;
@@ -1755,7 +1819,7 @@ impl ShadowGuestCompositor {
                     }
                     self.publish_visible_shell_frame("captured-frame");
                 } else {
-                    self.publish_frame(frame, "captured-frame");
+                    self.publish_frame(&frame, "captured-frame");
                 }
             }
             Ok(Err(error)) => {

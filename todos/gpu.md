@@ -204,6 +204,17 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [ ] The true `gpu` client renderer path is not the proven operator lane yet.
   - The proven lane today is `gpu_softbuffer`.
   - Existing direct-`gpu` Pixel runs fail at `window.resume() -> wgpu_context.create_surface() -> NoCompatibleDevice`.
+- [~] The direct-`gpu` package source narrowing is in progress.
+  - Root cause:
+    - `mkShadowBlitzDemoFor` still used `src = ./.`
+    - compositor-side edits were invalidating `shadow-blitz-demo-gpu` even when the app/runtime client had not changed
+  - First fix landed:
+    - add `shadowBlitzDemoSrc` in `flake.nix`
+    - move the demo package off the whole-repo source tree
+  - Current follow-up:
+    - `ui/Cargo.toml` still declares workspace members outside the first filtered source set
+    - probe run `build/pixel/runtime-gpu-probe/20260415T225322Z/vulkan_kgsl_first.log` failed because `ui/crates/shadow-ui-software/Cargo.toml` was omitted
+    - keep the filter narrow, but include the workspace member manifests Cargo needs for resolution
 - [ ] The guest compositor does not yet import/present dmabuf-backed client buffers on the rooted Pixel path.
 - [~] The Pixel GPU timeline smoke is now explicit, but cold runs can still spend time building.
   - Historical direct operator hooks were deleted during script cleanup.
@@ -463,6 +474,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Notes:
   - hardware-backed GPU timeline path is revalidated
   - x86_64-builder dependency is removed from the GPU bundle path
+  - direct `gpu` probe rebuild churn is being reduced by moving the Blitz demo Nix package off the whole repo source tree
   - local GPU bundle cache hits now work
   - runtime helper device-side cache hits now work too
   - new warm/prebuild entrypoint exists for the Pixel GPU timeline lane
@@ -475,6 +487,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [ ] Not done.
 - Notes:
   - this is the main remaining architectural gap if we want true end-to-end GPU presentation
+  - today the proven `gpu_softbuffer` lane still reaches the guest compositor as `type=shm`
+  - even after the client-side GPU work, the compositor cannot honestly claim end-to-end GPU presentation until it can consume/present a non-SHM client buffer path on-device
 
 ### 6. Make an explicit direct-`gpu` decision
 
@@ -484,6 +498,14 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - it now has a narrow failing seam
   - the decision tooling now preserves the real failure kind and explicit run ownership
   - the remaining work is to decide whether it is salvageable enough to ship on this Pixel
+
+### 7. Remove avoidable full-frame CPU shell composition cost
+
+- [~] In progress.
+- Notes:
+  - the current Pixel shell substrate is correct, but it still burns CPU in the outer guest compositor
+  - before this slice, every visible shell update rebuilt the full software shell scene, copied it again into a transient frame buffer, and then copied it again into the dumb KMS buffer
+  - the goal is not speculative over-engineering; it is to remove the obvious extra full-frame work while the deeper dmabuf/direct-present seam is still open
 
 ## Near-Term Steps
 
@@ -495,12 +517,17 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
      - or hard evidence that `gpu_softbuffer` should remain the supported path on this device
 
 2. Finish the compositor transport seam.
-   - Add or finish linux-dmabuf import/presentation in `shadow-compositor-guest`.
-   - Re-run buffer classification and stop only when:
-     - result is no longer `type=shm`
-     - or we can defend that SHM is not the remaining product bottleneck
+  - Add or finish linux-dmabuf import/presentation in `shadow-compositor-guest`.
+  - Re-run buffer classification and stop only when:
+    - result is no longer `type=shm`
+    - or we can defend that SHM is not the remaining product bottleneck
 
-3. Keep the known-good GPU lane boring and reproducible.
+3. Keep removing avoidable CPU work from the outer shell compositor path.
+   - Cache the static shell base scene instead of re-rendering it every frame.
+   - Remove transient full-frame copies where the render target already matches the panel.
+   - Add timing visibility so we can prove whether the remaining sluggishness is composition, KMS copy, or something up-stack.
+
+4. Keep the known-good GPU lane boring and reproducible.
    - Goal:
      - repeated GPU runs avoid rebuild churn and giant repushes
    - Current status:
@@ -508,7 +535,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
      - runtime helper device-side caching: good
       - historical direct warm/smoke wrappers were removed; current validation should use `just pixel-ci nostr` or a new explicit `sc -t pixel debug ...` command if GPU probing becomes active again
 
-4. Keep Pixel shell work on the right substrate.
+5. Keep Pixel shell work on the right substrate.
    - Current status:
      - validated on device
      - shell touch semantics tightened so tap activates on touch-down
@@ -523,7 +550,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
      - widen the operator path from dedicated `pixel-shell-drm*` commands into `run <serial>`
      - keep app launch/home UX truthful on top of the new shell mode
 
-5. Keep measuring incremental latency, not just startup.
+6. Keep measuring incremental latency, not just startup.
    - Need:
      - tap-to-updated-frame
      - text-render correctness

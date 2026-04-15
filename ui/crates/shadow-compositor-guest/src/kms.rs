@@ -1,8 +1,11 @@
 use anyhow::{anyhow, Context, Result};
-use drm::buffer::{Buffer as DrmBuffer, DrmFourcc};
+use drm::buffer::{Buffer as DrmBuffer, DrmFourcc, Handle as DrmBufferHandle, PlanarBuffer};
 use drm::control::Device as ControlDevice;
-use drm::control::{connector, crtc, dumbbuffer::DumbBuffer, framebuffer};
+use drm::control::{connector, crtc, dumbbuffer::DumbBuffer, framebuffer, FbCmd2Flags};
 use drm::Device as BasicDevice;
+use smithay::backend::allocator::dmabuf::{Dmabuf, DmabufMappingMode, DmabufSyncFlags};
+use smithay::backend::allocator::Buffer as SmithayBuffer;
+use smithay::backend::allocator::Fourcc;
 use smithay::reexports::wayland_server::protocol::wl_shm;
 use smithay::wayland::shm::BufferData;
 use std::fs;
@@ -25,6 +28,25 @@ pub struct CapturedFrame {
     pub stride: u32,
     pub format: wl_shm::Format,
     pub pixels: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CapturedFrameView<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
+    pub pixels: &'a [u8],
+}
+
+impl CapturedFrame {
+    pub fn view(&self) -> CapturedFrameView<'_> {
+        CapturedFrameView {
+            width: self.width,
+            height: self.height,
+            stride: self.stride,
+            pixels: &self.pixels,
+        }
+    }
 }
 
 pub fn capture_shm_frame(ptr: *const u8, len: usize, data: BufferData) -> Result<CapturedFrame> {
@@ -63,16 +85,26 @@ pub fn capture_shm_frame(ptr: *const u8, len: usize, data: BufferData) -> Result
     })
 }
 
+#[cfg(test)]
 pub fn frame_checksum(frame: &CapturedFrame) -> u64 {
+    frame_view_checksum(frame.view())
+}
+
+pub fn frame_view_checksum(frame: CapturedFrameView<'_>) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
-    for byte in &frame.pixels {
+    for byte in frame.pixels {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
 }
 
+#[cfg(test)]
 pub fn write_frame_ppm(frame: &CapturedFrame, path: impl AsRef<Path>) -> Result<()> {
+    write_frame_view_ppm(frame.view(), path)
+}
+
+pub fn write_frame_view_ppm(frame: CapturedFrameView<'_>, path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
     let width = usize::try_from(frame.width).context("frame width overflowed usize")?;
     let height = usize::try_from(frame.height).context("frame height overflowed usize")?;
@@ -100,6 +132,56 @@ pub fn write_frame_ppm(frame: &CapturedFrame, path: impl AsRef<Path>) -> Result<
 
     fs::write(path, ppm)
         .with_context(|| format!("failed to write ppm artifact to {}", path.display()))
+}
+
+pub fn capture_dmabuf_frame(dmabuf: &Dmabuf) -> Result<CapturedFrame> {
+    if dmabuf.num_planes() != 1 {
+        return Err(anyhow!(
+            "unsupported dmabuf plane count: {}",
+            dmabuf.num_planes()
+        ));
+    }
+
+    let size = dmabuf.size();
+    let width = u32::try_from(size.w).context("negative dmabuf width")?;
+    let height = u32::try_from(size.h).context("negative dmabuf height")?;
+    let stride = dmabuf
+        .strides()
+        .next()
+        .ok_or_else(|| anyhow!("dmabuf missing stride"))?;
+    let format = wl_shm_format_from_dmabuf(dmabuf)?;
+    let frame_len = usize::try_from(u64::from(stride) * u64::from(height))
+        .context("dmabuf frame length overflowed usize")?;
+
+    dmabuf
+        .sync_plane(0, DmabufSyncFlags::READ | DmabufSyncFlags::START)
+        .context("dmabuf sync start failed")?;
+    let mapping = dmabuf
+        .map_plane(0, DmabufMappingMode::READ)
+        .context("dmabuf map failed")?;
+    if frame_len > mapping.length() {
+        let _ = dmabuf.sync_plane(0, DmabufSyncFlags::READ | DmabufSyncFlags::END);
+        return Err(anyhow!(
+            "dmabuf mapping too small: frame_len={} mapping_len={}",
+            frame_len,
+            mapping.length()
+        ));
+    }
+    let mut pixels = vec![0_u8; frame_len];
+    unsafe {
+        std::ptr::copy_nonoverlapping(mapping.ptr() as *const u8, pixels.as_mut_ptr(), frame_len);
+    }
+    dmabuf
+        .sync_plane(0, DmabufSyncFlags::READ | DmabufSyncFlags::END)
+        .context("dmabuf sync end failed")?;
+
+    Ok(CapturedFrame {
+        width,
+        height,
+        stride,
+        format,
+        pixels,
+    })
 }
 
 pub fn build_boot_splash_frame(panel_width: u32, panel_height: u32) -> CapturedFrame {
@@ -181,6 +263,7 @@ pub fn build_boot_splash_frame(panel_width: u32, panel_height: u32) -> CapturedF
     }
 }
 
+#[cfg(test)]
 pub fn captured_frame_from_pixels(
     width: u32,
     height: u32,
@@ -219,8 +302,49 @@ pub struct KmsDisplay {
     mode: drm::control::Mode,
     dumb: Option<DumbBuffer>,
     fb_handle: Option<framebuffer::Handle>,
+    imported_fb: Option<ImportedFramebuffer>,
     width: u32,
     height: u32,
+}
+
+struct ImportedFramebuffer {
+    fb_handle: framebuffer::Handle,
+    gem_handles: [Option<DrmBufferHandle>; 4],
+}
+
+struct ImportedDmabufFramebuffer {
+    size: (u32, u32),
+    format: DrmFourcc,
+    modifier: Option<drm::buffer::DrmModifier>,
+    pitches: [u32; 4],
+    offsets: [u32; 4],
+    handles: [Option<DrmBufferHandle>; 4],
+}
+
+impl PlanarBuffer for ImportedDmabufFramebuffer {
+    fn size(&self) -> (u32, u32) {
+        self.size
+    }
+
+    fn format(&self) -> DrmFourcc {
+        self.format
+    }
+
+    fn modifier(&self) -> Option<drm::buffer::DrmModifier> {
+        self.modifier
+    }
+
+    fn pitches(&self) -> [u32; 4] {
+        self.pitches
+    }
+
+    fn handles(&self) -> [Option<DrmBufferHandle>; 4] {
+        self.handles
+    }
+
+    fn offsets(&self) -> [u32; 4] {
+        self.offsets
+    }
 }
 
 impl KmsDisplay {
@@ -266,6 +390,7 @@ impl KmsDisplay {
             mode,
             dumb: Some(dumb),
             fb_handle: Some(fb_handle),
+            imported_fb: None,
             width,
             height,
         };
@@ -302,7 +427,8 @@ impl KmsDisplay {
         (self.width, self.height)
     }
 
-    pub fn present_frame(&mut self, frame: &CapturedFrame) -> Result<()> {
+    pub fn present_frame_view(&mut self, frame: CapturedFrameView<'_>) -> Result<()> {
+        self.release_imported_framebuffer()?;
         let dumb = self
             .dumb
             .as_mut()
@@ -313,10 +439,17 @@ impl KmsDisplay {
             .map_dumb_buffer(dumb)
             .context("failed to map dumb buffer")?;
 
-        clear_framebuffer(mapping.as_mut());
-        blit_frame_centered(mapping.as_mut(), self.width, self.height, pitch, frame)?;
+        blit_frame(mapping.as_mut(), self.width, self.height, pitch, frame)?;
         drop(mapping);
         self.program_crtc()?;
+        Ok(())
+    }
+
+    pub fn present_dmabuf(&mut self, dmabuf: &Dmabuf) -> Result<()> {
+        let imported = self.import_dmabuf_framebuffer(dmabuf)?;
+        self.program_crtc_with_framebuffer(imported.fb_handle)?;
+        self.release_imported_framebuffer()?;
+        self.imported_fb = Some(imported);
         Ok(())
     }
 
@@ -337,6 +470,10 @@ impl KmsDisplay {
         let fb_handle = self
             .fb_handle
             .ok_or_else(|| anyhow!("framebuffer handle missing after initialization"))?;
+        self.program_crtc_with_framebuffer(fb_handle)
+    }
+
+    fn program_crtc_with_framebuffer(&mut self, fb_handle: framebuffer::Handle) -> Result<()> {
         self.card
             .set_crtc(
                 self.crtc_handle,
@@ -347,6 +484,85 @@ impl KmsDisplay {
             )
             .context("failed to set CRTC configuration")
     }
+
+    fn import_dmabuf_framebuffer(&mut self, dmabuf: &Dmabuf) -> Result<ImportedFramebuffer> {
+        let size = dmabuf.size();
+        let width = u32::try_from(size.w).context("negative dmabuf width")?;
+        let height = u32::try_from(size.h).context("negative dmabuf height")?;
+        let format = drm_fourcc_from_dmabuf(dmabuf)?;
+
+        let mut gem_handles = [None; 4];
+        let mut pitches = [0_u32; 4];
+        let mut offsets = [0_u32; 4];
+
+        for (index, fd) in dmabuf.handles().enumerate() {
+            if index >= gem_handles.len() {
+                break;
+            }
+            gem_handles[index] = Some(
+                self.card
+                    .prime_fd_to_buffer(fd)
+                    .with_context(|| format!("failed to import dmabuf plane {index}"))?,
+            );
+        }
+        for (index, pitch) in dmabuf.strides().enumerate() {
+            if index >= pitches.len() {
+                break;
+            }
+            pitches[index] = pitch;
+        }
+        for (index, offset) in dmabuf.offsets().enumerate() {
+            if index >= offsets.len() {
+                break;
+            }
+            offsets[index] = offset;
+        }
+
+        let imported = ImportedDmabufFramebuffer {
+            size: (width, height),
+            format,
+            modifier: dmabuf
+                .has_modifier()
+                .then(|| drm::buffer::DrmModifier::from(u64::from(dmabuf.format().modifier))),
+            pitches,
+            offsets,
+            handles: gem_handles,
+        };
+        let flags = if imported.modifier.is_some() {
+            FbCmd2Flags::MODIFIERS
+        } else {
+            FbCmd2Flags::empty()
+        };
+        let fb_handle = match self.card.add_planar_framebuffer(&imported, flags) {
+            Ok(handle) => handle,
+            Err(error) => {
+                for handle in gem_handles.into_iter().flatten() {
+                    let _ = self.card.close_buffer(handle);
+                }
+                return Err(error).context("failed to create dmabuf framebuffer");
+            }
+        };
+
+        Ok(ImportedFramebuffer {
+            fb_handle,
+            gem_handles,
+        })
+    }
+
+    fn release_imported_framebuffer(&mut self) -> Result<()> {
+        if let Some(imported) = self.imported_fb.take() {
+            self.card
+                .destroy_framebuffer(imported.fb_handle)
+                .context("failed to destroy imported framebuffer")?;
+            for handle in imported.gem_handles.into_iter().flatten() {
+                self.card
+                    .close_buffer(handle)
+                    .context("failed to close imported GEM buffer")?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Drop for KmsDisplay {
@@ -354,6 +570,7 @@ impl Drop for KmsDisplay {
         if self.master_locked {
             let _ = self.card.release_master_lock();
         }
+        let _ = self.release_imported_framebuffer();
         if let Some(fb_handle) = self.fb_handle.take() {
             let _ = self.card.destroy_framebuffer(fb_handle);
         }
@@ -424,7 +641,7 @@ fn blit_frame_centered(
     framebuffer_width: u32,
     framebuffer_height: u32,
     framebuffer_stride: usize,
-    frame: &CapturedFrame,
+    frame: CapturedFrameView<'_>,
 ) -> Result<()> {
     if frame.stride < frame.width * BYTES_PER_PIXEL as u32 {
         return Err(anyhow!(
@@ -496,6 +713,94 @@ fn blit_frame_centered(
     Ok(())
 }
 
+fn blit_frame(
+    framebuffer: &mut [u8],
+    framebuffer_width: u32,
+    framebuffer_height: u32,
+    framebuffer_stride: usize,
+    frame: CapturedFrameView<'_>,
+) -> Result<()> {
+    if frame.width == framebuffer_width && frame.height == framebuffer_height {
+        return copy_frame_exact(framebuffer, framebuffer_stride, frame);
+    }
+
+    clear_framebuffer(framebuffer);
+    blit_frame_centered(
+        framebuffer,
+        framebuffer_width,
+        framebuffer_height,
+        framebuffer_stride,
+        frame,
+    )
+}
+
+fn copy_frame_exact(
+    framebuffer: &mut [u8],
+    framebuffer_stride: usize,
+    frame: CapturedFrameView<'_>,
+) -> Result<()> {
+    if frame.stride < frame.width * BYTES_PER_PIXEL as u32 {
+        return Err(anyhow!(
+            "frame stride {} too small for width {}",
+            frame.stride,
+            frame.width
+        ));
+    }
+
+    let row_bytes = usize::try_from(frame.width)
+        .context("frame width overflowed usize")?
+        .checked_mul(BYTES_PER_PIXEL)
+        .context("frame width overflowed row bytes")?;
+    let src_stride = usize::try_from(frame.stride).context("invalid source stride")?;
+
+    if src_stride == framebuffer_stride && row_bytes == framebuffer_stride {
+        if frame.pixels.len() < framebuffer.len() {
+            return Err(anyhow!("source frame smaller than framebuffer"));
+        }
+        framebuffer.copy_from_slice(&frame.pixels[..framebuffer.len()]);
+        return Ok(());
+    }
+
+    for row in 0..usize::try_from(frame.height).context("frame height overflowed usize")? {
+        let src_offset = row
+            .checked_mul(src_stride)
+            .context("source offset overflowed")?;
+        let dst_offset = row
+            .checked_mul(framebuffer_stride)
+            .context("destination offset overflowed")?;
+        let src_end = src_offset
+            .checked_add(row_bytes)
+            .context("source end overflowed")?;
+        let dst_end = dst_offset
+            .checked_add(row_bytes)
+            .context("destination end overflowed")?;
+        if src_end > frame.pixels.len() || dst_end > framebuffer.len() {
+            return Err(anyhow!("copy range exceeded source or destination bounds"));
+        }
+        framebuffer[dst_offset..dst_end].copy_from_slice(&frame.pixels[src_offset..src_end]);
+    }
+
+    Ok(())
+}
+
+fn drm_fourcc_from_dmabuf(dmabuf: &Dmabuf) -> Result<DrmFourcc> {
+    match dmabuf.format().code {
+        Fourcc::Argb8888 => Ok(DrmFourcc::Argb8888),
+        Fourcc::Xrgb8888 => Ok(DrmFourcc::Xrgb8888),
+        other => Err(anyhow!(
+            "unsupported dmabuf fourcc for direct scanout: {other:?}"
+        )),
+    }
+}
+
+fn wl_shm_format_from_dmabuf(dmabuf: &Dmabuf) -> Result<wl_shm::Format> {
+    match dmabuf.format().code {
+        Fourcc::Argb8888 => Ok(wl_shm::Format::Argb8888),
+        Fourcc::Xrgb8888 => Ok(wl_shm::Format::Xrgb8888),
+        other => Err(anyhow!("unsupported dmabuf fourcc for capture: {other:?}")),
+    }
+}
+
 fn open_card(path: &str) -> Result<Card> {
     let file = OpenOptions::new()
         .read(true)
@@ -552,8 +857,8 @@ fn find_connected_connector(
 #[cfg(test)]
 mod tests {
     use super::{
-        blit_frame_centered, captured_frame_from_pixels, clear_framebuffer, frame_checksum,
-        write_frame_ppm, CapturedFrame, BACKGROUND_PIXEL,
+        blit_frame, blit_frame_centered, captured_frame_from_pixels, clear_framebuffer,
+        frame_checksum, write_frame_ppm, CapturedFrame, BACKGROUND_PIXEL,
     };
     use smithay::reexports::wayland_server::protocol::wl_shm;
     use tempfile::tempdir;
@@ -571,7 +876,7 @@ mod tests {
             pixels: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
         };
 
-        blit_frame_centered(&mut framebuffer, 4, 4, 16, &frame).unwrap();
+        blit_frame_centered(&mut framebuffer, 4, 4, 16, frame.view()).unwrap();
 
         let center = |x: usize, y: usize| {
             let start = (y * 16) + (x * 4);
@@ -602,7 +907,7 @@ mod tests {
             ],
         };
 
-        blit_frame_centered(&mut framebuffer, 2, 2, 8, &frame).unwrap();
+        blit_frame_centered(&mut framebuffer, 2, 2, 8, frame.view()).unwrap();
 
         assert_eq!(&framebuffer[0..4], &[2, 0, 0, 0]);
         assert_eq!(&framebuffer[4..8], &[3, 0, 0, 0]);
@@ -640,5 +945,21 @@ mod tests {
         assert_eq!(frame.height, 1);
         assert_eq!(frame.stride, 4);
         assert_eq!(frame.pixels, vec![220, 120, 20, 128]);
+    }
+
+    #[test]
+    fn blit_exact_copies_full_frame_without_centering() {
+        let frame = CapturedFrame {
+            width: 2,
+            height: 2,
+            stride: 8,
+            format: wl_shm::Format::Xrgb8888,
+            pixels: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        };
+        let mut framebuffer = vec![0_u8; frame.pixels.len()];
+
+        blit_frame(&mut framebuffer, 2, 2, 8, frame.view()).unwrap();
+
+        assert_eq!(framebuffer, frame.pixels);
     }
 }
