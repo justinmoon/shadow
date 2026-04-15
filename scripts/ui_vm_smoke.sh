@@ -7,6 +7,7 @@ LOG_DIR="$REPO_ROOT/build/ui-vm"
 RUN_LOG="$LOG_DIR/ui-vm-smoke.log"
 SHOT_PATH="$LOG_DIR/ui-vm-smoke.png"
 VM_SOCKET_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-vm.sock"
+VM_STATE_IMAGE_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-state.img"
 UI_VM_PREP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_PREP_TIMEOUT:-900}"
 UI_VM_READY_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_READY_TIMEOUT:-600}"
 UI_VM_APP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_APP_TIMEOUT:-30}"
@@ -123,6 +124,9 @@ trap 'status=$?; finish "$status"; exit "$status"' EXIT
 mkdir -p "$LOG_DIR"
 : >"$RUN_LOG"
 "$SCRIPT_DIR/ui_vm_stop.sh" >/dev/null 2>&1 || true
+# The branch gate should prove a clean boot/session lifecycle, not inherit
+# whichever apps happened to be warm in the previous VM run.
+rm -f "$VM_STATE_IMAGE_PATH"
 
 # Keep the required VM gate local-only even on hosts with distributed Nix builders.
 export NIX_BUILDERS=
