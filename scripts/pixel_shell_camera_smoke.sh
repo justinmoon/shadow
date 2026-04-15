@@ -35,13 +35,12 @@ PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 ||
   cd "$REPO_ROOT"
   PIXEL_SERIAL="$serial" \
   PIXEL_SHELL_RENDERER=gpu_softbuffer \
-  PIXEL_SHELL_START_APP_ID=camera \
   PIXEL_SHELL_EXTRA_GUEST_CLIENT_ENV='SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=capture' \
   PIXEL_SHELL_EXTRA_REQUIRED_MARKERS='runtime-event-dispatched source=auto type=click target=capture' \
   PIXEL_GUEST_REQUIRED_MARKER_TIMEOUT_SECS="${PIXEL_GUEST_REQUIRED_MARKER_TIMEOUT_SECS:-60}" \
   PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS="${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS:-10000}" \
   PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS:-90}" \
-    "$SCRIPT_DIR/pixel_shell_drm.sh"
+    "$SCRIPT_DIR/pixel_shell_drm.sh" --app camera
 ) >"$run_log" 2>&1 || {
   dump_run_log
   exit 1

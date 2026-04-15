@@ -113,19 +113,19 @@ check_case defaults desktop shell 1 ""
 check_just_run_case just_default "command=$SMOKE_SCRIPT_DIR/ui_vm_run.sh"
 check_just_run_case \
   just_named_normal \
-  "$(printf 'env=PIXEL_SERIAL=pixel\nenv=PIXEL_SHELL_START_APP_ID=timeline\ncommand=%s' "$SMOKE_SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=pixel\ncommand=%s --app timeline' "$SMOKE_SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
   app=timeline target=pixel
 check_just_run_case \
   just_named_reversed \
-  "$(printf 'env=PIXEL_SERIAL=pixel\nenv=PIXEL_SHELL_START_APP_ID=timeline\ncommand=%s' "$SMOKE_SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=pixel\ncommand=%s --app timeline' "$SMOKE_SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
   target=pixel app=timeline
 check_just_run_case \
   just_positional \
-  "$(printf 'env=PIXEL_SERIAL=pixel\nenv=PIXEL_SHELL_START_APP_ID=timeline\ncommand=%s' "$SMOKE_SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=pixel\ncommand=%s --app timeline' "$SMOKE_SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
   pixel timeline
 check_just_run_case \
   just_serial_shortcut \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\nenv=PIXEL_SHELL_START_APP_ID=timeline\ncommand=%s' "$SMOKE_SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --app timeline' "$SMOKE_SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
   TESTSERIAL timeline
 check_just_run_case \
   just_no_hold \
@@ -151,7 +151,7 @@ check_shadowctl_echo_case \
 check_shadowctl_echo_case \
   shadowctl_start_pixel_timeline \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\nenv=PIXEL_SHELL_START_APP_ID=timeline\ncommand=%s' "$SMOKE_SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --app timeline' "$SMOKE_SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
   start -t pixel:TESTSERIAL --app timeline
 
 check_shadowctl_echo_case \

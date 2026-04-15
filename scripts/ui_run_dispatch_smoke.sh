@@ -74,35 +74,35 @@ check_dispatch_case \
 check_dispatch_case \
   pixel_counter_hold \
   0 \
-  "$(printf 'env=PIXEL_SHELL_START_APP_ID=counter\ncommand=%s' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "$(printf 'command=%s --app counter' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
   "target=pixel launches the full home shell and asks it to open counter" \
   app=counter target=pixel
 
 check_dispatch_case \
   pixel_timeline_hold \
   0 \
-  "$(printf 'env=PIXEL_SHELL_START_APP_ID=timeline\ncommand=%s' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "$(printf 'command=%s --app timeline' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
   "target=pixel launches the full home shell and asks it to open timeline" \
   app=timeline target=pixel
 
 check_dispatch_case \
   pixel_camera_hold \
   0 \
-  "$(printf 'env=PIXEL_SHELL_START_APP_ID=camera\ncommand=%s' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "$(printf 'command=%s --app camera' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
   "target=pixel launches the full home shell and asks it to open camera" \
   app=camera target=pixel
 
 check_dispatch_case \
   pixel_podcast_hold \
   0 \
-  "$(printf 'env=PIXEL_SHELL_START_APP_ID=podcast\ncommand=%s' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "$(printf 'command=%s --app podcast' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
   "target=pixel launches the full home shell and asks it to open podcast" \
   app=podcast target=pixel
 
 check_dispatch_case \
   pixel_cashu_hold \
   0 \
-  "$(printf 'env=PIXEL_SHELL_START_APP_ID=cashu\ncommand=%s' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "$(printf 'command=%s --app cashu' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
   "target=pixel launches the full home shell and asks it to open cashu" \
   app=cashu target=pixel
 

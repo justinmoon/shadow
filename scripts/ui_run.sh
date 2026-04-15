@@ -188,7 +188,7 @@ run_pixel() {
     echo "ui-run: target=pixel launches the full home shell" >&2
   elif shadow_session_app_supports_auto_open "$app"; then
     echo "ui-run: target=pixel launches the full home shell and asks it to open $app" >&2
-    shell_env=("PIXEL_SHELL_START_APP_ID=$app")
+    shell_env=("--app" "$app")
   else
     echo "ui-run: target=pixel currently supports $(shadow_session_apps_usage)" >&2
     exit 1

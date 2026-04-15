@@ -110,7 +110,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `pixel-shell-drm` is the primary rooted-Pixel operator rung, and `ui-run target=pixel` now routes there instead of to the old direct-runtime timeline path.
   - The old direct runtime-app Pixel scripts remain in the repo as fallback/probe tools for narrower runtime or GPU work.
 - 2026-04-07: The rooted Pixel shell lane can now auto-open `timeline` without dropping back to the old direct-runtime path.
-  - `ui-run target=pixel app=timeline` now exports `PIXEL_SHELL_START_APP_ID=timeline`, and `pixel_shell_drm.sh` turns that into `SHADOW_GUEST_SHELL_START_APP_ID=timeline` for the guest compositor.
+  - `ui-run target=pixel app=timeline` now calls `pixel_shell_drm.sh --app timeline`, and the launcher turns that into `SHADOW_GUEST_SHELL_START_APP_ID=timeline` for the guest compositor.
   - The guest compositor stays in shell mode, publishes the home frame, and then launches `timeline` through the same `launch_or_focus_app()` path used by later control requests.
   - The Pixel shell lane now also expects a runtime client process plus a mapped window when an initial shell app is requested, so this entrypoint fails if the shell never actually opens the app.
 - 2026-04-07: The rooted Pixel shell now has a matching control helper and lifecycle smoke harness.

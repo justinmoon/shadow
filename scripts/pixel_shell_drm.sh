@@ -10,10 +10,28 @@ source "$SCRIPT_DIR/pixel_camera_runtime_common.sh"
 source "$SCRIPT_DIR/session_apps.sh"
 ensure_bootimg_shell "$@"
 
+shell_start_app_id=""
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --app)
+        shell_start_app_id="${2:-}"
+        shift 2
+        ;;
+      *)
+        echo "pixel_shell_drm: unsupported argument $1" >&2
+        exit 64
+        ;;
+    esac
+  done
+}
+
+parse_args "$@"
+
 serial="$(pixel_resolve_serial)"
 shell_stage_only=0
 shell_run_only=0
-shell_start_app_id="${PIXEL_SHELL_START_APP_ID-}"
 camera_runtime_enabled="${PIXEL_SHELL_ENABLE_CAMERA_RUNTIME-1}"
 camera_endpoint=""
 camera_start_command=""
@@ -32,7 +50,7 @@ if [[ -n "$shell_start_app_id" ]]; then
   if shadow_session_app_is_shell "$shell_start_app_id"; then
     shell_start_app_id=""
   elif ! shadow_session_app_supports_auto_open "$shell_start_app_id"; then
-    echo "pixel_shell_drm: unsupported PIXEL_SHELL_START_APP_ID=$shell_start_app_id; expected $(shadow_session_apps_usage)" >&2
+    echo "pixel_shell_drm: unsupported --app $shell_start_app_id; expected $(shadow_session_apps_usage)" >&2
     exit 64
   fi
 fi

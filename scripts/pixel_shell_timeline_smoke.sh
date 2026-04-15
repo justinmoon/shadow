@@ -136,8 +136,7 @@ PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 ||
   cd "$REPO_ROOT"
   PIXEL_SERIAL="$serial" \
   PIXEL_SHELL_RENDERER=gpu_softbuffer \
-  PIXEL_SHELL_START_APP_ID=timeline \
-    "$SCRIPT_DIR/pixel_shell_drm_hold.sh"
+    "$SCRIPT_DIR/pixel_shell_drm_hold.sh" --app timeline
 ) >"$run_log" 2>&1 &
 session_pid="$!"
 

@@ -147,11 +147,11 @@ def session_start_command(
         return (command, [])
 
     serial = target.serial or target.id
+    command = [scripts_dir / "pixel_shell_drm_hold.sh" if hold else scripts_dir / "pixel_shell_drm.sh"]
     env = [("PIXEL_SERIAL", serial)]
     if app_id != "shell":
-        env.append(("PIXEL_SHELL_START_APP_ID", app_id))
-    script_name = "pixel_shell_drm_hold.sh" if hold else "pixel_shell_drm.sh"
-    return ([scripts_dir / script_name], env)
+        command.extend(["--app", app_id])
+    return (command, env)
 
 
 def session_stop_command(target: TargetRef) -> tuple[list[str | pathlib.Path], list[tuple[str, str]]]:
