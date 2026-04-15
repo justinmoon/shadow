@@ -49,18 +49,13 @@ pub fn spawn_client(state: &mut ShadowGuestCompositor) -> io::Result<Child> {
 }
 
 fn apply_software_keyboard_policy(command: &mut Command) {
-    let keyboard_seat_enabled = std::env::var_os("SHADOW_GUEST_ENABLE_KEYBOARD_SEAT").is_some();
-    command.env(
-        "SHADOW_GUEST_KEYBOARD_SEAT",
-        if keyboard_seat_enabled { "1" } else { "0" },
-    );
-    if !keyboard_seat_enabled {
-        let enabled = std::env::var("SHADOW_BLITZ_SOFTWARE_KEYBOARD")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| String::from("1"));
-        command.env("SHADOW_BLITZ_SOFTWARE_KEYBOARD", enabled);
-    }
+    let enabled = std::env::var("SHADOW_BLITZ_SOFTWARE_KEYBOARD")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| String::from("1"));
+    command
+        .env("SHADOW_GUEST_KEYBOARD_SEAT", "0")
+        .env("SHADOW_BLITZ_SOFTWARE_KEYBOARD", enabled);
 }
 
 fn configure_guest_client_command(

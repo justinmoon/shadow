@@ -68,7 +68,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - 2026-04-15 local checkpoint: the camera, sound, podcast, GM, and timeline runtime wrappers now pass their extra guest env to `pixel_runtime_app_drm.sh` as raw multiline fragments instead of flattening it back into single-line strings first.
   - 2026-04-15 local checkpoint: the runtime click wrappers now prepend their auto-click guest env as multiline fragments too, so the runtime lane no longer mixes multiline and flat string assembly for the same `PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV` payload.
   - Delete env vars that only exist for historical probes, alternate transports, direct runtime-app lanes, or debugging experiments.
-  - Dead guest knobs removed in this chunk: `SHADOW_GUEST_SHELL` and `SHADOW_GUEST_ENABLE_KEYBOARD_SEAT` are no longer read.
+  - Dead guest knob removed in this chunk: `SHADOW_GUEST_SHELL` is no longer read.
+  - 2026-04-15 local checkpoint: guest app launch no longer reads `SHADOW_GUEST_ENABLE_KEYBOARD_SEAT`; the supported shell/home surface always launches apps with `SHADOW_GUEST_KEYBOARD_SEAT=0` and drives the software keyboard explicitly through `SHADOW_BLITZ_SOFTWARE_KEYBOARD`.
   - Replace `SHADOW_GUEST_CLIENT_ENV` and other stringly env blobs with structured config.
   - Invalid guest startup env values now fail explicitly instead of silently defaulting for transport, toplevel sizing, guest client env assignments, and client linger timing.
   - Separate true debug toggles from product launch config.
@@ -137,7 +138,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Added `ui/crates/shadow-compositor-guest/src/config.rs` as the typed startup loader for the guest compositor.
   - Guest startup mode now derives from `SHADOW_GUEST_START_APP_ID` plus `SHADOW_GUEST_SHELL_START_APP_ID` in one place, with explicit errors for invalid app ids, invalid transport values, invalid guest client env blobs, invalid linger timing, and invalid toplevel dimensions.
   - `main.rs` and `launch.rs` now consume parsed startup/client config instead of reading those env vars inline across constructor, helper, and startup branches.
-  - Dead guest env knobs removed in this chunk: `SHADOW_GUEST_SHELL` and `SHADOW_GUEST_ENABLE_KEYBOARD_SEAT`.
+  - Dead guest env knob removed in this chunk: `SHADOW_GUEST_SHELL`.
+  - Follow-up cleanup since that chunk: guest launch no longer reads `SHADOW_GUEST_ENABLE_KEYBOARD_SEAT`; supported guest app launches now set `SHADOW_GUEST_KEYBOARD_SEAT=0` directly and control software-keyboard behavior through `SHADOW_BLITZ_SOFTWARE_KEYBOARD`.
   - Good next seam: cut the remaining producer-side env duplication in `scripts/pixel_*` and `rust/shadow-session`, then start deleting direct runtime/probe knobs that no longer serve the VM/Pixel shell surface.
 - 2026-04-08: First bounded Rust/UI cleanup chunk landed.
   - Added `ui/crates/shadow-compositor-common` as the shared home for compositor control-listener plumbing and launch helpers.
