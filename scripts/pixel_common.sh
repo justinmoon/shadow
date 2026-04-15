@@ -608,15 +608,21 @@ pixel_takeover_processes_absent() {
   done
 }
 
-pixel_android_display_restored() {
+pixel_android_display_stack_restored() {
   local serial
   serial="$1"
   [[ "$(pixel_service_state "$serial" surfaceflinger)" == "running" ]] || return 1
   if [[ "$(pixel_prop "$serial" sys.boot_completed)" == "1" || "$(pixel_prop "$serial" dev.bootcomplete)" == "1" ]]; then
     pixel_bootanim_stopped "$serial" || return 1
   fi
-  pixel_android_window_service_ready "$serial" || return 1
   pixel_takeover_processes_absent "$serial"
+}
+
+pixel_android_display_restored() {
+  local serial
+  serial="$1"
+  pixel_android_display_stack_restored "$serial" || return 1
+  pixel_android_window_service_ready "$serial"
 }
 
 pixel_root_process_exists() {

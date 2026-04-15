@@ -447,13 +447,13 @@ if [[ "$frame_on_device" != true && -s "$frame_artifact" ]]; then
 fi
 
 if [[ -n "$restore_android" && "$android_restored" != true ]]; then
-  if ensure_post_success_adb "$restore_checkpoint_timeout_secs" && pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_restored "$serial"; then
+  if ensure_post_success_adb "$restore_checkpoint_timeout_secs" && pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_stack_restored "$serial"; then
     android_restored=true
   else
     if ensure_post_success_adb "$restore_checkpoint_timeout_secs"; then
       restore_android_now || true
     fi
-    if ensure_post_success_adb "$restore_checkpoint_timeout_secs" && pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_restored "$serial"; then
+    if ensure_post_success_adb "$restore_checkpoint_timeout_secs" && pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_stack_restored "$serial"; then
       android_restored=true
     else
       failure_message="${failure_message:-timed out waiting for Android display stack restore}"

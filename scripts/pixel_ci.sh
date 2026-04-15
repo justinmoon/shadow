@@ -186,6 +186,9 @@ for step in "${suite_steps[@]}"; do
 done
 
 cleanup() {
+  if pixel_android_display_stack_restored "$serial"; then
+    return 0
+  fi
   timeout 30 env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
 }
 
@@ -195,10 +198,13 @@ ensure_android_display_ready() {
   if pixel_wait_for_condition 5 1 pixel_android_display_restored "$serial"; then
     return 0
   fi
+  if pixel_wait_for_condition 5 1 pixel_android_display_stack_restored "$serial"; then
+    return 0
+  fi
 
   echo "pixel-ci: Android display stack not ready; attempting restore" >&2
   timeout 60 env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
-  if pixel_wait_for_condition 90 1 pixel_android_display_restored "$serial"; then
+  if pixel_wait_for_condition 30 1 pixel_android_display_stack_restored "$serial"; then
     return 0
   fi
 
@@ -207,7 +213,7 @@ ensure_android_display_ready() {
   sleep 5
   pixel_wait_for_adb "$serial" 180
   pixel_wait_for_boot_completed "$serial" 240
-  pixel_wait_for_condition 90 1 pixel_android_display_restored "$serial"
+  pixel_wait_for_condition 90 1 pixel_android_display_stack_restored "$serial"
 }
 
 run_display_ready_gate() {
@@ -314,7 +320,9 @@ printf 'pixel-ci: suite=%s serial=%s run_dir=%s\n' "$suite" "$serial" "$run_dir"
 
 # Best-effort reset so a stale hold-mode takeover does not poison the next case.
 if (( stage_only == 0 )); then
-  timeout 30 env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+  if ! pixel_android_display_stack_restored "$serial"; then
+    timeout 30 env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+  fi
 fi
 
 run_step preflight_root "verify Pixel root access" \
