@@ -8,15 +8,23 @@ ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
 runtime_host_bundle_artifact_dir="${PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR-}"
+runtime_app_asset_artifact_dir="${PIXEL_RUNTIME_APP_ASSET_ARTIFACT_DIR-}"
 runtime_app_bundle_artifact="${PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT-}"
 runtime_bundle_archive_host=""
 runtime_bundle_archive_device=""
+runtime_asset_archive_host=""
+runtime_asset_archive_device=""
 runtime_manifest_path=""
 runtime_device_manifest_path=""
+runtime_asset_manifest_path=""
+runtime_asset_manifest_device_path=""
 runtime_app_bundle_manifest_host=""
 runtime_app_bundle_manifest_device_path=""
 runtime_helper_content_fingerprint=""
 runtime_device_content_fingerprint=""
+runtime_asset_content_fingerprint=""
+runtime_device_asset_content_fingerprint=""
+runtime_device_assets_present=""
 runtime_app_bundle_content_fingerprint=""
 runtime_device_app_bundle_content_fingerprint=""
 runtime_device_app_bundle_present=""
@@ -25,12 +33,50 @@ cleanup() {
   if [[ -n "$runtime_bundle_archive_host" && -f "$runtime_bundle_archive_host" ]]; then
     rm -f "$runtime_bundle_archive_host"
   fi
+  if [[ -n "$runtime_asset_archive_host" && -f "$runtime_asset_archive_host" ]]; then
+    rm -f "$runtime_asset_archive_host"
+  fi
   if [[ -n "$runtime_app_bundle_manifest_host" && -f "$runtime_app_bundle_manifest_host" ]]; then
     rm -f "$runtime_app_bundle_manifest_host"
   fi
 }
 
 trap cleanup EXIT
+
+json_manifest_string_field_from_file() {
+  local manifest_path="$1"
+  local field="$2"
+
+  [[ -f "$manifest_path" ]] || return 0
+  python3 - "$manifest_path" "$field" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    print(json.load(handle).get(sys.argv[2], ""))
+PY
+}
+
+json_manifest_string_field_from_device() {
+  local manifest_path="$1"
+  local field="$2"
+
+  pixel_root_shell "$serial" "cat '$manifest_path' 2>/dev/null || true" \
+    | python3 -c '
+import json
+import sys
+
+data = sys.stdin.read().strip()
+field = sys.argv[1]
+if not data:
+    print("")
+else:
+    try:
+        print(json.loads(data).get(field, ""))
+    except json.JSONDecodeError:
+        print("")
+' "$field"
+}
 
 push_verified_file() {
   local host_path device_path tmp_path host_sum device_sum
@@ -61,62 +107,97 @@ if ! pixel_require_runtime_artifacts; then
 fi
 
 printf 'Pushing device artifacts to %s\n' "$serial"
-if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_bundle_artifact" ]]; then
+if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_dir" || -n "$runtime_app_bundle_artifact" ]]; then
   runtime_linux_dir="$(pixel_runtime_linux_dir)"
   runtime_manifest_path="$runtime_host_bundle_artifact_dir/.runtime-bundle-manifest.json"
   runtime_device_manifest_path="$runtime_linux_dir/.runtime-bundle-manifest.json"
+  runtime_asset_manifest_path="$runtime_app_asset_artifact_dir/.runtime-assets-manifest.json"
+  runtime_asset_manifest_device_path="$runtime_linux_dir/.runtime-assets-manifest.json"
   printf 'Pushing runtime support to %s\n' "$serial"
+
   if [[ -n "$runtime_host_bundle_artifact_dir" ]]; then
     if [[ -f "$runtime_manifest_path" ]]; then
       runtime_helper_content_fingerprint="$(
-        python3 - "$runtime_manifest_path" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    print(json.load(handle).get("contentFingerprint", ""))
-PY
+        json_manifest_string_field_from_file "$runtime_manifest_path" contentFingerprint
       )"
       runtime_device_content_fingerprint="$(
-        pixel_root_shell "$serial" "cat '$runtime_device_manifest_path' 2>/dev/null || true" \
-          | python3 -c '
-import json
-import sys
-
-data = sys.stdin.read().strip()
-if not data:
-    print("")
-else:
-    try:
-        print(json.loads(data).get("contentFingerprint", ""))
-    except json.JSONDecodeError:
-        print("")
-' || true
+        json_manifest_string_field_from_device "$runtime_device_manifest_path" contentFingerprint
       )"
     fi
 
     if [[ -n "$runtime_helper_content_fingerprint" && "$runtime_helper_content_fingerprint" == "$runtime_device_content_fingerprint" ]]; then
       printf 'Runtime helper dir cacheHit -> %s\n' "$runtime_linux_dir"
-	    else
-	      runtime_bundle_archive_host="$(mktemp "${TMPDIR:-/tmp}/shadow-runtime-bundle.XXXXXX.tar")"
-	      runtime_bundle_archive_device="/data/local/tmp/$(basename "$runtime_bundle_archive_host")"
-	      COPYFILE_DISABLE=1 tar \
-	        --format=ustar \
+    else
+      runtime_bundle_archive_host="$(mktemp "${TMPDIR:-/tmp}/shadow-runtime-bundle.XXXXXX.tar")"
+      runtime_bundle_archive_device="/data/local/tmp/$(basename "$runtime_bundle_archive_host")"
+      COPYFILE_DISABLE=1 tar \
+        --format=ustar \
         --numeric-owner \
         --owner=0 \
         --group=0 \
         --no-xattrs \
-	        -C "$runtime_host_bundle_artifact_dir" \
-	        -cf "$runtime_bundle_archive_host" \
-	        .
-	      pixel_root_shell "$serial" "umount -l '$runtime_linux_dir/etc' >/dev/null 2>&1 || true; mkdir -p '$runtime_linux_dir'; rm -f '$runtime_bundle_archive_device'"
-	      pixel_adb "$serial" push "$runtime_bundle_archive_host" "$runtime_bundle_archive_device" >/dev/null
-	      pixel_root_shell "$serial" "umount -l '$runtime_linux_dir/etc' >/dev/null 2>&1 || true; mkdir -p '$runtime_linux_dir' && /system/bin/tar -xf '$runtime_bundle_archive_device' -C '$runtime_linux_dir' && chown -R shell:shell '$runtime_linux_dir' && find '$runtime_linux_dir' -type d -exec chmod 0755 {} + && find '$runtime_linux_dir' -type f -exec chmod 0755 {} + && rm -f '$runtime_bundle_archive_device'"
-	    fi
-	  else
+        -C "$runtime_host_bundle_artifact_dir" \
+        -cf "$runtime_bundle_archive_host" \
+        .
+      pixel_root_shell "$serial" "umount -l '$runtime_linux_dir/etc' >/dev/null 2>&1 || true; mkdir -p '$runtime_linux_dir'; rm -f '$runtime_bundle_archive_device'"
+      pixel_adb "$serial" push "$runtime_bundle_archive_host" "$runtime_bundle_archive_device" >/dev/null
+      pixel_root_shell "$serial" "umount -l '$runtime_linux_dir/etc' >/dev/null 2>&1 || true; mkdir -p '$runtime_linux_dir' && /system/bin/tar -xf '$runtime_bundle_archive_device' -C '$runtime_linux_dir' && chown -R shell:shell '$runtime_linux_dir' && find '$runtime_linux_dir' -type d -exec chmod 0755 {} + && find '$runtime_linux_dir' -type f -exec chmod 0755 {} + && rm -f '$runtime_bundle_archive_device'"
+    fi
+  else
     pixel_root_shell "$serial" "rm -rf '$runtime_linux_dir'"
     pixel_adb "$serial" shell "mkdir -p '$runtime_linux_dir'"
   fi
+
+  if [[ -n "$runtime_app_asset_artifact_dir" && -d "$runtime_app_asset_artifact_dir" ]]; then
+    if [[ ! -f "$runtime_asset_manifest_path" ]]; then
+      echo "pixel_push: missing runtime asset manifest: $runtime_asset_manifest_path" >&2
+      exit 1
+    fi
+    runtime_asset_content_fingerprint="$(
+      json_manifest_string_field_from_file "$runtime_asset_manifest_path" contentFingerprint
+    )"
+    if [[ -z "$runtime_asset_content_fingerprint" ]]; then
+      echo "pixel_push: invalid runtime asset manifest: $runtime_asset_manifest_path" >&2
+      exit 1
+    fi
+  fi
+  runtime_device_asset_content_fingerprint="$(
+    json_manifest_string_field_from_device "$runtime_asset_manifest_device_path" contentFingerprint
+  )"
+  runtime_device_assets_present="$(
+    pixel_root_shell "$serial" "[ -e '$runtime_linux_dir/assets' ] && printf yes || true" \
+      | tr -d '\r' || true
+  )"
+  if [[ -n "$runtime_asset_content_fingerprint" ]]; then
+    if [[ "$runtime_asset_content_fingerprint" == "$runtime_device_asset_content_fingerprint" && "$runtime_device_assets_present" == "yes" ]]; then
+      printf 'Runtime assets cacheHit -> %s/assets\n' "$runtime_linux_dir"
+    else
+      runtime_asset_archive_host="$(mktemp "${TMPDIR:-/tmp}/shadow-runtime-assets.XXXXXX.tar")"
+      runtime_asset_archive_device="/data/local/tmp/$(basename "$runtime_asset_archive_host")"
+      COPYFILE_DISABLE=1 tar \
+        --format=ustar \
+        --numeric-owner \
+        --owner=0 \
+        --group=0 \
+        --no-xattrs \
+        --exclude=.runtime-assets-manifest.json \
+        -C "$runtime_app_asset_artifact_dir" \
+        -cf "$runtime_asset_archive_host" \
+        .
+      pixel_root_shell "$serial" "rm -rf '$runtime_linux_dir/assets'; mkdir -p '$runtime_linux_dir/assets'; rm -f '$runtime_asset_archive_device'"
+      pixel_adb "$serial" push "$runtime_asset_archive_host" "$runtime_asset_archive_device" >/dev/null
+      pixel_root_shell "$serial" "mkdir -p '$runtime_linux_dir/assets' && /system/bin/tar -xf '$runtime_asset_archive_device' -C '$runtime_linux_dir/assets' && chown -R shell:shell '$runtime_linux_dir/assets' && find '$runtime_linux_dir/assets' -type d -exec chmod 0755 {} + && find '$runtime_linux_dir/assets' -type f -exec chmod 0644 {} + && rm -f '$runtime_asset_archive_device'"
+      pixel_adb "$serial" push "$runtime_asset_manifest_path" "$runtime_asset_manifest_device_path" >/dev/null
+      pixel_root_shell "$serial" "chown shell:shell '$runtime_asset_manifest_device_path' && chmod 0644 '$runtime_asset_manifest_device_path'"
+      printf 'Pushed runtime assets -> %s/assets\n' "$runtime_linux_dir"
+    fi
+  else
+    if [[ -n "$runtime_device_asset_content_fingerprint" || "$runtime_device_assets_present" == "yes" ]]; then
+      pixel_root_shell "$serial" "rm -rf '$runtime_linux_dir/assets' '$runtime_asset_manifest_device_path'"
+      printf 'Removed runtime assets -> %s/assets\n' "$runtime_linux_dir"
+    fi
+  fi
+
   if [[ -n "$runtime_app_bundle_artifact" ]]; then
     runtime_app_bundle_manifest_device_path="$runtime_linux_dir/.runtime-app-bundle-manifest.json"
     runtime_app_bundle_content_fingerprint="$(
@@ -127,20 +208,7 @@ else:
         | tr -d '\r' || true
     )"
     runtime_device_app_bundle_content_fingerprint="$(
-      pixel_root_shell "$serial" "cat '$runtime_app_bundle_manifest_device_path' 2>/dev/null || true" \
-        | python3 -c '
-import json
-import sys
-
-data = sys.stdin.read().strip()
-if not data:
-    print("")
-else:
-    try:
-        print(json.loads(data).get("fingerprint", ""))
-    except json.JSONDecodeError:
-        print("")
-' || true
+      json_manifest_string_field_from_device "$runtime_app_bundle_manifest_device_path" fingerprint
     )"
     if [[ "$runtime_device_app_bundle_present" == "yes" && -n "$runtime_app_bundle_content_fingerprint" && "$runtime_app_bundle_content_fingerprint" == "$runtime_device_app_bundle_content_fingerprint" ]]; then
       printf 'Runtime app bundle cacheHit -> %s\n' "$(pixel_runtime_app_bundle_dst)"
@@ -160,10 +228,11 @@ with open(manifest_path, "w", encoding="utf-8") as handle:
 PY
       pixel_adb "$serial" push "$runtime_app_bundle_artifact" "$(pixel_runtime_app_bundle_dst)" >/dev/null
       pixel_adb "$serial" push "$runtime_app_bundle_manifest_host" "$runtime_app_bundle_manifest_device_path" >/dev/null
+      pixel_root_shell "$serial" "chown shell:shell '$(pixel_runtime_app_bundle_dst)' '$runtime_app_bundle_manifest_device_path' && chmod 0644 '$(pixel_runtime_app_bundle_dst)' '$runtime_app_bundle_manifest_device_path'"
       printf 'Pushed runtime app bundle -> %s\n' "$(pixel_runtime_app_bundle_dst)"
     fi
   fi
-  pixel_root_shell "$serial" "find '$runtime_linux_dir' -type f -exec chmod 0755 {} +"
+
   printf 'Pushed runtime helper dir -> %s\n' "$runtime_linux_dir"
 fi
 

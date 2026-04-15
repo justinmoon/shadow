@@ -114,6 +114,7 @@ if (( runtime_stage_only == 1 )); then
   PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
   PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
   PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_runtime_host_bundle_artifact_dir)" \
+  PIXEL_RUNTIME_APP_ASSET_ARTIFACT_DIR="$(pixel_runtime_app_asset_artifact_dir)" \
   PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT="$(pixel_runtime_app_bundle_artifact)" \
     "$SCRIPT_DIR/pixel_push.sh"
   exit 0
@@ -199,6 +200,7 @@ fi
 PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
 PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
 PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_runtime_host_bundle_artifact_dir)" \
+PIXEL_RUNTIME_APP_ASSET_ARTIFACT_DIR="$(pixel_runtime_app_asset_artifact_dir)" \
 PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT="$(pixel_runtime_app_bundle_artifact)" \
 PIXEL_COMPOSITOR_MARKER='[shadow-guest-compositor] presented-frame' \
 PIXEL_CLIENT_MARKER='runtime-document-ready' \

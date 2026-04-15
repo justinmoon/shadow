@@ -720,6 +720,10 @@ pixel_runtime_host_bundle_artifact_dir() {
   pixel_artifact_path shadow-runtime-gnu
 }
 
+pixel_runtime_app_asset_artifact_dir() {
+  pixel_artifact_path shadow-runtime-app-assets
+}
+
 pixel_shell_runtime_host_bundle_artifact_dir() {
   pixel_artifact_path shadow-runtime-shell-gnu
 }

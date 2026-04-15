@@ -36,12 +36,13 @@ cleanup_runtime_env_tmp() {
 
 trap cleanup_runtime_env_tmp EXIT
 
+if pgrep -f 'microvm@shadow-ui-vm' >/dev/null; then
+  echo "ui-vm-run: another Shadow UI VM process is already running" >&2
+  echo "ui-vm-run: stop it first with 'just ui-vm-stop'" >&2
+  exit 1
+fi
+
 if [[ -S "$SOCKET_PATH" ]]; then
-  if pgrep -f 'microvm@shadow-ui-vm' >/dev/null; then
-    echo "ui-vm-run: VM socket already exists at $SOCKET_PATH" >&2
-    echo "ui-vm-run: stop the current VM first with 'just ui-vm-stop'" >&2
-    exit 1
-  fi
   rm -f "$SOCKET_PATH"
 fi
 

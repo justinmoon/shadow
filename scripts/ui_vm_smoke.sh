@@ -131,7 +131,7 @@ ui_vm_run_pid=$!
 
 prep_start="$(date +%s)"
 while true; do
-  if [[ -S "$VM_SOCKET_PATH" ]] || pgrep -f 'microvm@shadow-ui-vm' >/dev/null; then
+  if [[ -S "$VM_SOCKET_PATH" ]]; then
     break
   fi
 

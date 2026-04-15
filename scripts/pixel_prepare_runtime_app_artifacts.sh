@@ -14,6 +14,7 @@ input_path="${PIXEL_RUNTIME_APP_INPUT_PATH:-runtime/app-counter/app.tsx}"
 cache_dir="${PIXEL_RUNTIME_APP_CACHE_DIR:-build/runtime/pixel-counter}"
 bundle_artifact="$(pixel_runtime_app_bundle_artifact)"
 host_bundle_dir="$(pixel_runtime_host_bundle_artifact_dir)"
+asset_artifact_dir="$(pixel_runtime_app_asset_artifact_dir)"
 host_bundle_out_link="$(pixel_dir)/shadow-runtime-host-aarch64-linux-gnu-result"
 host_binary_name="shadow-runtime-host"
 host_launcher_artifact="$host_bundle_dir/run-shadow-runtime-host"
@@ -24,8 +25,10 @@ audio_out_link="$(pixel_dir)/shadow-linux-audio-spike-aarch64-linux-gnu-result"
 audio_binary_name="shadow-linux-audio-spike"
 audio_launcher_artifact="$host_bundle_dir/run-$audio_binary_name"
 extra_bundle_dir="${PIXEL_RUNTIME_EXTRA_BUNDLE_ARTIFACT_DIR-}"
+extra_asset_dir="${PIXEL_RUNTIME_APP_EXTRA_ASSET_DIR-}"
 host_bundle_manifest_path="$host_bundle_dir/.bundle-manifest.json"
 runtime_manifest_path="$host_bundle_dir/.runtime-bundle-manifest.json"
+asset_manifest_path="$asset_artifact_dir/.runtime-assets-manifest.json"
 bundle_json=""
 bundle_source_path=""
 bundle_dir=""
@@ -33,8 +36,23 @@ bundle_asset_dir=""
 host_bundle_cache_hit=0
 host_bundle_source_fingerprint=""
 runtime_helper_content_fingerprint=""
+asset_cache_hit=0
+asset_source_fingerprint=""
+asset_content_fingerprint=""
 xkb_source_dir="$(runtime_bundle_xkb_source_dir)"
 android_font_source_dir="$(runtime_bundle_android_font_source_dir)"
+
+runtime_asset_directory_fingerprint() {
+  local dir="$1"
+
+  (
+    cd "$dir"
+    find . -type f ! -name '.runtime-assets-manifest.json' | LC_ALL=C sort | while IFS= read -r file; do
+      file="${file#./}"
+      printf 'file %s %s\n' "$(runtime_bundle_file_hash "$dir/$file")" "$file"
+    done
+  ) | shasum -a 256 | awk '{print $1}'
+}
 
 bundle_json="$(
   nix develop "$repo"#runtime -c deno run --quiet \
@@ -88,6 +106,13 @@ if [[ -n "$extra_bundle_dir" ]]; then
     exit 1
   fi
 fi
+if [[ -n "$extra_asset_dir" ]]; then
+  extra_asset_dir="$(normalize_runtime_bundle_input_path "$extra_asset_dir")"
+  if [[ ! -d "$extra_asset_dir" ]]; then
+    echo "pixel_prepare_runtime_app_artifacts: extra asset dir not found: $extra_asset_dir" >&2
+    exit 1
+  fi
+fi
 
 host_bundle_source_fingerprint="$(
   runtime_bundle_source_fingerprint \
@@ -103,7 +128,6 @@ host_bundle_source_fingerprint="$(
     "$repo/rust/vendor/temporal_rs" \
     "$SCRIPT_DIR/pixel_prepare_runtime_app_artifacts.sh" \
     "$SCRIPT_DIR/pixel_runtime_linux_bundle_common.sh" \
-    "${bundle_asset_dir:-__no_bundle_assets__}" \
     "$xkb_source_dir" \
     "$android_font_source_dir" \
     "${extra_bundle_dir:-__no_extra_bundle__}" \
@@ -143,12 +167,6 @@ if [[ "$host_bundle_cache_hit" != "1" ]]; then
     copy_closure_dir_into_bundle "share/alsa" "$host_bundle_dir/share/alsa"
     mkdir -p "$host_bundle_dir/lib/alsa-lib"
     copy_closure_dir_into_bundle "lib/alsa-lib" "$host_bundle_dir/lib/alsa-lib" optional
-  fi
-
-  if [[ -n "$bundle_asset_dir" && -d "$bundle_asset_dir" ]]; then
-    chmod -R u+w "$host_bundle_dir" 2>/dev/null || true
-    rm -rf "$host_bundle_dir/assets"
-    cp -R "$bundle_asset_dir" "$host_bundle_dir/assets"
   fi
 
   if [[ -n "$extra_bundle_dir" ]]; then
@@ -248,18 +266,116 @@ with open(manifest_path, "w", encoding="utf-8") as handle:
 PY
 fi
 
-python3 - "$bundle_artifact" "$bundle_dir" "$bundle_asset_dir" "$host_bundle_dir" "$input_path" "$extra_bundle_dir" "$host_bundle_cache_hit" <<'PY'
+if [[ -n "$bundle_asset_dir" || -n "$extra_asset_dir" ]]; then
+  asset_source_fingerprint="$(
+    {
+      printf 'script %s\n' "$(runtime_bundle_file_hash "$SCRIPT_DIR/pixel_prepare_runtime_app_artifacts.sh")"
+      if [[ -n "$bundle_asset_dir" && -d "$bundle_asset_dir" ]]; then
+        printf 'bundle_assets %s\n' "$(runtime_bundle_directory_fingerprint "$bundle_asset_dir")"
+      else
+        printf 'bundle_assets none\n'
+      fi
+      if [[ -n "$extra_asset_dir" && -d "$extra_asset_dir" ]]; then
+        printf 'extra_assets %s\n' "$(runtime_bundle_directory_fingerprint "$extra_asset_dir")"
+      else
+        printf 'extra_assets none\n'
+      fi
+    } | shasum -a 256 | awk '{print $1}'
+  )"
+  if [[ "${PIXEL_FORCE_LINUX_BUNDLE_REBUILD-}" != 1 ]] \
+    && [[ -d "$asset_artifact_dir" ]] \
+    && runtime_bundle_manifest_matches "$asset_manifest_path" "$asset_source_fingerprint"; then
+    asset_content_fingerprint="$(
+      python3 - "$asset_manifest_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    print(json.load(handle).get("contentFingerprint", ""))
+PY
+    )"
+    if [[ -n "$asset_content_fingerprint" ]] \
+      && [[ "$(runtime_asset_directory_fingerprint "$asset_artifact_dir")" == "$asset_content_fingerprint" ]]; then
+      asset_cache_hit=1
+      printf 'Runtime app assets cacheHit -> %s\n' "$asset_artifact_dir"
+    fi
+  fi
+
+  if [[ "$asset_cache_hit" != "1" ]]; then
+    rm -rf "$asset_artifact_dir"
+    mkdir -p "$asset_artifact_dir"
+    if [[ -n "$bundle_asset_dir" && -d "$bundle_asset_dir" ]]; then
+      cp -R "$bundle_asset_dir"/. "$asset_artifact_dir"/
+    fi
+    if [[ -n "$extra_asset_dir" ]]; then
+      cp -R "$extra_asset_dir"/. "$asset_artifact_dir"/
+    fi
+    asset_content_fingerprint="$(
+      runtime_asset_directory_fingerprint "$asset_artifact_dir"
+    )"
+    python3 - "$asset_manifest_path" "$asset_source_fingerprint" "$asset_content_fingerprint" "$bundle_asset_dir" "$extra_asset_dir" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+manifest_path, fingerprint, content_fingerprint, bundle_asset_dir, extra_asset_dir = sys.argv[1:6]
+manifest = {
+    "contentFingerprint": content_fingerprint,
+    "fingerprint": fingerprint,
+    "generatedAt": datetime.now(timezone.utc).isoformat(),
+    "runtimeBundleAssetDir": os.path.abspath(bundle_asset_dir) if bundle_asset_dir else None,
+    "runtimeExtraAssetDir": os.path.abspath(extra_asset_dir) if extra_asset_dir else None,
+}
+with open(manifest_path, "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2)
+    handle.write("\n")
+PY
+  fi
+
+  if [[ -z "$asset_content_fingerprint" && -f "$asset_manifest_path" ]]; then
+    asset_content_fingerprint="$(
+      python3 - "$asset_manifest_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    print(json.load(handle).get("contentFingerprint", ""))
+PY
+    )"
+  fi
+else
+  rm -rf "$asset_artifact_dir"
+fi
+
+python3 - "$bundle_artifact" "$bundle_dir" "$bundle_asset_dir" "$host_bundle_dir" "$input_path" "$extra_bundle_dir" "$host_bundle_cache_hit" "$asset_artifact_dir" "$asset_cache_hit" "$asset_content_fingerprint" "$extra_asset_dir" <<'PY'
 import json
 import os
 import sys
 
-bundle_artifact, bundle_dir, bundle_asset_dir, host_bundle_dir, input_path, extra_bundle_dir, host_bundle_cache_hit = sys.argv[1:8]
+(
+    bundle_artifact,
+    bundle_dir,
+    bundle_asset_dir,
+    host_bundle_dir,
+    input_path,
+    extra_bundle_dir,
+    host_bundle_cache_hit,
+    asset_artifact_dir,
+    asset_cache_hit,
+    asset_content_fingerprint,
+    extra_asset_dir,
+) = sys.argv[1:12]
 print(json.dumps({
+    "runtimeAppAssetArtifactDir": os.path.abspath(asset_artifact_dir) if asset_artifact_dir else None,
+    "runtimeAppAssetsCacheHit": asset_cache_hit == "1",
+    "runtimeAppAssetsContentFingerprint": asset_content_fingerprint or None,
     "runtimeHostBundleCacheHit": host_bundle_cache_hit == "1",
     "runtimeHelperContentFingerprint": json.load(open(os.path.join(host_bundle_dir, ".runtime-bundle-manifest.json"), "r", encoding="utf-8"))["contentFingerprint"],
     "inputPath": input_path,
     "runtimeBundleAssetDir": os.path.abspath(bundle_asset_dir) if bundle_asset_dir else None,
     "runtimeBundleDir": os.path.abspath(bundle_dir),
+    "runtimeExtraAssetDir": os.path.abspath(extra_asset_dir) if extra_asset_dir else None,
     "runtimeExtraBundleArtifactDir": os.path.abspath(extra_bundle_dir) if extra_bundle_dir else None,
     "runtimeAppBundleArtifact": os.path.abspath(bundle_artifact),
     "runtimeAppBundleDevicePath": "/data/local/tmp/shadow-runtime-gnu/runtime-app-bundle.js",
