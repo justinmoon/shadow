@@ -128,8 +128,7 @@ run_desktop() {
   cd "$REPO_ROOT"
   runtime_env_tmp="$(mktemp "${TMPDIR:-/tmp}/shadow-ui-run-runtime-env.XXXXXX")"
   trap 'rm -f "$runtime_env_tmp"' RETURN
-  SHADOW_RUNTIME_ENABLE_PODCAST_APP=1 \
-    "$SCRIPT_DIR/runtime_prepare_host_session_env.sh" >"$runtime_env_tmp"
+  "$SCRIPT_DIR/runtime_prepare_host_session_env.sh" --include-podcast >"$runtime_env_tmp"
   # shellcheck source=/dev/null
   source "$runtime_env_tmp"
 

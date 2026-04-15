@@ -141,7 +141,7 @@ nixpkgs.lib.nixosSystem {
               source ${runtimeHostEnvScript}
               echo "runtime env source=host-cache"
             else
-              runtime_env_exports="$(SHADOW_RUNTIME_FLAKE_REF=path:${repoDir} SHADOW_RUNTIME_ENABLE_PODCAST_APP=1 ${runtimeFallbackEnvScript})"
+              runtime_env_exports="$(${runtimeFallbackEnvScript} --flake-ref path:${repoDir} --include-podcast)"
               eval "$runtime_env_exports"
               echo "runtime env source=guest-fallback"
             fi

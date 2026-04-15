@@ -5,12 +5,32 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INPUT_PATH="${SHADOW_RUNTIME_APP_INPUT_PATH:-runtime/app-counter/app.tsx}"
 CACHE_DIR="${SHADOW_RUNTIME_APP_CACHE_DIR:-build/runtime/app-counter-host}"
-REPO_FLAKE_REF="${SHADOW_RUNTIME_FLAKE_REF:-${REPO_ROOT}}"
+runtime_flake_ref=""
+runtime_host_package_attr="shadow-runtime-host"
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --flake-ref)
+        runtime_flake_ref="${2:-}"
+        shift 2
+        ;;
+      --runtime-host-package)
+        runtime_host_package_attr="${2:-}"
+        shift 2
+        ;;
+      *)
+        echo "runtime_prepare_host_session.sh: unsupported argument $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+parse_args "$@"
+REPO_FLAKE_REF="${runtime_flake_ref:-${REPO_ROOT}}"
 
 cd "$REPO_ROOT"
-runtime_host_package_attr="${SHADOW_RUNTIME_HOST_PACKAGE_ATTR_OVERRIDE:-shadow-runtime-host}"
-runtime_host_binary_name="${SHADOW_RUNTIME_HOST_BINARY_NAME_OVERRIDE:-shadow-runtime-host}"
-runtime_host_binary_override="${SHADOW_RUNTIME_HOST_BINARY_PATH_OVERRIDE:-}"
 
 bundle_json="$(
   nix develop --accept-flake-config "${REPO_FLAKE_REF}#runtime" -c deno run --quiet \
@@ -41,14 +61,10 @@ print(os.path.abspath(data["bundleDir"]))
 '
 )"
 
-if [[ -n "$runtime_host_binary_override" ]]; then
-  runtime_host_binary_path="$runtime_host_binary_override"
-else
-  runtime_host_prefix="$(
-    nix build --accept-flake-config "${REPO_FLAKE_REF}#${runtime_host_package_attr}" --no-link --print-out-paths
-  )"
-  runtime_host_binary_path="${runtime_host_prefix}/bin/${runtime_host_binary_name}"
-fi
+runtime_host_prefix="$(
+  nix build --accept-flake-config "${REPO_FLAKE_REF}#${runtime_host_package_attr}" --no-link --print-out-paths
+)"
+runtime_host_binary_path="${runtime_host_prefix}/bin/shadow-runtime-host"
 
 python3 - "$bundle_path" "$bundle_dir" "$runtime_host_binary_path" "$INPUT_PATH" "$CACHE_DIR" "$runtime_host_package_attr" <<'PY'
 import json

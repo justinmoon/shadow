@@ -65,13 +65,13 @@ if [[ ! -s "$RUNTIME_ENV_PATH" ]] \
   || ! grep -Fq "SHADOW_RUNTIME_CASHU_DATA_DIR=$ui_vm_state_dir/runtime-cashu" "$RUNTIME_ENV_PATH" 2>/dev/null \
   || ! grep -Fq "SHADOW_RUNTIME_NOSTR_DB_PATH=$ui_vm_state_dir/runtime-nostr.sqlite3" "$RUNTIME_ENV_PATH" 2>/dev/null; then
   runtime_env_tmp="$(mktemp "$REPO_ROOT/.shadow-vm/runtime-host-session-env.XXXXXX")"
-  SHADOW_RUNTIME_APP_BUNDLE_REWRITE_FROM="$REPO_ROOT" \
-  SHADOW_RUNTIME_APP_BUNDLE_REWRITE_TO="/work/shadow" \
-  SHADOW_RUNTIME_AUDIO_BACKEND="$runtime_audio_backend" \
-  SHADOW_RUNTIME_ENABLE_PODCAST_APP=1 \
-  SHADOW_STATE_DIR="$ui_vm_state_dir" \
-  SHADOW_RUNTIME_HOST_PACKAGE_ATTR_OVERRIDE="$ui_vm_runtime_host_package_attr" \
-    ./scripts/runtime_prepare_host_session_env.sh >"$runtime_env_tmp"
+  ./scripts/runtime_prepare_host_session_env.sh \
+    --runtime-host-package "$ui_vm_runtime_host_package_attr" \
+    --include-podcast \
+    --bundle-rewrite-from "$REPO_ROOT" \
+    --bundle-rewrite-to "/work/shadow" \
+    --audio-backend "$runtime_audio_backend" \
+    --state-dir "$ui_vm_state_dir" >"$runtime_env_tmp"
   if shadow_session_app_is_shell "$ui_vm_start_app_id"; then
     :
   elif shadow_session_app_supports_auto_open "$ui_vm_start_app_id"; then
