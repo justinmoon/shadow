@@ -51,51 +51,6 @@ guest_client_dst="$(pixel_guest_client_dst)"
 runtime_prepare_extra_env=()
 runtime_gpu_profile="${PIXEL_RUNTIME_APP_GPU_PROFILE-}"
 
-runtime_gpu_profile_lines() {
-  local profile="$1"
-  case "$profile" in
-    "")
-      return 0
-      ;;
-    gl)
-      printf '%s\n' \
-        'WGPU_BACKEND=gl' \
-        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
-      ;;
-    gl_kgsl)
-      printf '%s\n' \
-        'WGPU_BACKEND=gl' \
-        'MESA_LOADER_DRIVER_OVERRIDE=kgsl' \
-        'TU_DEBUG=noconform' \
-        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
-      ;;
-    vulkan_drm)
-      printf '%s\n' \
-        'WGPU_BACKEND=vulkan' \
-        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
-      ;;
-    vulkan_kgsl)
-      printf '%s\n' \
-        'WGPU_BACKEND=vulkan' \
-        'MESA_LOADER_DRIVER_OVERRIDE=kgsl' \
-        'TU_DEBUG=noconform' \
-        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
-      ;;
-    vulkan_kgsl_first)
-      printf '%s\n' \
-        'WGPU_BACKEND=vulkan' \
-        'MESA_LOADER_DRIVER_OVERRIDE=kgsl' \
-        'TU_DEBUG=noconform' \
-        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so" \
-        'SHADOW_OPENLOG_DENY_DRI=1'
-      ;;
-    *)
-      echo "pixel_runtime_app_drm: unsupported PIXEL_RUNTIME_APP_GPU_PROFILE: $profile" >&2
-      return 1
-      ;;
-  esac
-}
-
 case "$PIXEL_RUNTIME_APP_RENDERER" in
   cpu)
     if (( runtime_run_only == 0 )); then
@@ -195,10 +150,14 @@ fi
 if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu_softbuffer" || "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
   runtime_guest_env="${runtime_guest_env}"$'\n'"MESA_SHADER_CACHE_DIR=$runtime_mesa_cache_dir"
   if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
+    runtime_gpu_profile_env="$(pixel_runtime_gpu_profile_lines "$runtime_gpu_profile")" || {
+      echo "pixel_runtime_app_drm: unsupported PIXEL_RUNTIME_APP_GPU_PROFILE: $runtime_gpu_profile" >&2
+      exit 1
+    }
     while IFS= read -r env_line; do
       [[ -n "$env_line" ]] || continue
       runtime_guest_env="${runtime_guest_env}"$'\n'"$env_line"
-    done < <(runtime_gpu_profile_lines "$runtime_gpu_profile")
+    done < <(printf '%s\n' "$runtime_gpu_profile_env")
   elif [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
     runtime_guest_env="${runtime_guest_env}"$'\n'"WGPU_BACKEND=${WGPU_BACKEND:-vulkan}"
     runtime_guest_env="${runtime_guest_env}"$'\n'"MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}"

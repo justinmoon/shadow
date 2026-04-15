@@ -853,6 +853,51 @@ XKB_CONFIG_ROOT=$(pixel_runtime_xkb_config_root)
 EOF
 }
 
+pixel_runtime_gpu_profile_lines() {
+  local profile="$1"
+
+  case "$profile" in
+    "")
+      return 0
+      ;;
+    gl)
+      printf '%s\n' \
+        'WGPU_BACKEND=gl' \
+        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_openlog_preload_dst)"
+      ;;
+    gl_kgsl)
+      printf '%s\n' \
+        'WGPU_BACKEND=gl' \
+        'MESA_LOADER_DRIVER_OVERRIDE=kgsl' \
+        'TU_DEBUG=noconform' \
+        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_openlog_preload_dst)"
+      ;;
+    vulkan_drm)
+      printf '%s\n' \
+        'WGPU_BACKEND=vulkan' \
+        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_openlog_preload_dst)"
+      ;;
+    vulkan_kgsl)
+      printf '%s\n' \
+        'WGPU_BACKEND=vulkan' \
+        'MESA_LOADER_DRIVER_OVERRIDE=kgsl' \
+        'TU_DEBUG=noconform' \
+        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_openlog_preload_dst)"
+      ;;
+    vulkan_kgsl_first)
+      printf '%s\n' \
+        'WGPU_BACKEND=vulkan' \
+        'MESA_LOADER_DRIVER_OVERRIDE=kgsl' \
+        'TU_DEBUG=noconform' \
+        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_openlog_preload_dst)" \
+        'SHADOW_OPENLOG_DENY_DRI=1'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 pixel_runtime_shell_bundle_env_lines() {
   cat <<EOF
 SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH=$(pixel_runtime_counter_bundle_dst)

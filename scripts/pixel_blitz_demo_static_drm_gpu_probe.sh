@@ -57,6 +57,7 @@ esac
 case_guest_env() {
   local profile="$1"
   local base_profile="$profile"
+  local profile_env=""
 
   if [[ "$profile" == *_early_probe ]]; then
     base_profile="${profile%_early_probe}"
@@ -65,44 +66,11 @@ case_guest_env() {
       'SHADOW_BLITZ_GPU_PROBE=1'
   fi
 
-  case "$base_profile" in
-    gl)
-      printf '%s\n' \
-        'WGPU_BACKEND=gl' \
-        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
-      ;;
-    gl_kgsl)
-      printf '%s\n' \
-        'WGPU_BACKEND=gl' \
-        'MESA_LOADER_DRIVER_OVERRIDE=kgsl' \
-        'TU_DEBUG=noconform' \
-        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
-      ;;
-    vulkan_drm)
-      printf '%s\n' \
-        'WGPU_BACKEND=vulkan' \
-        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
-      ;;
-    vulkan_kgsl)
-      printf '%s\n' \
-        'WGPU_BACKEND=vulkan' \
-        'MESA_LOADER_DRIVER_OVERRIDE=kgsl' \
-        'TU_DEBUG=noconform' \
-        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
-      ;;
-    vulkan_kgsl_first)
-      printf '%s\n' \
-        'WGPU_BACKEND=vulkan' \
-        'MESA_LOADER_DRIVER_OVERRIDE=kgsl' \
-        'TU_DEBUG=noconform' \
-        "SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so" \
-        'SHADOW_OPENLOG_DENY_DRI=1'
-      ;;
-    *)
-      echo "pixel_blitz_demo_static_drm_gpu_probe: unsupported profile: $profile" >&2
-      return 1
-      ;;
-  esac
+  profile_env="$(pixel_runtime_gpu_profile_lines "$base_profile")" || {
+    echo "pixel_blitz_demo_static_drm_gpu_probe: unsupported profile: $profile" >&2
+    return 1
+  }
+  [[ -n "$profile_env" ]] && printf '%s\n' "$profile_env"
 }
 
 run_case() {
@@ -110,8 +78,7 @@ run_case() {
   local case_log="$probe_dir/${profile}.log"
   local case_json="$probe_dir/${profile}.json"
   local run_dir="$probe_dir/run-$(printf '%s' "$profile" | tr -c 'A-Za-z0-9._-' '_')"
-  local case_status required_markers=""
-  local -a guest_env_lines=()
+  local case_status required_markers="" guest_client_env=""
   local -a env_vars=(
     "PIXEL_RUNTIME_SUMMARY_RENDERER=$renderer"
     "PIXEL_GUEST_EXPECT_COMPOSITOR_PROCESS="
@@ -119,10 +86,7 @@ run_case() {
     "PIXEL_GUEST_RUN_DIR=$run_dir"
   )
 
-  while IFS= read -r env_line; do
-    [[ -n "$env_line" ]] || continue
-    guest_env_lines+=("$env_line")
-  done < <(case_guest_env "$profile")
+  guest_client_env="$(case_guest_env "$profile")"
 
   if [[ "$profile" == *_early_probe ]]; then
     required_markers='gpu-summary-start'
@@ -130,19 +94,19 @@ run_case() {
   fi
 
   if [[ -n "${PIXEL_STATIC_GPU_EXTRA_ENV-}" ]]; then
-    guest_env_lines+=("${PIXEL_STATIC_GPU_EXTRA_ENV}")
+    guest_client_env="${guest_client_env:+${guest_client_env}"$'\n'}${PIXEL_STATIC_GPU_EXTRA_ENV}"
   fi
 
-  if [[ "${#guest_env_lines[@]}" -gt 0 ]]; then
-    env_vars+=("PIXEL_GUEST_CLIENT_ENV=${guest_env_lines[*]}")
+  if [[ -n "$guest_client_env" ]]; then
+    env_vars+=("PIXEL_GUEST_CLIENT_ENV=$guest_client_env")
   fi
 
   rm -rf "$run_dir"
   mkdir -p "$run_dir"
 
   printf 'pixel static gpu probe: profile=%s\n' "$profile" | tee "$case_log"
-  if [[ "${#guest_env_lines[@]}" -gt 0 ]]; then
-    printf 'guest env: %s\n' "${guest_env_lines[*]}" | tee -a "$case_log"
+  if [[ -n "$guest_client_env" ]]; then
+    printf 'guest env:\n%s\n' "$guest_client_env" | tee -a "$case_log"
   else
     printf 'guest env: <none>\n' | tee -a "$case_log"
   fi
