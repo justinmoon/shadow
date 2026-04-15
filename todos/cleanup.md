@@ -57,6 +57,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - 2026-04-15 dead guest debug path removed: `SHADOW_GUEST_COMPOSITOR_SELFTEST_DRM` plus the compositor DRM self-test frame path are gone because nothing on the supported surface produced or depended on them.
   - 2026-04-15 guest touch-debug cleanup landed: removed `SHADOW_GUEST_LOG_TOUCH_GEOMETRY`, dead `SHADOW_GUEST_LOG_TOUCH_SIGNAL`, and the compositor-only touch mapping debug helper that only existed for those hold/debug lanes.
   - 2026-04-15 Pixel runtime-path cleanup landed: `pixel_common.sh` now owns runtime home/cache/config, mesa cache, touch-signal, Nostr db, Cashu dir, XKB root, and preload paths so the supported Pixel shell/runtime launchers stop reconstructing those paths ad hoc.
+  - 2026-04-15 Pixel runtime-env cleanup landed: shared `pixel_common.sh` helpers now emit the common runtime host env, Linux user env, and shell bundle env fragments used by the supported Pixel shell/runtime launchers.
   - Delete env vars that only exist for historical probes, alternate transports, direct runtime-app lanes, or debugging experiments.
   - Dead guest knobs removed in this chunk: `SHADOW_GUEST_SHELL` and `SHADOW_GUEST_ENABLE_KEYBOARD_SEAT` are no longer read.
   - Replace `SHADOW_GUEST_CLIENT_ENV` and other stringly env blobs with structured config.

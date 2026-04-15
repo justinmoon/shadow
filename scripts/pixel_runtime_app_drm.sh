@@ -189,12 +189,8 @@ SHADOW_BLITZ_DEBUG_OVERLAY=0
 SHADOW_BLITZ_ANDROID_FONTS=${SHADOW_BLITZ_ANDROID_FONTS:-curated}
 SHADOW_BLITZ_SOFTWARE_KEYBOARD=${SHADOW_BLITZ_SOFTWARE_KEYBOARD:-1}
 SHADOW_RUNTIME_APP_BUNDLE_PATH=$(pixel_runtime_app_bundle_dst)
-SHADOW_RUNTIME_HOST_BINARY_PATH=$(pixel_runtime_host_launcher_dst)
-SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)
-HOME=$runtime_home_dir
-XDG_CACHE_HOME=$runtime_cache_dir
-XDG_CONFIG_HOME=$runtime_config_dir
-XKB_CONFIG_ROOT=$xkb_config_root
+$(pixel_runtime_host_env_lines)
+$(pixel_runtime_linux_user_env_lines)
 EOF
 )
 if [[ "${PIXEL_RUNTIME_ENABLE_GPU_SUMMARY:-0}" == "1" ]]; then

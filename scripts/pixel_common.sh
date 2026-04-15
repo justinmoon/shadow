@@ -828,6 +828,33 @@ pixel_runtime_openlog_preload_dst() {
   printf '%s/lib/shadow-openlog-preload.so\n' "$(pixel_runtime_linux_dir)"
 }
 
+pixel_runtime_host_env_lines() {
+  cat <<EOF
+SHADOW_RUNTIME_HOST_BINARY_PATH=$(pixel_runtime_host_launcher_dst)
+SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)
+EOF
+}
+
+pixel_runtime_linux_user_env_lines() {
+  cat <<EOF
+HOME=$(pixel_runtime_home_dir)
+XDG_CACHE_HOME=$(pixel_runtime_cache_dir)
+XDG_CONFIG_HOME=$(pixel_runtime_config_dir)
+XKB_CONFIG_ROOT=$(pixel_runtime_xkb_config_root)
+EOF
+}
+
+pixel_runtime_shell_bundle_env_lines() {
+  cat <<EOF
+SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH=$(pixel_runtime_counter_bundle_dst)
+SHADOW_RUNTIME_APP_CAMERA_BUNDLE_PATH=$(pixel_runtime_camera_bundle_dst)
+SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH=$(pixel_runtime_timeline_bundle_dst)
+SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=$(pixel_runtime_podcast_bundle_dst)
+SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH=$(pixel_runtime_cashu_bundle_dst)
+SHADOW_RUNTIME_CASHU_DATA_DIR=$(pixel_runtime_cashu_data_dir)
+EOF
+}
+
 pixel_download_dir_device() {
   printf '%s\n' "${PIXEL_DOWNLOAD_DIR_DEVICE:-/storage/emulated/0/Download}"
 }

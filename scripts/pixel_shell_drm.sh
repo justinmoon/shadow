@@ -114,10 +114,7 @@ SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS=${SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS:-1
 SHADOW_BLITZ_DEBUG_OVERLAY=0
 SHADOW_BLITZ_ANDROID_FONTS=${SHADOW_BLITZ_ANDROID_FONTS:-curated}
 SHADOW_BLITZ_SOFTWARE_KEYBOARD=${SHADOW_BLITZ_SOFTWARE_KEYBOARD:-1}
-HOME=$runtime_home_dir
-XDG_CACHE_HOME=$runtime_cache_dir
-XDG_CONFIG_HOME=$runtime_config_dir
-XKB_CONFIG_ROOT=$xkb_config_root
+$(pixel_runtime_linux_user_env_lines)
 EOF
 )
 if [[ "$camera_runtime_enabled" == "1" ]]; then
@@ -146,14 +143,8 @@ shell_guest_env="$(printf '%s\n' "$shell_guest_env" | tr '\n' ' ' | sed 's/[[:sp
 shell_session_env=$(
   cat <<EOF
 SHADOW_GUEST_START_APP_ID=shell
-SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH=$(pixel_runtime_counter_bundle_dst)
-SHADOW_RUNTIME_APP_CAMERA_BUNDLE_PATH=$(pixel_runtime_camera_bundle_dst)
-SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH=$(pixel_runtime_timeline_bundle_dst)
-SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=$(pixel_runtime_podcast_bundle_dst)
-SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH=$(pixel_runtime_cashu_bundle_dst)
-SHADOW_RUNTIME_HOST_BINARY_PATH=$(pixel_runtime_host_launcher_dst)
-SHADOW_RUNTIME_CASHU_DATA_DIR=$(pixel_runtime_cashu_data_dir)
-SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)
+$(pixel_runtime_shell_bundle_env_lines)
+$(pixel_runtime_host_env_lines)
 SHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM=1
 EOF
 )

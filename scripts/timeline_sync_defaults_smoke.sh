@@ -35,13 +35,18 @@ expect_fixed \
   "pixel direct timeline relay sync default"
 
 expect_fixed \
-  "$REPO_ROOT/scripts/pixel_shell_drm.sh" \
+  "$REPO_ROOT/scripts/pixel_common.sh" \
   'SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)' \
+  "pixel runtime host env nostr sqlite path"
+
+expect_fixed \
+  "$REPO_ROOT/scripts/pixel_shell_drm.sh" \
+  '$(pixel_runtime_host_env_lines)' \
   "pixel shell nostr sqlite path"
 
 expect_fixed \
   "$REPO_ROOT/scripts/pixel_runtime_app_drm.sh" \
-  'SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)' \
+  '$(pixel_runtime_host_env_lines)' \
   "pixel runtime nostr sqlite path"
 
 expect_fixed \
