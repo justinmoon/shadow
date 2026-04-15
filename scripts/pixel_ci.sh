@@ -15,11 +15,12 @@ Suites:
   shell     timeline + camera
   timeline  timeline lifecycle only
   camera    camera launch + capture only
+  nostr     runtime Nostr timeline against a host-local relay over USB
   sound     runtime sound app only
   audio     runtime sound + podcast
   podcast   runtime podcast app only
-  runtime   sound + podcast
-  full      timeline + camera + sound + podcast
+  runtime   sound + podcast + nostr
+  full      timeline + camera + sound + podcast + nostr
 
 Use PIXEL_SERIAL or --target to select a specific rooted Pixel.
 `--stage-only` stages artifacts onto the rooted Pixel without executing the suite.
@@ -33,6 +34,7 @@ quick
 shell
 timeline
 camera
+nostr
 sound
 audio
 podcast
@@ -80,7 +82,7 @@ while [[ $# -gt 0 ]]; do
       requested_target="${1#*=}"
       shift
       ;;
-    quick|shell|timeline|camera|sound|audio|podcast|runtime|full)
+    quick|shell|timeline|camera|nostr|sound|audio|podcast|runtime|full)
       suite="$1"
       shift
       ;;
@@ -133,17 +135,23 @@ case "$suite" in
   camera)
     suite_steps=(camera)
     ;;
+  nostr)
+    suite_steps=(nostr)
+    ;;
   sound)
     suite_steps=(sound)
     ;;
-  audio|runtime)
+  audio)
     suite_steps=(sound podcast)
+    ;;
+  runtime)
+    suite_steps=(sound podcast nostr)
     ;;
   podcast)
     suite_steps=(podcast)
     ;;
   full)
-    suite_steps=(timeline camera sound podcast)
+    suite_steps=(timeline camera sound podcast nostr)
     ;;
   *)
     echo "pixel-ci: unsupported suite '$suite'" >&2
@@ -156,6 +164,7 @@ need_shell=0
 need_sound=0
 need_podcast=0
 need_camera_runtime=0
+need_nostr=0
 for step in "${suite_steps[@]}"; do
   case "$step" in
     timeline|camera)
@@ -167,6 +176,9 @@ for step in "${suite_steps[@]}"; do
     podcast)
       need_podcast=1
       ;;
+    nostr)
+      need_nostr=1
+      ;;
   esac
   if [[ "$step" == "camera" ]]; then
     need_camera_runtime=1
@@ -174,7 +186,7 @@ for step in "${suite_steps[@]}"; do
 done
 
 cleanup() {
-  PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+  timeout 30 env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
 }
 
 trap cleanup EXIT
@@ -185,7 +197,7 @@ ensure_android_display_ready() {
   fi
 
   echo "pixel-ci: Android display stack not ready; attempting restore" >&2
-  env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+  timeout 60 env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
   if pixel_wait_for_condition 90 1 pixel_android_display_restored "$serial"; then
     return 0
   fi
@@ -302,7 +314,7 @@ printf 'pixel-ci: suite=%s serial=%s run_dir=%s\n' "$suite" "$serial" "$run_dir"
 
 # Best-effort reset so a stale hold-mode takeover does not poison the next case.
 if (( stage_only == 0 )); then
-  env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+  timeout 30 env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
 fi
 
 run_step preflight_root "verify Pixel root access" \
@@ -328,6 +340,11 @@ if (( run_only == 0 )); then
   if (( stage_only == 1 && need_podcast == 1 )); then
     run_step prep_podcast_runtime "stage rooted Pixel podcast runtime artifacts" \
       env PIXEL_SERIAL="$serial" SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_podcast_player_drm.sh"
+  fi
+
+  if (( stage_only == 1 && need_nostr == 1 )); then
+    run_step prep_nostr_runtime "stage rooted Pixel Nostr runtime artifacts" \
+      env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_nostr_timeline_local_smoke.sh"
   fi
 fi
 
@@ -366,6 +383,15 @@ for step in "${suite_steps[@]}"; do
       run_display_ready_gate "$step"
       run_step podcast "prove rooted Pixel runtime podcast playback" \
         env PIXEL_SERIAL="$serial" SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 PIXEL_RUNTIME_APP_RUN_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_podcast_player_drm.sh"
+      ;;
+    nostr)
+      if (( run_only == 0 )); then
+        run_step prep_nostr_runtime "stage rooted Pixel Nostr runtime artifacts" \
+          env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_nostr_timeline_local_smoke.sh"
+      fi
+      run_display_ready_gate "$step"
+      run_step nostr "prove rooted Pixel runtime Nostr timeline against a host-local relay over USB" \
+        env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_RUN_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_nostr_timeline_local_smoke.sh"
       ;;
   esac
 done

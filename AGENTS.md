@@ -14,7 +14,7 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - Run `just ui-vm-smoke` or `just vm-smoke` when you want the same local VM shell/app smoke that backs `just pre-merge`.
 - Run `just ui-smoke` only when you explicitly want the Linux-host proof outside the required CI gate.
 - Use `just run target=vm` / `just stop target=vm` as the public VM session entry/exit path. `vm-*` and older `ui-vm-*` aliases still work.
-- Use `just pixel-ci <suite>` for rooted-Pixel CI subsets (`quick`, `shell`, `timeline`, `camera`, `sound`, `podcast`, `runtime`, `full`).
+- Use `just pixel-ci <suite>` for rooted-Pixel CI subsets (`quick`, `shell`, `timeline`, `camera`, `nostr`, `sound`, `podcast`, `runtime`, `full`).
 - Use `just run target=pixel ...` / `just stop target=pixel` for the supported rooted-Pixel shell lane. Lower-level runtime/probe commands still exist for narrower debugging.
 - Run `just pre-merge` before handoff and before claiming the repo is green.
 
@@ -27,6 +27,6 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - `scripts/shadowctl` is the target-aware operator CLI behind the public run/stop wrappers, VM diagnostics, and rooted-Pixel shell control recipes; use `-t vm`, `-t pixel`, or a specific Pixel serial as needed.
 - `just pre-commit` runs shell syntax checks, flake evaluation, and `just ui-check`.
 - `just pre-merge` runs `just pre-commit` and `just ui-vm-smoke`.
-- `just pixel-ci full` runs the current rooted-Pixel CI lane: timeline lifecycle, camera capture, runtime sound, and runtime podcast playback on a connected rooted device.
+- `just pixel-ci full` runs the current rooted-Pixel CI lane: timeline lifecycle, camera capture, runtime sound, runtime podcast playback, and the runtime Nostr timeline against a host-local relay over USB on a connected rooted device.
 - `just pixel-ci <subset>` is the preferred ad hoc hardware gate for invasive app- or device-specific changes before landing.
 - `just land` wraps `scripts/land.sh` and is the only allowed path to merge a worktree branch into the root `master`.

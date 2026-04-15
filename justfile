@@ -31,14 +31,15 @@ help:
 	'  just vm-smoke' \
 	'' \
 	'Rooted Pixel:' \
-	'  just pixel-doctor' \
-	'  just pixel-build' \
-	'  just pixel-stage shell' \
-	'  just run target=pixel [app=shell|counter|timeline|camera|podcast|cashu]' \
-	'  just pixel-shell-drm-hold' \
-	'  just stop target=pixel' \
-	'  just shadowctl state|open <app>|home|switcher -t pixel' \
-	'  just pixel-ci [quick|shell|timeline|camera|sound|podcast|runtime|full]' \
+		'  just pixel-doctor' \
+		'  just pixel-build' \
+		'  just pixel-stage shell' \
+		'  just run target=pixel [app=shell|counter|timeline|camera|podcast|cashu]' \
+		'  just pixel-shell-drm-hold' \
+		'  just stop target=pixel' \
+		'  just shadowctl state|open <app>|home|switcher -t pixel' \
+		'  just pixel-ci [quick|shell|timeline|camera|nostr|sound|podcast|runtime|full]' \
+		'  just pixel-runtime-app-nostr-timeline-local-smoke [--target <serial>]' \
 	'' \
 	'Shared CLI:' \
 	'  just shadowctl <subcommand> -t vm' \
@@ -64,6 +65,10 @@ pre-merge:
 # Run the rooted-Pixel CI lane. Examples: `just pixel-ci`, `just pixel-ci camera`, `just pixel-ci --target <serial>`
 pixel-ci *args='':
 	@scripts/pixel_ci.sh {{args}}
+
+# Prove the rooted-Pixel Nostr timeline runtime against a host-local relay over USB
+pixel-runtime-app-nostr-timeline-local-smoke *args='':
+	@scripts/pixel_runtime_app_nostr_timeline_local_smoke.sh {{args}}
 
 # Stage rooted-Pixel artifacts without executing the suite. Examples: `just pixel-stage sound`
 pixel-stage *args='':

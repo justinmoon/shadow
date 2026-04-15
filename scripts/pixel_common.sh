@@ -111,11 +111,49 @@ pixel_adb() {
   adb -s "$serial" "$@"
 }
 
+pixel_adb_reverse_tcp() {
+  local serial port
+  serial="$1"
+  port="$2"
+  pixel_adb "$serial" reverse "tcp:$port" "tcp:$port"
+}
+
+pixel_adb_reverse_remove_tcp() {
+  local serial port
+  serial="$1"
+  port="$2"
+  pixel_adb "$serial" reverse --remove "tcp:$port"
+}
+
 pixel_fastboot() {
   local serial
   serial="$1"
   shift
   fastboot -s "$serial" "$@"
+}
+
+pixel_host_local_port() {
+  local service_key
+  service_key="${1:?pixel_host_local_port requires a service key}"
+
+  python3 - "$(repo_root)" "$service_key" <<'PY'
+import hashlib
+import sys
+
+repo_root, service_key = sys.argv[1], sys.argv[2]
+base = 40000
+span = 4000
+digest = hashlib.sha256(f"{repo_root}:{service_key}".encode("utf-8")).hexdigest()
+print(base + (int(digest[:8], 16) % span))
+PY
+}
+
+pixel_nostr_local_relay_port() {
+  if [[ -n "${PIXEL_NOSTR_LOCAL_RELAY_PORT:-}" ]]; then
+    printf '%s\n' "$PIXEL_NOSTR_LOCAL_RELAY_PORT"
+    return 0
+  fi
+  pixel_host_local_port pixel-nostr-local-relay
 }
 
 pixel_su_candidates() {
@@ -774,6 +812,12 @@ pixel_shell_control_socket_path() {
 
 pixel_runtime_linux_dir() {
   printf '%s\n' "${PIXEL_RUNTIME_LINUX_DIR:-/data/local/tmp/shadow-runtime-gnu}"
+}
+
+pixel_runtime_chroot_device_path() {
+  local chroot_path
+  chroot_path="${1:?pixel_runtime_chroot_device_path requires a path}"
+  printf '%s%s\n' "$(pixel_runtime_linux_dir)" "$chroot_path"
 }
 
 pixel_runtime_home_dir() {
