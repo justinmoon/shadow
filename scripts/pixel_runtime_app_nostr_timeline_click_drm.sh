@@ -11,7 +11,7 @@ ensure_bootimg_shell "$@"
 
 extra_guest_env="${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}"
 if [[ -n "$extra_guest_env" ]]; then
-  extra_guest_env="SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=quick-gm ${extra_guest_env}"
+  extra_guest_env="SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=quick-gm"$'\n'"${extra_guest_env}"
 else
   extra_guest_env="SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=quick-gm"
 fi
