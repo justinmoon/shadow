@@ -216,7 +216,6 @@ fi
 if [[ -n "$extra_guest_env" ]]; then
   runtime_guest_env="${runtime_guest_env}"$'\n'"${extra_guest_env}"
 fi
-runtime_guest_env="$(printf '%s\n' "$runtime_guest_env" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
 
 runtime_session_env=$(
   cat <<EOF
@@ -229,7 +228,6 @@ EOF
 if [[ -n "$extra_session_env" ]]; then
   runtime_session_env="${runtime_session_env}"$'\n'"${extra_session_env}"
 fi
-runtime_session_env="$(printf '%s\n' "$runtime_session_env" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
 
 required_markers='runtime-session-ready'
 if [[ -n "$extra_required_markers" ]]; then

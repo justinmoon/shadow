@@ -138,7 +138,6 @@ fi
 if [[ -n "$extra_guest_env" ]]; then
   shell_guest_env="${shell_guest_env}"$'\n'"${extra_guest_env}"
 fi
-shell_guest_env="$(printf '%s\n' "$shell_guest_env" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
 
 shell_session_env=$(
   cat <<EOF
@@ -156,7 +155,6 @@ fi
 if [[ -n "$extra_session_env" ]]; then
   shell_session_env="${shell_session_env}"$'\n'"${extra_session_env}"
 fi
-shell_session_env="$(printf '%s\n' "$shell_session_env" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
 
 required_markers='[shadow-guest-compositor] touch-ready'
 if [[ -n "$extra_required_markers" ]]; then

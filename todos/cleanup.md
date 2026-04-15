@@ -59,6 +59,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - 2026-04-15 Pixel runtime-path cleanup landed: `pixel_common.sh` now owns runtime home/cache/config, mesa cache, touch-signal, Nostr db, Cashu dir, XKB root, and preload paths so the supported Pixel shell/runtime launchers stop reconstructing those paths ad hoc.
   - 2026-04-15 Pixel runtime-env cleanup landed: shared `pixel_common.sh` helpers now emit the common runtime host env, Linux user env, and shell bundle env fragments used by the supported Pixel shell/runtime launchers.
   - 2026-04-15 Pixel guest-launcher cleanup landed: `pixel_common.sh` now owns the built-in guest session env quoting for `pixel_guest_ui_drm.sh`, and the generic launcher no longer exposes zero-caller overrides for direct transport, client linger, or the unused stop/process/client-marker/restore checkpoint defaults.
+  - 2026-04-15 Pixel env-fragment cleanup landed: `pixel_shell_drm.sh` and `pixel_runtime_app_drm.sh` now pass their supported guest/session env fragments to `pixel_guest_ui_drm.sh` as raw newline-delimited lists instead of flattening them into ad hoc single-line strings first.
   - Delete env vars that only exist for historical probes, alternate transports, direct runtime-app lanes, or debugging experiments.
   - Dead guest knobs removed in this chunk: `SHADOW_GUEST_SHELL` and `SHADOW_GUEST_ENABLE_KEYBOARD_SEAT` are no longer read.
   - Replace `SHADOW_GUEST_CLIENT_ENV` and other stringly env blobs with structured config.
