@@ -30,13 +30,11 @@ client_name="$(basename "$client_dst")"
 compositor_exit_on_first_frame="${PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME-1}"
 compositor_exit_on_client_disconnect="${PIXEL_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT-}"
 client_exit_on_configure="${PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE-1}"
-client_linger_ms="${PIXEL_GUEST_CLIENT_LINGER_MS-500}"
 session_timeout_secs="${PIXEL_GUEST_SESSION_TIMEOUT_SECS-}"
 guest_client_env="${PIXEL_GUEST_CLIENT_ENV-}"
 guest_session_env="${PIXEL_GUEST_SESSION_ENV-}"
 guest_precreate_dirs="${PIXEL_GUEST_PRECREATE_DIRS-}"
 guest_pre_session_device_script="${PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT-}"
-guest_transport="${PIXEL_GUEST_COMPOSITOR_TRANSPORT-direct}"
 expect_compositor_process="${PIXEL_GUEST_EXPECT_COMPOSITOR_PROCESS-1}"
 expect_client_process="${PIXEL_GUEST_EXPECT_CLIENT_PROCESS-1}"
 expect_client_marker="${PIXEL_GUEST_EXPECT_CLIENT_MARKER-1}"
@@ -46,14 +44,15 @@ skip_push="${PIXEL_GUEST_SKIP_PUSH-}"
 restore_android="${PIXEL_TAKEOVER_RESTORE_ANDROID-1}"
 stop_allocator="${PIXEL_TAKEOVER_STOP_ALLOCATOR-1}"
 restore_delay_secs="${PIXEL_TAKEOVER_RESTORE_DELAY_SECS-}"
-stop_checkpoint_timeout_secs="${PIXEL_GUEST_STOP_CHECKPOINT_TIMEOUT_SECS-15}"
-process_checkpoint_timeout_secs="${PIXEL_GUEST_PROCESS_CHECKPOINT_TIMEOUT_SECS-15}"
+# These launcher-level defaults have no in-repo callers today.
+stop_checkpoint_timeout_secs=15
+process_checkpoint_timeout_secs=15
 compositor_marker_timeout_secs="${PIXEL_GUEST_COMPOSITOR_MARKER_TIMEOUT_SECS-20}"
-client_marker_timeout_secs="${PIXEL_GUEST_CLIENT_MARKER_TIMEOUT_SECS-20}"
+client_marker_timeout_secs=20
 required_markers_raw="${PIXEL_GUEST_REQUIRED_MARKERS-}"
 required_marker_timeout_secs="${PIXEL_GUEST_REQUIRED_MARKER_TIMEOUT_SECS-$client_marker_timeout_secs}"
 frame_checkpoint_timeout_secs="${PIXEL_GUEST_FRAME_CHECKPOINT_TIMEOUT_SECS-20}"
-restore_checkpoint_timeout_secs="${PIXEL_GUEST_RESTORE_CHECKPOINT_TIMEOUT_SECS-20}"
+restore_checkpoint_timeout_secs=20
 session_exit_timeout_secs="${PIXEL_GUEST_SESSION_EXIT_TIMEOUT_SECS-15}"
 runtime_summary_renderer="${PIXEL_RUNTIME_SUMMARY_RENDERER-}"
 logcat_pid=""
@@ -234,12 +233,10 @@ guest_session_launch_env="$(
     "$runtime_dir" \
     "$compositor_dst" \
     "$client_dst" \
-    "$guest_transport" \
     "$frame_path" \
     "$compositor_exit_on_first_frame" \
     "$compositor_exit_on_client_disconnect" \
     "$client_exit_on_configure" \
-    "$client_linger_ms" \
     "$guest_client_env"
 )"
 session_command_word="$(printf '%q' "$session_dst")"

@@ -869,13 +869,11 @@ pixel_guest_ui_session_env_words() {
   local runtime_dir="$2"
   local compositor_dst="$3"
   local client_dst="$4"
-  local guest_transport="$5"
-  local frame_path="$6"
-  local compositor_exit_on_first_frame="${7:-}"
-  local compositor_exit_on_client_disconnect="${8:-}"
-  local client_exit_on_configure="${9:-}"
-  local client_linger_ms="${10:-}"
-  local guest_client_env="${11:-}"
+  local frame_path="$5"
+  local compositor_exit_on_first_frame="${6:-}"
+  local compositor_exit_on_client_disconnect="${7:-}"
+  local client_exit_on_configure="${8:-}"
+  local guest_client_env="${9:-}"
 
   pixel_shell_words_quoted \
     "XKB_CONFIG_ROOT=$xkb_config_root" \
@@ -883,7 +881,7 @@ pixel_guest_ui_session_env_words() {
     "SHADOW_RUNTIME_DIR=$runtime_dir" \
     "SHADOW_GUEST_COMPOSITOR_BIN=$compositor_dst" \
     "SHADOW_GUEST_CLIENT=$client_dst" \
-    "SHADOW_GUEST_COMPOSITOR_TRANSPORT=$guest_transport" \
+    'SHADOW_GUEST_COMPOSITOR_TRANSPORT=direct' \
     'SHADOW_GUEST_COMPOSITOR_ENABLE_DRM=1'
 
   if [[ -n "$compositor_exit_on_first_frame" ]]; then
@@ -895,9 +893,7 @@ pixel_guest_ui_session_env_words() {
   if [[ -n "$client_exit_on_configure" ]]; then
     pixel_shell_words_quoted "SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE=$client_exit_on_configure"
   fi
-  if [[ -n "$client_linger_ms" ]]; then
-    pixel_shell_words_quoted "SHADOW_GUEST_CLIENT_LINGER_MS=$client_linger_ms"
-  fi
+  pixel_shell_words_quoted 'SHADOW_GUEST_CLIENT_LINGER_MS=500'
   if [[ -n "$guest_client_env" ]]; then
     pixel_shell_words_quoted "SHADOW_GUEST_CLIENT_ENV=$guest_client_env"
   fi
