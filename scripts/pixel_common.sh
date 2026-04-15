@@ -792,6 +792,15 @@ pixel_runtime_xkb_config_root() {
   printf '%s/share/X11/xkb\n' "$(pixel_runtime_linux_dir)"
 }
 
+pixel_runtime_precreate_dirs_lines() {
+  cat <<EOF
+$(pixel_runtime_home_dir)
+$(pixel_runtime_cache_dir)
+$(pixel_runtime_mesa_cache_dir)
+$(pixel_runtime_config_dir)
+EOF
+}
+
 pixel_runtime_app_bundle_dst() {
   printf '%s/runtime-app-bundle.js\n' "$(pixel_runtime_linux_dir)"
 }
@@ -865,18 +874,17 @@ pixel_shell_words_quoted() {
 }
 
 pixel_guest_ui_session_env_words() {
-  local xkb_config_root="$1"
-  local runtime_dir="$2"
-  local compositor_dst="$3"
-  local client_dst="$4"
-  local frame_path="$5"
-  local compositor_exit_on_first_frame="${6:-}"
-  local compositor_exit_on_client_disconnect="${7:-}"
-  local client_exit_on_configure="${8:-}"
-  local guest_client_env="${9:-}"
+  local runtime_dir="$1"
+  local compositor_dst="$2"
+  local client_dst="$3"
+  local frame_path="$4"
+  local compositor_exit_on_first_frame="${5:-}"
+  local compositor_exit_on_client_disconnect="${6:-}"
+  local client_exit_on_configure="${7:-}"
+  local guest_client_env="${8:-}"
 
   pixel_shell_words_quoted \
-    "XKB_CONFIG_ROOT=$xkb_config_root" \
+    "XKB_CONFIG_ROOT=$(pixel_runtime_xkb_config_root)" \
     'SHADOW_SESSION_MODE=guest-ui' \
     "SHADOW_RUNTIME_DIR=$runtime_dir" \
     "SHADOW_GUEST_COMPOSITOR_BIN=$compositor_dst" \

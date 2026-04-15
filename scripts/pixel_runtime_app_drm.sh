@@ -151,11 +151,7 @@ extra_session_env="${PIXEL_RUNTIME_APP_EXTRA_SESSION_ENV-}"
 extra_required_markers="${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS-}"
 extra_forbidden_markers="${PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS-}"
 touch_signal_path="$(pixel_runtime_touch_signal_path)"
-runtime_home_dir="$(pixel_runtime_home_dir)"
-runtime_cache_dir="$(pixel_runtime_cache_dir)"
 runtime_mesa_cache_dir="$(pixel_runtime_mesa_cache_dir)"
-runtime_config_dir="$(pixel_runtime_config_dir)"
-xkb_config_root="$(pixel_runtime_xkb_config_root)"
 
 if (( runtime_stage_only == 1 )); then
   PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
@@ -252,7 +248,7 @@ PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
 PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
 PIXEL_GUEST_CLIENT_ENV="$runtime_guest_env" \
 PIXEL_GUEST_SESSION_ENV="$runtime_session_env" \
-PIXEL_GUEST_PRECREATE_DIRS="$runtime_home_dir $runtime_cache_dir $runtime_mesa_cache_dir $runtime_config_dir" \
+PIXEL_GUEST_PRECREATE_DIRS="$(pixel_runtime_precreate_dirs_lines)" \
 PIXEL_VERIFY_FORBIDDEN_MARKERS="$forbidden_markers" \
 PIXEL_RUNTIME_SUMMARY_RENDERER="$PIXEL_RUNTIME_APP_RENDERER" \
 PIXEL_GUEST_SKIP_PUSH="$([[ "$runtime_run_only" == 1 ]] && printf 1 || true)" \

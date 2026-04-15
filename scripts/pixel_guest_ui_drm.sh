@@ -20,8 +20,6 @@ frame_artifact="$run_dir/shadow-frame.ppm"
 pull_log_path="$run_dir/frame-pull.txt"
 frame_path="$(pixel_frame_path)"
 runtime_dir="$(pixel_runtime_dir)"
-runtime_linux_dir="$(pixel_runtime_linux_dir)"
-xkb_config_root="$runtime_linux_dir/share/X11/xkb"
 session_dst="$(pixel_session_dst)"
 compositor_dst="$(pixel_compositor_dst)"
 client_dst="$(pixel_guest_client_dst)"
@@ -43,7 +41,6 @@ verify_forbidden_markers="${PIXEL_VERIFY_FORBIDDEN_MARKERS-}"
 skip_push="${PIXEL_GUEST_SKIP_PUSH-}"
 restore_android="${PIXEL_TAKEOVER_RESTORE_ANDROID-1}"
 stop_allocator="${PIXEL_TAKEOVER_STOP_ALLOCATOR-1}"
-restore_delay_secs="${PIXEL_TAKEOVER_RESTORE_DELAY_SECS-}"
 # These launcher-level defaults have no in-repo callers today.
 stop_checkpoint_timeout_secs=15
 process_checkpoint_timeout_secs=15
@@ -229,7 +226,6 @@ fi
 
 guest_session_launch_env="$(
   pixel_guest_ui_session_env_words \
-    "$xkb_config_root" \
     "$runtime_dir" \
     "$compositor_dst" \
     "$client_dst" \
@@ -255,7 +251,6 @@ ${guest_precreate_dirs:+for prep_dir in $guest_precreate_dirs; do mkdir -p "\$pr
 ${guest_pre_session_device_script:+$guest_pre_session_device_script}
 ${session_timeout_secs:+timeout $session_timeout_secs }env ${guest_session_env:+$guest_session_env }${guest_session_launch_env}${session_command_word}
 status=\$?
-${restore_delay_secs:+sleep $restore_delay_secs}
 $(if [[ -n "$restore_android" ]]; then pixel_takeover_start_services_script; fi)
 exit \$status
 EOF

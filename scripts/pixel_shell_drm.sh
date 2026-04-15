@@ -100,12 +100,8 @@ PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS-}"
 extra_guest_env="${PIXEL_SHELL_EXTRA_GUEST_CLIENT_ENV-}"
 extra_session_env="${PIXEL_SHELL_EXTRA_SESSION_ENV-}"
 extra_required_markers="${PIXEL_SHELL_EXTRA_REQUIRED_MARKERS-}"
-runtime_home_dir="$(pixel_runtime_home_dir)"
-runtime_cache_dir="$(pixel_runtime_cache_dir)"
 runtime_mesa_cache_dir="$(pixel_runtime_mesa_cache_dir)"
-runtime_config_dir="$(pixel_runtime_config_dir)"
 expect_client_process=''
-xkb_config_root="$(pixel_runtime_xkb_config_root)"
 
 shell_guest_env=$(
   cat <<EOF
@@ -182,7 +178,7 @@ PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
 PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
 PIXEL_GUEST_CLIENT_ENV="$shell_guest_env" \
 PIXEL_GUEST_SESSION_ENV="$shell_session_env" \
-PIXEL_GUEST_PRECREATE_DIRS="$runtime_home_dir $runtime_cache_dir $runtime_mesa_cache_dir $runtime_config_dir" \
+PIXEL_GUEST_PRECREATE_DIRS="$(pixel_runtime_precreate_dirs_lines)" \
 PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT="$camera_start_command" \
 PIXEL_TAKEOVER_STOP_ALLOCATOR="${PIXEL_TAKEOVER_STOP_ALLOCATOR:-0}" \
 PIXEL_GUEST_SKIP_PUSH="$([[ "$shell_run_only" == 1 ]] && printf 1 || true)" \
