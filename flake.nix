@@ -67,6 +67,7 @@
         };
       shadowRuntimeHostSrc = repoSourceFromPrefixes [
         "rust/shadow-runtime-host"
+        "rust/shadow-runtime-protocol"
         "rust/runtime-audio-host"
         "rust/runtime-camera-host"
         "rust/runtime-cashu-host"
