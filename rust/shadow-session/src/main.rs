@@ -148,6 +148,8 @@ fn run_guest_ui() -> ! {
     let guest_client =
         env::var("SHADOW_GUEST_CLIENT").unwrap_or_else(|_| GUEST_RUNTIME_CLIENT_BIN.into());
     let mut command = Command::new(&compositor_bin);
+    // Command inherits the current process environment by default, so only
+    // set the values this wrapper owns: runtime-dir overrides plus defaults.
     command
         .env("XDG_RUNTIME_DIR", runtime_dir)
         .env("TMPDIR", runtime_dir)
@@ -158,34 +160,6 @@ fn run_guest_ui() -> ! {
                 "shadow_compositor_guest=info,shadow_blitz_demo=info,smithay=warn".into()
             }),
         );
-
-    if let Some(value) = env::var_os("SHADOW_GUEST_COMPOSITOR_ENABLE_DRM") {
-        command.env("SHADOW_GUEST_COMPOSITOR_ENABLE_DRM", value);
-    }
-    if let Some(value) = env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME") {
-        command.env("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME", value);
-    }
-    if let Some(value) = env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_WINDOW") {
-        command.env("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_WINDOW", value);
-    }
-    if let Some(value) = env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT") {
-        command.env("SHADOW_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT", value);
-    }
-    if let Some(value) = env::var_os("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE") {
-        command.env("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE", value);
-    }
-    if let Some(value) = env::var_os("SHADOW_GUEST_CLIENT_LINGER_MS") {
-        command.env("SHADOW_GUEST_CLIENT_LINGER_MS", value);
-    }
-    if let Some(value) = env::var_os("SHADOW_GUEST_FRAME_PATH") {
-        command.env("SHADOW_GUEST_FRAME_PATH", value);
-    }
-    if let Some(value) = env::var_os("SHADOW_GUEST_CLIENT_ENV") {
-        command.env("SHADOW_GUEST_CLIENT_ENV", value);
-    }
-    if let Some(value) = env::var_os("SHADOW_GUEST_COMPOSITOR_SELFTEST_DRM") {
-        command.env("SHADOW_GUEST_COMPOSITOR_SELFTEST_DRM", value);
-    }
 
     run_command(command, &compositor_bin);
 }

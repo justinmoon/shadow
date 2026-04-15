@@ -52,6 +52,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [~] Collapse the env-var surface to the minimum needed for shell/home and app launch.
   - Introduce one typed `LaunchConfig` / `SessionConfig`.
   - 2026-04-15 guest startup-config batch landed in the guest compositor: startup-mode, transport, frame/drm, touch-signal, client path/runtime-dir/runtime-host/client-env, and toplevel sizing now parse in one typed loader instead of being read inline across `main.rs` and `launch.rs`.
+  - 2026-04-15 follow-up cleanup landed in `rust/shadow-session`: the wrapper now relies on normal child-process env inheritance for guest compositor/session knobs instead of manually mirroring the passthrough allowlist one variable at a time.
   - Delete env vars that only exist for historical probes, alternate transports, direct runtime-app lanes, or debugging experiments.
   - Dead guest knobs removed in this chunk: `SHADOW_GUEST_SHELL` and `SHADOW_GUEST_ENABLE_KEYBOARD_SEAT` are no longer read.
   - Replace `SHADOW_GUEST_CLIENT_ENV` and other stringly env blobs with structured config.
