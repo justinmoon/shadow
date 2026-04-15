@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/pixel_common.sh"
 # shellcheck source=./pixel_camera_runtime_common.sh
 source "$SCRIPT_DIR/pixel_camera_runtime_common.sh"
+# shellcheck source=./session_apps.sh
+source "$SCRIPT_DIR/session_apps.sh"
 ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
@@ -25,6 +27,14 @@ fi
 if (( shell_stage_only == 1 && shell_run_only == 1 )); then
   echo "pixel_shell_drm: PIXEL_SHELL_RUN_ONLY cannot be combined with prep/stage-only mode" >&2
   exit 64
+fi
+if [[ -n "$shell_start_app_id" ]]; then
+  if shadow_session_app_is_shell "$shell_start_app_id"; then
+    shell_start_app_id=""
+  elif ! shadow_session_app_supports_auto_open "$shell_start_app_id"; then
+    echo "pixel_shell_drm: unsupported PIXEL_SHELL_START_APP_ID=$shell_start_app_id; expected $(shadow_session_apps_usage)" >&2
+    exit 64
+  fi
 fi
 if [[ "$camera_runtime_enabled" == "1" ]]; then
   camera_endpoint="$(pixel_camera_runtime_endpoint)"

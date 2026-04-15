@@ -8,6 +8,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNNER_LINK="$REPO_ROOT/.shadow-vm/ui-vm-runner"
 SOCKET_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-vm.sock"
 RUNTIME_ENV_PATH="$REPO_ROOT/.shadow-vm/runtime-host-session-env.sh"
+# shellcheck source=./session_apps.sh
+source "$SCRIPT_DIR/session_apps.sh"
 
 cd "$REPO_ROOT"
 mkdir -p .shadow-vm
@@ -73,20 +75,17 @@ if [[ ! -s "$RUNTIME_ENV_PATH" || -n "${SHADOW_UI_VM_REFRESH_RUNTIME_ENV:-}" ]] 
   SHADOW_RUNTIME_HOST_PACKAGE_ATTR_OVERRIDE="${SHADOW_UI_VM_RUNTIME_HOST_PACKAGE_ATTR:-$ui_vm_runtime_host_package_attr_default}" \
   SHADOW_RUNTIME_HOST_BINARY_NAME_OVERRIDE="${SHADOW_UI_VM_RUNTIME_HOST_BINARY_NAME:-shadow-runtime-host}" \
     ./scripts/runtime_prepare_host_session_env.sh >"$runtime_env_tmp"
-  case "$ui_vm_start_app_id" in
-    shell)
-      ;;
-    counter|timeline|camera|podcast|cashu)
-      {
-        printf 'export SHADOW_COMPOSITOR_AUTO_LAUNCH=1\n'
-        printf 'export SHADOW_COMPOSITOR_START_APP_ID=%q\n' "$ui_vm_start_app_id"
-      } >>"$runtime_env_tmp"
-      ;;
-    *)
-      echo "ui-vm-run: unsupported SHADOW_UI_VM_START_APP_ID=$ui_vm_start_app_id" >&2
-      exit 1
-      ;;
-  esac
+  if shadow_session_app_is_shell "$ui_vm_start_app_id"; then
+    :
+  elif shadow_session_app_supports_auto_open "$ui_vm_start_app_id"; then
+    {
+      printf 'export SHADOW_COMPOSITOR_AUTO_LAUNCH=1\n'
+      printf 'export SHADOW_COMPOSITOR_START_APP_ID=%q\n' "$ui_vm_start_app_id"
+    } >>"$runtime_env_tmp"
+  else
+    echo "ui-vm-run: unsupported SHADOW_UI_VM_START_APP_ID=$ui_vm_start_app_id; expected $(shadow_session_apps_usage)" >&2
+    exit 1
+  fi
   mv "$runtime_env_tmp" "$RUNTIME_ENV_PATH"
   chmod 0644 "$RUNTIME_ENV_PATH"
   runtime_env_tmp=""

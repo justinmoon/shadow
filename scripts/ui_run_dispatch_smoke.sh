@@ -3,6 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UI_RUN_SCRIPT="$SCRIPT_DIR/ui_run.sh"
+# shellcheck source=./session_apps.sh
+source "$SCRIPT_DIR/session_apps.sh"
+supported_apps_usage="$(shadow_session_apps_usage)"
 
 fail() {
   echo "ui_run_dispatch_smoke: $*" >&2
@@ -114,14 +117,14 @@ check_dispatch_case \
   pixel_unknown_rejected \
   1 \
   "" \
-  "target=pixel currently supports app=shell, app=counter, app=timeline, app=camera, app=podcast, or app=cashu" \
+  "target=pixel currently supports ${supported_apps_usage}" \
   app=unknown target=pixel
 
 check_dispatch_case \
   desktop_unknown_rejected \
   1 \
   "" \
-  "target=vm currently supports app=shell, app=counter, app=timeline, app=camera, app=podcast, or app=cashu" \
+  "target=vm currently supports ${supported_apps_usage}" \
   app=unknown target=desktop
 
 printf 'ui_run_dispatch_smoke: ok\n'
