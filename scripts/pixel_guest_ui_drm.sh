@@ -56,7 +56,6 @@ frame_checkpoint_timeout_secs="${PIXEL_GUEST_FRAME_CHECKPOINT_TIMEOUT_SECS-20}"
 restore_checkpoint_timeout_secs="${PIXEL_GUEST_RESTORE_CHECKPOINT_TIMEOUT_SECS-20}"
 session_exit_timeout_secs="${PIXEL_GUEST_SESSION_EXIT_TIMEOUT_SECS-15}"
 runtime_summary_renderer="${PIXEL_RUNTIME_SUMMARY_RENDERER-}"
-guest_client_env_quoted=""
 logcat_pid=""
 session_pid=""
 session_status=""
@@ -229,9 +228,21 @@ if [[ -z "$skip_push" ]]; then
   "$SCRIPT_DIR/pixel_push.sh"
 fi
 
-if [[ -n "$guest_client_env" ]]; then
-  guest_client_env_quoted="$(printf '%q' "$guest_client_env")"
-fi
+guest_session_launch_env="$(
+  pixel_guest_ui_session_env_words \
+    "$xkb_config_root" \
+    "$runtime_dir" \
+    "$compositor_dst" \
+    "$client_dst" \
+    "$guest_transport" \
+    "$frame_path" \
+    "$compositor_exit_on_first_frame" \
+    "$compositor_exit_on_client_disconnect" \
+    "$client_exit_on_configure" \
+    "$client_linger_ms" \
+    "$guest_client_env"
+)"
+session_command_word="$(printf '%q' "$session_dst")"
 
 pixel_capture_props "$serial" "$run_dir/device-props.txt"
 pixel_capture_processes "$serial" "$run_dir/processes-before.txt"
@@ -245,7 +256,7 @@ $(pixel_takeover_stop_services_script "$stop_allocator")
 rm -rf $runtime_dir && mkdir -p $runtime_dir && chmod 700 $runtime_dir && rm -f $frame_path
 ${guest_precreate_dirs:+for prep_dir in $guest_precreate_dirs; do mkdir -p "\$prep_dir"; done}
 ${guest_pre_session_device_script:+$guest_pre_session_device_script}
-${session_timeout_secs:+timeout $session_timeout_secs }env ${guest_session_env:+$guest_session_env }XKB_CONFIG_ROOT=$xkb_config_root SHADOW_SESSION_MODE=guest-ui SHADOW_RUNTIME_DIR=$runtime_dir SHADOW_GUEST_COMPOSITOR_BIN=$compositor_dst SHADOW_GUEST_CLIENT=$client_dst SHADOW_GUEST_COMPOSITOR_TRANSPORT=$guest_transport SHADOW_GUEST_COMPOSITOR_ENABLE_DRM=1 ${compositor_exit_on_first_frame:+SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME=$compositor_exit_on_first_frame }${compositor_exit_on_client_disconnect:+SHADOW_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT=$compositor_exit_on_client_disconnect }${client_exit_on_configure:+SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE=$client_exit_on_configure }${client_linger_ms:+SHADOW_GUEST_CLIENT_LINGER_MS=$client_linger_ms }${guest_client_env_quoted:+SHADOW_GUEST_CLIENT_ENV=$guest_client_env_quoted }SHADOW_GUEST_FRAME_PATH=$frame_path RUST_LOG=shadow_compositor_guest=info,shadow_blitz_demo=info,smithay=warn $session_dst
+${session_timeout_secs:+timeout $session_timeout_secs }env ${guest_session_env:+$guest_session_env }${guest_session_launch_env}${session_command_word}
 status=\$?
 ${restore_delay_secs:+sleep $restore_delay_secs}
 $(if [[ -n "$restore_android" ]]; then pixel_takeover_start_services_script; fi)

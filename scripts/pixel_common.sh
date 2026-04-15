@@ -855,6 +855,58 @@ SHADOW_RUNTIME_CASHU_DATA_DIR=$(pixel_runtime_cashu_data_dir)
 EOF
 }
 
+pixel_shell_words_quoted() {
+  local word
+
+  for word in "$@"; do
+    [[ -n "$word" ]] || continue
+    printf '%q ' "$word"
+  done
+}
+
+pixel_guest_ui_session_env_words() {
+  local xkb_config_root="$1"
+  local runtime_dir="$2"
+  local compositor_dst="$3"
+  local client_dst="$4"
+  local guest_transport="$5"
+  local frame_path="$6"
+  local compositor_exit_on_first_frame="${7:-}"
+  local compositor_exit_on_client_disconnect="${8:-}"
+  local client_exit_on_configure="${9:-}"
+  local client_linger_ms="${10:-}"
+  local guest_client_env="${11:-}"
+
+  pixel_shell_words_quoted \
+    "XKB_CONFIG_ROOT=$xkb_config_root" \
+    'SHADOW_SESSION_MODE=guest-ui' \
+    "SHADOW_RUNTIME_DIR=$runtime_dir" \
+    "SHADOW_GUEST_COMPOSITOR_BIN=$compositor_dst" \
+    "SHADOW_GUEST_CLIENT=$client_dst" \
+    "SHADOW_GUEST_COMPOSITOR_TRANSPORT=$guest_transport" \
+    'SHADOW_GUEST_COMPOSITOR_ENABLE_DRM=1'
+
+  if [[ -n "$compositor_exit_on_first_frame" ]]; then
+    pixel_shell_words_quoted "SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME=$compositor_exit_on_first_frame"
+  fi
+  if [[ -n "$compositor_exit_on_client_disconnect" ]]; then
+    pixel_shell_words_quoted "SHADOW_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT=$compositor_exit_on_client_disconnect"
+  fi
+  if [[ -n "$client_exit_on_configure" ]]; then
+    pixel_shell_words_quoted "SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE=$client_exit_on_configure"
+  fi
+  if [[ -n "$client_linger_ms" ]]; then
+    pixel_shell_words_quoted "SHADOW_GUEST_CLIENT_LINGER_MS=$client_linger_ms"
+  fi
+  if [[ -n "$guest_client_env" ]]; then
+    pixel_shell_words_quoted "SHADOW_GUEST_CLIENT_ENV=$guest_client_env"
+  fi
+
+  pixel_shell_words_quoted \
+    "SHADOW_GUEST_FRAME_PATH=$frame_path" \
+    'RUST_LOG=shadow_compositor_guest=info,shadow_blitz_demo=info,smithay=warn'
+}
+
 pixel_download_dir_device() {
   printf '%s\n' "${PIXEL_DOWNLOAD_DIR_DEVICE:-/storage/emulated/0/Download}"
 }
