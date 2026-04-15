@@ -923,11 +923,14 @@ def cmd_state(args: argparse.Namespace) -> int:
 
 
 def _print_control_result(result: subprocess.CompletedProcess[str]) -> int:
+    stdout = result.stdout or ""
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="", file=sys.stderr)
-    return result.returncode
+    if result.returncode != 0:
+        return result.returncode
+    return 1 if stdout.startswith("error=") else 0
 
 
 def cmd_open(args: argparse.Namespace) -> int:

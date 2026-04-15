@@ -25,6 +25,16 @@ audio_binary_name="shadow-linux-audio-spike"
 audio_launcher_artifact="$host_bundle_dir/run-$audio_binary_name"
 xkb_source_dir="$(runtime_bundle_xkb_source_dir)"
 android_font_source_dir="$(runtime_bundle_android_font_source_dir)"
+declare -a shell_runtime_source_inputs=()
+
+mapfile -t shell_runtime_source_inputs < <(
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-camera-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-runtime-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-audio-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-cashu-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-nostr-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-linux-audio-spike"
+)
 
 counter_input_path="${PIXEL_SHELL_COUNTER_INPUT_PATH:-runtime/app-counter/app.tsx}"
 counter_cache_dir="${PIXEL_SHELL_COUNTER_CACHE_DIR:-build/runtime/pixel-shell-counter}"
@@ -156,13 +166,7 @@ host_bundle_source_fingerprint="$(
     "pixel-shell-runtime $package_ref" \
     "$repo/flake.nix" \
     "$repo/flake.lock" \
-    "$repo/rust/runtime-camera-host" \
-    "$repo/rust/shadow-runtime-host" \
-    "$repo/rust/shadow-runtime-host/Cargo.lock" \
-    "$repo/rust/runtime-audio-host" \
-    "$repo/rust/runtime-cashu-host" \
-    "$repo/rust/runtime-nostr-host" \
-    "$repo/rust/shadow-linux-audio-spike" \
+    "${shell_runtime_source_inputs[@]}" \
     "$repo/rust/vendor/temporal_rs" \
     "$SCRIPT_DIR/pixel_prepare_shell_runtime_artifacts.sh" \
     "$SCRIPT_DIR/pixel_runtime_linux_bundle_common.sh" \

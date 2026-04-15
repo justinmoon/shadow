@@ -188,7 +188,7 @@ pixel_root_shell() {
 
   while IFS= read -r su_bin; do
     [[ -n "$su_bin" ]] || continue
-    if pixel_adb "$serial" shell "$su_bin 0 sh -c $(printf '%q' "$command")"; then
+    if printf '%s\n' "$command" | pixel_adb "$serial" shell "$su_bin" 0 sh; then
       return 0
     fi
   done < <(pixel_su_candidates)
@@ -964,11 +964,14 @@ EOF
 }
 
 pixel_shell_words_quoted() {
-  local word
+  local word quoted
 
   for word in "$@"; do
     [[ -n "$word" ]] || continue
-    printf '%q ' "$word"
+    # The rooted device wrapper executes under /system/bin/sh, so avoid bash-only
+    # $'...' quoting for multiline env payloads.
+    quoted=${word//\'/\'\\\'\'}
+    printf "'%s' " "$quoted"
   done
 }
 
@@ -1095,6 +1098,117 @@ pixel_touchscreen_event_device() {
   fi
 
   printf '%s\n' "$device"
+}
+
+pixel_touchscreen_device_info_json() {
+  local serial device listing
+  serial="$1"
+  device="$(pixel_touchscreen_event_device "$serial")" || return 1
+  listing="$(pixel_adb "$serial" shell getevent -pl "$device" 2>/dev/null | tr -d '\r')"
+
+  DEVICE_PATH="$device" GETEVENT_LISTING="$listing" python3 - <<'PY'
+import json
+import os
+import re
+import sys
+
+device_path = os.environ["DEVICE_PATH"]
+listing = os.environ["GETEVENT_LISTING"]
+
+axis_pattern = re.compile(
+    r"ABS_MT_POSITION_(?P<axis>[XY])\s*: value \d+, min (?P<min>-?\d+), max (?P<max>-?\d+)"
+)
+x_min = x_max = y_min = y_max = None
+for raw_line in listing.splitlines():
+    line = raw_line.strip()
+    match = axis_pattern.search(line)
+    if not match:
+      continue
+    axis = match.group("axis")
+    axis_min = int(match.group("min"))
+    axis_max = int(match.group("max"))
+    if axis == "X":
+      x_min = axis_min
+      x_max = axis_max
+    else:
+      y_min = axis_min
+      y_max = axis_max
+
+if None in (x_min, x_max, y_min, y_max):
+    raise SystemExit("pixel: failed to parse ABS_MT_POSITION ranges from getevent -pl")
+
+print(
+    json.dumps(
+        {
+            "devicePath": device_path,
+            "xMin": x_min,
+            "xMax": x_max,
+            "yMin": y_min,
+            "yMax": y_max,
+        }
+    )
+)
+PY
+}
+
+pixel_touchscreen_tap_panel() {
+  local serial panel_x panel_y panel_size touch_json tap_script
+  serial="$1"
+  panel_x="$2"
+  panel_y="$3"
+  panel_size="${4-}"
+  if [[ -z "$panel_size" ]]; then
+    panel_size="$(pixel_display_size "$serial")"
+  fi
+  touch_json="$(pixel_touchscreen_device_info_json "$serial")"
+  tap_script="$(
+    PANEL_SIZE="$panel_size" \
+    PANEL_X="$panel_x" \
+    PANEL_Y="$panel_y" \
+    TOUCH_JSON="$touch_json" \
+    python3 - <<'PY'
+import json
+import os
+
+panel_w, panel_h = [int(part) for part in os.environ["PANEL_SIZE"].split("x", 1)]
+panel_x = int(os.environ["PANEL_X"])
+panel_y = int(os.environ["PANEL_Y"])
+touch = json.loads(os.environ["TOUCH_JSON"])
+
+def scale(panel_value: int, panel_extent: int, raw_min: int, raw_max: int) -> int:
+    if panel_extent <= 1:
+        return raw_min
+    normalized = max(0.0, min(1.0, panel_value / float(panel_extent - 1)))
+    return round(raw_min + normalized * (raw_max - raw_min))
+
+raw_x = scale(panel_x, panel_w, int(touch["xMin"]), int(touch["xMax"]))
+raw_y = scale(panel_y, panel_h, int(touch["yMin"]), int(touch["yMax"]))
+tracking_id = 4242
+device_path = touch["devicePath"]
+
+print(
+    "\n".join(
+        [
+            f"sendevent {device_path} 3 47 0",
+            f"sendevent {device_path} 3 57 {tracking_id}",
+            f"sendevent {device_path} 3 53 {raw_x}",
+            f"sendevent {device_path} 3 54 {raw_y}",
+            f"sendevent {device_path} 3 48 20",
+            f"sendevent {device_path} 3 58 30",
+            f"sendevent {device_path} 1 330 1",
+            f"sendevent {device_path} 0 0 0",
+            "sleep 0.05",
+            f"sendevent {device_path} 3 47 0",
+            f"sendevent {device_path} 3 57 -1",
+            f"sendevent {device_path} 1 330 0",
+            f"sendevent {device_path} 0 0 0",
+        ]
+    )
+)
+PY
+  )"
+
+  pixel_root_shell "$serial" "$tap_script"
 }
 
 pixel_root_ota_url() {

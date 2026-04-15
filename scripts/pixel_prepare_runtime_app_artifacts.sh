@@ -41,6 +41,15 @@ asset_source_fingerprint=""
 asset_content_fingerprint=""
 xkb_source_dir="$(runtime_bundle_xkb_source_dir)"
 android_font_source_dir="$(runtime_bundle_android_font_source_dir)"
+declare -a runtime_host_source_inputs=()
+
+mapfile -t runtime_host_source_inputs < <(
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-camera-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-runtime-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-audio-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-nostr-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-linux-audio-spike"
+)
 
 runtime_asset_directory_fingerprint() {
   local dir="$1"
@@ -119,12 +128,7 @@ host_bundle_source_fingerprint="$(
     "$package_ref" \
     "$repo/flake.nix" \
     "$repo/flake.lock" \
-    "$repo/rust/runtime-camera-host" \
-    "$repo/rust/shadow-runtime-host" \
-    "$repo/rust/shadow-runtime-host/Cargo.lock" \
-    "$repo/rust/runtime-audio-host" \
-    "$repo/rust/runtime-nostr-host" \
-    "$repo/rust/shadow-linux-audio-spike" \
+    "${runtime_host_source_inputs[@]}" \
     "$repo/rust/vendor/temporal_rs" \
     "$SCRIPT_DIR/pixel_prepare_runtime_app_artifacts.sh" \
     "$SCRIPT_DIR/pixel_runtime_linux_bundle_common.sh" \

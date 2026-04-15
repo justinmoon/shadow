@@ -154,6 +154,18 @@ runtime_bundle_source_fingerprint() {
   } | shasum -a 256 | awk '{print $1}'
 }
 
+runtime_bundle_cargo_package_source_inputs() {
+  local package_dir path
+  package_dir="$1"
+
+  printf '%s\n' "$package_dir/Cargo.toml"
+
+  for path in Cargo.lock build.rs src tests examples benches; do
+    [[ -e "$package_dir/$path" ]] || continue
+    printf '%s\n' "$package_dir/$path"
+  done
+}
+
 runtime_bundle_directory_fingerprint() {
   local dir
   dir="$1"

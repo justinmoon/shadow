@@ -466,6 +466,10 @@ pixel-shellctl *args='':
 pixel-shell-timeline-smoke:
 	@scripts/pixel_shell_timeline_smoke.sh
 
+# Prove compose focus plus software keyboard input on the rooted Pixel shell lane
+pixel-shell-keyboard-smoke:
+	@scripts/pixel_shell_keyboard_smoke.sh
+
 # Prove camera launch and one live capture on the rooted Pixel shell lane
 pixel-shell-camera-smoke:
 	@scripts/pixel_shell_camera_smoke.sh

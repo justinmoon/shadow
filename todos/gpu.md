@@ -121,6 +121,23 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - invalidate old cached bundles that only had the broken symlinked XKB tree
   - validated rooted run:
     - `build/pixel/drm-guest/20260407T231051Z`
+- [x] Rooted Pixel shell keyboard input is now proved end to end with a real device smoke.
+  - operator hook:
+    - `just pixel-shell-keyboard-smoke`
+  - smoke contract:
+    - shell control socket ready
+    - timeline app mapped
+    - compose field hitmap rendered
+    - real evdev tap on `draft`
+    - software keyboard hitmap rendered
+    - real evdev tap on `__shadow_keyboard__a`
+    - runtime sees `keydown` and `input` for `draft`
+  - root causes fixed:
+    - shell/runtime payload drift could silently drop `textInput`
+    - `shadowctl tap` is compositor-content addressing, not real panel touch
+    - the smoke was incorrectly using the host hold-wrapper PID as session liveness, even though the wrapper exits after startup while the remote compositor keeps running
+  - validated rooted run:
+    - `build/pixel/shell/20260415T191547Z`
 
 ### Not Done
 
@@ -177,7 +194,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `run <serial>` now uses the shell path.
   - Home/app launch/app switching are working on device.
   - The remaining technical cleanup is narrower:
-    - [~] restore compose-field keyboard behavior on device
+    - [x] restore compose-field keyboard behavior on device
       - startup regression from the keyboard-seat change is fixed by staging `xkeyboard-config` into the rooted bundle and exporting `XKB_CONFIG_ROOT`
       - seat focus is fixed in the guest compositor
       - rooted Wayland still has no natural IME/input-method client, so the current closure path is a runtime-owned software keyboard rather than more compositor IME surgery
@@ -215,8 +232,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
         - keyboard tap dispatching `keydown` + `input`
         - bundled host runtime smoke:
           - `just runtime-app-keyboard-smoke`
-      - still pending:
-        - fresh live Pixel proof that tapping compose/input fields now yields usable text entry end to end
+      - live rooted proof now green:
+        - `just pixel-shell-keyboard-smoke`
+        - current validated run:
+          - `build/pixel/shell/20260415T191547Z`
     - keep app identity/app-id overrides truthful on fresh rooted runs
     - keep the shell operator path boring and explicit
       - `run <serial>` now holds indefinitely by default
@@ -258,6 +277,18 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
         - shell auto-open now validates shell-level markers instead:
           - `mapped-window`
           - `surface-app-tracked app=<id>`
+
+## Near-Term Steps
+
+- [ ] Run the broader fast gate and land this keyboard-smoke slice cleanly.
+- [ ] Add one more rooted shell smoke for a second app path so launch/input regressions are not Timeline-only.
+- [ ] Keep reducing Pixel shell cold-start churn, but treat incremental interaction latency as the primary bar.
+
+## Implementation Notes
+
+- The rooted shell hold wrapper is not the session lifetime. It returns after startup checkpoints while the on-device compositor and runtime app continue running.
+- Any Pixel smoke that waits on post-startup behavior must track remote liveness through the control socket and/or guest-compositor process, not the local launcher PID.
+- Real panel touch on the rooted Pixel must use evdev/sendevent for end-to-end input proof. `shadowctl tap` is still useful for compositor-space control, but it is not a substitute for device touch in keyboard/input smokes.
         - `run` / `ui-run` default back to `app=shell`
 
 ## What Is Proven vs. What Is Not

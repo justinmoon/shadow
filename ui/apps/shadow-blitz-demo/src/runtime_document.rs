@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     env, fs,
     path::PathBuf,
     sync::mpsc::{channel, Receiver, Sender},
@@ -149,7 +150,13 @@ impl RuntimeDocument {
         if width == 0 || height == 0 {
             return;
         }
+        let changed = self.surface_size != (width, height);
         self.surface_size = (width, height);
+        if changed {
+            for target_id in self.debug_target_hitmap_targets() {
+                self.log_target_hitmap(&target_id);
+            }
+        }
     }
 
     fn apply_render(&mut self) {
@@ -184,8 +191,11 @@ impl RuntimeDocument {
             "apply-render-dom-updated elapsed_ms={}",
             render_start.elapsed().as_millis()
         ));
-        if debug_target_hitmap_enabled() {
-            self.log_target_hitmap(&self.touch_signal_target_id());
+        let debug_targets = self.debug_target_hitmap_targets();
+        if !debug_targets.is_empty() {
+            for target_id in debug_targets {
+                self.log_target_hitmap(&target_id);
+            }
             runtime_log(format!(
                 "apply-render-target-hitmap elapsed_ms={}",
                 render_start.elapsed().as_millis()
@@ -777,7 +787,7 @@ impl RuntimeDocument {
     }
 
     fn log_target_hitmap(&mut self, target_id: &str) {
-        let (surface_width, surface_height) = runtime_surface_size();
+        let (surface_width, surface_height) = self.surface_size;
         let mut inner = self.inner_mut();
         inner.set_viewport(blitz_traits::shell::Viewport::new(
             surface_width,
@@ -794,10 +804,21 @@ impl RuntimeDocument {
         let mut max_x = 0_u32;
         let mut max_y = 0_u32;
         let mut sample = None;
+        let keyboard_target = target_id.starts_with(SOFT_KEYBOARD_TARGET_PREFIX);
+        let hit_kind = if keyboard_target {
+            "soft-keyboard"
+        } else {
+            "dom"
+        };
 
         for y in (0..surface_height).step_by(4) {
             for x in (0..surface_width).step_by(4) {
-                if self.shadow_target_id_at(x as f32, y as f32).as_deref() == Some(target_id) {
+                let hit_target_id = if keyboard_target {
+                    self.soft_keyboard_target_id_at(x as f32, y as f32)
+                } else {
+                    self.shadow_target_id_at(x as f32, y as f32)
+                };
+                if hit_target_id.as_deref() == Some(target_id) {
                     hit_count += 1;
                     min_x = min_x.min(x);
                     min_y = min_y.min(y);
@@ -810,14 +831,41 @@ impl RuntimeDocument {
 
         match sample {
             Some((sample_x, sample_y)) => eprintln!(
-                "[shadow-runtime-demo] target-hitmap id={} hits={} bbox={}..{},{}..{} sample={},{}",
-                target_id, hit_count, min_x, max_x, min_y, max_y, sample_x, sample_y
+                "[shadow-runtime-demo] target-hitmap id={} kind={} surface={}x{} hits={} bbox={}..{},{}..{} sample={},{}",
+                target_id,
+                hit_kind,
+                surface_width,
+                surface_height,
+                hit_count,
+                min_x,
+                max_x,
+                min_y,
+                max_y,
+                sample_x,
+                sample_y
             ),
             None => eprintln!(
-                "[shadow-runtime-demo] target-hitmap id={} hits=0",
-                target_id
+                "[shadow-runtime-demo] target-hitmap id={} kind={} surface={}x{} hits=0",
+                target_id, hit_kind, surface_width, surface_height
             ),
         }
+    }
+
+    fn debug_target_hitmap_targets(&self) -> Vec<String> {
+        let mut targets = BTreeSet::new();
+        if let Ok(value) = env::var("SHADOW_BLITZ_DEBUG_TARGET_HITMAP_IDS") {
+            for target in value
+                .split(|ch: char| ch == ',' || ch.is_ascii_whitespace())
+                .map(str::trim)
+                .filter(|target| !target.is_empty())
+            {
+                targets.insert(String::from(target));
+            }
+        }
+        if debug_target_hitmap_enabled() {
+            targets.insert(self.touch_signal_target_id());
+        }
+        targets.into_iter().collect()
     }
 
     fn ensure_exit_timer_started(&mut self, task_context: Option<&Context<'_>>) {
