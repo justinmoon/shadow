@@ -28,7 +28,6 @@ fi
 
 for profile in "${profiles[@]}"; do
   PIXEL_RUNTIME_GPU_PROBE_DIR="$probe_dir" \
-    PIXEL_RUNTIME_APP_GPU_PROFILE="$profile" \
     "$SCRIPT_DIR/pixel_runtime_app_drm_gpu_probe.sh" "$profile"
 done
 
