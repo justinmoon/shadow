@@ -107,7 +107,7 @@ if [[ ! -s "$RUNTIME_ENV_PATH" ]] \
 fi
 SHADOW_UI_VM_SOURCE="$REPO_ROOT" \
   SHADOW_UI_VM_SSH_PORT="$ui_vm_ssh_port_value" \
-  nix build --impure --accept-flake-config -o "$RUNNER_LINK" .#ui-vm >/dev/null
+  nix build --impure --accept-flake-config --option builders "" -o "$RUNNER_LINK" .#ui-vm >/dev/null
 
 echo "ui-vm-run: launching Shadow UI VM"
 echo "ui-vm-run: qemu window will host the real Linux compositor"

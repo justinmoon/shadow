@@ -12,8 +12,10 @@ nixpkgs.lib.nixosSystem {
     ({ config, pkgs, ... }:
       let
         stateDir = "/var/lib/shadow-ui";
+        buildCacheDir = "/var/cache/shadow-ui-build";
         repoDir = "/work/shadow";
-        targetDir = "${stateDir}/target";
+        targetDir = "${buildCacheDir}/target";
+        cargoHomeDir = "${buildCacheDir}/cargo-home";
         homeDir = "${stateDir}/home";
         logDir = "${stateDir}/log";
         runtimeLibDir = "${stateDir}/runtime-libs";
@@ -60,6 +62,7 @@ nixpkgs.lib.nixosSystem {
         shadowUiGuestEnv = pkgs.writeText "shadow-ui-env.sh" ''
           export HOME=${homeDir}
           export XDG_CACHE_HOME="$HOME/.cache"
+          export CARGO_HOME=${cargoHomeDir}
           export CARGO_TARGET_DIR=${targetDir}
           export PKG_CONFIG_PATH="${guestPkgConfigPath}:''${PKG_CONFIG_PATH:-}"
           export LD_LIBRARY_PATH="${runtimeLibDir}:${guestLibraryPath}:''${LD_LIBRARY_PATH:-}"
@@ -69,7 +72,7 @@ nixpkgs.lib.nixosSystem {
           export RUST_BACKTRACE=1
           export XDG_RUNTIME_DIR="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
-          mkdir -p "$HOME" "$XDG_CACHE_HOME" "$CARGO_TARGET_DIR" ${logDir} ${runtimeLibDir}
+          mkdir -p "$HOME" "$XDG_CACHE_HOME" "$CARGO_HOME" "$CARGO_TARGET_DIR" ${logDir} ${runtimeLibDir}
           cp -fL ${pkgs.libglvnd}/lib/libEGL.so.1 ${runtimeLibDir}/libEGL.so.1
           cp -fL ${pkgs.libglvnd}/lib/libGL.so.1 ${runtimeLibDir}/libGL.so.1
           cp -fL ${pkgs.libglvnd}/lib/libOpenGL.so.0 ${runtimeLibDir}/libOpenGL.so.0
@@ -78,6 +81,7 @@ nixpkgs.lib.nixosSystem {
           cat >${sessionEnv} <<EOF
           export HOME="$HOME"
           export XDG_CACHE_HOME="$XDG_CACHE_HOME"
+          export CARGO_HOME="$CARGO_HOME"
           export CARGO_TARGET_DIR="$CARGO_TARGET_DIR"
           export PKG_CONFIG_PATH="$PKG_CONFIG_PATH"
           export LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
@@ -360,6 +364,8 @@ PY
 
         systemd.tmpfiles.rules = [
           "d ${stateDir} 0755 shadow shadow -"
+          "d ${buildCacheDir} 0755 shadow shadow -"
+          "d ${cargoHomeDir} 0755 shadow shadow -"
           "d ${targetDir} 0755 shadow shadow -"
           "d ${logDir} 0755 shadow shadow -"
           "d ${runtimeLibDir} 0755 shadow shadow -"
@@ -392,6 +398,11 @@ PY
               image = ".shadow-vm/nix-store-overlay.img";
               mountPoint = config.microvm.writableStoreOverlay;
               size = 8192;
+            }
+            {
+              image = ".shadow-vm/shadow-ui-build-cache.img";
+              mountPoint = buildCacheDir;
+              size = 16384;
             }
             {
               image = ".shadow-vm/shadow-ui-state.img";

@@ -22,6 +22,7 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 
 - `just ui-check` runs formatting, core tests, and compositor/runtime compile checks for the `ui/` workspace.
 - `just ui-vm-smoke` / `just vm-smoke` run the required local VM shell/app smoke: timeline launch/home/reopen plus camera and podcast launch.
+- `just ui-vm-smoke` / `just vm-smoke` keep the VM lane local-only and reuse the dedicated guest Cargo cache image at `.shadow-vm/shadow-ui-build-cache.img` while still resetting the runtime state image each run.
 - `just ui-smoke` remains the manual Linux compositor smoke outside the required CI gate.
 - `just run target=vm` / `just stop target=vm` are the public VM session entrypoints. `vm-*` drives the rest of the local macOS QEMU VM loop, and `ui-vm-*` remains as compatibility aliases.
 - `scripts/shadowctl` is the target-aware operator CLI behind the public run/stop wrappers, VM diagnostics, and rooted-Pixel shell control recipes; use `-t vm`, `-t pixel`, or a specific Pixel serial as needed.

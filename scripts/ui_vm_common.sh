@@ -38,7 +38,7 @@ ui_vm_build_runner() {
   mkdir -p "$(ui_vm_state_dir)"
   SHADOW_UI_VM_SOURCE="$(ui_vm_repo_root)" \
     SHADOW_UI_VM_SSH_PORT="$(ui_vm_ssh_port)" \
-    nix build --impure --accept-flake-config -o "$(ui_vm_runner_link)" .#ui-vm >/dev/null
+    nix build --impure --accept-flake-config --option builders "" -o "$(ui_vm_runner_link)" .#ui-vm >/dev/null
 }
 
 ui_vm_ssh() {
