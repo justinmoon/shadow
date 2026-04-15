@@ -37,7 +37,6 @@ EOF
 if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}" ]]; then
   camera_guest_env="${camera_guest_env}"$'\n'"${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV}"
 fi
-camera_guest_env="$(printf '%s\n' "$camera_guest_env" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
 
 PIXEL_TAKEOVER_STOP_ALLOCATOR=0 \
 PIXEL_RUNTIME_APP_INPUT_PATH="runtime/app-camera/app.tsx" \

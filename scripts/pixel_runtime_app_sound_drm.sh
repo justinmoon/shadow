@@ -49,7 +49,6 @@ fi
 if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}" ]]; then
   sound_guest_env="${sound_guest_env}"$'\n'"${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV}"
 fi
-sound_guest_env="$(printf '%s\n' "$sound_guest_env" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
 
 required_markers=$(
   cat <<EOF

@@ -15,7 +15,6 @@ EOF
 if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}" ]]; then
   gm_guest_env="${gm_guest_env}"$'\n'"${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV}"
 fi
-gm_guest_env="$(printf '%s\n' "$gm_guest_env" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
 
 PIXEL_RUNTIME_APP_INPUT_PATH="runtime/app-nostr-gm/app.tsx" \
 PIXEL_RUNTIME_APP_CACHE_DIR="build/runtime/pixel-app-nostr-gm" \

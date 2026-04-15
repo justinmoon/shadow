@@ -15,7 +15,6 @@ EOF
 if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}" ]]; then
   timeline_guest_env="${timeline_guest_env}"$'\n'"${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV}"
 fi
-timeline_guest_env="$(printf '%s\n' "$timeline_guest_env" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
 runtime_app_config_json="${SHADOW_RUNTIME_APP_CONFIG_JSON:-}"
 if [[ -z "$runtime_app_config_json" ]]; then
   runtime_app_config_json='{"limit":12,"relayUrls":["wss://relay.primal.net/","wss://relay.damus.io/"],"syncOnStart":true}'

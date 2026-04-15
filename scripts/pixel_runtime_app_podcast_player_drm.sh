@@ -61,7 +61,6 @@ fi
 if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}" ]]; then
   podcast_guest_env="${podcast_guest_env}"$'\n'"${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV}"
 fi
-podcast_guest_env="$(printf '%s\n' "$podcast_guest_env" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')"
 
 required_markers=$(
   cat <<EOF
