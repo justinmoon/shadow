@@ -42,12 +42,14 @@ dump_run_log() {
 }
 
 cleanup() {
-  PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+  pixel_stop_shadow_session_best_effort "$serial"
+  pixel_restore_android_best_effort "$serial" 60
 }
 
 trap cleanup EXIT
 
-PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+pixel_stop_shadow_session_best_effort "$serial"
+pixel_restore_android_best_effort "$serial" 60
 
 (
   cd "$REPO_ROOT"

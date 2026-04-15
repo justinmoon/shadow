@@ -196,6 +196,86 @@ pixel_root_shell() {
   return 1
 }
 
+pixel_restore_android_best_effort() {
+  local serial timeout_secs pid
+  serial="$1"
+  timeout_secs="${2:-60}"
+  pid=""
+
+  (
+    PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+  ) &
+  pid="$!"
+
+  local deadline=$((SECONDS + timeout_secs))
+  while (( SECONDS < deadline )); do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      wait "$pid" >/dev/null 2>&1 || true
+      return 0
+    fi
+    sleep 1
+  done
+
+  kill "$pid" >/dev/null 2>&1 || true
+  wait "$pid" >/dev/null 2>&1 || true
+  printf 'pixel: warning: pixel_restore_android timed out after %ss\n' "$timeout_secs" >&2
+  return 0
+}
+
+pixel_kill_stale_shadow_processes_shell_snippet() {
+  cat <<'EOF'
+kill_stale_shadow_processes() {
+  shadow_process_pids() {
+    name="$1"
+    ps -A | awk -v name="$name" '$NF == name { print $2 }'
+  }
+
+  kill_named_shadow_process() {
+    name="$1"
+    attempts="${2:-10}"
+    count=0
+
+    for pid in $(shadow_process_pids "$name"); do
+      kill "$pid" >/dev/null 2>&1 || true
+    done
+    while [ "$count" -lt "$attempts" ]; do
+      if [ -z "$(shadow_process_pids "$name")" ]; then
+        return 0
+      fi
+      count=$((count + 1))
+      sleep 0.2
+    done
+
+    for pid in $(shadow_process_pids "$name"); do
+      kill -KILL "$pid" >/dev/null 2>&1 || true
+    done
+    while [ -n "$(shadow_process_pids "$name")" ]; do
+      sleep 0.1
+    done
+  }
+
+  kill_named_shadow_process shadow-blitz-demo
+  kill_named_shadow_process shadow-compositor-guest
+  kill_named_shadow_process shadow-session
+}
+
+kill_stale_shadow_processes
+EOF
+}
+
+pixel_stop_shadow_session_script() {
+  cat <<EOF
+$(pixel_kill_stale_shadow_processes_shell_snippet)
+rm -f '$(pixel_shell_control_socket_path)' >/dev/null 2>&1 || true
+EOF
+}
+
+pixel_stop_shadow_session_best_effort() {
+  local serial
+  serial="$1"
+  pixel_root_shell "$serial" "$(pixel_stop_shadow_session_script)" >/dev/null 2>&1 || true
+}
+
 pixel_takeover_display_service_helpers_script() {
   cat <<'EOF'
 service_process_exists() {
@@ -286,50 +366,14 @@ pixel_takeover_stop_services_script() {
   cat <<'EOF'
 EOF
   pixel_takeover_display_service_helpers_script
+  pixel_kill_stale_shadow_processes_shell_snippet
   cat <<'EOF'
-
-kill_stale_shadow_processes() {
-  shadow_process_pids() {
-    name="$1"
-    ps -A | awk -v name="$name" '$NF == name { print $2 }'
-  }
-
-  kill_named_shadow_process() {
-    name="$1"
-    attempts="${2:-10}"
-    count=0
-
-    for pid in $(shadow_process_pids "$name"); do
-      kill "$pid" >/dev/null 2>&1 || true
-    done
-    while [ "$count" -lt "$attempts" ]; do
-      if [ -z "$(shadow_process_pids "$name")" ]; then
-        return 0
-      fi
-      count=$((count + 1))
-      sleep 0.2
-    done
-
-    for pid in $(shadow_process_pids "$name"); do
-      kill -KILL "$pid" >/dev/null 2>&1 || true
-    done
-    while [ -n "$(shadow_process_pids "$name")" ]; do
-      sleep 0.1
-    done
-  }
-
-  kill_named_shadow_process shadow-blitz-demo
-  kill_named_shadow_process shadow-compositor-guest
-  kill_named_shadow_process shadow-session
-}
-
 stop_service_and_wait() {
   service="$1"
   stop "$service" || true
   wait_for_service_state "$service" stopped 50 || true
 }
 
-kill_stale_shadow_processes
 stop_service_and_wait surfaceflinger
 stop_service_and_wait bootanim
 for service in \
@@ -363,43 +407,8 @@ pixel_takeover_start_services_script() {
   cat <<'EOF'
 EOF
   pixel_takeover_display_service_helpers_script
+  pixel_kill_stale_shadow_processes_shell_snippet
   cat <<'EOF'
-
-kill_stale_shadow_processes() {
-  shadow_process_pids() {
-    name="$1"
-    ps -A | awk -v name="$name" '$NF == name { print $2 }'
-  }
-
-  kill_named_shadow_process() {
-    name="$1"
-    attempts="${2:-10}"
-    count=0
-
-    for pid in $(shadow_process_pids "$name"); do
-      kill "$pid" >/dev/null 2>&1 || true
-    done
-    while [ "$count" -lt "$attempts" ]; do
-      if [ -z "$(shadow_process_pids "$name")" ]; then
-        return 0
-      fi
-      count=$((count + 1))
-      sleep 0.2
-    done
-
-    for pid in $(shadow_process_pids "$name"); do
-      kill -KILL "$pid" >/dev/null 2>&1 || true
-    done
-    while [ -n "$(shadow_process_pids "$name")" ]; do
-      sleep 0.1
-    done
-  }
-
-  kill_named_shadow_process shadow-blitz-demo
-  kill_named_shadow_process shadow-compositor-guest
-  kill_named_shadow_process shadow-session
-}
-
 start_service_and_wait() {
   service="$1"
   start "$service" || true
@@ -411,7 +420,6 @@ boot_completed() {
     || [ "$(getprop dev.bootcomplete | tr -d '\r')" = "1" ]
 }
 
-kill_stale_shadow_processes
 for service in \
   vendor.qti.hardware.display.allocator \
   vendor.qti.hardware.display.allocator-service

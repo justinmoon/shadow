@@ -32,8 +32,10 @@ dump_run_log() {
 }
 
 cleanup() {
+  pixel_stop_shadow_session_best_effort "$serial"
   restore_android_best_effort
   if [[ -n "${session_pid:-}" ]]; then
+    kill "$session_pid" >/dev/null 2>&1 || true
     wait "$session_pid" >/dev/null 2>&1 || true
   fi
 }
@@ -223,28 +225,12 @@ PY
 }
 
 restore_android_best_effort() {
-  local pid=""
-  (
-    PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
-  ) &
-  pid="$!"
-
-  local deadline=$((SECONDS + restore_timeout_secs))
-  while (( SECONDS < deadline )); do
-    if ! kill -0 "$pid" >/dev/null 2>&1; then
-      wait "$pid" >/dev/null 2>&1 || true
-      return 0
-    fi
-    sleep 1
-  done
-
-  kill "$pid" >/dev/null 2>&1 || true
-  wait "$pid" >/dev/null 2>&1 || true
-  printf 'pixel-shell-keyboard-smoke: warning: pixel_restore_android timed out after %ss\n' \
-    "$restore_timeout_secs" >>"$run_log"
-  return 0
+  if ! pixel_restore_android_best_effort "$serial" "$restore_timeout_secs"; then
+    return 0
+  fi
 }
 
+pixel_stop_shadow_session_best_effort "$serial"
 restore_android_best_effort
 
 (

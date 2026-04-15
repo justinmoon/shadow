@@ -138,6 +138,18 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - the smoke was incorrectly using the host hold-wrapper PID as session liveness, even though the wrapper exits after startup while the remote compositor keeps running
   - validated rooted run:
     - `build/pixel/shell/20260415T191547Z`
+- [x] Rooted Pixel shell lifecycle smokes now exit cleanly instead of leaking stale sessions/wrappers.
+  - fixes:
+    - add a bounded shared `pixel_restore_android_best_effort`
+    - add explicit stale-Shadow-session teardown before restore and before the next shell smoke run
+    - kill the local hold-wrapper during smoke cleanup instead of waiting forever on a hold-mode guest session
+  - validated rooted runs:
+    - `just pixel-shell-timeline-smoke`
+      - `build/pixel/shell/20260415T195844Z`
+    - `just pixel-ci timeline`
+      - `build/pixel/runs/ci/20260415T200202Z`
+  - remaining rough edge:
+    - this handset still sometimes emits restore timeout warnings and `/system/bin/sh: su: inaccessible or not found` noise during cleanup probes, but those are now warnings instead of hangs
 
 ### Not Done
 
@@ -280,7 +292,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## Near-Term Steps
 
-- [ ] Run the broader fast gate and land this keyboard-smoke slice cleanly.
+- [ ] Run the broader fast gate and land the smoke/cleanup slices cleanly.
 - [ ] Add one more rooted shell smoke for a second app path so launch/input regressions are not Timeline-only.
 - [ ] Keep reducing Pixel shell cold-start churn, but treat incremental interaction latency as the primary bar.
 
@@ -289,6 +301,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The rooted shell hold wrapper is not the session lifetime. It returns after startup checkpoints while the on-device compositor and runtime app continue running.
 - Any Pixel smoke that waits on post-startup behavior must track remote liveness through the control socket and/or guest-compositor process, not the local launcher PID.
 - Real panel touch on the rooted Pixel must use evdev/sendevent for end-to-end input proof. `shadowctl tap` is still useful for compositor-space control, but it is not a substitute for device touch in keyboard/input smokes.
+- Restoring Android and stopping Shadow are separate concerns. A timed-out restore can leave a live rooted shell behind, so shell smokes and Pixel CI must explicitly stop stale Shadow processes before assuming the control socket state is meaningful.
         - `run` / `ui-run` default back to `app=shell`
 
 ## What Is Proven vs. What Is Not

@@ -14,6 +14,7 @@ state_after_open_path="$run_dir/state-after-open.json"
 state_after_home_path="$run_dir/state-after-home.json"
 state_after_reopen_path="$run_dir/state-after-reopen.json"
 control_socket_path="$(pixel_shell_control_socket_path)"
+restore_timeout_secs="${PIXEL_SHELL_SMOKE_RESTORE_TIMEOUT_SECS:-60}"
 session_pid=""
 latest_state_json=""
 launcher_args=(--no-camera-runtime --app timeline)
@@ -43,8 +44,10 @@ dump_run_log() {
 }
 
 cleanup() {
-  PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+  pixel_stop_shadow_session_best_effort "$serial"
+  pixel_restore_android_best_effort "$serial" "$restore_timeout_secs"
   if [[ -n "${session_pid:-}" ]]; then
+    kill "$session_pid" >/dev/null 2>&1 || true
     wait "$session_pid" >/dev/null 2>&1 || true
   fi
 }
@@ -52,7 +55,15 @@ cleanup() {
 trap cleanup EXIT
 
 session_still_running() {
-  [[ -n "${session_pid:-}" ]] && kill -0 "$session_pid" >/dev/null 2>&1
+  if [[ -n "${session_pid:-}" ]] && kill -0 "$session_pid" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if pixel_root_socket_exists "$serial" "$control_socket_path"; then
+    return 0
+  fi
+
+  pixel_root_process_exists "$serial" "$(basename "$(pixel_compositor_dst)")"
 }
 
 capture_state_json() {
@@ -148,7 +159,8 @@ shell_control_socket_ready() {
   pixel_root_socket_exists "$serial" "$control_socket_path"
 }
 
-PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+pixel_stop_shadow_session_best_effort "$serial"
+pixel_restore_android_best_effort "$serial" "$restore_timeout_secs"
 
 (
   cd "$REPO_ROOT"
