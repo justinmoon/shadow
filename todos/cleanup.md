@@ -49,10 +49,13 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Pick one target vocabulary in `shadowctl`, `just`, docs, and scripts, then delete aliases and fallback naming.
   - `desktop`, `ui-run` / `ui-stop`, and `ui-vm-*` still exist as compatibility layers and should be deleted or demoted after the remaining wrappers move cleanly.
   - Preserve compatibility only long enough to land the cleanup safely; do not keep permanent synonym layers.
-- [ ] Collapse the env-var surface to the minimum needed for shell/home and app launch.
+- [~] Collapse the env-var surface to the minimum needed for shell/home and app launch.
   - Introduce one typed `LaunchConfig` / `SessionConfig`.
+  - 2026-04-15 guest startup-config batch landed in the guest compositor: startup-mode, transport, frame/drm, touch-signal, client path/runtime-dir/runtime-host/client-env, and toplevel sizing now parse in one typed loader instead of being read inline across `main.rs` and `launch.rs`.
   - Delete env vars that only exist for historical probes, alternate transports, direct runtime-app lanes, or debugging experiments.
+  - Dead guest knobs removed in this chunk: `SHADOW_GUEST_SHELL` and `SHADOW_GUEST_ENABLE_KEYBOARD_SEAT` are no longer read.
   - Replace `SHADOW_GUEST_CLIENT_ENV` and other stringly env blobs with structured config.
+  - Invalid guest startup env values now fail explicitly instead of silently defaulting for transport, toplevel sizing, guest client env assignments, and client linger timing.
   - Separate true debug toggles from product launch config.
 - [ ] Make app/runtime launch metadata single-source.
   - Stop duplicating app ids, bundle env names, input paths, and cache dirs across Rust and shell.
@@ -60,8 +63,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Extract shared compositor plumbing.
   - Deduplicate `control.rs` and `launch.rs` logic between `shadow-compositor` and `shadow-compositor-guest`.
   - Centralize client-path resolution, runtime-dir resolution, and env-override parsing.
-- [ ] Decompose `shadow-compositor-guest` after config and shared helpers exist.
+- [~] Decompose `shadow-compositor-guest` after config and shared helpers exist.
   - Move constructor-time env reads into a typed config loader.
+  - 2026-04-15 startup-config loader landed as the first real split. `main.rs` no longer owns transport parsing, shell/app startup-mode parsing, or frame/toplevel env parsing inline.
   - Split transport, launch policy, shell startup, touch/input, and DRM seams out of `main.rs`.
 - [ ] Delete obsolete scripts and just recipes once `shadowctl` covers the kept operator surface.
   - Blocked on the `shadowctl` refactor above.
@@ -106,6 +110,14 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `ui-run`, `ui-stop`, and most `ui-vm-*` aliases still exist as compatibility wrappers. They are no longer the preferred front door, but they are not deleted yet.
   - `ui-vm-status` and `ui-vm-journal` intentionally stay on their direct scripts for now because the existing output is richer than the summarized `shadowctl` replacements.
   - Added dry-run coverage for the new `shadowctl start` / `shadowctl stop` seam in `scripts/ui_run_arg_smoke.sh`.
+- 2026-04-15: Landing blocker and guest startup-config chunk landed.
+  - Added repo-level `deno.json` plus `deno.lock` so the Solid runtime-app compile path no longer depends on a sibling worktree having already populated `node_modules`.
+  - This fixed the `ui-vm-smoke` failure inside `scripts/land.sh`, where `runtime_compile_solid.ts` could not resolve `babel-preset-solid` in a fresh worktree.
+  - Added `ui/crates/shadow-compositor-guest/src/config.rs` as the typed startup loader for the guest compositor.
+  - Guest startup mode now derives from `SHADOW_GUEST_START_APP_ID` plus `SHADOW_GUEST_SHELL_START_APP_ID` in one place, with explicit errors for invalid app ids, invalid transport values, invalid guest client env blobs, invalid linger timing, and invalid toplevel dimensions.
+  - `main.rs` and `launch.rs` now consume parsed startup/client config instead of reading those env vars inline across constructor, helper, and startup branches.
+  - Dead guest env knobs removed in this chunk: `SHADOW_GUEST_SHELL` and `SHADOW_GUEST_ENABLE_KEYBOARD_SEAT`.
+  - Good next seam: cut the remaining producer-side env duplication in `scripts/pixel_*` and `rust/shadow-session`, then start deleting direct runtime/probe knobs that no longer serve the VM/Pixel shell surface.
 - 2026-04-08: First bounded Rust/UI cleanup chunk landed.
   - Added `ui/crates/shadow-compositor-common` as the shared home for compositor control-listener plumbing and launch helpers.
   - `shadow-compositor` and `shadow-compositor-guest` now share control socket setup plus common launch helpers instead of carrying copy-pasted implementations.

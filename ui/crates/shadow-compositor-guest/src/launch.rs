@@ -4,9 +4,6 @@ use std::{
     process::{Child, Command},
 };
 
-use shadow_compositor_common::launch::{
-    apply_env_assignments, first_env_value, runtime_dir_from_env_or,
-};
 use shadow_ui_core::{
     app::{find_app, AppId},
     control,
@@ -25,9 +22,13 @@ pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Resul
         )
     })?;
 
-    let client_path = app_client_path();
+    let client_path = state.client_config.app_client_path.clone();
     let mut command = Command::new(&client_path);
-    configure_guest_client_command(&mut command, state.control_socket_path.as_os_str())?;
+    configure_guest_client_command(
+        &mut command,
+        &state.client_config,
+        state.control_socket_path.as_os_str(),
+    )?;
     command
         .env("SHADOW_BLITZ_APP_TITLE", app.window_title)
         .env("SHADOW_BLITZ_WAYLAND_APP_ID", app.wayland_app_id)
@@ -37,39 +38,36 @@ pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Resul
 }
 
 pub fn spawn_client(state: &mut ShadowGuestCompositor) -> io::Result<Child> {
-    let client_path = app_client_path();
+    let client_path = state.client_config.app_client_path.clone();
     let mut command = Command::new(&client_path);
-    configure_guest_client_command(&mut command, state.control_socket_path.as_os_str())?;
+    configure_guest_client_command(
+        &mut command,
+        &state.client_config,
+        state.control_socket_path.as_os_str(),
+    )?;
     state.spawn_wayland_command(command, &client_path)
-}
-
-fn app_client_path() -> String {
-    first_env_value(&["SHADOW_APP_CLIENT", "SHADOW_GUEST_CLIENT"])
-        .unwrap_or_else(crate::default_guest_client_path)
 }
 
 fn configure_guest_client_command(
     command: &mut Command,
+    client_config: &crate::config::GuestClientConfig,
     control_socket_path: &OsStr,
 ) -> io::Result<()> {
     command
-        .env(
-            "XDG_RUNTIME_DIR",
-            runtime_dir_from_env_or(|| "/data/local/tmp/shadow-runtime".into()),
-        )
+        .env("XDG_RUNTIME_DIR", &client_config.runtime_dir)
         .env(control::COMPOSITOR_CONTROL_ENV, control_socket_path);
 
-    if let Some(value) = std::env::var_os("SHADOW_RUNTIME_HOST_BINARY_PATH") {
+    if let Some(value) = &client_config.runtime_host_binary_path {
         command.env("SHADOW_RUNTIME_HOST_BINARY_PATH", value);
     }
-    if let Some(value) = std::env::var("SHADOW_GUEST_CLIENT_ENV").ok() {
-        apply_env_assignments(command, &value).map_err(io::Error::other)?;
+    for (key, value) in &client_config.env_assignments {
+        command.env(key, value);
     }
-    if let Some(value) = std::env::var_os("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE") {
-        command.env("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE", value);
+    if client_config.exit_on_configure {
+        command.env("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE", "1");
     }
-    if let Some(value) = std::env::var_os("SHADOW_GUEST_CLIENT_LINGER_MS") {
-        command.env("SHADOW_GUEST_CLIENT_LINGER_MS", value);
+    if let Some(value) = client_config.linger_ms {
+        command.env("SHADOW_GUEST_CLIENT_LINGER_MS", value.to_string());
     }
 
     Ok(())

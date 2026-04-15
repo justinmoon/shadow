@@ -1,3 +1,4 @@
+mod config;
 mod control;
 mod kms;
 mod launch;
@@ -16,6 +17,7 @@ use std::{
 };
 
 use chrono::Local;
+use config::{GuestClientConfig, GuestStartupConfig, StartupAction, TransportRequest};
 use shadow_ui_core::{
     app::{self, AppId},
     control::ControlRequest,
@@ -118,6 +120,7 @@ struct ShadowGuestCompositor {
     shelved_windows: HashMap<AppId, Window>,
     focused_app: Option<AppId>,
     shell_enabled: bool,
+    client_config: GuestClientConfig,
     shell: ShellModel,
     shell_surface: GuestShellSurface,
     shell_touch_active: bool,
@@ -132,20 +135,24 @@ struct ShadowGuestCompositor {
     kms_display: Option<kms::KmsDisplay>,
     last_frame_size: Option<(u32, u32)>,
     last_buffer_signature: Option<String>,
+    toplevel_size: smithay::utils::Size<i32, Logical>,
+    frame_artifact_path: PathBuf,
+    drm_enabled: bool,
+    log_touch_geometry: bool,
     touch_signal_counter: u64,
     touch_signal_path: Option<PathBuf>,
 }
 
 impl ShadowGuestCompositor {
-    fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> Self {
+    fn new(
+        config: &GuestStartupConfig,
+        event_loop: &mut EventLoop<Self>,
+        display: Display<Self>,
+    ) -> Self {
         let display_handle = display.handle();
         let loop_signal = event_loop.get_signal();
-        let shell_enabled = std::env::var_os("SHADOW_GUEST_SHELL").is_some()
-            || std::env::var("SHADOW_GUEST_START_APP_ID").ok().as_deref()
-                == Some(app::SHELL_APP_ID.as_str());
-        let exit_on_client_disconnect =
-            std::env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT").is_some()
-                && !shell_enabled;
+        let shell_enabled = config.startup_action.shell_enabled();
+        let exit_on_client_disconnect = config.exit_on_client_disconnect;
         let dmabuf_formats = Self::supported_dmabuf_formats();
         let mut dmabuf_state = DmabufState::new();
         let dmabuf_global =
@@ -153,13 +160,14 @@ impl ShadowGuestCompositor {
         let presentation_state =
             PresentationState::new::<Self>(&display_handle, libc::CLOCK_MONOTONIC as u32);
         let transport = Self::init_wayland_transport(
+            config.transport,
             display,
             event_loop,
             exit_on_client_disconnect.then_some(loop_signal.clone()),
         );
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&display_handle, "shadow-guest");
-        if keyboard_seat_enabled() {
+        if config.keyboard_seat_enabled {
             seat.add_keyboard(Default::default(), 200, 25).unwrap();
         }
         seat.add_pointer();
@@ -187,29 +195,27 @@ impl ShadowGuestCompositor {
             shelved_windows: HashMap::new(),
             focused_app: None,
             shell_enabled,
+            client_config: config.client.clone(),
             shell: ShellModel::new(),
             shell_surface: GuestShellSurface::new(WIDTH as u32, HEIGHT as u32),
             shell_touch_active: false,
             app_touch_gesture: None,
             control_socket_path,
-            exit_on_first_window: std::env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_WINDOW")
-                .is_some(),
-            exit_on_first_frame: std::env::var_os("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME")
-                .is_some(),
+            exit_on_first_window: config.exit_on_first_window,
+            exit_on_first_frame: config.exit_on_first_frame,
             exit_on_client_disconnect,
-            exit_on_first_dma_buffer: std::env::var_os(
-                "SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_DMA_BUFFER",
-            )
-            .is_some(),
-            selftest_drm: std::env::var_os("SHADOW_GUEST_COMPOSITOR_SELFTEST_DRM").is_some(),
-            boot_splash_drm: std::env::var_os("SHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM").is_some(),
+            exit_on_first_dma_buffer: config.exit_on_first_dma_buffer,
+            selftest_drm: config.selftest_drm,
+            boot_splash_drm: config.boot_splash_drm,
             kms_display: None,
             last_frame_size: None,
             last_buffer_signature: None,
+            toplevel_size: (config.toplevel_width, config.toplevel_height).into(),
+            frame_artifact_path: config.frame_artifact_path.clone(),
+            drm_enabled: config.drm_enabled,
+            log_touch_geometry: config.log_touch_geometry,
             touch_signal_counter: 0,
-            touch_signal_path: std::env::var_os("SHADOW_GUEST_TOUCH_SIGNAL_PATH")
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from),
+            touch_signal_path: config.touch_signal_path.clone(),
         };
         tracing::info!(
             "[shadow-guest-compositor] dmabuf-global-ready formats={}",
@@ -266,34 +272,33 @@ impl ShadowGuestCompositor {
     }
 
     fn init_wayland_transport(
+        requested: TransportRequest,
         display: Display<Self>,
         event_loop: &mut EventLoop<Self>,
         disconnect_signal: Option<LoopSignal>,
     ) -> WaylandTransport {
         Self::insert_display_source(display, event_loop);
 
-        let requested =
-            std::env::var("SHADOW_GUEST_COMPOSITOR_TRANSPORT").unwrap_or_else(|_| "auto".into());
-        match requested.as_str() {
-            "socket" => WaylandTransport::NamedSocket(Self::insert_wayland_listener(
-                event_loop,
-                disconnect_signal,
-            )),
-            "direct" => {
+        match requested {
+            TransportRequest::Socket => WaylandTransport::NamedSocket(
+                Self::insert_wayland_listener(event_loop, disconnect_signal),
+            ),
+            TransportRequest::Direct => {
                 tracing::info!("[shadow-guest-compositor] transport=direct-client-fd");
                 WaylandTransport::DirectClientFd
             }
-            "auto" => match Self::try_insert_wayland_listener(event_loop, disconnect_signal) {
-                Ok(socket_name) => WaylandTransport::NamedSocket(socket_name),
-                Err(BindError::PermissionDenied) => {
-                    tracing::warn!(
+            TransportRequest::Auto => {
+                match Self::try_insert_wayland_listener(event_loop, disconnect_signal) {
+                    Ok(socket_name) => WaylandTransport::NamedSocket(socket_name),
+                    Err(BindError::PermissionDenied) => {
+                        tracing::warn!(
                         "[shadow-guest-compositor] socket transport denied; falling back to direct client fd"
                     );
-                    WaylandTransport::DirectClientFd
+                        WaylandTransport::DirectClientFd
+                    }
+                    Err(error) => panic!("create wayland socket: {error}"),
                 }
-                Err(error) => panic!("create wayland socket: {error}"),
-            },
-            other => panic!("unknown SHADOW_GUEST_COMPOSITOR_TRANSPORT={other}"),
+            }
         }
     }
 
@@ -1220,7 +1225,7 @@ impl ShadowGuestCompositor {
     }
 
     fn log_touch_mapping(&mut self, normalized_x: f64, normalized_y: f64) {
-        if std::env::var_os("SHADOW_GUEST_LOG_TOUCH_GEOMETRY").is_none() {
+        if !self.log_touch_geometry {
             return;
         }
         let Some((frame_width, frame_height)) = self.last_frame_size else {
@@ -1297,17 +1302,7 @@ impl ShadowGuestCompositor {
     }
 
     fn configured_toplevel_size(&self) -> smithay::utils::Size<i32, Logical> {
-        let width = std::env::var("SHADOW_GUEST_COMPOSITOR_TOPLEVEL_WIDTH")
-            .ok()
-            .and_then(|value| value.parse::<i32>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_TOPLEVEL_WIDTH);
-        let height = std::env::var("SHADOW_GUEST_COMPOSITOR_TOPLEVEL_HEIGHT")
-            .ok()
-            .and_then(|value| value.parse::<i32>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_TOPLEVEL_HEIGHT);
-        (width, height).into()
+        self.toplevel_size
     }
 
     fn configure_toplevel(&self, surface: &ToplevelSurface) {
@@ -1380,13 +1375,11 @@ impl ShadowGuestCompositor {
             }
         }
 
-        let artifact_path =
-            std::env::var("SHADOW_GUEST_FRAME_PATH").unwrap_or_else(|_| "/shadow-frame.ppm".into());
-        match kms::write_frame_ppm(frame, &artifact_path) {
+        match kms::write_frame_ppm(frame, &self.frame_artifact_path) {
             Ok(()) => {
                 tracing::info!(
                     "[shadow-guest-compositor] wrote-frame-artifact path={} checksum={checksum:016x} size={}x{}",
-                    artifact_path,
+                    self.frame_artifact_path.display(),
                     frame.width,
                     frame.height
                 );
@@ -1396,7 +1389,7 @@ impl ShadowGuestCompositor {
             }
         }
 
-        if std::env::var_os("SHADOW_GUEST_COMPOSITOR_ENABLE_DRM").is_some() {
+        if self.drm_enabled {
             if let Some(display) = self.ensure_kms_display() {
                 match display.present_frame(frame) {
                     Ok(()) => tracing::info!("[shadow-guest-compositor] presented-frame"),
@@ -1771,24 +1764,12 @@ impl Drop for ShadowGuestCompositor {
     }
 }
 
-fn shell_start_app_id_from_env() -> Option<app::AppId> {
-    std::env::var("SHADOW_GUEST_SHELL_START_APP_ID")
-        .ok()
-        .as_deref()
-        .and_then(app::find_app_by_str)
-        .map(|app| app.id)
-        .filter(|app_id| *app_id != app::SHELL_APP_ID)
-}
-
-fn keyboard_seat_enabled() -> bool {
-    std::env::var_os("SHADOW_GUEST_ENABLE_KEYBOARD_SEAT").is_some()
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging();
+    let config = GuestStartupConfig::from_env()?;
     let mut event_loop: EventLoop<ShadowGuestCompositor> = EventLoop::try_new()?;
     let display: Display<ShadowGuestCompositor> = Display::new()?;
-    let mut state = ShadowGuestCompositor::new(&mut event_loop, display);
+    let mut state = ShadowGuestCompositor::new(&config, &mut event_loop, display);
 
     match &state.transport {
         WaylandTransport::NamedSocket(socket_name) => tracing::info!(
@@ -1810,83 +1791,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!("[shadow-guest-compositor] boot-splash-drm enabled");
             state.run_boot_splash();
         }
-        if state.shell_enabled {
-            tracing::info!("[shadow-guest-compositor] shell-mode enabled");
-            state.publish_visible_shell_frame("shell-home-frame");
-            if let Some(app_id) = shell_start_app_id_from_env() {
+        match config.startup_action {
+            StartupAction::Shell { start_app_id } => {
+                tracing::info!("[shadow-guest-compositor] shell-mode enabled");
+                state.publish_visible_shell_frame("shell-home-frame");
+                if let Some(app_id) = start_app_id {
+                    tracing::info!(
+                        "[shadow-guest-compositor] shell-start-app-id={}",
+                        app_id.as_str()
+                    );
+                    state.launch_or_focus_app(app_id)?;
+                }
+            }
+            StartupAction::App { app_id } => {
                 tracing::info!(
-                    "[shadow-guest-compositor] shell-start-app-id={}",
-                    app_id.as_str()
+                    "[shadow-guest-compositor] start-app-id={} control_socket={}",
+                    app_id.as_str(),
+                    state.control_socket_path.display()
                 );
                 state.launch_or_focus_app(app_id)?;
             }
-        } else if let Some(app_id) = std::env::var("SHADOW_GUEST_START_APP_ID")
-            .ok()
-            .as_deref()
-            .and_then(app::find_app_by_str)
-            .map(|app| app.id)
-        {
-            tracing::info!(
-                "[shadow-guest-compositor] start-app-id={} control_socket={}",
-                app_id.as_str(),
-                state.control_socket_path.display()
-            );
-            state.launch_or_focus_app(app_id)?;
-        } else {
-            state.spawn_client()?;
+            StartupAction::Client => state.spawn_client()?,
         }
     }
     event_loop.run(None, &mut state, |_| {})?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::shell_start_app_id_from_env;
-    use shadow_ui_core::app::{COUNTER_APP_ID, PODCAST_APP_ID, TIMELINE_APP_ID};
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn with_shell_start_app_env(value: Option<&str>, check: impl FnOnce()) {
-        let _guard = env_lock().lock().expect("lock shell-start env");
-        let key = "SHADOW_GUEST_SHELL_START_APP_ID";
-        let previous = std::env::var_os(key);
-        match value {
-            Some(value) => unsafe { std::env::set_var(key, value) },
-            None => unsafe { std::env::remove_var(key) },
-        }
-
-        check();
-
-        match previous {
-            Some(value) => unsafe { std::env::set_var(key, value) },
-            None => unsafe { std::env::remove_var(key) },
-        }
-    }
-
-    #[test]
-    fn shell_start_app_env_resolves_runtime_apps() {
-        with_shell_start_app_env(Some("timeline"), || {
-            assert_eq!(shell_start_app_id_from_env(), Some(TIMELINE_APP_ID));
-        });
-        with_shell_start_app_env(Some("counter"), || {
-            assert_eq!(shell_start_app_id_from_env(), Some(COUNTER_APP_ID));
-        });
-        with_shell_start_app_env(Some("podcast"), || {
-            assert_eq!(shell_start_app_id_from_env(), Some(PODCAST_APP_ID));
-        });
-    }
-
-    #[test]
-    fn shell_start_app_env_ignores_missing_unknown_and_shell() {
-        for value in [None, Some("nope"), Some("shell")] {
-            with_shell_start_app_env(value, || {
-                assert_eq!(shell_start_app_id_from_env(), None);
-            });
-        }
-    }
 }

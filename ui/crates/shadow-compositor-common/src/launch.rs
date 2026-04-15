@@ -4,6 +4,8 @@ use std::{
     process::Command,
 };
 
+pub type EnvAssignment = (String, String);
+
 pub fn first_env_value(keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| {
         env::var(key)
@@ -23,6 +25,16 @@ where
 }
 
 pub fn apply_env_assignments(command: &mut Command, spec: &str) -> Result<(), InvalidEnvSpec> {
+    for (key, value) in parse_env_assignments(spec)? {
+        command.env(key, value);
+    }
+
+    Ok(())
+}
+
+pub fn parse_env_assignments(spec: &str) -> Result<Vec<EnvAssignment>, InvalidEnvSpec> {
+    let mut assignments = Vec::new();
+
     for assignment in spec.split_whitespace() {
         let Some((key, value)) = assignment.split_once('=') else {
             return Err(InvalidEnvSpec {
@@ -36,10 +48,10 @@ pub fn apply_env_assignments(command: &mut Command, spec: &str) -> Result<(), In
                 reason: InvalidEnvSpecReason::EmptyKey,
             });
         }
-        command.env(key, value);
+        assignments.push((key.to_string(), value.to_string()));
     }
 
-    Ok(())
+    Ok(assignments)
 }
 
 pub fn sibling_binary_path(name: &str) -> Option<PathBuf> {
@@ -122,7 +134,7 @@ mod tests {
         sync::{Mutex, OnceLock},
     };
 
-    use super::{apply_env_assignments, runtime_dir_from_env_or};
+    use super::{apply_env_assignments, parse_env_assignments, runtime_dir_from_env_or};
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -151,6 +163,18 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "invalid env assignment \"not-an-assignment\": missing '='"
+        );
+    }
+
+    #[test]
+    fn parse_env_assignments_preserves_key_value_pairs() {
+        let assignments = parse_env_assignments("A=1 B=two").expect("valid env spec");
+        assert_eq!(
+            assignments,
+            vec![
+                ("A".to_string(), "1".to_string()),
+                ("B".to_string(), "two".to_string()),
+            ]
         );
     }
 
