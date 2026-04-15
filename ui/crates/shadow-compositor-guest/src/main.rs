@@ -126,7 +126,6 @@ struct ShadowGuestCompositor {
     shell_touch_active: bool,
     app_touch_gesture: Option<AppTouchGesture>,
     pub(crate) control_socket_path: PathBuf,
-    exit_on_first_window: bool,
     exit_on_first_frame: bool,
     exit_on_client_disconnect: bool,
     exit_on_first_dma_buffer: bool,
@@ -201,7 +200,6 @@ impl ShadowGuestCompositor {
             shell_touch_active: false,
             app_touch_gesture: None,
             control_socket_path,
-            exit_on_first_window: config.exit_on_first_window,
             exit_on_first_frame: config.exit_on_first_frame,
             exit_on_client_disconnect,
             exit_on_first_dma_buffer: config.exit_on_first_dma_buffer,
@@ -448,9 +446,6 @@ impl ShadowGuestCompositor {
         self.focus_window(Some(window));
         tracing::info!("[shadow-guest-compositor] mapped-window");
         self.log_window_state("mapped-window");
-        if self.exit_on_first_window {
-            self.loop_signal.stop();
-        }
     }
 
     fn app_window_location(&self) -> (i32, i32) {

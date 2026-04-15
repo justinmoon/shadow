@@ -35,7 +35,6 @@ pub(crate) struct GuestStartupConfig {
     pub(crate) client: GuestClientConfig,
     pub(crate) transport: TransportRequest,
     pub(crate) exit_on_client_disconnect: bool,
-    pub(crate) exit_on_first_window: bool,
     pub(crate) exit_on_first_frame: bool,
     pub(crate) exit_on_first_dma_buffer: bool,
     pub(crate) selftest_drm: bool,
@@ -91,7 +90,6 @@ impl GuestStartupConfig {
             exit_on_client_disconnect: env_flag(
                 "SHADOW_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT",
             ) && !startup_action.shell_enabled(),
-            exit_on_first_window: env_flag("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_WINDOW"),
             exit_on_first_frame: env_flag("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME"),
             exit_on_first_dma_buffer: env_flag("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_DMA_BUFFER"),
             selftest_drm: env_flag("SHADOW_GUEST_COMPOSITOR_SELFTEST_DRM"),
