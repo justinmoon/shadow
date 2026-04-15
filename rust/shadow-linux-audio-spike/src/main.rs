@@ -35,8 +35,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     let requested_frequency_hz = read_env_u32("SHADOW_AUDIO_SPIKE_FREQUENCY_HZ", 440);
     let requested_rate_hz = read_env_u32("SHADOW_AUDIO_SPIKE_RATE", 48_000);
     let requested_channels = read_env_u32("SHADOW_AUDIO_SPIKE_CHANNELS", 2);
-    let source_kind = read_env_string("SHADOW_AUDIO_SPIKE_SOURCE_KIND")
-        .unwrap_or_else(|| String::from("tone"));
+    let requested_gain = read_env_f32("SHADOW_AUDIO_SPIKE_GAIN", 1.0).max(0.0);
+    let source_kind =
+        read_env_string("SHADOW_AUDIO_SPIKE_SOURCE_KIND").unwrap_or_else(|| String::from("tone"));
     let requested_file_path = read_env_string("SHADOW_AUDIO_SPIKE_FILE_PATH");
     let summary_path = env::var("SHADOW_AUDIO_SPIKE_SUMMARY_PATH").ok();
     let cwd = env::current_dir()
@@ -48,6 +49,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         requested_frequency_hz,
         requested_rate_hz,
         requested_channels,
+        requested_gain,
         requested_file_path.as_deref(),
     )?;
 
@@ -86,13 +88,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     println!(
-        "audio-spike-start source_kind={} source_path={} duration_ms={} frequency_hz={} rate_hz={} channels={} device_candidates={}",
+        "audio-spike-start source_kind={} source_path={} duration_ms={} frequency_hz={} rate_hz={} channels={} gain={} device_candidates={}",
         prepared_playback.source_kind,
         sanitize_log_field(prepared_playback.source_path.as_deref().unwrap_or("none")),
         prepared_playback.duration_ms,
         prepared_playback.frequency_hz.unwrap_or(0),
         prepared_playback.rate_hz,
         prepared_playback.channels,
+        requested_gain,
         device_candidates.join(",")
     );
 
@@ -185,6 +188,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         requested_channels: prepared_playback.channels,
         requested_duration_ms: prepared_playback.duration_ms,
         requested_frequency_hz: prepared_playback.frequency_hz.unwrap_or(0),
+        requested_gain,
         requested_rate_hz: prepared_playback.rate_hz,
         source_kind: prepared_playback.source_kind.clone(),
         source_path: prepared_playback.source_path.clone(),
@@ -214,6 +218,7 @@ fn prepare_playback(
     frequency_hz: u32,
     rate_hz: u32,
     channels: u32,
+    gain: f32,
     file_path: Option<&str>,
 ) -> Result<PreparedPlayback, Box<dyn Error>> {
     match source_kind {
@@ -222,10 +227,14 @@ fn prepare_playback(
             frequency_hz as f32,
             rate_hz,
             channels,
+            gain,
         )),
-        "file" => decode_audio_file(file_path.ok_or_else(|| {
-            "SHADOW_AUDIO_SPIKE_FILE_PATH is required when SHADOW_AUDIO_SPIKE_SOURCE_KIND=file"
-        })?),
+        "file" => decode_audio_file(
+            file_path.ok_or_else(|| {
+                "SHADOW_AUDIO_SPIKE_FILE_PATH is required when SHADOW_AUDIO_SPIKE_SOURCE_KIND=file"
+            })?,
+            gain,
+        ),
         _ => Err(format!("unsupported SHADOW_AUDIO_SPIKE_SOURCE_KIND '{source_kind}'").into()),
     }
 }
@@ -235,6 +244,7 @@ fn build_tone_playback(
     frequency_hz: f32,
     rate_hz: u32,
     channels: u32,
+    gain: f32,
 ) -> PreparedPlayback {
     let frames_requested = ((u64::from(rate_hz) * u64::from(duration_ms)) / 1000) as usize;
     PreparedPlayback {
@@ -242,13 +252,13 @@ fn build_tone_playback(
         duration_ms,
         frequency_hz: Some(frequency_hz.round() as u32),
         rate_hz,
-        samples: render_tone_chunk(0, frames_requested, rate_hz, channels, frequency_hz),
+        samples: render_tone_chunk(0, frames_requested, rate_hz, channels, frequency_hz, gain),
         source_kind: String::from("tone"),
         source_path: None,
     }
 }
 
-fn decode_audio_file(path: &str) -> Result<PreparedPlayback, Box<dyn Error>> {
+fn decode_audio_file(path: &str, gain: f32) -> Result<PreparedPlayback, Box<dyn Error>> {
     let file = File::open(path)?;
     let media_source = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
@@ -263,7 +273,9 @@ fn decode_audio_file(path: &str) -> Result<PreparedPlayback, Box<dyn Error>> {
         &MetadataOptions::default(),
     )?;
     let mut format = probed.format;
-    let track = format.default_track().ok_or("audio-spike file decode needs a default track")?;
+    let track = format
+        .default_track()
+        .ok_or("audio-spike file decode needs a default track")?;
     let track_id = track.id;
     let codec_params = &track.codec_params;
     let sample_rate_hz = codec_params
@@ -307,6 +319,7 @@ fn decode_audio_file(path: &str) -> Result<PreparedPlayback, Box<dyn Error>> {
     if samples.is_empty() {
         return Err("audio-spike decoded file produced no audio samples".into());
     }
+    apply_gain(&mut samples, gain);
 
     let frames_requested = samples.len() / channels as usize;
     Ok(PreparedPlayback {
@@ -351,7 +364,8 @@ fn play_prepared_samples(
 
     let mut sample_offset = 0usize;
     while sample_offset < playback.samples.len() {
-        let remaining_frames = (playback.samples.len() - sample_offset) / playback.channels as usize;
+        let remaining_frames =
+            (playback.samples.len() - sample_offset) / playback.channels as usize;
         let frames_this_chunk = frames_per_chunk.min(remaining_frames);
         let chunk_end = sample_offset + (frames_this_chunk * playback.channels as usize);
         let chunk = &playback.samples[sample_offset..chunk_end];
@@ -577,8 +591,9 @@ fn render_tone_chunk(
     rate_hz: u32,
     channels: u32,
     frequency_hz: f32,
+    gain: f32,
 ) -> Vec<i16> {
-    let amplitude = i16::MAX as f32 * 0.20;
+    let amplitude = i16::MAX as f32 * 0.20 * gain;
     let mut output = Vec::with_capacity(frame_count * channels as usize);
     for frame_index in frame_start..frame_start + frame_count {
         let phase = (frame_index as f32 * frequency_hz * TAU) / rate_hz as f32;
@@ -590,10 +605,30 @@ fn render_tone_chunk(
     output
 }
 
+fn apply_gain(samples: &mut [i16], gain: f32) {
+    if (gain - 1.0).abs() < f32::EPSILON {
+        return;
+    }
+
+    for sample in samples {
+        let scaled = (*sample as f32 * gain)
+            .round()
+            .clamp(i16::MIN as f32, i16::MAX as f32);
+        *sample = scaled as i16;
+    }
+}
+
 fn read_env_u32(name: &str, default: u32) -> u32 {
     env::var(name)
         .ok()
         .and_then(|value| value.trim().parse::<u32>().ok())
+        .unwrap_or(default)
+}
+
+fn read_env_f32(name: &str, default: f32) -> f32 {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<f32>().ok())
         .unwrap_or(default)
 }
 
@@ -643,6 +678,7 @@ struct AudioSpikeSummary {
     requested_channels: u32,
     requested_duration_ms: u32,
     requested_frequency_hz: u32,
+    requested_gain: f32,
     requested_rate_hz: u32,
     source_kind: String,
     source_path: Option<String>,

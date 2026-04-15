@@ -32,6 +32,30 @@ cleanup() {
 
 trap cleanup EXIT
 
+push_verified_file() {
+  local host_path device_path tmp_path host_sum device_sum
+  host_path="$1"
+  device_path="$2"
+  tmp_path="${device_path}.push.$$"
+  host_sum="$(shasum -a 256 "$host_path" | awk '{print $1}')"
+
+  pixel_adb "$serial" shell "rm -f '$tmp_path'"
+  pixel_adb "$serial" push "$host_path" "$tmp_path" >/dev/null
+  device_sum="$(
+    pixel_adb "$serial" shell "toybox sha256sum '$tmp_path'" 2>/dev/null \
+      | tr -d '\r' \
+      | awk 'NR == 1 { print $1 }'
+  )"
+  if [[ -z "$device_sum" || "$device_sum" != "$host_sum" ]]; then
+    pixel_adb "$serial" shell "rm -f '$tmp_path'" >/dev/null 2>&1 || true
+    echo "pixel_push: checksum mismatch for $device_path" >&2
+    echo "pixel_push: host checksum=$host_sum device checksum=${device_sum:-missing}" >&2
+    return 1
+  fi
+
+  pixel_adb "$serial" shell "mv '$tmp_path' '$device_path' && chmod 0755 '$device_path'"
+}
+
 if ! pixel_require_runtime_artifacts; then
   "$SCRIPT_DIR/pixel_build.sh"
 fi
@@ -143,13 +167,9 @@ PY
   printf 'Pushed runtime helper dir -> %s\n' "$runtime_linux_dir"
 fi
 
-pixel_adb "$serial" push "$(pixel_session_artifact)" "$(pixel_session_dst)" >/dev/null
-pixel_adb "$serial" push "$(pixel_compositor_artifact)" "$(pixel_compositor_dst)" >/dev/null
-pixel_adb "$serial" push "$(pixel_guest_client_artifact)" "$(pixel_guest_client_dst)" >/dev/null
-pixel_adb "$serial" shell chmod 0755 \
-  "$(pixel_session_dst)" \
-  "$(pixel_compositor_dst)" \
-  "$(pixel_guest_client_dst)"
+push_verified_file "$(pixel_session_artifact)" "$(pixel_session_dst)"
+push_verified_file "$(pixel_compositor_artifact)" "$(pixel_compositor_dst)"
+push_verified_file "$(pixel_guest_client_artifact)" "$(pixel_guest_client_dst)"
 
 printf 'Pushed %s\n' "$(pixel_session_dst)"
 printf 'Pushed %s\n' "$(pixel_compositor_dst)"

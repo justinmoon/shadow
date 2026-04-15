@@ -179,6 +179,32 @@ cleanup() {
 
 trap cleanup EXIT
 
+ensure_android_display_ready() {
+  if pixel_wait_for_condition 5 1 pixel_android_display_restored "$serial"; then
+    return 0
+  fi
+
+  echo "pixel-ci: Android display stack not ready; attempting restore" >&2
+  env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+  if pixel_wait_for_condition 90 1 pixel_android_display_restored "$serial"; then
+    return 0
+  fi
+
+  echo "pixel-ci: Android display stack still not ready; rebooting device" >&2
+  pixel_adb "$serial" reboot
+  sleep 5
+  pixel_wait_for_adb "$serial" 180
+  pixel_wait_for_boot_completed "$serial" 240
+  pixel_wait_for_condition 90 1 pixel_android_display_restored "$serial"
+}
+
+run_display_ready_gate() {
+  local step_name
+  step_name="$1"
+  run_step "preflight_android_display_${step_name}" "wait for Android display stack ready before ${step_name}" \
+    ensure_android_display_ready
+}
+
 record_step() {
   local step_id="$1"
   local description="$2"
@@ -281,6 +307,10 @@ fi
 
 run_step preflight_root "verify Pixel root access" \
   "$SCRIPT_DIR/shadowctl" root-check -t "$serial"
+if (( stage_only == 0 )); then
+  run_step preflight_android_display "wait for Android display stack ready" \
+    ensure_android_display_ready
+fi
 run_step preflight_doctor "inspect Pixel device state" \
   "$SCRIPT_DIR/shadowctl" doctor -t "$serial"
 
@@ -290,12 +320,12 @@ if (( run_only == 0 )); then
       env PIXEL_SERIAL="$serial" PIXEL_SHELL_PREP_ONLY=1 PIXEL_SHELL_ENABLE_CAMERA_RUNTIME="$need_camera_runtime" "$SCRIPT_DIR/pixel_shell_drm.sh"
   fi
 
-  if (( need_sound == 1 )); then
+  if (( stage_only == 1 && need_sound == 1 )); then
     run_step prep_sound_runtime "stage rooted Pixel sound runtime artifacts" \
       env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_sound_drm.sh"
   fi
 
-  if (( need_podcast == 1 )); then
+  if (( stage_only == 1 && need_podcast == 1 )); then
     run_step prep_podcast_runtime "stage rooted Pixel podcast runtime artifacts" \
       env PIXEL_SERIAL="$serial" SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_podcast_player_drm.sh"
   fi
@@ -310,18 +340,30 @@ fi
 for step in "${suite_steps[@]}"; do
   case "$step" in
     timeline)
+      run_display_ready_gate "$step"
       run_step timeline "prove rooted Pixel shell timeline lifecycle" \
         env PIXEL_SERIAL="$serial" PIXEL_SHELL_RUN_ONLY=1 PIXEL_SHELL_ENABLE_CAMERA_RUNTIME=0 "$SCRIPT_DIR/pixel_shell_timeline_smoke.sh"
       ;;
     camera)
+      run_display_ready_gate "$step"
       run_step camera "prove rooted Pixel shell camera capture" \
         env PIXEL_SERIAL="$serial" PIXEL_SHELL_RUN_ONLY=1 PIXEL_SHELL_ENABLE_CAMERA_RUNTIME=1 "$SCRIPT_DIR/pixel_shell_camera_smoke.sh"
       ;;
     sound)
+      if (( run_only == 0 )); then
+        run_step prep_sound_runtime "stage rooted Pixel sound runtime artifacts" \
+          env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_sound_drm.sh"
+      fi
+      run_display_ready_gate "$step"
       run_step sound "prove rooted Pixel runtime sound playback" \
         env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_RUN_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_sound_drm.sh"
       ;;
     podcast)
+      if (( run_only == 0 )); then
+        run_step prep_podcast_runtime "stage rooted Pixel podcast runtime artifacts" \
+          env PIXEL_SERIAL="$serial" SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_podcast_player_drm.sh"
+      fi
+      run_display_ready_gate "$step"
       run_step podcast "prove rooted Pixel runtime podcast playback" \
         env PIXEL_SERIAL="$serial" SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 PIXEL_RUNTIME_APP_RUN_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_podcast_player_drm.sh"
       ;;

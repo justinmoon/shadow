@@ -72,6 +72,8 @@ android_restored=false
 checkpoint_failure_kind=""
 checkpoint_failure_description=""
 checkpoint_failure_message=""
+post_success_adb_lost=false
+post_success_transport_warning=""
 
 display_services_stopped_condition() {
   if [[ "$stop_allocator" == "0" ]]; then
@@ -214,6 +216,34 @@ restore_android_now() {
     return 0
   fi
   checkpoint_note "failed: Android display service restore did not complete cleanly"
+  return 1
+}
+
+note_post_success_transport_warning() {
+  local message
+  message="$1"
+  if [[ "$post_success_transport_warning" != "$message" ]]; then
+    post_success_transport_warning="$message"
+  fi
+  checkpoint_note "warning: $message"
+}
+
+ensure_post_success_adb() {
+  local timeout_secs
+  timeout_secs="${1:-5}"
+
+  if pixel_connected_serials | grep -Fxq "$serial"; then
+    return 0
+  fi
+
+  note_post_success_transport_warning "adb device unavailable during post-success cleanup; waiting up to ${timeout_secs}s for reconnect"
+  if pixel_wait_for_adb "$serial" "$timeout_secs" >/dev/null 2>&1; then
+    checkpoint_note "observed: adb device reconnected during post-success cleanup"
+    return 0
+  fi
+
+  post_success_adb_lost=true
+  note_post_success_transport_warning "adb device remained unavailable during post-success cleanup"
   return 1
 }
 
@@ -363,13 +393,31 @@ if [[ -z "${session_status:-}" ]]; then
 fi
 
 set +e
-pixel_adb "$serial" pull "$frame_path" "$frame_artifact" >"$pull_log_path" 2>&1
+if ensure_post_success_adb 5; then
+  pixel_adb "$serial" pull "$frame_path" "$frame_artifact" >"$pull_log_path" 2>&1
+else
+  printf 'skipped: adb unavailable during post-success frame pull\n' >"$pull_log_path"
+fi
 set -e
 
 sleep 3
 cleanup
 logcat_pid=""
-pixel_capture_processes "$serial" "$run_dir/processes-after.txt"
+set +e
+if ensure_post_success_adb 5; then
+  pixel_capture_processes "$serial" "$run_dir/processes-after.txt"
+else
+  : >"$run_dir/processes-after.txt"
+fi
+set -e
+
+if [[ ! -s "$frame_artifact" && "$frame_on_device" == true ]]; then
+  set +e
+  if ensure_post_success_adb 5; then
+    pixel_adb "$serial" pull "$frame_path" "$frame_artifact" >"$pull_log_path" 2>&1
+  fi
+  set -e
+fi
 
 set +e
 PIXEL_VERIFY_REQUIRE_CLIENT_MARKER="$verify_require_client_marker" \
@@ -397,11 +445,13 @@ if [[ "$frame_on_device" != true && -s "$frame_artifact" ]]; then
 fi
 
 if [[ -n "$restore_android" && "$android_restored" != true ]]; then
-  if pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_restored "$serial"; then
+  if ensure_post_success_adb "$restore_checkpoint_timeout_secs" && pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_restored "$serial"; then
     android_restored=true
   else
-    restore_android_now || true
-    if pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_restored "$serial"; then
+    if ensure_post_success_adb "$restore_checkpoint_timeout_secs"; then
+      restore_android_now || true
+    fi
+    if ensure_post_success_adb "$restore_checkpoint_timeout_secs" && pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_restored "$serial"; then
       android_restored=true
     else
       failure_message="${failure_message:-timed out waiting for Android display stack restore}"
@@ -438,6 +488,8 @@ pixel_write_status_json "$run_dir/status.json" \
   presented_frame="$presented" \
   session_ok="$session_ok" \
   android_restored="$android_restored" \
+  post_success_adb_lost="$post_success_adb_lost" \
+  post_success_transport_warning="$post_success_transport_warning" \
   failure_kind="$checkpoint_failure_kind" \
   failure_description="$checkpoint_failure_description" \
   failure_message="$failure_message" \
