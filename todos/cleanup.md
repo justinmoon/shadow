@@ -35,6 +35,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [~] Collapse the public command surface.
   - `just` currently exposes 131 recipes, and about 60 of them are explicitly `smoke`, `probe`, `hold`, `warm`, or `spike` lanes.
   - 2026-04-14 first front-door batch landed: default `just` now shows a curated supported-surface help screen, and `just help-all` is the explicit full recipe list.
+  - 2026-04-15 VM helper scoping cleanup landed: `ui_vm_*` scripts and `shadowctl` now identify the local VM by the worktree-scoped SSH/QMP lane instead of the global `microvm@shadow-ui-vm` process name, so concurrent cleanup/ci VM runs stop colliding.
   - Default `just` output should show the supported operator contract only, not the full bring-up archive.
   - Delete obsolete probes where possible; otherwise move them behind an internal namespace or private docs so they stop reading like product surface.
 - [~] Integrate with the new `shadowctl` shape and make it the primary CLI for both VM and Pixel.

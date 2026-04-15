@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=./ui_vm_common.sh
+source "$SCRIPT_DIR/ui_vm_common.sh"
 LOG_DIR="$REPO_ROOT/build/ui-vm"
 RUN_LOG="$LOG_DIR/ui-vm-smoke.log"
 SHOT_PATH="$LOG_DIR/ui-vm-smoke.png"
