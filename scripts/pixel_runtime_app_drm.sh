@@ -150,11 +150,12 @@ extra_guest_env="${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}"
 extra_session_env="${PIXEL_RUNTIME_APP_EXTRA_SESSION_ENV-}"
 extra_required_markers="${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS-}"
 extra_forbidden_markers="${PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS-}"
-touch_signal_path="$(pixel_runtime_dir)/touch-signal"
-runtime_home_dir="$(pixel_runtime_linux_dir)/home"
-runtime_cache_dir="$runtime_home_dir/.cache"
-runtime_config_dir="$runtime_home_dir/.config"
-xkb_config_root="$(pixel_runtime_linux_dir)/share/X11/xkb"
+touch_signal_path="$(pixel_runtime_touch_signal_path)"
+runtime_home_dir="$(pixel_runtime_home_dir)"
+runtime_cache_dir="$(pixel_runtime_cache_dir)"
+runtime_mesa_cache_dir="$(pixel_runtime_mesa_cache_dir)"
+runtime_config_dir="$(pixel_runtime_config_dir)"
+xkb_config_root="$(pixel_runtime_xkb_config_root)"
 
 if (( runtime_stage_only == 1 )); then
   PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
@@ -189,7 +190,7 @@ SHADOW_BLITZ_ANDROID_FONTS=${SHADOW_BLITZ_ANDROID_FONTS:-curated}
 SHADOW_BLITZ_SOFTWARE_KEYBOARD=${SHADOW_BLITZ_SOFTWARE_KEYBOARD:-1}
 SHADOW_RUNTIME_APP_BUNDLE_PATH=$(pixel_runtime_app_bundle_dst)
 SHADOW_RUNTIME_HOST_BINARY_PATH=$(pixel_runtime_host_launcher_dst)
-SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_dir)/runtime-nostr.sqlite3
+SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)
 HOME=$runtime_home_dir
 XDG_CACHE_HOME=$runtime_cache_dir
 XDG_CONFIG_HOME=$runtime_config_dir
@@ -200,7 +201,7 @@ if [[ "${PIXEL_RUNTIME_ENABLE_GPU_SUMMARY:-0}" == "1" ]]; then
   runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_BLITZ_GPU_SUMMARY=1"
 fi
 if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu_softbuffer" || "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
-  runtime_guest_env="${runtime_guest_env}"$'\n'"MESA_SHADER_CACHE_DIR=$runtime_cache_dir/mesa"
+  runtime_guest_env="${runtime_guest_env}"$'\n'"MESA_SHADER_CACHE_DIR=$runtime_mesa_cache_dir"
   if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
     while IFS= read -r env_line; do
       [[ -n "$env_line" ]] || continue
@@ -210,7 +211,7 @@ if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu_softbuffer" || "$PIXEL_RUNTIME_APP_R
     runtime_guest_env="${runtime_guest_env}"$'\n'"WGPU_BACKEND=${WGPU_BACKEND:-vulkan}"
     runtime_guest_env="${runtime_guest_env}"$'\n'"MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}"
     runtime_guest_env="${runtime_guest_env}"$'\n'"TU_DEBUG=${TU_DEBUG:-noconform}"
-    runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
+    runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_openlog_preload_dst)"
     runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_OPENLOG_DENY_DRI=${SHADOW_OPENLOG_DENY_DRI:-1}"
   else
     runtime_guest_env="${runtime_guest_env}"$'\n'"WGPU_BACKEND=${WGPU_BACKEND:-gl}"
@@ -257,7 +258,7 @@ PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
 PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
 PIXEL_GUEST_CLIENT_ENV="$runtime_guest_env" \
 PIXEL_GUEST_SESSION_ENV="$runtime_session_env" \
-PIXEL_GUEST_PRECREATE_DIRS="$runtime_home_dir $runtime_cache_dir $runtime_cache_dir/mesa $runtime_config_dir" \
+PIXEL_GUEST_PRECREATE_DIRS="$runtime_home_dir $runtime_cache_dir $runtime_mesa_cache_dir $runtime_config_dir" \
 PIXEL_VERIFY_FORBIDDEN_MARKERS="$forbidden_markers" \
 PIXEL_RUNTIME_SUMMARY_RENDERER="$PIXEL_RUNTIME_APP_RENDERER" \
 PIXEL_GUEST_SKIP_PUSH="$([[ "$runtime_run_only" == 1 ]] && printf 1 || true)" \

@@ -752,12 +752,44 @@ pixel_runtime_dir() {
   printf '%s\n' "${PIXEL_RUNTIME_DIR:-/data/local/tmp/shadow-runtime}"
 }
 
+pixel_runtime_touch_signal_path() {
+  printf '%s/touch-signal\n' "$(pixel_runtime_dir)"
+}
+
+pixel_runtime_cashu_data_dir() {
+  printf '%s/cashu\n' "$(pixel_runtime_dir)"
+}
+
+pixel_runtime_nostr_db_path() {
+  printf '%s/runtime-nostr.sqlite3\n' "$(pixel_runtime_dir)"
+}
+
 pixel_shell_control_socket_path() {
   printf '%s/%s\n' "$(pixel_runtime_dir)" "shadow-control.sock"
 }
 
 pixel_runtime_linux_dir() {
   printf '%s\n' "${PIXEL_RUNTIME_LINUX_DIR:-/data/local/tmp/shadow-runtime-gnu}"
+}
+
+pixel_runtime_home_dir() {
+  printf '%s/home\n' "$(pixel_runtime_linux_dir)"
+}
+
+pixel_runtime_cache_dir() {
+  printf '%s/.cache\n' "$(pixel_runtime_home_dir)"
+}
+
+pixel_runtime_mesa_cache_dir() {
+  printf '%s/mesa\n' "$(pixel_runtime_cache_dir)"
+}
+
+pixel_runtime_config_dir() {
+  printf '%s/.config\n' "$(pixel_runtime_home_dir)"
+}
+
+pixel_runtime_xkb_config_root() {
+  printf '%s/share/X11/xkb\n' "$(pixel_runtime_linux_dir)"
 }
 
 pixel_runtime_app_bundle_dst() {
@@ -790,6 +822,10 @@ pixel_runtime_host_binary_dst() {
 
 pixel_runtime_host_launcher_dst() {
   printf '%s/run-shadow-runtime-host\n' "$(pixel_runtime_linux_dir)"
+}
+
+pixel_runtime_openlog_preload_dst() {
+  printf '%s/lib/shadow-openlog-preload.so\n' "$(pixel_runtime_linux_dir)"
 }
 
 pixel_download_dir_device() {

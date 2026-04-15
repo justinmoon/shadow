@@ -36,12 +36,12 @@ expect_fixed \
 
 expect_fixed \
   "$REPO_ROOT/scripts/pixel_shell_drm.sh" \
-  'SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_dir)/runtime-nostr.sqlite3' \
+  'SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)' \
   "pixel shell nostr sqlite path"
 
 expect_fixed \
   "$REPO_ROOT/scripts/pixel_runtime_app_drm.sh" \
-  'SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_dir)/runtime-nostr.sqlite3' \
+  'SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)' \
   "pixel runtime nostr sqlite path"
 
 expect_fixed \

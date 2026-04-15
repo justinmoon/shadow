@@ -100,11 +100,12 @@ PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS-}"
 extra_guest_env="${PIXEL_SHELL_EXTRA_GUEST_CLIENT_ENV-}"
 extra_session_env="${PIXEL_SHELL_EXTRA_SESSION_ENV-}"
 extra_required_markers="${PIXEL_SHELL_EXTRA_REQUIRED_MARKERS-}"
-runtime_home_dir="$(pixel_runtime_linux_dir)/home"
-runtime_cache_dir="$runtime_home_dir/.cache"
-runtime_config_dir="$runtime_home_dir/.config"
+runtime_home_dir="$(pixel_runtime_home_dir)"
+runtime_cache_dir="$(pixel_runtime_cache_dir)"
+runtime_mesa_cache_dir="$(pixel_runtime_mesa_cache_dir)"
+runtime_config_dir="$(pixel_runtime_config_dir)"
 expect_client_process=''
-xkb_config_root="$(pixel_runtime_linux_dir)/share/X11/xkb"
+xkb_config_root="$(pixel_runtime_xkb_config_root)"
 
 shell_guest_env=$(
   cat <<EOF
@@ -126,12 +127,12 @@ if [[ -n "$PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS" ]]; then
   shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_BLITZ_RUNTIME_EXIT_DELAY_MS=$PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS"
 fi
 if [[ "$PIXEL_SHELL_RENDERER" == "gpu_softbuffer" ]]; then
-  shell_guest_env="${shell_guest_env}"$'\n'"MESA_SHADER_CACHE_DIR=$runtime_cache_dir/mesa"
+  shell_guest_env="${shell_guest_env}"$'\n'"MESA_SHADER_CACHE_DIR=$runtime_mesa_cache_dir"
   if [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
     shell_guest_env="${shell_guest_env}"$'\n'"WGPU_BACKEND=${WGPU_BACKEND:-vulkan}"
     shell_guest_env="${shell_guest_env}"$'\n'"MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}"
     shell_guest_env="${shell_guest_env}"$'\n'"TU_DEBUG=${TU_DEBUG:-noconform}"
-    shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_linux_dir)/lib/shadow-openlog-preload.so"
+    shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_openlog_preload_dst)"
     shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_OPENLOG_DENY_DRI=${SHADOW_OPENLOG_DENY_DRI:-1}"
   else
     shell_guest_env="${shell_guest_env}"$'\n'"WGPU_BACKEND=${WGPU_BACKEND:-gl}"
@@ -151,8 +152,8 @@ SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH=$(pixel_runtime_timeline_bundle_dst)
 SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=$(pixel_runtime_podcast_bundle_dst)
 SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH=$(pixel_runtime_cashu_bundle_dst)
 SHADOW_RUNTIME_HOST_BINARY_PATH=$(pixel_runtime_host_launcher_dst)
-SHADOW_RUNTIME_CASHU_DATA_DIR=$(pixel_runtime_dir)/cashu
-SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_dir)/runtime-nostr.sqlite3
+SHADOW_RUNTIME_CASHU_DATA_DIR=$(pixel_runtime_cashu_data_dir)
+SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)
 SHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM=1
 EOF
 )
@@ -192,7 +193,7 @@ PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
 PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
 PIXEL_GUEST_CLIENT_ENV="$shell_guest_env" \
 PIXEL_GUEST_SESSION_ENV="$shell_session_env" \
-PIXEL_GUEST_PRECREATE_DIRS="$runtime_home_dir $runtime_cache_dir $runtime_cache_dir/mesa $runtime_config_dir" \
+PIXEL_GUEST_PRECREATE_DIRS="$runtime_home_dir $runtime_cache_dir $runtime_mesa_cache_dir $runtime_config_dir" \
 PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT="$camera_start_command" \
 PIXEL_TAKEOVER_STOP_ALLOCATOR="${PIXEL_TAKEOVER_STOP_ALLOCATOR:-0}" \
 PIXEL_GUEST_SKIP_PUSH="$([[ "$shell_run_only" == 1 ]] && printf 1 || true)" \
