@@ -281,11 +281,19 @@ append_runtime_closure_from_package_ref() {
   local -a output_paths closure_paths
 
   package_ref="$1"
-  mapfile -t output_paths < <(nix build --accept-flake-config --no-link --print-out-paths "$package_ref")
+  output_paths=()
+  while IFS= read -r out_path; do
+    [[ -n "$out_path" ]] || continue
+    output_paths+=("$out_path")
+  done < <(nix build --accept-flake-config --no-link --print-out-paths "$package_ref")
 
   for out_path in "${output_paths[@]}"; do
     append_runtime_closure_paths "$out_path"
-    mapfile -t closure_paths < <(nix-store -qR "$out_path")
+    closure_paths=()
+    while IFS= read -r closure_path; do
+      [[ -n "$closure_path" ]] || continue
+      closure_paths+=("$closure_path")
+    done < <(nix-store -qR "$out_path")
     append_runtime_closure_paths "${closure_paths[@]}"
   done
 }
@@ -406,7 +414,11 @@ fill_linux_bundle_runtime_deps() {
   bundle_lib_dir="$bundle_dir/lib"
   loader_name="${PIXEL_RUNTIME_STAGE_LOADER_NAME:-}"
 
-  mapfile -t dependency_queue < <(find "$bundle_dir" -type f -print)
+  dependency_queue=()
+  while IFS= read -r dependency_path; do
+    [[ -n "$dependency_path" ]] || continue
+    dependency_queue+=("$dependency_path")
+  done < <(find "$bundle_dir" -type f -print)
 
   while [[ "${#dependency_queue[@]}" -gt 0 ]]; do
     current_path="${dependency_queue[0]}"
@@ -463,7 +475,11 @@ stage_runtime_host_linux_bundle() {
     return 1
   fi
 
-  mapfile -t PIXEL_RUNTIME_CLOSURE_PATHS < <(nix-store -qR "$out_link")
+  PIXEL_RUNTIME_CLOSURE_PATHS=()
+  while IFS= read -r closure_path; do
+    [[ -n "$closure_path" ]] || continue
+    PIXEL_RUNTIME_CLOSURE_PATHS+=("$closure_path")
+  done < <(nix-store -qR "$out_link")
 
   interpreter_path="$(binary_interpreter "$binary_host_path")"
   if [[ -z "$interpreter_path" || ! -f "$interpreter_path" ]]; then

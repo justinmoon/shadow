@@ -247,20 +247,16 @@ fi
 EOF
   if [[ "$audio_enabled" == "1" ]]; then
     cat >>"$host_launcher_artifact" <<EOF
-export SHADOW_RUNTIME_AUDIO_BACKEND="\${SHADOW_RUNTIME_AUDIO_BACKEND:-linux_spike}"
-export SHADOW_RUNTIME_AUDIO_SPIKE_BINARY="\$DIR/run-$audio_binary_name"
+export SHADOW_RUNTIME_AUDIO_BACKEND="linux_spike"
+export SHADOW_RUNTIME_AUDIO_SPIKE_BINARY="\$DIR/$audio_binary_name"
+export SHADOW_RUNTIME_AUDIO_SPIKE_STAGE_LOADER_PATH="\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME"
+export SHADOW_RUNTIME_AUDIO_SPIKE_STAGE_LIBRARY_PATH="\$DIR/lib"
+export ALSA_CONFIG_PATH="\$DIR/share/alsa/alsa.conf"
+export ALSA_CONFIG_DIR="\$DIR/share/alsa"
+export ALSA_CONFIG_UCM="\$DIR/share/alsa/ucm"
+export ALSA_CONFIG_UCM2="\$DIR/share/alsa/ucm2"
+export ALSA_PLUGIN_DIR="\$DIR/lib/alsa-lib"
 export SHADOW_RUNTIME_BUNDLE_DIR="\$DIR"
-if command -v unshare >/dev/null 2>&1 && command -v mount >/dev/null 2>&1; then
-  exec unshare -m /system/bin/sh -c '
-    DIR="\$1"
-    LOADER="\$2"
-    BINARY="\$3"
-    shift 3
-    mount --make-rprivate / >/dev/null 2>&1 || true
-    mount -o bind "\$DIR/etc" /system/etc >/dev/null 2>&1 || true
-    exec "\$DIR/lib/\$LOADER" --library-path "\$DIR/lib" "\$DIR/\$BINARY" "\$@"
-  ' sh "\$DIR" "$PIXEL_RUNTIME_STAGE_LOADER_NAME" "$host_binary_name" "\$@"
-fi
 exec "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$DIR/$host_binary_name" "\$@"
 EOF
   else

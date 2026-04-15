@@ -85,6 +85,13 @@ impl RuntimeSession {
     fn spawn(host_binary_path: String, bundle_path: String) -> Result<Self, String> {
         let stage_loader_path = env::var(RUNTIME_HOST_STAGE_LOADER_PATH_ENV).ok();
         let stage_library_path = env::var(RUNTIME_HOST_STAGE_LIBRARY_PATH_ENV).ok();
+        runtime_log(format!(
+            "runtime-session-spawn host_binary={} bundle={} stage_loader={} stage_library={}",
+            host_binary_path,
+            bundle_path,
+            stage_loader_path.as_deref().unwrap_or("none"),
+            stage_library_path.as_deref().unwrap_or("none"),
+        ));
 
         let mut command = match stage_loader_path {
             Some(loader_path) => {

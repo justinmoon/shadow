@@ -49,7 +49,11 @@ pixel_resolve_serial() {
     return 1
   fi
 
-  mapfile -t serials < <(pixel_connected_serials)
+  serials=()
+  while IFS= read -r serial; do
+    [[ -n "$serial" ]] || continue
+    serials+=("$serial")
+  done < <(pixel_connected_serials)
   case "${#serials[@]}" in
     0)
       echo "pixel: no authorized adb device detected" >&2
@@ -79,7 +83,11 @@ pixel_resolve_sideload_serial() {
     return 1
   fi
 
-  mapfile -t serials < <(pixel_connected_sideload_serials)
+  serials=()
+  while IFS= read -r serial; do
+    [[ -n "$serial" ]] || continue
+    serials+=("$serial")
+  done < <(pixel_connected_sideload_serials)
   case "${#serials[@]}" in
     0)
       echo "pixel: no adb sideload device detected" >&2

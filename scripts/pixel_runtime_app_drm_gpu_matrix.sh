@@ -16,7 +16,11 @@ if [[ -z "$profiles_raw" ]]; then
   profiles_raw=$'gl\ngl_kgsl\nvulkan_drm\nvulkan_kgsl\nvulkan_kgsl_first'
 fi
 
-mapfile -t profiles < <(printf '%s\n' "$profiles_raw" | tr ' ' '\n' | sed '/^[[:space:]]*$/d')
+profiles=()
+while IFS= read -r profile; do
+  [[ -n "$profile" ]] || continue
+  profiles+=("$profile")
+done < <(printf '%s\n' "$profiles_raw" | tr ' ' '\n' | sed '/^[[:space:]]*$/d')
 if [[ "${#profiles[@]}" -eq 0 ]]; then
   echo "pixel_runtime_app_drm_gpu_matrix: no profiles selected" >&2
   exit 1

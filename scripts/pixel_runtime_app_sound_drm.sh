@@ -6,10 +6,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
-serial="$(pixel_resolve_serial)"
-panel_size="$(pixel_display_size "$serial")"
-panel_width="${panel_size%x*}"
-panel_height="${panel_size#*x}"
+stage_only=0
+if [[ -n "${PIXEL_RUNTIME_APP_PREP_ONLY-}" || -n "${PIXEL_RUNTIME_APP_PREPARE_ONLY-}" || -n "${PIXEL_RUNTIME_APP_STAGE_ONLY-}" ]]; then
+  stage_only=1
+fi
 asset_json="$("$SCRIPT_DIR/prepare_sound_demo_assets.sh")"
 runtime_app_config_json="${SHADOW_RUNTIME_APP_CONFIG_JSON:-$(
   ASSET_JSON="$asset_json" python3 - <<'PY'
@@ -30,13 +30,20 @@ print(asset["source"]["path"])
 PY
 )"
 
-sound_guest_env=$(
-  cat <<EOF
+sound_guest_env=''
+if (( stage_only == 0 )); then
+  serial="$(pixel_resolve_serial)"
+  panel_size="$(pixel_display_size "$serial")"
+  panel_width="${panel_size%x*}"
+  panel_height="${panel_size#*x}"
+  sound_guest_env=$(
+    cat <<EOF
 SHADOW_BLITZ_SURFACE_WIDTH=$panel_width
 SHADOW_BLITZ_SURFACE_HEIGHT=$panel_height
 SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=play
 EOF
-)
+  )
+fi
 
 if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}" ]]; then
   sound_guest_env="${sound_guest_env}"$'\n'"${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV}"

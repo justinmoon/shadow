@@ -275,7 +275,9 @@ PY
 printf 'pixel-ci: suite=%s serial=%s run_dir=%s\n' "$suite" "$serial" "$run_dir"
 
 # Best-effort reset so a stale hold-mode takeover does not poison the next case.
-env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+if (( stage_only == 0 )); then
+  env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+fi
 
 run_step preflight_root "verify Pixel root access" \
   "$SCRIPT_DIR/shadowctl" root-check -t "$serial"

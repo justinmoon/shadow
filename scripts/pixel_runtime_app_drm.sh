@@ -7,14 +7,6 @@ source "$SCRIPT_DIR/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
-panel_size="$(pixel_display_size "$serial")"
-viewport_fit="$(python3 "$SCRIPT_DIR/runtime_viewport.py" --fit "$panel_size")"
-runtime_surface_width="$(printf '%s\n' "$viewport_fit" | awk -F= '/^fitted_width=/{print $2}')"
-runtime_surface_height="$(printf '%s\n' "$viewport_fit" | awk -F= '/^fitted_height=/{print $2}')"
-if [[ -z "$runtime_surface_width" || -z "$runtime_surface_height" ]]; then
-  echo "pixel_runtime_app_drm: failed to derive runtime viewport from $panel_size" >&2
-  exit 1
-fi
 
 default_turnip_tarball="$(pixel_dir)/vendor/turnip_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
 default_mesa_tarball="$(pixel_dir)/vendor/mesa-for-android-container_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
@@ -164,6 +156,24 @@ runtime_cache_dir="$runtime_home_dir/.cache"
 runtime_config_dir="$runtime_home_dir/.config"
 xkb_config_root="$(pixel_runtime_linux_dir)/share/X11/xkb"
 
+if (( runtime_stage_only == 1 )); then
+  PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
+  PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
+  PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_runtime_host_bundle_artifact_dir)" \
+  PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT="$(pixel_runtime_app_bundle_artifact)" \
+    "$SCRIPT_DIR/pixel_push.sh"
+  exit 0
+fi
+
+panel_size="$(pixel_display_size "$serial")"
+viewport_fit="$(python3 "$SCRIPT_DIR/runtime_viewport.py" --fit "$panel_size")"
+runtime_surface_width="$(printf '%s\n' "$viewport_fit" | awk -F= '/^fitted_width=/{print $2}')"
+runtime_surface_height="$(printf '%s\n' "$viewport_fit" | awk -F= '/^fitted_height=/{print $2}')"
+if [[ -z "$runtime_surface_width" || -z "$runtime_surface_height" ]]; then
+  echo "pixel_runtime_app_drm: failed to derive runtime viewport from $panel_size" >&2
+  exit 1
+fi
+
 runtime_guest_env=$(
   cat <<EOF
 SHADOW_BLITZ_DEMO_MODE=runtime
@@ -177,7 +187,6 @@ SHADOW_BLITZ_TOUCH_SIGNAL_PATH=$touch_signal_path
 SHADOW_BLITZ_DEBUG_OVERLAY=0
 SHADOW_BLITZ_ANDROID_FONTS=${SHADOW_BLITZ_ANDROID_FONTS:-curated}
 SHADOW_BLITZ_SOFTWARE_KEYBOARD=${SHADOW_BLITZ_SOFTWARE_KEYBOARD:-1}
-SHADOW_BLITZ_GPU_SUMMARY=1
 SHADOW_RUNTIME_APP_BUNDLE_PATH=$(pixel_runtime_app_bundle_dst)
 SHADOW_RUNTIME_HOST_BINARY_PATH=$(pixel_runtime_host_launcher_dst)
 SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_dir)/runtime-nostr.sqlite3
@@ -187,6 +196,9 @@ XDG_CONFIG_HOME=$runtime_config_dir
 XKB_CONFIG_ROOT=$xkb_config_root
 EOF
 )
+if [[ "${PIXEL_RUNTIME_ENABLE_GPU_SUMMARY:-0}" == "1" ]]; then
+  runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_BLITZ_GPU_SUMMARY=1"
+fi
 if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu_softbuffer" || "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
   runtime_guest_env="${runtime_guest_env}"$'\n'"MESA_SHADER_CACHE_DIR=$runtime_cache_dir/mesa"
   if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
@@ -230,15 +242,6 @@ fi
 forbidden_markers='[shadow-runtime-demo] runtime-event-error:'
 if [[ -n "$extra_forbidden_markers" ]]; then
   forbidden_markers="${forbidden_markers}"$'\n'"${extra_forbidden_markers}"
-fi
-
-if (( runtime_stage_only == 1 )); then
-  PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
-  PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
-  PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_runtime_host_bundle_artifact_dir)" \
-  PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT="$(pixel_runtime_app_bundle_artifact)" \
-    "$SCRIPT_DIR/pixel_push.sh"
-  exit 0
 fi
 
 PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \

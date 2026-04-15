@@ -6,10 +6,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
-serial="$(pixel_resolve_serial)"
-panel_size="$(pixel_display_size "$serial")"
-panel_width="${panel_size%x*}"
-panel_height="${panel_size#*x}"
+stage_only=0
+if [[ -n "${PIXEL_RUNTIME_APP_PREP_ONLY-}" || -n "${PIXEL_RUNTIME_APP_PREPARE_ONLY-}" || -n "${PIXEL_RUNTIME_APP_STAGE_ONLY-}" ]]; then
+  stage_only=1
+fi
 asset_json="$("$SCRIPT_DIR/prepare_podcast_player_demo_assets.sh")"
 asset_dir="$(
   ASSET_JSON="$asset_json" python3 - <<'PY'
@@ -42,13 +42,20 @@ print(episodes[0]["path"])
 PY
 )"
 
-podcast_guest_env=$(
-  cat <<EOF
+podcast_guest_env=''
+if (( stage_only == 0 )); then
+  serial="$(pixel_resolve_serial)"
+  panel_size="$(pixel_display_size "$serial")"
+  panel_width="${panel_size%x*}"
+  panel_height="${panel_size#*x}"
+  podcast_guest_env=$(
+    cat <<EOF
 SHADOW_BLITZ_SURFACE_WIDTH=$panel_width
 SHADOW_BLITZ_SURFACE_HEIGHT=$panel_height
 SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=play-00
 EOF
-)
+  )
+fi
 
 if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}" ]]; then
   podcast_guest_env="${podcast_guest_env}"$'\n'"${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV}"

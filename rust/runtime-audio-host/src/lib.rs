@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 const AUDIO_BACKEND_ENV: &str = "SHADOW_RUNTIME_AUDIO_BACKEND";
 const AUDIO_BUNDLE_DIR_ENV: &str = "SHADOW_RUNTIME_BUNDLE_DIR";
 const AUDIO_SPIKE_BINARY_ENV: &str = "SHADOW_RUNTIME_AUDIO_SPIKE_BINARY";
+const AUDIO_SPIKE_STAGE_LIBRARY_PATH_ENV: &str = "SHADOW_RUNTIME_AUDIO_SPIKE_STAGE_LIBRARY_PATH";
+const AUDIO_SPIKE_STAGE_LOADER_PATH_ENV: &str = "SHADOW_RUNTIME_AUDIO_SPIKE_STAGE_LOADER_PATH";
 const DEFAULT_DURATION_MS: u32 = 2_400;
 const DEFAULT_FREQUENCY_HZ: u32 = 440;
 
@@ -407,7 +409,31 @@ impl LinuxSpikePlayerRuntime {
             }
         };
 
-        let mut command = Command::new(binary_path);
+        let stage_loader_path = env::var(AUDIO_SPIKE_STAGE_LOADER_PATH_ENV)
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let stage_library_path = env::var(AUDIO_SPIKE_STAGE_LIBRARY_PATH_ENV)
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        eprintln!(
+            "runtime-audio-host linux-spike-config binary={} loader={} library_path={}",
+            binary_path,
+            stage_loader_path.as_deref().unwrap_or("none"),
+            stage_library_path.as_deref().unwrap_or("none"),
+        );
+        let mut command = match stage_loader_path.as_deref() {
+            Some(loader_path) => {
+                let mut command = Command::new(loader_path);
+                if let Some(library_path) = stage_library_path.as_deref() {
+                    command.arg("--library-path").arg(library_path);
+                }
+                command.arg(binary_path);
+                command
+            }
+            None => Command::new(binary_path),
+        };
         command
             .env("SHADOW_AUDIO_SPIKE_DURATION_MS", source.duration_ms().to_string())
             .env("SHADOW_AUDIO_SPIKE_SOURCE_KIND", source.kind())
@@ -426,7 +452,12 @@ impl LinuxSpikePlayerRuntime {
             }
         }
         let child = command.spawn().map_err(|error| {
-            JsErrorBox::generic(format!("audio.play spawn linux spike helper: {error}"))
+            JsErrorBox::generic(format!(
+                "audio.play spawn linux spike helper binary={} loader={} library_path={}: {error}",
+                binary_path,
+                stage_loader_path.as_deref().unwrap_or("none"),
+                stage_library_path.as_deref().unwrap_or("none"),
+            ))
         })?;
         match source {
             AudioSource::Tone(source) => {

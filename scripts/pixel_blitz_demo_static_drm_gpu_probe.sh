@@ -21,7 +21,11 @@ if [[ -z "$profiles_raw" ]]; then
   fi
 fi
 
-mapfile -t profiles < <(printf '%s\n' "$profiles_raw" | tr ' ' '\n' | sed '/^[[:space:]]*$/d')
+profiles=()
+while IFS= read -r profile; do
+  [[ -n "$profile" ]] || continue
+  profiles+=("$profile")
+done < <(printf '%s\n' "$profiles_raw" | tr ' ' '\n' | sed '/^[[:space:]]*$/d')
 if [[ "${#profiles[@]}" -eq 0 ]]; then
   echo "pixel_blitz_demo_static_drm_gpu_probe: no profiles selected" >&2
   exit 1
