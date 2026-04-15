@@ -221,14 +221,6 @@ runtime-app-host-smoke-gpu backend="deno-core":
 runtime-app-compositor-smoke-gpu:
 	@scripts/runtime_app_compositor_smoke.sh
 
-# Run the static GPU Blitz demo as a Wayland client under the Smithay compositor smoke path
-blitz-demo-compositor-smoke-gpu:
-	@scripts/blitz_demo_compositor_smoke.sh
-
-# Run the static GPU Blitz demo as a Wayland client under the guest compositor smoke path
-blitz-demo-guest-compositor-smoke-gpu:
-	@scripts/blitz_demo_guest_compositor_smoke.sh
-
 # Build the minimal Rusty V8 smoke binary for x86_64 Linux
 runtime-rusty-v8-smoke-x86_64-linux-gnu:
 	@nix build --accept-flake-config .#rusty-v8-smoke-x86_64-linux-gnu
@@ -571,14 +563,6 @@ pixel-root-check:
 # Probe the rooted Pixel DRM/KMS nodes and report driver capabilities relevant to Turnip
 pixel-drm-probe:
 	@scripts/pixel_drm_probe.sh
-
-# Run one static rooted-Pixel GPU probe case with the selected backend profile
-pixel-blitz-demo-static-drm-gpu-probe profile="gl":
-	@PIXEL_STATIC_GPU_PROFILE="{{profile}}" scripts/pixel_blitz_demo_static_drm_gpu_probe.sh
-
-# Run the static rooted-Pixel GPU probe matrix across the current default profiles
-pixel-blitz-demo-static-drm-gpu-matrix:
-	@scripts/pixel_blitz_demo_static_drm_gpu_probe.sh
 
 # Run the minimal Deno Core smoke binary on the rooted Pixel through the GNU runtime envelope
 pixel-runtime-deno-core-smoke:

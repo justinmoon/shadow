@@ -184,32 +184,6 @@
           CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
           RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
         };
-      mkShadowGuestCounterFor = cross:
-        cross.rustPlatform.buildRustPackage {
-          pname = "shadow-counter-guest";
-          version = "0.1.0";
-          src = ./ui;
-          cargoLock = {
-            lockFile = ./ui/Cargo.lock;
-            outputHashes = uiBlitzOutputHashes;
-          };
-          doCheck = false;
-          strictDeps = true;
-          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
-          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
-          cargoBuildFlags = [ "-p" "shadow-counter-guest" ];
-          cargoInstallFlags = [ "-p" "shadow-counter-guest" ];
-          nativeBuildInputs = [
-            cross.buildPackages.pkg-config
-            cross.buildPackages.python3
-          ];
-          buildInputs = [
-            cross.wayland
-            cross.expat
-            cross.libffi
-          ];
-          PKG_CONFIG_ALL_STATIC = "1";
-        };
       mkShadowBlitzDemoFor = cross: rendererFeature:
         let
           rendererSuffix = lib.replaceStrings [ "_" ] [ "-" ] rendererFeature;

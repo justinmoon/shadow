@@ -25,7 +25,6 @@ OPENLOG_PATH_RE = re.compile(r"\[shadow-openlog\] (\S+) path=(\S+)")
 OPENLOG_IOCTL_RE = re.compile(r"\[shadow-openlog\] ioctl kind=(\S+)\s")
 RUNTIME_LOG_RE = re.compile(r"\[shadow-runtime-demo ts_ms=(\d+)\s+\+\s*\d+ms\]")
 RUNTIME_LOG_LINE_RE = re.compile(r"\[shadow-runtime-demo ts_ms=\d+\s+\+\s*\d+ms\] (.+)$")
-STATIC_READY_RE = re.compile(r"\[shadow-blitz-demo\] static-document-ready")
 TIMESTAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)")
 DISPLAY_ENV_WGPU_RE = re.compile(r"wgpu_backend_env=Some\(\"([^\"]+)\"\)")
 DISPLAY_ENV_PRELOAD_RE = re.compile(r"shadow_linux_ld_preload=Some\(\"([^\"]+)\"\)")
@@ -305,10 +304,6 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
         boot_match = BOOT_SPLASH_RE.search(line)
         if timestamp_match and boot_match:
             boot_checksum = boot_match.group(1)
-            continue
-
-        if STATIC_READY_RE.search(line):
-            inferred_mode = "static"
             continue
 
         no_compat_match = NO_COMPAT_DEVICE_RE.search(line)

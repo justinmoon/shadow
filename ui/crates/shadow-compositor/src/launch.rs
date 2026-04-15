@@ -60,7 +60,6 @@ pub fn launch_app(
         };
 
     command
-        .env("SHADOW_BLITZ_DEMO_MODE", "runtime")
         .env("WAYLAND_DISPLAY", socket_name)
         .env(control::COMPOSITOR_CONTROL_ENV, control_socket_path)
         .env("SHADOW_BLITZ_APP_TITLE", app.window_title)
