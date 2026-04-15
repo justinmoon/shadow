@@ -336,8 +336,14 @@ run_step preflight_doctor "inspect Pixel device state" \
 
 if (( run_only == 0 )); then
   if (( need_shell == 1 )); then
+    shell_runtime_args=(--stage-only)
+    if (( need_camera_runtime == 1 )); then
+      shell_runtime_args+=(--camera-runtime)
+    else
+      shell_runtime_args+=(--no-camera-runtime)
+    fi
     run_step prep_shell_runtime "stage rooted Pixel shell artifacts" \
-      env PIXEL_SERIAL="$serial" PIXEL_SHELL_PREP_ONLY=1 PIXEL_SHELL_ENABLE_CAMERA_RUNTIME="$need_camera_runtime" "$SCRIPT_DIR/pixel_shell_drm.sh"
+      env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_shell_drm.sh" "${shell_runtime_args[@]}"
   fi
 
   if (( stage_only == 1 && need_sound == 1 )); then
@@ -367,12 +373,12 @@ for step in "${suite_steps[@]}"; do
     timeline)
       run_display_ready_gate "$step"
       run_step timeline "prove rooted Pixel shell timeline lifecycle" \
-        env PIXEL_SERIAL="$serial" PIXEL_SHELL_RUN_ONLY=1 PIXEL_SHELL_ENABLE_CAMERA_RUNTIME=0 "$SCRIPT_DIR/pixel_shell_timeline_smoke.sh"
+        env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_shell_timeline_smoke.sh" --run-only
       ;;
     camera)
       run_display_ready_gate "$step"
       run_step camera "prove rooted Pixel shell camera capture" \
-        env PIXEL_SERIAL="$serial" PIXEL_SHELL_RUN_ONLY=1 PIXEL_SHELL_ENABLE_CAMERA_RUNTIME=1 "$SCRIPT_DIR/pixel_shell_camera_smoke.sh"
+        env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_shell_camera_smoke.sh" --run-only
       ;;
     sound)
       if (( run_only == 0 )); then

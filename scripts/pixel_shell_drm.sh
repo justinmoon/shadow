@@ -11,13 +11,32 @@ source "$SCRIPT_DIR/session_apps.sh"
 ensure_bootimg_shell "$@"
 
 shell_start_app_id=""
+shell_stage_only=0
+shell_run_only=0
+camera_runtime_enabled=1
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --app)
-        shell_start_app_id="${2:-}"
+        shell_start_app_id="${2:?pixel_shell_drm: --app requires a value}"
         shift 2
+        ;;
+      --stage-only)
+        shell_stage_only=1
+        shift
+        ;;
+      --run-only)
+        shell_run_only=1
+        shift
+        ;;
+      --camera-runtime)
+        camera_runtime_enabled=1
+        shift
+        ;;
+      --no-camera-runtime)
+        camera_runtime_enabled=0
+        shift
         ;;
       *)
         echo "pixel_shell_drm: unsupported argument $1" >&2
@@ -30,20 +49,11 @@ parse_args() {
 parse_args "$@"
 
 serial="$(pixel_resolve_serial)"
-shell_stage_only=0
-shell_run_only=0
-camera_runtime_enabled="${PIXEL_SHELL_ENABLE_CAMERA_RUNTIME-1}"
 camera_endpoint=""
 camera_start_command=""
 
-if [[ -n "${PIXEL_SHELL_PREP_ONLY-}" || -n "${PIXEL_SHELL_STAGE_ONLY-}" ]]; then
-  shell_stage_only=1
-fi
-if [[ -n "${PIXEL_SHELL_RUN_ONLY-}" ]]; then
-  shell_run_only=1
-fi
 if (( shell_stage_only == 1 && shell_run_only == 1 )); then
-  echo "pixel_shell_drm: PIXEL_SHELL_RUN_ONLY cannot be combined with prep/stage-only mode" >&2
+  echo "pixel_shell_drm: --run-only cannot be combined with --stage-only" >&2
   exit 64
 fi
 if [[ -n "$shell_start_app_id" ]]; then
@@ -54,7 +64,7 @@ if [[ -n "$shell_start_app_id" ]]; then
     exit 64
   fi
 fi
-if [[ "$camera_runtime_enabled" == "1" ]]; then
+if (( camera_runtime_enabled == 1 )); then
   camera_endpoint="$(pixel_camera_runtime_endpoint)"
   camera_start_command="$(pixel_camera_runtime_start_command "$camera_endpoint")"
 fi
@@ -118,7 +128,7 @@ esac
 
 if (( shell_run_only == 0 )); then
   env "${runtime_prepare_extra_env[@]}" "$SCRIPT_DIR/pixel_prepare_shell_runtime_artifacts.sh"
-  if [[ "$camera_runtime_enabled" == "1" ]]; then
+  if (( camera_runtime_enabled == 1 )); then
     pixel_camera_runtime_prepare_helper "$serial"
   fi
 fi
@@ -140,7 +150,7 @@ SHADOW_BLITZ_SOFTWARE_KEYBOARD=${SHADOW_BLITZ_SOFTWARE_KEYBOARD:-1}
 $(pixel_runtime_linux_user_env_lines)
 EOF
 )
-if [[ "$camera_runtime_enabled" == "1" ]]; then
+if (( camera_runtime_enabled == 1 )); then
   shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_RUNTIME_CAMERA_ENDPOINT=$camera_endpoint"
 fi
 if [[ -n "$PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS" ]]; then

@@ -16,6 +16,24 @@ state_after_reopen_path="$run_dir/state-after-reopen.json"
 control_socket_path="$(pixel_shell_control_socket_path)"
 session_pid=""
 latest_state_json=""
+launcher_args=(--no-camera-runtime --app timeline)
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --run-only)
+        launcher_args=(--run-only "${launcher_args[@]}")
+        shift
+        ;;
+      *)
+        echo "pixel_shell_timeline_smoke: unsupported argument $1" >&2
+        exit 64
+        ;;
+    esac
+  done
+}
+
+parse_args "$@"
 
 dump_run_log() {
   if [[ -f "$run_log" ]]; then
@@ -136,7 +154,7 @@ PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 ||
   cd "$REPO_ROOT"
   PIXEL_SERIAL="$serial" \
   PIXEL_SHELL_RENDERER=gpu_softbuffer \
-    "$SCRIPT_DIR/pixel_shell_drm_hold.sh" --app timeline
+    "$SCRIPT_DIR/pixel_shell_drm_hold.sh" "${launcher_args[@]}"
 ) >"$run_log" 2>&1 &
 session_pid="$!"
 

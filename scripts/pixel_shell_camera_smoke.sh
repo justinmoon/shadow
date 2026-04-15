@@ -15,6 +15,24 @@ run_log="$run_dir/pixel-shell-camera-smoke.log"
 broker_log_path="$run_dir/shadow-camera-provider-host-serve.log"
 session_output_path=""
 logcat_path=""
+launcher_args=(--app camera)
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --run-only)
+        launcher_args=(--run-only "${launcher_args[@]}")
+        shift
+        ;;
+      *)
+        echo "pixel_shell_camera_smoke: unsupported argument $1" >&2
+        exit 64
+        ;;
+    esac
+  done
+}
+
+parse_args "$@"
 
 dump_run_log() {
   if [[ -f "$run_log" ]]; then
@@ -40,7 +58,7 @@ PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 ||
   PIXEL_GUEST_REQUIRED_MARKER_TIMEOUT_SECS="${PIXEL_GUEST_REQUIRED_MARKER_TIMEOUT_SECS:-60}" \
   PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS="${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS:-10000}" \
   PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS:-90}" \
-    "$SCRIPT_DIR/pixel_shell_drm.sh" --app camera
+    "$SCRIPT_DIR/pixel_shell_drm.sh" "${launcher_args[@]}"
 ) >"$run_log" 2>&1 || {
   dump_run_log
   exit 1
