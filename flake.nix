@@ -39,6 +39,37 @@
         "x86_64-darwin"
         "aarch64-darwin"
       ];
+      repoRoot = ./.;
+      repoRootStr = toString repoRoot;
+      repoSourceFromPrefixes = prefixes:
+        lib.cleanSourceWith {
+          src = repoRoot;
+          filter = path: _type:
+            let
+              pathStr = toString path;
+              relPath =
+                if pathStr == repoRootStr then
+                  ""
+                else
+                  lib.removePrefix "${repoRootStr}/" pathStr;
+              pathMatchesPrefix = prefix:
+                relPath == prefix || lib.hasPrefix "${prefix}/" relPath;
+              pathIsPrefixAncestor = prefix:
+                relPath == "" || lib.hasPrefix "${relPath}/" prefix;
+            in
+              lib.any pathMatchesPrefix prefixes || lib.any pathIsPrefixAncestor prefixes;
+        };
+      shadowRuntimeHostSrc = repoSourceFromPrefixes [
+        "rust/shadow-runtime-host"
+        "rust/runtime-audio-host"
+        "rust/runtime-camera-host"
+        "rust/runtime-cashu-host"
+        "rust/runtime-nostr-host"
+        "rust/vendor/temporal_rs"
+      ];
+      shadowLinuxAudioSpikeSrc = repoSourceFromPrefixes [
+        "rust/shadow-linux-audio-spike"
+      ];
       darwinSystems = builtins.filter (system: lib.hasSuffix "-darwin" system) systems;
       forAllSystems = f:
         lib.genAttrs systems (
@@ -256,7 +287,7 @@
         cross.rustPlatform.buildRustPackage {
           pname = "shadow-runtime-host";
           version = "0.1.0";
-          src = ./.;
+          src = shadowRuntimeHostSrc;
           cargoRoot = "rust/shadow-runtime-host";
           buildAndTestSubdir = "rust/shadow-runtime-host";
           cargoLock.lockFile = ./rust/shadow-runtime-host/Cargo.lock;
@@ -276,7 +307,7 @@
         cross.rustPlatform.buildRustPackage {
           pname = "shadow-linux-audio-spike";
           version = "0.1.0";
-          src = ./.;
+          src = shadowLinuxAudioSpikeSrc;
           cargoRoot = "rust/shadow-linux-audio-spike";
           buildAndTestSubdir = "rust/shadow-linux-audio-spike";
           cargoLock.lockFile = ./rust/shadow-linux-audio-spike/Cargo.lock;

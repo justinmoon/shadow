@@ -263,8 +263,10 @@ guest_session_launch_env="$(
     "$compositor_exit_on_first_frame" \
     "$compositor_exit_on_client_disconnect" \
     "$client_exit_on_configure" \
-    "$guest_client_env"
+    "$guest_client_env" \
+    "$guest_session_env"
 )"
+guest_precreate_dir_words="$(pixel_lines_quoted "$guest_precreate_dirs")"
 session_command_word="$(printf '%q' "$session_dst")"
 
 pixel_capture_props "$serial" "$run_dir/device-props.txt"
@@ -277,9 +279,9 @@ phone_script="$(
   cat <<EOF
 $(pixel_takeover_stop_services_script "$stop_allocator")
 rm -rf $runtime_dir && mkdir -p $runtime_dir && chmod 700 $runtime_dir && rm -f $frame_path
-${guest_precreate_dirs:+for prep_dir in $guest_precreate_dirs; do mkdir -p "\$prep_dir"; done}
+${guest_precreate_dir_words:+for prep_dir in ${guest_precreate_dir_words}; do mkdir -p "\$prep_dir"; done}
 ${guest_pre_session_device_script:+$guest_pre_session_device_script}
-${session_timeout_secs:+timeout $session_timeout_secs }env ${guest_session_env:+$guest_session_env }${guest_session_launch_env}${session_command_word}
+${session_timeout_secs:+timeout $session_timeout_secs }env ${guest_session_launch_env}${session_command_word}
 status=\$?
 $(if [[ -n "$restore_android" ]]; then pixel_takeover_start_services_script; fi)
 exit \$status

@@ -78,6 +78,7 @@ if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS-}" ]]; then
   forbidden_markers="${forbidden_markers}"$'\n'"${PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS}"
 fi
 
+PIXEL_TAKEOVER_STOP_ALLOCATOR="${PIXEL_TAKEOVER_STOP_ALLOCATOR:-0}" \
 PIXEL_RUNTIME_ENABLE_LINUX_AUDIO=1 \
 PIXEL_RUNTIME_APP_INPUT_PATH="runtime/app-podcast-player/app.tsx" \
 PIXEL_RUNTIME_APP_CACHE_DIR="build/runtime/pixel-app-podcast-player" \

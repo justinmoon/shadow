@@ -873,6 +873,17 @@ pixel_shell_words_quoted() {
   done
 }
 
+pixel_lines_quoted() {
+  local lines="$1"
+  local line
+
+  [[ -n "$lines" ]] || return 0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    pixel_shell_words_quoted "$line"
+  done <<< "$lines"
+}
+
 pixel_guest_ui_session_env_words() {
   local runtime_dir="$1"
   local compositor_dst="$2"
@@ -882,6 +893,9 @@ pixel_guest_ui_session_env_words() {
   local compositor_exit_on_client_disconnect="${6:-}"
   local client_exit_on_configure="${7:-}"
   local guest_client_env="${8:-}"
+  local guest_session_env="${9:-}"
+
+  pixel_lines_quoted "$guest_session_env"
 
   pixel_shell_words_quoted \
     "XKB_CONFIG_ROOT=$(pixel_runtime_xkb_config_root)" \
