@@ -39,7 +39,6 @@ pub(crate) struct GuestStartupConfig {
     pub(crate) exit_on_first_dma_buffer: bool,
     pub(crate) boot_splash_drm: bool,
     pub(crate) drm_enabled: bool,
-    pub(crate) log_touch_geometry: bool,
     pub(crate) touch_signal_path: Option<PathBuf>,
     pub(crate) frame_artifact_path: PathBuf,
     pub(crate) toplevel_width: i32,
@@ -93,7 +92,6 @@ impl GuestStartupConfig {
             exit_on_first_dma_buffer: env_flag("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_DMA_BUFFER"),
             boot_splash_drm: env_flag("SHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM"),
             drm_enabled: env_flag("SHADOW_GUEST_COMPOSITOR_ENABLE_DRM"),
-            log_touch_geometry: env_flag("SHADOW_GUEST_LOG_TOUCH_GEOMETRY"),
             touch_signal_path: env::var_os("SHADOW_GUEST_TOUCH_SIGNAL_PATH")
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from),

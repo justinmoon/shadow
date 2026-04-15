@@ -55,6 +55,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - 2026-04-15 follow-up cleanup landed in `rust/shadow-session`: the wrapper now relies on normal child-process env inheritance for guest compositor/session knobs instead of manually mirroring the passthrough allowlist one variable at a time.
   - 2026-04-15 dead guest knob removed: `SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_WINDOW` is no longer parsed or handled because nothing in the supported VM/Pixel surface produced it.
   - 2026-04-15 dead guest debug path removed: `SHADOW_GUEST_COMPOSITOR_SELFTEST_DRM` plus the compositor DRM self-test frame path are gone because nothing on the supported surface produced or depended on them.
+  - 2026-04-15 guest touch-debug cleanup landed: removed `SHADOW_GUEST_LOG_TOUCH_GEOMETRY`, dead `SHADOW_GUEST_LOG_TOUCH_SIGNAL`, and the compositor-only touch mapping debug helper that only existed for those hold/debug lanes.
   - Delete env vars that only exist for historical probes, alternate transports, direct runtime-app lanes, or debugging experiments.
   - Dead guest knobs removed in this chunk: `SHADOW_GUEST_SHELL` and `SHADOW_GUEST_ENABLE_KEYBOARD_SEAT` are no longer read.
   - Replace `SHADOW_GUEST_CLIENT_ENV` and other stringly env blobs with structured config.

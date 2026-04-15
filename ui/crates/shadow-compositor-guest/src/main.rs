@@ -136,7 +136,6 @@ struct ShadowGuestCompositor {
     toplevel_size: smithay::utils::Size<i32, Logical>,
     frame_artifact_path: PathBuf,
     drm_enabled: bool,
-    log_touch_geometry: bool,
     touch_signal_counter: u64,
     touch_signal_path: Option<PathBuf>,
 }
@@ -209,7 +208,6 @@ impl ShadowGuestCompositor {
             toplevel_size: (config.toplevel_width, config.toplevel_height).into(),
             frame_artifact_path: config.frame_artifact_path.clone(),
             drm_enabled: config.drm_enabled,
-            log_touch_geometry: config.log_touch_geometry,
             touch_signal_counter: 0,
             touch_signal_path: config.touch_signal_path.clone(),
         };
@@ -951,7 +949,6 @@ impl ShadowGuestCompositor {
                             self.flush_wayland_clients();
                         }
                     }
-                    self.log_touch_mapping(event.normalized_x, event.normalized_y);
                     tracing::info!(
                         "[shadow-guest-compositor] touch-outside-content normalized={:.3},{:.3}",
                         event.normalized_x,
@@ -1215,39 +1212,6 @@ impl ShadowGuestCompositor {
                 path.display()
             ),
         }
-    }
-
-    fn log_touch_mapping(&mut self, normalized_x: f64, normalized_y: f64) {
-        if !self.log_touch_geometry {
-            return;
-        }
-        let Some((frame_width, frame_height)) = self.last_frame_size else {
-            return;
-        };
-        let Some(display) = self.ensure_kms_display() else {
-            return;
-        };
-        let (panel_width, panel_height) = display.dimensions();
-        let Some((dst_x, dst_y, copy_width, copy_height)) =
-            touch::frame_content_rect(panel_width, panel_height, frame_width, frame_height)
-        else {
-            return;
-        };
-        let panel_x = normalized_x.clamp(0.0, 1.0) * f64::from(panel_width.saturating_sub(1));
-        let panel_y = normalized_y.clamp(0.0, 1.0) * f64::from(panel_height.saturating_sub(1));
-        tracing::info!(
-            "[shadow-guest-compositor] touch-content-rect panel={}x{} frame={}x{} rect={}x{}+{},{} panel_xy={:.1},{:.1}",
-            panel_width,
-            panel_height,
-            frame_width,
-            frame_height,
-            copy_width,
-            copy_height,
-            dst_x,
-            dst_y,
-            panel_x,
-            panel_y
-        );
     }
 
     fn surface_under(
