@@ -18,7 +18,7 @@ cleanup
 
 (
   cd "$REPO_ROOT"
-  SHADOW_UI_VM_START_APP_ID=camera "$SCRIPT_DIR/ui_vm_run.sh"
+  "$SCRIPT_DIR/ui_vm_run.sh" --app camera
 ) >"$RUN_LOG" 2>&1 &
 
 "$SCRIPT_DIR/shadowctl" wait-ready -t vm

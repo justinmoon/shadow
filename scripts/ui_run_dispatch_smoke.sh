@@ -53,21 +53,21 @@ check_dispatch_case \
 check_dispatch_case \
   vm_podcast_open \
   0 \
-  "$(printf 'env=SHADOW_UI_VM_START_APP_ID=podcast\ncommand=%s' "$SCRIPT_DIR/ui_vm_run.sh")" \
+  "$(printf 'command=%s --app podcast' "$SCRIPT_DIR/ui_vm_run.sh")" \
   "" \
   app=podcast target=vm
 
 check_dispatch_case \
   vm_camera_open \
   0 \
-  "$(printf 'env=SHADOW_UI_VM_START_APP_ID=camera\ncommand=%s' "$SCRIPT_DIR/ui_vm_run.sh")" \
+  "$(printf 'command=%s --app camera' "$SCRIPT_DIR/ui_vm_run.sh")" \
   "" \
   app=camera target=vm
 
 check_dispatch_case \
   vm_cashu_open \
   0 \
-  "$(printf 'env=SHADOW_UI_VM_START_APP_ID=cashu\ncommand=%s' "$SCRIPT_DIR/ui_vm_run.sh")" \
+  "$(printf 'command=%s --app cashu' "$SCRIPT_DIR/ui_vm_run.sh")" \
   "" \
   app=cashu target=vm
 

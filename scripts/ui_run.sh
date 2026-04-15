@@ -77,18 +77,35 @@ source "$SCRIPT_DIR/session_apps.sh"
 exec_or_echo() {
   local command="$1"
   shift || true
-  local env_assignment
+  local -a env_assignments=()
+  local -a command_args=()
+  local arg
+
+  for arg in "$@"; do
+    if [[ ${#command_args[@]} -eq 0 && "$arg" == *=* ]]; then
+      env_assignments+=("$arg")
+      continue
+    fi
+    command_args+=("$arg")
+  done
 
   if [[ -n "${SHADOW_UI_RUN_ECHO_EXEC-}" ]]; then
-    for env_assignment in "$@"; do
-      printf 'env=%s\n' "$env_assignment"
+    for arg in "${env_assignments[@]}"; do
+      printf 'env=%s\n' "$arg"
     done
-    printf 'command=%s\n' "$command"
+    printf 'command=%s\n' "$(printf '%q ' "$command" "${command_args[@]}" | sed 's/ $//')"
     return 0
   fi
 
-  if [[ "$#" -gt 0 ]]; then
-    exec env "$@" "$command"
+  if [[ "${#env_assignments[@]}" -gt 0 ]]; then
+    if [[ "${#command_args[@]}" -gt 0 ]]; then
+      exec env "${env_assignments[@]}" "$command" "${command_args[@]}"
+    fi
+    exec env "${env_assignments[@]}" "$command"
+  fi
+
+  if [[ "${#command_args[@]}" -gt 0 ]]; then
+    exec "$command" "${command_args[@]}"
   fi
 
   exec "$command"
@@ -156,7 +173,7 @@ run_vm() {
 
   if shadow_session_app_supports_auto_open "$app"; then
     echo "ui-run: target=vm auto-opens app=$app through the guest shell session" >&2
-    exec_or_echo "$SCRIPT_DIR/ui_vm_run.sh" "SHADOW_UI_VM_START_APP_ID=$app"
+    exec_or_echo "$SCRIPT_DIR/ui_vm_run.sh" --app "$app"
     return 0
   fi
 

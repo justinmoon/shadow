@@ -145,7 +145,7 @@ check_shadowctl_echo_case \
 check_shadowctl_echo_case \
   shadowctl_start_vm_camera \
   0 \
-  "$(printf 'env=SHADOW_UI_VM_START_APP_ID=camera\ncommand=%s' "$SMOKE_SCRIPT_DIR/ui_vm_run.sh")" \
+  "$(printf 'command=%s --app camera' "$SMOKE_SCRIPT_DIR/ui_vm_run.sh")" \
   start -t vm --app camera
 
 check_shadowctl_echo_case \

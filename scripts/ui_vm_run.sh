@@ -11,10 +11,28 @@ RUNTIME_ENV_PATH="$REPO_ROOT/.shadow-vm/runtime-host-session-env.sh"
 # shellcheck source=./session_apps.sh
 source "$SCRIPT_DIR/session_apps.sh"
 
+ui_vm_start_app_id="shell"
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --app)
+        ui_vm_start_app_id="${2:-}"
+        shift 2
+        ;;
+      *)
+        echo "ui-vm-run: unsupported argument $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+parse_args "$@"
+
 cd "$REPO_ROOT"
 mkdir -p .shadow-vm
 runtime_env_tmp=""
-ui_vm_start_app_id="${SHADOW_UI_VM_START_APP_ID:-shell}"
 ui_vm_state_dir="/var/lib/shadow-ui"
 ui_vm_ssh_port_value="${SHADOW_UI_VM_SSH_PORT:-$(ui_vm_ssh_port)}"
 runtime_audio_backend="${SHADOW_RUNTIME_AUDIO_BACKEND:-}"
@@ -80,7 +98,7 @@ if [[ ! -s "$RUNTIME_ENV_PATH" ]] \
       printf 'export SHADOW_COMPOSITOR_START_APP_ID=%q\n' "$ui_vm_start_app_id"
     } >>"$runtime_env_tmp"
   else
-    echo "ui-vm-run: unsupported SHADOW_UI_VM_START_APP_ID=$ui_vm_start_app_id; expected $(shadow_session_apps_usage)" >&2
+    echo "ui-vm-run: unsupported --app $ui_vm_start_app_id; expected $(shadow_session_apps_usage)" >&2
     exit 1
   fi
   mv "$runtime_env_tmp" "$RUNTIME_ENV_PATH"
