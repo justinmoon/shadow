@@ -28,11 +28,17 @@
     let
       lib = nixpkgs.lib;
       uiVmSourceEnv = builtins.getEnv "SHADOW_UI_VM_SOURCE";
+      uiVmSshPortEnv = builtins.getEnv "SHADOW_UI_VM_SSH_PORT";
       uiVmSource =
         if uiVmSourceEnv != "" then
           uiVmSourceEnv
         else
           null;
+      uiVmSshPort =
+        if uiVmSshPortEnv != "" then
+          builtins.fromJSON uiVmSshPortEnv
+        else
+          2222;
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -506,6 +512,7 @@
             value = import ./vm/shadow-ui-vm.nix {
               inherit hostSystem microvm nixpkgs;
               repoSource = uiVmSource;
+              sshPort = uiVmSshPort;
             };
           }) darwinSystems));
       devShells = forAllSystems ({ androidDevPkgs, androidSdk, pkgs }: {

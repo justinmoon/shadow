@@ -2,6 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./ui_vm_common.sh
+source "$SCRIPT_DIR/ui_vm_common.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNNER_LINK="$REPO_ROOT/.shadow-vm/ui-vm-runner"
 SOCKET_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-vm.sock"
@@ -13,6 +15,7 @@ runtime_env_tmp=""
 ui_vm_enable_podcast_app="${SHADOW_UI_VM_ENABLE_PODCAST_APP:-1}"
 ui_vm_start_app_id="${SHADOW_UI_VM_START_APP_ID:-shell}"
 ui_vm_state_dir="/var/lib/shadow-ui"
+ui_vm_ssh_port_value="${SHADOW_UI_VM_SSH_PORT:-$(ui_vm_ssh_port)}"
 runtime_audio_backend="${SHADOW_RUNTIME_AUDIO_BACKEND:-}"
 
 case "$(uname -m)" in
@@ -36,9 +39,9 @@ cleanup_runtime_env_tmp() {
 
 trap cleanup_runtime_env_tmp EXIT
 
-if pgrep -f 'microvm@shadow-ui-vm' >/dev/null; then
-  echo "ui-vm-run: another Shadow UI VM process is already running" >&2
-  echo "ui-vm-run: stop it first with 'just ui-vm-stop'" >&2
+if lsof -nP -iTCP:"$ui_vm_ssh_port_value" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "ui-vm-run: SSH port $ui_vm_ssh_port_value is already in use" >&2
+  echo "ui-vm-run: stop the current worktree VM first with 'just ui-vm-stop' or set SHADOW_UI_VM_SSH_PORT" >&2
   exit 1
 fi
 
@@ -89,11 +92,12 @@ if [[ ! -s "$RUNTIME_ENV_PATH" || -n "${SHADOW_UI_VM_REFRESH_RUNTIME_ENV:-}" ]] 
   runtime_env_tmp=""
 fi
 SHADOW_UI_VM_SOURCE="$REPO_ROOT" \
+  SHADOW_UI_VM_SSH_PORT="$ui_vm_ssh_port_value" \
   nix build --impure --accept-flake-config -o "$RUNNER_LINK" .#ui-vm >/dev/null
 
 echo "ui-vm-run: launching Shadow UI VM"
 echo "ui-vm-run: qemu window will host the real Linux compositor"
-echo "ui-vm-run: ssh endpoint shadow@127.0.0.1:2222"
+echo "ui-vm-run: ssh endpoint shadow@127.0.0.1:$ui_vm_ssh_port_value"
 echo "ui-vm-run: state image .shadow-vm/shadow-ui-state.img"
 echo "ui-vm-run: first boot or dependency changes may spend time compiling in guest"
 echo "ui-vm-run: use 'just ui-vm-doctor' or 'just ui-vm-wait-ready' while the screen is blank"

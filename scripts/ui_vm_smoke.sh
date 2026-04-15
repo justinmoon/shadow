@@ -10,6 +10,7 @@ VM_SOCKET_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-vm.sock"
 UI_VM_PREP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_PREP_TIMEOUT:-900}"
 UI_VM_READY_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_READY_TIMEOUT:-600}"
 UI_VM_APP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_APP_TIMEOUT:-30}"
+ui_vm_run_pid=""
 
 wait_for_open_state() {
   local app_id="$1"
@@ -112,6 +113,9 @@ finish() {
   fi
 
   "$SCRIPT_DIR/ui_vm_stop.sh" >/dev/null 2>&1 || true
+  if [[ -n "$ui_vm_run_pid" ]]; then
+    wait "$ui_vm_run_pid" 2>/dev/null || true
+  fi
 }
 
 trap 'status=$?; finish "$status"; exit "$status"' EXIT

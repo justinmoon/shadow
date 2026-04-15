@@ -17,12 +17,27 @@ ui_vm_socket_path() {
 }
 
 ui_vm_ssh_port() {
-  printf '%s\n' "${SHADOW_UI_VM_SSH_PORT:-2222}"
+  if [[ -n "${SHADOW_UI_VM_SSH_PORT:-}" ]]; then
+    printf '%s\n' "$SHADOW_UI_VM_SSH_PORT"
+    return 0
+  fi
+
+  python3 - "$(ui_vm_repo_root)" <<'PY'
+import hashlib
+import sys
+
+path = sys.argv[1]
+base = 44000
+span = 10000
+digest = hashlib.sha256(path.encode("utf-8")).hexdigest()
+print(base + (int(digest[:8], 16) % span))
+PY
 }
 
 ui_vm_build_runner() {
   mkdir -p "$(ui_vm_state_dir)"
   SHADOW_UI_VM_SOURCE="$(ui_vm_repo_root)" \
+    SHADOW_UI_VM_SSH_PORT="$(ui_vm_ssh_port)" \
     nix build --impure --accept-flake-config -o "$(ui_vm_runner_link)" .#ui-vm >/dev/null
 }
 

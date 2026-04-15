@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -39,8 +40,13 @@ def qmp_socket_path() -> pathlib.Path:
     return state_dir() / "shadow-ui-vm.sock"
 
 
+def default_vm_ssh_port() -> str:
+    digest = hashlib.sha256(str(repo_root()).encode("utf-8")).hexdigest()
+    return str(44000 + (int(digest[:8], 16) % 10000))
+
+
 def ssh_port() -> str:
-    return os.environ.get("SHADOW_UI_VM_SSH_PORT", "2222")
+    return os.environ.get("SHADOW_UI_VM_SSH_PORT", default_vm_ssh_port())
 
 
 def ssh_base() -> list[str]:
@@ -150,7 +156,12 @@ def vm_processes() -> list[str]:
     process_list = run_local(["ps", "-p", ",".join(pids), "-o", "pid=,command="], check=False)
     if process_list.returncode != 0:
         return pids
-    return [line for line in process_list.stdout.splitlines() if line.strip()]
+    port_marker = f"hostfwd=tcp::{ssh_port()}-:22"
+    return [
+        line
+        for line in process_list.stdout.splitlines()
+        if line.strip() and port_marker in line
+    ]
 
 
 def vm_repo_source(process_lines: list[str]) -> str | None:

@@ -1,4 +1,4 @@
-{ hostSystem, microvm, nixpkgs, repoSource }:
+{ hostSystem, microvm, nixpkgs, repoSource, sshPort }:
 
 let
   lib = nixpkgs.lib;
@@ -423,7 +423,7 @@ PY
           forwardPorts = [
             {
               from = "host";
-              host.port = 2222;
+              host.port = sshPort;
               guest.port = 22;
             }
           ];
