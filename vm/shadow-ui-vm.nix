@@ -18,6 +18,7 @@ nixpkgs.lib.nixosSystem {
         runtimeArtifactDir = "/opt/shadow-runtime";
         sessionLog = "${logDir}/shadow-ui-session.log";
         sessionEnv = "${stateDir}/shadow-ui-session-env.sh";
+        runtimeArtifactManifest = "${runtimeArtifactDir}/artifact-manifest.json";
         runtimeHostEnvScript = "${runtimeArtifactDir}/runtime-host-session-env.sh";
         guestSystemPkgs = with pkgs; [
           bash
@@ -94,6 +95,63 @@ nixpkgs.lib.nixosSystem {
               echo "shadow-ui-session: missing host-prepared runtime env ${runtimeHostEnvScript}" >&2
               exit 1
             fi
+            if [[ ! -f ${runtimeArtifactManifest} ]]; then
+              echo "shadow-ui-session: missing host-prepared runtime manifest ${runtimeArtifactManifest}" >&2
+              exit 1
+            fi
+            RUNTIME_ARTIFACT_MANIFEST=${runtimeArtifactManifest} \
+            RUNTIME_ARTIFACT_DIR=${runtimeArtifactDir} \
+            python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+manifest_path = Path(os.environ["RUNTIME_ARTIFACT_MANIFEST"])
+artifact_dir = Path(os.environ["RUNTIME_ARTIFACT_DIR"])
+with manifest_path.open("r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+if manifest.get("schemaVersion") != 1:
+    raise SystemExit("shadow-ui-session: runtime manifest schemaVersion must be 1")
+if manifest.get("profile") != "vm-shell":
+    raise SystemExit(
+        f"shadow-ui-session: runtime manifest profile must be vm-shell, got {manifest.get('profile')!r}",
+    )
+if manifest.get("artifactGuestRoot") != str(artifact_dir):
+    raise SystemExit(
+        "shadow-ui-session: runtime manifest artifactGuestRoot does not match mounted artifact dir",
+    )
+
+apps = manifest.get("apps")
+if not isinstance(apps, dict):
+    raise SystemExit("shadow-ui-session: runtime manifest apps must be an object")
+
+required_apps = {"camera", "cashu", "counter", "podcast", "timeline"}
+missing = sorted(required_apps - set(apps))
+if missing:
+    raise SystemExit(
+        "shadow-ui-session: runtime manifest missing apps: " + ", ".join(missing),
+    )
+
+for app_id in sorted(required_apps):
+    app = apps[app_id]
+    guest_bundle = app.get("guestBundlePath")
+    if not isinstance(guest_bundle, str) or not guest_bundle:
+        raise SystemExit(f"shadow-ui-session: app {app_id} missing guestBundlePath")
+    guest_bundle_path = Path(guest_bundle)
+    try:
+        guest_bundle_path.relative_to(artifact_dir)
+    except ValueError as error:
+        raise SystemExit(
+            f"shadow-ui-session: app {app_id} bundle is outside artifact dir: {guest_bundle}",
+        ) from error
+    if not guest_bundle_path.is_file():
+        raise SystemExit(
+            f"shadow-ui-session: app {app_id} bundle does not exist: {guest_bundle}",
+        )
+
+print("runtime manifest validated")
+PY
             # shellcheck source=/dev/null
             source ${runtimeHostEnvScript}
             echo "runtime env source=host-cache"

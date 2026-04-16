@@ -84,7 +84,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [~] Introduce a VM base module plus mode overlays.
   `.#ui-vm-ci` is now the canonical package name and `.#ui-vm` is a compatibility alias. Do not add a second NixOS mode until there is a proven dev-only delivery seam; if that happens, keep the overlay limited to artifact delivery and source visibility.
 - [x] Write down and enforce the runtime artifact contract.
-  The builder contract is now `apps/<id>/bundle.js`, optional colocated assets, `artifact-manifest.json`, and optional `runtime-host-session-env.sh`.
+  The builder contract is now `apps/<id>/bundle.js`, optional colocated assets, `artifact-manifest.json`, and optional `runtime-host-session-env.sh`. The VM session validates the manifest before starting the compositor, and `ui-vm-smoke` validates the same manifest from the host side.
 
 ## Implementation Notes
 
@@ -98,6 +98,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - the podcast asset resolver now defaults to the checked-in local episode `00` fixture, so VM, host, and Pixel CI podcast paths are offline-safe unless a caller explicitly requests live feed assets
   - runtime bundles are still host-prepared by design, and the Deno/npm bundler seam is now an explicit artifact-builder layer rather than hidden launch glue
   - `scripts/runtime_build_artifacts.sh` is the single public builder wrapper; the older host/Pixel prep scripts are compatibility callers over that manifest contract
+  - the VM runtime artifact manifest is now an enforced contract, not just diagnostic output: required apps must have bundle paths under the mounted artifact share
   - VM smoke step markers now show which app transition is under test, and the app-state timeout is 90s to tolerate cold app/runtime starts without hiding hard hangs
   - `SHADOW_UI_VM_SOURCE` / repoShare are gone from the VM definition; the remaining `--impure` use is only for dynamic SSH port selection
 - User invariant for this plan:

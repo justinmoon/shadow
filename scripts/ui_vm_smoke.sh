@@ -10,6 +10,8 @@ RUN_LOG="$LOG_DIR/ui-vm-smoke.log"
 SHOT_PATH="$LOG_DIR/ui-vm-smoke.png"
 VM_SOCKET_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-vm.sock"
 VM_STATE_IMAGE_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-state.img"
+RUNTIME_ARTIFACT_DIR="$(ui_vm_runtime_artifact_dir)"
+RUNTIME_GUEST_DIR="$(ui_vm_runtime_guest_dir)"
 UI_VM_PREP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_PREP_TIMEOUT:-900}"
 # Fresh worktrees can trigger cold VM artifact preparation before the compositor
 # is ready. Keep the required pre-merge smoke tolerant of that path.
@@ -163,7 +165,8 @@ done
 
 doctor_json="$("$SCRIPT_DIR/shadowctl" doctor -t vm --json)"
 REPO_ROOT="$REPO_ROOT" \
-EXPECTED_ARTIFACT_SHARE="$REPO_ROOT/.shadow-vm/runtime-artifacts" \
+EXPECTED_ARTIFACT_SHARE="$RUNTIME_ARTIFACT_DIR" \
+EXPECTED_ARTIFACT_GUEST_ROOT="$RUNTIME_GUEST_DIR" \
 DOCTOR_JSON="$doctor_json" \
 python3 - <<'PY'
 import json
@@ -175,6 +178,7 @@ issues = payload.get("issues", [])
 status = payload["status"]
 artifact_share = status["local"].get("artifact_share")
 expected = Path(os.environ["EXPECTED_ARTIFACT_SHARE"]).resolve()
+expected_guest_root = os.environ["EXPECTED_ARTIFACT_GUEST_ROOT"]
 repo_root = Path(os.environ["REPO_ROOT"]).resolve()
 
 if issues:
@@ -190,6 +194,60 @@ if artifact_share_path != expected:
     raise SystemExit(
         f"ui-vm-smoke: expected artifact share {str(expected)!r}, got {artifact_share!r}"
     )
+
+manifest_path = expected / "artifact-manifest.json"
+if not manifest_path.is_file():
+    raise SystemExit(f"ui-vm-smoke: missing runtime artifact manifest {manifest_path}")
+
+with manifest_path.open("r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+if manifest.get("schemaVersion") != 1:
+    raise SystemExit("ui-vm-smoke: runtime artifact manifest schemaVersion must be 1")
+if manifest.get("profile") != "vm-shell":
+    raise SystemExit(
+        f"ui-vm-smoke: runtime artifact manifest profile must be vm-shell, got {manifest.get('profile')!r}"
+    )
+if manifest.get("artifactGuestRoot") != expected_guest_root:
+    raise SystemExit(
+        f"ui-vm-smoke: runtime artifact manifest guest root must be {expected_guest_root!r}"
+    )
+
+apps = manifest.get("apps")
+if not isinstance(apps, dict):
+    raise SystemExit("ui-vm-smoke: runtime artifact manifest apps must be an object")
+
+required_apps = {"camera", "cashu", "counter", "podcast", "timeline"}
+missing = sorted(required_apps - set(apps))
+if missing:
+    raise SystemExit(
+        "ui-vm-smoke: runtime artifact manifest missing apps: " + ", ".join(missing)
+    )
+
+for app_id in sorted(required_apps):
+    app = apps[app_id]
+    effective_bundle = app.get("effectiveBundlePath")
+    guest_bundle = app.get("guestBundlePath")
+    expected_guest_bundle = f"{expected_guest_root}/apps/{app_id}/bundle.js"
+    if guest_bundle != expected_guest_bundle:
+        raise SystemExit(
+            f"ui-vm-smoke: app {app_id} guest bundle {guest_bundle!r} != {expected_guest_bundle!r}"
+        )
+    if not isinstance(effective_bundle, str) or not effective_bundle:
+        raise SystemExit(f"ui-vm-smoke: app {app_id} missing effectiveBundlePath")
+    effective_bundle_path = Path(effective_bundle)
+    if not effective_bundle_path.is_absolute():
+        effective_bundle_path = (repo_root / effective_bundle_path).resolve()
+    try:
+        effective_bundle_path.relative_to(expected)
+    except ValueError as error:
+        raise SystemExit(
+            f"ui-vm-smoke: app {app_id} host bundle is outside artifact share: {effective_bundle}"
+        ) from error
+    if not effective_bundle_path.is_file():
+        raise SystemExit(
+            f"ui-vm-smoke: app {app_id} host bundle does not exist: {effective_bundle_path}"
+        )
 PY
 
 echo "ui-vm-smoke: open timeline"
