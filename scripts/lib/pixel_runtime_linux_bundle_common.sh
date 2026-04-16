@@ -206,25 +206,27 @@ PY
 }
 
 write_runtime_bundle_manifest() {
-  local manifest_path fingerprint package_ref vendor_mesa_tarball vendor_turnip_tarball
+  local manifest_path fingerprint package_ref vendor_mesa_tarball vendor_turnip_tarball vendor_turnip_lib_path
   manifest_path="$1"
   fingerprint="$2"
   package_ref="$3"
   vendor_mesa_tarball="${4-}"
   vendor_turnip_tarball="${5-}"
+  vendor_turnip_lib_path="${6-}"
 
-  python3 - "$manifest_path" "$fingerprint" "$package_ref" "$vendor_mesa_tarball" "$vendor_turnip_tarball" <<'PY'
+  python3 - "$manifest_path" "$fingerprint" "$package_ref" "$vendor_mesa_tarball" "$vendor_turnip_tarball" "$vendor_turnip_lib_path" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
 
-manifest_path, fingerprint, package_ref, vendor_mesa_tarball, vendor_turnip_tarball = sys.argv[1:6]
+manifest_path, fingerprint, package_ref, vendor_mesa_tarball, vendor_turnip_tarball, vendor_turnip_lib_path = sys.argv[1:7]
 manifest = {
     "fingerprint": fingerprint,
     "generatedAt": datetime.now(timezone.utc).isoformat(),
     "packageRef": package_ref,
     "vendorMesaTarball": vendor_mesa_tarball or None,
     "vendorTurnipTarball": vendor_turnip_tarball or None,
+    "vendorTurnipLibPath": vendor_turnip_lib_path or None,
 }
 with open(manifest_path, "w", encoding="utf-8") as handle:
     json.dump(manifest, handle, indent=2)

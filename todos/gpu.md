@@ -845,6 +845,14 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - either:
       - confirm a Turnip/KGSL bug and carry a local Mesa patch / overlay
       - or prove our current env/profile is accidentally steering WSI onto a non-shareable BO path
+- `2026-04-16 local Turnip override seam`:
+  - the Pixel GPU bundle scripts now accept `PIXEL_VENDOR_TURNIP_LIB_PATH`
+  - that path is fingerprinted into the runtime bundle manifest/cache key
+  - practical use:
+    - build or patch `libvulkan_freedreno.so` locally
+    - point `PIXEL_VENDOR_TURNIP_LIB_PATH` at it
+    - reuse the normal Pixel bundle path without ad hoc device mutation
+  - this is the intended path for the next direct-`gpu` experiment if we carry a local Turnip fix
 
 ## Further Improvements
 

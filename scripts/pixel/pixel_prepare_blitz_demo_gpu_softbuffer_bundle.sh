@@ -20,7 +20,9 @@ bundle_out_link="$(pixel_dir)/shadow-blitz-demo-aarch64-linux-gnu-gpu-softbuffer
 launcher_artifact="$(pixel_artifact_path run-shadow-blitz-demo-gpu-softbuffer)"
 openlog_preload_artifact="$(pixel_artifact_path shadow-openlog-preload.so)"
 vendor_turnip_tarball="${PIXEL_VENDOR_TURNIP_TARBALL-}"
+vendor_turnip_lib_path="${PIXEL_VENDOR_TURNIP_LIB_PATH-}"
 vendor_turnip_tarball="$(normalize_runtime_bundle_input_path "$vendor_turnip_tarball")"
+vendor_turnip_lib_path="$(normalize_runtime_bundle_input_path "$vendor_turnip_lib_path")"
 package_system="${PIXEL_LINUX_BUILD_SYSTEM:-aarch64-linux}"
 package_ref="$repo#packages.${package_system}.shadow-blitz-demo-aarch64-linux-gnu-gpu-softbuffer"
 bundle_device_dir="$(pixel_runtime_linux_dir)"
@@ -50,7 +52,8 @@ bundle_fingerprint="$(
     "$SCRIPT_DIR/pixel/pixel_openlog_preload.c" \
     "$xkb_source_dir" \
     "$android_font_source_dir" \
-    "${vendor_turnip_tarball:-__no_vendor_turnip__}"
+    "${vendor_turnip_tarball:-__no_vendor_turnip__}" \
+    "${vendor_turnip_lib_path:-__no_vendor_turnip_lib__}"
 )"
 
 if reuse_cached_runtime_bundle \
@@ -191,6 +194,19 @@ overlay_vendor_turnip_tarball() {
   fi
 }
 
+overlay_vendor_turnip_lib_path() {
+  local lib_path="$1"
+
+  [[ -n "$lib_path" ]] || return 0
+  if [[ ! -f "$lib_path" ]]; then
+    echo "pixel_prepare_blitz_demo_gpu_softbuffer_bundle: missing PIXEL_VENDOR_TURNIP_LIB_PATH: $lib_path" >&2
+    return 1
+  fi
+
+  mkdir -p "$bundle_dir/lib"
+  cp -Lf "$lib_path" "$bundle_dir/lib/libvulkan_freedreno.so"
+}
+
 stage_runtime_host_linux_bundle "$package_ref" "$bundle_out_link" "$bundle_dir" "shadow-blitz-demo"
 
 chmod -R u+w "$bundle_dir" 2>/dev/null || true
@@ -201,6 +217,7 @@ copy_optional_tree_from_closure "share/vulkan/icd.d" || true
 copy_optional_tree_from_closure "share/glvnd/egl_vendor.d" || true
 append_vendor_turnip_runtime_closure
 overlay_vendor_turnip_tarball "$vendor_turnip_tarball"
+overlay_vendor_turnip_lib_path "$vendor_turnip_lib_path"
 rewrite_bundle_driver_manifests
 flatten_bundle_file_symlinks
 chmod -R u+w "$bundle_dir" 2>/dev/null || true
@@ -254,7 +271,8 @@ write_runtime_bundle_manifest \
   "$bundle_fingerprint" \
   "$package_ref" \
   "" \
-  "$vendor_turnip_tarball"
+  "$vendor_turnip_tarball" \
+  "$vendor_turnip_lib_path"
 
 python3 - "$bundle_dir" "$launcher_artifact" "$bundle_device_dir" "$package_ref" <<'PY'
 import json
