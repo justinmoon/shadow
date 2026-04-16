@@ -3,8 +3,9 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -30,10 +31,13 @@ pub enum TouchPhase {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TouchInputEvent {
+    pub sequence: u64,
     pub phase: TouchPhase,
     pub normalized_x: f64,
     pub normalized_y: f64,
     pub time_msec: u32,
+    pub captured_at: Instant,
+    pub wall_msec: u128,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -128,10 +132,13 @@ impl TouchFrameState {
         self.committed_slot = current.map(|(slot, _)| slot);
         self.committed = current.map(|(_, contact)| contact).unwrap_or_default();
         Some(TouchInputEvent {
+            sequence: next_touch_sequence(),
             phase,
             normalized_x: normalize_axis(x, device.x_min, device.x_max),
             normalized_y: normalize_axis(y, device.y_min, device.y_max),
             time_msec,
+            captured_at: Instant::now(),
+            wall_msec: wall_millis(),
         })
     }
 
@@ -327,6 +334,7 @@ const ABS_MT_SLOT: u16 = 0x2f;
 const ABS_MT_POSITION_X: u16 = 0x35;
 const ABS_MT_POSITION_Y: u16 = 0x36;
 const ABS_MT_TRACKING_ID: u16 = 0x39;
+static TOUCH_EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 fn parse_raw_touch_event(bytes: &[u8; INPUT_EVENT_SIZE]) -> Result<RawTouchEvent> {
     let seconds = i64::from_ne_bytes(bytes[0..8].try_into().expect("time seconds"));
@@ -462,6 +470,17 @@ fn time_msec(timestamp: SystemTime) -> u32 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u32
+}
+
+fn wall_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+fn next_touch_sequence() -> u64 {
+    TOUCH_EVENT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
 }
 
 #[cfg(test)]

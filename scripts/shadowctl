@@ -859,6 +859,24 @@ def resolve_output_path(target: TargetRef, output: str | None) -> pathlib.Path:
     return repo_root() / f"build/pixel/{serial}-screenshot.png"
 
 
+def resolve_frame_output_path(target: TargetRef, output: str | None) -> pathlib.Path:
+    if output:
+        path = pathlib.Path(output).expanduser()
+        if not path.is_absolute():
+            path = repo_root() / path
+        return path
+    if target.kind == "vm":
+        return repo_root() / "build/ui-vm/shadow-frame.ppm"
+    serial = target.serial or target.id
+    return repo_root() / f"build/pixel/{serial}-shadow-frame.ppm"
+
+
+def default_frame_remote_path(target: TargetRef) -> str:
+    if target.kind == "vm":
+        return "/tmp/shadow-frame.ppm"
+    return os.environ.get("PIXEL_FRAME_PATH", "/data/local/tmp/shadow-frame.ppm")
+
+
 def cmd_screenshot(args: argparse.Namespace) -> int:
     target = args.target_ref
     output = resolve_output_path(target, args.output)
@@ -876,6 +894,55 @@ def cmd_screenshot(args: argparse.Namespace) -> int:
             sys.stderr.write(result.stderr.decode("utf-8", errors="replace"))
         return result.returncode
     output.write_bytes(result.stdout)
+    print(output)
+    return 0
+
+
+def _control_error_text(
+    result: subprocess.CompletedProcess[str], *, require_ok: bool = False
+) -> str | None:
+    if result.returncode != 0:
+        return (result.stderr or result.stdout or f"control request exited {result.returncode}").strip()
+    stdout = result.stdout or ""
+    if stdout.startswith("error="):
+        return stdout.strip()
+    if require_ok and "ok" not in stdout.splitlines():
+        return "shadowctl: snapshot request did not return ok"
+    return None
+
+
+def cmd_frame(args: argparse.Namespace) -> int:
+    target = args.target_ref
+    output = resolve_frame_output_path(target, args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    remote_path = args.remote_path or default_frame_remote_path(target)
+
+    result = control_request_for(target, f"snapshot {remote_path}")
+    if error_text := _control_error_text(result, require_ok=True):
+        print(error_text, file=sys.stderr)
+        return result.returncode or 1
+
+    if target.kind == "vm":
+        cat_result = run_local(
+            ssh_base() + ["cat", remote_path],
+            text=False,
+            capture_output=True,
+            check=False,
+        )
+        if cat_result.returncode != 0:
+            stderr = cat_result.stderr.decode("utf-8", errors="replace")
+            stdout = cat_result.stdout.decode("utf-8", errors="replace")
+            print((stderr or stdout or "shadowctl: failed to read remote frame").strip(), file=sys.stderr)
+            return cat_result.returncode
+        output.write_bytes(cat_result.stdout)
+        print(output)
+        return 0
+
+    serial = target.serial or target.id
+    pull = pixel_adb(serial, "pull", remote_path, str(output), check=False)
+    if pull.returncode != 0:
+        print((pull.stderr or pull.stdout or "shadowctl: failed to pull frame").strip(), file=sys.stderr)
+        return pull.returncode
     print(output)
     return 0
 
@@ -1311,6 +1378,20 @@ def build_parser() -> argparse.ArgumentParser:
         parents=(target_parser,),
     )
     screenshot.add_argument("output", nargs="?")
+
+    frame = add_command(
+        subparsers,
+        "frame",
+        "Capture the compositor's latest published frame as a PPM.",
+        cmd_frame,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
+    frame.add_argument("output", nargs="?")
+    frame.add_argument(
+        "--remote-path",
+        help="Target-side path used for the transient PPM before it is pulled.",
+    )
 
     open_cmd = add_command(
         subparsers,

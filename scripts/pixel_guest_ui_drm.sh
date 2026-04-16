@@ -31,6 +31,7 @@ client_exit_on_configure="${PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE-1}"
 session_timeout_secs="${PIXEL_GUEST_SESSION_TIMEOUT_SECS-}"
 guest_client_env="${PIXEL_GUEST_CLIENT_ENV-}"
 guest_session_env="${PIXEL_GUEST_SESSION_ENV-}"
+frame_capture_mode="${PIXEL_GUEST_FRAME_CAPTURE_MODE-}"
 guest_precreate_dirs="${PIXEL_GUEST_PRECREATE_DIRS-}"
 guest_pre_session_device_script="${PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT-}"
 expect_compositor_process="${PIXEL_GUEST_EXPECT_COMPOSITOR_PROCESS-1}"
@@ -74,6 +75,30 @@ checkpoint_failure_description=""
 checkpoint_failure_message=""
 post_success_adb_lost=false
 post_success_transport_warning=""
+
+if [[ -z "$frame_capture_mode" ]]; then
+  if [[ -n "$compositor_exit_on_first_frame" ]]; then
+    frame_capture_mode="publish"
+  else
+    frame_capture_mode="request"
+  fi
+fi
+
+case "$frame_capture_mode" in
+  publish | request | off) ;;
+  *)
+    echo "pixel_guest_ui_drm: unsupported PIXEL_GUEST_FRAME_CAPTURE_MODE=$frame_capture_mode" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$frame_capture_mode" == "publish" ]]; then
+  if [[ -n "$guest_session_env" ]]; then
+    guest_session_env="${guest_session_env}"$'\n''SHADOW_GUEST_FRAME_ARTIFACTS=1'
+  else
+    guest_session_env='SHADOW_GUEST_FRAME_ARTIFACTS=1'
+  fi
+fi
 
 display_services_stopped_condition() {
   if [[ "$stop_allocator" == "0" ]]; then
@@ -247,6 +272,12 @@ ensure_post_success_adb() {
   return 1
 }
 
+request_frame_artifact() {
+  PIXEL_RUNTIME_DIR="$runtime_dir" \
+  PIXEL_FRAME_PATH="$frame_path" \
+    "$SCRIPT_DIR/shadowctl" frame -t "$serial" --remote-path "$frame_path" "$frame_artifact" >"$pull_log_path" 2>&1
+}
+
 if [[ -z "$skip_push" ]]; then
   if ! pixel_require_runtime_artifacts; then
     "$SCRIPT_DIR/pixel_build.sh"
@@ -355,11 +386,25 @@ if [[ -z "$failure_message" && -n "$required_markers_raw" ]]; then
 fi
 
 if [[ -z "$failure_message" ]]; then
-  if wait_for_checkpoint "frame artifact written on device" "$frame_checkpoint_timeout_secs" pixel_root_file_nonempty "$serial" "$frame_path"; then
-    frame_on_device=true
-  else
-    failure_message="$checkpoint_failure_message"
-  fi
+  case "$frame_capture_mode" in
+    publish)
+      if wait_for_checkpoint "frame artifact written on device" "$frame_checkpoint_timeout_secs" pixel_root_file_nonempty "$serial" "$frame_path"; then
+        frame_on_device=true
+      else
+        failure_message="$checkpoint_failure_message"
+      fi
+      ;;
+    request)
+      if wait_for_checkpoint "frame artifact requested from compositor" "$frame_checkpoint_timeout_secs" request_frame_artifact; then
+        frame_on_device=true
+      else
+        failure_message="$checkpoint_failure_message"
+      fi
+      ;;
+    off)
+      checkpoint_note "skipping frame artifact capture"
+      ;;
+  esac
 fi
 
 if [[ -n "$failure_message" ]]; then
@@ -486,6 +531,7 @@ pixel_write_status_json "$run_dir/status.json" \
   client_marker_seen="$client_marker_seen" \
   required_markers_seen="$required_markers_seen" \
   forbidden_markers_clear="$forbidden_markers_clear" \
+  frame_capture_mode="$frame_capture_mode" \
   frame_on_device="$frame_on_device" \
   presented_frame="$presented" \
   session_ok="$session_ok" \

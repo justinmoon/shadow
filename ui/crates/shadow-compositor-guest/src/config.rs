@@ -40,7 +40,9 @@ pub(crate) struct GuestStartupConfig {
     pub(crate) boot_splash_drm: bool,
     pub(crate) drm_enabled: bool,
     pub(crate) touch_signal_path: Option<PathBuf>,
+    pub(crate) touch_latency_trace: bool,
     pub(crate) frame_artifact_path: PathBuf,
+    pub(crate) frame_artifacts_enabled: bool,
     pub(crate) toplevel_width: i32,
     pub(crate) toplevel_height: i32,
     pub(crate) keyboard_seat_enabled: bool,
@@ -95,10 +97,12 @@ impl GuestStartupConfig {
             touch_signal_path: env::var_os("SHADOW_GUEST_TOUCH_SIGNAL_PATH")
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from),
+            touch_latency_trace: env_flag("SHADOW_GUEST_TOUCH_LATENCY_TRACE"),
             frame_artifact_path: env::var_os("SHADOW_GUEST_FRAME_PATH")
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(DEFAULT_FRAME_ARTIFACT_PATH)),
+            frame_artifacts_enabled: env_flag("SHADOW_GUEST_FRAME_ARTIFACTS"),
             toplevel_width: parse_positive_i32_env(
                 "SHADOW_GUEST_COMPOSITOR_TOPLEVEL_WIDTH",
                 DEFAULT_TOPLEVEL_WIDTH,

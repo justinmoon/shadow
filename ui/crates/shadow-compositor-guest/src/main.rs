@@ -13,7 +13,7 @@ use std::{
     path::PathBuf,
     process::Child,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use chrono::Local;
@@ -89,6 +89,18 @@ struct AppTouchGesture {
     scrolling: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PendingTouchTrace {
+    sequence: u64,
+    phase: touch::TouchPhase,
+    route: &'static str,
+    input_captured_at: Instant,
+    input_wall_msec: u128,
+    dispatch_started_at: Instant,
+    dispatch_wall_msec: u128,
+    commit_at: Option<Instant>,
+}
+
 fn init_logging() {
     if let Ok(filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
         tracing_subscriber::fmt().with_env_filter(filter).init();
@@ -97,6 +109,13 @@ fn init_logging() {
             .with_env_filter("shadow_compositor_guest=info,smithay=warn")
             .init();
     }
+}
+
+fn wall_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 struct ShadowGuestCompositor {
@@ -132,12 +151,16 @@ struct ShadowGuestCompositor {
     boot_splash_drm: bool,
     kms_display: Option<kms::KmsDisplay>,
     last_frame_size: Option<(u32, u32)>,
+    last_published_frame: Option<kms::CapturedFrame>,
     last_buffer_signature: Option<String>,
     toplevel_size: smithay::utils::Size<i32, Logical>,
     frame_artifact_path: PathBuf,
+    frame_artifacts_enabled: bool,
     drm_enabled: bool,
     touch_signal_counter: u64,
     touch_signal_path: Option<PathBuf>,
+    touch_latency_trace: bool,
+    pending_touch_trace: Option<PendingTouchTrace>,
 }
 
 impl ShadowGuestCompositor {
@@ -204,12 +227,16 @@ impl ShadowGuestCompositor {
             boot_splash_drm: config.boot_splash_drm,
             kms_display: None,
             last_frame_size: None,
+            last_published_frame: None,
             last_buffer_signature: None,
             toplevel_size: (config.toplevel_width, config.toplevel_height).into(),
             frame_artifact_path: config.frame_artifact_path.clone(),
+            frame_artifacts_enabled: config.frame_artifacts_enabled,
             drm_enabled: config.drm_enabled,
             touch_signal_counter: 0,
             touch_signal_path: config.touch_signal_path.clone(),
+            touch_latency_trace: config.touch_latency_trace,
+            pending_touch_trace: None,
         };
         tracing::info!(
             "[shadow-guest-compositor] dmabuf-global-ready formats={}",
@@ -220,6 +247,15 @@ impl ShadowGuestCompositor {
             tracing::info!(
                 "[shadow-guest-compositor] touch-signal-ready path={}",
                 path.display()
+            );
+        }
+        if state.touch_latency_trace {
+            tracing::info!("[shadow-guest-compositor] touch-latency-trace enabled");
+        }
+        if state.frame_artifacts_enabled {
+            tracing::info!(
+                "[shadow-guest-compositor] frame-artifacts-enabled path={}",
+                state.frame_artifact_path.display()
             );
         }
         state.insert_touch_source(event_loop);
@@ -245,6 +281,123 @@ impl ShadowGuestCompositor {
                 modifier: Modifier::Linear,
             },
         ]
+    }
+
+    fn log_touch_handle_latency(&self, event: &touch::TouchInputEvent) {
+        if !self.touch_latency_trace {
+            return;
+        }
+
+        tracing::info!(
+            "[shadow-guest-compositor] touch-latency-handle seq={} phase={:?} queue_us={} wall_ms={} normalized={:.3},{:.3}",
+            event.sequence,
+            event.phase,
+            event.captured_at.elapsed().as_micros(),
+            wall_millis(),
+            event.normalized_x,
+            event.normalized_y
+        );
+    }
+
+    fn finish_touch_dispatch(
+        &mut self,
+        event: &touch::TouchInputEvent,
+        route: &'static str,
+        dispatch_started_at: Instant,
+    ) {
+        if !self.touch_latency_trace {
+            return;
+        }
+
+        let dispatch_wall_msec = wall_millis();
+        let pending = PendingTouchTrace {
+            sequence: event.sequence,
+            phase: event.phase,
+            route,
+            input_captured_at: event.captured_at,
+            input_wall_msec: event.wall_msec,
+            dispatch_started_at,
+            dispatch_wall_msec,
+            commit_at: None,
+        };
+        if let Some(previous) = self.pending_touch_trace.replace(pending) {
+            tracing::info!(
+                "[shadow-guest-compositor] touch-latency-replaced prev_seq={} prev_route={} seq={} route={}",
+                previous.sequence,
+                previous.route,
+                event.sequence,
+                route
+            );
+        }
+        tracing::info!(
+            "[shadow-guest-compositor] touch-latency-dispatch seq={} route={} phase={:?} handle_to_flush_us={} input_wall_ms={} dispatch_wall_ms={}",
+            event.sequence,
+            route,
+            event.phase,
+            dispatch_started_at.elapsed().as_micros(),
+            event.wall_msec,
+            dispatch_wall_msec
+        );
+    }
+
+    fn record_touch_commit(&mut self) {
+        let Some(trace) = self.pending_touch_trace.as_mut() else {
+            return;
+        };
+        if trace.commit_at.is_some() {
+            return;
+        }
+
+        let commit_at = Instant::now();
+        tracing::info!(
+            "[shadow-guest-compositor] touch-latency-commit seq={} route={} phase={:?} input_to_commit_us={} dispatch_to_commit_us={}",
+            trace.sequence,
+            trace.route,
+            trace.phase,
+            commit_at.duration_since(trace.input_captured_at).as_micros(),
+            commit_at.duration_since(trace.dispatch_started_at).as_micros()
+        );
+        trace.commit_at = Some(commit_at);
+    }
+
+    fn record_touch_present(&mut self, frame_marker: &str) {
+        let Some(trace) = self.pending_touch_trace.take() else {
+            return;
+        };
+
+        let present_at = Instant::now();
+        let input_to_present_us = present_at
+            .duration_since(trace.input_captured_at)
+            .as_micros();
+        let dispatch_to_present_us = present_at
+            .duration_since(trace.dispatch_started_at)
+            .as_micros();
+        if let Some(commit_at) = trace.commit_at {
+            tracing::info!(
+                "[shadow-guest-compositor] touch-latency-present seq={} route={} phase={:?} frame_marker={} input_wall_ms={} dispatch_wall_ms={} input_to_present_us={} dispatch_to_present_us={} commit_to_present_us={}",
+                trace.sequence,
+                trace.route,
+                trace.phase,
+                frame_marker,
+                trace.input_wall_msec,
+                trace.dispatch_wall_msec,
+                input_to_present_us,
+                dispatch_to_present_us,
+                present_at.duration_since(commit_at).as_micros()
+            );
+        } else {
+            tracing::info!(
+                "[shadow-guest-compositor] touch-latency-present seq={} route={} phase={:?} frame_marker={} input_wall_ms={} dispatch_wall_ms={} input_to_present_us={} dispatch_to_present_us={}",
+                trace.sequence,
+                trace.route,
+                trace.phase,
+                frame_marker,
+                trace.input_wall_msec,
+                trace.dispatch_wall_msec,
+                input_to_present_us,
+                dispatch_to_present_us
+            );
+        }
     }
 
     fn ensure_kms_display(&mut self) -> Option<&mut kms::KmsDisplay> {
@@ -536,7 +689,7 @@ impl ShadowGuestCompositor {
             wl_shm::Format::Xrgb8888,
         )
         .expect("shell scene pixels match frame dimensions");
-        self.publish_frame(&frame, frame_marker);
+        self.publish_frame(frame, frame_marker);
     }
 
     fn window_for_surface(&self, surface: &WlSurface) -> Option<Window> {
@@ -750,8 +903,37 @@ impl ShadowGuestCompositor {
                 Ok("ok\n".to_string())
             }
             ControlRequest::Switcher => Ok("ok\n".to_string()),
+            ControlRequest::Snapshot { path } => self.write_frame_snapshot(path),
             ControlRequest::State => Ok(self.control_state_response()),
         }
+    }
+
+    fn write_frame_snapshot(&self, path: Option<String>) -> std::io::Result<String> {
+        let frame = self.last_published_frame.as_ref().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no published frame available for snapshot",
+            )
+        })?;
+        let path = path
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.frame_artifact_path.clone());
+        let checksum = kms::frame_checksum(frame);
+        kms::write_frame_ppm(frame, &path)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        tracing::info!(
+            "[shadow-guest-compositor] wrote-frame-snapshot path={} checksum={checksum:016x} size={}x{}",
+            path.display(),
+            frame.width,
+            frame.height
+        );
+        Ok(format!(
+            "ok\npath={}\nchecksum={checksum:016x}\nsize={}x{}\n",
+            path.display(),
+            frame.width,
+            frame.height
+        ))
     }
 
     fn handle_control_tap(&mut self, x: i32, y: i32) -> std::io::Result<String> {
@@ -918,6 +1100,7 @@ impl ShadowGuestCompositor {
 
     fn handle_touch_input(&mut self, event: touch::TouchInputEvent) {
         self.signal_touch_event(&event);
+        self.log_touch_handle_latency(&event);
         let pointer = self.seat.get_pointer().expect("guest seat pointer");
         let serial = SERIAL_COUNTER.next_serial();
 
@@ -932,12 +1115,15 @@ impl ShadowGuestCompositor {
                 let Some(position) = self.touch_position(event.normalized_x, event.normalized_y)
                 else {
                     if self.shell_touch_active {
+                        let dispatch_started_at = Instant::now();
                         self.handle_shell_event(ShellEvent::PointerLeft);
                         self.shell_touch_active = false;
+                        self.finish_touch_dispatch(&event, "shell-pointer", dispatch_started_at);
                         self.publish_visible_shell_frame("shell-touch-frame");
                     }
                     if let Some(gesture) = self.app_touch_gesture.take() {
                         if gesture.scrolling {
+                            let dispatch_started_at = Instant::now();
                             pointer.axis(
                                 self,
                                 AxisFrame::new(event.time_msec)
@@ -947,6 +1133,11 @@ impl ShadowGuestCompositor {
                             );
                             pointer.frame(self);
                             self.flush_wayland_clients();
+                            self.finish_touch_dispatch(
+                                &event,
+                                "app-scroll-stop",
+                                dispatch_started_at,
+                            );
                         }
                     }
                     tracing::info!(
@@ -965,6 +1156,7 @@ impl ShadowGuestCompositor {
                 if shell_handles_touch {
                     if let Some(gesture) = self.app_touch_gesture.take() {
                         if gesture.scrolling {
+                            let dispatch_started_at = Instant::now();
                             pointer.axis(
                                 self,
                                 AxisFrame::new(event.time_msec)
@@ -974,6 +1166,11 @@ impl ShadowGuestCompositor {
                             );
                             pointer.frame(self);
                             self.flush_wayland_clients();
+                            self.finish_touch_dispatch(
+                                &event,
+                                "app-scroll-stop",
+                                dispatch_started_at,
+                            );
                         }
                     }
                     let (x, y) = self
@@ -985,10 +1182,12 @@ impl ShadowGuestCompositor {
                         x,
                         y
                     );
+                    let dispatch_started_at = Instant::now();
                     self.handle_shell_event(ShellEvent::PointerMoved { x, y });
                     if matches!(event.phase, touch::TouchPhase::Down) {
                         self.shell_touch_active = true;
                     }
+                    self.finish_touch_dispatch(&event, "shell-pointer", dispatch_started_at);
                     self.publish_visible_shell_frame("shell-touch-frame");
                     return;
                 }
@@ -1034,6 +1233,7 @@ impl ShadowGuestCompositor {
                         let Some(mut gesture) = self.app_touch_gesture.take() else {
                             return;
                         };
+                        let dispatch_started_at = Instant::now();
 
                         pointer.motion(
                             self,
@@ -1071,15 +1271,24 @@ impl ShadowGuestCompositor {
                         }
 
                         gesture.last = position;
+                        let route = if gesture.scrolling {
+                            Some("app-scroll")
+                        } else {
+                            None
+                        };
                         self.app_touch_gesture = Some(gesture);
                         pointer.frame(self);
                         self.flush_wayland_clients();
+                        if let Some(route) = route {
+                            self.finish_touch_dispatch(&event, route, dispatch_started_at);
+                        }
                     }
                     touch::TouchPhase::Up => unreachable!(),
                 }
             }
             touch::TouchPhase::Up => {
                 if self.shell_touch_active {
+                    let dispatch_started_at = Instant::now();
                     if let Some(position) =
                         self.touch_position(event.normalized_x, event.normalized_y)
                     {
@@ -1090,11 +1299,18 @@ impl ShadowGuestCompositor {
                                 y
                             );
                             self.handle_shell_event(ShellEvent::TouchTap { x, y });
+                            self.finish_touch_dispatch(&event, "shell-tap", dispatch_started_at);
                         } else {
                             self.handle_shell_event(ShellEvent::PointerLeft);
+                            self.finish_touch_dispatch(
+                                &event,
+                                "shell-pointer",
+                                dispatch_started_at,
+                            );
                         }
                     } else {
                         self.handle_shell_event(ShellEvent::PointerLeft);
+                        self.finish_touch_dispatch(&event, "shell-pointer", dispatch_started_at);
                     }
                     self.shell_touch_active = false;
                     self.publish_visible_shell_frame("shell-touch-frame");
@@ -1103,6 +1319,8 @@ impl ShadowGuestCompositor {
                     self.handle_shell_event(ShellEvent::PointerLeft);
                 }
                 tracing::info!("[shadow-guest-compositor] touch-input phase=Up");
+                let mut route = None;
+                let dispatch_started_at = Instant::now();
                 if let Some(gesture) = self.app_touch_gesture.take() {
                     if let Some(position) =
                         self.touch_position(event.normalized_x, event.normalized_y)
@@ -1125,6 +1343,7 @@ impl ShadowGuestCompositor {
                                     .stop(Axis::Horizontal)
                                     .stop(Axis::Vertical),
                             );
+                            route = Some("app-scroll-stop");
                         } else if under.is_some() {
                             pointer.button(
                                 self,
@@ -1144,6 +1363,7 @@ impl ShadowGuestCompositor {
                                     time: event.time_msec,
                                 },
                             );
+                            route = Some("app-tap");
                         }
                     } else if gesture.scrolling {
                         pointer.axis(
@@ -1153,10 +1373,14 @@ impl ShadowGuestCompositor {
                                 .stop(Axis::Horizontal)
                                 .stop(Axis::Vertical),
                         );
+                        route = Some("app-scroll-stop");
                     }
                 }
                 pointer.frame(self);
                 self.flush_wayland_clients();
+                if let Some(route) = route {
+                    self.finish_touch_dispatch(&event, route, dispatch_started_at);
+                }
             }
         }
     }
@@ -1201,8 +1425,10 @@ impl ShadowGuestCompositor {
         let token = self.touch_signal_counter.to_string();
         match fs::write(path, &token) {
             Ok(()) => tracing::info!(
-                "[shadow-guest-compositor] touch-signal-write counter={} path={} normalized={:.3},{:.3}",
+                "[shadow-guest-compositor] touch-signal-write counter={} seq={} wall_ms={} path={} normalized={:.3},{:.3}",
                 token,
+                event.sequence,
+                wall_millis(),
                 path.display(),
                 event.normalized_x,
                 event.normalized_y
@@ -1305,9 +1531,9 @@ impl ShadowGuestCompositor {
         }
     }
 
-    fn publish_frame(&mut self, frame: &kms::CapturedFrame, frame_marker: &str) {
+    fn publish_frame(&mut self, frame: kms::CapturedFrame, frame_marker: &str) {
         self.last_frame_size = Some((frame.width, frame.height));
-        let checksum = kms::frame_checksum(frame);
+        let checksum = kms::frame_checksum(&frame);
         tracing::info!(
             "[shadow-guest-compositor] {frame_marker} checksum={checksum:016x} size={}x{}",
             frame.width,
@@ -1332,23 +1558,25 @@ impl ShadowGuestCompositor {
             }
         }
 
-        match kms::write_frame_ppm(frame, &self.frame_artifact_path) {
-            Ok(()) => {
-                tracing::info!(
-                    "[shadow-guest-compositor] wrote-frame-artifact path={} checksum={checksum:016x} size={}x{}",
-                    self.frame_artifact_path.display(),
-                    frame.width,
-                    frame.height
-                );
-            }
-            Err(error) => {
-                tracing::warn!("[shadow-guest-compositor] capture-write failed: {error}");
+        if self.frame_artifacts_enabled {
+            match kms::write_frame_ppm(&frame, &self.frame_artifact_path) {
+                Ok(()) => {
+                    tracing::info!(
+                        "[shadow-guest-compositor] wrote-frame-artifact path={} checksum={checksum:016x} size={}x{}",
+                        self.frame_artifact_path.display(),
+                        frame.width,
+                        frame.height
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!("[shadow-guest-compositor] capture-write failed: {error}");
+                }
             }
         }
 
         if self.drm_enabled {
             if let Some(display) = self.ensure_kms_display() {
-                match display.present_frame(frame) {
+                match display.present_frame(&frame) {
                     Ok(()) => tracing::info!("[shadow-guest-compositor] presented-frame"),
                     Err(error) => {
                         tracing::warn!("[shadow-guest-compositor] present-frame failed: {error}")
@@ -1356,10 +1584,12 @@ impl ShadowGuestCompositor {
                 }
             }
         }
+        self.record_touch_present(frame_marker);
 
         if self.exit_on_first_frame {
             self.loop_signal.stop();
         }
+        self.last_published_frame = Some(frame);
     }
 
     fn run_boot_splash(&mut self) {
@@ -1368,7 +1598,7 @@ impl ShadowGuestCompositor {
         };
         let (panel_width, panel_height) = display.dimensions();
         let frame = kms::build_boot_splash_frame(panel_width, panel_height);
-        self.publish_frame(&frame, "boot-splash-frame-generated");
+        self.publish_frame(frame, "boot-splash-frame-generated");
     }
 
     fn take_surface_buffer(
@@ -1447,6 +1677,7 @@ impl ShadowGuestCompositor {
 
         match capture_result {
             Ok(Ok(frame)) => {
+                self.record_touch_commit();
                 if self.shell_enabled {
                     let app_id = self.surface_apps.get(surface).copied();
                     if let Some(app_id) = app_id {
@@ -1454,7 +1685,7 @@ impl ShadowGuestCompositor {
                     }
                     self.publish_visible_shell_frame("captured-frame");
                 } else {
-                    self.publish_frame(&frame, "captured-frame");
+                    self.publish_frame(frame, "captured-frame");
                 }
             }
             Ok(Err(error)) => {

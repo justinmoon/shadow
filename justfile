@@ -28,6 +28,7 @@ help:
 	'  just vm-open app=<app>' \
 	'  just vm-home' \
 	'  just vm-screenshot' \
+	'  just vm-frame [output.ppm]' \
 	'  just vm-smoke' \
 	'' \
 	'Rooted Pixel:' \
@@ -38,6 +39,7 @@ help:
 		'  just pixel-shell-drm-hold' \
 		'  just stop target=pixel' \
 		'  just shadowctl state|open <app>|home|switcher -t pixel' \
+		'  just pixel-frame [output.ppm]' \
 		'  just pixel-ci [quick|shell|timeline|camera|nostr|sound|podcast|runtime|full]' \
 		'  just pixel-runtime-app-nostr-timeline-local-smoke [--target <serial>]' \
 	'' \
@@ -374,6 +376,14 @@ ui-vm-screenshot output="build/ui-vm/shadow-ui-vm.ppm":
 vm-screenshot output="build/ui-vm/shadow-ui-vm.ppm":
 	@just ui-vm-screenshot "{{output}}"
 
+# Request and pull the latest compositor PPM frame from the local UI VM
+ui-vm-frame *args='':
+	@scripts/shadowctl frame -t vm {{args}}
+
+# Alias for ui-vm-frame
+vm-frame *args='':
+	@just ui-vm-frame {{args}}
+
 # Prove the timeline app launches, shelves warm, and reopens in the local UI VM
 ui-vm-timeline-smoke:
 	@scripts/ui_vm_timeline_smoke.sh
@@ -461,6 +471,10 @@ pixel-shell-drm-hold:
 # Send control requests to the rooted Pixel shell compositor
 pixel-shellctl *args='':
 	@scripts/shadowctl -t pixel {{args}}
+
+# Request and pull the latest compositor PPM frame from the rooted Pixel
+pixel-frame *args='':
+	@scripts/shadowctl frame -t pixel {{args}}
 
 # Prove timeline launch, home, and reopen on the rooted Pixel shell lane
 pixel-shell-timeline-smoke:
@@ -587,3 +601,7 @@ pixel-runtime-app-click-drm:
 # Detect the rooted Pixel touchscreen and capture one raw touch sequence
 pixel-touch-input-smoke:
 	@scripts/pixel_touch_input_smoke.sh
+
+# Run the rooted-Pixel touch + scroll latency probe and emit a summary in the run dir
+pixel-touch-latency-probe:
+	@scripts/pixel_touch_latency_probe.sh

@@ -120,7 +120,14 @@ if (( runtime_stage_only == 1 )); then
   exit 0
 fi
 
-panel_size="$(pixel_display_size "$serial")"
+panel_size="${PIXEL_RUNTIME_APP_PANEL_SIZE-${PIXEL_PANEL_SIZE-}}"
+if [[ -z "$panel_size" ]]; then
+  panel_size="$(pixel_display_size "$serial" 2>/dev/null || true)"
+fi
+if [[ -z "$panel_size" ]]; then
+  echo "pixel_runtime_app_drm: failed to determine display size; set PIXEL_RUNTIME_APP_PANEL_SIZE or PIXEL_PANEL_SIZE" >&2
+  exit 1
+fi
 viewport_fit="$(python3 "$SCRIPT_DIR/runtime_viewport.py" --fit "$panel_size")"
 runtime_surface_width="$(printf '%s\n' "$viewport_fit" | awk -F= '/^fitted_width=/{print $2}')"
 runtime_surface_height="$(printf '%s\n' "$viewport_fit" | awk -F= '/^fitted_height=/{print $2}')"
@@ -138,6 +145,7 @@ SHADOW_BLITZ_RAW_POINTER_FALLBACK=1
 SHADOW_BLITZ_TOUCH_ANYWHERE_TARGET=counter
 SHADOW_BLITZ_TOUCH_ACTIVATE_ON_DOWN=1
 SHADOW_BLITZ_TOUCH_SIGNAL_PATH=$touch_signal_path
+SHADOW_BLITZ_TOUCH_SIGNAL_POLL_INTERVAL_MS=${SHADOW_BLITZ_TOUCH_SIGNAL_POLL_INTERVAL_MS:-16}
 SHADOW_BLITZ_DEBUG_OVERLAY=0
 SHADOW_BLITZ_ANDROID_FONTS=${SHADOW_BLITZ_ANDROID_FONTS:-curated}
 SHADOW_BLITZ_SOFTWARE_KEYBOARD=${SHADOW_BLITZ_SOFTWARE_KEYBOARD:-1}

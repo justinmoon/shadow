@@ -9,22 +9,25 @@ use std::{
 pub const COMPOSITOR_CONTROL_ENV: &str = "SHADOW_COMPOSITOR_CONTROL";
 pub const COMPOSITOR_CONTROL_SOCKET: &str = "shadow-control.sock";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ControlRequest {
     Launch { app_id: AppId },
     Tap { x: i32, y: i32 },
     Home,
     Switcher,
+    Snapshot { path: Option<String> },
     State,
 }
 
 impl ControlRequest {
-    pub fn encode(self) -> String {
+    pub fn encode(&self) -> String {
         match self {
             Self::Launch { app_id } => format!("launch {}\n", app_id.as_str()),
             Self::Tap { x, y } => format!("tap {x} {y}\n"),
             Self::Home => "home\n".to_string(),
             Self::Switcher => "switcher\n".to_string(),
+            Self::Snapshot { path: Some(path) } => format!("snapshot {path}\n"),
+            Self::Snapshot { path: None } => "snapshot\n".to_string(),
             Self::State => "state\n".to_string(),
         }
     }
@@ -41,6 +44,10 @@ impl ControlRequest {
             }),
             (Some("home"), None, None, None) => Some(Self::Home),
             (Some("switcher"), None, None, None) => Some(Self::Switcher),
+            (Some("snapshot"), None, None, None) => Some(Self::Snapshot { path: None }),
+            (Some("snapshot"), Some(path), None, None) => Some(Self::Snapshot {
+                path: Some(path.to_string()),
+            }),
             (Some("state"), None, None, None) => Some(Self::State),
             _ => None,
         }
@@ -113,6 +120,16 @@ mod tests {
         assert_eq!(
             ControlRequest::parse("switcher"),
             Some(ControlRequest::Switcher)
+        );
+        assert_eq!(
+            ControlRequest::parse("snapshot"),
+            Some(ControlRequest::Snapshot { path: None })
+        );
+        assert_eq!(
+            ControlRequest::parse("snapshot /data/local/tmp/frame.ppm"),
+            Some(ControlRequest::Snapshot {
+                path: Some("/data/local/tmp/frame.ppm".to_string())
+            })
         );
         assert_eq!(ControlRequest::parse("state"), Some(ControlRequest::State));
     }

@@ -275,6 +275,10 @@ impl ShadowCompositor {
                 Ok("ok\n".to_string())
             }
             ControlRequest::Switcher => Ok("ok\n".to_string()),
+            ControlRequest::Snapshot { .. } => Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "frame snapshots are only supported by the guest compositor",
+            )),
             ControlRequest::State => Ok(self.control_state_response()),
         }
     }

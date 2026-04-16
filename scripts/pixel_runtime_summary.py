@@ -67,6 +67,42 @@ STARTUP_FAILURE_TIMEOUT_RE = re.compile(
 STARTUP_FAILURE_SESSION_EXIT_RE = re.compile(
     r"startup checkpoint failure: session exited before checkpoint: (.+)$"
 )
+TOUCH_HANDLE_RE = re.compile(
+    r"\[shadow-guest-compositor\] touch-latency-handle seq=(\d+) phase=(\S+) queue_us=(\d+) wall_ms=(\d+) "
+)
+TOUCH_DISPATCH_RE = re.compile(
+    r"\[shadow-guest-compositor\] touch-latency-dispatch seq=(\d+) route=(\S+) phase=(\S+) handle_to_flush_us=(\d+) input_wall_ms=(\d+) dispatch_wall_ms=(\d+)"
+)
+TOUCH_COMMIT_RE = re.compile(
+    r"\[shadow-guest-compositor\] touch-latency-commit seq=(\d+) route=(\S+) phase=(\S+) input_to_commit_us=(\d+) dispatch_to_commit_us=(\d+)"
+)
+TOUCH_PRESENT_RE = re.compile(
+    r"\[shadow-guest-compositor\] touch-latency-present seq=(\d+) route=(\S+) phase=(\S+) frame_marker=(\S+) input_wall_ms=(\d+) dispatch_wall_ms=(\d+) input_to_present_us=(\d+) dispatch_to_present_us=(\d+)(?: commit_to_present_us=(\d+))?"
+)
+TOUCH_REPLACED_RE = re.compile(
+    r"\[shadow-guest-compositor\] touch-latency-replaced prev_seq=(\d+) prev_route=(\S+) seq=(\d+) route=(\S+)"
+)
+TOUCH_SIGNAL_WRITE_RE = re.compile(
+    r"\[shadow-guest-compositor\] touch-signal-write counter=(\d+) seq=(\d+) wall_ms=(\d+)"
+)
+TOUCH_SIGNAL_DETECTED_RE = re.compile(
+    r"\[shadow-runtime-demo ts_ms=(\d+)\s+\+\s*\d+ms\] touch-signal-detected token=(\d+)"
+)
+RUNTIME_SESSION_RESPONSE_RE = re.compile(
+    r"\[shadow-runtime-demo ts_ms=(\d+)\s+\+\s*\d+ms\] runtime-session-response op=(\S+) elapsed_ms=(\d+)"
+)
+SOFTBUFFER_RENDER_RE = re.compile(
+    r"\[shadow-softbuffer \+\s*(\d+)ms\] render-to-vec-done"
+)
+SOFTBUFFER_SWIZZLE_RE = re.compile(
+    r"\[shadow-softbuffer \+\s*(\d+)ms\] swizzle-done"
+)
+SOFTBUFFER_PRESENT_RE = re.compile(
+    r"\[shadow-softbuffer \+\s*(\d+)ms\] present-done"
+)
+WROTE_FRAME_ARTIFACT_RE = re.compile(
+    r"\[shadow-guest-compositor\] wrote-frame-artifact path=\S+ checksum=([0-9a-f]+) size=([0-9]+x[0-9]+)"
+)
 
 
 def strip_ansi(value: str) -> str:
@@ -75,6 +111,38 @@ def strip_ansi(value: str) -> str:
 
 def parse_timestamp_ms(value: str) -> int:
     return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+
+
+def percentile(sorted_values: list[float], fraction: float) -> float | None:
+    if not sorted_values:
+        return None
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    position = max(0.0, min(1.0, fraction)) * (len(sorted_values) - 1)
+    lower = int(position)
+    upper = min(len(sorted_values) - 1, lower + 1)
+    if lower == upper:
+        return sorted_values[lower]
+    weight = position - lower
+    return sorted_values[lower] * (1.0 - weight) + sorted_values[upper] * weight
+
+
+def summarize_samples(values: list[float]) -> dict:
+    if not values:
+        return {"count": 0}
+    ordered = sorted(values)
+    return {
+        "count": len(ordered),
+        "min_ms": round(ordered[0], 3),
+        "avg_ms": round(sum(ordered) / len(ordered), 3),
+        "p50_ms": round(percentile(ordered, 0.50) or 0.0, 3),
+        "p95_ms": round(percentile(ordered, 0.95) or 0.0, 3),
+        "max_ms": round(ordered[-1], 3),
+    }
+
+
+def summarize_micros(values: list[int]) -> dict:
+    return summarize_samples([value / 1000.0 for value in values])
 
 
 def compute_first_visible_ms(
@@ -228,6 +296,22 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
     surface_adapter_backend = None
     selected_adapter_surface_seen = False
     selected_adapter_surface_supported = None
+    touch_handle_queue_us: list[int] = []
+    touch_dispatches: list[dict] = []
+    touch_commits: list[dict] = []
+    touch_presents: list[dict] = []
+    touch_replaced_count = 0
+    touch_signal_writes: dict[str, int] = {}
+    touch_signal_detect_delays_ms: list[float] = []
+    softbuffer_render_ms: list[float] = []
+    softbuffer_swizzle_ms: list[float] = []
+    softbuffer_present_ms: list[float] = []
+    runtime_session_ms: dict[str, list[float]] = {}
+    frame_capture_to_artifact_ms: list[float] = []
+    frame_artifact_to_present_ms: list[float] = []
+    frame_capture_to_present_ms: list[float] = []
+    last_frame_capture_ts_ms = None
+    last_frame_artifact_ts_ms = None
     openlog = {
         "dri_open_count": 0,
         "kgsl_open_count": 0,
@@ -260,6 +344,95 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
 
         if WINDOW_RESUME_DONE_RE.search(line):
             window_resume_done = True
+            continue
+
+        touch_handle_match = TOUCH_HANDLE_RE.search(line)
+        if touch_handle_match:
+            touch_handle_queue_us.append(int(touch_handle_match.group(3)))
+            continue
+
+        touch_dispatch_match = TOUCH_DISPATCH_RE.search(line)
+        if touch_dispatch_match:
+            touch_dispatches.append(
+                {
+                    "seq": int(touch_dispatch_match.group(1)),
+                    "route": touch_dispatch_match.group(2),
+                    "phase": touch_dispatch_match.group(3),
+                    "handle_to_flush_us": int(touch_dispatch_match.group(4)),
+                }
+            )
+            continue
+
+        touch_commit_match = TOUCH_COMMIT_RE.search(line)
+        if touch_commit_match:
+            touch_commits.append(
+                {
+                    "seq": int(touch_commit_match.group(1)),
+                    "route": touch_commit_match.group(2),
+                    "phase": touch_commit_match.group(3),
+                    "input_to_commit_us": int(touch_commit_match.group(4)),
+                    "dispatch_to_commit_us": int(touch_commit_match.group(5)),
+                }
+            )
+            continue
+
+        touch_present_match = TOUCH_PRESENT_RE.search(line)
+        if touch_present_match:
+            commit_to_present_us = touch_present_match.group(9)
+            touch_presents.append(
+                {
+                    "seq": int(touch_present_match.group(1)),
+                    "route": touch_present_match.group(2),
+                    "phase": touch_present_match.group(3),
+                    "frame_marker": touch_present_match.group(4),
+                    "input_to_present_us": int(touch_present_match.group(7)),
+                    "dispatch_to_present_us": int(touch_present_match.group(8)),
+                    "commit_to_present_us": (
+                        int(commit_to_present_us) if commit_to_present_us is not None else None
+                    ),
+                }
+            )
+            continue
+
+        if TOUCH_REPLACED_RE.search(line):
+            touch_replaced_count += 1
+            continue
+
+        touch_signal_write_match = TOUCH_SIGNAL_WRITE_RE.search(line)
+        if touch_signal_write_match:
+            touch_signal_writes[touch_signal_write_match.group(1)] = int(
+                touch_signal_write_match.group(3)
+            )
+            continue
+
+        touch_signal_detected_match = TOUCH_SIGNAL_DETECTED_RE.search(line)
+        if touch_signal_detected_match:
+            detected_ms = int(touch_signal_detected_match.group(1))
+            written_ms = touch_signal_writes.get(touch_signal_detected_match.group(2))
+            if written_ms is not None and detected_ms >= written_ms:
+                touch_signal_detect_delays_ms.append(detected_ms - written_ms)
+            continue
+
+        runtime_session_response_match = RUNTIME_SESSION_RESPONSE_RE.search(line)
+        if runtime_session_response_match:
+            op = runtime_session_response_match.group(2)
+            runtime_session_ms.setdefault(op, []).append(
+                float(runtime_session_response_match.group(3))
+            )
+
+        softbuffer_render_match = SOFTBUFFER_RENDER_RE.search(line)
+        if softbuffer_render_match:
+            softbuffer_render_ms.append(float(softbuffer_render_match.group(1)))
+            continue
+
+        softbuffer_swizzle_match = SOFTBUFFER_SWIZZLE_RE.search(line)
+        if softbuffer_swizzle_match:
+            softbuffer_swizzle_ms.append(float(softbuffer_swizzle_match.group(1)))
+            continue
+
+        softbuffer_present_match = SOFTBUFFER_PRESENT_RE.search(line)
+        if softbuffer_present_match:
+            softbuffer_present_ms.append(float(softbuffer_present_match.group(1)))
             continue
 
         match = CLIENT_START_RE.search(line)
@@ -373,6 +546,22 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
 
         if PRESENTED_FRAME_RE.search(line):
             presented_frame_count += 1
+            if timestamp_match and last_frame_capture_ts_ms is not None:
+                presented_ts_ms = parse_timestamp_ms(timestamp_match.group(1))
+                frame_capture_to_present_ms.append(presented_ts_ms - last_frame_capture_ts_ms)
+                if last_frame_artifact_ts_ms is not None:
+                    frame_artifact_to_present_ms.append(
+                        presented_ts_ms - last_frame_artifact_ts_ms
+                    )
+            continue
+
+        wrote_frame_artifact_match = WROTE_FRAME_ARTIFACT_RE.search(line)
+        if timestamp_match and wrote_frame_artifact_match:
+            last_frame_artifact_ts_ms = parse_timestamp_ms(timestamp_match.group(1))
+            if last_frame_capture_ts_ms is not None:
+                frame_capture_to_artifact_ms.append(
+                    last_frame_artifact_ts_ms - last_frame_capture_ts_ms
+                )
             continue
 
         run_app_error_match = RUN_APP_ERROR_RE.search(line)
@@ -405,9 +594,11 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
 
         capture_match = CAPTURED_RE.search(line)
         if timestamp_match and capture_match:
+            last_frame_capture_ts_ms = parse_timestamp_ms(timestamp_match.group(1))
+            last_frame_artifact_ts_ms = None
             captures.append(
                 {
-                    "timestamp_ms": parse_timestamp_ms(timestamp_match.group(1)),
+                    "timestamp_ms": last_frame_capture_ts_ms,
                     "checksum": capture_match.group(1),
                     "size": capture_match.group(2),
                 }
@@ -465,6 +656,83 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
     click_latency_ms, click_source, updated_frame_checksum = compute_click_latency_ms(
         dispatches, captures, boot_checksum, first_visible_checksum
     )
+    touch_routes = sorted(
+        {
+            sample["route"]
+            for sample in touch_dispatches + touch_commits + touch_presents
+            if sample.get("route")
+        }
+    )
+    touch_latency = {
+        "handle_queue": summarize_micros(touch_handle_queue_us),
+        "dispatch_to_flush": summarize_micros(
+            [sample["handle_to_flush_us"] for sample in touch_dispatches]
+        ),
+        "input_to_commit": summarize_micros(
+            [sample["input_to_commit_us"] for sample in touch_commits]
+        ),
+        "dispatch_to_commit": summarize_micros(
+            [sample["dispatch_to_commit_us"] for sample in touch_commits]
+        ),
+        "input_to_present": summarize_micros(
+            [sample["input_to_present_us"] for sample in touch_presents]
+        ),
+        "dispatch_to_present": summarize_micros(
+            [sample["dispatch_to_present_us"] for sample in touch_presents]
+        ),
+        "commit_to_present": summarize_micros(
+            [
+                sample["commit_to_present_us"]
+                for sample in touch_presents
+                if sample["commit_to_present_us"] is not None
+            ]
+        ),
+        "replaced_count": touch_replaced_count,
+        "routes": {},
+    }
+    for route in touch_routes:
+        route_dispatches = [
+            sample["handle_to_flush_us"]
+            for sample in touch_dispatches
+            if sample["route"] == route
+        ]
+        route_commits = [
+            sample["input_to_commit_us"]
+            for sample in touch_commits
+            if sample["route"] == route
+        ]
+        route_presents = [
+            sample["input_to_present_us"]
+            for sample in touch_presents
+            if sample["route"] == route
+        ]
+        route_commit_to_present = [
+            sample["commit_to_present_us"]
+            for sample in touch_presents
+            if sample["route"] == route and sample["commit_to_present_us"] is not None
+        ]
+        touch_latency["routes"][route] = {
+            "dispatch_to_flush": summarize_micros(route_dispatches),
+            "input_to_commit": summarize_micros(route_commits),
+            "input_to_present": summarize_micros(route_presents),
+            "commit_to_present": summarize_micros(route_commit_to_present),
+        }
+    touch_signal_latency = summarize_samples(touch_signal_detect_delays_ms)
+    touch_signal_latency["count"] = len(touch_signal_detect_delays_ms)
+    softbuffer_latency = {
+        "render_to_vec": summarize_samples(softbuffer_render_ms),
+        "swizzle": summarize_samples(softbuffer_swizzle_ms),
+        "present": summarize_samples(softbuffer_present_ms),
+    }
+    compositor_frame_latency = {
+        "capture_to_artifact": summarize_samples(frame_capture_to_artifact_ms),
+        "artifact_to_present": summarize_samples(frame_artifact_to_present_ms),
+        "capture_to_present": summarize_samples(frame_capture_to_present_ms),
+    }
+    runtime_session_latency = {
+        op: summarize_samples(samples)
+        for op, samples in sorted(runtime_session_ms.items())
+    }
     failure_phase = infer_failure_phase(
         startup_stage_last,
         runtime_document_ready_wall_ms,
@@ -545,6 +813,11 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
         "click_to_updated_frame_ms": click_latency_ms,
         "click_source": click_source,
         "updated_frame_checksum": updated_frame_checksum,
+        "touch_latency": touch_latency,
+        "touch_signal_latency": touch_signal_latency,
+        "softbuffer_latency": softbuffer_latency,
+        "compositor_frame_latency": compositor_frame_latency,
+        "runtime_session_latency": runtime_session_latency,
         "boot_splash_checksum": boot_checksum,
         "captured_frame_count": len(captures),
         "dispatch_count": len(dispatches),
