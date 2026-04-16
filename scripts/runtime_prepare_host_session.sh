@@ -32,39 +32,43 @@ REPO_FLAKE_REF="${runtime_flake_ref:-${REPO_ROOT}}"
 
 cd "$REPO_ROOT"
 
-bundle_json="$(
-  nix develop --accept-flake-config "${REPO_FLAKE_REF}#runtime" -c deno run --quiet \
-    --allow-env --allow-read --allow-write --allow-run \
-    scripts/runtime_prepare_app_bundle.ts \
+manifest_json="$(
+  "$SCRIPT_DIR/runtime_build_artifacts.sh" \
+    --flake-ref "$REPO_FLAKE_REF" \
+    --runtime-host-package "$runtime_host_package_attr" \
+    --profile single \
+    --app-id app \
     --input "$INPUT_PATH" \
     --cache-dir "$CACHE_DIR"
 )"
 
 bundle_path="$(
-  printf '%s\n' "$bundle_json" | python3 -c '
+  printf '%s\n' "$manifest_json" | python3 -c '
 import json
-import os
 import sys
 
 data = json.load(sys.stdin)
-print(os.path.abspath(data["bundlePath"]))
+print(data["apps"]["app"]["effectiveBundlePath"])
 '
 )"
 bundle_dir="$(
-  printf '%s\n' "$bundle_json" | python3 -c '
+  printf '%s\n' "$manifest_json" | python3 -c '
 import json
-import os
 import sys
 
 data = json.load(sys.stdin)
-print(os.path.abspath(data["bundleDir"]))
+print(data["apps"]["app"]["effectiveBundleDir"])
 '
 )"
+runtime_host_binary_path="$(
+  printf '%s\n' "$manifest_json" | python3 -c '
+import json
+import sys
 
-runtime_host_prefix="$(
-  nix build --accept-flake-config "${REPO_FLAKE_REF}#${runtime_host_package_attr}" --no-link --print-out-paths
+data = json.load(sys.stdin)
+print(data["runtimeHostBinaryPath"])
+'
 )"
-runtime_host_binary_path="${runtime_host_prefix}/bin/shadow-runtime-host"
 
 python3 - "$bundle_path" "$bundle_dir" "$runtime_host_binary_path" "$INPUT_PATH" "$CACHE_DIR" "$runtime_host_package_attr" <<'PY'
 import json

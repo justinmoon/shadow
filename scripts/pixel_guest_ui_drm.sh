@@ -18,6 +18,7 @@ session_output_path="$run_dir/session-output.txt"
 checkpoint_log_path="$run_dir/checkpoints.txt"
 frame_artifact="$run_dir/shadow-frame.ppm"
 pull_log_path="$run_dir/frame-pull.txt"
+host_pid_path="${PIXEL_GUEST_UI_HOST_PID_PATH-}"
 frame_path="$(pixel_frame_path)"
 runtime_dir="$(pixel_runtime_dir)"
 session_dst="$(pixel_session_dst)"
@@ -98,6 +99,11 @@ if [[ "$frame_capture_mode" == "publish" ]]; then
   else
     guest_session_env='SHADOW_GUEST_FRAME_ARTIFACTS=1'
   fi
+fi
+
+if [[ -n "$host_pid_path" ]]; then
+  mkdir -p "$(dirname "$host_pid_path")"
+  printf '%s\n' "$$" >"$host_pid_path"
 fi
 
 display_services_stopped_condition() {

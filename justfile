@@ -135,6 +135,11 @@ runtime-app-host-smokes:
 	@just runtime-app-nostr-gm-smoke
 	@just runtime-app-nostr-timeline-smoke
 	@just runtime-app-cashu-wallet-smoke
+
+# Build runtime app artifacts with the shared host-side bundler
+runtime-build-artifacts *args='':
+	@scripts/runtime_build_artifacts.sh {{args}}
+
 # Run the first host-dispatched click through the selected bundled app runtime seam
 runtime-app-click-smoke backend="deno-core":
 	@SHADOW_RUNTIME_HOST_BACKEND="{{backend}}" nix develop .#runtime -c scripts/runtime_app_click_smoke.sh

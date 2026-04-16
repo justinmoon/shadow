@@ -1,4 +1,4 @@
-{ hostSystem, microvm, nixpkgs, repoSource, sshPort }:
+{ hostSystem, microvm, nixpkgs, shadowBlitzDemoPackage, shadowCompositorPackage, sshPort }:
 
 let
   lib = nixpkgs.lib;
@@ -12,25 +12,20 @@ nixpkgs.lib.nixosSystem {
     ({ config, pkgs, ... }:
       let
         stateDir = "/var/lib/shadow-ui";
-        buildCacheDir = "/var/cache/shadow-ui-build";
-        repoDir = "/work/shadow";
-        targetDir = "${buildCacheDir}/target";
-        cargoHomeDir = "${buildCacheDir}/cargo-home";
         homeDir = "${stateDir}/home";
         logDir = "${stateDir}/log";
         runtimeLibDir = "${stateDir}/runtime-libs";
+        runtimeArtifactDir = "/opt/shadow-runtime";
         sessionLog = "${logDir}/shadow-ui-session.log";
-        buildLog = "${logDir}/shadow-ui-build.log";
         sessionEnv = "${stateDir}/shadow-ui-session-env.sh";
-        runtimeHostEnvScript = "${repoDir}/.shadow-vm/runtime-host-session-env.sh";
-        runtimeFallbackEnvScript = "${repoDir}/scripts/runtime_prepare_host_session_env.sh";
-        guestToolPkgs = with pkgs; [
-          cargo
-          clang
-          just
-          pkg-config
+        runtimeHostEnvScript = "${runtimeArtifactDir}/runtime-host-session-env.sh";
+        guestSystemPkgs = with pkgs; [
+          bash
+          coreutils
+          findutils
+          gnugrep
+          procps
           python3
-          rustc
         ];
         guestRuntimeLibs = with pkgs; [
           bzip2
@@ -51,28 +46,16 @@ nixpkgs.lib.nixosSystem {
           wayland-protocols
           zlib
         ];
-        guestPkgConfigPath = lib.concatStringsSep ":" [
-          (lib.makeSearchPathOutput "dev" "lib/pkgconfig" guestRuntimeLibs)
-          (lib.makeSearchPathOutput "dev" "share/pkgconfig" guestRuntimeLibs)
-          (lib.makeSearchPathOutput "out" "lib/pkgconfig" guestRuntimeLibs)
-          (lib.makeSearchPathOutput "out" "share/pkgconfig" guestRuntimeLibs)
-        ];
         guestLibraryPath = lib.makeLibraryPath guestRuntimeLibs;
-        guestLinkFlags = lib.concatMapStringsSep " " (pkg: "-L${pkg}/lib") guestRuntimeLibs;
         shadowUiGuestEnv = pkgs.writeText "shadow-ui-env.sh" ''
           export HOME=${homeDir}
           export XDG_CACHE_HOME="$HOME/.cache"
-          export CARGO_HOME=${cargoHomeDir}
-          export CARGO_TARGET_DIR=${targetDir}
-          export PKG_CONFIG_PATH="${guestPkgConfigPath}:''${PKG_CONFIG_PATH:-}"
           export LD_LIBRARY_PATH="${runtimeLibDir}:${guestLibraryPath}:''${LD_LIBRARY_PATH:-}"
-          export LIBRARY_PATH="${guestLibraryPath}:''${LIBRARY_PATH:-}"
-          export NIX_LDFLAGS="${guestLinkFlags} ''${NIX_LDFLAGS:-}"
           export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri:''${LIBGL_DRIVERS_PATH:-}"
-          export RUST_BACKTRACE=1
           export XDG_RUNTIME_DIR="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+          export SHADOW_APP_CLIENT=${shadowBlitzDemoPackage}/bin/shadow-blitz-demo
 
-          mkdir -p "$HOME" "$XDG_CACHE_HOME" "$CARGO_HOME" "$CARGO_TARGET_DIR" ${logDir} ${runtimeLibDir}
+          mkdir -p "$HOME" "$XDG_CACHE_HOME" ${logDir} ${runtimeLibDir}
           cp -fL ${pkgs.libglvnd}/lib/libEGL.so.1 ${runtimeLibDir}/libEGL.so.1
           cp -fL ${pkgs.libglvnd}/lib/libGL.so.1 ${runtimeLibDir}/libGL.so.1
           cp -fL ${pkgs.libglvnd}/lib/libOpenGL.so.0 ${runtimeLibDir}/libOpenGL.so.0
@@ -81,82 +64,48 @@ nixpkgs.lib.nixosSystem {
           cat >${sessionEnv} <<EOF
           export HOME="$HOME"
           export XDG_CACHE_HOME="$XDG_CACHE_HOME"
-          export CARGO_HOME="$CARGO_HOME"
-          export CARGO_TARGET_DIR="$CARGO_TARGET_DIR"
-          export PKG_CONFIG_PATH="$PKG_CONFIG_PATH"
           export LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
-          export LIBRARY_PATH="$LIBRARY_PATH"
-          export NIX_LDFLAGS="$NIX_LDFLAGS"
           export LIBGL_DRIVERS_PATH="$LIBGL_DRIVERS_PATH"
-          export RUST_BACKTRACE="$RUST_BACKTRACE"
           export XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR"
+          export SHADOW_APP_CLIENT="$SHADOW_APP_CLIENT"
           EOF
         '';
-        shadowUiWarmup = pkgs.writeShellApplication {
-          name = "shadow-ui-warmup";
-          runtimeInputs = with pkgs; [
-            bash
-            coreutils
-          ] ++ guestToolPkgs ++ guestRuntimeLibs;
-          text = ''
-            set -euo pipefail
-            # shellcheck source=/dev/null
-            source ${shadowUiGuestEnv}
-
-            cd ${repoDir}
-            : >${buildLog}
-            exec >>${buildLog} 2>&1
-
-            echo "== shadow-ui-warmup $(date --iso-8601=seconds) =="
-            cargo clean --manifest-path ui/Cargo.toml -p shadow-compositor
-            cargo clean --manifest-path ui/Cargo.toml -p shadow-blitz-demo
-            cargo build --locked --manifest-path ui/Cargo.toml -p shadow-compositor
-            cargo build --locked --manifest-path ui/Cargo.toml \
-              -p shadow-blitz-demo \
-              --features host_system_fonts
-          '';
-        };
         shadowUiSession = pkgs.writeShellApplication {
           name = "shadow-ui-session";
           runtimeInputs = with pkgs; [
             bash
             coreutils
-          ] ++ guestToolPkgs ++ guestRuntimeLibs;
+          ] ++ guestSystemPkgs ++ guestRuntimeLibs;
           text = ''
             set -euo pipefail
             # shellcheck source=/dev/null
             source ${shadowUiGuestEnv}
 
-            cd ${repoDir}
             : >${sessionLog}
             exec >>${sessionLog} 2>&1
 
             echo "== shadow-ui-session $(date --iso-8601=seconds) =="
-            echo "cwd: $(pwd)"
             echo "WAYLAND_DISPLAY=''${WAYLAND_DISPLAY:-unset}"
             echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+            echo "runtime artifact dir=${runtimeArtifactDir}"
 
             echo "preparing runtime app session"
-            if [[ -f ${runtimeHostEnvScript} ]]; then
-              # The host prepares these env exports before launching QEMU so the
-              # guest session can start the compositor without an extra nix
-              # resolution step on first frame.
-              # shellcheck source=/dev/null
-              source ${runtimeHostEnvScript}
-              echo "runtime env source=host-cache"
-            else
-              runtime_env_exports="$(${runtimeFallbackEnvScript} --flake-ref path:${repoDir} --include-podcast)"
-              eval "$runtime_env_exports"
-              echo "runtime env source=guest-fallback"
+            if [[ ! -f ${runtimeHostEnvScript} ]]; then
+              echo "shadow-ui-session: missing host-prepared runtime env ${runtimeHostEnvScript}" >&2
+              exit 1
             fi
+            # shellcheck source=/dev/null
+            source ${runtimeHostEnvScript}
+            echo "runtime env source=host-cache"
             export SHADOW_RUNTIME_CASHU_DATA_DIR=${stateDir}/runtime-cashu
             export SHADOW_RUNTIME_NOSTR_DB_PATH=${stateDir}/runtime-nostr.sqlite3
             echo "runtime bundle=$SHADOW_RUNTIME_APP_BUNDLE_PATH"
             echo "runtime host=$SHADOW_RUNTIME_HOST_BINARY_PATH"
+            echo "app client=$SHADOW_APP_CLIENT"
             echo "runtime nostr db=$SHADOW_RUNTIME_NOSTR_DB_PATH"
             echo "runtime cashu dir=$SHADOW_RUNTIME_CASHU_DATA_DIR"
 
-            cargo run --locked --manifest-path ui/Cargo.toml -p shadow-compositor &
+            ${shadowCompositorPackage}/bin/shadow-compositor &
             compositor_pid=$!
 
             cleanup() {
@@ -233,14 +182,10 @@ PY
             printf '%s\n' \
               "export HOME=\"$HOME\"" \
               "export XDG_CACHE_HOME=\"$XDG_CACHE_HOME\"" \
-              "export CARGO_TARGET_DIR=\"$CARGO_TARGET_DIR\"" \
-              "export PKG_CONFIG_PATH=\"$PKG_CONFIG_PATH\"" \
               "export LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH\"" \
-              "export LIBRARY_PATH=\"$LIBRARY_PATH\"" \
-              "export NIX_LDFLAGS=\"$NIX_LDFLAGS\"" \
               "export LIBGL_DRIVERS_PATH=\"$LIBGL_DRIVERS_PATH\"" \
-              "export RUST_BACKTRACE=\"$RUST_BACKTRACE\"" \
               "export XDG_RUNTIME_DIR=\"$XDG_RUNTIME_DIR\"" \
+              "export SHADOW_APP_CLIENT=\"$SHADOW_APP_CLIENT\"" \
               "export SHADOW_RUNTIME_APP_BUNDLE_PATH=\"$SHADOW_RUNTIME_APP_BUNDLE_PATH\"" \
               "export SHADOW_RUNTIME_HOST_BINARY_PATH=\"$SHADOW_RUNTIME_HOST_BINARY_PATH\"" \
               "export WAYLAND_DISPLAY=\"$nested_wayland\"" \
@@ -299,28 +244,12 @@ PY
           wheelNeedsPassword = false;
         };
 
-        environment.systemPackages = guestToolPkgs;
-
-        systemd.services.shadow-ui-warmup = {
-          description = "Prebuild the Shadow UI guest binaries";
-          before = [ "greetd.service" ];
-          wantedBy = [ "multi-user.target" ];
-          serviceConfig = {
-            Type = "oneshot";
-            User = "shadow";
-            Group = "shadow";
-            StandardOutput = "journal+console";
-            StandardError = "journal+console";
-          };
-          script = ''
-            exec ${shadowUiWarmup}/bin/shadow-ui-warmup
-          '';
-        };
-
-        systemd.services.greetd = {
-          after = [ "shadow-ui-warmup.service" ];
-          requires = [ "shadow-ui-warmup.service" ];
-        };
+        environment.systemPackages =
+          guestSystemPkgs
+          ++ [
+            shadowBlitzDemoPackage
+            shadowCompositorPackage
+          ];
 
         systemd.services.shadow-ui-smoke = {
           description = "Verify the Shadow UI guest session";
@@ -337,9 +266,11 @@ PY
               runtime_dir="/run/user/$uid"
               process_snapshot="$(ps -eo args=)"
               if grep -Fq '/bin/cage --' <<<"$process_snapshot" \
-                && grep -Eq '(^|/)shadow-compositor($| )|cargo run( --locked)? --manifest-path ui/Cargo.toml -p shadow-compositor' <<<"$process_snapshot" \
+                && grep -Eq '(^|/)shadow-compositor($| )' <<<"$process_snapshot" \
+                && ! command -v cargo >/dev/null 2>&1 \
+                && ! command -v rustc >/dev/null 2>&1 \
                 && [[ -S "$runtime_dir/shadow-control.sock" ]]; then
-                echo "shadow-ui smoke: compositor is running"
+                echo "shadow-ui smoke: compositor is running without guest toolchains"
                 exit 0
               fi
               sleep 1
@@ -347,7 +278,9 @@ PY
 
             echo "shadow-ui smoke: compositor did not appear" >&2
             echo "shadow-ui smoke: relevant processes:" >&2
-            ps -ef | grep -E 'greetd|cage|shadow-|cargo run --manifest-path ui/Cargo.toml' | grep -v grep >&2 || true
+            ps -ef | grep -E 'greetd|cage|shadow-' | grep -v grep >&2 || true
+            echo "shadow-ui smoke: cargo present? $(command -v cargo >/dev/null 2>&1 && echo yes || echo no)" >&2
+            echo "shadow-ui smoke: rustc present? $(command -v rustc >/dev/null 2>&1 && echo yes || echo no)" >&2
             echo "shadow-ui smoke: greetd status:" >&2
             systemctl --no-pager --full status greetd.service >&2 || true
             echo "shadow-ui smoke: greetd journal:" >&2
@@ -364,9 +297,6 @@ PY
 
         systemd.tmpfiles.rules = [
           "d ${stateDir} 0755 shadow shadow -"
-          "d ${buildCacheDir} 0755 shadow shadow -"
-          "d ${cargoHomeDir} 0755 shadow shadow -"
-          "d ${targetDir} 0755 shadow shadow -"
           "d ${logDir} 0755 shadow shadow -"
           "d ${runtimeLibDir} 0755 shadow shadow -"
         ];
@@ -400,11 +330,6 @@ PY
               size = 8192;
             }
             {
-              image = ".shadow-vm/shadow-ui-build-cache.img";
-              mountPoint = buildCacheDir;
-              size = 16384;
-            }
-            {
               image = ".shadow-vm/shadow-ui-state.img";
               mountPoint = stateDir;
               size = 16384;
@@ -419,9 +344,9 @@ PY
             }
             {
               proto = "9p";
-              tag = "shadow-src";
-              source = repoSource;
-              mountPoint = repoDir;
+              tag = "shadow-runtime";
+              source = ".shadow-vm/runtime-artifacts";
+              mountPoint = runtimeArtifactDir;
             }
           ];
           interfaces = [

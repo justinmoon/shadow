@@ -13,6 +13,7 @@ run_log="$run_dir/pixel-shell-timeline-smoke.log"
 state_after_open_path="$run_dir/state-after-open.json"
 state_after_home_path="$run_dir/state-after-home.json"
 state_after_reopen_path="$run_dir/state-after-reopen.json"
+session_host_pid_path="$run_dir/guest-ui-host.pid"
 control_socket_path="$(pixel_shell_control_socket_path)"
 restore_timeout_secs="${PIXEL_SHELL_SMOKE_RESTORE_TIMEOUT_SECS:-60}"
 session_pid=""
@@ -36,6 +37,14 @@ parse_args() {
 
 parse_args "$@"
 
+restore_android_best_effort() {
+  if pixel_android_display_stack_restored "$serial"; then
+    return 0
+  fi
+  timeout "${PIXEL_RESTORE_ANDROID_TIMEOUT_SECS:-30}" \
+    env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+}
+
 dump_run_log() {
   if [[ -f "$run_log" ]]; then
     printf '\n== pixel-shell-timeline-smoke log ==\n' >&2
@@ -44,11 +53,11 @@ dump_run_log() {
 }
 
 cleanup() {
+  stop_session_process
   pixel_stop_shadow_session_best_effort "$serial"
   pixel_restore_android_best_effort "$serial" "$restore_timeout_secs"
   if [[ -n "${session_pid:-}" ]]; then
-    kill "$session_pid" >/dev/null 2>&1 || true
-    wait "$session_pid" >/dev/null 2>&1 || true
+    stop_session_process
   fi
 }
 
@@ -64,6 +73,65 @@ session_still_running() {
   fi
 
   pixel_root_process_exists "$serial" "$(basename "$(pixel_compositor_dst)")"
+}
+
+stop_session_process() {
+  local pid pids seen
+  pids=()
+  seen=" "
+
+  add_session_pid() {
+    local candidate="$1"
+    [[ "$candidate" =~ ^[0-9]+$ ]] || return 0
+    if [[ "$seen" != *" $candidate "* ]]; then
+      pids+=("$candidate")
+      seen="${seen}${candidate} "
+    fi
+  }
+
+  kill_process_tree() {
+    local tree_pid="$1"
+    local signal="$2"
+    local child
+    for child in $(pgrep -P "$tree_pid" 2>/dev/null || true); do
+      kill_process_tree "$child" "$signal"
+    done
+    kill "-$signal" "$tree_pid" >/dev/null 2>&1 || true
+  }
+
+  add_session_pid "${session_pid:-}"
+  if [[ -f "$session_host_pid_path" ]]; then
+    add_session_pid "$(tr -cd '0-9' <"$session_host_pid_path")"
+  fi
+  if ((${#pids[@]} == 0)); then
+    return 0
+  fi
+
+  for pid in "${pids[@]}"; do
+    kill_process_tree "$pid" TERM
+  done
+
+  local deadline=$((SECONDS + 10))
+  while (( SECONDS < deadline )); do
+    local any_running=0
+    for pid in "${pids[@]}"; do
+      if kill -0 "$pid" >/dev/null 2>&1; then
+        any_running=1
+        break
+      fi
+    done
+    if (( any_running == 0 )); then
+      break
+    fi
+    sleep 0.2
+  done
+
+  for pid in "${pids[@]}"; do
+    kill_process_tree "$pid" KILL
+  done
+  if [[ -n "${session_pid:-}" ]]; then
+    wait "$session_pid" >/dev/null 2>&1 || true
+  fi
 }
 
 capture_state_json() {
@@ -165,6 +233,7 @@ pixel_restore_android_best_effort "$serial" "$restore_timeout_secs"
 (
   cd "$REPO_ROOT"
   PIXEL_SERIAL="$serial" \
+  PIXEL_GUEST_UI_HOST_PID_PATH="$session_host_pid_path" \
   PIXEL_SHELL_RENDERER=gpu_softbuffer \
     "$SCRIPT_DIR/pixel_shell_drm_hold.sh" "${launcher_args[@]}"
 ) >"$run_log" 2>&1 &

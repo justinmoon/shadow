@@ -2,7 +2,7 @@
 
 Shadow is a custom mobile OS stack built from the ground up. We take a rooted Android phone, stop the Android display server, and run our own compositor, runtime, and apps directly on the Linux kernel. This tutorial explains every layer of the system.
 
-For the current supported operator surface, start with [docs/architecture.md](/Users/justin/code/shadow/worktrees/cleanup/docs/architecture.md). That doc now defines the front door: local VM/QEMU shell/home plus app launch and rooted-Pixel shell/home plus app launch, with `just run target=...` / `just stop target=...` as the target-aware session entrypoints. This tutorial still carries older bring-up and probe material for deeper context.
+For the current supported operator surface, start with `docs/architecture.md`. That doc now defines the front door: local VM/QEMU shell/home plus app launch and rooted-Pixel shell/home plus app launch, with `just run target=...` / `just stop target=...` as the target-aware session entrypoints. This tutorial still carries older bring-up and probe material for deeper context.
 
 ---
 
@@ -18,14 +18,13 @@ The QEMU VM gives you a full Linux environment running the Shadow compositor in 
 - 4 vCPUs, 4 GB RAM
 - virtio-gpu display at 660x1240 (phone-like portrait)
 - USB keyboard and tablet input
-- 9P share mounting the repo at `/work/shadow`
-- SSH access on port 2222
+- 9P share mounting staged runtime artifacts at `/opt/shadow-runtime`
+- SSH access on a worktree-scoped forwarded port (`just vm-ssh` and `shadowctl` pick the right one)
 
 **Startup flow:**
-1. `just vm-run` builds the NixOS image and launches QEMU
+1. `just vm-run` stages runtime bundles under `.shadow-vm/runtime-artifacts`, builds the NixOS image, and launches QEMU
 2. The guest boots, greetd starts a user session via cage (a minimal Wayland kiosk)
-3. `shadow-ui-warmup` pre-compiles the compositor and demo binaries
-4. `shadow-ui-session` launches the compositor and exposes a control socket
+3. `shadow-ui-session` sources the staged runtime env, launches the packaged compositor, and exposes a control socket
 5. The VM reaches steady state — compositor running, control socket ready
 
 **Common commands:**

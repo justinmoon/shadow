@@ -12,6 +12,18 @@ ui_vm_runner_link() {
   printf '%s/ui-vm-runner\n' "$(ui_vm_state_dir)"
 }
 
+ui_vm_runtime_artifact_dir() {
+  printf '%s/runtime-artifacts\n' "$(ui_vm_state_dir)"
+}
+
+ui_vm_runtime_env_path() {
+  printf '%s/runtime-host-session-env.sh\n' "$(ui_vm_runtime_artifact_dir)"
+}
+
+ui_vm_runtime_guest_dir() {
+  printf '/opt/shadow-runtime\n'
+}
+
 ui_vm_socket_path() {
   printf '%s/shadow-ui-vm.sock\n' "$(ui_vm_state_dir)"
 }
@@ -35,10 +47,9 @@ PY
 }
 
 ui_vm_build_runner() {
-  mkdir -p "$(ui_vm_state_dir)"
-  SHADOW_UI_VM_SOURCE="$(ui_vm_repo_root)" \
-    SHADOW_UI_VM_SSH_PORT="$(ui_vm_ssh_port)" \
-    nix build --impure --accept-flake-config --option builders "" -o "$(ui_vm_runner_link)" .#ui-vm >/dev/null
+  mkdir -p "$(ui_vm_state_dir)" "$(ui_vm_runtime_artifact_dir)"
+  SHADOW_UI_VM_SSH_PORT="$(ui_vm_ssh_port)" \
+    nix build --impure --accept-flake-config -o "$(ui_vm_runner_link)" .#ui-vm >/dev/null
 }
 
 ui_vm_ssh() {

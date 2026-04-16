@@ -584,7 +584,7 @@ pixel_bootanim_stopped() {
 pixel_android_window_service_ready() {
   local serial
   serial="$1"
-  pixel_adb "$serial" shell wm size 2>/dev/null \
+  timeout "${PIXEL_ADB_QUERY_TIMEOUT_SECS:-5}" adb -s "$serial" shell wm size 2>/dev/null \
     | tr -d '\r' \
     | grep -Eq '[0-9]+x[0-9]+'
 }
@@ -593,7 +593,7 @@ pixel_display_size() {
   local serial size
   serial="$1"
   size="$(
-    pixel_adb "$serial" shell wm size 2>/dev/null \
+    timeout "${PIXEL_ADB_QUERY_TIMEOUT_SECS:-5}" adb -s "$serial" shell wm size 2>/dev/null \
       | tr -d '\r' \
       | grep -Eo '[0-9]+x[0-9]+' \
       | head -n1 \

@@ -14,7 +14,7 @@ expect_fixed() {
   local needle="$2"
   local description="$3"
 
-  if ! grep -Fq "$needle" "$path"; then
+  if ! grep -Fq -- "$needle" "$path"; then
     fail "$description missing in $path"
   fi
 }
@@ -25,9 +25,14 @@ expect_fixed \
   "pixel shell timeline startup sync default"
 
 expect_fixed \
-  "$REPO_ROOT/scripts/runtime_prepare_host_session_env.sh" \
-  "SHADOW_RUNTIME_APP_CONFIG_JSON='{\"limit\":12,\"syncOnStart\":true}'" \
+  "$REPO_ROOT/scripts/runtime_build_artifacts.ts" \
+  "const DEFAULT_TIMELINE_CONFIG = { limit: 12, syncOnStart: true };" \
   "host session timeline startup sync default"
+
+expect_fixed \
+  "$REPO_ROOT/scripts/runtime_prepare_host_session_env.sh" \
+  "--profile vm-shell" \
+  "host session env uses shared VM-shell artifact profile"
 
 expect_fixed \
   "$REPO_ROOT/scripts/pixel_runtime_app_nostr_timeline_drm.sh" \

@@ -8,7 +8,5 @@ ensure_bootimg_shell "$@"
 
 cd "$(repo_root)"
 
-export NIX_BUILDERS=
-
 just pre-commit
 just ui-vm-smoke

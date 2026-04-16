@@ -60,9 +60,9 @@ fi
 
 mkdir -p .shadow-vm
 if [[ ! -x "$RUNNER_LINK/bin/microvm-shutdown" ]]; then
-  SHADOW_UI_VM_SOURCE="$REPO_ROOT" \
-    SHADOW_UI_VM_SSH_PORT="$PROCESS_PORT" \
-    nix build --impure --accept-flake-config --option builders "" -o "$RUNNER_LINK" .#ui-vm >/dev/null
+  mkdir -p "$REPO_ROOT/.shadow-vm/runtime-artifacts"
+  SHADOW_UI_VM_SSH_PORT="$PROCESS_PORT" \
+    nix build --impure --accept-flake-config -o "$RUNNER_LINK" .#ui-vm >/dev/null
 fi
 
 shutdown_pid=""

@@ -1,0 +1,18 @@
+{
+  "assetDir": null,
+  "episodes": [
+    {
+      "durationMs": 229000,
+      "id": "00",
+      "outputBasename": "00-test-recording-teaser-w-pablo.mp3",
+      "path": "assets/podcast/00-test-recording-teaser-w-pablo.mp3",
+      "sourceExt": ".mp3",
+      "sourceUrl": "https://sovereignengineering.io/dialogues.xml",
+      "title": "#00: Test Recording / Teaser w/ Pablo"
+    }
+  ],
+  "podcastFeedUrl": "https://sovereignengineering.io/dialogues.xml",
+  "podcastLicense": "local demo fixture",
+  "podcastPageUrl": "https://sovereignengineering.io/podcast",
+  "podcastTitle": "No Solutions"
+}

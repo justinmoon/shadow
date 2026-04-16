@@ -185,6 +185,20 @@ for step in "${suite_steps[@]}"; do
   fi
 done
 
+runtime_run_only_step_count=0
+for step in "${suite_steps[@]}"; do
+  case "$step" in
+    sound|podcast|nostr)
+      runtime_run_only_step_count=$((runtime_run_only_step_count + 1))
+      ;;
+  esac
+done
+if (( run_only == 1 && runtime_run_only_step_count > 1 )); then
+  echo "pixel-ci: --run-only cannot run multiple runtime app steps because they share one staged runtime app bundle" >&2
+  echo "pixel-ci: run each runtime subset separately with --run-only, or omit --run-only so artifacts are staged per step" >&2
+  exit 64
+fi
+
 cleanup() {
   pixel_stop_shadow_session_best_effort "$serial"
   if pixel_android_display_stack_restored "$serial"; then
@@ -199,29 +213,26 @@ ensure_android_display_ready() {
   if pixel_wait_for_condition 5 1 pixel_android_display_restored "$serial"; then
     return 0
   fi
-  if pixel_wait_for_condition 5 1 pixel_android_display_stack_restored "$serial"; then
-    return 0
-  fi
 
-  echo "pixel-ci: Android display stack not ready; attempting restore" >&2
+  echo "pixel-ci: Android display/window stack not ready; attempting restore" >&2
   pixel_stop_shadow_session_best_effort "$serial"
   pixel_restore_android_best_effort "$serial" 60
-  if pixel_wait_for_condition 30 1 pixel_android_display_stack_restored "$serial"; then
+  if pixel_wait_for_condition 30 1 pixel_android_display_restored "$serial"; then
     return 0
   fi
 
-  echo "pixel-ci: Android display stack still not ready; rebooting device" >&2
+  echo "pixel-ci: Android display/window stack still not ready; rebooting device" >&2
   pixel_adb "$serial" reboot
   sleep 5
   pixel_wait_for_adb "$serial" 180
   pixel_wait_for_boot_completed "$serial" 240
-  pixel_wait_for_condition 90 1 pixel_android_display_stack_restored "$serial"
+  pixel_wait_for_condition 90 1 pixel_android_display_restored "$serial"
 }
 
 run_display_ready_gate() {
   local step_name
   step_name="$1"
-  run_step "preflight_android_display_${step_name}" "wait for Android display stack ready before ${step_name}" \
+  run_step "preflight_android_display_${step_name}" "wait for Android display/window stack ready before ${step_name}" \
     ensure_android_display_ready
 }
 
@@ -331,7 +342,7 @@ fi
 run_step preflight_root "verify Pixel root access" \
   "$SCRIPT_DIR/shadowctl" root-check -t "$serial"
 if (( stage_only == 0 )); then
-  run_step preflight_android_display "wait for Android display stack ready" \
+  run_step preflight_android_display "wait for Android display/window stack ready" \
     ensure_android_display_ready
 fi
 run_step preflight_doctor "inspect Pixel device state" \

@@ -65,6 +65,10 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 ## Repo Shape
 
 1. `flake.nix` pins the toolchain, dev shells, and packaged binaries.
+   The VM lane now consumes packaged Linux `shadow-compositor` / `shadow-blitz-demo` artifacts built through Nix; the guest should stay runtime-only.
+   The guest no longer mounts the repo. It mounts `/nix/store` plus a narrow `.shadow-vm/runtime-artifacts` share staged on the host.
+   Runtime app bundles are built by the shared host-side artifact builder (`scripts/runtime_build_artifacts.sh`) and staged under that artifact share.
+   The VM podcast sample defaults to a checked-in local fixture so the branch gate does not need a live RSS/media fetch just to open that app.
 2. `justfile` is the human entrypoint and should stay curated around the supported operator surface. `just` should show that curated view by default, and `just help-all` should expose the full recipe list.
 3. `scripts/shadowctl` owns shared target/session/control behavior.
 4. `scripts/*.sh` stage artifacts and launch sessions. Reused operator behavior belongs in `shadowctl`, not duplicated shell wrappers.
@@ -78,6 +82,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 - Treat VM/QEMU shell/home plus app launch and rooted Pixel shell/home plus app launch as the only supported surfaces.
 - Keep `just` thin. If a capability is reused across targets, it belongs in `shadowctl`.
 - Delete or hide historical probe lanes instead of continuing to advertise them as normal operator commands.
+- Keep runtime app bundling as an explicit host-side artifact-builder seam. Nix owns stable deps and Linux binaries; Deno/npm app bundling remains dynamic because the same machinery is useful for runtime-created apps.
 - Replace ad hoc launch-time env assembly with a small typed config loaded once at startup.
 - Make app/runtime metadata single-source so staging, shell launch, and runtime host code stop carrying parallel tables.
 - Decompose `shadow-compositor-guest` only after shared helpers and typed startup config seams are in place.
@@ -86,6 +91,8 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 
 - The rooted Pixel path assumes a rooted device and uses the guest compositor control socket on-device for shell actions like `state`, `open`, `home`, and `switcher`.
 - VM and Pixel are the validation targets that matter for cleanup work. Linux desktop host smokes and other historical bring-up paths are secondary.
+- The local macOS VM gate is allowed to use the local `linux-builder`; removing guest-side Cargo/Rust is part of keeping build-time and runtime responsibilities separate.
+- The remaining VM impurity is intentional: host-prepared runtime app artifacts. The branch gate should keep that seam clean, manifest-driven, offline-safe for fixtures, and never built inside the guest.
 - This repo is still a bring-up repo, not a polished product repo. The cleanup goal is to make the supported system explicit and to stop advertising accidental operator surface.
 
 ## Not Front-Door Material

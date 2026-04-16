@@ -27,13 +27,9 @@
   outputs = { self, nixpkgs, android-nixpkgs, microvm, rust-overlay }:
     let
       lib = nixpkgs.lib;
-      uiVmSourceEnv = builtins.getEnv "SHADOW_UI_VM_SOURCE";
+      guestSystemForHostSystem = hostSystem:
+        builtins.replaceStrings [ "-darwin" ] [ "-linux" ] hostSystem;
       uiVmSshPortEnv = builtins.getEnv "SHADOW_UI_VM_SSH_PORT";
-      uiVmSource =
-        if uiVmSourceEnv != "" then
-          uiVmSourceEnv
-        else
-          null;
       uiVmSshPort =
         if uiVmSshPortEnv != "" then
           builtins.fromJSON uiVmSshPortEnv
@@ -176,6 +172,44 @@
           ];
           buildInputs = lib.optionals cross.stdenv.hostPlatform.isLinux [ staticXkbcommon ];
         };
+      mkShadowCompositorFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "shadow-compositor";
+          version = "0.1.0";
+          src = ./ui;
+          cargoLock = {
+            lockFile = ./ui/Cargo.lock;
+            outputHashes = uiBlitzOutputHashes;
+          };
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          cargoBuildFlags = [ "-p" "shadow-compositor" ];
+          cargoInstallFlags = [ "-p" "shadow-compositor" ];
+          nativeBuildInputs = [ cross.buildPackages.pkg-config ];
+          depsBuildBuild =
+            lib.optionals cross.stdenv.buildPlatform.isDarwin [
+              cross.buildPackages.stdenv.cc
+              cross.buildPackages.libiconv
+            ];
+          buildInputs = [
+            cross.expat
+            cross.fontconfig
+            cross.freetype
+            cross.libdrm
+            cross.libGL
+            cross.libxkbcommon
+            cross.mesa
+            cross.vulkan-loader
+            cross.wayland
+            cross.wayland-protocols
+            cross.libx11
+            cross.libxcursor
+            cross.libxi
+            cross.libxrandr
+          ];
+          meta.mainProgram = "shadow-compositor";
+        };
       mkDrmRectFor = cross:
         cross.rustPlatform.buildRustPackage {
           pname = "drm-rect";
@@ -215,11 +249,30 @@
           ];
           PKG_CONFIG_ALL_STATIC = "1";
         };
-      mkShadowBlitzDemoFor = cross: rendererFeature:
+      mkShadowBlitzDemoFor =
+        cross:
+        {
+          features ? [ ],
+          pnameSuffix ? null,
+          useDefaultFeatures ? false,
+        }:
         let
-          rendererSuffix = lib.replaceStrings [ "_" ] [ "-" ] rendererFeature;
+          suffix =
+            if pnameSuffix != null then
+              pnameSuffix
+            else
+              lib.concatMapStringsSep "-" (feature: lib.replaceStrings [ "_" ] [ "-" ] feature) features;
+          defaultFeatureArgs = lib.optionals (!useDefaultFeatures) [ "--no-default-features" ];
+          featureArgs = lib.optionals (features != [ ]) [
+            "--features"
+            (lib.concatStringsSep "," features)
+          ];
         in cross.rustPlatform.buildRustPackage {
-          pname = "shadow-blitz-demo-${rendererSuffix}";
+          pname =
+            if suffix == "" then
+              "shadow-blitz-demo"
+            else
+              "shadow-blitz-demo-${suffix}";
           version = "0.1.0";
           src = ./.;
           cargoRoot = "ui";
@@ -235,17 +288,11 @@
           cargoBuildFlags = [
             "-p"
             "shadow-blitz-demo"
-            "--no-default-features"
-            "--features"
-            rendererFeature
-          ];
+          ] ++ defaultFeatureArgs ++ featureArgs;
           cargoInstallFlags = [
             "-p"
             "shadow-blitz-demo"
-            "--no-default-features"
-            "--features"
-            rendererFeature
-          ];
+          ] ++ defaultFeatureArgs ++ featureArgs;
           nativeBuildInputs = [ cross.buildPackages.pkg-config ];
           depsBuildBuild =
             lib.optionals cross.stdenv.buildPlatform.isDarwin [
@@ -260,7 +307,7 @@
             cross.libffi
             cross.libglvnd
             cross.libxkbcommon
-            cross.mesa.drivers
+            cross.mesa
             cross.vulkan-loader
             cross.wayland
             cross.wayland-protocols
@@ -274,21 +321,21 @@
             ln -s "${cross.libffi}" "$out/runtime-libs/libffi"
             ln -s "${cross.libglvnd}" "$out/runtime-libs/libglvnd"
             ln -s "${cross.libxkbcommon}" "$out/runtime-libs/libxkbcommon"
-            ln -s "${cross.mesa.drivers}" "$out/runtime-libs/mesa-drivers"
+            ln -s "${cross.mesa}" "$out/runtime-libs/mesa-drivers"
             ln -s "${cross.vulkan-loader}" "$out/runtime-libs/vulkan-loader"
             ln -s "${cross.wayland}" "$out/runtime-libs/wayland"
             ln -s "${cross.wayland-protocols}" "$out/runtime-libs/wayland-protocols"
-            if [ -d "${cross.mesa.drivers}/lib/dri" ]; then
+            if [ -d "${cross.mesa}/lib/dri" ]; then
               mkdir -p "$out/lib"
-              ln -s "${cross.mesa.drivers}/lib/dri" "$out/lib/dri"
+              ln -s "${cross.mesa}/lib/dri" "$out/lib/dri"
             fi
-            if [ -d "${cross.mesa.drivers}/share/vulkan/icd.d" ]; then
+            if [ -d "${cross.mesa}/share/vulkan/icd.d" ]; then
               mkdir -p "$out/share/vulkan"
-              ln -s "${cross.mesa.drivers}/share/vulkan/icd.d" "$out/share/vulkan/icd.d"
+              ln -s "${cross.mesa}/share/vulkan/icd.d" "$out/share/vulkan/icd.d"
             fi
-            if [ -d "${cross.mesa.drivers}/share/glvnd/egl_vendor.d" ]; then
+            if [ -d "${cross.mesa}/share/glvnd/egl_vendor.d" ]; then
               mkdir -p "$out/share/glvnd"
-              ln -s "${cross.mesa.drivers}/share/glvnd/egl_vendor.d" "$out/share/glvnd/egl_vendor.d"
+              ln -s "${cross.mesa}/share/glvnd/egl_vendor.d" "$out/share/glvnd/egl_vendor.d"
             elif [ -d "${cross.libglvnd}/share/glvnd/egl_vendor.d" ]; then
               mkdir -p "$out/share/glvnd"
               ln -s "${cross.libglvnd}/share/glvnd/egl_vendor.d" "$out/share/glvnd/egl_vendor.d"
@@ -512,16 +559,22 @@
           '';
         };
     in {
-      nixosConfigurations =
-        lib.optionalAttrs (uiVmSource != null)
-          (lib.listToAttrs (map (hostSystem: {
-            name = "${hostSystem}-shadow-ui-vm";
-            value = import ./vm/shadow-ui-vm.nix {
-              inherit hostSystem microvm nixpkgs;
-              repoSource = uiVmSource;
-              sshPort = uiVmSshPort;
-            };
-          }) darwinSystems));
+      nixosConfigurations = lib.listToAttrs (map (
+        hostSystem:
+        let
+          guestSystem = guestSystemForHostSystem hostSystem;
+        in
+        {
+          name = "${hostSystem}-shadow-ui-vm";
+          value = import ./vm/shadow-ui-vm.nix {
+            inherit hostSystem microvm nixpkgs;
+            shadowBlitzDemoPackage =
+              self.packages.${guestSystem}.shadow-blitz-demo-host-system-fonts;
+            shadowCompositorPackage = self.packages.${guestSystem}.shadow-compositor;
+            sshPort = uiVmSshPort;
+          };
+        }
+      ) darwinSystems);
       devShells = forAllSystems ({ androidDevPkgs, androidSdk, pkgs }: {
         android =
           if androidSdk != null then
@@ -550,17 +603,28 @@
           shadow-session-device = mkShadowSessionFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           default = mkShadowSession pkgs;
           ui-vm =
-            if pkgs.stdenv.isDarwin && uiVmSource != null then
+            if pkgs.stdenv.isDarwin then
               self.nixosConfigurations."${pkgs.stdenv.hostPlatform.system}-shadow-ui-vm".config.microvm.declaredRunner
             else
               mkUnavailablePackage pkgs "shadow-ui-vm-unavailable"
-                "ui-vm requires a macOS host plus SHADOW_UI_VM_SOURCE set under --impure. Use just ui-vm-run.";
+                "ui-vm requires a macOS host. Use just ui-vm-run.";
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           shadow-blitz-demo-aarch64-linux-gnu-gpu =
-            mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform "gpu";
+            mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform {
+              features = [ "gpu" ];
+            };
           shadow-blitz-demo-aarch64-linux-gnu-gpu-softbuffer =
-            mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform "gpu_softbuffer";
+            mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform {
+              features = [ "gpu_softbuffer" ];
+            };
+          shadow-blitz-demo-host-system-fonts =
+            mkShadowBlitzDemoFor pkgs {
+              features = [ "host_system_fonts" ];
+              pnameSuffix = "host-system-fonts";
+              useDefaultFeatures = true;
+            };
+          shadow-compositor = mkShadowCompositorFor pkgs;
           shadow-compositor-guest = mkShadowGuestCompositor pkgs;
           shadow-compositor-guest-device =
             mkShadowGuestCompositorFor pkgs.pkgsCross.aarch64-multiplatform-musl;

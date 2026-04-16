@@ -11,6 +11,8 @@ use shadow_ui_core::{
     scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX},
 };
 
+const ALLOW_WORKSPACE_CARGO_LAUNCH_ENV: &str = "SHADOW_ALLOW_WORKSPACE_CARGO_LAUNCH";
+
 pub fn launch_app(
     app_id: AppId,
     socket_name: &OsStr,
@@ -27,37 +29,47 @@ pub fn launch_app(
         )
     })?;
 
-    let mut command =
-        if let Some(explicit) = first_env_value(&["SHADOW_APP_CLIENT", "SHADOW_DEMO_CLIENT"]) {
-            Command::new(explicit)
-        } else if let Some(sibling) = sibling_binary_path(binary_name) {
-            if sibling.exists() {
-                Command::new(sibling)
-            } else if let Some(manifest) = workspace_manifest() {
-                let mut command = Command::new("cargo");
-                command.args([
-                    "run",
-                    "--manifest-path",
-                    manifest.to_string_lossy().as_ref(),
-                    "-p",
-                    binary_name,
-                ]);
-                if binary_name == "shadow-blitz-demo" {
-                    command.args(["--features", "host_system_fonts"]);
-                }
-                command
-            } else {
-                return Err(io::Error::new(
+    let mut command = if let Some(explicit) =
+        first_env_value(&["SHADOW_APP_CLIENT", "SHADOW_DEMO_CLIENT"])
+    {
+        Command::new(explicit)
+    } else if let Some(sibling) = sibling_binary_path(binary_name) {
+        if sibling.exists() {
+            Command::new(sibling)
+        } else if std::env::var_os(ALLOW_WORKSPACE_CARGO_LAUNCH_ENV).is_some() {
+            let manifest = workspace_manifest().ok_or_else(|| {
+                io::Error::new(
                     io::ErrorKind::NotFound,
-                    "could not locate demo app binary or workspace manifest",
-                ));
+                    "workspace cargo launch enabled but no workspace manifest was found",
+                )
+            })?;
+            let mut command = Command::new("cargo");
+            command.args([
+                "run",
+                "--manifest-path",
+                manifest.to_string_lossy().as_ref(),
+                "-p",
+                binary_name,
+            ]);
+            if binary_name == "shadow-blitz-demo" {
+                command.args(["--features", "host_system_fonts"]);
             }
+            command
         } else {
             return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "could not locate compositor executable path",
-            ));
-        };
+                    io::ErrorKind::NotFound,
+                    format!(
+                        "could not locate demo app binary {}; set SHADOW_APP_CLIENT or {} for dev cargo fallback",
+                        binary_name, ALLOW_WORKSPACE_CARGO_LAUNCH_ENV
+                    ),
+                ));
+        }
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "could not locate compositor executable path",
+        ));
+    };
 
     command
         .env("WAYLAND_DISPLAY", socket_name)

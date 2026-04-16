@@ -64,9 +64,9 @@ runtime_asset_directory_fingerprint() {
 }
 
 bundle_json="$(
-  nix develop "$repo"#runtime -c deno run --quiet \
-    --allow-env --allow-read --allow-write --allow-run \
-    "$repo/scripts/runtime_prepare_app_bundle.ts" \
+  "$SCRIPT_DIR/runtime_build_artifacts.sh" \
+    --profile single \
+    --app-id app \
     --input "$input_path" \
     --cache-dir "$cache_dir"
 )"
@@ -79,7 +79,7 @@ import os
 import sys
 
 data = json.load(sys.stdin)
-print(os.path.abspath(data["bundlePath"]))
+print(data["apps"]["app"]["effectiveBundlePath"])
 '
 )"
 bundle_dir="$(
@@ -89,7 +89,7 @@ import os
 import sys
 
 data = json.load(sys.stdin)
-print(os.path.abspath(data["bundleDir"]))
+print(data["apps"]["app"]["effectiveBundleDir"])
 '
 )"
 bundle_asset_dir="$(
@@ -99,7 +99,7 @@ import os
 import sys
 
 data = json.load(sys.stdin)
-asset_dir = data.get("assetDir")
+asset_dir = data["apps"]["app"].get("assetDir")
 print(os.path.abspath(asset_dir) if asset_dir else "")
 '
 )"
@@ -132,6 +132,10 @@ host_bundle_source_fingerprint="$(
     "$repo/rust/vendor/temporal_rs" \
     "$SCRIPT_DIR/pixel_prepare_runtime_app_artifacts.sh" \
     "$SCRIPT_DIR/pixel_runtime_linux_bundle_common.sh" \
+    "$SCRIPT_DIR/runtime_build_artifacts.sh" \
+    "$SCRIPT_DIR/runtime_build_artifacts.ts" \
+    "$SCRIPT_DIR/runtime_prepare_app_bundle.ts" \
+    "$SCRIPT_DIR/runtime_compile_solid.ts" \
     "$xkb_source_dir" \
     "$android_font_source_dir" \
     "${extra_bundle_dir:-__no_extra_bundle__}" \

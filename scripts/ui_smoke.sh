@@ -132,6 +132,7 @@ run_local_linux_smoke() {
     export XDG_RUNTIME_DIR="$runtime_dir"
     export SHADOW_COMPOSITOR_HEADLESS=1
     export SHADOW_COMPOSITOR_AUTO_LAUNCH=1
+    export SHADOW_ALLOW_WORKSPACE_CARGO_LAUNCH=1
     export XDG_RUNTIME_DIR="$runtime_dir"
     export RUST_LOG="${RUST_LOG:-shadow_compositor=info,smithay=warn}"
     scripts/runtime_prepare_host_session_env.sh >"$runtime_env"

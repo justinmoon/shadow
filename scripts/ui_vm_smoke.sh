@@ -11,10 +11,10 @@ SHOT_PATH="$LOG_DIR/ui-vm-smoke.png"
 VM_SOCKET_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-vm.sock"
 VM_STATE_IMAGE_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-state.img"
 UI_VM_PREP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_PREP_TIMEOUT:-900}"
-# Fresh worktrees can trigger a cold guest-side cargo build before the
-# compositor is ready. Keep the required pre-merge smoke tolerant of that path.
+# Fresh worktrees can trigger cold VM artifact preparation before the compositor
+# is ready. Keep the required pre-merge smoke tolerant of that path.
 UI_VM_READY_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_READY_TIMEOUT:-1200}"
-UI_VM_APP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_APP_TIMEOUT:-30}"
+UI_VM_APP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_APP_TIMEOUT:-90}"
 ui_vm_run_pid=""
 
 wait_for_open_state() {
@@ -132,9 +132,6 @@ mkdir -p "$LOG_DIR"
 # whichever apps happened to be warm in the previous VM run.
 rm -f "$VM_STATE_IMAGE_PATH"
 
-# Keep the required VM gate local-only even on hosts with distributed Nix builders.
-export NIX_BUILDERS=
-
 (
   cd "$REPO_ROOT"
   SHADOW_RUNTIME_AUDIO_BACKEND=memory "$SCRIPT_DIR/ui_vm_run.sh"
@@ -164,27 +161,66 @@ done
 
 "$SCRIPT_DIR/shadowctl" wait-ready -t vm --timeout "$UI_VM_READY_TIMEOUT_SECS"
 
+doctor_json="$("$SCRIPT_DIR/shadowctl" doctor -t vm --json)"
+REPO_ROOT="$REPO_ROOT" \
+EXPECTED_ARTIFACT_SHARE="$REPO_ROOT/.shadow-vm/runtime-artifacts" \
+DOCTOR_JSON="$doctor_json" \
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+payload = json.loads(os.environ["DOCTOR_JSON"])
+issues = payload.get("issues", [])
+status = payload["status"]
+artifact_share = status["local"].get("artifact_share")
+expected = Path(os.environ["EXPECTED_ARTIFACT_SHARE"]).resolve()
+repo_root = Path(os.environ["REPO_ROOT"]).resolve()
+
+if issues:
+    raise SystemExit(f"ui-vm-smoke: doctor reported issues: {issues!r}")
+if artifact_share is None:
+    raise SystemExit(
+        f"ui-vm-smoke: expected artifact share {str(expected)!r}, got {artifact_share!r}"
+    )
+artifact_share_path = Path(artifact_share)
+if not artifact_share_path.is_absolute():
+    artifact_share_path = (repo_root / artifact_share_path).resolve()
+if artifact_share_path != expected:
+    raise SystemExit(
+        f"ui-vm-smoke: expected artifact share {str(expected)!r}, got {artifact_share!r}"
+    )
+PY
+
+echo "ui-vm-smoke: open timeline"
 "$SCRIPT_DIR/shadowctl" open timeline -t vm >/dev/null
 state_after_timeline_open="$(wait_for_open_state timeline "timeline open")"
 
+echo "ui-vm-smoke: home timeline"
 "$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
 state_after_timeline_home="$(wait_for_home_state timeline "timeline home")"
 
+echo "ui-vm-smoke: reopen timeline"
 "$SCRIPT_DIR/shadowctl" open timeline -t vm >/dev/null
 state_after_timeline_reopen="$(wait_for_open_state timeline "timeline reopen")"
 
+echo "ui-vm-smoke: home timeline again"
 "$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
 wait_for_home_state timeline "timeline second home" >/dev/null
 
+echo "ui-vm-smoke: open camera"
 "$SCRIPT_DIR/shadowctl" open camera -t vm >/dev/null
 state_after_camera_open="$(wait_for_open_state camera "camera open")"
 
+echo "ui-vm-smoke: home camera"
 "$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
 state_after_camera_home="$(wait_for_home_state camera "camera home")"
 
+echo "ui-vm-smoke: open podcast"
 "$SCRIPT_DIR/shadowctl" open podcast -t vm >/dev/null
 state_after_podcast_open="$(wait_for_open_state podcast "podcast open")"
 
+echo "ui-vm-smoke: screenshot"
 "$SCRIPT_DIR/shadowctl" screenshot -t vm "$SHOT_PATH" >/dev/null
 
 STATE_AFTER_TIMELINE_OPEN="$state_after_timeline_open" \

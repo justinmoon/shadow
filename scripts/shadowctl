@@ -181,7 +181,7 @@ def vm_processes() -> list[str]:
     ]
 
 
-def vm_repo_source(process_lines: list[str]) -> str | None:
+def vm_artifact_share(process_lines: list[str]) -> str | None:
     pattern = re.compile(r"-fsdev local,id=fs1,path=([^,]+),security_model=none,readonly=false")
     for line in process_lines:
         match = pattern.search(line)
@@ -259,7 +259,7 @@ def vm_status_payload() -> dict[str, Any]:
             "socket_path": str(qmp_socket_path()),
             "socket_exists": qmp_socket_path().exists(),
             "vm_processes": local_processes,
-            "repo_source": vm_repo_source(local_processes),
+            "artifact_share": vm_artifact_share(local_processes),
         },
     }
 
@@ -290,7 +290,7 @@ for line in cmd("systemctl", "show", "shadow-ui-smoke.service", "-p", "ActiveSta
 
 process_lines = []
 for line in cmd("ps", "-eo", "pid=,comm=,args=")[1].splitlines():
-    if not any(name in line for name in ("shadow-compositor", "shadow-blitz-demo", "cargo run")):
+    if not any(name in line for name in ("shadow-compositor", "shadow-blitz-demo")):
         continue
     if "python3 - <<'PY'" in line:
         continue
@@ -321,17 +321,11 @@ PY
     if remote.returncode == 0 and remote.stdout.strip():
         payload["remote"].update(json.loads(remote.stdout))
         remote_processes = payload["remote"].get("processes", [])
-        compiling = any(
-            marker in line
-            for line in remote_processes
-            for marker in ("cargo", "rustc")
-        )
         payload["remote"]["running_apps"] = running_apps(remote_processes)
         payload["remote"]["ui_ready"] = bool(
             payload["remote"].get("control_socket_exists")
             and "shadow-composit" in "\n".join(remote_processes)
         )
-        payload["remote"]["compile_in_progress"] = compiling
     return payload
 
 
@@ -345,8 +339,8 @@ def print_vm_status(payload: dict[str, Any]) -> None:
             print(f"  {line}")
     else:
         print("vm process: not running")
-    if local.get("repo_source"):
-        print(f"vm repo source: {local['repo_source']}")
+    if local.get("artifact_share"):
+        print(f"vm artifact share: {local['artifact_share']}")
 
     print(f"remote reachable: {'yes' if remote.get('reachable') else 'no'}")
     if not remote.get("reachable"):
@@ -365,8 +359,6 @@ def print_vm_status(payload: dict[str, Any]) -> None:
     if remote.get("running_apps"):
         print("running apps:", ", ".join(remote["running_apps"]))
     print("ui ready:", "yes" if remote.get("ui_ready") else "no")
-    if remote.get("compile_in_progress"):
-        print("compile:", "in progress")
     print("processes:")
     for line in remote.get("processes", []):
         print(f"  {line}")
@@ -379,18 +371,22 @@ def diagnose_vm(payload: dict[str, Any]) -> list[str]:
         issues.append("VM guest is not reachable over SSH.")
         return issues
 
-    if payload["local"].get("repo_source") not in (None, str(repo_root())):
-        issues.append(
-            f"VM is mounted from {payload['local']['repo_source']}, not {repo_root()}."
-        )
+    expected_artifact_share = (state_dir() / "runtime-artifacts").resolve()
+    artifact_share = payload["local"].get("artifact_share")
+    if artifact_share is not None:
+        artifact_share_path = pathlib.Path(artifact_share)
+        if not artifact_share_path.is_absolute():
+            artifact_share_path = (repo_root() / artifact_share_path).resolve()
+        if artifact_share_path != expected_artifact_share:
+            issues.append(
+                f"VM artifact share is {payload['local']['artifact_share']}, not {expected_artifact_share}."
+            )
 
     processes = "\n".join(remote.get("processes", []))
     if not remote.get("control_socket_exists"):
         issues.append("Compositor control socket is missing.")
     if not remote.get("wayland_sockets"):
         issues.append("No Wayland sockets are present in the guest runtime dir.")
-    if remote.get("compile_in_progress") and not remote.get("ui_ready"):
-        issues.append("Guest UI build is still in progress; blank compositor background is expected.")
     if "shadow-compositor" not in processes and remote.get("ui_ready"):
         issues.append("Control socket exists but shadow-compositor is not visible in the guest process list.")
     return issues
@@ -968,7 +964,6 @@ def cmd_state(args: argparse.Namespace) -> int:
                 "transport": None,
                 "control_socket": None,
                 "socket": None,
-                "compile_in_progress": payload["remote"].get("compile_in_progress"),
                 "ui_ready": payload["remote"].get("ui_ready"),
                 "remote_reachable": payload["remote"].get("reachable"),
             }
@@ -1075,19 +1070,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         env_assignments.append(f"{key}={shlex.quote(value)}")
     env_prefix = " ".join(env_assignments)
     env_prefix = f"{env_prefix} " if env_prefix else ""
-    cargo_args = [
-        "cargo",
-        "run",
-        "--locked",
-        "--manifest-path",
-        "ui/Cargo.toml",
-        "-p",
-        package,
-    ]
-    if package == "shadow-blitz-demo":
-        cargo_args.extend(["--features", "host_system_fonts"])
-    cargo_cmd = " ".join(shlex.quote(part) for part in cargo_args)
-
     remote_script = f"""
 set -euo pipefail
 export XDG_RUNTIME_DIR="${{XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
@@ -1105,7 +1087,7 @@ load_session_env_from_process() {{
 
   while IFS= read -r -d '' entry; do
     case "$entry" in
-      HOME=*|XDG_CACHE_HOME=*|CARGO_TARGET_DIR=*|PKG_CONFIG_PATH=*|LD_LIBRARY_PATH=*|LIBRARY_PATH=*|NIX_LDFLAGS=*|LIBGL_DRIVERS_PATH=*|RUST_BACKTRACE=*|XDG_RUNTIME_DIR=*)
+      HOME=*|XDG_CACHE_HOME=*|LD_LIBRARY_PATH=*|LIBGL_DRIVERS_PATH=*|XDG_RUNTIME_DIR=*|SHADOW_APP_CLIENT=*|SHADOW_RUNTIME_*=*|WAYLAND_DISPLAY=*|SHADOW_COMPOSITOR_CONTROL=*)
         export "$entry"
         ;;
     esac
@@ -1131,8 +1113,13 @@ if [[ ! -S "$control_socket" ]]; then
   exit 1
 fi
 
-cd /work/shadow
-cmd=(env WAYLAND_DISPLAY="$wayland_socket" SHADOW_COMPOSITOR_CONTROL="$control_socket" {env_prefix}{cargo_cmd})
+binary_path="$(command -v "$package" || true)"
+if [[ -z "$binary_path" ]]; then
+  echo "shadowctl: could not find installed binary $package in the VM" >&2
+  exit 1
+fi
+
+cmd=(env WAYLAND_DISPLAY="$wayland_socket" SHADOW_COMPOSITOR_CONTROL="$control_socket" {env_prefix}"$binary_path")
 
 echo "mode={mode}"
 echo "wayland=$wayland_socket"

@@ -22,13 +22,36 @@ type CliOptions = {
   inputPath: string;
 };
 
-async function main() {
-  const options = parseArgs(Deno.args);
-  const cwd = Deno.cwd();
-  const runtimeAppConfig = readRuntimeAppConfig();
+export type PrepareRuntimeAppBundleOptions = {
+  cacheDir: string;
+  cwd?: string;
+  expectCacheHit?: boolean;
+  inputPath: string;
+  runtimeAppConfig?: unknown;
+};
+
+export type PreparedRuntimeAppBundle = {
+  assetDir: string | null;
+  bundleDir: string;
+  bundlePath: string;
+  cacheDir: string;
+  cacheHit: boolean;
+  inputPath: string;
+  osPath: string;
+  outputPath: string;
+  rendererPath: string;
+  runnerPath: string;
+};
+
+export async function prepareRuntimeAppBundle(
+  options: PrepareRuntimeAppBundleOptions,
+): Promise<PreparedRuntimeAppBundle> {
+  const cwd = options.cwd ?? Deno.cwd();
+  const runtimeAppConfig = options.runtimeAppConfig ?? null;
   const compileOptions: CompileSolidModuleOptions = {
     cacheDir: options.cacheDir,
-    expectCacheHit: options.expectCacheHit,
+    cwd,
+    expectCacheHit: options.expectCacheHit ?? false,
     inputPath: options.inputPath,
     moduleName: RENDERER_MODULE_NAME,
   };
@@ -39,7 +62,10 @@ async function main() {
   const osPath = path.join(compiled.cacheDir, "shadow_runtime_os.js");
   const runnerPath = path.join(compiled.cacheDir, "runner.js");
   const bundlePath = path.join(compiled.cacheDir, "bundle.js");
-  const sourceAssetDir = path.join(path.dirname(compiled.inputPath), ASSET_DIR_NAME);
+  const sourceAssetDir = path.join(
+    path.dirname(compiled.inputPath),
+    ASSET_DIR_NAME,
+  );
   const bundleAssetDir = path.join(compiled.cacheDir, ASSET_DIR_NAME);
 
   await Deno.copyFile(rendererSourcePath, rendererPath);
@@ -49,25 +75,31 @@ async function main() {
   await Deno.writeTextFile(runnerPath, buildRunnerSource(runtimeAppConfig));
   await bundleRunner(runnerPath, bundlePath);
 
+  return {
+    bundlePath: path.relative(cwd, bundlePath),
+    bundleDir: path.relative(cwd, compiled.cacheDir),
+    cacheDir: path.relative(cwd, compiled.cacheDir),
+    cacheHit: compiled.cacheHit,
+    assetDir: await dirExists(bundleAssetDir)
+      ? path.relative(cwd, bundleAssetDir)
+      : null,
+    inputPath: path.relative(cwd, compiled.inputPath),
+    outputPath: path.relative(cwd, compiled.outputPath),
+    osPath: path.relative(cwd, osPath),
+    rendererPath: path.relative(cwd, rendererPath),
+    runnerPath: path.relative(cwd, runnerPath),
+  };
+}
+
+async function main() {
+  const options = parseArgs(Deno.args);
+  const prepared = await prepareRuntimeAppBundle({
+    ...options,
+    runtimeAppConfig: readRuntimeAppConfig(),
+  });
+
   console.log(
-    JSON.stringify(
-      {
-        bundlePath: path.relative(cwd, bundlePath),
-        bundleDir: path.relative(cwd, compiled.cacheDir),
-        cacheDir: path.relative(cwd, compiled.cacheDir),
-        cacheHit: compiled.cacheHit,
-        assetDir: await dirExists(bundleAssetDir)
-          ? path.relative(cwd, bundleAssetDir)
-          : null,
-        inputPath: path.relative(cwd, compiled.inputPath),
-        outputPath: path.relative(cwd, compiled.outputPath),
-        osPath: path.relative(cwd, osPath),
-        rendererPath: path.relative(cwd, rendererPath),
-        runnerPath: path.relative(cwd, runnerPath),
-      },
-      null,
-      2,
-    ),
+    JSON.stringify(prepared, null, 2),
   );
 }
 
@@ -122,7 +154,10 @@ globalThis.RUNTIME_APP_DOCUMENT = documentPayload;
 `;
 }
 
-async function copyDirRecursive(sourceDir: string, targetDir: string): Promise<void> {
+async function copyDirRecursive(
+  sourceDir: string,
+  targetDir: string,
+): Promise<void> {
   await Deno.mkdir(targetDir, { recursive: true });
   for await (const entry of Deno.readDir(sourceDir)) {
     const sourcePath = path.join(sourceDir, entry.name);

@@ -138,6 +138,7 @@ run_desktop() {
     for env_assignment in "${compositor_env[@]}"; do
       printf 'env=%s\n' "$env_assignment"
     done
+    printf 'env=SHADOW_ALLOW_WORKSPACE_CARGO_LAUNCH=1\n'
     printf 'command=nix develop .#ui -c cargo run --manifest-path ui/Cargo.toml -p shadow-compositor\n'
     return 0
   fi
@@ -155,6 +156,7 @@ run_desktop() {
   fi
   export SHADOW_BLITZ_FONT_DIR="$font_dir"
   compositor_env+=("SHADOW_BLITZ_FONT_DIR=$font_dir")
+  compositor_env+=("SHADOW_ALLOW_WORKSPACE_CARGO_LAUNCH=1")
 
   if [[ "${#compositor_env[@]}" -gt 0 ]]; then
     exec env "${compositor_env[@]}" \

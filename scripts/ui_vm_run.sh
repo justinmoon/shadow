@@ -7,7 +7,9 @@ source "$SCRIPT_DIR/ui_vm_common.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNNER_LINK="$REPO_ROOT/.shadow-vm/ui-vm-runner"
 SOCKET_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-vm.sock"
-RUNTIME_ENV_PATH="$REPO_ROOT/.shadow-vm/runtime-host-session-env.sh"
+RUNTIME_ARTIFACT_DIR="$(ui_vm_runtime_artifact_dir)"
+RUNTIME_ENV_PATH="$(ui_vm_runtime_env_path)"
+RUNTIME_GUEST_DIR="$(ui_vm_runtime_guest_dir)"
 # shellcheck source=./session_apps.sh
 source "$SCRIPT_DIR/session_apps.sh"
 
@@ -31,11 +33,12 @@ parse_args() {
 parse_args "$@"
 
 cd "$REPO_ROOT"
-mkdir -p .shadow-vm
+mkdir -p .shadow-vm "$RUNTIME_ARTIFACT_DIR"
 runtime_env_tmp=""
 ui_vm_state_dir="/var/lib/shadow-ui"
 ui_vm_ssh_port_value="${SHADOW_UI_VM_SSH_PORT:-$(ui_vm_ssh_port)}"
 runtime_audio_backend="${SHADOW_RUNTIME_AUDIO_BACKEND:-}"
+podcast_fixture_dir="$REPO_ROOT/runtime/app-podcast-player/fixture"
 
 case "$(uname -m)" in
   arm64|aarch64)
@@ -69,51 +72,40 @@ if [[ -S "$SOCKET_PATH" ]]; then
 fi
 
 rm -f .shadow-vm/nix-store-overlay.img
-if [[ ! -s "$RUNTIME_ENV_PATH" ]] \
-  || ! grep -Fq 'SHADOW_RUNTIME_APP_CAMERA_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
-  || ! grep -Fq 'SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
-  || ! grep -Fq 'SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
-  || ! grep -Fq 'SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=' "$RUNTIME_ENV_PATH" 2>/dev/null \
-  || ! grep -Fq 'SHADOW_RUNTIME_CASHU_DATA_DIR=/var/lib/shadow-ui/runtime-cashu' "$RUNTIME_ENV_PATH" 2>/dev/null \
-  || ! grep -Fq 'SHADOW_RUNTIME_NOSTR_DB_PATH=/var/lib/shadow-ui/runtime-nostr.sqlite3' "$RUNTIME_ENV_PATH" 2>/dev/null \
-  || { [[ "$ui_vm_start_app_id" == "shell" ]] && grep -Fq 'SHADOW_COMPOSITOR_AUTO_LAUNCH=' "$RUNTIME_ENV_PATH" 2>/dev/null; } \
-  || { [[ "$ui_vm_start_app_id" != "shell" ]] && ! grep -Fq "SHADOW_COMPOSITOR_START_APP_ID=$ui_vm_start_app_id" "$RUNTIME_ENV_PATH" 2>/dev/null; } \
-  || { [[ -z "$runtime_audio_backend" ]] && grep -Fq 'SHADOW_RUNTIME_AUDIO_BACKEND=' "$RUNTIME_ENV_PATH" 2>/dev/null; } \
-  || { [[ -n "$runtime_audio_backend" ]] && ! grep -Fqx "export SHADOW_RUNTIME_AUDIO_BACKEND=$runtime_audio_backend" "$RUNTIME_ENV_PATH" 2>/dev/null; } \
-  || ! grep -Fq "SHADOW_RUNTIME_CASHU_DATA_DIR=$ui_vm_state_dir/runtime-cashu" "$RUNTIME_ENV_PATH" 2>/dev/null \
-  || ! grep -Fq "SHADOW_RUNTIME_NOSTR_DB_PATH=$ui_vm_state_dir/runtime-nostr.sqlite3" "$RUNTIME_ENV_PATH" 2>/dev/null; then
-  runtime_env_tmp="$(mktemp "$REPO_ROOT/.shadow-vm/runtime-host-session-env.XXXXXX")"
-  ./scripts/runtime_prepare_host_session_env.sh \
-    --runtime-host-package "$ui_vm_runtime_host_package_attr" \
-    --include-podcast \
-    --bundle-rewrite-from "$REPO_ROOT" \
-    --bundle-rewrite-to "/work/shadow" \
-    --audio-backend "$runtime_audio_backend" \
-    --state-dir "$ui_vm_state_dir" >"$runtime_env_tmp"
-  if shadow_session_app_is_shell "$ui_vm_start_app_id"; then
-    :
-  elif shadow_session_app_supports_auto_open "$ui_vm_start_app_id"; then
-    {
-      printf 'export SHADOW_COMPOSITOR_AUTO_LAUNCH=1\n'
-      printf 'export SHADOW_COMPOSITOR_START_APP_ID=%q\n' "$ui_vm_start_app_id"
-    } >>"$runtime_env_tmp"
-  else
-    echo "ui-vm-run: unsupported --app $ui_vm_start_app_id; expected $(shadow_session_apps_usage)" >&2
-    exit 1
-  fi
-  mv "$runtime_env_tmp" "$RUNTIME_ENV_PATH"
-  chmod 0644 "$RUNTIME_ENV_PATH"
-  runtime_env_tmp=""
+runtime_env_tmp="$(mktemp "$RUNTIME_ARTIFACT_DIR/runtime-host-session-env.XXXXXX")"
+SHADOW_PODCAST_PLAYER_ASSET_DIR="$podcast_fixture_dir" \
+SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 \
+./scripts/runtime_prepare_host_session_env.sh \
+  --runtime-host-package "$ui_vm_runtime_host_package_attr" \
+  --include-podcast \
+  --artifact-root "$RUNTIME_ARTIFACT_DIR" \
+  --artifact-guest-root "$RUNTIME_GUEST_DIR" \
+  --audio-backend "$runtime_audio_backend" \
+  --state-dir "$ui_vm_state_dir" >"$runtime_env_tmp"
+if shadow_session_app_is_shell "$ui_vm_start_app_id"; then
+  :
+elif shadow_session_app_supports_auto_open "$ui_vm_start_app_id"; then
+  {
+    printf 'export SHADOW_COMPOSITOR_AUTO_LAUNCH=1\n'
+    printf 'export SHADOW_COMPOSITOR_START_APP_ID=%q\n' "$ui_vm_start_app_id"
+  } >>"$runtime_env_tmp"
+else
+  echo "ui-vm-run: unsupported --app $ui_vm_start_app_id; expected $(shadow_session_apps_usage)" >&2
+  exit 1
 fi
-SHADOW_UI_VM_SOURCE="$REPO_ROOT" \
+mv "$runtime_env_tmp" "$RUNTIME_ENV_PATH"
+chmod 0644 "$RUNTIME_ENV_PATH"
+runtime_env_tmp=""
+
   SHADOW_UI_VM_SSH_PORT="$ui_vm_ssh_port_value" \
-  nix build --impure --accept-flake-config --option builders "" -o "$RUNNER_LINK" .#ui-vm >/dev/null
+  nix build --impure --accept-flake-config -o "$RUNNER_LINK" .#ui-vm >/dev/null
 
 echo "ui-vm-run: launching Shadow UI VM"
 echo "ui-vm-run: qemu window will host the real Linux compositor"
 echo "ui-vm-run: ssh endpoint shadow@127.0.0.1:$ui_vm_ssh_port_value"
 echo "ui-vm-run: state image .shadow-vm/shadow-ui-state.img"
-echo "ui-vm-run: first boot or dependency changes may spend time compiling in guest"
+echo "ui-vm-run: runtime artifacts .shadow-vm/runtime-artifacts"
+echo "ui-vm-run: first boot or dependency changes may spend time building Linux artifacts through Nix"
 echo "ui-vm-run: use 'just ui-vm-doctor' or 'just ui-vm-wait-ready' while the screen is blank"
 
 trap - EXIT

@@ -51,6 +51,8 @@ timeline_bundle_artifact="$(pixel_runtime_timeline_bundle_artifact)"
 podcast_input_path="${PIXEL_SHELL_PODCAST_INPUT_PATH:-runtime/app-podcast-player/app.tsx}"
 podcast_cache_dir="${PIXEL_SHELL_PODCAST_CACHE_DIR:-build/runtime/pixel-shell-podcast}"
 podcast_bundle_artifact="$(pixel_runtime_podcast_bundle_artifact)"
+podcast_episode_ids="${SHADOW_PODCAST_PLAYER_EPISODE_IDS:-00}"
+app_artifact_root="${PIXEL_SHELL_APP_ARTIFACT_ROOT:-build/runtime/pixel-shell-app-artifacts}"
 podcast_asset_dir=""
 podcast_config_json=""
 
@@ -63,28 +65,21 @@ if [[ -z "$timeline_config_json" ]]; then
   timeline_config_json='{"limit":12,"syncOnStart":true}'
 fi
 
-prepare_bundle() {
-  local input_path cache_dir
-  input_path="$1"
-  cache_dir="$2"
-  shift 2
+manifest_app_field() {
+  local app_id="$1"
+  local field="$2"
 
-  nix develop "$repo"#runtime -c env "$@" deno run --quiet \
-    --allow-env --allow-read --allow-write --allow-run \
-    "$repo/scripts/runtime_prepare_app_bundle.ts" \
-    --input "$input_path" \
-    --cache-dir "$cache_dir"
-}
-
-bundle_source_path_from_json() {
-  python3 -c '
+  APP_MANIFEST_JSON="$app_manifest_json" APP_ID="$app_id" APP_FIELD="$field" python3 - <<'PY'
 import json
 import os
-import sys
 
-data = json.load(sys.stdin)
-print(os.path.abspath(data["bundlePath"]))
-'
+data = json.loads(os.environ["APP_MANIFEST_JSON"])
+value = data["apps"][os.environ["APP_ID"]].get(os.environ["APP_FIELD"])
+if isinstance(value, (dict, list)):
+    print(json.dumps(value))
+elif value is not None:
+    print(value)
+PY
 }
 
 if [[ -n "$extra_bundle_dir" ]]; then
@@ -95,58 +90,22 @@ if [[ -n "$extra_bundle_dir" ]]; then
   fi
 fi
 
-counter_bundle_json="$(
-  prepare_bundle \
-    "$counter_input_path" \
-    "$counter_cache_dir"
-)"
-camera_bundle_json="$(
-  prepare_bundle \
-    "$camera_input_path" \
-    "$camera_cache_dir"
-)"
-timeline_bundle_json="$(
-  prepare_bundle \
-    "$timeline_input_path" \
-    "$timeline_cache_dir" \
-    SHADOW_RUNTIME_APP_CONFIG_JSON="$timeline_config_json"
-)"
-podcast_asset_json="$("$SCRIPT_DIR/prepare_podcast_player_demo_assets.sh")"
-podcast_asset_dir="$(
-  ASSET_JSON="$podcast_asset_json" python3 - <<'PY'
-import json
-import os
-
-print(json.loads(os.environ["ASSET_JSON"])["assetDir"])
-PY
-)"
-podcast_config_json="$(
-  ASSET_JSON="$podcast_asset_json" python3 - <<'PY'
-import json
-import os
-
-asset = json.loads(os.environ["ASSET_JSON"])
-asset.pop("assetDir", None)
-print(json.dumps(asset))
-PY
-)"
-podcast_bundle_json="$(
-  prepare_bundle \
-    "$podcast_input_path" \
-    "$podcast_cache_dir" \
-    SHADOW_RUNTIME_APP_CONFIG_JSON="$podcast_config_json"
-)"
-cashu_bundle_json="$(
-  prepare_bundle \
-    "$cashu_input_path" \
-    "$cashu_cache_dir"
+app_manifest_json="$(
+  SHADOW_RUNTIME_APP_TIMELINE_CONFIG_JSON="$timeline_config_json" \
+  SHADOW_PODCAST_PLAYER_EPISODE_IDS="$podcast_episode_ids" \
+    "$SCRIPT_DIR/runtime_build_artifacts.sh" \
+      --profile pixel-shell \
+      --include-podcast \
+      --artifact-root "$app_artifact_root"
 )"
 
-counter_bundle_source_path="$(printf '%s\n' "$counter_bundle_json" | bundle_source_path_from_json)"
-camera_bundle_source_path="$(printf '%s\n' "$camera_bundle_json" | bundle_source_path_from_json)"
-timeline_bundle_source_path="$(printf '%s\n' "$timeline_bundle_json" | bundle_source_path_from_json)"
-podcast_bundle_source_path="$(printf '%s\n' "$podcast_bundle_json" | bundle_source_path_from_json)"
-cashu_bundle_source_path="$(printf '%s\n' "$cashu_bundle_json" | bundle_source_path_from_json)"
+counter_bundle_source_path="$(manifest_app_field counter effectiveBundlePath)"
+camera_bundle_source_path="$(manifest_app_field camera effectiveBundlePath)"
+timeline_bundle_source_path="$(manifest_app_field timeline effectiveBundlePath)"
+podcast_bundle_source_path="$(manifest_app_field podcast effectiveBundlePath)"
+cashu_bundle_source_path="$(manifest_app_field cashu effectiveBundlePath)"
+podcast_asset_dir="$(manifest_app_field podcast extraAssetDir)"
+podcast_config_json="$(manifest_app_field podcast runtimeAppConfig)"
 
 mkdir -p "$(dirname "$counter_bundle_artifact")"
 cp "$counter_bundle_source_path" "$counter_bundle_artifact"
@@ -170,6 +129,11 @@ host_bundle_source_fingerprint="$(
     "$repo/rust/vendor/temporal_rs" \
     "$SCRIPT_DIR/pixel_prepare_shell_runtime_artifacts.sh" \
     "$SCRIPT_DIR/pixel_runtime_linux_bundle_common.sh" \
+    "$SCRIPT_DIR/runtime_build_artifacts.sh" \
+    "$SCRIPT_DIR/runtime_build_artifacts.ts" \
+    "$SCRIPT_DIR/runtime_prepare_app_bundle.ts" \
+    "$SCRIPT_DIR/runtime_compile_solid.ts" \
+    "$SCRIPT_DIR/prepare_podcast_player_demo_assets.sh" \
     "$xkb_source_dir" \
     "$android_font_source_dir" \
     "$counter_bundle_source_path" \
