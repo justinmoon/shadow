@@ -70,6 +70,10 @@
         "rust/runtime-nostr-host"
         "rust/vendor/temporal_rs"
       ];
+      shadowUiSrc = repoSourceFromPrefixes [
+        "ui"
+        "rust/shadow-runtime-protocol"
+      ];
       shadowLinuxAudioSpikeSrc = repoSourceFromPrefixes [
         "rust/shadow-linux-audio-spike"
       ];
@@ -176,7 +180,9 @@
         cross.rustPlatform.buildRustPackage {
           pname = "shadow-compositor";
           version = "0.1.0";
-          src = ./ui;
+          src = shadowUiSrc;
+          cargoRoot = "ui";
+          buildAndTestSubdir = "ui";
           cargoLock = {
             lockFile = ./ui/Cargo.lock;
             outputHashes = uiBlitzOutputHashes;
