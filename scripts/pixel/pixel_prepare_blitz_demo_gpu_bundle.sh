@@ -24,6 +24,7 @@ bundle_dir="$(pixel_artifact_path shadow-blitz-demo-gpu-gnu)"
 bundle_out_link="$(pixel_dir)/shadow-blitz-demo-aarch64-linux-gnu-gpu-result"
 launcher_artifact="$(pixel_artifact_path run-shadow-blitz-demo-gpu)"
 openlog_preload_artifact="$(pixel_artifact_path shadow-openlog-preload.so)"
+bundle_mode="${PIXEL_BLITZ_GPU_BUNDLE_MODE:-full}"
 vendor_mesa_tarball="${PIXEL_VENDOR_MESA_TARBALL-}"
 vendor_turnip_tarball="${PIXEL_VENDOR_TURNIP_TARBALL-}"
 vendor_mesa_tarball="$(normalize_runtime_bundle_input_path "$vendor_mesa_tarball")"
@@ -52,6 +53,7 @@ vendor_turnip_package_refs=(
 bundle_fingerprint="$(
   runtime_bundle_source_fingerprint \
     "$package_ref" \
+    "__bundle_mode_${bundle_mode}__" \
     "$repo/flake.nix" \
     "$repo/ui/Cargo.toml" \
     "$repo/ui/Cargo.lock" \
@@ -175,6 +177,12 @@ stage_openlog_preload() {
   cp -L "$openlog_preload_artifact" "$bundle_dir/lib/shadow-openlog-preload.so"
 }
 
+copy_vulkan_loader_from_closure() {
+  mkdir -p "$bundle_dir/lib"
+  copy_runtime_optional_lib "libvulkan.so" "$bundle_dir/lib"
+  copy_runtime_optional_lib "libvulkan.so.1" "$bundle_dir/lib"
+}
+
 overlay_vendor_mesa_tarball() {
   local tarball="$1"
   local temp_dir="$bundle_dir/.vendor-mesa-overlay"
@@ -274,13 +282,19 @@ stage_runtime_host_linux_bundle "$package_ref" "$bundle_out_link" "$bundle_dir" 
 
 chmod -R u+w "$bundle_dir" 2>/dev/null || true
 stage_openlog_preload
-copy_runtime_libs_from_package_output
-copy_optional_tree_from_closure "lib/dri" || true
-copy_optional_tree_from_closure "share/vulkan/icd.d" || true
-copy_optional_tree_from_closure "share/glvnd/egl_vendor.d" || true
-append_vendor_mesa_runtime_closure
+if [[ "$bundle_mode" == "vulkan-only" ]]; then
+  copy_vulkan_loader_from_closure
+else
+  copy_runtime_libs_from_package_output
+  copy_optional_tree_from_closure "lib/dri" || true
+  copy_optional_tree_from_closure "share/vulkan/icd.d" || true
+  copy_optional_tree_from_closure "share/glvnd/egl_vendor.d" || true
+  append_vendor_mesa_runtime_closure
+fi
 append_vendor_turnip_runtime_closure
-overlay_vendor_mesa_tarball "$vendor_mesa_tarball"
+if [[ "$bundle_mode" != "vulkan-only" ]]; then
+  overlay_vendor_mesa_tarball "$vendor_mesa_tarball"
+fi
 overlay_vendor_turnip_tarball "$vendor_turnip_tarball"
 rewrite_bundle_driver_manifests
 flatten_bundle_file_symlinks

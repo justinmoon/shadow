@@ -200,21 +200,18 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - `failure_kind`
     - `failure_description`
   - Remaining work:
-    - finish one fresh rooted-Pixel probe run after the current cold direct-`gpu` bundle build completes
+    - finish a fresh rooted-Pixel probe run after the latest direct-`gpu` config clamp lands
 - [ ] The true `gpu` client renderer path is not the proven operator lane yet.
   - The proven lane today is `gpu_softbuffer`.
-  - Existing direct-`gpu` Pixel runs fail at `window.resume() -> wgpu_context.create_surface() -> NoCompatibleDevice`.
-- [~] The direct-`gpu` package source narrowing is in progress.
-  - Root cause:
-    - `mkShadowBlitzDemoFor` still used `src = ./.`
-    - compositor-side edits were invalidating `shadow-blitz-demo-gpu` even when the app/runtime client had not changed
-  - First fix landed:
+  - Current direct-`gpu` Pixel runs get through adapter discovery and surface capability enumeration, then die during `wgpu::Surface::configure` before the first frame.
+- [x] The direct-`gpu` package source narrowing is landed.
+  - Fixes:
     - add `shadowBlitzDemoSrc` in `flake.nix`
-    - move the demo package off the whole-repo source tree
-  - Current follow-up:
-    - `ui/Cargo.toml` still declares workspace members outside the first filtered source set
-    - probe run `build/pixel/runtime-gpu-probe/20260415T225322Z/vulkan_kgsl_first.log` failed because `ui/crates/shadow-ui-software/Cargo.toml` was omitted
-    - keep the filter narrow, but include the workspace member manifests Cargo needs for resolution
+    - move the direct-`gpu` demo package off the whole-repo source tree
+    - rewrite the filtered `ui/Cargo.toml` workspace to only the demo-facing members Cargo actually needs
+  - Result:
+    - compositor-side edits no longer force unrelated direct-`gpu` demo package rebuilds
+    - the old filtered-source failures around omitted workspace member manifests are removed
 - [ ] The guest compositor does not yet import/present dmabuf-backed client buffers on the rooted Pixel path.
 - [~] The Pixel GPU timeline smoke is now explicit, but cold runs can still spend time building.
   - Historical direct operator hooks were deleted during script cleanup.
@@ -224,6 +221,81 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - keep repeated warm runs boring
 - [ ] The direct `gpu` lane does not yet have a clear go/no-go decision.
   - We still need to decide whether to promote it, keep `gpu_softbuffer`, or declare direct present not worth further effort on this Pixel.
+  - Current narrowed blocker:
+    - Turnip/KGSL adapter selection now succeeds
+    - the direct Wayland/Vulkan client still crashes before its first commit in `surface.configure`
+    - latest mitigation in flight is forcing `SHADOW_WGPU_PRESENT_MODE=fifo` on the direct-`gpu` Pixel lane
+  - Latest rooted proof:
+    - preload-disabled rooted proof:
+      - `build/pixel/runtime-gpu-probe/20260415T232726Z/run-vulkan_kgsl_first`
+      - `surface_configure_started=true`
+      - `surface_configure_done=false`
+      - `failure_phase=surface-configure`
+      - `client_disconnect_reason=ConnectionClosed`
+      - `openlog_kgsl_seen=false`
+      - `openlog_dri_seen=false`
+      - so disabling `SHADOW_LINUX_LD_PRELOAD` and `SHADOW_OPENLOG_DENY_DRI` did not change the direct-`gpu` failure
+    - conservative-format rooted proof:
+      - `build/pixel/runtime-gpu-probe/20260415T233717Z/run-vulkan_kgsl_first`
+      - `present_mode=Fifo`
+      - `surface_format=Bgra8UnormSrgb`
+      - `alpha_mode=Opaque`
+      - `maximum_frame_latency=1`
+      - `launched-client-exited ... signal: 7 (SIGBUS)`
+      - so the direct-`gpu` crash still reproduces after:
+        - forcing `Fifo`
+        - forcing `Bgra8UnormSrgb`
+        - forcing `Opaque`
+        - lowering swapchain latency to `1`
+        - configuring the surface before allocating the intermediate texture
+    - reduced-surface rooted proof:
+      - `build/pixel/runtime-gpu-probe/20260415T234432Z/run-vulkan_kgsl_first`
+      - `configure-toplevel size=540x1106`
+      - `resume-start width=532 height=1074`
+      - `surface-configure width=532 height=1074 format=Bgra8UnormSrgb present_mode=Fifo alpha_mode=Opaque`
+      - `launched-client-exited ... signal: 7 (SIGBUS)`
+      - so the direct-`gpu` crash still reproduces on a much smaller surface and is not just a full-screen swapchain allocation threshold
+    - minimal-feature rooted proof:
+      - `build/pixel/runtime-gpu-probe/20260415T234930Z/run-vulkan_kgsl_first`
+      - `[shadow-anyrender-vello] requested-features env_profile=minimal features=...0x0`
+      - `surface-configure width=532 height=1074 format=Bgra8UnormSrgb present_mode=Fifo alpha_mode=Opaque`
+      - `client-disconnected reason=ConnectionClosed`
+      - so the direct-`gpu` crash still reproduces with optional requested WGPU features removed
+    - performance-memory-hint rooted proof:
+      - `build/pixel/runtime-gpu-probe/20260415T235645Z/run-vulkan_kgsl_first`
+      - `request-device-config ... memory_hints=Performance`
+      - `surface-configure width=532 height=1074 format=Bgra8UnormSrgb present_mode=Fifo alpha_mode=Opaque`
+      - `client-disconnected reason=ConnectionClosed`
+      - so switching allocator policy from `MemoryUsage` to `Performance` did not fix the direct-`gpu` surface-configure crash
+    - dmabuf-global-disabled rooted proof:
+      - `build/pixel/runtime-gpu-probe/20260416T000549Z/run-vulkan_kgsl_first`
+      - `[shadow-guest-compositor] dmabuf-global-disabled`
+      - `surface-adapter ... supported=false`
+      - `create-surface-find-device-error ... vulkan not compatible with provided surface`
+      - so the direct-Vulkan client needs the compositor's dmabuf global for surface compatibility at all
+    - linear-only dmabuf rooted proof:
+      - `build/pixel/runtime-gpu-probe/20260416T001456Z/run-vulkan_kgsl_first`
+      - `[shadow-guest-compositor] dmabuf-global-ready formats=2 ... profile=LinearOnly`
+      - `surface-configure ...`
+      - `client-disconnected reason=ConnectionClosed`
+      - so switching the compositor advertisement to `Linear` modifiers only did not move the failure past `surface-configure`
+    - implicit-only dmabuf rooted proof:
+      - `build/pixel/runtime-gpu-probe/20260416T002001Z/run-vulkan_kgsl_first`
+      - `[shadow-guest-compositor] dmabuf-global-ready formats=2 mode=legacy-v3 profile=ImplicitOnly`
+      - `surface-configure-done`
+      - `window-resume-done`
+      - `gpu-summary-client {"renderer":"gpu","backend":"Vulkan","adapter_name":"Turnip Adreno (TM) 618","software_backed":false}`
+      - `error marshalling arguments for add: dup failed: Bad file descriptor`
+      - `Surface does not support the adapter's queue family`
+      - so the compositor's modifier advertisement was part of the blocker: `ImplicitOnly` moves direct `gpu` past the original configure crash and onto a later dmabuf/export/reconfigure failure
+    - resize-skip rooted proof:
+      - `build/pixel/runtime-gpu-probe/20260416T002237Z/run-vulkan_kgsl_first`
+      - `surface-resize-skip width=532 height=1074`
+      - no second `Surface::configure` validation panic
+      - remaining failure:
+        - `error marshalling arguments for add: dup failed: Bad file descriptor`
+        - `run-app-error: ExitFailure(1)`
+      - so the redundant same-size reconfigure was a real local bug, but the remaining direct-`gpu` blocker is now the dmabuf export/send path itself
 - [~] Pixel shell/home operator unification is largely done, with one major interaction gap left.
   - `run <serial>` now uses the shell path.
   - Home/app launch/app switching are working on device.
@@ -363,8 +435,33 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The current compositor path still looks SHM-oriented from the outside.
 - The direct `gpu` failure is now narrower than before:
   - the bundled Turnip library does contain Wayland WSI entrypoints
-  - the direct path gets past adapter discovery and then dies in surface configure/present territory
-  - the likely next seam is compositor protocol support and presentation compatibility, not basic Vulkan adapter discovery
+  - the direct path gets past adapter discovery and still dies in `wgpu::Surface::configure`
+  - forcing `PresentMode::Fifo` did not fix it
+  - disabling the `shadow-openlog` preload and DRI-deny path did not fix it
+  - forcing `Bgra8UnormSrgb`, `Opaque`, and `desired_maximum_frame_latency=1` did not fix it
+  - configuring the surface before allocating the intermediate texture did not fix it
+  - shrinking the configured toplevel and client surface to `540x1106` / `532x1074` did not fix it
+  - removing optional requested device features (`CLEAR_TEXTURE`, `PIPELINE_CACHE`) did not fix it
+  - switching `MemoryHints` to `Performance` did not fix it
+  - disabling the compositor dmabuf global makes Vulkan cleanly report the surface as incompatible instead of crashing
+  - advertising only `Linear` modifiers did not fix it
+  - advertising only implicit modifiers does move the failure forward:
+    - initial `surface-configure` now succeeds
+    - `window-resume-done` now lands
+    - the remaining error is later and narrower:
+      - `zwp_linux_buffer_params_v1.add` fd-dup failure
+      - then client exit
+  - skipping redundant same-size surface reconfigure removes the later `Surface does not support the adapter's queue family` validation panic
+  - the likely next seams are now:
+    - dmabuf plane fd export / sendability on the Turnip implicit-modifier path
+    - client-side retry/reconfigure behavior after a failed dmabuf buffer submission
+    - or a deeper Turnip Wayland dmabuf export limitation on this rooted Pixel userspace stack
+- The rooted Pixel panel-size discovery path needed a lower-level fallback.
+  - `wm size` depends on Android's `window` service, which can stay unavailable during a half-restored display stack even when `system_server` and `surfaceflinger` processes are back
+  - `pixel_display_size` now falls back to rooted DRM sysfs:
+    - `/sys/class/drm/*/modes`
+    - `/sys/class/graphics/fb0/virtual_size`
+  - this keeps direct probes and other rooted launchers from failing early just because Android window-manager registration is lagging
 - Historical direct-`gpu` runs now classify much better under the updated summary parser.
   - Reparsed run:
     - `build/pixel/drm-guest/20260407T163153Z`

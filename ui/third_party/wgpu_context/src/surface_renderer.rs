@@ -76,6 +76,26 @@ struct IntermediateTextureStuff {
     pub blitter: TextureBlitter,
 }
 
+fn create_intermediate_texture_stuff(
+    device_handle: &DeviceHandle,
+    width: u32,
+    height: u32,
+    surface_format: TextureFormat,
+    texture_config: &TextureConfiguration,
+) -> Box<IntermediateTextureStuff> {
+    Box::new(IntermediateTextureStuff {
+        config: texture_config.clone(),
+        texture_view: create_texture(
+            width,
+            height,
+            TextureFormat::Rgba8Unorm,
+            texture_config.usage,
+            &device_handle.device,
+        ),
+        blitter: TextureBlitter::new(&device_handle.device, surface_format),
+    })
+}
+
 /// Combination of surface and its configuration.
 pub struct SurfaceRenderer<'s> {
     // The device and queue for rendering to the surface
@@ -131,27 +151,13 @@ impl<'s> SurfaceRenderer<'s> {
             view_formats: surface_renderer_config.view_formats,
         };
 
-        let intermediate_texture = intermediate_texture_config.map(|texture_config| {
-            Box::new(IntermediateTextureStuff {
-                config: texture_config.clone(),
-                texture_view: create_texture(
-                    surface_renderer_config.width,
-                    surface_renderer_config.height,
-                    TextureFormat::Rgba8Unorm,
-                    texture_config.usage,
-                    &device_handle.device,
-                ),
-                blitter: TextureBlitter::new(&device_handle.device, surface_config.format),
-            })
-        });
-
-        let surface = SurfaceRenderer {
+        let mut surface = SurfaceRenderer {
             dev_id,
             device_handle,
             surface,
             config: surface_config,
             current_surface_texture: None,
-            intermediate_texture,
+            intermediate_texture: None,
         };
         eprintln!(
             "[shadow-wgpu-context] surface-renderer-new configure-begin format={:?} width={} height={} present_mode={:?} alpha_mode={:?}",
@@ -163,6 +169,15 @@ impl<'s> SurfaceRenderer<'s> {
         );
         surface.configure();
         eprintln!("[shadow-wgpu-context] surface-renderer-new configure-done");
+        surface.intermediate_texture = intermediate_texture_config.as_ref().map(|texture_config| {
+            create_intermediate_texture_stuff(
+                &surface.device_handle,
+                surface.config.width,
+                surface.config.height,
+                surface.config.format,
+                texture_config,
+            )
+        });
         Ok(surface)
     }
 
@@ -178,6 +193,16 @@ impl<'s> SurfaceRenderer<'s> {
     pub fn resize(&mut self, width: u32, height: u32) {
         // TODO: Use clever resize semantics to avoid thrashing the memory allocator during a resize
         // especially important on metal.
+        if self.config.width == width && self.config.height == height {
+            eprintln!(
+                "[shadow-wgpu-context] surface-resize-skip width={} height={}",
+                width, height
+            );
+            return;
+        }
+        self.config.width = width;
+        self.config.height = height;
+        self.configure();
         if let Some(intermediate_texture_stuff) = &mut self.intermediate_texture {
             intermediate_texture_stuff.texture_view = create_texture(
                 width,
@@ -187,9 +212,6 @@ impl<'s> SurfaceRenderer<'s> {
                 &self.device_handle.device,
             );
         }
-        self.config.width = width;
-        self.config.height = height;
-        self.configure();
     }
 
     pub fn set_present_mode(&mut self, present_mode: wgpu::PresentMode) {

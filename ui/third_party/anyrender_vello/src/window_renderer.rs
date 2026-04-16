@@ -2,15 +2,20 @@ use anyrender::{WindowHandle, WindowRenderer};
 use debug_timer::debug_timer;
 use peniko::Color;
 use rustc_hash::FxHashMap;
-use std::sync::{
-    Arc,
-    atomic::{self, AtomicU64},
+use std::{
+    env,
+    sync::{
+        Arc,
+        atomic::{self, AtomicU64},
+    },
 };
 use vello::{
     AaConfig, AaSupport, RenderParams, Renderer as VelloRenderer, RendererOptions,
     Scene as VelloScene,
 };
-use wgpu::{Features, Limits, PresentMode, SurfaceError, TextureFormat, TextureUsages};
+use wgpu::{
+    CompositeAlphaMode, Features, Limits, PresentMode, SurfaceError, TextureFormat, TextureUsages,
+};
 use wgpu_context::{
     DeviceHandle, SurfaceRenderer, SurfaceRendererConfiguration, TextureConfiguration, WGPUContext,
 };
@@ -18,6 +23,121 @@ use wgpu_context::{
 use crate::{CustomPaintSource, DEFAULT_THREADS, VelloScenePainter};
 
 static PAINT_SOURCE_ID: AtomicU64 = AtomicU64::new(0);
+
+const SHADOW_WGPU_PRESENT_MODE_ENV: &str = "SHADOW_WGPU_PRESENT_MODE";
+const SHADOW_WGPU_SURFACE_FORMAT_ENV: &str = "SHADOW_WGPU_SURFACE_FORMAT";
+const SHADOW_WGPU_ALPHA_MODE_ENV: &str = "SHADOW_WGPU_ALPHA_MODE";
+const SHADOW_WGPU_MAX_FRAME_LATENCY_ENV: &str = "SHADOW_WGPU_MAX_FRAME_LATENCY";
+const SHADOW_WGPU_FEATURE_PROFILE_ENV: &str = "SHADOW_WGPU_FEATURE_PROFILE";
+
+fn configured_env_value(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+}
+
+fn configured_present_mode() -> PresentMode {
+    let Some(raw_value) = configured_env_value(SHADOW_WGPU_PRESENT_MODE_ENV) else {
+        return PresentMode::AutoVsync;
+    };
+
+    match raw_value.as_str() {
+        "auto" | "auto-vsync" | "autovsync" => PresentMode::AutoVsync,
+        "auto-no-vsync" | "autonovsync" => PresentMode::AutoNoVsync,
+        "fifo" => PresentMode::Fifo,
+        "fifo-relaxed" | "fiforelaxed" => PresentMode::FifoRelaxed,
+        "immediate" => PresentMode::Immediate,
+        "mailbox" => PresentMode::Mailbox,
+        other => {
+            eprintln!(
+                "[shadow-anyrender-vello] invalid-present-mode env={} raw_value={other:?} fallback=AutoVsync",
+                SHADOW_WGPU_PRESENT_MODE_ENV
+            );
+            PresentMode::AutoVsync
+        }
+    }
+}
+
+fn configured_surface_formats() -> Vec<TextureFormat> {
+    let Some(raw_value) = configured_env_value(SHADOW_WGPU_SURFACE_FORMAT_ENV) else {
+        return vec![TextureFormat::Rgba8Unorm, TextureFormat::Bgra8Unorm];
+    };
+
+    let configured_format = match raw_value.as_str() {
+        "rgba8unorm" | "rgba8-unorm" => TextureFormat::Rgba8Unorm,
+        "rgba8unormsrgb" | "rgba8-unorm-srgb" => TextureFormat::Rgba8UnormSrgb,
+        "bgra8unorm" | "bgra8-unorm" => TextureFormat::Bgra8Unorm,
+        "bgra8unormsrgb" | "bgra8-unorm-srgb" => TextureFormat::Bgra8UnormSrgb,
+        other => {
+            eprintln!(
+                "[shadow-anyrender-vello] invalid-surface-format env={} raw_value={other:?} fallback=default",
+                SHADOW_WGPU_SURFACE_FORMAT_ENV
+            );
+            return vec![TextureFormat::Rgba8Unorm, TextureFormat::Bgra8Unorm];
+        }
+    };
+
+    vec![configured_format]
+}
+
+fn configured_alpha_mode() -> CompositeAlphaMode {
+    let Some(raw_value) = configured_env_value(SHADOW_WGPU_ALPHA_MODE_ENV) else {
+        return CompositeAlphaMode::Auto;
+    };
+
+    match raw_value.as_str() {
+        "auto" => CompositeAlphaMode::Auto,
+        "opaque" => CompositeAlphaMode::Opaque,
+        "premultiplied" | "pre-multiplied" => CompositeAlphaMode::PreMultiplied,
+        "postmultiplied" | "post-multiplied" => CompositeAlphaMode::PostMultiplied,
+        "inherit" => CompositeAlphaMode::Inherit,
+        other => {
+            eprintln!(
+                "[shadow-anyrender-vello] invalid-alpha-mode env={} raw_value={other:?} fallback=Auto",
+                SHADOW_WGPU_ALPHA_MODE_ENV
+            );
+            CompositeAlphaMode::Auto
+        }
+    }
+}
+
+fn configured_maximum_frame_latency() -> u32 {
+    let Some(raw_value) = configured_env_value(SHADOW_WGPU_MAX_FRAME_LATENCY_ENV) else {
+        return 2;
+    };
+
+    match raw_value.parse::<u32>() {
+        Ok(value) if value > 0 => value,
+        _ => {
+            eprintln!(
+                "[shadow-anyrender-vello] invalid-frame-latency env={} raw_value={raw_value:?} fallback=2",
+                SHADOW_WGPU_MAX_FRAME_LATENCY_ENV
+            );
+            2
+        }
+    }
+}
+
+fn configured_optional_features() -> Features {
+    let Some(raw_value) = configured_env_value(SHADOW_WGPU_FEATURE_PROFILE_ENV) else {
+        return Features::CLEAR_TEXTURE | Features::PIPELINE_CACHE;
+    };
+
+    match raw_value.as_str() {
+        "default" => Features::CLEAR_TEXTURE | Features::PIPELINE_CACHE,
+        "minimal" | "none" => Features::empty(),
+        "clear-texture" => Features::CLEAR_TEXTURE,
+        "pipeline-cache" => Features::PIPELINE_CACHE,
+        other => {
+            eprintln!(
+                "[shadow-anyrender-vello] invalid-feature-profile env={} raw_value={other:?} fallback=default",
+                SHADOW_WGPU_FEATURE_PROFILE_ENV
+            );
+            Features::CLEAR_TEXTURE | Features::PIPELINE_CACHE
+        }
+    }
+}
 
 // Simple struct to hold the state of the renderer
 struct ActiveRenderState {
@@ -79,9 +199,12 @@ impl VelloWindowRenderer {
     }
 
     pub fn with_options(config: VelloRendererOptions) -> Self {
-        let features = config.features.unwrap_or_default()
-            | Features::CLEAR_TEXTURE
-            | Features::PIPELINE_CACHE;
+        let features = config.features.unwrap_or_default() | configured_optional_features();
+        eprintln!(
+            "[shadow-anyrender-vello] requested-features env_profile={} features={features:?}",
+            configured_env_value(SHADOW_WGPU_FEATURE_PROFILE_ENV)
+                .unwrap_or_else(|| "default".to_string())
+        );
         Self {
             wgpu_context: WGPUContext::with_features_and_limits(
                 Some(features),
@@ -128,21 +251,25 @@ impl WindowRenderer for VelloWindowRenderer {
     }
 
     fn resume(&mut self, window_handle: Arc<dyn WindowHandle>, width: u32, height: u32) {
+        let present_mode = configured_present_mode();
+        let surface_formats = configured_surface_formats();
+        let alpha_mode = configured_alpha_mode();
+        let maximum_frame_latency = configured_maximum_frame_latency();
         eprintln!(
-            "[shadow-anyrender-vello] resume-start width={} height={}",
-            width, height
+            "[shadow-anyrender-vello] resume-start width={} height={} present_mode={present_mode:?} alpha_mode={alpha_mode:?} maximum_frame_latency={} surface_formats={surface_formats:?}",
+            width, height, maximum_frame_latency,
         );
         // Create wgpu_context::SurfaceRenderer
         let render_surface = pollster::block_on(self.wgpu_context.create_surface(
             window_handle.clone(),
             SurfaceRendererConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                formats: vec![TextureFormat::Rgba8Unorm, TextureFormat::Bgra8Unorm],
+                formats: surface_formats,
                 width,
                 height,
-                present_mode: PresentMode::AutoVsync,
-                desired_maximum_frame_latency: 2,
-                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                present_mode,
+                desired_maximum_frame_latency: maximum_frame_latency,
+                alpha_mode,
                 view_formats: vec![],
             },
             Some(TextureConfiguration {

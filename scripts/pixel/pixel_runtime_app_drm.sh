@@ -51,6 +51,7 @@ guest_client_artifact="$(pixel_guest_client_artifact)"
 guest_client_dst="$(pixel_guest_client_dst)"
 runtime_prepare_extra_env=()
 runtime_gpu_profile="${PIXEL_RUNTIME_APP_GPU_PROFILE-}"
+runtime_gpu_bundle_mode="${PIXEL_BLITZ_GPU_BUNDLE_MODE-}"
 
 case "$PIXEL_RUNTIME_APP_RENDERER" in
   cpu)
@@ -60,7 +61,24 @@ case "$PIXEL_RUNTIME_APP_RENDERER" in
     ;;
   gpu)
     if (( runtime_run_only == 0 )); then
-      "$SCRIPT_DIR/pixel/pixel_prepare_blitz_demo_gpu_bundle.sh"
+      if [[ -z "$runtime_gpu_bundle_mode" ]]; then
+        if [[ -n "$runtime_gpu_profile" ]]; then
+          case "$runtime_gpu_profile" in
+            vulkan*)
+              runtime_gpu_bundle_mode="vulkan-only"
+              ;;
+            *)
+              runtime_gpu_bundle_mode="full"
+              ;;
+          esac
+        elif [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
+          runtime_gpu_bundle_mode="vulkan-only"
+        else
+          runtime_gpu_bundle_mode="full"
+        fi
+      fi
+      PIXEL_BLITZ_GPU_BUNDLE_MODE="$runtime_gpu_bundle_mode" \
+        "$SCRIPT_DIR/pixel/pixel_prepare_blitz_demo_gpu_bundle.sh"
     fi
     guest_client_artifact="$(pixel_artifact_path run-shadow-blitz-demo-gpu)"
     guest_client_dst="$(pixel_runtime_linux_dir)/run-shadow-blitz-demo"
@@ -169,6 +187,7 @@ if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu_softbuffer" || "$PIXEL_RUNTIME_APP_R
       [[ -n "$env_line" ]] || continue
       runtime_guest_env="${runtime_guest_env}"$'\n'"$env_line"
     done < <(printf '%s\n' "$runtime_gpu_profile_env")
+    runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_WGPU_PRESENT_MODE=${SHADOW_WGPU_PRESENT_MODE:-fifo}"
   elif [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
     runtime_guest_env="${runtime_guest_env}"$'\n'"WGPU_BACKEND=${WGPU_BACKEND:-vulkan}"
     runtime_guest_env="${runtime_guest_env}"$'\n'"MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}"

@@ -3,6 +3,8 @@
 
 //! Simple helpers for managing wgpu state and surfaces.
 
+use std::env;
+
 use wgpu::{
     Adapter, Device, Features, Instance, Limits, MemoryHints, Queue, Surface, SurfaceTarget,
 };
@@ -38,6 +40,8 @@ pub struct WGPUContext {
     extra_features: Option<Features>,
     override_limits: Option<Limits>,
 }
+
+const SHADOW_WGPU_MEMORY_HINT_ENV: &str = "SHADOW_WGPU_MEMORY_HINT";
 
 impl Default for WGPUContext {
     fn default() -> Self {
@@ -182,17 +186,24 @@ impl WGPUContext {
         let requested_features = self.extra_features.unwrap_or(Features::empty());
         let available_features = adapter.features();
         let required_features = requested_features & available_features;
+        eprintln!(
+            "[shadow-wgpu-context] request-device-features requested={requested_features:?} available={available_features:?} required={required_features:?}"
+        );
 
         // Determine limits to request
         // The user may override the limits
         let required_limits = self.override_limits.clone().unwrap_or_default();
+        let memory_hints = configured_memory_hints();
+        eprintln!(
+            "[shadow-wgpu-context] request-device-config limits={required_limits:?} memory_hints={memory_hints:?}"
+        );
 
         // Create the device and the queue
         let descripter = wgpu::DeviceDescriptor {
             label: None,
             required_features,
             required_limits,
-            memory_hints: MemoryHints::MemoryUsage,
+            memory_hints,
             trace: wgpu::Trace::default(),
             experimental_features: wgpu::ExperimentalFeatures::default(),
         };
@@ -209,6 +220,28 @@ impl WGPUContext {
 
         // Return the ID
         Ok(self.device_pool.len() - 1)
+    }
+}
+
+fn configured_memory_hints() -> MemoryHints {
+    let Some(raw_value) = env::var(SHADOW_WGPU_MEMORY_HINT_ENV)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return MemoryHints::MemoryUsage;
+    };
+
+    match raw_value.as_str() {
+        "memory-usage" | "memoryusage" => MemoryHints::MemoryUsage,
+        "performance" => MemoryHints::Performance,
+        other => {
+            eprintln!(
+                "[shadow-wgpu-context] invalid-memory-hint env={} raw_value={other:?} fallback=MemoryUsage",
+                SHADOW_WGPU_MEMORY_HINT_ENV
+            );
+            MemoryHints::MemoryUsage
+        }
     }
 }
 

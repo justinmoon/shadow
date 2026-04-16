@@ -710,7 +710,32 @@ pixel_display_size() {
       || true
   )"
   if [[ -z "$size" ]]; then
-    echo "pixel: failed to determine display size via 'wm size'" >&2
+    size="$(
+      pixel_root_shell "$serial" '
+        for f in /sys/class/drm/*/modes; do
+          case "$f" in
+            *Virtual*) continue ;;
+          esac
+          [ -r "$f" ] || continue
+          while IFS= read -r mode; do
+            printf "%s\n" "$mode"
+            exit 0
+          done < "$f"
+        done
+        if [ -r /sys/class/graphics/fb0/virtual_size ]; then
+          cat /sys/class/graphics/fb0/virtual_size
+          exit 0
+        fi
+        exit 1
+      ' 2>/dev/null \
+        | tr -d '\r' \
+        | grep -Eo '[0-9]+x[0-9]+' \
+        | head -n1 \
+        || true
+    )"
+  fi
+  if [[ -z "$size" ]]; then
+    echo "pixel: failed to determine display size via 'wm size' or rooted DRM sysfs" >&2
     return 1
   fi
   printf '%s\n' "$size"

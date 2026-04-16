@@ -29,6 +29,13 @@ pub(crate) enum TransportRequest {
     Direct,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DmabufFormatProfile {
+    Default,
+    LinearOnly,
+    ImplicitOnly,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct GuestStartupConfig {
     pub(crate) startup_action: StartupAction,
@@ -39,6 +46,9 @@ pub(crate) struct GuestStartupConfig {
     pub(crate) exit_on_first_dma_buffer: bool,
     pub(crate) boot_splash_drm: bool,
     pub(crate) drm_enabled: bool,
+    pub(crate) dmabuf_global_enabled: bool,
+    pub(crate) dmabuf_feedback_enabled: bool,
+    pub(crate) dmabuf_format_profile: DmabufFormatProfile,
     pub(crate) touch_signal_path: Option<PathBuf>,
     pub(crate) touch_latency_trace: bool,
     pub(crate) frame_artifact_path: PathBuf,
@@ -94,6 +104,9 @@ impl GuestStartupConfig {
             exit_on_first_dma_buffer: env_flag("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_DMA_BUFFER"),
             boot_splash_drm: env_flag("SHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM"),
             drm_enabled: env_flag("SHADOW_GUEST_COMPOSITOR_ENABLE_DRM"),
+            dmabuf_global_enabled: !env_flag("SHADOW_GUEST_COMPOSITOR_DISABLE_DMABUF_GLOBAL"),
+            dmabuf_feedback_enabled: env_flag("SHADOW_GUEST_COMPOSITOR_DMABUF_FEEDBACK"),
+            dmabuf_format_profile: parse_dmabuf_format_profile()?,
             touch_signal_path: env::var_os("SHADOW_GUEST_TOUCH_SIGNAL_PATH")
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from),
@@ -128,6 +141,17 @@ fn parse_transport_request() -> Result<TransportRequest, ConfigError> {
         "socket" => Ok(TransportRequest::Socket),
         "direct" => Ok(TransportRequest::Direct),
         _ => Err(ConfigError::InvalidTransport { requested }),
+    }
+}
+
+fn parse_dmabuf_format_profile() -> Result<DmabufFormatProfile, ConfigError> {
+    let requested = env::var("SHADOW_GUEST_COMPOSITOR_DMABUF_FORMAT_PROFILE")
+        .unwrap_or_else(|_| "default".to_string());
+    match requested.as_str() {
+        "default" => Ok(DmabufFormatProfile::Default),
+        "linear-only" | "linear_only" => Ok(DmabufFormatProfile::LinearOnly),
+        "implicit-only" | "implicit_only" => Ok(DmabufFormatProfile::ImplicitOnly),
+        _ => Err(ConfigError::InvalidDmabufFormatProfile { requested }),
     }
 }
 
@@ -195,6 +219,7 @@ fn parse_u64_env(key: &'static str) -> Result<Option<u64>, ConfigError> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ConfigError {
     InvalidAppId { key: &'static str, value: String },
+    InvalidDmabufFormatProfile { requested: String },
     InvalidGuestClientEnv(InvalidEnvSpec),
     InvalidPositiveI32 { key: &'static str, value: String },
     InvalidTransport { requested: String },
@@ -206,6 +231,12 @@ impl fmt::Display for ConfigError {
         match self {
             Self::InvalidAppId { key, value } => {
                 write!(f, "invalid {key}={value:?}: unknown app id")
+            }
+            Self::InvalidDmabufFormatProfile { requested } => {
+                write!(
+                    f,
+                    "invalid SHADOW_GUEST_COMPOSITOR_DMABUF_FORMAT_PROFILE={requested:?}: expected default, linear-only, or implicit-only"
+                )
             }
             Self::InvalidGuestClientEnv(error) => {
                 write!(f, "invalid SHADOW_GUEST_CLIENT_ENV: {error}")
@@ -234,7 +265,7 @@ mod tests {
 
     use shadow_ui_core::app::{CAMERA_APP_ID, TIMELINE_APP_ID};
 
-    use super::{GuestStartupConfig, StartupAction, TransportRequest};
+    use super::{DmabufFormatProfile, GuestStartupConfig, StartupAction, TransportRequest};
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -249,6 +280,9 @@ mod tests {
             ("SHADOW_GUEST_COMPOSITOR_TRANSPORT", None),
             ("SHADOW_GUEST_COMPOSITOR_TOPLEVEL_WIDTH", None),
             ("SHADOW_GUEST_COMPOSITOR_TOPLEVEL_HEIGHT", None),
+            ("SHADOW_GUEST_COMPOSITOR_DISABLE_DMABUF_GLOBAL", None),
+            ("SHADOW_GUEST_COMPOSITOR_DMABUF_FEEDBACK", None),
+            ("SHADOW_GUEST_COMPOSITOR_DMABUF_FORMAT_PROFILE", None),
             ("SHADOW_GUEST_CLIENT_ENV", None),
             ("SHADOW_GUEST_CLIENT_LINGER_MS", None),
         ];
@@ -341,7 +375,49 @@ mod tests {
         with_env(vec![], || {
             let config = GuestStartupConfig::from_env().expect("default config");
             assert_eq!(config.transport, TransportRequest::Auto);
+            assert!(config.dmabuf_global_enabled);
+            assert!(!config.dmabuf_feedback_enabled);
+            assert_eq!(config.dmabuf_format_profile, DmabufFormatProfile::Default);
         });
+    }
+
+    #[test]
+    fn config_can_disable_dmabuf_global() {
+        with_env(
+            vec![("SHADOW_GUEST_COMPOSITOR_DISABLE_DMABUF_GLOBAL", Some("1"))],
+            || {
+                let config = GuestStartupConfig::from_env().expect("dmabuf-disabled config");
+                assert!(!config.dmabuf_global_enabled);
+            },
+        );
+    }
+
+    #[test]
+    fn config_can_enable_dmabuf_feedback() {
+        with_env(
+            vec![("SHADOW_GUEST_COMPOSITOR_DMABUF_FEEDBACK", Some("1"))],
+            || {
+                let config = GuestStartupConfig::from_env().expect("dmabuf-feedback config");
+                assert!(config.dmabuf_feedback_enabled);
+            },
+        );
+    }
+
+    #[test]
+    fn config_can_override_dmabuf_format_profile() {
+        with_env(
+            vec![(
+                "SHADOW_GUEST_COMPOSITOR_DMABUF_FORMAT_PROFILE",
+                Some("linear-only"),
+            )],
+            || {
+                let config = GuestStartupConfig::from_env().expect("dmabuf-format-profile config");
+                assert_eq!(
+                    config.dmabuf_format_profile,
+                    DmabufFormatProfile::LinearOnly
+                );
+            },
+        );
     }
 
     #[test]

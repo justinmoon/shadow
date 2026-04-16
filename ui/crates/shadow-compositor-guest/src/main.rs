@@ -10,7 +10,10 @@ use std::{
     collections::HashMap,
     ffi::OsString,
     fs,
-    os::{fd::AsRawFd, unix::net::UnixStream},
+    os::{
+        fd::AsRawFd,
+        unix::{fs::MetadataExt, net::UnixStream},
+    },
     path::PathBuf,
     process::Child,
     sync::Arc,
@@ -18,7 +21,9 @@ use std::{
 };
 
 use chrono::Local;
-use config::{GuestClientConfig, GuestStartupConfig, StartupAction, TransportRequest};
+use config::{
+    DmabufFormatProfile, GuestClientConfig, GuestStartupConfig, StartupAction, TransportRequest,
+};
 use shadow_ui_core::{
     app::{self, AppId},
     control::{ControlRequest, MediaAction},
@@ -59,7 +64,10 @@ use smithay::{
             CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes,
             TraversalAction,
         },
-        dmabuf::{get_dmabuf, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
+        dmabuf::{
+            get_dmabuf, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState,
+            ImportNotifier,
+        },
         presentation::PresentationState,
         shell::xdg::{ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData},
         shm::{with_buffer_contents, ShmHandler, ShmState},
@@ -129,7 +137,7 @@ struct ShadowGuestCompositor {
     xdg_shell_state: XdgShellState,
     shm_state: ShmState,
     dmabuf_state: DmabufState,
-    _dmabuf_global: DmabufGlobal,
+    _dmabuf_global: Option<DmabufGlobal>,
     _presentation_state: PresentationState,
     seat_state: SeatState<Self>,
     seat: Seat<Self>,
@@ -174,10 +182,33 @@ impl ShadowGuestCompositor {
         let loop_signal = event_loop.get_signal();
         let shell_enabled = config.startup_action.shell_enabled();
         let exit_on_client_disconnect = config.exit_on_client_disconnect;
-        let dmabuf_formats = Self::supported_dmabuf_formats();
+        let dmabuf_formats = Self::supported_dmabuf_formats(config.dmabuf_format_profile);
         let mut dmabuf_state = DmabufState::new();
-        let dmabuf_global =
-            dmabuf_state.create_global::<Self>(&display_handle, dmabuf_formats.clone());
+        let dmabuf_global = if config.dmabuf_global_enabled {
+            if config.dmabuf_feedback_enabled {
+                match Self::build_default_dmabuf_feedback(&dmabuf_formats) {
+                    Some(default_feedback) => {
+                        Some(dmabuf_state.create_global_with_default_feedback::<Self>(
+                            &display_handle,
+                            &default_feedback,
+                        ))
+                    }
+                    None => {
+                        tracing::warn!(
+                            "[shadow-guest-compositor] dmabuf-feedback-build-failed; falling back to legacy global"
+                        );
+                        Some(
+                            dmabuf_state
+                                .create_global::<Self>(&display_handle, dmabuf_formats.clone()),
+                        )
+                    }
+                }
+            } else {
+                Some(dmabuf_state.create_global::<Self>(&display_handle, dmabuf_formats.clone()))
+            }
+        } else {
+            None
+        };
         let presentation_state =
             PresentationState::new::<Self>(&display_handle, libc::CLOCK_MONOTONIC as u32);
         let transport = Self::init_wayland_transport(
@@ -239,10 +270,20 @@ impl ShadowGuestCompositor {
             touch_latency_trace: config.touch_latency_trace,
             pending_touch_trace: None,
         };
-        tracing::info!(
-            "[shadow-guest-compositor] dmabuf-global-ready formats={}",
-            dmabuf_formats.len()
-        );
+        if config.dmabuf_global_enabled {
+            let feedback_mode = if config.dmabuf_feedback_enabled {
+                "default-feedback"
+            } else {
+                "legacy-v3"
+            };
+            tracing::info!(
+                "[shadow-guest-compositor] dmabuf-global-ready formats={} mode={feedback_mode} profile={:?}",
+                dmabuf_formats.len(),
+                config.dmabuf_format_profile
+            );
+        } else {
+            tracing::info!("[shadow-guest-compositor] dmabuf-global-disabled");
+        }
         tracing::info!("[shadow-guest-compositor] presentation-global-ready");
         if let Some(path) = state.touch_signal_path.as_ref() {
             tracing::info!(
@@ -264,25 +305,60 @@ impl ShadowGuestCompositor {
         state
     }
 
-    fn supported_dmabuf_formats() -> Vec<Format> {
-        vec![
-            Format {
-                code: Fourcc::Argb8888,
-                modifier: Modifier::Invalid,
-            },
-            Format {
-                code: Fourcc::Xrgb8888,
-                modifier: Modifier::Invalid,
-            },
-            Format {
-                code: Fourcc::Argb8888,
-                modifier: Modifier::Linear,
-            },
-            Format {
-                code: Fourcc::Xrgb8888,
-                modifier: Modifier::Linear,
-            },
-        ]
+    fn supported_dmabuf_formats(profile: DmabufFormatProfile) -> Vec<Format> {
+        match profile {
+            DmabufFormatProfile::Default => vec![
+                Format {
+                    code: Fourcc::Argb8888,
+                    modifier: Modifier::Invalid,
+                },
+                Format {
+                    code: Fourcc::Xrgb8888,
+                    modifier: Modifier::Invalid,
+                },
+                Format {
+                    code: Fourcc::Argb8888,
+                    modifier: Modifier::Linear,
+                },
+                Format {
+                    code: Fourcc::Xrgb8888,
+                    modifier: Modifier::Linear,
+                },
+            ],
+            DmabufFormatProfile::LinearOnly => vec![
+                Format {
+                    code: Fourcc::Argb8888,
+                    modifier: Modifier::Linear,
+                },
+                Format {
+                    code: Fourcc::Xrgb8888,
+                    modifier: Modifier::Linear,
+                },
+            ],
+            DmabufFormatProfile::ImplicitOnly => vec![
+                Format {
+                    code: Fourcc::Argb8888,
+                    modifier: Modifier::Invalid,
+                },
+                Format {
+                    code: Fourcc::Xrgb8888,
+                    modifier: Modifier::Invalid,
+                },
+            ],
+        }
+    }
+
+    fn build_default_dmabuf_feedback(
+        formats: &[Format],
+    ) -> Option<smithay::wayland::dmabuf::DmabufFeedback> {
+        let main_device: libc::dev_t = fs::metadata("/dev/dri/card0")
+            .ok()?
+            .rdev()
+            .try_into()
+            .ok()?;
+        DmabufFeedbackBuilder::new(main_device, formats.iter().copied())
+            .build()
+            .ok()
     }
 
     fn log_touch_handle_latency(&self, event: &touch::TouchInputEvent) {
