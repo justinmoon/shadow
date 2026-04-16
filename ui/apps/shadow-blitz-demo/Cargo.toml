@@ -28,6 +28,7 @@ blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e7
 blitz-shell = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-shell", default-features = false, features = ["data-uri"] }
 blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-traits", default-features = false }
 image = { version = "0.25.6", default-features = false, features = ["jpeg", "png"] }
+libc = "0.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 shadow-runtime-protocol = { path = "../../../rust/shadow-runtime-protocol" }

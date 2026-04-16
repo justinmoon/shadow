@@ -43,7 +43,7 @@ Important summary fields:
 - `touch_latency.handle_queue`: evdev reader to compositor event handling.
 - `touch_latency.dispatch_to_flush`: compositor handle to Wayland/client dispatch.
 - `touch_latency.routes.app-scroll.input_to_present`: finger move to presented scroll frame.
-- `touch_signal_latency`: compositor touch-signal file write to runtime fallback detection.
+- `touch_signal_latency`: compositor touch-signal file write to runtime fallback detection. On Linux/Pixel this is event-driven with an inotify watcher and falls back to polling if watching is unavailable.
 - `softbuffer_latency.render_to_vec`: app-side CPU raster time before softbuffer present.
 - `compositor_frame_latency.capture_to_artifact`: compositor capture to PPM artifact write when continuous artifacts are explicitly enabled.
 - `compositor_frame_latency.capture_to_present`: compositor frame capture to DRM present.
@@ -62,6 +62,10 @@ Current gpu-softbuffer Pixel 4a result from `build/latency/probe-timeline-4`:
 - The touch-signal fallback is polling and render-loop bound: p50 detection was
   `263.5ms` in this run.
 
+After the event-driven touch-signal watcher, `build/latency/probe-inotify-090`
+measured `touch_signal_latency` p50 `0ms`, p95 `0ms` across 4 samples on Pixel
+`09051JEC202061`.
+
 Interpretation:
 
 - Fast event dispatch plus slow present means input plumbing is usable, but the
@@ -69,4 +73,4 @@ Interpretation:
 - For scroll, prioritize getting off CPU softbuffer. Per-frame PPM artifacts are
   now opt-in; use `just pixel-frame` / `shadowctl frame -t pixel` for snapshots.
 - For shell/runtime async updates, avoid 100ms fixed polling. The Pixel shell
-  default is now 16ms; longer values should be explicit.
+  default is now 16ms; touch-signal detection is event-driven on Linux/Pixel.

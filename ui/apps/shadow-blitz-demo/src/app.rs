@@ -38,7 +38,10 @@ use serde::Serialize;
 use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
-use std::{env, thread, time::Duration};
+use std::{env, path::PathBuf, thread, time::Duration};
+
+#[cfg(target_os = "linux")]
+use std::{ffi::CString, io, os::unix::ffi::OsStrExt, path::Path};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -344,9 +347,12 @@ impl BlitzApplication {
         if self.runtime_touch_signal_thread_started {
             return;
         }
-        if env::var_os("SHADOW_BLITZ_TOUCH_SIGNAL_PATH").is_none() {
+        let Some(path) = env::var_os("SHADOW_BLITZ_TOUCH_SIGNAL_PATH")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+        else {
             return;
-        }
+        };
 
         self.runtime_touch_signal_thread_started = true;
         let proxy = self.proxy.clone();
@@ -355,15 +361,17 @@ impl BlitzApplication {
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(40);
-        eprintln!("[shadow-runtime-demo] touch-signal-thread-start interval_ms={interval}");
-        runtime_log(format!("touch-signal-thread-start interval_ms={interval}"));
+        let watch_mode = touch_signal_watch_mode();
+        eprintln!(
+            "[shadow-runtime-demo] touch-signal-thread-start mode={watch_mode:?} interval_ms={interval} path={}",
+            path.display()
+        );
+        runtime_log(format!(
+            "touch-signal-thread-start mode={watch_mode:?} interval_ms={interval} path={}",
+            path.display()
+        ));
 
-        thread::spawn(move || loop {
-            thread::sleep(Duration::from_millis(interval));
-            proxy.send_event(BlitzShellEvent::embedder_event(
-                RuntimeEmbedderEvent::TouchSignalTick,
-            ));
-        });
+        thread::spawn(move || run_touch_signal_thread(proxy, path, interval, watch_mode));
     }
 
     fn maybe_resume_deferred_window(&mut self, window_id: WindowId, event: &WindowEvent) {
@@ -683,6 +691,133 @@ enum RuntimeEmbedderEvent {
     TouchSignalTick,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TouchSignalWatchMode {
+    Auto,
+    Poll,
+}
+
+fn touch_signal_watch_mode() -> TouchSignalWatchMode {
+    touch_signal_watch_mode_from_env(env::var("SHADOW_BLITZ_TOUCH_SIGNAL_WATCH").ok().as_deref())
+}
+
+fn touch_signal_watch_mode_from_env(value: Option<&str>) -> TouchSignalWatchMode {
+    match value {
+        Some("0") | Some("false") | Some("off") | Some("poll") => TouchSignalWatchMode::Poll,
+        _ => TouchSignalWatchMode::Auto,
+    }
+}
+
+fn run_touch_signal_thread(
+    proxy: BlitzShellProxy,
+    path: PathBuf,
+    interval_ms: u64,
+    watch_mode: TouchSignalWatchMode,
+) {
+    if matches!(watch_mode, TouchSignalWatchMode::Auto) {
+        #[cfg(target_os = "linux")]
+        match run_touch_signal_inotify_loop(&proxy, &path) {
+            Ok(()) => return,
+            Err(error) => runtime_log(format!(
+                "touch-signal-watch-fallback reason={} path={}",
+                error,
+                path.display()
+            )),
+        }
+        #[cfg(not(target_os = "linux"))]
+        runtime_log(format!(
+            "touch-signal-watch-fallback reason=unsupported-platform path={}",
+            path.display()
+        ));
+    }
+
+    run_touch_signal_poll_loop(proxy, interval_ms);
+}
+
+fn run_touch_signal_poll_loop(proxy: BlitzShellProxy, interval_ms: u64) {
+    runtime_log(format!(
+        "touch-signal-poll-loop-start interval_ms={interval_ms}"
+    ));
+    loop {
+        thread::sleep(Duration::from_millis(interval_ms));
+        send_touch_signal_tick(&proxy);
+    }
+}
+
+fn send_touch_signal_tick(proxy: &BlitzShellProxy) {
+    proxy.send_event(BlitzShellEvent::embedder_event(
+        RuntimeEmbedderEvent::TouchSignalTick,
+    ));
+}
+
+#[cfg(target_os = "linux")]
+fn run_touch_signal_inotify_loop(proxy: &BlitzShellProxy, path: &Path) -> io::Result<()> {
+    let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let _fd_guard = InotifyFd(fd);
+
+    let watch_path = if path.exists() {
+        path
+    } else {
+        path.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+    };
+    let watch_path_cstr = CString::new(watch_path.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("inotify path contains NUL: {}", watch_path.display()),
+        )
+    })?;
+    let mask = libc::IN_CLOSE_WRITE
+        | libc::IN_MODIFY
+        | libc::IN_CREATE
+        | libc::IN_MOVED_TO
+        | libc::IN_DELETE_SELF
+        | libc::IN_MOVE_SELF;
+    let watch = unsafe { libc::inotify_add_watch(fd, watch_path_cstr.as_ptr(), mask) };
+    if watch < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    runtime_log(format!(
+        "touch-signal-watch-start mode=inotify path={} watch_path={}",
+        path.display(),
+        watch_path.display()
+    ));
+
+    let mut buffer = [0_u8; 4096];
+    loop {
+        let read_count =
+            unsafe { libc::read(fd, buffer.as_mut_ptr().cast::<libc::c_void>(), buffer.len()) };
+        if read_count < 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            return Err(error);
+        }
+        if read_count == 0 {
+            continue;
+        }
+        send_touch_signal_tick(proxy);
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct InotifyFd(libc::c_int);
+
+#[cfg(target_os = "linux")]
+impl Drop for InotifyFd {
+    fn drop(&mut self) {
+        unsafe {
+            libc::close(self.0);
+        }
+    }
+}
+
 fn window_attributes() -> WindowAttributes {
     let attributes = WindowAttributes::default()
         .with_title(resolved_title())
@@ -749,7 +884,9 @@ fn log_pointer_window_event(event: &WindowEvent) {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolved_title, BLITZ_APP_TITLE_ENV};
+    use super::{
+        resolved_title, touch_signal_watch_mode_from_env, TouchSignalWatchMode, BLITZ_APP_TITLE_ENV,
+    };
     use std::{
         env,
         sync::{Mutex, MutexGuard},
@@ -821,6 +958,26 @@ mod tests {
             assert_eq!(super::resolved_wayland_app_id(), "dev.shadow.timeline");
             assert_eq!(super::resolved_wayland_instance_name(), "timeline");
         }
+    }
+
+    #[test]
+    fn touch_signal_watch_mode_defaults_to_auto() {
+        assert_eq!(
+            touch_signal_watch_mode_from_env(None),
+            TouchSignalWatchMode::Auto
+        );
+        assert_eq!(
+            touch_signal_watch_mode_from_env(Some("inotify")),
+            TouchSignalWatchMode::Auto
+        );
+        assert_eq!(
+            touch_signal_watch_mode_from_env(Some("poll")),
+            TouchSignalWatchMode::Poll
+        );
+        assert_eq!(
+            touch_signal_watch_mode_from_env(Some("off")),
+            TouchSignalWatchMode::Poll
+        );
     }
 }
 

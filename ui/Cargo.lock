@@ -3181,6 +3181,7 @@ dependencies = [
  "blitz-traits",
  "env_logger",
  "image",
+ "libc",
  "pollster",
  "serde",
  "serde_json",
