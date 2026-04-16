@@ -603,6 +603,16 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - the current Pixel shell substrate is correct, but it still burns CPU in the outer guest compositor
   - before this slice, every visible shell update rebuilt the full software shell scene, copied it again into a transient frame buffer, and then copied it again into the dumb KMS buffer
   - the goal is not speculative over-engineering; it is to remove the obvious extra full-frame work while the deeper dmabuf/direct-present seam is still open
+  - latest landed cut on this branch:
+    - shell app updates now restore only the app viewport from the cached base scene when the shell scene itself is unchanged
+    - the compositor no longer rewrites `/shadow-frame.ppm` on every frame by default
+      - opt back into per-frame artifacts with `SHADOW_GUEST_FRAME_WRITE_EVERY_FRAME=1`
+    - KMS present now logs split `blit_ms` / `program_ms` timing when a present takes `>=8ms`
+    - Pixel shell runtime-host polling default is reduced from `100ms` to `16ms`
+  - validation:
+    - `just ui-check`
+  - current device-validation caveat:
+    - `PIXEL_SERIAL=09051JEC202061 just pixel-shell-timeline-smoke` did not yield a trustworthy pass/fail signal in this session because it wedged in the existing rooted `su` cleanup/probe noise and had to be terminated
 
 ## Near-Term Steps
 

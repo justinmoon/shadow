@@ -165,6 +165,8 @@ struct ShadowGuestCompositor {
     toplevel_size: smithay::utils::Size<i32, Logical>,
     frame_artifact_path: PathBuf,
     frame_artifacts_enabled: bool,
+    frame_artifact_every_frame: bool,
+    frame_artifact_written: bool,
     drm_enabled: bool,
     touch_signal_counter: u64,
     touch_signal_path: Option<PathBuf>,
@@ -264,6 +266,8 @@ impl ShadowGuestCompositor {
             toplevel_size: (config.toplevel_width, config.toplevel_height).into(),
             frame_artifact_path: config.frame_artifact_path.clone(),
             frame_artifacts_enabled: config.frame_artifacts_enabled,
+            frame_artifact_every_frame: config.frame_artifact_every_frame,
+            frame_artifact_written: false,
             drm_enabled: config.drm_enabled,
             touch_signal_counter: 0,
             touch_signal_path: config.touch_signal_path.clone(),
@@ -1742,9 +1746,12 @@ impl ShadowGuestCompositor {
             }
         }
 
-        if self.frame_artifacts_enabled {
+        if self.frame_artifacts_enabled
+            && (!self.frame_artifact_written || self.frame_artifact_every_frame)
+        {
             match kms::write_frame_view_ppm(frame, &self.frame_artifact_path) {
                 Ok(()) => {
+                    self.frame_artifact_written = true;
                     tracing::info!(
                         "[shadow-guest-compositor] wrote-frame-artifact path={} checksum={checksum:016x} size={}x{}",
                         self.frame_artifact_path.display(),

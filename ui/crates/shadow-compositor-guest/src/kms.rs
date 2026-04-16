@@ -429,6 +429,7 @@ impl KmsDisplay {
 
     pub fn present_frame_view(&mut self, frame: CapturedFrameView<'_>) -> Result<()> {
         self.release_imported_framebuffer()?;
+        let present_started = Instant::now();
         let dumb = self
             .dumb
             .as_mut()
@@ -439,9 +440,22 @@ impl KmsDisplay {
             .map_dumb_buffer(dumb)
             .context("failed to map dumb buffer")?;
 
+        let blit_started = Instant::now();
         blit_frame(mapping.as_mut(), self.width, self.height, pitch, frame)?;
+        let blit_elapsed = blit_started.elapsed();
         drop(mapping);
+        let program_started = Instant::now();
         self.program_crtc()?;
+        let program_elapsed = program_started.elapsed();
+        let total_elapsed = present_started.elapsed();
+        if total_elapsed.as_millis() >= 8 {
+            tracing::info!(
+                "[shadow-guest-compositor] kms-present-frame-view blit_ms={} program_ms={} total_ms={}",
+                blit_elapsed.as_millis(),
+                program_elapsed.as_millis(),
+                total_elapsed.as_millis()
+            );
+        }
         Ok(())
     }
 

@@ -53,6 +53,7 @@ pub(crate) struct GuestStartupConfig {
     pub(crate) touch_latency_trace: bool,
     pub(crate) frame_artifact_path: PathBuf,
     pub(crate) frame_artifacts_enabled: bool,
+    pub(crate) frame_artifact_every_frame: bool,
     pub(crate) toplevel_width: i32,
     pub(crate) toplevel_height: i32,
     pub(crate) keyboard_seat_enabled: bool,
@@ -116,6 +117,7 @@ impl GuestStartupConfig {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(DEFAULT_FRAME_ARTIFACT_PATH)),
             frame_artifacts_enabled: env_flag("SHADOW_GUEST_FRAME_ARTIFACTS"),
+            frame_artifact_every_frame: env_flag("SHADOW_GUEST_FRAME_WRITE_EVERY_FRAME"),
             toplevel_width: parse_positive_i32_env(
                 "SHADOW_GUEST_COMPOSITOR_TOPLEVEL_WIDTH",
                 DEFAULT_TOPLEVEL_WIDTH,
@@ -283,6 +285,8 @@ mod tests {
             ("SHADOW_GUEST_COMPOSITOR_DISABLE_DMABUF_GLOBAL", None),
             ("SHADOW_GUEST_COMPOSITOR_DMABUF_FEEDBACK", None),
             ("SHADOW_GUEST_COMPOSITOR_DMABUF_FORMAT_PROFILE", None),
+            ("SHADOW_GUEST_FRAME_ARTIFACTS", None),
+            ("SHADOW_GUEST_FRAME_WRITE_EVERY_FRAME", None),
             ("SHADOW_GUEST_CLIENT_ENV", None),
             ("SHADOW_GUEST_CLIENT_LINGER_MS", None),
         ];
@@ -378,6 +382,8 @@ mod tests {
             assert!(config.dmabuf_global_enabled);
             assert!(!config.dmabuf_feedback_enabled);
             assert_eq!(config.dmabuf_format_profile, DmabufFormatProfile::Default);
+            assert!(!config.frame_artifacts_enabled);
+            assert!(!config.frame_artifact_every_frame);
         });
     }
 
@@ -416,6 +422,25 @@ mod tests {
                     config.dmabuf_format_profile,
                     DmabufFormatProfile::LinearOnly
                 );
+            },
+        );
+    }
+
+    #[test]
+    fn config_can_enable_frame_artifacts() {
+        with_env(vec![("SHADOW_GUEST_FRAME_ARTIFACTS", Some("1"))], || {
+            let config = GuestStartupConfig::from_env().expect("frame-artifact config");
+            assert!(config.frame_artifacts_enabled);
+        });
+    }
+
+    #[test]
+    fn config_can_enable_frame_artifact_every_frame() {
+        with_env(
+            vec![("SHADOW_GUEST_FRAME_WRITE_EVERY_FRAME", Some("1"))],
+            || {
+                let config = GuestStartupConfig::from_env().expect("frame-artifact config");
+                assert!(config.frame_artifact_every_frame);
             },
         );
     }

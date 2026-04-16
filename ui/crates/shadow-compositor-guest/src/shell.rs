@@ -15,6 +15,7 @@ pub struct GuestShellSurface {
     base_pixels: Vec<u8>,
     pixels: Vec<u8>,
     last_scene_key: Option<u64>,
+    last_frame_had_app: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -43,6 +44,7 @@ impl GuestShellSurface {
             base_pixels: vec![0; (width * height * 4) as usize],
             pixels: vec![0; (width * height * 4) as usize],
             last_scene_key: None,
+            last_frame_had_app: false,
         }
     }
 
@@ -59,6 +61,7 @@ impl GuestShellSurface {
         self.pixels
             .resize((width as usize) * (height as usize) * 4, 0);
         self.last_scene_key = None;
+        self.last_frame_had_app = false;
     }
 
     #[cfg(test)]
@@ -85,7 +88,8 @@ impl GuestShellSurface {
     ) -> ShellRenderStats {
         let mut stats = ShellRenderStats::default();
         let scene_key = scene_cache_key(scene, self.width, self.height);
-        if self.last_scene_key != Some(scene_key) {
+        let scene_changed = self.last_scene_key != Some(scene_key);
+        if scene_changed {
             let scene_render_start = std::time::Instant::now();
             self.renderer.resize(self.width, self.height);
             let scaled_scene = scale_scene(scene, self.width, self.height);
@@ -97,8 +101,18 @@ impl GuestShellSurface {
             stats.scene_cache_hit = true;
         }
 
+        let has_app = app_frame.is_some();
         let base_copy_start = std::time::Instant::now();
-        self.pixels.copy_from_slice(&self.base_pixels);
+        if scene_changed {
+            self.pixels.copy_from_slice(&self.base_pixels);
+        } else if has_app || self.last_frame_had_app {
+            restore_viewport_from_base(
+                &mut self.pixels,
+                &self.base_pixels,
+                self.width,
+                self.height,
+            );
+        }
         stats.base_copy = base_copy_start.elapsed();
 
         if let Some(app_frame) = app_frame {
@@ -107,7 +121,33 @@ impl GuestShellSurface {
             stats.app_composite = app_composite_start.elapsed();
         }
 
+        self.last_frame_had_app = has_app;
+
         stats
+    }
+}
+
+fn restore_viewport_from_base(
+    target: &mut [u8],
+    base: &[u8],
+    target_width: u32,
+    target_height: u32,
+) {
+    let Some((viewport_x, viewport_y, viewport_width, viewport_height)) =
+        viewport_bounds(target_width, target_height)
+    else {
+        target.copy_from_slice(base);
+        return;
+    };
+
+    let stride = target_width as usize * 4;
+    let row_bytes = viewport_width as usize * 4;
+    let start_x = viewport_x as usize * 4;
+
+    for row in 0..viewport_height as usize {
+        let row_start = (viewport_y as usize + row) * stride + start_x;
+        let row_end = row_start + row_bytes;
+        target[row_start..row_end].copy_from_slice(&base[row_start..row_end]);
     }
 }
 
@@ -363,5 +403,39 @@ mod tests {
 
         let second = surface.render_scene_with_app_frame(&scene, None);
         assert!(second.scene_cache_hit);
+    }
+
+    #[test]
+    fn render_scene_restores_viewport_when_app_frame_is_removed() {
+        let scene = Scene {
+            clear_color: Color::rgba(255, 0, 0, 255),
+            rects: Vec::new(),
+            texts: Vec::new(),
+        };
+        let mut surface = GuestShellSurface::new(4, 70);
+        let app_frame = AppFrame {
+            width: 2,
+            height: 2,
+            stride: 8,
+            format: wl_shm::Format::Argb8888,
+            pixels: &[
+                0, 255, 0, 255, 0, 255, 0, 255, //
+                0, 255, 0, 255, 0, 255, 0, 255,
+            ],
+        };
+
+        surface.render_scene_with_app_frame(&scene, Some(app_frame));
+        let (_, viewport_y, _, _) = viewport_bounds(4, 70).expect("scaled viewport");
+        let viewport_origin = (viewport_y as usize) * 4 * 4;
+        assert_eq!(
+            &surface.pixels[viewport_origin..viewport_origin + 4],
+            &[0, 255, 0, 255]
+        );
+
+        surface.render_scene_with_app_frame(&scene, None);
+        assert_eq!(
+            &surface.pixels[viewport_origin..viewport_origin + 4],
+            &[0, 0, 255, 255]
+        );
     }
 }
