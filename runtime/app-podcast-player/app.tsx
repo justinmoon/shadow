@@ -459,8 +459,8 @@ export default function renderApp() {
         <p class="podcast-eyebrow">Shadow Audio</p>
         <h1 class="podcast-headline">{config.podcastTitle} player</h1>
         <p class="podcast-body">
-          Hardcoded runtime app sample: episodes `#00` through `#04`, staged as
-          local files and played through `Shadow.os.audio`.
+          Runtime app sample: configured episodes are staged as local files and
+          played through `Shadow.os.audio`.
         </p>
 
         <div class="podcast-status">
@@ -542,7 +542,7 @@ export default function renderApp() {
         </p>
 
         <div class="podcast-chips">
-          <span class="podcast-chip">{config.episodes.length} hardcoded episodes</span>
+          <span class="podcast-chip">{config.episodes.length} configured episodes</span>
           <span class="podcast-chip">local file playback</span>
           {config.podcastLicense ? <span class="podcast-chip">{config.podcastLicense}</span> : null}
           {config.podcastPageUrl ? <span class="podcast-chip">{config.podcastPageUrl}</span> : null}

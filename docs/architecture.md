@@ -65,7 +65,8 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 ## Repo Shape
 
 1. `flake.nix` pins the toolchain, dev shells, and packaged binaries.
-   The VM lane now consumes packaged Linux `shadow-compositor` / `shadow-blitz-demo` artifacts built through Nix; the guest should stay runtime-only.
+   The VM lane now consumes packaged Linux `shadow-compositor` / `shadow-blitz-demo` artifacts built through Nix; `.#ui-vm-ci` is the canonical artifact-consumer runner package and `.#ui-vm` remains a compatibility alias.
+   The guest should stay runtime-only.
    The guest no longer mounts the repo. It mounts `/nix/store` plus a narrow `.shadow-vm/runtime-artifacts` share staged on the host.
    Runtime app bundles are built by the shared host-side artifact builder (`scripts/runtime_build_artifacts.sh`) and staged under that artifact share.
    The VM podcast sample defaults to a checked-in local fixture so the branch gate does not need a live RSS/media fetch just to open that app.

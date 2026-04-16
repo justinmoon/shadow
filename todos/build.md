@@ -19,9 +19,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - one manifest/env contract consumed by VM, Pixel, and host smokes
   - one shared smoke surface
 - Canonical execution mode:
-  - `ui-vm-ci`: clean artifact consumer; used by `pre-merge` and `land`
-- Optional fallback mode only if needed later:
-  - `ui-vm-dev`: source-mounted or artifact-mounted convenience lane that still consumes host-built outputs only
+  - `.#ui-vm-ci`: clean artifact-consumer runner; used by the VM scripts that back `pre-merge` and `land`
+- Optional fallback mode:
+  - not justified yet. Add `ui-vm-dev` only if a measured iteration problem remains after the artifact lane is boring, and still do not put Cargo/Rust in the guest.
 - Keep the DRY boundary explicit:
   - shared flake packages for compositor, app client, runtime host, bundles, fixtures
   - shared VM base module for users, services, shell control, smoke wiring, runtime env shape
@@ -54,14 +54,14 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   The guest warmup build path is gone, Cargo/Rust are removed from the image, and the session runs packaged store binaries.
 - [x] Make runtime app bundling first-class without pretending it is pure Nix.
   Runtime app bundles now flow through `scripts/runtime_build_artifacts.sh`, with VM/host/Pixel prep consuming the same manifest/env output.
-- [~] Make CI fixtures reproducible.
-  The VM/pre-merge lane now uses a checked-in local podcast fixture for episode `00`, but the general bundle/fixture path is still host-prepared and Pixel lanes still fetch live media unless a local cache/fixture is supplied.
+- [x] Make CI fixtures reproducible.
+  The podcast asset resolver now defaults to the checked-in episode `00` fixture when callers do not request a custom feed, asset directory, or episode set. VM, host podcast smoke, and Pixel CI podcast paths are offline-safe by default while still allowing explicit live-feed overrides.
 - [x] Add a clean artifact-consumer VM config.
   The repo mount is gone and the VM now mounts only `.shadow-vm/runtime-artifacts` plus `/nix/store`; bundles/fixtures are deliberately host-prepared, manifest-driven artifacts.
 - [x] Repoint `pre-merge` and `land` at the artifact VM lane.
   The branch gate now validates the artifact-driven VM session. It is not fully pure yet because runtime bundles/fixtures still come from host-prepared paths.
-- [ ] Decide whether a separate dev lane is still justified.
-  Default bias: delete it unless an artifact-consumption convenience mode materially improves iteration speed without violating the no-guest-build invariant.
+- [x] Decide whether a separate dev lane is still justified.
+  Not now. Keep one artifact-consumer VM lane and one build graph; introduce a dev delivery overlay only after measuring a real iteration-speed problem that cannot be solved by host-side artifact caching.
 
 ## Near-Term Steps
 
@@ -81,8 +81,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   `ui-vm-run` now points podcast prep at a checked-in local fixture for episode `00`, so `just pre-merge` no longer depends on a live RSS/media fetch just to open the podcast app.
 - [x] Trim unnecessary podcast fetch volume on the Pixel shell lane.
   Pixel shell/runtime prep now defaults to episode `00` unless an explicit `SHADOW_PODCAST_PLAYER_EPISODE_IDS` override is provided.
-- [ ] Introduce a VM base module plus mode overlays.
-  Keep one shared base and make any `ci` / `dev` differences narrow and inspectable instead of growing one giant conditional module.
+- [~] Introduce a VM base module plus mode overlays.
+  `.#ui-vm-ci` is now the canonical package name and `.#ui-vm` is a compatibility alias. Do not add a second NixOS mode until there is a proven dev-only delivery seam; if that happens, keep the overlay limited to artifact delivery and source visibility.
 - [x] Write down and enforce the runtime artifact contract.
   The builder contract is now `apps/<id>/bundle.js`, optional colocated assets, `artifact-manifest.json`, and optional `runtime-host-session-env.sh`.
 
@@ -93,8 +93,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `ui/crates/shadow-compositor/src/launch.rs` also falls back to `cargo run` if it cannot find a sibling binary.
 - Current landed state:
   - `just ui-vm-smoke` and `just pre-merge` both pass on the artifact-driven VM path.
+  - the canonical VM runner package is now `.#ui-vm-ci`; `.#ui-vm` remains as a compatibility alias for old scripts/operators
   - the guest no longer mounts the repo; it mounts `.shadow-vm/runtime-artifacts` and `/nix/store`
-  - the VM podcast app now uses a checked-in local fixture by default, so the branch gate is offline-safe on that seam
+  - the podcast asset resolver now defaults to the checked-in local episode `00` fixture, so VM, host, and Pixel CI podcast paths are offline-safe unless a caller explicitly requests live feed assets
   - runtime bundles are still host-prepared by design, and the Deno/npm bundler seam is now an explicit artifact-builder layer rather than hidden launch glue
   - `scripts/runtime_build_artifacts.sh` is the single public builder wrapper; the older host/Pixel prep scripts are compatibility callers over that manifest contract
   - VM smoke step markers now show which app transition is under test, and the app-state timeout is 90s to tolerate cold app/runtime starts without hiding hard hangs
@@ -122,9 +123,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - naive fixed-output `DENO_DIR` packaging self-references or drags in mutable cache behavior
   - this same dynamic app-bundling machinery is useful for runtime-created apps, so the immediate goal is not "all bundles are store derivations"
   - the goal is one explicit host-side builder with a manifest contract, clean inputs, local fixtures for CI, and no guest-side build tools
-- If the artifact lane is fast enough, we should prefer one VM mode and delete the source-mounted path rather than preserve it out of habit.
+- Keep one VM mode until evidence says otherwise. A separate `ui-vm-dev` should be an artifact-delivery overlay only, not a second build graph.
 - `shadow-compositor` and `shadow-compositor-guest` are different binaries because they use different display backends:
   - `shadow-compositor`: nested Linux compositor with Smithay `backend_winit`
   - `shadow-compositor-guest`: direct guest/hardware compositor without `backend_winit`, with DRM/KMS/input-specific code
   This is concerning only if app/shell/control logic diverges; the current cleanup should keep backend-specific code narrow and shared UI/shell logic centralized.
-- The “single nix build” end state should be one top-level target such as `.#ui-vm-ci`, backed by multiple derivations underneath for cacheability. It should not be one giant monolithic derivation.
+- The “single nix build” end state is now represented by `.#ui-vm-ci`, backed by multiple derivations underneath for cacheability. It should not become one giant monolithic derivation.

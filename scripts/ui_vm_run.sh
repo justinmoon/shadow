@@ -98,13 +98,14 @@ chmod 0644 "$RUNTIME_ENV_PATH"
 runtime_env_tmp=""
 
   SHADOW_UI_VM_SSH_PORT="$ui_vm_ssh_port_value" \
-  nix build --impure --accept-flake-config -o "$RUNNER_LINK" .#ui-vm >/dev/null
+  nix build --impure --accept-flake-config -o "$RUNNER_LINK" .#ui-vm-ci >/dev/null
 
 echo "ui-vm-run: launching Shadow UI VM"
 echo "ui-vm-run: qemu window will host the real Linux compositor"
 echo "ui-vm-run: ssh endpoint shadow@127.0.0.1:$ui_vm_ssh_port_value"
 echo "ui-vm-run: state image .shadow-vm/shadow-ui-state.img"
 echo "ui-vm-run: runtime artifacts .shadow-vm/runtime-artifacts"
+echo "ui-vm-run: runner package .#ui-vm-ci"
 echo "ui-vm-run: first boot or dependency changes may spend time building Linux artifacts through Nix"
 echo "ui-vm-run: use 'just ui-vm-doctor' or 'just ui-vm-wait-ready' while the screen is blank"
 

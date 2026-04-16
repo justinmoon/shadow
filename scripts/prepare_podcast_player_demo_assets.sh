@@ -3,17 +3,31 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ASSET_DIR="${SHADOW_PODCAST_PLAYER_ASSET_DIR:-$REPO_ROOT/build/runtime/app-podcast-player-assets}"
+DEFAULT_EPISODE_IDS="00"
+EPISODE_IDS="${SHADOW_PODCAST_PLAYER_EPISODE_IDS:-$DEFAULT_EPISODE_IDS}"
+DEFAULT_ASSET_DIR="$REPO_ROOT/build/runtime/app-podcast-player-assets"
+FIXTURE_ASSET_DIR="$REPO_ROOT/runtime/app-podcast-player/fixture"
+offline_fixture=0
+
+if [[ -z "${SHADOW_PODCAST_PLAYER_ASSET_DIR+x}" \
+  && -z "${SHADOW_PODCAST_PLAYER_FEED_URL+x}" \
+  && "$EPISODE_IDS" == "$DEFAULT_EPISODE_IDS" \
+  && -f "$FIXTURE_ASSET_DIR/podcast-feed-cache.json" ]]; then
+  ASSET_DIR="$FIXTURE_ASSET_DIR"
+  offline_fixture=1
+else
+  ASSET_DIR="${SHADOW_PODCAST_PLAYER_ASSET_DIR:-$DEFAULT_ASSET_DIR}"
+fi
 PODCAST_DIR="$ASSET_DIR/assets/podcast"
 PODCAST_METADATA_PATH="$ASSET_DIR/podcast-feed-cache.json"
 PODCAST_FEED_URL="${SHADOW_PODCAST_PLAYER_FEED_URL:-https://sovereignengineering.io/dialogues.xml}"
-EPISODE_IDS="${SHADOW_PODCAST_PLAYER_EPISODE_IDS:-00,01,02,03,04}"
 
 mkdir -p "$PODCAST_DIR"
 
 episode_json="$(
   PODCAST_FEED_URL="$PODCAST_FEED_URL" \
   EPISODE_IDS="$EPISODE_IDS" \
+  PODCAST_OFFLINE_FIXTURE="$offline_fixture" \
   PODCAST_METADATA_PATH="$PODCAST_METADATA_PATH" \
   python3 - <<'PY'
 import json
@@ -25,6 +39,7 @@ from tempfile import NamedTemporaryFile
 
 feed_url = os.environ["PODCAST_FEED_URL"]
 metadata_path = os.environ["PODCAST_METADATA_PATH"]
+offline_fixture = os.environ.get("PODCAST_OFFLINE_FIXTURE") == "1"
 episode_ids = {
     part.strip() for part in os.environ["EPISODE_IDS"].split(",") if part.strip()
 }
@@ -115,6 +130,11 @@ def fetch_metadata():
 
 episode_data = load_cached_metadata()
 if episode_data is None:
+    if offline_fixture:
+        raise SystemExit(
+            "prepare_podcast_player_demo_assets: checked-in podcast fixture "
+            "does not satisfy requested episodes"
+        )
     episode_data = fetch_metadata()
     os.makedirs(os.path.dirname(metadata_path), exist_ok=True)
     with NamedTemporaryFile("w", encoding="utf-8", dir=os.path.dirname(metadata_path), delete=False) as handle:
@@ -138,6 +158,10 @@ while IFS=$'\t' read -r episode_id source_url source_ext output_basename; do
   output_path="$PODCAST_DIR/$output_basename"
   if [[ -f "$output_path" ]]; then
     continue
+  fi
+  if [[ "$offline_fixture" == "1" ]]; then
+    echo "prepare_podcast_player_demo_assets: checked-in podcast fixture missing $output_basename" >&2
+    exit 1
   fi
 
   source_path="$tmp_dir/$episode_id${source_ext:-}"
