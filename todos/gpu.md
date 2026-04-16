@@ -827,6 +827,24 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - direct `gpu`
     - compositor transport
     - reproducibility
+- `2026-04-16 direct-gpu source-level finding`:
+  - the remaining direct-`gpu` failure is no longer just "somewhere in surface configure"
+  - source-level Mesa readout now matches the rooted-Pixel probe logs:
+    - Wayland WSI calls `zwp_linux_buffer_params_v1_add(..., image->base.dma_buf_fd, ...)`
+    - Turnip KGSL export path is `tu_GetMemoryFdKHR()` -> `tu_bo_export_dmabuf()` -> `kgsl_bo_export_dmabuf()`
+    - `kgsl_bo_export_dmabuf()` just returns `os_dupfd_cloexec(bo->shared_fd)`
+    - non-shareable KGSL BO allocation still initializes `.shared_fd = -1`
+    - so the observed probe error:
+      - `error marshalling arguments for add: dup failed: Bad file descriptor`
+      - `Error marshalling request for zwp_linux_buffer_params_v1.add: Bad file descriptor`
+      is consistent with the client trying to submit a Wayland linux-dmabuf buffer whose exported fd is invalid before the compositor ever imports it
+  - practical consequence:
+    - the current direct-`gpu` blocker is most likely in Turnip/KGSL dma-buf exportability for these WSI images, not in our app code and not in Smithay import
+  - next concrete step:
+    - prove why the WSI allocation ended up with an invalid export fd on this stack
+    - either:
+      - confirm a Turnip/KGSL bug and carry a local Mesa patch / overlay
+      - or prove our current env/profile is accidentally steering WSI onto a non-shareable BO path
 
 ## Further Improvements
 

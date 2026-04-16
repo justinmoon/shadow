@@ -52,6 +52,12 @@ SURFACE_RENDERER_NEW_RE = re.compile(
 )
 SURFACE_CONFIGURE_RE = re.compile(r"\[shadow-wgpu-context\] surface-configure ")
 SURFACE_CONFIGURE_DONE_RE = re.compile(r"\[shadow-wgpu-context\] surface-configure-done")
+WAYLAND_DMABUF_ADD_BAD_FD_RE = re.compile(
+    r"Error marshalling request for zwp_linux_buffer_params_v1\.add: Bad file descriptor"
+)
+WAYLAND_DUP_BAD_FD_RE = re.compile(
+    r"error marshalling arguments for add: dup failed: Bad file descriptor"
+)
 SURFACE_ADAPTER_RE = re.compile(
     r"\[shadow-wgpu-context\] surface-adapter index=(\d+) supported=(true|false) backend=([^ ]+) "
 )
@@ -213,11 +219,14 @@ def infer_failure_phase(
     surface_renderer_new_started: bool,
     surface_configure_started: bool,
     surface_configure_done: bool,
+    wayland_dmabuf_add_bad_fd: bool,
     presented_frame_count: int,
     first_visible_ms: int | None,
 ) -> str | None:
     if first_visible_ms is not None:
         return None
+    if wayland_dmabuf_add_bad_fd:
+        return "wayland-dmabuf-submit"
     if run_app_error:
         return "run-app"
     if timeout_checkpoint:
@@ -288,6 +297,7 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
     surface_renderer_new_started = False
     surface_configure_started = False
     surface_configure_done = False
+    wayland_dmabuf_add_bad_fd = False
     presented_frame_count = 0
     client_disconnect_reason = None
     run_app_error = None
@@ -539,6 +549,10 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
             surface_configure_started = True
             continue
 
+        if WAYLAND_DUP_BAD_FD_RE.search(line) or WAYLAND_DMABUF_ADD_BAD_FD_RE.search(line):
+            wayland_dmabuf_add_bad_fd = True
+            continue
+
         client_disconnect_match = CLIENT_DISCONNECTED_RE.search(line)
         if client_disconnect_match:
             client_disconnect_reason = client_disconnect_match.group(1) or "unknown"
@@ -749,6 +763,7 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
         surface_renderer_new_started,
         surface_configure_started,
         surface_configure_done,
+        wayland_dmabuf_add_bad_fd,
         presented_frame_count,
         first_visible_ms,
     )
@@ -776,7 +791,8 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
         "failure_phase": failure_phase,
         "inferred_failure_phase": failure_phase,
         "failure_reason": (
-            run_app_error
+            ("wayland-dmabuf-add-bad-fd" if wayland_dmabuf_add_bad_fd else None)
+            or run_app_error
             or probe_error
             or (
                 f"client-disconnect:{client_disconnect_reason}"
@@ -805,6 +821,7 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
         "selected_adapter_surface_supported": selected_adapter_surface_supported,
         "surface_configure_started": surface_configure_started,
         "surface_configure_done": surface_configure_done,
+        "wayland_dmabuf_add_bad_fd": wayland_dmabuf_add_bad_fd,
         "presented_frame_count": presented_frame_count,
         "client_disconnect_reason": client_disconnect_reason,
         "run_app_error": run_app_error,
