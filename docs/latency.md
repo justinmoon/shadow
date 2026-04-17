@@ -11,16 +11,15 @@ read_when:
 Use the rooted-Pixel touch latency probe for direct-runtime app latency:
 
 ```sh
-PIXEL_SERIAL=<serial> scripts/pixel_touch_latency_probe.sh
+sc -t <serial> debug latency
 ```
 
 For a deterministic run directory:
 
 ```sh
-PIXEL_SERIAL=<serial> \
 PIXEL_TOUCH_LATENCY_PANEL_SIZE=1080x2340 \
 PIXEL_TOUCH_LATENCY_RUN_DIR=build/latency/probe-timeline \
-  scripts/pixel_touch_latency_probe.sh
+  sc -t <serial> debug latency
 ```
 
 The probe launches the timeline runtime app, enables compositor touch tracing,

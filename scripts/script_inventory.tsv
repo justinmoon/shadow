@@ -1,0 +1,77 @@
+# path	bucket	note
+scripts/agent-brief	public	Agent context snapshot required by AGENTS.md.
+scripts/check_script_inventory.py	ci	Pre-commit taxonomy gate for every file under scripts/.
+scripts/ensure_cashu_test_mint.sh	runtime	Private Cashu host-smoke fixture helper.
+scripts/generate_sound_demo_fixture.sh	runtime	Private sound demo fixture generator.
+scripts/land.sh	public	Canonical local landing gate.
+scripts/operator_cli_smoke.sh	ci	Dry-run smoke coverage for the public just/shadowctl routing surface.
+scripts/pixel_build.sh	pixel	Private Pixel build delegate used by rooted device staging.
+scripts/pixel_build_guest_client.sh	pixel	Private Pixel guest-client build delegate.
+scripts/pixel_build_openlog_preload.sh	pixel	Private Pixel preload build delegate.
+scripts/pixel_camera_rs_run.sh	pixel	Private Pixel camera-provider helper runner.
+scripts/pixel_camera_runtime_common.sh	lib	Shared Pixel camera runtime helper library.
+scripts/pixel_ci.sh	ci	Rooted-Pixel CI suite driver behind sc ci and just pixel-ci.
+scripts/pixel_common.sh	lib	Shared rooted-Pixel shell/build/runtime helper library.
+scripts/pixel_guest_ui_drm.sh	pixel	Private rooted-Pixel compositor takeover/session driver.
+scripts/pixel_openlog_preload.c	data	C source for the Pixel openlog preload helper.
+scripts/pixel_ota_sideload.sh	pixel	Pixel setup/recovery delegate behind sc ota-sideload.
+scripts/pixel_prepare_blitz_demo_gpu_bundle.sh	pixel	Private Pixel GPU Blitz bundle staging helper.
+scripts/pixel_prepare_blitz_demo_gpu_softbuffer_bundle.sh	pixel	Private Pixel softbuffer Blitz bundle staging helper.
+scripts/pixel_prepare_runtime_app_artifacts.sh	pixel	Private Pixel runtime app artifact staging helper.
+scripts/pixel_prepare_shell_runtime_artifacts.sh	pixel	Private Pixel shell runtime artifact staging helper.
+scripts/pixel_push.sh	pixel	Private Pixel artifact push helper.
+scripts/pixel_restore_android.sh	pixel	Pixel display-stack restore delegate behind sc stop/restore-android.
+scripts/pixel_root_check.sh	pixel	Pixel setup/recovery delegate behind sc root-check dry runs.
+scripts/pixel_root_flash.sh	pixel	Pixel setup/recovery delegate behind sc root-flash.
+scripts/pixel_root_patch.sh	pixel	Pixel setup/recovery delegate behind sc root-patch.
+scripts/pixel_root_prep.sh	pixel	Pixel setup/recovery delegate behind sc root-prep.
+scripts/pixel_root_stage.sh	pixel	Pixel setup/recovery delegate behind sc root-stage.
+scripts/pixel_runtime_app_camera_drm.sh	pixel	Private Pixel runtime camera app runner used by device lanes.
+scripts/pixel_runtime_app_drm.sh	pixel	Private generic Pixel runtime app runner.
+scripts/pixel_runtime_app_nostr_gm_drm.sh	pixel	Private Pixel runtime Nostr GM app runner.
+scripts/pixel_runtime_app_nostr_timeline_drm.sh	pixel	Private Pixel runtime Nostr timeline app runner.
+scripts/pixel_runtime_app_nostr_timeline_local_smoke.sh	ci	Pixel CI Nostr timeline smoke against a host-local relay.
+scripts/pixel_runtime_app_podcast_player_drm.sh	pixel	Private Pixel runtime podcast app runner.
+scripts/pixel_runtime_app_sound_drm.sh	pixel	Private Pixel runtime sound app runner.
+scripts/pixel_runtime_linux_bundle_common.sh	lib	Shared Pixel runtime Linux bundle helper library.
+scripts/pixel_runtime_summary.py	pixel	Private Pixel runtime result summarizer.
+scripts/pixel_shell_camera_smoke.sh	ci	Rooted-Pixel shell camera smoke used by pixel-ci.
+scripts/pixel_shell_drm.sh	pixel	Private rooted-Pixel shell session runner.
+scripts/pixel_shell_drm_hold.sh	pixel	Private rooted-Pixel hold-mode shell session runner behind sc run.
+scripts/pixel_shell_keyboard_smoke.sh	ci	Rooted-Pixel shell keyboard smoke helper.
+scripts/pixel_shell_timeline_smoke.sh	ci	Rooted-Pixel shell timeline smoke used by pixel-ci.
+scripts/pixel_touch_latency_probe.sh	debug	Pixel latency probe exposed as shadowctl debug latency and documented in docs/latency.md.
+scripts/pixel_verify.sh	pixel	Private rooted-Pixel session verification helper.
+scripts/pre_commit.sh	public	Fast local gate.
+scripts/pre_merge.sh	public	Required branch gate.
+scripts/prepare_podcast_player_demo_assets.sh	runtime	Private podcast host/device smoke fixture helper.
+scripts/prepare_sound_demo_assets.sh	runtime	Private sound host/device smoke fixture helper.
+scripts/remote_guest_build_common.sh	lib	Shared remote/Linux guest build fallback helpers.
+scripts/runtime_app_camera_smoke.sh	ci	Host runtime camera app smoke.
+scripts/runtime_app_cashu_wallet_smoke.sh	ci	Host runtime Cashu wallet app smoke.
+scripts/runtime_app_keyboard_smoke.sh	ci	Host runtime keyboard app smoke.
+scripts/runtime_app_nostr_gm_smoke.sh	ci	Host runtime Nostr GM app smoke.
+scripts/runtime_app_nostr_timeline_smoke.sh	ci	Host runtime Nostr timeline app smoke.
+scripts/runtime_app_podcast_player_smoke.sh	ci	Host runtime podcast player app smoke.
+scripts/runtime_app_sound_smoke.sh	ci	Host runtime sound app smoke.
+scripts/runtime_audio_linux_spike_fake.sh	runtime	Private fake Linux audio backend used by sound host smoke.
+scripts/runtime_build_artifacts.sh	public	Public runtime artifact builder wrapper used by just runtime-build-artifacts.
+scripts/runtime_build_artifacts.ts	runtime	Shared runtime artifact builder implementation.
+scripts/runtime_compile_solid.ts	runtime	Runtime Solid compile helper.
+scripts/runtime_prepare_app_bundle.ts	runtime	Runtime app bundle preparation helper.
+scripts/runtime_prepare_host_session.sh	runtime	Host runtime session preparation helper for smokes and VM staging.
+scripts/runtime_prepare_host_session_env.sh	runtime	Host runtime session env exporter for VM staging.
+scripts/runtime_viewport.py	runtime	Runtime viewport helper.
+scripts/sc	public	Short devshell alias entrypoint for shadowctl.
+scripts/script_inventory.tsv	data	Manifest consumed by check_script_inventory.py.
+scripts/session_apps.sh	lib	Shared shell loader for supported session app ids.
+scripts/session_apps.txt	data	Single-source supported session app id list.
+scripts/shadow_common.sh	lib	Shared repo/bootstrap shell helper library.
+scripts/shadowctl	public	Primary target-aware Shadow development CLI.
+scripts/timeline_sync_defaults_smoke.sh	ci	Static smoke for timeline sync defaults and generated runtime env.
+scripts/ui_check.sh	public	UI formatting/test/compile gate.
+scripts/ui_vm_common.sh	lib	Shared local VM/QEMU helper library.
+scripts/ui_vm_run.sh	vm	Private VM session runner behind sc run.
+scripts/ui_vm_smoke.sh	ci	Required local VM shell/app smoke behind just smoke target=vm.
+scripts/ui_vm_ssh.sh	vm	Private VM SSH delegate behind sc ssh.
+scripts/ui_vm_stop.sh	vm	Private VM stop delegate behind sc stop.

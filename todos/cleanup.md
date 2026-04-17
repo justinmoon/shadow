@@ -114,29 +114,36 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## Script Audit Plan
 
-- [ ] Add an enforced script inventory.
+- [x] Add an enforced script inventory.
   - Track every file under `scripts/` in a small manifest with bucket, owner surface, and allowed callers.
   - Add a pre-commit check that fails when a top-level script is unclassified, directly public without being in the public allowlist, or marked debug without a `shadowctl`/docs entrypoint.
   - Update shell syntax checking to cover subdirectories, not only `scripts/*.sh`.
-- [ ] Keep the public top-level tiny.
+  - Implemented as `scripts/script_inventory.tsv` plus `scripts/check_script_inventory.py`, and wired into `just pre-commit`.
+- [~] Keep the public top-level tiny.
   - Allowed top-level operator/gate files: `sc`, `shadowctl`, `agent-brief`, `land.sh`, `pre_commit.sh`, `pre_merge.sh`, `ui_check.sh`, and the shared runtime artifact wrapper if we keep it as a direct Just target.
   - Everything else should move under `scripts/lib/`, `scripts/ci/`, `scripts/pixel/`, `scripts/runtime/`, or `scripts/debug/`, or be deleted.
-- [ ] Delete duplicate VM wrappers first.
+  - The public allowlist is now enforced by the inventory checker. Physical subdirectory moves are still intentionally left for a later mechanical pass.
+- [x] Delete duplicate VM wrappers first.
   - Remove `ui_vm_logs.sh`, `ui_vm_journal.sh`, and `ui_vm_status.sh`; `sc -t vm logs|journal|status` already owns those.
   - Remove `ui_vm_camera_smoke.sh` and `ui_vm_timeline_smoke.sh`; `ui_vm_smoke.sh` is the required VM app smoke.
   - Remove `ui_smoke.sh` and `desktop_prepare_fonts.sh`; the remote/Linux desktop proof is no longer part of the supported CI gate.
-- [ ] Delete or internalize duplicate Pixel wrappers.
+  - Deleted in the script inventory cleanup batch.
+- [x] Delete or internalize duplicate Pixel wrappers.
   - Remove `pixel_shellctl.sh` and `pixel_doctor.sh`; `shadowctl` already owns target-aware Pixel control and diagnostics.
   - Keep root/setup/recovery scripts temporarily as private `shadowctl` delegates, then move the direct logic into `shadowctl` or a private library once stable.
-- [ ] Collapse one-off app runner wrappers.
+  - Deleted the duplicate Pixel shellctl/doctor wrappers. Setup/recovery scripts remain private `shadowctl` delegates and are classified as `pixel`.
+- [~] Collapse one-off app runner wrappers.
   - Delete hold/click wrappers that only bake one env var around `pixel_runtime_app_drm.sh` unless they are used by `pixel_ci.sh`.
   - For still-useful fast iteration, expose a typed `sc -t pixel run-app <app> --click <target> --hold` or `sc -t pixel debug ...` command instead of one script per app/test variant.
-- [ ] Move real debug tools into an explicit debug class.
+  - Deleted unused direct runtime click/hold/GPU probe wrappers. The Nostr local smoke now inlines the quick-GM auto-click behavior it actually needs.
+- [x] Move real debug tools into an explicit debug class.
   - Keep `pixel_touch_latency_probe.sh` because it is documented and measures a real class of regressions, but expose it as `sc -t pixel debug latency` or move it under `scripts/debug/`.
   - Treat GPU/DRM/audio/camera takeover probes as delete-by-default; keep only if we can name the current debugging workflow and put it behind `sc -t pixel debug ...`.
-- [ ] Make runtime app smokes honest.
+  - `pixel_touch_latency_probe.sh` is the only remaining explicit debug script and is reachable as `sc -t pixel debug latency`.
+- [~] Make runtime app smokes honest.
   - Either include sound and podcast host smokes in the supported host smoke recipe, or delete them in favor of Pixel CI coverage.
   - Prefer one `scripts/ci/runtime_app_host_smokes.sh` runner over many public-looking `runtime_app_*_smoke.sh` files.
+  - `just runtime-app-host-smokes` now includes sound and podcast. A single aggregate CI runner remains a later path-organization cleanup.
 - [ ] Reorganize remaining private implementation files.
   - `scripts/lib/`: shared shell libraries such as `shadow_common.sh`, `pixel_common.sh`, session app helpers, VM helpers, and runtime Linux bundle helpers.
   - `scripts/pixel/`: Pixel build/push/session/root delegates still called by `shadowctl` and `pixel_ci`.
@@ -147,7 +154,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 ## Implementation Notes
 
 - The plan intentionally uses one checklist now. No separate near-term section.
-- Current script count: 95 total files under `scripts/`; 51 are `pixel_*`.
+- Current script count after the inventory cleanup: 76 total files under `scripts/`; 37 are `pixel_*`.
 - `just` used to expose 131 recipes. It now exposes 18 curated public recipes after the hard-cut cleanup; historical probe/bring-up lanes should stay as scripts unless promoted deliberately.
 - `scripts/shadowctl` is 1714 lines and carries real VM and Pixel target logic. The supported public operator surface routes through it now; private helper scripts still carry too much repeated policy.
 - `justfile` is 206 lines, `flake.nix` is 646 lines, and `shadow-compositor-guest/src/main.rs` is 1990 lines. The sprawl is now less in public entrypoints and more in private orchestration, packaging, and compositor internals.

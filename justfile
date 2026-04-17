@@ -25,6 +25,7 @@ help:
 	'  sc -t vm ssh' \
 	'  sc -t pixel state' \
 	'  sc -t pixel open camera' \
+	'  sc -t pixel debug latency' \
 	'  just shadowctl ...    # same CLI without relying on devshell PATH' \
 	'' \
 	'Pixel CI and setup:' \
@@ -47,7 +48,7 @@ help:
 	'  just runtime-shell' \
 	'  just android-shell' \
 	'' \
-	'Historical probes and one-off bring-up lanes live as scripts, not public just recipes.' \
+	'Private implementation scripts are classified in scripts/script_inventory.tsv.' \
 	'Run `just help-all` for the public recipe list.'
 
 # Show the public recipe list
@@ -113,6 +114,8 @@ runtime-app-host-smokes:
 	SHADOW_RUNTIME_APP_CACHE_DIR=build/runtime/app-nostr-gm \
 	scripts/runtime_app_nostr_gm_smoke.sh
 	@scripts/runtime_app_nostr_timeline_smoke.sh
+	@scripts/runtime_app_sound_smoke.sh
+	@scripts/runtime_app_podcast_player_smoke.sh
 	@scripts/runtime_app_cashu_wallet_smoke.sh
 
 # Build runtime app artifacts with the shared host-side bundler

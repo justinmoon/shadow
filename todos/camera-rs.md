@@ -50,9 +50,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Architectural result: the provider-level Rust path does not need `SurfaceFlinger`, but it does still need gralloc/allocator service availability on this Pixel.
 
 - [x] M5: Operator integration.
-  - Added `scripts/pixel_camera_rs_takeover.sh` plus `just pixel-camera-rs-takeover` for the proven reduced-stop camera takeover lane.
+  - Historical note: the reduced-stop camera takeover proof worked, but its standalone `pixel_camera_rs_takeover.sh` wrapper was later deleted during script-surface cleanup. Use the supported Pixel shell/runtime camera lanes for current operator validation.
   - Kept the generic display takeover default unchanged; `pixel_takeover_stop_services_script` is now parameterized so camera-specific flows can keep the allocator alive without weakening the DRM/KMS path.
-  - Proven on-device on `09051JEC202061`: `just pixel-camera-rs-takeover capture` captures successfully while `surfaceflinger` and HWC are still stopped, then restores Android cleanly. Artifacts live under `build/pixel/camera-rs-takeover/20260407T224734Z/`.
+  - Historical proof on `09051JEC202061`: the reduced-stop wrapper captured successfully while `surfaceflinger` and HWC were still stopped, then restored Android cleanly. Artifacts live under `build/pixel/camera-rs-takeover/20260407T224734Z/`.
   - `scripts/pixel_camera_rs_run.sh` now treats helper JSON with `"ok": false` as a failed run, so operator commands stop reporting false-positive success on application-level helper errors.
   - `just pre-commit` passed during iteration.
 
@@ -63,7 +63,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Added a `Reload Cameras` recovery action in the app so operators can retry broker/provider discovery without restarting the whole session.
   - Added an Android-side loopback broker mode to `shadow-camera-provider-host` so the GNU `shadow-runtime-host` running inside the staged chroot can reach the provider helper over `127.0.0.1` without needing direct Binder access.
   - Proven locally: `just runtime-app-camera-smoke` captures a mock frame through the real packaged runtime host and renders an image data URL in the TS app.
-  - Proven on-device on `09051JEC202061`: `just pixel-runtime-app-camera-click-drm` drives the camera app under reduced-stop takeover, hits the Android camera broker, and the runtime debug dump reaches `Photo captured from the live Pixel camera`.
+  - Historical direct-wrapper proof on `09051JEC202061`: the camera runtime app drove the capture target under reduced-stop takeover, hit the Android camera broker, and the runtime debug dump reached `Photo captured from the live Pixel camera`. Current validation should use `just pixel-ci camera` or `sc -t pixel ci camera`.
 
 - [ ] M7: Broaden runtime validation and decide how far to productize the lane.
   - Decide whether to keep camera on the reduced-stop takeover profile only, or make that the default takeover model for runtime apps that need allocator-backed services.
@@ -108,6 +108,6 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Current reduced-stop takeover artifacts live under `build/pixel/camera-rs-partial-stop/20260407T224255Z/` and `build/pixel/camera-rs-takeover/20260407T224734Z/`; those runs demonstrate successful capture with `surfaceflinger` and HWC stopped but the allocator still running.
 - Current runtime camera app host smoke artifact is the bundle under `build/runtime/app-camera/00335c0c601313d7b51d5629c7ef042c7afa2fa4e1a11a4a038a4a5a2e622be2/`; `just runtime-app-camera-smoke` proves that the packaged runtime host and TS app render a captured image through the new OS API seam.
 - Current Pixel runtime camera proof artifacts live under `build/pixel/drm-guest/20260407T232322Z/`; the render debug output in `session-output.txt` shows the app transition from `Ready on Rear Camera` to `Taking photo through Shadow OS camera service` to `Photo captured from the live Pixel camera`.
-- The manual Pixel launcher `just pixel-runtime-app-camera-drm` now launches the app without auto-clicking; `just pixel-runtime-app-camera-click-drm` is the dedicated proof lane that auto-dispatches one capture tap.
+- The historical manual Pixel camera runtime wrappers were removed during script-surface cleanup. Current validation should use `just pixel-ci camera` or `sc -t pixel ci camera`.
 - Runtime camera note: async runtime app state will not repaint on device unless `SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS` is set. The camera lane now opts into that poll thread explicitly because capture completion arrives after the initial click dispatch returns.
 - Takeover note: the camera runtime app cannot use the generic full-stop runtime takeover path on this Pixel. The working profile preserves `vendor.qti.hardware.display.allocator`, and `pixel_guest_ui_drm.sh` now supports that reduced-stop mode via `PIXEL_TAKEOVER_STOP_ALLOCATOR=0`.

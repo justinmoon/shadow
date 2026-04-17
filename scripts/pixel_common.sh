@@ -664,7 +664,7 @@ pixel_shell_control_request() {
     cat <<EOF
 control_socket=$control_socket
 if [ ! -S "\$control_socket" ]; then
-  echo "pixel-shellctl: missing compositor control socket \$control_socket" >&2
+  echo "shadowctl: missing compositor control socket \$control_socket" >&2
   exit 1
 fi
 printf '%s\n' $(printf '%q' "$request") | nc -U "\$control_socket"

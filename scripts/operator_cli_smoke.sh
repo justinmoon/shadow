@@ -199,6 +199,13 @@ check_output_case \
   "$SHADOWCTL_SCRIPT" stage --dry-run -t TESTSERIAL sound
 
 check_output_case \
+  shadowctl_pixel_debug_latency \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel_touch_latency_probe.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL latency
+
+check_output_case \
   shadowctl_pixel_ci_run_only_podcast \
   0 \
   "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --run-only podcast' "$SCRIPT_DIR/pixel_ci.sh")" \
@@ -302,6 +309,13 @@ check_output_case \
   "" \
   "stage supports targets: pixel; got vm (vm)" \
   "$SHADOWCTL_SCRIPT" -t vm stage --dry-run camera
+
+check_output_case \
+  unsupported_vm_debug_rejected \
+  2 \
+  "" \
+  "debug supports targets: pixel; got vm (vm)" \
+  "$SHADOWCTL_SCRIPT" -t vm debug --dry-run latency
 
 check_output_case \
   unsupported_vm_root_patch_rejected \

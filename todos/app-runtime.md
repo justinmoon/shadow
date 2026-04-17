@@ -18,9 +18,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - `Shadow.os.cashu` now exists as the second concrete runtime-host domain, backed by CDK plus a durable mnemonic + `redb` wallet store.
 - `deno_core` remains the default runtime helper. `deno_runtime` is proven, but not promoted.
 - Rooted Pixel real shell now has a primary operator lane (`pixel-shell-drm` and `just run target=pixel`).
-- The direct rooted Pixel runtime-app scripts still exist, but they are now fallback/probe lanes rather than the main operator path.
+- The old direct rooted Pixel runtime-app probes were pruned. Current device validation should use the shell lane or `just pixel-ci <suite>`.
 - Pixel shell runs can now either stop at home or auto-open `timeline` through that same shell lane.
-- `pixel-shellctl` now gives the rooted Pixel shell a reusable launch/home/state control seam once the compositor is live.
+- `shadowctl` gives the rooted Pixel shell a reusable launch/home/state control seam once the compositor is live.
 - The rooted Pixel shell lifecycle lane is now green on at least one real device (`09051JEC202061`).
 - `just runtime-app-host-smokes` is now the truthful host proof surface.
 - The runtime viewport contract is now unified around the shell app viewport (`540x1106` today). Pixel fits that viewport into the real panel instead of using raw panel size as the app surface.
@@ -105,19 +105,19 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - 2026-04-07: The VM shelve/reopen smoke was green.
   - The shell launch regression was that `shadow-compositor` spawned `shadow-blitz-demo` without forcing runtime mode, so the self-exiting static demo launched instead of the real runtime app.
   - `shadow-blitz-demo` now honors launch-provided title and Wayland app-id overrides, and the compositor sets runtime mode plus app-specific launch env.
-  - `scripts/ui_vm_timeline_smoke.sh` no longer forces a runtime-env rebuild on every run, so it validates the live VM lane instead of first spending minutes rebuilding the aarch64 runtime host.
+  - The required VM app smoke is now consolidated in `scripts/ui_vm_smoke.sh`, so timeline/home/reopen coverage lives in the same branch gate as camera and podcast launch coverage.
 - 2026-04-07: The near-term Pixel lane is now the real shell/home path.
   - `pixel-shell-drm` is the primary rooted-Pixel operator rung, and `just run target=pixel` now routes there instead of to the old direct-runtime timeline path.
-  - The old direct runtime-app Pixel scripts remain in the repo as fallback/probe tools for narrower runtime or GPU work.
+  - The old direct runtime-app Pixel probes were later pruned; current device validation should use the supported Pixel shell path or `just pixel-ci <suite>`.
 - 2026-04-07: The rooted Pixel shell lane can now auto-open `timeline` without dropping back to the old direct-runtime path.
   - `just run target=pixel app=timeline` now calls `pixel_shell_drm.sh --app timeline` through `shadowctl`, and the launcher turns that into `SHADOW_GUEST_SHELL_START_APP_ID=timeline` for the guest compositor.
   - The guest compositor stays in shell mode, publishes the home frame, and then launches `timeline` through the same `launch_or_focus_app()` path used by later control requests.
   - The Pixel shell lane now also expects a runtime client process plus a mapped window when an initial shell app is requested, so this entrypoint fails if the shell never actually opens the app.
 - 2026-04-07: The rooted Pixel shell now has a matching control helper and lifecycle smoke harness.
-  - `pixel-shellctl.sh` talks to `/data/local/tmp/shadow-runtime/shadow-control.sock` over rooted `adb shell` plus Toybox `nc -U`, and `state --json` mirrors the VM control-state shape.
-  - `pixel-shell-timeline-smoke.sh` now starts the rooted shell in hold mode, waits for `timeline` to launch through the real shell path, sends `home`, reopens `timeline`, and checks the same focused/mapped/shelved state transitions as the VM smoke.
+  - `shadowctl` talks to `/data/local/tmp/shadow-runtime/shadow-control.sock` over rooted `adb shell` plus Toybox `nc -U`, and `sc -t pixel state --json` mirrors the VM control-state shape.
+  - `pixel_shell_timeline_smoke.sh` now starts the rooted shell in hold mode, waits for `timeline` to launch through the real shell path, sends `home`, reopens `timeline`, and checks the same focused/mapped/shelved state transitions as the VM smoke.
 - 2026-04-07: The rooted Pixel shell lifecycle smoke is live-green on `09051JEC202061`.
-  - `PIXEL_SERIAL=09051JEC202061 just pixel-shell-timeline-smoke` passed and wrote its run log under `build/pixel/shell/20260407T230414Z/`.
+  - Historical direct smoke on `09051JEC202061` passed and wrote its run log under `build/pixel/shell/20260407T230414Z/`. Current equivalent coverage is `just pixel-ci timeline`.
   - The smoke proved `timeline` launch, `home` shelving, and `timeline` reopen through the real rooted shell lane, then restored Android cleanly.
   - The first live failure was a smoke bug, not a shell bug: lifecycle timeouts were starting before host-side artifact prep finished. The smoke now waits for the rooted `shadow-control.sock` to exist before starting lifecycle assertions.
 

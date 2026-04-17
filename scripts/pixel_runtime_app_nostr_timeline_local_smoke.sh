@@ -45,13 +45,39 @@ do
   fi
 done
 
+prepend_guest_env_line() {
+  local existing="${1-}"
+  local line="$2"
+  if [[ -n "$existing" ]]; then
+    printf '%s\n%s' "$line" "$existing"
+  else
+    printf '%s' "$line"
+  fi
+}
+
+append_required_marker() {
+  local existing="${1-}"
+  local marker="$2"
+  if [[ -n "$existing" ]]; then
+    printf '%s\n%s' "$existing" "$marker"
+  else
+    printf '%s' "$marker"
+  fi
+}
+
+click_guest_env="$(prepend_guest_env_line "${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}" "SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=quick-gm")"
+click_required_markers="$(append_required_marker "${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS-}" "runtime-event-dispatched source=auto type=click target=quick-gm")"
+
 if [[ -n "${PIXEL_RUNTIME_APP_PREP_ONLY-}" || -n "${PIXEL_RUNTIME_APP_PREPARE_ONLY-}" || -n "${PIXEL_RUNTIME_APP_STAGE_ONLY-}" ]]; then
   PIXEL_SERIAL="$serial" \
   PIXEL_GUEST_RUN_DIR="$session_run_dir" \
   SHADOW_RUNTIME_APP_CONFIG_JSON="$runtime_app_config_json" \
   PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS="$extra_forbidden_markers" \
+  PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV="$click_guest_env" \
+  PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS="$click_required_markers" \
+  PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS="${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS:-12000}" \
   PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS:-45}" \
-    "$SCRIPT_DIR/pixel_runtime_app_nostr_timeline_click_drm.sh"
+    "$SCRIPT_DIR/pixel_runtime_app_nostr_timeline_drm.sh"
   exit 0
 fi
 
@@ -88,6 +114,8 @@ RUNTIME_NOSTR_DB_DEVICE_PATH = os.environ["RUNTIME_NOSTR_DB_DEVICE_PATH"]
 SESSION_TIMEOUT = os.environ.get("PIXEL_GUEST_SESSION_TIMEOUT_SECS", "45")
 EXIT_DELAY_MS = os.environ.get("PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS", "12000")
 RUN_ONLY = bool(os.environ.get("PIXEL_RUNTIME_APP_RUN_ONLY"))
+AUTO_CLICK_ENV = "SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=quick-gm"
+AUTO_CLICK_MARKER = "runtime-event-dispatched source=auto type=click target=quick-gm"
 
 SEED_EVENTS_PATH = RUN_DIR / "relay-events.jsonl"
 DB_COPY_PATH = RUN_DIR / "runtime-nostr.sqlite3"
@@ -112,6 +140,14 @@ def run(command, *, env=None, input_text=None, timeout=30):
         timeout=timeout,
         check=True,
     )
+
+
+def prepend_guest_env_line(existing: str | None, line: str) -> str:
+    return f"{line}\n{existing}" if existing else line
+
+
+def append_required_marker(existing: str | None, marker: str) -> str:
+    return f"{existing}\n{marker}" if existing else marker
 
 
 def adb(*args, timeout=30):
@@ -254,6 +290,14 @@ try:
                 "PIXEL_GUEST_RUN_DIR": str(SESSION_RUN_DIR),
                 "SHADOW_RUNTIME_APP_CONFIG_JSON": RUNTIME_APP_CONFIG_JSON,
                 "PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS": EXTRA_FORBIDDEN_MARKERS,
+                "PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV": prepend_guest_env_line(
+                    env.get("PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV"),
+                    AUTO_CLICK_ENV,
+                ),
+                "PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS": append_required_marker(
+                    env.get("PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS"),
+                    AUTO_CLICK_MARKER,
+                ),
                 "PIXEL_GUEST_SESSION_TIMEOUT_SECS": SESSION_TIMEOUT,
                 "PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS": EXIT_DELAY_MS,
             }
@@ -261,7 +305,7 @@ try:
         if RUN_ONLY:
             env["PIXEL_RUNTIME_APP_RUN_ONLY"] = "1"
         run(
-            [str(SCRIPT_DIR / "pixel_runtime_app_nostr_timeline_click_drm.sh")],
+            [str(SCRIPT_DIR / "pixel_runtime_app_nostr_timeline_drm.sh")],
             env=env,
             timeout=600,
         )

@@ -66,9 +66,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Repeated warm runs now skip re-pushing `runtime-app-bundle.js` when the device-side fingerprint matches.
   - Validated output:
     - `Runtime app bundle cacheHit -> /data/local/tmp/shadow-runtime-gnu/runtime-app-bundle.js`
-- [x] Timeline incremental rendering on the hardware-backed GPU lane is now measured directly.
-  - Dedicated recipe:
-    - `just pixel-runtime-app-nostr-timeline-click-drm`
+- [x] Timeline incremental rendering on the hardware-backed GPU lane was measured directly.
+  - Historical direct wrapper:
+    - `pixel_runtime_app_nostr_timeline_click_drm.sh` was later deleted during script cleanup; current Nostr device coverage is `just pixel-ci nostr`.
   - Validated repeated real-device runs:
     - `click_to_updated_frame_ms=63`
     - `click_to_updated_frame_ms=62`
@@ -166,13 +166,13 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [~] The GPU timeline recipe is much more reproducible now, but not completely polished.
   - The client GPU bundle now has a real local cache hit path.
   - The runtime host bundle/device push path now has a real repeated-run cache-hit path.
-  - Explicit operator hooks:
-    - `just pixel-gpu-warm`
-    - `just pixel-runtime-app-nostr-timeline-gpu-smoke`
-- [~] The direct runtime GPU probe/matrix seam now exists.
-  - New operator hooks:
-    - `just pixel-runtime-app-drm-gpu-probe`
-    - `just pixel-runtime-app-drm-gpu-matrix`
+  - Historical operator hooks were later deleted during script cleanup:
+    - `pixel_gpu_warm.sh`
+    - direct runtime GPU smoke wrappers
+- [~] The direct runtime GPU probe/matrix seam existed as a bring-up aid and was later removed.
+  - Deleted historical hooks:
+    - `pixel_runtime_app_drm_gpu_probe.sh`
+    - `pixel_runtime_app_drm_gpu_matrix.sh`
   - The summary output now reports:
     - `startup_stage_last`
     - `startup_stage_count`
@@ -194,9 +194,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Existing direct-`gpu` Pixel runs fail at `window.resume() -> wgpu_context.create_surface() -> NoCompatibleDevice`.
 - [ ] The guest compositor does not yet import/present dmabuf-backed client buffers on the rooted Pixel path.
 - [~] The Pixel GPU timeline smoke is now explicit, but cold runs can still spend time building.
-  - Operator hooks:
-    - `just pixel-gpu-warm`
-    - `just pixel-runtime-app-nostr-timeline-gpu-smoke`
+  - Historical direct operator hooks were deleted during script cleanup.
+  - Current Nostr device coverage is `just pixel-ci nostr`; add a new `sc -t pixel debug ...` command before reviving lower-level GPU probes.
   - Remaining polish:
     - reduce cold-start build churn further
     - keep repeated warm runs boring
@@ -495,8 +494,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
    - Current status:
      - client GPU bundle caching: good
      - runtime helper device-side caching: good
-      - `just pixel-gpu-warm` now prebuilds the current Pixel GPU timeline lane without launching it
-      - `just pixel-runtime-app-nostr-timeline-gpu-smoke` runs the proven lane explicitly
+      - historical direct warm/smoke wrappers were removed; current validation should use `just pixel-ci nostr` or a new explicit `sc -t pixel debug ...` command if GPU probing becomes active again
 
 4. Keep Pixel shell work on the right substrate.
    - Current status:
@@ -609,7 +607,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - `9cc5e21`:
   - curated Android font mode restored runtime text on Pixel
 - `685b6a1`:
-  - `just pixel-gpu-warm` landed as the obvious prebuild hook for the current proven lane
+  - Historical note: a direct Pixel GPU warm prebuild hook landed, then was removed when direct GPU warm/probe wrappers were pruned from the public script surface.
 - `Phase A operator follow-up`:
   - fixed the prepare-only env mismatch so the warm path actually exercises the existing Pixel runtime prep flow
   - added explicit `gpu_softbuffer` operator recipes for warm/smoke on the proven lane

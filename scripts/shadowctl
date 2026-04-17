@@ -30,6 +30,9 @@ SUPPORTED_PIXEL_CI_SUITES = (
     "runtime",
     "full",
 )
+SUPPORTED_PIXEL_DEBUG_TOOLS = (
+    "latency",
+)
 
 
 @dataclass(frozen=True)
@@ -206,6 +209,17 @@ def pixel_ci_command(
         command.append("--run-only")
     command.append(suite)
     return command, [("PIXEL_SERIAL", target.serial or target.id)]
+
+
+def pixel_debug_command(
+    target: TargetRef,
+    *,
+    tool: str,
+) -> tuple[list[str | pathlib.Path], list[tuple[str, str]]]:
+    if tool == "latency":
+        return script_command("pixel_touch_latency_probe.sh", target=target)
+    supported = ", ".join(SUPPORTED_PIXEL_DEBUG_TOOLS)
+    raise SystemExit(f"shadowctl: unsupported Pixel debug tool {tool!r}; expected one of {supported}")
 
 
 def vm_processes() -> list[str]:
@@ -594,6 +608,7 @@ def synthetic_target_for_dry_run(
 ) -> TargetRef | None:
     if not enabled or command_name not in {
         "ci",
+        "debug",
         "ota-sideload",
         "restore-android",
         "root-flash",
@@ -1139,6 +1154,11 @@ def cmd_pixel_stage(args: argparse.Namespace) -> int:
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 
+def cmd_pixel_debug(args: argparse.Namespace) -> int:
+    command, env = pixel_debug_command(args.target_ref, tool=args.tool)
+    return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
+
+
 def cmd_root_prep(args: argparse.Namespace) -> int:
     command, env = script_command("pixel_root_prep.sh")
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
@@ -1371,7 +1391,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  sc -t vm status\n"
             "  sc -t vm open timeline\n"
             "  sc -t pixel open camera\n"
-            "  sc -t pixel ci camera"
+            "  sc -t pixel ci camera\n"
+            "  sc -t pixel debug latency"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1581,6 +1602,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Suite to stage. Defaults to full.",
     )
     stage.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
+
+    debug = add_command(
+        subparsers,
+        "debug",
+        "Run an explicit target-specific debug tool.",
+        cmd_pixel_debug,
+        supported_target_kinds=("pixel",),
+        parents=(target_parser,),
+    )
+    debug.add_argument("tool", choices=SUPPORTED_PIXEL_DEBUG_TOOLS)
+    debug.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
 
     root_prep = add_command(
         subparsers,

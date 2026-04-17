@@ -52,7 +52,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 ## Near-Term Steps
 
 - [x] Run the Linux-direct probe first.
-  `just pixel-linux-audio-spike` now runs end-to-end on the rooted Pixel and produced audible output. The current narrow proof is synthesized PCM tone playback through ALSA `plughw:0,0` with a Pixel-specific `speaker-mm1` mixer route during takeover.
+  Historical note: the deleted `pixel_linux_audio_spike.sh` proof produced audible output on the rooted Pixel. Current audio validation should use `just pixel-ci sound` or `just pixel-ci podcast`.
 - [ ] Prove the native Android bridge shape on a real Pixel.
   During rooted takeover, play a known MP3 through a bionic-native helper from `adb shell` and confirm the speaker path still works.
 - [ ] Pick packaging and IPC.

@@ -17,7 +17,7 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - Use `just pixel-ci <suite>` for rooted-Pixel CI subsets (`quick`, `shell`, `timeline`, `camera`, `nostr`, `sound`, `audio`, `podcast`, `runtime`, `full`).
 - Use `sc -t pixel ci <suite>` / `sc -t pixel stage <suite>` for the underlying rooted-Pixel CI and artifact staging CLI. `just pixel-ci`, `just pixel-stage`, and `just pixel-run` are convenience wrappers.
 - Use `sc root-prep` for host-side rooting assets and `sc -t pixel root-check`, `sc -t pixel root-patch`, `sc -t pixel root-flash`, or `sc -t pixel ota-sideload` for rooted-Pixel setup/recovery.
-- Use `just run target=pixel ...` / `just stop target=pixel` for the supported rooted-Pixel shell lane. Lower-level runtime/probe commands still exist for narrower debugging.
+- Use `just run target=pixel ...` / `just stop target=pixel` for the supported rooted-Pixel shell lane. Explicit debug tooling should be reached through `sc -t pixel debug ...`, not ad hoc one-off scripts.
 - Run `just pre-merge` before handoff and before claiming the repo is green.
 
 ## Current Checks
@@ -27,10 +27,11 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - `just smoke target=vm` keeps the VM lane local-only, artifact-driven, and free of guest-side Cargo/Rust while still resetting the runtime state image each run.
 - `just run target=vm` / `just stop target=vm` are the public VM session entrypoints. VM inspection/control goes through `sc -t vm <subcommand>`.
 - `scripts/shadowctl` is the target-aware operator CLI behind the public run/stop wrappers, VM diagnostics, and rooted-Pixel shell control recipes; use `-t vm`, `-t pixel`, or a specific Pixel serial as needed.
-- `just pre-commit` runs shell syntax checks, flake evaluation, and `just ui-check`.
+- `just pre-commit` runs the script inventory check, recursive shell syntax checks, flake evaluation, and `just ui-check`.
 - `just pre-merge` runs `just pre-commit` and `just smoke target=vm`.
 - `just pixel-ci full` runs the current rooted-Pixel CI lane: timeline lifecycle, camera capture, runtime sound, runtime podcast playback, and the runtime Nostr timeline against a host-local relay over USB on a connected rooted device.
 - `sc -t pixel ci <subset>` is the preferred ad hoc hardware gate for invasive app- or device-specific changes before landing; use a specific serial from `sc devices` when multiple Pixels are attached.
 - `just pixel-ci <subset>` remains a convenience wrapper over that canonical CLI shape.
 - `sc root-prep` prepares host-side Pixel rooting assets. Device-specific setup/recovery commands use `sc -t pixel ...` or a concrete serial.
+- `scripts/script_inventory.tsv` classifies every file under `scripts/`; update it when adding, moving, or deleting script-layer files.
 - `just land` wraps `scripts/land.sh` and is the only allowed path to merge a worktree branch into the root `master`.
