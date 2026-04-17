@@ -19,6 +19,17 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `just smoke target=vm` for VM shell lifecycle.
   - `just pixel-ci <suite>` for rooted-Pixel hardware subsets.
 
+## Agent Handoff
+
+- Treat this as a parent/platform status plan, not the best first coding target.
+- Prefer assigning implementation agents to the child plans: `todos/app-metadata.md`, `todos/cashu.md`, `todos/camera-rs.md`, `todos/gpu.md`, and `todos/sound.md`.
+- Own only cross-app runtime contracts here: lifecycle, viewport, input, host protocol, OS API shape, and validation lanes.
+- Do not put app product requirements here. Move app-specific work into the matching app plan.
+- Do not put build tools back inside the VM. VM and Pixel lanes should consume host-built/staged artifacts.
+- Keep the public operator surface small: `just run`, `just stop`, `just smoke`, `just pixel-ci`, `just pre-commit`, `just pre-merge`, and `shadowctl`.
+- If adding scripts, update the script inventory classification and keep them in an accepted bucket.
+- Avoid running multiple VM smokes concurrently; stale/high-CPU microVMs have caused misleading soft-lock-style failures.
+
 ## Milestones
 
 - [x] Make the runtime operator and docs surface truthful.

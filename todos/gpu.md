@@ -19,6 +19,18 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Is the client using real hardware-backed GPU rendering?
   - Is the compositor path still forcing a slower SHM handoff?
 
+## Agent Handoff
+
+- This is a hardware/performance plan. Use rooted Pixel measurements as truth; VM/host results are supporting evidence only.
+- Do not revive deleted bring-up scripts casually. If a low-level probe is still needed, prefer `sc -t pixel debug ...` plus script inventory classification.
+- Keep audio out of GPU validation unless the task explicitly touches media. Avoid long playback while testing.
+- Likely write areas: `ui/apps/shadow-blitz-demo/`, guest compositor rendering/import paths, Pixel staging/session helpers, and targeted `pixel-ci` suites.
+- Do not conflate the proven `gpu_softbuffer` lane with the unresolved direct `gpu` lane. State which lane a change targets.
+- Do not add build steps inside the VM or device. Pixel/VM should consume host-built and staged artifacts.
+- Coordinate with compositor agents before changing buffer import/presentation semantics.
+- Validate with narrow Pixel runs first, then `just pre-commit`; use `just pixel-ci nostr` or another targeted suite for rooted hardware proof; run `just pre-merge` before landing repo-wide changes.
+- Avoid concurrent VM smokes and stale QEMU/MicroVM processes while measuring latency.
+
 ## Current State
 
 ### Done

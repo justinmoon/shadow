@@ -15,6 +15,18 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Share host/guest helpers only where the behavior is genuinely common.
 - Validate each chunk with `just ui-check`; use `just smoke target=vm` when startup, launch, shell, or control behavior changes.
 
+## Agent Handoff
+
+- Do not collapse the host and guest compositors. They target different environments for real reasons.
+- Goal: smaller guest modules, shared policy/helpers where true, and better tests. Not one binary.
+- First deliverable should be a responsibility map for `ui/crates/shadow-compositor-guest/src/main.rs`.
+- Pick one low-risk seam per change: launch/session policy, input/touch, DRM/KMS frame handling, control state, or env/config parsing.
+- Avoid broad rewrites that change launch mode, app focus, shell/home behavior, or frame output without adding focused tests.
+- Likely write areas: `ui/crates/shadow-compositor-guest/`, `ui/crates/shadow-compositor-common/`, `ui/crates/shadow-ui-core/`, and VM launch config only if startup behavior changes.
+- Coordinate with app-metadata agents before changing app ids, Wayland app ids, or launch environment names.
+- Validate refactors with `just ui-check`; run `just smoke target=vm` for startup/control/shell behavior; use a targeted Pixel shell suite only if DRM/KMS or rooted session behavior changes.
+- Avoid concurrent VM smokes while testing. Local QEMU/MicroVM runs are resource-sensitive.
+
 ## Milestones
 
 - [x] Extract shared compositor control and launch helpers into `shadow-compositor-common`.
@@ -36,5 +48,5 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 - There are two compositors for a reason: the host compositor targets a host Wayland/winit-style environment, while the guest compositor drives DRM/KMS on VM/Pixel-like targets.
 - The goal is shared policy and smaller files, not forcing one binary.
+- The guest compositor is on the critical path for both VM smoke and rooted-Pixel shell runs. Prefer boring, testable extractions.
 - Any change that touches launch mode, control socket state, app focus, or frame output needs VM smoke coverage before landing.
-

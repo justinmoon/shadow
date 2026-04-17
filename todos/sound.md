@@ -38,6 +38,17 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Prove URL playback with a tiny local HTTP fixture smoke before touching real third-party feeds in gates.
 - Defer true progressive streaming until a concrete app needs “start before full fetch completes.”
 
+## Agent Handoff
+
+- This plan is mostly complete. New agents should only take it if working on visible progress, seek, volume, timeouts, or backend hardening.
+- Avoid long audible playback while validating. Start playback only long enough to observe success, then stop/restore promptly.
+- Keep default branch gates offline-safe. File-backed fixtures remain the default; URL playback should use local HTTP fixtures unless explicitly running an external/manual test.
+- Do not make the macOS aggregate gate depend on a private remote Linux host. Linux-authoritative URL tests should stay explicit or run where Linux is available.
+- Likely write areas: `rust/runtime-audio-host/`, audio helper crates, podcast runtime app code, `scripts/ci/runtime_app_podcast_player_url_smoke.sh`, and media control handling in UI/compositor code.
+- Coordinate with app-metadata before changing podcast bundle/config metadata.
+- Validate with host/file smokes first; run the URL smoke on Linux or explicitly opt in; use targeted `just pixel-ci sound` or `just pixel-ci podcast` only when rooted hardware behavior changes.
+- Use `SHADOW_AUDIO_SPIKE_VALIDATE_ONLY=1` where possible to prove fetch/decode without depending on ALSA hardware.
+
 ## Milestones
 
 - [x] App-facing audio seam exists.

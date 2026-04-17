@@ -19,6 +19,17 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Run in the rooted `su` domain on device; plain `shell` is not the policy target.
 - Keep takeover changes conservative until capture works; do not assume display allocator services can be killed.
 
+## Agent Handoff
+
+- This plan is already far along. New agents should focus on M7: cleaner validation/productization, not rediscovering the provider path.
+- Use the supported operator lanes: `just pixel-ci camera` or `sc -t pixel ci camera`. Do not revive deleted one-off camera wrapper scripts unless there is a clear new `shadowctl debug` command.
+- Device proofs should use rooted Pixel hardware. The known device `0B191JEC203253` is available when a device is needed.
+- The working takeover profile preserves `vendor.qti.hardware.display.allocator`. Do not switch camera capture back to the generic full-stop path without proving it on hardware.
+- Likely write areas: `rust/shadow-camera-provider-host/`, `rust/runtime-camera-host/`, `runtime/app-camera/`, `scripts/ci/pixel_ci.sh`, Pixel runtime helpers, and validation docs.
+- Coordinate with Cashu if QR scanning needs camera frames, and with app-metadata if app bundle/config metadata moves.
+- Avoid adding more private scripts. If a lower-level diagnostic is needed, prefer a classified `shadowctl debug` command plus script inventory updates.
+- Validate with host camera smoke where possible, then `just pixel-ci camera`; use `just pre-commit` for non-device changes and `just pre-merge` before landing.
+
 ## Milestones
 
 - [x] M0: Bootstrap crate and Android build path.
@@ -111,3 +122,4 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The historical manual Pixel camera runtime wrappers were removed during script-surface cleanup. Current validation should use `just pixel-ci camera` or `sc -t pixel ci camera`.
 - Runtime camera note: async runtime app state will not repaint on device unless `SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS` is set. The camera lane now opts into that poll thread explicitly because capture completion arrives after the initial click dispatch returns.
 - Takeover note: the camera runtime app cannot use the generic full-stop runtime takeover path on this Pixel. The working profile preserves `vendor.qti.hardware.display.allocator`, and `pixel_guest_ui_drm.sh` now supports that reduced-stop mode via `PIXEL_TAKEOVER_STOP_ALLOCATOR=0`.
+- Script-surface note: the project intentionally deleted historical probe wrappers. Keep future diagnostics discoverable through `shadowctl`, `just pixel-ci camera`, or a classified debug bucket.
