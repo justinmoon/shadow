@@ -7,8 +7,11 @@ import {
 } from "@shadow/app-runtime-solid";
 import {
   addCashuMint,
+  captureStill,
   checkCashuMintQuote,
   createCashuMintQuote,
+  decodeQrCode,
+  listCameras,
   listCashuWallets,
   payCashuInvoice,
   receiveCashuToken,
@@ -65,6 +68,24 @@ type PayInvoiceReceipt = {
   state: string;
 };
 
+type CameraDevice = {
+  id: string;
+  label: string;
+  lensFacing: string;
+};
+
+type CaptureStillReceipt = {
+  cameraId: string;
+  imageDataUrl: string;
+  isMock: boolean;
+  mimeType: string;
+};
+
+type DecodeQrCodeReceipt = {
+  codeCount: number;
+  payload: string;
+};
+
 type WalletAppConfig = {
   defaultMintUrl?: string;
   defaultFundAmountSats?: number;
@@ -76,12 +97,31 @@ type StatusState =
   | { kind: "success"; message: string }
   | { kind: "error"; message: string };
 
+type ScannedPayload =
+  | { kind: "token"; value: string }
+  | { kind: "mint"; value: string }
+  | { kind: "invoice"; value: string }
+  | { kind: "unsupported"; value: string };
+
+type ScanOutcome = {
+  kind: "idle" | "working" | "success" | "unsupported" | "duplicate" | "error";
+  message: string;
+  payload: string;
+  payloadKind: ScannedPayload["kind"] | "";
+};
+
 const DEFAULT_FUND_AMOUNT_SATS = 100;
 const DEFAULT_SEND_AMOUNT_SATS = 21;
 const DEFAULT_STATUS: StatusState = {
   kind: "idle",
   message:
     "Trust one mint, then fund via Lightning, send and receive Cashu tokens, or pay a BOLT11 invoice.",
+};
+const DEFAULT_SCAN_OUTCOME: ScanOutcome = {
+  kind: "idle",
+  message: "Scan a Cashu token, mint URL, or BOLT11 invoice.",
+  payload: "",
+  payloadKind: "",
 };
 
 export const runtimeDocumentCss = `
@@ -367,6 +407,35 @@ body {
   overflow-wrap: anywhere;
 }
 
+.wallet-scan-result {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 20px;
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.wallet-scan-result-idle,
+.wallet-scan-result-working {
+  background: rgba(17, 24, 39, 0.06);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  color: #374151;
+}
+
+.wallet-scan-result-success {
+  background: rgba(22, 163, 74, 0.12);
+  border: 1px solid rgba(22, 163, 74, 0.18);
+  color: #166534;
+}
+
+.wallet-scan-result-unsupported,
+.wallet-scan-result-duplicate,
+.wallet-scan-result-error {
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.18);
+  color: #991b1b;
+}
+
 .wallet-qr {
   align-self: center;
   display: flex;
@@ -428,12 +497,7 @@ function parsePositiveInt(value: string): number | null {
 }
 
 function shortMintLabel(mintUrl: string): string {
-  try {
-    const url = new URL(mintUrl);
-    return url.host || mintUrl;
-  } catch {
-    return mintUrl;
-  }
+  return mintUrl.replace(/^https?:\/\//i, "").split(/[/?#]/, 1)[0] || mintUrl;
 }
 
 function quoteStatusMessage(quote: MintQuoteReceipt): string {
@@ -448,6 +512,76 @@ function quoteStatusMessage(quote: MintQuoteReceipt): string {
     default:
       return `Quote ${quote.quoteId} is ${quote.state}.`;
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isDuplicateTokenError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("already") ||
+    normalized.includes("duplicate") ||
+    normalized.includes("replay") ||
+    normalized.includes("spent");
+}
+
+function looksLikeCashuToken(payload: string): boolean {
+  return /^cashu[ab]/i.test(payload.trim());
+}
+
+function looksLikeBolt11Invoice(payload: string): boolean {
+  return /^ln(bc|tb|bcrt)[a-z0-9]+$/i.test(payload.trim());
+}
+
+function normalizeLightningPayload(payload: string): string {
+  const trimmed = payload.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("lightning:")) {
+    return trimmed.slice("lightning:".length).trim();
+  }
+
+  if (lower.startsWith("bitcoin:")) {
+    const queryStart = trimmed.indexOf("?");
+    if (queryStart >= 0) {
+      for (const pair of trimmed.slice(queryStart + 1).split("&")) {
+        const [key, value = ""] = pair.split("=", 2);
+        if (key.toLowerCase() === "lightning" && value.trim()) {
+          try {
+            return decodeURIComponent(value.replace(/\+/g, "%20")).trim();
+          } catch {
+            return value.trim();
+          }
+        }
+      }
+    }
+  }
+
+  return trimmed;
+}
+
+function isMintUrl(payload: string): boolean {
+  return /^https?:\/\/[^\s/?#]+(?::\d+)?(?:[/?#][^\s]*)?$/i.test(payload.trim());
+}
+
+function classifyScannedPayload(payload: string): ScannedPayload {
+  const trimmed = payload.trim();
+  const invoice = normalizeLightningPayload(trimmed);
+
+  if (looksLikeCashuToken(trimmed)) {
+    return { kind: "token", value: trimmed };
+  }
+  if (looksLikeBolt11Invoice(invoice)) {
+    return { kind: "invoice", value: invoice.toLowerCase() };
+  }
+  if (isMintUrl(trimmed)) {
+    return { kind: "mint", value: trimmed };
+  }
+  return { kind: "unsupported", value: trimmed };
+}
+
+function pickScanCamera(cameras: CameraDevice[]): CameraDevice | null {
+  return cameras.find((camera) => camera.lensFacing === "rear") ?? cameras[0] ?? null;
 }
 
 function QrCode(props: { rows: string[] }) {
@@ -492,6 +626,7 @@ export function renderApp() {
   const [latestReceive, setLatestReceive] = createSignal<ReceiveTokenReceipt | null>(null);
   const [latestPayment, setLatestPayment] = createSignal<PayInvoiceReceipt | null>(null);
   const [status, setStatus] = createSignal<StatusState>(DEFAULT_STATUS);
+  const [scanOutcome, setScanOutcome] = createSignal<ScanOutcome>(DEFAULT_SCAN_OUTCOME);
   const [busy, setBusy] = createSignal(false);
 
   const activeWallet = () =>
@@ -715,6 +850,188 @@ export function renderApp() {
     );
   }
 
+  async function trustScannedMint(mintUrl: string) {
+    setMintDraft(mintUrl);
+    const existing = wallets().find((wallet) => wallet.mintUrl === mintUrl);
+    if (existing) {
+      setSelectedMintUrl(existing.mintUrl);
+      setStatus({
+        kind: "success",
+        message: `Scanned mint ${shortMintLabel(existing.mintUrl)} is already trusted.`,
+      });
+      setScanOutcome({
+        kind: "success",
+        message: `Trusted mint selected: ${shortMintLabel(existing.mintUrl)}.`,
+        payload: mintUrl,
+        payloadKind: "mint",
+      });
+      return;
+    }
+
+    const wallet = await addCashuMint({ mintUrl }) as WalletSummary;
+    await refreshWallets("scan-mint");
+    setSelectedMintUrl(wallet.mintUrl);
+    setScanOutcome({
+      kind: "success",
+      message: `Trusted scanned mint: ${shortMintLabel(wallet.mintUrl)}.`,
+      payload: mintUrl,
+      payloadKind: "mint",
+    });
+    setStatus({
+      kind: "success",
+      message: `Trusted scanned mint ${shortMintLabel(wallet.mintUrl)} for sats.`,
+    });
+  }
+
+  async function receiveScannedToken(token: string) {
+    setTokenDraft(token);
+    try {
+      const receipt = await receiveCashuToken({ token }) as ReceiveTokenReceipt;
+      setLatestReceive(receipt);
+      await refreshWallets("scan-token");
+      setScanOutcome({
+        kind: "success",
+        message:
+          `Received ${receipt.receivedAmountSats} sats from scanned Cashu token.`,
+        payload: token,
+        payloadKind: "token",
+      });
+      setStatus({
+        kind: "success",
+        message:
+          `Received ${receipt.receivedAmountSats} sats from ${shortMintLabel(receipt.mintUrl)}.`,
+      });
+    } catch (error) {
+      const message = errorMessage(error);
+      const duplicate = isDuplicateTokenError(message);
+      setScanOutcome({
+        kind: duplicate ? "duplicate" : "error",
+        message: duplicate
+          ? "Scanned token was already redeemed or replayed."
+          : message,
+        payload: token,
+        payloadKind: "token",
+      });
+      setStatus({
+        kind: "error",
+        message: duplicate
+          ? "Scanned token was already redeemed or replayed. Manual paste remains available."
+          : message,
+      });
+    }
+  }
+
+  async function payScannedInvoice(invoice: string) {
+    setInvoiceDraft(invoice);
+    const receipt = await payCashuInvoice({
+      invoice,
+      mintUrl: selectedMintUrl(),
+    }) as PayInvoiceReceipt;
+    setLatestPayment(receipt);
+    await refreshWallets("scan-invoice");
+    setScanOutcome({
+      kind: "success",
+      message: `Paid scanned invoice for ${receipt.amountSats} sats.`,
+      payload: invoice,
+      payloadKind: "invoice",
+    });
+    setStatus({
+      kind: "success",
+      message:
+        `Paid scanned invoice for ${receipt.amountSats} sats with ${receipt.feePaidSats} sats of final fee.`,
+    });
+  }
+
+  async function routeScannedPayload(scanned: ScannedPayload) {
+    switch (scanned.kind) {
+      case "token":
+        await receiveScannedToken(scanned.value);
+        return;
+      case "mint":
+        try {
+          await trustScannedMint(scanned.value);
+        } catch (error) {
+          const message = errorMessage(error);
+          setScanOutcome({
+            kind: "error",
+            message,
+            payload: scanned.value,
+            payloadKind: "mint",
+          });
+          setStatus({ kind: "error", message });
+        }
+        return;
+      case "invoice":
+        try {
+          await payScannedInvoice(scanned.value);
+        } catch (error) {
+          const message = errorMessage(error);
+          setScanOutcome({
+            kind: "error",
+            message,
+            payload: scanned.value,
+            payloadKind: "invoice",
+          });
+          setStatus({ kind: "error", message });
+        }
+        return;
+      case "unsupported":
+        setScanOutcome({
+          kind: "unsupported",
+          message: "Unsupported QR payload. Use Cashu tokens, mint URLs, or BOLT11 invoices.",
+          payload: scanned.value,
+          payloadKind: "unsupported",
+        });
+        setStatus({
+          kind: "error",
+          message: "Unsupported QR payload. Paste it manually if it belongs somewhere else.",
+        });
+        return;
+    }
+  }
+
+  async function scanQrCode() {
+    setBusy(true);
+    setStatus({
+      kind: "working",
+      message: "Scanning QR code through Shadow OS camera.",
+    });
+    setScanOutcome({
+      kind: "working",
+      message: "Capturing a still frame and decoding its QR payload.",
+      payload: "",
+      payloadKind: "",
+    });
+    invalidateRuntimeApp();
+
+    try {
+      const cameras = await listCameras() as CameraDevice[];
+      const camera = pickScanCamera(cameras);
+      if (!camera) {
+        throw new Error("No camera is available for QR scanning.");
+      }
+
+      const capture = await captureStill({ cameraId: camera.id }) as CaptureStillReceipt;
+      const decoded = await decodeQrCode({
+        imageDataUrl: capture.imageDataUrl,
+      }) as DecodeQrCodeReceipt;
+      const scanned = classifyScannedPayload(decoded.payload);
+      await routeScannedPayload(scanned);
+    } catch (error) {
+      const message = errorMessage(error);
+      setScanOutcome({
+        kind: "error",
+        message,
+        payload: "",
+        payloadKind: "",
+      });
+      setStatus({ kind: "error", message });
+    } finally {
+      setBusy(false);
+      invalidateRuntimeApp();
+    }
+  }
+
   onMount(() => {
     void refreshWallets("startup").then(() => invalidateRuntimeApp());
   });
@@ -732,6 +1049,9 @@ export function renderApp() {
       data-shadow-latest-receive-amount={String(latestReceive()?.receivedAmountSats ?? "")}
       data-shadow-latest-payment-amount={String(latestPayment()?.amountSats ?? "")}
       data-shadow-latest-payment-state={latestPayment()?.state ?? ""}
+      data-shadow-scan-kind={scanOutcome().kind}
+      data-shadow-scan-payload={scanOutcome().payload}
+      data-shadow-scan-payload-kind={scanOutcome().payloadKind}
       data-shadow-total-balance={String(totalBalanceSats())}
     >
       <section class="wallet-hero">
@@ -806,6 +1126,29 @@ export function renderApp() {
               Trust Mint
             </button>
           </div>
+        </div>
+
+        <div class="wallet-card">
+          <p class="wallet-section-kicker">Scan QR</p>
+          <p class="wallet-label">
+            Read a Cashu token, mint URL, or BOLT11 invoice from the camera.
+          </p>
+          <div class="wallet-toolbar">
+            <button
+              class="wallet-button wallet-button-secondary"
+              data-shadow-id="cashu-scan-qr"
+              disabled={busy()}
+              onClick={() => void scanQrCode()}
+            >
+              {scanOutcome().kind === "working" ? "Scanning..." : "Scan QR"}
+            </button>
+          </div>
+          <p class={`wallet-scan-result wallet-scan-result-${scanOutcome().kind}`}>
+            {scanOutcome().message}
+          </p>
+          <Show when={scanOutcome().payload}>
+            <p class="wallet-payload wallet-mono">{scanOutcome().payload}</p>
+          </Show>
         </div>
 
         <div class="wallet-card">

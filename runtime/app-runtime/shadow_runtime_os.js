@@ -30,6 +30,10 @@ export function logCamera(message) {
   return getCameraApi().debugLog(message);
 }
 
+export function decodeQrCode(request = {}) {
+  return getCameraApi().decodeQrCode(request);
+}
+
 export function createPlayer(request = {}) {
   return getAudioApi().createPlayer(request);
 }

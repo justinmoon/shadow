@@ -32,7 +32,7 @@ help:
 	'' \
 	'Pixel CI and setup:' \
 	'  just pixel-prep-settings' \
-	'  sc -t pixel ci [quick|shell|timeline|camera|nostr|sound|audio|podcast|runtime|full]' \
+	'  sc -t pixel ci [quick|shell|timeline|camera|cashu|nostr|sound|audio|podcast|runtime|full]' \
 	'  sc -t pixel stage <suite>' \
 	'  sc root-prep' \
 	'  sc -t pixel root-check' \

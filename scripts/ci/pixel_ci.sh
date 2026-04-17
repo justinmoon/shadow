@@ -15,6 +15,7 @@ Suites:
   shell     timeline + camera
   timeline  timeline lifecycle only
   camera    camera launch + capture only
+  cashu     Cashu wallet shell lifecycle only
   nostr     runtime Nostr timeline against a host-local relay over USB
   sound     runtime sound app only
   audio     runtime sound + podcast
@@ -34,6 +35,7 @@ quick
 shell
 timeline
 camera
+cashu
 nostr
 sound
 audio
@@ -82,7 +84,7 @@ while [[ $# -gt 0 ]]; do
       requested_target="${1#*=}"
       shift
       ;;
-    quick|shell|timeline|camera|nostr|sound|audio|podcast|runtime|full)
+    quick|shell|timeline|camera|cashu|nostr|sound|audio|podcast|runtime|full)
       suite="$1"
       shift
       ;;
@@ -135,6 +137,9 @@ case "$suite" in
   camera)
     suite_steps=(camera)
     ;;
+  cashu)
+    suite_steps=(cashu)
+    ;;
   nostr)
     suite_steps=(nostr)
     ;;
@@ -181,7 +186,7 @@ append_shell_stage_app() {
 
 for step in "${suite_steps[@]}"; do
   case "$step" in
-    timeline|camera)
+    timeline|camera|cashu)
       need_shell=1
       ;;
     sound)
@@ -419,6 +424,11 @@ for step in "${suite_steps[@]}"; do
       run_display_ready_gate "$step"
       run_step camera "prove rooted Pixel shell camera capture" \
         env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/ci/pixel_shell_camera_smoke.sh" --run-only
+      ;;
+    cashu)
+      run_display_ready_gate "$step"
+      run_step cashu "prove rooted Pixel shell Cashu wallet lifecycle" \
+        env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/ci/pixel_shell_timeline_smoke.sh" --app cashu --run-only
       ;;
     sound)
       if (( run_only == 0 )); then

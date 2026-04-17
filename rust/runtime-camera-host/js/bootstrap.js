@@ -13,6 +13,10 @@ function installShadowRuntimeCamera() {
     debugLog(message) {
       core.ops.op_runtime_camera_debug_log(String(message));
     },
+
+    async decodeQrCode(request = {}) {
+      return await core.ops.op_runtime_camera_decode_qr_code(request);
+    },
   };
 
   globalThis.Shadow = {

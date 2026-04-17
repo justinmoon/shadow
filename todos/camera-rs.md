@@ -5,7 +5,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 ## Scope
 
 - Land one supported live-camera path in Shadow that is good enough to unblock other projects.
-- Keep the public platform seam narrow: `listCameras()` and `captureStill()`.
+- Keep the public platform seam narrow: `listCameras()`, `captureStill()`, and `decodeQrCode()`.
 - Support the real user flow: open Camera in the shell, see a live preview, switch between front/back cameras, take a photo, render the photo in-app.
 - Keep Pixel behavior live-or-fail. Do not silently fall back to mock on device.
 - Out of scope for now: video recording, non-root support, generic multi-device portability, full HAL/provider productization.
@@ -38,6 +38,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [~] Re-run live validation on the supported phone until `pixel-shell-camera-smoke` is repeatable.
 - [x] Keep the smoke strict: require auto-click, live capture completion, and a rerender after completion.
 - [~] Make Pixel runtime/device errors surface clearly to the app and scripts instead of timing out or looking like transport flakes.
+- [ ] Add a rooted-Pixel QR proof path that validates real camera capture plus QR decode end to end, not just app launch or broker activity.
+- [ ] Add a cleaner camera error taxonomy so apps can distinguish broker unavailable, no camera, capture timeout, invalid image data, and QR-not-found without string matching.
+- [ ] Decide whether QR-oriented capture needs first-class controls such as torch, higher-resolution stills, or scan-specific capture defaults before more apps depend on it.
 - [ ] Define the smallest truthful preview contract: one live stream in the rooted Pixel shell lane, no video recording or background session complexity yet.
 - [ ] Thread camera enumeration metadata through the existing `listCameras()` seam so the app can distinguish front/back cameras without adding a new public platform API.
 - [ ] Design the runtime/provider path for preview frames so the app can render a low-latency live view without regressing still capture correctness.
@@ -53,6 +56,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The camera app is already a valid platform integration example: it exercises the OS API from TS and renders the result.
 - Mock capture is explicit-only (`SHADOW_RUNTIME_CAMERA_ALLOW_MOCK=1`). There is no implicit camera fallback.
 - The main remaining risk is operational reliability and latency, not basic access to the camera stack.
+- Cashu QR integration proved the current seam is useful on host/VM, but the live rooted-Pixel lane still does not prove that real captures are reliable enough for QR-heavy product flows.
+- `listCameras()` still infers `label` and `lensFacing` from id suffixes rather than provider metadata, so camera selection remains somewhat heuristic and device-specific.
+- The QR path currently round-trips a full captured still as a base64 image data URL before decode. That kept integration simple, but it is still a poor fit for repeated scans, low-latency scanning, or larger images.
 - Suite-aware shell app staging landed at `da68380`; the camera suite now stages only `selectedAppIds: ["camera"]`.
 - The next warm-stage bottleneck turned out to be the full runtime helper push to `/data/local/tmp/shadow-runtime-gnu`, about 1.23 GB even on cache-hit host bundles.
 - `fac53c8` landed the runtime-helper delta sync in `scripts/pixel/pixel_push.sh`: the first run after the manifest format change still does a one-time full sync; later warm runs hit `Runtime helper dir cacheHit`.

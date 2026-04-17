@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import time
+from html.parser import HTMLParser
 
 session = json.loads(os.environ["SESSION_JSON"])
 bundle_path = session["bundlePath"]
@@ -52,6 +53,24 @@ def unwrap(response):
     return response["payload"]
 
 
+class MainAttrParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.attrs = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "main" and self.attrs is None:
+            self.attrs = dict(attrs)
+
+
+def attrs(html: str) -> dict[str, str]:
+    parser = MainAttrParser()
+    parser.feed(html)
+    if parser.attrs is None:
+        raise SystemExit("runtime-app-camera-smoke: render missing main shell attrs")
+    return parser.attrs
+
+
 initial = unwrap(send({"op": "render"}))
 if "Take Photo" not in initial["html"]:
     raise SystemExit("runtime-app-camera-smoke: initial render missing Take Photo button")
@@ -71,11 +90,19 @@ while time.time() < deadline:
 if "Ready on" not in ready_html:
     raise SystemExit("runtime-app-camera-smoke: app never surfaced camera readiness")
 
+ready_attrs = attrs(ready_html)
+if ready_attrs.get("data-shadow-status-kind") != "ready":
+    raise SystemExit("runtime-app-camera-smoke: ready render missing status marker")
+
 clicked = unwrap(
     send({"op": "dispatch", "event": {"targetId": "capture", "type": "click"}})
 )
 if "Capturing..." not in clicked["html"]:
     raise SystemExit("runtime-app-camera-smoke: click did not surface capture state")
+
+clicked_attrs = attrs(clicked["html"])
+if clicked_attrs.get("data-shadow-status-kind") != "capturing":
+    raise SystemExit("runtime-app-camera-smoke: click render missing capturing marker")
 
 final_html = None
 deadline = time.time() + 15
@@ -95,6 +122,14 @@ if final_html is None:
 
 if "data:image/" not in final_html:
     raise SystemExit("runtime-app-camera-smoke: final render missing image data URL")
+
+final_attrs = attrs(final_html)
+if final_attrs.get("data-shadow-status-kind") != "ready":
+    raise SystemExit("runtime-app-camera-smoke: final render missing ready status marker")
+if final_attrs.get("data-shadow-last-capture-is-mock") != "true":
+    raise SystemExit("runtime-app-camera-smoke: final render missing mock capture marker")
+if not (final_attrs.get("data-shadow-last-capture-bytes") or "").isdigit():
+    raise SystemExit("runtime-app-camera-smoke: final render missing capture byte marker")
 
 assert process.stdin is not None
 process.stdin.close()

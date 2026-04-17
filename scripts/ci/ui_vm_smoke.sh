@@ -266,6 +266,22 @@ echo "vm-smoke: home timeline again"
 "$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
 wait_for_home_state timeline "timeline second home" >/dev/null
 
+echo "vm-smoke: open cashu"
+"$SCRIPT_DIR/shadowctl" open cashu -t vm >/dev/null
+state_after_cashu_open="$(wait_for_open_state cashu "cashu open")"
+
+echo "vm-smoke: home cashu"
+"$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
+state_after_cashu_home="$(wait_for_home_state cashu "cashu home")"
+
+echo "vm-smoke: reopen cashu"
+"$SCRIPT_DIR/shadowctl" open cashu -t vm >/dev/null
+state_after_cashu_reopen="$(wait_for_open_state cashu "cashu reopen")"
+
+echo "vm-smoke: home cashu again"
+"$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
+wait_for_home_state cashu "cashu second home" >/dev/null
+
 echo "vm-smoke: open camera"
 "$SCRIPT_DIR/shadowctl" open camera -t vm >/dev/null
 state_after_camera_open="$(wait_for_open_state camera "camera open")"
@@ -284,6 +300,9 @@ echo "vm-smoke: screenshot"
 STATE_AFTER_TIMELINE_OPEN="$state_after_timeline_open" \
 STATE_AFTER_TIMELINE_HOME="$state_after_timeline_home" \
 STATE_AFTER_TIMELINE_REOPEN="$state_after_timeline_reopen" \
+STATE_AFTER_CASHU_OPEN="$state_after_cashu_open" \
+STATE_AFTER_CASHU_HOME="$state_after_cashu_home" \
+STATE_AFTER_CASHU_REOPEN="$state_after_cashu_reopen" \
 STATE_AFTER_CAMERA_OPEN="$state_after_camera_open" \
 STATE_AFTER_CAMERA_HOME="$state_after_camera_home" \
 STATE_AFTER_PODCAST_OPEN="$state_after_podcast_open" \
@@ -295,6 +314,9 @@ import os
 timeline_open = json.loads(os.environ["STATE_AFTER_TIMELINE_OPEN"])
 timeline_home = json.loads(os.environ["STATE_AFTER_TIMELINE_HOME"])
 timeline_reopen = json.loads(os.environ["STATE_AFTER_TIMELINE_REOPEN"])
+cashu_open = json.loads(os.environ["STATE_AFTER_CASHU_OPEN"])
+cashu_home = json.loads(os.environ["STATE_AFTER_CASHU_HOME"])
+cashu_reopen = json.loads(os.environ["STATE_AFTER_CASHU_REOPEN"])
 camera_open = json.loads(os.environ["STATE_AFTER_CAMERA_OPEN"])
 camera_home = json.loads(os.environ["STATE_AFTER_CAMERA_HOME"])
 podcast_open = json.loads(os.environ["STATE_AFTER_PODCAST_OPEN"])
@@ -322,6 +344,9 @@ def expect_home(state: dict, app_id: str, label: str) -> None:
 expect_open(timeline_open, "timeline", "timeline open")
 expect_home(timeline_home, "timeline", "timeline home")
 expect_open(timeline_reopen, "timeline", "timeline reopen")
+expect_open(cashu_open, "cashu", "cashu open")
+expect_home(cashu_home, "cashu", "cashu home")
+expect_open(cashu_reopen, "cashu", "cashu reopen")
 expect_open(camera_open, "camera", "camera open")
 expect_home(camera_home, "camera", "camera home")
 expect_open(podcast_open, "podcast", "podcast open")

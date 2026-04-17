@@ -341,7 +341,16 @@ export function renderApp() {
   });
 
   return (
-    <main class="camera-shell">
+    <main
+      class="camera-shell"
+      data-shadow-camera-count={String(cameras().length)}
+      data-shadow-selected-camera={selectedCameraId() ?? ""}
+      data-shadow-status-kind={status().kind}
+      data-shadow-last-capture-camera-id={lastCapture()?.cameraId ?? ""}
+      data-shadow-last-capture-is-mock={lastCapture() == null ? "" : String(lastCapture()!.isMock)}
+      data-shadow-last-capture-bytes={String(lastCapture()?.bytes ?? "")}
+      data-shadow-last-capture-mime-type={lastCapture()?.mimeType ?? ""}
+    >
       <section class="camera-hero">
         <p class="camera-eyebrow">Shadow Camera</p>
         <h1 class="camera-title">Take Photo</h1>

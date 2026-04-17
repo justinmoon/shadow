@@ -8,23 +8,25 @@ source "$SCRIPT_DIR/lib/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
-run_dir="$(pixel_prepare_named_run_dir "$(pixel_shell_runs_dir)")"
-run_log="$run_dir/pixel-shell-timeline-smoke.log"
-state_after_open_path="$run_dir/state-after-open.json"
-state_after_home_path="$run_dir/state-after-home.json"
-state_after_reopen_path="$run_dir/state-after-reopen.json"
-session_host_pid_path="$run_dir/guest-ui-host.pid"
-control_socket_path="$(pixel_shell_control_socket_path)"
 restore_timeout_secs="${PIXEL_SHELL_SMOKE_RESTORE_TIMEOUT_SECS:-60}"
 session_pid=""
 latest_state_json=""
-launcher_args=(--no-camera-runtime --app timeline)
+app_id="${PIXEL_SHELL_LIFECYCLE_APP_ID:-timeline}"
+run_only=0
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --run-only)
-        launcher_args=(--run-only "${launcher_args[@]}")
+        run_only=1
+        shift
+        ;;
+      --app)
+        app_id="${2:?pixel_shell_timeline_smoke: --app requires a value}"
+        shift 2
+        ;;
+      app=*)
+        app_id="${1#app=}"
         shift
         ;;
       *)
@@ -37,6 +39,18 @@ parse_args() {
 
 parse_args "$@"
 
+run_dir="$(pixel_prepare_named_run_dir "$(pixel_shell_runs_dir)")"
+run_log="$run_dir/pixel-shell-${app_id}-smoke.log"
+state_after_open_path="$run_dir/state-after-${app_id}-open.json"
+state_after_home_path="$run_dir/state-after-${app_id}-home.json"
+state_after_reopen_path="$run_dir/state-after-${app_id}-reopen.json"
+session_host_pid_path="$run_dir/guest-ui-host.pid"
+control_socket_path="$(pixel_shell_control_socket_path)"
+launcher_args=(--no-camera-runtime --app "$app_id")
+if (( run_only == 1 )); then
+  launcher_args=(--run-only "${launcher_args[@]}")
+fi
+
 restore_android_best_effort() {
   if pixel_android_display_stack_restored "$serial"; then
     return 0
@@ -47,7 +61,7 @@ restore_android_best_effort() {
 
 dump_run_log() {
   if [[ -f "$run_log" ]]; then
-    printf '\n== pixel-shell-timeline-smoke log ==\n' >&2
+    printf '\n== pixel-shell-%s-smoke log ==\n' "$app_id" >&2
     sed -n '1,260p' "$run_log" >&2
   fi
 }
@@ -208,7 +222,7 @@ wait_for_state() {
     fi
     if ! session_still_running; then
       dump_run_log
-      echo "pixel-shell-timeline-smoke: session exited before ${description}" >&2
+      echo "pixel-shell-${app_id}-smoke: session exited before ${description}" >&2
       exit 1
     fi
     sleep 1
@@ -219,7 +233,7 @@ wait_for_state() {
   fi
 
   dump_run_log
-  echo "pixel-shell-timeline-smoke: timed out waiting for ${description}" >&2
+  echo "pixel-shell-${app_id}-smoke: timed out waiting for ${description}" >&2
   exit 1
 }
 
@@ -240,18 +254,18 @@ pixel_restore_android_best_effort "$serial" "$restore_timeout_secs"
 session_pid="$!"
 
 wait_for_state "rooted Pixel shell control socket" 300 shell_control_socket_ready
-wait_for_state "timeline launch through rooted Pixel shell" 60 \
-  state_matches timeline timeline '' '' timeline
+wait_for_state "${app_id} launch through rooted Pixel shell" 60 \
+  state_matches "$app_id" "$app_id" '' '' "$app_id"
 printf '%s\n' "$latest_state_json" >"$state_after_open_path"
 
 "$SCRIPT_DIR/shadowctl" --target "$serial" home >/dev/null
-wait_for_state "timeline shelved after home" 30 \
-  state_matches '' '' timeline timeline ''
+wait_for_state "${app_id} shelved after home" 30 \
+  state_matches '' '' "$app_id" "$app_id" ''
 printf '%s\n' "$latest_state_json" >"$state_after_home_path"
 
-"$SCRIPT_DIR/shadowctl" --target "$serial" open timeline >/dev/null
-wait_for_state "timeline reopen through rooted Pixel shell" 30 \
-  state_matches timeline timeline '' '' timeline
+"$SCRIPT_DIR/shadowctl" --target "$serial" open "$app_id" >/dev/null
+wait_for_state "${app_id} reopen through rooted Pixel shell" 30 \
+  state_matches "$app_id" "$app_id" '' '' "$app_id"
 printf '%s\n' "$latest_state_json" >"$state_after_reopen_path"
 
 STATE_AFTER_OPEN="$(cat "$state_after_open_path")" \
@@ -259,6 +273,7 @@ STATE_AFTER_HOME="$(cat "$state_after_home_path")" \
 STATE_AFTER_REOPEN="$(cat "$state_after_reopen_path")" \
 RUN_LOG="$run_log" \
 SERIAL="$serial" \
+APP_ID="$app_id" \
 python3 - <<'PY'
 import json
 import os
@@ -266,34 +281,37 @@ import os
 open_state = json.loads(os.environ["STATE_AFTER_OPEN"])
 home_state = json.loads(os.environ["STATE_AFTER_HOME"])
 reopen_state = json.loads(os.environ["STATE_AFTER_REOPEN"])
+app_id = os.environ["APP_ID"]
+prefix = f"pixel-shell-{app_id}-smoke"
 
 
 def expect(condition: bool, message: str) -> None:
     if not condition:
-        raise SystemExit(f"pixel-shell-timeline-smoke: {message}")
+        raise SystemExit(f"{prefix}: {message}")
 
 
-expect(open_state.get("focused") == "timeline", f"open focused={open_state.get('focused')!r}")
-expect("timeline" in open_state.get("launched", []), f"open launched={open_state.get('launched')!r}")
-expect("timeline" in open_state.get("mapped", []), f"open mapped={open_state.get('mapped')!r}")
-expect("timeline" not in open_state.get("shelved", []), f"open shelved={open_state.get('shelved')!r}")
+expect(open_state.get("focused") == app_id, f"open focused={open_state.get('focused')!r}")
+expect(app_id in open_state.get("launched", []), f"open launched={open_state.get('launched')!r}")
+expect(app_id in open_state.get("mapped", []), f"open mapped={open_state.get('mapped')!r}")
+expect(app_id not in open_state.get("shelved", []), f"open shelved={open_state.get('shelved')!r}")
 
 expect(home_state.get("focused") in ("", None), f"home focused={home_state.get('focused')!r}")
-expect("timeline" in home_state.get("launched", []), f"home launched={home_state.get('launched')!r}")
-expect("timeline" not in home_state.get("mapped", []), f"home mapped={home_state.get('mapped')!r}")
-expect("timeline" in home_state.get("shelved", []), f"home shelved={home_state.get('shelved')!r}")
+expect(app_id in home_state.get("launched", []), f"home launched={home_state.get('launched')!r}")
+expect(app_id not in home_state.get("mapped", []), f"home mapped={home_state.get('mapped')!r}")
+expect(app_id in home_state.get("shelved", []), f"home shelved={home_state.get('shelved')!r}")
 
-expect(reopen_state.get("focused") == "timeline", f"reopen focused={reopen_state.get('focused')!r}")
-expect("timeline" in reopen_state.get("launched", []), f"reopen launched={reopen_state.get('launched')!r}")
-expect("timeline" in reopen_state.get("mapped", []), f"reopen mapped={reopen_state.get('mapped')!r}")
-expect("timeline" not in reopen_state.get("shelved", []), f"reopen shelved={reopen_state.get('shelved')!r}")
+expect(reopen_state.get("focused") == app_id, f"reopen focused={reopen_state.get('focused')!r}")
+expect(app_id in reopen_state.get("launched", []), f"reopen launched={reopen_state.get('launched')!r}")
+expect(app_id in reopen_state.get("mapped", []), f"reopen mapped={reopen_state.get('mapped')!r}")
+expect(app_id not in reopen_state.get("shelved", []), f"reopen shelved={reopen_state.get('shelved')!r}")
 
 print(
     json.dumps(
         {
-            "result": "pixel-shell-timeline-ok",
+            "app": app_id,
             "serial": os.environ["SERIAL"],
             "log": os.environ["RUN_LOG"],
+            "result": f"pixel-shell-{app_id}-ok",
         },
         indent=2,
     )

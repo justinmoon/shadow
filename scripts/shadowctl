@@ -23,6 +23,7 @@ SUPPORTED_PIXEL_CI_SUITES = (
     "shell",
     "timeline",
     "camera",
+    "cashu",
     "nostr",
     "sound",
     "audio",

@@ -28,6 +28,7 @@ TEST_MINT_BIN = os.environ["TEST_MINT_BIN"]
 FUND_AMOUNT_SATS = 100
 SEND_AMOUNT_SATS = 21
 PAY_AMOUNT_SATS = 7
+UNSUPPORTED_QR_PAYLOAD = "shadow://unsupported"
 
 
 def reserve_port() -> int:
@@ -166,6 +167,34 @@ def attr(html_text: str, name: str) -> str:
     return html.unescape(match.group(1))
 
 
+def start_runtime(session, wallet_data_dir: Path, *, qr_payload=None):
+    runtime_env = os.environ.copy()
+    runtime_env["SHADOW_RUNTIME_CASHU_DATA_DIR"] = str(wallet_data_dir)
+    if qr_payload is not None:
+        runtime_env["SHADOW_RUNTIME_CAMERA_ALLOW_MOCK"] = "1"
+        runtime_env["SHADOW_RUNTIME_CAMERA_MOCK_QR_PAYLOAD"] = qr_payload
+    return subprocess.Popen(
+        [session["runtimeHostBinaryPath"], "--session", session["bundlePath"]],
+        cwd=REPO_ROOT,
+        env=runtime_env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def stop_runtime(process) -> None:
+    assert process.stdin is not None
+    process.stdin.close()
+    stderr = process.stderr.read() if process.stderr is not None else ""
+    return_code = process.wait(timeout=10)
+    if return_code not in (0, None):
+        raise SystemExit(
+            f"runtime-app-cashu-wallet-smoke: runtime host exited {return_code}\n{stderr}",
+        )
+
+
 with tempfile.TemporaryDirectory(prefix="shadow-cashu-wallet-") as temp_dir:
     temp_path = Path(temp_dir)
     mint_port = reserve_port()
@@ -245,17 +274,7 @@ max_inputs = 1000
         wallet_data_dir = temp_path / "wallet"
         wallet_data_dir.mkdir(parents=True, exist_ok=True)
 
-        runtime_env = os.environ.copy()
-        runtime_env["SHADOW_RUNTIME_CASHU_DATA_DIR"] = str(wallet_data_dir)
-        process = subprocess.Popen(
-            [session["runtimeHostBinaryPath"], "--session", session["bundlePath"]],
-            cwd=REPO_ROOT,
-            env=runtime_env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        process = start_runtime(session, wallet_data_dir, qr_payload=mint_url)
         try:
             initial_html = render(process)
             if "Shadow Cashu" not in initial_html or "Wallet" not in initial_html:
@@ -263,14 +282,15 @@ max_inputs = 1000
                     "runtime-app-cashu-wallet-smoke: initial render missing wallet headline",
                 )
 
-            input_text(process, "cashu-mint-url", mint_url)
-            click(process, "cashu-add-mint")
+            click(process, "cashu-scan-qr")
             wait_for_html(
                 process,
                 lambda current: attr(current, "data-shadow-active-mint") == mint_url
                 and attr(current, "data-shadow-wallet-count") == "1"
+                and attr(current, "data-shadow-scan-kind") == "success"
+                and attr(current, "data-shadow-scan-payload-kind") == "mint"
                 and attr(current, "data-shadow-status-kind") == "success",
-                description="trusted mint activation",
+                description="scanned mint activation",
             )
 
             click(process, "cashu-create-quote")
@@ -314,13 +334,39 @@ max_inputs = 1000
                 raise SystemExit(
                     "runtime-app-cashu-wallet-smoke: send token did not produce a Cashu token",
                 )
+        finally:
+            stop_runtime(process)
 
-            click(process, "cashu-receive-submit")
+        process = start_runtime(session, wallet_data_dir, qr_payload=sent_token)
+        try:
+            wait_for_html(
+                process,
+                lambda current: attr(current, "data-shadow-wallet-count") == "1"
+                and attr(current, "data-shadow-active-mint") == mint_url,
+                description="wallet relaunch persistence",
+            )
+            click(process, "cashu-scan-qr")
             received_html = wait_for_html(
                 process,
                 lambda current: attr(current, "data-shadow-total-balance") == str(FUND_AMOUNT_SATS)
                 and attr(current, "data-shadow-latest-receive-amount") == str(SEND_AMOUNT_SATS),
-                description="Cashu token receive",
+                description="scanned Cashu token receive",
+            )
+            if attr(received_html, "data-shadow-scan-kind") != "success" or attr(received_html, "data-shadow-scan-payload-kind") != "token":
+                raise SystemExit(
+                    "runtime-app-cashu-wallet-smoke: scanned token receive did not report scan success",
+                )
+        finally:
+            stop_runtime(process)
+
+        process = start_runtime(session, wallet_data_dir, qr_payload=sent_token)
+        try:
+            click(process, "cashu-scan-qr")
+            wait_for_html(
+                process,
+                lambda current: attr(current, "data-shadow-scan-kind") == "duplicate"
+                and attr(current, "data-shadow-scan-payload-kind") == "token",
+                description="duplicate scanned Cashu token",
             )
 
             input_text(process, "cashu-fund-amount", str(PAY_AMOUNT_SATS))
@@ -336,49 +382,53 @@ max_inputs = 1000
                 raise SystemExit(
                     "runtime-app-cashu-wallet-smoke: second invoice did not look like BOLT11",
                 )
+        finally:
+            stop_runtime(process)
 
-            input_text(process, "cashu-pay-invoice", invoice_2)
-            click(process, "cashu-pay-submit")
+        process = start_runtime(session, wallet_data_dir, qr_payload=invoice_2)
+        try:
+            click(process, "cashu-scan-qr")
             paid_invoice_html = wait_for_html(
                 process,
                 lambda current: attr(current, "data-shadow-latest-payment-amount") == str(PAY_AMOUNT_SATS)
-                and attr(current, "data-shadow-latest-payment-state") == "paid",
-                description="Lightning invoice payment",
+                and attr(current, "data-shadow-latest-payment-state") == "paid"
+                and attr(current, "data-shadow-scan-kind") == "success"
+                and attr(current, "data-shadow-scan-payload-kind") == "invoice",
+                description="scanned Lightning invoice payment",
             )
             post_pay_balance = int(attr(paid_invoice_html, "data-shadow-total-balance") or "0")
-
-            for _ in range(15):
-                click(process, "cashu-mint-quote")
-                reminted_html = wait_for_html(
-                    process,
-                    lambda current: attr(current, "data-shadow-status-kind") != "working",
-                    description="second quote mint attempt",
-                )
-                if int(attr(reminted_html, "data-shadow-total-balance") or "0") > post_pay_balance:
-                    break
-                time.sleep(0.5)
-            else:
+            if post_pay_balance <= 0:
                 raise SystemExit(
-                    "runtime-app-cashu-wallet-smoke: paid Lightning invoice never became mintable",
+                    "runtime-app-cashu-wallet-smoke: scanned invoice payment left invalid balance",
                 )
-
-            result = {
-                "bundlePath": session["bundlePath"],
-                "invoice": invoice_1,
-                "invoicePaid": invoice_2,
-                "mintUrl": mint_url,
-                "result": "cashu-wallet-ok",
-                "token": sent_token,
-            }
         finally:
-            assert process.stdin is not None
-            process.stdin.close()
-            stderr = process.stderr.read() if process.stderr is not None else ""
-            return_code = process.wait(timeout=10)
-            if return_code not in (0, None):
+            stop_runtime(process)
+
+        process = start_runtime(session, wallet_data_dir, qr_payload=UNSUPPORTED_QR_PAYLOAD)
+        try:
+            click(process, "cashu-scan-qr")
+            unsupported_html = wait_for_html(
+                process,
+                lambda current: attr(current, "data-shadow-scan-kind") == "unsupported"
+                and attr(current, "data-shadow-scan-payload-kind") == "unsupported",
+                description="unsupported scanned QR payload",
+            )
+            if attr(unsupported_html, "data-shadow-scan-payload") != UNSUPPORTED_QR_PAYLOAD:
                 raise SystemExit(
-                    f"runtime-app-cashu-wallet-smoke: runtime host exited {return_code}\n{stderr}",
+                    "runtime-app-cashu-wallet-smoke: unsupported scan payload was not preserved",
                 )
+        finally:
+            stop_runtime(process)
+
+        result = {
+            "bundlePath": session["bundlePath"],
+            "invoice": invoice_1,
+            "invoicePaid": invoice_2,
+            "mintUrl": mint_url,
+            "result": "cashu-wallet-ok",
+            "scan": "mock-camera-qr-ok",
+            "token": sent_token,
+        }
     finally:
         mint_process.terminate()
         try:

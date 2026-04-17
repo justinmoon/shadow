@@ -13,15 +13,20 @@ use deno_core::op2;
 use deno_core::Extension;
 use deno_error::JsErrorBox;
 use image::ImageFormat;
+use image::{DynamicImage, ImageBuffer, Luma};
+use qrcodegen::{QrCode, QrCodeEcc};
 use serde::{Deserialize, Serialize};
 
 const CAMERA_ENDPOINT_ENV: &str = "SHADOW_RUNTIME_CAMERA_ENDPOINT";
 const CAMERA_ALLOW_MOCK_ENV: &str = "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK";
+const CAMERA_MOCK_QR_PAYLOAD_ENV: &str = "SHADOW_RUNTIME_CAMERA_MOCK_QR_PAYLOAD";
 const CAMERA_TIMEOUT_MS_ENV: &str = "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS";
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const CONNECT_RETRY_ATTEMPTS: usize = 10;
 const CONNECT_RETRY_DELAY_MS: u64 = 250;
 const MOCK_CAMERA_ID: &str = "mock/rear/0";
+const MOCK_QR_BORDER_MODULES: u32 = 4;
+const MOCK_QR_MODULE_SCALE: u32 = 8;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CameraDevice {
@@ -50,6 +55,19 @@ pub struct CaptureStillReceipt {
     pub is_mock: bool,
     #[serde(rename = "mimeType")]
     pub mime_type: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct DecodeQrCodeRequest {
+    #[serde(rename = "imageDataUrl")]
+    image_data_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DecodeQrCodeReceipt {
+    #[serde(rename = "codeCount")]
+    pub code_count: usize,
+    pub payload: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,7 +142,7 @@ impl CameraHostConfig {
     fn capture_still(&self, request: CaptureStillRequest) -> Result<CaptureStillReceipt, String> {
         match self.endpoint.as_deref() {
             Some(endpoint) => self.capture_via_broker(endpoint, request),
-            None if self.allow_mock => Ok(mock_capture(request.camera_id)),
+            None if self.allow_mock => mock_capture(request.camera_id),
             None => Err(missing_camera_backend_error()),
         }
     }
@@ -318,6 +336,17 @@ fn op_runtime_camera_debug_log(#[string] message: String) {
     eprintln!("[shadow-runtime-camera] {message}");
 }
 
+#[op2]
+#[serde]
+async fn op_runtime_camera_decode_qr_code(
+    #[serde] request: DecodeQrCodeRequest,
+) -> Result<DecodeQrCodeReceipt, JsErrorBox> {
+    tokio::task::spawn_blocking(move || decode_qr_code(request))
+        .await
+        .map_err(|error| JsErrorBox::generic(format!("camera.decodeQrCode join: {error}")))?
+        .map_err(JsErrorBox::generic)
+}
+
 fn label_for_camera_id(camera_id: &str) -> String {
     if camera_id.ends_with("/0") {
         return String::from("Rear Camera");
@@ -343,7 +372,15 @@ fn mock_cameras() -> Vec<CameraDevice> {
     }]
 }
 
-fn mock_capture(camera_id: Option<String>) -> CaptureStillReceipt {
+fn mock_capture(camera_id: Option<String>) -> Result<CaptureStillReceipt, String> {
+    if let Some(payload) = env::var(CAMERA_MOCK_QR_PAYLOAD_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    {
+        return mock_qr_capture(camera_id, &payload);
+    }
+
     let timestamp = unix_time_ms();
     let card = timestamp % 10_000;
     let svg = format!(
@@ -359,14 +396,29 @@ fn mock_capture(camera_id: Option<String>) -> CaptureStillReceipt {
 </svg>"
     );
 
-    CaptureStillReceipt {
+    Ok(CaptureStillReceipt {
         bytes: svg.len(),
         camera_id: camera_id.unwrap_or_else(|| String::from(MOCK_CAMERA_ID)),
         captured_at_ms: timestamp,
         image_data_url: format!("data:image/svg+xml;utf8,{}", encode_svg_data_url(&svg)),
         is_mock: true,
         mime_type: String::from("image/svg+xml"),
-    }
+    })
+}
+
+fn mock_qr_capture(
+    camera_id: Option<String>,
+    payload: &str,
+) -> Result<CaptureStillReceipt, String> {
+    let (image_data_url, bytes) = build_qr_png_data_url(payload)?;
+    Ok(CaptureStillReceipt {
+        bytes,
+        camera_id: camera_id.unwrap_or_else(|| String::from(MOCK_CAMERA_ID)),
+        captured_at_ms: unix_time_ms(),
+        image_data_url,
+        is_mock: true,
+        mime_type: String::from("image/png"),
+    })
 }
 
 fn encode_svg_data_url(svg: &str) -> String {
@@ -451,12 +503,118 @@ fn build_capture_image_data_url(
     ))
 }
 
+fn build_qr_png_data_url(payload: &str) -> Result<(String, usize), String> {
+    let qr = QrCode::encode_text(payload, QrCodeEcc::Medium)
+        .map_err(|error| format!("camera mock QR encode: {error:?}"))?;
+    let module_count = qr.size() as u32;
+    let image_size = (module_count + MOCK_QR_BORDER_MODULES * 2) * MOCK_QR_MODULE_SCALE;
+    let mut image = ImageBuffer::from_pixel(image_size, image_size, Luma([255_u8]));
+
+    for y in 0..module_count {
+        for x in 0..module_count {
+            if !qr.get_module(x as i32, y as i32) {
+                continue;
+            }
+            let left = (x + MOCK_QR_BORDER_MODULES) * MOCK_QR_MODULE_SCALE;
+            let top = (y + MOCK_QR_BORDER_MODULES) * MOCK_QR_MODULE_SCALE;
+            for dy in 0..MOCK_QR_MODULE_SCALE {
+                for dx in 0..MOCK_QR_MODULE_SCALE {
+                    image.put_pixel(left + dx, top + dy, Luma([0_u8]));
+                }
+            }
+        }
+    }
+
+    let mut encoded = Cursor::new(Vec::new());
+    DynamicImage::ImageLuma8(image)
+        .write_to(&mut encoded, ImageFormat::Png)
+        .map_err(|error| format!("camera mock QR encode png: {error}"))?;
+    let output_bytes = encoded.into_inner();
+    Ok((
+        format!(
+            "data:image/png;base64,{}",
+            BASE64_STANDARD.encode(&output_bytes)
+        ),
+        output_bytes.len(),
+    ))
+}
+
 fn image_format_for_mime_type(mime_type: &str) -> Option<ImageFormat> {
     match mime_type {
         "image/jpeg" | "image/jpg" => Some(ImageFormat::Jpeg),
         "image/png" => Some(ImageFormat::Png),
         _ => None,
     }
+}
+
+fn decode_qr_code(request: DecodeQrCodeRequest) -> Result<DecodeQrCodeReceipt, String> {
+    let image_data_url = request
+        .image_data_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| String::from("camera.decodeQrCode requires imageDataUrl"))?;
+    decode_qr_code_from_image_data_url(image_data_url)
+}
+
+fn decode_qr_code_from_image_data_url(image_data_url: &str) -> Result<DecodeQrCodeReceipt, String> {
+    let image_bytes = decode_image_data_url(image_data_url)?;
+    let image = image::load_from_memory(&image_bytes)
+        .map_err(|error| format!("camera.decodeQrCode decode image: {error}"))?;
+    let mut prepared = rqrr::PreparedImage::prepare(image.to_luma8());
+    let grids = prepared.detect_grids();
+    let code_count = grids.len();
+    if code_count == 0 {
+        return Err(String::from(
+            "camera.decodeQrCode found no QR code in captured image",
+        ));
+    }
+
+    let mut errors = Vec::new();
+    for grid in grids {
+        match grid.decode() {
+            Ok((_meta, payload)) if !payload.trim().is_empty() => {
+                return Ok(DecodeQrCodeReceipt {
+                    code_count,
+                    payload,
+                });
+            }
+            Ok((_meta, _payload)) => errors.push(String::from("empty QR payload")),
+            Err(error) => errors.push(error.to_string()),
+        }
+    }
+
+    Err(format!(
+        "camera.decodeQrCode could not decode {} QR code{}: {}",
+        code_count,
+        if code_count == 1 { "" } else { "s" },
+        errors.join("; "),
+    ))
+}
+
+fn decode_image_data_url(image_data_url: &str) -> Result<Vec<u8>, String> {
+    let (header, payload) = image_data_url
+        .split_once(',')
+        .ok_or_else(|| String::from("camera.decodeQrCode imageDataUrl must be a data URL"))?;
+    let normalized_header = header.to_ascii_lowercase();
+    if !normalized_header.starts_with("data:image/") {
+        return Err(String::from(
+            "camera.decodeQrCode imageDataUrl must contain image data",
+        ));
+    }
+    if !normalized_header.contains(";base64") {
+        return Err(String::from(
+            "camera.decodeQrCode imageDataUrl must be base64 encoded",
+        ));
+    }
+
+    let compact_payload = payload
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace())
+        .collect::<String>();
+    BASE64_STANDARD
+        .decode(compact_payload)
+        .map_err(|error| format!("camera.decodeQrCode decode base64 image: {error}"))
 }
 
 fn normalize_rotation_degrees(rotation_degrees: u16) -> u16 {
@@ -474,7 +632,8 @@ extension!(
     ops = [
         op_runtime_camera_list_cameras,
         op_runtime_camera_capture_still,
-        op_runtime_camera_debug_log
+        op_runtime_camera_debug_log,
+        op_runtime_camera_decode_qr_code
     ],
     esm_entry_point = "ext:runtime_camera_host_extension/bootstrap.js",
     esm = [dir "js", "bootstrap.js"],
@@ -487,11 +646,13 @@ pub fn init_extension() -> Extension {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_capture_image_data_url, image_format_for_mime_type, missing_camera_backend_error,
-        normalize_rotation_degrees, parse_truthy_env, BASE64_STANDARD, CAMERA_ALLOW_MOCK_ENV,
-        CAMERA_ENDPOINT_ENV,
+        build_capture_image_data_url, build_qr_png_data_url, decode_image_data_url,
+        decode_qr_code_from_image_data_url, image_format_for_mime_type,
+        missing_camera_backend_error, normalize_rotation_degrees, parse_truthy_env,
+        BASE64_STANDARD, CAMERA_ALLOW_MOCK_ENV, CAMERA_ENDPOINT_ENV,
     };
-    use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
+    use base64::Engine as _;
+    use image::{DynamicImage, ImageBuffer, ImageFormat, Luma, Rgb};
     use std::io::Cursor;
 
     fn sample_png_base64(width: u32, height: u32) -> String {
@@ -505,6 +666,20 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         image.write_to(&mut output, ImageFormat::Png).unwrap();
         BASE64_STANDARD.encode(output.into_inner())
+    }
+
+    fn sample_qr_png_data_url(payload: &str) -> String {
+        build_qr_png_data_url(payload).unwrap().0
+    }
+
+    fn sample_blank_png_data_url() -> String {
+        let image = DynamicImage::ImageLuma8(ImageBuffer::from_pixel(64, 64, Luma([255_u8])));
+        let mut output = Cursor::new(Vec::new());
+        image.write_to(&mut output, ImageFormat::Png).unwrap();
+        format!(
+            "data:image/png;base64,{}",
+            BASE64_STANDARD.encode(output.into_inner())
+        )
     }
 
     #[test]
@@ -563,5 +738,34 @@ mod tests {
         let rotated = image::load_from_memory_with_format(&decoded, ImageFormat::Png).unwrap();
         assert_eq!(rotated.width(), 1);
         assert_eq!(rotated.height(), 2);
+    }
+
+    #[test]
+    fn decodes_fixed_qr_image_payloads() {
+        let fixtures = [
+            "cashuAeyJ0b2tlbiI6ImZpeHR1cmUifQ",
+            "https://mint.example.test",
+            "lnbcrt1u1pjfixture",
+            "shadow://unsupported",
+        ];
+
+        for fixture in fixtures {
+            let receipt =
+                decode_qr_code_from_image_data_url(&sample_qr_png_data_url(fixture)).unwrap();
+            assert_eq!(receipt.payload, fixture);
+            assert_eq!(receipt.code_count, 1);
+        }
+    }
+
+    #[test]
+    fn rejects_missing_qr_code() {
+        let error = decode_qr_code_from_image_data_url(&sample_blank_png_data_url()).unwrap_err();
+        assert!(error.contains("found no QR code"));
+    }
+
+    #[test]
+    fn rejects_non_image_data_urls() {
+        let error = decode_image_data_url("data:text/plain;base64,SGVsbG8=").unwrap_err();
+        assert!(error.contains("image data"));
     }
 }

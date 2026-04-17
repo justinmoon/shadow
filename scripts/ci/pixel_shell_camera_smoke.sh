@@ -140,6 +140,18 @@ expect(
     f"expected camera broker list+capture requests, got log: {broker_log!r}",
 )
 expect(
+    'data-shadow-status-kind="ready"' in session_output,
+    "camera app did not publish a ready status marker",
+)
+expect(
+    'data-shadow-last-capture-is-mock="false"' in session_output,
+    "camera app did not publish a live capture marker",
+)
+expect(
+    'data-shadow-last-capture-bytes="' in session_output,
+    "camera app did not publish capture byte metadata",
+)
+expect(
     "GCH_CameraDeviceSession: Create: Created a device session for camera 0" in logcat,
     "missing live camera device-session logcat marker",
 )

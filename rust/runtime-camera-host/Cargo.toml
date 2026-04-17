@@ -8,6 +8,8 @@ base64.workspace = true
 deno_core = { workspace = true, features = ["include_icu_data"] }
 deno_error.workspace = true
 image.workspace = true
+qrcodegen.workspace = true
+rqrr.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt"] }

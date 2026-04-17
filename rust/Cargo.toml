@@ -36,6 +36,7 @@ libc = "0.2"
 nostr = "0.44.2"
 nostr-sdk = "0.44.1"
 qrcodegen = "1.8.0"
+rqrr = "0.10.1"
 runtime-audio-host = { path = "runtime-audio-host" }
 runtime-camera-host = { path = "runtime-camera-host" }
 runtime-cashu-host = { path = "runtime-cashu-host" }
