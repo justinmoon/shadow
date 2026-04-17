@@ -34,7 +34,10 @@ pub struct CameraDevice {
     pub label: String,
     #[serde(rename = "lensFacing")]
     pub lens_facing: String,
-    #[serde(rename = "sensorOrientationDegrees", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "sensorOrientationDegrees",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub sensor_orientation_degrees: Option<u16>,
 }
 
@@ -189,9 +192,7 @@ impl CameraHostConfig {
 
         if response.camera_ids.is_empty() {
             if response.cameras.is_empty() {
-                return Err(String::from(
-                    "camera broker returned no camera descriptors",
-                ));
+                return Err(String::from("camera broker returned no camera descriptors"));
             }
         }
 
@@ -746,11 +747,12 @@ pub fn init_extension() -> Extension {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_capture_image_data_url, build_qr_png_data_url, decode_image_data_url,
+        build_capture_image_data_url, build_qr_png_data_url,
+        camera_devices_from_broker_list_response, decode_image_data_url,
         decode_qr_code_from_image_data_url, image_format_for_mime_type,
         missing_camera_backend_error, normalize_rotation_degrees, parse_truthy_env,
-        camera_devices_from_broker_list_response, BrokerCameraDevice, BrokerListResponse,
-        BASE64_STANDARD, CAMERA_ALLOW_MOCK_ENV, CAMERA_ENDPOINT_ENV,
+        BrokerCameraDevice, BrokerListResponse, BASE64_STANDARD, CAMERA_ALLOW_MOCK_ENV,
+        CAMERA_ENDPOINT_ENV,
     };
     use base64::Engine as _;
     use image::{DynamicImage, ImageBuffer, ImageFormat, Luma, Rgb};
