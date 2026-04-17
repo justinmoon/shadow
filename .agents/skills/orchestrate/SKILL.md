@@ -1,112 +1,104 @@
 ---
 name: orchestrate
-description: Orchestrate multi-step cleanup, migration, or refactor work across pika worktrees using one integration branch, bounded subagents, explicit write ownership, forge-native landing, and project-specific safety rules for staged Linux remote runs.
+description: Orchestrate Codex subagents to research, implement, review, and validate a multi-step software project while the current agent stays on the architectural thread.
 ---
 
 # Orchestrate
 
-Use this skill when running a multi-chunk implementation program in `pika` where you need to sequence work, delegate bounded subtasks, and keep checkpoints landable.
+This skill is for orchestrating Codex subagents to implement software.
+
+You are the orchestrator.
+
+Your job is to understand the objective, plan the work, talk with the user, and orchestrate subagents to research, implement, review, and validate. Use subagents to economize your own context window: you are the subject-matter expert on the overall goal, and if you spend too much context on bounded side work you lose sight of the architecture, the plan, and the user's intent.
+
+Stay in direct conversation with the user. Do not hide behind subagents. Ask clarifying questions when needed. If the architecture is slowing progress, assumptions are breaking, or the plan needs to change, tell the user plainly and adjust.
+
+Follow the repo instructions first. In this repo, landing to `master` goes through the `land` skill or `scripts/land.sh`.
 
 ## Default Shape
 
-- Keep one integration worktree/branch for the active program.
-- Use one implementation worker on the critical path.
-- Use one explorer/reviewer in parallel to audit assumptions, stale usage, and regressions.
-- Add a second implementation worker only when the write sets are clearly disjoint.
+- Keep the current agent on the main thread as orchestrator.
+- Usually keep a living plan in `todos/` and update it as work lands.
+- Use subagents for most bounded research, implementation, review, and validation work once the first seam is clear.
+- For nontrivial chunks, default to at least one worker and at least one reviewer.
+- Add more workers or reviewers when the seam is broad enough to justify it.
+- Prefer strong subagents for architectural work: `gpt-5.4` with `high` reasoning by default, `xhigh` when the task is especially ambiguous or review-heavy.
 
-## Worktree Rules
+## Roles
 
-- Run `./scripts/agent-brief` once per new worktree session before substantial work.
-- Do not keep doing large cleanup work on a shared scratch branch. Create a dedicated branch per chunk or per program.
-- If two chunks may conflict, put them in separate worktrees immediately instead of hoping the merge will be easy.
-- Keep a local untracked `JOURNAL.md` in the worktree for simplification opportunities, abstraction ideas, and cleanup candidates noticed in the weeds.
-  - Capture the note quickly and keep moving.
-  - Capture abstraction opportunities too, especially when you deliberately choose a smaller tactical seam over a larger redesign.
-  - Do not widen the active chunk just because the journal grew.
-  - Triage the journal at the end of the broader project or migration once the primary seams are landed.
-  - Before declaring the broader project done, review the journal and explicitly decide what to land now vs leave for later.
+### Orchestrator
 
-## Chunking Rules
+You own:
 
-- Make each chunk end in a truthful, landable state.
-- Prefer deleting migration scaffolding over layering more compatibility code on top.
-- Keep prompts aggressive, but scoped to one architectural seam at a time.
-- After each chunk:
-  - review the result
-  - validate locally
-  - do targeted live validation when the change affects hosted or remote CI paths
-  - upstream or checkpoint before starting the next risky chunk
+- understanding the goal
+- picking seams
+- assigning ownership
+- writing subagent prompts
+- integrating results
+- choosing validations
+- updating the plan
+- deciding when to land
+- communicating with the user
 
-## Staged Linux Remote Safety
+### Worker
 
-- Do not run multiple staged Linux remote lanes concurrently from the same worktree if they share the default remote prepared-output root.
-- The default remote work dir (`/var/tmp/pikaci-prepared-output`) is collision-prone for parallel runs from one worktree.
-- If parallel staged Linux remote validation is required, isolate it first:
-  - separate worktrees
-  - separate remote work dir roots
-  - or separate snapshot/request ids with guaranteed non-overlap
+A worker owns a bounded write set and should:
 
-## Delegation Pattern
+- stay inside scope
+- avoid reverting unrelated edits
+- run the required checks for the seam
+- report exact files changed and exact validations run
 
-For each chunk:
+### Reviewer
 
-1. Local orchestrator:
-   - identify the architectural seam
-   - inspect the current code enough to write a concrete prompt
-   - decide what should stay local vs delegated
-2. Worker:
-   - owns the implementation write set
-   - runs required checks
-   - reports exact live validation, not just local tests
-3. Explorer/reviewer:
-   - searches for stale usages, hidden consumers, rollout regressions, and misleading docs/comments
-   - should avoid editing files unless explicitly asked
+A reviewer is a standing lane on broad work.
 
-## Landing Pattern
+Use reviewers to look for:
 
-- Prefer forge-native flow for real checkpoints.
-- Land or checkpoint before opening the next risky branch.
-- Before pushing:
-  - ensure the branch is dedicated, not a shared scratch branch
-  - inspect divergence from `origin/master` and the tracked remote branch
-- After a chunk is locally green, push a dedicated branch immediately and use forge/`ph status`
-  as the canonical checkpoint before starting the next risky chunk in a new worktree or branch.
-- If a remote scratch branch has moved independently, do not fight it. Push a dedicated branch instead.
-- Land early; otherwise collapse to one integration branch.
+- hidden consumers
+- stale docs or config
+- rollout regressions
+- missing tests
+- migration code that can already be deleted
+- vague or undefined design language
 
-## Project-Specific Heuristics
+Use one reviewer when that is enough. Use multiple reviewers when independent review angles are valuable.
 
-- In CI/runtime work, prefer Nix-declared runtime contracts over imperative bash assembly in Rust.
-- Treat migration-only env knobs and selector logic as debt. Hard-cut them once the default path is real.
-- When a review finds "the real runtime works, but CI reconstructs it differently," make aligning CI to the real runtime the next chunk.
-- When a hosted/forge flow runs tooling from a temporary worktree, check whether the tool's state root is implicitly anchored to `cwd` before you design API/log/artifact integrations around it.
-  If the worktree is ephemeral, persist the tool state outside it first; otherwise every "structured" run contract will collapse back into flattened subprocess output.
-- When a producer already emits structured events and has loadable run metadata, inspect the consumer
-  seam before inventing a new protocol. In this repo, `pikaci` already had JSONL lifecycle events and
-  log metadata; the real gap was that `pika-git` flattened and discarded the durable state.
-- For temp-worktree CI in particular, prefer a single service-owned persistent state root over per-worktree `.state` trees.
-  If a tool already emits stable run IDs, make `run_id` plus that shared state root enough to reload run records, logs, and artifacts after worktree cleanup.
-- When parity is green, remove stale exclusions immediately and prove the normal default path.
-- Validate remote-authoritative paths.
-- When guest/runtime behavior moves into an Incus image, refresh/import the remote image before live
-  validation. Otherwise image drift can masquerade as a runtime regression.
-- When replacing `writeShellScript`/store-backed wrappers with guest-local scripts, inspect the realized
-  store object on `pika-build`:
-  - verify the shebang is at byte 0
-  - verify the mode is still executable
-  - do not assume a script generated inside a Nix build stayed runnable just because the source text looked right
-- After deleting a host-store seam, validate a low-risk control lane first (`pre-merge-rmp` is a good
-  default) before burning time on heavier desktop/OpenClaw lanes.
-- For hosted `pika-git` CI, prefer one deterministic shared `pikaci` state root near the forge state
-  directory over per-run scratch dirs. If `run_id` is the durable key, make the state root stable
-  enough that web/API code can load run records and logs later without requiring a DB migration.
+## Planning and Parallelism
 
-## Minimal Output Contract
+- Usually pair this skill with a living plan in `todos/`.
+- Keep the plan concise; it is the execution notebook, not a second design doc.
+- Keep `master` moving whenever a chunk is truthful and landable.
+- Use sibling worktrees when seams are clearly disjoint.
+- Keep one worker per clearly owned seam.
+- The orchestrator stays responsible for integration.
+
+## Prompt Contract
+
+Before delegating, inspect enough code to write a precise prompt.
+
+Every worker prompt should include:
+
+- the seam being attacked
+- the exact goal
+- owned files or directories
+- files or areas to avoid
+- required validations
+
+Tell workers explicitly that they are not alone in the codebase and must adapt to surrounding changes instead of fighting them.
+
+## Chunking and Landing
+
+- Prefer one architectural seam per chunk.
+- End each chunk in a truthful, landable state.
+- Delete migration scaffolding once the new default is real instead of layering compatibility forever.
+- Land aggressively to `master` once a chunk is green and coherent.
+- Only defer landing when landing would knowingly leave `master` broken or misleading.
 
 At the end of each chunk, be able to state:
 
-- what architectural seam changed
-- what migration/scaffolding was deleted
-- what exact validations passed
-- what remains, if anything
+- what seam changed
+- what was deleted or simplified
+- what validations passed
+- what remains open
 - what the next chunk should attack
