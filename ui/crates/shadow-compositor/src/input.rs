@@ -114,7 +114,7 @@ impl ShadowCompositor {
                 match intent {
                     KeyboardIntent::None => {}
                     KeyboardIntent::Media(action) => {
-                        let _ = self.handle_control_media(action);
+                        self.dispatch_control_media_async(action);
                     }
                     KeyboardIntent::Shell(action) => {
                         self.handle_shell_event(ShellEvent::Navigate(action));

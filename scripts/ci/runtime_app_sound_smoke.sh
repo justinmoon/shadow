@@ -73,7 +73,14 @@ asset_source_path = os.environ["ASSET_SOURCE_PATH"]
 fake_linux_spike_binary = os.environ["FAKE_LINUX_SPIKE_BINARY"]
 url_source_url = os.environ["URL_SOURCE_URL"]
 
-def run_scenario(name, session, extra_env, expected_source_fragment, capture_path=None):
+def run_scenario(
+    name,
+    session,
+    extra_env,
+    expected_source_fragment,
+    capture_path=None,
+    after_play=None,
+):
     bundle_path = session["bundlePath"]
     binary_path = session["runtimeHostBinaryPath"]
     process_env = dict(os.environ)
@@ -136,6 +143,25 @@ def run_scenario(name, session, extra_env, expected_source_fragment, capture_pat
             f"runtime-app-sound-smoke ({name}): timed out waiting for fragment {fragment!r}",
         )
 
+    def wait_for_capture(predicate, description, timeout_seconds=5):
+        deadline = time.time() + timeout_seconds
+        last_capture = None
+        while time.time() < deadline:
+            if capture_path is not None and os.path.exists(capture_path):
+                try:
+                    with open(capture_path, "r", encoding="utf-8") as handle:
+                        last_capture = json.load(handle)
+                except json.JSONDecodeError:
+                    time.sleep(0.05)
+                    continue
+                if predicate(last_capture):
+                    return last_capture
+            time.sleep(0.05)
+        raise SystemExit(
+            "runtime-app-sound-smoke "
+            f"({name}): timed out waiting for capture {description}; last={last_capture}"
+        )
+
     def dispatch_and_wait(target_id, fragment):
         payload = send_ok({"op": "dispatch", "event": {"targetId": target_id, "type": "click"}})
         html = payload["html"]
@@ -147,12 +173,8 @@ def run_scenario(name, session, extra_env, expected_source_fragment, capture_pat
         initial = send_ok({"op": "render"})
         prepared_html = dispatch_and_wait("prepare", "State:</span> idle")
         playing_html = dispatch_and_wait("play", "State:</span> playing")
-        if capture_path is not None:
-            deadline = time.time() + 2
-            while time.time() < deadline:
-                if os.path.exists(capture_path):
-                    break
-                time.sleep(0.05)
+        if after_play is not None:
+            after_play(dispatch_and_wait, wait_for_capture)
         stopped_html = dispatch_and_wait("stop", "State:</span> stopped")
         released_html = dispatch_and_wait("release", "State:</span> released")
 
@@ -220,22 +242,53 @@ memory = run_scenario(
 if "Backend:</span> memory" not in memory["backend_fragment"]:
     raise SystemExit("runtime-app-sound-smoke (memory): expected memory backend label")
 
-linux_spike = run_scenario(
-    "linux_spike",
-    file_session,
-    {
-        "SHADOW_RUNTIME_AUDIO_BACKEND": "linux_spike",
-        "SHADOW_RUNTIME_AUDIO_SPIKE_BINARY": fake_linux_spike_binary,
-        "SHADOW_AUDIO_SPIKE_TEST_SLEEP_SECS": "0.2",
-    },
-    f"Source:</span> file / {asset_source_path}",
-)
-if "Backend:</span> linux_spike" not in linux_spike["backend_fragment"]:
-    raise SystemExit(
-        "runtime-app-sound-smoke (linux_spike): expected linux_spike backend label"
-    )
-
 with tempfile.TemporaryDirectory() as tmp_dir:
+    file_capture_path = os.path.join(tmp_dir, "linux-spike-file.json")
+    captured_results = {}
+
+    def expect_gain(capture):
+        gain = capture.get("gain")
+        start_ms = capture.get("startMs")
+        return (
+            gain is not None
+            and start_ms is not None
+            and abs(float(gain) - 1.0) < 0.01
+            and int(start_ms) == 0
+        )
+
+    def expect_seek(capture):
+        start_ms = capture.get("startMs")
+        return start_ms is not None and int(start_ms) >= 1_000
+
+    def expect_volume(capture):
+        gain = capture.get("gain")
+        start_ms = capture.get("startMs")
+        return (
+            gain is not None
+            and start_ms is not None
+            and abs(float(gain) - 0.4) < 0.01
+            and int(start_ms) >= 1_000
+        )
+
+    def verify_file_linux_spike(dispatch_and_wait, wait_for_capture):
+        wait_for_capture(expect_gain, "initial play gain")
+        dispatch_and_wait("seek-forward", "Seeked forward by one second.")
+        wait_for_capture(expect_seek, "seek startMs")
+        dispatch_and_wait("volume-down", "Player volume reduced.")
+        wait_for_capture(expect_volume, "volume gain and persisted startMs")
+
+    def expect_url_capture(capture):
+        return (
+            capture.get("sourceKind") == "url"
+            and capture.get("url") == url_source_url
+        )
+
+    def verify_url_linux_spike(_dispatch_and_wait, wait_for_capture):
+        captured_results["url"] = wait_for_capture(
+            expect_url_capture,
+            "url source handoff",
+        )
+
     url_capture_path = os.path.join(tmp_dir, "linux-spike-url.json")
     linux_spike_url = run_scenario(
         "linux_spike_url",
@@ -248,20 +301,33 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         },
         f"Source:</span> url / {url_source_url}",
         url_capture_path,
+        verify_url_linux_spike,
     )
     if "Backend:</span> linux_spike" not in linux_spike_url["backend_fragment"]:
         raise SystemExit(
             "runtime-app-sound-smoke (linux_spike_url): expected linux_spike backend label"
         )
-    with open(url_capture_path, "r", encoding="utf-8") as handle:
-        url_capture = json.load(handle)
-    if url_capture.get("sourceKind") != "url":
+    linux_spike = run_scenario(
+        "linux_spike",
+        file_session,
+        {
+            "SHADOW_RUNTIME_AUDIO_BACKEND": "linux_spike",
+            "SHADOW_RUNTIME_AUDIO_SPIKE_BINARY": fake_linux_spike_binary,
+            "SHADOW_AUDIO_SPIKE_TEST_OUTPUT": file_capture_path,
+            "SHADOW_AUDIO_SPIKE_TEST_SLEEP_SECS": "5",
+        },
+        f"Source:</span> file / {asset_source_path}",
+        file_capture_path,
+        verify_file_linux_spike,
+    )
+    if "Backend:</span> linux_spike" not in linux_spike["backend_fragment"]:
         raise SystemExit(
-            "runtime-app-sound-smoke (linux_spike_url): expected url source kind handoff"
+            "runtime-app-sound-smoke (linux_spike): expected linux_spike backend label"
         )
-    if url_capture.get("url") != url_source_url:
+    url_capture = captured_results.get("url")
+    if url_capture is None:
         raise SystemExit(
-            "runtime-app-sound-smoke (linux_spike_url): expected url handoff to fake helper"
+            "runtime-app-sound-smoke (linux_spike_url): missing captured url handoff"
         )
 
 print(json.dumps({

@@ -291,55 +291,33 @@ impl ShadowCompositor {
         let Some(app_id) = self.focused_app else {
             return "ok\nhandled=0\nreason=no-focused-app\n".to_string();
         };
-        let socket_path = shadow_ui_core::control::platform_control_socket_path(
+        dispatch_media_action_to_app(
             self.control_socket_path
                 .parent()
-                .unwrap_or_else(|| std::path::Path::new(".")),
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_path_buf(),
             app_id,
-        );
+            action,
+        )
+    }
 
-        let mut stream = match UnixStream::connect(&socket_path) {
-            Ok(stream) => stream,
-            Err(error) => {
-                return format!(
-                    "ok\nhandled=0\nreason=platform-control-unavailable\napp={}\naction={}\nerror={}\n",
-                    app_id.as_str(),
-                    action.as_token(),
-                    sanitize_control_error(&error.to_string()),
-                );
-            }
+    pub(crate) fn dispatch_control_media_async(&self, action: MediaAction) {
+        let Some(app_id) = self.focused_app else {
+            return;
         };
-
-        if let Err(error) =
-            std::io::Write::write_all(&mut stream, format!("{}\n", action.as_token()).as_bytes())
-        {
-            return format!(
-                "ok\nhandled=0\nreason=platform-control-write-failed\napp={}\naction={}\nerror={}\n",
-                app_id.as_str(),
+        let runtime_dir = self
+            .control_socket_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        std::thread::spawn(move || {
+            let response = dispatch_media_action_to_app(runtime_dir, app_id, action);
+            tracing::info!(
+                "[shadow-compositor] media-key-dispatch action={} response={}",
                 action.as_token(),
-                sanitize_control_error(&error.to_string()),
+                response.trim()
             );
-        }
-        let _ = stream.shutdown(std::net::Shutdown::Write);
-
-        let mut response = String::new();
-        if let Err(error) = std::io::Read::read_to_string(&mut stream, &mut response) {
-            return format!(
-                "ok\nhandled=0\nreason=platform-control-read-failed\napp={}\naction={}\nerror={}\n",
-                app_id.as_str(),
-                action.as_token(),
-                sanitize_control_error(&error.to_string()),
-            );
-        }
-
-        if response.trim().is_empty() {
-            return format!(
-                "ok\nhandled=0\nreason=empty-app-response\napp={}\naction={}\n",
-                app_id.as_str(),
-                action.as_token()
-            );
-        }
-        response
+        });
     }
 
     fn handle_control_tap(&mut self, x: i32, y: i32) -> std::io::Result<String> {
@@ -588,6 +566,57 @@ impl ShadowCompositor {
 
 fn sanitize_control_error(message: &str) -> String {
     message.replace('\n', " ")
+}
+
+fn dispatch_media_action_to_app(
+    runtime_dir: PathBuf,
+    app_id: AppId,
+    action: MediaAction,
+) -> String {
+    let socket_path = shadow_ui_core::control::platform_control_socket_path(&runtime_dir, app_id);
+
+    let mut stream = match UnixStream::connect(&socket_path) {
+        Ok(stream) => stream,
+        Err(error) => {
+            return format!(
+                "ok\nhandled=0\nreason=platform-control-unavailable\napp={}\naction={}\nerror={}\n",
+                app_id.as_str(),
+                action.as_token(),
+                sanitize_control_error(&error.to_string()),
+            );
+        }
+    };
+
+    if let Err(error) =
+        std::io::Write::write_all(&mut stream, format!("{}\n", action.as_token()).as_bytes())
+    {
+        return format!(
+            "ok\nhandled=0\nreason=platform-control-write-failed\napp={}\naction={}\nerror={}\n",
+            app_id.as_str(),
+            action.as_token(),
+            sanitize_control_error(&error.to_string()),
+        );
+    }
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+
+    let mut response = String::new();
+    if let Err(error) = std::io::Read::read_to_string(&mut stream, &mut response) {
+        return format!(
+            "ok\nhandled=0\nreason=platform-control-read-failed\napp={}\naction={}\nerror={}\n",
+            app_id.as_str(),
+            action.as_token(),
+            sanitize_control_error(&error.to_string()),
+        );
+    }
+
+    if response.trim().is_empty() {
+        return format!(
+            "ok\nhandled=0\nreason=empty-app-response\napp={}\naction={}\n",
+            app_id.as_str(),
+            action.as_token()
+        );
+    }
+    response
 }
 
 fn auto_launch_app_id() -> AppId {

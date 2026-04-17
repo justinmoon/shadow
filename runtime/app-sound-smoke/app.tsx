@@ -5,6 +5,8 @@ import {
   pause,
   play,
   release,
+  seek,
+  setVolume,
   stop,
 } from "@shadow/app-runtime-os";
 
@@ -15,9 +17,11 @@ type AudioStatus = {
   frequencyHz?: number;
   id: number;
   path?: string;
+  positionMs: number;
   url?: string;
   sourceKind: string;
   state: string;
+  volume: number;
 };
 
 type ToneSourceConfig = {
@@ -52,7 +56,9 @@ type CommandKind =
   | "pause"
   | "stop"
   | "refresh"
-  | "release";
+  | "release"
+  | "seek_forward"
+  | "volume_down";
 
 const DEFAULT_SOURCE = {
   kind: "tone",
@@ -222,16 +228,20 @@ function readAppSourceConfig(): AudioSourceConfig {
   const runtimeConfig = (globalThis as Record<string, unknown>)
     .SHADOW_RUNTIME_APP_CONFIG as RuntimeAppConfig | undefined;
   const source = runtimeConfig?.source;
-  if (source?.kind === "url" && typeof source.url === "string" &&
-    source.url.trim()) {
+  if (
+    source?.kind === "url" && typeof source.url === "string" &&
+    source.url.trim()
+  ) {
     return {
       durationMs: normalizeDurationMs(source.durationMs),
       kind: "url",
       url: source.url.trim(),
     };
   }
-  if (source?.kind === "file" && typeof source.path === "string" &&
-    source.path.trim()) {
+  if (
+    source?.kind === "file" && typeof source.path === "string" &&
+    source.path.trim()
+  ) {
     return {
       durationMs: normalizeDurationMs(source.durationMs),
       kind: "file",
@@ -261,13 +271,17 @@ function normalizeFrequencyHz(value: unknown): number {
 function isFileSource(
   source: AudioSourceConfig | AudioStatus,
 ): source is FileSourceConfig | AudioStatus {
-  return "sourceKind" in source ? source.sourceKind === "file" : source.kind === "file";
+  return "sourceKind" in source
+    ? source.sourceKind === "file"
+    : source.kind === "file";
 }
 
 function isUrlSource(
   source: AudioSourceConfig | AudioStatus,
 ): source is UrlSourceConfig | AudioStatus {
-  return "sourceKind" in source ? source.sourceKind === "url" : source.kind === "url";
+  return "sourceKind" in source
+    ? source.sourceKind === "url"
+    : source.kind === "url";
 }
 
 function formatSourceLabel(source: AudioSourceConfig | AudioStatus): string {
@@ -277,9 +291,9 @@ function formatSourceLabel(source: AudioSourceConfig | AudioStatus): string {
   if (isUrlSource(source)) {
     return source.url ?? "missing-url";
   }
-  return `${source.frequencyHz ?? DEFAULT_SOURCE.frequencyHz} Hz / ${
-    source.durationMs
-  } ms`;
+  return `${
+    source.frequencyHz ?? DEFAULT_SOURCE.frequencyHz
+  } Hz / ${source.durationMs} ms`;
 }
 
 function logAudioStatus(command: CommandKind, nextStatus: AudioStatus | null) {
@@ -379,6 +393,36 @@ export default function renderApp() {
             "Player released. Play or Prepare will create a fresh one.",
           );
           break;
+        case "seek_forward": {
+          const current = status();
+          if (!current || current.state === "released") {
+            setMessage("No active player to seek.");
+            break;
+          }
+          const refreshed = await getStatus({ id: current.id }) as AudioStatus;
+          nextStatus = await seek({
+            id: refreshed.id,
+            positionMs: Math.min(
+              refreshed.durationMs,
+              refreshed.positionMs + 1_000,
+            ),
+          }) as AudioStatus;
+          setMessage("Seeked forward by one second.");
+          break;
+        }
+        case "volume_down": {
+          const current = status();
+          if (!current || current.state === "released") {
+            setMessage("No active player to adjust.");
+            break;
+          }
+          nextStatus = await setVolume({
+            id: current.id,
+            volume: Math.max(0, Math.round((current.volume - 0.6) * 10) / 10),
+          }) as AudioStatus;
+          setMessage("Player volume reduced.");
+          break;
+        }
       }
 
       if (nextStatus) {
@@ -407,8 +451,11 @@ export default function renderApp() {
   const statusValue = () => currentStatus()?.state ?? "missing";
   const backendValue = () => currentStatus()?.backend ?? "missing";
   const playerIdValue = () => currentStatus()?.id ?? "n/a";
+  const positionValue = () => `${currentStatus()?.positionMs ?? 0} ms`;
   const sourceLabel = () => formatSourceLabel(currentStatus() ?? appSource);
   const sourceKindLabel = () => currentStatus()?.sourceKind ?? appSource.kind;
+  const volumeValue = () =>
+    `${Math.round((currentStatus()?.volume ?? 1) * 100)}%`;
 
   return (
     <main class="sound-shell">
@@ -418,7 +465,11 @@ export default function renderApp() {
         <p class="sound-body">
           Runtime app buttons drive `Shadow.os.audio`. Host uses an in-memory
           backend; the Pixel sound lane switches to the rooted Linux{" "}
-          {appSource.kind === "file" ? "file" : appSource.kind === "url" ? "URL" : "tone"} helper.
+          {appSource.kind === "file"
+            ? "file"
+            : appSource.kind === "url"
+            ? "URL"
+            : "tone"} helper.
         </p>
 
         <div class="sound-status">
@@ -432,7 +483,14 @@ export default function renderApp() {
             <span class="sound-status-label">Player:</span> {playerIdValue()}
           </p>
           <p class="sound-status-line">
-            <span class="sound-status-label">Source:</span> {sourceKindLabel()}{" "}
+            <span class="sound-status-label">Position:</span> {positionValue()}
+          </p>
+          <p class="sound-status-line">
+            <span class="sound-status-label">Volume:</span> {volumeValue()}
+          </p>
+          <p class="sound-status-line">
+            <span class="sound-status-label">Source:</span> {sourceKindLabel()}
+            {" "}
             / {sourceLabel()}
           </p>
         </div>
@@ -477,6 +535,22 @@ export default function renderApp() {
             onClick={() => void runCommand("prepare")}
           >
             Prepare
+          </button>
+          <button
+            class="sound-button sound-button-secondary"
+            data-shadow-id="seek-forward"
+            disabled={busyCommand() !== null}
+            onClick={() => void runCommand("seek_forward")}
+          >
+            Seek +1s
+          </button>
+          <button
+            class="sound-button sound-button-secondary"
+            data-shadow-id="volume-down"
+            disabled={busyCommand() !== null}
+            onClick={() => void runCommand("volume_down")}
+          >
+            Volume 40%
           </button>
           <button
             class="sound-button sound-button-danger"

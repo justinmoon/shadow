@@ -97,6 +97,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - `Shadow.os.audio` status now reports `positionMs` and `volume`, and the host exposes `seek` plus `setVolume`.
 - The first consumer now uses `seek` and per-player volume from app UI and platform media-button handlers.
 - Rooted Pixel sessions now read physical media/volume button events directly from `/dev/input/event*` and route them through the same focused-app media control path as `shadowctl media`.
+- The dedicated sound smoke now proves Linux-helper restart semantics for `seek` and per-player gain by asserting the fake helper capture after both operations, instead of only proving initial play.
+- Physical media-key ingestion now dispatches onto a worker thread after focus resolution so compositor input loops do not block on per-app control socket round trips.
 - The Linux helper also has a `SHADOW_AUDIO_SPIKE_VALIDATE_ONLY=1` mode so URL fetch/decode can be proved without depending on ALSA device availability.
 - The Linux helper now bounds in-memory URL fetch size with `SHADOW_AUDIO_SPIKE_MAX_URL_BYTES` so v0 URL playback cannot buffer unbounded responses.
 - `scripts/ci/runtime_app_podcast_player_url_smoke.sh` is Linux-authoritative: on macOS it syncs to a Linux executor, serves a local HTTP fixture there, and runs the real helper through the runtime host seam.
