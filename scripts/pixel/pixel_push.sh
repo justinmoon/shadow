@@ -12,6 +12,7 @@ runtime_app_asset_artifact_dir="${PIXEL_RUNTIME_APP_ASSET_ARTIFACT_DIR-}"
 runtime_app_bundle_artifact="${PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT-}"
 runtime_bundle_archive_host=""
 runtime_bundle_archive_device=""
+runtime_sync_work_dir=""
 runtime_asset_archive_host=""
 runtime_asset_archive_device=""
 runtime_manifest_path=""
@@ -32,6 +33,9 @@ runtime_device_app_bundle_present=""
 cleanup() {
   if [[ -n "$runtime_bundle_archive_host" && -f "$runtime_bundle_archive_host" ]]; then
     rm -f "$runtime_bundle_archive_host"
+  fi
+  if [[ -n "$runtime_sync_work_dir" && -d "$runtime_sync_work_dir" ]]; then
+    rm -rf "$runtime_sync_work_dir"
   fi
   if [[ -n "$runtime_asset_archive_host" && -f "$runtime_asset_archive_host" ]]; then
     rm -f "$runtime_asset_archive_host"
@@ -78,6 +82,234 @@ else:
 ' "$field"
 }
 
+write_runtime_helper_sync_manifest() {
+  local bundle_dir="$1"
+  local manifest_path="$2"
+
+  python3 - "$bundle_dir" "$manifest_path" <<'PY'
+import hashlib
+import json
+import os
+import stat
+import sys
+
+bundle_dir, manifest_path = sys.argv[1:3]
+excluded_paths = {
+    ".bundle-manifest.json",
+    ".runtime-bundle-manifest.json",
+    ".runtime-bundle-sync-manifest.json",
+}
+entries = []
+for current_root, dirnames, filenames in os.walk(bundle_dir, topdown=True, followlinks=False):
+    dirnames.sort()
+    filenames.sort()
+    rel_root = os.path.relpath(current_root, bundle_dir)
+    if rel_root == ".":
+        rel_root = ""
+
+    for dirname in list(dirnames):
+        abs_path = os.path.join(current_root, dirname)
+        rel_path = os.path.join(rel_root, dirname) if rel_root else dirname
+        st = os.lstat(abs_path)
+        mode = stat.S_IMODE(st.st_mode)
+        if stat.S_ISLNK(st.st_mode):
+            entries.append(
+                {
+                    "mode": mode,
+                    "path": rel_path,
+                    "target": os.readlink(abs_path),
+                    "type": "symlink",
+                }
+            )
+            dirnames.remove(dirname)
+            continue
+        entries.append(
+            {
+                "mode": mode,
+                "path": rel_path,
+                "type": "dir",
+            }
+        )
+
+    for filename in filenames:
+        rel_path = os.path.join(rel_root, filename) if rel_root else filename
+        if rel_path in excluded_paths:
+            continue
+
+        abs_path = os.path.join(current_root, filename)
+        st = os.lstat(abs_path)
+        mode = stat.S_IMODE(st.st_mode)
+        if stat.S_ISLNK(st.st_mode):
+            entries.append(
+                {
+                    "mode": mode,
+                    "path": rel_path,
+                    "target": os.readlink(abs_path),
+                    "type": "symlink",
+                }
+            )
+            continue
+
+        digest = hashlib.sha256()
+        with open(abs_path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        entries.append(
+            {
+                "mode": mode,
+                "path": rel_path,
+                "sha256": digest.hexdigest(),
+                "size": st.st_size,
+                "type": "file",
+            }
+        )
+
+entries.sort(key=lambda entry: (entry["path"], entry["type"]))
+fingerprint = hashlib.sha256()
+for entry in entries:
+    fingerprint.update(entry["type"].encode("utf-8"))
+    fingerprint.update(b"\0")
+    fingerprint.update(entry["path"].encode("utf-8"))
+    fingerprint.update(b"\0")
+    fingerprint.update(f"{entry['mode']:04o}".encode("ascii"))
+    if entry["type"] == "file":
+        fingerprint.update(b"\0")
+        fingerprint.update(str(entry["size"]).encode("ascii"))
+        fingerprint.update(b"\0")
+        fingerprint.update(entry["sha256"].encode("ascii"))
+    elif entry["type"] == "symlink":
+        fingerprint.update(b"\0")
+        fingerprint.update(entry["target"].encode("utf-8"))
+    fingerprint.update(b"\n")
+
+manifest = {
+    "contentFingerprint": fingerprint.hexdigest(),
+    "entries": entries,
+    "schemaVersion": 1,
+}
+with open(manifest_path, "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2)
+    handle.write("\n")
+PY
+}
+
+write_runtime_helper_sync_plan() {
+  local host_manifest_path="$1"
+  local device_manifest_path="$2"
+  local plan_path="$3"
+  local changed_paths_path="$4"
+  local reset_paths_path="$5"
+  local dir_modes_path="$6"
+
+  python3 - "$host_manifest_path" "$device_manifest_path" "$plan_path" "$changed_paths_path" "$reset_paths_path" "$dir_modes_path" <<'PY'
+import json
+import os
+import sys
+
+(
+    host_manifest_path,
+    device_manifest_path,
+    plan_path,
+    changed_paths_path,
+    reset_paths_path,
+    dir_modes_path,
+) = sys.argv[1:7]
+
+with open(host_manifest_path, "r", encoding="utf-8") as handle:
+    host_manifest = json.load(handle)
+
+device_manifest = {}
+device_manifest_valid = False
+if os.path.isfile(device_manifest_path):
+    try:
+        with open(device_manifest_path, "r", encoding="utf-8") as handle:
+            device_manifest = json.load(handle)
+        device_manifest_valid = (
+            device_manifest.get("schemaVersion") == host_manifest.get("schemaVersion")
+            and isinstance(device_manifest.get("entries"), list)
+        )
+    except json.JSONDecodeError:
+        device_manifest = {}
+
+host_entries = {
+    entry["path"]: entry for entry in host_manifest.get("entries", [])
+}
+device_entries = {
+    entry["path"]: entry for entry in device_manifest.get("entries", [])
+} if device_manifest_valid else {}
+
+changed_paths = []
+reset_paths = set()
+dir_modes = []
+changed_bytes = 0
+
+for path, host_entry in host_entries.items():
+    device_entry = device_entries.get(path)
+    if host_entry["type"] == "dir":
+        dir_modes.append((path, host_entry["mode"]))
+        if device_entry and device_entry.get("type") != "dir":
+            reset_paths.add(path)
+        continue
+
+    if not device_manifest_valid or device_entry != host_entry:
+        changed_paths.append(path)
+        if host_entry["type"] == "file":
+            changed_bytes += int(host_entry.get("size", 0))
+        if device_entry and (
+            device_entry.get("type") != host_entry.get("type")
+            or host_entry["type"] == "symlink"
+        ):
+            reset_paths.add(path)
+
+for path, device_entry in device_entries.items():
+    if path not in host_entries:
+        reset_paths.add(path)
+
+dir_modes.sort(key=lambda item: (item[0].count("/"), item[0]))
+changed_paths.sort()
+reset_paths_sorted = sorted(reset_paths, key=lambda path: (-path.count("/"), path), reverse=False)
+
+with open(changed_paths_path, "w", encoding="utf-8") as handle:
+    for path in changed_paths:
+        handle.write(f"{path}\n")
+
+with open(reset_paths_path, "w", encoding="utf-8") as handle:
+    for path in reset_paths_sorted:
+        handle.write(f"{path}\n")
+
+with open(dir_modes_path, "w", encoding="utf-8") as handle:
+    for path, mode in dir_modes:
+        handle.write(f"{mode:04o}\t{path}\n")
+
+plan = {
+    "changedBytes": changed_bytes,
+    "changedPathCount": len(changed_paths),
+    "contentFingerprint": host_manifest.get("contentFingerprint", ""),
+    "deviceManifestValid": device_manifest_valid,
+    "fullReplace": not device_manifest_valid,
+    "resetPathCount": len(reset_paths_sorted),
+}
+with open(plan_path, "w", encoding="utf-8") as handle:
+    json.dump(plan, handle, indent=2)
+    handle.write("\n")
+PY
+}
+
+json_manifest_int_field_from_file() {
+  local manifest_path="$1"
+  local field="$2"
+
+  [[ -f "$manifest_path" ]] || return 0
+  python3 - "$manifest_path" "$field" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    value = json.load(handle).get(sys.argv[2], 0)
+print(int(value))
+PY
+}
+
 push_verified_file() {
   local host_path device_path tmp_path host_sum device_sum
   host_path="$1"
@@ -116,32 +348,106 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
   printf 'Pushing runtime support to %s\n' "$serial"
 
   if [[ -n "$runtime_host_bundle_artifact_dir" ]]; then
-    if [[ -f "$runtime_manifest_path" ]]; then
-      runtime_helper_content_fingerprint="$(
-        json_manifest_string_field_from_file "$runtime_manifest_path" contentFingerprint
-      )"
-      runtime_device_content_fingerprint="$(
-        json_manifest_string_field_from_device "$runtime_device_manifest_path" contentFingerprint
-      )"
-    fi
+    runtime_sync_work_dir="$(mktemp -d "${TMPDIR:-/tmp}/shadow-runtime-sync.XXXXXX")"
+    runtime_host_sync_manifest_path="$runtime_sync_work_dir/runtime-host-manifest.json"
+    runtime_device_manifest_host_path="$runtime_sync_work_dir/runtime-device-manifest.json"
+    runtime_sync_plan_path="$runtime_sync_work_dir/runtime-sync-plan.json"
+    runtime_sync_changed_paths_path="$runtime_sync_work_dir/runtime-changed-paths.txt"
+    runtime_sync_reset_paths_path="$runtime_sync_work_dir/runtime-reset-paths.txt"
+    runtime_sync_dir_modes_path="$runtime_sync_work_dir/runtime-dir-modes.tsv"
+
+    write_runtime_helper_sync_manifest \
+      "$runtime_host_bundle_artifact_dir" \
+      "$runtime_host_sync_manifest_path"
+    runtime_helper_content_fingerprint="$(
+      json_manifest_string_field_from_file "$runtime_host_sync_manifest_path" contentFingerprint
+    )"
+
+    pixel_root_shell "$serial" "cat '$runtime_device_manifest_path' 2>/dev/null || true" \
+      >"$runtime_device_manifest_host_path"
+    runtime_device_content_fingerprint="$(
+      json_manifest_string_field_from_file "$runtime_device_manifest_host_path" contentFingerprint
+    )"
 
     if [[ -n "$runtime_helper_content_fingerprint" && "$runtime_helper_content_fingerprint" == "$runtime_device_content_fingerprint" ]]; then
       printf 'Runtime helper dir cacheHit -> %s\n' "$runtime_linux_dir"
     else
-      runtime_bundle_archive_host="$(mktemp "${TMPDIR:-/tmp}/shadow-runtime-bundle.XXXXXX.tar")"
-      runtime_bundle_archive_device="/data/local/tmp/$(basename "$runtime_bundle_archive_host")"
-      COPYFILE_DISABLE=1 tar \
-        --format=ustar \
-        --numeric-owner \
-        --owner=0 \
-        --group=0 \
-        --no-xattrs \
-        -C "$runtime_host_bundle_artifact_dir" \
-        -cf "$runtime_bundle_archive_host" \
-        .
-      pixel_root_shell "$serial" "umount -l '$runtime_linux_dir/etc' >/dev/null 2>&1 || true; mkdir -p '$runtime_linux_dir'; rm -f '$runtime_bundle_archive_device'"
-      pixel_adb "$serial" push "$runtime_bundle_archive_host" "$runtime_bundle_archive_device" >/dev/null
-      pixel_root_shell "$serial" "umount -l '$runtime_linux_dir/etc' >/dev/null 2>&1 || true; mkdir -p '$runtime_linux_dir' && /system/bin/tar -xf '$runtime_bundle_archive_device' -C '$runtime_linux_dir' && chown -R shell:shell '$runtime_linux_dir' && find '$runtime_linux_dir' -type d -exec chmod 0755 {} + && find '$runtime_linux_dir' -type f -exec chmod 0755 {} + && rm -f '$runtime_bundle_archive_device'"
+      runtime_sync_changed_path_count=0
+      runtime_sync_reset_path_count=0
+      runtime_sync_changed_bytes=0
+      runtime_sync_full_replace=0
+
+      write_runtime_helper_sync_plan \
+        "$runtime_host_sync_manifest_path" \
+        "$runtime_device_manifest_host_path" \
+        "$runtime_sync_plan_path" \
+        "$runtime_sync_changed_paths_path" \
+        "$runtime_sync_reset_paths_path" \
+        "$runtime_sync_dir_modes_path"
+
+      runtime_sync_changed_path_count="$(
+        json_manifest_int_field_from_file "$runtime_sync_plan_path" changedPathCount
+      )"
+      runtime_sync_reset_path_count="$(
+        json_manifest_int_field_from_file "$runtime_sync_plan_path" resetPathCount
+      )"
+      runtime_sync_changed_bytes="$(
+        json_manifest_int_field_from_file "$runtime_sync_plan_path" changedBytes
+      )"
+      if [[ "$(json_manifest_string_field_from_file "$runtime_sync_plan_path" fullReplace)" == "True" ]]; then
+        runtime_sync_full_replace=1
+      fi
+
+      runtime_bundle_archive_device=""
+      if (( runtime_sync_changed_path_count > 0 )); then
+        runtime_bundle_archive_host="$(mktemp "${TMPDIR:-/tmp}/shadow-runtime-bundle.XXXXXX.tar")"
+        runtime_bundle_archive_device="/data/local/tmp/$(basename "$runtime_bundle_archive_host")"
+        COPYFILE_DISABLE=1 tar \
+          --format=ustar \
+          --numeric-owner \
+          --owner=0 \
+          --group=0 \
+          --no-xattrs \
+          -C "$runtime_host_bundle_artifact_dir" \
+          -cf "$runtime_bundle_archive_host" \
+          -T "$runtime_sync_changed_paths_path"
+      fi
+
+      pixel_root_shell "$serial" "umount -l '$runtime_linux_dir/etc' >/dev/null 2>&1 || true"
+      if (( runtime_sync_full_replace == 1 )); then
+        pixel_adb "$serial" shell "rm -rf '$runtime_linux_dir' && mkdir -p '$runtime_linux_dir'"
+      else
+        pixel_adb "$serial" shell "mkdir -p '$runtime_linux_dir' && rm -f '$runtime_linux_dir/.bundle-manifest.json'"
+        if (( runtime_sync_reset_path_count > 0 )); then
+          pixel_adb "$serial" shell "while IFS= read -r rel; do [ -n \"\$rel\" ] || continue; rm -rf '$runtime_linux_dir'/\"\$rel\"; done" \
+            <"$runtime_sync_reset_paths_path"
+        fi
+      fi
+      pixel_adb "$serial" shell "while IFS='	' read -r mode rel; do [ -n \"\$rel\" ] || continue; mkdir -p '$runtime_linux_dir'/\"\$rel\" && chmod \"\$mode\" '$runtime_linux_dir'/\"\$rel\"; done" \
+        <"$runtime_sync_dir_modes_path"
+
+      if (( runtime_sync_changed_path_count > 0 )); then
+        pixel_adb "$serial" shell "rm -f '$runtime_bundle_archive_device'"
+        pixel_adb "$serial" push "$runtime_bundle_archive_host" "$runtime_bundle_archive_device" >/dev/null
+        pixel_adb "$serial" shell "/system/bin/tar -xf '$runtime_bundle_archive_device' -C '$runtime_linux_dir' && rm -f '$runtime_bundle_archive_device'"
+      fi
+
+      pixel_adb "$serial" push "$runtime_host_sync_manifest_path" "$runtime_device_manifest_path" >/dev/null
+      pixel_adb "$serial" shell "chmod 0644 '$runtime_device_manifest_path'"
+
+      if (( runtime_sync_full_replace == 1 )); then
+        printf 'Runtime helper dir fullSync -> %s (changed=%s reset=%s bytes=%s)\n' \
+          "$runtime_linux_dir" \
+          "$runtime_sync_changed_path_count" \
+          "$runtime_sync_reset_path_count" \
+          "$runtime_sync_changed_bytes"
+      else
+        printf 'Runtime helper dir deltaSync -> %s (changed=%s reset=%s bytes=%s)\n' \
+          "$runtime_linux_dir" \
+          "$runtime_sync_changed_path_count" \
+          "$runtime_sync_reset_path_count" \
+          "$runtime_sync_changed_bytes"
+      fi
     fi
   else
     pixel_root_shell "$serial" "rm -rf '$runtime_linux_dir'"
