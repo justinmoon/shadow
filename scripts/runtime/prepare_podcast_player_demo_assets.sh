@@ -52,9 +52,11 @@ from tempfile import NamedTemporaryFile
 feed_url = os.environ["PODCAST_FEED_URL"]
 metadata_path = os.environ["PODCAST_METADATA_PATH"]
 offline_fixture = os.environ.get("PODCAST_OFFLINE_FIXTURE") == "1"
+playback_source = os.environ["PODCAST_PLAYBACK_SOURCE"]
 episode_ids = {
     part.strip() for part in os.environ["EPISODE_IDS"].split(",") if part.strip()
 }
+supported_url_source_exts = {".mp3", ".wav"}
 
 def slugify(title: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
@@ -70,6 +72,12 @@ def parse_duration_ms(raw: str) -> int:
       total = total * 60 + part
     return total * 1000
 
+def source_ext_from_url(source_url: str) -> str:
+    return os.path.splitext(urlsplit(source_url).path)[1].lower()
+
+def supports_url_playback(source_url: str) -> bool:
+    return source_ext_from_url(source_url) in supported_url_source_exts
+
 def metadata_satisfies(data):
     available = {episode["id"] for episode in data.get("episodes", [])}
     return (
@@ -83,7 +91,7 @@ def load_cached_metadata():
     with open(metadata_path, "r", encoding="utf-8") as handle:
         data = json.load(handle)
     if metadata_satisfies(data):
-        data["episodes"] = sorted(
+        episodes = sorted(
             [
                 episode
                 for episode in data.get("episodes", [])
@@ -91,6 +99,12 @@ def load_cached_metadata():
             ],
             key=lambda episode: episode["id"],
         )
+        if playback_source == "url" and not all(
+            supports_url_playback(str(episode.get("sourceUrl", "")))
+            for episode in episodes
+        ):
+            return None
+        data["episodes"] = episodes
         return data
     return None
 
@@ -118,7 +132,12 @@ def fetch_metadata():
         if enclosure is None or not enclosure.get("url"):
             raise SystemExit(f"prepare_podcast_player_demo_assets: missing enclosure for {title}")
         source_url = enclosure.get("url")
-        source_ext = os.path.splitext(urlsplit(source_url).path)[1].lower()
+        source_ext = source_ext_from_url(source_url)
+        if playback_source == "url" and source_ext not in supported_url_source_exts:
+            raise SystemExit(
+                "prepare_podcast_player_demo_assets: URL playback currently "
+                f"supports {sorted(supported_url_source_exts)} sources, got {source_ext or 'unknown'} for {title}"
+            )
         output_basename = f"{episode_id}-{slugify(match.group('rest'))}.mp3"
         duration_raw = item.findtext("{http://www.itunes.com/dtds/podcast-1.0.dtd}duration") or ""
         episodes.append({

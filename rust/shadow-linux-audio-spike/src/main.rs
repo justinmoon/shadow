@@ -21,7 +21,8 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
 const DEFAULT_DEVICE_CANDIDATES: [&str; 2] = ["default", "sysdefault"];
-const URL_FETCH_TIMEOUT_SECS: u64 = 30;
+const URL_FETCH_CONNECT_TIMEOUT_SECS: u64 = 10;
+const URL_FETCH_TOTAL_TIMEOUT_SECS: u64 = 600;
 
 fn main() {
     if let Err(error) = run() {
@@ -279,7 +280,8 @@ fn decode_audio_file(path: &str, gain: f32) -> Result<PreparedPlayback, Box<dyn 
 
 fn decode_audio_url(url: &str, gain: f32) -> Result<PreparedPlayback, Box<dyn Error>> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(URL_FETCH_TIMEOUT_SECS))
+        .connect_timeout(Duration::from_secs(URL_FETCH_CONNECT_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(URL_FETCH_TOTAL_TIMEOUT_SECS))
         .build()?;
     let response = client.get(url).send()?;
     let status = response.status();
