@@ -18,13 +18,14 @@
       url = "github:microvm-nix/microvm.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    crane.url = "github:ipetkov/crane";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, android-nixpkgs, microvm, rust-overlay }:
+  outputs = { self, nixpkgs, android-nixpkgs, microvm, crane, rust-overlay }:
     let
       lib = nixpkgs.lib;
       guestSystemForHostSystem = hostSystem:
@@ -62,6 +63,8 @@
               lib.any pathMatchesPrefix prefixes || lib.any pathIsPrefixAncestor prefixes;
         };
       shadowRuntimeHostSrc = repoSourceFromPrefixes [
+        "rust/Cargo.toml"
+        "rust/Cargo.lock"
         "rust/shadow-runtime-host"
         "rust/shadow-runtime-protocol"
         "rust/runtime-audio-host"
@@ -350,25 +353,47 @@
           meta.mainProgram = "shadow-blitz-demo";
         };
       mkShadowRuntimeHostFor = cross:
-        cross.rustPlatform.buildRustPackage {
-          pname = "shadow-runtime-host";
-          version = "0.1.0";
-          src = shadowRuntimeHostSrc;
-          cargoRoot = "rust/shadow-runtime-host";
-          buildAndTestSubdir = "rust/shadow-runtime-host";
-          cargoLock.lockFile = ./rust/shadow-runtime-host/Cargo.lock;
-          doCheck = false;
-          strictDeps = true;
-          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
-          nativeBuildInputs = [ cross.buildPackages.pkg-config ];
-          depsBuildBuild =
-            lib.optionals cross.stdenv.buildPlatform.isDarwin [
-              cross.buildPackages.stdenv.cc
-              cross.buildPackages.libiconv
+        let
+          craneLib = crane.mkLib cross;
+          commonArgs = {
+            pname = "shadow-runtime-host";
+            version = "0.1.0";
+            src = shadowRuntimeHostSrc;
+            cargoLock = ./rust/Cargo.lock;
+            cargoToml = ./rust/Cargo.toml;
+            cargoExtraArgs = "--locked -p shadow-runtime-host";
+            doCheck = false;
+            strictDeps = true;
+            CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.rust.rustcTarget;
+            postUnpack = ''
+              cd "$sourceRoot/rust"
+              sourceRoot="."
+            '';
+            nativeBuildInputs = [ cross.buildPackages.pkg-config ];
+            depsBuildBuild =
+              lib.optionals cross.stdenv.buildPlatform.isDarwin [
+                cross.buildPackages.stdenv.cc
+                cross.buildPackages.libiconv
             ];
-          RUSTY_V8_ARCHIVE = mkRustyV8ArchiveFor cross;
+            RUSTY_V8_ARCHIVE = mkRustyV8ArchiveFor cross;
+          };
+          cargoVendorDir = craneLib.vendorCargoDeps commonArgs;
+          cargoArgs = commonArgs // { inherit cargoVendorDir; };
+          cargoArtifacts = craneLib.buildDepsOnly ((builtins.removeAttrs cargoArgs [ "src" ]) // {
+            pname = "shadow-runtime-host-deps";
+            dummySrc = craneLib.mkDummySrc (commonArgs // {
+              extraDummyScript = ''
+                rm -rf "$out/rust/vendor/temporal_rs"
+                mkdir -p "$out/rust/vendor"
+                cp --recursive --no-preserve=ownership ${./rust/vendor/temporal_rs} "$out/rust/vendor/temporal_rs"
+                chmod +w -R "$out/rust/vendor/temporal_rs"
+              '';
+            });
+          });
+        in craneLib.buildPackage (cargoArgs // {
+          inherit cargoArtifacts;
           meta.mainProgram = "shadow-runtime-host";
-        };
+        });
       mkShadowLinuxAudioSpikeFor = cross:
         cross.rustPlatform.buildRustPackage {
           pname = "shadow-linux-audio-spike";

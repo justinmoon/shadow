@@ -31,11 +31,14 @@ supported_shell_app_ids=(counter camera timeline podcast cashu)
 selected_shell_app_ids=()
 
 mapfile -t shell_runtime_source_inputs < <(
+  printf '%s\n' "$repo/rust/Cargo.toml"
+  printf '%s\n' "$repo/rust/Cargo.lock"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-camera-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-runtime-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-audio-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-cashu-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-nostr-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-runtime-protocol"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-linux-audio-spike"
 )
 

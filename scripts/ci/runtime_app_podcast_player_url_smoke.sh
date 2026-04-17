@@ -69,6 +69,8 @@ sync_remote_tree() {
     justfile \
     runtime \
     scripts \
+    rust/Cargo.toml \
+    rust/Cargo.lock \
     rust/shadow-linux-audio-spike \
     rust/shadow-runtime-host \
     rust/runtime-audio-host \

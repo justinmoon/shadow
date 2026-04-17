@@ -1,11 +1,5 @@
 use std::{
-    cell::RefCell,
-    collections::HashMap,
-    fs,
-    path::PathBuf,
-    rc::Rc,
-    str::FromStr,
-    sync::Arc,
+    cell::RefCell, collections::HashMap, fs, path::PathBuf, rc::Rc, str::FromStr, sync::Arc,
     time::Duration,
 };
 
@@ -14,7 +8,9 @@ use cdk::{
     amount::SplitTarget,
     cdk_database,
     mint_url::MintUrl,
-    nuts::{nut00::KnownMethod, nut00::ProofsMethods, CurrencyUnit, MeltOptions, PaymentMethod, Token},
+    nuts::{
+        nut00::KnownMethod, nut00::ProofsMethods, CurrencyUnit, MeltOptions, PaymentMethod, Token,
+    },
     wallet::{ReceiveOptions, SendOptions, Wallet, WalletRepository, WalletRepositoryBuilder},
     Amount,
 };
@@ -47,7 +43,8 @@ struct CashuRuntimeService {
 
 impl std::fmt::Debug for CashuRuntimeService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CashuRuntimeService").finish_non_exhaustive()
+        f.debug_struct("CashuRuntimeService")
+            .finish_non_exhaustive()
     }
 }
 
@@ -119,12 +116,14 @@ impl CashuPaths {
     }
 
     fn open_localstore(&self) -> Result<CashuLocalstore, String> {
-        Ok(Arc::new(WalletRedbDatabase::new(&self.db_path).map_err(|error| {
-            format!(
-                "cashu runtime host: open wallet db {}: {error}",
-                self.db_path.display()
-            )
-        })?))
+        Ok(Arc::new(WalletRedbDatabase::new(&self.db_path).map_err(
+            |error| {
+                format!(
+                    "cashu runtime host: open wallet db {}: {error}",
+                    self.db_path.display()
+                )
+            },
+        )?))
     }
 
     async fn load_service(&self) -> Result<CashuRuntimeService, String> {
@@ -138,10 +137,9 @@ impl CashuPaths {
             .map_err(|error| format!("cashu runtime host: build wallet repository: {error}"))?;
 
         for wallet in repository.get_wallets().await {
-            wallet
-                .recover_incomplete_sagas()
-                .await
-                .map_err(|error| format!("cashu runtime host: recover incomplete sagas: {error}"))?;
+            wallet.recover_incomplete_sagas().await.map_err(|error| {
+                format!("cashu runtime host: recover incomplete sagas: {error}")
+            })?;
         }
 
         Ok(CashuRuntimeService {
@@ -363,8 +361,7 @@ async fn op_runtime_cashu_create_mint_quote(
     #[serde] request: CreateMintQuoteRequest,
 ) -> Result<MintQuoteReceipt, JsErrorBox> {
     let service = load_cashu_service(state).await?;
-    let mint_url =
-        parse_required_mint_url(request.mint_url.as_deref(), "cashu.createMintQuote")?;
+    let mint_url = parse_required_mint_url(request.mint_url.as_deref(), "cashu.createMintQuote")?;
     let amount_sats = request
         .amount_sats
         .filter(|amount| *amount > 0)
@@ -391,7 +388,10 @@ async fn op_runtime_cashu_check_mint_quote(
     #[serde] request: QuoteLookupRequest,
 ) -> Result<MintQuoteReceipt, JsErrorBox> {
     let service = load_cashu_service(state).await?;
-    let quote_id = require_non_empty(request.quote_id.as_deref(), "cashu.checkMintQuote requires quoteId")?;
+    let quote_id = require_non_empty(
+        request.quote_id.as_deref(),
+        "cashu.checkMintQuote requires quoteId",
+    )?;
     let mint_url = resolve_mint_url(&service.repository, request.mint_url.as_deref())
         .await
         .map_err(JsErrorBox::generic)?;
@@ -431,9 +431,13 @@ async fn op_runtime_cashu_settle_mint_quote(
         .get_mint_quote(&quote_id)
         .await
         .map_err(|error| {
-            JsErrorBox::generic(format!("cashu.settleMintQuote load quote {quote_id}: {error}"))
+            JsErrorBox::generic(format!(
+                "cashu.settleMintQuote load quote {quote_id}: {error}"
+            ))
         })?
-        .ok_or_else(|| JsErrorBox::generic(format!("cashu.settleMintQuote unknown quoteId {quote_id}")))?;
+        .ok_or_else(|| {
+            JsErrorBox::generic(format!("cashu.settleMintQuote unknown quoteId {quote_id}"))
+        })?;
     let proofs = wallet
         .wait_and_mint_quote(
             quote,
@@ -470,13 +474,16 @@ async fn op_runtime_cashu_receive_token(
     #[serde] request: ReceiveTokenRequest,
 ) -> Result<ReceiveTokenReceipt, JsErrorBox> {
     let service = load_cashu_service(state).await?;
-    let token_str =
-        require_non_empty(request.token.as_deref(), "cashu.receiveToken requires token")?;
-    let token = Token::from_str(&token_str)
-        .map_err(|error| JsErrorBox::type_error(format!("cashu.receiveToken invalid token: {error}")))?;
-    let mint_url = token
-        .mint_url()
-        .map_err(|error| JsErrorBox::type_error(format!("cashu.receiveToken token mint url: {error}")))?;
+    let token_str = require_non_empty(
+        request.token.as_deref(),
+        "cashu.receiveToken requires token",
+    )?;
+    let token = Token::from_str(&token_str).map_err(|error| {
+        JsErrorBox::type_error(format!("cashu.receiveToken invalid token: {error}"))
+    })?;
+    let mint_url = token.mint_url().map_err(|error| {
+        JsErrorBox::type_error(format!("cashu.receiveToken token mint url: {error}"))
+    })?;
     if !service.repository.has_mint(&mint_url).await {
         return Err(JsErrorBox::type_error(format!(
             "cashu.receiveToken mint {} is not trusted yet",
@@ -549,8 +556,10 @@ async fn op_runtime_cashu_pay_invoice(
     #[serde] request: PayInvoiceRequest,
 ) -> Result<PayInvoiceReceipt, JsErrorBox> {
     let service = load_cashu_service(state).await?;
-    let invoice =
-        require_non_empty(request.invoice.as_deref(), "cashu.payInvoice requires invoice")?;
+    let invoice = require_non_empty(
+        request.invoice.as_deref(),
+        "cashu.payInvoice requires invoice",
+    )?;
     let mint_url = resolve_mint_url(&service.repository, request.mint_url.as_deref())
         .await
         .map_err(JsErrorBox::generic)?;
@@ -615,7 +624,10 @@ async fn wallet_summary(wallet: &Wallet) -> Result<WalletSummary, String> {
     })
 }
 
-async fn get_or_create_wallet(repository: &WalletRepository, mint_url: &MintUrl) -> Result<Wallet, String> {
+async fn get_or_create_wallet(
+    repository: &WalletRepository,
+    mint_url: &MintUrl,
+) -> Result<Wallet, String> {
     match repository.get_wallet(mint_url, &CurrencyUnit::Sat).await {
         Ok(wallet) => Ok(wallet),
         Err(_) => repository
@@ -636,7 +648,9 @@ async fn resolve_mint_url(
 
     let wallets = repository.get_wallets().await;
     match wallets.as_slice() {
-        [] => Err(String::from("cashu request requires mintUrl because no trusted mint exists yet")),
+        [] => Err(String::from(
+            "cashu request requires mintUrl because no trusted mint exists yet",
+        )),
         [wallet] => Ok(wallet.mint_url.clone()),
         _ => Err(String::from(
             "cashu request requires mintUrl when multiple trusted mints exist",
@@ -651,13 +665,17 @@ fn parse_required_mint_url(value: Option<&str>, action: &str) -> Result<MintUrl,
 }
 
 fn require_non_empty(value: Option<&str>, message: &str) -> Result<String, JsErrorBox> {
-    value.map(str::trim)
+    value
+        .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .ok_or_else(|| JsErrorBox::type_error(message.to_string()))
 }
 
-fn mint_quote_receipt(mint_url: &MintUrl, quote: &cdk::wallet::MintQuote) -> Result<MintQuoteReceipt, String> {
+fn mint_quote_receipt(
+    mint_url: &MintUrl,
+    quote: &cdk::wallet::MintQuote,
+) -> Result<MintQuoteReceipt, String> {
     Ok(MintQuoteReceipt {
         mint_url: mint_url.to_string(),
         quote_id: quote.id.clone(),

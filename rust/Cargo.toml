@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "runtime-audio-host",
+    "runtime-camera-host",
+    "runtime-cashu-host",
+    "runtime-nostr-host",
+    "shadow-runtime-host",
+    "shadow-runtime-protocol",
+]
+default-members = [
+    "shadow-runtime-host",
+]
+exclude = [
+    "drm-rect",
+    "shadow-camera-provider-host",
+    "shadow-linux-audio-spike",
+    "shadow-session",
+    "vendor/temporal_rs",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+base64 = "0.22.1"
+bip39 = "2.2.0"
+cdk = { version = "0.16.0", default-features = false, features = ["wallet"] }
+cdk-redb = { version = "0.16.0", default-features = false, features = ["wallet"] }
+deno_core = { version = "=0.393.0", default-features = false }
+deno_error = "=0.7.1"
+getrandom = "0.2.16"
+image = { version = "0.25.8", default-features = false, features = ["jpeg", "png"] }
+libc = "0.2"
+nostr = "0.44.2"
+nostr-sdk = "0.44.1"
+qrcodegen = "1.8.0"
+runtime-audio-host = { path = "runtime-audio-host" }
+runtime-camera-host = { path = "runtime-camera-host" }
+runtime-cashu-host = { path = "runtime-cashu-host" }
+runtime-nostr-host = { path = "runtime-nostr-host" }
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+shadow-runtime-protocol = { path = "shadow-runtime-protocol" }
+tokio = { version = "1.50.0", default-features = false }
+v8 = "=146.8.0"
+
+[patch.crates-io]
+temporal_rs = { path = "vendor/temporal_rs" }

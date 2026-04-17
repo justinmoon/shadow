@@ -45,10 +45,14 @@ android_font_source_dir="$(runtime_bundle_android_font_source_dir)"
 declare -a runtime_host_source_inputs=()
 
 mapfile -t runtime_host_source_inputs < <(
+  printf '%s\n' "$repo/rust/Cargo.toml"
+  printf '%s\n' "$repo/rust/Cargo.lock"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-camera-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-runtime-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-audio-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-cashu-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-nostr-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-runtime-protocol"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-linux-audio-spike"
 )
 

@@ -1,7 +1,7 @@
 use std::env;
+use std::io::Cursor;
 use std::io::ErrorKind;
 use std::io::{BufRead, BufReader, Write};
-use std::io::Cursor;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -519,8 +519,14 @@ mod tests {
 
     #[test]
     fn maps_supported_mime_types_to_image_formats() {
-        assert_eq!(image_format_for_mime_type("image/jpeg"), Some(ImageFormat::Jpeg));
-        assert_eq!(image_format_for_mime_type("image/png"), Some(ImageFormat::Png));
+        assert_eq!(
+            image_format_for_mime_type("image/jpeg"),
+            Some(ImageFormat::Jpeg)
+        );
+        assert_eq!(
+            image_format_for_mime_type("image/png"),
+            Some(ImageFormat::Png)
+        );
         assert_eq!(image_format_for_mime_type("image/webp"), None);
     }
 

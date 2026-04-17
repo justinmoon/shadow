@@ -65,7 +65,9 @@ pub async fn sync_kind1(request: SyncKind1Request) -> Result<FetchedKind1Batch, 
         failed_relays.sort();
         client.shutdown().await;
         if failed_relays.is_empty() {
-            return Err(String::from("nostr.syncKind1 could not connect to any relay"));
+            return Err(String::from(
+                "nostr.syncKind1 could not connect to any relay",
+            ));
         }
         return Err(format!(
             "nostr.syncKind1 could not connect to any relay: {}",

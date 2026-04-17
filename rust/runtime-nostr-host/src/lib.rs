@@ -367,7 +367,10 @@ async fn op_runtime_nostr_sync_kind1(
     let service = SqliteNostrService::from_env().map_err(JsErrorBox::generic)?;
     let mut imported_count = 0_usize;
     for event in fetched.events.iter() {
-        if service.store_kind1_event(event).map_err(JsErrorBox::generic)? {
+        if service
+            .store_kind1_event(event)
+            .map_err(JsErrorBox::generic)?
+        {
             imported_count += 1;
         }
     }
