@@ -20,6 +20,18 @@ import os
 
 asset = json.loads(os.environ["ASSET_JSON"])
 asset.pop("assetDir", None)
+episodes = asset.get("episodes", [])
+if len(episodes) == 1:
+    base = episodes[0]
+    episodes = [
+        base,
+        {
+            **base,
+            "id": "01",
+            "title": "#01: Platform Media Control Sample",
+        },
+    ]
+asset["episodes"] = episodes
 print(json.dumps(asset))
 PY
 )"
@@ -117,8 +129,18 @@ def dispatch_and_wait(target_id, fragment):
         return html
     return wait_for_fragment(fragment)
 
+def media_and_wait(action, fragment):
+    payload = send_ok({"op": "platform_audio_control", "action": action})
+    html = payload["html"]
+    if fragment in html:
+        return html
+    return wait_for_fragment(fragment)
+
 initial = send_ok({"op": "render"})
 playing_html = dispatch_and_wait("play-00", "State:</span> playing")
+next_html = media_and_wait("next", "Current:</span> #01: Platform Media Control Sample")
+previous_html = media_and_wait("previous", "Current:</span> #00: Test Recording / Teaser w/ Pablo")
+paused_html = media_and_wait("play_pause", "State:</span> paused")
 stopped_html = dispatch_and_wait("stop", "State:</span> stopped")
 released_html = dispatch_and_wait("release", "State:</span> released")
 
@@ -142,6 +164,12 @@ if "Current:</span> #00: Test Recording / Teaser w/ Pablo" not in playing_html:
     raise SystemExit("runtime-app-podcast-player-smoke: missing active episode")
 if "Source:</span> assets/podcast/00-test-recording-teaser-w-pablo.mp3" not in playing_html:
     raise SystemExit("runtime-app-podcast-player-smoke: missing first episode source path")
+if "Current:</span> #01: Platform Media Control Sample" not in next_html:
+    raise SystemExit("runtime-app-podcast-player-smoke: next media action did not advance episode")
+if "Current:</span> #00: Test Recording / Teaser w/ Pablo" not in previous_html:
+    raise SystemExit("runtime-app-podcast-player-smoke: previous media action did not rewind episode")
+if "State:</span> paused" not in paused_html:
+    raise SystemExit("runtime-app-podcast-player-smoke: play_pause media action did not pause playback")
 if "State:</span> stopped" not in stopped_html:
     raise SystemExit("runtime-app-podcast-player-smoke: stop did not update state")
 if "State:</span> released" not in released_html:

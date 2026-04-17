@@ -20,6 +20,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 
 - Primary loop:
   - `just run target=vm app=<id>`
+    Default app is `podcast`.
   - `just stop target=vm`
   - `sc -t vm doctor`
   - `sc -t vm status`
@@ -27,6 +28,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
   - `sc -t vm journal`
   - `sc -t vm wait-ready`
   - `sc -t vm open <id>`
+  - `sc -t vm media <play-pause|play|pause|next|previous>`
   - `sc -t vm home`
   - `sc -t vm screenshot`
   - `sc -t vm frame`
@@ -43,6 +45,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
   - `sc -t pixel doctor`
   - `sc -t pixel state`
   - `sc -t pixel open <id>`
+  - `sc -t pixel media <play-pause|play|pause|next|previous>`
   - `sc -t pixel home`
   - `sc -t pixel switcher`
   - `sc -t pixel frame`
@@ -96,7 +99,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 
 ## Important Constraints
 
-- The rooted Pixel path assumes a rooted device and uses the guest compositor control socket on-device for shell actions like `state`, `open`, `home`, and `switcher`.
+- The rooted Pixel path assumes a rooted device and uses the guest compositor control socket on-device for shell actions like `state`, `open`, `home`, `switcher`, and focused-app media control.
 - VM and Pixel are the validation targets that matter for cleanup work. Linux desktop host smokes and other historical bring-up paths are secondary.
 - The local macOS VM gate is allowed to use the local `linux-builder`; removing guest-side Cargo/Rust is part of keeping build-time and runtime responsibilities separate.
 - The remaining VM impurity is intentional: host-prepared runtime app artifacts. The branch gate should keep that seam clean, manifest-driven, offline-safe for fixtures, and never built inside the guest.

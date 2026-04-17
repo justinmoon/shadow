@@ -8,7 +8,8 @@ use shadow_runtime_protocol::{RuntimeDocumentPayload, SessionRequest, SessionRes
 use crate::log::runtime_log;
 
 pub use shadow_runtime_protocol::{
-    RuntimeDispatchEvent, RuntimeKeyboardEvent, RuntimePointerEvent, RuntimeSelectionEvent,
+    RuntimeAudioControlAction, RuntimeDispatchEvent, RuntimeKeyboardEvent, RuntimePointerEvent,
+    RuntimeSelectionEvent,
 };
 
 const RUNTIME_APP_BUNDLE_PATH_ENV: &str = "SHADOW_RUNTIME_APP_BUNDLE_PATH";
@@ -81,6 +82,17 @@ impl RuntimeSession {
             SessionResponse::NoUpdate => {
                 Err(String::from("runtime host returned no update for dispatch"))
             }
+            SessionResponse::Error { message } => Err(message),
+        }
+    }
+
+    pub fn platform_audio_control(
+        &mut self,
+        action: RuntimeAudioControlAction,
+    ) -> Result<Option<RuntimeDocumentPayload>, String> {
+        match self.send_request(&SessionRequest::PlatformAudioControl { action })? {
+            SessionResponse::Ok { payload } => Ok(Some(payload)),
+            SessionResponse::NoUpdate => Ok(None),
             SessionResponse::Error { message } => Err(message),
         }
     }
@@ -183,6 +195,7 @@ fn session_request_name(request: &SessionRequest) -> &'static str {
         SessionRequest::Render => "render",
         SessionRequest::RenderIfDirty => "render_if_dirty",
         SessionRequest::Dispatch { .. } => "dispatch",
+        SessionRequest::PlatformAudioControl { .. } => "platform_audio_control",
     }
 }
 

@@ -1,10 +1,16 @@
-import { createSignal, invalidateRuntimeApp } from "@shadow/app-runtime-solid";
 import {
+  createSignal,
+  invalidateRuntimeApp,
+  onCleanup,
+} from "@shadow/app-runtime-solid";
+import {
+  clearMediaButtonHandler,
   createPlayer,
   getStatus,
   pause,
   play,
   release,
+  setMediaButtonHandler,
   stop,
 } from "@shadow/app-runtime-os";
 
@@ -38,7 +44,10 @@ type RuntimeAppConfig = {
 };
 
 type CommandKind =
+  | "next"
   | "pause"
+  | "play_pause"
+  | "previous"
   | "refresh"
   | "release"
   | "stop"
@@ -271,7 +280,9 @@ function readAppConfig(): {
     .SHADOW_RUNTIME_APP_CONFIG as RuntimeAppConfig | undefined;
   const episodes = Array.isArray(runtimeConfig?.episodes) &&
       runtimeConfig.episodes.length > 0
-    ? runtimeConfig.episodes.map(normalizeEpisode).filter(Boolean) as EpisodeConfig[]
+    ? runtimeConfig.episodes.map(normalizeEpisode).filter(
+      Boolean,
+    ) as EpisodeConfig[]
     : DEFAULT_EPISODES;
 
   return {
@@ -279,7 +290,8 @@ function readAppConfig(): {
     playbackSource: normalizePlaybackSource(runtimeConfig?.playbackSource),
     podcastLicense: normalizeString(runtimeConfig?.podcastLicense),
     podcastPageUrl: normalizeString(runtimeConfig?.podcastPageUrl),
-    podcastTitle: normalizeString(runtimeConfig?.podcastTitle) ?? "No Solutions",
+    podcastTitle: normalizeString(runtimeConfig?.podcastTitle) ??
+      "No Solutions",
   };
 }
 
@@ -342,7 +354,10 @@ function logPodcastStatus(
   console.error(parts.join(" "));
 }
 
-function buildEpisodeSource(episode: EpisodeConfig, playbackSource: PlaybackSource) {
+function buildEpisodeSource(
+  episode: EpisodeConfig,
+  playbackSource: PlaybackSource,
+) {
   if (playbackSource === "url" && episode.sourceUrl) {
     return {
       durationMs: episode.durationMs,
@@ -358,7 +373,10 @@ function buildEpisodeSource(episode: EpisodeConfig, playbackSource: PlaybackSour
   } as const;
 }
 
-function episodeSourceLabel(episode: EpisodeConfig | null, playbackSource: PlaybackSource) {
+function episodeSourceLabel(
+  episode: EpisodeConfig | null,
+  playbackSource: PlaybackSource,
+) {
   if (!episode) {
     return "missing";
   }
@@ -371,7 +389,9 @@ function episodeSourceLabel(episode: EpisodeConfig | null, playbackSource: Playb
 export default function renderApp() {
   const config = readAppConfig();
   const [status, setStatus] = createSignal<AudioStatus | null>(null);
-  const [activeEpisodeId, setActiveEpisodeId] = createSignal<string | null>(null);
+  const [activeEpisodeId, setActiveEpisodeId] = createSignal<string | null>(
+    null,
+  );
   const [busy, setBusy] = createSignal<CommandKind | null>(null);
   const [message, setMessage] = createSignal(
     "Pick an episode. The current Pixel backend uses the Linux audio spike.",
@@ -379,13 +399,45 @@ export default function renderApp() {
   const [error, setError] = createSignal<string | null>(null);
 
   function activeEpisode() {
-    return config.episodes.find((episode) => episode.id === activeEpisodeId()) ?? null;
+    return config.episodes.find((episode) =>
+      episode.id === activeEpisodeId()
+    ) ?? null;
   }
 
-  async function ensurePlayerForEpisode(episode: EpisodeConfig, forceCreate = false) {
+  function defaultEpisode() {
+    return config.episodes[0] ?? null;
+  }
+
+  function adjacentEpisode(step: 1 | -1) {
+    if (config.episodes.length === 0) {
+      return null;
+    }
+    const currentIndex = config.episodes.findIndex((episode) =>
+      episode.id === activeEpisodeId()
+    );
+    if (currentIndex === -1) {
+      return step > 0
+        ? defaultEpisode()
+        : config.episodes[config.episodes.length - 1] ?? null;
+    }
+    const nextIndex = (currentIndex + step + config.episodes.length) %
+      config.episodes.length;
+    return config.episodes[nextIndex] ?? null;
+  }
+
+  function playbackEpisode() {
+    return activeEpisode() ?? defaultEpisode();
+  }
+
+  async function ensurePlayerForEpisode(
+    episode: EpisodeConfig,
+    forceCreate = false,
+  ) {
     const current = status();
-    if (!forceCreate && current && current.state !== "released" &&
-      activeEpisodeId() === episode.id) {
+    if (
+      !forceCreate && current && current.state !== "released" &&
+      activeEpisodeId() === episode.id
+    ) {
       return current;
     }
 
@@ -412,6 +464,24 @@ export default function renderApp() {
     try {
       let nextStatus = status();
       switch (command) {
+        case "next":
+        case "previous": {
+          const targetEpisode = episode ??
+            adjacentEpisode(command === "next" ? 1 : -1);
+          if (!targetEpisode) {
+            setMessage("No configured episodes.");
+            break;
+          }
+          nextStatus = await play({
+            id: (await ensurePlayerForEpisode(targetEpisode)).id,
+          }) as AudioStatus;
+          setMessage(
+            `${
+              command === "next" ? "Next" : "Previous"
+            } episode requested: ${targetEpisode.title}.`,
+          );
+          break;
+        }
         case "pause":
           if (!status() || status()!.state === "released") {
             setMessage("No active player yet.");
@@ -420,6 +490,24 @@ export default function renderApp() {
           nextStatus = await pause({ id: status()!.id }) as AudioStatus;
           setMessage("Playback paused.");
           break;
+        case "play_pause": {
+          const currentStatus = status();
+          if (currentStatus && currentStatus.state === "playing") {
+            nextStatus = await pause({ id: currentStatus.id }) as AudioStatus;
+            setMessage("Playback paused.");
+            break;
+          }
+          const targetEpisode = episode ?? playbackEpisode();
+          if (!targetEpisode) {
+            setMessage("No configured episodes.");
+            break;
+          }
+          nextStatus = await play({
+            id: (await ensurePlayerForEpisode(targetEpisode)).id,
+          }) as AudioStatus;
+          setMessage(`Playback requested for ${targetEpisode.title}.`);
+          break;
+        }
         case "refresh":
           if (!status() || status()!.state === "released") {
             setMessage("No live player to refresh.");
@@ -482,11 +570,44 @@ export default function renderApp() {
     }
   }
 
+  setMediaButtonHandler(async ({ action }: { action: string }) => {
+    if (busy() !== null) {
+      return false;
+    }
+    switch (action) {
+      case "next":
+        await runCommand("next");
+        return true;
+      case "pause":
+        await runCommand("pause");
+        return true;
+      case "play": {
+        const episode = playbackEpisode();
+        if (episode) {
+          await runCommand(`play:${episode.id}`, episode);
+          return true;
+        }
+        return false;
+      }
+      case "play_pause":
+        await runCommand("play_pause");
+        return true;
+      case "previous":
+        await runCommand("previous");
+        return true;
+      default:
+        return false;
+    }
+  });
+  onCleanup(() => {
+    clearMediaButtonHandler();
+  });
+
   const activeStatus = () => status();
   const sourcePath = () =>
     activeStatus()?.url ??
-    activeStatus()?.path ??
-    episodeSourceLabel(activeEpisode(), config.playbackSource);
+      activeStatus()?.path ??
+      episodeSourceLabel(activeEpisode(), config.playbackSource);
 
   return (
     <main class="podcast-shell">
@@ -495,18 +616,23 @@ export default function renderApp() {
         <h1 class="podcast-headline">{config.podcastTitle} player</h1>
         <p class="podcast-body">
           Runtime app sample: configured episodes are played through
-          `Shadow.os.audio`, using {config.playbackSource === "url" ? "source URLs" : "staged local files"}.
+          `Shadow.os.audio`, using {config.playbackSource === "url"
+            ? "source URLs"
+            : "staged local files"}.
         </p>
 
         <div class="podcast-status">
           <p class="podcast-status-line">
-            <span class="podcast-status-label">State:</span> {activeStatus()?.state ?? "missing"}
+            <span class="podcast-status-label">State:</span>{" "}
+            {activeStatus()?.state ?? "missing"}
           </p>
           <p class="podcast-status-line">
-            <span class="podcast-status-label">Backend:</span> {activeStatus()?.backend ?? "missing"}
+            <span class="podcast-status-label">Backend:</span>{" "}
+            {activeStatus()?.backend ?? "missing"}
           </p>
           <p class="podcast-status-line">
-            <span class="podcast-status-label">Current:</span> {activeEpisode()?.title ?? "none"}
+            <span class="podcast-status-label">Current:</span>{" "}
+            {activeEpisode()?.title ?? "none"}
           </p>
           <p class="podcast-status-line">
             <span class="podcast-status-label">Source:</span> {sourcePath()}
@@ -514,6 +640,32 @@ export default function renderApp() {
         </div>
 
         <div class="podcast-controls">
+          <button
+            class="podcast-button podcast-button-secondary"
+            data-shadow-id="previous"
+            disabled={busy() !== null}
+            onClick={() => void runCommand("previous")}
+          >
+            Previous
+          </button>
+          <button
+            class="podcast-button podcast-button-primary"
+            data-shadow-id="play-pause"
+            disabled={busy() !== null}
+            onClick={() => void runCommand("play_pause")}
+          >
+            {activeStatus()?.state === "playing"
+              ? "Pause Track"
+              : "Play / Pause"}
+          </button>
+          <button
+            class="podcast-button podcast-button-secondary"
+            data-shadow-id="next"
+            disabled={busy() !== null}
+            onClick={() => void runCommand("next")}
+          >
+            Next
+          </button>
           <button
             class="podcast-button podcast-button-secondary"
             data-shadow-id="pause"
@@ -552,12 +704,16 @@ export default function renderApp() {
           {config.episodes.map((episode) => (
             <article
               class={`podcast-episode${
-                activeEpisodeId() === episode.id ? " podcast-episode-active" : ""
+                activeEpisodeId() === episode.id
+                  ? " podcast-episode-active"
+                  : ""
               }`}
             >
               <div class="podcast-episode-top">
                 <h2 class="podcast-episode-title">{episode.title}</h2>
-                <p class="podcast-episode-meta">{formatDuration(episode.durationMs)}</p>
+                <p class="podcast-episode-meta">
+                  {formatDuration(episode.durationMs)}
+                </p>
               </div>
               <p class="podcast-episode-source">
                 {episodeSourceLabel(episode, config.playbackSource)}
@@ -568,7 +724,9 @@ export default function renderApp() {
                 disabled={busy() !== null}
                 onClick={() => void runCommand(`play:${episode.id}`, episode)}
               >
-                {busy() === `play:${episode.id}` ? "Playing..." : `Play #${episode.id}`}
+                {busy() === `play:${episode.id}`
+                  ? "Playing..."
+                  : `Play #${episode.id}`}
               </button>
             </article>
           ))}
@@ -579,12 +737,20 @@ export default function renderApp() {
         </p>
 
         <div class="podcast-chips">
-          <span class="podcast-chip">{config.episodes.length} configured episodes</span>
           <span class="podcast-chip">
-            {config.playbackSource === "url" ? "URL playback" : "local file playback"}
+            {config.episodes.length} configured episodes
           </span>
-          {config.podcastLicense ? <span class="podcast-chip">{config.podcastLicense}</span> : null}
-          {config.podcastPageUrl ? <span class="podcast-chip">{config.podcastPageUrl}</span> : null}
+          <span class="podcast-chip">
+            {config.playbackSource === "url"
+              ? "URL playback"
+              : "local file playback"}
+          </span>
+          {config.podcastLicense
+            ? <span class="podcast-chip">{config.podcastLicense}</span>
+            : null}
+          {config.podcastPageUrl
+            ? <span class="podcast-chip">{config.podcastPageUrl}</span>
+            : null}
         </div>
       </section>
     </main>

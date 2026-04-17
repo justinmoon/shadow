@@ -52,7 +52,7 @@ url_session_json="$(
   SHADOW_RUNTIME_APP_CONFIG_JSON="$url_runtime_app_config_json" \
   SHADOW_RUNTIME_APP_INPUT_PATH="runtime/app-sound-smoke/app.tsx" \
   SHADOW_RUNTIME_APP_CACHE_DIR="build/runtime/app-sound-smoke-host-url" \
-    "$SCRIPT_DIR/runtime_prepare_host_session.sh"
+    "$SCRIPT_DIR/runtime/runtime_prepare_host_session.sh"
 )"
 
 ASSET_SOURCE_PATH="$asset_source_path" \

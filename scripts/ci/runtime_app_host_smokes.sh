@@ -19,4 +19,9 @@ SHADOW_RUNTIME_APP_CACHE_DIR=build/runtime/app-nostr-gm \
 "$SCRIPT_DIR/ci/runtime_app_nostr_timeline_smoke.sh"
 "$SCRIPT_DIR/ci/runtime_app_sound_smoke.sh"
 "$SCRIPT_DIR/ci/runtime_app_podcast_player_smoke.sh"
+if [[ "$(uname -s)" == "Linux" || "${SHADOW_RUNTIME_APP_HOST_INCLUDE_URL_SMOKE:-0}" == "1" ]]; then
+  "$SCRIPT_DIR/ci/runtime_app_podcast_player_url_smoke.sh"
+else
+  echo "runtime_app_host_smokes: skipping podcast URL smoke on non-Linux; run scripts/ci/runtime_app_podcast_player_url_smoke.sh directly or set SHADOW_RUNTIME_APP_HOST_INCLUDE_URL_SMOKE=1" >&2
+fi
 "$SCRIPT_DIR/ci/runtime_app_cashu_wallet_smoke.sh"

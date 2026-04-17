@@ -143,6 +143,16 @@ globalThis.SHADOW_RUNTIME_HOST = {
   dispatch(event) {
     return JSON.stringify(runtimeApp.dispatch(event));
   },
+  async platformAudioControl(action) {
+    const audio = ensureShadowRuntimeOs().audio;
+    if (typeof audio?.__dispatchMediaButton === "function") {
+      const handled = await audio.__dispatchMediaButton(action);
+      if (!handled) {
+        return JSON.stringify(null);
+      }
+    }
+    return JSON.stringify(runtimeApp.renderDocument());
+  },
   render() {
     return JSON.stringify(runtimeApp.renderDocument());
   },

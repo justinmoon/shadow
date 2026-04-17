@@ -17,8 +17,8 @@ use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
 use crate::frame::template_document;
 use crate::log::{runtime_log, runtime_wall_ms};
 use crate::runtime_session::{
-    RuntimeDispatchEvent, RuntimeKeyboardEvent, RuntimePointerEvent, RuntimeSelectionEvent,
-    RuntimeSession,
+    RuntimeAudioControlAction, RuntimeDispatchEvent, RuntimeKeyboardEvent, RuntimePointerEvent,
+    RuntimeSelectionEvent, RuntimeSession,
 };
 
 const STYLE_SELECTOR: &str = "#shadow-blitz-style";
@@ -956,6 +956,36 @@ impl RuntimeDocument {
 
     pub fn check_touch_signal(&mut self) -> bool {
         self.handle_touch_signal_tick()
+    }
+
+    pub fn handle_platform_audio_control(&mut self, action: RuntimeAudioControlAction) -> bool {
+        let Some(runtime_session) = self.runtime_session.as_mut() else {
+            return false;
+        };
+
+        runtime_log(format!(
+            "runtime-platform-audio-control-start action={} wall_ms={}",
+            action.as_str(),
+            runtime_wall_ms()
+        ));
+        match runtime_session.platform_audio_control(action) {
+            Ok(Some(payload)) => {
+                self.replace_document(payload);
+                self.refresh_debug_overlay();
+                self.redraw_requested = true;
+                runtime_log(format!(
+                    "runtime-platform-audio-control-applied action={} wall_ms={}",
+                    action.as_str(),
+                    runtime_wall_ms()
+                ));
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                eprintln!("[shadow-runtime-demo] runtime-platform-audio-control-error: {error}");
+                false
+            }
+        }
     }
 
     pub fn take_redraw_requested(&mut self) -> bool {

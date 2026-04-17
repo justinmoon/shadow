@@ -76,12 +76,35 @@ pub struct RuntimeKeyboardEvent {
     pub shift_key: Option<bool>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeAudioControlAction {
+    PlayPause,
+    Play,
+    Pause,
+    Next,
+    Previous,
+}
+
+impl RuntimeAudioControlAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PlayPause => "play_pause",
+            Self::Play => "play",
+            Self::Pause => "pause",
+            Self::Next => "next",
+            Self::Previous => "previous",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum SessionRequest {
     Render,
     RenderIfDirty,
     Dispatch { event: RuntimeDispatchEvent },
+    PlatformAudioControl { action: RuntimeAudioControlAction },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

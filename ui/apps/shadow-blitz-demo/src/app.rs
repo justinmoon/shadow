@@ -23,6 +23,7 @@ type WindowRenderer = softbuffer_window_renderer::SoftbufferWindowRenderer<
 >;
 use crate::log::{runtime_log, runtime_log_json, runtime_wall_ms};
 use crate::runtime_document::RuntimeDocument;
+use crate::runtime_session::RuntimeAudioControlAction;
 #[cfg(all(not(feature = "gpu"), not(feature = "hybrid"), feature = "cpu"))]
 use anyrender_vello_cpu::VelloCpuWindowRenderer as WindowRenderer;
 #[cfg(all(
@@ -37,11 +38,13 @@ use blitz_shell::{
 use serde::Serialize;
 use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
 use std::sync::mpsc::Receiver;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::{env, path::PathBuf, thread, time::Duration};
 
 #[cfg(target_os = "linux")]
 use std::{ffi::CString, io, os::unix::ffi::OsStrExt, path::Path};
+#[cfg(unix)]
+use std::{io::Read, os::unix::net::UnixListener};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -56,6 +59,7 @@ use winit::platform::wayland::WindowAttributesWayland;
 #[cfg(target_os = "linux")]
 const RUNTIME_DEMO_WAYLAND_APP_ID: &str = "dev.shadow.counter";
 const BLITZ_APP_TITLE_ENV: &str = "SHADOW_BLITZ_APP_TITLE";
+const BLITZ_PLATFORM_CONTROL_SOCKET_ENV: &str = "SHADOW_BLITZ_PLATFORM_CONTROL_SOCKET";
 #[cfg(target_os = "linux")]
 const BLITZ_WAYLAND_APP_ID_ENV: &str = "SHADOW_BLITZ_WAYLAND_APP_ID";
 #[cfg(target_os = "linux")]
@@ -171,6 +175,7 @@ struct BlitzApplication {
     resume_pending: bool,
     runtime_poll_thread_started: bool,
     runtime_touch_signal_thread_started: bool,
+    runtime_platform_control_thread_started: bool,
 }
 
 impl BlitzApplication {
@@ -187,6 +192,7 @@ impl BlitzApplication {
             resume_pending: false,
             runtime_poll_thread_started: false,
             runtime_touch_signal_thread_started: false,
+            runtime_platform_control_thread_started: false,
         }
     }
 
@@ -237,6 +243,7 @@ impl ApplicationHandler for BlitzApplication {
             let window_id = window.window_id();
             self.ensure_runtime_poll_thread(window_id);
             self.ensure_runtime_touch_signal_thread();
+            self.ensure_runtime_platform_control_thread();
             self.proxy.send_event(BlitzShellEvent::Poll { window_id });
             runtime_log(format!(
                 "request-poll source=can-create-existing window={window_id:?}"
@@ -261,6 +268,7 @@ impl ApplicationHandler for BlitzApplication {
                 self.window = Some(window);
                 self.ensure_runtime_poll_thread(window_id);
                 self.ensure_runtime_touch_signal_thread();
+                self.ensure_runtime_platform_control_thread();
                 self.proxy.send_event(BlitzShellEvent::Poll { window_id });
                 runtime_log(format!(
                     "request-poll source=can-create-new window={window_id:?}"
@@ -374,6 +382,26 @@ impl BlitzApplication {
         thread::spawn(move || run_touch_signal_thread(proxy, path, interval, watch_mode));
     }
 
+    fn ensure_runtime_platform_control_thread(&mut self) {
+        if self.runtime_platform_control_thread_started {
+            return;
+        }
+        let Some(path) = env::var_os(BLITZ_PLATFORM_CONTROL_SOCKET_ENV)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+        else {
+            return;
+        };
+
+        self.runtime_platform_control_thread_started = true;
+        let proxy = self.proxy.clone();
+        runtime_log(format!(
+            "platform-control-thread-start path={}",
+            path.display()
+        ));
+        thread::spawn(move || run_platform_control_thread(proxy, path));
+    }
+
     fn maybe_resume_deferred_window(&mut self, window_id: WindowId, event: &WindowEvent) {
         if !self.resume_pending {
             return;
@@ -392,6 +420,7 @@ impl BlitzApplication {
         self.resume_pending = false;
         self.ensure_runtime_poll_thread(window_id);
         self.ensure_runtime_touch_signal_thread();
+        self.ensure_runtime_platform_control_thread();
 
         let window = self.window.as_mut().expect("window before deferred resume");
         runtime_log(format!("window-resume-start window={window_id:?}"));
@@ -686,9 +715,13 @@ fn adapter_is_software(info: &wgpu::AdapterInfo) -> bool {
         .any(|needle| haystack.contains(needle))
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 enum RuntimeEmbedderEvent {
     TouchSignalTick,
+    PlatformAudioControl {
+        action: RuntimeAudioControlAction,
+        response: Arc<PlatformControlResponse>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -748,6 +781,122 @@ fn send_touch_signal_tick(proxy: &BlitzShellProxy) {
     proxy.send_event(BlitzShellEvent::embedder_event(
         RuntimeEmbedderEvent::TouchSignalTick,
     ));
+}
+
+#[derive(Debug)]
+struct PlatformControlResponse {
+    handled: Mutex<Option<bool>>,
+    signal: Condvar,
+}
+
+impl PlatformControlResponse {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            handled: Mutex::new(None),
+            signal: Condvar::new(),
+        })
+    }
+
+    fn store(&self, handled: bool) {
+        let mut state = self
+            .handled
+            .lock()
+            .expect("platform control response mutex poisoned");
+        *state = Some(handled);
+        self.signal.notify_all();
+    }
+
+    fn wait(&self, timeout: Duration) -> Option<bool> {
+        let state = self
+            .handled
+            .lock()
+            .expect("platform control response mutex poisoned");
+        let (state, _) = self
+            .signal
+            .wait_timeout_while(state, timeout, |handled| handled.is_none())
+            .expect("platform control response wait poisoned");
+        *state
+    }
+}
+
+#[cfg(unix)]
+fn run_platform_control_thread(proxy: BlitzShellProxy, path: PathBuf) {
+    if path.exists() {
+        let _ = std::fs::remove_file(&path);
+    }
+
+    let listener = match UnixListener::bind(&path) {
+        Ok(listener) => listener,
+        Err(error) => {
+            runtime_log(format!(
+                "platform-control-thread-bind-failed path={} error={error}",
+                path.display()
+            ));
+            return;
+        }
+    };
+
+    for stream in listener.incoming() {
+        let mut stream = match stream {
+            Ok(stream) => stream,
+            Err(error) => {
+                runtime_log(format!("platform-control-accept-failed error={error}"));
+                continue;
+            }
+        };
+
+        let mut request = String::new();
+        if let Err(error) = stream.read_to_string(&mut request) {
+            let _ = std::io::Write::write_all(
+                &mut stream,
+                format!("error=read-failed {error}\n").as_bytes(),
+            );
+            continue;
+        }
+
+        let Some(action) = parse_platform_audio_control(&request) else {
+            let _ =
+                std::io::Write::write_all(&mut stream, b"ok\nhandled=0\nreason=invalid-action\n");
+            continue;
+        };
+
+        let response = PlatformControlResponse::new();
+        proxy.send_event(BlitzShellEvent::embedder_event(
+            RuntimeEmbedderEvent::PlatformAudioControl {
+                action,
+                response: response.clone(),
+            },
+        ));
+        let handled = response.wait(Duration::from_secs(5)).unwrap_or(false);
+        let _ = std::io::Write::write_all(
+            &mut stream,
+            format!(
+                "ok\nhandled={}\naction={}\n",
+                if handled { 1 } else { 0 },
+                action.as_str()
+            )
+            .as_bytes(),
+        );
+    }
+}
+
+#[cfg(not(unix))]
+fn run_platform_control_thread(_proxy: BlitzShellProxy, path: PathBuf) {
+    runtime_log(format!(
+        "platform-control-thread-unsupported path={}",
+        path.display()
+    ));
+}
+
+fn parse_platform_audio_control(request: &str) -> Option<RuntimeAudioControlAction> {
+    match request.trim() {
+        "play" => Some(RuntimeAudioControlAction::Play),
+        "pause" => Some(RuntimeAudioControlAction::Pause),
+        "play-pause" | "play_pause" => Some(RuntimeAudioControlAction::PlayPause),
+        "next" => Some(RuntimeAudioControlAction::Next),
+        "previous" => Some(RuntimeAudioControlAction::Previous),
+        _ => None,
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1084,6 +1233,13 @@ fn handle_runtime_embedder_event(
                 runtime_log("touch-signal-redraw-requested");
             }
             changed
+        }
+        RuntimeEmbedderEvent::PlatformAudioControl { action, response } => {
+            let handled = window
+                .downcast_doc_mut::<RuntimeDocument>()
+                .handle_platform_audio_control(*action);
+            response.store(handled);
+            handled
         }
     }
 }

@@ -110,6 +110,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(os.environ["REPO_ROOT"])
 SCRIPT_DIR = REPO_ROOT / "scripts"
+RUNTIME_SCRIPT_DIR = SCRIPT_DIR / "runtime"
 FIXTURE_DIR = REPO_ROOT / "runtime" / "app-podcast-player" / "fixture"
 FIXTURE_METADATA_PATH = FIXTURE_DIR / "podcast-feed-cache.json"
 EPISODE_ID = os.environ.get("SHADOW_PODCAST_URL_SMOKE_EPISODE_ID", "00")
@@ -174,7 +175,7 @@ try:
     helper_binary_path = Path(helper_prefix) / "bin" / "shadow-linux-audio-spike"
 
     session_json = subprocess.check_output(
-        [str(SCRIPT_DIR / "runtime_prepare_host_session.sh")],
+        [str(RUNTIME_SCRIPT_DIR / "runtime_prepare_host_session.sh")],
         cwd=REPO_ROOT,
         env={
             **os.environ,

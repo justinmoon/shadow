@@ -87,6 +87,13 @@ check_output_case \
   "" \
   env SHADOWCTL_JUST_DRY_RUN=1 just run app=timeline target=TESTSERIAL hold=0
 
+check_output_case \
+  just_run_vm_defaults_to_podcast \
+  0 \
+  "$(printf 'command=%s --app podcast' "$SCRIPT_DIR/vm/ui_vm_run.sh")" \
+  "" \
+  env SHADOWCTL_JUST_DRY_RUN=1 just run target=vm
+
 check_stdout_contains \
   just_stop_uses_shadowctl_flags \
   0 \
@@ -122,7 +129,14 @@ check_output_case \
   env SHADOWCTL_JUST_DRY_RUN=1 just pixel-run --target TESTSERIAL podcast
 
 check_output_case \
-  shadowctl_run_vm_default \
+  shadowctl_run_vm_default_podcast \
+  0 \
+  "$(printf 'command=%s --app podcast' "$SCRIPT_DIR/vm/ui_vm_run.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" run --dry-run -t vm
+
+check_output_case \
+  shadowctl_run_vm_shell \
   0 \
   "command=$SCRIPT_DIR/vm/ui_vm_run.sh" \
   "" \

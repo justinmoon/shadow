@@ -1,6 +1,7 @@
 use std::{
     ffi::OsStr,
     io,
+    path::Path,
     process::{Child, Command},
 };
 
@@ -74,6 +75,15 @@ pub fn launch_app(
     command
         .env("WAYLAND_DISPLAY", socket_name)
         .env(control::COMPOSITOR_CONTROL_ENV, control_socket_path)
+        .env(
+            control::APP_PLATFORM_CONTROL_ENV,
+            control::platform_control_socket_path(
+                Path::new(control_socket_path)
+                    .parent()
+                    .unwrap_or_else(|| Path::new(".")),
+                app_id,
+            ),
+        )
         .env("SHADOW_BLITZ_APP_TITLE", app.window_title)
         .env("SHADOW_BLITZ_WAYLAND_APP_ID", app.wayland_app_id)
         .env("SHADOW_BLITZ_WAYLAND_INSTANCE_NAME", app.id.as_str())

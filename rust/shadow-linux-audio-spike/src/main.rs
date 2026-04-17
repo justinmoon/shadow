@@ -3,7 +3,7 @@ use std::env;
 use std::error::Error;
 use std::f32::consts::TAU;
 use std::fs::{self, File};
-use std::io::{Cursor, ErrorKind};
+use std::io::{Cursor, ErrorKind, Read};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -21,6 +21,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
 const DEFAULT_DEVICE_CANDIDATES: [&str; 2] = ["default", "sysdefault"];
+const DEFAULT_MAX_URL_BYTES: usize = 64 * 1024 * 1024;
 const URL_FETCH_CONNECT_TIMEOUT_SECS: u64 = 10;
 const URL_FETCH_TOTAL_TIMEOUT_SECS: u64 = 600;
 
@@ -292,22 +293,41 @@ fn decode_audio_file(path: &str, gain: f32) -> Result<PreparedPlayback, Box<dyn 
 }
 
 fn decode_audio_url(url: &str, gain: f32) -> Result<PreparedPlayback, Box<dyn Error>> {
+    let max_url_bytes = read_env_usize("SHADOW_AUDIO_SPIKE_MAX_URL_BYTES", DEFAULT_MAX_URL_BYTES);
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(URL_FETCH_CONNECT_TIMEOUT_SECS))
         .timeout(Duration::from_secs(URL_FETCH_TOTAL_TIMEOUT_SECS))
         .build()?;
-    let response = client.get(url).send()?;
+    let mut response = client.get(url).send()?;
     let status = response.status();
     if !status.is_success() {
         return Err(format!("audio-spike url fetch failed status={status} url={url}").into());
     }
-    let bytes = response.bytes()?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_url_bytes as u64)
+    {
+        return Err(format!(
+            "audio-spike url fetch exceeded SHADOW_AUDIO_SPIKE_MAX_URL_BYTES={max_url_bytes} url={url}"
+        )
+        .into());
+    }
+    let mut bytes = Vec::new();
+    response
+        .take((max_url_bytes as u64) + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > max_url_bytes {
+        return Err(format!(
+            "audio-spike url fetch exceeded SHADOW_AUDIO_SPIKE_MAX_URL_BYTES={max_url_bytes} url={url}"
+        )
+        .into());
+    }
     let mut hint = Hint::new();
     if let Some(extension) = source_extension_hint(url) {
         hint.with_extension(&extension);
     }
     decode_audio_media(
-        Box::new(Cursor::new(bytes.to_vec())),
+        Box::new(Cursor::new(bytes)),
         hint,
         gain,
         "url",
@@ -398,6 +418,13 @@ fn source_extension_hint(source: &str) -> Option<String> {
         .extension()
         .and_then(|value| value.to_str())
         .map(str::to_owned)
+}
+
+fn read_env_usize(key: &str, default: usize) -> usize {
+    match env::var(key) {
+        Ok(value) => value.trim().parse::<usize>().ok().unwrap_or(default),
+        Err(_) => default,
+    }
 }
 
 fn play_prepared_samples(

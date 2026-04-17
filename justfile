@@ -22,9 +22,11 @@ help:
 	'  sc devices' \
 	'  sc -t vm status' \
 	'  sc -t vm open timeline' \
+	'  sc -t vm media play-pause' \
 	'  sc -t vm ssh' \
 	'  sc -t pixel state' \
 	'  sc -t pixel open camera' \
+	'  sc -t pixel media next' \
 	'  sc -t pixel debug latency' \
 	'  just shadowctl ...    # same CLI without relying on devshell PATH' \
 	'' \
@@ -114,7 +116,7 @@ runtime-build-artifacts *args='':
 
 # Run a target shell session
 run *args='':
-	@target_arg="vm"; app_arg="shell"; hold_arg="1"; \
+	@target_arg="vm"; app_arg="podcast"; hold_arg="1"; \
 	for arg in {{args}}; do \
 		case "$arg" in \
 			target=*) target_arg="${arg#target=}" ;; \

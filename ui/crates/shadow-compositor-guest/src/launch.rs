@@ -1,6 +1,7 @@
 use std::{
     ffi::OsStr,
     io,
+    path::Path,
     process::{Child, Command},
 };
 
@@ -32,6 +33,16 @@ pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Resul
     command
         .env("SHADOW_BLITZ_APP_TITLE", app.window_title)
         .env("SHADOW_BLITZ_WAYLAND_APP_ID", app.wayland_app_id)
+        .env(
+            control::APP_PLATFORM_CONTROL_ENV,
+            control::platform_control_socket_path(
+                state
+                    .control_socket_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new(".")),
+                app_id,
+            ),
+        )
         .env("SHADOW_RUNTIME_APP_BUNDLE_PATH", runtime_bundle_path);
     apply_software_keyboard_policy(&mut command);
 
