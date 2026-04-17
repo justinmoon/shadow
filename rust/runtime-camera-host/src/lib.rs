@@ -171,7 +171,7 @@ impl CameraHostConfig {
     ) -> Result<CaptureStillReceipt, String> {
         match self.endpoint.as_deref() {
             Some(endpoint) => self.capture_preview_via_broker(endpoint, request),
-            None if self.allow_mock => Ok(mock_capture(request.camera_id)),
+            None if self.allow_mock => mock_capture(request.camera_id),
             None => Err(missing_camera_backend_error()),
         }
     }
