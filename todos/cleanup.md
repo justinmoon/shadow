@@ -28,6 +28,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Default decision is `delete` unless the file is required for the Pixel shell lane, the QEMU shell lane, or build/staging needed by those lanes.
   - This audit is no longer blocked on public `shadowctl` routing; classify and delete in small verified batches.
   - Record the result directly in this plan as the audit lands.
+  - 2026-04-17 audit result: the top-level script folder has five legitimate buckets: public CLI/gates, CI-enforced tests, private build/runtime workers, private libraries, and explicitly named debug tools. Everything else should be deleted or moved behind `shadowctl`.
 - [x] Define the supported operator contract in plain terms.
   - VM/QEMU: run, stop, status, logs, screenshot, open app, go home, wait-ready.
   - Pixel: doctor, build/stage, run shell, hold/restore, status/logs, open app, go home.
@@ -110,6 +111,38 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Rust workspace consolidation under `/rust`.
   - Flake simplification driven by fewer entrypoints.
   - Justfile cleanup once thin wrappers replace the current script fan-out.
+
+## Script Audit Plan
+
+- [ ] Add an enforced script inventory.
+  - Track every file under `scripts/` in a small manifest with bucket, owner surface, and allowed callers.
+  - Add a pre-commit check that fails when a top-level script is unclassified, directly public without being in the public allowlist, or marked debug without a `shadowctl`/docs entrypoint.
+  - Update shell syntax checking to cover subdirectories, not only `scripts/*.sh`.
+- [ ] Keep the public top-level tiny.
+  - Allowed top-level operator/gate files: `sc`, `shadowctl`, `agent-brief`, `land.sh`, `pre_commit.sh`, `pre_merge.sh`, `ui_check.sh`, and the shared runtime artifact wrapper if we keep it as a direct Just target.
+  - Everything else should move under `scripts/lib/`, `scripts/ci/`, `scripts/pixel/`, `scripts/runtime/`, or `scripts/debug/`, or be deleted.
+- [ ] Delete duplicate VM wrappers first.
+  - Remove `ui_vm_logs.sh`, `ui_vm_journal.sh`, and `ui_vm_status.sh`; `sc -t vm logs|journal|status` already owns those.
+  - Remove `ui_vm_camera_smoke.sh` and `ui_vm_timeline_smoke.sh`; `ui_vm_smoke.sh` is the required VM app smoke.
+  - Remove `ui_smoke.sh` and `desktop_prepare_fonts.sh`; the remote/Linux desktop proof is no longer part of the supported CI gate.
+- [ ] Delete or internalize duplicate Pixel wrappers.
+  - Remove `pixel_shellctl.sh` and `pixel_doctor.sh`; `shadowctl` already owns target-aware Pixel control and diagnostics.
+  - Keep root/setup/recovery scripts temporarily as private `shadowctl` delegates, then move the direct logic into `shadowctl` or a private library once stable.
+- [ ] Collapse one-off app runner wrappers.
+  - Delete hold/click wrappers that only bake one env var around `pixel_runtime_app_drm.sh` unless they are used by `pixel_ci.sh`.
+  - For still-useful fast iteration, expose a typed `sc -t pixel run-app <app> --click <target> --hold` or `sc -t pixel debug ...` command instead of one script per app/test variant.
+- [ ] Move real debug tools into an explicit debug class.
+  - Keep `pixel_touch_latency_probe.sh` because it is documented and measures a real class of regressions, but expose it as `sc -t pixel debug latency` or move it under `scripts/debug/`.
+  - Treat GPU/DRM/audio/camera takeover probes as delete-by-default; keep only if we can name the current debugging workflow and put it behind `sc -t pixel debug ...`.
+- [ ] Make runtime app smokes honest.
+  - Either include sound and podcast host smokes in the supported host smoke recipe, or delete them in favor of Pixel CI coverage.
+  - Prefer one `scripts/ci/runtime_app_host_smokes.sh` runner over many public-looking `runtime_app_*_smoke.sh` files.
+- [ ] Reorganize remaining private implementation files.
+  - `scripts/lib/`: shared shell libraries such as `shadow_common.sh`, `pixel_common.sh`, session app helpers, VM helpers, and runtime Linux bundle helpers.
+  - `scripts/pixel/`: Pixel build/push/session/root delegates still called by `shadowctl` and `pixel_ci`.
+  - `scripts/runtime/`: Deno/TS artifact builders and host-session prep.
+  - `scripts/ci/`: CI smoke drivers and taxonomy checks.
+  - Keep path moves mechanical, with compatibility shims only if needed by `shadowctl` during the same commit; do not leave permanent aliases.
 
 ## Implementation Notes
 
