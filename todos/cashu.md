@@ -35,7 +35,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Add deterministic host smoke coverage against a local `cdk-mintd` fakewallet mint.
 - [x] Prove wallet restart persistence through a real host-session relaunch.
 - [x] Prove wallet restart/shelve behavior through the VM shell lane.
-- [ ] Prove the wallet through the rooted-Pixel shell lane.
+- [x] Prove the wallet through the rooted-Pixel shell lane.
 - [x] Add QR scanning for Cashu tokens, mint URLs, and Lightning invoices.
 - [x] Add explicit UX for scan failures, unsupported QR payloads, and duplicate/replayed tokens.
 
@@ -59,5 +59,5 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Deterministic QR coverage uses camera-host PNG QR fixtures plus `SHADOW_RUNTIME_CAMERA_MOCK_QR_PAYLOAD` for end-to-end mock-camera scans.
 - Host QR scan smoke covers scanned mint trust, scanned token receive, duplicate/replay token UX, scanned Lightning invoice payment, and unsupported payload UX.
 - VM smoke now opens, homes, reopens, and re-shelves Cashu through the normal shell control path.
-- `just pixel-ci cashu` is wired as a rooted-Pixel shell lifecycle suite for Cashu launch, shelve, and reopen. A real hardware run is still needed before marking the rooted-Pixel milestone complete.
+- `./scripts/shadowctl -t 09051JEC202061 ci cashu` passed on April 17, 2026, proving the rooted-Pixel shell lane for Cashu launch, shelve, and reopen.
 - `just pre-merge` passes with the Cashu VM shell lifecycle included in `just smoke target=vm`.
