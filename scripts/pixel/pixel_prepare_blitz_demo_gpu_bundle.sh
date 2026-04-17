@@ -60,7 +60,7 @@ bundle_fingerprint="$(
     "$repo/ui/third_party/softbuffer_window_renderer" \
     "$repo/ui/third_party/wgpu_context" \
     "$SCRIPT_DIR/pixel/pixel_prepare_blitz_demo_gpu_bundle.sh" \
-    "$SCRIPT_DIR/pixel/pixel_runtime_linux_bundle_common.sh" \
+    "$SCRIPT_DIR/lib/pixel_runtime_linux_bundle_common.sh" \
     "$SCRIPT_DIR/pixel/pixel_build_openlog_preload.sh" \
     "$SCRIPT_DIR/pixel/pixel_openlog_preload.c" \
     "$xkb_source_dir" \

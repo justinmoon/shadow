@@ -97,6 +97,12 @@ def main() -> int:
         errors.append(f"public script is not in allowlist: {path}")
     for path in sorted((PUBLIC_ALLOWLIST & actual) - public):
         errors.append(f"allowlisted public script is not bucketed public: {path}")
+    for path in sorted(actual):
+        if path.count("/") == 1 and path not in PUBLIC_ALLOWLIST:
+            errors.append(f"top-level scripts/ file must be public allowlisted: {path}")
+    for path, (bucket, _) in sorted(rows.items()):
+        if path.count("/") == 1 and bucket != "public":
+            errors.append(f"top-level scripts/ file must use public bucket: {path}")
 
     for path, (bucket, note) in sorted(rows.items()):
         if bucket != "debug":

@@ -188,7 +188,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `main.rs` and `launch.rs` now consume parsed startup/client config instead of reading those env vars inline across constructor, helper, and startup branches.
   - Dead guest env knob removed in this chunk: `SHADOW_GUEST_SHELL`.
   - Follow-up cleanup since that chunk: guest launch no longer reads `SHADOW_GUEST_ENABLE_KEYBOARD_SEAT`; supported guest app launches now set `SHADOW_GUEST_KEYBOARD_SEAT=0` directly and control software-keyboard behavior through `SHADOW_BLITZ_SOFTWARE_KEYBOARD`.
-  - Good next seam: cut the remaining producer-side env duplication in `scripts/pixel_*` and `rust/shadow-session`, then start deleting direct runtime/probe knobs that no longer serve the VM/Pixel shell surface.
+  - Good next seam: cut the remaining producer-side env duplication in `scripts/pixel/` and `rust/shadow-session`, then start deleting direct runtime/probe knobs that no longer serve the VM/Pixel shell surface.
 - 2026-04-08: First bounded Rust/UI cleanup chunk landed.
   - Added `ui/crates/shadow-compositor-common` as the shared home for compositor control-listener plumbing and launch helpers.
   - `shadow-compositor` and `shadow-compositor-guest` now share control socket setup plus common launch helpers instead of carrying copy-pasted implementations.

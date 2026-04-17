@@ -128,7 +128,7 @@ host_bundle_source_fingerprint="$(
     "${shell_runtime_source_inputs[@]}" \
     "$repo/rust/vendor/temporal_rs" \
     "$SCRIPT_DIR/pixel/pixel_prepare_shell_runtime_artifacts.sh" \
-    "$SCRIPT_DIR/pixel/pixel_runtime_linux_bundle_common.sh" \
+    "$SCRIPT_DIR/lib/pixel_runtime_linux_bundle_common.sh" \
     "$SCRIPT_DIR/runtime_build_artifacts.sh" \
     "$SCRIPT_DIR/runtime/runtime_build_artifacts.ts" \
     "$SCRIPT_DIR/runtime/runtime_prepare_app_bundle.ts" \

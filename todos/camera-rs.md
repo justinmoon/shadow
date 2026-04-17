@@ -24,14 +24,14 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] M0: Bootstrap crate and Android build path.
   - Added `rust/shadow-camera-provider-host` as a minimal Android-friendly Rust helper with deterministic JSON output.
   - Added an `android` dev shell in `flake.nix` using `android-nixpkgs` + `rust-overlay` + `cargo-ndk` instead of `pkgsCross`.
-  - Added `scripts/pixel/pixel_camera_rs_run.sh` and `just pixel-camera-rs-run` to build with `cargo ndk`, push to the phone, and run under `su`.
+  - Added `scripts/pixel/pixel_camera_rs_run.sh` to build with `cargo ndk`, push to the phone, and run under `su`; current public camera validation runs through `just pixel-ci camera` or `sc -t pixel ci camera`.
   - Proven on-device on `0B191JEC203253`: `ping` runs as root and returns structured JSON.
 
 - [x] M1: Service discovery proof.
   - Added a Rust `list` command plus hand-written camera AIDL slices for `provider`, `device`, and `common`.
   - Added Android-only binder service-manager/thread-pool shims that `dlopen` extra `libbinder_ndk.so` entrypoints not exposed by the Cargo NDK crate surface.
   - Pinned the helper build to Android API level 31 in `scripts/pixel/pixel_camera_rs_run.sh` because the public binder NDK stub needs API 31 for the symbols used by `android-binder`.
-  - Proven on-device on `0B191JEC203253`: `just pixel-camera-rs-run list` reaches `android.hardware.camera.provider.ICameraProvider/internal/0`, enumerates `device@1.1/internal/0` and `device@1.1/internal/1`, reads rear-camera resource cost `33`, and reads `21312` bytes of static metadata.
+  - Proven on-device on `0B191JEC203253`: `scripts/pixel/pixel_camera_rs_run.sh list` reached `android.hardware.camera.provider.ICameraProvider/internal/0`, enumerated `device@1.1/internal/0` and `device@1.1/internal/1`, read rear-camera resource cost `33`, and read `21312` bytes of static metadata.
   - Saved structured artifacts under `build/pixel/camera-rs/20260407T210041Z/`.
 
 - [x] M2: Minimal open/configure path.
@@ -42,7 +42,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] M3: Buffer plus still-capture proof outside takeover.
   - Added HAL buffer-manager callback handling for `requestStreamBuffers` / `returnStreamBuffers`, plus helper-side buffer tracking keyed by camera buffer id.
   - Added Android `AHardwareBuffer` allocation/import glue for JPEG BLOB buffers and enough result handling to wait for the returned buffer, honor the release fence, and parse the JPEG blob footer.
-  - Proven on-device on `09051JEC202061`: `just pixel-camera-rs-run capture` returns `ok=true`, writes `/data/local/tmp/shadow-camera-provider-host-capture.jpg`, and records an `8080` byte JPEG plus structured callback traces under `build/pixel/camera-rs/20260407T224737Z/`.
+  - Proven on-device on `09051JEC202061`: `scripts/pixel/pixel_camera_rs_run.sh capture` returned `ok=true`, wrote `/data/local/tmp/shadow-camera-provider-host-capture.jpg`, and recorded an `8080` byte JPEG plus structured callback traces under `build/pixel/camera-rs/20260407T224737Z/`.
 
 - [x] M4: Takeover proof.
   - Full current display-stop takeover still fails for direct provider capture when it also stops `vendor.qti.hardware.display.allocator`: the helper enters the camera session, then stalls in capture while the device repeatedly fails to find the graphics allocator service and later drives `system_server` into ANR/watchdog handling.
