@@ -5,11 +5,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$REPO_ROOT"
-session_json="$(
-  SHADOW_RUNTIME_APP_INPUT_PATH="runtime/app-camera/app.tsx" \
-  SHADOW_RUNTIME_APP_CACHE_DIR="build/runtime/app-camera" \
-    "$SCRIPT_DIR/runtime/runtime_prepare_host_session.sh"
-)"
+if [[ -n "${SHADOW_RUNTIME_HOST_BINARY_OVERRIDE:-}" ]]; then
+  session_json="$(
+    deno run --quiet --allow-env --allow-read --allow-write --allow-run \
+      scripts/runtime/runtime_build_artifacts.ts \
+      --runtime-host-binary-path "${SHADOW_RUNTIME_HOST_BINARY_OVERRIDE}" \
+      --profile single \
+      --app-id app \
+      --input runtime/app-camera/app.tsx \
+      --cache-dir build/runtime/app-camera
+  )"
+else
+  session_json="$(
+    SHADOW_RUNTIME_APP_INPUT_PATH="runtime/app-camera/app.tsx" \
+    SHADOW_RUNTIME_APP_CACHE_DIR="build/runtime/app-camera" \
+      "$SCRIPT_DIR/runtime/runtime_prepare_host_session.sh"
+  )"
+fi
 
 SESSION_JSON="$session_json" python3 - <<'PY'
 import json
@@ -20,8 +32,16 @@ import time
 from html.parser import HTMLParser
 
 session = json.loads(os.environ["SESSION_JSON"])
-bundle_path = session["bundlePath"]
-binary_path = session["runtimeHostBinaryPath"]
+if "bundlePath" in session:
+    bundle_path = session["bundlePath"]
+    binary_path = session["runtimeHostBinaryPath"]
+    runtime_host_binary_name = session["runtimeHostBinaryName"]
+    runtime_host_package_attr = session["runtimeHostPackageAttr"]
+else:
+    bundle_path = session["apps"]["app"]["effectiveBundlePath"]
+    binary_path = session["runtimeHostBinaryPath"]
+    runtime_host_binary_name = os.path.basename(binary_path)
+    runtime_host_package_attr = session.get("runtimeHostPackageAttr")
 
 process = subprocess.Popen(
     [binary_path, "--session", bundle_path],
@@ -94,6 +114,21 @@ ready_attrs = attrs(ready_html)
 if ready_attrs.get("data-shadow-status-kind") != "ready":
     raise SystemExit("runtime-app-camera-smoke: ready render missing status marker")
 
+preview_html = ready_html
+deadline = time.time() + 15
+while time.time() < deadline:
+    response = send({"op": "render_if_dirty"})
+    if response.get("status") == "no_update":
+        time.sleep(0.1)
+        continue
+    payload = unwrap(response)
+    preview_html = payload["html"]
+    if "preview active" in preview_html.lower() and "data:image/" in preview_html:
+        break
+
+if "preview active" not in preview_html.lower() or "data:image/" not in preview_html:
+    raise SystemExit("runtime-app-camera-smoke: app never surfaced a preview frame")
+
 clicked = unwrap(
     send({"op": "dispatch", "event": {"targetId": "capture", "type": "click"}})
 )
@@ -112,7 +147,7 @@ while time.time() < deadline:
         time.sleep(0.2)
         continue
     payload = unwrap(response)
-    if "data:image/" in payload["html"] and "Captured explicit mock frame." in payload["html"]:
+    if "Latest mock photo." in payload["html"] and payload["html"].count("data:image/") >= 1:
         final_html = payload["html"]
         break
     final_html = payload["html"]
@@ -120,8 +155,8 @@ while time.time() < deadline:
 if final_html is None:
     raise SystemExit("runtime-app-camera-smoke: timed out waiting for capture result")
 
-if "data:image/" not in final_html:
-    raise SystemExit("runtime-app-camera-smoke: final render missing image data URL")
+if "Latest mock photo." not in final_html:
+    raise SystemExit("runtime-app-camera-smoke: final render missing latest capture section")
 
 final_attrs = attrs(final_html)
 if final_attrs.get("data-shadow-status-kind") != "ready":
@@ -134,8 +169,16 @@ if not (final_attrs.get("data-shadow-last-capture-bytes") or "").isdigit():
 assert process.stdin is not None
 process.stdin.close()
 stderr = process.stderr.read() if process.stderr is not None else ""
-return_code = process.wait(timeout=10)
-if return_code not in (0, None):
+try:
+    return_code = process.wait(timeout=10)
+except subprocess.TimeoutExpired:
+    process.terminate()
+    try:
+        return_code = process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        return_code = process.wait(timeout=5)
+if return_code not in (0, -15, -9, None):
     raise SystemExit(f"runtime-app-camera-smoke: runtime host exited {return_code}\n{stderr}")
 
 print(
@@ -143,8 +186,8 @@ print(
         {
             "bundlePath": bundle_path,
             "result": "camera-explicit-mock-capture-ok",
-            "runtimeHostBinaryName": session["runtimeHostBinaryName"],
-            "runtimeHostPackageAttr": session["runtimeHostPackageAttr"],
+            "runtimeHostBinaryName": runtime_host_binary_name,
+            "runtimeHostPackageAttr": runtime_host_package_attr,
         },
         indent=2,
     )

@@ -26,6 +26,10 @@ export function captureStill(request = {}) {
   return getCameraApi().captureStill(request);
 }
 
+export function capturePreviewFrame(request = {}) {
+  return getCameraApi().capturePreviewFrame(request);
+}
+
 export function logCamera(message) {
   return getCameraApi().debugLog(message);
 }

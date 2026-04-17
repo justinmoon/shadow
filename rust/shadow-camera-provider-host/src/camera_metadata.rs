@@ -3,7 +3,13 @@ use libc::{c_char, c_void, dlopen, dlsym, RTLD_LOCAL, RTLD_NOW};
 use std::mem::MaybeUninit;
 use std::sync::OnceLock;
 
+const ANDROID_LENS_FACING: u32 = 524_293;
 const ANDROID_SENSOR_ORIENTATION: u32 = 917_518;
+const TYPE_BYTE: u8 = 0;
+const TYPE_INT32: u8 = 1;
+const LENS_FACING_FRONT: i32 = 0;
+const LENS_FACING_BACK: i32 = 1;
+const LENS_FACING_EXTERNAL: i32 = 2;
 
 #[repr(C)]
 struct CameraMetadataOpaque {
@@ -53,7 +59,21 @@ unsafe impl Sync for CameraMetadataFns {}
 
 static CAMERA_METADATA_FNS: OnceLock<Option<CameraMetadataFns>> = OnceLock::new();
 
+pub fn lens_facing(characteristics: &device::CameraMetadata) -> Option<&'static str> {
+    match integer_metadata_value(characteristics, ANDROID_LENS_FACING)? {
+        LENS_FACING_FRONT => Some("front"),
+        LENS_FACING_BACK => Some("rear"),
+        LENS_FACING_EXTERNAL => Some("external"),
+        _ => None,
+    }
+}
+
 pub fn sensor_orientation_degrees(characteristics: &device::CameraMetadata) -> Option<u16> {
+    integer_metadata_value(characteristics, ANDROID_SENSOR_ORIENTATION)
+        .and_then(|value| u16::try_from(value.rem_euclid(360)).ok())
+}
+
+fn integer_metadata_value(characteristics: &device::CameraMetadata, tag: u32) -> Option<i32> {
     let camera_metadata = camera_metadata_fns()?;
     let copied = unsafe {
         (camera_metadata.allocate_copy_camera_metadata_checked)(
@@ -65,19 +85,43 @@ pub fn sensor_orientation_degrees(characteristics: &device::CameraMetadata) -> O
         return None;
     }
 
+    let value = integer_entry_value(camera_metadata, copied, tag);
+
+    unsafe {
+        (camera_metadata.free_camera_metadata)(copied);
+    }
+
+    value
+}
+
+fn integer_entry_value(
+    camera_metadata: &CameraMetadataFns,
+    copied: *mut CameraMetadataOpaque,
+    tag: u32,
+) -> Option<i32> {
     let mut entry = MaybeUninit::<CameraMetadataRoEntry>::zeroed();
     let status = unsafe {
-        (camera_metadata.find_camera_metadata_ro_entry)(
-            copied,
-            ANDROID_SENSOR_ORIENTATION,
-            entry.as_mut_ptr(),
-        )
+        (camera_metadata.find_camera_metadata_ro_entry)(copied, tag, entry.as_mut_ptr())
     };
-    let orientation = if status == 0 {
-        let entry = unsafe { entry.assume_init() };
-        if entry.count == 0 {
-            None
-        } else {
+    if status != 0 {
+        return None;
+    }
+
+    let entry = unsafe { entry.assume_init() };
+    if entry.count == 0 {
+        return None;
+    }
+
+    match entry.type_ {
+        TYPE_BYTE => {
+            let value_ptr = unsafe { entry.data.u8_ };
+            if value_ptr.is_null() {
+                None
+            } else {
+                Some(i32::from(unsafe { *value_ptr }))
+            }
+        }
+        TYPE_INT32 => {
             let value_ptr = unsafe { entry.data.i32_ };
             if value_ptr.is_null() {
                 None
@@ -85,15 +129,8 @@ pub fn sensor_orientation_degrees(characteristics: &device::CameraMetadata) -> O
                 Some(unsafe { *value_ptr })
             }
         }
-    } else {
-        None
-    };
-
-    unsafe {
-        (camera_metadata.free_camera_metadata)(copied);
+        _ => None,
     }
-
-    orientation.and_then(|value| u16::try_from(value.rem_euclid(360)).ok())
 }
 
 fn camera_metadata_fns() -> Option<&'static CameraMetadataFns> {

@@ -11,6 +11,7 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use std::path::Path;
 
 pub const DEFAULT_CAPTURE_PATH: &str = "/data/local/tmp/shadow-camera-provider-host-capture.jpg";
+pub const DEFAULT_PREVIEW_PATH: &str = "/data/local/tmp/shadow-camera-provider-host-preview.jpg";
 
 const AIDL_CAMERA_BLOB_JPEG_ID: i32 = 255;
 const HIDL_CAMERA_BLOB_JPEG_ID: u16 = 0x00ff;

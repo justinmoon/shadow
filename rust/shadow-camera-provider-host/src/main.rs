@@ -10,7 +10,7 @@ mod camera_metadata;
 #[cfg(target_os = "android")]
 use android_buffer::{
     allocate_jpeg_capture_buffer, write_jpeg_from_buffer, AllocatedCaptureBuffer,
-    DEFAULT_CAPTURE_PATH,
+    DEFAULT_CAPTURE_PATH, DEFAULT_PREVIEW_PATH,
 };
 #[cfg(target_os = "android")]
 use android_service::{
@@ -29,7 +29,7 @@ use camera_aidl::device::{
     StreamConfigurationMode, StreamRotation, StreamType,
 };
 #[cfg(target_os = "android")]
-use camera_metadata::sensor_orientation_degrees;
+use camera_metadata::{lens_facing, sensor_orientation_degrees};
 #[cfg(target_os = "android")]
 use camera_aidl::graphics::{BufferUsage, Dataspace, PixelFormat};
 #[cfg(target_os = "android")]
@@ -39,7 +39,7 @@ use camera_aidl::metadata::{
 #[cfg(target_os = "android")]
 use camera_aidl::provider::{self, ICameraProvider, ICameraProviderCallback};
 #[cfg(target_os = "android")]
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 #[cfg(target_os = "android")]
 use std::collections::HashMap;
@@ -90,6 +90,7 @@ fn main() {
         "list" => make_list_response(&argv),
         "open" => make_open_response(&argv),
         "configure" => make_configure_response(&argv),
+        "preview" => make_preview_response(&argv),
         "capture" => make_capture_response(&argv),
         "serve" => run_socket_server(&argv),
         other => make_error(other, &argv, "unsupported command"),
@@ -135,6 +136,17 @@ struct SocketBrokerRequest {
     command: String,
     #[serde(rename = "cameraId")]
     camera_id: Option<String>,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Debug, Clone, Serialize)]
+struct CameraListEntry {
+    id: String,
+    label: String,
+    #[serde(rename = "lensFacing")]
+    lens_facing: String,
+    #[serde(rename = "sensorOrientationDegrees", skip_serializing_if = "Option::is_none")]
+    sensor_orientation_degrees: Option<u16>,
 }
 
 #[cfg(target_os = "android")]
@@ -204,11 +216,12 @@ fn handle_socket_client(mut stream: TcpStream) -> Result<(), String> {
     let mut response = match request.command.as_str() {
         "ping" => make_response("ping", &argv),
         "list" => make_list_response(&argv),
+        "preview" => make_preview_response(&argv),
         "capture" => make_capture_response(&argv),
         other => make_error(other, &argv, "unsupported socket command"),
     };
 
-    if request.command == "capture" {
+    if matches!(request.command.as_str(), "capture" | "preview") {
         attach_capture_image_data(&mut response);
     }
 
@@ -324,32 +337,14 @@ fn make_list_response(argv: &[OsString]) -> serde_json::Value {
     };
 
     let selected_camera = select_camera(&camera_ids);
+    let selected_camera_id = selected_camera.as_deref();
+    let mut cameras = Vec::with_capacity(camera_ids.len());
     let mut selected_resource_cost = None;
     let mut selected_characteristics = None;
 
-    if let Some(camera_id) = selected_camera.as_deref() {
-        match provider.get_camera_device_interface(camera_id) {
-            Ok(device) => {
-                match device.get_resource_cost() {
-                    Ok(resource_cost) => {
-                        selected_resource_cost = Some(json!({
-                            "resourceCost": resource_cost.resource_cost,
-                            "conflictingDevices": resource_cost.conflicting_devices,
-                        }));
-                    }
-                    Err(status) => selected_resource_cost = Some(status_json(&status)),
-                }
-
-                match device.get_camera_characteristics() {
-                    Ok(characteristics) => {
-                        selected_characteristics = Some(json!({
-                            "bytes": characteristics.metadata.len(),
-                            "hexPreview": hex_preview(&characteristics.metadata, 48),
-                        }));
-                    }
-                    Err(status) => selected_characteristics = Some(status_json(&status)),
-                }
-            }
+    for camera_id in &camera_ids {
+        let device = match provider.get_camera_device_interface(camera_id) {
+            Ok(device) => device,
             Err(status) => {
                 return command_error_with_context(
                     "list",
@@ -360,7 +355,40 @@ fn make_list_response(argv: &[OsString]) -> serde_json::Value {
                     &service_name,
                 );
             }
+        };
+
+        if selected_camera_id == Some(camera_id.as_str()) {
+            selected_resource_cost = Some(match device.get_resource_cost() {
+                Ok(resource_cost) => json!({
+                    "resourceCost": resource_cost.resource_cost,
+                    "conflictingDevices": resource_cost.conflicting_devices,
+                }),
+                Err(status) => status_json(&status),
+            });
         }
+
+        let characteristics = match device.get_camera_characteristics() {
+            Ok(characteristics) => characteristics,
+            Err(status) => {
+                return command_error_with_context(
+                    "list",
+                    argv,
+                    "get_camera_characteristics",
+                    &status,
+                    Some(&declared_instances),
+                    &service_name,
+                );
+            }
+        };
+
+        if selected_camera_id == Some(camera_id.as_str()) {
+            selected_characteristics = Some(json!({
+                "bytes": characteristics.metadata.len(),
+                "hexPreview": hex_preview(&characteristics.metadata, 48),
+            }));
+        }
+
+        cameras.push(camera_list_entry(camera_id, &characteristics));
     }
 
     std::thread::sleep(Duration::from_millis(250));
@@ -381,6 +409,7 @@ fn make_list_response(argv: &[OsString]) -> serde_json::Value {
         "isDeclared": is_declared_value,
         "declaredInstances": declared_instances,
         "cameraIds": camera_ids,
+        "cameras": cameras,
         "requestedCamera": requested_camera,
         "selectedCamera": selected_camera,
         "selectedResourceCost": selected_resource_cost,
@@ -860,6 +889,61 @@ fn make_configure_response(argv: &[OsString]) -> serde_json::Value {
 
 #[cfg(target_os = "android")]
 fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
+    make_frame_response(argv, FrameRequestMode::Still)
+}
+
+#[cfg(target_os = "android")]
+fn make_preview_response(argv: &[OsString]) -> serde_json::Value {
+    make_frame_response(argv, FrameRequestMode::Preview)
+}
+
+#[cfg(target_os = "android")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrameRequestMode {
+    Preview,
+    Still,
+}
+
+#[cfg(target_os = "android")]
+impl FrameRequestMode {
+    fn command(self) -> &'static str {
+        match self {
+            Self::Preview => "preview",
+            Self::Still => "capture",
+        }
+    }
+
+    fn request_template(self) -> RequestTemplate {
+        match self {
+            // Keep the first preview slice on the known-good still template path.
+            Self::Preview | Self::Still => RequestTemplate::STILL_CAPTURE,
+        }
+    }
+
+    fn request_template_name(self) -> &'static str {
+        match self {
+            Self::Preview => "STILL_CAPTURE",
+            Self::Still => "STILL_CAPTURE",
+        }
+    }
+
+    fn output_path(self) -> &'static str {
+        match self {
+            Self::Preview => DEFAULT_PREVIEW_PATH,
+            Self::Still => DEFAULT_CAPTURE_PATH,
+        }
+    }
+
+    fn stream_configuration(self) -> StreamConfiguration {
+        match self {
+            Self::Preview => build_preview_stream_configuration(),
+            Self::Still => build_jpeg_stream_configuration(),
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+fn make_frame_response(argv: &[OsString], frame_mode: FrameRequestMode) -> serde_json::Value {
     set_thread_pool_max_thread_count(1);
     start_thread_pool();
 
@@ -867,7 +951,9 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
     let interface_name = "android.hardware.camera.provider.ICameraProvider";
     let declared_instances: Vec<String> = match get_declared_instances(interface_name) {
         Ok(instances) => instances,
-        Err(status) => return command_error("capture", argv, "get_declared_instances", &status),
+        Err(status) => {
+            return command_error(frame_mode.command(), argv, "get_declared_instances", &status);
+        }
     };
 
     let (service_name, requested_camera) = resolve_provider_args(&argv_strings);
@@ -875,7 +961,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         Ok(value) => value,
         Err(status) => {
             return command_error_with_context(
-                "capture",
+                frame_mode.command(),
                 argv,
                 "is_declared",
                 &status,
@@ -890,7 +976,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
             Ok(provider) => provider,
             Err(status) => {
                 return command_error_with_context(
-                    "capture",
+                    frame_mode.command(),
                     argv,
                     "wait_for_interface",
                     &status,
@@ -907,7 +993,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
 
     if let Err(status) = provider.set_callback(&provider_callback) {
         return command_error_with_context(
-            "capture",
+            frame_mode.command(),
             argv,
             "set_callback",
             &status,
@@ -918,7 +1004,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
 
     if let Err(status) = provider.notify_device_state_change(provider::DEVICE_STATE_NORMAL) {
         return command_error_with_context(
-            "capture",
+            frame_mode.command(),
             argv,
             "notify_device_state_change",
             &status,
@@ -933,7 +1019,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         Ok(camera_ids) => camera_ids,
         Err(status) => {
             return command_error_with_context(
-                "capture",
+                frame_mode.command(),
                 argv,
                 "get_camera_id_list",
                 &status,
@@ -949,7 +1035,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
     let Some(camera_id) = selected_camera.clone() else {
         return json!({
             "ok": false,
-            "command": "capture",
+            "command": frame_mode.command(),
             "pid": std::process::id(),
             "cwd": current_dir_string(),
             "argv": argv_strings,
@@ -964,7 +1050,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         Ok(device) => device,
         Err(status) => {
             return command_error_with_context(
-                "capture",
+                frame_mode.command(),
                 argv,
                 "get_camera_device_interface",
                 &status,
@@ -1009,7 +1095,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         Ok(session) => session,
         Err(status) => {
             return command_error_with_context(
-                "capture",
+                frame_mode.command(),
                 argv,
                 "open",
                 &status,
@@ -1020,12 +1106,14 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
     };
 
     let capture_execution = (|| -> Result<CaptureExecution, serde_json::Value> {
+        let request_template = frame_mode.request_template();
+        let request_template_name = frame_mode.request_template_name();
         let default_request_settings =
-            match session.construct_default_request_settings(RequestTemplate::STILL_CAPTURE) {
+            match session.construct_default_request_settings(request_template) {
                 Ok(settings) => settings,
                 Err(status) => {
                     return Err(command_error_with_context(
-                        "capture",
+                        frame_mode.command(),
                         argv,
                         "session_construct_default_request_settings",
                         &status,
@@ -1037,19 +1125,19 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
 
         let default_request_settings_json = json!({
             "source": "session",
-            "template": "STILL_CAPTURE",
-            "templateValue": RequestTemplate::STILL_CAPTURE.0,
+            "template": request_template_name,
+            "templateValue": request_template.0,
             "bytes": default_request_settings.metadata.len(),
             "hexPreview": hex_preview(&default_request_settings.metadata, 48),
         });
 
-        let requested_configuration = build_jpeg_stream_configuration();
+        let requested_configuration = frame_mode.stream_configuration();
         let requested_configuration_json = stream_configuration_json(&requested_configuration);
         let hal_streams = match session.configure_streams(&requested_configuration) {
             Ok(hal_streams) => hal_streams,
             Err(status) => {
                 return Err(command_error_with_context(
-                    "capture",
+                    frame_mode.command(),
                     argv,
                     "configure_streams",
                     &status,
@@ -1061,7 +1149,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
 
         let requested_stream = requested_configuration.streams.first().ok_or_else(|| {
             command_message_with_context(
-                "capture",
+                frame_mode.command(),
                 argv,
                 "build_jpeg_stream_configuration",
                 "requested configuration did not include any streams",
@@ -1091,7 +1179,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
                 )
             })?;
 
-        let output_path = PathBuf::from(DEFAULT_CAPTURE_PATH);
+        let output_path = PathBuf::from(frame_mode.output_path());
         // The live Pixel 4a requests still-capture buffers through the HAL
         // buffer manager on this provider path. Keep the spike on that path
         // until we add metadata-based mode detection.
@@ -1100,7 +1188,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         {
             let mut guard = capture_buffer_manager.lock().map_err(|_| {
                 command_message_with_context(
-                    "capture",
+                    frame_mode.command(),
                     argv,
                     "capture_buffer_manager_lock",
                     "capture buffer manager mutex was poisoned",
@@ -1127,7 +1215,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
             Ok(count) => count,
             Err(status) => {
                 return Err(command_error_with_context(
-                    "capture",
+                    frame_mode.command(),
                     argv,
                     "process_capture_request",
                     &status,
@@ -1140,7 +1228,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         let wait_snapshot = wait_for_capture_completion(&capture_wait, Duration::from_secs(10))
             .map_err(|error| {
                 command_message_with_context(
-                    "capture",
+                    frame_mode.command(),
                     argv,
                     "wait_for_capture_result",
                     &error,
@@ -1152,7 +1240,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         let capture_completion_json = capture_completion_json(&wait_snapshot.completion);
         if wait_snapshot.completion.buffer_status != BufferStatus::OK.0 {
             let mut value = command_message_with_context(
-                "capture",
+                frame_mode.command(),
                 argv,
                 "capture_result_status",
                 &format!(
@@ -1177,7 +1265,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
             take_capture_buffer(&capture_buffer_manager, wait_snapshot.completion.buffer_id)
                 .map_err(|error| {
                     command_message_with_context(
-                        "capture",
+                        frame_mode.command(),
                         argv,
                         "take_capture_buffer",
                         &error,
@@ -1193,7 +1281,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         )
         .map_err(|error| {
             command_message_with_context(
-                "capture",
+                frame_mode.command(),
                 argv,
                 "write_jpeg_from_buffer",
                 &error.to_string(),
@@ -1223,7 +1311,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         Ok(()) => true,
         Err(status) => {
             let mut value = command_error_with_context(
-                "capture",
+                frame_mode.command(),
                 argv,
                 "close",
                 &status,
@@ -1269,7 +1357,7 @@ fn make_capture_response(argv: &[OsString]) -> serde_json::Value {
         Ok(execution) => {
             let mut value = json!({
                 "ok": true,
-                "command": "capture",
+                "command": frame_mode.command(),
                 "pid": std::process::id(),
                 "cwd": current_dir_string(),
                 "argv": argv_strings,
@@ -1410,6 +1498,41 @@ fn select_camera(camera_ids: &[String]) -> Option<String> {
 }
 
 #[cfg(target_os = "android")]
+fn camera_list_entry(camera_id: &str, characteristics: &device::CameraMetadata) -> CameraListEntry {
+    let lens_facing = lens_facing(characteristics)
+        .map(String::from)
+        .unwrap_or_else(|| fallback_lens_facing(camera_id));
+
+    CameraListEntry {
+        id: camera_id.to_owned(),
+        label: camera_label(camera_id, &lens_facing),
+        lens_facing,
+        sensor_orientation_degrees: sensor_orientation_degrees(characteristics),
+    }
+}
+
+#[cfg(target_os = "android")]
+fn fallback_lens_facing(camera_id: &str) -> String {
+    if camera_id.ends_with("/1") {
+        return String::from("front");
+    }
+    if camera_id.ends_with("/0") {
+        return String::from("rear");
+    }
+    String::from("unknown")
+}
+
+#[cfg(target_os = "android")]
+fn camera_label(camera_id: &str, lens_facing: &str) -> String {
+    match lens_facing {
+        "front" => String::from("Front Camera"),
+        "rear" => String::from("Rear Camera"),
+        "external" => String::from("External Camera"),
+        _ => format!("Camera {camera_id}"),
+    }
+}
+
+#[cfg(target_os = "android")]
 fn resolve_provider_args(argv: &[String]) -> (String, Option<String>) {
     const DEFAULT_SERVICE: &str = "android.hardware.camera.provider.ICameraProvider/internal/0";
     const PROVIDER_PREFIX: &str = "android.hardware.camera.provider.ICameraProvider/";
@@ -1427,6 +1550,41 @@ fn build_jpeg_stream_configuration() -> StreamConfiguration {
     const WIDTH: i32 = 640;
     const HEIGHT: i32 = 480;
     const BUFFER_SIZE: i32 = 8 * 1024 * 1024;
+
+    StreamConfiguration {
+        streams: vec![Stream {
+            id: STREAM_ID,
+            stream_type: StreamType::OUTPUT,
+            width: WIDTH,
+            height: HEIGHT,
+            format: PixelFormat::BLOB,
+            usage: BufferUsage::CPU_READ_OFTEN,
+            data_space: Dataspace::JFIF,
+            rotation: StreamRotation::ROTATION_0,
+            physical_camera_id: String::new(),
+            buffer_size: BUFFER_SIZE,
+            group_id: 0,
+            sensor_pixel_modes_used: Vec::new(),
+            dynamic_range_profile:
+                RequestAvailableDynamicRangeProfilesMap::
+                    ANDROID_REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES_MAP_STANDARD,
+            use_case:
+                ScalerAvailableStreamUseCases::
+                    ANDROID_SCALER_AVAILABLE_STREAM_USE_CASES_DEFAULT,
+        }],
+        operation_mode: StreamConfigurationMode::NORMAL_MODE,
+        session_params: device::CameraMetadata::default(),
+        stream_config_counter: 1,
+        multi_resolution_input_image: false,
+    }
+}
+
+#[cfg(target_os = "android")]
+fn build_preview_stream_configuration() -> StreamConfiguration {
+    const STREAM_ID: i32 = 1;
+    const WIDTH: i32 = 320;
+    const HEIGHT: i32 = 240;
+    const BUFFER_SIZE: i32 = 2 * 1024 * 1024;
 
     StreamConfiguration {
         streams: vec![Stream {

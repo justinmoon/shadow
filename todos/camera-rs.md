@@ -42,9 +42,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [ ] Add a cleaner camera error taxonomy so apps can distinguish broker unavailable, no camera, capture timeout, invalid image data, and QR-not-found without string matching.
 - [ ] Decide whether QR-oriented capture needs first-class controls such as torch, higher-resolution stills, or scan-specific capture defaults before more apps depend on it.
 - [ ] Define the smallest truthful preview contract: one live stream in the rooted Pixel shell lane, no video recording or background session complexity yet.
-- [ ] Thread camera enumeration metadata through the existing `listCameras()` seam so the app can distinguish front/back cameras without adding a new public platform API.
-- [ ] Design the runtime/provider path for preview frames so the app can render a low-latency live view without regressing still capture correctness.
-- [ ] Add one deterministic manual/operator path for switching cameras and confirming the selected camera actually changes before trying to automate it.
+- [~] Define the smallest truthful preview contract: one live stream in the rooted Pixel shell lane, no video recording or background session complexity yet.
+- [~] Thread camera enumeration metadata through the existing `listCameras()` seam so the app can distinguish front/back cameras without adding a new public platform API.
+- [~] Design the runtime/provider path for preview frames so the app can render a low-latency live view without regressing still capture correctness.
+- [~] Add one deterministic manual/operator path for switching cameras and confirming the selected camera actually changes before trying to automate it.
 - [ ] Reduce perceived capture latency enough that the feature feels usable.
 - [ ] Wire the truthful camera smoke into the branch gate once it is reliable.
 
@@ -66,3 +67,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Remaining warm-stage time is now mostly host artifact prep (`shadow-session`, `shadow-compositor-guest`) plus the live camera smoke itself, not unrelated runtime-helper upload.
 - Preview and camera switching should stay inside the current camera seam if possible: enrich `listCameras()` with truthful metadata, keep `captureStill()` intact, and only add more platform surface if the preview path proves it is necessary.
 - The next product-value seam after landing is not deeper still-capture plumbing; it is “can a user see what camera is live, switch cameras, and then capture confidently”.
+- The app already has a working camera picker. The immediate gap is that provider metadata is still too heuristic, so front/back switching is not yet a truthful operator contract.
+- The next implementation slice is: provider returns per-camera facing/orientation metadata, runtime preserves it through `listCameras()`, app uses it for stable front/back selection, then preview work can build on that without widening the public API yet.
+- Local WIP now does that metadata plumbing: provider `list` returns structured `cameras[]`, runtime preserves `lensFacing` and `sensorOrientationDegrees`, and the app exposes stable `camera-front` / `camera-rear` selectors when the facing is unique. Device validation still needs to confirm the Pixel reports the expected facing metadata.
+- Local WIP now also adds a dedicated `preview` frame command through the broker/runtime path. The app uses that for the live preview panel while keeping `captureStill()` as the explicit photo action, so preview and still capture no longer trample each other in the UI.
+- The mock camera smoke now proves both behaviors in one run: preview renders first, then explicit capture renders a separate latest-photo section. Rooted-Pixel validation is still pending because `09051JEC202061` is currently held by another worktree session.

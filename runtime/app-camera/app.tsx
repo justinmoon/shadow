@@ -5,14 +5,21 @@ import {
   Switch,
   createSignal,
   invalidateRuntimeApp,
+  onCleanup,
   onMount,
 } from "@shadow/app-runtime-solid";
-import { captureStill, listCameras, logCamera } from "@shadow/app-runtime-os";
+import {
+  capturePreviewFrame,
+  captureStill,
+  listCameras,
+  logCamera,
+} from "@shadow/app-runtime-os";
 
 type CameraDevice = {
   id: string;
   label: string;
   lensFacing: string;
+  sensorOrientationDegrees?: number;
 };
 
 type CaptureReceipt = {
@@ -28,6 +35,12 @@ type StatusState =
   | { kind: "loading"; message: string }
   | { kind: "ready"; message: string }
   | { kind: "capturing"; message: string }
+  | { kind: "error"; message: string };
+
+type PreviewState =
+  | { kind: "idle"; message: string }
+  | { kind: "loading"; message: string }
+  | { kind: "live"; message: string }
   | { kind: "error"; message: string };
 
 export const runtimeDocumentCss = `
@@ -253,6 +266,42 @@ function logCameraMarker(message: string) {
   }
 }
 
+function cameraReadyMessage(camera: CameraDevice | null | undefined) {
+  if (!camera) {
+    return "No cameras reported by Shadow OS.";
+  }
+  return `Ready on ${camera.label}.`;
+}
+
+function cameraLensFacingLabel(lensFacing: string) {
+  switch (lensFacing) {
+    case "front":
+      return "Front facing";
+    case "rear":
+      return "Rear facing";
+    case "external":
+      return "External";
+    default:
+      return "Unknown facing";
+  }
+}
+
+function cameraChipShadowId(
+  camera: CameraDevice,
+  index: number,
+  devices: CameraDevice[],
+) {
+  if (!["external", "front", "rear"].includes(camera.lensFacing)) {
+    return `camera-${index}`;
+  }
+  const hasDuplicateFacing = devices.filter((device) =>
+    device.lensFacing === camera.lensFacing
+  ).length > 1;
+  return hasDuplicateFacing
+    ? `camera-${camera.lensFacing}-${index}`
+    : `camera-${camera.lensFacing}`;
+}
+
 export function renderApp() {
   const [cameras, setCameras] = createSignal<CameraDevice[]>([]);
   const [selectedCameraId, setSelectedCameraId] = createSignal<string | null>(null);
@@ -260,17 +309,119 @@ export function renderApp() {
     kind: "loading",
     message: "Loading cameras from Shadow OS.",
   });
+  const [previewStatus, setPreviewStatus] = createSignal<PreviewState>({
+    kind: "loading",
+    message: "Loading live preview.",
+  });
+  const [previewFrame, setPreviewFrame] = createSignal<CaptureReceipt | null>(null);
   const [lastCapture, setLastCapture] = createSignal<CaptureReceipt | null>(null);
+  let queuedCameraTask: Promise<void> = Promise.resolve();
+  let previewGeneration = 0;
+  let isDisposed = false;
 
   function setStatusState(next: StatusState) {
     setStatus(next);
     invalidateRuntimeApp();
   }
 
+  function setPreviewStatusState(next: PreviewState) {
+    setPreviewStatus(next);
+    invalidateRuntimeApp();
+  }
+
+  function selectedCamera() {
+    const cameraId = selectedCameraId();
+    if (cameraId == null) {
+      return null;
+    }
+    return cameras().find((camera) => camera.id === cameraId) ?? null;
+  }
+
+  function queueCameraTask<T>(task: () => Promise<T>): Promise<T> {
+    const run = queuedCameraTask.then(task, task);
+    queuedCameraTask = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  function stopPreviewLoop() {
+    previewGeneration += 1;
+  }
+
+  async function startPreviewLoop(camera: CameraDevice) {
+    const generation = ++previewGeneration;
+    let loggedFirstFrame = false;
+    setPreviewFrame(null);
+    setPreviewStatusState({
+      kind: "loading",
+      message: `Starting live preview on ${camera.label}.`,
+    });
+
+    while (
+      !isDisposed &&
+      generation === previewGeneration &&
+      selectedCameraId() === camera.id
+    ) {
+      try {
+        const receipt = await queueCameraTask(() => capturePreviewFrame({ cameraId: camera.id }));
+        if (
+          isDisposed ||
+          generation !== previewGeneration ||
+          selectedCameraId() !== camera.id
+        ) {
+          return;
+        }
+        setPreviewFrame(receipt);
+        if (!loggedFirstFrame) {
+          logCameraMarker(
+            `camera-preview-live cameraId=${receipt.cameraId} isMock=${receipt.isMock} bytes=${receipt.bytes}`,
+          );
+          loggedFirstFrame = true;
+        }
+        setPreviewStatusState({
+          kind: "live",
+          message: receipt.isMock ? "Mock preview active." : "Live preview active.",
+        });
+        if (receipt.isMock) {
+          return;
+        }
+      } catch (error) {
+        if (isDisposed || generation !== previewGeneration) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        logCameraMarker(
+          `camera-preview-error cameraId=${camera.id} message=${JSON.stringify(message)}`,
+        );
+        setPreviewStatusState({
+          kind: "error",
+          message,
+        });
+        return;
+      }
+    }
+  }
+
+  function selectCamera(camera: CameraDevice) {
+    setSelectedCameraId(camera.id);
+    logCameraMarker(
+      `camera-selected cameraId=${camera.id} lensFacing=${camera.lensFacing}`,
+    );
+    setStatusState({
+      kind: "ready",
+      message: cameraReadyMessage(camera),
+    });
+    void startPreviewLoop(camera);
+  }
+
   async function refreshCameras() {
+    stopPreviewLoop();
     setStatusState({
       kind: "loading",
       message: "Loading cameras from Shadow OS.",
+    });
+    setPreviewStatusState({
+      kind: "loading",
+      message: "Loading live preview.",
     });
 
     try {
@@ -280,16 +431,31 @@ export function renderApp() {
           devices.some((camera) => camera.id === currentSelection)
         ? currentSelection
         : devices[0]?.id ?? null;
+      const nextSelectedCamera = nextSelected == null
+        ? null
+        : devices.find((camera) => camera.id === nextSelected) ?? null;
       setCameras(devices);
       setSelectedCameraId(nextSelected);
       setStatusState({
         kind: "ready",
-        message: devices.length > 0
-          ? `Ready on ${devices[0].label}.`
-          : "No cameras reported by Shadow OS.",
+        message: cameraReadyMessage(nextSelectedCamera),
       });
+      if (nextSelectedCamera != null) {
+        void startPreviewLoop(nextSelectedCamera);
+      } else {
+        setPreviewFrame(null);
+        setPreviewStatusState({
+          kind: "idle",
+          message: "No cameras reported by Shadow OS.",
+        });
+      }
     } catch (error) {
+      setPreviewFrame(null);
       setStatusState({
+        kind: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      setPreviewStatusState({
         kind: "error",
         message: error instanceof Error ? error.message : String(error),
       });
@@ -297,8 +463,8 @@ export function renderApp() {
   }
 
   async function handleCapture() {
-    const cameraId = selectedCameraId();
-    if (!cameraId) {
+    const camera = selectedCamera();
+    if (!camera) {
       setStatusState({
         kind: "error",
         message: "Pick a camera before taking a photo.",
@@ -306,14 +472,15 @@ export function renderApp() {
       return;
     }
 
+    stopPreviewLoop();
     setStatusState({
       kind: "capturing",
       message: "Taking photo through Shadow OS camera service.",
     });
-    logCameraMarker(`camera-capture-start cameraId=${cameraId}`);
+    logCameraMarker(`camera-capture-start cameraId=${camera.id}`);
 
     try {
-      const receipt = await captureStill({ cameraId });
+      const receipt = await queueCameraTask(() => captureStill({ cameraId: camera.id }));
       setLastCapture(receipt);
       logCameraMarker(
         `camera-capture-complete cameraId=${receipt.cameraId} isMock=${receipt.isMock} bytes=${receipt.bytes}`,
@@ -327,17 +494,27 @@ export function renderApp() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logCameraMarker(
-        `camera-capture-error cameraId=${cameraId} message=${JSON.stringify(message)}`,
+        `camera-capture-error cameraId=${camera.id} message=${JSON.stringify(message)}`,
       );
       setStatusState({
         kind: "error",
         message,
       });
+    } finally {
+      const nextCamera = selectedCamera();
+      if (!isDisposed && nextCamera?.id === camera.id) {
+        void startPreviewLoop(nextCamera);
+      }
     }
   }
 
   onMount(() => {
     void refreshCameras();
+  });
+
+  onCleanup(() => {
+    isDisposed = true;
+    stopPreviewLoop();
   });
 
   return (
@@ -368,13 +545,11 @@ export function renderApp() {
                   "camera-chip": true,
                   "camera-chip-active": selectedCameraId() === camera.id,
                 }}
-                data-shadow-id={`camera-${index()}`}
+                data-camera-id={camera.id}
+                data-camera-lens-facing={camera.lensFacing}
+                data-shadow-id={cameraChipShadowId(camera, index(), cameras())}
                 onClick={() => {
-                  setSelectedCameraId(camera.id);
-                  setStatus({
-                    kind: "ready",
-                    message: `Ready on ${camera.label}.`,
-                  });
+                  selectCamera(camera);
                 }}
                 type="button"
               >
@@ -414,33 +589,82 @@ export function renderApp() {
           </button>
         </div>
 
+        <Show when={selectedCamera() != null}>
+          <div class="camera-meta">
+            <span>{selectedCamera()?.label}</span>
+            <span>{cameraLensFacingLabel(selectedCamera()?.lensFacing ?? "")}</span>
+            <Show when={selectedCamera()?.sensorOrientationDegrees != null}>
+              <span>
+                Sensor {selectedCamera()?.sensorOrientationDegrees}deg
+              </span>
+            </Show>
+          </div>
+        </Show>
+
         <section class="camera-preview">
+          <p
+            class={`camera-status camera-status-${
+              previewStatus().kind === "error"
+                ? "error"
+                : previewStatus().kind === "loading"
+                ? "loading"
+                : "ready"
+            }`}
+          >
+            {previewStatus().message}
+          </p>
+
           <Switch>
-            <Match when={lastCapture() != null}>
+            <Match when={previewFrame() != null}>
               <div class="camera-preview-frame">
                 <img
-                  alt="Latest Shadow camera capture"
+                  alt="Live Shadow camera preview"
                   class="camera-preview-image"
-                  src={lastCapture()?.imageDataUrl ?? ""}
+                  src={previewFrame()?.imageDataUrl ?? ""}
                 />
               </div>
             </Match>
-            <Match when={lastCapture() == null}>
+            <Match when={previewFrame() == null}>
               <div class="camera-preview-empty">
-                The latest capture will appear here once the app takes a photo.
+                Live preview will appear here once Shadow starts producing frames.
               </div>
             </Match>
           </Switch>
 
-          <Show when={lastCapture() != null}>
+          <Show when={previewFrame() != null}>
+            <div class="camera-meta">
+              <span>{previewFrame()?.cameraId}</span>
+              <span>{timestampLabel(previewFrame()?.capturedAtMs ?? 0)}</span>
+              <span>{previewFrame()?.mimeType}</span>
+              <span>{previewFrame()?.bytes} bytes</span>
+            </div>
+          </Show>
+        </section>
+
+        <Show when={lastCapture() != null}>
+          <section class="camera-preview">
+            <p class="camera-status camera-status-ready">
+              {lastCapture()?.isMock
+                ? "Latest mock photo."
+                : "Latest captured photo."}
+            </p>
+
+            <div class="camera-preview-frame">
+              <img
+                alt="Latest Shadow camera capture"
+                class="camera-preview-image"
+                src={lastCapture()?.imageDataUrl ?? ""}
+              />
+            </div>
+
             <div class="camera-meta">
               <span>{lastCapture()?.cameraId}</span>
               <span>{timestampLabel(lastCapture()?.capturedAtMs ?? 0)}</span>
               <span>{lastCapture()?.mimeType}</span>
               <span>{lastCapture()?.bytes} bytes</span>
             </div>
-          </Show>
-        </section>
+          </section>
+        </Show>
       </section>
     </main>
   );

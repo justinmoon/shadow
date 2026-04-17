@@ -34,6 +34,8 @@ pub struct CameraDevice {
     pub label: String,
     #[serde(rename = "lensFacing")]
     pub lens_facing: String,
+    #[serde(rename = "sensorOrientationDegrees", skip_serializing_if = "Option::is_none")]
+    pub sensor_orientation_degrees: Option<u16>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -80,9 +82,22 @@ struct BrokerRequest<'a> {
 #[derive(Debug, Deserialize)]
 struct BrokerListResponse {
     ok: bool,
+    #[serde(default)]
+    cameras: Vec<BrokerCameraDevice>,
     #[serde(rename = "cameraIds", default)]
     camera_ids: Vec<String>,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BrokerCameraDevice {
+    id: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(rename = "lensFacing", default)]
+    lens_facing: Option<String>,
+    #[serde(rename = "sensorOrientationDegrees", default)]
+    sensor_orientation_degrees: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,6 +162,17 @@ impl CameraHostConfig {
         }
     }
 
+    fn capture_preview_frame(
+        &self,
+        request: CaptureStillRequest,
+    ) -> Result<CaptureStillReceipt, String> {
+        match self.endpoint.as_deref() {
+            Some(endpoint) => self.capture_preview_via_broker(endpoint, request),
+            None if self.allow_mock => Ok(mock_capture(request.camera_id)),
+            None => Err(missing_camera_backend_error()),
+        }
+    }
+
     fn list_cameras_via_broker(&self, endpoint: &str) -> Result<Vec<CameraDevice>, String> {
         let response: BrokerListResponse = self.send(
             endpoint,
@@ -162,18 +188,14 @@ impl CameraHostConfig {
         }
 
         if response.camera_ids.is_empty() {
-            return Err(String::from("camera broker returned no camera IDs"));
+            if response.cameras.is_empty() {
+                return Err(String::from(
+                    "camera broker returned no camera descriptors",
+                ));
+            }
         }
 
-        Ok(response
-            .camera_ids
-            .into_iter()
-            .map(|camera_id| CameraDevice {
-                label: label_for_camera_id(&camera_id),
-                lens_facing: lens_facing_for_camera_id(&camera_id),
-                id: camera_id,
-            })
-            .collect())
+        Ok(camera_devices_from_broker_list_response(response))
     }
 
     fn capture_via_broker(
@@ -181,17 +203,34 @@ impl CameraHostConfig {
         endpoint: &str,
         request: CaptureStillRequest,
     ) -> Result<CaptureStillReceipt, String> {
+        self.capture_frame_via_broker(endpoint, "capture", request)
+    }
+
+    fn capture_preview_via_broker(
+        &self,
+        endpoint: &str,
+        request: CaptureStillRequest,
+    ) -> Result<CaptureStillReceipt, String> {
+        self.capture_frame_via_broker(endpoint, "preview", request)
+    }
+
+    fn capture_frame_via_broker(
+        &self,
+        endpoint: &str,
+        command: &'static str,
+        request: CaptureStillRequest,
+    ) -> Result<CaptureStillReceipt, String> {
         let response: BrokerCaptureResponse = self.send(
             endpoint,
             BrokerRequest {
-                command: "capture",
+                command,
                 camera_id: request.camera_id.as_deref(),
             },
         )?;
         if !response.ok {
             return Err(response
                 .error
-                .unwrap_or_else(|| String::from("camera broker capture failed")));
+                .unwrap_or_else(|| format!("camera broker {command} failed")));
         }
 
         let image_base64 = response
@@ -331,6 +370,17 @@ async fn op_runtime_camera_capture_still(
         .map_err(JsErrorBox::generic)
 }
 
+#[op2]
+#[serde]
+async fn op_runtime_camera_capture_preview_frame(
+    #[serde] request: CaptureStillRequest,
+) -> Result<CaptureStillReceipt, JsErrorBox> {
+    tokio::task::spawn_blocking(move || CameraHostConfig::from_env().capture_preview_frame(request))
+        .await
+        .map_err(|error| JsErrorBox::generic(format!("camera.capturePreviewFrame join: {error}")))?
+        .map_err(JsErrorBox::generic)
+}
+
 #[op2(fast)]
 fn op_runtime_camera_debug_log(#[string] message: String) {
     eprintln!("[shadow-runtime-camera] {message}");
@@ -357,6 +407,15 @@ fn label_for_camera_id(camera_id: &str) -> String {
     format!("Camera {camera_id}")
 }
 
+fn label_for_camera(camera_id: &str, lens_facing: &str) -> String {
+    match lens_facing {
+        "front" => String::from("Front Camera"),
+        "rear" => String::from("Rear Camera"),
+        "external" => String::from("External Camera"),
+        _ => label_for_camera_id(camera_id),
+    }
+}
+
 fn lens_facing_for_camera_id(camera_id: &str) -> String {
     if camera_id.ends_with("/1") {
         return String::from("front");
@@ -364,11 +423,51 @@ fn lens_facing_for_camera_id(camera_id: &str) -> String {
     String::from("rear")
 }
 
+fn camera_devices_from_broker_list_response(response: BrokerListResponse) -> Vec<CameraDevice> {
+    if !response.cameras.is_empty() {
+        return response
+            .cameras
+            .into_iter()
+            .map(camera_device_from_broker_camera)
+            .collect();
+    }
+
+    response
+        .camera_ids
+        .into_iter()
+        .map(|camera_id| CameraDevice {
+            label: label_for_camera_id(&camera_id),
+            lens_facing: lens_facing_for_camera_id(&camera_id),
+            sensor_orientation_degrees: None,
+            id: camera_id,
+        })
+        .collect()
+}
+
+fn camera_device_from_broker_camera(camera: BrokerCameraDevice) -> CameraDevice {
+    let lens_facing = camera
+        .lens_facing
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| lens_facing_for_camera_id(&camera.id));
+    let label = camera
+        .label
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| label_for_camera(&camera.id, &lens_facing));
+
+    CameraDevice {
+        id: camera.id,
+        label,
+        lens_facing,
+        sensor_orientation_degrees: camera.sensor_orientation_degrees,
+    }
+}
+
 fn mock_cameras() -> Vec<CameraDevice> {
     vec![CameraDevice {
         id: String::from(MOCK_CAMERA_ID),
         label: String::from("Mock Rear Camera"),
         lens_facing: String::from("rear"),
+        sensor_orientation_degrees: None,
     }]
 }
 
@@ -632,6 +731,7 @@ extension!(
     ops = [
         op_runtime_camera_list_cameras,
         op_runtime_camera_capture_still,
+        op_runtime_camera_capture_preview_frame,
         op_runtime_camera_debug_log,
         op_runtime_camera_decode_qr_code
     ],
@@ -649,6 +749,7 @@ mod tests {
         build_capture_image_data_url, build_qr_png_data_url, decode_image_data_url,
         decode_qr_code_from_image_data_url, image_format_for_mime_type,
         missing_camera_backend_error, normalize_rotation_degrees, parse_truthy_env,
+        camera_devices_from_broker_list_response, BrokerCameraDevice, BrokerListResponse,
         BASE64_STANDARD, CAMERA_ALLOW_MOCK_ENV, CAMERA_ENDPOINT_ENV,
     };
     use base64::Engine as _;
@@ -767,5 +868,43 @@ mod tests {
     fn rejects_non_image_data_urls() {
         let error = decode_image_data_url("data:text/plain;base64,SGVsbG8=").unwrap_err();
         assert!(error.contains("image data"));
+    }
+
+    #[test]
+    fn uses_structured_broker_camera_metadata_when_present() {
+        let devices = camera_devices_from_broker_list_response(BrokerListResponse {
+            ok: true,
+            cameras: vec![BrokerCameraDevice {
+                id: String::from("device/front"),
+                label: Some(String::from("Selfie Camera")),
+                lens_facing: Some(String::from("front")),
+                sensor_orientation_degrees: Some(270),
+            }],
+            camera_ids: vec![String::from("legacy/ignored")],
+            error: None,
+        });
+
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].id, "device/front");
+        assert_eq!(devices[0].label, "Selfie Camera");
+        assert_eq!(devices[0].lens_facing, "front");
+        assert_eq!(devices[0].sensor_orientation_degrees, Some(270));
+    }
+
+    #[test]
+    fn falls_back_to_legacy_camera_ids_when_structured_metadata_is_missing() {
+        let devices = camera_devices_from_broker_list_response(BrokerListResponse {
+            ok: true,
+            cameras: Vec::new(),
+            camera_ids: vec![String::from("device/0"), String::from("device/1")],
+            error: None,
+        });
+
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[0].label, "Rear Camera");
+        assert_eq!(devices[0].lens_facing, "rear");
+        assert_eq!(devices[0].sensor_orientation_degrees, None);
+        assert_eq!(devices[1].label, "Front Camera");
+        assert_eq!(devices[1].lens_facing, "front");
     }
 }
