@@ -16,6 +16,7 @@ use image::ImageFormat;
 use serde::{Deserialize, Serialize};
 
 const CAMERA_ENDPOINT_ENV: &str = "SHADOW_RUNTIME_CAMERA_ENDPOINT";
+const CAMERA_REQUIRE_LIVE_ENV: &str = "SHADOW_RUNTIME_CAMERA_REQUIRE_LIVE";
 const CAMERA_TIMEOUT_MS_ENV: &str = "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS";
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const CONNECT_RETRY_ATTEMPTS: usize = 10;
@@ -85,6 +86,7 @@ struct BrokerCaptureResponse {
 #[derive(Debug, Clone)]
 struct CameraHostConfig {
     endpoint: Option<String>,
+    require_live: bool,
     timeout: Duration,
 }
 
@@ -100,13 +102,21 @@ impl CameraHostConfig {
             .filter(|value| *value > 0)
             .map(Duration::from_millis)
             .unwrap_or_else(|| Duration::from_millis(DEFAULT_TIMEOUT_MS));
+        let require_live = env::var(CAMERA_REQUIRE_LIVE_ENV)
+            .ok()
+            .is_some_and(|value| parse_truthy_env(&value));
 
-        Self { endpoint, timeout }
+        Self {
+            endpoint,
+            require_live,
+            timeout,
+        }
     }
 
     fn list_cameras(&self) -> Result<Vec<CameraDevice>, String> {
         match self.endpoint.as_deref() {
             Some(endpoint) => self.list_cameras_via_broker(endpoint),
+            None if self.require_live => Err(missing_live_camera_error()),
             None => Ok(mock_cameras()),
         }
     }
@@ -114,6 +124,7 @@ impl CameraHostConfig {
     fn capture_still(&self, request: CaptureStillRequest) -> Result<CaptureStillReceipt, String> {
         match self.endpoint.as_deref() {
             Some(endpoint) => self.capture_via_broker(endpoint, request),
+            None if self.require_live => Err(missing_live_camera_error()),
             None => Ok(mock_capture(request.camera_id)),
         }
     }
@@ -266,6 +277,19 @@ fn should_retry_connect(error: &std::io::Error) -> bool {
             | ErrorKind::ConnectionReset
             | ErrorKind::Interrupted
             | ErrorKind::TimedOut
+    )
+}
+
+fn parse_truthy_env(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn missing_live_camera_error() -> String {
+    format!(
+        "live camera required but {CAMERA_ENDPOINT_ENV} is not set; set {CAMERA_ENDPOINT_ENV} or unset {CAMERA_REQUIRE_LIVE_ENV}"
     )
 }
 
@@ -463,8 +487,9 @@ pub fn init_extension() -> Extension {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_capture_image_data_url, image_format_for_mime_type, normalize_rotation_degrees,
-        BASE64_STANDARD,
+        build_capture_image_data_url, image_format_for_mime_type, missing_live_camera_error,
+        normalize_rotation_degrees, parse_truthy_env, BASE64_STANDARD, CAMERA_ENDPOINT_ENV,
+        CAMERA_REQUIRE_LIVE_ENV,
     };
     use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
     use std::io::Cursor;
@@ -497,6 +522,24 @@ mod tests {
         assert_eq!(image_format_for_mime_type("image/jpeg"), Some(ImageFormat::Jpeg));
         assert_eq!(image_format_for_mime_type("image/png"), Some(ImageFormat::Png));
         assert_eq!(image_format_for_mime_type("image/webp"), None);
+    }
+
+    #[test]
+    fn parses_truthy_runtime_camera_env_values() {
+        assert!(parse_truthy_env("1"));
+        assert!(parse_truthy_env("true"));
+        assert!(parse_truthy_env(" YES "));
+        assert!(parse_truthy_env("on"));
+        assert!(!parse_truthy_env("0"));
+        assert!(!parse_truthy_env("false"));
+        assert!(!parse_truthy_env(""));
+    }
+
+    #[test]
+    fn missing_live_camera_error_mentions_required_envs() {
+        let error = missing_live_camera_error();
+        assert!(error.contains(CAMERA_ENDPOINT_ENV));
+        assert!(error.contains(CAMERA_REQUIRE_LIVE_ENV));
     }
 
     #[test]

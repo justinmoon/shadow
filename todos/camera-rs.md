@@ -35,7 +35,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [ ] Stabilize one supported rooted Pixel lane and document it as the canonical camera path.
 - [ ] Re-run live validation on the supported phone until `pixel-shell-camera-smoke` is repeatable.
 - [ ] Keep the smoke strict: require auto-click, live capture completion, and a rerender after completion.
-- [ ] Make Pixel runtime/device errors surface clearly to the app and scripts instead of timing out or looking like transport flakes.
+- [~] Make Pixel runtime/device errors surface clearly to the app and scripts instead of timing out or looking like transport flakes.
 - [ ] Reduce perceived capture latency enough that the feature feels usable.
 - [ ] Wire the truthful camera smoke into the branch gate once it is reliable.
 
