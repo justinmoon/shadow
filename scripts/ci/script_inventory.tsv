@@ -55,6 +55,7 @@ scripts/ci/runtime_app_keyboard_smoke.sh	ci	Host runtime keyboard app smoke.
 scripts/ci/runtime_app_nostr_gm_smoke.sh	ci	Host runtime Nostr GM app smoke.
 scripts/ci/runtime_app_nostr_timeline_smoke.sh	ci	Host runtime Nostr timeline app smoke.
 scripts/ci/runtime_app_podcast_player_smoke.sh	ci	Host runtime podcast player app smoke.
+scripts/ci/runtime_app_podcast_player_url_smoke.sh	ci	Linux-authoritative runtime podcast player URL playback smoke.
 scripts/ci/runtime_app_sound_smoke.sh	ci	Host runtime sound app smoke.
 scripts/runtime/runtime_audio_linux_spike_fake.sh	runtime	Private fake Linux audio backend used by sound host smoke.
 scripts/runtime_build_artifacts.sh	public	Public runtime artifact builder wrapper used by just runtime-build-artifacts.

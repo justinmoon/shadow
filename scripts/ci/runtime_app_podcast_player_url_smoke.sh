@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REMOTE_HOST="${SHADOW_PODCAST_URL_SMOKE_REMOTE_HOST:-${CUTTLEFISH_REMOTE_HOST:-justin@100.73.239.5}}"
 REMOTE_DIR_CACHE="${SHADOW_PODCAST_URL_SMOKE_REMOTE_DIR:-}"
 URL_SMOKE_NAMESPACE="${SHADOW_PODCAST_URL_SMOKE_NAMESPACE:-$(basename "$REPO_ROOT")-$$}"
@@ -84,7 +84,7 @@ run_remote_smoke() {
   local dir command status
   dir="$(remote_dir)"
   sync_remote_tree
-  command="cd $(printf '%q' "$dir") && SHADOW_PODCAST_URL_SMOKE_REMOTE=1 SHADOW_PODCAST_URL_SMOKE_NAMESPACE=$(printf '%q' "$URL_SMOKE_NAMESPACE") nix develop --accept-flake-config .#runtime -c bash scripts/runtime_app_podcast_player_url_smoke.sh"
+  command="cd $(printf '%q' "$dir") && SHADOW_PODCAST_URL_SMOKE_REMOTE=1 SHADOW_PODCAST_URL_SMOKE_NAMESPACE=$(printf '%q' "$URL_SMOKE_NAMESPACE") nix develop --accept-flake-config .#runtime -c bash scripts/ci/runtime_app_podcast_player_url_smoke.sh"
   if remote_ssh "$command"; then
     status=0
   else
@@ -100,6 +100,7 @@ import functools
 import http.server
 import json
 import os
+import select
 import shutil
 import subprocess
 import tempfile
@@ -202,6 +203,7 @@ try:
             key: value
             for key, value in os.environ.items()
             if not key.startswith("SHADOW_AUDIO_SPIKE_")
+            and not key.startswith("SHADOW_RUNTIME_AUDIO_")
         }
         process_env.update(
             {
@@ -221,17 +223,40 @@ try:
             text=True,
         )
 
+        def wait_for_process_exit(context, timeout_seconds):
+            try:
+                return_code = process.wait(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                return_code = process.wait(timeout=5)
+                stderr = process.stderr.read() if process.stderr is not None else ""
+                raise SystemExit(
+                    "runtime-app-podcast-player-url-smoke: runtime host timed out "
+                    f"during {context}\n{stderr}"
+                )
+            stderr = process.stderr.read() if process.stderr is not None else ""
+            return return_code, stderr
+
         def send_raw(request):
             assert process.stdin is not None
             process.stdin.write(json.dumps(request) + "\n")
             process.stdin.flush()
             assert process.stdout is not None
             while True:
+                ready, _, _ = select.select([process.stdout], [], [], 5)
+                if not ready:
+                    raise SystemExit(
+                        "runtime-app-podcast-player-url-smoke: timed out waiting for "
+                        f"runtime host response to {json.dumps(request)}"
+                    )
                 line = process.stdout.readline()
                 if not line:
-                    stderr = process.stderr.read() if process.stderr is not None else ""
+                    return_code, stderr = wait_for_process_exit(
+                        "stdout shutdown", timeout_seconds=5
+                    )
                     raise SystemExit(
-                        "runtime-app-podcast-player-url-smoke: runtime host closed stdout\n"
+                        "runtime-app-podcast-player-url-smoke: runtime host closed stdout "
+                        f"with exit code {return_code}\n"
                         f"{stderr}"
                     )
                 try:
@@ -285,7 +310,8 @@ try:
 
         try:
             initial = send_ok({"op": "render"})
-            playing_html = dispatch_and_wait("play-00", "Backend:</span> linux_spike")
+            play_target_id = f"play-{episode['id']}"
+            playing_html = dispatch_and_wait(play_target_id, "Backend:</span> linux_spike")
 
             deadline = time.time() + 10
             while time.time() < deadline and not summary_path.exists():
@@ -300,9 +326,8 @@ try:
         finally:
             assert process.stdin is not None
             process.stdin.close()
-            stderr = process.stderr.read() if process.stderr is not None else ""
-            return_code = process.wait(timeout=10)
-            if return_code not in (0, None):
+            return_code, stderr = wait_for_process_exit("shutdown", timeout_seconds=10)
+            if return_code != 0:
                 raise SystemExit(
                     "runtime-app-podcast-player-url-smoke: runtime host exited "
                     f"{return_code}\n{stderr}"
