@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-asset_json="$("$SCRIPT_DIR/prepare_sound_demo_assets.sh")"
+asset_json="$("$SCRIPT_DIR/runtime/prepare_sound_demo_assets.sh")"
 runtime_app_config_json="$(
   ASSET_JSON="$asset_json" python3 - <<'PY'
 import json
@@ -23,14 +23,14 @@ asset = json.loads(os.environ["ASSET_JSON"])
 print(asset["source"]["path"])
 PY
 )"
-fake_linux_spike_binary="$REPO_ROOT/scripts/runtime_audio_linux_spike_fake.sh"
+fake_linux_spike_binary="$REPO_ROOT/scripts/runtime/runtime_audio_linux_spike_fake.sh"
 
 cd "$REPO_ROOT"
 session_json="$(
   SHADOW_RUNTIME_APP_CONFIG_JSON="$runtime_app_config_json" \
   SHADOW_RUNTIME_APP_INPUT_PATH="runtime/app-sound-smoke/app.tsx" \
   SHADOW_RUNTIME_APP_CACHE_DIR="build/runtime/app-sound-smoke-host" \
-    "$SCRIPT_DIR/runtime_prepare_host_session.sh"
+    "$SCRIPT_DIR/runtime/runtime_prepare_host_session.sh"
 )"
 
 ASSET_SOURCE_PATH="$asset_source_path" \

@@ -23,11 +23,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `shadowctl` now works across the supported VM and Pixel operator lanes.
   - Broad shell-script consolidation and deletion can proceed against that interface.
   - 2026-04-16 update: the supported public routing surface is real in this branch. The remaining work is script audit/deletion and moving reusable internals out of private helpers.
-- [ ] Audit every file under `scripts/` and classify it as `keep`, `move into shadowctl`, `keep as private helper`, or `delete`.
-  - Current surface: 95 files in `scripts/`, 51 of them Pixel-prefixed.
+- [x] Audit every file under `scripts/` and classify it as `keep`, `move into shadowctl`, `keep as private helper`, or `delete`.
+  - Current surface after the script taxonomy batches: 78 tracked files in `scripts/`, with only 8 public top-level entrypoints.
   - Default decision is `delete` unless the file is required for the Pixel shell lane, the QEMU shell lane, or build/staging needed by those lanes.
   - This audit is no longer blocked on public `shadowctl` routing; classify and delete in small verified batches.
-  - Record the result directly in this plan as the audit lands.
   - 2026-04-17 audit result: the top-level script folder has five legitimate buckets: public CLI/gates, CI-enforced tests, private build/runtime workers, private libraries, and explicitly named debug tools. Everything else should be deleted or moved behind `shadowctl`.
 - [x] Define the supported operator contract in plain terms.
   - VM/QEMU: run, stop, status, logs, screenshot, open app, go home, wait-ready.
@@ -80,7 +79,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Separate true debug toggles from product launch config.
 - [ ] Make app/runtime launch metadata single-source.
   - Stop duplicating app ids, bundle env names, input paths, and cache dirs across Rust and shell.
-  - 2026-04-15 operator app-list cleanup landed: the supported shell/home launch app ids now live in `scripts/session_apps.txt`, and `shadowctl`, `ui_vm_run.sh`, `pixel_shell_drm.sh`, plus the operator CLI smoke all consume that shared list instead of carrying parallel hardcoded tables.
+  - 2026-04-15 operator app-list cleanup landed: the supported shell/home launch app ids now live in `scripts/lib/session_apps.txt`, and `shadowctl`, `ui_vm_run.sh`, `pixel_shell_drm.sh`, plus the operator CLI smoke all consume that shared list instead of carrying parallel hardcoded tables.
   - 2026-04-15 VM env-surface cleanup landed: `ui_vm_run.sh` no longer accepts `SHADOW_UI_VM_ENABLE_PODCAST_APP`, `SHADOW_UI_VM_REFRESH_RUNTIME_ENV`, `SHADOW_UI_VM_RUNTIME_HOST_PACKAGE_ATTR`, or `SHADOW_UI_VM_RUNTIME_HOST_BINARY_NAME`; the supported VM lane always stages the podcast app, refreshes runtime env by content drift, and picks the guest runtime-host package from the host arch in one place.
   - 2026-04-15 VM launcher cleanup landed: `ui_vm_run.sh` no longer takes `SHADOW_UI_VM_START_APP_ID`; `shadowctl` and the VM smokes now pass `--app ...` explicitly instead of routing initial app selection through ambient env.
   - 2026-04-15 Pixel launcher cleanup landed: `pixel_shell_drm.sh` no longer takes `PIXEL_SHELL_START_APP_ID`; `pixel_shell_drm_hold.sh`, `shadowctl`, and the Pixel shell smokes now pass `--app ...` explicitly instead of routing initial app selection through ambient env.
@@ -119,11 +118,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Add a pre-commit check that fails when a top-level script is unclassified, directly public without being in the public allowlist, or marked debug without a `shadowctl`/docs entrypoint.
   - Update shell syntax checking to cover subdirectories, not only `scripts/*.sh`.
   - Implemented as `scripts/ci/script_inventory.tsv` plus `scripts/ci/check_script_inventory.py`, and wired into `just pre-commit`.
-- [~] Keep the public top-level tiny.
+- [x] Keep the public top-level tiny.
   - Allowed top-level operator/gate files: `sc`, `shadowctl`, `agent-brief`, `land.sh`, `pre_commit.sh`, `pre_merge.sh`, `ui_check.sh`, and the shared runtime artifact wrapper if we keep it as a direct Just target.
   - Everything else should move under `scripts/lib/`, `scripts/ci/`, `scripts/pixel/`, `scripts/runtime/`, or `scripts/debug/`, or be deleted.
   - The public allowlist is now enforced by the inventory checker.
-  - CI/test drivers and the inventory checker moved under `scripts/ci/`; Pixel, runtime, VM, lib, and debug physical moves remain.
+  - CI/test drivers and the inventory checker moved under `scripts/ci/`.
+  - Pixel, runtime, VM, lib, and debug files moved under `scripts/pixel/`, `scripts/runtime/`, `scripts/vm/`, `scripts/lib/`, and `scripts/debug/`.
 - [x] Delete duplicate VM wrappers first.
   - Remove `ui_vm_logs.sh`, `ui_vm_journal.sh`, and `ui_vm_status.sh`; `sc -t vm logs|journal|status` already owns those.
   - Remove `ui_vm_camera_smoke.sh` and `ui_vm_timeline_smoke.sh`; `ui_vm_smoke.sh` is the required VM app smoke.
@@ -145,18 +145,18 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Either include sound and podcast host smokes in the supported host smoke recipe, or delete them in favor of Pixel CI coverage.
   - Prefer one `scripts/ci/runtime_app_host_smokes.sh` runner over many public-looking `runtime_app_*_smoke.sh` files.
   - `just runtime-app-host-smokes` now routes through `scripts/ci/runtime_app_host_smokes.sh`, which includes sound and podcast.
-- [~] Reorganize remaining private implementation files.
+- [x] Reorganize remaining private implementation files.
   - `scripts/lib/`: shared shell libraries such as `shadow_common.sh`, `pixel_common.sh`, session app helpers, VM helpers, and runtime Linux bundle helpers.
   - `scripts/pixel/`: Pixel build/push/session/root delegates still called by `shadowctl` and `pixel_ci`.
   - `scripts/runtime/`: Deno/TS artifact builders and host-session prep.
   - `scripts/ci/`: CI smoke drivers and taxonomy checks.
-  - First physical move landed for `scripts/ci/`; the moved scripts preserve `SCRIPT_DIR` as the script-root to keep internal references stable.
+  - Physical moves landed for all buckets. Public files remain at top level; private files now live under their bucket directories.
   - Keep path moves mechanical, with compatibility shims only if needed by `shadowctl` during the same commit; do not leave permanent aliases.
 
 ## Implementation Notes
 
 - The plan intentionally uses one checklist now. No separate near-term section.
-- Current script count after rebasing over Pixel prep docs: 77 total files under `scripts/`; 38 are `pixel_*`.
+- Current script count after physical organization: 78 tracked files under `scripts/`; 8 public entrypoints remain at top level and all private delegates are bucketed.
 - `just` used to expose 131 recipes. It now exposes 18 curated public recipes after the hard-cut cleanup; historical probe/bring-up lanes should stay as scripts unless promoted deliberately.
 - `scripts/shadowctl` is 1714 lines and carries real VM and Pixel target logic. The supported public operator surface routes through it now; private helper scripts still carry too much repeated policy.
 - `justfile` is 206 lines, `flake.nix` is 646 lines, and `shadow-compositor-guest/src/main.rs` is 1990 lines. The sprawl is now less in public entrypoints and more in private orchestration, packaging, and compositor internals.
@@ -165,7 +165,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `shadowctl` already has real VM and Pixel target abstractions, but lower-level Pixel scripts still bypass it internally. The public `just` surface now routes session and Pixel CI/stage/run entrypoints through `shadowctl`; setup/recovery is `sc`-only.
 - The `shadowctl` public routing refactor is no longer the blocker. Treat the current CLI as the target for script consolidation and deletion.
 - The highest-value cleanup seam is launch/config plus script deletion. That work unlocks most of the other simplifications.
-- Existing host-session prep is the best current nucleus: `scripts/runtime_prepare_host_session.sh` and `scripts/runtime_prepare_host_session_env.sh` already centralize some bundle/runtime-host staging, but they stop too early and then hand off raw env again.
+- Existing host-session prep is the best current nucleus: `scripts/runtime/runtime_prepare_host_session.sh` and `scripts/runtime/runtime_prepare_host_session_env.sh` already centralize some bundle/runtime-host staging, but they stop too early and then hand off raw env again.
 - `shadow-compositor` and `shadow-compositor-guest` duplicate control/launch code today. Extract that before large behavior edits in guest compositor code.
 - 2026-04-14: First front-door cleanup batch landed.
   - `just` no longer dumps the full recipe list by default. The default view is now a curated VM/QEMU + rooted-Pixel operator surface, and `just help-all` is the explicit escape hatch for the full list.
@@ -203,7 +203,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - `just pre-commit`
     - The old remote Linux smoke was inconclusive after the compositor exited before smoke markers while the staged build path reported an interrupted `shadow-runtime-host` derivation. Do not treat that run as green.
 - Current drift examples to remove:
-  - App metadata duplicated in `ui/crates/shadow-ui-core/src/app.rs`, `scripts/runtime_prepare_host_session_env.sh`, and Pixel artifact prep scripts.
+  - App metadata duplicated in `ui/crates/shadow-ui-core/src/app.rs`, `scripts/runtime/runtime_prepare_host_session_env.sh`, and Pixel artifact prep scripts.
   - Inconsistent client fallback chains across desktop compositor, guest compositor, and guest session wrapper.
   - Inconsistent runtime-dir fallbacks across compositor launch/control paths.
   - Same touch-signal concept split across `SHADOW_GUEST_*` and `SHADOW_BLITZ_*` naming.

@@ -20,37 +20,37 @@ expect_fixed() {
 }
 
 expect_fixed \
-  "$REPO_ROOT/scripts/pixel_prepare_shell_runtime_artifacts.sh" \
+  "$REPO_ROOT/scripts/pixel/pixel_prepare_shell_runtime_artifacts.sh" \
   "timeline_config_json='{\"limit\":12,\"syncOnStart\":true}'" \
   "pixel shell timeline startup sync default"
 
 expect_fixed \
-  "$REPO_ROOT/scripts/runtime_build_artifacts.ts" \
+  "$REPO_ROOT/scripts/runtime/runtime_build_artifacts.ts" \
   "const DEFAULT_TIMELINE_CONFIG = { limit: 12, syncOnStart: true };" \
   "host session timeline startup sync default"
 
 expect_fixed \
-  "$REPO_ROOT/scripts/runtime_prepare_host_session_env.sh" \
+  "$REPO_ROOT/scripts/runtime/runtime_prepare_host_session_env.sh" \
   "--profile vm-shell" \
   "host session env uses shared VM-shell artifact profile"
 
 expect_fixed \
-  "$REPO_ROOT/scripts/pixel_runtime_app_nostr_timeline_drm.sh" \
+  "$REPO_ROOT/scripts/pixel/pixel_runtime_app_nostr_timeline_drm.sh" \
   "runtime_app_config_json='{\"limit\":12,\"relayUrls\":[\"wss://relay.primal.net/\",\"wss://relay.damus.io/\"],\"syncOnStart\":true}'" \
   "pixel direct timeline relay sync default"
 
 expect_fixed \
-  "$REPO_ROOT/scripts/pixel_common.sh" \
+  "$REPO_ROOT/scripts/lib/pixel_common.sh" \
   'SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)' \
   "pixel runtime host env nostr sqlite path"
 
 expect_fixed \
-  "$REPO_ROOT/scripts/pixel_shell_drm.sh" \
+  "$REPO_ROOT/scripts/pixel/pixel_shell_drm.sh" \
   '$(pixel_runtime_host_env_lines)' \
   "pixel shell nostr sqlite path"
 
 expect_fixed \
-  "$REPO_ROOT/scripts/pixel_runtime_app_drm.sh" \
+  "$REPO_ROOT/scripts/pixel/pixel_runtime_app_drm.sh" \
   '$(pixel_runtime_host_env_lines)' \
   "pixel runtime nostr sqlite path"
 

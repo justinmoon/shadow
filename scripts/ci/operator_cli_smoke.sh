@@ -83,7 +83,7 @@ check_stdout_contains \
 check_output_case \
   just_run_named_args_any_order \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --app timeline' "$SCRIPT_DIR/pixel_shell_drm.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --app timeline' "$SCRIPT_DIR/pixel/pixel_shell_drm.sh")" \
   "" \
   env SHADOWCTL_JUST_DRY_RUN=1 just run app=timeline target=TESTSERIAL hold=0
 
@@ -96,7 +96,7 @@ check_stdout_contains \
 check_output_case \
   just_stop_named_arg \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel_restore_android.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_restore_android.sh")" \
   "" \
   env SHADOWCTL_JUST_DRY_RUN=1 just stop target=TESTSERIAL
 
@@ -124,35 +124,35 @@ check_output_case \
 check_output_case \
   shadowctl_run_vm_default \
   0 \
-  "command=$SCRIPT_DIR/ui_vm_run.sh" \
+  "command=$SCRIPT_DIR/vm/ui_vm_run.sh" \
   "" \
   "$SHADOWCTL_SCRIPT" run --dry-run -t vm --app shell
 
 check_output_case \
   shadowctl_run_vm_camera \
   0 \
-  "$(printf 'command=%s --app camera' "$SCRIPT_DIR/ui_vm_run.sh")" \
+  "$(printf 'command=%s --app camera' "$SCRIPT_DIR/vm/ui_vm_run.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" run --dry-run -t vm --app camera
 
 check_output_case \
   shadowctl_run_pixel_timeline \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --app timeline' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --app timeline' "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" run --dry-run -t TESTSERIAL --app timeline
 
 check_output_case \
   shadowctl_run_pixel_no_hold \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel_shell_drm.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_shell_drm.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" run --dry-run -t TESTSERIAL --app shell --hold 0
 
 check_output_case \
   shadowctl_global_target_before_command \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --app timeline' "$SCRIPT_DIR/pixel_shell_drm_hold.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --app timeline' "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" -t TESTSERIAL run --dry-run --app timeline
 
@@ -173,14 +173,14 @@ check_output_case \
 check_output_case \
   shadowctl_stop_vm \
   0 \
-  "command=$SCRIPT_DIR/ui_vm_stop.sh" \
+  "command=$SCRIPT_DIR/vm/ui_vm_stop.sh" \
   "" \
   "$SHADOWCTL_SCRIPT" stop --dry-run -t vm
 
 check_output_case \
   shadowctl_stop_pixel \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel_restore_android.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_restore_android.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" stop --dry-run -t TESTSERIAL
 
@@ -201,7 +201,7 @@ check_output_case \
 check_output_case \
   shadowctl_pixel_debug_latency \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel_touch_latency_probe.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/debug/pixel_touch_latency_probe.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL latency
 
@@ -215,49 +215,49 @@ check_output_case \
 check_output_case \
   shadowctl_root_prep \
   0 \
-  "command=$SCRIPT_DIR/pixel_root_prep.sh" \
+  "command=$SCRIPT_DIR/pixel/pixel_root_prep.sh" \
   "" \
   "$SHADOWCTL_SCRIPT" root-prep --dry-run
 
 check_output_case \
   shadowctl_root_patch \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel_root_patch.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_root_patch.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" root-patch --dry-run -t TESTSERIAL
 
 check_output_case \
   shadowctl_root_stage \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel_root_stage.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_root_stage.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" root-stage --dry-run -t TESTSERIAL
 
 check_output_case \
   shadowctl_root_flash \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel_root_flash.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_root_flash.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" root-flash --dry-run -t TESTSERIAL
 
 check_output_case \
   shadowctl_ota_sideload \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel_ota_sideload.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_ota_sideload.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" ota-sideload --dry-run -t TESTSERIAL
 
 check_output_case \
   shadowctl_root_check_dry_run \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel_root_check.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_root_check.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" root-check --dry-run -t TESTSERIAL
 
 check_output_case \
   shadowctl_restore_android_dry_run \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel_restore_android.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_restore_android.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" restore-android --dry-run -t TESTSERIAL
 

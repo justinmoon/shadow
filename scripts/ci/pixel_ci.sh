@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=./pixel_common.sh
-source "$SCRIPT_DIR/pixel_common.sh"
+source "$SCRIPT_DIR/lib/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 usage() {
@@ -357,17 +357,17 @@ if (( run_only == 0 )); then
       shell_runtime_args+=(--no-camera-runtime)
     fi
     run_step prep_shell_runtime "stage rooted Pixel shell artifacts" \
-      env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_shell_drm.sh" "${shell_runtime_args[@]}"
+      env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel/pixel_shell_drm.sh" "${shell_runtime_args[@]}"
   fi
 
   if (( stage_only == 1 && need_sound == 1 )); then
     run_step prep_sound_runtime "stage rooted Pixel sound runtime artifacts" \
-      env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_sound_drm.sh"
+      env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel/pixel_runtime_app_sound_drm.sh"
   fi
 
   if (( stage_only == 1 && need_podcast == 1 )); then
     run_step prep_podcast_runtime "stage rooted Pixel podcast runtime artifacts" \
-      env PIXEL_SERIAL="$serial" SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_podcast_player_drm.sh"
+      env PIXEL_SERIAL="$serial" SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel/pixel_runtime_app_podcast_player_drm.sh"
   fi
 
   if (( stage_only == 1 && need_nostr == 1 )); then
@@ -397,20 +397,20 @@ for step in "${suite_steps[@]}"; do
     sound)
       if (( run_only == 0 )); then
         run_step prep_sound_runtime "stage rooted Pixel sound runtime artifacts" \
-          env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_sound_drm.sh"
+          env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel/pixel_runtime_app_sound_drm.sh"
       fi
       run_display_ready_gate "$step"
       run_step sound "prove rooted Pixel runtime sound playback" \
-        env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_RUN_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_sound_drm.sh"
+        env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_RUN_ONLY=1 "$SCRIPT_DIR/pixel/pixel_runtime_app_sound_drm.sh"
       ;;
     podcast)
       if (( run_only == 0 )); then
         run_step prep_podcast_runtime "stage rooted Pixel podcast runtime artifacts" \
-          env PIXEL_SERIAL="$serial" SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_podcast_player_drm.sh"
+          env PIXEL_SERIAL="$serial" SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel/pixel_runtime_app_podcast_player_drm.sh"
       fi
       run_display_ready_gate "$step"
       run_step podcast "prove rooted Pixel runtime podcast playback" \
-        env PIXEL_SERIAL="$serial" SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 PIXEL_RUNTIME_APP_RUN_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_podcast_player_drm.sh"
+        env PIXEL_SERIAL="$serial" SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 PIXEL_RUNTIME_APP_RUN_ONLY=1 "$SCRIPT_DIR/pixel/pixel_runtime_app_podcast_player_drm.sh"
       ;;
     nostr)
       if (( run_only == 0 )); then

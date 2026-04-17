@@ -24,13 +24,13 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] M0: Bootstrap crate and Android build path.
   - Added `rust/shadow-camera-provider-host` as a minimal Android-friendly Rust helper with deterministic JSON output.
   - Added an `android` dev shell in `flake.nix` using `android-nixpkgs` + `rust-overlay` + `cargo-ndk` instead of `pkgsCross`.
-  - Added `scripts/pixel_camera_rs_run.sh` and `just pixel-camera-rs-run` to build with `cargo ndk`, push to the phone, and run under `su`.
+  - Added `scripts/pixel/pixel_camera_rs_run.sh` and `just pixel-camera-rs-run` to build with `cargo ndk`, push to the phone, and run under `su`.
   - Proven on-device on `0B191JEC203253`: `ping` runs as root and returns structured JSON.
 
 - [x] M1: Service discovery proof.
   - Added a Rust `list` command plus hand-written camera AIDL slices for `provider`, `device`, and `common`.
   - Added Android-only binder service-manager/thread-pool shims that `dlopen` extra `libbinder_ndk.so` entrypoints not exposed by the Cargo NDK crate surface.
-  - Pinned the helper build to Android API level 31 in `scripts/pixel_camera_rs_run.sh` because the public binder NDK stub needs API 31 for the symbols used by `android-binder`.
+  - Pinned the helper build to Android API level 31 in `scripts/pixel/pixel_camera_rs_run.sh` because the public binder NDK stub needs API 31 for the symbols used by `android-binder`.
   - Proven on-device on `0B191JEC203253`: `just pixel-camera-rs-run list` reaches `android.hardware.camera.provider.ICameraProvider/internal/0`, enumerates `device@1.1/internal/0` and `device@1.1/internal/1`, reads rear-camera resource cost `33`, and reads `21312` bytes of static metadata.
   - Saved structured artifacts under `build/pixel/camera-rs/20260407T210041Z/`.
 
@@ -53,13 +53,13 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Historical note: the reduced-stop camera takeover proof worked, but its standalone `pixel_camera_rs_takeover.sh` wrapper was later deleted during script-surface cleanup. Use the supported Pixel shell/runtime camera lanes for current operator validation.
   - Kept the generic display takeover default unchanged; `pixel_takeover_stop_services_script` is now parameterized so camera-specific flows can keep the allocator alive without weakening the DRM/KMS path.
   - Historical proof on `09051JEC202061`: the reduced-stop wrapper captured successfully while `surfaceflinger` and HWC were still stopped, then restored Android cleanly. Artifacts live under `build/pixel/camera-rs-takeover/20260407T224734Z/`.
-  - `scripts/pixel_camera_rs_run.sh` now treats helper JSON with `"ok": false` as a failed run, so operator commands stop reporting false-positive success on application-level helper errors.
+  - `scripts/pixel/pixel_camera_rs_run.sh` now treats helper JSON with `"ok": false` as a failed run, so operator commands stop reporting false-positive success on application-level helper errors.
   - `just pre-commit` passed during iteration.
 
 - [x] M6: Runtime camera OS API and app integration.
   - Added `rust/runtime-camera-host` as a sibling Deno extension to `runtime-nostr-host`, exposing `Shadow.os.camera.listCameras()` and `Shadow.os.camera.captureStill()`.
   - Kept the app/runtime contract narrow: the runtime app still uses the existing stdio render/dispatch/render-if-dirty host seam; camera work lives behind OS-level request/response APIs.
-  - Added a real runtime app at `runtime/app-camera/app.tsx`, registered it in the Shadow shell app grid, exported its bundle path in `scripts/runtime_prepare_host_session_env.sh`, and added `just runtime-app-camera-smoke`.
+  - Added a real runtime app at `runtime/app-camera/app.tsx`, registered it in the Shadow shell app grid, exported its bundle path in `scripts/runtime/runtime_prepare_host_session_env.sh`, and added `just runtime-app-camera-smoke`.
   - Added a `Reload Cameras` recovery action in the app so operators can retry broker/provider discovery without restarting the whole session.
   - Added an Android-side loopback broker mode to `shadow-camera-provider-host` so the GNU `shadow-runtime-host` running inside the staged chroot can reach the provider helper over `127.0.0.1` without needing direct Binder access.
   - Proven locally: `just runtime-app-camera-smoke` captures a mock frame through the real packaged runtime host and renders an image data URL in the TS app.

@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=./pixel_common.sh
-source "$SCRIPT_DIR/pixel_common.sh"
+source "$SCRIPT_DIR/lib/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
@@ -240,7 +240,7 @@ restore_android_best_effort
   PIXEL_SHELL_RENDERER=gpu_softbuffer \
   PIXEL_SHELL_START_APP_ID=timeline \
   PIXEL_SHELL_EXTRA_GUEST_CLIENT_ENV='SHADOW_BLITZ_DEBUG_TARGET_HITMAP_IDS=draft,__shadow_keyboard__a' \
-    "$SCRIPT_DIR/pixel_shell_drm_hold.sh"
+    "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh"
 ) >"$run_log" 2>&1 &
 session_pid="$!"
 

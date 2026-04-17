@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=./pixel_common.sh
-source "$SCRIPT_DIR/pixel_common.sh"
+source "$SCRIPT_DIR/lib/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
@@ -42,7 +42,7 @@ restore_android_best_effort() {
     return 0
   fi
   timeout "${PIXEL_RESTORE_ANDROID_TIMEOUT_SECS:-30}" \
-    env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_restore_android.sh" >/dev/null 2>&1 || true
+    env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel/pixel_restore_android.sh" >/dev/null 2>&1 || true
 }
 
 dump_run_log() {
@@ -235,7 +235,7 @@ pixel_restore_android_best_effort "$serial" "$restore_timeout_secs"
   PIXEL_SERIAL="$serial" \
   PIXEL_GUEST_UI_HOST_PID_PATH="$session_host_pid_path" \
   PIXEL_SHELL_RENDERER=gpu_softbuffer \
-    "$SCRIPT_DIR/pixel_shell_drm_hold.sh" "${launcher_args[@]}"
+    "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh" "${launcher_args[@]}"
 ) >"$run_log" 2>&1 &
 session_pid="$!"
 

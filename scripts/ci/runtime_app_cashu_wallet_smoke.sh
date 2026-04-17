@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$REPO_ROOT"
 
-TEST_MINT_BIN="$("$SCRIPT_DIR/ensure_cashu_test_mint.sh")"
+TEST_MINT_BIN="$("$SCRIPT_DIR/runtime/ensure_cashu_test_mint.sh")"
 
 TEST_MINT_BIN="$TEST_MINT_BIN" python3 - <<'PY'
 import html
@@ -236,7 +236,7 @@ max_inputs = 1000
             }
         )
         session_json = run(
-            [str(SCRIPT_DIR / "runtime_prepare_host_session.sh")],
+            [str(SCRIPT_DIR / "runtime" / "runtime_prepare_host_session.sh")],
             env=prepare_env,
             timeout=600,
         ).stdout

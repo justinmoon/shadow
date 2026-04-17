@@ -8,7 +8,7 @@ cd "$REPO_ROOT"
 session_json="$(
   SHADOW_RUNTIME_APP_INPUT_PATH="runtime/app-camera/app.tsx" \
   SHADOW_RUNTIME_APP_CACHE_DIR="build/runtime/app-camera" \
-    "$SCRIPT_DIR/runtime_prepare_host_session.sh"
+    "$SCRIPT_DIR/runtime/runtime_prepare_host_session.sh"
 )"
 
 SESSION_JSON="$session_json" python3 - <<'PY'

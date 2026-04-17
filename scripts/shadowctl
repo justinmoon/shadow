@@ -47,7 +47,7 @@ def repo_root() -> pathlib.Path:
 
 
 def session_apps_file() -> pathlib.Path:
-    return repo_root() / "scripts" / "session_apps.txt"
+    return repo_root() / "scripts" / "lib" / "session_apps.txt"
 
 
 def load_supported_session_apps() -> tuple[str, ...]:
@@ -156,13 +156,15 @@ def session_start_command(
     scripts_dir = repo_root() / "scripts"
 
     if target.kind == "vm":
-        command: list[str | pathlib.Path] = [scripts_dir / "ui_vm_run.sh"]
+        command: list[str | pathlib.Path] = [scripts_dir / "vm" / "ui_vm_run.sh"]
         if app_id != "shell":
             command.extend(["--app", app_id])
         return (command, [])
 
     serial = target.serial or target.id
-    command = [scripts_dir / "pixel_shell_drm_hold.sh" if hold else scripts_dir / "pixel_shell_drm.sh"]
+    command = [
+        scripts_dir / "pixel" / ("pixel_shell_drm_hold.sh" if hold else "pixel_shell_drm.sh")
+    ]
     env = [("PIXEL_SERIAL", serial)]
     if app_id != "shell":
         command.extend(["--app", app_id])
@@ -172,10 +174,10 @@ def session_start_command(
 def session_stop_command(target: TargetRef) -> tuple[list[str | pathlib.Path], list[tuple[str, str]]]:
     scripts_dir = repo_root() / "scripts"
     if target.kind == "vm":
-        return ([scripts_dir / "ui_vm_stop.sh"], [])
+        return ([scripts_dir / "vm" / "ui_vm_stop.sh"], [])
 
     serial = target.serial or target.id
-    return ([scripts_dir / "pixel_restore_android.sh"], [("PIXEL_SERIAL", serial)])
+    return ([scripts_dir / "pixel" / "pixel_restore_android.sh"], [("PIXEL_SERIAL", serial)])
 
 
 def script_command(
@@ -217,7 +219,7 @@ def pixel_debug_command(
     tool: str,
 ) -> tuple[list[str | pathlib.Path], list[tuple[str, str]]]:
     if tool == "latency":
-        return script_command("pixel_touch_latency_probe.sh", target=target)
+        return script_command("debug/pixel_touch_latency_probe.sh", target=target)
     supported = ", ".join(SUPPORTED_PIXEL_DEBUG_TOOLS)
     raise SystemExit(f"shadowctl: unsupported Pixel debug tool {tool!r}; expected one of {supported}")
 
@@ -1160,27 +1162,27 @@ def cmd_pixel_debug(args: argparse.Namespace) -> int:
 
 
 def cmd_root_prep(args: argparse.Namespace) -> int:
-    command, env = script_command("pixel_root_prep.sh")
+    command, env = script_command("pixel/pixel_root_prep.sh")
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 
 def cmd_root_patch(args: argparse.Namespace) -> int:
-    command, env = script_command("pixel_root_patch.sh", target=args.target_ref)
+    command, env = script_command("pixel/pixel_root_patch.sh", target=args.target_ref)
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 
 def cmd_root_stage(args: argparse.Namespace) -> int:
-    command, env = script_command("pixel_root_stage.sh", target=args.target_ref)
+    command, env = script_command("pixel/pixel_root_stage.sh", target=args.target_ref)
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 
 def cmd_root_flash(args: argparse.Namespace) -> int:
-    command, env = script_command("pixel_root_flash.sh", target=args.target_ref)
+    command, env = script_command("pixel/pixel_root_flash.sh", target=args.target_ref)
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 
 def cmd_ota_sideload(args: argparse.Namespace) -> int:
-    command, env = script_command("pixel_ota_sideload.sh", target=args.target_ref)
+    command, env = script_command("pixel/pixel_ota_sideload.sh", target=args.target_ref)
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 
@@ -1270,14 +1272,14 @@ def cmd_ssh(args: argparse.Namespace) -> int:
     ssh_args = list(args.ssh_args)
     if ssh_args and ssh_args[0] == "--":
         ssh_args = ssh_args[1:]
-    command = [str(repo_root() / "scripts/ui_vm_ssh.sh"), *ssh_args]
+    command = [str(repo_root() / "scripts" / "vm" / "ui_vm_ssh.sh"), *ssh_args]
     result = subprocess.run(command, check=False)
     return result.returncode
 
 
 def cmd_root_check(args: argparse.Namespace) -> int:
     if getattr(args, "dry_run", False):
-        command, env = script_command("pixel_root_check.sh", target=args.target_ref)
+        command, env = script_command("pixel/pixel_root_check.sh", target=args.target_ref)
         return run_local_script(command, env_assignments=env, dry_run=True)
 
     serial = args.target_ref.serial or args.target_ref.id
@@ -1297,7 +1299,7 @@ def cmd_root_check(args: argparse.Namespace) -> int:
 
 
 def cmd_restore_android(args: argparse.Namespace) -> int:
-    command, env = script_command("pixel_restore_android.sh", target=args.target_ref)
+    command, env = script_command("pixel/pixel_restore_android.sh", target=args.target_ref)
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 

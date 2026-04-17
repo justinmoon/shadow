@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$REPO_ROOT"
-session_json="$("$SCRIPT_DIR/runtime_prepare_host_session.sh")"
+session_json="$("$SCRIPT_DIR/runtime/runtime_prepare_host_session.sh")"
 
 SESSION_JSON="$session_json" python3 - <<'PY'
 import json

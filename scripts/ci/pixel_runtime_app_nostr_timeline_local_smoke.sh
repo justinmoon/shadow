@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=./pixel_common.sh
-source "$SCRIPT_DIR/pixel_common.sh"
+source "$SCRIPT_DIR/lib/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
@@ -77,7 +77,7 @@ if [[ -n "${PIXEL_RUNTIME_APP_PREP_ONLY-}" || -n "${PIXEL_RUNTIME_APP_PREPARE_ON
   PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS="$click_required_markers" \
   PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS="${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS:-12000}" \
   PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS:-45}" \
-    "$SCRIPT_DIR/pixel_runtime_app_nostr_timeline_drm.sh"
+    "$SCRIPT_DIR/pixel/pixel_runtime_app_nostr_timeline_drm.sh"
   exit 0
 fi
 
@@ -305,7 +305,7 @@ try:
         if RUN_ONLY:
             env["PIXEL_RUNTIME_APP_RUN_ONLY"] = "1"
         run(
-            [str(SCRIPT_DIR / "pixel_runtime_app_nostr_timeline_drm.sh")],
+            [str(SCRIPT_DIR / "pixel" / "pixel_runtime_app_nostr_timeline_drm.sh")],
             env=env,
             timeout=600,
         )

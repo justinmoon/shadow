@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-asset_json="$("$SCRIPT_DIR/prepare_podcast_player_demo_assets.sh")"
+asset_json="$("$SCRIPT_DIR/runtime/prepare_podcast_player_demo_assets.sh")"
 asset_dir="$(
   ASSET_JSON="$asset_json" python3 - <<'PY'
 import json
@@ -29,7 +29,7 @@ session_json="$(
   SHADOW_RUNTIME_APP_CONFIG_JSON="$runtime_app_config_json" \
   SHADOW_RUNTIME_APP_INPUT_PATH="runtime/app-podcast-player/app.tsx" \
   SHADOW_RUNTIME_APP_CACHE_DIR="build/runtime/app-podcast-player-host" \
-    "$SCRIPT_DIR/runtime_prepare_host_session.sh"
+    "$SCRIPT_DIR/runtime/runtime_prepare_host_session.sh"
 )"
 
 ASSET_DIR="$asset_dir" SESSION_JSON="$session_json" python3 - <<'PY'

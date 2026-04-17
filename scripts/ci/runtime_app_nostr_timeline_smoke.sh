@@ -192,7 +192,7 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
             }),
         })
         session_json = run(
-            [str(SCRIPT_DIR / "runtime_prepare_host_session.sh")],
+            [str(SCRIPT_DIR / "runtime" / "runtime_prepare_host_session.sh")],
             env=prepare_env,
             timeout=120,
         ).stdout

@@ -42,5 +42,5 @@ cd "$REPO_ROOT"
 exec nix develop --accept-flake-config "${REPO_FLAKE_REF}#runtime" -c \
   deno run --quiet \
     --allow-env --allow-read --allow-write --allow-run \
-    scripts/runtime_build_artifacts.ts \
+    scripts/runtime/runtime_build_artifacts.ts \
     "${passthrough[@]}"

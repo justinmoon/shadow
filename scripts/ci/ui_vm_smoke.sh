@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=./ui_vm_common.sh
-source "$SCRIPT_DIR/ui_vm_common.sh"
+source "$SCRIPT_DIR/lib/ui_vm_common.sh"
 LOG_DIR="$REPO_ROOT/build/ui-vm"
 RUN_LOG="$LOG_DIR/ui-vm-smoke.log"
 SHOT_PATH="$LOG_DIR/ui-vm-smoke.png"
@@ -119,7 +119,7 @@ finish() {
     dump_failure_context
   fi
 
-  "$SCRIPT_DIR/ui_vm_stop.sh" >/dev/null 2>&1 || true
+  "$SCRIPT_DIR/vm/ui_vm_stop.sh" >/dev/null 2>&1 || true
   if [[ -n "$ui_vm_run_pid" ]]; then
     wait "$ui_vm_run_pid" 2>/dev/null || true
   fi
@@ -129,14 +129,14 @@ trap 'status=$?; finish "$status"; exit "$status"' EXIT
 
 mkdir -p "$LOG_DIR"
 : >"$RUN_LOG"
-"$SCRIPT_DIR/ui_vm_stop.sh" >/dev/null 2>&1 || true
+"$SCRIPT_DIR/vm/ui_vm_stop.sh" >/dev/null 2>&1 || true
 # The branch gate should prove a clean boot/session lifecycle, not inherit
 # whichever apps happened to be warm in the previous VM run.
 rm -f "$VM_STATE_IMAGE_PATH"
 
 (
   cd "$REPO_ROOT"
-  SHADOW_RUNTIME_AUDIO_BACKEND=memory "$SCRIPT_DIR/ui_vm_run.sh"
+  SHADOW_RUNTIME_AUDIO_BACKEND=memory "$SCRIPT_DIR/vm/ui_vm_run.sh"
 ) >"$RUN_LOG" 2>&1 &
 ui_vm_run_pid=$!
 
