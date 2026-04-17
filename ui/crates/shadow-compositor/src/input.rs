@@ -1,4 +1,7 @@
-use shadow_ui_core::shell::{NavAction, PointerButtonState, ShellAction, ShellEvent};
+use shadow_ui_core::{
+    control::MediaAction,
+    shell::{NavAction, PointerButtonState, ShellAction, ShellEvent},
+};
 use smithay::{
     backend::input::{
         AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent,
@@ -16,6 +19,7 @@ use crate::state::ShadowCompositor;
 #[derive(Clone, Copy, Debug)]
 enum KeyboardIntent {
     None,
+    Media(MediaAction),
     Shell(NavAction),
     Home,
 }
@@ -42,6 +46,14 @@ impl ShadowCompositor {
 
                             match event.state() {
                                 KeyState::Pressed => {
+                                    if has_foreground_app {
+                                        if let Some(action) = media_action_from_keysym(keysym) {
+                                            return FilterResult::Intercept(KeyboardIntent::Media(
+                                                action,
+                                            ));
+                                        }
+                                    }
+
                                     if matches!(keysym, keysyms::KEY_Home | keysyms::KEY_Escape)
                                         && has_foreground_app
                                     {
@@ -73,20 +85,22 @@ impl ShadowCompositor {
                                     FilterResult::Forward
                                 }
                                 KeyState::Released => {
-                                    if matches!(
-                                        keysym,
-                                        keysyms::KEY_Left
-                                            | keysyms::KEY_Right
-                                            | keysyms::KEY_Up
-                                            | keysyms::KEY_Down
-                                            | keysyms::KEY_Return
-                                            | keysyms::KEY_KP_Enter
-                                            | keysyms::KEY_space
-                                            | keysyms::KEY_Tab
-                                            | keysyms::KEY_ISO_Left_Tab
-                                            | keysyms::KEY_Escape
-                                            | keysyms::KEY_Home
-                                    ) {
+                                    if media_action_from_keysym(keysym).is_some()
+                                        || matches!(
+                                            keysym,
+                                            keysyms::KEY_Left
+                                                | keysyms::KEY_Right
+                                                | keysyms::KEY_Up
+                                                | keysyms::KEY_Down
+                                                | keysyms::KEY_Return
+                                                | keysyms::KEY_KP_Enter
+                                                | keysyms::KEY_space
+                                                | keysyms::KEY_Tab
+                                                | keysyms::KEY_ISO_Left_Tab
+                                                | keysyms::KEY_Escape
+                                                | keysyms::KEY_Home
+                                        )
+                                    {
                                         FilterResult::Intercept(KeyboardIntent::None)
                                     } else {
                                         FilterResult::Forward
@@ -99,6 +113,9 @@ impl ShadowCompositor {
 
                 match intent {
                     KeyboardIntent::None => {}
+                    KeyboardIntent::Media(action) => {
+                        let _ = self.handle_control_media(action);
+                    }
                     KeyboardIntent::Shell(action) => {
                         self.handle_shell_event(ShellEvent::Navigate(action));
                     }
@@ -224,5 +241,52 @@ impl ShadowCompositor {
             }
             _ => {}
         }
+    }
+}
+
+fn media_action_from_keysym(keysym: u32) -> Option<MediaAction> {
+    match keysym {
+        keysyms::KEY_XF86AudioPlay => Some(MediaAction::Play),
+        keysyms::KEY_XF86AudioPause => Some(MediaAction::Pause),
+        keysyms::KEY_XF86AudioNext => Some(MediaAction::Next),
+        keysyms::KEY_XF86AudioPrev => Some(MediaAction::Previous),
+        keysyms::KEY_XF86AudioRaiseVolume => Some(MediaAction::VolumeUp),
+        keysyms::KEY_XF86AudioLowerVolume => Some(MediaAction::VolumeDown),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::media_action_from_keysym;
+    use shadow_ui_core::control::MediaAction;
+    use smithay::input::keyboard::keysyms;
+
+    #[test]
+    fn maps_media_keysyms() {
+        assert_eq!(
+            media_action_from_keysym(keysyms::KEY_XF86AudioPlay),
+            Some(MediaAction::Play)
+        );
+        assert_eq!(
+            media_action_from_keysym(keysyms::KEY_XF86AudioPause),
+            Some(MediaAction::Pause)
+        );
+        assert_eq!(
+            media_action_from_keysym(keysyms::KEY_XF86AudioNext),
+            Some(MediaAction::Next)
+        );
+        assert_eq!(
+            media_action_from_keysym(keysyms::KEY_XF86AudioPrev),
+            Some(MediaAction::Previous)
+        );
+        assert_eq!(
+            media_action_from_keysym(keysyms::KEY_XF86AudioRaiseVolume),
+            Some(MediaAction::VolumeUp)
+        );
+        assert_eq!(
+            media_action_from_keysym(keysyms::KEY_XF86AudioLowerVolume),
+            Some(MediaAction::VolumeDown)
+        );
     }
 }

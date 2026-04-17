@@ -18,7 +18,6 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - Use `sc -t pixel ci <suite>` / `sc -t pixel stage <suite>` for the underlying rooted-Pixel CI and artifact staging CLI. `just pixel-ci`, `just pixel-stage`, and `just pixel-run` are convenience wrappers.
 - Use `sc root-prep` for host-side rooting assets and `sc -t pixel root-check`, `sc -t pixel root-patch`, `sc -t pixel root-flash`, or `sc -t pixel ota-sideload` for rooted-Pixel setup/recovery.
 - Use `just run target=pixel ...` / `just stop target=pixel` for the supported rooted-Pixel shell lane. Explicit debug tooling should be reached through `sc -t pixel debug ...`, not ad hoc one-off scripts.
-- Run `just pre-merge` before handoff and before claiming the repo is green.
 
 ## Current Checks
 

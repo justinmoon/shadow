@@ -18,6 +18,8 @@ pub enum MediaAction {
     Pause,
     Next,
     Previous,
+    VolumeUp,
+    VolumeDown,
 }
 
 impl MediaAction {
@@ -28,6 +30,8 @@ impl MediaAction {
             Self::Pause => "pause",
             Self::Next => "next",
             Self::Previous => "previous",
+            Self::VolumeUp => "volume-up",
+            Self::VolumeDown => "volume-down",
         }
     }
 
@@ -38,6 +42,8 @@ impl MediaAction {
             "pause" => Some(Self::Pause),
             "next" => Some(Self::Next),
             "previous" => Some(Self::Previous),
+            "volume-up" | "volume_up" => Some(Self::VolumeUp),
+            "volume-down" | "volume_down" => Some(Self::VolumeDown),
             _ => None,
         }
     }
@@ -175,6 +181,12 @@ mod tests {
             ControlRequest::parse("media previous"),
             Some(ControlRequest::Media {
                 action: MediaAction::Previous
+            })
+        );
+        assert_eq!(
+            ControlRequest::parse("media volume-up"),
+            Some(ControlRequest::Media {
+                action: MediaAction::VolumeUp
             })
         );
         assert_eq!(

@@ -84,6 +84,8 @@ pub enum RuntimeAudioControlAction {
     Pause,
     Next,
     Previous,
+    VolumeUp,
+    VolumeDown,
 }
 
 impl RuntimeAudioControlAction {
@@ -94,6 +96,8 @@ impl RuntimeAudioControlAction {
             Self::Pause => "pause",
             Self::Next => "next",
             Self::Previous => "previous",
+            Self::VolumeUp => "volume_up",
+            Self::VolumeDown => "volume_down",
         }
     }
 }

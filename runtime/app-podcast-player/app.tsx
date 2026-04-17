@@ -10,7 +10,9 @@ import {
   pause,
   play,
   release,
+  seek,
   setMediaButtonHandler,
+  setVolume,
   stop,
 } from "@shadow/app-runtime-os";
 
@@ -20,9 +22,11 @@ type AudioStatus = {
   error?: string;
   id: number;
   path?: string;
+  positionMs: number;
   url?: string;
   sourceKind: string;
   state: string;
+  volume: number;
 };
 
 type PlaybackSource = "file" | "url";
@@ -50,7 +54,11 @@ type CommandKind =
   | "previous"
   | "refresh"
   | "release"
+  | "seek_back"
+  | "seek_forward"
   | "stop"
+  | "volume_down"
+  | "volume_up"
   | `play:${string}`;
 
 const DEFAULT_EPISODES: EpisodeConfig[] = [
@@ -333,6 +341,13 @@ function formatDuration(durationMs: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function formatPosition(positionMs: number) {
+  const totalSeconds = Math.max(0, Math.floor(positionMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 function logPodcastStatus(
   command: CommandKind,
   nextStatus: AudioStatus | null,
@@ -427,6 +442,23 @@ export default function renderApp() {
 
   function playbackEpisode() {
     return activeEpisode() ?? defaultEpisode();
+  }
+
+  function clampSeekPosition(currentStatus: AudioStatus, deltaMs: number) {
+    return Math.max(
+      0,
+      Math.min(
+        currentStatus.durationMs,
+        Math.round(currentStatus.positionMs + deltaMs),
+      ),
+    );
+  }
+
+  function clampVolume(currentStatus: AudioStatus, delta: number) {
+    return Math.max(
+      0,
+      Math.min(1, Math.round((currentStatus.volume + delta) * 100) / 100),
+    );
   }
 
   async function ensurePlayerForEpisode(
@@ -524,6 +556,28 @@ export default function renderApp() {
           nextStatus = await release({ id: status()!.id }) as AudioStatus;
           setMessage("Player released.");
           break;
+        case "seek_back":
+        case "seek_forward": {
+          const currentStatus = status();
+          if (!currentStatus || currentStatus.state === "released") {
+            setMessage("No active player yet.");
+            break;
+          }
+          const positionMs = clampSeekPosition(
+            currentStatus,
+            command === "seek_forward" ? 30_000 : -30_000,
+          );
+          nextStatus = await seek({
+            id: currentStatus.id,
+            positionMs,
+          }) as AudioStatus;
+          setMessage(
+            `${
+              command === "seek_forward" ? "Skipped forward" : "Skipped back"
+            } to ${formatPosition(positionMs)}.`,
+          );
+          break;
+        }
         case "stop":
           if (!status() || status()!.state === "released") {
             setMessage("No active player yet.");
@@ -532,6 +586,24 @@ export default function renderApp() {
           nextStatus = await stop({ id: status()!.id }) as AudioStatus;
           setMessage("Playback stopped.");
           break;
+        case "volume_down":
+        case "volume_up": {
+          const currentStatus = status();
+          if (!currentStatus || currentStatus.state === "released") {
+            setMessage("No active player yet.");
+            break;
+          }
+          const volume = clampVolume(
+            currentStatus,
+            command === "volume_up" ? 0.1 : -0.1,
+          );
+          nextStatus = await setVolume({
+            id: currentStatus.id,
+            volume,
+          }) as AudioStatus;
+          setMessage(`Player volume set to ${Math.round(volume * 100)}%.`);
+          break;
+        }
         default:
           if (!episode) {
             throw new Error("podcast play command requires an episode");
@@ -595,6 +667,12 @@ export default function renderApp() {
       case "previous":
         await runCommand("previous");
         return true;
+      case "volume_down":
+        await runCommand("volume_down");
+        return true;
+      case "volume_up":
+        await runCommand("volume_up");
+        return true;
       default:
         return false;
     }
@@ -633,6 +711,15 @@ export default function renderApp() {
           <p class="podcast-status-line">
             <span class="podcast-status-label">Current:</span>{" "}
             {activeEpisode()?.title ?? "none"}
+          </p>
+          <p class="podcast-status-line">
+            <span class="podcast-status-label">Position:</span>{" "}
+            {formatPosition(activeStatus()?.positionMs ?? 0)} /{" "}
+            {formatDuration(activeStatus()?.durationMs ?? 0)}
+          </p>
+          <p class="podcast-status-line">
+            <span class="podcast-status-label">Volume:</span>{" "}
+            {Math.round((activeStatus()?.volume ?? 1) * 100)}%
           </p>
           <p class="podcast-status-line">
             <span class="podcast-status-label">Source:</span> {sourcePath()}
@@ -689,6 +776,38 @@ export default function renderApp() {
             onClick={() => void runCommand("refresh")}
           >
             Refresh
+          </button>
+          <button
+            class="podcast-button podcast-button-secondary"
+            data-shadow-id="seek-back"
+            disabled={busy() !== null}
+            onClick={() => void runCommand("seek_back")}
+          >
+            Back 30s
+          </button>
+          <button
+            class="podcast-button podcast-button-secondary"
+            data-shadow-id="seek-forward"
+            disabled={busy() !== null}
+            onClick={() => void runCommand("seek_forward")}
+          >
+            Fwd 30s
+          </button>
+          <button
+            class="podcast-button podcast-button-secondary"
+            data-shadow-id="volume-down"
+            disabled={busy() !== null}
+            onClick={() => void runCommand("volume_down")}
+          >
+            Vol -
+          </button>
+          <button
+            class="podcast-button podcast-button-secondary"
+            data-shadow-id="volume-up"
+            disabled={busy() !== null}
+            onClick={() => void runCommand("volume_up")}
+          >
+            Vol +
           </button>
           <button
             class="podcast-button podcast-button-danger"

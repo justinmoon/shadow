@@ -22,6 +22,12 @@ function installShadowRuntimeOs() {
     async getStatus(request = {}) {
       return core.ops.op_runtime_audio_get_status(request);
     },
+    async seek(request = {}) {
+      return core.ops.op_runtime_audio_seek(request);
+    },
+    async setVolume(request = {}) {
+      return core.ops.op_runtime_audio_set_volume(request);
+    },
   };
 
   globalThis.Shadow = {

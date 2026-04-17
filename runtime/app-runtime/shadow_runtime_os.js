@@ -54,6 +54,14 @@ export function getStatus(request) {
   return getAudioApi().getStatus(request);
 }
 
+export function seek(request) {
+  return getAudioApi().seek(request);
+}
+
+export function setVolume(request) {
+  return getAudioApi().setVolume(request);
+}
+
 export function setMediaButtonHandler(handler) {
   return getAudioApi().setMediaButtonHandler(handler);
 }
@@ -146,6 +154,8 @@ const AUDIO_MEDIA_ACTIONS = new Set([
   "play",
   "play_pause",
   "previous",
+  "volume_down",
+  "volume_up",
 ]);
 
 function installAudioMediaHandlerApi(audio) {

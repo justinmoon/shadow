@@ -895,6 +895,8 @@ fn parse_platform_audio_control(request: &str) -> Option<RuntimeAudioControlActi
         "play-pause" | "play_pause" => Some(RuntimeAudioControlAction::PlayPause),
         "next" => Some(RuntimeAudioControlAction::Next),
         "previous" => Some(RuntimeAudioControlAction::Previous),
+        "volume-up" | "volume_up" => Some(RuntimeAudioControlAction::VolumeUp),
+        "volume-down" | "volume_down" => Some(RuntimeAudioControlAction::VolumeDown),
         _ => None,
     }
 }

@@ -2,6 +2,7 @@ mod config;
 mod control;
 mod kms;
 mod launch;
+mod media_keys;
 mod shell;
 mod touch;
 
@@ -259,6 +260,7 @@ impl ShadowGuestCompositor {
             );
         }
         state.insert_touch_source(event_loop);
+        state.insert_media_key_source(event_loop);
         state
     }
 
@@ -1152,6 +1154,45 @@ impl ShadowGuestCompositor {
             })
             .expect("insert touch source");
         touch::spawn_touch_reader(touch_device, sender);
+    }
+
+    fn insert_media_key_source(&mut self, event_loop: &mut EventLoop<Self>) {
+        let devices = match media_keys::detect_media_key_devices() {
+            Ok(devices) => devices,
+            Err(error) => {
+                tracing::warn!("[shadow-guest-compositor] media-keys-unavailable: {error}");
+                return;
+            }
+        };
+        if devices.is_empty() {
+            tracing::warn!("[shadow-guest-compositor] media-keys-unavailable: no event devices");
+            return;
+        }
+
+        tracing::info!(
+            "[shadow-guest-compositor] media-keys-ready devices={}",
+            devices.len()
+        );
+        let (sender, receiver) = channel::channel();
+        event_loop
+            .handle()
+            .insert_source(receiver, |event, _, state| match event {
+                channel::Event::Msg(event) => state.handle_media_key_input(event),
+                channel::Event::Closed => {
+                    tracing::warn!("[shadow-guest-compositor] media-key-source closed")
+                }
+            })
+            .expect("insert media key source");
+        media_keys::spawn_media_key_readers(devices, sender);
+    }
+
+    fn handle_media_key_input(&mut self, event: media_keys::MediaKeyEvent) {
+        let response = self.handle_control_media(event.action);
+        tracing::info!(
+            "[shadow-guest-compositor] media-key-dispatch action={} response={}",
+            event.action.as_token(),
+            response.trim()
+        );
     }
 
     fn handle_touch_input(&mut self, event: touch::TouchInputEvent) {

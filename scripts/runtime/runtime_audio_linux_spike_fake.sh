@@ -12,6 +12,8 @@ import os
 
 print(json.dumps({
     "filePath": os.environ.get("SHADOW_AUDIO_SPIKE_FILE_PATH"),
+    "gain": os.environ.get("SHADOW_AUDIO_SPIKE_GAIN"),
+    "startMs": os.environ.get("SHADOW_AUDIO_SPIKE_START_MS"),
     "sourceKind": os.environ.get("SHADOW_AUDIO_SPIKE_SOURCE_KIND"),
     "url": os.environ.get("SHADOW_AUDIO_SPIKE_URL"),
 }))

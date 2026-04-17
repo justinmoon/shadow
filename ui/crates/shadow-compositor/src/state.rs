@@ -287,7 +287,7 @@ impl ShadowCompositor {
         }
     }
 
-    fn handle_control_media(&self, action: MediaAction) -> String {
+    pub(crate) fn handle_control_media(&self, action: MediaAction) -> String {
         let Some(app_id) = self.focused_app else {
             return "ok\nhandled=0\nreason=no-focused-app\n".to_string();
         };

@@ -39,6 +39,8 @@ SUPPORTED_MEDIA_ACTIONS = (
     "pause",
     "next",
     "previous",
+    "volume-up",
+    "volume-down",
 )
 
 

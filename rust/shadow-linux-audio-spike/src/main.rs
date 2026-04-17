@@ -40,6 +40,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let requested_rate_hz = read_env_u32("SHADOW_AUDIO_SPIKE_RATE", 48_000);
     let requested_channels = read_env_u32("SHADOW_AUDIO_SPIKE_CHANNELS", 2);
     let requested_gain = read_env_f32("SHADOW_AUDIO_SPIKE_GAIN", 1.0).max(0.0);
+    let requested_start_ms = read_env_u32("SHADOW_AUDIO_SPIKE_START_MS", 0);
     let source_kind =
         read_env_string("SHADOW_AUDIO_SPIKE_SOURCE_KIND").unwrap_or_else(|| String::from("tone"));
     let requested_file_path = read_env_string("SHADOW_AUDIO_SPIKE_FILE_PATH");
@@ -48,15 +49,18 @@ fn run() -> Result<(), Box<dyn Error>> {
     let cwd = env::current_dir()
         .ok()
         .map(|path| path.display().to_string());
-    let prepared_playback = prepare_playback(
-        &source_kind,
-        requested_duration_ms,
-        requested_frequency_hz,
-        requested_rate_hz,
-        requested_channels,
-        requested_gain,
-        requested_file_path.as_deref(),
-        requested_url.as_deref(),
+    let prepared_playback = trim_playback_start(
+        prepare_playback(
+            &source_kind,
+            requested_duration_ms,
+            requested_frequency_hz,
+            requested_rate_hz,
+            requested_channels,
+            requested_gain,
+            requested_file_path.as_deref(),
+            requested_url.as_deref(),
+        )?,
+        requested_start_ms,
     )?;
 
     let mut device_candidates = Vec::new();
@@ -94,7 +98,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     println!(
-        "audio-spike-start source_kind={} source_path={} duration_ms={} frequency_hz={} rate_hz={} channels={} gain={} device_candidates={}",
+        "audio-spike-start source_kind={} source_path={} duration_ms={} frequency_hz={} rate_hz={} channels={} gain={} start_ms={} device_candidates={}",
         prepared_playback.source_kind,
         sanitize_log_field(prepared_playback.source_path.as_deref().unwrap_or("none")),
         prepared_playback.duration_ms,
@@ -102,6 +106,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         prepared_playback.rate_hz,
         prepared_playback.channels,
         requested_gain,
+        requested_start_ms,
         device_candidates.join(",")
     );
 
@@ -207,6 +212,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         requested_frequency_hz: prepared_playback.frequency_hz.unwrap_or(0),
         requested_gain,
         requested_rate_hz: prepared_playback.rate_hz,
+        requested_start_ms,
         source_kind: prepared_playback.source_kind.clone(),
         source_path: prepared_playback.source_path.clone(),
         success,
@@ -395,7 +401,9 @@ fn decode_audio_media(
     }
 
     if samples.is_empty() {
-        return Err(format!("audio-spike decoded {source_kind} source produced no audio samples").into());
+        return Err(
+            format!("audio-spike decoded {source_kind} source produced no audio samples").into(),
+        );
     }
     apply_gain(&mut samples, gain);
 
@@ -411,9 +419,35 @@ fn decode_audio_media(
     })
 }
 
+fn trim_playback_start(
+    mut playback: PreparedPlayback,
+    requested_start_ms: u32,
+) -> Result<PreparedPlayback, Box<dyn Error>> {
+    if requested_start_ms == 0 {
+        return Ok(playback);
+    }
+    let start_frames =
+        ((u64::from(playback.rate_hz) * u64::from(requested_start_ms)) / 1000) as usize;
+    let start_samples = start_frames.saturating_mul(playback.channels as usize);
+    if start_samples >= playback.samples.len() {
+        return Err(format!(
+            "audio-spike start offset exceeds decoded playback start_ms={} duration_ms={}",
+            requested_start_ms, playback.duration_ms
+        )
+        .into());
+    }
+    playback.samples.drain(..start_samples);
+    let frames_remaining = playback.samples.len() / playback.channels as usize;
+    playback.duration_ms = ((frames_remaining as u64) * 1000 / u64::from(playback.rate_hz)) as u32;
+    Ok(playback)
+}
+
 fn source_extension_hint(source: &str) -> Option<String> {
     let without_fragment = source.split('#').next().unwrap_or(source);
-    let without_query = without_fragment.split('?').next().unwrap_or(without_fragment);
+    let without_query = without_fragment
+        .split('?')
+        .next()
+        .unwrap_or(without_fragment);
     Path::new(without_query)
         .extension()
         .and_then(|value| value.to_str())
@@ -781,6 +815,7 @@ struct AudioSpikeSummary {
     requested_frequency_hz: u32,
     requested_gain: f32,
     requested_rate_hz: u32,
+    requested_start_ms: u32,
     source_kind: String,
     source_path: Option<String>,
     success: bool,

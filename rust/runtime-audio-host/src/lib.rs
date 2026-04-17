@@ -19,6 +19,7 @@ const AUDIO_SPIKE_STAGE_LIBRARY_PATH_ENV: &str = "SHADOW_RUNTIME_AUDIO_SPIKE_STA
 const AUDIO_SPIKE_STAGE_LOADER_PATH_ENV: &str = "SHADOW_RUNTIME_AUDIO_SPIKE_STAGE_LOADER_PATH";
 const DEFAULT_DURATION_MS: u32 = 2_400;
 const DEFAULT_FREQUENCY_HZ: u32 = 440;
+const DEFAULT_PLAYER_VOLUME: f32 = 1.0;
 
 #[derive(Debug)]
 struct AudioHostState {
@@ -102,6 +103,20 @@ impl AudioHostService {
         Ok(status)
     }
 
+    fn seek(&mut self, request: SeekRequest) -> Result<AudioPlayerStatus, JsErrorBox> {
+        let backend = self.backend.clone();
+        let player = self.player_mut(request.id)?;
+        player.seek(request.position_ms, &backend)?;
+        Ok(player.status(&backend))
+    }
+
+    fn set_volume(&mut self, request: SetVolumeRequest) -> Result<AudioPlayerStatus, JsErrorBox> {
+        let backend = self.backend.clone();
+        let player = self.player_mut(request.id)?;
+        player.set_volume(request.volume, &backend)?;
+        Ok(player.status(&backend))
+    }
+
     fn status_for(&mut self, id: u32) -> Result<AudioPlayerStatus, JsErrorBox> {
         let backend = self.backend.clone();
         let player = self.player_mut(id)?;
@@ -163,6 +178,7 @@ struct AudioPlayer {
     last_error: Option<String>,
     runtime: PlayerRuntime,
     source: AudioSource,
+    volume: f32,
 }
 
 impl AudioPlayer {
@@ -178,18 +194,19 @@ impl AudioPlayer {
             last_error: None,
             runtime,
             source,
+            volume: DEFAULT_PLAYER_VOLUME,
         }
     }
 
     fn play(&mut self, backend: &AudioBackend) -> Result<(), JsErrorBox> {
         self.runtime.reconcile(&self.source, &mut self.last_error);
         self.runtime
-            .play(&self.source, backend, &mut self.last_error)
+            .play(&self.source, backend, self.volume, &mut self.last_error)
     }
 
     fn pause(&mut self) -> Result<(), JsErrorBox> {
         self.runtime.reconcile(&self.source, &mut self.last_error);
-        self.runtime.pause(&mut self.last_error)
+        self.runtime.pause(&self.source, &mut self.last_error)
     }
 
     fn stop(&mut self) -> Result<(), JsErrorBox> {
@@ -202,6 +219,37 @@ impl AudioPlayer {
         self.runtime.release(&mut self.last_error)
     }
 
+    fn seek(&mut self, position_ms: u32, backend: &AudioBackend) -> Result<(), JsErrorBox> {
+        let requested = Duration::from_millis(u64::from(position_ms));
+        if requested > self.source.duration() {
+            return Err(JsErrorBox::type_error(format!(
+                "audio.seek requires positionMs <= durationMs ({}), got {position_ms}",
+                self.source.duration_ms()
+            )));
+        }
+        self.runtime.reconcile(&self.source, &mut self.last_error);
+        self.runtime.seek(
+            &self.source,
+            backend,
+            requested,
+            self.volume,
+            &mut self.last_error,
+        )
+    }
+
+    fn set_volume(&mut self, volume: f32, backend: &AudioBackend) -> Result<(), JsErrorBox> {
+        if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+            return Err(JsErrorBox::type_error(format!(
+                "audio.setVolume requires 0.0 <= volume <= 1.0, got {volume}"
+            )));
+        }
+        self.runtime.reconcile(&self.source, &mut self.last_error);
+        self.runtime
+            .set_volume(&self.source, backend, volume, &mut self.last_error)?;
+        self.volume = volume;
+        Ok(())
+    }
+
     fn status(&mut self, backend: &AudioBackend) -> AudioPlayerStatus {
         self.runtime.reconcile(&self.source, &mut self.last_error);
         AudioPlayerStatus {
@@ -211,9 +259,11 @@ impl AudioPlayer {
             frequency_hz: self.source.frequency_hz(),
             id: self.id,
             path: self.source.path().map(str::to_owned),
+            position_ms: duration_to_millis_u32(self.runtime.position(&self.source)),
             url: self.source.url().map(str::to_owned),
             source_kind: String::from(self.source.kind()),
             state: String::from(self.runtime.state().as_str()),
+            volume: self.volume,
         }
     }
 }
@@ -229,18 +279,23 @@ impl PlayerRuntime {
         &mut self,
         source: &AudioSource,
         backend: &AudioBackend,
+        volume: f32,
         last_error: &mut Option<String>,
     ) -> Result<(), JsErrorBox> {
         match self {
             Self::Memory(runtime) => runtime.play(source, last_error),
-            Self::LinuxSpike(runtime) => runtime.play(source, backend, last_error),
+            Self::LinuxSpike(runtime) => runtime.play(source, backend, volume, last_error),
         }
     }
 
-    fn pause(&mut self, last_error: &mut Option<String>) -> Result<(), JsErrorBox> {
+    fn pause(
+        &mut self,
+        source: &AudioSource,
+        last_error: &mut Option<String>,
+    ) -> Result<(), JsErrorBox> {
         match self {
-            Self::Memory(runtime) => runtime.pause(last_error),
-            Self::LinuxSpike(runtime) => runtime.pause(last_error),
+            Self::Memory(runtime) => runtime.pause(source, last_error),
+            Self::LinuxSpike(runtime) => runtime.pause(source, last_error),
         }
     }
 
@@ -261,7 +316,7 @@ impl PlayerRuntime {
     fn reconcile(&mut self, source: &AudioSource, last_error: &mut Option<String>) {
         match self {
             Self::Memory(runtime) => runtime.reconcile(source),
-            Self::LinuxSpike(runtime) => runtime.reconcile(last_error),
+            Self::LinuxSpike(runtime) => runtime.reconcile(source, last_error),
         }
     }
 
@@ -269,6 +324,45 @@ impl PlayerRuntime {
         match self {
             Self::Memory(runtime) => runtime.state,
             Self::LinuxSpike(runtime) => runtime.state,
+        }
+    }
+
+    fn position(&self, source: &AudioSource) -> Duration {
+        match self {
+            Self::Memory(runtime) => runtime.position(source),
+            Self::LinuxSpike(runtime) => runtime.position(source),
+        }
+    }
+
+    fn seek(
+        &mut self,
+        source: &AudioSource,
+        backend: &AudioBackend,
+        position: Duration,
+        volume: f32,
+        last_error: &mut Option<String>,
+    ) -> Result<(), JsErrorBox> {
+        match self {
+            Self::Memory(runtime) => runtime.seek(source, position, last_error),
+            Self::LinuxSpike(runtime) => {
+                runtime.seek(source, backend, position, volume, last_error)
+            }
+        }
+    }
+
+    fn set_volume(
+        &mut self,
+        source: &AudioSource,
+        backend: &AudioBackend,
+        volume: f32,
+        last_error: &mut Option<String>,
+    ) -> Result<(), JsErrorBox> {
+        match self {
+            Self::Memory(_) => {
+                *last_error = None;
+                Ok(())
+            }
+            Self::LinuxSpike(runtime) => runtime.set_volume(source, backend, volume, last_error),
         }
     }
 }
@@ -313,7 +407,11 @@ impl MemoryPlayerRuntime {
         Ok(())
     }
 
-    fn pause(&mut self, _last_error: &mut Option<String>) -> Result<(), JsErrorBox> {
+    fn pause(
+        &mut self,
+        source: &AudioSource,
+        _last_error: &mut Option<String>,
+    ) -> Result<(), JsErrorBox> {
         if self.state == PlayerState::Released {
             return Err(JsErrorBox::generic(
                 "audio.pause cannot target a released player",
@@ -321,9 +419,8 @@ impl MemoryPlayerRuntime {
         }
 
         if self.state == PlayerState::Playing {
-            if let Some(started_at) = self.started_at.take() {
-                self.elapsed_before_pause += started_at.elapsed();
-            }
+            self.elapsed_before_pause = self.position(source);
+            self.started_at = None;
             self.state = PlayerState::Paused;
         }
         Ok(())
@@ -353,21 +450,55 @@ impl MemoryPlayerRuntime {
         if self.state != PlayerState::Playing {
             return;
         }
-        let Some(started_at) = self.started_at else {
-            return;
-        };
-        let elapsed = self.elapsed_before_pause + started_at.elapsed();
+        let elapsed = self.position(source);
         if elapsed >= source.duration() {
             self.elapsed_before_pause = source.duration();
             self.started_at = None;
             self.state = PlayerState::Completed;
         }
     }
+
+    fn position(&self, source: &AudioSource) -> Duration {
+        let started_elapsed = self
+            .started_at
+            .map(|started_at| started_at.elapsed())
+            .unwrap_or_default();
+        (self.elapsed_before_pause + started_elapsed).min(source.duration())
+    }
+
+    fn seek(
+        &mut self,
+        source: &AudioSource,
+        position: Duration,
+        last_error: &mut Option<String>,
+    ) -> Result<(), JsErrorBox> {
+        if self.state == PlayerState::Released {
+            return Err(JsErrorBox::generic(
+                "audio.seek cannot target a released player",
+            ));
+        }
+
+        let clamped = position.min(source.duration());
+        self.elapsed_before_pause = clamped;
+        if clamped >= source.duration() {
+            self.started_at = None;
+            self.state = PlayerState::Completed;
+        } else if self.state == PlayerState::Playing {
+            self.started_at = Some(Instant::now());
+        } else {
+            self.started_at = None;
+            self.state = PlayerState::Paused;
+        }
+        *last_error = None;
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
 struct LinuxSpikePlayerRuntime {
     child: Option<Child>,
+    elapsed_before_pause: Duration,
+    started_at: Option<Instant>,
     state: PlayerState,
 }
 
@@ -375,6 +506,8 @@ impl Default for LinuxSpikePlayerRuntime {
     fn default() -> Self {
         Self {
             child: None,
+            elapsed_before_pause: Duration::from_millis(0),
+            started_at: None,
             state: PlayerState::Idle,
         }
     }
@@ -385,6 +518,7 @@ impl LinuxSpikePlayerRuntime {
         &mut self,
         source: &AudioSource,
         backend: &AudioBackend,
+        volume: f32,
         last_error: &mut Option<String>,
     ) -> Result<(), JsErrorBox> {
         match self.state {
@@ -393,9 +527,14 @@ impl LinuxSpikePlayerRuntime {
                     "audio.play cannot resume a released player",
                 ))
             }
+            PlayerState::Playing => {
+                *last_error = None;
+                return Ok(());
+            }
             PlayerState::Paused => {
                 if let Some(child) = self.child.as_ref() {
                     send_signal(child, libc::SIGCONT)?;
+                    self.started_at = Some(Instant::now());
                     self.state = PlayerState::Playing;
                     *last_error = None;
                     return Ok(());
@@ -404,7 +543,182 @@ impl LinuxSpikePlayerRuntime {
             _ => {}
         }
 
+        if self.state == PlayerState::Completed && self.elapsed_before_pause >= source.duration() {
+            self.elapsed_before_pause = Duration::from_millis(0);
+        }
+        self.kill_child("audio.play")?;
+        self.child = Some(self.spawn_helper(source, backend, self.elapsed_before_pause, volume)?);
+        self.started_at = Some(Instant::now());
+        self.state = PlayerState::Playing;
+        *last_error = None;
+        Ok(())
+    }
+
+    fn pause(
+        &mut self,
+        source: &AudioSource,
+        _last_error: &mut Option<String>,
+    ) -> Result<(), JsErrorBox> {
+        if self.state == PlayerState::Released {
+            return Err(JsErrorBox::generic(
+                "audio.pause cannot target a released player",
+            ));
+        }
+
+        if self.state == PlayerState::Playing {
+            let position = self.position(source);
+            if let Some(child) = self.child.as_ref() {
+                send_signal(child, libc::SIGSTOP)?;
+                self.elapsed_before_pause = position;
+                self.started_at = None;
+                self.state = PlayerState::Paused;
+            }
+        }
+        Ok(())
+    }
+
+    fn stop(&mut self, last_error: &mut Option<String>) -> Result<(), JsErrorBox> {
+        self.kill_child("audio.stop")?;
+        self.elapsed_before_pause = Duration::from_millis(0);
+        self.started_at = None;
+        if self.state != PlayerState::Released {
+            self.state = PlayerState::Stopped;
+        }
+        *last_error = None;
+        Ok(())
+    }
+
+    fn release(&mut self, last_error: &mut Option<String>) -> Result<(), JsErrorBox> {
         self.stop(last_error)?;
+        self.state = PlayerState::Released;
+        Ok(())
+    }
+
+    fn reconcile(&mut self, source: &AudioSource, last_error: &mut Option<String>) {
+        let Some(child) = self.child.as_mut() else {
+            return;
+        };
+
+        match child.try_wait() {
+            Ok(None) => {}
+            Ok(Some(status)) => {
+                self.child = None;
+                self.started_at = None;
+                eprintln!(
+                    "runtime-audio-host linux-spike-exit success={} status={}",
+                    status.success(),
+                    status
+                );
+                if status.success() {
+                    self.elapsed_before_pause = source.duration();
+                    self.state = PlayerState::Completed;
+                    *last_error = None;
+                } else {
+                    self.state = PlayerState::Error;
+                    *last_error = Some(format!("linux spike helper exited with status {status}"));
+                }
+            }
+            Err(error) => {
+                self.child = None;
+                self.started_at = None;
+                self.state = PlayerState::Error;
+                *last_error = Some(format!("audio.getStatus wait linux spike helper: {error}"));
+            }
+        }
+    }
+
+    fn position(&self, source: &AudioSource) -> Duration {
+        let started_elapsed = self
+            .started_at
+            .map(|started_at| started_at.elapsed())
+            .unwrap_or_default();
+        (self.elapsed_before_pause + started_elapsed).min(source.duration())
+    }
+
+    fn seek(
+        &mut self,
+        source: &AudioSource,
+        backend: &AudioBackend,
+        position: Duration,
+        volume: f32,
+        last_error: &mut Option<String>,
+    ) -> Result<(), JsErrorBox> {
+        if self.state == PlayerState::Released {
+            return Err(JsErrorBox::generic(
+                "audio.seek cannot target a released player",
+            ));
+        }
+
+        let was_playing = self.state == PlayerState::Playing;
+        self.kill_child("audio.seek")?;
+        self.elapsed_before_pause = position.min(source.duration());
+        self.started_at = None;
+        if self.elapsed_before_pause >= source.duration() {
+            self.state = PlayerState::Completed;
+            *last_error = None;
+            return Ok(());
+        }
+        if was_playing {
+            self.child =
+                Some(self.spawn_helper(source, backend, self.elapsed_before_pause, volume)?);
+            self.started_at = Some(Instant::now());
+            self.state = PlayerState::Playing;
+        } else {
+            self.state = PlayerState::Paused;
+        }
+        *last_error = None;
+        Ok(())
+    }
+
+    fn set_volume(
+        &mut self,
+        source: &AudioSource,
+        backend: &AudioBackend,
+        volume: f32,
+        last_error: &mut Option<String>,
+    ) -> Result<(), JsErrorBox> {
+        if self.state == PlayerState::Released {
+            return Err(JsErrorBox::generic(
+                "audio.setVolume cannot target a released player",
+            ));
+        }
+
+        match self.state {
+            PlayerState::Playing => {
+                self.elapsed_before_pause = self.position(source);
+                self.kill_child("audio.setVolume")?;
+                if self.elapsed_before_pause >= source.duration() {
+                    self.started_at = None;
+                    self.state = PlayerState::Completed;
+                } else {
+                    self.child = Some(self.spawn_helper(
+                        source,
+                        backend,
+                        self.elapsed_before_pause,
+                        volume,
+                    )?);
+                    self.started_at = Some(Instant::now());
+                    self.state = PlayerState::Playing;
+                }
+            }
+            PlayerState::Paused => {
+                self.kill_child("audio.setVolume")?;
+                self.started_at = None;
+                self.state = PlayerState::Paused;
+            }
+            _ => {}
+        }
+        *last_error = None;
+        Ok(())
+    }
+
+    fn spawn_helper(
+        &self,
+        source: &AudioSource,
+        backend: &AudioBackend,
+        start_position: Duration,
+        volume: f32,
+    ) -> Result<Child, JsErrorBox> {
         let binary_path = match backend {
             AudioBackend::LinuxSpike { binary_path } => binary_path.as_str(),
             AudioBackend::Memory => {
@@ -413,7 +727,6 @@ impl LinuxSpikePlayerRuntime {
                 ))
             }
         };
-
         let stage_loader_path = env::var(AUDIO_SPIKE_STAGE_LOADER_PATH_ENV)
             .ok()
             .map(|value| value.trim().to_owned())
@@ -422,16 +735,23 @@ impl LinuxSpikePlayerRuntime {
             .ok()
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty());
-        let spike_gain = env::var(AUDIO_SPIKE_GAIN_ENV)
+        let configured_gain = env::var(AUDIO_SPIKE_GAIN_ENV)
             .ok()
             .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty());
+            .filter(|value| !value.is_empty())
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(1.0);
+        let resolved_gain = (configured_gain * volume).max(0.0);
+        let start_ms = duration_to_millis_u32(start_position);
         eprintln!(
-            "runtime-audio-host linux-spike-config binary={} loader={} library_path={} gain={}",
+            "runtime-audio-host linux-spike-config binary={} loader={} library_path={} base_gain={} player_volume={} resolved_gain={} start_ms={}",
             binary_path,
             stage_loader_path.as_deref().unwrap_or("none"),
             stage_library_path.as_deref().unwrap_or("none"),
-            spike_gain.as_deref().unwrap_or("default"),
+            configured_gain,
+            volume,
+            resolved_gain,
+            start_ms,
         );
         let mut command = match stage_loader_path.as_deref() {
             Some(loader_path) => {
@@ -449,13 +769,12 @@ impl LinuxSpikePlayerRuntime {
                 "SHADOW_AUDIO_SPIKE_DURATION_MS",
                 source.duration_ms().to_string(),
             )
+            .env("SHADOW_AUDIO_SPIKE_GAIN", resolved_gain.to_string())
             .env("SHADOW_AUDIO_SPIKE_SOURCE_KIND", source.kind())
+            .env("SHADOW_AUDIO_SPIKE_START_MS", start_ms.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
-        if let Some(gain) = spike_gain.as_deref() {
-            command.env("SHADOW_AUDIO_SPIKE_GAIN", gain);
-        }
         match source {
             AudioSource::Tone(source) => {
                 command.env(
@@ -481,105 +800,64 @@ impl LinuxSpikePlayerRuntime {
         match source {
             AudioSource::Tone(source) => {
                 eprintln!(
-                    "runtime-audio-host linux-spike-spawn binary={} kind=tone duration_ms={} frequency_hz={} pid={}",
+                    "runtime-audio-host linux-spike-spawn binary={} kind=tone duration_ms={} frequency_hz={} start_ms={} volume={} pid={}",
                     binary_path,
                     source.duration_ms,
                     source.frequency_hz,
+                    start_ms,
+                    volume,
                     child.id()
                 );
             }
             AudioSource::File(source) => {
                 eprintln!(
-                    "runtime-audio-host linux-spike-spawn binary={} kind=file duration_ms={} path={} pid={}",
+                    "runtime-audio-host linux-spike-spawn binary={} kind=file duration_ms={} path={} start_ms={} volume={} pid={}",
                     binary_path,
                     source.duration_ms,
                     source.path,
+                    start_ms,
+                    volume,
                     child.id()
                 );
             }
             AudioSource::Url(source) => {
                 eprintln!(
-                    "runtime-audio-host linux-spike-spawn binary={} kind=url duration_ms={} url={} pid={}",
+                    "runtime-audio-host linux-spike-spawn binary={} kind=url duration_ms={} url={} start_ms={} volume={} pid={}",
                     binary_path,
                     source.duration_ms,
                     source.url,
+                    start_ms,
+                    volume,
                     child.id()
                 );
             }
         }
-        self.child = Some(child);
-        self.state = PlayerState::Playing;
-        *last_error = None;
-        Ok(())
+        Ok(child)
     }
 
-    fn pause(&mut self, _last_error: &mut Option<String>) -> Result<(), JsErrorBox> {
-        if self.state == PlayerState::Released {
-            return Err(JsErrorBox::generic(
-                "audio.pause cannot target a released player",
-            ));
-        }
-
-        if self.state == PlayerState::Playing {
-            if let Some(child) = self.child.as_ref() {
-                send_signal(child, libc::SIGSTOP)?;
-                self.state = PlayerState::Paused;
-            }
-        }
-        Ok(())
-    }
-
-    fn stop(&mut self, last_error: &mut Option<String>) -> Result<(), JsErrorBox> {
-        if let Some(mut child) = self.child.take() {
-            child
-                .kill()
-                .map_err(|error| JsErrorBox::generic(format!("audio.stop kill player: {error}")))?;
-            child
-                .wait()
-                .map_err(|error| JsErrorBox::generic(format!("audio.stop wait player: {error}")))?;
-        }
-
-        if self.state != PlayerState::Released {
-            self.state = PlayerState::Stopped;
-        }
-        *last_error = None;
-        Ok(())
-    }
-
-    fn release(&mut self, last_error: &mut Option<String>) -> Result<(), JsErrorBox> {
-        self.stop(last_error)?;
-        self.state = PlayerState::Released;
-        Ok(())
-    }
-
-    fn reconcile(&mut self, last_error: &mut Option<String>) {
-        let Some(child) = self.child.as_mut() else {
-            return;
+    fn kill_child(&mut self, context: &str) -> Result<(), JsErrorBox> {
+        let Some(mut child) = self.child.take() else {
+            self.started_at = None;
+            return Ok(());
         };
-
         match child.try_wait() {
-            Ok(None) => {}
-            Ok(Some(status)) => {
-                self.child = None;
-                eprintln!(
-                    "runtime-audio-host linux-spike-exit success={} status={}",
-                    status.success(),
-                    status
-                );
-                if status.success() {
-                    self.state = PlayerState::Completed;
-                    *last_error = None;
-                } else {
-                    self.state = PlayerState::Error;
-                    *last_error = Some(format!("linux spike helper exited with status {status}"));
-                }
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                child.kill().map_err(|error| {
+                    JsErrorBox::generic(format!("{context} kill linux spike helper: {error}"))
+                })?;
             }
             Err(error) => {
-                self.child = None;
-                self.state = PlayerState::Error;
-                *last_error = Some(format!("audio.getStatus wait linux spike helper: {error}"));
+                return Err(JsErrorBox::generic(format!(
+                    "{context} poll linux spike helper: {error}"
+                )));
             }
         }
+        child.wait().map_err(|error| {
+            JsErrorBox::generic(format!("{context} wait linux spike helper: {error}"))
+        })?;
+        self.started_at = None;
+        Ok(())
     }
 }
 
@@ -693,6 +971,20 @@ struct PlayerHandleRequest {
     id: u32,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SeekRequest {
+    id: u32,
+    position_ms: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetVolumeRequest {
+    id: u32,
+    volume: f32,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AudioSourceRequest {
@@ -790,10 +1082,12 @@ struct AudioPlayerStatus {
     id: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
+    position_ms: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     url: Option<String>,
     source_kind: String,
     state: String,
+    volume: f32,
 }
 
 #[op2]
@@ -868,6 +1162,30 @@ fn op_runtime_audio_get_status(
         .status_for(request.id)
 }
 
+#[op2]
+#[serde]
+fn op_runtime_audio_seek(
+    state: &mut OpState,
+    #[serde] request: SeekRequest,
+) -> Result<AudioPlayerStatus, JsErrorBox> {
+    state
+        .borrow_mut::<AudioHostState>()
+        .service_mut()?
+        .seek(request)
+}
+
+#[op2]
+#[serde]
+fn op_runtime_audio_set_volume(
+    state: &mut OpState,
+    #[serde] request: SetVolumeRequest,
+) -> Result<AudioPlayerStatus, JsErrorBox> {
+    state
+        .borrow_mut::<AudioHostState>()
+        .service_mut()?
+        .set_volume(request)
+}
+
 fn default_audio_source_kind() -> String {
     String::from("tone")
 }
@@ -923,6 +1241,10 @@ fn unknown_player_error(id: u32) -> JsErrorBox {
     ))
 }
 
+fn duration_to_millis_u32(duration: Duration) -> u32 {
+    u32::try_from(duration.as_millis()).unwrap_or(u32::MAX)
+}
+
 extension!(
     runtime_audio_host_extension,
     ops = [
@@ -931,7 +1253,9 @@ extension!(
         op_runtime_audio_pause,
         op_runtime_audio_stop,
         op_runtime_audio_release,
-        op_runtime_audio_get_status
+        op_runtime_audio_get_status,
+        op_runtime_audio_seek,
+        op_runtime_audio_set_volume
     ],
     esm_entry_point = "ext:runtime_audio_host_extension/bootstrap.js",
     esm = [dir "js", "bootstrap.js"],

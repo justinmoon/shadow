@@ -138,9 +138,12 @@ def media_and_wait(action, fragment):
 
 initial = send_ok({"op": "render"})
 playing_html = dispatch_and_wait("play-00", "State:</span> playing")
+seek_html = dispatch_and_wait("seek-forward", "Position:</span> 0:30 /")
+volume_html = dispatch_and_wait("volume-down", "Volume:</span> 90%")
 next_html = media_and_wait("next", "Current:</span> #01: Platform Media Control Sample")
 previous_html = media_and_wait("previous", "Current:</span> #00: Test Recording / Teaser w/ Pablo")
 paused_html = media_and_wait("play_pause", "State:</span> paused")
+volume_up_html = media_and_wait("volume_up", "Volume:</span> 100%")
 stopped_html = dispatch_and_wait("stop", "State:</span> stopped")
 released_html = dispatch_and_wait("release", "State:</span> released")
 
@@ -164,12 +167,18 @@ if "Current:</span> #00: Test Recording / Teaser w/ Pablo" not in playing_html:
     raise SystemExit("runtime-app-podcast-player-smoke: missing active episode")
 if "Source:</span> assets/podcast/00-test-recording-teaser-w-pablo.mp3" not in playing_html:
     raise SystemExit("runtime-app-podcast-player-smoke: missing first episode source path")
+if "Position:</span> 0:30 /" not in seek_html:
+    raise SystemExit("runtime-app-podcast-player-smoke: seek button did not advance position")
+if "Volume:</span> 90%" not in volume_html:
+    raise SystemExit("runtime-app-podcast-player-smoke: volume-down button did not change volume")
 if "Current:</span> #01: Platform Media Control Sample" not in next_html:
     raise SystemExit("runtime-app-podcast-player-smoke: next media action did not advance episode")
 if "Current:</span> #00: Test Recording / Teaser w/ Pablo" not in previous_html:
     raise SystemExit("runtime-app-podcast-player-smoke: previous media action did not rewind episode")
 if "State:</span> paused" not in paused_html:
     raise SystemExit("runtime-app-podcast-player-smoke: play_pause media action did not pause playback")
+if "Volume:</span> 100%" not in volume_up_html:
+    raise SystemExit("runtime-app-podcast-player-smoke: volume_up media action did not restore volume")
 if "State:</span> stopped" not in stopped_html:
     raise SystemExit("runtime-app-podcast-player-smoke: stop did not update state")
 if "State:</span> released" not in released_html:
