@@ -18,7 +18,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## Agent Handoff
 
-- This is product/app work. Keep cross-app runtime changes narrow and move reusable platform decisions back to `todos/app-runtime.md`.
+- This is product/app work. Keep cross-app runtime changes narrow and move reusable platform decisions into the relevant platform plan or docs.
 - First clarify the QR decode path: TypeScript bundle dependency, Rust runtime op, or camera-host-side helper.
 - Prefer reusing `Shadow.os.camera` and the existing camera runtime seam. Do not create a separate camera capture path for Cashu unless the existing seam is proven insufficient.
 - Likely write areas: `runtime/app-cashu/`, Cashu runtime-host code under `rust/`, shared runtime protocol/types, host smokes, and eventually Pixel CI suite wiring.
@@ -50,7 +50,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## Implementation Notes
 
-- `todos/app-runtime.md` now tracks the cross-app runtime platform. This file tracks Cashu wallet product work.
+- `todos/app-metadata.md` carries the remaining cross-app runtime cleanup context. This file tracks Cashu wallet product work.
 - QR scanning probably crosses the camera runtime seam, so coordinate with `todos/camera-rs.md` instead of creating a separate camera path.
 - The wallet is still pre-alpha. Optimize for fast iteration and clear failures before polishing broad compatibility.
 - Pixel hardware is useful for final proof, but most Cashu behavior should be provable without requiring a plugged-in device.

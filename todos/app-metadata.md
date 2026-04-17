@@ -7,6 +7,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Make app/runtime metadata single-source.
 - Adding or renaming an app should not require coordinated edits across Rust app registry, TypeScript bundle prep, shell helpers, Pixel staging scripts, and `shadowctl`.
 - Cover supported shell apps first: `counter`, `camera`, `timeline`, `podcast`, and `cashu`.
+- Carry the remaining cross-app runtime-platform cleanup context now that the old parent runtime plan is retired.
 
 ## Approach
 
@@ -14,6 +15,15 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Store app id, title, icon label, subtitle, Wayland app id, window title, TSX entrypoint, default cache dirs, bundle env name, bundle filename, default config, and profile membership in that manifest.
 - Generate or load derived metadata for Rust and scripts instead of maintaining parallel tables.
 - Keep the first version boring: static metadata only, no plugin system.
+
+## Runtime Platform Context
+
+- Current runtime posture: usable for real app iteration, but still pre-alpha.
+- Keep TS/TSX app modules, Solid-style authoring, and `{ html, css }` render snapshots for now.
+- Keep Rust in charge of the outer frame, app lifecycle, native integration, and runtime-host extensions.
+- Prefer concrete domain APIs under `Shadow.os.<domain>` until multiple domains force a shared capability convention.
+- Cross-app runtime seams are app lifecycle, viewport, input, app-host protocol, OS API shape, metadata, and validation lanes.
+- App product work belongs in the matching app plan: Cashu in `todos/cashu.md`, camera in `todos/camera-rs.md`, GPU/device rendering in `todos/gpu.md`, and sound in `todos/sound.md`.
 
 ## Agent Handoff
 
@@ -26,6 +36,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Avoid changing unrelated app behavior while moving metadata. The goal is fewer coordinated edits, not new runtime features.
 - If adding generator scripts, classify them in the script inventory and keep `scripts/` organized.
 - Validate with `just pre-commit`; use `just smoke target=vm` once shell app launch metadata changes; use a targeted `just pixel-ci <suite>` only if Pixel staging behavior changes.
+- Keep `just runtime-app-host-smokes`, `just smoke target=vm`, and relevant `just pixel-ci <suite>` coverage updated as apps become real.
 
 ## Milestones
 
@@ -53,3 +64,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Metadata changes can conflict with app agents. Coordinate app id, bundle filename, runtime config, and profile membership changes before landing.
 - This is an iteration-speed project. The goal is fewer coordinated edits when adding apps, not a general app packaging framework.
 - Keep app-specific product behavior out of the metadata manifest unless multiple apps need the same field.
+- `deno_core` remains the pragmatic runtime helper. `deno_runtime` is proven but not promoted.
+- The current JS app contract is still `{ html, css? }` snapshots plus app-owned event target ids.
+- Host wheel and pan scrolling currently live in the Blitz document layer rather than the JS runtime event schema.
+- The old direct rooted-Pixel runtime-app probes were pruned. Current device validation should use the shell lane or `just pixel-ci <suite>`.
+- App metadata duplication is now the main platform cleanup seam.
