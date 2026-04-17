@@ -114,7 +114,13 @@ ready_attrs = attrs(ready_html)
 if ready_attrs.get("data-shadow-status-kind") != "ready":
     raise SystemExit("runtime-app-camera-smoke: ready render missing status marker")
 
-preview_html = ready_html
+preview_clicked = unwrap(
+    send({"op": "dispatch", "event": {"targetId": "preview-toggle", "type": "click"}})
+)
+if "Stop Preview" not in preview_clicked["html"]:
+    raise SystemExit("runtime-app-camera-smoke: click did not enable preview")
+
+preview_html = preview_clicked["html"]
 deadline = time.time() + 15
 while time.time() < deadline:
     response = send({"op": "render_if_dirty"})

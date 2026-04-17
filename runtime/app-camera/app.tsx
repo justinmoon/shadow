@@ -305,13 +305,14 @@ function cameraChipShadowId(
 export function renderApp() {
   const [cameras, setCameras] = createSignal<CameraDevice[]>([]);
   const [selectedCameraId, setSelectedCameraId] = createSignal<string | null>(null);
+  const [previewEnabled, setPreviewEnabled] = createSignal(false);
   const [status, setStatus] = createSignal<StatusState>({
     kind: "loading",
     message: "Loading cameras from Shadow OS.",
   });
   const [previewStatus, setPreviewStatus] = createSignal<PreviewState>({
-    kind: "loading",
-    message: "Loading live preview.",
+    kind: "idle",
+    message: "Preview paused. Tap Start Preview when ready.",
   });
   const [previewFrame, setPreviewFrame] = createSignal<CaptureReceipt | null>(null);
   const [lastCapture, setLastCapture] = createSignal<CaptureReceipt | null>(null);
@@ -347,10 +348,20 @@ export function renderApp() {
     previewGeneration += 1;
   }
 
+  function pausePreview(message = "Preview paused. Tap Start Preview when ready.") {
+    stopPreviewLoop();
+    setPreviewEnabled(false);
+    setPreviewStatusState({
+      kind: "idle",
+      message,
+    });
+  }
+
   async function startPreviewLoop(camera: CameraDevice) {
     const generation = ++previewGeneration;
     let loggedFirstFrame = false;
     setPreviewFrame(null);
+    setPreviewEnabled(true);
     setPreviewStatusState({
       kind: "loading",
       message: `Starting live preview on ${camera.label}.`,
@@ -401,7 +412,20 @@ export function renderApp() {
     }
   }
 
+  function restartPreviewIfEnabled(camera: CameraDevice) {
+    if (!previewEnabled()) {
+      setPreviewFrame(null);
+      setPreviewStatusState({
+        kind: "idle",
+        message: `Preview paused on ${camera.label}.`,
+      });
+      return;
+    }
+    void startPreviewLoop(camera);
+  }
+
   function selectCamera(camera: CameraDevice) {
+    stopPreviewLoop();
     setSelectedCameraId(camera.id);
     logCameraMarker(
       `camera-selected cameraId=${camera.id} lensFacing=${camera.lensFacing}`,
@@ -410,6 +434,25 @@ export function renderApp() {
       kind: "ready",
       message: cameraReadyMessage(camera),
     });
+    restartPreviewIfEnabled(camera);
+  }
+
+  function handlePreviewToggle() {
+    const camera = selectedCamera();
+    if (!camera) {
+      setPreviewFrame(null);
+      setPreviewStatusState({
+        kind: "error",
+        message: "Pick a camera before starting preview.",
+      });
+      return;
+    }
+
+    if (previewEnabled()) {
+      pausePreview(`Preview paused on ${camera.label}.`);
+      return;
+    }
+
     void startPreviewLoop(camera);
   }
 
@@ -419,9 +462,12 @@ export function renderApp() {
       kind: "loading",
       message: "Loading cameras from Shadow OS.",
     });
+    setPreviewFrame(null);
     setPreviewStatusState({
-      kind: "loading",
-      message: "Loading live preview.",
+      kind: previewEnabled() ? "loading" : "idle",
+      message: previewEnabled()
+        ? "Refreshing cameras before restarting preview."
+        : "Preview paused. Tap Start Preview when ready.",
     });
 
     try {
@@ -441,9 +487,10 @@ export function renderApp() {
         message: cameraReadyMessage(nextSelectedCamera),
       });
       if (nextSelectedCamera != null) {
-        void startPreviewLoop(nextSelectedCamera);
+        restartPreviewIfEnabled(nextSelectedCamera);
       } else {
         setPreviewFrame(null);
+        setPreviewEnabled(false);
         setPreviewStatusState({
           kind: "idle",
           message: "No cameras reported by Shadow OS.",
@@ -455,6 +502,7 @@ export function renderApp() {
         kind: "error",
         message: error instanceof Error ? error.message : String(error),
       });
+      setPreviewEnabled(false);
       setPreviewStatusState({
         kind: "error",
         message: error instanceof Error ? error.message : String(error),
@@ -502,7 +550,7 @@ export function renderApp() {
       });
     } finally {
       const nextCamera = selectedCamera();
-      if (!isDisposed && nextCamera?.id === camera.id) {
+      if (!isDisposed && previewEnabled() && nextCamera?.id === camera.id) {
         void startPreviewLoop(nextCamera);
       }
     }
@@ -574,6 +622,18 @@ export function renderApp() {
             type="button"
           >
             {status().kind === "capturing" ? "Capturing..." : "Take Photo"}
+          </button>
+
+          <button
+            class="camera-action camera-action-secondary"
+            data-shadow-id="preview-toggle"
+            disabled={status().kind === "capturing" || selectedCameraId() == null}
+            onClick={() => {
+              handlePreviewToggle();
+            }}
+            type="button"
+          >
+            {previewEnabled() ? "Stop Preview" : "Start Preview"}
           </button>
 
           <button
