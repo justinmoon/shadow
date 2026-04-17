@@ -33,6 +33,7 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
+    let validate_only = read_env_flag("SHADOW_AUDIO_SPIKE_VALIDATE_ONLY");
     let requested_duration_ms = read_env_u32("SHADOW_AUDIO_SPIKE_DURATION_MS", 1500);
     let requested_frequency_hz = read_env_u32("SHADOW_AUDIO_SPIKE_FREQUENCY_HZ", 440);
     let requested_rate_hz = read_env_u32("SHADOW_AUDIO_SPIKE_RATE", 48_000);
@@ -111,74 +112,85 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let mut attempts = Vec::new();
     let mut playback = None;
-    for device in &device_candidates {
-        println!("audio-spike-attempt device={device}");
-        let attempt_started = Instant::now();
-        let route_name = route_plan_for_device(device)
-            .map(|plan| plan.name)
-            .map(str::to_owned);
-        let attempt_result = match route_plan_for_device(device) {
-            Some(route_plan) => with_route_plan(route_plan, || {
-                play_prepared_samples(device, &prepared_playback)
-            }),
-            None => play_prepared_samples(device, &prepared_playback),
-        };
-        match attempt_result {
-            Ok(result) => {
-                let proxy_like = is_non_audible_candidate(device, &playback_device_names);
-                println!(
-                    "audio-spike-playback-ok device={} elapsed_ms={} frames={} rate_hz={} channels={} buffer_frames={} period_frames={} proxy_like={} route={}",
-                    device,
-                    attempt_started.elapsed().as_millis(),
-                    result.frames_requested,
-                    result.actual_rate_hz,
-                    result.actual_channels,
-                    result.buffer_frames,
-                    result.period_frames,
-                    proxy_like,
-                    route_name.as_deref().unwrap_or("none")
-                );
-                attempts.push(PcmAttempt {
-                    device: device.clone(),
-                    elapsed_ms: attempt_started.elapsed().as_millis(),
-                    error: None,
-                    frames_requested: result.frames_requested,
-                    proxy_like,
-                    route: route_name.clone(),
-                    success: !proxy_like,
-                });
-                if proxy_like {
+    if validate_only {
+        println!(
+            "audio-spike-validate-ok source_kind={} source_path={} rate_hz={} channels={} duration_ms={}",
+            prepared_playback.source_kind,
+            sanitize_log_field(prepared_playback.source_path.as_deref().unwrap_or("none")),
+            prepared_playback.rate_hz,
+            prepared_playback.channels,
+            prepared_playback.duration_ms,
+        );
+    } else {
+        for device in &device_candidates {
+            println!("audio-spike-attempt device={device}");
+            let attempt_started = Instant::now();
+            let route_name = route_plan_for_device(device)
+                .map(|plan| plan.name)
+                .map(str::to_owned);
+            let attempt_result = match route_plan_for_device(device) {
+                Some(route_plan) => with_route_plan(route_plan, || {
+                    play_prepared_samples(device, &prepared_playback)
+                }),
+                None => play_prepared_samples(device, &prepared_playback),
+            };
+            match attempt_result {
+                Ok(result) => {
+                    let proxy_like = is_non_audible_candidate(device, &playback_device_names);
                     println!(
-                        "audio-spike-playback-ignored device={} reason=proxy-or-hostless",
-                        device
+                        "audio-spike-playback-ok device={} elapsed_ms={} frames={} rate_hz={} channels={} buffer_frames={} period_frames={} proxy_like={} route={}",
+                        device,
+                        attempt_started.elapsed().as_millis(),
+                        result.frames_requested,
+                        result.actual_rate_hz,
+                        result.actual_channels,
+                        result.buffer_frames,
+                        result.period_frames,
+                        proxy_like,
+                        route_name.as_deref().unwrap_or("none")
                     );
-                } else {
-                    playback = Some(result.with_device(device.clone()));
-                    break;
+                    attempts.push(PcmAttempt {
+                        device: device.clone(),
+                        elapsed_ms: attempt_started.elapsed().as_millis(),
+                        error: None,
+                        frames_requested: result.frames_requested,
+                        proxy_like,
+                        route: route_name.clone(),
+                        success: !proxy_like,
+                    });
+                    if proxy_like {
+                        println!(
+                            "audio-spike-playback-ignored device={} reason=proxy-or-hostless",
+                            device
+                        );
+                    } else {
+                        playback = Some(result.with_device(device.clone()));
+                        break;
+                    }
                 }
-            }
-            Err(error) => {
-                let message = error.to_string();
-                println!(
-                    "audio-spike-playback-error device={} elapsed_ms={} error={}",
-                    device,
-                    attempt_started.elapsed().as_millis(),
-                    sanitize_log_field(&message)
-                );
-                attempts.push(PcmAttempt {
-                    device: device.clone(),
-                    elapsed_ms: attempt_started.elapsed().as_millis(),
-                    error: Some(message),
-                    frames_requested: 0,
-                    proxy_like: false,
-                    route: route_name,
-                    success: false,
-                });
+                Err(error) => {
+                    let message = error.to_string();
+                    println!(
+                        "audio-spike-playback-error device={} elapsed_ms={} error={}",
+                        device,
+                        attempt_started.elapsed().as_millis(),
+                        sanitize_log_field(&message)
+                    );
+                    attempts.push(PcmAttempt {
+                        device: device.clone(),
+                        elapsed_ms: attempt_started.elapsed().as_millis(),
+                        error: Some(message),
+                        frames_requested: 0,
+                        proxy_like: false,
+                        route: route_name,
+                        success: false,
+                    });
+                }
             }
         }
     }
 
-    let success = playback.is_some();
+    let success = validate_only || playback.is_some();
     let summary = AudioSpikeSummary {
         attempts,
         cwd,
@@ -198,6 +210,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         source_path: prepared_playback.source_path.clone(),
         success,
         summary_path: summary_path.clone(),
+        validate_only,
     };
     let encoded = serde_json::to_string(&summary)?;
     println!("audio-spike-summary={encoded}");
@@ -693,6 +706,13 @@ fn read_env_string(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn read_env_flag(name: &str) -> bool {
+    matches!(
+        env::var(name).ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
+    )
+}
+
 fn list_tree_entries(path: &str) -> Vec<String> {
     let root = Path::new(path);
     let Ok(entries) = fs::read_dir(root) else {
@@ -738,6 +758,7 @@ struct AudioSpikeSummary {
     source_path: Option<String>,
     success: bool,
     summary_path: Option<String>,
+    validate_only: bool,
 }
 
 #[derive(Debug)]

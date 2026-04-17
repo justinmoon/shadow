@@ -602,6 +602,12 @@
       });
       packages = forAllSystems ({ pkgs, ... }:
         {
+          shadow-linux-audio-spike =
+            if pkgs.stdenv.isLinux then
+              mkShadowLinuxAudioSpikeFor pkgs
+            else
+              mkUnavailablePackage pkgs "shadow-linux-audio-spike-unavailable"
+                "shadow-linux-audio-spike is only available on Linux hosts";
           shadow-linux-audio-spike-aarch64-linux-gnu =
             mkShadowLinuxAudioSpikeFor pkgs.pkgsCross.aarch64-multiplatform;
           shadow-camera-provider-host = mkShadowCameraProviderHostFor pkgs;
