@@ -90,7 +90,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `shadow_runtime_os.js` is now a thin hard-require bridge. It no longer carries app-side mock/fallback behavior for `nostr` or `cashu`; if the runtime host does not install `Shadow.os.<domain>`, the app fails loudly.
   - `runtime-cashu-host` now keeps one session-scoped CDK repository in Deno op state instead of reopening `redb` on every call. That fixed the `Database already open. Cannot acquire lock.` failure and matches the intended host architecture better.
   - The durable wallet store is `redb` (`wallet.redb`) plus a file-backed BIP39 mnemonic under `SHADOW_RUNTIME_CASHU_DATA_DIR`. `cdk-sqlite` was intentionally skipped because it collided with the existing Nostr sqlite seam on `libsqlite3-sys`.
-  - `scripts/runtime_app_cashu_wallet_smoke.sh` now boots a local `cdk-mintd` fakewallet mint, proves trusted-mint persistence and wallet actions through the live runtime host, and finishes with invoice funding plus invoice payment using the wallet itself.
+  - `scripts/ci/runtime_app_cashu_wallet_smoke.sh` now boots a local `cdk-mintd` fakewallet mint, proves trusted-mint persistence and wallet actions through the live runtime host, and finishes with invoice funding plus invoice payment using the wallet itself.
 - 2026-04-07: `just runtime-app-keyboard-smoke` passed. That already covers focus, keyboard input, and selection metadata on the bundled host seam.
 - 2026-04-07: `just runtime-app-nostr-timeline-smoke` passed. That proves relay sync, keyboard compose, restart behavior, and cache-backed timeline reload on the host runtime seam.
 - 2026-04-07: The old split host commands (`runtime-app-document-smoke`, `runtime-app-click-smoke`, `runtime-app-input-smoke`, `runtime-app-focus-smoke`, `runtime-app-toggle-smoke`, `runtime-app-selection-smoke`, `runtime-app-host-smoke`, `runtime-app-compositor-smoke-gpu`) were removed from the live `just` surface because their scripts no longer exist.
@@ -105,7 +105,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - 2026-04-07: The VM shelve/reopen smoke was green.
   - The shell launch regression was that `shadow-compositor` spawned `shadow-blitz-demo` without forcing runtime mode, so the self-exiting static demo launched instead of the real runtime app.
   - `shadow-blitz-demo` now honors launch-provided title and Wayland app-id overrides, and the compositor sets runtime mode plus app-specific launch env.
-  - The required VM app smoke is now consolidated in `scripts/ui_vm_smoke.sh`, so timeline/home/reopen coverage lives in the same branch gate as camera and podcast launch coverage.
+  - The required VM app smoke is now consolidated in `scripts/ci/ui_vm_smoke.sh`, so timeline/home/reopen coverage lives in the same branch gate as camera and podcast launch coverage.
 - 2026-04-07: The near-term Pixel lane is now the real shell/home path.
   - `pixel-shell-drm` is the primary rooted-Pixel operator rung, and `just run target=pixel` now routes there instead of to the old direct-runtime timeline path.
   - The old direct runtime-app Pixel probes were later pruned; current device validation should use the supported Pixel shell path or `just pixel-ci <suite>`.
@@ -115,7 +115,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - The Pixel shell lane now also expects a runtime client process plus a mapped window when an initial shell app is requested, so this entrypoint fails if the shell never actually opens the app.
 - 2026-04-07: The rooted Pixel shell now has a matching control helper and lifecycle smoke harness.
   - `shadowctl` talks to `/data/local/tmp/shadow-runtime/shadow-control.sock` over rooted `adb shell` plus Toybox `nc -U`, and `sc -t pixel state --json` mirrors the VM control-state shape.
-  - `pixel_shell_timeline_smoke.sh` now starts the rooted shell in hold mode, waits for `timeline` to launch through the real shell path, sends `home`, reopens `timeline`, and checks the same focused/mapped/shelved state transitions as the VM smoke.
+  - `scripts/ci/pixel_shell_timeline_smoke.sh` now starts the rooted shell in hold mode, waits for `timeline` to launch through the real shell path, sends `home`, reopens `timeline`, and checks the same focused/mapped/shelved state transitions as the VM smoke.
 - 2026-04-07: The rooted Pixel shell lifecycle smoke is live-green on `09051JEC202061`.
   - Historical direct smoke on `09051JEC202061` passed and wrote its run log under `build/pixel/shell/20260407T230414Z/`. Current equivalent coverage is `just pixel-ci timeline`.
   - The smoke proved `timeline` launch, `home` shelving, and `timeline` reopen through the real rooted shell lane, then restored Android cleanly.

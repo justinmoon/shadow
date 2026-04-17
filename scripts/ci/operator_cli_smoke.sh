@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SHADOWCTL_SCRIPT="$SCRIPT_DIR/shadowctl"
 PYTHON3_BIN="$(command -v python3)"
@@ -103,21 +103,21 @@ check_output_case \
 check_output_case \
   just_pixel_ci_routes_through_shadowctl \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s camera' "$SCRIPT_DIR/pixel_ci.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s camera' "$SCRIPT_DIR/ci/pixel_ci.sh")" \
   "" \
   env SHADOWCTL_JUST_DRY_RUN=1 just pixel-ci --target TESTSERIAL camera
 
 check_output_case \
   just_pixel_stage_routes_through_shadowctl \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --stage-only sound' "$SCRIPT_DIR/pixel_ci.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --stage-only sound' "$SCRIPT_DIR/ci/pixel_ci.sh")" \
   "" \
   env SHADOWCTL_JUST_DRY_RUN=1 just pixel-stage --target TESTSERIAL sound
 
 check_output_case \
   just_pixel_run_routes_through_shadowctl \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --run-only podcast' "$SCRIPT_DIR/pixel_ci.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --run-only podcast' "$SCRIPT_DIR/ci/pixel_ci.sh")" \
   "" \
   env SHADOWCTL_JUST_DRY_RUN=1 just pixel-run --target TESTSERIAL podcast
 
@@ -187,14 +187,14 @@ check_output_case \
 check_output_case \
   shadowctl_pixel_ci_camera \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s camera' "$SCRIPT_DIR/pixel_ci.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s camera' "$SCRIPT_DIR/ci/pixel_ci.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" ci --dry-run -t TESTSERIAL camera
 
 check_output_case \
   shadowctl_pixel_stage_sound \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --stage-only sound' "$SCRIPT_DIR/pixel_ci.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --stage-only sound' "$SCRIPT_DIR/ci/pixel_ci.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" stage --dry-run -t TESTSERIAL sound
 
@@ -208,7 +208,7 @@ check_output_case \
 check_output_case \
   shadowctl_pixel_ci_run_only_podcast \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --run-only podcast' "$SCRIPT_DIR/pixel_ci.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --run-only podcast' "$SCRIPT_DIR/ci/pixel_ci.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" ci --dry-run --run-only -t TESTSERIAL podcast
 

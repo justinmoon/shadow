@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=./pixel_common.sh
 source "$SCRIPT_DIR/pixel_common.sh"
 ensure_bootimg_shell "$@"
@@ -372,7 +372,7 @@ if (( run_only == 0 )); then
 
   if (( stage_only == 1 && need_nostr == 1 )); then
     run_step prep_nostr_runtime "stage rooted Pixel Nostr runtime artifacts" \
-      env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_nostr_timeline_local_smoke.sh"
+      env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/ci/pixel_runtime_app_nostr_timeline_local_smoke.sh"
   fi
 fi
 
@@ -387,12 +387,12 @@ for step in "${suite_steps[@]}"; do
     timeline)
       run_display_ready_gate "$step"
       run_step timeline "prove rooted Pixel shell timeline lifecycle" \
-        env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_shell_timeline_smoke.sh" --run-only
+        env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/ci/pixel_shell_timeline_smoke.sh" --run-only
       ;;
     camera)
       run_display_ready_gate "$step"
       run_step camera "prove rooted Pixel shell camera capture" \
-        env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel_shell_camera_smoke.sh" --run-only
+        env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/ci/pixel_shell_camera_smoke.sh" --run-only
       ;;
     sound)
       if (( run_only == 0 )); then
@@ -415,11 +415,11 @@ for step in "${suite_steps[@]}"; do
     nostr)
       if (( run_only == 0 )); then
         run_step prep_nostr_runtime "stage rooted Pixel Nostr runtime artifacts" \
-          env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_nostr_timeline_local_smoke.sh"
+          env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_PREP_ONLY=1 "$SCRIPT_DIR/ci/pixel_runtime_app_nostr_timeline_local_smoke.sh"
       fi
       run_display_ready_gate "$step"
       run_step nostr "prove rooted Pixel runtime Nostr timeline against a host-local relay over USB" \
-        env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_RUN_ONLY=1 "$SCRIPT_DIR/pixel_runtime_app_nostr_timeline_local_smoke.sh"
+        env PIXEL_SERIAL="$serial" PIXEL_RUNTIME_APP_RUN_ONLY=1 "$SCRIPT_DIR/ci/pixel_runtime_app_nostr_timeline_local_smoke.sh"
       ;;
   esac
 done

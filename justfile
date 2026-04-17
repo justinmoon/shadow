@@ -48,7 +48,7 @@ help:
 	'  just runtime-shell' \
 	'  just android-shell' \
 	'' \
-	'Private implementation scripts are classified in scripts/script_inventory.tsv.' \
+	'Private implementation scripts are classified in scripts/ci/script_inventory.tsv.' \
 	'Run `just help-all` for the public recipe list.'
 
 # Show the public recipe list
@@ -106,17 +106,7 @@ android-shell:
 
 # Run the currently supported bundled host runtime smokes
 runtime-app-host-smokes:
-	@SHADOW_RUNTIME_APP_INPUT_PATH=runtime/app-keyboard-smoke/app.tsx \
-	SHADOW_RUNTIME_APP_CACHE_DIR=build/runtime/app-keyboard-smoke \
-	scripts/runtime_app_keyboard_smoke.sh
-	@nix develop .#runtime -c scripts/runtime_app_camera_smoke.sh
-	@SHADOW_RUNTIME_APP_INPUT_PATH=runtime/app-nostr-gm/app.tsx \
-	SHADOW_RUNTIME_APP_CACHE_DIR=build/runtime/app-nostr-gm \
-	scripts/runtime_app_nostr_gm_smoke.sh
-	@scripts/runtime_app_nostr_timeline_smoke.sh
-	@scripts/runtime_app_sound_smoke.sh
-	@scripts/runtime_app_podcast_player_smoke.sh
-	@scripts/runtime_app_cashu_wallet_smoke.sh
+	@scripts/ci/runtime_app_host_smokes.sh
 
 # Build runtime app artifacts with the shared host-side bundler
 runtime-build-artifacts *args='':
@@ -148,7 +138,7 @@ smoke *args='':
 		esac; \
 	done; \
 	case "$target_arg" in \
-		vm) exec scripts/ui_vm_smoke.sh ;; \
+		vm) exec scripts/ci/ui_vm_smoke.sh ;; \
 		*) echo "just smoke: supported targets: vm" >&2; exit 2 ;; \
 	esac
 

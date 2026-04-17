@@ -29,11 +29,11 @@ PUBLIC_ALLOWLIST = {
 
 
 def repo_root() -> Path:
-    return Path(__file__).resolve().parent.parent
+    return Path(__file__).resolve().parents[2]
 
 
 def manifest_path() -> Path:
-    return repo_root() / "scripts" / "script_inventory.tsv"
+    return Path(__file__).resolve().parent / "script_inventory.tsv"
 
 
 def read_manifest() -> dict[str, tuple[str, str]]:

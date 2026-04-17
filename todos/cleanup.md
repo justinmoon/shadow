@@ -118,11 +118,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Track every file under `scripts/` in a small manifest with bucket, owner surface, and allowed callers.
   - Add a pre-commit check that fails when a top-level script is unclassified, directly public without being in the public allowlist, or marked debug without a `shadowctl`/docs entrypoint.
   - Update shell syntax checking to cover subdirectories, not only `scripts/*.sh`.
-  - Implemented as `scripts/script_inventory.tsv` plus `scripts/check_script_inventory.py`, and wired into `just pre-commit`.
+  - Implemented as `scripts/ci/script_inventory.tsv` plus `scripts/ci/check_script_inventory.py`, and wired into `just pre-commit`.
 - [~] Keep the public top-level tiny.
   - Allowed top-level operator/gate files: `sc`, `shadowctl`, `agent-brief`, `land.sh`, `pre_commit.sh`, `pre_merge.sh`, `ui_check.sh`, and the shared runtime artifact wrapper if we keep it as a direct Just target.
   - Everything else should move under `scripts/lib/`, `scripts/ci/`, `scripts/pixel/`, `scripts/runtime/`, or `scripts/debug/`, or be deleted.
-  - The public allowlist is now enforced by the inventory checker. Physical subdirectory moves are still intentionally left for a later mechanical pass.
+  - The public allowlist is now enforced by the inventory checker.
+  - CI/test drivers and the inventory checker moved under `scripts/ci/`; Pixel, runtime, VM, lib, and debug physical moves remain.
 - [x] Delete duplicate VM wrappers first.
   - Remove `ui_vm_logs.sh`, `ui_vm_journal.sh`, and `ui_vm_status.sh`; `sc -t vm logs|journal|status` already owns those.
   - Remove `ui_vm_camera_smoke.sh` and `ui_vm_timeline_smoke.sh`; `ui_vm_smoke.sh` is the required VM app smoke.
@@ -143,12 +144,13 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [~] Make runtime app smokes honest.
   - Either include sound and podcast host smokes in the supported host smoke recipe, or delete them in favor of Pixel CI coverage.
   - Prefer one `scripts/ci/runtime_app_host_smokes.sh` runner over many public-looking `runtime_app_*_smoke.sh` files.
-  - `just runtime-app-host-smokes` now includes sound and podcast. A single aggregate CI runner remains a later path-organization cleanup.
-- [ ] Reorganize remaining private implementation files.
+  - `just runtime-app-host-smokes` now routes through `scripts/ci/runtime_app_host_smokes.sh`, which includes sound and podcast.
+- [~] Reorganize remaining private implementation files.
   - `scripts/lib/`: shared shell libraries such as `shadow_common.sh`, `pixel_common.sh`, session app helpers, VM helpers, and runtime Linux bundle helpers.
   - `scripts/pixel/`: Pixel build/push/session/root delegates still called by `shadowctl` and `pixel_ci`.
   - `scripts/runtime/`: Deno/TS artifact builders and host-session prep.
   - `scripts/ci/`: CI smoke drivers and taxonomy checks.
+  - First physical move landed for `scripts/ci/`; the moved scripts preserve `SCRIPT_DIR` as the script-root to keep internal references stable.
   - Keep path moves mechanical, with compatibility shims only if needed by `shadowctl` during the same commit; do not leave permanent aliases.
 
 ## Implementation Notes
@@ -175,7 +177,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `shadowctl` now owns target-aware dispatch for VM, Pixel, and serial-target forms. Legacy `target=...` parsing was deleted from `shadowctl`; the Just wrapper is the only place that accepts Just-style assignment tokens.
   - The old `ui-run`, `ui-stop`, and `ui-vm-*` aliases were deleted in the 2026-04-16 hard-cut batch.
   - VM status and journal inspection now use `sc -t vm status` and `sc -t vm journal` (`just shadowctl ...` remains only a fallback when `sc` is unavailable).
-  - Dry-run coverage for the supported `just run`, `just stop`, and `shadowctl run` / `shadowctl stop` seams now lives in `scripts/operator_cli_smoke.sh`.
+  - Dry-run coverage for the supported `just run`, `just stop`, and `shadowctl run` / `shadowctl stop` seams now lives in `scripts/ci/operator_cli_smoke.sh`.
   - 2026-04-16 follow-up: `sc -t pixel ci <suite>` and `sc -t pixel stage <suite>` are now the canonical rooted-Pixel CI/staging commands; the `just pixel-*` recipes remain only convenience wrappers.
   - 2026-04-16 follow-up: `sc root-prep` plus `sc -t pixel root-check`, `root-patch`, `root-stage`, `root-flash`, and `ota-sideload` are now the canonical rooted-Pixel setup/recovery commands; temporary Just wrappers for those commands were removed.
 - 2026-04-15: Landing blocker and guest startup-config chunk landed.

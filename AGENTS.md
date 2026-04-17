@@ -33,5 +33,5 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - `sc -t pixel ci <subset>` is the preferred ad hoc hardware gate for invasive app- or device-specific changes before landing; use a specific serial from `sc devices` when multiple Pixels are attached.
 - `just pixel-ci <subset>` remains a convenience wrapper over that canonical CLI shape.
 - `sc root-prep` prepares host-side Pixel rooting assets. Device-specific setup/recovery commands use `sc -t pixel ...` or a concrete serial.
-- `scripts/script_inventory.tsv` classifies every file under `scripts/`; update it when adding, moving, or deleting script-layer files.
+- `scripts/ci/script_inventory.tsv` classifies every file under `scripts/`; update it when adding, moving, or deleting script-layer files.
 - `just land` wraps `scripts/land.sh` and is the only allowed path to merge a worktree branch into the root `master`.

@@ -202,7 +202,7 @@ def pixel_ci_command(
         supported = ", ".join(SUPPORTED_PIXEL_CI_SUITES)
         raise SystemExit(f"shadowctl: unsupported Pixel CI suite {suite!r}; expected one of {supported}")
 
-    command: list[str | pathlib.Path] = [repo_root() / "scripts/pixel_ci.sh"]
+    command: list[str | pathlib.Path] = [repo_root() / "scripts/ci/pixel_ci.sh"]
     if stage_only:
         command.append("--stage-only")
     if run_only:

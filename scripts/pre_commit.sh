@@ -8,7 +8,7 @@ ensure_bootimg_shell "$@"
 
 cd "$(repo_root)"
 
-scripts/check_script_inventory.py
+scripts/ci/check_script_inventory.py
 shell_scripts=()
 while IFS= read -r -d '' script_path; do
   if [[ "$script_path" == *.sh ]]; then
@@ -24,7 +24,7 @@ done < <(find scripts -type f ! -path '*/__pycache__/*' -print0 | sort -z)
 if ((${#shell_scripts[@]})); then
   bash -n "${shell_scripts[@]}"
 fi
-scripts/operator_cli_smoke.sh
-scripts/timeline_sync_defaults_smoke.sh
+scripts/ci/operator_cli_smoke.sh
+scripts/ci/timeline_sync_defaults_smoke.sh
 nix flake check --no-build
 just ui-check
