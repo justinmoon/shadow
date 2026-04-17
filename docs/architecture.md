@@ -28,7 +28,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
   - `sc -t vm journal`
   - `sc -t vm wait-ready`
   - `sc -t vm open <id>`
-  - `sc -t vm media <play-pause|play|pause|next|previous>`
+  - `sc -t vm media <play-pause|play|pause|next|previous|volume-up|volume-down>`
   - `sc -t vm home`
   - `sc -t vm screenshot`
   - `sc -t vm frame`
@@ -45,7 +45,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
   - `sc -t pixel doctor`
   - `sc -t pixel state`
   - `sc -t pixel open <id>`
-  - `sc -t pixel media <play-pause|play|pause|next|previous>`
+  - `sc -t pixel media <play-pause|play|pause|next|previous|volume-up|volume-down>`
   - `sc -t pixel home`
   - `sc -t pixel switcher`
   - `sc -t pixel frame`

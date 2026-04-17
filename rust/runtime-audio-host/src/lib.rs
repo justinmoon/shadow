@@ -659,8 +659,18 @@ impl LinuxSpikePlayerRuntime {
             return Ok(());
         }
         if was_playing {
-            self.child =
-                Some(self.spawn_helper(source, backend, self.elapsed_before_pause, volume)?);
+            let child = match self.spawn_helper(source, backend, self.elapsed_before_pause, volume)
+            {
+                Ok(child) => child,
+                Err(error) => {
+                    self.child = None;
+                    self.started_at = None;
+                    self.state = PlayerState::Error;
+                    *last_error = Some(error.to_string());
+                    return Err(error);
+                }
+            };
+            self.child = Some(child);
             self.started_at = Some(Instant::now());
             self.state = PlayerState::Playing;
         } else {
@@ -691,12 +701,19 @@ impl LinuxSpikePlayerRuntime {
                     self.started_at = None;
                     self.state = PlayerState::Completed;
                 } else {
-                    self.child = Some(self.spawn_helper(
-                        source,
-                        backend,
-                        self.elapsed_before_pause,
-                        volume,
-                    )?);
+                    let child =
+                        match self.spawn_helper(source, backend, self.elapsed_before_pause, volume)
+                        {
+                            Ok(child) => child,
+                            Err(error) => {
+                                self.child = None;
+                                self.started_at = None;
+                                self.state = PlayerState::Error;
+                                *last_error = Some(error.to_string());
+                                return Err(error);
+                            }
+                        };
+                    self.child = Some(child);
                     self.started_at = Some(Instant::now());
                     self.state = PlayerState::Playing;
                 }

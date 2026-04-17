@@ -563,12 +563,15 @@ export default function renderApp() {
             setMessage("No active player yet.");
             break;
           }
+          const refreshedStatus = await getStatus({
+            id: currentStatus.id,
+          }) as AudioStatus;
           const positionMs = clampSeekPosition(
-            currentStatus,
+            refreshedStatus,
             command === "seek_forward" ? 30_000 : -30_000,
           );
           nextStatus = await seek({
-            id: currentStatus.id,
+            id: refreshedStatus.id,
             positionMs,
           }) as AudioStatus;
           setMessage(

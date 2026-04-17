@@ -10,7 +10,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - bundled runtime apps on host
 - Add URL-backed podcast playback without requiring MP3 downloads to disk.
 - Keep file-backed playback working for fixtures, demos, and offline branch gates.
-- Include audio/media button support so focused audio apps can react to play/pause and track navigation.
+- Include audio/media button support so focused audio apps can react to play/pause, track navigation, and volume buttons.
 - Non-goals for this wrap-up:
   - recording
   - browser-compatible `<audio>` / Web Audio
@@ -81,9 +81,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Add an audio/media button path that routes play/pause/next/previous to the focused audio app without hard-coding podcast UI behavior.
 - [x] Decide the v0 behavior for URL playback:
   Buffer the full response in memory before play for v0; defer true progressive playback until an app proves it is necessary.
-- [ ] Add `positionMs` to status if app work immediately needs visible progress.
-- [ ] Add `seek` only if the first consumer actually needs it.
-- [ ] Add `volume` only if the first consumer actually needs per-player gain.
+- [x] Add `positionMs` to status.
+- [x] Add `seek` for the first consumer.
+- [x] Add `volume` for per-player gain.
 - [ ] Revisit the standard remote smoke timeout if audio adoption depends on it; today the longer `ui-smoke` timeout is more trustworthy than the default cold-build budget.
 
 ## Implementation Notes
@@ -93,7 +93,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The Linux helper can now fetch a URL into memory, then decode it through the same Symphonia path used for file playback.
 - `just run` now defaults to the podcast app so the audio path is the front-door demo instead of a hidden app id.
 - Platform media actions now flow through the compositor control socket into the focused Blitz app, then into the runtime host as a dedicated session request, and finally into app code through `Shadow.os.audio`.
-- `shadowctl media <action>` now exists for VM and Pixel and returns nonzero when the focused app does not actually handle the action.
+- `shadowctl media <action>` now exists for VM and Pixel and returns nonzero when the focused app does not actually handle the action; supported actions now include `volume-up` and `volume-down`.
+- `Shadow.os.audio` status now reports `positionMs` and `volume`, and the host exposes `seek` plus `setVolume`.
+- The first consumer now uses `seek` and per-player volume from app UI and platform media-button handlers.
+- Rooted Pixel sessions now read physical media/volume button events directly from `/dev/input/event*` and route them through the same focused-app media control path as `shadowctl media`.
 - The Linux helper also has a `SHADOW_AUDIO_SPIKE_VALIDATE_ONLY=1` mode so URL fetch/decode can be proved without depending on ALSA device availability.
 - The Linux helper now bounds in-memory URL fetch size with `SHADOW_AUDIO_SPIKE_MAX_URL_BYTES` so v0 URL playback cannot buffer unbounded responses.
 - `scripts/ci/runtime_app_podcast_player_url_smoke.sh` is Linux-authoritative: on macOS it syncs to a Linux executor, serves a local HTTP fixture there, and runs the real helper through the runtime host seam.
