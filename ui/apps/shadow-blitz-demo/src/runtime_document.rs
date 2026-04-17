@@ -96,7 +96,7 @@ impl RuntimeDocument {
         let mut document = Self {
             inner,
             payload,
-            surface_size: runtime_surface_size(),
+            surface_size: runtime_surface_size_from_env(),
             frame_nodes,
             debug_state: DebugOverlayState::default(),
             debug_overlay_enabled: debug_overlay_enabled(),
@@ -1909,11 +1909,15 @@ fn truncate_debug(value: &str, max_chars: usize) -> String {
     }
 }
 
-fn runtime_surface_size() -> (u32, u32) {
+pub(crate) fn runtime_surface_size_from_env() -> (u32, u32) {
     (
         runtime_surface_dimension("SHADOW_BLITZ_SURFACE_WIDTH", DEFAULT_SURFACE_WIDTH),
         runtime_surface_dimension("SHADOW_BLITZ_SURFACE_HEIGHT", DEFAULT_SURFACE_HEIGHT),
     )
+}
+
+pub(crate) fn runtime_ignore_safe_area_from_env() -> bool {
+    env::var_os("SHADOW_BLITZ_IGNORE_SAFE_AREA").is_some()
 }
 
 fn runtime_surface_dimension(key: &str, default: u32) -> u32 {

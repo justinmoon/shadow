@@ -7,7 +7,10 @@ scripts/land.sh	public	Canonical local landing gate.
 scripts/ci/operator_cli_smoke.sh	ci	Dry-run smoke coverage for the public just/shadowctl routing surface.
 scripts/pixel/pixel_build.sh	pixel	Private Pixel build delegate used by rooted device staging.
 scripts/pixel/pixel_build_guest_client.sh	pixel	Private Pixel guest-client build delegate.
+scripts/pixel/pixel_build_local_turnip.sh	pixel	Private local Turnip override builder for direct-GPU probe work.
 scripts/pixel/pixel_build_openlog_preload.sh	pixel	Private Pixel preload build delegate.
+scripts/pixel/pixel_runtime_app_drm_gpu_matrix.sh	pixel	Private rooted-Pixel direct-GPU probe matrix helper.
+scripts/pixel/pixel_runtime_app_drm_gpu_probe.sh	pixel	Private rooted-Pixel direct-GPU probe wrapper.
 scripts/pixel/pixel_camera_rs_run.sh	pixel	Private Pixel camera-provider helper runner.
 scripts/lib/pixel_camera_runtime_common.sh	lib	Shared Pixel camera runtime helper library.
 scripts/ci/pixel_ci.sh	ci	Rooted-Pixel CI suite driver behind sc ci and just pixel-ci.

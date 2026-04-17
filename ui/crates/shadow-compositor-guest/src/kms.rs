@@ -85,7 +85,6 @@ pub fn capture_shm_frame(ptr: *const u8, len: usize, data: BufferData) -> Result
     })
 }
 
-#[cfg(test)]
 pub fn frame_checksum(frame: &CapturedFrame) -> u64 {
     frame_view_checksum(frame.view())
 }
@@ -99,7 +98,6 @@ pub fn frame_view_checksum(frame: CapturedFrameView<'_>) -> u64 {
     hash
 }
 
-#[cfg(test)]
 pub fn write_frame_ppm(frame: &CapturedFrame, path: impl AsRef<Path>) -> Result<()> {
     write_frame_view_ppm(frame.view(), path)
 }

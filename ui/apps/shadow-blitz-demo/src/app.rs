@@ -22,7 +22,9 @@ type WindowRenderer = softbuffer_window_renderer::SoftbufferWindowRenderer<
     anyrender_vello_cpu::VelloCpuImageRenderer,
 >;
 use crate::log::{runtime_log, runtime_log_json, runtime_wall_ms};
-use crate::runtime_document::RuntimeDocument;
+use crate::runtime_document::{
+    runtime_ignore_safe_area_from_env, runtime_surface_size_from_env, RuntimeDocument,
+};
 use crate::runtime_session::RuntimeAudioControlAction;
 #[cfg(all(not(feature = "gpu"), not(feature = "hybrid"), feature = "cpu"))]
 use anyrender_vello_cpu::VelloCpuWindowRenderer as WindowRenderer;
@@ -36,7 +38,6 @@ use blitz_shell::{
     create_default_event_loop, BlitzShellEvent, BlitzShellProxy, View, WindowConfig,
 };
 use serde::Serialize;
-use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Condvar, Mutex};
 use std::{env, path::PathBuf, thread, time::Duration};
@@ -60,6 +61,7 @@ use winit::platform::wayland::WindowAttributesWayland;
 const RUNTIME_DEMO_WAYLAND_APP_ID: &str = "dev.shadow.counter";
 const BLITZ_APP_TITLE_ENV: &str = "SHADOW_BLITZ_APP_TITLE";
 const BLITZ_PLATFORM_CONTROL_SOCKET_ENV: &str = "SHADOW_BLITZ_PLATFORM_CONTROL_SOCKET";
+const BLITZ_UNDECORATED_ENV: &str = "SHADOW_BLITZ_UNDECORATED";
 #[cfg(target_os = "linux")]
 const BLITZ_WAYLAND_APP_ID_ENV: &str = "SHADOW_BLITZ_WAYLAND_APP_ID";
 #[cfg(target_os = "linux")]
@@ -255,6 +257,7 @@ impl ApplicationHandler for BlitzApplication {
             runtime_log("view-init-start");
             let mut window = View::init(config, event_loop, &self.proxy);
             runtime_log(format!("view-init-done window={:?}", window.window_id()));
+            log_runtime_window_metrics("view-init", &window);
             let window_id = window.window_id();
             if self.should_defer_initial_resume() {
                 self.resume_pending = true;
@@ -295,6 +298,8 @@ impl ApplicationHandler for BlitzApplication {
         event: WindowEvent,
     ) {
         self.maybe_resume_deferred_window(window_id, &event);
+        let forced_surface_size = runtime_forced_surface_size(&event);
+        let surface_resize_size = runtime_surface_resize_size(&event);
         log_pointer_window_event(&event);
         let runtime_pointer_button = self
             .window
@@ -309,7 +314,17 @@ impl ApplicationHandler for BlitzApplication {
 
         if let Some(window) = self.window.as_mut() {
             update_runtime_surface_size(window, &event);
+            if let Some((width, height)) = surface_resize_size {
+                log_runtime_surface_resize("before-handle", window, width, height);
+            }
             window.handle_winit_event(event);
+            if let Some((width, height)) = surface_resize_size {
+                log_runtime_surface_resize("after-handle", window, width, height);
+            }
+            if let Some((width, height)) = forced_surface_size {
+                force_runtime_surface_size(window, width, height);
+                log_runtime_surface_resize("after-force", window, width, height);
+            }
             handle_runtime_pointer_button(window, runtime_pointer_button);
             request_runtime_redraw(window);
         }
@@ -417,15 +432,19 @@ impl BlitzApplication {
             "window-resume-trigger window={window_id:?} event={}",
             window_event_name(event)
         ));
+        log_runtime_window_metrics("before-deferred-resume", window);
         self.resume_pending = false;
         self.ensure_runtime_poll_thread(window_id);
         self.ensure_runtime_touch_signal_thread();
         self.ensure_runtime_platform_control_thread();
 
         let window = self.window.as_mut().expect("window before deferred resume");
+        maybe_force_runtime_surface_size(window, event);
+        log_runtime_window_metrics("after-deferred-force", window);
         runtime_log(format!("window-resume-start window={window_id:?}"));
         window.resume();
         log_renderer_backend(window, "resume-deferred-window");
+        log_runtime_window_metrics("after-deferred-resume", window);
         runtime_log(format!("window-resume-done window={window_id:?}"));
         let changed = window.poll();
         runtime_log(format!(
@@ -970,12 +989,22 @@ impl Drop for InotifyFd {
 }
 
 fn window_attributes() -> WindowAttributes {
+    let (surface_width, surface_height) = runtime_surface_size_from_env();
+    let undecorated = runtime_undecorated_from_env();
+    runtime_log(format!(
+        "window-attributes surface={}x{} undecorated={} ignore_safe_area={}",
+        surface_width,
+        surface_height,
+        undecorated,
+        runtime_ignore_safe_area_from_env()
+    ));
     let attributes = WindowAttributes::default()
         .with_title(resolved_title())
         .with_resizable(false)
+        .with_decorations(!undecorated)
         .with_surface_size(LogicalSize::new(
-            f64::from(APP_VIEWPORT_WIDTH_PX),
-            f64::from(APP_VIEWPORT_HEIGHT_PX),
+            f64::from(surface_width),
+            f64::from(surface_height),
         ));
 
     #[cfg(target_os = "linux")]
@@ -1196,6 +1225,79 @@ fn update_runtime_surface_size(window: &mut View<WindowRenderer>, event: &Window
     window
         .downcast_doc_mut::<RuntimeDocument>()
         .update_surface_size(size.width, size.height);
+}
+
+fn maybe_force_runtime_surface_size(window: &mut View<WindowRenderer>, event: &WindowEvent) {
+    let Some((width, height)) = runtime_forced_surface_size(event) else {
+        return;
+    };
+
+    force_runtime_surface_size(window, width, height);
+}
+
+fn runtime_surface_resize_size(event: &WindowEvent) -> Option<(u32, u32)> {
+    let WindowEvent::SurfaceResized(size) = event else {
+        return None;
+    };
+
+    Some((size.width, size.height))
+}
+
+fn runtime_forced_surface_size(event: &WindowEvent) -> Option<(u32, u32)> {
+    if !runtime_ignore_safe_area_from_env() {
+        return None;
+    }
+
+    let WindowEvent::SurfaceResized(size) = event else {
+        return None;
+    };
+
+    Some((size.width, size.height))
+}
+
+fn force_runtime_surface_size(window: &mut View<WindowRenderer>, width: u32, height: u32) {
+    window.safe_area_insets = Default::default();
+    window.with_viewport(|viewport| viewport.window_size = (width, height));
+    window
+        .downcast_doc_mut::<RuntimeDocument>()
+        .update_surface_size(width, height);
+}
+
+fn runtime_undecorated_from_env() -> bool {
+    env::var_os(BLITZ_UNDECORATED_ENV).is_some()
+}
+
+fn log_runtime_window_metrics(label: &str, window: &View<WindowRenderer>) {
+    let surface_size = window.window.surface_size();
+    let live_safe_area = window.window.safe_area();
+    let cached_safe_area = window.safe_area_insets;
+    let (viewport_width, viewport_height) = {
+        let inner = window.doc.inner();
+        inner.viewport().window_size
+    };
+    runtime_log(format!(
+        "window-metrics label={label} surface={}x{} viewport={}x{} live_safe_area=l{} t{} r{} b{} cached_safe_area=l{} t{} r{} b{}",
+        surface_size.width,
+        surface_size.height,
+        viewport_width,
+        viewport_height,
+        live_safe_area.left,
+        live_safe_area.top,
+        live_safe_area.right,
+        live_safe_area.bottom,
+        cached_safe_area.left,
+        cached_safe_area.top,
+        cached_safe_area.right,
+        cached_safe_area.bottom
+    ));
+}
+
+fn log_runtime_surface_resize(label: &str, window: &View<WindowRenderer>, width: u32, height: u32) {
+    runtime_log(format!(
+        "surface-resized label={label} event={}x{}",
+        width, height
+    ));
+    log_runtime_window_metrics(label, window);
 }
 
 fn request_runtime_redraw(window: &mut View<WindowRenderer>) {

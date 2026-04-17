@@ -625,6 +625,39 @@ impl ShadowGuestCompositor {
             });
     }
 
+    fn drain_client_exit_statuses(&mut self, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.reap_exited_clients();
+            if self.launched_clients.is_empty() && self.launched_apps.is_empty() {
+                return;
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        if !self.launched_clients.is_empty() {
+            let pids = self
+                .launched_clients
+                .iter()
+                .map(|child| child.id().to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            tracing::info!("[shadow-guest-compositor] launched-clients-still-running pids={pids}");
+        }
+        if !self.launched_apps.is_empty() {
+            let apps = self
+                .launched_apps
+                .iter()
+                .map(|(app_id, child)| format!("{}:{}", app_id.as_str(), child.id()))
+                .collect::<Vec<_>>()
+                .join(",");
+            tracing::info!("[shadow-guest-compositor] launched-apps-still-running entries={apps}");
+        }
+    }
+
     pub(crate) fn spawn_wayland_command(
         &mut self,
         mut command: std::process::Command,
@@ -1866,6 +1899,12 @@ impl ShadowGuestCompositor {
                         self.publish_visible_shell_frame("captured-dmabuf-frame");
                     } else if directly_presented {
                         self.record_frame_view(frame.view(), "captured-dmabuf-frame");
+                        self.last_published_frame = Some(frame.clone());
+                        tracing::info!("[shadow-guest-compositor] presented-frame");
+                        self.record_touch_present("captured-dmabuf-frame");
+                        if self.exit_on_first_frame {
+                            self.loop_signal.stop();
+                        }
                     } else {
                         self.publish_frame(&frame, "captured-dmabuf-frame");
                     }
@@ -2258,5 +2297,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         StartupAction::Client => state.spawn_client()?,
     }
     event_loop.run(None, &mut state, |_| {})?;
+    state.drain_client_exit_statuses(Duration::from_millis(500));
     Ok(())
 }

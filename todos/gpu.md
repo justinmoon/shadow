@@ -43,7 +43,15 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - `Turnip Adreno (TM) 618`
     - `turnip Mesa driver`
     - `hardware_backed=true`
-- [x] Rooted Pixel runtime operator path defaults to the proven Turnip/KGSL lane when the cached vendor Turnip tarball is present.
+- [x] Rooted Pixel runtime direct-GPU path now picks the best available Turnip payload automatically.
+  - current selection order:
+    - explicit `PIXEL_VENDOR_TURNIP_LIB_PATH`
+    - explicit `PIXEL_VENDOR_TURNIP_TARBALL` for diagnostics
+    - pinned Turnip build result under `build/pixel/shadow-pinned-turnip-mesa-aarch64-linux-result`
+  - current proven payload:
+    - pinned Turnip lib from Mesa `81feb2e7f1196dec7faee7791e17e472f9d8702a`
+  - current non-proven payload:
+    - cached `20260404` vendor Turnip tarball still crashes during `surface-configure` and is no longer an implicit default
 - [x] Rooted Pixel runtime interaction is now fast enough for taps.
   - Best validated runtime numbers:
     - `first_visible_frame_ms=943`
@@ -169,20 +177,26 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - This matters less than incremental latency for the current product bar.
   - Warmed / isolated click-lane runs already reached `first_visible_frame_ms=408`.
   - Startup polish is no longer the main blocking seam.
-- [~] End-to-end GPU presentation is not proved.
+- [x] End-to-end direct-GPU presentation is proved on the rooted Pixel runtime lane.
+  - Proven on:
+    - `build/pixel/runtime-gpu-probe/20260417T173549Z/run-vulkan_kgsl_first`
   - The rooted Pixel client is hardware-backed.
-  - The guest compositor still reports `observed_buffer_type=shm`.
+  - The guest compositor reports:
+    - `observed_buffer_type=dma`
+    - `presented-dmabuf-direct size=1080x2340`
   - So the current proof is:
     - GPU render in the client
-    - SHM-oriented handoff/presentation in the compositor path
+    - dma-buf export from Turnip
+    - dma-buf import in the guest compositor
+    - direct KMS present of the imported dma-buf at full panel geometry
 - [~] The GPU timeline recipe is much more reproducible now, but not completely polished.
   - The client GPU bundle now has a real local cache hit path.
   - The runtime host bundle/device push path now has a real repeated-run cache-hit path.
   - Historical operator hooks were later deleted during script cleanup:
     - `pixel_gpu_warm.sh`
     - direct runtime GPU smoke wrappers
-- [~] The direct runtime GPU probe/matrix seam existed as a bring-up aid and was later removed.
-  - Deleted historical hooks:
+- [~] The direct runtime GPU probe/matrix seam is restored as a bring-up aid while the pure direct path is still settling.
+  - Current hooks:
     - `pixel_runtime_app_drm_gpu_probe.sh`
     - `pixel_runtime_app_drm_gpu_matrix.sh`
   - The summary output now reports:
@@ -200,10 +214,19 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - `failure_kind`
     - `failure_description`
   - Remaining work:
-    - finish a fresh rooted-Pixel probe run after the latest direct-`gpu` config clamp lands
-- [ ] The true `gpu` client renderer path is not the proven operator lane yet.
-  - The proven lane today is `gpu_softbuffer`.
-  - Current direct-`gpu` Pixel runs get through adapter discovery and surface capability enumeration, then die during `wgpu::Surface::configure` before the first frame.
+    - teach the wrapper to emit a final summary even when Android restore needs manual recovery
+- [~] The true `gpu` client renderer path now has a rooted proof, but it is not the default operator lane yet.
+  - The rooted direct-`gpu` proof now reaches:
+    - adapter discovery
+    - `wgpu::Surface::configure`
+    - first frame production
+    - dma-buf import
+    - direct KMS present
+  - The old `gpu_softbuffer` lane is still the more boring operator path today.
+  - Remaining work:
+    - promote the working local Turnip result into a pinned reproducible payload instead of depending on a developer-local Mesa checkout
+    - re-run the remaining operator lanes on that exact payload
+    - then clean up the patch/env surface that got us here
 - [x] The direct-`gpu` package source narrowing is landed.
   - Fixes:
     - add `shadowBlitzDemoSrc` in `flake.nix`
@@ -212,20 +235,70 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Result:
     - compositor-side edits no longer force unrelated direct-`gpu` demo package rebuilds
     - the old filtered-source failures around omitted workspace member manifests are removed
-- [ ] The guest compositor does not yet import/present dmabuf-backed client buffers on the rooted Pixel path.
+- [x] The guest compositor now imports and directly presents dmabuf-backed client buffers on the rooted Pixel path.
+  - Proven:
+    - `dmabuf-imported ...`
+    - `buffer-observed type=dma ...`
+    - `presented-dmabuf-direct size=1080x2340`
+  - Proof run:
+    - `build/pixel/runtime-gpu-probe/20260417T173549Z/run-vulkan_kgsl_first`
 - [~] The Pixel GPU timeline smoke is now explicit, but cold runs can still spend time building.
   - Historical direct operator hooks were deleted during script cleanup.
   - Current Nostr device coverage is `just pixel-ci nostr`; add a new `sc -t pixel debug ...` command before reviving lower-level GPU probes.
   - Remaining polish:
     - reduce cold-start build churn further
     - keep repeated warm runs boring
-- [ ] The direct `gpu` lane does not yet have a clear go/no-go decision.
-  - We still need to decide whether to promote it, keep `gpu_softbuffer`, or declare direct present not worth further effort on this Pixel.
-  - Current narrowed blocker:
-    - Turnip/KGSL adapter selection now succeeds
-    - the direct Wayland/Vulkan client still crashes before its first commit in `surface.configure`
-    - latest mitigation in flight is forcing `SHADOW_WGPU_PRESENT_MODE=fifo` on the direct-`gpu` Pixel lane
+- [~] The direct `gpu` lane now has a clear technical answer, but not a final operator-promotion decision.
+  - We no longer need to guess whether direct present is viable on this Pixel.
+  - The technical answer is now yes:
+    - Turnip/KGSL adapter selection succeeds
+    - the direct Wayland/Vulkan client configures, renders, and exports dma-bufs
+    - the guest compositor imports those dma-bufs
+    - direct KMS present succeeds at full panel geometry
+  - Remaining product/operator decision:
+    - promote direct `gpu` over `gpu_softbuffer`
+    - or keep `gpu_softbuffer` as the boring default until restore/polish work lands
   - Latest rooted proof:
+    - full-panel direct-present rooted proof:
+      - `build/pixel/runtime-gpu-probe/20260417T173549Z/run-vulkan_kgsl_first`
+      - result:
+        - `window-attributes surface=1080x2340 undecorated=true ignore_safe_area=true`
+        - `window-metrics label=view-init surface=1080x2340 viewport=1080x2340 live_safe_area=l0 t0 r0 b0 cached_safe_area=l0 t0 r0 b0`
+        - `surface_configure_done=true`
+        - `hardware_backed=true`
+        - `observed_buffer_type=dma`
+        - `presented-dmabuf-direct size=1080x2340`
+        - `frame-content-rect panel=1080x2340 frame=1080x2340 rect=1080x2340+0,0`
+      - conclusion:
+        - the blocker was not KMS policy after all
+        - the blocker was the Wayland runtime window still being decorated, which shrank the client surface below panel size
+        - forcing an undecorated toplevel plus the panel-sized runtime surface produced the exact scanout-compatible framebuffer the simple direct-present path needed
+    - panel-sized direct-`gpu` rerun:
+      - `build/pixel/runtime-gpu-probe/20260417T172712Z/run-vulkan_kgsl_first`
+      - local `aarch64-linux` builder fix:
+        - the resized nix-darwin Linux builder must stay at `8` vCPUs max on this QEMU `virt` machine
+        - `12` vCPUs prevented the builder VM from booting at all
+      - result:
+        - `surface_configure_done=true`
+        - `hardware_backed=true`
+        - `observed_buffer_type=dma`
+        - `presented_frame_count=3`
+        - `present-dmabuf failed: failed to set CRTC configuration`
+        - `failure_reason=client-disconnect:ConnectionClosed`
+      - updated hypothesis:
+        - the panel-sized clamp changed the client dma-buf from `1072x2180` to `1072x2308`
+        - but it still did not produce a true panel-compatible `1080x2340` framebuffer
+        - so the remaining blocker is still exact presentation geometry / KMS policy, not GPU initialization
+    - direct-render + dma-buf-import rooted proof:
+      - `build/pixel/runtime-gpu-probe/20260417T160418Z/run-vulkan_kgsl_first`
+      - `surface_configure_done=true`
+      - `hardware_backed=true`
+      - `observed_buffer_type=dma`
+      - `presented_frame_count=3`
+      - `present-dmabuf failed: failed to set CRTC configuration`
+      - strongest current hypothesis:
+        - the client buffer was still `1072x2180`, not panel-compatible `1080x2340`
+        - so direct scanout is currently failing at the KMS/presentation policy seam, not the GPU bring-up seam
     - preload-disabled rooted proof:
       - `build/pixel/runtime-gpu-probe/20260415T232726Z/run-vulkan_kgsl_first`
       - `surface_configure_started=true`
@@ -386,7 +459,11 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## Near-Term Steps
 
-- [ ] Run the broader fast gate and land the smoke/cleanup slices cleanly.
+- [~] Run the broader rooted Pixel and fast local gates on the pinned Turnip payload.
+  - `just pre-commit` is green after the pinned payload and restore-helper changes.
+  - Remaining before landing:
+    - broader Pixel operator lane selection
+    - holistic subagent review
 - [ ] Add one more rooted shell smoke for a second app path so launch/input regressions are not Timeline-only.
 - [ ] Keep reducing Pixel shell cold-start churn, but treat incremental interaction latency as the primary bar.
 
@@ -395,8 +472,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The rooted shell hold wrapper is not the session lifetime. It returns after startup checkpoints while the on-device compositor and runtime app continue running.
 - Any Pixel smoke that waits on post-startup behavior must track remote liveness through the control socket and/or guest-compositor process, not the local launcher PID.
 - Real panel touch on the rooted Pixel must use evdev/sendevent for end-to-end input proof. `shadowctl tap` is still useful for compositor-space control, but it is not a substitute for device touch in keyboard/input smokes.
-- Restoring Android and stopping Shadow are separate concerns. A timed-out restore can leave a live rooted shell behind, so shell smokes and Pixel CI must explicitly stop stale Shadow processes before assuming the control socket state is meaningful.
-        - `just run` defaults back to `app=shell`
+- Restoring Android and stopping Shadow are separate concerns. Shell smokes and Pixel CI must explicitly stop stale Shadow processes before assuming the control socket state is meaningful.
+- A restore is only complete when `wm size` works again. `surfaceflinger=running` is not enough; the previous half-restore state had `surfaceflinger` back but Android's `window` service unavailable.
+- On this Pixel, full direct-KMS takeover still needs the display HAL stopped. Preserving the display HAL avoids the reboot cleanup path but prevents our compositor from setting the CRTC.
 
 ## What Is Proven vs. What Is Not
 
@@ -618,7 +696,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 1. Finish the direct-`gpu` investigation.
    - Focus:
-     - `Surface::configure()` / direct present failure on the rooted Pixel
+     - panel-sized direct present failure on the rooted Pixel
    - Goal:
      - either a stable direct `gpu` lane
      - or hard evidence that `gpu_softbuffer` should remain the supported path on this device
@@ -829,22 +907,30 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - reproducibility
 - `2026-04-16 direct-gpu source-level finding`:
   - the remaining direct-`gpu` failure is no longer just "somewhere in surface configure"
-  - source-level Mesa readout now matches the rooted-Pixel probe logs:
+  - source-level Mesa readout still makes the dma-buf export path worth watching:
     - Wayland WSI calls `zwp_linux_buffer_params_v1_add(..., image->base.dma_buf_fd, ...)`
     - Turnip KGSL export path is `tu_GetMemoryFdKHR()` -> `tu_bo_export_dmabuf()` -> `kgsl_bo_export_dmabuf()`
     - `kgsl_bo_export_dmabuf()` just returns `os_dupfd_cloexec(bo->shared_fd)`
     - non-shareable KGSL BO allocation still initializes `.shared_fd = -1`
-    - so the observed probe error:
-      - `error marshalling arguments for add: dup failed: Bad file descriptor`
-      - `Error marshalling request for zwp_linux_buffer_params_v1.add: Bad file descriptor`
-      is consistent with the client trying to submit a Wayland linux-dmabuf buffer whose exported fd is invalid before the compositor ever imports it
+  - but that is no longer enough to conclude "bad fd export is the active blocker":
+    - the first local Turnip/Nix build did not even enumerate an adapter on Pixel
+    - after aligning the local build recipe with known Android-container Turnip flags, the same local Mesa source now enumerates:
+      - `Turnip Adreno (TM) 618`
+      - `driver_info="Mesa 26.0.2"`
+    - and it reaches the same failure phase as the cached vendor Turnip tarball:
+      - adapter discovery succeeds
+      - surface capability query succeeds
+      - client disconnect still happens during `surface-configure`
+      - no `mesa-wsi-wl-dmabuf` or `kgsl dmabuf export` debug line has fired yet in this matched-build probe
   - practical consequence:
-    - the current direct-`gpu` blocker is most likely in Turnip/KGSL dma-buf exportability for these WSI images, not in our app code and not in Smithay import
+    - the earlier bad-fd hypothesis is still plausible, but it is not proved yet
+    - the stronger result from today is:
+      - local Turnip parity depends on matching the Android KGSL build recipe
+      - the old zero-adapter result was a packaging/build-shape problem, not a device limitation
   - next concrete step:
-    - prove why the WSI allocation ended up with an invalid export fd on this stack
-    - either:
-      - confirm a Turnip/KGSL bug and carry a local Mesa patch / overlay
-      - or prove our current env/profile is accidentally steering WSI onto a non-shareable BO path
+    - keep the dma-buf instrumentation in place
+    - drive the matched local Turnip build farther past `surface-configure`
+    - only call it a Turnip/KGSL export bug once the debug patch actually shows the failing export/import sequence
 - `2026-04-16 local Turnip override seam`:
   - the Pixel GPU bundle scripts now accept `PIXEL_VENDOR_TURNIP_LIB_PATH`
   - that path is fingerprinted into the runtime bundle manifest/cache key
@@ -853,6 +939,367 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
     - point `PIXEL_VENDOR_TURNIP_LIB_PATH` at it
     - reuse the normal Pixel bundle path without ad hoc device mutation
   - this is the intended path for the next direct-`gpu` experiment if we carry a local Turnip fix
+- `2026-04-16 local Turnip build recipe finding`:
+  - targeted prior art search was useful here
+  - the key external references were Android-container / Termux Turnip packaging, not generic Mesa docs
+  - the known-good Android-container Turnip recipe uses:
+    - `-Dplatforms=x11,wayland`
+    - `-Dvulkan-drivers=freedreno`
+    - `-Dfreedreno-kmds=kgsl`
+    - Turnip-only disables like:
+      - `-Degl=disabled`
+      - `-Dglvnd=disabled`
+      - `-Dgbm=disabled`
+      - `-Dglx=disabled`
+      - `-Dllvm=disabled`
+      - `-Dlmsensors=disabled`
+  - after aligning our local Nix Turnip override to that recipe, the rebuilt local `libvulkan_freedreno.so` changed from:
+    - opening `/dev/kgsl-3d0` but reporting `adapter_count=0`
+    - linking unwanted DRM/udev/display-info paths
+  - to:
+    - selecting the real Adreno adapter on Pixel
+    - matching the vendor Turnip tarball much more closely in ELF dependencies
+    - reaching the same `surface-configure` failure phase as the vendor tarball
+  - practical takeaway:
+    - local Turnip iteration is now viable
+    - future direct-`gpu` debugging should use this matched local build path, not the earlier stripped-down Nix override
+- `2026-04-17 minimal Turnip bring-up result`:
+  - the adapter-enumeration blocker is now understood and reproduced cleanly
+  - root cause:
+    - Turnip on the KGSL path advertises `VK_KHR_display`
+    - `tu_knl_kgsl_load()` then aborted enumeration if that extension was enabled on the instance
+    - `wgpu`/Vulkan instance creation on this stack does enable `KHR_display`
+    - result before the fix:
+      - `/dev/kgsl-3d0` opened
+      - `vkEnumeratePhysicalDevices` returned `VK_ERROR_INITIALIZATION_FAILED`
+      - `wgpu` saw `adapter_count=0`
+  - minimal fix proven locally:
+    - build local Turnip with `freedreno-kmds=msm,kgsl`
+    - on KGSL, ignore enabled `VK_KHR_display` instead of aborting instance/device enumeration
+  - clean-room validation:
+    - a fresh Mesa worktree with only that `KHR_display` behavior change was enough to:
+      - enumerate `Turnip Adreno (TM) 618`
+      - create the Vulkan device
+      - configure the `wgpu` surface
+      - render with Vello GPU
+      - export dma-bufs from Turnip
+      - import those dma-bufs in the guest compositor
+    - the repo-side local Turnip build also now builds from a fresh Mesa worktree with the carried patch
+  - practical consequence:
+    - pure app-side GPU bring-up on rooted Pixel 4a is no longer speculative
+    - the remaining work moved from driver bring-up to presentation/composition policy
+- `2026-04-17 direct-present unblock`:
+  - root cause:
+    - the panel-sized clamp was necessary but not sufficient
+    - the remaining `1072x2308` shrink came from the runtime Wayland window still being created with decorations
+    - that produced the exact missing margins we kept seeing:
+      - `4px` left/right
+      - `16px` top/bottom
+  - code change:
+    - `scripts/pixel_runtime_app_drm.sh` now exports `SHADOW_BLITZ_UNDECORATED=1`
+    - the runtime app now honors that by setting `.with_decorations(false)`
+    - the runtime app also logs its surface/viewport/safe-area state around init and `SurfaceResized`
+  - rooted proof:
+    - `build/pixel/runtime-gpu-probe/20260417T173549Z/run-vulkan_kgsl_first`
+    - key lines:
+      - `window-attributes surface=1080x2340 undecorated=true ignore_safe_area=true`
+      - `window-metrics label=view-init surface=1080x2340 viewport=1080x2340 live_safe_area=l0 t0 r0 b0 cached_safe_area=l0 t0 r0 b0`
+      - `resume-start width=1080 height=2340`
+      - `surface-configure width=1080 height=2340`
+      - `buffer-observed type=dma size=1080x2340`
+      - `presented-dmabuf-direct size=1080x2340`
+      - `frame-content-rect panel=1080x2340 frame=1080x2340 rect=1080x2340+0,0`
+  - conclusion:
+    - direct-present is now proved on the pure `gpu` path
+    - the blocker moved from GPU/presentation geometry to operator cleanup/polish
+  - remaining rough edge from the same run:
+    - after the success window, the probe wrapper still got stuck restoring Android display services
+    - logcat showed repeated failures to restart:
+      - `SurfaceFlinger`
+      - `vendor.qti.hardware.display.allocator-service`
+      - `android.hardware.graphics.composer@2.4-service-sm8150`
+  - follow-up operator fix:
+    - move direct-`gpu` runtime runs off in-session Android restore
+    - make the wrapper verify restore explicitly
+    - allow a reboot fallback if Android still does not come back
+  - rooted follow-up:
+    - `build/pixel/runtime-gpu-probe/20260417T175132Z/run-vulkan_kgsl_first`
+    - result:
+      - `success=true`
+      - `android_restored=true`
+      - `android_restore_rebooted=false`
+      - `session_ok=true`
+      - `present_ok=true`
+      - the probe emitted both:
+        - `status.json`
+        - `gpu-summary.json`
+    - remaining rough edge:
+      - the wrapper still forced cleanup after the success window:
+        - `session_exit=143`
+        - `session still running after success window; forcing cleanup`
+      - Android restore then completed cleanly one minute later:
+        - `restored Android display services`
+  - rebase revalidation:
+    - `build/pixel/runtime-gpu-probe/20260417T181504Z/run-vulkan_kgsl_first`
+    - preserved direct-present proof after rebasing onto `master`:
+      - `window-attributes surface=1080x2340 undecorated=true ignore_safe_area=true`
+      - `surface-configure-done`
+      - `window-resume-done`
+      - `buffer-observed type=dma size=1080x2340`
+      - `presented-dmabuf-direct size=1080x2340`
+      - `frame-content-rect panel=1080x2340 frame=1080x2340 rect=1080x2340+0,0`
+    - status stayed good:
+      - `success=true`
+      - `android_restored=true`
+      - `android_restore_rebooted=false`
+      - `present_ok=true`
+    - remaining rough edge stayed the same:
+      - the session still outlives the proof window and needs forced cleanup
+      - `session_exit=143`
+  - frame-request checkpoint fix:
+    - `build/pixel/runtime-gpu-probe/20260417T182937Z/run-vulkan_kgsl_first`
+    - the direct-present path still rendered correctly after the compositor bookkeeping fix:
+      - `presented-dmabuf-direct size=1080x2340`
+      - `captured-dmabuf-frame checksum=b043a466284a6ac5 size=1080x2340`
+      - `presented-frame`
+      - `wrote-frame-snapshot path=/data/local/tmp/shadow-frame.ppm checksum=b043a466284a6ac5 size=1080x2340`
+    - but the probe wrapper still reported:
+      - `failure_kind=session-exited-before-checkpoint`
+      - `failure_message=session exited before checkpoint: frame artifact requested from compositor`
+    - root cause:
+      - `shadowctl frame` sent the snapshot request and pulled the PPM immediately
+      - the compositor writes the snapshot asynchronously, so the first pull could race the write even though the snapshot arrived a moment later
+    - follow-up fix:
+      - clear the remote snapshot path before requesting a frame
+      - wait for the remote PPM to become non-empty before pulling it back
+      - keep request-mode runs from clobbering the first frame-pull log with a second unconditional pull
+  - automated wrapper revalidation:
+    - `build/pixel/runtime-gpu-probe/20260417T184143Z/run-vulkan_kgsl_first`
+    - the request checkpoint and Android restore both completed cleanly after tightening the wrapper:
+      - `observed: frame artifact requested from compositor`
+      - `restored Android display services`
+      - `startup_checkpoints_ok=true`
+      - `android_restored=true`
+      - `success=true`
+    - the pure GPU path stayed hardware-backed:
+      - `adapter_name=Turnip Adreno (TM) 618`
+      - `driver_info=Mesa 26.2.0-devel`
+      - `hardware_backed=true`
+      - `observed_buffer_type=dma`
+      - `presented_frame_count=3`
+    - the restore path now no longer needed manual intervention:
+      - trimming per-alias waits from `pixel_takeover_start_services_script` let the post-run Android restore finish in about eight seconds
+  - clean-exit revalidation:
+    - `build/pixel/runtime-gpu-probe/20260417T190551Z/run-vulkan_kgsl_first`
+    - the wrapper now recognizes the on-device session exit instead of waiting for the lingering host `adb shell`:
+      - `observed: session exit recorded in output; ending lingering host shell`
+      - `session_exit=0`
+      - `success=true`
+      - `android_restored=true`
+    - the pure GPU result stayed the same:
+      - `adapter_name=Turnip Adreno (TM) 618`
+      - `driver_info=Mesa 26.2.0-devel`
+      - `hardware_backed=true`
+      - `observed_buffer_type=dma`
+      - `presented_frame_count=3`
+  - build invalidation finding:
+    - shell-only wrapper edits were still forcing a remote rebuild of `shadow-compositor-guest-device`
+    - root cause:
+      - `mkShadowGuestCompositorFor` still used `src = ./.`
+    - follow-up fix:
+      - point the compositor guest derivation at `shadowUiSrc` so non-UI repo churn stops invalidating the aarch64-musl compositor build
+  - source-filter revalidation:
+    - dry-run after the `shadowUiSrc` fix:
+      - `nix build --accept-flake-config --dry-run .#packages.aarch64-linux.shadow-compositor-guest-device`
+    - observed drv stayed stable across non-UI edits:
+      - `/nix/store/c98qc03qjlqa88ly6c40rqnlgzziyb1k-shadow-compositor-guest-aarch64-unknown-linux-musl-0.1.0.drv`
+    - matrix follow-up:
+      - `build/pixel/runtime-gpu-probe/20260417T195716Z`
+      - the first Vulkan case rebuilt / pushed the compositor guest once
+      - the later Vulkan cases reused the staged compositor artifact instead of rebuilding it again
+  - Vulkan-only matrix revalidation:
+    - `build/pixel/runtime-gpu-probe/20260417T195716Z`
+    - profiles:
+      - `vulkan_kgsl_first`
+      - `vulkan_kgsl`
+      - `vulkan_drm`
+    - all three finished green:
+      - `success=true`
+      - `session_exit=0`
+      - `android_restored=true`
+      - `startup_checkpoints_ok=true`
+      - `hardware_backed=true`
+      - `observed_buffer_type=dma`
+      - `presented_frame_count=3`
+      - `openlog_kgsl_seen=true`
+      - `openlog_dri_seen=false`
+  - cached vendor tarball comparison:
+    - `build/pixel/runtime-gpu-probe/20260417T200203Z/run-vulkan_kgsl_first`
+    - `build/pixel/runtime-gpu-probe/20260417T200420Z/run-vulkan_drm`
+    - both tarball-backed runs fail the same way:
+      - Turnip adapter enumeration succeeds
+      - `surface-configure` begins
+      - the compositor presents the boot frame once
+      - the client then dies with `SIGBUS`
+      - wrapper result:
+        - `success=false`
+        - `failure_phase=surface-configure`
+        - `session_exit=0`
+        - `android_restored=true`
+    - logs show both failing runs still used:
+      - `driver_info="Mesa 26.1.0-devel (git-ab5f386b2e)"`
+      - `openlog_kgsl_seen=true`
+      - `openlog_dri_seen=false`
+    - current conclusion:
+      - the broken piece is the cached vendor Turnip payload, not the direct-present plumbing
+  - default-path revalidation with the local Turnip result:
+    - `build/pixel/runtime-gpu-probe/20260417T200709Z/run-vulkan_kgsl_first`
+    - after preferring the existing local Turnip result over the cached tarball, a plain no-env probe is green again:
+      - `success=true`
+      - `session_exit=0`
+      - `android_restored=true`
+      - `adapter_name=Turnip Adreno (TM) 618`
+      - `driver_info=Mesa 26.2.0-devel`
+      - `hardware_backed=true`
+      - `observed_buffer_type=dma`
+      - `presented_frame_count=3`
+  - lib-path-only bundle revalidation:
+    - `build/pixel/artifacts/shadow-blitz-demo-gpu-gnu/.bundle-manifest.json`
+    - after tightening the bundle defaults, the staged runtime bundle now records:
+      - `vendorTurnipTarball=null`
+      - `vendorTurnipLibPath=/nix/store/6shcbpdzwf806dwf1l6r4lnnv5317dk4-shadow-local-turnip-mesa-26.0.2/lib/libvulkan_freedreno.so`
+    - follow-up rooted proof:
+      - `build/pixel/runtime-gpu-probe/20260417T202152Z/run-vulkan_kgsl_first`
+      - `success=true`
+      - `session_exit=0`
+      - `android_restored=true`
+      - `driver_info=Mesa 26.2.0-devel`
+      - `hardware_backed=true`
+      - `observed_buffer_type=dma`
+  - no-env Vulkan matrix revalidation:
+    - `build/pixel/runtime-gpu-probe/20260417T201637Z`
+    - after the local-result preference change, the no-env Vulkan matrix is green again:
+      - `success_count=3`
+      - `case_count=3`
+    - green profiles:
+      - `vulkan_kgsl_first`
+      - `vulkan_kgsl`
+      - `vulkan_drm`
+    - all three now report:
+      - `session_exit=0`
+      - `android_restored=true`
+      - `startup_checkpoints_ok=true`
+      - `adapter_name=Turnip Adreno (TM) 618`
+      - `driver_info=Mesa 26.2.0-devel`
+      - `hardware_backed=true`
+      - `observed_buffer_type=dma`
+      - `presented_frame_count=3`
+  - broader runtime lane revalidation:
+    - `build/pixel/runs/runtime-app-nostr-timeline-local/20260417T202353Z`
+    - the local-relay Nostr timeline smoke now passes on the same pure direct-GPU payload:
+      - `result=pixel-runtime-app-nostr-timeline-local-ok`
+      - `session_exit=0`
+      - `android_restored=true`
+      - `startup_checkpoints_ok=true`
+      - `adapter_name=Turnip Adreno (TM) 618`
+      - `driver_info=Mesa 26.2.0-devel`
+      - `hardware_backed=true`
+      - `observed_buffer_type=dma`
+      - `presented_frame_count=5`
+      - `openlog_kgsl_seen=true`
+      - `openlog_dri_seen=false`
+    - key live markers from `pixel-drm/session-output.txt`:
+      - `renderer-backend ... backend=Vulkan ... driver_info="Mesa 26.2.0-devel"`
+      - `runtime-event-dispatched source=auto type=click target=quick-gm`
+      - `presented-dmabuf-direct size=1080x2340`
+  - shell / operator lane revalidation:
+    - `build/pixel/shell/20260417T202638Z`
+    - after teaching `pixel_shell_drm.sh` to prefer the local Turnip result, the rooted shell timeline smoke passes again on the same payload:
+      - `result=pixel-shell-timeline-ok`
+      - shell renderer path stayed on `gpu_softbuffer`
+      - the runtime helper / shell bundle staged from the same local Turnip lib-backed artifacts
+    - remaining rough edge:
+      - the shell smoke cleanup still left Android in the half-restored state where `surfaceflinger` was back but `service check window` still reported `not found`
+      - the dedicated `pixel_restore_android.sh` retry also failed
+      - the handset needed an explicit `adb reboot` to get back to:
+        - `surfaceflinger=running`
+        - `bootanim=stopped`
+        - `Service window: found`
+  - pinned Turnip default:
+    - repo package:
+      - `packages.aarch64-linux.shadow-pinned-turnip-mesa-aarch64-linux`
+    - source:
+      - Mesa archive rev `81feb2e7f1196dec7faee7791e17e472f9d8702a`
+      - repo patch `patches/mesa/0002-shadow-turnip-direct-gpu-known-good.patch`
+    - built result:
+      - `/nix/store/qxkg17833x6y8g7q9ahrddv5cf61b109-shadow-pinned-turnip-mesa-26.0.2`
+    - direct GPU bundle manifest now records:
+      - `vendorMesaTarball=null`
+      - `vendorTurnipTarball=null`
+      - `vendorTurnipLibPath=/nix/store/qxkg17833x6y8g7q9ahrddv5cf61b109-shadow-pinned-turnip-mesa-26.0.2/lib/libvulkan_freedreno.so`
+    - softbuffer shell bundle manifest records the same pinned Turnip lib path.
+  - pinned no-env direct GPU proof:
+    - `build/pixel/runtime-gpu-probe/20260417T205847Z/run-vulkan_kgsl_first`
+    - `success=true`
+    - `session_exit=0`
+    - `android_restored=true`
+    - `android_restore_rebooted=true`
+    - `adapter_name=Turnip Adreno (TM) 618`
+    - `driver_info=Mesa 26.2.0-devel`
+    - `hardware_backed=true`
+    - `observed_buffer_type=dma`
+    - `presented_frame_count=3`
+  - pinned no-env Vulkan matrix proof:
+    - `build/pixel/runtime-gpu-probe/20260417T210752Z`
+    - `success_count=3`
+    - `case_count=3`
+    - green profiles:
+      - `vulkan_kgsl_first`
+      - `vulkan_kgsl`
+      - `vulkan_drm`
+    - all three report:
+      - `session_exit=0`
+      - `android_restored=true`
+      - `android_restore_rebooted=true`
+      - `adapter_name=Turnip Adreno (TM) 618`
+      - `driver_info=Mesa 26.2.0-devel`
+      - `hardware_backed=true`
+      - `observed_buffer_type=dma`
+      - `presented_frame_count=3`
+  - pinned app-level direct GPU proof:
+    - `build/pixel/runs/runtime-app-nostr-timeline-local/20260417T211559Z`
+    - `result=pixel-runtime-app-nostr-timeline-local-ok`
+    - `session_exit=0`
+    - `android_restored=true`
+    - `android_restore_rebooted=true`
+    - `startup_checkpoints_ok=true`
+    - local relay URL was `ws://127.0.0.1:43581`
+  - local fast gate:
+    - `just pre-commit`
+    - result: green
+  - restore semantics update:
+    - direct GPU still needs the full display-HAL stop; preserving the display HAL kept Turnip alive but failed KMS present with repeated `drm-unavailable: failed to set CRTC configuration`
+    - `android_restored=true` now requires display services, bootanim settled, no Shadow takeover processes, and `wm size` / window service readiness
+    - `pixel_restore_android.sh` now has the same reboot fallback as the internal helpers, so `shadowctl stop` / `just stop target=pixel` no longer rely on the weaker one-shot restore path
+    - shared shell-smoke cleanup now reboots as the fallback instead of returning success after a timed-out half-restore
+    - shell timeline smoke revalidation:
+      - `build/pixel/shell/20260417T210133Z`
+      - `result=pixel-shell-timeline-ok`
+      - cleanup timed out its non-reboot restore, rebooted, and the handset returned to `wm size` = `1080x2340`
+    - operator stop path proof:
+      - hold-mode operator run launched through `scripts/shadowctl run -t 11151JEC200472 --app timeline --hold 1`
+      - public recovery completed through `scripts/shadowctl stop -t 11151JEC200472`
+      - restore output:
+        - `pixel_restore_android: direct restore did not complete cleanly; rebooting fallback`
+        - `Pixel Android display stack restored on 11151JEC200472 via reboot fallback`
+      - post-stop checks:
+        - `wm size` = `1080x2340`
+        - `surfaceflinger=running`
+        - `bootanim=stopped`
+        - no `shadow-blitz-demo`, `shadow-compositor-guest`, or `shadow-session` processes remained
+  - next seam:
+    - run the remaining operator lanes on the pinned payload before landing
+    - then decide whether to keep the current Mesa patch as one known-good bring-up patch or split it into reviewable subpatches
 
 ## Further Improvements
 
@@ -882,6 +1329,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - treat first visible frame and incremental latency separately
   - keep incremental updates as the primary product metric
   - only chase startup below `500ms` after the default GPU lane is reproducible and boring
+  - observed operator feel:
+    - taps now feel much snappier on the direct-GPU path
+    - scrolling is still very slow
+  - follow-up once pure GPU is in good shape:
+    - measure scroll dispatch / render / present latency explicitly
+    - compare touch-event cadence, dirty render scheduling, and compositor present timing
 
 - Architecture cleanup:
   - once the current GPU lane is merged and in use, remove stale CPU-only assumptions from:

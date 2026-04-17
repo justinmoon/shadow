@@ -307,10 +307,15 @@ pixel_root_shell() {
 }
 
 pixel_restore_android_best_effort() {
-  local serial timeout_secs pid
+  local serial timeout_secs reboot_timeout_secs pid
   serial="$1"
   timeout_secs="${2:-60}"
+  reboot_timeout_secs="${PIXEL_RESTORE_ANDROID_REBOOT_TIMEOUT_SECS:-120}"
   pid=""
+
+  if pixel_android_display_restored "$serial"; then
+    return 0
+  fi
 
   (
     PIXEL_SERIAL="$serial" "$SHADOW_SCRIPT_ROOT/pixel/pixel_restore_android.sh" >/dev/null 2>&1 || true
@@ -321,15 +326,27 @@ pixel_restore_android_best_effort() {
   while (( SECONDS < deadline )); do
     if ! kill -0 "$pid" >/dev/null 2>&1; then
       wait "$pid" >/dev/null 2>&1 || true
-      return 0
+      if pixel_android_display_restored "$serial"; then
+        return 0
+      fi
+      printf 'pixel: warning: pixel_restore_android exited before Android was fully restored\n' >&2
+      break
     fi
     sleep 1
   done
 
-  kill "$pid" >/dev/null 2>&1 || true
-  wait "$pid" >/dev/null 2>&1 || true
-  printf 'pixel: warning: pixel_restore_android timed out after %ss\n' "$timeout_secs" >&2
-  return 0
+  if kill -0 "$pid" >/dev/null 2>&1; then
+    kill "$pid" >/dev/null 2>&1 || true
+    wait "$pid" >/dev/null 2>&1 || true
+    printf 'pixel: warning: pixel_restore_android timed out after %ss\n' "$timeout_secs" >&2
+  fi
+
+  if [[ "${PIXEL_RESTORE_ANDROID_REBOOT_ON_FAILURE:-1}" == "0" ]]; then
+    return 1
+  fi
+
+  printf 'pixel: warning: rebooting %s to restore Android display stack\n' "$serial" >&2
+  pixel_reboot_and_wait_android_display "$serial" "$reboot_timeout_secs"
 }
 
 pixel_kill_stale_shadow_processes_shell_snippet() {
@@ -519,10 +536,19 @@ EOF
   pixel_takeover_display_service_helpers_script
   pixel_kill_stale_shadow_processes_shell_snippet
   cat <<'EOF'
-start_service_and_wait() {
+start_service_if_known() {
   service="$1"
-  start "$service" || true
-  wait_for_service_state "$service" running 50 || true
+  current="$(getprop "init.svc.$service" | tr -d '\r')"
+  if [ "$current" = running ]; then
+    return 0
+  fi
+  if [ -n "$current" ]; then
+    start "$service" || true
+    wait_for_service_state "$service" running 50 || true
+    return 0
+  fi
+  service_process_exists "$service" && return 0
+  return 0
 }
 
 boot_completed() {
@@ -534,26 +560,21 @@ for service in \
   vendor.qti.hardware.display.allocator \
   vendor.qti.hardware.display.allocator-service
 do
-  if service_is_known "$service"; then
-    start_service_and_wait "$service"
-  fi
+  start_service_if_known "$service"
 done
 for service in \
   vendor.hwcomposer-2-4 \
   android.hardware.graphics.composer@2.4-service-sm8150 \
   android.hardware.graphics.composer@2.4-service
 do
-  if service_is_known "$service"; then
-    start_service_and_wait "$service"
-  fi
+  start_service_if_known "$service"
 done
-start_service_and_wait surfaceflinger
+start surfaceflinger || true
 if boot_completed; then
   setprop service.bootanim.exit 1 || true
   stop bootanim || true
-  wait_for_service_state bootanim stopped 50 || true
 else
-  start_service_and_wait bootanim
+  start bootanim || true
 fi
 setenforce 1 >/dev/null 2>&1 || true
 EOF
@@ -754,7 +775,7 @@ pixel_takeover_processes_absent() {
 pixel_android_display_stack_restored() {
   local serial
   serial="$1"
-  [[ "$(pixel_service_state "$serial" surfaceflinger)" == "running" ]] || return 1
+  pixel_display_services_running "$serial" || return 1
   if [[ "$(pixel_prop "$serial" sys.boot_completed)" == "1" || "$(pixel_prop "$serial" dev.bootcomplete)" == "1" ]]; then
     pixel_bootanim_stopped "$serial" || return 1
   fi
@@ -829,8 +850,49 @@ pixel_wait_for_condition() {
   return 1
 }
 
+pixel_reboot_and_wait_android_display() {
+  local serial timeout_secs
+  serial="$1"
+  timeout_secs="${2:-120}"
+
+  pixel_adb "$serial" reboot >/dev/null 2>&1 || return 1
+  pixel_wait_for_adb "$serial" "$timeout_secs" >/dev/null 2>&1 || return 1
+  pixel_wait_for_boot_completed "$serial" "$timeout_secs" >/dev/null 2>&1 || return 1
+  pixel_wait_for_condition "$timeout_secs" 1 pixel_android_display_restored "$serial"
+}
+
 pixel_prepare_dirs() {
   mkdir -p "$(pixel_artifacts_dir)" "$(pixel_runs_dir)" "$(pixel_root_dir)"
+}
+
+pixel_pinned_turnip_result_link() {
+  printf '%s/shadow-pinned-turnip-mesa-aarch64-linux-result\n' "$(pixel_dir)"
+}
+
+pixel_pinned_turnip_lib_path() {
+  printf '%s/lib/libvulkan_freedreno.so\n' "$(pixel_pinned_turnip_result_link)"
+}
+
+pixel_ensure_pinned_turnip_lib() {
+  local repo package_system package_ref out_link lib_path
+
+  out_link="$(pixel_pinned_turnip_result_link)"
+  lib_path="$(pixel_pinned_turnip_lib_path)"
+  repo="$(repo_root)"
+  package_system="${PIXEL_LINUX_BUILD_SYSTEM:-aarch64-linux}"
+  package_ref="$repo#packages.${package_system}.shadow-pinned-turnip-mesa-aarch64-linux"
+  nix build \
+    --accept-flake-config \
+    --out-link "$out_link" \
+    --print-out-paths \
+    "$package_ref" >/dev/null
+
+  if [[ ! -f "$lib_path" ]]; then
+    echo "pixel: pinned Turnip build did not produce libvulkan_freedreno.so: $lib_path" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$lib_path"
 }
 
 pixel_prepare_named_run_dir() {

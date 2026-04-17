@@ -9,15 +9,9 @@ source "$SCRIPT_DIR/lib/pixel_runtime_linux_bundle_common.sh"
 ensure_bootimg_shell "$@"
 
 pixel_prepare_dirs
-default_mesa_tarball="$(pixel_dir)/vendor/mesa-for-android-container_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
-default_turnip_tarball="$(pixel_dir)/vendor/turnip_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
-if [[ -z "${PIXEL_VENDOR_MESA_TARBALL-}" && -f "$default_mesa_tarball" ]]; then
-  PIXEL_VENDOR_MESA_TARBALL="$default_mesa_tarball"
-  export PIXEL_VENDOR_MESA_TARBALL
-fi
-if [[ -z "${PIXEL_VENDOR_TURNIP_TARBALL-}" && -f "$default_turnip_tarball" ]]; then
-  PIXEL_VENDOR_TURNIP_TARBALL="$default_turnip_tarball"
-  export PIXEL_VENDOR_TURNIP_TARBALL
+if [[ -z "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" && -z "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
+  PIXEL_VENDOR_TURNIP_LIB_PATH="$(pixel_ensure_pinned_turnip_lib)"
+  export PIXEL_VENDOR_TURNIP_LIB_PATH
 fi
 repo="$(repo_root)"
 bundle_dir="$(pixel_artifact_path shadow-blitz-demo-gpu-gnu)"
@@ -48,6 +42,7 @@ vendor_mesa_package_refs=(
 vendor_turnip_package_refs=(
   "nixpkgs#pkgsCross.aarch64-multiplatform.libx11"
   "nixpkgs#pkgsCross.aarch64-multiplatform.libxcb"
+  "nixpkgs#pkgsCross.aarch64-multiplatform.libxcb-keysyms"
   "nixpkgs#pkgsCross.aarch64-multiplatform.libxshmfence"
   "nixpkgs#pkgsCross.aarch64-multiplatform.zstd.out"
   "nixpkgs#pkgsCross.aarch64-multiplatform.stdenv.cc.cc.lib"
@@ -252,7 +247,7 @@ append_vendor_mesa_runtime_closure() {
 append_vendor_turnip_runtime_closure() {
   local package_ref
 
-  [[ -n "$vendor_turnip_tarball" ]] || return 0
+  [[ -n "$vendor_turnip_tarball" || -n "$vendor_turnip_lib_path" ]] || return 0
   for package_ref in "${vendor_turnip_package_refs[@]}"; do
     append_runtime_closure_from_package_ref "$package_ref"
   done

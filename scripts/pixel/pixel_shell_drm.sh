@@ -72,17 +72,15 @@ if (( camera_runtime_enabled == 1 )); then
   camera_cleanup_command="$(pixel_camera_runtime_cleanup_command)"
 fi
 
-default_turnip_tarball="$(pixel_dir)/vendor/turnip_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
 default_mesa_tarball="$(pixel_dir)/vendor/mesa-for-android-container_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
 if [[ -z "${PIXEL_VENDOR_MESA_TARBALL-}" && -f "$default_mesa_tarball" ]]; then
   PIXEL_VENDOR_MESA_TARBALL="$default_mesa_tarball"
   export PIXEL_VENDOR_MESA_TARBALL
 fi
-if [[ -z "${PIXEL_VENDOR_TURNIP_TARBALL-}" && -f "$default_turnip_tarball" ]]; then
-  PIXEL_VENDOR_TURNIP_TARBALL="$default_turnip_tarball"
-  export PIXEL_VENDOR_TURNIP_TARBALL
+if [[ -z "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" && -z "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
+  PIXEL_VENDOR_TURNIP_LIB_PATH="$(pixel_ensure_pinned_turnip_lib)"
+  export PIXEL_VENDOR_TURNIP_LIB_PATH
 fi
-
 # Deterministic default. Never infer renderer mode from optional GPU assets.
 # CPU stays opt-in through PIXEL_SHELL_RENDERER=cpu.
 : "${PIXEL_SHELL_RENDERER:=gpu_softbuffer}"
@@ -155,7 +153,7 @@ if [[ -n "$PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS" ]]; then
 fi
 if [[ "$PIXEL_SHELL_RENDERER" == "gpu_softbuffer" ]]; then
   shell_guest_env="${shell_guest_env}"$'\n'"MESA_SHADER_CACHE_DIR=$runtime_mesa_cache_dir"
-  if [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
+  if [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" || -n "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" ]]; then
     shell_guest_env="${shell_guest_env}"$'\n'"WGPU_BACKEND=${WGPU_BACKEND:-vulkan}"
     shell_guest_env="${shell_guest_env}"$'\n'"MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}"
     shell_guest_env="${shell_guest_env}"$'\n'"TU_DEBUG=${TU_DEBUG:-noconform}"

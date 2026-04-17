@@ -9,17 +9,10 @@ ensure_bootimg_shell "$@"
 serial="$(pixel_resolve_serial)"
 pixel_require_host_lock "$serial" "$0" "$@"
 
-default_turnip_tarball="$(pixel_dir)/vendor/turnip_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
-default_mesa_tarball="$(pixel_dir)/vendor/mesa-for-android-container_26.1.0-devel-20260404_debian_trixie_arm64.tar.gz"
-if [[ -z "${PIXEL_VENDOR_MESA_TARBALL-}" && -f "$default_mesa_tarball" ]]; then
-  PIXEL_VENDOR_MESA_TARBALL="$default_mesa_tarball"
-  export PIXEL_VENDOR_MESA_TARBALL
+if [[ -z "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" && -z "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
+  PIXEL_VENDOR_TURNIP_LIB_PATH="$(pixel_ensure_pinned_turnip_lib)"
+  export PIXEL_VENDOR_TURNIP_LIB_PATH
 fi
-if [[ -z "${PIXEL_VENDOR_TURNIP_TARBALL-}" && -f "$default_turnip_tarball" ]]; then
-  PIXEL_VENDOR_TURNIP_TARBALL="$default_turnip_tarball"
-  export PIXEL_VENDOR_TURNIP_TARBALL
-fi
-
 # Deterministic default. Never infer renderer mode from optional GPU assets.
 # CPU stays opt-in through PIXEL_RUNTIME_APP_RENDERER=cpu.
 : "${PIXEL_RUNTIME_APP_RENDERER:=gpu_softbuffer}"
@@ -71,7 +64,7 @@ case "$PIXEL_RUNTIME_APP_RENDERER" in
               runtime_gpu_bundle_mode="full"
               ;;
           esac
-        elif [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
+        elif [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" || -n "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" ]]; then
           runtime_gpu_bundle_mode="vulkan-only"
         else
           runtime_gpu_bundle_mode="full"
@@ -86,7 +79,7 @@ case "$PIXEL_RUNTIME_APP_RENDERER" in
       "PIXEL_RUNTIME_EXTRA_BUNDLE_ARTIFACT_DIR=$(pixel_artifact_path shadow-blitz-demo-gpu-gnu)"
     )
     if [[ -z "$runtime_gpu_profile" ]]; then
-      if [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
+      if [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" || -n "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" ]]; then
         runtime_gpu_profile="vulkan_kgsl_first"
       else
         runtime_gpu_profile="gl"
@@ -122,12 +115,20 @@ fi
 : "${PIXEL_GUEST_COMPOSITOR_MARKER_TIMEOUT_SECS:=45}"
 : "${PIXEL_GUEST_FRAME_CHECKPOINT_TIMEOUT_SECS:=45}"
 : "${PIXEL_GUEST_SESSION_TIMEOUT_SECS:=20}"
+runtime_session_exit_timeout_secs="${PIXEL_GUEST_SESSION_EXIT_TIMEOUT_SECS-}"
+if [[ -z "$runtime_session_exit_timeout_secs" ]]; then
+  runtime_session_exit_timeout_secs="$(( (PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS + 999) / 1000 + 10 ))"
+  if (( runtime_session_exit_timeout_secs < 20 )); then
+    runtime_session_exit_timeout_secs=20
+  fi
+fi
 extra_guest_env="${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}"
 extra_session_env="${PIXEL_RUNTIME_APP_EXTRA_SESSION_ENV-}"
 extra_required_markers="${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS-}"
 extra_forbidden_markers="${PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS-}"
 touch_signal_path="$(pixel_runtime_touch_signal_path)"
 runtime_mesa_cache_dir="$(pixel_runtime_mesa_cache_dir)"
+runtime_viewport_mode="${PIXEL_RUNTIME_APP_VIEWPORT_MODE-}"
 
 if (( runtime_stage_only == 1 )); then
   PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
@@ -147,11 +148,31 @@ if [[ -z "$panel_size" ]]; then
   echo "pixel_runtime_app_drm: failed to determine display size; set PIXEL_RUNTIME_APP_PANEL_SIZE or PIXEL_PANEL_SIZE" >&2
   exit 1
 fi
-viewport_fit="$(python3 "$SCRIPT_DIR/runtime/runtime_viewport.py" --fit "$panel_size")"
-runtime_surface_width="$(printf '%s\n' "$viewport_fit" | awk -F= '/^fitted_width=/{print $2}')"
-runtime_surface_height="$(printf '%s\n' "$viewport_fit" | awk -F= '/^fitted_height=/{print $2}')"
+if [[ -z "$runtime_viewport_mode" ]]; then
+  if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
+    runtime_viewport_mode="panel"
+  else
+    runtime_viewport_mode="fit"
+  fi
+fi
+
+case "$runtime_viewport_mode" in
+  fit)
+    viewport_fit="$(python3 "$SCRIPT_DIR/runtime/runtime_viewport.py" --fit "$panel_size")"
+    runtime_surface_width="$(printf '%s\n' "$viewport_fit" | awk -F= '/^fitted_width=/{print $2}')"
+    runtime_surface_height="$(printf '%s\n' "$viewport_fit" | awk -F= '/^fitted_height=/{print $2}')"
+    ;;
+  panel)
+    runtime_surface_width="${panel_size%x*}"
+    runtime_surface_height="${panel_size#*x}"
+    ;;
+  *)
+    echo "pixel_runtime_app_drm: unsupported PIXEL_RUNTIME_APP_VIEWPORT_MODE: $runtime_viewport_mode" >&2
+    exit 1
+    ;;
+esac
 if [[ -z "$runtime_surface_width" || -z "$runtime_surface_height" ]]; then
-  echo "pixel_runtime_app_drm: failed to derive runtime viewport from $panel_size" >&2
+  echo "pixel_runtime_app_drm: failed to derive runtime viewport from $panel_size (mode=$runtime_viewport_mode)" >&2
   exit 1
 fi
 
@@ -166,6 +187,7 @@ SHADOW_BLITZ_TOUCH_ACTIVATE_ON_DOWN=1
 SHADOW_BLITZ_TOUCH_SIGNAL_PATH=$touch_signal_path
 SHADOW_BLITZ_TOUCH_SIGNAL_POLL_INTERVAL_MS=${SHADOW_BLITZ_TOUCH_SIGNAL_POLL_INTERVAL_MS:-16}
 SHADOW_BLITZ_DEBUG_OVERLAY=0
+SHADOW_BLITZ_UNDECORATED=1
 SHADOW_BLITZ_ANDROID_FONTS=${SHADOW_BLITZ_ANDROID_FONTS:-curated}
 SHADOW_BLITZ_SOFTWARE_KEYBOARD=${SHADOW_BLITZ_SOFTWARE_KEYBOARD:-1}
 SHADOW_RUNTIME_APP_BUNDLE_PATH=$(pixel_runtime_app_bundle_dst)
@@ -175,6 +197,9 @@ EOF
 )
 if [[ "${PIXEL_RUNTIME_ENABLE_GPU_SUMMARY:-0}" == "1" ]]; then
   runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_BLITZ_GPU_SUMMARY=1"
+fi
+if [[ "$runtime_viewport_mode" == "panel" ]]; then
+  runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_BLITZ_IGNORE_SAFE_AREA=1"
 fi
 if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu_softbuffer" || "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
   runtime_guest_env="${runtime_guest_env}"$'\n'"MESA_SHADER_CACHE_DIR=$runtime_mesa_cache_dir"
@@ -188,7 +213,7 @@ if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu_softbuffer" || "$PIXEL_RUNTIME_APP_R
       runtime_guest_env="${runtime_guest_env}"$'\n'"$env_line"
     done < <(printf '%s\n' "$runtime_gpu_profile_env")
     runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_WGPU_PRESENT_MODE=${SHADOW_WGPU_PRESENT_MODE:-fifo}"
-  elif [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
+  elif [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" || -n "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" ]]; then
     runtime_guest_env="${runtime_guest_env}"$'\n'"WGPU_BACKEND=${WGPU_BACKEND:-vulkan}"
     runtime_guest_env="${runtime_guest_env}"$'\n'"MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}"
     runtime_guest_env="${runtime_guest_env}"$'\n'"TU_DEBUG=${TU_DEBUG:-noconform}"
@@ -224,6 +249,15 @@ if [[ -n "$extra_forbidden_markers" ]]; then
   forbidden_markers="${forbidden_markers}"$'\n'"${extra_forbidden_markers}"
 fi
 
+takeover_restore_in_session="${PIXEL_TAKEOVER_RESTORE_IN_SESSION-}"
+takeover_reboot_on_restore_failure="${PIXEL_TAKEOVER_REBOOT_ON_RESTORE_FAILURE-}"
+if [[ -z "$takeover_restore_in_session" && "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
+  takeover_restore_in_session=0
+fi
+if [[ -z "$takeover_reboot_on_restore_failure" && "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
+  takeover_reboot_on_restore_failure=1
+fi
+
 PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
 PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
 PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_runtime_host_bundle_artifact_dir)" \
@@ -238,10 +272,13 @@ PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME='' \
 PIXEL_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT=1 \
 PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
 PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
+PIXEL_GUEST_SESSION_EXIT_TIMEOUT_SECS="$runtime_session_exit_timeout_secs" \
 PIXEL_GUEST_CLIENT_ENV="$runtime_guest_env" \
 PIXEL_GUEST_SESSION_ENV="$runtime_session_env" \
 PIXEL_GUEST_PRECREATE_DIRS="$(pixel_runtime_precreate_dirs_lines)" \
 PIXEL_VERIFY_FORBIDDEN_MARKERS="$forbidden_markers" \
 PIXEL_RUNTIME_SUMMARY_RENDERER="$PIXEL_RUNTIME_APP_RENDERER" \
 PIXEL_GUEST_SKIP_PUSH="$([[ "$runtime_run_only" == 1 ]] && printf 1 || true)" \
+PIXEL_TAKEOVER_RESTORE_IN_SESSION="$takeover_restore_in_session" \
+PIXEL_TAKEOVER_REBOOT_ON_RESTORE_FAILURE="$takeover_reboot_on_restore_failure" \
   "$SCRIPT_DIR/pixel/pixel_guest_ui_drm.sh"

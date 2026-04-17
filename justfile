@@ -161,3 +161,23 @@ stop *args='':
 		exec scripts/shadowctl stop --dry-run -t "$target_arg"; \
 	fi; \
 	exec scripts/shadowctl stop -t "$target_arg"
+
+# Build the local Mesa/Turnip override library for rooted-Pixel direct-GPU probes
+pixel-build-local-turnip:
+	@scripts/pixel/pixel_build_local_turnip.sh
+
+# Run the runtime-mode Blitz demo on the rooted Pixel through the guest compositor DRM path
+pixel-runtime-app-drm:
+	@scripts/pixel/pixel_runtime_app_drm.sh
+
+# Restore the Android display stack after a hold-mode rooted takeover run
+pixel-restore-android:
+	@scripts/pixel/pixel_restore_android.sh
+
+# Run one rooted-Pixel runtime direct-gpu probe case with the selected backend profile
+pixel-runtime-app-drm-gpu-probe profile="vulkan_kgsl_first":
+	@PIXEL_RUNTIME_GPU_RENDERER=gpu scripts/pixel/pixel_runtime_app_drm_gpu_probe.sh "{{profile}}"
+
+# Run the rooted-Pixel runtime direct-gpu probe matrix across the current default profiles
+pixel-runtime-app-drm-gpu-matrix:
+	@PIXEL_RUNTIME_GPU_RENDERER=gpu scripts/pixel/pixel_runtime_app_drm_gpu_matrix.sh

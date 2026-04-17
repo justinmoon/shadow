@@ -42,6 +42,8 @@ SUPPORTED_MEDIA_ACTIONS = (
     "volume-up",
     "volume-down",
 )
+FRAME_CAPTURE_WAIT_TIMEOUT_SECS = 5.0
+FRAME_CAPTURE_WAIT_INTERVAL_SECS = 0.2
 
 
 @dataclass(frozen=True)
@@ -866,6 +868,35 @@ def control_request_for(target: TargetRef, command: str) -> subprocess.Completed
     return pixel_control_request(serial, command)
 
 
+def clear_remote_frame_path(target: TargetRef, remote_path: str) -> None:
+    quoted_path = shlex.quote(remote_path)
+    if target.kind == "vm":
+        run_remote(f"rm -f {quoted_path}", check=False)
+        return
+
+    serial = target.serial or target.id
+    pixel_root_command(serial, f"rm -f {quoted_path}")
+
+
+def remote_frame_available(target: TargetRef, remote_path: str) -> bool:
+    quoted_path = shlex.quote(remote_path)
+    if target.kind == "vm":
+        return run_remote(f"test -s {quoted_path}", check=False).returncode == 0
+
+    serial = target.serial or target.id
+    return pixel_root_test(serial, f"test -s {quoted_path}")
+
+
+def wait_for_remote_frame(target: TargetRef, remote_path: str) -> bool:
+    deadline = time.monotonic() + FRAME_CAPTURE_WAIT_TIMEOUT_SECS
+    while True:
+        if remote_frame_available(target, remote_path):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(FRAME_CAPTURE_WAIT_INTERVAL_SECS)
+
+
 def cmd_devices(args: argparse.Namespace) -> int:
     entries = device_entries()
     if args.json:
@@ -1009,10 +1040,18 @@ def cmd_frame(args: argparse.Namespace) -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     remote_path = args.remote_path or default_frame_remote_path(target)
 
+    clear_remote_frame_path(target, remote_path)
     result = control_request_for(target, f"snapshot {remote_path}")
     if error_text := _control_error_text(result, require_ok=True):
         print(error_text, file=sys.stderr)
         return result.returncode or 1
+    if not wait_for_remote_frame(target, remote_path):
+        timeout = f"{FRAME_CAPTURE_WAIT_TIMEOUT_SECS:.1f}".rstrip("0").rstrip(".")
+        print(
+            f"shadowctl: snapshot {remote_path} did not materialize within {timeout}s",
+            file=sys.stderr,
+        )
+        return 1
 
     if target.kind == "vm":
         cat_result = run_local(

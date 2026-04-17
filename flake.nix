@@ -30,7 +30,26 @@
       lib = nixpkgs.lib;
       guestSystemForHostSystem = hostSystem:
         builtins.replaceStrings [ "-darwin" ] [ "-linux" ] hostSystem;
+      uiVmSourceEnv = builtins.getEnv "SHADOW_UI_VM_SOURCE";
+      localMesaSourceEnv = builtins.getEnv "SHADOW_LOCAL_MESA_SOURCE";
+      localMesaApplyRepoPatchEnv = builtins.getEnv "SHADOW_LOCAL_MESA_APPLY_REPO_PATCH";
       uiVmSshPortEnv = builtins.getEnv "SHADOW_UI_VM_SSH_PORT";
+      uiVmSource =
+        if uiVmSourceEnv != "" then
+          uiVmSourceEnv
+        else
+          null;
+      localMesaSourcePath =
+        if localMesaSourceEnv != "" then
+          /. + localMesaSourceEnv
+        else
+          null;
+      localMesaSource =
+        if localMesaSourcePath != null then
+          lib.cleanSource localMesaSourcePath
+        else
+          null;
+      localMesaApplyRepoPatch = localMesaApplyRepoPatchEnv != "0";
       uiVmSshPort =
         if uiVmSshPortEnv != "" then
           builtins.fromJSON uiVmSshPortEnv
@@ -171,7 +190,7 @@
         in cross.rustPlatform.buildRustPackage {
           pname = "shadow-compositor-guest";
           version = "0.1.0";
-          src = ./.;
+          src = shadowUiSrc;
           cargoRoot = "ui";
           buildAndTestSubdir = "ui";
           cargoLock = {
@@ -382,6 +401,74 @@
           '';
           meta.mainProgram = "shadow-blitz-demo";
         };
+      mesaTurnipKnownGoodRev = "81feb2e7f1196dec7faee7791e17e472f9d8702a";
+      mesaTurnipKnownGoodArchive =
+        "https://gitlab.freedesktop.org/mesa/mesa/-/archive/${mesaTurnipKnownGoodRev}/mesa-${mesaTurnipKnownGoodRev}.tar.gz";
+      mkShadowTurnipMesaFor = cross: { pname, src, patches ? [ ] }:
+        (cross.mesa.override {
+            galliumDrivers = [ ];
+            vulkanDrivers = [ "freedreno" ];
+            eglPlatforms = [ "x11" "wayland" ];
+            vulkanLayers = [ ];
+            enablePatentEncumberedCodecs = false;
+            withValgrind = false;
+          }).overrideAttrs (old: {
+            inherit pname src;
+            outputs = [ "out" ];
+            patches = (old.patches or [ ]) ++ patches;
+            mesonFlags = (old.mesonFlags or [ ]) ++ [
+              (lib.mesonEnable "xlib-lease" false)
+              (lib.mesonBool "opengl" false)
+              (lib.mesonEnable "gles1" false)
+              (lib.mesonEnable "gles2" false)
+              (lib.mesonOption "glx" "disabled")
+              (lib.mesonEnable "egl" false)
+              (lib.mesonEnable "glvnd" false)
+              (lib.mesonEnable "gbm" false)
+              (lib.mesonBool "teflon" false)
+              (lib.mesonBool "gallium-rusticl" false)
+              (lib.mesonBool "gallium-extra-hud" false)
+              (lib.mesonEnable "gallium-va" false)
+              (lib.mesonEnable "intel-rt" false)
+              (lib.mesonEnable "llvm" false)
+              (lib.mesonBool "build-tests" false)
+              (lib.mesonEnable "libunwind" false)
+              (lib.mesonBool "lmsensors" false)
+              (lib.mesonEnable "android-libbacktrace" false)
+              (lib.mesonOption "freedreno-kmds" "msm,kgsl")
+              (lib.mesonOption "tools" "")
+            ];
+            postInstall = ''
+              mkdir -p "$out/nix-support"
+              printf '%s\n' "$out/lib/libvulkan_freedreno.so" > "$out/nix-support/libvulkan-freedreno-path"
+            '';
+            postFixup = "";
+          });
+      mkShadowPinnedTurnipMesaFor = cross:
+        mkShadowTurnipMesaFor cross {
+          pname = "shadow-pinned-turnip-mesa";
+          src = cross.fetchzip {
+            url = mesaTurnipKnownGoodArchive;
+            hash = "sha256-/V2epd3eXAFZJME4ocQmD5ihVNiaK/ysN2gXfj0f1hg=";
+            stripRoot = true;
+          };
+          patches = [
+            ./patches/mesa/0002-shadow-turnip-direct-gpu-known-good.patch
+          ];
+        };
+      mkShadowLocalTurnipMesaFor = cross:
+        if localMesaSource == null then
+          mkUnavailablePackage cross.buildPackages "shadow-local-turnip-mesa-unavailable"
+            "Set SHADOW_LOCAL_MESA_SOURCE under --impure to a local Mesa checkout."
+        else
+          mkShadowTurnipMesaFor cross {
+            pname = "shadow-local-turnip-mesa";
+            src = localMesaSource;
+            patches =
+              lib.optionals localMesaApplyRepoPatch [
+                ./patches/mesa/0001-turnip-kgsl-ignore-khr-display.patch
+              ];
+          };
       mkShadowRuntimeHostFor = cross:
         let
           craneLib = crane.mkLib cross;
@@ -699,6 +786,10 @@
               useDefaultFeatures = true;
             };
           shadow-compositor = mkShadowCompositorFor pkgs;
+          shadow-pinned-turnip-mesa-aarch64-linux =
+            mkShadowPinnedTurnipMesaFor pkgs.pkgsCross.aarch64-multiplatform;
+          shadow-local-turnip-mesa-aarch64-linux =
+            mkShadowLocalTurnipMesaFor pkgs.pkgsCross.aarch64-multiplatform;
           shadow-compositor-guest = mkShadowGuestCompositor pkgs;
           shadow-compositor-guest-device =
             mkShadowGuestCompositorFor pkgs.pkgsCross.aarch64-multiplatform-musl;

@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=../lib/pixel_common.sh
+source "$SCRIPT_DIR/lib/pixel_common.sh"
+ensure_bootimg_shell "$@"
+
+pixel_prepare_dirs
+
+probe_root="$(pixel_dir)/runtime-gpu-probe"
+probe_dir="$(pixel_prepare_named_run_dir "$probe_root")"
+profiles_raw="${PIXEL_RUNTIME_GPU_PROFILES-}"
+
+if [[ -z "$profiles_raw" ]]; then
+  profiles_raw=$'gl\ngl_kgsl\nvulkan_drm\nvulkan_kgsl\nvulkan_kgsl_first'
+fi
+
+profiles=()
+while IFS= read -r profile; do
+  [[ -n "$profile" ]] || continue
+  profiles+=("$profile")
+done < <(printf '%s\n' "$profiles_raw" | tr ' ' '\n' | sed '/^[[:space:]]*$/d')
+if [[ "${#profiles[@]}" -eq 0 ]]; then
+  echo "pixel_runtime_app_drm_gpu_matrix: no profiles selected" >&2
+  exit 1
+fi
+
+matrix_status=0
+for profile in "${profiles[@]}"; do
+  set +e
+  PIXEL_RUNTIME_GPU_PROBE_DIR="$probe_dir" \
+    "$SCRIPT_DIR/pixel/pixel_runtime_app_drm_gpu_probe.sh" "$profile"
+  probe_status="$?"
+  set -e
+  if [[ "$probe_status" -ne 0 && "$matrix_status" -eq 0 ]]; then
+    matrix_status="$probe_status"
+  fi
+done
+
+python3 - "$probe_dir" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+probe_dir = Path(sys.argv[1])
+cases = []
+for case_path in sorted(probe_dir.glob("*.json")):
+    if case_path.name == "matrix-summary.json":
+        continue
+    cases.append(json.loads(case_path.read_text(encoding="utf-8")))
+
+payload = {
+    "probe_dir": str(probe_dir),
+    "case_count": len(cases),
+    "success_count": sum(1 for case in cases if case.get("success")),
+    "cases": cases,
+}
+
+summary_path = probe_dir / "matrix-summary.json"
+summary_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(json.dumps(payload, indent=2, sort_keys=True))
+PY
+
+exit "$matrix_status"

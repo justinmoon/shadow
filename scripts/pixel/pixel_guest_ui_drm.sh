@@ -43,6 +43,8 @@ verify_require_client_marker="${PIXEL_VERIFY_REQUIRE_CLIENT_MARKER-1}"
 verify_forbidden_markers="${PIXEL_VERIFY_FORBIDDEN_MARKERS-}"
 skip_push="${PIXEL_GUEST_SKIP_PUSH-}"
 restore_android="${PIXEL_TAKEOVER_RESTORE_ANDROID-1}"
+restore_in_session="${PIXEL_TAKEOVER_RESTORE_IN_SESSION:-1}"
+reboot_on_restore_failure="${PIXEL_TAKEOVER_REBOOT_ON_RESTORE_FAILURE:-0}"
 stop_allocator="${PIXEL_TAKEOVER_STOP_ALLOCATOR-1}"
 # These launcher-level defaults have no in-repo callers today.
 stop_checkpoint_timeout_secs=15
@@ -52,8 +54,9 @@ client_marker_timeout_secs=20
 required_markers_raw="${PIXEL_GUEST_REQUIRED_MARKERS-}"
 required_marker_timeout_secs="${PIXEL_GUEST_REQUIRED_MARKER_TIMEOUT_SECS-$client_marker_timeout_secs}"
 frame_checkpoint_timeout_secs="${PIXEL_GUEST_FRAME_CHECKPOINT_TIMEOUT_SECS-20}"
-restore_checkpoint_timeout_secs=20
+restore_checkpoint_timeout_secs="${PIXEL_TAKEOVER_RESTORE_CHECKPOINT_TIMEOUT_SECS-60}"
 session_exit_timeout_secs="${PIXEL_GUEST_SESSION_EXIT_TIMEOUT_SECS-15}"
+restore_reboot_timeout_secs="${PIXEL_TAKEOVER_RESTORE_REBOOT_TIMEOUT_SECS-120}"
 runtime_summary_renderer="${PIXEL_RUNTIME_SUMMARY_RENDERER-}"
 logcat_pid=""
 session_pid=""
@@ -72,6 +75,7 @@ required_markers_seen=false
 forbidden_markers_clear=true
 frame_on_device=false
 android_restored=false
+android_restore_rebooted=false
 checkpoint_failure_kind=""
 checkpoint_failure_description=""
 checkpoint_failure_message=""
@@ -151,6 +155,35 @@ session_not_running() {
   ! session_still_running
 }
 
+session_output_exit_status() {
+  local status_line status_value
+
+  [[ -f "$session_output_path" ]] || return 1
+  status_line="$(
+    grep -F "[shadow-session]" "$session_output_path" \
+      | grep -F " exited with exit status: " \
+      | tail -n 1 || true
+  )"
+  [[ -n "$status_line" ]] || return 1
+  status_value="${status_line##* exit status: }"
+  [[ "$status_value" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$status_value"
+}
+
+session_completed() {
+  local observed_exit_code
+
+  if ! session_still_running; then
+    return 0
+  fi
+
+  observed_exit_code="$(session_output_exit_status)" || return 1
+  if [[ -z "${session_status:-}" ]]; then
+    session_status="$observed_exit_code"
+  fi
+  return 0
+}
+
 required_markers_all_seen() {
   local marker
 
@@ -225,8 +258,13 @@ wait_for_checkpoint() {
     return 0
   fi
 
-  if ! session_still_running; then
-    wait "$session_pid" >/dev/null 2>&1 || session_status="$?"
+  if session_completed; then
+    if session_still_running; then
+      kill "$session_pid" >/dev/null 2>&1 || true
+      wait "$session_pid" >/dev/null 2>&1 || true
+    else
+      wait "$session_pid" >/dev/null 2>&1 || true
+    fi
     checkpoint_failure_kind="session-exited-before-checkpoint"
     checkpoint_failure_description="$description"
     checkpoint_failure_message="session exited before checkpoint: $description"
@@ -245,12 +283,43 @@ restore_android_now() {
     return 0
   fi
   checkpoint_note "restoring Android display services"
-  if pixel_root_shell "$serial" "$(pixel_takeover_start_services_script)"; then
+  if ! pixel_root_shell "$serial" "$(pixel_takeover_start_services_script)"; then
+    checkpoint_note "failed: Android display service restore command did not complete cleanly"
+    return 1
+  fi
+  if pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_restored "$serial"; then
     android_restored=true
     checkpoint_note "restored Android display services"
     return 0
   fi
   checkpoint_note "failed: Android display service restore did not complete cleanly"
+  return 1
+}
+
+restore_android_via_reboot() {
+  if [[ "$android_restored" == true ]]; then
+    return 0
+  fi
+  checkpoint_note "restore fallback: rebooting device"
+  if ! pixel_adb "$serial" reboot >/dev/null 2>&1; then
+    checkpoint_note "failed: reboot command for Android restore fallback"
+    return 1
+  fi
+  if ! pixel_wait_for_adb "$serial" "$restore_reboot_timeout_secs" >/dev/null 2>&1; then
+    checkpoint_note "failed: device did not reconnect after Android restore fallback reboot"
+    return 1
+  fi
+  if ! pixel_wait_for_boot_completed "$serial" "$restore_reboot_timeout_secs" >/dev/null 2>&1; then
+    checkpoint_note "failed: device did not finish boot after Android restore fallback reboot"
+    return 1
+  fi
+  if pixel_wait_for_condition "$restore_reboot_timeout_secs" 1 pixel_android_display_restored "$serial"; then
+    android_restored=true
+    android_restore_rebooted=true
+    checkpoint_note "restored Android display services via reboot fallback"
+    return 0
+  fi
+  checkpoint_note "failed: Android display stack still not restored after reboot fallback"
   return 1
 }
 
@@ -324,7 +393,7 @@ ${guest_precreate_dir_words:+for prep_dir in ${guest_precreate_dir_words}; do mk
 ${guest_pre_session_device_script:+$guest_pre_session_device_script}
 ${session_timeout_secs:+timeout $session_timeout_secs }env ${guest_session_launch_env}${session_command_word}
 status=\$?
-$(if [[ -n "$restore_android" ]]; then pixel_takeover_start_services_script; fi)
+$(if [[ -n "$restore_android" && "$restore_in_session" != "0" ]]; then pixel_takeover_start_services_script; fi)
 exit \$status
 EOF
 )"
@@ -434,11 +503,21 @@ if [[ -z "${session_status:-}" ]]; then
     wait "$session_pid"
     session_status="$?"
     set -e
-  elif pixel_wait_for_condition "$session_exit_timeout_secs" 1 session_not_running; then
-    set +e
-    wait "$session_pid"
-    session_status="$?"
-    set -e
+  elif pixel_wait_for_condition "$session_exit_timeout_secs" 1 session_completed; then
+    if session_still_running; then
+      checkpoint_note "observed: session exit recorded in output; ending lingering host shell"
+      kill "$session_pid" >/dev/null 2>&1 || true
+      set +e
+      wait "$session_pid" >/dev/null 2>&1 || true
+      set -e
+    else
+      set +e
+      wait "$session_pid"
+      if [[ -z "${session_status:-}" ]]; then
+        session_status="$?"
+      fi
+      set -e
+    fi
   else
     checkpoint_note "session still running after success window; forcing cleanup"
     kill "$session_pid" >/dev/null 2>&1 || true
@@ -450,10 +529,12 @@ if [[ -z "${session_status:-}" ]]; then
 fi
 
 set +e
-if ensure_post_success_adb 5; then
-  pixel_adb "$serial" pull "$frame_path" "$frame_artifact" >"$pull_log_path" 2>&1
-else
-  printf 'skipped: adb unavailable during post-success frame pull\n' >"$pull_log_path"
+if [[ ! -s "$frame_artifact" ]]; then
+  if ensure_post_success_adb 5; then
+    pixel_adb "$serial" pull "$frame_path" "$frame_artifact" >"$pull_log_path" 2>&1
+  else
+    printf 'skipped: adb unavailable during post-success frame pull\n' >"$pull_log_path"
+  fi
 fi
 set -e
 
@@ -502,17 +583,19 @@ if [[ "$frame_on_device" != true && -s "$frame_artifact" ]]; then
 fi
 
 if [[ -n "$restore_android" && "$android_restored" != true ]]; then
-  if ensure_post_success_adb "$restore_checkpoint_timeout_secs" && pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_stack_restored "$serial"; then
+  if [[ "$restore_in_session" != "0" ]] \
+    && ensure_post_success_adb "$restore_checkpoint_timeout_secs" \
+    && pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_restored "$serial"; then
     android_restored=true
-  else
-    if ensure_post_success_adb "$restore_checkpoint_timeout_secs"; then
-      restore_android_now || true
-    fi
-    if ensure_post_success_adb "$restore_checkpoint_timeout_secs" && pixel_wait_for_condition "$restore_checkpoint_timeout_secs" 1 pixel_android_display_stack_restored "$serial"; then
-      android_restored=true
-    else
-      failure_message="${failure_message:-timed out waiting for Android display stack restore}"
-    fi
+  fi
+  if [[ "$android_restored" != true ]] && ensure_post_success_adb "$restore_checkpoint_timeout_secs"; then
+    restore_android_now || true
+  fi
+  if [[ "$android_restored" != true && "$reboot_on_restore_failure" != "0" ]]; then
+    restore_android_via_reboot || true
+  fi
+  if [[ "$android_restored" != true ]]; then
+    failure_message="${failure_message:-timed out waiting for Android display stack restore}"
   fi
 fi
 
@@ -546,6 +629,7 @@ pixel_write_status_json "$run_dir/status.json" \
   presented_frame="$presented" \
   session_ok="$session_ok" \
   android_restored="$android_restored" \
+  android_restore_rebooted="$android_restore_rebooted" \
   post_success_adb_lost="$post_success_adb_lost" \
   post_success_transport_warning="$post_success_transport_warning" \
   failure_kind="$checkpoint_failure_kind" \

@@ -1,0 +1,1348 @@
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index 7ac080b6..9f7adb98 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -46,8 +46,20 @@
+ #include <vndk/hardware_buffer.h>
+ #endif
+ 
++#include <stdio.h>
++
+ uint64_t os_page_size = 4096;
+ 
++DEBUG_GET_ONCE_BOOL_OPTION(tu_dmabuf_debug, "TU_DMABUF_DEBUG", false)
++
++#define TU_DMABUF_DEBUG(...) \
++   do { \
++      if (debug_get_option_tu_dmabuf_debug()) { \
++         fprintf(stderr, __VA_ARGS__); \
++         fflush(stderr); \
++      } \
++   } while (0)
++
+ static int
+ tu_device_get_cache_uuid(struct tu_physical_device *device, void *uuid)
+ {
+@@ -1608,9 +1620,17 @@ tu_physical_device_init(struct tu_physical_device *device,
+                         struct tu_instance *instance)
+ {
+    VkResult result = VK_SUCCESS;
++   TU_DMABUF_DEBUG("tu-dmabuf: physical-device-init-begin gpu_id=%u chip_id=0x%llx gmem_size=%llu sparse=%d cached_coherent=%d\n",
++                   device->dev_id.gpu_id,
++                   (unsigned long long) device->dev_id.chip_id,
++                   (unsigned long long) device->gmem_size,
++                   device->has_sparse, device->has_cached_coherent_memory);
+ 
+    const char *fd_name = fd_dev_name(&device->dev_id);
+    if (!fd_name) {
++      TU_DMABUF_DEBUG("tu-dmabuf: physical-device-init-unsupported fd_dev_name gpu_id=%u chip_id=0x%llx\n",
++                      device->dev_id.gpu_id,
++                      (unsigned long long) device->dev_id.chip_id);
+       return vk_startup_errorf(instance, VK_ERROR_INCOMPATIBLE_DRIVER,
+                                "device (chip_id = %" PRIX64
+                                ", gpu_id = %u) is unsupported",
+@@ -1639,6 +1659,7 @@ tu_physical_device_init(struct tu_physical_device *device,
+ 
+    }
+    if (!device->name) {
++      TU_DMABUF_DEBUG("tu-dmabuf: physical-device-init-name-alloc-fail\n");
+       return vk_startup_errorf(instance, VK_ERROR_OUT_OF_HOST_MEMORY,
+                                "device name alloc fail");
+    }
+@@ -1664,11 +1685,15 @@ tu_physical_device_init(struct tu_physical_device *device,
+       break;
+    }
+    default:
++      TU_DMABUF_DEBUG("tu-dmabuf: physical-device-init-unsupported-generation name=%s gen=%u\n",
++                      device->name, fd_dev_gen(&device->dev_id));
+       result = vk_startup_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+                                  "device %s is unsupported", device->name);
+       goto fail_free_name;
+    }
+    if (tu_device_get_cache_uuid(device, device->cache_uuid)) {
++      TU_DMABUF_DEBUG("tu-dmabuf: physical-device-init-cache-uuid-fail name=%s\n",
++                      device->name);
+       result = vk_startup_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+                                  "cannot generate UUID");
+       goto fail_free_name;
+@@ -1735,8 +1760,11 @@ tu_physical_device_init(struct tu_physical_device *device,
+    result = vk_physical_device_init(&device->vk, &instance->vk,
+                                     NULL, NULL, NULL, /* We set up extensions later */
+                                     &dispatch_table);
+-   if (result != VK_SUCCESS)
++   if (result != VK_SUCCESS) {
++      TU_DMABUF_DEBUG("tu-dmabuf: physical-device-init-vk-physical-device-init-fail name=%s result=%d\n",
++                      device->name, result);
+       goto fail_free_name;
++   }
+ 
+    get_device_extensions(device, &device->vk.supported_extensions);
+    tu_get_features(device, &device->vk.supported_features);
+@@ -1751,6 +1779,9 @@ tu_physical_device_init(struct tu_physical_device *device,
+             &tu_gfx_sparse_queue_family_properties :
+             &tu_gfx_queue_family_properties,
+       };
++   TU_DMABUF_DEBUG("tu-dmabuf: physical-device-init-success name=%s queues=%u memory_types=%u\n",
++                   device->name, device->num_queue_families,
++                   device->memory.type_count);
+ 
+    if (device->has_sparse) {
+       device->queue_families[device->num_queue_families++] =
+@@ -3433,6 +3464,14 @@ _tu_init_memory(struct tu_device *device,
+                 const char *name)
+ {
+    VkResult result;
++   TU_DMABUF_DEBUG("tu-dmabuf: init-memory-begin mem=%p size=%llu mem_property=0x%x alloc_flags=0x%x client_address=0x%llx name=%s lazy=%d\n",
++                   (void *)mem,
++                   (unsigned long long)size,
++                   mem_property,
++                   (unsigned) alloc_flags,
++                   (unsigned long long)client_address,
++                   name ? name : "(null)",
++                   !!(mem_property & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT));
+ 
+    if (mem_property & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT) {
+       mem->lazy = true;
+@@ -3451,6 +3490,9 @@ _tu_init_memory(struct tu_device *device,
+          client_address, mem_property, alloc_flags, NULL, name);
+    }
+ 
++   TU_DMABUF_DEBUG("tu-dmabuf: init-memory-end mem=%p result=%d bo=%p\n",
++                   (void *)mem, result, (void *)mem->bo);
++
+    return result;
+ }
+ 
+@@ -3596,6 +3638,10 @@ tu_AllocateMemory(VkDevice _device,
+    mem->refcnt = 1;
+ 
+    BITMASK_ENUM(tu_bo_alloc_flags) alloc_flags = TU_BO_ALLOC_NO_FLAGS;
++   TU_DMABUF_DEBUG("tu-dmabuf: allocate-memory-begin size=%llu memory_type_index=%u pNext=%p\n",
++                   (unsigned long long)pAllocateInfo->allocationSize,
++                   pAllocateInfo->memoryTypeIndex,
++                   pAllocateInfo->pNext);
+ 
+    const VkMemoryAllocateFlagsInfo *flags_info = vk_find_struct_const(
+       pAllocateInfo->pNext, MEMORY_ALLOCATE_FLAGS_INFO);
+@@ -3609,6 +3655,10 @@ tu_AllocateMemory(VkDevice _device,
+       vk_find_struct_const(pAllocateInfo->pNext, IMPORT_MEMORY_FD_INFO_KHR);
+ 
+    if (fd_info && fd_info->handleType) {
++      TU_DMABUF_DEBUG("tu-dmabuf: allocate-memory-import-fd handle_type=0x%x fd=%d size=%llu alloc_flags=0x%x\n",
++                      fd_info->handleType, fd_info->fd,
++                      (unsigned long long)pAllocateInfo->allocationSize,
++                      (unsigned) alloc_flags);
+       assert(fd_info->handleType ==
+                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT ||
+              fd_info->handleType ==
+@@ -3659,6 +3709,11 @@ tu_AllocateMemory(VkDevice _device,
+       if (wsi_info && wsi_info->implicit_sync)
+          alloc_flags |= TU_BO_ALLOC_IMPLICIT_SYNC;
+ 
++      TU_DMABUF_DEBUG("tu-dmabuf: allocate-memory-new export_handle_types=0x%x implicit_sync=%d alloc_flags=0x%x\n",
++                      export_info ? export_info->handleTypes : 0,
++                      wsi_info ? wsi_info->implicit_sync : 0,
++                      (unsigned) alloc_flags);
++
+       char name[64] = "vkAllocateMemory()";
+       if (device->bo_sizes)
+          snprintf(name, ARRAY_SIZE(name), "vkAllocateMemory(%ldkb)",
+@@ -3672,11 +3727,17 @@ tu_AllocateMemory(VkDevice _device,
+    }
+ 
+    if (result == VK_SUCCESS && !mem->lazy) {
++      TU_DMABUF_DEBUG("tu-dmabuf: allocate-memory-add-to-heap mem=%p bo=%p size=%llu iova=0x%llx\n",
++                      (void *)mem, (void *)mem->bo,
++                      (unsigned long long)(mem->bo ? mem->bo->size : 0),
++                      (unsigned long long)(mem->bo ? mem->bo->iova : 0));
+       result = tu_add_to_heap(device, mem->bo);
+       mem->iova = mem->bo->iova;
+    }
+ 
+    if (result != VK_SUCCESS) {
++      TU_DMABUF_DEBUG("tu-dmabuf: allocate-memory-fail mem=%p result=%d\n",
++                      (void *)mem, result);
+       vk_device_memory_destroy(&device->vk, pAllocator, &mem->vk);
+       tu_memory_emit_report(device, /* mem */ NULL, pAllocateInfo, result);
+       return result;
+@@ -3695,6 +3756,12 @@ tu_AllocateMemory(VkDevice _device,
+    tu_memory_emit_report(device, mem, pAllocateInfo, VK_SUCCESS);
+ 
+    *pMem = tu_device_memory_to_handle(mem);
++   TU_DMABUF_DEBUG("tu-dmabuf: allocate-memory-success mem=%p handle=%p bo=%p image=%p iova=0x%llx\n",
++                   (void *)mem,
++                   (void *)(uintptr_t)*pMem,
++                   (void *)mem->bo,
++                   (void *)mem->image,
++                   (unsigned long long)mem->iova);
+ 
+    return VK_SUCCESS;
+ }
+@@ -4284,6 +4351,8 @@ tu_GetMemoryFdKHR(VkDevice _device,
+    int prime_fd = tu_bo_export_dmabuf(device, memory->bo);
+    if (prime_fd < 0)
+       return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
++   TU_DMABUF_DEBUG("tu-dmabuf: export-bo-ok memory=%p bo=%p fd=%d image=%p\n",
++                   (void *)memory, (void *)memory->bo, prime_fd, (void *)memory->image);
+ 
+    *pFd = prime_fd;
+ 
+@@ -4303,6 +4372,10 @@ tu_GetMemoryFdKHR(VkDevice _device,
+       struct fdl_metadata metadata = {
+          .modifier = modifier,
+       };
++      TU_DMABUF_DEBUG("tu-dmabuf: set-metadata memory=%p bo=%p modifier=0x%016llx ubwc=%d tile_mode=%u\n",
++                      (void *)memory, (void *)memory->bo,
++                      (unsigned long long)modifier,
++                      l->ubwc, l->tile_mode);
+       tu_bo_set_metadata(device, memory->bo, &metadata, sizeof(metadata));
+    }
+ 
+diff --git a/src/freedreno/vulkan/tu_image.cc b/src/freedreno/vulkan/tu_image.cc
+index 8ce30f58..07979271 100644
+--- a/src/freedreno/vulkan/tu_image.cc
++++ b/src/freedreno/vulkan/tu_image.cc
+@@ -32,6 +32,16 @@
+ #include "tu_subsampled_image.h"
+ #include "tu_wsi.h"
+ 
++#include <stdio.h>
++
++DEBUG_GET_ONCE_BOOL_OPTION(tu_dmabuf_debug, "TU_DMABUF_DEBUG", false)
++
++#define TU_DMABUF_DEBUG(...) \
++   do { \
++      if (debug_get_option_tu_dmabuf_debug()) \
++         fprintf(stderr, __VA_ARGS__); \
++   } while (0)
++
+ uint32_t
+ tu6_plane_count(VkFormat format)
+ {
+@@ -1296,7 +1306,20 @@ tu_GetImageMemoryRequirements2(VkDevice _device,
+    VK_FROM_HANDLE(tu_device, device, _device);
+    VK_FROM_HANDLE(tu_image, image, pInfo->image);
+ 
++   TU_DMABUF_DEBUG("tu-dmabuf: get-image-memory-reqs2-begin image=%p\n",
++                   (void *)image);
++   TU_DMABUF_DEBUG("tu-dmabuf: get-image-memory-reqs2-state image=%p total_size=%llu base_align=%u usage=0x%x create_flags=0x%x\n",
++                   (void *)image,
++                   image ? (unsigned long long)image->total_size : 0,
++                   image ? image->layout[0].base_align : 0,
++                   image ? image->vk.usage : 0,
++                   image ? image->vk.create_flags : 0);
+    tu_get_image_memory_requirements(device, image, pMemoryRequirements);
++   TU_DMABUF_DEBUG("tu-dmabuf: get-image-memory-reqs2-ok image=%p size=%llu alignment=%llu bits=0x%x\n",
++                   (void *)image,
++                   (unsigned long long)pMemoryRequirements->memoryRequirements.size,
++                   (unsigned long long)pMemoryRequirements->memoryRequirements.alignment,
++                   pMemoryRequirements->memoryRequirements.memoryTypeBits);
+ }
+ 
+ VKAPI_ATTR void VKAPI_CALL
+@@ -1639,4 +1662,3 @@ tu_bind_sparse_image(struct tu_device *device, void *submit,
+                          prev_bo_offset, bind_range);
+    }
+ }
+-
+diff --git a/src/freedreno/vulkan/tu_knl_drm_msm.cc b/src/freedreno/vulkan/tu_knl_drm_msm.cc
+index 16e1cb40..69f7a8fe 100644
+--- a/src/freedreno/vulkan/tu_knl_drm_msm.cc
++++ b/src/freedreno/vulkan/tu_knl_drm_msm.cc
+@@ -1375,12 +1375,10 @@ msm_queue_submit(struct tu_queue *queue, void *_submit,
+                                  DRM_MSM_VM_BIND,
+                                  &req, sizeof(req));
+       }
+-      int errno_ = errno;
+-
+       u_rwlock_rdunlock(&queue->device->vm_bind_fence_lock);
+ 
+       if (ret) {
+-         assert(errno_ != EINVAL);
++         assert(errno != EINVAL);
+          if (errno == ENOMEM) {
+             MESA_TRACE_SCOPE("DRM_MSM_VM_BIND OOM path");
+ 
+diff --git a/src/freedreno/vulkan/tu_knl_kgsl.cc b/src/freedreno/vulkan/tu_knl_kgsl.cc
+index c01160ea..99e9da33 100644
+--- a/src/freedreno/vulkan/tu_knl_kgsl.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl.cc
+@@ -7,6 +7,7 @@
+ #include <fcntl.h>
+ #include <linux/dma-heap.h>
+ #include <poll.h>
++#include <stdio.h>
+ #include <stdint.h>
+ #include <sys/ioctl.h>
+ #include <sys/mman.h>
+@@ -34,6 +35,15 @@
+ /* ION_HEAP(ION_SYSTEM_HEAP_ID) */
+ #define KGSL_ION_SYSTEM_HEAP_MASK (1u << 25)
+ 
++DEBUG_GET_ONCE_BOOL_OPTION(tu_dmabuf_debug, "TU_DMABUF_DEBUG", false)
++
++#define TU_DMABUF_DEBUG(...) \
++   do { \
++      if (debug_get_option_tu_dmabuf_debug()) { \
++         fprintf(stderr, __VA_ARGS__); \
++         fflush(stderr); \
++      } \
++   } while (0)
+ 
+ static int
+ safe_ioctl(int fd, unsigned long request, void *arg)
+@@ -87,6 +97,8 @@ bo_init_new_dmaheap(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
+    };
+ 
+    int ret;
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-dmaheap-alloc-begin size=%llu flags=0x%x fd=%d\n",
++                   (unsigned long long)size, (unsigned) flags, dev->physical_device->kgsl_dma_fd);
+    ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, DMA_HEAP_IOCTL_ALLOC,
+                     &alloc);
+ 
+@@ -95,6 +107,9 @@ bo_init_new_dmaheap(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
+                        "DMA_HEAP_IOCTL_ALLOC failed (%s)", strerror(errno));
+    }
+ 
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-dmaheap-alloc-ok alloc_fd=%d len=%llu\n",
++                   alloc.fd, (unsigned long long)alloc.len);
++
+    return tu_bo_init_dmabuf(dev, out_bo, -1, TU_BO_ALLOC_NO_FLAGS, alloc.fd);
+ }
+ 
+@@ -236,6 +251,13 @@ kgsl_bo_init(struct tu_device *dev,
+              struct tu_sparse_vma *lazy_vma,
+              const char *name)
+ {
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-bo-init-begin size=%llu client_iova=0x%llx mem_property=0x%x flags=0x%x lazy_vma=%p name=%s\n",
++                   (unsigned long long)size,
++                   (unsigned long long)client_iova,
++                   mem_property,
++                   (unsigned) flags,
++                   (void *)lazy_vma,
++                   name ? name : "(null)");
+    if (flags & TU_BO_ALLOC_SHAREABLE) {
+       /* The Vulkan spec doesn't forbid allocating exportable memory with a
+        * fixed address, only imported memory, but on kgsl we can't sensibly
+@@ -285,6 +307,12 @@ kgsl_bo_init(struct tu_device *dev,
+                        "GPUMEM_ALLOC_ID failed (%s)", strerror(errno));
+    }
+ 
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-bo-init-native-ok id=%u mmapsize=%llu gpuaddr=0x%llx flags=0x%x\n",
++                   req.id,
++                   (unsigned long long)req.mmapsize,
++                   (unsigned long long)req.gpuaddr,
++                   req.flags);
++
+    struct tu_bo* bo = tu_device_lookup_bo(dev, req.id);
+    assert(bo && bo->gem_handle == 0);
+ 
+@@ -312,6 +340,11 @@ kgsl_bo_init(struct tu_device *dev,
+    tu_dump_bo_init(dev, bo);
+ 
+    *out_bo = bo;
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-bo-init-end bo=%p handle=%u size=%llu iova=0x%llx shared_fd=%d\n",
++                   (void *)bo, bo->gem_handle,
++                   (unsigned long long)bo->size,
++                   (unsigned long long)bo->iova,
++                   bo->shared_fd);
+ 
+    TU_RMV(bo_allocate, dev, bo);
+    if (flags & TU_BO_ALLOC_INTERNAL_RESOURCE) {
+@@ -329,6 +362,8 @@ kgsl_bo_init_dmabuf(struct tu_device *dev,
+                     enum tu_bo_alloc_flags flags,
+                     int fd)
+ {
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-import-dmabuf-begin fd=%d size=%llu flags=0x%x\n",
++                   fd, (unsigned long long)size, (unsigned) flags);
+    struct kgsl_gpuobj_import_dma_buf import_dmabuf = {
+       .fd = fd,
+    };
+@@ -346,6 +381,8 @@ kgsl_bo_init_dmabuf(struct tu_device *dev,
+       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+                        "Failed to import dma-buf (%s)\n", strerror(errno));
+ 
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-import-dmabuf-imported id=%u\n", req.id);
++
+    struct kgsl_gpuobj_info info_req = {
+       .id = req.id,
+    };
+@@ -356,6 +393,11 @@ kgsl_bo_init_dmabuf(struct tu_device *dev,
+       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+                        "Failed to get dma-buf info (%s)\n", strerror(errno));
+ 
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-import-dmabuf-info id=%u size=%llu gpuaddr=0x%llx\n",
++                   req.id,
++                   (unsigned long long)info_req.size,
++                   (unsigned long long)info_req.gpuaddr);
++
+    struct tu_bo* bo = tu_device_lookup_bo(dev, req.id);
+    assert(bo && bo->gem_handle == 0);
+ 
+@@ -378,6 +420,12 @@ kgsl_bo_init_dmabuf(struct tu_device *dev,
+    tu_dump_bo_init(dev, bo);
+ 
+    *out_bo = bo;
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-import-dmabuf-end bo=%p handle=%u size=%llu iova=0x%llx shared_fd=%d\n",
++                   (void *)bo,
++                   bo->gem_handle,
++                   (unsigned long long)bo->size,
++                   (unsigned long long)bo->iova,
++                   bo->shared_fd);
+ 
+    return VK_SUCCESS;
+ }
+@@ -386,7 +434,12 @@ static int
+ kgsl_bo_export_dmabuf(struct tu_device *dev, struct tu_bo *bo)
+ {
+    assert(bo->shared_fd != -1);
+-   return os_dupfd_cloexec(bo->shared_fd);
++   int fd = os_dupfd_cloexec(bo->shared_fd);
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-export shared_fd=%d dup_fd=%d bo_size=%llu iova=0x%llx\n",
++                   bo->shared_fd, fd,
++                   (unsigned long long)bo->size,
++                   (unsigned long long)bo->iova);
++   return fd;
+ }
+ 
+ static VkResult
+@@ -1755,8 +1808,7 @@ VkResult
+ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
+ {
+    if (instance->vk.enabled_extensions.KHR_display) {
+-      return vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+-                       "I can't KHR_display");
++      TU_DMABUF_DEBUG("tu-dmabuf: kgsl-load-ignore reason=khr-display-enabled\n");
+    }
+ 
+    struct tu_physical_device *device = (struct tu_physical_device *)
+@@ -1774,6 +1826,7 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
+    dma_fd = open(dma_heap_path, O_RDONLY);
+    if (dma_fd >= 0) {
+       device->kgsl_dma_type = TU_KGSL_DMA_TYPE_DMAHEAP;
++      TU_DMABUF_DEBUG("tu-dmabuf: kgsl-load-dma type=dmaheap fd=%d\n", dma_fd);
+    } else {
+       dma_fd = open(ion_path, O_RDONLY);
+       if (dma_fd >= 0) {
+@@ -1783,38 +1836,57 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
+             device->kgsl_dma_type = TU_KGSL_DMA_TYPE_ION_LEGACY;
+          else
+             device->kgsl_dma_type = TU_KGSL_DMA_TYPE_ION;
++         TU_DMABUF_DEBUG("tu-dmabuf: kgsl-load-dma type=ion fd=%d mode=%u errno=%d\n",
++                         dma_fd, (unsigned) device->kgsl_dma_type, errno);
+       } else {
+          mesa_logw(
+             "Unable to open neither %s nor %s, VK_KHR_external_memory_fd would be "
+             "unavailable: %s",
+             dma_heap_path, ion_path, strerror(errno));
++         TU_DMABUF_DEBUG("tu-dmabuf: kgsl-load-dma-unavailable errno=%d msg=%s\n",
++                         errno, strerror(errno));
+       }
+    }
+ 
+    VkResult result = VK_ERROR_INITIALIZATION_FAILED;
+ 
+    struct kgsl_devinfo info;
+-   if (get_kgsl_prop(fd, KGSL_PROP_DEVICE_INFO, &info, sizeof(info)))
++   if (get_kgsl_prop(fd, KGSL_PROP_DEVICE_INFO, &info, sizeof(info))) {
++      TU_DMABUF_DEBUG("tu-dmabuf: kgsl-prop-fail prop=DEVICE_INFO errno=%d msg=%s\n",
++                      errno, strerror(errno));
+       goto fail;
++   }
+ 
+    uint64_t gmem_iova;
+-   if (get_kgsl_prop(fd, KGSL_PROP_UCHE_GMEM_VADDR, &gmem_iova, sizeof(gmem_iova)))
++   if (get_kgsl_prop(fd, KGSL_PROP_UCHE_GMEM_VADDR, &gmem_iova, sizeof(gmem_iova))) {
++      TU_DMABUF_DEBUG("tu-dmabuf: kgsl-prop-fail prop=UCHE_GMEM_VADDR errno=%d msg=%s\n",
++                      errno, strerror(errno));
+       goto fail;
++   }
+ 
+    uint32_t highest_bank_bit;
+    if (get_kgsl_prop(fd, KGSL_PROP_HIGHEST_BANK_BIT, &highest_bank_bit,
+-                     sizeof(highest_bank_bit)))
++                     sizeof(highest_bank_bit))) {
++      TU_DMABUF_DEBUG("tu-dmabuf: kgsl-prop-fail prop=HIGHEST_BANK_BIT errno=%d msg=%s\n",
++                      errno, strerror(errno));
+       goto fail;
++   }
+ 
+    uint32_t ubwc_version;
+    if (get_kgsl_prop(fd, KGSL_PROP_UBWC_MODE, &ubwc_version,
+-                     sizeof(ubwc_version)))
++                     sizeof(ubwc_version))) {
++      TU_DMABUF_DEBUG("tu-dmabuf: kgsl-prop-fail prop=UBWC_MODE errno=%d msg=%s\n",
++                      errno, strerror(errno));
+       goto fail;
++   }
+ 
+    if (get_kgsl_prop(fd, KGSL_PROP_UCHE_TRAP_BASE, &device->uche_trap_base,
+                      sizeof(device->uche_trap_base))) {
+       /* It is known to be hardcoded to */
+       device->uche_trap_base = 0x1fffffffff000ull;
++      TU_DMABUF_DEBUG("tu-dmabuf: kgsl-prop-fallback prop=UCHE_TRAP_BASE errno=%d msg=%s fallback=0x%llx\n",
++                      errno, strerror(errno),
++                      (unsigned long long) device->uche_trap_base);
+    }
+ 
+    /* kgsl version check? */
+@@ -1829,6 +1901,10 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
+       ((info.chip_id >> 16) & 0xff) * 10 +
+       ((info.chip_id >>  8) & 0xff);
+    device->dev_id.chip_id = info.chip_id;
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-load-device chip_id=0x%08x gpu_id=%u gmem_bytes=%llu gmem_iova=0x%llx highest_bank_bit=%u ubwc_version=0x%x\n",
++                   info.chip_id, device->dev_id.gpu_id,
++                   (unsigned long long) info.gmem_sizebytes,
++                   (unsigned long long) gmem_iova, highest_bank_bit, ubwc_version);
+    device->gmem_size = debug_get_num_option("TU_GMEM", info.gmem_sizebytes);
+    device->gmem_base = gmem_iova;
+ 
+@@ -1915,14 +1991,23 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
+    instance->knl = &kgsl_knl_funcs;
+ 
+    result = tu_physical_device_init(device, instance);
+-   if (result != VK_SUCCESS)
++   if (result != VK_SUCCESS) {
++      TU_DMABUF_DEBUG("tu-dmabuf: kgsl-load-physical-device-init-fail result=%d gpu_id=%u chip_id=0x%llx\n",
++                      result, device->dev_id.gpu_id,
++                      (unsigned long long) device->dev_id.chip_id);
+       goto fail;
++   }
+ 
+    list_addtail(&device->vk.link, &instance->vk.physical_devices.list);
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-load-success gpu_id=%u chip_id=0x%llx\n",
++                   device->dev_id.gpu_id,
++                   (unsigned long long) device->dev_id.chip_id);
+ 
+    return VK_SUCCESS;
+ 
+ fail:
++   TU_DMABUF_DEBUG("tu-dmabuf: kgsl-load-fail result=%d errno=%d msg=%s\n",
++                   result, errno, strerror(errno));
+    vk_free(&instance->vk.alloc, device);
+    close(fd);
+    if (dma_fd >= 0)
+diff --git a/src/freedreno/vulkan/tu_wsi.cc b/src/freedreno/vulkan/tu_wsi.cc
+index 12b694b4..14e51bc5 100644
+--- a/src/freedreno/vulkan/tu_wsi.cc
++++ b/src/freedreno/vulkan/tu_wsi.cc
+@@ -15,10 +15,50 @@
+ 
+ #include "tu_device.h"
+ 
++#include <inttypes.h>
++#include <stdio.h>
++#include <string.h>
++
++VKAPI_ATTR VkResult VKAPI_CALL
++tu_AllocateMemory(VkDevice _device,
++                  const VkMemoryAllocateInfo *pAllocateInfo,
++                  const VkAllocationCallbacks *pAllocator,
++                  VkDeviceMemory *pMem);
++
++static VKAPI_ATTR VkResult VKAPI_CALL
++tu_wsi_AllocateMemory_probe(VkDevice device,
++                            const VkMemoryAllocateInfo *pAllocateInfo,
++                            const VkAllocationCallbacks *pAllocator,
++                            VkDeviceMemory *pMem)
++{
++   fprintf(stderr,
++           "tu-wsi-proc-addr: allocate-wrapper-enter device=%p info=%p alloc=%p size=%" PRIu64 " type=%u pNext=%p\n",
++           (void *)device,
++           (const void *)pAllocateInfo,
++           (const void *)pAllocator,
++           (uint64_t)(pAllocateInfo ? pAllocateInfo->allocationSize : 0),
++           pAllocateInfo ? pAllocateInfo->memoryTypeIndex : 0,
++           pAllocateInfo ? pAllocateInfo->pNext : NULL);
++   fflush(stderr);
++   return tu_AllocateMemory(device, pAllocateInfo, pAllocator, pMem);
++}
++
+ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
+ tu_wsi_proc_addr(VkPhysicalDevice physicalDevice, const char *pName)
+ {
+    VK_FROM_HANDLE(tu_physical_device, pdevice, physicalDevice);
++   if (strcmp(pName, "vkAllocateMemory") == 0) {
++      auto alloc_memory =
++         static_cast<VkResult (VKAPI_PTR *)(VkDevice,
++                                            const VkMemoryAllocateInfo *,
++                                            const VkAllocationCallbacks *,
++                                            VkDeviceMemory *)>(&tu_wsi_AllocateMemory_probe);
++      fprintf(stderr,
++              "tu-wsi-proc-addr: hook vkAllocateMemory -> %p\n",
++              (const void *)alloc_memory);
++      fflush(stderr);
++      return reinterpret_cast<PFN_vkVoidFunction>(alloc_memory);
++   }
+    return vk_instance_get_proc_addr_unchecked(&pdevice->instance->vk, pName);
+ }
+ 
+diff --git a/src/vulkan/wsi/wsi_common.c b/src/vulkan/wsi/wsi_common.c
+index 44367b6b..eb080f1e 100644
+--- a/src/vulkan/wsi/wsi_common.c
++++ b/src/vulkan/wsi/wsi_common.c
+@@ -60,6 +60,16 @@ static const struct debug_control debug_control[] = {
+    { NULL, },
+ };
+ 
++DEBUG_GET_ONCE_BOOL_OPTION(wsi_image_debug, "MESA_WSI_IMAGE_DEBUG", false)
++
++#define WSI_IMAGE_DEBUG(...) \
++   do { \
++      if (debug_get_option_wsi_image_debug()) { \
++         fprintf(stderr, __VA_ARGS__); \
++         fflush(stderr); \
++      } \
++   } while (0)
++
+ static bool present_false(VkPhysicalDevice pdevice, int fd) {
+    return false;
+ }
+@@ -397,19 +407,46 @@ get_blit_type(const struct wsi_device *wsi,
+               const struct wsi_base_image_params *params,
+               VkDevice device)
+ {
++   WSI_IMAGE_DEBUG("mesa-wsi-image: get-blit-type-begin image_type=%d cpu_enum=%d drm_enum=%d dxgi_enum=%d metal_enum=%d\n",
++                   params->image_type,
++                   WSI_IMAGE_TYPE_CPU,
++                   WSI_IMAGE_TYPE_DRM,
++                   WSI_IMAGE_TYPE_DXGI,
++                   WSI_IMAGE_TYPE_METAL);
++   if (params->image_type == WSI_IMAGE_TYPE_DRM) {
++      const struct wsi_drm_image_params *drm_params =
++         container_of(params, const struct wsi_drm_image_params, base);
++      if (drm_params->same_gpu && drm_params->num_modifier_lists > 0) {
++         WSI_IMAGE_DEBUG("mesa-wsi-image: get-blit-type-forced-drm-native same_gpu=%d modifier_lists=%u supports_scanout=%d\n",
++                         drm_params->same_gpu,
++                         drm_params->num_modifier_lists,
++                         wsi->supports_scanout);
++         return WSI_SWAPCHAIN_NO_BLIT;
++      }
++   }
+    switch (params->image_type) {
+    case WSI_IMAGE_TYPE_CPU: {
+       const struct wsi_cpu_image_params *cpu_params =
+          container_of(params, const struct wsi_cpu_image_params, base);
+-      return wsi_cpu_image_needs_buffer_blit(wsi, cpu_params) ?
++      enum wsi_swapchain_blit_type blit =
++         wsi_cpu_image_needs_buffer_blit(wsi, cpu_params) ?
+          WSI_SWAPCHAIN_BUFFER_BLIT : WSI_SWAPCHAIN_NO_BLIT;
++      WSI_IMAGE_DEBUG("mesa-wsi-image: get-blit-type-cpu result=%d\n", blit);
++      return blit;
+    }
+ #ifdef HAVE_LIBDRM
+    case WSI_IMAGE_TYPE_DRM: {
+       const struct wsi_drm_image_params *drm_params =
+          container_of(params, const struct wsi_drm_image_params, base);
+-      return wsi_drm_image_needs_buffer_blit(wsi, drm_params) ?
++      enum wsi_swapchain_blit_type blit =
++         wsi_drm_image_needs_buffer_blit(wsi, drm_params) ?
+          WSI_SWAPCHAIN_BUFFER_BLIT : WSI_SWAPCHAIN_NO_BLIT;
++      WSI_IMAGE_DEBUG("mesa-wsi-image: get-blit-type-drm same_gpu=%d modifier_lists=%u supports_scanout=%d result=%d\n",
++                      drm_params->same_gpu,
++                      drm_params->num_modifier_lists,
++                      wsi->supports_scanout,
++                      blit);
++      return blit;
+    }
+ #endif
+ #ifdef _WIN32
+@@ -452,12 +489,20 @@ configure_image(const struct wsi_swapchain *chain,
+    case WSI_IMAGE_TYPE_CPU: {
+       const struct wsi_cpu_image_params *cpu_params =
+          container_of(params, const struct wsi_cpu_image_params, base);
++      WSI_IMAGE_DEBUG("mesa-wsi-image: configure-image-dispatch case=cpu params=%p alloc_shm=%p\n",
++                      (const void *)params,
++                      (const void *)cpu_params->alloc_shm);
+       return wsi_configure_cpu_image(chain, pCreateInfo, cpu_params, info);
+    }
+ #ifdef HAVE_LIBDRM
+    case WSI_IMAGE_TYPE_DRM: {
+       const struct wsi_drm_image_params *drm_params =
+          container_of(params, const struct wsi_drm_image_params, base);
++      WSI_IMAGE_DEBUG("mesa-wsi-image: configure-image-dispatch case=drm params=%p same_gpu=%d explicit_sync=%d modifier_lists=%u\n",
++                      (const void *)params,
++                      drm_params->same_gpu,
++                      drm_params->explicit_sync,
++                      drm_params->num_modifier_lists);
+       return wsi_drm_configure_image(chain, pCreateInfo, drm_params, info);
+    }
+ #endif
+@@ -494,6 +539,15 @@ wsi_swapchain_init(const struct wsi_device *wsi,
+ {
+    VK_FROM_HANDLE(vk_device, device, _device);
+    VkResult result;
++   enum wsi_image_type stable_image_type = image_params->image_type;
++   const struct wsi_base_image_params *stable_image_params = image_params;
++   void *owned_image_params = NULL;
++#ifdef HAVE_LIBDRM
++#endif
++#ifdef _WIN32
++#endif
++#if defined(VK_USE_PLATFORM_METAL_EXT)
++#endif
+ 
+    memset(chain, 0, sizeof(*chain));
+ 
+@@ -503,7 +557,61 @@ wsi_swapchain_init(const struct wsi_device *wsi,
+    chain->wsi = wsi;
+    chain->device = _device;
+    chain->alloc = *pAllocator;
+-   chain->blit.type = get_blit_type(wsi, image_params, _device);
++   switch (stable_image_type) {
++   case WSI_IMAGE_TYPE_CPU:
++      owned_image_params =
++         vk_alloc(pAllocator, sizeof(struct wsi_cpu_image_params), 8,
++                  VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
++      if (!owned_image_params)
++         return VK_ERROR_OUT_OF_HOST_MEMORY;
++      *(struct wsi_cpu_image_params *)owned_image_params =
++         *container_of(image_params, const struct wsi_cpu_image_params, base);
++      stable_image_params =
++         &((struct wsi_cpu_image_params *)owned_image_params)->base;
++      break;
++#ifdef HAVE_LIBDRM
++   case WSI_IMAGE_TYPE_DRM:
++      owned_image_params =
++         vk_alloc(pAllocator, sizeof(struct wsi_drm_image_params), 8,
++                  VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
++      if (!owned_image_params)
++         return VK_ERROR_OUT_OF_HOST_MEMORY;
++      *(struct wsi_drm_image_params *)owned_image_params =
++         *container_of(image_params, const struct wsi_drm_image_params, base);
++      stable_image_params =
++         &((struct wsi_drm_image_params *)owned_image_params)->base;
++      break;
++#endif
++#ifdef _WIN32
++   case WSI_IMAGE_TYPE_DXGI:
++      owned_image_params =
++         vk_alloc(pAllocator, sizeof(struct wsi_dxgi_image_params), 8,
++                  VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
++      if (!owned_image_params)
++         return VK_ERROR_OUT_OF_HOST_MEMORY;
++      *(struct wsi_dxgi_image_params *)owned_image_params =
++         *container_of(image_params, const struct wsi_dxgi_image_params, base);
++      stable_image_params =
++         &((struct wsi_dxgi_image_params *)owned_image_params)->base;
++      break;
++#endif
++#if defined(VK_USE_PLATFORM_METAL_EXT)
++   case WSI_IMAGE_TYPE_METAL:
++      owned_image_params =
++         vk_alloc(pAllocator, sizeof(struct wsi_metal_image_params), 8,
++                  VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
++      if (!owned_image_params)
++         return VK_ERROR_OUT_OF_HOST_MEMORY;
++      *(struct wsi_metal_image_params *)owned_image_params =
++         *container_of(image_params, const struct wsi_metal_image_params, base);
++      stable_image_params =
++         &((struct wsi_metal_image_params *)owned_image_params)->base;
++      break;
++#endif
++   default:
++      UNREACHABLE("Invalid image type");
++   }
++   chain->blit.type = get_blit_type(wsi, stable_image_params, _device);
+    chain->present_wait_enabled =
+       device->enabled_features.presentWait ||
+       (pCreateInfo->flags & VK_SWAPCHAIN_CREATE_PRESENT_WAIT_2_BIT_KHR);
+@@ -561,10 +669,54 @@ wsi_swapchain_init(const struct wsi_device *wsi,
+       }
+    }
+ 
+-   result = configure_image(chain, pCreateInfo, image_params,
+-                            &chain->image_info);
++   WSI_IMAGE_DEBUG("mesa-wsi-image: swapchain-before-configure stable_params=%p image_type=%d\n",
++                   (const void *)stable_image_params,
++                   stable_image_params->image_type);
++   switch (stable_image_type) {
++   case WSI_IMAGE_TYPE_CPU:
++      result = wsi_configure_cpu_image(
++         chain, pCreateInfo,
++         container_of(stable_image_params, const struct wsi_cpu_image_params, base),
++         &chain->image_info);
++      break;
++#ifdef HAVE_LIBDRM
++   case WSI_IMAGE_TYPE_DRM:
++      result = wsi_drm_configure_image(
++         chain, pCreateInfo,
++         container_of(stable_image_params, const struct wsi_drm_image_params, base),
++         &chain->image_info);
++      break;
++#endif
++#ifdef _WIN32
++   case WSI_IMAGE_TYPE_DXGI:
++      result = wsi_dxgi_configure_image(
++         chain, pCreateInfo,
++         container_of(stable_image_params, const struct wsi_dxgi_image_params, base),
++         &chain->image_info);
++      break;
++#endif
++#if defined(VK_USE_PLATFORM_METAL_EXT)
++   case WSI_IMAGE_TYPE_METAL:
++      result = wsi_metal_configure_image(
++         chain, pCreateInfo,
++         container_of(stable_image_params, const struct wsi_metal_image_params, base),
++         &chain->image_info);
++      break;
++#endif
++   default:
++      UNREACHABLE("Invalid image type");
++   }
++   if (owned_image_params != NULL) {
++      vk_free(pAllocator, owned_image_params);
++      owned_image_params = NULL;
++   }
+    if (result != VK_SUCCESS)
+       goto fail;
++   WSI_IMAGE_DEBUG("mesa-wsi-image: swapchain-configured blit_type=%d image_type=%d explicit_sync=%d modifier_count=%u\n",
++                   chain->blit.type,
++                   chain->image_info.image_type,
++                   chain->image_info.explicit_sync,
++                   chain->image_info.drm_mod_list.drmFormatModifierCount);
+ 
+ #ifdef HAVE_LIBDRM
+    result = wsi_drm_init_swapchain_implicit_sync(chain);
+@@ -593,6 +745,8 @@ wsi_swapchain_init(const struct wsi_device *wsi,
+    return VK_SUCCESS;
+ 
+ fail:
++   if (owned_image_params != NULL)
++      vk_free(pAllocator, owned_image_params);
+    wsi_swapchain_finish(chain);
+    return result;
+ }
+@@ -696,10 +850,12 @@ wsi_swapchain_finish(struct wsi_swapchain *chain)
+ VkResult
+ wsi_configure_image(const struct wsi_swapchain *chain,
+                     const VkSwapchainCreateInfoKHR *pCreateInfo,
++                    enum wsi_image_type image_type,
+                     VkExternalMemoryHandleTypeFlags handle_types,
+                     struct wsi_image_info *info)
+ {
+    memset(info, 0, sizeof(*info));
++   info->image_type = image_type;
+    uint32_t queue_family_count = 1;
+ 
+    if (pCreateInfo->imageSharingMode == VK_SHARING_MODE_CONCURRENT)
+@@ -832,6 +988,8 @@ wsi_create_image(const struct wsi_swapchain *chain,
+    VkResult result;
+ 
+    memset(image, 0, sizeof(*image));
++   WSI_IMAGE_DEBUG("mesa-wsi-image: begin image=%p image_type=%d explicit_sync=%d\n",
++                   (void *)image, info->image_type, info->explicit_sync);
+ 
+ #ifndef _WIN32
+    image->dma_buf_fd = -1;
+@@ -843,20 +1001,30 @@ wsi_create_image(const struct wsi_swapchain *chain,
+                              &chain->alloc, &image->image);
+    if (result != VK_SUCCESS)
+       goto fail;
++   WSI_IMAGE_DEBUG("mesa-wsi-image: create-image-ok image=%p vk_image=%p\n",
++                   (void *)image, (void *)(uintptr_t)image->image);
+ 
+    result = info->create_mem(chain, info, image);
+    if (result != VK_SUCCESS)
+       goto fail;
++   WSI_IMAGE_DEBUG("mesa-wsi-image: create-mem-ok image=%p memory=%p dma_buf_fd=%d num_planes=%d modifier=0x%016llx\n",
++                   (void *)image,
++                   (void *)(uintptr_t)image->memory,
++                   image->dma_buf_fd,
++                   image->num_planes,
++                   (unsigned long long)image->drm_modifier);
+ 
+    result = wsi->BindImageMemory(chain->device, image->image,
+                                  image->memory, 0);
+    if (result != VK_SUCCESS)
+       goto fail;
++   WSI_IMAGE_DEBUG("mesa-wsi-image: bind-memory-ok image=%p\n", (void *)image);
+ 
+    if (info->finish_create) {
+       result = info->finish_create(chain, info, image);
+       if (result != VK_SUCCESS)
+          goto fail;
++      WSI_IMAGE_DEBUG("mesa-wsi-image: finish-create-ok image=%p\n", (void *)image);
+    }
+ 
+    if (info->explicit_sync) {
+@@ -864,12 +1032,14 @@ wsi_create_image(const struct wsi_swapchain *chain,
+       result = wsi_create_image_explicit_sync_drm(chain, image);
+       if (result != VK_SUCCESS)
+          goto fail;
++      WSI_IMAGE_DEBUG("mesa-wsi-image: explicit-sync-ok image=%p\n", (void *)image);
+ #else
+       result = VK_ERROR_FEATURE_NOT_PRESENT;
+       goto fail;
+ #endif
+    }
+ 
++   WSI_IMAGE_DEBUG("mesa-wsi-image: success image=%p\n", (void *)image);
+    return VK_SUCCESS;
+ 
+ fail:
+@@ -2642,18 +2812,25 @@ wsi_select_memory_type(const struct wsi_device *wsi,
+                        uint32_t type_bits)
+ {
+    assert(type_bits != 0);
++   WSI_IMAGE_DEBUG("mesa-wsi-image: select-memory-type-begin req=0x%x deny=0x%x type_bits=0x%x memory_type_count=%u\n",
++                   req_props, deny_props, type_bits, wsi->memory_props.memoryTypeCount);
+ 
+    VkMemoryPropertyFlags common_props = ~0;
+    u_foreach_bit(t, type_bits) {
+       const VkMemoryType type = wsi->memory_props.memoryTypes[t];
++      WSI_IMAGE_DEBUG("mesa-wsi-image: select-memory-type-candidate index=%u props=0x%x heap=%u\n",
++                      t, type.propertyFlags, type.heapIndex);
+ 
+       common_props &= type.propertyFlags;
+ 
+       if (deny_props & type.propertyFlags)
+          continue;
+ 
+-      if (!(req_props & ~type.propertyFlags))
++      if (!(req_props & ~type.propertyFlags)) {
++         WSI_IMAGE_DEBUG("mesa-wsi-image: select-memory-type-picked index=%u props=0x%x\n",
++                         t, type.propertyFlags);
+          return t;
++      }
+    }
+ 
+    if ((deny_props & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+@@ -2672,6 +2849,8 @@ wsi_select_memory_type(const struct wsi_device *wsi,
+       return wsi_select_memory_type(wsi, req_props, deny_props, type_bits);
+    }
+ 
++   WSI_IMAGE_DEBUG("mesa-wsi-image: select-memory-type-unreachable req=0x%x deny=0x%x type_bits=0x%x common=0x%x\n",
++                   req_props, deny_props, type_bits, common_props);
+    UNREACHABLE("No memory type found");
+ }
+ 
+@@ -2802,7 +2981,7 @@ wsi_create_buffer_blit_context(const struct wsi_swapchain *chain,
+    };
+ 
+    result = wsi->AllocateMemory(chain->device, &memory_info,
+-                                &chain->alloc, &image->memory);
++                                NULL, &image->memory);
+    if (result != VK_SUCCESS)
+       return result;
+ 
+@@ -3122,6 +3301,16 @@ wsi_create_cpu_linear_image_mem(const struct wsi_swapchain *chain,
+ {
+    const struct wsi_device *wsi = chain->wsi;
+    VkResult result;
++   WSI_IMAGE_DEBUG("mesa-wsi-image: cpu-linear-image-mem-begin image=%p vk_image=%p image_type=%d blit_type=%d\n",
++                   (void *)image,
++                   (void *)(uintptr_t)image->image,
++                   info->image_type,
++                   chain->blit.type);
++   WSI_IMAGE_DEBUG("mesa-wsi-image: cpu-linear-image-mem-state alloc_shm=%p finish_create=%p create_mem=%p explicit_sync=%d\n",
++                   (const void *)info->alloc_shm,
++                   (const void *)info->finish_create,
++                   (const void *)info->create_mem,
++                   info->explicit_sync);
+ 
+    VkMemoryRequirements reqs;
+    wsi->GetImageMemoryRequirements(chain->device, image->image, &reqs);
+@@ -3142,15 +3331,21 @@ wsi_create_cpu_linear_image_mem(const struct wsi_swapchain *chain,
+    };
+    VkMemoryAllocateInfo memory_info = {
+       .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+-      .pNext = &memory_dedicated_info,
++      .pNext = NULL,
+       .allocationSize = reqs.size,
+       .memoryTypeIndex =
+          wsi_select_host_memory_type(wsi, reqs.memoryTypeBits),
+    };
++   (void) memory_dedicated_info;
+ 
+    void *sw_host_ptr = NULL;
+-   if (info->alloc_shm)
++   if (info->alloc_shm) {
++      WSI_IMAGE_DEBUG("mesa-wsi-image: cpu-linear-image-mem-call-alloc-shm size=%llu\n",
++                      (unsigned long long)layout.size);
+       sw_host_ptr = info->alloc_shm(image, layout.size);
++      WSI_IMAGE_DEBUG("mesa-wsi-image: cpu-linear-image-mem-alloc-shm-ok ptr=%p\n",
++                      sw_host_ptr);
++   }
+ 
+    VkImportMemoryHostPointerInfoEXT host_ptr_info;
+    if (sw_host_ptr != NULL) {
+@@ -3162,6 +3357,14 @@ wsi_create_cpu_linear_image_mem(const struct wsi_swapchain *chain,
+       __vk_append_struct(&memory_info, &host_ptr_info);
+    }
+ 
++   WSI_IMAGE_DEBUG("mesa-wsi-image: cpu-linear-image-mem-before-allocate alloc_fn=%p device=%p alloc=%p memory_out=%p size=%llu type_index=%u pNext=%p\n",
++                   (const void *)wsi->AllocateMemory,
++                   (void *)chain->device,
++                   (const void *)&chain->alloc,
++                   (void *)&image->memory,
++                   (unsigned long long)memory_info.allocationSize,
++                   memory_info.memoryTypeIndex,
++                   memory_info.pNext);
+    result = wsi->AllocateMemory(chain->device, &memory_info,
+                                 &chain->alloc, &image->memory);
+    if (result != VK_SUCCESS)
+@@ -3185,6 +3388,11 @@ wsi_create_cpu_buffer_image_mem(const struct wsi_swapchain *chain,
+                                 const struct wsi_image_info *info,
+                                 struct wsi_image *image)
+ {
++   WSI_IMAGE_DEBUG("mesa-wsi-image: cpu-buffer-image-mem-begin image=%p vk_image=%p image_type=%d blit_type=%d\n",
++                   (void *)image,
++                   (void *)(uintptr_t)image->image,
++                   info->image_type,
++                   chain->blit.type);
+    VkResult result;
+ 
+    result = wsi_create_buffer_blit_context(chain, info, image, 0);
+@@ -3218,6 +3426,23 @@ wsi_configure_cpu_image(const struct wsi_swapchain *chain,
+                         const struct wsi_cpu_image_params *params,
+                         struct wsi_image_info *info)
+ {
++   WSI_IMAGE_DEBUG("mesa-wsi-image: configure-cpu-image-begin params=%p base.image_type=%d alloc_shm=%p blit_type=%d\n",
++                   (const void *)params,
++                   params->base.image_type,
++                   (const void *)params->alloc_shm,
++                   chain->blit.type);
++#ifdef HAVE_LIBDRM
++   if (params->base.image_type == WSI_IMAGE_TYPE_DRM) {
++      const struct wsi_drm_image_params *drm_params =
++         container_of(&params->base, const struct wsi_drm_image_params, base);
++      WSI_IMAGE_DEBUG("mesa-wsi-image: configure-cpu-image-reroute-drm params=%p same_gpu=%d explicit_sync=%d modifier_lists=%u\n",
++                      (const void *)drm_params,
++                      drm_params->same_gpu,
++                      drm_params->explicit_sync,
++                      drm_params->num_modifier_lists);
++      return wsi_drm_configure_image(chain, pCreateInfo, drm_params, info);
++   }
++#endif
+    assert(params->base.image_type == WSI_IMAGE_TYPE_CPU);
+    assert(chain->blit.type == WSI_SWAPCHAIN_NO_BLIT ||
+           chain->blit.type == WSI_SWAPCHAIN_BUFFER_BLIT);
+@@ -3227,6 +3452,7 @@ wsi_configure_cpu_image(const struct wsi_swapchain *chain,
+       handle_types = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+ 
+    VkResult result = wsi_configure_image(chain, pCreateInfo,
++                                         params->base.image_type,
+                                          handle_types, info);
+    if (result != VK_SUCCESS)
+       return result;
+diff --git a/src/vulkan/wsi/wsi_common_drm.c b/src/vulkan/wsi/wsi_common_drm.c
+index 5c862bb0..1ec8a5ee 100644
+--- a/src/vulkan/wsi/wsi_common_drm.c
++++ b/src/vulkan/wsi/wsi_common_drm.c
+@@ -27,6 +27,7 @@
+ #include "util/log.h"
+ #include "util/os_file.h"
+ #include "util/log.h"
++#include "util/u_debug.h"
+ #include "util/u_atomic.h"
+ #include "util/xmlconfig.h"
+ #include "vk_device.h"
+@@ -44,6 +45,14 @@
+ #include <stdio.h>
+ #include <xf86drm.h>
+ 
++DEBUG_GET_ONCE_BOOL_OPTION(wsi_image_debug, "MESA_WSI_IMAGE_DEBUG", false)
++
++#define WSI_IMAGE_DEBUG(...) \
++   do { \
++      if (debug_get_option_wsi_image_debug()) \
++         fprintf(stderr, __VA_ARGS__); \
++   } while (0)
++
+ static VkResult
+ wsi_dma_buf_export_sync_file(int dma_buf_fd, int *sync_file_fd)
+ {
+@@ -586,7 +595,9 @@ wsi_configure_native_image(const struct wsi_swapchain *chain,
+    VkExternalMemoryHandleTypeFlags handle_type =
+       VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+ 
+-   VkResult result = wsi_configure_image(chain, pCreateInfo, handle_type, info);
++   VkResult result = wsi_configure_image(chain, pCreateInfo,
++                                         params->base.image_type,
++                                         handle_type, info);
+    if (result != VK_SUCCESS)
+       return result;
+ 
+@@ -747,8 +758,16 @@ wsi_create_native_image_mem(const struct wsi_swapchain *chain,
+    const struct wsi_device *wsi = chain->wsi;
+    VkResult result;
+ 
++   WSI_IMAGE_DEBUG("mesa-wsi-image: create-native-image-mem-begin image=%p vk_image=%p\n",
++                   (void *)image, (void *)(uintptr_t)image->image);
+    VkMemoryRequirements reqs;
++   WSI_IMAGE_DEBUG("mesa-wsi-image: get-image-memory-reqs-begin vk_image=%p\n",
++                   (void *)(uintptr_t)image->image);
+    wsi->GetImageMemoryRequirements(chain->device, image->image, &reqs);
++   WSI_IMAGE_DEBUG("mesa-wsi-image: get-image-memory-reqs size=%llu alignment=%llu bits=0x%x\n",
++                   (unsigned long long)reqs.size,
++                   (unsigned long long)reqs.alignment,
++                   reqs.memoryTypeBits);
+ 
+    const struct wsi_memory_allocate_info memory_wsi_info = {
+       .sType = VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA,
+@@ -781,10 +800,17 @@ wsi_create_native_image_mem(const struct wsi_swapchain *chain,
+                                 &chain->alloc, &image->memory);
+    if (result != VK_SUCCESS)
+       return result;
++   WSI_IMAGE_DEBUG("mesa-wsi-image: allocate-memory-ok memory=%p size=%llu type_index=%u implicit_sync=%d\n",
++                   (void *)(uintptr_t)image->memory,
++                   (unsigned long long)memory_info.allocationSize,
++                   memory_info.memoryTypeIndex,
++                   memory_wsi_info.implicit_sync);
+ 
+    result = wsi_init_image_dmabuf_fd(chain, image, false);
+    if (result != VK_SUCCESS)
+       return result;
++   WSI_IMAGE_DEBUG("mesa-wsi-image: get-memory-fd-ok memory=%p dma_buf_fd=%d\n",
++                   (void *)(uintptr_t)image->memory, image->dma_buf_fd);
+ 
+    if (info->drm_mod_list.drmFormatModifierCount > 0) {
+       VkImageDrmFormatModifierPropertiesEXT image_mod_props = {
+@@ -795,6 +821,9 @@ wsi_create_native_image_mem(const struct wsi_swapchain *chain,
+                                                            &image_mod_props);
+       if (result != VK_SUCCESS)
+          return result;
++      WSI_IMAGE_DEBUG("mesa-wsi-image: modifier-props-ok memory=%p modifier=0x%016llx\n",
++                      (void *)(uintptr_t)image->memory,
++                      (unsigned long long)image_mod_props.drmFormatModifier);
+ 
+       image->drm_modifier = image_mod_props.drmFormatModifier;
+       assert(image->drm_modifier != DRM_FORMAT_MOD_INVALID);
+@@ -815,6 +844,11 @@ wsi_create_native_image_mem(const struct wsi_swapchain *chain,
+          image->sizes[p] = image_layout.size;
+          image->row_pitches[p] = image_layout.rowPitch;
+          image->offsets[p] = image_layout.offset;
++         WSI_IMAGE_DEBUG("mesa-wsi-image: plane-layout plane=%u size=%llu offset=%llu row_pitch=%llu\n",
++                         p,
++                         (unsigned long long)image_layout.size,
++                         (unsigned long long)image_layout.offset,
++                         (unsigned long long)image_layout.rowPitch);
+       }
+    } else {
+       const VkImageSubresource image_subresource = {
+@@ -831,6 +865,9 @@ wsi_create_native_image_mem(const struct wsi_swapchain *chain,
+       image->sizes[0] = reqs.size;
+       image->row_pitches[0] = image_layout.rowPitch;
+       image->offsets[0] = 0;
++      WSI_IMAGE_DEBUG("mesa-wsi-image: linear-layout size=%llu row_pitch=%llu\n",
++                      (unsigned long long)image->sizes[0],
++                      (unsigned long long)image->row_pitches[0]);
+    }
+ 
+    return VK_SUCCESS;
+@@ -871,6 +908,7 @@ wsi_configure_prime_image(UNUSED const struct wsi_swapchain *chain,
+                            prime_select_buffer_memory_type;
+ 
+    VkResult result = wsi_configure_image(chain, pCreateInfo,
++                                         params->base.image_type,
+                                          0 /* handle_types */, info);
+    if (result != VK_SUCCESS)
+       return result;
+@@ -893,15 +931,26 @@ bool
+ wsi_drm_image_needs_buffer_blit(const struct wsi_device *wsi,
+                                 const struct wsi_drm_image_params *params)
+ {
+-   if (WSI_DEBUG & WSI_DEBUG_BUFFER)
++   if (WSI_DEBUG & WSI_DEBUG_BUFFER) {
++      WSI_IMAGE_DEBUG("mesa-wsi-image: drm-needs-buffer-blit reason=debug-buffer same_gpu=%d modifier_lists=%u supports_scanout=%d\n",
++                      params->same_gpu, params->num_modifier_lists, wsi->supports_scanout);
+       return true;
++   }
+ 
+-   if (!params->same_gpu)
++   if (!params->same_gpu) {
++      WSI_IMAGE_DEBUG("mesa-wsi-image: drm-needs-buffer-blit reason=not-same-gpu same_gpu=%d modifier_lists=%u supports_scanout=%d\n",
++                      params->same_gpu, params->num_modifier_lists, wsi->supports_scanout);
+       return true;
++   }
+ 
+-   if (params->num_modifier_lists > 0 || wsi->supports_scanout)
++   if (params->num_modifier_lists > 0 || wsi->supports_scanout) {
++      WSI_IMAGE_DEBUG("mesa-wsi-image: drm-needs-buffer-blit reason=native-ok same_gpu=%d modifier_lists=%u supports_scanout=%d\n",
++                      params->same_gpu, params->num_modifier_lists, wsi->supports_scanout);
+       return false;
++   }
+ 
++   WSI_IMAGE_DEBUG("mesa-wsi-image: drm-needs-buffer-blit reason=no-modifiers-or-scanout same_gpu=%d modifier_lists=%u supports_scanout=%d\n",
++                   params->same_gpu, params->num_modifier_lists, wsi->supports_scanout);
+    return true;
+ }
+ 
+@@ -911,6 +960,13 @@ wsi_drm_configure_image(const struct wsi_swapchain *chain,
+                         const struct wsi_drm_image_params *params,
+                         struct wsi_image_info *info)
+ {
++   WSI_IMAGE_DEBUG("mesa-wsi-image: configure-drm-image-begin params=%p base.image_type=%d same_gpu=%d explicit_sync=%d modifier_lists=%u blit_type=%d\n",
++                   (const void *)params,
++                   params->base.image_type,
++                   params->same_gpu,
++                   params->explicit_sync,
++                   params->num_modifier_lists,
++                   chain->blit.type);
+    assert(params->base.image_type == WSI_IMAGE_TYPE_DRM);
+ 
+    if (chain->blit.type == WSI_SWAPCHAIN_BUFFER_BLIT) {
+diff --git a/src/vulkan/wsi/wsi_common_metal.c b/src/vulkan/wsi/wsi_common_metal.c
+index 3bb23c0d..1835235f 100644
+--- a/src/vulkan/wsi/wsi_common_metal.c
++++ b/src/vulkan/wsi/wsi_common_metal.c
+@@ -846,7 +846,9 @@ wsi_metal_configure_image(const struct wsi_swapchain *chain,
+                           struct wsi_image_info *info)
+ {
+    VkResult result =
+-      wsi_configure_image(chain, pCreateInfo, 0, info);
++      wsi_configure_image(chain, pCreateInfo,
++                          params->image_type,
++                          0, info);
+    if (result != VK_SUCCESS)
+       return result;
+ 
+diff --git a/src/vulkan/wsi/wsi_common_private.h b/src/vulkan/wsi/wsi_common_private.h
+index 0b90eacc..f02c8c92 100644
+--- a/src/vulkan/wsi/wsi_common_private.h
++++ b/src/vulkan/wsi/wsi_common_private.h
+@@ -425,6 +425,7 @@ wsi_configure_image_blit_image(UNUSED const struct wsi_swapchain *chain,
+ VkResult
+ wsi_configure_image(const struct wsi_swapchain *chain,
+                     const VkSwapchainCreateInfoKHR *pCreateInfo,
++                    enum wsi_image_type image_type,
+                     VkExternalMemoryHandleTypeFlags handle_types,
+                     struct wsi_image_info *info);
+ void
+diff --git a/src/vulkan/wsi/wsi_common_wayland.c b/src/vulkan/wsi/wsi_common_wayland.c
+index fd0b398d..ca5eb647 100644
+--- a/src/vulkan/wsi/wsi_common_wayland.c
++++ b/src/vulkan/wsi/wsi_common_wayland.c
+@@ -24,6 +24,7 @@
+ #include <wayland-client.h>
+ 
+ #include <assert.h>
++#include <fcntl.h>
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <unistd.h>
+@@ -70,6 +71,24 @@
+ 
+ struct wsi_wayland;
+ 
++static bool
++wsi_wl_dmabuf_debug_enabled(void)
++{
++   static int cached = -1;
++   if (cached < 0) {
++      const char *env = getenv("MESA_WSI_WL_DMABUF_DEBUG");
++      cached = env != NULL && env[0] != '\0' && strcmp(env, "0") != 0;
++   }
++
++   return cached;
++}
++
++#define WSI_WL_DMABUF_DEBUG(...) \
++   do { \
++      if (wsi_wl_dmabuf_debug_enabled()) \
++         fprintf(stderr, __VA_ARGS__); \
++   } while (0)
++
+ struct wsi_wl_format {
+    VkFormat vk_format;
+    uint32_t flags;
+@@ -3501,6 +3520,17 @@ wsi_wl_image_init(struct wsi_wl_swapchain *chain,
+          goto fail_image;
+ 
+       for (int i = 0; i < image->base.num_planes; i++) {
++         errno = 0;
++         int fd_getfd = fcntl(image->base.dma_buf_fd, F_GETFD);
++         int fd_errno = errno;
++         WSI_WL_DMABUF_DEBUG("mesa-wsi-wl-dmabuf: plane=%d/%d fd=%d valid=%d fd_getfd=%d errno=%d offset=%u stride=%u modifier=0x%016llx\n",
++                             i + 1, image->base.num_planes,
++                             image->base.dma_buf_fd,
++                             fd_getfd >= 0 || fd_errno != EBADF,
++                             fd_getfd, fd_errno,
++                             image->base.offsets[i],
++                             image->base.row_pitches[i],
++                             (unsigned long long)image->base.drm_modifier);
+          zwp_linux_buffer_params_v1_add(params,
+                                         image->base.dma_buf_fd,
+                                         i,
+@@ -3677,6 +3707,13 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+    VkResult result;
+ 
+    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR);
++   WSI_WL_DMABUF_DEBUG("mesa-wsi-wl-swapchain: begin format=%u extent=%ux%u min_images=%u present_mode=%u old_swapchain=%p\n",
++                       pCreateInfo->imageFormat,
++                       pCreateInfo->imageExtent.width,
++                       pCreateInfo->imageExtent.height,
++                       pCreateInfo->minImageCount,
++                       pCreateInfo->presentMode,
++                       (void *)(uintptr_t)pCreateInfo->oldSwapchain);
+ 
+    /* From spec 1.3.278:
+     * Upon calling vkCreateSwapchainKHR with an oldSwapchain that is not VK_NULL_HANDLE,
+@@ -3731,6 +3768,13 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+    result = wsi_wl_surface_init(wsi_wl_surface, wsi_device, pAllocator);
+    if (result != VK_SUCCESS)
+       goto fail;
++   WSI_WL_DMABUF_DEBUG("mesa-wsi-wl-swapchain: surface-init-ok same_gpu=%d dmabuf=%d feedback=%d explicit_sync_possible=%d supports_modifiers=%d sw=%d\n",
++                       wsi_wl_surface->display->same_gpu,
++                       wsi_wl_surface->display->wl_dmabuf != NULL,
++                       wsi_wl_surface->wl_dmabuf_feedback != NULL,
++                       wsi_wl_surface->display->wl_syncobj != NULL,
++                       wsi_device->supports_modifiers,
++                       wsi_device->sw);
+ 
+    uint32_t num_images = pCreateInfo->minImageCount;
+ 
+@@ -3825,10 +3869,28 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+       image_params = &drm_image_params.base;
+    }
+ 
++   WSI_WL_DMABUF_DEBUG("mesa-wsi-wl-swapchain: init-call image_type=%d same_gpu=%d explicit_sync=%d buffer_type=%d modifier_lists=%u modifiers=%u\n",
++                       image_params->image_type,
++                       !wsi_device->sw ? drm_image_params.same_gpu : -1,
++                       !wsi_device->sw ? drm_image_params.explicit_sync : -1,
++                       buffer_type,
++                       !wsi_device->sw ? drm_image_params.num_modifier_lists : 0,
++                       num_drm_modifiers);
+    result = wsi_swapchain_init(wsi_device, &chain->base, device,
+                                pCreateInfo, image_params, pAllocator);
+    if (result != VK_SUCCESS)
+       goto fail;
++   WSI_WL_DMABUF_DEBUG("mesa-wsi-wl-swapchain: init-ok image_type=%d same_gpu=%d explicit_sync=%d buffer_type=%d modifier_lists=%u modifiers=%u\n",
++                       image_params->image_type,
++                       !wsi_device->sw ? drm_image_params.same_gpu : -1,
++                       !wsi_device->sw ? drm_image_params.explicit_sync : -1,
++                       buffer_type,
++                       !wsi_device->sw ? drm_image_params.num_modifier_lists : 0,
++                       num_drm_modifiers);
++   WSI_WL_DMABUF_DEBUG("mesa-wsi-wl-swapchain: chain-image-info image_type=%d explicit_sync=%d modifier_count=%u\n",
++                       chain->base.image_info.image_type,
++                       chain->base.image_info.explicit_sync,
++                       chain->base.image_info.drm_mod_list.drmFormatModifierCount);
+ 
+    bool alpha = pCreateInfo->compositeAlpha ==
+                       VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
+@@ -3925,10 +3987,14 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+    }
+ 
+    for (uint32_t i = 0; i < chain->base.image_count; i++) {
++      WSI_WL_DMABUF_DEBUG("mesa-wsi-wl-swapchain: image-init-begin index=%u/%u\n",
++                          i + 1, chain->base.image_count);
+       result = wsi_wl_image_init(chain, &chain->images[i],
+                                  pCreateInfo, pAllocator);
+       if (result != VK_SUCCESS)
+          goto fail_free_wl_images;
++      WSI_WL_DMABUF_DEBUG("mesa-wsi-wl-swapchain: image-init-ok index=%u/%u\n",
++                          i + 1, chain->base.image_count);
+       chain->images[i].busy = false;
+    }
+ 
+@@ -3936,6 +4002,8 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+    chain->present_ids.refresh_nsec = 0;
+ 
+    *swapchain_out = &chain->base;
++   WSI_WL_DMABUF_DEBUG("mesa-wsi-wl-swapchain: success image_count=%u\n",
++                       chain->base.image_count);
+ 
+    return VK_SUCCESS;
+ 
