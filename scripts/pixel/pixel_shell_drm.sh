@@ -49,6 +49,7 @@ parse_args() {
 parse_args "$@"
 
 serial="$(pixel_resolve_serial)"
+pixel_require_host_lock "$serial" "$0" "$@"
 camera_endpoint=""
 camera_start_command=""
 camera_cleanup_command=""

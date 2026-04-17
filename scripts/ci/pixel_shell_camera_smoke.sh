@@ -16,6 +16,7 @@ broker_log_path="$run_dir/shadow-camera-provider-host-serve.log"
 session_output_path=""
 logcat_path=""
 launcher_args=(--app camera)
+render_latency_budget_ms="${PIXEL_SHELL_CAMERA_RENDER_LATENCY_BUDGET_MS:-12000}"
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -98,22 +99,38 @@ LOGCAT_PATH="$logcat_path" \
 BROKER_LOG_PATH="$broker_log_path" \
 SERIAL="$serial" \
 RUN_LOG="$run_log" \
+RENDER_LATENCY_BUDGET_MS="$render_latency_budget_ms" \
 python3 - <<'PY'
 import json
 import os
+import re
 
 session_output = open(os.environ["SESSION_OUTPUT_PATH"], "r", encoding="utf-8").read()
 logcat = open(os.environ["LOGCAT_PATH"], "r", encoding="utf-8").read()
 broker_log = open(os.environ["BROKER_LOG_PATH"], "r", encoding="utf-8").read()
+render_latency_budget_ms = int(os.environ["RENDER_LATENCY_BUDGET_MS"])
+session_lines = session_output.splitlines()
 
 def expect(condition: bool, message: str) -> None:
     if not condition:
         raise SystemExit(f"pixel-shell-camera-smoke: {message}")
 
-expect(
-    "runtime-event-dispatched source=auto type=click target=capture" in session_output,
-    "missing auto capture click dispatch marker",
-)
+def line_index_after(start: int, needle: str) -> int | None:
+    for index, line in enumerate(session_lines[start:], start):
+        if needle in line:
+            return index
+    return None
+
+def runtime_offset_ms_at(line_index: int) -> int | None:
+    if line_index is None:
+        return None
+    match = re.search(r"\+\s*(\d+)ms\]", session_lines[line_index])
+    if not match:
+        return None
+    return int(match.group(1))
+
+click_line_index = line_index_after(0, "runtime-event-dispatched source=auto type=click target=capture")
+expect(click_line_index is not None, "missing auto capture click dispatch marker")
 expect(
     "[shadow-guest-compositor] surface-app-tracked app=camera" in session_output,
     "camera app was not tracked by the guest compositor",
@@ -126,12 +143,49 @@ expect(
     "GCH_CameraDeviceSession: Create: Created a device session for camera 0" in logcat,
     "missing live camera device-session logcat marker",
 )
+expect(
+    "run-app-error:" not in session_output,
+    "runtime app exited with an error before smoke completion",
+)
+
+capture_complete_line_index = line_index_after(
+    click_line_index + 1,
+    "[shadow-runtime-camera] camera-capture-complete",
+)
+expect(capture_complete_line_index is not None, "missing camera capture completion marker")
+expect(
+    "isMock=false" in session_lines[capture_complete_line_index],
+    "camera capture completion marker reported a mock frame",
+)
+
+dirty_render_line_index = line_index_after(
+    capture_complete_line_index + 1,
+    "runtime-dirty-render-applied",
+)
+
+click_offset_ms = runtime_offset_ms_at(click_line_index)
+dirty_render_offset_ms = runtime_offset_ms_at(dirty_render_line_index)
+expect(click_offset_ms is not None, "missing runtime auto click timing marker")
+expect(
+    dirty_render_offset_ms is not None,
+    "missing runtime dirty render marker after live capture completion",
+)
+expect(
+    dirty_render_offset_ms >= click_offset_ms,
+    "dirty render marker appeared before the capture click marker",
+)
+expect(
+    dirty_render_offset_ms - click_offset_ms <= render_latency_budget_ms,
+    f"capture result did not render within {render_latency_budget_ms}ms (delta={dirty_render_offset_ms - click_offset_ms}ms)",
+)
 
 print(
     json.dumps(
         {
             "brokerLog": os.environ["BROKER_LOG_PATH"],
             "log": os.environ["RUN_LOG"],
+            "renderLatencyBudgetMs": render_latency_budget_ms,
+            "renderLatencyDeltaMs": dirty_render_offset_ms - click_offset_ms,
             "result": "pixel-shell-camera-ok",
             "serial": os.environ["SERIAL"],
             "sessionOutput": os.environ["SESSION_OUTPUT_PATH"],

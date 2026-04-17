@@ -289,6 +289,11 @@ async fn op_runtime_camera_capture_still(
         .map_err(JsErrorBox::generic)
 }
 
+#[op2(fast)]
+fn op_runtime_camera_debug_log(#[string] message: String) {
+    eprintln!("[shadow-runtime-camera] {message}");
+}
+
 fn label_for_camera_id(camera_id: &str) -> String {
     if camera_id.ends_with("/0") {
         return String::from("Rear Camera");
@@ -444,7 +449,8 @@ extension!(
     runtime_camera_host_extension,
     ops = [
         op_runtime_camera_list_cameras,
-        op_runtime_camera_capture_still
+        op_runtime_camera_capture_still,
+        op_runtime_camera_debug_log
     ],
     esm_entry_point = "ext:runtime_camera_host_extension/bootstrap.js",
     esm = [dir "js", "bootstrap.js"],

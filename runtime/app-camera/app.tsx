@@ -7,7 +7,7 @@ import {
   invalidateRuntimeApp,
   onMount,
 } from "@shadow/app-runtime-solid";
-import { captureStill, listCameras } from "@shadow/app-runtime-os";
+import { captureStill, listCameras, logCamera } from "@shadow/app-runtime-os";
 
 type CameraDevice = {
   id: string;
@@ -245,6 +245,14 @@ function timestampLabel(capturedAtMs: number) {
   return date.toISOString().replace("T", " ").replace("Z", " UTC");
 }
 
+function logCameraMarker(message: string) {
+  try {
+    logCamera(message);
+  } catch {
+    // Keep app behavior independent from debug logging.
+  }
+}
+
 export function renderApp() {
   const [cameras, setCameras] = createSignal<CameraDevice[]>([]);
   const [selectedCameraId, setSelectedCameraId] = createSignal<string | null>(null);
@@ -302,10 +310,14 @@ export function renderApp() {
       kind: "capturing",
       message: "Taking photo through Shadow OS camera service.",
     });
+    logCameraMarker(`camera-capture-start cameraId=${cameraId}`);
 
     try {
       const receipt = await captureStill({ cameraId });
       setLastCapture(receipt);
+      logCameraMarker(
+        `camera-capture-complete cameraId=${receipt.cameraId} isMock=${receipt.isMock} bytes=${receipt.bytes}`,
+      );
       setStatusState({
         kind: "ready",
         message: receipt.isMock
@@ -313,9 +325,13 @@ export function renderApp() {
           : "Photo captured from the live Pixel camera.",
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logCameraMarker(
+        `camera-capture-error cameraId=${cameraId} message=${JSON.stringify(message)}`,
+      );
       setStatusState({
         kind: "error",
-        message: error instanceof Error ? error.message : String(error),
+        message,
       });
     }
   }

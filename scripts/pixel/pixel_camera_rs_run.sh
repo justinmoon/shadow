@@ -8,6 +8,7 @@ ensure_bootimg_shell "$@"
 
 pixel_prepare_dirs
 serial="$(pixel_resolve_serial)"
+pixel_require_host_lock "$serial" "$0" "$@"
 repo="$(repo_root)"
 run_root="$(pixel_dir)/camera-rs"
 run_dir="$(pixel_prepare_named_run_dir "$run_root")"

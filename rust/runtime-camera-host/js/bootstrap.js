@@ -10,6 +10,9 @@ function installShadowRuntimeCamera() {
     async captureStill(request = {}) {
       return await core.ops.op_runtime_camera_capture_still(request);
     },
+    debugLog(message) {
+      core.ops.op_runtime_camera_debug_log(String(message));
+    },
   };
 
   globalThis.Shadow = {

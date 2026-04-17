@@ -26,6 +26,10 @@ export function captureStill(request = {}) {
   return getCameraApi().captureStill(request);
 }
 
+export function logCamera(message) {
+  return getCameraApi().debugLog(message);
+}
+
 export function createPlayer(request = {}) {
   return getAudioApi().createPlayer(request);
 }

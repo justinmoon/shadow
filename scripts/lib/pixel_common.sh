@@ -71,6 +71,43 @@ pixel_resolve_serial() {
   esac
 }
 
+pixel_serial_lock_key() {
+  local serial
+  serial="${1:?pixel_serial_lock_key requires a serial}"
+
+  printf '%s\n' "$serial" | tr -c 'A-Za-z0-9._-' '_'
+}
+
+pixel_serial_lock_path() {
+  local serial lock_dir lock_key
+  serial="${1:?pixel_serial_lock_path requires a serial}"
+  lock_dir="$(pixel_dir)/locks"
+  lock_key="$(pixel_serial_lock_key "$serial")"
+
+  mkdir -p "$lock_dir"
+  printf '%s/%s.lock\n' "$lock_dir" "$lock_key"
+}
+
+pixel_require_host_lock() {
+  local serial script_path script_name lock_path
+  serial="${1:?pixel_require_host_lock requires a serial}"
+  script_path="${2:?pixel_require_host_lock requires a script path}"
+  shift 2
+
+  if [[ "${PIXEL_HOST_LOCK_HELD_SERIAL:-}" == "$serial" ]]; then
+    return 0
+  fi
+
+  lock_path="$(pixel_serial_lock_path "$serial")"
+  script_name="$(basename "$script_path")"
+  if ! lockf -st 0 "$lock_path" true 2>/dev/null; then
+    printf '%s: waiting for host lock on Pixel %s\n' "$script_name" "$serial" >&2
+  fi
+
+  exec env PIXEL_HOST_LOCK_HELD_SERIAL="$serial" \
+    lockf "$lock_path" "$script_path" "$@"
+}
+
 pixel_resolve_sideload_serial() {
   local requested
   requested="${PIXEL_SERIAL:-}"
