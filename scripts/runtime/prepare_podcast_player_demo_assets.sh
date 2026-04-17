@@ -7,10 +7,20 @@ DEFAULT_EPISODE_IDS="00"
 EPISODE_IDS="${SHADOW_PODCAST_PLAYER_EPISODE_IDS:-$DEFAULT_EPISODE_IDS}"
 DEFAULT_ASSET_DIR="$REPO_ROOT/build/runtime/app-podcast-player-assets"
 FIXTURE_ASSET_DIR="$REPO_ROOT/runtime/app-podcast-player/fixture"
+PLAYBACK_SOURCE="${SHADOW_PODCAST_PLAYER_PLAYBACK_SOURCE:-file}"
 offline_fixture=0
+
+case "$PLAYBACK_SOURCE" in
+  file|url) ;;
+  *)
+    echo "prepare_podcast_player_demo_assets: unsupported playback source '$PLAYBACK_SOURCE'" >&2
+    exit 1
+    ;;
+esac
 
 if [[ -z "${SHADOW_PODCAST_PLAYER_ASSET_DIR+x}" \
   && -z "${SHADOW_PODCAST_PLAYER_FEED_URL+x}" \
+  && "$PLAYBACK_SOURCE" != "url" \
   && "$EPISODE_IDS" == "$DEFAULT_EPISODE_IDS" \
   && -f "$FIXTURE_ASSET_DIR/podcast-feed-cache.json" ]]; then
   ASSET_DIR="$FIXTURE_ASSET_DIR"
@@ -28,12 +38,14 @@ episode_json="$(
   PODCAST_FEED_URL="$PODCAST_FEED_URL" \
   EPISODE_IDS="$EPISODE_IDS" \
   PODCAST_OFFLINE_FIXTURE="$offline_fixture" \
+  PODCAST_PLAYBACK_SOURCE="$PLAYBACK_SOURCE" \
   PODCAST_METADATA_PATH="$PODCAST_METADATA_PATH" \
   python3 - <<'PY'
 import json
 import os
 import re
 import urllib.request
+from urllib.parse import urlsplit
 import xml.etree.ElementTree as ET
 from tempfile import NamedTemporaryFile
 
@@ -71,6 +83,14 @@ def load_cached_metadata():
     with open(metadata_path, "r", encoding="utf-8") as handle:
         data = json.load(handle)
     if metadata_satisfies(data):
+        data["episodes"] = sorted(
+            [
+                episode
+                for episode in data.get("episodes", [])
+                if episode.get("id") in episode_ids
+            ],
+            key=lambda episode: episode["id"],
+        )
         return data
     return None
 
@@ -98,7 +118,7 @@ def fetch_metadata():
         if enclosure is None or not enclosure.get("url"):
             raise SystemExit(f"prepare_podcast_player_demo_assets: missing enclosure for {title}")
         source_url = enclosure.get("url")
-        source_ext = os.path.splitext(source_url)[1].lower()
+        source_ext = os.path.splitext(urlsplit(source_url).path)[1].lower()
         output_basename = f"{episode_id}-{slugify(match.group('rest'))}.mp3"
         duration_raw = item.findtext("{http://www.itunes.com/dtds/podcast-1.0.dtd}duration") or ""
         episodes.append({
@@ -144,6 +164,7 @@ if episode_data is None:
     os.replace(tmp_path, metadata_path)
     os.chmod(metadata_path, 0o644)
 
+episode_data["playbackSource"] = os.environ["PODCAST_PLAYBACK_SOURCE"]
 print(json.dumps(episode_data, indent=2))
 PY
 )"
@@ -154,35 +175,36 @@ cleanup() {
 }
 trap cleanup EXIT
 
-while IFS=$'\t' read -r episode_id source_url source_ext output_basename; do
-  output_path="$PODCAST_DIR/$output_basename"
-  if [[ -f "$output_path" ]]; then
-    continue
-  fi
-  if [[ "$offline_fixture" == "1" ]]; then
-    echo "prepare_podcast_player_demo_assets: checked-in podcast fixture missing $output_basename" >&2
-    exit 1
-  fi
+if [[ "$PLAYBACK_SOURCE" == "file" ]]; then
+  while IFS=$'\t' read -r episode_id source_url source_ext output_basename; do
+    output_path="$PODCAST_DIR/$output_basename"
+    if [[ -f "$output_path" ]]; then
+      continue
+    fi
+    if [[ "$offline_fixture" == "1" ]]; then
+      echo "prepare_podcast_player_demo_assets: checked-in podcast fixture missing $output_basename" >&2
+      exit 1
+    fi
 
-  source_path="$tmp_dir/$episode_id${source_ext:-}"
-  output_tmp="$tmp_dir/$output_basename"
-  curl -fsSL "$source_url" -o "$source_path"
-  if [[ "$source_ext" == ".mp3" ]]; then
-    mv "$source_path" "$output_tmp"
+    source_path="$tmp_dir/$episode_id${source_ext:-}"
+    output_tmp="$tmp_dir/$output_basename"
+    curl -fsSL "$source_url" -o "$source_path"
+    if [[ "$source_ext" == ".mp3" ]]; then
+      mv "$source_path" "$output_tmp"
+      chmod 0644 "$output_tmp"
+      mv "$output_tmp" "$output_path"
+      continue
+    fi
+
+    nix shell --accept-flake-config --inputs-from "$REPO_ROOT" nixpkgs#ffmpeg -c \
+      ffmpeg -hide_banner -loglevel error -y \
+      -i "$source_path" \
+      -vn -c:a libmp3lame -b:a 128k \
+      "$output_tmp"
     chmod 0644 "$output_tmp"
     mv "$output_tmp" "$output_path"
-    continue
-  fi
-
-  nix shell --accept-flake-config --inputs-from "$REPO_ROOT" nixpkgs#ffmpeg -c \
-    ffmpeg -hide_banner -loglevel error -y \
-    -i "$source_path" \
-    -vn -c:a libmp3lame -b:a 128k \
-    "$output_tmp"
-  chmod 0644 "$output_tmp"
-  mv "$output_tmp" "$output_path"
-done < <(
-  EPISODE_JSON="$episode_json" python3 - <<'PY'
+  done < <(
+    EPISODE_JSON="$episode_json" python3 - <<'PY'
 import json
 import os
 
@@ -197,13 +219,15 @@ for episode in data["episodes"]:
         ])
     )
 PY
-)
+  )
+fi
 
-EPISODE_JSON="$episode_json" ASSET_DIR="$ASSET_DIR" python3 - <<'PY'
+EPISODE_JSON="$episode_json" ASSET_DIR="$ASSET_DIR" PODCAST_PLAYBACK_SOURCE="$PLAYBACK_SOURCE" python3 - <<'PY'
 import json
 import os
 
 data = json.loads(os.environ["EPISODE_JSON"])
 data["assetDir"] = os.path.abspath(os.environ["ASSET_DIR"])
+data["playbackSource"] = os.environ["PODCAST_PLAYBACK_SOURCE"]
 print(json.dumps(data, indent=2))
 PY

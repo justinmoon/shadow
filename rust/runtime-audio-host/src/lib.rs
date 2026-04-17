@@ -93,12 +93,13 @@ impl AudioHostService {
 
     fn release(&mut self, request: PlayerHandleRequest) -> Result<AudioPlayerStatus, JsErrorBox> {
         let backend = self.backend.clone();
-        let mut player = self
-            .players
-            .remove(&request.id)
-            .ok_or_else(|| unknown_player_error(request.id))?;
-        player.release()?;
-        Ok(player.status(&backend))
+        let status = {
+            let player = self.player_mut(request.id)?;
+            player.release()?;
+            player.status(&backend)
+        };
+        self.players.remove(&request.id);
+        Ok(status)
     }
 
     fn status_for(&mut self, id: u32) -> Result<AudioPlayerStatus, JsErrorBox> {
@@ -192,10 +193,12 @@ impl AudioPlayer {
     }
 
     fn stop(&mut self) -> Result<(), JsErrorBox> {
+        self.runtime.reconcile(&self.source, &mut self.last_error);
         self.runtime.stop(&mut self.last_error)
     }
 
     fn release(&mut self) -> Result<(), JsErrorBox> {
+        self.runtime.reconcile(&self.source, &mut self.last_error);
         self.runtime.release(&mut self.last_error)
     }
 
@@ -208,6 +211,7 @@ impl AudioPlayer {
             frequency_hz: self.source.frequency_hz(),
             id: self.id,
             path: self.source.path().map(str::to_owned),
+            url: self.source.url().map(str::to_owned),
             source_kind: String::from(self.source.kind()),
             state: String::from(self.runtime.state().as_str()),
         }
@@ -462,6 +466,9 @@ impl LinuxSpikePlayerRuntime {
             AudioSource::File(source) => {
                 command.env("SHADOW_AUDIO_SPIKE_FILE_PATH", &source.resolved_path);
             }
+            AudioSource::Url(source) => {
+                command.env("SHADOW_AUDIO_SPIKE_URL", &source.url);
+            }
         }
         let child = command.spawn().map_err(|error| {
             JsErrorBox::generic(format!(
@@ -487,6 +494,15 @@ impl LinuxSpikePlayerRuntime {
                     binary_path,
                     source.duration_ms,
                     source.path,
+                    child.id()
+                );
+            }
+            AudioSource::Url(source) => {
+                eprintln!(
+                    "runtime-audio-host linux-spike-spawn binary={} kind=url duration_ms={} url={} pid={}",
+                    binary_path,
+                    source.duration_ms,
+                    source.url,
                     child.id()
                 );
             }
@@ -596,6 +612,7 @@ impl PlayerState {
 enum AudioSource {
     Tone(ToneSource),
     File(FileSource),
+    Url(UrlSource),
 }
 
 impl AudioSource {
@@ -607,6 +624,7 @@ impl AudioSource {
         match self {
             Self::Tone(source) => source.duration_ms,
             Self::File(source) => source.duration_ms,
+            Self::Url(source) => source.duration_ms,
         }
     }
 
@@ -614,6 +632,7 @@ impl AudioSource {
         match self {
             Self::Tone(source) => Some(source.frequency_hz),
             Self::File(_) => None,
+            Self::Url(_) => None,
         }
     }
 
@@ -621,6 +640,7 @@ impl AudioSource {
         match self {
             Self::Tone(_) => "tone",
             Self::File(_) => "file",
+            Self::Url(_) => "url",
         }
     }
 
@@ -628,6 +648,15 @@ impl AudioSource {
         match self {
             Self::Tone(_) => None,
             Self::File(source) => Some(source.path.as_str()),
+            Self::Url(_) => None,
+        }
+    }
+
+    fn url(&self) -> Option<&str> {
+        match self {
+            Self::Tone(_) => None,
+            Self::File(_) => None,
+            Self::Url(source) => Some(source.url.as_str()),
         }
     }
 }
@@ -643,6 +672,12 @@ struct FileSource {
     duration_ms: u32,
     path: String,
     resolved_path: String,
+}
+
+#[derive(Clone, Debug)]
+struct UrlSource {
+    duration_ms: u32,
+    url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -668,6 +703,7 @@ struct AudioSourceRequest {
     #[serde(default = "default_frequency_hz")]
     frequency_hz: u32,
     path: Option<String>,
+    url: Option<String>,
 }
 
 impl Default for AudioSourceRequest {
@@ -677,6 +713,7 @@ impl Default for AudioSourceRequest {
             duration_ms: default_duration_ms(),
             frequency_hz: default_frequency_hz(),
             path: None,
+            url: None,
         }
     }
 }
@@ -718,6 +755,21 @@ impl TryFrom<AudioSourceRequest> for AudioSource {
                     path,
                 }))
             }
+            "url" => {
+                let url = request
+                    .url
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        JsErrorBox::type_error("audio.createPlayer requires source.url")
+                    })?
+                    .to_owned();
+                Ok(Self::Url(UrlSource {
+                    duration_ms: request.duration_ms,
+                    url,
+                }))
+            }
             _ => Err(JsErrorBox::generic(format!(
                 "audio.createPlayer does not support source kind '{}'",
                 request.kind
@@ -738,6 +790,8 @@ struct AudioPlayerStatus {
     id: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
     source_kind: String,
     state: String,
 }

@@ -15,6 +15,7 @@ type AudioStatus = {
   frequencyHz?: number;
   id: number;
   path?: string;
+  url?: string;
   sourceKind: string;
   state: string;
 };
@@ -31,10 +32,16 @@ type FileSourceConfig = {
   path: string;
 };
 
-type AudioSourceConfig = ToneSourceConfig | FileSourceConfig;
+type UrlSourceConfig = {
+  kind: "url";
+  durationMs: number;
+  url: string;
+};
+
+type AudioSourceConfig = ToneSourceConfig | FileSourceConfig | UrlSourceConfig;
 
 type RuntimeAppConfig = {
-  source?: Partial<ToneSourceConfig & FileSourceConfig> & {
+  source?: Partial<ToneSourceConfig & FileSourceConfig & UrlSourceConfig> & {
     kind?: string;
   };
 };
@@ -215,6 +222,14 @@ function readAppSourceConfig(): AudioSourceConfig {
   const runtimeConfig = (globalThis as Record<string, unknown>)
     .SHADOW_RUNTIME_APP_CONFIG as RuntimeAppConfig | undefined;
   const source = runtimeConfig?.source;
+  if (source?.kind === "url" && typeof source.url === "string" &&
+    source.url.trim()) {
+    return {
+      durationMs: normalizeDurationMs(source.durationMs),
+      kind: "url",
+      url: source.url.trim(),
+    };
+  }
   if (source?.kind === "file" && typeof source.path === "string" &&
     source.path.trim()) {
     return {
@@ -249,9 +264,18 @@ function isFileSource(
   return "sourceKind" in source ? source.sourceKind === "file" : source.kind === "file";
 }
 
+function isUrlSource(
+  source: AudioSourceConfig | AudioStatus,
+): source is UrlSourceConfig | AudioStatus {
+  return "sourceKind" in source ? source.sourceKind === "url" : source.kind === "url";
+}
+
 function formatSourceLabel(source: AudioSourceConfig | AudioStatus): string {
   if (isFileSource(source)) {
     return source.path ?? "missing-path";
+  }
+  if (isUrlSource(source)) {
+    return source.url ?? "missing-url";
   }
   return `${source.frequencyHz ?? DEFAULT_SOURCE.frequencyHz} Hz / ${
     source.durationMs
@@ -268,7 +292,7 @@ function logAudioStatus(command: CommandKind, nextStatus: AudioStatus | null) {
     `state=${nextStatus.state}`,
     `backend=${nextStatus.backend}`,
     `source_kind=${nextStatus.sourceKind}`,
-    `path=${nextStatus.path ?? "n/a"}`,
+    `source=${nextStatus.url ?? nextStatus.path ?? "n/a"}`,
   ];
   console.error(parts.join(" "));
 }
@@ -308,6 +332,8 @@ export default function renderApp() {
           setMessage(
             appSource.kind === "file"
               ? "Player ready. Play should trigger the staged file-backed helper."
+              : appSource.kind === "url"
+              ? "Player ready. Play should trigger the URL-backed Linux helper path."
               : "Player ready. On Pixel, Play should trigger the Linux tone helper.",
           );
           break;
@@ -392,7 +418,7 @@ export default function renderApp() {
         <p class="sound-body">
           Runtime app buttons drive `Shadow.os.audio`. Host uses an in-memory
           backend; the Pixel sound lane switches to the rooted Linux{" "}
-          {appSource.kind === "file" ? "file" : "tone"} helper.
+          {appSource.kind === "file" ? "file" : appSource.kind === "url" ? "URL" : "tone"} helper.
         </p>
 
         <div class="sound-status">
@@ -468,11 +494,19 @@ export default function renderApp() {
 
         <div class="sound-meta">
           <span class="sound-chip">
-            {appSource.kind === "file" ? "file-backed demo" : "tone-backed MVP"}
+            {appSource.kind === "file"
+              ? "file-backed demo"
+              : appSource.kind === "url"
+              ? "URL-backed demo"
+              : "tone-backed MVP"}
           </span>
           <span class="sound-chip">pause via signal</span>
           <span class="sound-chip">
-            {appSource.kind === "file" ? "bundle-relative path" : "MP3/file path next"}
+            {appSource.kind === "file"
+              ? "bundle-relative path"
+              : appSource.kind === "url"
+              ? "URL env handoff"
+              : "MP3/file path next"}
           </span>
         </div>
       </section>

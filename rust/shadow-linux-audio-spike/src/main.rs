@@ -3,9 +3,9 @@ use std::env;
 use std::error::Error;
 use std::f32::consts::TAU;
 use std::fs::{self, File};
-use std::io::ErrorKind;
+use std::io::{Cursor, ErrorKind};
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use alsa::ctl::{ElemId, ElemIface, ElemType};
 use alsa::hctl::HCtl;
@@ -16,11 +16,12 @@ use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::FormatOptions;
-use symphonia::core::io::MediaSourceStream;
+use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
 const DEFAULT_DEVICE_CANDIDATES: [&str; 2] = ["default", "sysdefault"];
+const URL_FETCH_TIMEOUT_SECS: u64 = 30;
 
 fn main() {
     if let Err(error) = run() {
@@ -39,6 +40,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let source_kind =
         read_env_string("SHADOW_AUDIO_SPIKE_SOURCE_KIND").unwrap_or_else(|| String::from("tone"));
     let requested_file_path = read_env_string("SHADOW_AUDIO_SPIKE_FILE_PATH");
+    let requested_url = read_env_string("SHADOW_AUDIO_SPIKE_URL");
     let summary_path = env::var("SHADOW_AUDIO_SPIKE_SUMMARY_PATH").ok();
     let cwd = env::current_dir()
         .ok()
@@ -51,6 +53,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         requested_channels,
         requested_gain,
         requested_file_path.as_deref(),
+        requested_url.as_deref(),
     )?;
 
     let mut device_candidates = Vec::new();
@@ -220,6 +223,7 @@ fn prepare_playback(
     channels: u32,
     gain: f32,
     file_path: Option<&str>,
+    url: Option<&str>,
 ) -> Result<PreparedPlayback, Box<dyn Error>> {
     match source_kind {
         "tone" => Ok(build_tone_playback(
@@ -232,6 +236,12 @@ fn prepare_playback(
         "file" => decode_audio_file(
             file_path.ok_or_else(|| {
                 "SHADOW_AUDIO_SPIKE_FILE_PATH is required when SHADOW_AUDIO_SPIKE_SOURCE_KIND=file"
+            })?,
+            gain,
+        ),
+        "url" => decode_audio_url(
+            url.ok_or_else(|| {
+                "SHADOW_AUDIO_SPIKE_URL is required when SHADOW_AUDIO_SPIKE_SOURCE_KIND=url"
             })?,
             gain,
         ),
@@ -260,11 +270,44 @@ fn build_tone_playback(
 
 fn decode_audio_file(path: &str, gain: f32) -> Result<PreparedPlayback, Box<dyn Error>> {
     let file = File::open(path)?;
-    let media_source = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
-    if let Some(extension) = Path::new(path).extension().and_then(|value| value.to_str()) {
-        hint.with_extension(extension);
+    if let Some(extension) = source_extension_hint(path) {
+        hint.with_extension(&extension);
     }
+    decode_audio_media(Box::new(file), hint, gain, "file", Some(path.to_owned()))
+}
+
+fn decode_audio_url(url: &str, gain: f32) -> Result<PreparedPlayback, Box<dyn Error>> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(URL_FETCH_TIMEOUT_SECS))
+        .build()?;
+    let response = client.get(url).send()?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("audio-spike url fetch failed status={status} url={url}").into());
+    }
+    let bytes = response.bytes()?;
+    let mut hint = Hint::new();
+    if let Some(extension) = source_extension_hint(url) {
+        hint.with_extension(&extension);
+    }
+    decode_audio_media(
+        Box::new(Cursor::new(bytes.to_vec())),
+        hint,
+        gain,
+        "url",
+        Some(url.to_owned()),
+    )
+}
+
+fn decode_audio_media(
+    media_source: Box<dyn MediaSource>,
+    hint: Hint,
+    gain: f32,
+    source_kind: &str,
+    source_path: Option<String>,
+) -> Result<PreparedPlayback, Box<dyn Error>> {
+    let media_source = MediaSourceStream::new(media_source, Default::default());
 
     let probed = symphonia::default::get_probe().format(
         &hint,
@@ -275,15 +318,15 @@ fn decode_audio_file(path: &str, gain: f32) -> Result<PreparedPlayback, Box<dyn 
     let mut format = probed.format;
     let track = format
         .default_track()
-        .ok_or("audio-spike file decode needs a default track")?;
+        .ok_or_else(|| format!("audio-spike {source_kind} decode needs a default track"))?;
     let track_id = track.id;
     let codec_params = &track.codec_params;
     let sample_rate_hz = codec_params
         .sample_rate
-        .ok_or("audio-spike file decode needs a sample rate")?;
+        .ok_or_else(|| format!("audio-spike {source_kind} decode needs a sample rate"))?;
     let channels = codec_params
         .channels
-        .ok_or("audio-spike file decode needs channel metadata")?
+        .ok_or_else(|| format!("audio-spike {source_kind} decode needs channel metadata"))?
         .count() as u32;
     let mut decoder =
         symphonia::default::get_codecs().make(codec_params, &DecoderOptions::default())?;
@@ -307,7 +350,7 @@ fn decode_audio_file(path: &str, gain: f32) -> Result<PreparedPlayback, Box<dyn 
                 break;
             }
             Err(SymphoniaError::DecodeError(error)) => {
-                return Err(format!("audio-spike file decode error: {error}").into());
+                return Err(format!("audio-spike {source_kind} decode error: {error}").into());
             }
             Err(error) => return Err(Box::new(error)),
         };
@@ -317,7 +360,7 @@ fn decode_audio_file(path: &str, gain: f32) -> Result<PreparedPlayback, Box<dyn 
     }
 
     if samples.is_empty() {
-        return Err("audio-spike decoded file produced no audio samples".into());
+        return Err(format!("audio-spike decoded {source_kind} source produced no audio samples").into());
     }
     apply_gain(&mut samples, gain);
 
@@ -328,9 +371,18 @@ fn decode_audio_file(path: &str, gain: f32) -> Result<PreparedPlayback, Box<dyn 
         frequency_hz: None,
         rate_hz: sample_rate_hz,
         samples,
-        source_kind: String::from("file"),
-        source_path: Some(path.to_owned()),
+        source_kind: String::from(source_kind),
+        source_path,
     })
+}
+
+fn source_extension_hint(source: &str) -> Option<String> {
+    let without_fragment = source.split('#').next().unwrap_or(source);
+    let without_query = without_fragment.split('?').next().unwrap_or(without_fragment);
+    Path::new(without_query)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_owned)
 }
 
 fn play_prepared_samples(

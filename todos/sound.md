@@ -50,8 +50,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   Runtime apps can play staged local assets on host, VM, and Pixel lanes.
 - [x] Shared artifact builder knows about audio/podcast apps.
   Sound is no longer a one-off staging path.
-- [ ] URL-backed playback exists.
-  Runtime apps should be able to play an episode from its source URL without writing the MP3 to disk.
+- [~] URL-backed playback exists.
+  The low-level host/helper/app plumbing is landed; the remaining gap is a dedicated local-HTTP end-to-end proof for the podcast path.
 - [ ] Player semantics are minimally productized.
   Add the smallest missing controls/status needed by real apps.
 - [ ] Audio/media button support exists.
@@ -63,14 +63,13 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## Near-Term Steps
 
-- [ ] Add `source.kind = "url"` and `source.url` in `runtime-audio-host`.
-- [ ] Refactor the Linux helper decode path so it is not hard-wired to `File::open(...)`.
-- [ ] Update the podcast app to prefer `episode.sourceUrl` when present and fall back to local fixture paths when running offline.
+- [x] Add `source.kind = "url"` and `source.url` in `runtime-audio-host`.
+- [x] Refactor the Linux helper decode path so it is not hard-wired to `File::open(...)`.
+- [x] Update the podcast app so runtime config can opt into `episode.sourceUrl` playback while file-backed fixtures remain the default offline path.
 - [ ] Add a host smoke that serves the checked-in podcast fixture over local HTTP and proves URL playback end to end.
 - [ ] Add an audio/media button path that routes play/pause/next/previous to the focused audio app without hard-coding podcast UI behavior.
-- [ ] Decide the v0 behavior for URL playback:
-  - buffer full response in memory before play
-  - or require true progressive playback
+- [x] Decide the v0 behavior for URL playback:
+  Buffer the full response in memory before play for v0; defer true progressive playback until an app proves it is necessary.
 - [ ] Add `positionMs` to status if app work immediately needs visible progress.
 - [ ] Add `seek` only if the first consumer actually needs it.
 - [ ] Add `volume` only if the first consumer actually needs per-player gain.
@@ -78,9 +77,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## Implementation Notes
 
-- `runtime-audio-host` currently supports only `tone` and `file`.
-- The podcast app already carries `sourceUrl` in config, but still creates a `file` player.
-- The Linux helper currently decodes from a filesystem path via Symphonia.
+- `runtime-audio-host` now supports `tone`, `file`, and `url`.
+- The podcast app can now switch between file-backed and URL-backed playback via runtime config (`playbackSource`), while default fixtures stay file-backed.
+- The Linux helper can now fetch a URL into memory, then decode it through the same Symphonia path used for file playback.
 - The shared artifact builder already has a clean place to keep offline podcast fixtures and app-local assets.
 - VM/master now uses a checked-in local podcast fixture so branch gates do not need the live RSS/media path just to boot the app.
 - The clean v0 split is:

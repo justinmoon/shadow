@@ -14,9 +14,12 @@ type AudioStatus = {
   error?: string;
   id: number;
   path?: string;
+  url?: string;
   sourceKind: string;
   state: string;
 };
+
+type PlaybackSource = "file" | "url";
 
 type EpisodeConfig = {
   durationMs: number;
@@ -28,6 +31,7 @@ type EpisodeConfig = {
 
 type RuntimeAppConfig = {
   episodes?: Partial<EpisodeConfig>[];
+  playbackSource?: string;
   podcastLicense?: string;
   podcastPageUrl?: string;
   podcastTitle?: string;
@@ -258,6 +262,7 @@ body {
 
 function readAppConfig(): {
   episodes: EpisodeConfig[];
+  playbackSource: PlaybackSource;
   podcastLicense: string | null;
   podcastPageUrl: string | null;
   podcastTitle: string;
@@ -271,6 +276,7 @@ function readAppConfig(): {
 
   return {
     episodes,
+    playbackSource: normalizePlaybackSource(runtimeConfig?.playbackSource),
     podcastLicense: normalizeString(runtimeConfig?.podcastLicense),
     podcastPageUrl: normalizeString(runtimeConfig?.podcastPageUrl),
     podcastTitle: normalizeString(runtimeConfig?.podcastTitle) ?? "No Solutions",
@@ -300,6 +306,10 @@ function normalizeDurationMs(value: unknown) {
     : 60_000;
 }
 
+function normalizePlaybackSource(value: unknown): PlaybackSource {
+  return value === "url" ? "url" : "file";
+}
+
 function normalizeString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -315,7 +325,7 @@ function logPodcastStatus(
   command: CommandKind,
   nextStatus: AudioStatus | null,
   episodeId: string | null,
-  fallbackPath?: string,
+  fallbackSource?: string,
 ) {
   if (!nextStatus) {
     return;
@@ -327,9 +337,35 @@ function logPodcastStatus(
     `episode=${episodeId ?? "none"}`,
     `state=${nextStatus.state}`,
     `backend=${nextStatus.backend}`,
-    `path=${nextStatus.path ?? fallbackPath ?? "n/a"}`,
+    `source=${nextStatus.url ?? nextStatus.path ?? fallbackSource ?? "n/a"}`,
   ];
   console.error(parts.join(" "));
+}
+
+function buildEpisodeSource(episode: EpisodeConfig, playbackSource: PlaybackSource) {
+  if (playbackSource === "url" && episode.sourceUrl) {
+    return {
+      durationMs: episode.durationMs,
+      kind: "url",
+      url: episode.sourceUrl,
+    } as const;
+  }
+
+  return {
+    durationMs: episode.durationMs,
+    kind: "file",
+    path: episode.path,
+  } as const;
+}
+
+function episodeSourceLabel(episode: EpisodeConfig | null, playbackSource: PlaybackSource) {
+  if (!episode) {
+    return "missing";
+  }
+  if (playbackSource === "url" && episode.sourceUrl) {
+    return episode.sourceUrl;
+  }
+  return episode.path;
 }
 
 export default function renderApp() {
@@ -362,11 +398,7 @@ export default function renderApp() {
     }
 
     const created = await createPlayer({
-      source: {
-        durationMs: episode.durationMs,
-        kind: "file",
-        path: episode.path,
-      },
+      source: buildEpisodeSource(episode, config.playbackSource),
     }) as AudioStatus;
     setStatus(created);
     setActiveEpisodeId(episode.id);
@@ -381,7 +413,7 @@ export default function renderApp() {
       let nextStatus = status();
       switch (command) {
         case "pause":
-          if (!status()) {
+          if (!status() || status()!.state === "released") {
             setMessage("No active player yet.");
             break;
           }
@@ -397,7 +429,7 @@ export default function renderApp() {
           setMessage("Player status refreshed.");
           break;
         case "release":
-          if (!status()) {
+          if (!status() || status()!.state === "released") {
             setMessage("No player to release.");
             break;
           }
@@ -405,7 +437,7 @@ export default function renderApp() {
           setMessage("Player released.");
           break;
         case "stop":
-          if (!status()) {
+          if (!status() || status()!.state === "released") {
             setMessage("No active player yet.");
             break;
           }
@@ -429,7 +461,7 @@ export default function renderApp() {
           command,
           nextStatus,
           activeEpisodeId() ?? episode?.id ?? null,
-          episode?.path,
+          episodeSourceLabel(episode ?? activeEpisode(), config.playbackSource),
         );
       }
     } catch (nextError) {
@@ -451,7 +483,10 @@ export default function renderApp() {
   }
 
   const activeStatus = () => status();
-  const sourcePath = () => activeStatus()?.path ?? activeEpisode()?.path ?? "missing";
+  const sourcePath = () =>
+    activeStatus()?.url ??
+    activeStatus()?.path ??
+    episodeSourceLabel(activeEpisode(), config.playbackSource);
 
   return (
     <main class="podcast-shell">
@@ -459,8 +494,8 @@ export default function renderApp() {
         <p class="podcast-eyebrow">Shadow Audio</p>
         <h1 class="podcast-headline">{config.podcastTitle} player</h1>
         <p class="podcast-body">
-          Runtime app sample: configured episodes are staged as local files and
-          played through `Shadow.os.audio`.
+          Runtime app sample: configured episodes are played through
+          `Shadow.os.audio`, using {config.playbackSource === "url" ? "source URLs" : "staged local files"}.
         </p>
 
         <div class="podcast-status">
@@ -524,7 +559,9 @@ export default function renderApp() {
                 <h2 class="podcast-episode-title">{episode.title}</h2>
                 <p class="podcast-episode-meta">{formatDuration(episode.durationMs)}</p>
               </div>
-              <p class="podcast-episode-source">{episode.path}</p>
+              <p class="podcast-episode-source">
+                {episodeSourceLabel(episode, config.playbackSource)}
+              </p>
               <button
                 class="podcast-button podcast-button-primary"
                 data-shadow-id={`play-${episode.id}`}
@@ -543,7 +580,9 @@ export default function renderApp() {
 
         <div class="podcast-chips">
           <span class="podcast-chip">{config.episodes.length} configured episodes</span>
-          <span class="podcast-chip">local file playback</span>
+          <span class="podcast-chip">
+            {config.playbackSource === "url" ? "URL playback" : "local file playback"}
+          </span>
           {config.podcastLicense ? <span class="podcast-chip">{config.podcastLicense}</span> : null}
           {config.podcastPageUrl ? <span class="podcast-chip">{config.podcastPageUrl}</span> : null}
         </div>
