@@ -15,6 +15,7 @@ scripts/pixel_common.sh	lib	Shared rooted-Pixel shell/build/runtime helper libra
 scripts/pixel_guest_ui_drm.sh	pixel	Private rooted-Pixel compositor takeover/session driver.
 scripts/pixel_openlog_preload.c	data	C source for the Pixel openlog preload helper.
 scripts/pixel_ota_sideload.sh	pixel	Pixel setup/recovery delegate behind sc ota-sideload.
+scripts/pixel_prep_settings.sh	pixel	Non-root Pixel test-device settings helper behind just pixel-prep-settings.
 scripts/pixel_prepare_blitz_demo_gpu_bundle.sh	pixel	Private Pixel GPU Blitz bundle staging helper.
 scripts/pixel_prepare_blitz_demo_gpu_softbuffer_bundle.sh	pixel	Private Pixel softbuffer Blitz bundle staging helper.
 scripts/pixel_prepare_runtime_app_artifacts.sh	pixel	Private Pixel runtime app artifact staging helper.

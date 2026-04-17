@@ -154,7 +154,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 ## Implementation Notes
 
 - The plan intentionally uses one checklist now. No separate near-term section.
-- Current script count after the inventory cleanup: 76 total files under `scripts/`; 37 are `pixel_*`.
+- Current script count after rebasing over Pixel prep docs: 77 total files under `scripts/`; 38 are `pixel_*`.
 - `just` used to expose 131 recipes. It now exposes 18 curated public recipes after the hard-cut cleanup; historical probe/bring-up lanes should stay as scripts unless promoted deliberately.
 - `scripts/shadowctl` is 1714 lines and carries real VM and Pixel target logic. The supported public operator surface routes through it now; private helper scripts still carry too much repeated policy.
 - `justfile` is 206 lines, `flake.nix` is 646 lines, and `shadow-compositor-guest/src/main.rs` is 1990 lines. The sprawl is now less in public entrypoints and more in private orchestration, packaging, and compositor internals.
