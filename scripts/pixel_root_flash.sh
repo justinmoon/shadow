@@ -21,7 +21,7 @@ if [[ ! -f "$patched_local" ]]; then
 
   if [[ -z "$patched_remote" ]]; then
     echo "pixel-root-flash: no patched boot image is available locally or on the device" >&2
-    echo "Run 'just pixel-root-patch' for the automated path, or 'just pixel-root-stage' for the manual Magisk-app fallback." >&2
+    echo "Run 'sc -t pixel root-patch' for the automated path, or 'sc -t pixel root-stage' for the manual Magisk-app fallback." >&2
     exit 1
   fi
 

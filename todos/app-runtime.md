@@ -17,7 +17,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The current app-facing host seam already exists in one concrete domain: `Shadow.os.nostr`.
 - `Shadow.os.cashu` now exists as the second concrete runtime-host domain, backed by CDK plus a durable mnemonic + `redb` wallet store.
 - `deno_core` remains the default runtime helper. `deno_runtime` is proven, but not promoted.
-- Rooted Pixel real shell now has a primary operator lane (`pixel-shell-drm` and `ui-run target=pixel`).
+- Rooted Pixel real shell now has a primary operator lane (`pixel-shell-drm` and `just run target=pixel`).
 - The direct rooted Pixel runtime-app scripts still exist, but they are now fallback/probe lanes rather than the main operator path.
 - Pixel shell runs can now either stop at home or auto-open `timeline` through that same shell lane.
 - `pixel-shellctl` now gives the rooted Pixel shell a reusable launch/home/state control seam once the compositor is live.
@@ -27,7 +27,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Host proofs already exist for focus, keyboard input, selection metadata, relay sync, and restart/cache reload.
 - `just runtime-app-cashu-wallet-smoke` is now green against a local `cdk-mintd` fakewallet mint: trust mint, mint invoice into balance, send token, receive token, pay Lightning invoice, then remint it.
 - Host wheel scroll already works through Blitz's native `UiEvent::Wheel` path; the runtime wrapper now suppresses drag / pan gestures from turning into synthetic runtime clicks.
-- The VM shelve/reopen lane is green again on the current machine.
+- The VM shelve/reopen lane was green in the 2026-04-07 smoke and is covered by the current `just smoke target=vm` branch gate.
 - `cdk` is now cloned locally at `~/code/oss/cdk` for Cashu wallet work.
 
 ## Stable Bets
@@ -102,15 +102,15 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Blitz already converts host wheel input into `UiEvent::Wheel` and scrolls overflow containers natively.
   - The real runtime-wrapper bug was that press-drag-release gestures could still synthesize a runtime click after a pan.
   - `RuntimeDocument` now cancels synthetic clicks after pointer movement crosses a small threshold, and unit coverage now proves host wheel scroll, finger-pan scroll, and tap-to-click separately.
-- 2026-04-07: The VM shelve/reopen smoke is green again.
+- 2026-04-07: The VM shelve/reopen smoke was green.
   - The shell launch regression was that `shadow-compositor` spawned `shadow-blitz-demo` without forcing runtime mode, so the self-exiting static demo launched instead of the real runtime app.
   - `shadow-blitz-demo` now honors launch-provided title and Wayland app-id overrides, and the compositor sets runtime mode plus app-specific launch env.
-  - `ui-vm-timeline-smoke` no longer forces a runtime-env rebuild on every run, so it validates the live VM lane instead of first spending minutes rebuilding the aarch64 runtime host.
+  - `scripts/ui_vm_timeline_smoke.sh` no longer forces a runtime-env rebuild on every run, so it validates the live VM lane instead of first spending minutes rebuilding the aarch64 runtime host.
 - 2026-04-07: The near-term Pixel lane is now the real shell/home path.
-  - `pixel-shell-drm` is the primary rooted-Pixel operator rung, and `ui-run target=pixel` now routes there instead of to the old direct-runtime timeline path.
+  - `pixel-shell-drm` is the primary rooted-Pixel operator rung, and `just run target=pixel` now routes there instead of to the old direct-runtime timeline path.
   - The old direct runtime-app Pixel scripts remain in the repo as fallback/probe tools for narrower runtime or GPU work.
 - 2026-04-07: The rooted Pixel shell lane can now auto-open `timeline` without dropping back to the old direct-runtime path.
-  - `ui-run target=pixel app=timeline` now calls `pixel_shell_drm.sh --app timeline`, and the launcher turns that into `SHADOW_GUEST_SHELL_START_APP_ID=timeline` for the guest compositor.
+  - `just run target=pixel app=timeline` now calls `pixel_shell_drm.sh --app timeline` through `shadowctl`, and the launcher turns that into `SHADOW_GUEST_SHELL_START_APP_ID=timeline` for the guest compositor.
   - The guest compositor stays in shell mode, publishes the home frame, and then launches `timeline` through the same `launch_or_focus_app()` path used by later control requests.
   - The Pixel shell lane now also expects a runtime client process plus a mapped window when an initial shell app is requested, so this entrypoint fails if the shell never actually opens the app.
 - 2026-04-07: The rooted Pixel shell now has a matching control helper and lifecycle smoke harness.

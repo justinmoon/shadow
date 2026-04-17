@@ -11,7 +11,7 @@ read_when:
 Use the rooted-Pixel touch latency probe for direct-runtime app latency:
 
 ```sh
-PIXEL_SERIAL=<serial> just pixel-touch-latency-probe
+PIXEL_SERIAL=<serial> scripts/pixel_touch_latency_probe.sh
 ```
 
 For a deterministic run directory:
@@ -32,7 +32,7 @@ published frame. Request one explicitly when a test or debugging session needs
 the compositor's latest frame:
 
 ```sh
-PIXEL_SERIAL=<serial> just pixel-frame build/pixel/latest-shadow-frame.ppm
+sc -t <serial> frame build/pixel/latest-shadow-frame.ppm
 ```
 
 That calls the compositor control socket, writes one target-side PPM, and pulls
@@ -71,6 +71,6 @@ Interpretation:
 - Fast event dispatch plus slow present means input plumbing is usable, but the
   visible frame pipeline is not.
 - For scroll, prioritize getting off CPU softbuffer. Per-frame PPM artifacts are
-  now opt-in; use `just pixel-frame` / `shadowctl frame -t pixel` for snapshots.
+  now opt-in; use `sc -t pixel frame` or `sc -t <serial> frame` for snapshots.
 - For shell/runtime async updates, avoid 100ms fixed polling. The Pixel shell
   default is now 16ms; touch-signal detection is event-driven on Linux/Pixel.

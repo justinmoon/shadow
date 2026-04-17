@@ -38,5 +38,5 @@ On the phone:
 3. Re-enable USB debugging if Android asks again.
 
 Then continue with:
-  just pixel-root-patch
+  sc -t pixel root-patch
 EOF

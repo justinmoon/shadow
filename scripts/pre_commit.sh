@@ -9,8 +9,7 @@ ensure_bootimg_shell "$@"
 cd "$(repo_root)"
 
 bash -n scripts/*.sh
-scripts/ui_run_arg_smoke.sh
-scripts/ui_run_dispatch_smoke.sh
+scripts/operator_cli_smoke.sh
 scripts/timeline_sync_defaults_smoke.sh
 nix flake check --no-build
 just ui-check

@@ -64,6 +64,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn main() {
     init_logging();
     tracing::warn!(
-        "shadow-compositor currently supports Linux only; use the ui-vm-run flow on macOS hosts"
+        "shadow-compositor currently supports Linux only; use `just run target=vm` on macOS hosts"
     );
 }

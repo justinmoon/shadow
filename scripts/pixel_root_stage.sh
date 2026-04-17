@@ -35,5 +35,5 @@ On the phone in the Magisk app:
 4. Wait for Magisk to finish patching.
 
 Then run:
-  just pixel-root-flash
+  sc -t pixel root-flash
 EOF

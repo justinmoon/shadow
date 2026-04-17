@@ -18,6 +18,18 @@ from typing import Any
 
 PIXEL_DEFAULT_RUNTIME_DIR = "/data/local/tmp/shadow-runtime"
 GETPROP_RE = re.compile(r"^\[([^\]]+)\]: \[(.*)\]$")
+SUPPORTED_PIXEL_CI_SUITES = (
+    "quick",
+    "shell",
+    "timeline",
+    "camera",
+    "nostr",
+    "sound",
+    "audio",
+    "podcast",
+    "runtime",
+    "full",
+)
 
 
 @dataclass(frozen=True)
@@ -163,6 +175,39 @@ def session_stop_command(target: TargetRef) -> tuple[list[str | pathlib.Path], l
     return ([scripts_dir / "pixel_restore_android.sh"], [("PIXEL_SERIAL", serial)])
 
 
+def script_command(
+    script_name: str,
+    *,
+    target: TargetRef | None = None,
+) -> tuple[list[str | pathlib.Path], list[tuple[str, str]]]:
+    env: list[tuple[str, str]] = []
+    if target is not None:
+        env.append(("PIXEL_SERIAL", target.serial or target.id))
+    return ([repo_root() / "scripts" / script_name], env)
+
+
+def pixel_ci_command(
+    target: TargetRef,
+    *,
+    run_only: bool = False,
+    stage_only: bool = False,
+    suite: str,
+) -> tuple[list[str | pathlib.Path], list[tuple[str, str]]]:
+    if run_only and stage_only:
+        raise SystemExit("shadowctl: --stage-only and --run-only are mutually exclusive")
+    if suite not in SUPPORTED_PIXEL_CI_SUITES:
+        supported = ", ".join(SUPPORTED_PIXEL_CI_SUITES)
+        raise SystemExit(f"shadowctl: unsupported Pixel CI suite {suite!r}; expected one of {supported}")
+
+    command: list[str | pathlib.Path] = [repo_root() / "scripts/pixel_ci.sh"]
+    if stage_only:
+        command.append("--stage-only")
+    if run_only:
+        command.append("--run-only")
+    command.append(suite)
+    return command, [("PIXEL_SERIAL", target.serial or target.id)]
+
+
 def vm_processes() -> list[str]:
     result = run_local(["pgrep", "-f", "microvm@shadow-ui-vm"], check=False)
     if result.returncode != 0:
@@ -224,6 +269,14 @@ def qmp_request(command: str, arguments: dict[str, Any] | None = None) -> dict[s
         if "error" in response:
             raise RuntimeError(f"shadowctl: QMP {command} failed: {response['error']}")
         return response
+
+
+def qmp_available() -> bool:
+    try:
+        qmp_request("query-status")
+        return True
+    except (FileNotFoundError, OSError, RuntimeError, json.JSONDecodeError):
+        return False
 
 
 def _qmp_send_message(client: socket.socket, payload: dict[str, Any]) -> None:
@@ -490,7 +543,7 @@ def resolve_pixel_serial(requested: str | None) -> str:
     if requested:
         if requested not in devices:
             raise SystemExit(
-                f"shadowctl: requested target {requested!r} is not connected; run 'shadowctl devices'"
+                f"shadowctl: requested target {requested!r} is not connected; run 'sc devices'"
             )
         if devices[requested] != "device":
             raise SystemExit(
@@ -512,14 +565,15 @@ def resolve_pixel_serial(requested: str | None) -> str:
 
 def resolve_target(requested: str | None, *, default_kind: str = "vm") -> TargetRef:
     effective = requested or default_kind
-    if effective in {"vm", "desktop"}:
+    if effective == "desktop":
+        raise SystemExit("shadowctl: target 'desktop' was removed; use 'vm'")
+    if effective == "vm":
         return TargetRef(id="vm", kind="vm")
     if effective == "pixel":
         serial = resolve_pixel_serial(None)
         return TargetRef(id=serial, kind="pixel", serial=serial)
     if effective.startswith("pixel:"):
-        serial = resolve_pixel_serial(effective.split(":", 1)[1])
-        return TargetRef(id=serial, kind="pixel", serial=serial)
+        raise SystemExit("shadowctl: target 'pixel:<serial>' was removed; use the raw adb serial")
 
     devices = adb_device_map()
     if effective in devices:
@@ -527,7 +581,7 @@ def resolve_target(requested: str | None, *, default_kind: str = "vm") -> Target
         return TargetRef(id=serial, kind="pixel", serial=serial)
 
     raise SystemExit(
-        f"shadowctl: unknown target {effective!r}; run 'shadowctl devices' for valid ids"
+        f"shadowctl: unknown target {effective!r}; run 'sc devices' for valid ids"
     )
 
 
@@ -538,17 +592,29 @@ def synthetic_target_for_dry_run(
     command_name: str,
     default_kind: str,
 ) -> TargetRef | None:
-    if not enabled or command_name not in {"start", "stop"}:
+    if not enabled or command_name not in {
+        "ci",
+        "ota-sideload",
+        "restore-android",
+        "root-flash",
+        "root-check",
+        "root-patch",
+        "root-stage",
+        "run",
+        "stage",
+        "stop",
+    }:
         return None
 
     effective = requested or default_kind
-    if effective in {"vm", "desktop"}:
+    if effective == "desktop":
+        raise SystemExit("shadowctl: target 'desktop' was removed; use 'vm'")
+    if effective == "vm":
         return TargetRef(id="vm", kind="vm")
     if effective == "pixel":
         return TargetRef(id="pixel", kind="pixel", serial="pixel")
     if effective.startswith("pixel:"):
-        serial = effective.split(":", 1)[1] or "pixel"
-        return TargetRef(id=serial, kind="pixel", serial=serial)
+        raise SystemExit("shadowctl: target 'pixel:<serial>' was removed; use the raw adb serial")
     return TargetRef(id=effective, kind="pixel", serial=effective)
 
 
@@ -742,7 +808,7 @@ def diagnose_pixel(payload: dict[str, Any]) -> list[str]:
 def device_entries() -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     local_processes = vm_processes()
-    if local_processes or qmp_socket_path().exists():
+    if local_processes or qmp_available():
         entries.append(
             {
                 "id": "vm",
@@ -750,7 +816,11 @@ def device_entries() -> list[dict[str, Any]]:
                 "state": "running",
             }
         )
-    entries.extend(adb_devices())
+    try:
+        entries.extend(adb_devices())
+    except (FileNotFoundError, RuntimeError) as exc:
+        message = str(exc).removeprefix("shadowctl: ")
+        entries.append({"id": "adb", "kind": "adb", "state": f"error: {message}"})
     return entries
 
 
@@ -1041,17 +1111,56 @@ def cmd_wait_ready(args: argparse.Namespace) -> int:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
-    app, hold = normalize_start_legacy_args(args)
     command, env = session_start_command(
         args.target_ref,
-        app_id=app,
-        hold=hold,
+        app_id=args.app,
+        hold=args.hold,
     )
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
     command, env = session_stop_command(args.target_ref)
+    return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
+
+
+def cmd_pixel_ci(args: argparse.Namespace) -> int:
+    command, env = pixel_ci_command(
+        args.target_ref,
+        run_only=args.run_only,
+        stage_only=args.stage_only,
+        suite=args.suite,
+    )
+    return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
+
+
+def cmd_pixel_stage(args: argparse.Namespace) -> int:
+    command, env = pixel_ci_command(args.target_ref, stage_only=True, suite=args.suite)
+    return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
+
+
+def cmd_root_prep(args: argparse.Namespace) -> int:
+    command, env = script_command("pixel_root_prep.sh")
+    return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
+
+
+def cmd_root_patch(args: argparse.Namespace) -> int:
+    command, env = script_command("pixel_root_patch.sh", target=args.target_ref)
+    return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
+
+
+def cmd_root_stage(args: argparse.Namespace) -> int:
+    command, env = script_command("pixel_root_stage.sh", target=args.target_ref)
+    return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
+
+
+def cmd_root_flash(args: argparse.Namespace) -> int:
+    command, env = script_command("pixel_root_flash.sh", target=args.target_ref)
+    return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
+
+
+def cmd_ota_sideload(args: argparse.Namespace) -> int:
+    command, env = script_command("pixel_ota_sideload.sh", target=args.target_ref)
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 
@@ -1137,7 +1246,20 @@ fi
     return _print_control_result(result)
 
 
+def cmd_ssh(args: argparse.Namespace) -> int:
+    ssh_args = list(args.ssh_args)
+    if ssh_args and ssh_args[0] == "--":
+        ssh_args = ssh_args[1:]
+    command = [str(repo_root() / "scripts/ui_vm_ssh.sh"), *ssh_args]
+    result = subprocess.run(command, check=False)
+    return result.returncode
+
+
 def cmd_root_check(args: argparse.Namespace) -> int:
+    if getattr(args, "dry_run", False):
+        command, env = script_command("pixel_root_check.sh", target=args.target_ref)
+        return run_local_script(command, env_assignments=env, dry_run=True)
+
     serial = args.target_ref.serial or args.target_ref.id
     su_user = pixel_root_id(serial)
     if su_user:
@@ -1150,110 +1272,13 @@ def cmd_root_check(args: argparse.Namespace) -> int:
     print("If the phone just booted a patched Magisk image, open the Magisk app once.")
     print("If Magisk asks for additional setup or environment fix, accept it and let it reboot.")
     print("Then run:")
-    print(f"  shadowctl root-check --target {serial}")
+    print(f"  sc -t {serial} root-check")
     return 1
 
 
 def cmd_restore_android(args: argparse.Namespace) -> int:
-    serial = args.target_ref.serial or args.target_ref.id
-    env = os.environ.copy()
-    env["PIXEL_SERIAL"] = serial
-    result = subprocess.run(
-        [str(repo_root() / "scripts/pixel_restore_android.sh")],
-        text=True,
-        check=False,
-        env=env,
-    )
-    return result.returncode
-
-
-def extract_target(argv: list[str]) -> tuple[str | None, list[str]]:
-    target: str | None = None
-    filtered: list[str] = []
-    index = 0
-    while index < len(argv):
-        arg = argv[index]
-        if arg in ("-t", "--target"):
-            if index + 1 >= len(argv):
-                raise SystemExit("shadowctl: missing value for --target")
-            target = argv[index + 1]
-            index += 2
-            continue
-        if arg.startswith("--target="):
-            target = arg.split("=", 1)[1]
-            index += 1
-            continue
-        if arg.startswith("-t") and len(arg) > 2:
-            target = arg[2:]
-            index += 1
-            continue
-        if arg.startswith("target="):
-            target = arg.split("=", 1)[1]
-            index += 1
-            continue
-        filtered.append(arg)
-        index += 1
-
-    if filtered and filtered[0] in {"vm", "pixel"} and target is None:
-        target = filtered[0]
-        filtered = filtered[1:]
-    elif len(filtered) >= 2 and filtered[0] in {"start", "stop"} and target is None:
-        candidate = filtered[1]
-        if candidate and not candidate.startswith("-") and "=" not in candidate:
-            target = candidate
-            filtered = [filtered[0], *filtered[2:]]
-    return target, filtered
-
-
-def parse_hold_value(raw: str) -> int:
-    if raw not in {"0", "1"}:
-        raise SystemExit(f"shadowctl: expected hold value 0 or 1, got {raw!r}")
-    return int(raw)
-
-
-def normalize_start_legacy_args(args: argparse.Namespace) -> tuple[str, int]:
-    app = args.app
-    hold = args.hold
-    app_set = app != "shell"
-    hold_set = hold != 1
-    positional: list[str] = []
-
-    for raw in args.legacy_args:
-        if raw.startswith("app="):
-            app = raw.split("=", 1)[1]
-            app_set = True
-            continue
-        if raw.startswith("hold="):
-            hold = parse_hold_value(raw.split("=", 1)[1])
-            hold_set = True
-            continue
-        if raw.startswith("target="):
-            continue
-        positional.append(raw)
-
-    for raw in positional:
-        if not app_set:
-            app = raw
-            app_set = True
-            continue
-        if not hold_set:
-            hold = parse_hold_value(raw)
-            hold_set = True
-            continue
-
-    require_session_app(app)
-    return app, hold
-
-
-def extract_global_dry_run(argv: list[str]) -> tuple[bool, list[str]]:
-    dry_run = False
-    filtered: list[str] = []
-    for arg in argv:
-        if arg == "--dry-run":
-            dry_run = True
-            continue
-        filtered.append(arg)
-    return dry_run, filtered
+    command, env = script_command("pixel_restore_android.sh", target=args.target_ref)
+    return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 
 def add_command(
@@ -1278,22 +1303,79 @@ def add_command(
     return parser
 
 
+def display_prog() -> str:
+    return os.environ.get("SHADOWCTL_PROG") or pathlib.Path(sys.argv[0]).name
+
+
+def preprocess_argv(argv: list[str]) -> list[str]:
+    command_index: int | None = None
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg in {"-t", "--target"}:
+            index += 2
+            continue
+        if arg.startswith("--target=") or (arg.startswith("-t") and len(arg) > 2):
+            index += 1
+            continue
+        if arg.startswith("-"):
+            index += 1
+            continue
+        command_index = index
+        break
+
+    if command_index is None or argv[command_index] != "ssh":
+        return argv
+    ssh_index = command_index
+    passthrough_index = ssh_index + 1
+    while passthrough_index < len(argv):
+        arg = argv[passthrough_index]
+        if arg in {"--", "-h", "--help"}:
+            return argv
+        if arg in {"-t", "--target"}:
+            passthrough_index += 2
+            continue
+        if arg.startswith("--target=") or (arg.startswith("-t") and len(arg) > 2):
+            passthrough_index += 1
+            continue
+        break
+    if passthrough_index >= len(argv):
+        return argv
+    return [*argv[:passthrough_index], "--", *argv[passthrough_index:]]
+
+
+def requested_target_kind(requested: str | None, *, default_kind: str) -> str:
+    effective = requested or default_kind
+    if effective == "desktop":
+        return "desktop"
+    if effective == "vm":
+        return "vm"
+    return "pixel"
+
+
 def build_parser() -> argparse.ArgumentParser:
     target_help = (
-        "Target id. Use `vm`, `pixel`, or a specific adb serial from `shadowctl devices`."
+        "Target id. Use `vm`, `pixel`, or a specific adb serial from `sc devices`."
     )
     parser = argparse.ArgumentParser(
-        prog="shadowctl",
+        prog=display_prog(),
         description="Shadow development CLI.",
         epilog=(
             "target ids:\n"
             "  vm            local UI VM\n"
             "  pixel         the sole authorized adb device when exactly one is attached\n"
-            "  <serial>      a specific adb device serial from `shadowctl devices`"
+            "  <serial>      a specific adb device serial from `sc devices`\n"
+            "\n"
+            "examples:\n"
+            "  sc devices\n"
+            "  sc -t vm status\n"
+            "  sc -t vm open timeline\n"
+            "  sc -t pixel open camera\n"
+            "  sc -t pixel ci camera"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("-t", "--target", metavar="TARGET", help=target_help)
+    parser.add_argument("-t", "--target", dest="global_target", metavar="TARGET", help=target_help)
     target_parser = argparse.ArgumentParser(add_help=False)
     target_parser.add_argument("-t", "--target", metavar="TARGET", help=target_help)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1388,7 +1470,7 @@ def build_parser() -> argparse.ArgumentParser:
         supported_target_kinds=("vm", "pixel"),
         parents=(target_parser,),
     )
-    open_cmd.add_argument("app_id")
+    open_cmd.add_argument("app_id", choices=SUPPORTED_SESSION_APPS)
 
     add_command(
         subparsers,
@@ -1431,18 +1513,28 @@ def build_parser() -> argparse.ArgumentParser:
     wait_ready.add_argument("--interval", type=float, default=1.0)
     wait_ready.add_argument("--json", action="store_true")
 
-    start = add_command(
+    run = add_command(
         subparsers,
-        "start",
-        "Start the target shell session.",
+        "run",
+        "Run the target shell session.",
         cmd_start,
         supported_target_kinds=("vm", "pixel"),
         parents=(target_parser,),
     )
-    start.add_argument("--app", choices=SUPPORTED_SESSION_APPS, default="shell")
-    start.add_argument("--hold", type=int, choices=(0, 1), default=1)
-    start.add_argument("--dry-run", action="store_true")
-    start.add_argument("legacy_args", nargs="*")
+    run.add_argument(
+        "--app",
+        choices=SUPPORTED_SESSION_APPS,
+        default="shell",
+        help="Shell app to foreground after session launch.",
+    )
+    run.add_argument(
+        "--hold",
+        type=int,
+        choices=(0, 1),
+        default=1,
+        help="Pixel only: 1 keeps the display stack seized until `stop`; 0 restores Android on exit.",
+    )
+    run.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
 
     stop = add_command(
         subparsers,
@@ -1452,19 +1544,113 @@ def build_parser() -> argparse.ArgumentParser:
         supported_target_kinds=("vm", "pixel"),
         parents=(target_parser,),
     )
-    stop.add_argument("--dry-run", action="store_true")
+    stop.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
 
-    run = add_command(
+    ci = add_command(
         subparsers,
-        "run",
-        "Run a package inside the VM session.",
+        "ci",
+        "Run a rooted-Pixel CI suite.",
+        cmd_pixel_ci,
+        supported_target_kinds=("pixel",),
+        parents=(target_parser,),
+    )
+    ci.add_argument(
+        "suite",
+        nargs="?",
+        choices=SUPPORTED_PIXEL_CI_SUITES,
+        default="full",
+        help="Suite to run. Defaults to full.",
+    )
+    ci.add_argument("--stage-only", action="store_true", help="Stage artifacts without executing the suite.")
+    ci.add_argument("--run-only", action="store_true", help="Run against already-staged artifacts.")
+    ci.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
+
+    stage = add_command(
+        subparsers,
+        "stage",
+        "Stage rooted-Pixel CI artifacts without running the suite.",
+        cmd_pixel_stage,
+        supported_target_kinds=("pixel",),
+        parents=(target_parser,),
+    )
+    stage.add_argument(
+        "suite",
+        nargs="?",
+        choices=SUPPORTED_PIXEL_CI_SUITES,
+        default="full",
+        help="Suite to stage. Defaults to full.",
+    )
+    stage.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
+
+    root_prep = add_command(
+        subparsers,
+        "root-prep",
+        "Prepare host-side Pixel rooting assets.",
+        cmd_root_prep,
+    )
+    root_prep.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
+
+    root_patch = add_command(
+        subparsers,
+        "root-patch",
+        "Patch the stock boot image with Magisk on a Pixel target.",
+        cmd_root_patch,
+        supported_target_kinds=("pixel",),
+        parents=(target_parser,),
+    )
+    root_patch.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
+
+    root_stage = add_command(
+        subparsers,
+        "root-stage",
+        "Stage Magisk and stock boot image for manual Pixel root patching.",
+        cmd_root_stage,
+        supported_target_kinds=("pixel",),
+        parents=(target_parser,),
+    )
+    root_stage.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
+
+    root_flash = add_command(
+        subparsers,
+        "root-flash",
+        "Flash a patched boot image to a Pixel target.",
+        cmd_root_flash,
+        supported_target_kinds=("pixel",),
+        parents=(target_parser,),
+    )
+    root_flash.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
+
+    ota_sideload = add_command(
+        subparsers,
+        "ota-sideload",
+        "Reboot a Pixel target to recovery and sideload the cached OTA.",
+        cmd_ota_sideload,
+        supported_target_kinds=("pixel",),
+        parents=(target_parser,),
+    )
+    ota_sideload.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
+
+    exec_cmd = add_command(
+        subparsers,
+        "exec",
+        "Exec a package inside the VM session.",
         cmd_run,
         supported_target_kinds=("vm",),
         parents=(target_parser,),
     )
-    run.add_argument("package")
-    run.add_argument("--env", action="append", default=[])
-    run.add_argument("--background", action="store_true")
+    exec_cmd.add_argument("package", help="Package executable to launch inside the running VM session.")
+    exec_cmd.add_argument("--env", action="append", default=[], help="Environment assignment passed to the package.")
+    exec_cmd.add_argument("--background", action="store_true", help="Do not wait for the remote package to exit.")
+
+    ssh_cmd = add_command(
+        subparsers,
+        "ssh",
+        "SSH into the VM target.",
+        cmd_ssh,
+        supported_target_kinds=("vm",),
+        parents=(target_parser,),
+    )
+    ssh_cmd.add_argument("ssh_args", nargs=argparse.REMAINDER, help="Arguments passed through to ssh.")
 
     add_command(
         subparsers,
@@ -1473,9 +1659,9 @@ def build_parser() -> argparse.ArgumentParser:
         cmd_root_check,
         supported_target_kinds=("pixel",),
         parents=(target_parser,),
-    )
+    ).add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
 
-    add_command(
+    restore_android = add_command(
         subparsers,
         "restore-android",
         "Restore Android display services on a Pixel target.",
@@ -1483,25 +1669,39 @@ def build_parser() -> argparse.ArgumentParser:
         supported_target_kinds=("pixel",),
         parents=(target_parser,),
     )
+    restore_android.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
 
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    raw_argv = list(sys.argv[1:] if argv is None else argv)
-    global_dry_run, raw_argv = extract_global_dry_run(raw_argv)
-    requested_target, filtered_argv = extract_target(raw_argv)
-
     parser = build_parser()
-    args = parser.parse_args(filtered_argv)
-    if global_dry_run:
-        if not hasattr(args, "dry_run"):
-            parser.error("--dry-run is only supported with start and stop")
-        args.dry_run = True
+    args = parser.parse_args(preprocess_argv(list(sys.argv[1:] if argv is None else argv)))
+    global_target = getattr(args, "global_target", None)
+    local_target = getattr(args, "target", None)
+    if global_target and local_target and global_target != local_target:
+        print(
+            f"shadowctl: conflicting targets: global {global_target!r}, command {local_target!r}",
+            file=sys.stderr,
+        )
+        return 2
+    requested_target = local_target or global_target
     supported_target_kinds = tuple(getattr(args, "supported_target_kinds", ()))
 
     if supported_target_kinds:
         default_kind = supported_target_kinds[0] if len(supported_target_kinds) == 1 else "vm"
+        target_kind = requested_target_kind(requested_target, default_kind=default_kind)
+        if target_kind == "desktop":
+            print("shadowctl: target 'desktop' was removed; use 'vm'", file=sys.stderr)
+            return 1
+        if target_kind not in supported_target_kinds:
+            supported = ", ".join(supported_target_kinds)
+            got = requested_target or default_kind
+            print(
+                f"shadowctl: {args.command} supports targets: {supported}; got {got} ({target_kind})",
+                file=sys.stderr,
+            )
+            return 2
         target_ref = synthetic_target_for_dry_run(
             requested_target,
             enabled=bool(getattr(args, "dry_run", False)),

@@ -54,7 +54,7 @@ if [[ ! -S "$SOCKET_PATH" ]]; then
     terminate_vm_process
     exit 0
   fi
-  echo "ui-vm-stop: VM is not running"
+  echo "vm: VM is not running"
   exit 0
 fi
 

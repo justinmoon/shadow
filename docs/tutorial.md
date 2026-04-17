@@ -19,26 +19,26 @@ The QEMU VM gives you a full Linux environment running the Shadow compositor in 
 - virtio-gpu display at 660x1240 (phone-like portrait)
 - USB keyboard and tablet input
 - 9P share mounting staged runtime artifacts at `/opt/shadow-runtime`
-- SSH access on a worktree-scoped forwarded port (`just vm-ssh` and `shadowctl` pick the right one)
+- SSH access on a worktree-scoped forwarded port (`sc -t vm ssh` picks the right one)
 
 **Startup flow:**
-1. `just vm-run` stages runtime bundles under `.shadow-vm/runtime-artifacts`, builds the NixOS image, and launches QEMU
+1. `just run target=vm` stages runtime bundles under `.shadow-vm/runtime-artifacts`, builds the NixOS image, and launches QEMU
 2. The guest boots, greetd starts a user session via cage (a minimal Wayland kiosk)
 3. `shadow-ui-session` sources the staged runtime env, launches the packaged compositor, and exposes a control socket
-5. The VM reaches steady state — compositor running, control socket ready
+4. The VM reaches steady state — compositor running, control socket ready
 
 **Common commands:**
 ```bash
-just vm-run              # Launch the VM
-just vm-ssh              # SSH into the guest
-just vm-logs             # Tail compositor session logs
-just vm-status           # Show running processes and state
-just vm-open app=counter # Launch an app in the compositor
-just vm-home             # Return to the home screen
-just vm-stop             # Shut down the VM
+just run target=vm                    # Launch the VM
+sc -t vm ssh                          # SSH into the guest
+sc -t vm logs                         # Tail compositor session logs
+sc -t vm status                       # Show running processes and state
+sc -t vm open counter                 # Launch an app in the compositor
+sc -t vm home                         # Return to the home screen
+just stop target=vm                   # Shut down the VM
 ```
 
-Behind these recipes, `scripts/shadowctl` is the unified Python CLI for VM and rooted-Pixel iteration. In the devshell, `sc` is a thin wrapper on `PATH` that runs it; use `-t vm`, `-t pixel`, or an explicit Pixel serial from `shadowctl devices`.
+Behind these recipes, `scripts/shadowctl` is the unified Python CLI for VM and rooted-Pixel iteration. In the devshell, `sc` is a thin wrapper on `PATH` that runs it; use `-t vm`, `-t pixel`, or an explicit Pixel serial from `sc devices`.
 
 ### Rooted Pixel
 
@@ -57,19 +57,20 @@ This frees `/dev/dri/card0` (the Linux kernel's device file for the display hard
 
 **Root acquisition (one-time setup):**
 ```bash
-just pixel-root-prep   # Download OTA, extract boot.img, fetch Magisk APK
-just pixel-root-patch  # Run Magisk's patcher on device, pull patched boot.img
-just pixel-root-flash  # Flash patched boot via fastboot
-just pixel-root-check  # Verify root works
+sc root-prep             # Download OTA, extract boot.img, fetch Magisk APK
+sc -t pixel root-patch   # Run Magisk's patcher on device, pull patched boot.img
+sc -t pixel root-flash   # Flash patched boot via fastboot
+sc -t pixel root-check   # Verify root works
 ```
 
 **Running apps on device:**
 ```bash
-just pixel-build                    # Cross-compile aarch64 static binaries
-just pixel-push                     # Push artifacts via adb
-just pixel-runtime-app-drm          # Run the Blitz demo (restores Android after)
-just pixel-runtime-app-drm-hold     # Run and keep the display seized
-just pixel-restore-android          # Manually restore Android's display stack
+sc -t pixel stage shell             # Build and push shell/runtime artifacts
+just run target=pixel app=shell     # Run the shell/home scene
+just run target=pixel app=timeline  # Run and ask the shell to open timeline
+just stop target=pixel              # Restore Android's display stack
+sc -t pixel ci timeline             # Run the timeline hardware subset
+sc -t pixel stage camera            # Stage artifacts without executing the suite
 ```
 
 Artifacts are cross-compiled as static musl binaries (aarch64), pushed to `/data/local/tmp/`, and executed as root via `su`.
@@ -337,7 +338,7 @@ The compositor's software renderer (`ui/crates/shadow-ui-software/`) handles she
 
 Shadow uses Nix flakes as the build environment for everything: development shells, cross-compilation, and the VM image.
 
-**Disk space:** The default dev shell (`nix develop`) downloads about **3.8 GiB** to the Nix store. Running the QEMU VM (`just vm-run`) adds another ~6.5 GiB for the Linux guest image (QEMU, NixOS kernel, Mesa, cargo/rustc for the guest), plus ~7.5 GiB of VM disk images that grow as you compile inside the guest. Total for the full VM setup: **~18 GiB on disk**. Actual network transfer is smaller — Nix compresses downloads, so expect roughly 6–8 GiB over the wire.
+**Disk space:** The default dev shell (`nix develop`) downloads several GiB to the Nix store. Running the QEMU VM (`just run target=vm`) adds the Linux guest image, QEMU dependencies, Mesa/Wayland graphics libraries, and host-staged runtime artifacts. The VM is now an artifact consumer: it does not install Cargo/Rust and does not grow a guest-side compile cache.
 
 ### Dev Shells
 
@@ -393,9 +394,9 @@ The QEMU VM is a full NixOS system defined in `vm/shadow-ui-vm.nix`. Nix builds 
 
 ---
 
-## Vibecoding a New App
+## Iterating On Runtime Apps
 
-Here's how to build and test a new app from scratch.
+The public VM session currently launches registered shell apps: `counter`, `timeline`, `camera`, `podcast`, and `cashu`. For a brand-new app, add it to the runtime artifact metadata and session app list first, then launch it with `just run target=vm app=<id>`.
 
 ### 1. Create the app
 
@@ -444,21 +445,20 @@ import { listKind1, publishKind1 } from "@shadow/app-runtime-os";    // nostr
 ### 2. Run it
 
 ```bash
-just run app=hello
+just run target=vm app=counter
 ```
 
-This handles everything: compiles TSX through Babel + SolidJS preset, bundles with esbuild, launches the compositor, and opens your app. The compositor spawns Blitz, which spawns the Deno runtime host pointing at your bundle.
+This handles everything for the supported VM shell apps: prepares runtime bundles, launches the artifact-consumer VM, starts the compositor, and opens the requested app.
 
 ### 3. Iterate
 
-Edit `app.tsx`, re-run `just run`. That's the loop.
+Edit an app under `runtime/`, re-run `just run target=vm app=<id>`. That's the loop.
 
 Key checks:
 ```bash
 just pre-commit    # Fast local gate (formatting, tests, compile)
 just ui-check      # UI workspace checks
-just ui-vm-smoke   # Local VM shell/app smoke used by pre-merge
-just ui-smoke      # Manual Linux compositor smoke test
+just smoke target=vm # Local VM shell/app smoke used by pre-merge
 just pre-merge     # Required branch gate (pre-commit + VM smoke)
-just pixel-ci      # Rooted-Pixel CI suite runner (`quick|camera|sound|podcast|full`)
+sc -t pixel ci     # Rooted-Pixel CI suite runner (`quick|shell|timeline|camera|nostr|sound|audio|podcast|runtime|full`)
 ```

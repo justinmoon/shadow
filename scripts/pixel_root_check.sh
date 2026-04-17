@@ -25,6 +25,6 @@ root: no
 If the phone just booted a patched Magisk image, open the Magisk app once.
 If Magisk asks for additional setup or environment fix, accept it and let it reboot.
 Then run:
-  just pixel-root-check
+  sc -t pixel root-check
 EOF
 exit 1

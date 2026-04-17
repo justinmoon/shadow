@@ -1391,7 +1391,7 @@ $context: device fingerprint does not match the cached stock boot image.
 expected: $expected
 actual:   $actual
 
-Run 'just pixel-ota-sideload' first, let Android boot, re-enable USB debugging, then retry.
+Run 'sc -t pixel ota-sideload' first, let Android boot, re-enable USB debugging, then retry.
 EOF
   return 1
 }

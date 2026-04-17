@@ -18,64 +18,69 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 
 ### VM / QEMU
 
-- The repo currently carries both `just vm-*` and `just ui-vm-*` names for the same VM surface.
-- Prefer `just run target=vm` / `just stop target=vm` at the front door.
-- Keep `vm-*` and `ui-vm-*` working as convenience and compatibility wrappers until the cleanup finishes.
 - Primary loop:
   - `just run target=vm app=<id>`
   - `just stop target=vm`
-  - `just vm-doctor`
-  - `just vm-status`
-  - `just vm-logs`
-  - `just vm-journal`
-  - `just vm-wait-ready`
-  - `just vm-open app=<id>`
-  - `just vm-home`
-  - `just vm-screenshot`
-  - `just vm-smoke`
+  - `sc -t vm doctor`
+  - `sc -t vm status`
+  - `sc -t vm logs`
+  - `sc -t vm journal`
+  - `sc -t vm wait-ready`
+  - `sc -t vm open <id>`
+  - `sc -t vm home`
+  - `sc -t vm screenshot`
+  - `sc -t vm frame`
+  - `sc -t vm ssh`
+  - `just smoke target=vm`
+- The old `ui-vm-*`, `vm-*`, `ui-run`, and `ui-stop` compatibility recipes were removed. `just smoke target=vm` is the single VM CI subset recipe.
 
 ### Rooted Pixel
 
 - Primary loop:
-  - `just pixel-doctor`
-  - `just pixel-build`
-  - `just pixel-stage shell`
+  - `sc -t pixel stage shell`
   - `just run target=pixel app=<id>`
-  - `just pixel-restore-android`
-  - `just pixel-shell-drm-hold`
   - `just stop target=pixel`
-  - `just shadowctl state|open <id>|home|switcher -t pixel`
+  - `sc -t pixel doctor`
+  - `sc -t pixel state`
+  - `sc -t pixel open <id>`
+  - `sc -t pixel home`
+  - `sc -t pixel switcher`
+  - `sc -t pixel frame`
+  - `sc -t pixel ci <subset>`
+  - `sc -t pixel stage <subset>`
   - `just pixel-ci <subset>`
+- `just pixel-ci`, `just pixel-stage`, and `just pixel-run` are thin convenience wrappers around `shadowctl` Pixel CI commands.
 - Setup and recovery still matter for the real-device lane:
-  - `just pixel-root-prep`
-  - `just pixel-root-patch`
-  - `just pixel-root-flash`
-  - `just pixel-root-check`
-  - `just pixel-restore-android`
+  - `sc root-prep`
+  - `sc -t pixel root-check`
+  - `sc -t pixel root-patch`
+  - `sc -t pixel root-flash`
+  - `sc -t pixel ota-sideload`
+  - `just stop target=pixel`
 - The supported rooted-Pixel product surface is shell/home plus app launch, not every historical direct-runtime, GPU probe, or one-off device-debug path.
 
 ### Shared CLI
 
 - `scripts/shadowctl` is the target-aware operator CLI for VM and Pixel.
-- `just shadowctl ...` passes through to that shared CLI.
-- `just run target=...` / `just stop target=...` now route through `shadowctl start` / `shadowctl stop`.
-- Most VM convenience wrappers now hang off `shadowctl`, while older compatibility wrappers still exist around the same target model.
-- Pixel shell control should move toward the same shared CLI shape instead of accumulating more one-off shell wrappers.
+- `sc` is the devshell alias for `scripts/shadowctl`; `just shadowctl ...` is the fallback when `sc` is not on `PATH`.
+- `just run target=...` / `just stop target=...` now route through `shadowctl run` / `shadowctl stop`.
+- VM inspection/control hangs off `shadowctl`; `just` should not grow one wrapper per VM subcommand again.
+- Pixel shell control and setup/recovery now hang off `shadowctl`; remaining cleanup is private helper consolidation.
 
 ## Repo Shape
 
 1. `flake.nix` pins the toolchain, dev shells, and packaged binaries.
-   The VM lane now consumes packaged Linux `shadow-compositor` / `shadow-blitz-demo` artifacts built through Nix; `.#ui-vm-ci` is the canonical artifact-consumer runner package and `.#ui-vm` remains a compatibility alias.
+   The VM lane now consumes packaged Linux `shadow-compositor` / `shadow-blitz-demo` artifacts built through Nix; `.#ui-vm-ci` is the canonical artifact-consumer runner package.
    The guest should stay runtime-only.
    The guest no longer mounts the repo. It mounts `/nix/store` plus a narrow `.shadow-vm/runtime-artifacts` share staged on the host.
    Runtime app bundles are built by the shared host-side artifact builder (`scripts/runtime_build_artifacts.sh`) and staged under that artifact share.
    The VM podcast sample defaults to a checked-in local fixture so the branch gate does not need a live RSS/media fetch just to open that app.
-2. `justfile` is the human entrypoint and should stay curated around the supported operator surface. `just` should show that curated view by default, and `just help-all` should expose the full recipe list.
+2. `justfile` is the human entrypoint and should stay curated around orchestration shortcuts. `just` should show the small public API, not every historical probe script.
 3. `scripts/shadowctl` owns shared target/session/control behavior.
 4. `scripts/*.sh` stage artifacts and launch sessions. Reused operator behavior belongs in `shadowctl`, not duplicated shell wrappers.
 5. `ui/crates/shadow-ui-core` holds shell state, app metadata, palette, and the control protocol.
-6. `ui/crates/shadow-compositor` is the Linux desktop compositor bring-up host.
-7. `ui/crates/shadow-compositor-guest` is the guest compositor used by VM and Pixel sessions.
+6. `ui/crates/shadow-compositor` is the nested Linux compositor used inside the VM and by Linux desktop bring-up.
+7. `ui/crates/shadow-compositor-guest` is the direct-display compositor used by rooted Pixel sessions.
 8. `rust/` contains helper binaries for session launch, runtime hosting, device integration, and narrow probes.
 
 ## Current Architecture Direction

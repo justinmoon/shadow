@@ -586,10 +586,6 @@
               name = "${hostSystem}-shadow-ui-vm-ci";
               value = shadowUiVmConfig;
             }
-            {
-              name = "${hostSystem}-shadow-ui-vm";
-              value = shadowUiVmConfig;
-            }
           ]
       ) darwinSystems);
       devShells = forAllSystems ({ androidDevPkgs, androidSdk, pkgs }: {
@@ -624,13 +620,7 @@
               self.nixosConfigurations."${pkgs.stdenv.hostPlatform.system}-shadow-ui-vm-ci".config.microvm.declaredRunner
             else
               mkUnavailablePackage pkgs "shadow-ui-vm-ci-unavailable"
-                "ui-vm-ci requires a macOS host. Use just ui-vm-run.";
-          ui-vm =
-            if pkgs.stdenv.isDarwin then
-              self.packages.${pkgs.stdenv.hostPlatform.system}.ui-vm-ci
-            else
-              mkUnavailablePackage pkgs "shadow-ui-vm-unavailable"
-                "ui-vm is a compatibility alias for ui-vm-ci and requires a macOS host. Use just ui-vm-run.";
+                "ui-vm-ci requires a macOS host. Use just run target=vm.";
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           shadow-blitz-demo-aarch64-linux-gnu-gpu =

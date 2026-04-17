@@ -48,7 +48,7 @@ PY
     fi
 
     if (( SECONDS >= deadline )); then
-      echo "ui-vm-smoke: timed out waiting for ${label}" >&2
+      echo "vm-smoke: timed out waiting for ${label}" >&2
       printf '%s\n' "$state_json" >&2
       return 1
     fi
@@ -86,7 +86,7 @@ PY
     fi
 
     if (( SECONDS >= deadline )); then
-      echo "ui-vm-smoke: timed out waiting for ${label}" >&2
+      echo "vm-smoke: timed out waiting for ${label}" >&2
       printf '%s\n' "$state_json" >&2
       return 1
     fi
@@ -97,17 +97,17 @@ PY
 
 dump_failure_context() {
   if [[ -f "$RUN_LOG" ]]; then
-    printf '\n== ui-vm-smoke run log ==\n' >&2
+    printf '\n== vm-smoke run log ==\n' >&2
     sed -n '1,240p' "$RUN_LOG" >&2 || true
   fi
 
-  printf '\n== ui-vm doctor ==\n' >&2
+  printf '\n== vm doctor ==\n' >&2
   "$SCRIPT_DIR/shadowctl" doctor -t vm >&2 || true
 
-  printf '\n== ui-vm logs ==\n' >&2
+  printf '\n== vm logs ==\n' >&2
   "$SCRIPT_DIR/shadowctl" logs -t vm --lines 200 >&2 || true
 
-  printf '\n== ui-vm journal ==\n' >&2
+  printf '\n== vm journal ==\n' >&2
   "$SCRIPT_DIR/shadowctl" journal -t vm --lines 120 >&2 || true
 }
 
@@ -147,14 +147,14 @@ while true; do
   fi
 
   if ! kill -0 "$ui_vm_run_pid" 2>/dev/null; then
-    echo "ui-vm-smoke: ui_vm_run exited before the VM started" >&2
+    echo "vm-smoke: VM runner exited before the VM started" >&2
     wait "$ui_vm_run_pid"
     exit 1
   fi
 
   prep_now="$(date +%s)"
   if (( prep_now - prep_start > UI_VM_PREP_TIMEOUT_SECS )); then
-    echo "ui-vm-smoke: timed out waiting for VM bootstrap" >&2
+    echo "vm-smoke: timed out waiting for VM bootstrap" >&2
     exit 1
   fi
 
@@ -182,46 +182,46 @@ expected_guest_root = os.environ["EXPECTED_ARTIFACT_GUEST_ROOT"]
 repo_root = Path(os.environ["REPO_ROOT"]).resolve()
 
 if issues:
-    raise SystemExit(f"ui-vm-smoke: doctor reported issues: {issues!r}")
+    raise SystemExit(f"vm-smoke: doctor reported issues: {issues!r}")
 if artifact_share is None:
     raise SystemExit(
-        f"ui-vm-smoke: expected artifact share {str(expected)!r}, got {artifact_share!r}"
+        f"vm-smoke: expected artifact share {str(expected)!r}, got {artifact_share!r}"
     )
 artifact_share_path = Path(artifact_share)
 if not artifact_share_path.is_absolute():
     artifact_share_path = (repo_root / artifact_share_path).resolve()
 if artifact_share_path != expected:
     raise SystemExit(
-        f"ui-vm-smoke: expected artifact share {str(expected)!r}, got {artifact_share!r}"
+        f"vm-smoke: expected artifact share {str(expected)!r}, got {artifact_share!r}"
     )
 
 manifest_path = expected / "artifact-manifest.json"
 if not manifest_path.is_file():
-    raise SystemExit(f"ui-vm-smoke: missing runtime artifact manifest {manifest_path}")
+    raise SystemExit(f"vm-smoke: missing runtime artifact manifest {manifest_path}")
 
 with manifest_path.open("r", encoding="utf-8") as handle:
     manifest = json.load(handle)
 
 if manifest.get("schemaVersion") != 1:
-    raise SystemExit("ui-vm-smoke: runtime artifact manifest schemaVersion must be 1")
+    raise SystemExit("vm-smoke: runtime artifact manifest schemaVersion must be 1")
 if manifest.get("profile") != "vm-shell":
     raise SystemExit(
-        f"ui-vm-smoke: runtime artifact manifest profile must be vm-shell, got {manifest.get('profile')!r}"
+        f"vm-smoke: runtime artifact manifest profile must be vm-shell, got {manifest.get('profile')!r}"
     )
 if manifest.get("artifactGuestRoot") != expected_guest_root:
     raise SystemExit(
-        f"ui-vm-smoke: runtime artifact manifest guest root must be {expected_guest_root!r}"
+        f"vm-smoke: runtime artifact manifest guest root must be {expected_guest_root!r}"
     )
 
 apps = manifest.get("apps")
 if not isinstance(apps, dict):
-    raise SystemExit("ui-vm-smoke: runtime artifact manifest apps must be an object")
+    raise SystemExit("vm-smoke: runtime artifact manifest apps must be an object")
 
 required_apps = {"camera", "cashu", "counter", "podcast", "timeline"}
 missing = sorted(required_apps - set(apps))
 if missing:
     raise SystemExit(
-        "ui-vm-smoke: runtime artifact manifest missing apps: " + ", ".join(missing)
+        "vm-smoke: runtime artifact manifest missing apps: " + ", ".join(missing)
     )
 
 for app_id in sorted(required_apps):
@@ -231,10 +231,10 @@ for app_id in sorted(required_apps):
     expected_guest_bundle = f"{expected_guest_root}/apps/{app_id}/bundle.js"
     if guest_bundle != expected_guest_bundle:
         raise SystemExit(
-            f"ui-vm-smoke: app {app_id} guest bundle {guest_bundle!r} != {expected_guest_bundle!r}"
+            f"vm-smoke: app {app_id} guest bundle {guest_bundle!r} != {expected_guest_bundle!r}"
         )
     if not isinstance(effective_bundle, str) or not effective_bundle:
-        raise SystemExit(f"ui-vm-smoke: app {app_id} missing effectiveBundlePath")
+        raise SystemExit(f"vm-smoke: app {app_id} missing effectiveBundlePath")
     effective_bundle_path = Path(effective_bundle)
     if not effective_bundle_path.is_absolute():
         effective_bundle_path = (repo_root / effective_bundle_path).resolve()
@@ -242,43 +242,43 @@ for app_id in sorted(required_apps):
         effective_bundle_path.relative_to(expected)
     except ValueError as error:
         raise SystemExit(
-            f"ui-vm-smoke: app {app_id} host bundle is outside artifact share: {effective_bundle}"
+            f"vm-smoke: app {app_id} host bundle is outside artifact share: {effective_bundle}"
         ) from error
     if not effective_bundle_path.is_file():
         raise SystemExit(
-            f"ui-vm-smoke: app {app_id} host bundle does not exist: {effective_bundle_path}"
+            f"vm-smoke: app {app_id} host bundle does not exist: {effective_bundle_path}"
         )
 PY
 
-echo "ui-vm-smoke: open timeline"
+echo "vm-smoke: open timeline"
 "$SCRIPT_DIR/shadowctl" open timeline -t vm >/dev/null
 state_after_timeline_open="$(wait_for_open_state timeline "timeline open")"
 
-echo "ui-vm-smoke: home timeline"
+echo "vm-smoke: home timeline"
 "$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
 state_after_timeline_home="$(wait_for_home_state timeline "timeline home")"
 
-echo "ui-vm-smoke: reopen timeline"
+echo "vm-smoke: reopen timeline"
 "$SCRIPT_DIR/shadowctl" open timeline -t vm >/dev/null
 state_after_timeline_reopen="$(wait_for_open_state timeline "timeline reopen")"
 
-echo "ui-vm-smoke: home timeline again"
+echo "vm-smoke: home timeline again"
 "$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
 wait_for_home_state timeline "timeline second home" >/dev/null
 
-echo "ui-vm-smoke: open camera"
+echo "vm-smoke: open camera"
 "$SCRIPT_DIR/shadowctl" open camera -t vm >/dev/null
 state_after_camera_open="$(wait_for_open_state camera "camera open")"
 
-echo "ui-vm-smoke: home camera"
+echo "vm-smoke: home camera"
 "$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
 state_after_camera_home="$(wait_for_home_state camera "camera home")"
 
-echo "ui-vm-smoke: open podcast"
+echo "vm-smoke: open podcast"
 "$SCRIPT_DIR/shadowctl" open podcast -t vm >/dev/null
 state_after_podcast_open="$(wait_for_open_state podcast "podcast open")"
 
-echo "ui-vm-smoke: screenshot"
+echo "vm-smoke: screenshot"
 "$SCRIPT_DIR/shadowctl" screenshot -t vm "$SHOT_PATH" >/dev/null
 
 STATE_AFTER_TIMELINE_OPEN="$state_after_timeline_open" \
@@ -302,7 +302,7 @@ podcast_open = json.loads(os.environ["STATE_AFTER_PODCAST_OPEN"])
 
 def expect(condition: bool, message: str) -> None:
     if not condition:
-        raise SystemExit(f"ui-vm-smoke: {message}")
+        raise SystemExit(f"vm-smoke: {message}")
 
 
 def expect_open(state: dict, app_id: str, label: str) -> None:
@@ -329,7 +329,7 @@ expect_open(podcast_open, "podcast", "podcast open")
 print(
     json.dumps(
         {
-            "result": "ui-vm-smoke-ok",
+            "result": "vm-smoke-ok",
             "screenshot": os.environ["SHOT_PATH"],
         },
         indent=2,

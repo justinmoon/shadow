@@ -79,7 +79,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `just ui-check`
   - `just pre-commit`
 - [x] Host font discovery is no longer leaking into the Pixel musl guest-client build.
-  - Root cause of the regression on `just run <serial>`:
+  - Root cause of the regression on `just run target=<serial>`:
     - enabling `blitz-dom/system_fonts` globally pulled in `yeslogic-fontconfig-sys`
     - the static `aarch64-unknown-linux-musl` Pixel guest-client build has no declarative `fontconfig.pc`, so the build died before device launch
   - Fix:
@@ -302,7 +302,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Any Pixel smoke that waits on post-startup behavior must track remote liveness through the control socket and/or guest-compositor process, not the local launcher PID.
 - Real panel touch on the rooted Pixel must use evdev/sendevent for end-to-end input proof. `shadowctl tap` is still useful for compositor-space control, but it is not a substitute for device touch in keyboard/input smokes.
 - Restoring Android and stopping Shadow are separate concerns. A timed-out restore can leave a live rooted shell behind, so shell smokes and Pixel CI must explicitly stop stale Shadow processes before assuming the control socket state is meaningful.
-        - `run` / `ui-run` default back to `app=shell`
+        - `just run` defaults back to `app=shell`
 
 ## What Is Proven vs. What Is Not
 

@@ -23,7 +23,7 @@ parse_args() {
         shift 2
         ;;
       *)
-        echo "ui-vm-run: unsupported argument $1" >&2
+        echo "vm: unsupported argument $1" >&2
         exit 1
         ;;
     esac
@@ -48,7 +48,7 @@ case "$(uname -m)" in
     ui_vm_runtime_host_package_attr="shadow-runtime-host-x86_64-linux-gnu"
     ;;
   *)
-    echo "ui-vm-run: unsupported host arch $(uname -m) for runtime host package selection" >&2
+    echo "vm: unsupported host arch $(uname -m) for runtime host package selection" >&2
     exit 1
     ;;
 esac
@@ -62,8 +62,8 @@ cleanup_runtime_env_tmp() {
 trap cleanup_runtime_env_tmp EXIT
 
 if lsof -nP -iTCP:"$ui_vm_ssh_port_value" -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "ui-vm-run: SSH port $ui_vm_ssh_port_value is already in use" >&2
-  echo "ui-vm-run: stop the current worktree VM first with 'just ui-vm-stop' or set SHADOW_UI_VM_SSH_PORT" >&2
+  echo "vm: SSH port $ui_vm_ssh_port_value is already in use" >&2
+  echo "vm: stop the current worktree VM first with 'just stop target=vm' or set SHADOW_UI_VM_SSH_PORT" >&2
   exit 1
 fi
 
@@ -90,7 +90,7 @@ elif shadow_session_app_supports_auto_open "$ui_vm_start_app_id"; then
     printf 'export SHADOW_COMPOSITOR_START_APP_ID=%q\n' "$ui_vm_start_app_id"
   } >>"$runtime_env_tmp"
 else
-  echo "ui-vm-run: unsupported --app $ui_vm_start_app_id; expected $(shadow_session_apps_usage)" >&2
+  echo "vm: unsupported --app $ui_vm_start_app_id; expected $(shadow_session_apps_usage)" >&2
   exit 1
 fi
 mv "$runtime_env_tmp" "$RUNTIME_ENV_PATH"
@@ -100,14 +100,14 @@ runtime_env_tmp=""
   SHADOW_UI_VM_SSH_PORT="$ui_vm_ssh_port_value" \
   nix build --impure --accept-flake-config -o "$RUNNER_LINK" .#ui-vm-ci >/dev/null
 
-echo "ui-vm-run: launching Shadow UI VM"
-echo "ui-vm-run: qemu window will host the real Linux compositor"
-echo "ui-vm-run: ssh endpoint shadow@127.0.0.1:$ui_vm_ssh_port_value"
-echo "ui-vm-run: state image .shadow-vm/shadow-ui-state.img"
-echo "ui-vm-run: runtime artifacts .shadow-vm/runtime-artifacts"
-echo "ui-vm-run: runner package .#ui-vm-ci"
-echo "ui-vm-run: first boot or dependency changes may spend time building Linux artifacts through Nix"
-echo "ui-vm-run: use 'just ui-vm-doctor' or 'just ui-vm-wait-ready' while the screen is blank"
+echo "vm: launching Shadow UI VM"
+echo "vm: qemu window will host the real Linux compositor"
+echo "vm: ssh endpoint shadow@127.0.0.1:$ui_vm_ssh_port_value"
+echo "vm: state image .shadow-vm/shadow-ui-state.img"
+echo "vm: runtime artifacts .shadow-vm/runtime-artifacts"
+echo "vm: runner package .#ui-vm-ci"
+echo "vm: first boot or dependency changes may spend time building Linux artifacts through Nix"
+echo "vm: use 'sc -t vm doctor' or 'sc -t vm wait-ready' while the screen is blank"
 
 trap - EXIT
 exec "$RUNNER_LINK/bin/microvm-run"
