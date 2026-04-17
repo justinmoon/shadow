@@ -56,7 +56,7 @@ playback_source = os.environ["PODCAST_PLAYBACK_SOURCE"]
 episode_ids = {
     part.strip() for part in os.environ["EPISODE_IDS"].split(",") if part.strip()
 }
-supported_url_source_exts = {".mp3", ".wav"}
+supported_url_source_exts = {".mp3", ".ogg", ".oga", ".wav"}
 
 def slugify(title: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
