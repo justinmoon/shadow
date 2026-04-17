@@ -9,6 +9,8 @@ REMOTE_FLAKE_DIR_CACHE="${REMOTE_FLAKE_DIR_CACHE:-}"
 SSH_OPTS=(
   -o BatchMode=yes
   -o ConnectTimeout=10
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=3
   -o StrictHostKeyChecking=no
   -o UserKnownHostsFile=/dev/null
 )

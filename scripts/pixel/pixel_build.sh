@@ -17,7 +17,8 @@ build_one() {
 
   mkdir -p "$(dirname "$out_link")"
   rm -f "$out_link"
-  nix build "$(repo_root)#${attr}" --out-link "$out_link"
+  rm -f "$output_path"
+  pixel_retry_nix_build nix build "$(repo_root)#${attr}" --out-link "$out_link"
 
   cp "$out_link/bin/$binary" "$output_path"
   chmod 0755 "$output_path"
@@ -62,11 +63,14 @@ copy_linux_package_binary() {
 
   mkdir -p "$(dirname "$out_link")"
   rm -f "$out_link"
-  if ! nix build "$package_ref" --out-link "$out_link"; then
+  rm -f "$output_path"
+  if ! pixel_retry_nix_build nix build "$package_ref" --out-link "$out_link"; then
     return 1
   fi
 
-  cp "$out_link/bin/$binary_name" "$output_path"
+  if ! cp "$out_link/bin/$binary_name" "$output_path"; then
+    return 1
+  fi
   chmod 0755 "$output_path"
   validate_device_binary "$output_path"
   printf 'Built %s via %s -> %s\n' "$binary_name" "$linux_system" "$output_path"
@@ -79,7 +83,8 @@ copy_remote_binary() {
   binary_name="$3"
   output_path="$(pixel_artifact_path "$binary_name")"
   remote_bin="$(remote_store_bin "$remote_repo" "$attr" "$binary_name")"
-  scp "${SSH_OPTS[@]}" -q "${REMOTE_HOST}:$remote_bin" "$output_path"
+  rm -f "$output_path"
+  scp_retry "${REMOTE_HOST}:$remote_bin" "$output_path"
   chmod 0755 "$output_path"
   validate_device_binary "$output_path"
   printf 'Fetched %s -> %s\n' "$binary_name" "$output_path"

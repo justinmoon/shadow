@@ -1,3 +1,10 @@
+---
+summary: Historical bring-up walkthrough and deeper system context beyond the front-door operator docs
+read_when:
+  - you need historical or subsystem context that is intentionally omitted from architecture.md
+  - you are tracing the full Shadow stack end to end during bring-up or debugging
+---
+
 # Shadow Tutorial
 
 Shadow is a custom mobile OS stack built from the ground up. We take a rooted Android phone, stop the Android display server, and run our own compositor, runtime, and apps directly on the Linux kernel. This tutorial explains every layer of the system.

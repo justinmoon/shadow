@@ -34,6 +34,7 @@ scripts/pixel/pixel_runtime_app_nostr_timeline_drm.sh	pixel	Private Pixel runtim
 scripts/ci/pixel_runtime_app_nostr_timeline_local_smoke.sh	ci	Pixel CI Nostr timeline smoke against a host-local relay.
 scripts/pixel/pixel_runtime_app_podcast_player_drm.sh	pixel	Private Pixel runtime podcast app runner.
 scripts/pixel/pixel_runtime_app_sound_drm.sh	pixel	Private Pixel runtime sound app runner.
+scripts/lib/agent_tools.py	lib	Shared agent/docs hygiene helper used by agent-brief and pre-commit.
 scripts/lib/pixel_runtime_linux_bundle_common.sh	lib	Shared Pixel runtime Linux bundle helper library.
 scripts/pixel/pixel_runtime_summary.py	pixel	Private Pixel runtime result summarizer.
 scripts/ci/pixel_shell_camera_smoke.sh	ci	Rooted-Pixel shell camera smoke used by pixel-ci.

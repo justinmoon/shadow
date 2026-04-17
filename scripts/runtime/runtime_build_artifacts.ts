@@ -19,6 +19,7 @@ type CliOptions = {
   configJson: string;
   expectCacheHit: boolean;
   extraAssetDir: string;
+  includeAppIds: string[];
   includePodcast: boolean;
   inputPath: string;
   manifestOut: string;
@@ -126,6 +127,11 @@ async function buildSpecs(
   cwd: string,
 ): Promise<AppSpec[]> {
   if (options.profile === "single") {
+    if (options.includeAppIds.length > 0) {
+      throw new Error(
+        "--include-app is only valid with vm-shell and pixel-shell profiles",
+      );
+    }
     return [
       {
         cacheDir: options.cacheDir,
@@ -137,51 +143,67 @@ async function buildSpecs(
     ];
   }
 
-  const specs: AppSpec[] = [
-    {
-      cacheDir: profileEnv(options.profile, "COUNTER_CACHE_DIR") ??
-        defaultCacheDir(options.profile, "counter"),
-      config: null,
-      extraAssetDir: null,
-      id: "counter",
-      inputPath: profileEnv(options.profile, "COUNTER_INPUT_PATH") ??
-        "runtime/app-counter/app.tsx",
-    },
-    {
-      cacheDir: profileEnv(options.profile, "CAMERA_CACHE_DIR") ??
-        defaultCacheDir(options.profile, "camera"),
-      config: null,
-      extraAssetDir: null,
-      id: "camera",
-      inputPath: profileEnv(options.profile, "CAMERA_INPUT_PATH") ??
-        "runtime/app-camera/app.tsx",
-    },
-    {
-      cacheDir: profileEnv(options.profile, "TIMELINE_CACHE_DIR") ??
-        defaultCacheDir(options.profile, "timeline"),
-      config: parseConfigJson(
-        Deno.env.get("SHADOW_RUNTIME_APP_TIMELINE_CONFIG_JSON") ??
-          JSON.stringify(DEFAULT_TIMELINE_CONFIG),
-      ),
-      extraAssetDir: null,
-      id: "timeline",
-      inputPath: profileEnv(options.profile, "TIMELINE_INPUT_PATH") ??
-        "runtime/app-nostr-timeline/app.tsx",
-    },
-    {
-      cacheDir: profileEnv(options.profile, "CASHU_CACHE_DIR") ??
-        defaultCacheDir(options.profile, "cashu"),
-      config: null,
-      extraAssetDir: null,
-      id: "cashu",
-      inputPath: profileEnv(options.profile, "CASHU_INPUT_PATH") ??
-        "runtime/app-cashu-wallet/app.tsx",
-    },
-  ];
+  const specsById = new Map<string, AppSpec>([
+    [
+      "counter",
+      {
+        cacheDir: profileEnv(options.profile, "COUNTER_CACHE_DIR") ??
+          defaultCacheDir(options.profile, "counter"),
+        config: null,
+        extraAssetDir: null,
+        id: "counter",
+        inputPath: profileEnv(options.profile, "COUNTER_INPUT_PATH") ??
+          "runtime/app-counter/app.tsx",
+      },
+    ],
+    [
+      "camera",
+      {
+        cacheDir: profileEnv(options.profile, "CAMERA_CACHE_DIR") ??
+          defaultCacheDir(options.profile, "camera"),
+        config: null,
+        extraAssetDir: null,
+        id: "camera",
+        inputPath: profileEnv(options.profile, "CAMERA_INPUT_PATH") ??
+          "runtime/app-camera/app.tsx",
+      },
+    ],
+    [
+      "timeline",
+      {
+        cacheDir: profileEnv(options.profile, "TIMELINE_CACHE_DIR") ??
+          defaultCacheDir(options.profile, "timeline"),
+        config: parseConfigJson(
+          Deno.env.get("SHADOW_RUNTIME_APP_TIMELINE_CONFIG_JSON") ??
+            JSON.stringify(DEFAULT_TIMELINE_CONFIG),
+        ),
+        extraAssetDir: null,
+        id: "timeline",
+        inputPath: profileEnv(options.profile, "TIMELINE_INPUT_PATH") ??
+          "runtime/app-nostr-timeline/app.tsx",
+      },
+    ],
+    [
+      "cashu",
+      {
+        cacheDir: profileEnv(options.profile, "CASHU_CACHE_DIR") ??
+          defaultCacheDir(options.profile, "cashu"),
+        config: null,
+        extraAssetDir: null,
+        id: "cashu",
+        inputPath: profileEnv(options.profile, "CASHU_INPUT_PATH") ??
+          "runtime/app-cashu-wallet/app.tsx",
+      },
+    ],
+  ]);
 
-  if (options.includePodcast) {
+  const selectedAppIds = options.includeAppIds.length > 0
+    ? options.includeAppIds
+    : ["counter", "camera", "timeline", "cashu"];
+
+  if (options.includePodcast || selectedAppIds.includes("podcast")) {
     const podcast = await resolvePodcastAssets(cwd);
-    specs.push({
+    specsById.set("podcast", {
       cacheDir: profileEnv(options.profile, "PODCAST_CACHE_DIR") ??
         defaultCacheDir(options.profile, "podcast"),
       config: podcast.config,
@@ -192,7 +214,21 @@ async function buildSpecs(
     });
   }
 
-  return specs;
+  const resolvedAppIds = options.includeAppIds.length > 0
+    ? selectedAppIds
+    : (options.includePodcast
+      ? [...selectedAppIds, "podcast"]
+      : selectedAppIds);
+
+  return resolvedAppIds.map((appId) => {
+    const spec = specsById.get(appId);
+    if (!spec) {
+      throw new Error(
+        `unsupported app ${appId} for profile ${options.profile}`,
+      );
+    }
+    return spec;
+  });
 }
 
 async function buildApp(
@@ -291,7 +327,12 @@ async function resolvePodcastAssets(
   cwd: string,
 ): Promise<{ assetDir: string; config: unknown }> {
   const command = new Deno.Command(
-    path.join(cwd, "scripts", "runtime", "prepare_podcast_player_demo_assets.sh"),
+    path.join(
+      cwd,
+      "scripts",
+      "runtime",
+      "prepare_podcast_player_demo_assets.sh",
+    ),
     {
       stderr: "inherit",
       stdout: "piped",
@@ -497,6 +538,7 @@ function parseArgs(args: string[]): CliOptions {
     configJson: Deno.env.get("SHADOW_RUNTIME_APP_CONFIG_JSON") ?? "",
     expectCacheHit: false,
     extraAssetDir: Deno.env.get("SHADOW_RUNTIME_APP_EXTRA_ASSET_DIR") ?? "",
+    includeAppIds: [],
     includePodcast: false,
     inputPath: Deno.env.get("SHADOW_RUNTIME_APP_INPUT_PATH") ??
       "runtime/app-counter/app.tsx",
@@ -517,6 +559,10 @@ function parseArgs(args: string[]): CliOptions {
         break;
       case "--app-id":
         options.appId = requireValue(arg, args[index + 1]);
+        index += 1;
+        break;
+      case "--include-app":
+        options.includeAppIds.push(requireValue(arg, args[index + 1]));
         index += 1;
         break;
       case "--input":

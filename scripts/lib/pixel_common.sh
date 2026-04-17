@@ -108,6 +108,78 @@ pixel_require_host_lock() {
     lockf "$lock_path" "$script_path" "$@"
 }
 
+pixel_retryable_nix_build_failure() {
+  local log_path
+  log_path="$1"
+
+  grep -Eq \
+    'Nix daemon disconnected unexpectedly|failed to read from remote builder|failed to start SSH connection to|Failed to find a machine for remote build|writing to file: Broken pipe|unexpected end-of-file|Connection reset by peer' \
+    "$log_path"
+}
+
+pixel_retry_nix_build() {
+  local attempt max_attempts retry_sleep_secs status log_path
+  max_attempts="${PIXEL_NIX_BUILD_RETRIES:-3}"
+  retry_sleep_secs="${PIXEL_NIX_BUILD_RETRY_SLEEP_SECS:-3}"
+  log_path="$(mktemp "${TMPDIR:-/tmp}/pixel-nix-build.XXXXXX")"
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    if "$@" >"$log_path" 2>&1; then
+      cat "$log_path"
+      rm -f "$log_path"
+      return 0
+    fi
+
+    status="$?"
+    if (( attempt == max_attempts )) || ! pixel_retryable_nix_build_failure "$log_path"; then
+      cat "$log_path" >&2
+      rm -f "$log_path"
+      return "$status"
+    fi
+
+    printf 'pixel: retrying transient nix build failure (%s/%s)\n' "$attempt" "$max_attempts" >&2
+    tail -n 80 "$log_path" >&2 || true
+    sleep "$retry_sleep_secs"
+  done
+
+  rm -f "$log_path"
+  return 1
+}
+
+pixel_retry_nix_build_print_out_paths() {
+  local attempt max_attempts retry_sleep_secs status stdout_log stderr_log combined_log
+  max_attempts="${PIXEL_NIX_BUILD_RETRIES:-3}"
+  retry_sleep_secs="${PIXEL_NIX_BUILD_RETRY_SLEEP_SECS:-3}"
+  stdout_log="$(mktemp "${TMPDIR:-/tmp}/pixel-nix-build-stdout.XXXXXX")"
+  stderr_log="$(mktemp "${TMPDIR:-/tmp}/pixel-nix-build-stderr.XXXXXX")"
+  combined_log="$(mktemp "${TMPDIR:-/tmp}/pixel-nix-build-combined.XXXXXX")"
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    if "$@" >"$stdout_log" 2>"$stderr_log"; then
+      cat "$stderr_log" >&2
+      cat "$stdout_log"
+      rm -f "$stdout_log" "$stderr_log" "$combined_log"
+      return 0
+    fi
+
+    status="$?"
+    cat "$stdout_log" "$stderr_log" >"$combined_log"
+    if (( attempt == max_attempts )) || ! pixel_retryable_nix_build_failure "$combined_log"; then
+      cat "$stderr_log" >&2
+      cat "$stdout_log" >&2
+      rm -f "$stdout_log" "$stderr_log" "$combined_log"
+      return "$status"
+    fi
+
+    printf 'pixel: retrying transient nix build print-out-paths failure (%s/%s)\n' "$attempt" "$max_attempts" >&2
+    tail -n 80 "$combined_log" >&2 || true
+    sleep "$retry_sleep_secs"
+  done
+
+  rm -f "$stdout_log" "$stderr_log" "$combined_log"
+  return 1
+}
+
 pixel_resolve_sideload_serial() {
   local requested
   requested="${PIXEL_SERIAL:-}"

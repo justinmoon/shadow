@@ -21,7 +21,9 @@ runtime_bundle_xkb_source_dir() {
   fi
 
   xkb_store="$(
-    nix build --accept-flake-config --no-link --print-out-paths 'nixpkgs#xkeyboard_config' | tail -n 1
+    pixel_retry_nix_build_print_out_paths \
+      nix build --accept-flake-config --no-link --print-out-paths 'nixpkgs#xkeyboard_config' \
+      | tail -n 1
   )"
   PIXEL_XKB_CONFIG_SOURCE_DIR="$xkb_store/share/X11/xkb"
   export PIXEL_XKB_CONFIG_SOURCE_DIR
@@ -44,13 +46,19 @@ runtime_bundle_android_font_source_dir() {
   fi
 
   roboto_store="$(
-    nix build --accept-flake-config --no-link --print-out-paths 'nixpkgs#roboto' | tail -n 1
+    pixel_retry_nix_build_print_out_paths \
+      nix build --accept-flake-config --no-link --print-out-paths 'nixpkgs#roboto' \
+      | tail -n 1
   )"
   roboto_mono_store="$(
-    nix build --accept-flake-config --no-link --print-out-paths 'nixpkgs#roboto-mono' | tail -n 1
+    pixel_retry_nix_build_print_out_paths \
+      nix build --accept-flake-config --no-link --print-out-paths 'nixpkgs#roboto-mono' \
+      | tail -n 1
   )"
   emoji_store="$(
-    nix build --accept-flake-config --no-link --print-out-paths 'nixpkgs#noto-fonts-color-emoji' | tail -n 1
+    pixel_retry_nix_build_print_out_paths \
+      nix build --accept-flake-config --no-link --print-out-paths 'nixpkgs#noto-fonts-color-emoji' \
+      | tail -n 1
   )"
   font_cache_dir="$(pixel_dir)/vendor/android-fonts/nix-curated"
 
@@ -297,7 +305,10 @@ append_runtime_closure_from_package_ref() {
   while IFS= read -r out_path; do
     [[ -n "$out_path" ]] || continue
     output_paths+=("$out_path")
-  done < <(nix build --accept-flake-config --no-link --print-out-paths "$package_ref")
+  done < <(
+    pixel_retry_nix_build_print_out_paths \
+      nix build --accept-flake-config --no-link --print-out-paths "$package_ref"
+  )
 
   for out_path in "${output_paths[@]}"; do
     append_runtime_closure_paths "$out_path"
@@ -477,7 +488,7 @@ stage_runtime_host_linux_bundle() {
   rm -rf "$bundle_dir"
   mkdir -p "$bundle_lib_dir" "$bundle_etc_dir"
 
-  nix build --accept-flake-config "$package_ref" --out-link "$out_link"
+  pixel_retry_nix_build nix build --accept-flake-config "$package_ref" --out-link "$out_link"
 
   binary_host_path="$out_link/bin/$binary_name"
   file_output="$(file "$binary_host_path")"

@@ -217,4 +217,4 @@ exec env \
   PIXEL_GUEST_POST_SESSION_DEVICE_SCRIPT="$camera_cleanup_command" \
   PIXEL_TAKEOVER_STOP_ALLOCATOR="${PIXEL_TAKEOVER_STOP_ALLOCATOR:-0}" \
   PIXEL_GUEST_SKIP_PUSH="$([[ "$shell_run_only" == 1 ]] && printf 1 || true)" \
-  "$SCRIPT_DIR/pixel_guest_ui_drm.sh"
+  "$SCRIPT_DIR/pixel/pixel_guest_ui_drm.sh"

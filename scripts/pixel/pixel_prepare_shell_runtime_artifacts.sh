@@ -10,22 +10,25 @@ ensure_bootimg_shell "$@"
 
 pixel_prepare_dirs
 repo="$(repo_root)"
+linux_system="${PIXEL_GUEST_BUILD_SYSTEM:-aarch64-linux}"
 host_bundle_dir="$(pixel_shell_runtime_host_bundle_artifact_dir)"
 host_bundle_out_link="$(pixel_dir)/shadow-runtime-shell-host-aarch64-linux-gnu-result"
 host_binary_name="shadow-runtime-host"
 host_launcher_artifact="$host_bundle_dir/run-shadow-runtime-host"
 host_bundle_manifest_path="$host_bundle_dir/.bundle-manifest.json"
 runtime_manifest_path="$host_bundle_dir/.runtime-bundle-manifest.json"
-package_ref="$repo#shadow-runtime-host-aarch64-linux-gnu"
+package_ref="$repo#packages.${linux_system}.shadow-runtime-host"
 extra_bundle_dir="${PIXEL_RUNTIME_EXTRA_BUNDLE_ARTIFACT_DIR-}"
 audio_enabled="${PIXEL_SHELL_ENABLE_LINUX_AUDIO:-1}"
-audio_package_ref="$repo#shadow-linux-audio-spike-aarch64-linux-gnu"
+audio_package_ref="$repo#packages.${linux_system}.shadow-linux-audio-spike-aarch64-linux-gnu"
 audio_out_link="$(pixel_dir)/shadow-linux-audio-spike-aarch64-linux-gnu-result"
 audio_binary_name="shadow-linux-audio-spike"
 audio_launcher_artifact="$host_bundle_dir/run-$audio_binary_name"
 xkb_source_dir="$(runtime_bundle_xkb_source_dir)"
 android_font_source_dir="$(runtime_bundle_android_font_source_dir)"
 declare -a shell_runtime_source_inputs=()
+supported_shell_app_ids=(counter camera timeline podcast cashu)
+selected_shell_app_ids=()
 
 mapfile -t shell_runtime_source_inputs < <(
   runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-camera-host"
@@ -65,6 +68,69 @@ if [[ -z "$timeline_config_json" ]]; then
   timeline_config_json='{"limit":12,"syncOnStart":true}'
 fi
 
+trim_whitespace() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+shell_app_is_supported() {
+  local app_id="$1"
+  local supported_app_id
+
+  for supported_app_id in "${supported_shell_app_ids[@]}"; do
+    if [[ "$supported_app_id" == "$app_id" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+shell_app_selected() {
+  local app_id="$1"
+  local selected_app_id
+
+  for selected_app_id in "${selected_shell_app_ids[@]}"; do
+    if [[ "$selected_app_id" == "$app_id" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+append_selected_shell_app() {
+  local app_id="$1"
+  local selected_app_id
+
+  for selected_app_id in "${selected_shell_app_ids[@]}"; do
+    if [[ "$selected_app_id" == "$app_id" ]]; then
+      return 0
+    fi
+  done
+  selected_shell_app_ids+=("$app_id")
+}
+
+selected_shell_app_ids_csv="${PIXEL_SHELL_APP_IDS:-}"
+if [[ -n "$selected_shell_app_ids_csv" ]]; then
+  IFS=',' read -r -a requested_shell_app_ids <<<"$selected_shell_app_ids_csv"
+  for requested_app_id in "${requested_shell_app_ids[@]}"; do
+    requested_app_id="$(trim_whitespace "$requested_app_id")"
+    if [[ -z "$requested_app_id" ]]; then
+      continue
+    fi
+    if ! shell_app_is_supported "$requested_app_id"; then
+      echo "pixel_prepare_shell_runtime_artifacts: unsupported PIXEL_SHELL_APP_IDS entry: $requested_app_id" >&2
+      exit 1
+    fi
+    append_selected_shell_app "$requested_app_id"
+  done
+fi
+if ((${#selected_shell_app_ids[@]} == 0)); then
+  selected_shell_app_ids=("${supported_shell_app_ids[@]}")
+fi
+selected_shell_app_ids_csv="$(IFS=,; printf '%s' "${selected_shell_app_ids[*]}")"
+
 manifest_app_field() {
   local app_id="$1"
   local field="$2"
@@ -74,12 +140,41 @@ import json
 import os
 
 data = json.loads(os.environ["APP_MANIFEST_JSON"])
-value = data["apps"][os.environ["APP_ID"]].get(os.environ["APP_FIELD"])
+value = data["apps"].get(os.environ["APP_ID"], {}).get(os.environ["APP_FIELD"])
 if isinstance(value, (dict, list)):
     print(json.dumps(value))
 elif value is not None:
     print(value)
 PY
+}
+
+copy_selected_bundle_artifact() {
+  local app_id="$1"
+  local source_path="$2"
+  local artifact_path="$3"
+
+  if ! shell_app_selected "$app_id"; then
+    rm -f "$artifact_path"
+    return 0
+  fi
+  if [[ -z "$source_path" || ! -f "$source_path" ]]; then
+    echo "pixel_prepare_shell_runtime_artifacts: missing bundle source for selected app: $app_id" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "$artifact_path")"
+  cp "$source_path" "$artifact_path"
+  chmod 0644 "$artifact_path"
+}
+
+copy_selected_host_bundle() {
+  local app_id="$1"
+  local artifact_path="$2"
+  local device_bundle_path="$3"
+
+  if ! shell_app_selected "$app_id"; then
+    return 0
+  fi
+  cp "$artifact_path" "$host_bundle_dir/$(basename "$device_bundle_path")"
 }
 
 if [[ -n "$extra_bundle_dir" ]]; then
@@ -91,12 +186,17 @@ if [[ -n "$extra_bundle_dir" ]]; then
 fi
 
 app_manifest_json="$(
+  runtime_build_args=(--profile pixel-shell --artifact-root "$app_artifact_root")
+  if shell_app_selected podcast; then
+    runtime_build_args+=(--include-podcast)
+  fi
+  for selected_app_id in "${selected_shell_app_ids[@]}"; do
+    runtime_build_args+=(--include-app "$selected_app_id")
+  done
   SHADOW_RUNTIME_APP_TIMELINE_CONFIG_JSON="$timeline_config_json" \
   SHADOW_PODCAST_PLAYER_EPISODE_IDS="$podcast_episode_ids" \
     "$SCRIPT_DIR/runtime_build_artifacts.sh" \
-      --profile pixel-shell \
-      --include-podcast \
-      --artifact-root "$app_artifact_root"
+      "${runtime_build_args[@]}"
 )"
 
 counter_bundle_source_path="$(manifest_app_field counter effectiveBundlePath)"
@@ -107,18 +207,11 @@ cashu_bundle_source_path="$(manifest_app_field cashu effectiveBundlePath)"
 podcast_asset_dir="$(manifest_app_field podcast extraAssetDir)"
 podcast_config_json="$(manifest_app_field podcast runtimeAppConfig)"
 
-mkdir -p "$(dirname "$counter_bundle_artifact")"
-cp "$counter_bundle_source_path" "$counter_bundle_artifact"
-cp "$camera_bundle_source_path" "$camera_bundle_artifact"
-cp "$timeline_bundle_source_path" "$timeline_bundle_artifact"
-cp "$podcast_bundle_source_path" "$podcast_bundle_artifact"
-cp "$cashu_bundle_source_path" "$cashu_bundle_artifact"
-chmod 0644 \
-  "$counter_bundle_artifact" \
-  "$camera_bundle_artifact" \
-  "$timeline_bundle_artifact" \
-  "$podcast_bundle_artifact" \
-  "$cashu_bundle_artifact"
+copy_selected_bundle_artifact counter "$counter_bundle_source_path" "$counter_bundle_artifact"
+copy_selected_bundle_artifact camera "$camera_bundle_source_path" "$camera_bundle_artifact"
+copy_selected_bundle_artifact timeline "$timeline_bundle_source_path" "$timeline_bundle_artifact"
+copy_selected_bundle_artifact podcast "$podcast_bundle_source_path" "$podcast_bundle_artifact"
+copy_selected_bundle_artifact cashu "$cashu_bundle_source_path" "$cashu_bundle_artifact"
 
 host_bundle_source_fingerprint="$(
   runtime_bundle_source_fingerprint \
@@ -136,15 +229,16 @@ host_bundle_source_fingerprint="$(
     "$SCRIPT_DIR/runtime/prepare_podcast_player_demo_assets.sh" \
     "$xkb_source_dir" \
     "$android_font_source_dir" \
-    "$counter_bundle_source_path" \
-    "$camera_bundle_source_path" \
-    "$timeline_bundle_source_path" \
-    "$podcast_bundle_source_path" \
-    "$cashu_bundle_source_path" \
-    "$podcast_asset_dir" \
+    "__pixel_shell_app_ids__${selected_shell_app_ids_csv}" \
+    "${counter_bundle_source_path:-__counter_unselected__}" \
+    "${camera_bundle_source_path:-__camera_unselected__}" \
+    "${timeline_bundle_source_path:-__timeline_unselected__}" \
+    "${podcast_bundle_source_path:-__podcast_unselected__}" \
+    "${cashu_bundle_source_path:-__cashu_unselected__}" \
+    "${podcast_asset_dir:-__podcast_assets_unselected__}" \
     "__pixel_shell_enable_linux_audio__${audio_enabled}" \
     "__pixel_shell_audio_package_ref__${audio_package_ref}" \
-    "__pixel_shell_podcast_config__${podcast_config_json}" \
+    "__pixel_shell_podcast_config__${podcast_config_json:-__podcast_unselected__}" \
     "${extra_bundle_dir:-__no_extra_bundle__}"
 )"
 
@@ -153,11 +247,11 @@ if [[ "${PIXEL_FORCE_LINUX_BUNDLE_REBUILD-}" != 1 ]] \
   && [[ -d "$host_bundle_dir" ]] \
   && [[ -x "$host_launcher_artifact" ]] \
   && [[ -f "$host_bundle_dir/$host_binary_name" ]] \
-  && [[ -f "$host_bundle_dir/$(basename "$(pixel_runtime_counter_bundle_dst)")" ]] \
-  && [[ -f "$host_bundle_dir/$(basename "$(pixel_runtime_camera_bundle_dst)")" ]] \
-  && [[ -f "$host_bundle_dir/$(basename "$(pixel_runtime_timeline_bundle_dst)")" ]] \
-  && [[ -f "$host_bundle_dir/$(basename "$(pixel_runtime_podcast_bundle_dst)")" ]] \
-  && [[ -f "$host_bundle_dir/$(basename "$(pixel_runtime_cashu_bundle_dst)")" ]] \
+  && { ! shell_app_selected counter || [[ -f "$host_bundle_dir/$(basename "$(pixel_runtime_counter_bundle_dst)")" ]]; } \
+  && { ! shell_app_selected camera || [[ -f "$host_bundle_dir/$(basename "$(pixel_runtime_camera_bundle_dst)")" ]]; } \
+  && { ! shell_app_selected timeline || [[ -f "$host_bundle_dir/$(basename "$(pixel_runtime_timeline_bundle_dst)")" ]]; } \
+  && { ! shell_app_selected podcast || [[ -f "$host_bundle_dir/$(basename "$(pixel_runtime_podcast_bundle_dst)")" ]]; } \
+  && { ! shell_app_selected cashu || [[ -f "$host_bundle_dir/$(basename "$(pixel_runtime_cashu_bundle_dst)")" ]]; } \
   && [[ -d "$host_bundle_dir/share/X11/xkb" ]] \
   && [[ ! -L "$host_bundle_dir/share/X11/xkb" ]] \
   && runtime_bundle_manifest_matches "$host_bundle_manifest_path" "$host_bundle_source_fingerprint"; then
@@ -172,7 +266,7 @@ if [[ "$host_bundle_cache_hit" == "1" ]]; then
 else
   stage_runtime_host_linux_bundle "$package_ref" "$host_bundle_out_link" "$host_bundle_dir" "$host_binary_name"
   if [[ "$audio_enabled" == "1" ]]; then
-    nix build --accept-flake-config "$audio_package_ref" --out-link "$audio_out_link"
+    pixel_retry_nix_build nix build --accept-flake-config "$audio_package_ref" --out-link "$audio_out_link"
     cp "$audio_out_link/bin/$audio_binary_name" "$host_bundle_dir/$audio_binary_name"
     chmod 0755 "$host_bundle_dir/$audio_binary_name"
     append_runtime_closure_from_package_ref "$audio_package_ref"
@@ -246,27 +340,35 @@ EOF
     "$package_ref"
 fi
 
-cp "$counter_bundle_artifact" "$host_bundle_dir/$(basename "$(pixel_runtime_counter_bundle_dst)")"
-cp "$camera_bundle_artifact" "$host_bundle_dir/$(basename "$(pixel_runtime_camera_bundle_dst)")"
-cp "$timeline_bundle_artifact" "$host_bundle_dir/$(basename "$(pixel_runtime_timeline_bundle_dst)")"
-cp "$podcast_bundle_artifact" "$host_bundle_dir/$(basename "$(pixel_runtime_podcast_bundle_dst)")"
-cp "$cashu_bundle_artifact" "$host_bundle_dir/$(basename "$(pixel_runtime_cashu_bundle_dst)")"
-if [[ -n "$podcast_asset_dir" ]]; then
-  chmod -R u+w "$host_bundle_dir/assets" 2>/dev/null || true
-  rm -rf "$host_bundle_dir/assets"
-  cp -R "$podcast_asset_dir"/. "$host_bundle_dir"/
-fi
-chmod 0644 \
+rm -f \
   "$host_bundle_dir/$(basename "$(pixel_runtime_counter_bundle_dst)")" \
   "$host_bundle_dir/$(basename "$(pixel_runtime_camera_bundle_dst)")" \
   "$host_bundle_dir/$(basename "$(pixel_runtime_timeline_bundle_dst)")" \
   "$host_bundle_dir/$(basename "$(pixel_runtime_podcast_bundle_dst)")" \
   "$host_bundle_dir/$(basename "$(pixel_runtime_cashu_bundle_dst)")"
+copy_selected_host_bundle counter "$counter_bundle_artifact" "$(pixel_runtime_counter_bundle_dst)"
+copy_selected_host_bundle camera "$camera_bundle_artifact" "$(pixel_runtime_camera_bundle_dst)"
+copy_selected_host_bundle timeline "$timeline_bundle_artifact" "$(pixel_runtime_timeline_bundle_dst)"
+copy_selected_host_bundle podcast "$podcast_bundle_artifact" "$(pixel_runtime_podcast_bundle_dst)"
+copy_selected_host_bundle cashu "$cashu_bundle_artifact" "$(pixel_runtime_cashu_bundle_dst)"
+if shell_app_selected podcast && [[ -n "$podcast_asset_dir" ]]; then
+  chmod -R u+w "$host_bundle_dir/assets" 2>/dev/null || true
+  rm -rf "$host_bundle_dir/assets"
+  cp -R "$podcast_asset_dir"/. "$host_bundle_dir"/
+else
+  chmod -R u+w "$host_bundle_dir/assets" 2>/dev/null || true
+  rm -rf "$host_bundle_dir/assets"
+fi
+if shell_app_selected counter; then chmod 0644 "$host_bundle_dir/$(basename "$(pixel_runtime_counter_bundle_dst)")"; fi
+if shell_app_selected camera; then chmod 0644 "$host_bundle_dir/$(basename "$(pixel_runtime_camera_bundle_dst)")"; fi
+if shell_app_selected timeline; then chmod 0644 "$host_bundle_dir/$(basename "$(pixel_runtime_timeline_bundle_dst)")"; fi
+if shell_app_selected podcast; then chmod 0644 "$host_bundle_dir/$(basename "$(pixel_runtime_podcast_bundle_dst)")"; fi
+if shell_app_selected cashu; then chmod 0644 "$host_bundle_dir/$(basename "$(pixel_runtime_cashu_bundle_dst)")"; fi
 
 runtime_helper_content_fingerprint="$(
   runtime_bundle_directory_fingerprint "$host_bundle_dir"
 )"
-python3 - "$runtime_manifest_path" "$runtime_helper_content_fingerprint" "$audio_enabled" "$podcast_config_json" "$timeline_config_json" "$counter_input_path" "$camera_input_path" "$timeline_input_path" "$podcast_input_path" "$podcast_asset_dir" "$cashu_input_path" "$extra_bundle_dir" <<'PY'
+python3 - "$runtime_manifest_path" "$runtime_helper_content_fingerprint" "$audio_enabled" "$podcast_config_json" "$timeline_config_json" "$counter_input_path" "$camera_input_path" "$timeline_input_path" "$podcast_input_path" "$podcast_asset_dir" "$cashu_input_path" "$extra_bundle_dir" "$selected_shell_app_ids_csv" <<'PY'
 import json
 import os
 import sys
@@ -285,7 +387,8 @@ from datetime import datetime, timezone
     podcast_asset_dir,
     cashu_input_path,
     extra_bundle_dir,
-) = sys.argv[1:13]
+    selected_app_ids_csv,
+) = sys.argv[1:14]
 manifest = {
     "cashuInputPath": cashu_input_path,
     "cameraInputPath": camera_input_path,
@@ -298,6 +401,7 @@ manifest = {
     "podcastConfigJson": podcast_config_json,
     "podcastInputPath": podcast_input_path,
     "runtimeExtraBundleArtifactDir": os.path.abspath(extra_bundle_dir) if extra_bundle_dir else None,
+    "selectedAppIds": [app_id for app_id in selected_app_ids_csv.split(",") if app_id],
     "timelineConfigJson": timeline_config_json,
     "timelineInputPath": timeline_input_path,
 }
@@ -306,7 +410,7 @@ with open(manifest_path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 
-python3 - "$host_bundle_dir" "$counter_bundle_artifact" "$camera_bundle_artifact" "$timeline_bundle_artifact" "$podcast_bundle_artifact" "$cashu_bundle_artifact" "$host_bundle_cache_hit" <<'PY'
+python3 - "$host_bundle_dir" "$counter_bundle_artifact" "$camera_bundle_artifact" "$timeline_bundle_artifact" "$podcast_bundle_artifact" "$cashu_bundle_artifact" "$host_bundle_cache_hit" "$selected_shell_app_ids_csv" <<'PY'
 import json
 import os
 import sys
@@ -319,7 +423,8 @@ import sys
     podcast_bundle_artifact,
     cashu_bundle_artifact,
     host_bundle_cache_hit,
-) = sys.argv[1:8]
+    selected_app_ids_csv,
+) = sys.argv[1:9]
 print(json.dumps({
     "cashuBundleArtifact": os.path.abspath(cashu_bundle_artifact),
     "cashuBundleDevicePath": "/data/local/tmp/shadow-runtime-gnu/runtime-app-cashu-bundle.js",
@@ -333,6 +438,7 @@ print(json.dumps({
     "runtimeHostBundleArtifactDir": os.path.abspath(host_bundle_dir),
     "runtimeHostBundleCacheHit": host_bundle_cache_hit == "1",
     "runtimeHostLauncherDevicePath": "/data/local/tmp/shadow-runtime-gnu/run-shadow-runtime-host",
+    "selectedAppIds": [app_id for app_id in selected_app_ids_csv.split(",") if app_id],
     "timelineBundleArtifact": os.path.abspath(timeline_bundle_artifact),
     "timelineBundleDevicePath": "/data/local/tmp/shadow-runtime-gnu/runtime-app-timeline-bundle.js",
 }, indent=2))

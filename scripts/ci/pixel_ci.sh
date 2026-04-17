@@ -165,6 +165,20 @@ need_sound=0
 need_podcast=0
 need_camera_runtime=0
 need_nostr=0
+shell_stage_app_ids=()
+
+append_shell_stage_app() {
+  local app_id="$1"
+  local existing
+
+  for existing in "${shell_stage_app_ids[@]}"; do
+    if [[ "$existing" == "$app_id" ]]; then
+      return 0
+    fi
+  done
+  shell_stage_app_ids+=("$app_id")
+}
+
 for step in "${suite_steps[@]}"; do
   case "$step" in
     timeline|camera)
@@ -183,7 +197,19 @@ for step in "${suite_steps[@]}"; do
   if [[ "$step" == "camera" ]]; then
     need_camera_runtime=1
   fi
+  case "$step" in
+    timeline)
+      append_shell_stage_app timeline
+      ;;
+    camera)
+      append_shell_stage_app camera
+      ;;
+  esac
 done
+shell_stage_app_ids_csv=""
+if ((${#shell_stage_app_ids[@]} > 0)); then
+  shell_stage_app_ids_csv="$(IFS=,; printf '%s' "${shell_stage_app_ids[*]}")"
+fi
 
 runtime_run_only_step_count=0
 for step in "${suite_steps[@]}"; do
@@ -357,7 +383,7 @@ if (( run_only == 0 )); then
       shell_runtime_args+=(--no-camera-runtime)
     fi
     run_step prep_shell_runtime "stage rooted Pixel shell artifacts" \
-      env PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel/pixel_shell_drm.sh" "${shell_runtime_args[@]}"
+      env PIXEL_SERIAL="$serial" PIXEL_SHELL_APP_IDS="$shell_stage_app_ids_csv" "$SCRIPT_DIR/pixel/pixel_shell_drm.sh" "${shell_runtime_args[@]}"
   fi
 
   if (( stage_only == 1 && need_sound == 1 )); then

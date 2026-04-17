@@ -22,7 +22,7 @@ descs+=("Available repo entrypoints.")
 
 if [[ -d "$repo_root/docs" ]]; then
   titles+=("docs")
-  cmds+=("npx -y @justinmoon/agent-tools list-docs")
+  cmds+=("$SCRIPT_DIR/lib/agent_tools.py list-docs")
   descs+=("Project documentation index.")
 fi
 

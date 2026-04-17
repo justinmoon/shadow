@@ -10,6 +10,7 @@ ensure_bootimg_shell "$@"
 
 pixel_prepare_dirs
 repo="$(repo_root)"
+linux_system="${PIXEL_GUEST_BUILD_SYSTEM:-aarch64-linux}"
 input_path="${PIXEL_RUNTIME_APP_INPUT_PATH:-runtime/app-counter/app.tsx}"
 cache_dir="${PIXEL_RUNTIME_APP_CACHE_DIR:-build/runtime/pixel-counter}"
 bundle_artifact="$(pixel_runtime_app_bundle_artifact)"
@@ -18,9 +19,9 @@ asset_artifact_dir="$(pixel_runtime_app_asset_artifact_dir)"
 host_bundle_out_link="$(pixel_dir)/shadow-runtime-host-aarch64-linux-gnu-result"
 host_binary_name="shadow-runtime-host"
 host_launcher_artifact="$host_bundle_dir/run-shadow-runtime-host"
-package_ref="$repo#shadow-runtime-host-aarch64-linux-gnu"
+package_ref="$repo#packages.${linux_system}.shadow-runtime-host"
 audio_enabled="${PIXEL_RUNTIME_ENABLE_LINUX_AUDIO:-0}"
-audio_package_ref="$repo#shadow-linux-audio-spike-aarch64-linux-gnu"
+audio_package_ref="$repo#packages.${linux_system}.shadow-linux-audio-spike-aarch64-linux-gnu"
 audio_out_link="$(pixel_dir)/shadow-linux-audio-spike-aarch64-linux-gnu-result"
 audio_binary_name="shadow-linux-audio-spike"
 audio_launcher_artifact="$host_bundle_dir/run-$audio_binary_name"
@@ -163,7 +164,7 @@ fi
 if [[ "$host_bundle_cache_hit" != "1" ]]; then
   stage_runtime_host_linux_bundle "$package_ref" "$host_bundle_out_link" "$host_bundle_dir" "$host_binary_name"
   if [[ "$audio_enabled" == "1" ]]; then
-    nix build --accept-flake-config "$audio_package_ref" --out-link "$audio_out_link"
+    pixel_retry_nix_build nix build --accept-flake-config "$audio_package_ref" --out-link "$audio_out_link"
     cp "$audio_out_link/bin/$audio_binary_name" "$host_bundle_dir/$audio_binary_name"
     chmod 0755 "$host_bundle_dir/$audio_binary_name"
     append_runtime_closure_from_package_ref "$audio_package_ref"

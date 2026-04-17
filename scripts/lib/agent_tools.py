@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+EXCLUDED_DOC_DIRS = {"archive", "research"}
+
+
+def usage() -> int:
+    print(
+        "agent-tools - AI agent project hygiene.\n\n"
+        "Usage:\n"
+        "  agent-tools <command>\n\n"
+        "Commands:\n"
+        "  list-docs          List docs in ./docs/ with summaries and read-when hints\n"
+        "  check-docs         Validate all docs have proper frontmatter (CI)\n"
+        "  check-justfile     Verify all recipes have a summary comment (CI)\n"
+    )
+    return 0
+
+
+def iter_docs(root: Path) -> list[Path]:
+    docs_dir = root / "docs"
+    if not docs_dir.is_dir():
+        return []
+
+    files: list[Path] = []
+    for path in sorted(docs_dir.rglob("*.md")):
+        rel_parts = path.relative_to(docs_dir).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        if any(part in EXCLUDED_DOC_DIRS for part in rel_parts):
+            continue
+        files.append(path)
+    return files
+
+
+def extract_metadata(path: Path) -> tuple[str | None, list[str], str | None]:
+    content = path.read_text(encoding="utf-8")
+    if not content.startswith("---"):
+        return None, [], "missing front matter"
+
+    end_index = content.find("\n---", 3)
+    if end_index == -1:
+        return None, [], "unterminated front matter"
+
+    front_matter = content[3:end_index].strip().splitlines()
+    summary: str | None = None
+    read_when: list[str] = []
+    collecting_read_when = False
+
+    for raw_line in front_matter:
+        line = raw_line.strip()
+        if line.startswith("summary:"):
+            summary_value = line[len("summary:") :].strip().strip("'\"")
+            summary = " ".join(summary_value.split()) or None
+            collecting_read_when = False
+            continue
+
+        if line.startswith("read_when:"):
+            collecting_read_when = True
+            inline = line[len("read_when:") :].strip()
+            if inline.startswith("[") and inline.endswith("]"):
+                try:
+                    parsed = json.loads(inline.replace("'", '"'))
+                except json.JSONDecodeError:
+                    parsed = []
+                if isinstance(parsed, list):
+                    read_when.extend(
+                        str(value).strip() for value in parsed if str(value).strip()
+                    )
+            continue
+
+        if collecting_read_when:
+            if line.startswith("- "):
+                hint = line[2:].strip()
+                if hint:
+                    read_when.append(hint)
+            elif line:
+                collecting_read_when = False
+
+    if not summary:
+        return None, read_when, "summary key missing"
+
+    return summary, read_when, None
+
+
+def list_docs(root: Path) -> int:
+    files = iter_docs(root)
+    if not files:
+        print("No docs/ folder found.")
+        return 0
+
+    docs_dir = root / "docs"
+    print("Listing all markdown files in docs folder:")
+    for path in files:
+        rel = path.relative_to(docs_dir)
+        summary, read_when, error = extract_metadata(path)
+        if summary:
+            print(f"{rel} - {summary}")
+            if read_when:
+                print(f"  Read when: {'; '.join(read_when)}")
+            continue
+        reason = f" - [{error}]" if error else ""
+        print(f"{rel}{reason}")
+
+    print(
+        "\nReminder: keep docs up to date as behavior changes. "
+        'When your task matches any "Read when" hint above, read that doc before coding, '
+        "and suggest new coverage when it is missing."
+    )
+    return 0
+
+
+def check_docs(root: Path) -> int:
+    docs_dir = root / "docs"
+    if not docs_dir.is_dir():
+        return 0
+
+    failures: list[tuple[str, str]] = []
+    files = iter_docs(root)
+    for path in files:
+        summary, _, error = extract_metadata(path)
+        if not summary and error:
+            failures.append((str(path.relative_to(docs_dir)), error))
+
+    if failures:
+        print("check-docs failed:", file=sys.stderr)
+        for rel, error in failures:
+            print(f"  {rel}: {error}", file=sys.stderr)
+        print(
+            "\nAll docs must have frontmatter with 'summary' and 'read_when' fields.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"check-docs passed: {len(files)} docs have valid frontmatter")
+    return 0
+
+
+def check_justfile(root: Path, justfile_path: Path) -> int:
+    if not justfile_path.exists():
+        print(f"No justfile found at {justfile_path}")
+        return 0
+
+    lines = justfile_path.read_text(encoding="utf-8").splitlines()
+    missing: list[str] = []
+    recipe_count = 0
+
+    for index, line in enumerate(lines):
+        recipe_match = re.match(r"^([a-zA-Z_][a-zA-Z0-9_-]*)\s*(?:[^:=]*)?:", line)
+        if not recipe_match:
+            continue
+
+        name = recipe_match.group(1)
+        if name in {"set", "export", "alias", "import", "mod"}:
+            continue
+
+        recipe_count += 1
+        previous = index - 1
+        while previous >= 0 and not lines[previous].strip():
+            previous -= 1
+
+        attribute_lines: list[str] = []
+        while previous >= 0 and lines[previous].strip().startswith("[") and lines[previous].strip().endswith("]"):
+            attribute_lines.append(lines[previous].strip())
+            previous -= 1
+            while previous >= 0 and not lines[previous].strip():
+                previous -= 1
+
+        if any(attribute == "[private]" for attribute in attribute_lines):
+            continue
+        if previous < 0 or not lines[previous].lstrip().startswith("#"):
+            missing.append(name)
+
+    if missing:
+        rel = justfile_path.relative_to(root) if justfile_path.is_relative_to(root) else justfile_path
+        print(f"check-justfile failed for {rel}:", file=sys.stderr)
+        for name in missing:
+            print(f"  recipe missing summary comment: {name}", file=sys.stderr)
+        return 1
+
+    print(f"check-justfile passed: {recipe_count} recipes have summary comments")
+    return 0
+
+
+def main() -> int:
+    root = Path.cwd()
+    args = sys.argv[1:]
+    if not args or args[0] in {"-h", "--help"}:
+        return usage()
+
+    command = args[0]
+    if command == "list-docs":
+        return list_docs(root)
+    if command == "check-docs":
+        return check_docs(root)
+    if command == "check-justfile":
+        justfile_path = Path(args[1]).resolve() if len(args) > 1 else root / "justfile"
+        return check_justfile(root, justfile_path)
+
+    print(f"Unknown command: {command}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

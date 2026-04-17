@@ -26,5 +26,7 @@ if ((${#shell_scripts[@]})); then
 fi
 scripts/ci/operator_cli_smoke.sh
 scripts/ci/timeline_sync_defaults_smoke.sh
+scripts/lib/agent_tools.py check-docs
+scripts/lib/agent_tools.py check-justfile
 nix flake check --no-build
 just ui-check
