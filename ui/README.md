@@ -22,6 +22,7 @@ just smoke target=vm
 For the rooted Pixel path:
 
 ```sh
+just pixel-prep-settings
 sc -t pixel doctor
 sc -t pixel stage shell
 just run target=pixel app=shell

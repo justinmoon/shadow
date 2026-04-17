@@ -28,6 +28,7 @@ help:
 	'  just shadowctl ...    # same CLI without relying on devshell PATH' \
 	'' \
 	'Pixel CI and setup:' \
+	'  just pixel-prep-settings' \
 	'  sc -t pixel ci [quick|shell|timeline|camera|nostr|sound|audio|podcast|runtime|full]' \
 	'  sc -t pixel stage <suite>' \
 	'  sc root-prep' \
@@ -81,6 +82,10 @@ pixel-run *args='':
 		exec scripts/shadowctl ci --run-only --dry-run {{args}}; \
 	fi; \
 	exec scripts/shadowctl ci --run-only {{args}}
+
+# Apply non-root Android convenience settings for a dedicated Pixel test device
+pixel-prep-settings:
+	@scripts/pixel_prep_settings.sh
 
 # Rebase this worktree branch onto root master, run pre-merge, and fast-forward root master if green
 land:

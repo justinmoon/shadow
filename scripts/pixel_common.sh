@@ -1189,8 +1189,17 @@ def scale(panel_value: int, panel_extent: int, raw_min: int, raw_max: int) -> in
     normalized = max(0.0, min(1.0, panel_value / float(panel_extent - 1)))
     return round(raw_min + normalized * (raw_max - raw_min))
 
+def nudge(value: int, raw_min: int, raw_max: int) -> int:
+    if value > raw_min:
+        return value - 1
+    if value < raw_max:
+        return value + 1
+    return value
+
 raw_x = scale(panel_x, panel_w, int(touch["xMin"]), int(touch["xMax"]))
 raw_y = scale(panel_y, panel_h, int(touch["yMin"]), int(touch["yMax"]))
+raw_x_nudge = nudge(raw_x, int(touch["xMin"]), int(touch["xMax"]))
+raw_y_nudge = nudge(raw_y, int(touch["yMin"]), int(touch["yMax"]))
 tracking_id = 4242
 device_path = touch["devicePath"]
 
@@ -1199,6 +1208,8 @@ print(
         [
             f"sendevent {device_path} 3 47 0",
             f"sendevent {device_path} 3 57 {tracking_id}",
+            f"sendevent {device_path} 3 53 {raw_x_nudge}",
+            f"sendevent {device_path} 3 54 {raw_y_nudge}",
             f"sendevent {device_path} 3 53 {raw_x}",
             f"sendevent {device_path} 3 54 {raw_y}",
             f"sendevent {device_path} 3 48 20",
@@ -1261,6 +1272,13 @@ def scale(panel_value: int, panel_extent: int, raw_min: int, raw_max: int) -> in
     normalized = max(0.0, min(1.0, panel_value / float(panel_extent - 1)))
     return round(raw_min + normalized * (raw_max - raw_min))
 
+def nudge(value: int, raw_min: int, raw_max: int) -> int:
+    if value > raw_min:
+        return value - 1
+    if value < raw_max:
+        return value + 1
+    return value
+
 def lerp(start: int, end: int, index: int, total: int) -> int:
     if total <= 1:
         return start
@@ -1276,10 +1294,14 @@ raw_points = [
     )
     for index in range(steps)
 ]
+raw_x_nudge = nudge(raw_points[0][0], int(touch["xMin"]), int(touch["xMax"]))
+raw_y_nudge = nudge(raw_points[0][1], int(touch["yMin"]), int(touch["yMax"]))
 
 lines = [
     f"sendevent {device_path} 3 47 0",
     f"sendevent {device_path} 3 57 {tracking_id}",
+    f"sendevent {device_path} 3 53 {raw_x_nudge}",
+    f"sendevent {device_path} 3 54 {raw_y_nudge}",
     f"sendevent {device_path} 3 53 {raw_points[0][0]}",
     f"sendevent {device_path} 3 54 {raw_points[0][1]}",
     f"sendevent {device_path} 3 48 20",
