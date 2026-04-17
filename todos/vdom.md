@@ -9,6 +9,10 @@ DOM mutations, using the same Blitz `DocumentMutator` APIs that Dioxus native-do
 already uses. Keep the existing full-HTML path as the initial-render and fallback
 mechanism.
 
+Once incremental mutations are proven, move Blitz into the compositor process so
+that all TS/Solid apps share one Vello renderer and one wgpu device, eliminating
+per-app GPU contexts and Wayland surface buffer copies entirely.
+
 ## Approach
 
 Solid already knows exactly which nodes changed via fine-grained reactivity. Today
@@ -32,7 +36,7 @@ touch event
 A single text change reprocesses the entire document. Estimated ~30-50ms for a
 200-item timeline vs the 16ms frame budget at 60fps.
 
-### Target hot path
+### Target hot path (phase 1: incremental mutations, Blitz still in shadow-blitz-demo)
 
 ```
 touch event
@@ -41,6 +45,55 @@ touch event
   -> JSON stdout -> MutationApplier looks up Blitz node IDs
   -> DocumentMutator.set_node_text / append_children / etc
   -> mark dirty subtree -> incremental relayout -> repaint dirty region
+```
+
+### Target hot path (phase 2: Blitz moved into compositor)
+
+```
+touch event
+  -> compositor routes input -> JSON over pipe/socket -> Deno
+  -> Solid re-renders -> drain pending mutations (small JSON array)
+  -> JSON over pipe/socket -> compositor's MutationApplier
+  -> DocumentMutator calls on this app's Blitz DOM
+  -> mark dirty subtree -> incremental relayout
+  -> Vello repaints in same render pass as shell (no Wayland surface, no buffer copy)
+```
+
+Phase 2 eliminates the shadow-blitz-demo middle process entirely. Each app's
+Blitz DOM lives in the compositor. Deno processes remain crash-isolated — if an
+app's JS crashes, the compositor drops that app's DOM and shows an error state.
+Blitz itself is a deterministic layout engine (no I/O, no user code, bounded
+memory) so the crash risk of hosting it in the compositor is low.
+
+Benefits of phase 2:
+- One wgpu device and one Vello renderer for all apps + shell (critical on Pixel
+  where GPU memory is constrained)
+- No Wayland surface per app — no SHM fallback, no dmabuf negotiation, solves
+  the Pixel dmabuf issue (`shadow-compositor-guest/src/main.rs:1719`)
+- App switching / shelving animations are compositor scene operations, not
+  "capture surface as texture then animate"
+- Screenshots and smoke tests trivially capture compositor output
+
+The mutation protocol from phase 1 becomes the clean IPC boundary for phase 2.
+The MutationApplier doesn't care which process it lives in — moving it from
+shadow-blitz-demo to the compositor is a relocation, not a rewrite.
+
+### Current process architecture
+
+```
+compositor (Smithay + Vello + wgpu)
+  └── shadow-blitz-demo (Blitz + Vello + wgpu, per-app)  ← 5 copies of this
+        └── Deno (Solid/TSX app logic, per-app)
+```
+
+### Phase 2 process architecture
+
+```
+compositor (Smithay + Vello + wgpu + Blitz DOM per app)
+  ├── Deno for Counter (sends mutations over pipe/socket)
+  ├── Deno for Timeline
+  ├── Deno for Podcast
+  └── ...
 ```
 
 ## Prior Art References
@@ -171,11 +224,34 @@ Key files in `~/code/oss/dioxus/`:
   HTML vs incremental). Measure on Timeline with 50+ items. Run `just pre-commit`
   and `just ui-check` green.
 
+- [ ] **Phase 2 — Move Blitz into compositor**: relocate `MutationApplier` and
+  per-app Blitz DOM ownership from `shadow-blitz-demo` into the compositor
+  (`shadow-compositor` / `shadow-compositor-guest`). Replace the Wayland surface
+  per TS app with a compositor-owned Blitz DOM that renders directly into the
+  compositor's Vello scene. Deno processes communicate mutations over a
+  pipe/socket to the compositor instead of to shadow-blitz-demo. Remove
+  shadow-blitz-demo from the TS app launch path. Handle app crashes gracefully:
+  if a Deno process dies, drop the app's Blitz DOM and surface an error state
+  without affecting other apps or the shell.
+
+  Files to modify:
+  - `ui/crates/shadow-compositor/src/launch.rs` — launch Deno directly, not
+    shadow-blitz-demo
+  - `ui/crates/shadow-compositor-guest/src/launch.rs` — same for guest path
+  - Compositor app state — hold a `Blitz DOM + MutationApplier` per app instead
+    of a Wayland client surface
+  - Compositor render loop — render each app's Blitz DOM as a sub-scene in the
+    Vello render pass, positioned in the app viewport
+  - `ui/apps/shadow-blitz-demo/` — can be removed or kept only for standalone
+    testing/development
+
 ## Near-Term Steps
 
 Start with the protocol and a minimal Rust-side `MutationApplier` that handles
 just `SetText`. Prove the concept end-to-end with the Counter app before
-expanding to the full mutation vocabulary.
+expanding to the full mutation vocabulary. Phase 2 (moving Blitz into the
+compositor) should wait until the mutation protocol is validated end-to-end in
+phase 1.
 
 ## Implementation Notes
 
