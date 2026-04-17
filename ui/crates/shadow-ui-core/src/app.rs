@@ -1,4 +1,6 @@
-use crate::color::{Color, ICON_CYAN, ICON_GREEN, ICON_ORANGE, ICON_PINK};
+use crate::color::Color;
+
+const SESSION_APP_PROFILE_ENV: &str = "SHADOW_SESSION_APP_PROFILE";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AppId(&'static str);
@@ -29,132 +31,46 @@ pub struct DemoApp {
     pub icon_color: Color,
 }
 
-pub const COUNTER_APP_ID: AppId = AppId::new("counter");
-pub const COUNTER_WAYLAND_APP_ID: &str = "dev.shadow.counter";
-pub const COUNTER_WINDOW_TITLE: &str = "Shadow Counter";
-pub const COUNTER_RUNTIME_BUNDLE_ENV: &str = "SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH";
-pub const COUNTER_RUNTIME_INPUT_PATH: &str = "runtime/app-counter/app.tsx";
-pub const COUNTER_RUNTIME_CACHE_DIR: &str = "build/runtime/app-counter-host";
-pub const CAMERA_APP_ID: AppId = AppId::new("camera");
-pub const CAMERA_WAYLAND_APP_ID: &str = "dev.shadow.camera";
-pub const CAMERA_WINDOW_TITLE: &str = "Shadow Camera";
-pub const CAMERA_RUNTIME_BUNDLE_ENV: &str = "SHADOW_RUNTIME_APP_CAMERA_BUNDLE_PATH";
-pub const CAMERA_RUNTIME_INPUT_PATH: &str = "runtime/app-camera/app.tsx";
-pub const CAMERA_RUNTIME_CACHE_DIR: &str = "build/runtime/app-camera-host";
-pub const TIMELINE_APP_ID: AppId = AppId::new("timeline");
-pub const TIMELINE_WAYLAND_APP_ID: &str = "dev.shadow.timeline";
-pub const TIMELINE_WINDOW_TITLE: &str = "Shadow Timeline";
-pub const TIMELINE_RUNTIME_BUNDLE_ENV: &str = "SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH";
-pub const TIMELINE_RUNTIME_INPUT_PATH: &str = "runtime/app-nostr-timeline/app.tsx";
-pub const TIMELINE_RUNTIME_CACHE_DIR: &str = "build/runtime/app-nostr-timeline-host";
-pub const PODCAST_APP_ID: AppId = AppId::new("podcast");
-pub const PODCAST_WAYLAND_APP_ID: &str = "dev.shadow.podcast";
-pub const PODCAST_WINDOW_TITLE: &str = "No Solutions Player";
-pub const PODCAST_RUNTIME_BUNDLE_ENV: &str = "SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH";
-pub const PODCAST_RUNTIME_INPUT_PATH: &str = "runtime/app-podcast-player/app.tsx";
-pub const PODCAST_RUNTIME_CACHE_DIR: &str = "build/runtime/app-podcast-player-host";
-pub const CASHU_APP_ID: AppId = AppId::new("cashu");
-pub const CASHU_WAYLAND_APP_ID: &str = "dev.shadow.cashu";
-pub const CASHU_WINDOW_TITLE: &str = "Shadow Cashu";
-pub const CASHU_RUNTIME_BUNDLE_ENV: &str = "SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH";
-pub const CASHU_RUNTIME_INPUT_PATH: &str = "runtime/app-cashu-wallet/app.tsx";
-pub const CASHU_RUNTIME_CACHE_DIR: &str = "build/runtime/app-cashu-wallet-host";
-pub const SHELL_APP_ID: AppId = AppId::new("shell");
-pub const SHELL_WAYLAND_APP_ID: &str = "dev.shadow.shell";
+#[path = "generated_apps.rs"]
+mod generated_apps;
+pub use self::generated_apps::*;
 
-pub const COUNTER_APP: DemoApp = DemoApp {
-    id: COUNTER_APP_ID,
-    icon_label: "01",
-    title: "Counter",
-    subtitle: "Counter demo",
-    lifecycle_hint: "Shelving keeps the live counter warm until the app exits.",
-    binary_name: "shadow-blitz-demo",
-    wayland_app_id: COUNTER_WAYLAND_APP_ID,
-    window_title: COUNTER_WINDOW_TITLE,
-    runtime_bundle_env: COUNTER_RUNTIME_BUNDLE_ENV,
-    runtime_input_path: COUNTER_RUNTIME_INPUT_PATH,
-    runtime_cache_dir: COUNTER_RUNTIME_CACHE_DIR,
-    icon_color: ICON_CYAN,
-};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionAppProfile {
+    VmShell,
+    PixelShell,
+}
 
-pub const CAMERA_APP: DemoApp = DemoApp {
-    id: CAMERA_APP_ID,
-    icon_label: "CM",
-    title: "Camera",
-    subtitle: "Take and review a photo",
-    lifecycle_hint: "The latest captured frame stays visible while the app remains warm.",
-    binary_name: "shadow-blitz-demo",
-    wayland_app_id: CAMERA_WAYLAND_APP_ID,
-    window_title: CAMERA_WINDOW_TITLE,
-    runtime_bundle_env: CAMERA_RUNTIME_BUNDLE_ENV,
-    runtime_input_path: CAMERA_RUNTIME_INPUT_PATH,
-    runtime_cache_dir: CAMERA_RUNTIME_CACHE_DIR,
-    icon_color: ICON_ORANGE,
-};
+impl SessionAppProfile {
+    fn from_env() -> Option<Self> {
+        match std::env::var(SESSION_APP_PROFILE_ENV).ok()?.trim() {
+            "vm-shell" => Some(Self::VmShell),
+            "pixel-shell" => Some(Self::PixelShell),
+            _ => None,
+        }
+    }
+}
 
-pub const TIMELINE_APP: DemoApp = DemoApp {
-    id: TIMELINE_APP_ID,
-    icon_label: "TL",
-    title: "Timeline",
-    subtitle: "Local Nostr cache",
-    lifecycle_hint: "Shelving keeps the live draft warm. Full restart reloads cached notes.",
-    binary_name: "shadow-blitz-demo",
-    wayland_app_id: TIMELINE_WAYLAND_APP_ID,
-    window_title: TIMELINE_WINDOW_TITLE,
-    runtime_bundle_env: TIMELINE_RUNTIME_BUNDLE_ENV,
-    runtime_input_path: TIMELINE_RUNTIME_INPUT_PATH,
-    runtime_cache_dir: TIMELINE_RUNTIME_CACHE_DIR,
-    icon_color: ICON_ORANGE,
-};
-
-pub const PODCAST_APP: DemoApp = DemoApp {
-    id: PODCAST_APP_ID,
-    icon_label: "NS",
-    title: "Podcast",
-    subtitle: "No Solutions",
-    lifecycle_hint: "Shelving keeps the current episode loaded until the player is released.",
-    binary_name: "shadow-blitz-demo",
-    wayland_app_id: PODCAST_WAYLAND_APP_ID,
-    window_title: PODCAST_WINDOW_TITLE,
-    runtime_bundle_env: PODCAST_RUNTIME_BUNDLE_ENV,
-    runtime_input_path: PODCAST_RUNTIME_INPUT_PATH,
-    runtime_cache_dir: PODCAST_RUNTIME_CACHE_DIR,
-    icon_color: ICON_PINK,
-};
-
-pub const CASHU_APP: DemoApp = DemoApp {
-    id: CASHU_APP_ID,
-    icon_label: "CU",
-    title: "Cashu",
-    subtitle: "Wallet + Lightning",
-    lifecycle_hint: "Shelving keeps your trusted mints and draft flows one tap away.",
-    binary_name: "shadow-blitz-demo",
-    wayland_app_id: CASHU_WAYLAND_APP_ID,
-    window_title: CASHU_WINDOW_TITLE,
-    runtime_bundle_env: CASHU_RUNTIME_BUNDLE_ENV,
-    runtime_input_path: CASHU_RUNTIME_INPUT_PATH,
-    runtime_cache_dir: CASHU_RUNTIME_CACHE_DIR,
-    icon_color: ICON_GREEN,
-};
-
-pub const DEMO_APPS: [DemoApp; 5] = [
-    COUNTER_APP,
-    CAMERA_APP,
-    TIMELINE_APP,
-    PODCAST_APP,
-    CASHU_APP,
-];
+fn visible_apps() -> &'static [DemoApp] {
+    match SessionAppProfile::from_env() {
+        Some(SessionAppProfile::VmShell) => &VM_SHELL_DEMO_APPS,
+        Some(SessionAppProfile::PixelShell) => &PIXEL_SHELL_DEMO_APPS,
+        None => &DEMO_APPS,
+    }
+}
 
 pub fn find_app(id: AppId) -> Option<&'static DemoApp> {
-    DEMO_APPS.iter().find(|app| app.id == id)
+    visible_apps().iter().find(|app| app.id == id)
 }
 
 pub fn find_app_by_str(value: &str) -> Option<&'static DemoApp> {
-    DEMO_APPS.iter().find(|app| app.id.as_str() == value)
+    visible_apps().iter().find(|app| app.id.as_str() == value)
 }
 
 pub fn find_app_by_wayland_app_id(value: &str) -> Option<&'static DemoApp> {
-    DEMO_APPS.iter().find(|app| app.wayland_app_id == value)
+    visible_apps()
+        .iter()
+        .find(|app| app.wayland_app_id == value)
 }
 
 pub fn app_id_from_wayland_app_id(value: &str) -> Option<AppId> {
@@ -169,18 +85,25 @@ pub fn binary_name_for(id: AppId) -> Option<&'static str> {
 }
 
 pub fn home_apps() -> &'static [DemoApp] {
-    &DEMO_APPS
+    visible_apps()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, OnceLock};
+
     use super::{
         app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, home_apps,
         CAMERA_APP, CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP, CASHU_APP_ID,
-        CASHU_WAYLAND_APP_ID, COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, PODCAST_APP,
-        PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, SHELL_APP_ID, SHELL_WAYLAND_APP_ID, TIMELINE_APP,
-        TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID,
+        CASHU_WAYLAND_APP_ID, COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, DEMO_APPS,
+        PODCAST_APP, PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, SESSION_APP_PROFILE_ENV, SHELL_APP_ID,
+        SHELL_WAYLAND_APP_ID, TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID,
     };
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn counter_app_lookup_round_trips() {
@@ -264,5 +187,13 @@ mod tests {
             Some(CASHU_APP_ID)
         );
         assert_eq!(home_apps()[4].id, CASHU_APP_ID);
+    }
+
+    #[test]
+    fn unknown_profile_env_falls_back_to_full_app_list() {
+        let _guard = env_lock().lock().expect("env lock");
+        std::env::set_var(SESSION_APP_PROFILE_ENV, "unknown-profile");
+        assert_eq!(home_apps().len(), DEMO_APPS.len());
+        std::env::remove_var(SESSION_APP_PROFILE_ENV);
     }
 }

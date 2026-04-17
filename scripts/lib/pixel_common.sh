@@ -945,24 +945,62 @@ pixel_runtime_app_bundle_artifact() {
   pixel_artifact_path shadow-runtime-app-bundle.js
 }
 
-pixel_runtime_counter_bundle_artifact() {
-  pixel_artifact_path shadow-runtime-app-counter-bundle.js
+pixel_runtime_apps_manifest() {
+  printf '%s\n' "${SHADOW_APP_METADATA_MANIFEST:-$(repo_root)/runtime/apps.json}"
 }
 
-pixel_runtime_camera_bundle_artifact() {
-  pixel_artifact_path shadow-runtime-app-camera-bundle.js
+pixel_runtime_shell_app_ids() {
+  python3 - "$(pixel_runtime_apps_manifest)" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+for app in manifest.get("apps", []):
+    if "pixel-shell" in set(app.get("profiles", [])):
+        print(app["id"])
+PY
 }
 
-pixel_runtime_timeline_bundle_artifact() {
-  pixel_artifact_path shadow-runtime-app-timeline-bundle.js
+pixel_runtime_app_manifest_field() {
+  local app_id="$1"
+  local field_path="$2"
+
+  python3 - "$(pixel_runtime_apps_manifest)" "$app_id" "$field_path" <<'PY'
+import json
+import sys
+
+manifest_path, app_id, field_path = sys.argv[1:4]
+with open(manifest_path, encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+for app in manifest.get("apps", []):
+    if app.get("id") != app_id:
+        continue
+    value = app
+    for part in field_path.split("."):
+        value = value[part]
+    if isinstance(value, (dict, list)):
+        print(json.dumps(value, separators=(",", ":")))
+    else:
+        print(value)
+    raise SystemExit(0)
+
+raise SystemExit(f"unknown runtime app id: {app_id}")
+PY
 }
 
-pixel_runtime_podcast_bundle_artifact() {
-  pixel_artifact_path shadow-runtime-app-podcast-bundle.js
+pixel_runtime_app_bundle_filename() {
+  pixel_runtime_app_manifest_field "$1" runtime.bundleFilename
 }
 
-pixel_runtime_cashu_bundle_artifact() {
-  pixel_artifact_path shadow-runtime-app-cashu-bundle.js
+pixel_runtime_app_bundle_env() {
+  pixel_runtime_app_manifest_field "$1" runtime.bundleEnv
+}
+
+pixel_runtime_app_bundle_artifact_for() {
+  pixel_artifact_path "$(pixel_runtime_app_bundle_filename "$1")"
 }
 
 pixel_runtime_host_bundle_artifact_dir() {
@@ -1064,24 +1102,8 @@ pixel_runtime_app_bundle_dst() {
   printf '%s/runtime-app-bundle.js\n' "$(pixel_runtime_linux_dir)"
 }
 
-pixel_runtime_counter_bundle_dst() {
-  printf '%s/runtime-app-counter-bundle.js\n' "$(pixel_runtime_linux_dir)"
-}
-
-pixel_runtime_camera_bundle_dst() {
-  printf '%s/runtime-app-camera-bundle.js\n' "$(pixel_runtime_linux_dir)"
-}
-
-pixel_runtime_timeline_bundle_dst() {
-  printf '%s/runtime-app-timeline-bundle.js\n' "$(pixel_runtime_linux_dir)"
-}
-
-pixel_runtime_podcast_bundle_dst() {
-  printf '%s/runtime-app-podcast-bundle.js\n' "$(pixel_runtime_linux_dir)"
-}
-
-pixel_runtime_cashu_bundle_dst() {
-  printf '%s/runtime-app-cashu-bundle.js\n' "$(pixel_runtime_linux_dir)"
+pixel_runtime_app_bundle_dst_for() {
+  printf '%s/%s\n' "$(pixel_runtime_linux_dir)" "$(pixel_runtime_app_bundle_filename "$1")"
 }
 
 pixel_runtime_host_binary_dst() {
@@ -1158,14 +1180,15 @@ pixel_runtime_gpu_profile_lines() {
 }
 
 pixel_runtime_shell_bundle_env_lines() {
-  cat <<EOF
-SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH=$(pixel_runtime_counter_bundle_dst)
-SHADOW_RUNTIME_APP_CAMERA_BUNDLE_PATH=$(pixel_runtime_camera_bundle_dst)
-SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH=$(pixel_runtime_timeline_bundle_dst)
-SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH=$(pixel_runtime_podcast_bundle_dst)
-SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH=$(pixel_runtime_cashu_bundle_dst)
-SHADOW_RUNTIME_CASHU_DATA_DIR=$(pixel_runtime_cashu_data_dir)
-EOF
+  local app_id
+
+  while IFS= read -r app_id; do
+    [[ -n "$app_id" ]] || continue
+    printf '%s=%s\n' \
+      "$(pixel_runtime_app_bundle_env "$app_id")" \
+      "$(pixel_runtime_app_bundle_dst_for "$app_id")"
+  done < <(pixel_runtime_shell_app_ids)
+  printf 'SHADOW_RUNTIME_CASHU_DATA_DIR=%s\n' "$(pixel_runtime_cashu_data_dir)"
 }
 
 pixel_shell_words_quoted() {

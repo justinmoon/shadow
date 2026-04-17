@@ -7,6 +7,7 @@ import {
 } from "./runtime_prepare_app_bundle.ts";
 
 type Profile = "single" | "vm-shell" | "pixel-shell";
+type ShellProfile = Exclude<Profile, "single">;
 
 type CliOptions = {
   appId: string;
@@ -31,6 +32,8 @@ type CliOptions = {
 };
 
 type AppSpec = {
+  bundleEnv: string | null;
+  bundleFilename: string | null;
   cacheDir: string;
   config: unknown;
   extraAssetDir: string | null;
@@ -41,12 +44,34 @@ type AppSpec = {
 type BuiltApp = PreparedRuntimeAppBundle & {
   artifactBundlePath: string | null;
   artifactDir: string | null;
+  bundleEnv: string | null;
+  bundleFilename: string | null;
   effectiveBundleDir: string;
   effectiveBundlePath: string;
   extraAssetDir: string | null;
   guestBundlePath: string;
   id: string;
   runtimeAppConfig: unknown;
+};
+
+type RuntimeAppMetadata = {
+  id: string;
+  profiles: ShellProfile[];
+  runtime: {
+    assetResolver?: "podcast-demo";
+    bundleEnv: string;
+    bundleFilename: string;
+    cacheDirs: Partial<Record<ShellProfile, string>>;
+    config?: unknown;
+    configEnv?: string;
+    inputPath: string;
+    optionalBundle?: boolean;
+  };
+};
+
+type RuntimeAppsManifest = {
+  apps: RuntimeAppMetadata[];
+  schemaVersion: 1;
 };
 
 type ArtifactManifest = {
@@ -61,8 +86,6 @@ type ArtifactManifest = {
   schemaVersion: 1;
   stateDir: string;
 };
-
-const DEFAULT_TIMELINE_CONFIG = { limit: 12, syncOnStart: true };
 
 async function main() {
   const options = parseArgs(Deno.args);
@@ -126,109 +149,84 @@ async function buildSpecs(
   options: CliOptions,
   cwd: string,
 ): Promise<AppSpec[]> {
-  if (options.profile === "single") {
+  const profile = options.profile;
+  if (profile === "single") {
     if (options.includeAppIds.length > 0) {
       throw new Error(
         "--include-app is only valid with vm-shell and pixel-shell profiles",
       );
     }
+    const defaults = await defaultSingleAppSpec(cwd);
     return [
       {
-        cacheDir: options.cacheDir,
+        bundleEnv: null,
+        bundleFilename: null,
+        cacheDir: options.cacheDir || defaults.cacheDir,
         config: parseConfigJson(options.configJson),
         extraAssetDir: options.extraAssetDir || null,
         id: options.appId,
-        inputPath: options.inputPath,
+        inputPath: options.inputPath || defaults.inputPath,
       },
     ];
   }
 
-  const specsById = new Map<string, AppSpec>([
-    [
-      "counter",
-      {
-        cacheDir: profileEnv(options.profile, "COUNTER_CACHE_DIR") ??
-          defaultCacheDir(options.profile, "counter"),
-        config: null,
-        extraAssetDir: null,
-        id: "counter",
-        inputPath: profileEnv(options.profile, "COUNTER_INPUT_PATH") ??
-          "runtime/app-counter/app.tsx",
-      },
-    ],
-    [
-      "camera",
-      {
-        cacheDir: profileEnv(options.profile, "CAMERA_CACHE_DIR") ??
-          defaultCacheDir(options.profile, "camera"),
-        config: null,
-        extraAssetDir: null,
-        id: "camera",
-        inputPath: profileEnv(options.profile, "CAMERA_INPUT_PATH") ??
-          "runtime/app-camera/app.tsx",
-      },
-    ],
-    [
-      "timeline",
-      {
-        cacheDir: profileEnv(options.profile, "TIMELINE_CACHE_DIR") ??
-          defaultCacheDir(options.profile, "timeline"),
-        config: parseConfigJson(
-          Deno.env.get("SHADOW_RUNTIME_APP_TIMELINE_CONFIG_JSON") ??
-            JSON.stringify(DEFAULT_TIMELINE_CONFIG),
-        ),
-        extraAssetDir: null,
-        id: "timeline",
-        inputPath: profileEnv(options.profile, "TIMELINE_INPUT_PATH") ??
-          "runtime/app-nostr-timeline/app.tsx",
-      },
-    ],
-    [
-      "cashu",
-      {
-        cacheDir: profileEnv(options.profile, "CASHU_CACHE_DIR") ??
-          defaultCacheDir(options.profile, "cashu"),
-        config: null,
-        extraAssetDir: null,
-        id: "cashu",
-        inputPath: profileEnv(options.profile, "CASHU_INPUT_PATH") ??
-          "runtime/app-cashu-wallet/app.tsx",
-      },
-    ],
-  ]);
+  const manifest = await loadRuntimeAppsManifest(cwd);
+  const requestedAppIds = options.includeAppIds;
+  const selectedAppIds = requestedAppIds.length > 0 ? requestedAppIds : null;
+  const specsById = new Map<string, AppSpec>();
+  for (const app of manifest.apps) {
+    if (!app.profiles.includes(profile)) {
+      continue;
+    }
+    if (selectedAppIds && !selectedAppIds.includes(app.id)) {
+      continue;
+    }
+    if (
+      app.runtime.optionalBundle &&
+      !options.includePodcast &&
+      !(selectedAppIds?.includes(app.id))
+    ) {
+      continue;
+    }
 
-  const selectedAppIds = options.includeAppIds.length > 0
-    ? options.includeAppIds
-    : ["counter", "camera", "timeline", "cashu"];
-
-  if (options.includePodcast || selectedAppIds.includes("podcast")) {
-    const podcast = await resolvePodcastAssets(cwd);
-    specsById.set("podcast", {
-      cacheDir: profileEnv(options.profile, "PODCAST_CACHE_DIR") ??
-        defaultCacheDir(options.profile, "podcast"),
-      config: podcast.config,
-      extraAssetDir: podcast.assetDir,
-      id: "podcast",
-      inputPath: profileEnv(options.profile, "PODCAST_INPUT_PATH") ??
-        "runtime/app-podcast-player/app.tsx",
+    let config = runtimeAppConfig(app);
+    let extraAssetDir: string | null = null;
+    if (app.runtime.assetResolver === "podcast-demo") {
+      const podcast = await resolvePodcastAssets(cwd);
+      config = podcast.config;
+      extraAssetDir = podcast.assetDir;
+    }
+    const prefix = appEnvPrefix(app.id);
+    const cacheDir = app.runtime.cacheDirs[profile];
+    if (!cacheDir) {
+      throw new Error(
+        `runtime/apps.json: app ${app.id} is missing runtime.cacheDirs.${profile}`,
+      );
+    }
+    specsById.set(app.id, {
+      bundleEnv: app.runtime.bundleEnv,
+      bundleFilename: app.runtime.bundleFilename,
+      cacheDir: profileEnv(profile, `${prefix}_CACHE_DIR`) ??
+        cacheDir,
+      config,
+      extraAssetDir,
+      id: app.id,
+      inputPath: profileEnv(profile, `${prefix}_INPUT_PATH`) ??
+        app.runtime.inputPath,
     });
   }
 
-  const resolvedAppIds = options.includeAppIds.length > 0
-    ? selectedAppIds
-    : (options.includePodcast
-      ? [...selectedAppIds, "podcast"]
-      : selectedAppIds);
+  if (selectedAppIds) {
+    return selectedAppIds.map((appId) => {
+      const spec = specsById.get(appId);
+      if (!spec) {
+        throw new Error(`unsupported app ${appId} for profile ${profile}`);
+      }
+      return spec;
+    });
+  }
 
-  return resolvedAppIds.map((appId) => {
-    const spec = specsById.get(appId);
-    if (!spec) {
-      throw new Error(
-        `unsupported app ${appId} for profile ${options.profile}`,
-      );
-    }
-    return spec;
-  });
+  return Array.from(specsById.values());
 }
 
 async function buildApp(
@@ -279,6 +277,8 @@ async function buildApp(
     artifactBundlePath,
     artifactDir,
     assetDir,
+    bundleEnv: spec.bundleEnv,
+    bundleFilename: spec.bundleFilename,
     bundleDir,
     bundlePath,
     effectiveBundleDir,
@@ -304,23 +304,120 @@ function profileEnv(profile: Profile, suffix: string): string | null {
   return null;
 }
 
-function defaultCacheDir(profile: Profile, appId: string): string {
-  if (profile === "pixel-shell") {
-    return {
-      camera: "build/runtime/pixel-shell-camera",
-      cashu: "build/runtime/pixel-shell-cashu",
-      counter: "build/runtime/pixel-shell-counter",
-      podcast: "build/runtime/pixel-shell-podcast",
-      timeline: "build/runtime/pixel-shell-timeline",
-    }[appId] ?? `build/runtime/pixel-shell-${appId}`;
+async function loadRuntimeAppsManifest(
+  cwd: string,
+): Promise<RuntimeAppsManifest> {
+  const manifestPath = Deno.env.get("SHADOW_APP_METADATA_MANIFEST") ||
+    path.join(cwd, "runtime", "apps.json");
+  const data = JSON.parse(await Deno.readTextFile(manifestPath));
+  validateRuntimeAppsManifest(data, manifestPath);
+  return data as RuntimeAppsManifest;
+}
+
+function validateRuntimeAppsManifest(
+  data: unknown,
+  manifestPath: string,
+): void {
+  if (!data || typeof data !== "object") {
+    throw new Error(`${manifestPath}: manifest must be an object`);
+  }
+  const manifest = data as {
+    apps?: unknown;
+    schemaVersion?: unknown;
+    shell?: { id?: unknown; waylandAppId?: unknown };
+  };
+  if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.apps)) {
+    throw new Error(
+      `${manifestPath}: manifest must use schemaVersion 1 with an apps array`,
+    );
+  }
+  const shellId = typeof manifest.shell?.id === "string" && manifest.shell.id
+    ? manifest.shell.id
+    : "shell";
+  const seenAppIds = new Set<string>([shellId]);
+  const seenBundleEnvs = new Set<string>();
+  const seenBundleFilenames = new Set<string>();
+
+  for (const app of manifest.apps) {
+    if (!app || typeof app !== "object") {
+      throw new Error(`${manifestPath}: apps entries must be objects`);
+    }
+    const metadata = app as {
+      id?: unknown;
+      profiles?: unknown;
+      runtime?: {
+        bundleEnv?: unknown;
+        bundleFilename?: unknown;
+      };
+    };
+    if (typeof metadata.id !== "string" || !metadata.id) {
+      throw new Error(`${manifestPath}: app id must be a non-empty string`);
+    }
+    if (seenAppIds.has(metadata.id)) {
+      throw new Error(`${manifestPath}: duplicate app id ${metadata.id}`);
+    }
+    seenAppIds.add(metadata.id);
+    if (!Array.isArray(metadata.profiles) || metadata.profiles.length === 0) {
+      throw new Error(
+        `${manifestPath}: app ${metadata.id} must declare profiles`,
+      );
+    }
+    const bundleEnv = metadata.runtime?.bundleEnv;
+    if (typeof bundleEnv !== "string" || !bundleEnv) {
+      throw new Error(
+        `${manifestPath}: app ${metadata.id} must declare runtime.bundleEnv`,
+      );
+    }
+    if (seenBundleEnvs.has(bundleEnv)) {
+      throw new Error(
+        `${manifestPath}: duplicate runtime.bundleEnv ${bundleEnv}`,
+      );
+    }
+    seenBundleEnvs.add(bundleEnv);
+    const bundleFilename = metadata.runtime?.bundleFilename;
+    if (typeof bundleFilename !== "string" || !bundleFilename) {
+      throw new Error(
+        `${manifestPath}: app ${metadata.id} must declare runtime.bundleFilename`,
+      );
+    }
+    if (seenBundleFilenames.has(bundleFilename)) {
+      throw new Error(
+        `${manifestPath}: duplicate runtime.bundleFilename ${bundleFilename}`,
+      );
+    }
+    seenBundleFilenames.add(bundleFilename);
+  }
+}
+
+async function defaultSingleAppSpec(
+  cwd: string,
+): Promise<{ cacheDir: string; inputPath: string }> {
+  const manifest = await loadRuntimeAppsManifest(cwd);
+  const app = manifest.apps.find((candidate) =>
+    candidate.profiles.includes("vm-shell") &&
+    typeof candidate.runtime.cacheDirs["vm-shell"] === "string"
+  );
+  if (!app) {
+    throw new Error("runtime/apps.json must contain at least one vm-shell app");
   }
   return {
-    camera: "build/runtime/app-camera-host",
-    cashu: "build/runtime/app-cashu-wallet-host",
-    counter: "build/runtime/app-counter-host",
-    podcast: "build/runtime/app-podcast-player-host",
-    timeline: "build/runtime/app-nostr-timeline-host",
-  }[appId] ?? `build/runtime/app-${appId}-host`;
+    cacheDir: app.runtime.cacheDirs["vm-shell"]!,
+    inputPath: app.runtime.inputPath,
+  };
+}
+
+function appEnvPrefix(appId: string): string {
+  return appId.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+}
+
+function runtimeAppConfig(app: RuntimeAppMetadata): unknown {
+  const configEnv = app.runtime.configEnv
+    ? Deno.env.get(app.runtime.configEnv)
+    : undefined;
+  if (configEnv !== undefined) {
+    return parseConfigJson(configEnv);
+  }
+  return app.runtime.config ?? null;
 }
 
 async function resolvePodcastAssets(
@@ -397,37 +494,19 @@ function buildEnvScript(
       "runtime-nostr.sqlite3",
     ),
   };
+  if (manifest.profile === "vm-shell" || manifest.profile === "pixel-shell") {
+    exports.SHADOW_SESSION_APP_PROFILE = manifest.profile;
+  }
 
   if (manifest.runtimeHostBinaryPath) {
     exports.SHADOW_RUNTIME_HOST_BINARY_PATH = manifest.runtimeHostBinaryPath;
   }
-  if (apps.counter) {
-    exports.SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH = rewriteBundlePath(
-      apps.counter.guestBundlePath,
-      bundleRewrite,
-    );
-  }
-  if (apps.camera) {
-    exports.SHADOW_RUNTIME_APP_CAMERA_BUNDLE_PATH = rewriteBundlePath(
-      apps.camera.guestBundlePath,
-      bundleRewrite,
-    );
-  }
-  if (apps.timeline) {
-    exports.SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH = rewriteBundlePath(
-      apps.timeline.guestBundlePath,
-      bundleRewrite,
-    );
-  }
-  if (apps.cashu) {
-    exports.SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH = rewriteBundlePath(
-      apps.cashu.guestBundlePath,
-      bundleRewrite,
-    );
-  }
-  if (apps.podcast) {
-    exports.SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH = rewriteBundlePath(
-      apps.podcast.guestBundlePath,
+  for (const app of Object.values(apps)) {
+    if (!app.bundleEnv) {
+      continue;
+    }
+    exports[app.bundleEnv] = rewriteBundlePath(
+      app.guestBundlePath,
       bundleRewrite,
     );
   }
@@ -533,15 +612,13 @@ function parseArgs(args: string[]): CliOptions {
     audioBackend: "",
     bundleRewriteFrom: "",
     bundleRewriteTo: "",
-    cacheDir: Deno.env.get("SHADOW_RUNTIME_APP_CACHE_DIR") ??
-      "build/runtime/app-counter-host",
+    cacheDir: Deno.env.get("SHADOW_RUNTIME_APP_CACHE_DIR") ?? "",
     configJson: Deno.env.get("SHADOW_RUNTIME_APP_CONFIG_JSON") ?? "",
     expectCacheHit: false,
     extraAssetDir: Deno.env.get("SHADOW_RUNTIME_APP_EXTRA_ASSET_DIR") ?? "",
     includeAppIds: [],
     includePodcast: false,
-    inputPath: Deno.env.get("SHADOW_RUNTIME_APP_INPUT_PATH") ??
-      "runtime/app-counter/app.tsx",
+    inputPath: Deno.env.get("SHADOW_RUNTIME_APP_INPUT_PATH") ?? "",
     manifestOut: "",
     profile: "single",
     runtimeHostBinaryPath: "",

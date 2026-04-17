@@ -3,8 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-INPUT_PATH="${SHADOW_RUNTIME_APP_INPUT_PATH:-runtime/app-counter/app.tsx}"
-CACHE_DIR="${SHADOW_RUNTIME_APP_CACHE_DIR:-build/runtime/app-counter-host}"
+INPUT_PATH="${SHADOW_RUNTIME_APP_INPUT_PATH:-}"
+CACHE_DIR="${SHADOW_RUNTIME_APP_CACHE_DIR:-}"
 runtime_flake_ref=""
 runtime_host_package_attr="shadow-runtime-host"
 
@@ -32,14 +32,21 @@ REPO_FLAKE_REF="${runtime_flake_ref:-${REPO_ROOT}}"
 
 cd "$REPO_ROOT"
 
+builder_args=(
+  --flake-ref "$REPO_FLAKE_REF"
+  --runtime-host-package "$runtime_host_package_attr"
+  --profile single
+  --app-id app
+)
+if [[ -n "$INPUT_PATH" ]]; then
+  builder_args+=(--input "$INPUT_PATH")
+fi
+if [[ -n "$CACHE_DIR" ]]; then
+  builder_args+=(--cache-dir "$CACHE_DIR")
+fi
+
 manifest_json="$(
-  "$SCRIPT_DIR/runtime_build_artifacts.sh" \
-    --flake-ref "$REPO_FLAKE_REF" \
-    --runtime-host-package "$runtime_host_package_attr" \
-    --profile single \
-    --app-id app \
-    --input "$INPUT_PATH" \
-    --cache-dir "$CACHE_DIR"
+  "$SCRIPT_DIR/runtime_build_artifacts.sh" "${builder_args[@]}"
 )"
 
 bundle_path="$(
@@ -69,8 +76,26 @@ data = json.load(sys.stdin)
 print(data["runtimeHostBinaryPath"])
 '
 )"
+input_path="$(
+  printf '%s\n' "$manifest_json" | python3 -c '
+import json
+import sys
 
-python3 - "$bundle_path" "$bundle_dir" "$runtime_host_binary_path" "$INPUT_PATH" "$CACHE_DIR" "$runtime_host_package_attr" <<'PY'
+data = json.load(sys.stdin)
+print(data["apps"]["app"]["inputPath"])
+'
+)"
+cache_dir="$(
+  printf '%s\n' "$manifest_json" | python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+print(data["apps"]["app"]["cacheDir"])
+'
+)"
+
+python3 - "$bundle_path" "$bundle_dir" "$runtime_host_binary_path" "$input_path" "$cache_dir" "$runtime_host_package_attr" <<'PY'
 import json
 import os
 import sys

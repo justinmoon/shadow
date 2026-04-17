@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "shell": {
+    "id": "shell",
+    "waylandAppId": "dev.shadow.shell"
+  },
+  "apps": [
+    {
+      "id": "counter",
+      "title": "Counter",
+      "iconLabel": "01",
+      "subtitle": "Counter demo",
+      "lifecycleHint": "Shelving keeps the live counter warm until the app exits.",
+      "binaryName": "shadow-blitz-demo",
+      "waylandAppId": "dev.shadow.counter",
+      "windowTitle": "Shadow Counter",
+      "runtime": {
+        "bundleEnv": "SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH",
+        "bundleFilename": "runtime-app-counter-bundle.js",
+        "inputPath": "runtime/app-counter/app.tsx",
+        "cacheDirs": {
+          "vm-shell": "build/runtime/app-counter-host",
+          "pixel-shell": "build/runtime/pixel-shell-counter"
+        },
+        "config": null
+      },
+      "profiles": [
+        "vm-shell",
+        "pixel-shell"
+      ],
+      "ui": {
+        "iconColor": "ICON_CYAN"
+      }
+    },
+    {
+      "id": "camera",
+      "title": "Camera",
+      "iconLabel": "CM",
+      "subtitle": "Take and review a photo",
+      "lifecycleHint": "The latest captured frame stays visible while the app remains warm.",
+      "binaryName": "shadow-blitz-demo",
+      "waylandAppId": "dev.shadow.camera",
+      "windowTitle": "Shadow Camera",
+      "runtime": {
+        "bundleEnv": "SHADOW_RUNTIME_APP_CAMERA_BUNDLE_PATH",
+        "bundleFilename": "runtime-app-camera-bundle.js",
+        "inputPath": "runtime/app-camera/app.tsx",
+        "cacheDirs": {
+          "vm-shell": "build/runtime/app-camera-host",
+          "pixel-shell": "build/runtime/pixel-shell-camera"
+        },
+        "config": null
+      },
+      "profiles": [
+        "vm-shell",
+        "pixel-shell"
+      ],
+      "ui": {
+        "iconColor": "ICON_ORANGE"
+      }
+    },
+    {
+      "id": "timeline",
+      "title": "Timeline",
+      "iconLabel": "TL",
+      "subtitle": "Local Nostr cache",
+      "lifecycleHint": "Shelving keeps the live draft warm. Full restart reloads cached notes.",
+      "binaryName": "shadow-blitz-demo",
+      "waylandAppId": "dev.shadow.timeline",
+      "windowTitle": "Shadow Timeline",
+      "runtime": {
+        "bundleEnv": "SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH",
+        "bundleFilename": "runtime-app-timeline-bundle.js",
+        "inputPath": "runtime/app-nostr-timeline/app.tsx",
+        "cacheDirs": {
+          "vm-shell": "build/runtime/app-nostr-timeline-host",
+          "pixel-shell": "build/runtime/pixel-shell-timeline"
+        },
+        "configEnv": "SHADOW_RUNTIME_APP_TIMELINE_CONFIG_JSON",
+        "config": {
+          "limit": 12,
+          "syncOnStart": true
+        }
+      },
+      "profiles": [
+        "vm-shell",
+        "pixel-shell"
+      ],
+      "ui": {
+        "iconColor": "ICON_ORANGE"
+      }
+    },
+    {
+      "id": "podcast",
+      "title": "Podcast",
+      "iconLabel": "NS",
+      "subtitle": "No Solutions",
+      "lifecycleHint": "Shelving keeps the current episode loaded until the player is released.",
+      "binaryName": "shadow-blitz-demo",
+      "waylandAppId": "dev.shadow.podcast",
+      "windowTitle": "No Solutions Player",
+      "runtime": {
+        "bundleEnv": "SHADOW_RUNTIME_APP_PODCAST_BUNDLE_PATH",
+        "bundleFilename": "runtime-app-podcast-bundle.js",
+        "inputPath": "runtime/app-podcast-player/app.tsx",
+        "cacheDirs": {
+          "vm-shell": "build/runtime/app-podcast-player-host",
+          "pixel-shell": "build/runtime/pixel-shell-podcast"
+        },
+        "config": null,
+        "assetResolver": "podcast-demo",
+        "optionalBundle": true
+      },
+      "profiles": [
+        "vm-shell",
+        "pixel-shell"
+      ],
+      "ui": {
+        "iconColor": "ICON_PINK"
+      }
+    },
+    {
+      "id": "cashu",
+      "title": "Cashu",
+      "iconLabel": "CU",
+      "subtitle": "Wallet + Lightning",
+      "lifecycleHint": "Shelving keeps your trusted mints and draft flows one tap away.",
+      "binaryName": "shadow-blitz-demo",
+      "waylandAppId": "dev.shadow.cashu",
+      "windowTitle": "Shadow Cashu",
+      "runtime": {
+        "bundleEnv": "SHADOW_RUNTIME_APP_CASHU_BUNDLE_PATH",
+        "bundleFilename": "runtime-app-cashu-bundle.js",
+        "inputPath": "runtime/app-cashu-wallet/app.tsx",
+        "cacheDirs": {
+          "vm-shell": "build/runtime/app-cashu-wallet-host",
+          "pixel-shell": "build/runtime/pixel-shell-cashu"
+        },
+        "config": null
+      },
+      "profiles": [
+        "vm-shell",
+        "pixel-shell"
+      ],
+      "ui": {
+        "iconColor": "ICON_GREEN"
+      }
+    }
+  ]
+}

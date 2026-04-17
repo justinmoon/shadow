@@ -20,14 +20,19 @@ expect_fixed() {
 }
 
 expect_fixed \
-  "$REPO_ROOT/scripts/pixel/pixel_prepare_shell_runtime_artifacts.sh" \
-  "timeline_config_json='{\"limit\":12,\"syncOnStart\":true}'" \
-  "pixel shell timeline startup sync default"
+  "$REPO_ROOT/runtime/apps.json" \
+  '"configEnv": "SHADOW_RUNTIME_APP_TIMELINE_CONFIG_JSON"' \
+  "manifest timeline startup sync override env"
 
 expect_fixed \
-  "$REPO_ROOT/scripts/runtime/runtime_build_artifacts.ts" \
-  "const DEFAULT_TIMELINE_CONFIG = { limit: 12, syncOnStart: true };" \
-  "host session timeline startup sync default"
+  "$REPO_ROOT/runtime/apps.json" \
+  '"limit": 12' \
+  "manifest timeline startup sync limit"
+
+expect_fixed \
+  "$REPO_ROOT/runtime/apps.json" \
+  '"syncOnStart": true' \
+  "manifest timeline startup sync default"
 
 expect_fixed \
   "$REPO_ROOT/scripts/runtime/runtime_prepare_host_session_env.sh" \

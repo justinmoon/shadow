@@ -12,8 +12,9 @@ RUNTIME_ENV_PATH="$(ui_vm_runtime_env_path)"
 RUNTIME_GUEST_DIR="$(ui_vm_runtime_guest_dir)"
 # shellcheck source=./session_apps.sh
 source "$SCRIPT_DIR/lib/session_apps.sh"
+export SHADOW_SESSION_APP_PROFILE="vm-shell"
 
-ui_vm_start_app_id="shell"
+ui_vm_start_app_id="$(shadow_session_shell_app_id)"
 
 parse_args() {
   while [[ $# -gt 0 ]]; do

@@ -8,12 +8,14 @@ source "$SCRIPT_DIR/lib/pixel_common.sh"
 source "$SCRIPT_DIR/lib/pixel_camera_runtime_common.sh"
 # shellcheck source=./session_apps.sh
 source "$SCRIPT_DIR/lib/session_apps.sh"
+export SHADOW_SESSION_APP_PROFILE="pixel-shell"
 ensure_bootimg_shell "$@"
 
 shell_start_app_id=""
 shell_stage_only=0
 shell_run_only=0
 camera_runtime_enabled=1
+shell_app_id="$(shadow_session_shell_app_id)"
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -168,7 +170,8 @@ if [[ -n "$extra_guest_env" ]]; then
 fi
 shell_session_env=$(
   cat <<EOF
-SHADOW_GUEST_START_APP_ID=shell
+SHADOW_GUEST_START_APP_ID=$shell_app_id
+SHADOW_SESSION_APP_PROFILE=pixel-shell
 $(pixel_runtime_shell_bundle_env_lines)
 $(pixel_runtime_host_env_lines)
 SHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM=1

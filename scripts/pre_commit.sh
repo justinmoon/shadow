@@ -9,6 +9,8 @@ ensure_bootimg_shell "$@"
 cd "$(repo_root)"
 
 scripts/ci/check_script_inventory.py
+scripts/runtime/generate_app_metadata.py --check
+scripts/ci/app_metadata_manifest_smoke.sh
 shell_scripts=()
 while IFS= read -r -d '' script_path; do
   if [[ "$script_path" == *.sh ]]; then

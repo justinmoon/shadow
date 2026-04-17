@@ -58,22 +58,58 @@ def repo_root() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parent.parent
 
 
-def session_apps_file() -> pathlib.Path:
-    return repo_root() / "scripts" / "lib" / "session_apps.txt"
+def app_manifest_file() -> pathlib.Path:
+    override = os.environ.get("SHADOW_APP_METADATA_MANIFEST")
+    if override:
+        return pathlib.Path(override)
+    return repo_root() / "runtime" / "apps.json"
 
 
-def load_supported_session_apps() -> tuple[str, ...]:
-    apps = tuple(
-        line.strip()
-        for line in session_apps_file().read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
+def load_app_manifest() -> dict[str, Any]:
+    return json.loads(app_manifest_file().read_text(encoding="utf-8"))
+
+
+def manifest_shell_id(manifest: dict[str, Any]) -> str:
+    return manifest.get("shell", {}).get("id", "shell")
+
+
+def load_supported_session_apps(
+    manifest: dict[str, Any],
+    *,
+    profile: str,
+) -> tuple[str, ...]:
+    shell_id = manifest_shell_id(manifest)
+    apps = (
+        shell_id,
+        *(
+            app["id"]
+            for app in manifest.get("apps", [])
+            if profile in set(app.get("profiles", ()))
+        ),
     )
+    apps = tuple(dict.fromkeys(apps))
     if not apps:
-        raise RuntimeError(f"shadowctl: no session apps found in {session_apps_file()}")
+        raise RuntimeError(f"shadowctl: no session apps found in {app_manifest_file()}")
     return apps
 
 
-SUPPORTED_SESSION_APPS = load_supported_session_apps()
+APP_MANIFEST = load_app_manifest()
+SHELL_APP_ID = manifest_shell_id(APP_MANIFEST)
+SUPPORTED_SESSION_APPS_BY_TARGET = {
+    "pixel": load_supported_session_apps(APP_MANIFEST, profile="pixel-shell"),
+    "vm": load_supported_session_apps(APP_MANIFEST, profile="vm-shell"),
+}
+
+
+def supported_session_apps(target_kind: str) -> tuple[str, ...]:
+    apps = SUPPORTED_SESSION_APPS_BY_TARGET.get(target_kind)
+    if apps is None:
+        raise RuntimeError(f"shadowctl: unsupported target kind {target_kind!r}")
+    return apps
+
+
+def format_supported_session_apps(apps: tuple[str, ...]) -> str:
+    return ", ".join(f"app={app}" for app in apps)
 
 
 def state_dir() -> pathlib.Path:
@@ -152,9 +188,10 @@ def run_local_script(
     return result.returncode
 
 
-def require_session_app(app_id: str) -> None:
-    if app_id not in SUPPORTED_SESSION_APPS:
-        supported = ", ".join(f"app={app}" for app in SUPPORTED_SESSION_APPS)
+def require_session_app(target: TargetRef, app_id: str) -> None:
+    supported_apps = supported_session_apps(target.kind)
+    if app_id not in supported_apps:
+        supported = format_supported_session_apps(supported_apps)
         raise SystemExit(f"shadowctl: unsupported app {app_id!r}; expected one of {supported}")
 
 
@@ -164,12 +201,12 @@ def session_start_command(
     app_id: str,
     hold: int,
 ) -> tuple[list[str | pathlib.Path], list[tuple[str, str]]]:
-    require_session_app(app_id)
+    require_session_app(target, app_id)
     scripts_dir = repo_root() / "scripts"
 
     if target.kind == "vm":
         command: list[str | pathlib.Path] = [scripts_dir / "vm" / "ui_vm_run.sh"]
-        if app_id != "shell":
+        if app_id != SHELL_APP_ID:
             command.extend(["--app", app_id])
         return (command, [])
 
@@ -178,7 +215,7 @@ def session_start_command(
         scripts_dir / "pixel" / ("pixel_shell_drm_hold.sh" if hold else "pixel_shell_drm.sh")
     ]
     env = [("PIXEL_SERIAL", serial)]
-    if app_id != "shell":
+    if app_id != SHELL_APP_ID:
         command.extend(["--app", app_id])
     return (command, env)
 
@@ -1142,6 +1179,7 @@ def _response_fields(stdout: str) -> dict[str, str]:
 
 
 def cmd_open(args: argparse.Namespace) -> int:
+    require_session_app(args.target_ref, args.app_id)
     return _print_control_result(control_request_for(args.target_ref, f"launch {args.app_id}"))
 
 
@@ -1565,7 +1603,7 @@ def build_parser() -> argparse.ArgumentParser:
         supported_target_kinds=("vm", "pixel"),
         parents=(target_parser,),
     )
-    open_cmd.add_argument("app_id", choices=SUPPORTED_SESSION_APPS)
+    open_cmd.add_argument("app_id")
 
     add_command(
         subparsers,
@@ -1628,7 +1666,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--app",
-        choices=SUPPORTED_SESSION_APPS,
         default="podcast",
         help="Shell app to foreground after session launch.",
     )

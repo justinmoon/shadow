@@ -291,9 +291,9 @@ check_output_case \
 
 check_output_case \
   unknown_app_rejected \
-  2 \
+  1 \
   "" \
-  "invalid choice: 'unknown'" \
+  "unsupported app 'unknown'" \
   "$SHADOWCTL_SCRIPT" run --dry-run -t vm --app unknown
 
 check_output_case \

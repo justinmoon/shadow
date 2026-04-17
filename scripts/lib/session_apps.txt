@@ -1,6 +1,0 @@
-shell
-counter
-timeline
-camera
-podcast
-cashu
