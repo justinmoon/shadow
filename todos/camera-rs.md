@@ -44,7 +44,6 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [ ] Add one deterministic manual/operator path for switching cameras and confirming the selected camera actually changes before trying to automate it.
 - [ ] Reduce perceived capture latency enough that the feature feels usable.
 - [ ] Wire the truthful camera smoke into the branch gate once it is reliable.
-- [ ] Commit and land the runtime-helper delta-sync change now that warm camera reruns no longer re-push the 1.23 GB support bundle.
 
 ## Implementation Notes
 
@@ -56,7 +55,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The main remaining risk is operational reliability and latency, not basic access to the camera stack.
 - Suite-aware shell app staging landed at `da68380`; the camera suite now stages only `selectedAppIds: ["camera"]`.
 - The next warm-stage bottleneck turned out to be the full runtime helper push to `/data/local/tmp/shadow-runtime-gnu`, about 1.23 GB even on cache-hit host bundles.
-- The current uncommitted change in `scripts/pixel/pixel_push.sh` adds a device-side runtime-helper manifest and only pushes changed helper files. The first run after the format change still does a one-time full sync; later warm runs hit `Runtime helper dir cacheHit`.
+- `fac53c8` landed the runtime-helper delta sync in `scripts/pixel/pixel_push.sh`: the first run after the manifest format change still does a one-time full sync; later warm runs hit `Runtime helper dir cacheHit`.
 - Validated on Pixel `09051JEC202061`: one migration run did `prep_shell_runtime=98s`; the warm rerun dropped to `prep_shell_runtime=38s` and still returned `pixel-shell-camera-ok`.
 - Remaining warm-stage time is now mostly host artifact prep (`shadow-session`, `shadow-compositor-guest`) plus the live camera smoke itself, not unrelated runtime-helper upload.
 - Preview and camera switching should stay inside the current camera seam if possible: enrich `listCameras()` with truthful metadata, keep `captureStill()` intact, and only add more platform surface if the preview path proves it is necessary.
