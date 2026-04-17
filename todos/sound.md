@@ -1,0 +1,90 @@
+Living plan. Revise it as we learn. Do not treat this as a fixed contract.
+
+## Scope
+
+- Finish sound support to the point where other app/platform work can treat it as stable infrastructure instead of an active bring-up project.
+- Keep `Shadow.os.audio` as the only app-facing seam.
+- Support the current operator surface:
+  - VM/QEMU shell apps
+  - rooted Pixel shell apps
+  - bundled runtime apps on host
+- Add URL-backed podcast playback without requiring MP3 downloads to disk.
+- Keep file-backed playback working for fixtures, demos, and offline branch gates.
+- Include audio/media button support so focused audio apps can react to play/pause and track navigation.
+- Non-goals for this wrap-up:
+  - recording
+  - browser-compatible `<audio>` / Web Audio
+  - mixing graphs / multi-track editing
+  - native Android bridge work unless the current Linux backend proves too brittle
+
+## Approach
+
+- Treat the current `linux_spike` backend as the working v0 default unless it blocks real app work.
+- Keep the handle-based API shape:
+  - `createPlayer`
+  - `play`
+  - `pause`
+  - `stop`
+  - `release`
+  - `getStatus`
+- Add one new source kind first: `url`.
+- For v0 URL playback, prefer the smallest useful implementation:
+  - fetch response in the runtime audio host or helper
+  - decode from memory / stream
+  - avoid persisting the media to disk
+- Do not turn `Shadow.os.audio` into a general network abstraction.
+- Treat audio/media buttons as control input wired onto the same player/app seam, not as a separate special-case podcast API.
+- Keep CI offline-safe by continuing to use checked-in/local fixtures for default VM and host paths.
+- Prove URL playback with a tiny local HTTP fixture smoke before touching real third-party feeds in gates.
+- Defer true progressive streaming until a concrete app needs “start before full fetch completes.”
+
+## Milestones
+
+- [x] App-facing audio seam exists.
+  `Shadow.os.audio` is installed by the runtime host and already used by runtime apps.
+- [x] Host/mock backend exists.
+  The host can exercise the API without Pixel audio hardware.
+- [x] Rooted Pixel Linux backend exists.
+  The current `linux_spike` path is audible on the device.
+- [x] File-backed playback exists.
+  Runtime apps can play staged local assets on host, VM, and Pixel lanes.
+- [x] Shared artifact builder knows about audio/podcast apps.
+  Sound is no longer a one-off staging path.
+- [ ] URL-backed playback exists.
+  Runtime apps should be able to play an episode from its source URL without writing the MP3 to disk.
+- [ ] Player semantics are minimally productized.
+  Add the smallest missing controls/status needed by real apps.
+- [ ] Audio/media button support exists.
+  Focused audio apps should be able to respond to play/pause and next/previous from platform controls.
+- [ ] Audio branch gate is trustworthy.
+  One stable smoke should cover the supported URL/file behavior without relying on the public podcast feed.
+- [~] Backend decision is explicit.
+  Current assumption: `linux_spike` is acceptable for v0 unless new failures show up.
+
+## Near-Term Steps
+
+- [ ] Add `source.kind = "url"` and `source.url` in `runtime-audio-host`.
+- [ ] Refactor the Linux helper decode path so it is not hard-wired to `File::open(...)`.
+- [ ] Update the podcast app to prefer `episode.sourceUrl` when present and fall back to local fixture paths when running offline.
+- [ ] Add a host smoke that serves the checked-in podcast fixture over local HTTP and proves URL playback end to end.
+- [ ] Add an audio/media button path that routes play/pause/next/previous to the focused audio app without hard-coding podcast UI behavior.
+- [ ] Decide the v0 behavior for URL playback:
+  - buffer full response in memory before play
+  - or require true progressive playback
+- [ ] Add `positionMs` to status if app work immediately needs visible progress.
+- [ ] Add `seek` only if the first consumer actually needs it.
+- [ ] Add `volume` only if the first consumer actually needs per-player gain.
+- [ ] Revisit the standard remote smoke timeout if audio adoption depends on it; today the longer `ui-smoke` timeout is more trustworthy than the default cold-build budget.
+
+## Implementation Notes
+
+- `runtime-audio-host` currently supports only `tone` and `file`.
+- The podcast app already carries `sourceUrl` in config, but still creates a `file` player.
+- The Linux helper currently decodes from a filesystem path via Symphonia.
+- The shared artifact builder already has a clean place to keep offline podcast fixtures and app-local assets.
+- VM/master now uses a checked-in local podcast fixture so branch gates do not need the live RSS/media path just to boot the app.
+- The clean v0 split is:
+  - fixtures and branch gates stay file-backed and offline-safe
+  - optional URL smoke proves the new network-backed path against a local test server
+- Audio/media buttons should land as platform-level control routing, not as podcast-app-specific button handling.
+- If URL playback turns out to need true streaming rather than in-memory buffering, that is the point to decide whether `linux_spike` is still the right backend for v0.
