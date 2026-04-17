@@ -321,7 +321,7 @@ export function renderApp() {
       setStatusState({
         kind: "ready",
         message: receipt.isMock
-          ? "Captured mock frame."
+          ? "Captured explicit mock frame."
           : "Photo captured from the live Pixel camera.",
       });
     } catch (error) {

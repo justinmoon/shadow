@@ -24,6 +24,7 @@ binary_path = session["runtimeHostBinaryPath"]
 
 process = subprocess.Popen(
     [binary_path, "--session", bundle_path],
+    env={**os.environ, "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK": "1"},
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
@@ -84,7 +85,7 @@ while time.time() < deadline:
         time.sleep(0.2)
         continue
     payload = unwrap(response)
-    if "data:image/" in payload["html"] and "Captured mock frame." in payload["html"]:
+    if "data:image/" in payload["html"] and "Captured explicit mock frame." in payload["html"]:
         final_html = payload["html"]
         break
     final_html = payload["html"]
@@ -106,7 +107,7 @@ print(
     json.dumps(
         {
             "bundlePath": bundle_path,
-            "result": "camera-mock-capture-ok",
+            "result": "camera-explicit-mock-capture-ok",
             "runtimeHostBinaryName": session["runtimeHostBinaryName"],
             "runtimeHostPackageAttr": session["runtimeHostPackageAttr"],
         },

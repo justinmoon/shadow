@@ -16,7 +16,7 @@ use image::ImageFormat;
 use serde::{Deserialize, Serialize};
 
 const CAMERA_ENDPOINT_ENV: &str = "SHADOW_RUNTIME_CAMERA_ENDPOINT";
-const CAMERA_REQUIRE_LIVE_ENV: &str = "SHADOW_RUNTIME_CAMERA_REQUIRE_LIVE";
+const CAMERA_ALLOW_MOCK_ENV: &str = "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK";
 const CAMERA_TIMEOUT_MS_ENV: &str = "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS";
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const CONNECT_RETRY_ATTEMPTS: usize = 10;
@@ -86,7 +86,7 @@ struct BrokerCaptureResponse {
 #[derive(Debug, Clone)]
 struct CameraHostConfig {
     endpoint: Option<String>,
-    require_live: bool,
+    allow_mock: bool,
     timeout: Duration,
 }
 
@@ -102,13 +102,13 @@ impl CameraHostConfig {
             .filter(|value| *value > 0)
             .map(Duration::from_millis)
             .unwrap_or_else(|| Duration::from_millis(DEFAULT_TIMEOUT_MS));
-        let require_live = env::var(CAMERA_REQUIRE_LIVE_ENV)
+        let allow_mock = env::var(CAMERA_ALLOW_MOCK_ENV)
             .ok()
             .is_some_and(|value| parse_truthy_env(&value));
 
         Self {
             endpoint,
-            require_live,
+            allow_mock,
             timeout,
         }
     }
@@ -116,16 +116,16 @@ impl CameraHostConfig {
     fn list_cameras(&self) -> Result<Vec<CameraDevice>, String> {
         match self.endpoint.as_deref() {
             Some(endpoint) => self.list_cameras_via_broker(endpoint),
-            None if self.require_live => Err(missing_live_camera_error()),
-            None => Ok(mock_cameras()),
+            None if self.allow_mock => Ok(mock_cameras()),
+            None => Err(missing_camera_backend_error()),
         }
     }
 
     fn capture_still(&self, request: CaptureStillRequest) -> Result<CaptureStillReceipt, String> {
         match self.endpoint.as_deref() {
             Some(endpoint) => self.capture_via_broker(endpoint, request),
-            None if self.require_live => Err(missing_live_camera_error()),
-            None => Ok(mock_capture(request.camera_id)),
+            None if self.allow_mock => Ok(mock_capture(request.camera_id)),
+            None => Err(missing_camera_backend_error()),
         }
     }
 
@@ -287,9 +287,9 @@ fn parse_truthy_env(value: &str) -> bool {
     )
 }
 
-fn missing_live_camera_error() -> String {
+fn missing_camera_backend_error() -> String {
     format!(
-        "live camera required but {CAMERA_ENDPOINT_ENV} is not set; set {CAMERA_ENDPOINT_ENV} or unset {CAMERA_REQUIRE_LIVE_ENV}"
+        "camera backend not configured; set {CAMERA_ENDPOINT_ENV} for live capture or {CAMERA_ALLOW_MOCK_ENV}=1 for explicit mock mode"
     )
 }
 
@@ -353,7 +353,7 @@ fn mock_capture(camera_id: Option<String>) -> CaptureStillReceipt {
 <circle cx='560' cy='200' r='128' fill='rgba(255,255,255,0.22)'/>\
 <rect x='72' y='116' width='576' height='728' rx='36' fill='rgba(2,6,23,0.38)' stroke='rgba(255,255,255,0.22)' stroke-width='4'/>\
 <text x='96' y='214' fill='#f8fafc' font-family='Google Sans, Roboto, sans-serif' font-size='34' font-weight='700'>Shadow Camera Mock</text>\
-<text x='96' y='276' fill='#dbeafe' font-family='Google Sans, Roboto, sans-serif' font-size='24'>No live broker configured in this runtime.</text>\
+<text x='96' y='276' fill='#dbeafe' font-family='Google Sans, Roboto, sans-serif' font-size='24'>Explicit mock camera mode is active.</text>\
 <text x='96' y='744' fill='#f8fafc' font-family='Google Sans, Roboto, sans-serif' font-size='112' font-weight='800'>Frame {card:04}</text>\
 <text x='96' y='806' fill='#e2e8f0' font-family='Google Sans, Roboto, sans-serif' font-size='28'>Captured at {timestamp}</text>\
 </svg>"
@@ -487,9 +487,9 @@ pub fn init_extension() -> Extension {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_capture_image_data_url, image_format_for_mime_type, missing_live_camera_error,
-        normalize_rotation_degrees, parse_truthy_env, BASE64_STANDARD, CAMERA_ENDPOINT_ENV,
-        CAMERA_REQUIRE_LIVE_ENV,
+        build_capture_image_data_url, image_format_for_mime_type, missing_camera_backend_error,
+        normalize_rotation_degrees, parse_truthy_env, BASE64_STANDARD, CAMERA_ALLOW_MOCK_ENV,
+        CAMERA_ENDPOINT_ENV,
     };
     use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
     use std::io::Cursor;
@@ -536,10 +536,10 @@ mod tests {
     }
 
     #[test]
-    fn missing_live_camera_error_mentions_required_envs() {
-        let error = missing_live_camera_error();
+    fn missing_camera_backend_error_mentions_required_envs() {
+        let error = missing_camera_backend_error();
         assert!(error.contains(CAMERA_ENDPOINT_ENV));
-        assert!(error.contains(CAMERA_REQUIRE_LIVE_ENV));
+        assert!(error.contains(CAMERA_ALLOW_MOCK_ENV));
     }
 
     #[test]

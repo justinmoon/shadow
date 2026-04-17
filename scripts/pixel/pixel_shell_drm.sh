@@ -168,10 +168,6 @@ fi
 if [[ -n "$extra_guest_env" ]]; then
   shell_guest_env="${shell_guest_env}"$'\n'"${extra_guest_env}"
 fi
-if (( camera_runtime_enabled == 1 )); then
-  shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_RUNTIME_CAMERA_REQUIRE_LIVE=1"
-fi
-
 shell_session_env=$(
   cat <<EOF
 SHADOW_GUEST_START_APP_ID=shell
