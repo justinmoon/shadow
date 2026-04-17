@@ -81,7 +81,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The podcast app can now switch between file-backed and URL-backed playback via runtime config (`playbackSource`), while default fixtures stay file-backed.
 - The Linux helper can now fetch a URL into memory, then decode it through the same Symphonia path used for file playback.
 - The Linux helper also has a `SHADOW_AUDIO_SPIKE_VALIDATE_ONLY=1` mode so URL fetch/decode can be proved without depending on ALSA device availability.
-- `scripts/runtime_app_podcast_player_url_smoke.sh` is Linux-authoritative: on macOS it syncs to a Linux executor, serves a local HTTP fixture there, and runs the real helper through the runtime host seam.
+- `scripts/ci/runtime_app_podcast_player_url_smoke.sh` is Linux-authoritative: on macOS it syncs to a Linux executor, serves a local HTTP fixture there, and runs the real helper through the runtime host seam.
 - The shared artifact builder already has a clean place to keep offline podcast fixtures and app-local assets.
 - VM/master now uses a checked-in local podcast fixture so branch gates do not need the live RSS/media path just to boot the app.
 - The clean v0 split is:
