@@ -7,6 +7,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/ui_vm_common.sh"
 # shellcheck source=./ci_vm_smoke_common.sh
 source "$SCRIPT_DIR/lib/ci_vm_smoke_common.sh"
+# shellcheck source=./session_apps.sh
+source "$SCRIPT_DIR/lib/session_apps.sh"
 LOG_DIR="$REPO_ROOT/build/ui-vm"
 RUN_LOG="$LOG_DIR/ui-vm-smoke.log"
 SHOT_PATH="$LOG_DIR/ui-vm-smoke.png"
@@ -246,9 +248,12 @@ done
 "$SCRIPT_DIR/shadowctl" wait-ready -t vm --timeout "$UI_VM_READY_TIMEOUT_SECS"
 
 doctor_json="$("$SCRIPT_DIR/shadowctl" doctor -t vm --json)"
+shadow_load_typescript_runtime_apps "vm-shell"
+expected_runtime_app_ids="$(IFS=,; printf '%s' "${shadow_session_apps[*]}")"
 REPO_ROOT="$REPO_ROOT" \
 EXPECTED_ARTIFACT_SHARE="$RUNTIME_ARTIFACT_DIR" \
 EXPECTED_ARTIFACT_GUEST_ROOT="$RUNTIME_GUEST_DIR" \
+EXPECTED_RUNTIME_APP_IDS="$expected_runtime_app_ids" \
 DOCTOR_JSON="$doctor_json" \
 python3 - <<'PY'
 import json
@@ -299,14 +304,26 @@ apps = manifest.get("apps")
 if not isinstance(apps, dict):
     raise SystemExit("vm-smoke: runtime artifact manifest apps must be an object")
 
-required_apps = {"camera", "cashu", "counter", "podcast", "timeline"}
-missing = sorted(required_apps - set(apps))
-if missing:
+expected_apps = {
+    app_id
+    for app_id in os.environ["EXPECTED_RUNTIME_APP_IDS"].split(",")
+    if app_id
+}
+actual_apps = set(apps)
+if actual_apps != expected_apps:
+    missing = sorted(expected_apps - actual_apps)
+    extra = sorted(actual_apps - expected_apps)
+    details = []
+    if missing:
+        details.append("missing=" + ",".join(missing))
+    if extra:
+        details.append("extra=" + ",".join(extra))
     raise SystemExit(
-        "vm-smoke: runtime artifact manifest missing apps: " + ", ".join(missing)
+        "vm-smoke: runtime artifact manifest app set mismatch: "
+        + " ".join(details)
     )
 
-for app_id in sorted(required_apps):
+for app_id in sorted(expected_apps):
     app = apps[app_id]
     effective_bundle = app.get("effectiveBundlePath")
     guest_bundle = app.get("guestBundlePath")

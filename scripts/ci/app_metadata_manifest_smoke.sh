@@ -8,7 +8,7 @@ TMP_FILES=()
 
 cleanup() {
   if ((${#TMP_FILES[@]})); then
-    rm -f "${TMP_FILES[@]}"
+    rm -rf "${TMP_FILES[@]}"
   fi
 }
 trap cleanup EXIT
@@ -274,6 +274,72 @@ with open(manifest_path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
   printf '%s\n' "$manifest_path"
+}
+
+check_runtime_session_env_case() {
+  local name="$1"
+  local manifest_path="$2"
+  local expected_apps_csv="$3"
+  local artifact_root env_output_path
+  artifact_root="$(mktemp -d "${TMPDIR:-/tmp}/app-metadata-runtime-artifacts.XXXXXX")"
+  TMP_FILES+=("$artifact_root")
+  env_output_path="$(mktemp_tracked)"
+
+  (
+    cd "$REPO_ROOT"
+    env SHADOW_APP_METADATA_MANIFEST="$manifest_path" \
+      scripts/runtime/runtime_prepare_host_session_env.sh \
+        --runtime-host-binary-path /tmp/shadow-runtime-host \
+        --artifact-root "$artifact_root" \
+        --artifact-guest-root /opt/shadow-runtime \
+        >"$env_output_path"
+  )
+
+  python3 - "$artifact_root" "$env_output_path" "$expected_apps_csv" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+artifact_root = Path(sys.argv[1])
+env_output_path = Path(sys.argv[2])
+expected_apps = {app_id for app_id in sys.argv[3].split(",") if app_id}
+
+manifest_path = artifact_root / "artifact-manifest.json"
+if not manifest_path.is_file():
+    raise SystemExit(f"missing runtime artifact manifest {manifest_path}")
+
+with manifest_path.open("r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+if manifest.get("schemaVersion") != 1:
+    raise SystemExit("runtime artifact manifest schemaVersion must be 1")
+if manifest.get("profile") != "vm-shell":
+    raise SystemExit("runtime artifact manifest profile must be vm-shell")
+if manifest.get("artifactGuestRoot") != "/opt/shadow-runtime":
+    raise SystemExit("runtime artifact manifest guest root mismatch")
+
+apps = manifest.get("apps")
+if not isinstance(apps, dict):
+    raise SystemExit("runtime artifact manifest apps must be an object")
+actual_apps = set(apps)
+if actual_apps != expected_apps:
+    raise SystemExit(
+        f"runtime artifact manifest app set mismatch: expected {sorted(expected_apps)!r}, got {sorted(actual_apps)!r}"
+    )
+
+env_text = env_output_path.read_text(encoding="utf-8")
+if "export SHADOW_SESSION_APP_PROFILE='vm-shell'" not in env_text:
+    raise SystemExit("session env missing SHADOW_SESSION_APP_PROFILE")
+if "export SHADOW_RUNTIME_HOST_BINARY_PATH='/tmp/shadow-runtime-host'" not in env_text:
+    raise SystemExit("session env missing SHADOW_RUNTIME_HOST_BINARY_PATH")
+
+if expected_apps:
+    if "export SHADOW_RUNTIME_APP_BUNDLE_PATH=" not in env_text:
+        raise SystemExit("session env missing SHADOW_RUNTIME_APP_BUNDLE_PATH")
+else:
+    if "export SHADOW_RUNTIME_APP_BUNDLE_PATH=" in env_text:
+        raise SystemExit("session env unexpectedly exports SHADOW_RUNTIME_APP_BUNDLE_PATH")
+PY
 }
 
 write_rust_fixture() {
@@ -634,5 +700,15 @@ check_output_case \
   env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" \
     deno run --quiet --allow-env --allow-read --allow-write --allow-run \
       scripts/runtime/runtime_build_artifacts.ts --profile vm-shell --include-app mixed-rust
+
+check_runtime_session_env_case \
+  runtime_prepare_host_session_env_supports_rust_only_profile \
+  "$rust_manifest" \
+  ""
+
+check_runtime_session_env_case \
+  runtime_prepare_host_session_env_tracks_mixed_profile_typescript_apps \
+  "$mixed_model_manifest" \
+  "mixed-ts"
 
 printf 'app_metadata_manifest_smoke: ok\n'

@@ -95,7 +95,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-shadow_load_typescript_runtime_apps "vm-shell"
 builder_args=(
   --repo-root "$runtime_repo_root"
   --runtime-host-package "$runtime_host_package_attr"
@@ -123,19 +122,6 @@ fi
 if [[ -n "$state_dir_override" ]]; then
   builder_args+=(--state-dir "$state_dir_override")
 fi
-
-if ((${#shadow_session_apps[@]})); then
-  for app_id in "${shadow_session_apps[@]}"; do
-    builder_args+=(--include-app "$app_id")
-  done
-  "$SCRIPT_DIR/runtime_build_artifacts.sh" "${builder_args[@]}" >/dev/null
-else
-  {
-    printf 'export SHADOW_SESSION_APP_PROFILE=%q\n' "vm-shell"
-    if [[ -n "$audio_backend" ]]; then
-      printf 'export SHADOW_RUNTIME_AUDIO_BACKEND=%q\n' "$audio_backend"
-    fi
-  } >"$env_tmp"
-fi
+"$SCRIPT_DIR/runtime_build_artifacts.sh" "${builder_args[@]}" >/dev/null
 
 cat "$env_tmp"

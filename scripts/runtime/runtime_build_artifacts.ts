@@ -524,15 +524,7 @@ function buildEnvScript(
 ): string {
   const apps = manifest.apps;
   const defaultApp = apps.counter ?? Object.values(apps)[0];
-  if (!defaultApp) {
-    throw new Error("cannot write env for manifest with no apps");
-  }
-
   const exports: Record<string, string> = {
-    SHADOW_RUNTIME_APP_BUNDLE_PATH: rewriteBundlePath(
-      defaultApp.guestBundlePath,
-      bundleRewrite,
-    ),
     SHADOW_RUNTIME_CASHU_DATA_DIR: path.join(
       manifest.stateDir,
       "runtime-cashu",
@@ -542,6 +534,12 @@ function buildEnvScript(
       "runtime-nostr.sqlite3",
     ),
   };
+  if (defaultApp) {
+    exports.SHADOW_RUNTIME_APP_BUNDLE_PATH = rewriteBundlePath(
+      defaultApp.guestBundlePath,
+      bundleRewrite,
+    );
+  }
   if (manifest.profile === "vm-shell" || manifest.profile === "pixel-shell") {
     exports.SHADOW_SESSION_APP_PROFILE = manifest.profile;
   }

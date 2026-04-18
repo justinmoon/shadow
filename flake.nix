@@ -116,12 +116,15 @@
         "ui/crates"
         "ui/third_party"
         "rust/Cargo.toml"
+        "rust/Cargo.lock"
         "rust/shadow-sdk"
+        "rust/shadow-runtime-host"
         "rust/runtime-audio-host"
         "rust/runtime-camera-host"
         "rust/runtime-cashu-host"
         "rust/runtime-nostr-host"
         "rust/shadow-runtime-protocol"
+        "rust/vendor/temporal_rs"
       ];
       shadowUiCoreSrc = repoSourceFromPrefixes [
         "ui/Cargo.toml"

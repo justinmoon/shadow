@@ -89,13 +89,13 @@ scripts/runtime/runtime_prepare_host_session_env.sh \
   --state-dir "$ui_vm_state_dir" >"$runtime_env_tmp"
 if shadow_session_app_is_shell "$ui_vm_start_app_id"; then
   :
-elif shadow_session_app_supports_auto_open "$ui_vm_start_app_id"; then
+elif shadow_session_app_supports_auto_open "$ui_vm_start_app_id" "vm-shell"; then
   {
     printf 'export SHADOW_COMPOSITOR_AUTO_LAUNCH=1\n'
     printf 'export SHADOW_COMPOSITOR_START_APP_ID=%q\n' "$ui_vm_start_app_id"
   } >>"$runtime_env_tmp"
 else
-  echo "vm: unsupported --app $ui_vm_start_app_id; expected $(shadow_session_apps_usage)" >&2
+  echo "vm: unsupported --app $ui_vm_start_app_id; expected $(shadow_session_apps_usage "vm-shell")" >&2
   exit 1
 fi
 mv "$runtime_env_tmp" "$RUNTIME_ENV_PATH"

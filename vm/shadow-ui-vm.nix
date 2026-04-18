@@ -126,14 +126,7 @@ apps = manifest.get("apps")
 if not isinstance(apps, dict):
     raise SystemExit("shadow-ui-session: runtime manifest apps must be an object")
 
-required_apps = {"camera", "cashu", "counter", "podcast", "timeline"}
-missing = sorted(required_apps - set(apps))
-if missing:
-    raise SystemExit(
-        "shadow-ui-session: runtime manifest missing apps: " + ", ".join(missing),
-    )
-
-for app_id in sorted(required_apps):
+for app_id in sorted(apps):
     app = apps[app_id]
     guest_bundle = app.get("guestBundlePath")
     if not isinstance(guest_bundle, str) or not guest_bundle:
@@ -161,11 +154,13 @@ PY
             echo "session binaries validated"
             # shellcheck source=/dev/null
             source ${runtimeHostEnvScript}
+            runtime_bundle_path="''${SHADOW_RUNTIME_APP_BUNDLE_PATH:-}"
+            runtime_host_path="''${SHADOW_RUNTIME_HOST_BINARY_PATH:-}"
             echo "runtime env source=host-cache"
             export SHADOW_RUNTIME_CASHU_DATA_DIR=${stateDir}/runtime-cashu
             export SHADOW_RUNTIME_NOSTR_DB_PATH=${stateDir}/runtime-nostr.sqlite3
-            echo "runtime bundle=$SHADOW_RUNTIME_APP_BUNDLE_PATH"
-            echo "runtime host=$SHADOW_RUNTIME_HOST_BINARY_PATH"
+            echo "runtime bundle=''${runtime_bundle_path:-unset}"
+            echo "runtime host=''${runtime_host_path:-unset}"
             echo "app launch mode=metadata"
             echo "runtime nostr db=$SHADOW_RUNTIME_NOSTR_DB_PATH"
             echo "runtime cashu dir=$SHADOW_RUNTIME_CASHU_DATA_DIR"
@@ -250,8 +245,8 @@ PY
               "export LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH\"" \
               "export LIBGL_DRIVERS_PATH=\"$LIBGL_DRIVERS_PATH\"" \
               "export XDG_RUNTIME_DIR=\"$XDG_RUNTIME_DIR\"" \
-              "export SHADOW_RUNTIME_APP_BUNDLE_PATH=\"$SHADOW_RUNTIME_APP_BUNDLE_PATH\"" \
-              "export SHADOW_RUNTIME_HOST_BINARY_PATH=\"$SHADOW_RUNTIME_HOST_BINARY_PATH\"" \
+              "export SHADOW_RUNTIME_APP_BUNDLE_PATH=\"$runtime_bundle_path\"" \
+              "export SHADOW_RUNTIME_HOST_BINARY_PATH=\"$runtime_host_path\"" \
               "export WAYLAND_DISPLAY=\"$nested_wayland\"" \
               "export SHADOW_COMPOSITOR_CONTROL=\"$control_socket\"" \
               >${sessionEnv}
