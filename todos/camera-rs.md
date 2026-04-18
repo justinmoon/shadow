@@ -28,7 +28,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Orientation/rendering bug is fixed for the current portrait shell lane.
 - [x] Camera validation was tightened from “camera touched something” to “live capture completed and rerendered”.
 - [~] Pixel operator hygiene is better: per-serial host lock, less broker leakage, less false green.
-- [ ] Camera app can show a live preview in the supported rooted Pixel lane.
+- [x] Camera app can show a live preview in the supported rooted Pixel lane.
 - [ ] Camera app can enumerate and switch between front/back cameras without breaking capture correctness.
 - [ ] Camera support is boring enough to stop working on and build other projects on top of.
 
@@ -41,8 +41,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [ ] Add a rooted-Pixel QR proof path that validates real camera capture plus QR decode end to end, not just app launch or broker activity.
 - [ ] Add a cleaner camera error taxonomy so apps can distinguish broker unavailable, no camera, capture timeout, invalid image data, and QR-not-found without string matching.
 - [ ] Decide whether QR-oriented capture needs first-class controls such as torch, higher-resolution stills, or scan-specific capture defaults before more apps depend on it.
-- [ ] Define the smallest truthful preview contract: one live stream in the rooted Pixel shell lane, no video recording or background session complexity yet.
-- [~] Define the smallest truthful preview contract: one live stream in the rooted Pixel shell lane, no video recording or background session complexity yet.
+- [x] Define the smallest truthful preview contract: one live stream in the rooted Pixel shell lane, no video recording or background session complexity yet.
 - [~] Thread camera enumeration metadata through the existing `listCameras()` seam so the app can distinguish front/back cameras without adding a new public platform API.
 - [~] Design the runtime/provider path for preview frames so the app can render a low-latency live view without regressing still capture correctness.
 - [~] Add one deterministic manual/operator path for switching cameras and confirming the selected camera actually changes before trying to automate it.
@@ -70,5 +69,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The app already has a working camera picker. The immediate gap is that provider metadata is still too heuristic, so front/back switching is not yet a truthful operator contract.
 - The next implementation slice is: provider returns per-camera facing/orientation metadata, runtime preserves it through `listCameras()`, app uses it for stable front/back selection, then preview work can build on that without widening the public API yet.
 - Local WIP now does that metadata plumbing: provider `list` returns structured `cameras[]`, runtime preserves `lensFacing` and `sensorOrientationDegrees`, and the app exposes stable `camera-front` / `camera-rear` selectors when the facing is unique. Device validation still needs to confirm the Pixel reports the expected facing metadata.
-- Local WIP now also adds a dedicated `preview` frame command through the broker/runtime path. The app uses that for the live preview panel while keeping `captureStill()` as the explicit photo action, so preview and still capture no longer trample each other in the UI.
-- The mock camera smoke now proves both behaviors in one run: preview renders first, then explicit capture renders a separate latest-photo section. Rooted-Pixel validation is still pending because `09051JEC202061` is currently held by another worktree session.
+- The current preview path uses a dedicated broker/runtime `preview` command while keeping `captureStill()` as the explicit photo action, so preview and still capture no longer trample each other in the UI.
+- Rooted-Pixel validation now proves both behaviors in one smoke: preview dispatch must produce a live provider frame plus a changed composed frame checksum, then explicit capture must still complete and rerender. Validated on `0B191JEC203253` via `just pixel-ci --target 0B191JEC203253 camera` in run `20260418T164112Z`.
+- Tightening that smoke exposed two real Pixel staging bugs in `scripts/pixel/pixel_push.sh`: missing/empty device manifests crashed the sync planner, and full-replace cleanup failed on root-owned runtime cache dirs. Both are now fixed locally.
+- The next seam is no longer “prove preview exists”; it is “prove front/back switching is truthful on rooted Pixel and wire that into the smoke/operator path”.
