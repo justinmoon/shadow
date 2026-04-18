@@ -1,5 +1,6 @@
-use std::{env, error::Error, num::NonZeroU32};
+use std::{error::Error, num::NonZeroU32};
 
+use shadow_sdk::app::{AppWindowDefaults, AppWindowEnvironment};
 use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
 use softbuffer::{Context, Surface};
 use winit::{
@@ -14,19 +15,13 @@ use winit::{
 use winit::platform::wayland::WindowAttributesWayland;
 
 const DEFAULT_TITLE: &str = "Shadow Rust Demo";
-#[cfg(target_os = "linux")]
 const DEFAULT_WAYLAND_APP_ID: &str = "dev.shadow.rust-demo";
-#[cfg(target_os = "linux")]
 const DEFAULT_WAYLAND_INSTANCE_NAME: &str = "rust-demo";
 const CLEAR_COLOR: u32 = 0x1B6E7A;
-const APP_TITLE_ENV: &str = "SHADOW_BLITZ_APP_TITLE";
-const SURFACE_HEIGHT_ENV: &str = "SHADOW_BLITZ_SURFACE_HEIGHT";
-const SURFACE_WIDTH_ENV: &str = "SHADOW_BLITZ_SURFACE_WIDTH";
-const UNDECORATED_ENV: &str = "SHADOW_BLITZ_UNDECORATED";
-#[cfg(target_os = "linux")]
-const WAYLAND_APP_ID_ENV: &str = "SHADOW_BLITZ_WAYLAND_APP_ID";
-#[cfg(target_os = "linux")]
-const WAYLAND_INSTANCE_NAME_ENV: &str = "SHADOW_BLITZ_WAYLAND_INSTANCE_NAME";
+const WINDOW_DEFAULTS: AppWindowDefaults<'static> =
+    AppWindowDefaults::new(DEFAULT_TITLE, APP_VIEWPORT_WIDTH_PX, APP_VIEWPORT_HEIGHT_PX)
+        .with_wayland_app_id(DEFAULT_WAYLAND_APP_ID)
+        .with_wayland_instance_name(DEFAULT_WAYLAND_INSTANCE_NAME);
 
 struct WindowState {
     window: &'static dyn Window,
@@ -124,20 +119,26 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn window_attributes() -> WindowAttributes {
-    let (surface_width, surface_height) = runtime_surface_size_from_env();
+    let window_env = window_environment();
     let attributes = WindowAttributes::default()
-        .with_title(resolved_title())
+        .with_title(window_env.title)
         .with_resizable(false)
-        .with_decorations(!env_flag(UNDECORATED_ENV))
+        .with_decorations(!window_env.undecorated)
         .with_surface_size(LogicalSize::new(
-            f64::from(surface_width),
-            f64::from(surface_height),
+            f64::from(window_env.surface_width),
+            f64::from(window_env.surface_height),
         ));
 
     #[cfg(target_os = "linux")]
     {
-        let wayland_attributes = WindowAttributesWayland::default()
-            .with_name(resolved_wayland_app_id(), resolved_wayland_instance_name());
+        let wayland_attributes = WindowAttributesWayland::default().with_name(
+            window_env
+                .wayland_app_id
+                .expect("shadow-rust-demo defaults require a Wayland app id"),
+            window_env
+                .wayland_instance_name
+                .expect("shadow-rust-demo defaults require a Wayland instance name"),
+        );
         return attributes.with_platform_attributes(Box::new(wayland_attributes));
     }
 
@@ -145,53 +146,8 @@ fn window_attributes() -> WindowAttributes {
     attributes
 }
 
-fn resolved_title() -> String {
-    env_override(APP_TITLE_ENV).unwrap_or_else(|| String::from(DEFAULT_TITLE))
-}
-
-#[cfg(target_os = "linux")]
-fn resolved_wayland_app_id() -> String {
-    env_override(WAYLAND_APP_ID_ENV).unwrap_or_else(|| String::from(DEFAULT_WAYLAND_APP_ID))
-}
-
-#[cfg(target_os = "linux")]
-fn resolved_wayland_instance_name() -> String {
-    env_override(WAYLAND_INSTANCE_NAME_ENV)
-        .or_else(|| {
-            env_override(WAYLAND_APP_ID_ENV).map(|app_id| {
-                app_id
-                    .rsplit_once('.')
-                    .map(|(_, suffix)| String::from(suffix))
-                    .unwrap_or(app_id)
-            })
-        })
-        .unwrap_or_else(|| String::from(DEFAULT_WAYLAND_INSTANCE_NAME))
-}
-
-fn env_override(key: &str) -> Option<String> {
-    env::var(key)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-}
-
-fn env_flag(key: &str) -> bool {
-    env::var_os(key).is_some()
-}
-
-fn runtime_surface_size_from_env() -> (u32, u32) {
-    (
-        runtime_surface_dimension(SURFACE_WIDTH_ENV, APP_VIEWPORT_WIDTH_PX),
-        runtime_surface_dimension(SURFACE_HEIGHT_ENV, APP_VIEWPORT_HEIGHT_PX),
-    )
-}
-
-fn runtime_surface_dimension(key: &str, default: u32) -> u32 {
-    env::var(key)
-        .ok()
-        .and_then(|value| value.trim().parse::<u32>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
+fn window_environment() -> AppWindowEnvironment {
+    AppWindowEnvironment::from_env(WINDOW_DEFAULTS)
 }
 
 fn resize_surface(

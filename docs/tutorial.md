@@ -107,7 +107,7 @@ Apps are written in pure TypeScript — just `.tsx` files with no build config t
 Here's the counter app (`runtime/app-counter/app.tsx`):
 
 ```tsx
-import { createSignal } from "@shadow/app-runtime-solid";
+import { createSignal } from "@shadow/sdk";
 
 export function renderApp() {
   const [count, setCount] = createSignal(1);
@@ -418,7 +418,7 @@ runtime/app-hello/
 Write your app in `app.tsx`:
 
 ```tsx
-import { createSignal } from "@shadow/app-runtime-solid";
+import { createSignal } from "@shadow/sdk";
 
 export function renderApp() {
   const [name, setName] = createSignal("world");
@@ -441,12 +441,13 @@ export function renderApp() {
 
 You have access to all SolidJS primitives: `createSignal`, `createEffect`, `createMemo`, `Show`, `For`, `Switch`/`Match`, etc.
 
-For platform APIs, import from `@shadow/app-runtime-os`:
+For UI primitives and platform APIs, import from `@shadow/sdk`:
 
 ```tsx
-import { listCameras, captureStill } from "@shadow/app-runtime-os";  // camera
-import { createPlayer, play, pause } from "@shadow/app-runtime-os";  // audio
-import { listKind1, publishKind1 } from "@shadow/app-runtime-os";    // nostr
+import { createSignal } from "@shadow/sdk";                          // Solid primitives
+import { listCameras, captureStill } from "@shadow/sdk";             // camera
+import { createPlayer, play, pause } from "@shadow/sdk";             // audio
+import { listKind1, publishKind1 } from "@shadow/sdk";               // nostr
 ```
 
 ### 2. Run it

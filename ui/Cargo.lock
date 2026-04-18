@@ -3249,10 +3249,15 @@ dependencies = [
 name = "shadow-rust-demo"
 version = "0.1.0"
 dependencies = [
+ "shadow-sdk",
  "shadow-ui-core",
  "softbuffer",
  "winit 0.31.0-beta.2",
 ]
+
+[[package]]
+name = "shadow-sdk"
+version = "0.1.0"
 
 [[package]]
 name = "shadow-ui-core"

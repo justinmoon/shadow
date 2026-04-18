@@ -1,23 +1,21 @@
 import {
-  For,
-  Show,
-  createSignal,
-  invalidateRuntimeApp,
-  onMount,
-} from "@shadow/app-runtime-solid";
-import {
   addCashuMint,
   captureStill,
   checkCashuMintQuote,
   createCashuMintQuote,
+  createSignal,
   decodeQrCode,
+  For,
+  invalidateRuntimeApp,
   listCameras,
   listCashuWallets,
+  onMount,
   payCashuInvoice,
   receiveCashuToken,
   sendCashuToken,
   settleCashuMintQuote,
-} from "@shadow/app-runtime-os";
+  Show,
+} from "@shadow/sdk";
 
 type WalletSummary = {
   balanceSats: number;
@@ -501,7 +499,9 @@ function shortMintLabel(mintUrl: string): string {
 }
 
 function quoteStatusMessage(quote: MintQuoteReceipt): string {
-  const amountLabel = quote.amountSats == null ? "unknown" : `${quote.amountSats} sats`;
+  const amountLabel = quote.amountSats == null
+    ? "unknown"
+    : `${quote.amountSats} sats`;
   switch (quote.state) {
     case "unpaid":
       return `Invoice ready for ${amountLabel}. Pay it externally, then check or mint it.`;
@@ -561,7 +561,9 @@ function normalizeLightningPayload(payload: string): string {
 }
 
 function isMintUrl(payload: string): boolean {
-  return /^https?:\/\/[^\s/?#]+(?::\d+)?(?:[/?#][^\s]*)?$/i.test(payload.trim());
+  return /^https?:\/\/[^\s/?#]+(?::\d+)?(?:[/?#][^\s]*)?$/i.test(
+    payload.trim(),
+  );
 }
 
 function classifyScannedPayload(payload: string): ScannedPayload {
@@ -581,7 +583,8 @@ function classifyScannedPayload(payload: string): ScannedPayload {
 }
 
 function pickScanCamera(cameras: CameraDevice[]): CameraDevice | null {
-  return cameras.find((camera) => camera.lensFacing === "rear") ?? cameras[0] ?? null;
+  return cameras.find((camera) => camera.lensFacing === "rear") ?? cameras[0] ??
+    null;
 }
 
 function QrCode(props: { rows: string[] }) {
@@ -611,7 +614,9 @@ function QrCode(props: { rows: string[] }) {
 export function renderApp() {
   const config = readWalletConfig();
   const [wallets, setWallets] = createSignal<WalletSummary[]>([]);
-  const [selectedMintUrl, setSelectedMintUrl] = createSignal(config.defaultMintUrl ?? "");
+  const [selectedMintUrl, setSelectedMintUrl] = createSignal(
+    config.defaultMintUrl ?? "",
+  );
   const [mintDraft, setMintDraft] = createSignal(config.defaultMintUrl ?? "");
   const [fundAmountDraft, setFundAmountDraft] = createSignal(
     String(config.defaultFundAmountSats ?? DEFAULT_FUND_AMOUNT_SATS),
@@ -622,11 +627,19 @@ export function renderApp() {
   const [tokenDraft, setTokenDraft] = createSignal("");
   const [invoiceDraft, setInvoiceDraft] = createSignal("");
   const [fundQuote, setFundQuote] = createSignal<MintQuoteReceipt | null>(null);
-  const [latestToken, setLatestToken] = createSignal<SendTokenReceipt | null>(null);
-  const [latestReceive, setLatestReceive] = createSignal<ReceiveTokenReceipt | null>(null);
-  const [latestPayment, setLatestPayment] = createSignal<PayInvoiceReceipt | null>(null);
+  const [latestToken, setLatestToken] = createSignal<SendTokenReceipt | null>(
+    null,
+  );
+  const [latestReceive, setLatestReceive] = createSignal<
+    ReceiveTokenReceipt | null
+  >(null);
+  const [latestPayment, setLatestPayment] = createSignal<
+    PayInvoiceReceipt | null
+  >(null);
   const [status, setStatus] = createSignal<StatusState>(DEFAULT_STATUS);
-  const [scanOutcome, setScanOutcome] = createSignal<ScanOutcome>(DEFAULT_SCAN_OUTCOME);
+  const [scanOutcome, setScanOutcome] = createSignal<ScanOutcome>(
+    DEFAULT_SCAN_OUTCOME,
+  );
   const [busy, setBusy] = createSignal(false);
 
   const activeWallet = () =>
@@ -641,7 +654,8 @@ export function renderApp() {
     const selectedMint = selectedMintUrl();
     if (
       nextWallets.length > 0 &&
-      (!selectedMint || !nextWallets.some((wallet) => wallet.mintUrl === selectedMint))
+      (!selectedMint ||
+        !nextWallets.some((wallet) => wallet.mintUrl === selectedMint))
     ) {
       setSelectedMintUrl(nextWallets[0].mintUrl);
     }
@@ -649,7 +663,9 @@ export function renderApp() {
     if (reason === "startup" && nextWallets.length > 0) {
       setStatus({
         kind: "idle",
-        message: `Trusted ${nextWallets.length} mint${nextWallets.length === 1 ? "" : "s"} already loaded.`,
+        message: `Trusted ${nextWallets.length} mint${
+          nextWallets.length === 1 ? "" : "s"
+        } already loaded.`,
       });
     }
   }
@@ -809,13 +825,16 @@ export function renderApp() {
       "Redeeming the pasted Cashu token with its mint...",
       "Cashu token redeemed into the wallet.",
       async () => {
-        const receipt = await receiveCashuToken({ token }) as ReceiveTokenReceipt;
+        const receipt = await receiveCashuToken({
+          token,
+        }) as ReceiveTokenReceipt;
         setLatestReceive(receipt);
         await refreshWallets("receive-token");
         setStatus({
           kind: "success",
-          message:
-            `Received ${receipt.receivedAmountSats} sats from ${shortMintLabel(receipt.mintUrl)}.`,
+          message: `Received ${receipt.receivedAmountSats} sats from ${
+            shortMintLabel(receipt.mintUrl)
+          }.`,
         });
       },
     );
@@ -857,7 +876,9 @@ export function renderApp() {
       setSelectedMintUrl(existing.mintUrl);
       setStatus({
         kind: "success",
-        message: `Scanned mint ${shortMintLabel(existing.mintUrl)} is already trusted.`,
+        message: `Scanned mint ${
+          shortMintLabel(existing.mintUrl)
+        } is already trusted.`,
       });
       setScanOutcome({
         kind: "success",
@@ -879,7 +900,9 @@ export function renderApp() {
     });
     setStatus({
       kind: "success",
-      message: `Trusted scanned mint ${shortMintLabel(wallet.mintUrl)} for sats.`,
+      message: `Trusted scanned mint ${
+        shortMintLabel(wallet.mintUrl)
+      } for sats.`,
     });
   }
 
@@ -898,8 +921,9 @@ export function renderApp() {
       });
       setStatus({
         kind: "success",
-        message:
-          `Received ${receipt.receivedAmountSats} sats from ${shortMintLabel(receipt.mintUrl)}.`,
+        message: `Received ${receipt.receivedAmountSats} sats from ${
+          shortMintLabel(receipt.mintUrl)
+        }.`,
       });
     } catch (error) {
       const message = errorMessage(error);
@@ -978,13 +1002,15 @@ export function renderApp() {
       case "unsupported":
         setScanOutcome({
           kind: "unsupported",
-          message: "Unsupported QR payload. Use Cashu tokens, mint URLs, or BOLT11 invoices.",
+          message:
+            "Unsupported QR payload. Use Cashu tokens, mint URLs, or BOLT11 invoices.",
           payload: scanned.value,
           payloadKind: "unsupported",
         });
         setStatus({
           kind: "error",
-          message: "Unsupported QR payload. Paste it manually if it belongs somewhere else.",
+          message:
+            "Unsupported QR payload. Paste it manually if it belongs somewhere else.",
         });
         return;
     }
@@ -1011,7 +1037,9 @@ export function renderApp() {
         throw new Error("No camera is available for QR scanning.");
       }
 
-      const capture = await captureStill({ cameraId: camera.id }) as CaptureStillReceipt;
+      const capture = await captureStill({
+        cameraId: camera.id,
+      }) as CaptureStillReceipt;
       const decoded = await decodeQrCode({
         imageDataUrl: capture.imageDataUrl,
       }) as DecodeQrCodeReceipt;
@@ -1046,8 +1074,12 @@ export function renderApp() {
       data-shadow-fund-quote-state={fundQuote()?.state ?? ""}
       data-shadow-fund-quote-amount={String(fundQuote()?.amountSats ?? "")}
       data-shadow-latest-token={latestToken()?.token ?? ""}
-      data-shadow-latest-receive-amount={String(latestReceive()?.receivedAmountSats ?? "")}
-      data-shadow-latest-payment-amount={String(latestPayment()?.amountSats ?? "")}
+      data-shadow-latest-receive-amount={String(
+        latestReceive()?.receivedAmountSats ?? "",
+      )}
+      data-shadow-latest-payment-amount={String(
+        latestPayment()?.amountSats ?? "",
+      )}
       data-shadow-latest-payment-state={latestPayment()?.state ?? ""}
       data-shadow-scan-kind={scanOutcome().kind}
       data-shadow-scan-payload={scanOutcome().payload}
@@ -1061,7 +1093,9 @@ export function renderApp() {
           Mint trust, Lightning funding, token send/receive, and invoice pay in
           one runtime app.
         </p>
-        <p class={`wallet-status wallet-status-${status().kind}`}>{status().message}</p>
+        <p class={`wallet-status wallet-status-${status().kind}`}>
+          {status().message}
+        </p>
       </section>
 
       <Show when={wallets().length > 0}>
@@ -1077,8 +1111,12 @@ export function renderApp() {
                 data-shadow-id={`mint-${wallet.mintUrl}`}
                 onClick={() => setSelectedMintUrl(wallet.mintUrl)}
               >
-                <span class="wallet-mint-title">{shortMintLabel(wallet.mintUrl)}</span>
-                <span class="wallet-mint-balance">{wallet.balanceSats} sats</span>
+                <span class="wallet-mint-title">
+                  {shortMintLabel(wallet.mintUrl)}
+                </span>
+                <span class="wallet-mint-balance">
+                  {wallet.balanceSats} sats
+                </span>
               </button>
             )}
           </For>
@@ -1095,11 +1133,9 @@ export function renderApp() {
           <p class="wallet-balance-detail">
             <Show
               when={activeWallet()}
-              fallback={
-                wallets().length === 0
-                  ? "Trust a mint to start using the wallet."
-                  : "Choose which trusted mint to spend from."
-              }
+              fallback={wallets().length === 0
+                ? "Trust a mint to start using the wallet."
+                : "Choose which trusted mint to spend from."}
             >
               {activeWallet()?.mintUrl}
             </Show>
@@ -1143,7 +1179,9 @@ export function renderApp() {
               {scanOutcome().kind === "working" ? "Scanning..." : "Scan QR"}
             </button>
           </div>
-          <p class={`wallet-scan-result wallet-scan-result-${scanOutcome().kind}`}>
+          <p
+            class={`wallet-scan-result wallet-scan-result-${scanOutcome().kind}`}
+          >
             {scanOutcome().message}
           </p>
           <Show when={scanOutcome().payload}>
@@ -1192,8 +1230,12 @@ export function renderApp() {
             {(quote) => (
               <>
                 <QrCode rows={quote().qrRows} />
-                <p class="wallet-payload wallet-mono">{quote().paymentRequest}</p>
-                <p class="wallet-balance-detail">{quoteStatusMessage(quote())}</p>
+                <p class="wallet-payload wallet-mono">
+                  {quote().paymentRequest}
+                </p>
+                <p class="wallet-balance-detail">
+                  {quoteStatusMessage(quote())}
+                </p>
               </>
             )}
           </Show>
@@ -1225,7 +1267,8 @@ export function renderApp() {
               <>
                 <p class="wallet-payload wallet-mono">{receipt().token}</p>
                 <p class="wallet-balance-detail">
-                  Sent {receipt().amountSats} sats with {receipt().feeSats} sat fee.
+                  Sent {receipt().amountSats} sats with {receipt().feeSats}{" "}
+                  sat fee.
                 </p>
               </>
             )}
@@ -1285,7 +1328,8 @@ export function renderApp() {
           <Show when={latestPayment()}>
             {(receipt) => (
               <p class="wallet-balance-detail">
-                Paid {receipt().amountSats} sats. Fee paid: {receipt().feePaidSats} sats.
+                Paid {receipt().amountSats} sats. Fee paid:{" "}
+                {receipt().feePaidSats} sats.
               </p>
             )}
           </Show>

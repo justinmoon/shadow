@@ -34,7 +34,6 @@ The following are current implementation bets and may change:
 
 - Masonry/Xilem as the leading Rust UI foundation
 - exact module names inside `shadow_sdk`
-- exact TypeScript binding package name
 - whether internal implementation ends up as one crate or several non-public crates/packages
 
 The target model is:
@@ -186,7 +185,7 @@ The current `runtime-<something>-host` pattern is transitional and should conver
 The public app-authoring surface should look like one SDK:
 
 - Rust apps import `shadow_sdk`
-- TypeScript apps import one Shadow SDK binding module, such as `@shadow/sdk`
+- TypeScript apps import `@shadow/sdk`
 
 The public mental model should be one SDK, even if internal implementation later splits for build, ownership, or tooling reasons.
 

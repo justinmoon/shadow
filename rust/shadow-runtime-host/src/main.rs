@@ -50,12 +50,7 @@ fn configure_runtime_bundle_dir(session_module_path: &str) -> Result<()> {
 async fn load_runtime(main_module: &Url) -> Result<JsRuntime> {
     let mut runtime = JsRuntime::new(RuntimeOptions {
         module_loader: Some(Rc::new(FsModuleLoader)),
-        extensions: vec![
-            runtime_camera_host::init_extension(),
-            runtime_nostr_host::init_extension(),
-            runtime_audio_host::init_extension(),
-            runtime_cashu_host::init_extension(),
-        ],
+        extensions: shadow_sdk::runtime_host::runtime_extensions(),
         ..Default::default()
     });
 

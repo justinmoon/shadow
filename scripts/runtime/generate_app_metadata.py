@@ -98,6 +98,8 @@ def validate_manifest(manifest: dict[str, Any], path: Path) -> None:
         if unknown_profiles:
             unknown = ", ".join(sorted(unknown_profiles))
             raise SystemExit(f"{label}: unsupported profiles: {unknown}")
+        if model == "rust" and "pixel-shell" in profiles:
+            raise SystemExit(f"{label}: rust apps must not declare pixel-shell")
 
         runtime = app.get("runtime")
         if model == "rust":

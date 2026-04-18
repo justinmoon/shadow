@@ -1,11 +1,13 @@
 import {
-  For,
-  Show,
   createSignal,
+  For,
   invalidateRuntimeApp,
+  listKind1,
   onMount,
-} from "@shadow/app-runtime-solid";
-import { listKind1, publishKind1, syncKind1 } from "@shadow/app-runtime-os";
+  publishKind1,
+  Show,
+  syncKind1,
+} from "@shadow/sdk";
 
 type Kind1Event = {
   content: string;
@@ -82,7 +84,7 @@ const TOOLBAR_STYLE = "display:flex;flex-wrap:wrap;gap:14px";
 const COMPOSE_LABEL_STYLE =
   "margin:0;color:#93c5fd;font-size:18px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em";
 const COMPOSE_INPUT_STYLE =
-  'width:100%;min-height:88px;border-radius:24px;border:1px solid rgba(148, 163, 184, 0.25);background:rgba(15, 23, 42, 0.9);color:#f8fafc;padding:22px 24px;font:inherit;font-size:28px;box-sizing:border-box';
+  "width:100%;min-height:88px;border-radius:24px;border:1px solid rgba(148, 163, 184, 0.25);background:rgba(15, 23, 42, 0.9);color:#f8fafc;padding:22px 24px;font:inherit;font-size:28px;box-sizing:border-box";
 const COMPOSE_META_STYLE =
   "display:flex;flex-wrap:wrap;gap:16px;color:#94a3b8;font-size:18px";
 const SESSION_NOTE_STYLE =
@@ -330,7 +332,8 @@ function buttonStyle(variant: "primary" | "secondary", disabled = false) {
 }
 
 function statusStyle(kind: StatusState["kind"]) {
-  const base = "margin:0;padding:18px 20px;border-radius:24px;font-size:22px;line-height:1.35";
+  const base =
+    "margin:0;padding:18px 20px;border-radius:24px;font-size:22px;line-height:1.35";
   switch (kind) {
     case "syncing":
     case "posting":
@@ -363,7 +366,9 @@ export function renderApp() {
   const initialFeed = loadInitialFeed(config);
   const [notes, setNotes] = createSignal<Kind1Event[]>(initialFeed.notes);
   const [draft, setDraft] = createSignal("");
-  const [feedSource, setFeedSource] = createSignal<FeedSource>(initialFeed.source);
+  const [feedSource, setFeedSource] = createSignal<FeedSource>(
+    initialFeed.source,
+  );
   const [focused, setFocused] = createSignal(false);
   const [selection, setSelection] = createSignal("0-0:none");
   const [status, setStatus] = createSignal<StatusState>({
@@ -397,8 +402,9 @@ export function renderApp() {
         setNotes(nextNotes);
         setStatus({
           kind: "ready",
-          message:
-            `Fetched ${receipt.fetchedCount} note${receipt.fetchedCount === 1 ? "" : "s"}, imported ${receipt.importedCount}.`,
+          message: `Fetched ${receipt.fetchedCount} note${
+            receipt.fetchedCount === 1 ? "" : "s"
+          }, imported ${receipt.importedCount}.`,
         });
       } else {
         const demoNotes = materializeDemoNotes(config.demoNotes, config.limit);
@@ -453,7 +459,8 @@ export function renderApp() {
         <p class="timeline-eyebrow" style={EYEBROW_STYLE}>Shadow Nostr</p>
         <h1 class="timeline-title" style={TITLE_STYLE}>Timeline</h1>
         <p class="timeline-subtitle" style={SUBTITLE_STYLE}>
-          OS-owned feed read path below the app. Compose locally. Refresh from relays.
+          OS-owned feed read path below the app. Compose locally. Refresh from
+          relays.
         </p>
         <div class="timeline-toolbar" style={TOOLBAR_STYLE}>
           <button
@@ -482,10 +489,14 @@ export function renderApp() {
       </section>
 
       <section
-        class={`timeline-compose ${focused() ? "timeline-compose-focused" : ""}`}
+        class={`timeline-compose ${
+          focused() ? "timeline-compose-focused" : ""
+        }`}
         style={composeStyle(focused())}
       >
-        <p class="timeline-compose-label" style={COMPOSE_LABEL_STYLE}>Compose</p>
+        <p class="timeline-compose-label" style={COMPOSE_LABEL_STYLE}>
+          Compose
+        </p>
         <input
           class="timeline-compose-input"
           data-shadow-id="draft"
@@ -524,15 +535,20 @@ export function renderApp() {
           <span>Notes: {notes().length}</span>
         </div>
         <p class="timeline-compose-hint" style={SESSION_NOTE_STYLE}>
-          Home shelves this app warm and keeps the in-memory draft. A cold restart reloads the
-          cached timeline first, then falls back to the local demo feed when the store is empty.
+          Home shelves this app warm and keeps the in-memory draft. A cold
+          restart reloads the cached timeline first, then falls back to the
+          local demo feed when the store is empty.
         </p>
       </section>
 
       <section class="timeline-feed" style={FEED_STYLE}>
         <Show
           when={notes().length > 0}
-          fallback={<p class="timeline-feed-empty" style={FEED_EMPTY_STYLE}>No notes yet.</p>}
+          fallback={
+            <p class="timeline-feed-empty" style={FEED_EMPTY_STYLE}>
+              No notes yet.
+            </p>
+          }
         >
           <For each={notes()}>
             {(event) => (
@@ -582,17 +598,19 @@ function readTimelineConfig(): Required<TimelineConfig> {
       SHADOW_RUNTIME_APP_CONFIG?: TimelineConfig;
     }
   ).SHADOW_RUNTIME_APP_CONFIG;
-  const demoNotes = Array.isArray(value?.demoNotes) && value.demoNotes.length > 0
-    ? value.demoNotes.map((note) => ({
-      content: String(note.content),
-      createdAt: Number(note.createdAt),
-      id: note.id == null ? undefined : String(note.id),
-      pubkey: String(note.pubkey),
-    }))
-    : DEFAULT_DEMO_NOTES;
-  const relayUrls = Array.isArray(value?.relayUrls) && value.relayUrls.length > 0
-    ? value.relayUrls.map(String)
-    : DEFAULT_RELAY_URLS;
+  const demoNotes =
+    Array.isArray(value?.demoNotes) && value.demoNotes.length > 0
+      ? value.demoNotes.map((note) => ({
+        content: String(note.content),
+        createdAt: Number(note.createdAt),
+        id: note.id == null ? undefined : String(note.id),
+        pubkey: String(note.pubkey),
+      }))
+      : DEFAULT_DEMO_NOTES;
+  const relayUrls =
+    Array.isArray(value?.relayUrls) && value.relayUrls.length > 0
+      ? value.relayUrls.map(String)
+      : DEFAULT_RELAY_URLS;
   const limit = typeof value?.limit === "number" && value.limit > 0
     ? Math.floor(value.limit)
     : DEFAULT_LIMIT;
@@ -630,7 +648,10 @@ function initialStatusMessage(source: FeedSource, count: number): string {
   }
 }
 
-function materializeDemoNotes(demoNotes: DemoNoteConfig[], limit: number): Kind1Event[] {
+function materializeDemoNotes(
+  demoNotes: DemoNoteConfig[],
+  limit: number,
+): Kind1Event[] {
   return demoNotes.slice(0, limit).map((note, index) => ({
     content: note.content,
     created_at: note.createdAt,
@@ -648,7 +669,10 @@ function shortPubkey(pubkey: string): string {
 }
 
 function formatTimestamp(createdAt: number): string {
-  return new Date(createdAt * 1000).toISOString().replace("T", " ").slice(0, 16);
+  return new Date(createdAt * 1000).toISOString().replace("T", " ").slice(
+    0,
+    16,
+  );
 }
 
 function formatSelection(event: {

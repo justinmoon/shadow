@@ -1,10 +1,10 @@
 import {
-  For,
-  Show,
   createSignal,
+  For,
   invalidateRuntimeApp,
-} from "@shadow/app-runtime-solid";
-import { publishEphemeralKind1 } from "@shadow/app-runtime-os";
+  publishEphemeralKind1,
+  Show,
+} from "@shadow/sdk";
 
 const GM_CONTENT = "GM";
 const DEFAULT_RELAY_URLS = ["wss://relay.primal.net/", "wss://relay.damus.io/"];
@@ -327,9 +327,7 @@ export function renderApp() {
     <main class="gm-shell">
       <Show
         when={state().kind === "success"}
-        fallback={
-          <IdleOrErrorCard state={state()} onSend={sendGm} />
-        }
+        fallback={<IdleOrErrorCard state={state()} onSend={sendGm} />}
       >
         <SuccessCard
           receipt={(state() as Extract<AppState, { kind: "success" }>).receipt}
@@ -357,15 +355,15 @@ function IdleOrErrorCard(props: IdleOrErrorCardProps) {
         {isError()
           ? "Relay publish failed"
           : isPublishing()
-            ? "Publishing GM"
-            : "Tap to send GM"}
+          ? "Publishing GM"
+          : "Tap to send GM"}
       </h1>
       <p class={`gm-body ${bodyVariantClass(state())}`}>
         {isError()
           ? (state() as Extract<AppState, { kind: "error" }>).message
           : isPublishing()
-            ? "Generating a fresh nsec, signing one kind 1 note, and waiting for relay ack. This can take around 10 seconds."
-            : "One tap generates a fresh keypair, posts a kind 1 note with just GM, and turns the result into a scannable Primal link."}
+          ? "Generating a fresh nsec, signing one kind 1 note, and waiting for relay ack. This can take around 10 seconds."
+          : "One tap generates a fresh keypair, posts a kind 1 note with just GM, and turns the result into a scannable Primal link."}
       </p>
       <Show when={isPublishing()}>
         <section class="gm-progress">
@@ -378,7 +376,9 @@ function IdleOrErrorCard(props: IdleOrErrorCardProps) {
       <div class="gm-spacer" />
       <button
         type="button"
-        class={`gm-action ${isError() ? "gm-action-danger" : "gm-action-primary"}`}
+        class={`gm-action ${
+          isError() ? "gm-action-danger" : "gm-action-primary"
+        }`}
         data-shadow-id="gm"
         disabled={isPublishing()}
         onClick={props.onSend}
@@ -439,7 +439,9 @@ function QrCode(props: { rows: string[] }) {
           {(row) => (
             <For each={Array.from(row)}>
               {(cell) => (
-                <span class={`gm-qr-cell${cell === "1" ? " gm-qr-cell-on" : ""}`} />
+                <span
+                  class={`gm-qr-cell${cell === "1" ? " gm-qr-cell-on" : ""}`}
+                />
               )}
             </For>
           )}

@@ -5,10 +5,7 @@ edition.workspace = true
 
 [dependencies]
 deno_core = { workspace = true, features = ["include_icu_data", "reactor-tokio"] }
-runtime-audio-host.workspace = true
-runtime-cashu-host.workspace = true
-runtime-camera-host.workspace = true
-runtime-nostr-host.workspace = true
+shadow-sdk = { workspace = true, features = ["runtime-host"] }
 shadow-runtime-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true

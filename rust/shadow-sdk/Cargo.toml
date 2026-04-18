@@ -1,0 +1,21 @@
+[package]
+name = "shadow-sdk"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+runtime-host = [
+    "dep:deno_core",
+    "dep:runtime-audio-host",
+    "dep:runtime-camera-host",
+    "dep:runtime-cashu-host",
+    "dep:runtime-nostr-host",
+]
+
+[dependencies]
+deno_core = { workspace = true, features = ["include_icu_data", "reactor-tokio"], optional = true }
+runtime-audio-host = { path = "../runtime-audio-host", optional = true }
+runtime-camera-host = { path = "../runtime-camera-host", optional = true }
+runtime-cashu-host = { path = "../runtime-cashu-host", optional = true }
+runtime-nostr-host = { path = "../runtime-nostr-host", optional = true }

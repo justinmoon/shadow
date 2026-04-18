@@ -118,7 +118,7 @@ cat >"$mixed_model_manifest" <<'JSON'
       "binaryName": "shadow-rust-demo",
       "waylandAppId": "dev.shadow.mixed-rust",
       "windowTitle": "Mixed Rust",
-      "profiles": ["vm-shell", "pixel-shell"],
+      "profiles": ["vm-shell"],
       "ui": {
         "iconColor": "ICON_GREEN"
       }

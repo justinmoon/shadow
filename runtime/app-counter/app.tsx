@@ -1,4 +1,4 @@
-import { createSignal } from "@shadow/app-runtime-solid";
+import { createSignal } from "@shadow/sdk";
 
 const SHELL_STYLE =
   "width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:28px;box-sizing:border-box";
@@ -26,12 +26,10 @@ function accentStyle(active: boolean) {
 
 function dotStyle(active: boolean, enabled: boolean) {
   const background = enabled
-    ? active
-      ? "#7b2900"
-      : "#08121b"
+    ? active ? "#7b2900" : "#08121b"
     : active
-      ? "#ffc98b"
-      : "#89daff";
+    ? "#ffc98b"
+    : "#89daff";
   return `${DOT_STYLE};background:${background}`;
 }
 

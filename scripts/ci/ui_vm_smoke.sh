@@ -372,6 +372,14 @@ echo "vm-smoke: home camera"
 run_shadowctl home -t vm >/dev/null
 state_after_camera_home="$(wait_for_home_state camera "camera home")"
 
+echo "vm-smoke: open rust-demo"
+"$SCRIPT_DIR/shadowctl" open rust-demo -t vm >/dev/null
+state_after_rust_demo_open="$(wait_for_open_state rust-demo "rust-demo open")"
+
+echo "vm-smoke: home rust-demo"
+"$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
+state_after_rust_demo_home="$(wait_for_home_state rust-demo "rust-demo home")"
+
 echo "vm-smoke: open podcast"
 run_shadowctl open podcast -t vm >/dev/null
 state_after_podcast_open="$(wait_for_open_state podcast "podcast open")"
@@ -387,6 +395,8 @@ STATE_AFTER_CASHU_HOME="$state_after_cashu_home" \
 STATE_AFTER_CASHU_REOPEN="$state_after_cashu_reopen" \
 STATE_AFTER_CAMERA_OPEN="$state_after_camera_open" \
 STATE_AFTER_CAMERA_HOME="$state_after_camera_home" \
+STATE_AFTER_RUST_DEMO_OPEN="$state_after_rust_demo_open" \
+STATE_AFTER_RUST_DEMO_HOME="$state_after_rust_demo_home" \
 STATE_AFTER_PODCAST_OPEN="$state_after_podcast_open" \
 SHOT_PATH="$SHOT_PATH" \
 python3 - <<'PY'
@@ -401,6 +411,8 @@ cashu_home = json.loads(os.environ["STATE_AFTER_CASHU_HOME"])
 cashu_reopen = json.loads(os.environ["STATE_AFTER_CASHU_REOPEN"])
 camera_open = json.loads(os.environ["STATE_AFTER_CAMERA_OPEN"])
 camera_home = json.loads(os.environ["STATE_AFTER_CAMERA_HOME"])
+rust_demo_open = json.loads(os.environ["STATE_AFTER_RUST_DEMO_OPEN"])
+rust_demo_home = json.loads(os.environ["STATE_AFTER_RUST_DEMO_HOME"])
 podcast_open = json.loads(os.environ["STATE_AFTER_PODCAST_OPEN"])
 
 
@@ -431,6 +443,8 @@ expect_home(cashu_home, "cashu", "cashu home")
 expect_open(cashu_reopen, "cashu", "cashu reopen")
 expect_open(camera_open, "camera", "camera open")
 expect_home(camera_home, "camera", "camera home")
+expect_open(rust_demo_open, "rust-demo", "rust-demo open")
+expect_home(rust_demo_home, "rust-demo", "rust-demo home")
 expect_open(podcast_open, "podcast", "podcast open")
 
 print(

@@ -1,12 +1,10 @@
 import {
-  createSignal,
-  invalidateRuntimeApp,
-  onCleanup,
-} from "@shadow/app-runtime-solid";
-import {
   clearMediaButtonHandler,
   createPlayer,
+  createSignal,
   getStatus,
+  invalidateRuntimeApp,
+  onCleanup,
   pause,
   play,
   release,
@@ -14,7 +12,7 @@ import {
   setMediaButtonHandler,
   setVolume,
   stop,
-} from "@shadow/app-runtime-os";
+} from "@shadow/sdk";
 
 type AudioStatus = {
   backend: string;

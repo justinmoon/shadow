@@ -32,7 +32,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 ## Milestones
 
 - [x] Extend the current manifest and generated metadata to support `typescript` and `rust` app models.
-- [ ] Define the public `shadow_sdk` surface for Rust apps and the matching single binding surface for TypeScript apps.
+- [x] Define the first public `shadow_sdk` surface for Rust apps and the matching `@shadow/sdk` binding for TypeScript apps.
 - [ ] Decide the smallest useful internal boundaries behind the one public SDK surface.
 - [x] Prove a minimal Rust app runner for one process-isolated Shadow UI app.
 - [ ] Prove one shared capability end-to-end through both Rust and TypeScript app surfaces.
@@ -42,7 +42,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 
 ## Near-Term Steps
 
-- [ ] Tighten the spec one more pass around `shadow_sdk` naming, modules, and binding language for TypeScript.
+- [ ] Expand the first `shadow_sdk` slice beyond app env and service bindings.
 - [ ] Decide where the generated manifest types should live as the current manifest expands.
 - [x] Sketch the minimal launch metadata required for both `typescript` and `rust` apps.
 - [x] Choose the first Rust runner spike target and keep it deliberately small.
@@ -59,6 +59,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - Pixel remains TypeScript-only for now. Mixed-model manifests are valid, but rooted-Pixel staging and shell surfaces still filter to TypeScript until the native packaging path exists there too.
 - The current `runtime-<something>-host` naming pattern should collapse toward one shared SDK/service surface.
 - The public app-authoring surface should feel like one SDK, not a pile of crates and one-off bindings.
+- The first public SDK slice is now real: Rust apps have `shadow_sdk::app`, TypeScript apps import `@shadow/sdk`, and the old TypeScript runtime aliases remain as compatibility wrappers while in-repo apps migrate.
 - Masonry/Xilem remains the leading foundation candidate for the Rust UI implementation layer because it supports both external event-loop integration and rendering into caller-provided textures.
 - Shell/system chrome rewrite is in scope. The current homegrown shell UI should be treated as bring-up architecture, not the final product direction.
 - The VM operator/status path now depends on truthful mixed-model probing in `scripts/shadowctl`; keep VM smoke and the operator CLI smoke in lockstep when touching that code.

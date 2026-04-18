@@ -313,6 +313,43 @@ PY
   printf '%s\n' "$manifest_path"
 }
 
+write_invalid_rust_pixel_fixture() {
+  local manifest_path
+  manifest_path="$(mktemp_tracked)"
+  python3 - "$manifest_path" <<'PY'
+import json
+import sys
+
+manifest_path = sys.argv[1]
+manifest = {
+    "schemaVersion": 1,
+    "shell": {
+        "id": "shell",
+        "waylandAppId": "dev.shadow.shell",
+    },
+    "apps": [
+        {
+            "id": "rust-pixel",
+            "model": "rust",
+            "title": "Rust Pixel",
+            "iconLabel": "RP",
+            "subtitle": "Invalid pixel rust lane",
+            "lifecycleHint": "Invalid Rust app profile.",
+            "binaryName": "shadow-rust-demo",
+            "waylandAppId": "dev.shadow.rust-pixel",
+            "windowTitle": "Rust Pixel",
+            "profiles": ["vm-shell", "pixel-shell"],
+            "ui": {"iconColor": "ICON_PURPLE"},
+        },
+    ],
+}
+with open(manifest_path, "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2)
+    handle.write("\n")
+PY
+  printf '%s\n' "$manifest_path"
+}
+
 write_mixed_model_fixture() {
   local manifest_path
   manifest_path="$(mktemp_tracked)"
@@ -361,7 +398,7 @@ manifest = {
             "binaryName": "shadow-rust-demo",
             "waylandAppId": "dev.shadow.mixed-rust",
             "windowTitle": "Mixed Rust",
-            "profiles": ["vm-shell", "pixel-shell"],
+            "profiles": ["vm-shell"],
             "ui": {"iconColor": "ICON_PURPLE"},
         },
     ],
@@ -377,6 +414,7 @@ profile_manifest="$(write_profile_fixture)"
 duplicate_env_manifest="$(write_duplicate_env_fixture)"
 duplicate_filename_manifest="$(write_duplicate_filename_fixture)"
 rust_manifest="$(write_rust_fixture)"
+invalid_rust_pixel_manifest="$(write_invalid_rust_pixel_fixture)"
 mixed_model_manifest="$(write_mixed_model_fixture)"
 rust_out="$(mktemp_tracked)"
 
@@ -418,6 +456,13 @@ if 'pub const RUST_NOTES_MODEL: AppModel = AppModel::Rust;' not in text:
 if "typescript_runtime: None" not in text:
     raise SystemExit("app_metadata_manifest_smoke: rust app should not get TypeScript runtime metadata")
 PY
+
+check_output_case \
+  rust_pixel_profile_rejected \
+  1 \
+  "" \
+  "rust apps must not declare pixel-shell" \
+  scripts/runtime/generate_app_metadata.py --manifest "$invalid_rust_pixel_manifest" --rust-out "$rust_out"
 
 scripts/runtime/generate_app_metadata.py --manifest "$mixed_model_manifest" --rust-out "$rust_out" >/dev/null
 python3 - "$rust_out" <<'PY'

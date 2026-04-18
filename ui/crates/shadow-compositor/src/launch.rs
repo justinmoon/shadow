@@ -89,12 +89,23 @@ pub fn launch_app(
                 app_id,
             ),
         )
+        .env("SHADOW_APP_TITLE", app.window_title)
         .env("SHADOW_BLITZ_APP_TITLE", app.window_title)
+        .env("SHADOW_APP_WAYLAND_APP_ID", app.wayland_app_id)
         .env("SHADOW_BLITZ_WAYLAND_APP_ID", app.wayland_app_id)
+        .env("SHADOW_APP_WAYLAND_INSTANCE_NAME", app.id.as_str())
         .env("SHADOW_BLITZ_WAYLAND_INSTANCE_NAME", app.id.as_str())
+        .env(
+            "SHADOW_APP_SURFACE_WIDTH",
+            runtime_surface_width().to_string(),
+        )
         .env(
             "SHADOW_BLITZ_SURFACE_WIDTH",
             runtime_surface_width().to_string(),
+        )
+        .env(
+            "SHADOW_APP_SURFACE_HEIGHT",
+            runtime_surface_height().to_string(),
         )
         .env(
             "SHADOW_BLITZ_SURFACE_HEIGHT",

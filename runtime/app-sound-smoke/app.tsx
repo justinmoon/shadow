@@ -1,14 +1,15 @@
-import { createSignal, invalidateRuntimeApp } from "@shadow/app-runtime-solid";
 import {
   createPlayer,
+  createSignal,
   getStatus,
+  invalidateRuntimeApp,
   pause,
   play,
   release,
   seek,
   setVolume,
   stop,
-} from "@shadow/app-runtime-os";
+} from "@shadow/sdk";
 
 type AudioStatus = {
   backend: string;

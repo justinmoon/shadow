@@ -1,4 +1,4 @@
-import { For, createSignal } from "@shadow/app-runtime-solid";
+import { createSignal, For } from "@shadow/sdk";
 
 export const runtimeDocumentCss = `
 :root {
@@ -140,10 +140,12 @@ export function renderApp() {
       event.metaKey ? "meta" : null,
     ].filter(Boolean).join("+") || "none";
 
-    setHistory((entries) => [
-      ...entries,
-      `${event.key} / ${event.code} / ${modifiers}`,
-    ].slice(-4));
+    setHistory((entries) =>
+      [
+        ...entries,
+        `${event.key} / ${event.code} / ${modifiers}`,
+      ].slice(-4)
+    );
   }
 
   return (
@@ -152,8 +154,8 @@ export function renderApp() {
         <p class="keyboard-eyebrow">Shadow Keyboard</p>
         <h1 class="keyboard-headline">English text seam</h1>
         <p class="keyboard-body">
-          Host smoke for focus, keydown metadata, plain text input, and selection
-          updates.
+          Host smoke for focus, keydown metadata, plain text input, and
+          selection updates.
         </p>
         <input
           class="keyboard-input"
@@ -165,7 +167,9 @@ export function renderApp() {
           onInput={(event) => {
             setDraft(event.currentTarget.value);
             setSelection(
-              `${event.selectionStart ?? 0}-${event.selectionEnd ?? 0}:${event.selectionDirection ?? "none"}`,
+              `${event.selectionStart ?? 0}-${event.selectionEnd ?? 0}:${
+                event.selectionDirection ?? "none"
+              }`,
             );
           }}
           onKeyDown={(event) =>
@@ -179,7 +183,9 @@ export function renderApp() {
             })}
         />
         <section class="keyboard-meta">
-          <p class="keyboard-meta-line">Focus: {focused() ? "focused" : "blurred"}</p>
+          <p class="keyboard-meta-line">
+            Focus: {focused() ? "focused" : "blurred"}
+          </p>
           <p class="keyboard-meta-line">Draft: {draft() || "(empty)"}</p>
           <p class="keyboard-meta-line">Selection: {selection()}</p>
         </section>

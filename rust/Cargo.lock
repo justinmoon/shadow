@@ -3234,13 +3234,10 @@ name = "shadow-runtime-host"
 version = "0.1.0"
 dependencies = [
  "deno_core",
- "runtime-audio-host",
- "runtime-camera-host",
- "runtime-cashu-host",
- "runtime-nostr-host",
  "serde",
  "serde_json",
  "shadow-runtime-protocol",
+ "shadow-sdk",
  "tokio",
  "v8",
 ]
@@ -3251,6 +3248,17 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "shadow-sdk"
+version = "0.1.0"
+dependencies = [
+ "deno_core",
+ "runtime-audio-host",
+ "runtime-camera-host",
+ "runtime-cashu-host",
+ "runtime-nostr-host",
 ]
 
 [[package]]

@@ -985,6 +985,10 @@
               } // {
                 cargoTestExtraArgs = "-p shadow-compositor-guest";
               });
+              uiShadowRustDemoCheck = mkUiCargoCheck {
+                pname = "shadow-rust-demo-check";
+                cargoCheckExtraArgs = "-p shadow-rust-demo";
+              };
               uiShadowBlitzDemoHostSystemFontsCheck = mkUiCargoCheck {
                 pname = "shadow-blitz-demo-host-system-fonts-check";
                 cargoCheckExtraArgs = "-p shadow-blitz-demo --features host_system_fonts";

@@ -152,6 +152,13 @@ for app_id in sorted(required_apps):
 
 print("runtime manifest validated")
 PY
+            for binary in ${requiredSessionBinaryArgs}; do
+              if [[ ! -x ${shadowUiVmSessionPackage}/bin/$binary ]]; then
+                echo "shadow-ui-session: missing session binary ${shadowUiVmSessionPackage}/bin/$binary" >&2
+                exit 1
+              fi
+            done
+            echo "session binaries validated"
             # shellcheck source=/dev/null
             source ${runtimeHostEnvScript}
             echo "runtime env source=host-cache"

@@ -1,19 +1,17 @@
 import {
-  For,
-  Match,
-  Show,
-  Switch,
-  createSignal,
-  invalidateRuntimeApp,
-  onCleanup,
-  onMount,
-} from "@shadow/app-runtime-solid";
-import {
   capturePreviewFrame,
   captureStill,
+  createSignal,
+  For,
+  invalidateRuntimeApp,
   listCameras,
   logCamera,
-} from "@shadow/app-runtime-os";
+  Match,
+  onCleanup,
+  onMount,
+  Show,
+  Switch,
+} from "@shadow/sdk";
 
 type CameraDevice = {
   id: string;
@@ -304,7 +302,9 @@ function cameraChipShadowId(
 
 export function renderApp() {
   const [cameras, setCameras] = createSignal<CameraDevice[]>([]);
-  const [selectedCameraId, setSelectedCameraId] = createSignal<string | null>(null);
+  const [selectedCameraId, setSelectedCameraId] = createSignal<string | null>(
+    null,
+  );
   const [previewEnabled, setPreviewEnabled] = createSignal(false);
   const [status, setStatus] = createSignal<StatusState>({
     kind: "loading",
@@ -314,8 +314,12 @@ export function renderApp() {
     kind: "idle",
     message: "Preview paused. Tap Start Preview when ready.",
   });
-  const [previewFrame, setPreviewFrame] = createSignal<CaptureReceipt | null>(null);
-  const [lastCapture, setLastCapture] = createSignal<CaptureReceipt | null>(null);
+  const [previewFrame, setPreviewFrame] = createSignal<CaptureReceipt | null>(
+    null,
+  );
+  const [lastCapture, setLastCapture] = createSignal<CaptureReceipt | null>(
+    null,
+  );
   let queuedCameraTask: Promise<void> = Promise.resolve();
   let previewGeneration = 0;
   let isDisposed = false;
@@ -578,7 +582,9 @@ export function renderApp() {
       data-shadow-preview-mime-type={previewFrame()?.mimeType ?? ""}
       data-shadow-status-kind={status().kind}
       data-shadow-last-capture-camera-id={lastCapture()?.cameraId ?? ""}
-      data-shadow-last-capture-is-mock={lastCapture() == null ? "" : String(lastCapture()!.isMock)}
+      data-shadow-last-capture-is-mock={lastCapture() == null
+        ? ""
+        : String(lastCapture()!.isMock)}
       data-shadow-last-capture-bytes={String(lastCapture()?.bytes ?? "")}
       data-shadow-last-capture-mime-type={lastCapture()?.mimeType ?? ""}
     >
@@ -621,7 +627,8 @@ export function renderApp() {
           <button
             class="camera-action"
             data-shadow-id="capture"
-            disabled={status().kind === "capturing" || selectedCameraId() == null}
+            disabled={status().kind === "capturing" ||
+              selectedCameraId() == null}
             onClick={() => {
               void handleCapture();
             }}

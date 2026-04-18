@@ -77,6 +77,7 @@ scripts/runtime_build_artifacts.sh	public	Public runtime artifact builder wrappe
 scripts/runtime/runtime_build_artifacts.ts	runtime	Shared runtime artifact builder implementation.
 scripts/runtime/runtime_compile_solid.ts	runtime	Runtime Solid compile helper.
 scripts/runtime/runtime_prepare_app_bundle.ts	runtime	Runtime app bundle preparation helper.
+scripts/runtime/runtime_prepare_app_bundle_test.ts	runtime	Runtime app bundle alias and staging regression test.
 scripts/runtime/runtime_prepare_host_session.sh	runtime	Host runtime session preparation helper for smokes and VM staging.
 scripts/runtime/runtime_prepare_host_session_env.sh	runtime	Host runtime session env exporter for VM staging.
 scripts/runtime/runtime_viewport.py	runtime	Runtime viewport helper.
