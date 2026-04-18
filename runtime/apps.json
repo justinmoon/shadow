@@ -161,6 +161,9 @@
       "binaryName": "shadow-rust-demo",
       "waylandAppId": "dev.shadow.rust-demo",
       "windowTitle": "Shadow Rust Demo",
+      "launchEnv": {
+        "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK": "1"
+      },
       "profiles": [
         "vm-shell"
       ],

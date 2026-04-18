@@ -32,6 +32,9 @@ pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Resul
     let client_path = first_env_value(&["SHADOW_APP_CLIENT", "SHADOW_GUEST_CLIENT"])
         .unwrap_or_else(|| state.client_config.app_client_path.clone());
     let mut command = Command::new(&client_path);
+    for (key, value) in app.launch_env {
+        command.env(key, value);
+    }
     configure_guest_client_command(
         &mut command,
         &state.client_config,

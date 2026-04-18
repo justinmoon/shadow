@@ -476,12 +476,94 @@ PY
   printf '%s\n' "$manifest_path"
 }
 
+write_launch_env_fixture() {
+  local manifest_path
+  manifest_path="$(mktemp_tracked)"
+  python3 - "$manifest_path" <<'PY'
+import json
+import sys
+
+manifest_path = sys.argv[1]
+manifest = {
+    "schemaVersion": 1,
+    "shell": {
+        "id": "shell",
+        "waylandAppId": "dev.shadow.shell",
+    },
+    "apps": [
+        {
+            "id": "launch-env-rust",
+            "model": "rust",
+            "title": "Launch Env Rust",
+            "iconLabel": "LE",
+            "subtitle": "Launch env lane",
+            "lifecycleHint": "Rust app with launch env.",
+            "binaryName": "shadow-rust-demo",
+            "waylandAppId": "dev.shadow.launch-env-rust",
+            "windowTitle": "Launch Env Rust",
+            "launchEnv": {
+                "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK": "1",
+            },
+            "profiles": ["vm-shell"],
+            "ui": {"iconColor": "ICON_PURPLE"},
+        },
+    ],
+}
+with open(manifest_path, "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2)
+    handle.write("\n")
+PY
+  printf '%s\n' "$manifest_path"
+}
+
+write_invalid_launch_env_fixture() {
+  local manifest_path
+  manifest_path="$(mktemp_tracked)"
+  python3 - "$manifest_path" <<'PY'
+import json
+import sys
+
+manifest_path = sys.argv[1]
+manifest = {
+    "schemaVersion": 1,
+    "shell": {
+        "id": "shell",
+        "waylandAppId": "dev.shadow.shell",
+    },
+    "apps": [
+        {
+            "id": "invalid-launch-env",
+            "model": "rust",
+            "title": "Invalid Launch Env",
+            "iconLabel": "IL",
+            "subtitle": "Invalid launch env lane",
+            "lifecycleHint": "Rust app with reserved launch env.",
+            "binaryName": "shadow-rust-demo",
+            "waylandAppId": "dev.shadow.invalid-launch-env",
+            "windowTitle": "Invalid Launch Env",
+            "launchEnv": {
+                "WAYLAND_DISPLAY": "bad-wayland-0",
+            },
+            "profiles": ["vm-shell"],
+            "ui": {"iconColor": "ICON_PURPLE"},
+        },
+    ],
+}
+with open(manifest_path, "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2)
+    handle.write("\n")
+PY
+  printf '%s\n' "$manifest_path"
+}
+
 profile_manifest="$(write_profile_fixture)"
 duplicate_env_manifest="$(write_duplicate_env_fixture)"
 duplicate_filename_manifest="$(write_duplicate_filename_fixture)"
 rust_manifest="$(write_rust_fixture)"
 invalid_rust_pixel_manifest="$(write_invalid_rust_pixel_fixture)"
 mixed_model_manifest="$(write_mixed_model_fixture)"
+launch_env_manifest="$(write_launch_env_fixture)"
+invalid_launch_env_manifest="$(write_invalid_launch_env_fixture)"
 rust_out="$(mktemp_tracked)"
 
 scripts/runtime/generate_app_metadata.py --manifest "$profile_manifest" --rust-out "$rust_out" >/dev/null
@@ -552,6 +634,28 @@ if "MIXED_TS_APP" not in vm_shell_apps or "MIXED_RUST_APP" not in vm_shell_apps:
 if "MIXED_TS_APP" not in pixel_shell_apps or "MIXED_RUST_APP" in pixel_shell_apps:
     raise SystemExit("app_metadata_manifest_smoke: generated PIXEL_SHELL_DEMO_APPS should only include launchable mixed-model apps")
 PY
+
+scripts/runtime/generate_app_metadata.py --manifest "$launch_env_manifest" --rust-out "$rust_out" >/dev/null
+python3 - "$rust_out" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+
+if 'pub const LAUNCH_ENV_RUST_LAUNCH_ENV: [AppLaunchEnv; 1] = [' not in text:
+    raise SystemExit("app_metadata_manifest_smoke: launchEnv constant was not generated")
+if '("SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "1")' not in text:
+    raise SystemExit("app_metadata_manifest_smoke: launchEnv entry was not generated")
+if "launch_env: &LAUNCH_ENV_RUST_LAUNCH_ENV" not in text:
+    raise SystemExit("app_metadata_manifest_smoke: launchEnv was not wired into DemoApp")
+PY
+
+check_output_case \
+  generate_app_metadata_rejects_reserved_launch_env_key \
+  1 \
+  "" \
+  "reserved for launcher-managed configuration" \
+  scripts/runtime/generate_app_metadata.py --manifest "$invalid_launch_env_manifest" --rust-out "$rust_out"
 
 check_output_case \
   shadowctl_vm_accepts_vm_only \

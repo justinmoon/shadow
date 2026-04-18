@@ -77,6 +77,10 @@ pub fn launch_app(
         ));
     };
 
+    for (key, value) in app.launch_env {
+        command.env(key, value);
+    }
+
     command
         .env("WAYLAND_DISPLAY", socket_name)
         .env(control::COMPOSITOR_CONTROL_ENV, control_socket_path)

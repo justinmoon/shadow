@@ -202,11 +202,21 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn load_camera_panel() -> CameraPanelState {
     match probe_camera_report() {
         Ok(report) => {
-            eprintln!("shadow-rust-demo: camera probe succeeded: {report:?}");
+            eprintln!(
+                "shadow-rust-demo: camera_probe=ok camera_count={} camera_id={} lens={} mime={}",
+                report.camera_count,
+                report.selected_camera_id,
+                report.selected_lens_facing,
+                report.capture_mime_type,
+            );
             CameraPanelState::success(report)
         }
         Err(error) => {
-            eprintln!("shadow-rust-demo: camera probe failed: {error}");
+            eprintln!(
+                "shadow-rust-demo: camera_probe=error kind={:?} message={:?}",
+                error.kind(),
+                error.to_string(),
+            );
             CameraPanelState::error(&error.to_string())
         }
     }

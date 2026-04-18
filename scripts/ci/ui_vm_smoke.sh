@@ -25,6 +25,7 @@ UI_VM_CONTROL_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_CONTROL_TIMEOUT:-20}"
 UI_VM_STOP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_STOP_TIMEOUT:-20}"
 ui_vm_run_pid=""
 prepared_inputs_path="${SHADOW_UI_VM_PREPARED_INPUTS:-}"
+vm_smoke_succeeded=0
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -177,6 +178,37 @@ PY
   done
 }
 
+wait_for_log_marker() {
+  local marker="$1"
+  local label="$2"
+  local failure_marker="${3:-}"
+  local deadline=$((SECONDS + UI_VM_APP_TIMEOUT_SECS))
+  local logs=""
+
+  while true; do
+    if logs="$(run_shadowctl logs -t vm --lines 200)"; then
+      if grep -Fq "$marker" <<<"$logs"; then
+        return 0
+      fi
+      if [[ -n "$failure_marker" ]] && grep -Fq "$failure_marker" <<<"$logs"; then
+        echo "vm-smoke: observed failure marker while waiting for ${label}" >&2
+        printf '%s\n' "$logs" >&2
+        return 1
+      fi
+    fi
+
+    if (( SECONDS >= deadline )); then
+      echo "vm-smoke: timed out waiting for ${label}" >&2
+      if [[ -n "$logs" ]]; then
+        printf '%s\n' "$logs" >&2
+      fi
+      return 1
+    fi
+
+    sleep 1
+  done
+}
+
 dump_failure_context() {
   if [[ -f "$RUN_LOG" ]]; then
     printf '\n== vm-smoke run log ==\n' >&2
@@ -203,8 +235,22 @@ finish() {
 
   run_vm_stop >/dev/null 2>&1 || true
   if [[ -n "$ui_vm_run_pid" ]]; then
-    kill "$ui_vm_run_pid" >/dev/null 2>&1 || true
+    if kill -0 "$ui_vm_run_pid" >/dev/null 2>&1; then
+      local deadline=$((SECONDS + UI_VM_STOP_TIMEOUT_SECS))
+      kill "$ui_vm_run_pid" >/dev/null 2>&1 || true
+      while kill -0 "$ui_vm_run_pid" >/dev/null 2>&1; do
+        if (( SECONDS >= deadline )); then
+          kill -9 "$ui_vm_run_pid" >/dev/null 2>&1 || true
+          break
+        fi
+        sleep 1
+      done
+    fi
     wait "$ui_vm_run_pid" 2>/dev/null || true
+  fi
+
+  if (( status == 0 && vm_smoke_succeeded == 1 )); then
+    vm_smoke_record_success "$prepared_inputs_path" "$REPO_ROOT"
   fi
 }
 
@@ -392,6 +438,10 @@ state_after_camera_home="$(wait_for_home_state camera "camera home")"
 echo "vm-smoke: open rust-demo"
 "$SCRIPT_DIR/shadowctl" open rust-demo -t vm >/dev/null
 state_after_rust_demo_open="$(wait_for_open_state rust-demo "rust-demo open")"
+wait_for_log_marker \
+  "shadow-rust-demo: camera_probe=ok" \
+  "rust-demo camera probe" \
+  "shadow-rust-demo: camera_probe=error"
 
 echo "vm-smoke: home rust-demo"
 "$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
@@ -475,4 +525,4 @@ print(
 )
 PY
 
-vm_smoke_record_success "$prepared_inputs_path" "$REPO_ROOT"
+vm_smoke_succeeded=1

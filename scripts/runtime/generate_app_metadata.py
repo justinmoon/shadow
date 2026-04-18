@@ -21,6 +21,29 @@ VALID_ICON_COLORS = {
 }
 VALID_APP_MODELS = {"typescript", "rust"}
 VALID_PROFILES = {"vm-shell", "pixel-shell"}
+ENV_KEY_PATTERN = re.compile(r"[A-Z][A-Z0-9_]*")
+RESERVED_LAUNCH_ENV_KEYS = frozenset(
+    {
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "SHADOW_COMPOSITOR_CONTROL",
+        "SHADOW_BLITZ_PLATFORM_CONTROL_SOCKET",
+        "SHADOW_RUNTIME_APP_BUNDLE_PATH",
+        "SHADOW_RUNTIME_HOST_BINARY_PATH",
+        "SHADOW_APP_TITLE",
+        "SHADOW_BLITZ_APP_TITLE",
+        "SHADOW_APP_WAYLAND_APP_ID",
+        "SHADOW_BLITZ_WAYLAND_APP_ID",
+        "SHADOW_APP_WAYLAND_INSTANCE_NAME",
+        "SHADOW_BLITZ_WAYLAND_INSTANCE_NAME",
+        "SHADOW_APP_SURFACE_WIDTH",
+        "SHADOW_BLITZ_SURFACE_WIDTH",
+        "SHADOW_APP_SURFACE_HEIGHT",
+        "SHADOW_BLITZ_SURFACE_HEIGHT",
+        "SHADOW_GUEST_KEYBOARD_SEAT",
+        "SHADOW_BLITZ_SOFTWARE_KEYBOARD",
+    }
+)
 
 
 def repo_root() -> Path:
@@ -90,6 +113,7 @@ def validate_manifest(manifest: dict[str, Any], path: Path) -> None:
         if app["waylandAppId"] in seen_wayland_ids:
             raise SystemExit(f"{label}: duplicate waylandAppId {app['waylandAppId']!r}")
         seen_wayland_ids.add(app["waylandAppId"])
+        validate_launch_env(app.get("launchEnv"), label)
 
         profiles = app.get("profiles")
         if not isinstance(profiles, list) or not profiles:
@@ -157,6 +181,28 @@ def require_string(data: dict[str, Any], field: str, label: str) -> str:
     return value
 
 
+def validate_launch_env(env_map: Any, label: str) -> None:
+    if env_map is None:
+        return
+    if not isinstance(env_map, dict):
+        raise SystemExit(f"{label}: launchEnv must be an object when present")
+    for key, value in env_map.items():
+        if not isinstance(key, str) or not key:
+            raise SystemExit(f"{label}.launchEnv: env keys must be non-empty strings")
+        if not ENV_KEY_PATTERN.fullmatch(key):
+            raise SystemExit(
+                f"{label}.launchEnv: unsupported env key {key!r}; expected SHOUTY_CASE"
+            )
+        if key in RESERVED_LAUNCH_ENV_KEYS:
+            raise SystemExit(
+                f"{label}.launchEnv: env key {key!r} is reserved for launcher-managed configuration"
+            )
+        if not isinstance(value, str):
+            raise SystemExit(
+                f"{label}.launchEnv[{key!r}]: env values must be strings"
+            )
+
+
 def rust_const_name(app_id: str, suffix: str) -> str:
     prefix = re.sub(r"[^A-Z0-9]+", "_", app_id.upper()).strip("_")
     return f"{prefix}_{suffix}"
@@ -196,7 +242,7 @@ def display_path(path: Path) -> str:
 def generate_rust(manifest: dict[str, Any]) -> str:
     apps = manifest["apps"]
     icon_colors = sorted({app["ui"]["iconColor"] for app in apps})
-    super_imports = ["AppId", "AppModel", "DemoApp"]
+    super_imports = ["AppId", "AppLaunchEnv", "AppModel", "DemoApp"]
     if any(app["model"] == "typescript" for app in apps):
         super_imports.append("TypeScriptAppRuntime")
     lines: list[str] = [
@@ -264,6 +310,28 @@ def generate_rust(manifest: dict[str, Any]) -> str:
             runtime_bundle_env = '""'
             runtime_input_path = '""'
             runtime_cache_dir = '""'
+        launch_env = app.get("launchEnv") or {}
+        if launch_env:
+            env_const = rust_const_name(app_id, "LAUNCH_ENV")
+            launch_env_entries = sorted(launch_env.items())
+            if len(launch_env_entries) == 1:
+                key, value = launch_env_entries[0]
+                lines.extend(
+                    [
+                        f"pub const {env_const}: [AppLaunchEnv; 1] = [({rust_str(key)}, {rust_str(value)})];",
+                        "",
+                    ]
+                )
+            else:
+                lines.append(
+                    f"pub const {env_const}: [AppLaunchEnv; {len(launch_env_entries)}] = ["
+                )
+                for key, value in launch_env_entries:
+                    lines.append(f"    ({rust_str(key)}, {rust_str(value)}),")
+                lines.extend(["];", ""])
+            launch_env_ref = f"&{env_const}"
+        else:
+            launch_env_ref = "&[]"
         lines.extend(
             [
                 f"pub const {app_const}: DemoApp = DemoApp {{",
@@ -280,6 +348,7 @@ def generate_rust(manifest: dict[str, Any]) -> str:
                 f"    runtime_bundle_env: {runtime_bundle_env},",
                 f"    runtime_input_path: {runtime_input_path},",
                 f"    runtime_cache_dir: {runtime_cache_dir},",
+                f"    launch_env: {launch_env_ref},",
                 f"    icon_color: {app['ui']['iconColor']},",
                 "};",
                 "",

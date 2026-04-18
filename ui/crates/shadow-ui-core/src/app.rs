@@ -34,6 +34,8 @@ pub enum AppLaunchModel {
     Rust,
 }
 
+pub type AppLaunchEnv = (&'static str, &'static str);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AppLaunchSpec {
     pub id: AppId,
@@ -41,6 +43,7 @@ pub struct AppLaunchSpec {
     pub wayland_app_id: &'static str,
     pub window_title: &'static str,
     pub model: AppLaunchModel,
+    pub launch_env: &'static [AppLaunchEnv],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +61,7 @@ pub struct DemoApp {
     pub runtime_bundle_env: &'static str,
     pub runtime_input_path: &'static str,
     pub runtime_cache_dir: &'static str,
+    pub launch_env: &'static [AppLaunchEnv],
     pub icon_color: Color,
 }
 
@@ -73,6 +77,7 @@ impl DemoApp {
             wayland_app_id: self.wayland_app_id,
             window_title: self.window_title,
             model,
+            launch_env: self.launch_env,
         }
     }
 }
@@ -197,6 +202,7 @@ mod tests {
                 wayland_app_id: app.wayland_app_id,
                 window_title: app.window_title,
                 model: AppLaunchModel::TypeScript { runtime },
+                launch_env: app.launch_env,
             })
         );
     }
@@ -217,6 +223,7 @@ mod tests {
             runtime_bundle_env: "",
             runtime_input_path: "",
             runtime_cache_dir: "",
+            launch_env: &[],
             icon_color: crate::color::ICON_PURPLE,
         };
 
@@ -226,6 +233,7 @@ mod tests {
         assert_eq!(spec.wayland_app_id, "dev.shadow.rust-notes");
         assert_eq!(spec.window_title, "Rust Notes");
         assert_eq!(spec.model, AppLaunchModel::Rust);
+        assert!(spec.launch_env.is_empty());
         assert_eq!(spec.typescript_runtime(), None);
     }
 
@@ -347,7 +355,12 @@ mod tests {
                     wayland_app_id: RUST_DEMO_WAYLAND_APP_ID,
                     window_title: "Shadow Rust Demo",
                     model: AppLaunchModel::Rust,
+                    launch_env: &[("SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "1")],
                 })
+            );
+            assert_eq!(
+                RUST_DEMO_APP.launch_env,
+                &[("SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "1")]
             );
             assert_eq!(
                 app_id_from_wayland_app_id(RUST_DEMO_WAYLAND_APP_ID),

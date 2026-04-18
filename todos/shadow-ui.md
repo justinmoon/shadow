@@ -35,14 +35,14 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - [x] Define the first public `shadow_sdk` surface for Rust apps and the matching `@shadow/sdk` binding for TypeScript apps.
 - [~] Decide the smallest useful internal boundaries behind the one public SDK surface.
 - [x] Prove a minimal Rust app runner for one process-isolated Shadow UI app.
-- [~] Prove one shared capability end-to-end through both Rust and TypeScript app surfaces.
+- [x] Prove one shared capability end-to-end through both Rust and TypeScript app surfaces.
 - [ ] Prove shared lifecycle events through the Rust path first and define how they surface to TypeScript apps.
 - [ ] Prove one shell/system surface rendered directly by the compositor.
 - [ ] Land the first serious Rust demo app that exercises navigation, list rendering, and persistence.
 
 ## Near-Term Steps
 
-- [ ] Expand the first `shadow_sdk` slice beyond app env and service bindings.
+- [~] Expand the first `shadow_sdk` slice beyond app env and service bindings.
 - [ ] Decide where the generated manifest types should live as the current manifest expands.
 - [x] Sketch the minimal launch metadata required for both `typescript` and `rust` apps.
 - [x] Choose the first Rust runner spike target and keep it deliberately small.
@@ -67,3 +67,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - Camera is the first shared capability seam. It already has a relatively clean env-driven host implementation, explicit mock support for tests, and a small enough surface to expose natively through `shadow_sdk` without first solving the entire lifecycle/control-plane story.
 - The first Rust camera slice now keeps `runtime-camera-host` as the single implementation while `shadow_sdk::services::camera` owns the app-facing types. The public Rust SDK no longer re-exports runtime host env knobs or transport request/receipt types.
 - The Rust camera surface still intentionally stops at `list_cameras`, `capture_still`, and `decode_qr_code`. Preview remains TypeScript-only for now, so API parity and VM smoke coverage are the next camera follow-up instead of more wrapper churn.
+- The VM proof path for the Rust camera slice is now manifest-driven: `launchEnv` metadata flows through generated app metadata into both compositor launchers, `rust-demo` logs a structured `camera_probe` marker, and `scripts/ci/ui_vm_smoke.sh` asserts that marker while failing fast on explicit probe errors.
+- `launchEnv` is intentionally subordinate to compositor-owned wiring. The metadata generator now rejects reserved launcher-managed env keys, and both launchers apply manifest env before their own required Wayland/control/runtime settings.
+- `scripts/ci/ui_vm_smoke.sh` now records cached success only after cleanup and no longer waits unbounded on the VM runner in the EXIT path. That tightened the “VM looked done but the command kept running” failure mode from this seam.
+- The next seam should move to lifecycle. Camera now has a real Rust SDK boundary plus a truthful VM proof, so more launch/env churn would have diminishing returns.
