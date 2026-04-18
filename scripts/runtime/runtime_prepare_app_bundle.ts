@@ -165,6 +165,15 @@ globalThis.SHADOW_RUNTIME_HOST = {
     }
     return JSON.stringify(runtimeApp.renderDocument());
   },
+  async platformLifecycleChange(state) {
+    ensureShadowRuntimeOs();
+    const dispatchLifecycleStateChange =
+      globalThis.Shadow?.__dispatchLifecycleStateChange;
+    if (typeof dispatchLifecycleStateChange === "function") {
+      await dispatchLifecycleStateChange(state);
+    }
+    return JSON.stringify(runtimeApp.renderDocument());
+  },
   render() {
     return JSON.stringify(runtimeApp.renderDocument());
   },

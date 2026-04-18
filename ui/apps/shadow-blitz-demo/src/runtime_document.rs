@@ -17,8 +17,8 @@ use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
 use crate::frame::template_document;
 use crate::log::{runtime_log, runtime_wall_ms};
 use crate::runtime_session::{
-    RuntimeAudioControlAction, RuntimeDispatchEvent, RuntimeKeyboardEvent, RuntimePointerEvent,
-    RuntimeSelectionEvent, RuntimeSession,
+    AppLifecycleState, RuntimeAudioControlAction, RuntimeDispatchEvent, RuntimeKeyboardEvent,
+    RuntimePointerEvent, RuntimeSelectionEvent, RuntimeSession,
 };
 
 const STYLE_SELECTOR: &str = "#shadow-blitz-style";
@@ -983,6 +983,36 @@ impl RuntimeDocument {
             Ok(None) => false,
             Err(error) => {
                 eprintln!("[shadow-runtime-demo] runtime-platform-audio-control-error: {error}");
+                false
+            }
+        }
+    }
+
+    pub fn handle_platform_lifecycle_change(&mut self, state: AppLifecycleState) -> bool {
+        let Some(runtime_session) = self.runtime_session.as_mut() else {
+            return false;
+        };
+
+        runtime_log(format!(
+            "runtime-platform-lifecycle-start state={} wall_ms={}",
+            state.as_str(),
+            runtime_wall_ms()
+        ));
+        match runtime_session.platform_lifecycle_change(state) {
+            Ok(Some(payload)) => {
+                self.replace_document(payload);
+                self.refresh_debug_overlay();
+                self.redraw_requested = true;
+                runtime_log(format!(
+                    "runtime-platform-lifecycle-applied state={} wall_ms={}",
+                    state.as_str(),
+                    runtime_wall_ms()
+                ));
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                eprintln!("[shadow-runtime-demo] runtime-platform-lifecycle-error: {error}");
                 false
             }
         }

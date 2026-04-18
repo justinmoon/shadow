@@ -5,3 +5,4 @@ edition.workspace = true
 
 [dependencies]
 chrono.workspace = true
+shadow-runtime-protocol = { path = "../../../rust/shadow-runtime-protocol" }

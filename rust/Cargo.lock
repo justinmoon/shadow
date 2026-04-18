@@ -3248,6 +3248,7 @@ dependencies = [
  "runtime-camera-host",
  "runtime-cashu-host",
  "runtime-nostr-host",
+ "shadow-runtime-protocol",
 ]
 
 [[package]]

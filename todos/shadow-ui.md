@@ -36,7 +36,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - [~] Decide the smallest useful internal boundaries behind the one public SDK surface.
 - [x] Prove a minimal Rust app runner for one process-isolated Shadow UI app.
 - [x] Prove one shared capability end-to-end through both Rust and TypeScript app surfaces.
-- [ ] Prove shared lifecycle events through the Rust path first and define how they surface to TypeScript apps.
+- [x] Prove shared lifecycle events through the Rust path first and define how they surface to TypeScript apps.
 - [ ] Prove one shell/system surface rendered directly by the compositor.
 - [ ] Land the first serious Rust demo app that exercises navigation, list rendering, and persistence.
 
@@ -73,4 +73,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - The VM proof path for the Rust camera slice is now manifest-driven: `launchEnv` metadata flows through generated app metadata into both compositor launchers, `rust-demo` logs a structured `camera_probe` marker, and `scripts/ci/ui_vm_smoke.sh` asserts that marker while failing fast on explicit probe errors.
 - `launchEnv` is intentionally subordinate to compositor-owned wiring. The metadata generator now rejects reserved launcher-managed env keys, and both launchers apply manifest env before their own required Wayland/control/runtime settings.
 - `scripts/ci/ui_vm_smoke.sh` now records cached success only after cleanup and no longer waits unbounded on the VM runner in the EXIT path. That tightened the “VM looked done but the command kept running” failure mode from this seam.
-- The next seam should move to lifecycle. Camera now has a real Rust SDK boundary plus a truthful VM proof, so more launch/env churn would have diminishing returns.
+- Lifecycle now uses the existing per-app platform-control socket instead of a second transport. The first truthful contract is intentionally smaller than the long-term spec: apps start in `foreground` by default and receive `background` / `foreground` transitions as the shell shelves and resumes them.
+- Rust apps now read lifecycle state from `shadow_sdk::app` and can spawn a lifecycle listener on the same app platform-control socket. TypeScript apps now use `getLifecycleState`, `setLifecycleHandler`, and `clearLifecycleHandler` from `@shadow/sdk`, backed by the same host/app transport.
+- VM smoke now proves the lifecycle seam through both app models: `counter` logs TypeScript lifecycle markers on home/reopen, and `rust-demo` logs Rust lifecycle markers on the same transitions.
+- The next seam should move to a richer platform contract on top of this base, likely text/input or one embedded shell surface, rather than adding more launch/env churn.

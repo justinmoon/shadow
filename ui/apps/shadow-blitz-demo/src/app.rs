@@ -7,7 +7,7 @@ use crate::log::{runtime_log, runtime_log_json, runtime_wall_ms};
 use crate::runtime_document::{
     runtime_ignore_safe_area_from_env, runtime_surface_size_from_env, RuntimeDocument,
 };
-use crate::runtime_session::RuntimeAudioControlAction;
+use crate::runtime_session::{AppLifecycleState, RuntimeAudioControlAction};
 #[cfg(feature = "gpu")]
 use anyrender_vello::VelloWindowRenderer as WindowRenderer;
 #[cfg(all(not(feature = "gpu"), feature = "cpu"))]
@@ -16,6 +16,7 @@ use blitz_shell::{
     create_default_event_loop, BlitzShellEvent, BlitzShellProxy, View, WindowConfig,
 };
 use serde::Serialize;
+use shadow_runtime_protocol::AppPlatformRequest;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Condvar, Mutex};
 use std::{env, path::PathBuf, thread, time::Duration};
@@ -38,6 +39,7 @@ use winit::platform::wayland::WindowAttributesWayland;
 #[cfg(target_os = "linux")]
 const RUNTIME_DEMO_WAYLAND_APP_ID: &str = "dev.shadow.counter";
 const BLITZ_APP_TITLE_ENV: &str = "SHADOW_BLITZ_APP_TITLE";
+const APP_PLATFORM_CONTROL_SOCKET_ENV: &str = "SHADOW_APP_PLATFORM_CONTROL_SOCKET";
 const BLITZ_PLATFORM_CONTROL_SOCKET_ENV: &str = "SHADOW_BLITZ_PLATFORM_CONTROL_SOCKET";
 const BLITZ_UNDECORATED_ENV: &str = "SHADOW_BLITZ_UNDECORATED";
 #[cfg(target_os = "linux")]
@@ -379,7 +381,8 @@ impl BlitzApplication {
         if self.runtime_platform_control_thread_started {
             return;
         }
-        let Some(path) = env::var_os(BLITZ_PLATFORM_CONTROL_SOCKET_ENV)
+        let Some(path) = env::var_os(APP_PLATFORM_CONTROL_SOCKET_ENV)
+            .or_else(|| env::var_os(BLITZ_PLATFORM_CONTROL_SOCKET_ENV))
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
         else {
@@ -711,6 +714,10 @@ enum RuntimeEmbedderEvent {
         action: RuntimeAudioControlAction,
         response: Arc<PlatformControlResponse>,
     },
+    PlatformLifecycleChange {
+        state: AppLifecycleState,
+        response: Arc<PlatformControlResponse>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -843,27 +850,40 @@ fn run_platform_control_thread(proxy: BlitzShellProxy, path: PathBuf) {
             continue;
         }
 
-        let Some(action) = parse_platform_audio_control(&request) else {
+        let response = PlatformControlResponse::new();
+        let Some(request) = AppPlatformRequest::parse_line(&request) else {
             let _ =
                 std::io::Write::write_all(&mut stream, b"ok\nhandled=0\nreason=invalid-action\n");
             continue;
         };
-
-        let response = PlatformControlResponse::new();
-        proxy.send_event(BlitzShellEvent::embedder_event(
-            RuntimeEmbedderEvent::PlatformAudioControl {
+        let event = match request {
+            AppPlatformRequest::Media { action } => RuntimeEmbedderEvent::PlatformAudioControl {
                 action,
                 response: response.clone(),
             },
-        ));
+            AppPlatformRequest::Lifecycle { state } => {
+                RuntimeEmbedderEvent::PlatformLifecycleChange {
+                    state,
+                    response: response.clone(),
+                }
+            }
+        };
+        proxy.send_event(BlitzShellEvent::embedder_event(event));
         let handled = response.wait(Duration::from_secs(5)).unwrap_or(false);
         let _ = std::io::Write::write_all(
             &mut stream,
-            format!(
-                "ok\nhandled={}\naction={}\n",
-                if handled { 1 } else { 0 },
-                action.as_str()
-            )
+            match request {
+                AppPlatformRequest::Media { action } => format!(
+                    "ok\nhandled={}\naction={}\n",
+                    if handled { 1 } else { 0 },
+                    action.as_str()
+                ),
+                AppPlatformRequest::Lifecycle { state } => format!(
+                    "ok\nhandled={}\nstate={}\n",
+                    if handled { 1 } else { 0 },
+                    state.as_str()
+                ),
+            }
             .as_bytes(),
         );
     }
@@ -875,19 +895,6 @@ fn run_platform_control_thread(_proxy: BlitzShellProxy, path: PathBuf) {
         "platform-control-thread-unsupported path={}",
         path.display()
     ));
-}
-
-fn parse_platform_audio_control(request: &str) -> Option<RuntimeAudioControlAction> {
-    match request.trim() {
-        "play" => Some(RuntimeAudioControlAction::Play),
-        "pause" => Some(RuntimeAudioControlAction::Pause),
-        "play-pause" | "play_pause" => Some(RuntimeAudioControlAction::PlayPause),
-        "next" => Some(RuntimeAudioControlAction::Next),
-        "previous" => Some(RuntimeAudioControlAction::Previous),
-        "volume-up" | "volume_up" => Some(RuntimeAudioControlAction::VolumeUp),
-        "volume-down" | "volume_down" => Some(RuntimeAudioControlAction::VolumeDown),
-        _ => None,
-    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1312,6 +1319,13 @@ fn handle_runtime_embedder_event(
             let handled = window
                 .downcast_doc_mut::<RuntimeDocument>()
                 .handle_platform_audio_control(*action);
+            response.store(handled);
+            handled
+        }
+        RuntimeEmbedderEvent::PlatformLifecycleChange { state, response } => {
+            let handled = window
+                .downcast_doc_mut::<RuntimeDocument>()
+                .handle_platform_lifecycle_change(*state);
             response.store(handled);
             handled
         }

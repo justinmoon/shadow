@@ -1,8 +1,6 @@
-use std::{
-    collections::HashMap, ffi::OsString, os::unix::net::UnixStream, path::PathBuf, process::Child,
-    sync::Arc,
-};
+use std::{collections::HashMap, ffi::OsString, path::PathBuf, process::Child, sync::Arc};
 
+use shadow_runtime_protocol::{AppLifecycleState, AppPlatformRequest};
 use shadow_ui_core::{
     app::AppId,
     control::{ControlRequest, MediaAction},
@@ -406,10 +404,21 @@ impl ShadowCompositor {
         }
 
         self.focus_window(None, self.next_serial());
+        notify_lifecycle_state_to_app(
+            self.control_socket_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+            app_id,
+            AppLifecycleState::Background,
+        );
     }
 
     pub fn launch_or_focus_app(&mut self, app_id: AppId) -> std::io::Result<()> {
         self.reap_children();
+
+        if self.focused_app == Some(app_id) {
+            return Ok(());
+        }
 
         if self
             .shell
@@ -421,6 +430,13 @@ impl ShadowCompositor {
 
         if let Some(window) = self.mapped_window_for_app(app_id) {
             self.focus_window(Some(window), self.next_serial());
+            notify_lifecycle_state_to_app(
+                self.control_socket_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new(".")),
+                app_id,
+                AppLifecycleState::Foreground,
+            );
             return Ok(());
         }
 
@@ -428,6 +444,13 @@ impl ShadowCompositor {
             self.space
                 .map_element(window.clone(), self.app_window_location(), false);
             self.focus_window(Some(window), self.next_serial());
+            notify_lifecycle_state_to_app(
+                self.control_socket_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new(".")),
+                app_id,
+                AppLifecycleState::Foreground,
+            );
             return Ok(());
         }
 
@@ -568,55 +591,65 @@ fn sanitize_control_error(message: &str) -> String {
     message.replace('\n', " ")
 }
 
+fn dispatch_platform_request_to_app(
+    runtime_dir: impl AsRef<std::path::Path>,
+    app_id: AppId,
+    request: AppPlatformRequest,
+) -> String {
+    let runtime_dir = runtime_dir.as_ref();
+    let request_label = match request {
+        AppPlatformRequest::Lifecycle { state } => state.as_str().to_string(),
+        AppPlatformRequest::Media { action } => action.as_str().to_string(),
+    };
+    match shadow_ui_core::control::app_platform_request_response(runtime_dir, app_id, request) {
+        Ok(response) if !response.trim().is_empty() => response,
+        Ok(_) => format!(
+            "ok\nhandled=0\nreason=empty-app-response\napp={}\nrequest={}\n",
+            app_id.as_str(),
+            request_label,
+        ),
+        Err(error) => {
+            let reason = match error.kind() {
+                std::io::ErrorKind::NotFound
+                | std::io::ErrorKind::ConnectionRefused
+                | std::io::ErrorKind::AddrNotAvailable => "platform-control-unavailable",
+                std::io::ErrorKind::BrokenPipe => "platform-control-write-failed",
+                _ => "platform-control-read-failed",
+            };
+            format!(
+                "ok\nhandled=0\nreason={reason}\napp={}\nrequest={}\nerror={}\n",
+                app_id.as_str(),
+                request_label,
+                sanitize_control_error(&error.to_string()),
+            )
+        }
+    }
+}
+
 fn dispatch_media_action_to_app(
-    runtime_dir: PathBuf,
+    runtime_dir: impl AsRef<std::path::Path>,
     app_id: AppId,
     action: MediaAction,
 ) -> String {
-    let socket_path = shadow_ui_core::control::platform_control_socket_path(&runtime_dir, app_id);
+    dispatch_platform_request_to_app(
+        runtime_dir,
+        app_id,
+        AppPlatformRequest::Media {
+            action: action.into(),
+        },
+    )
+}
 
-    let mut stream = match UnixStream::connect(&socket_path) {
-        Ok(stream) => stream,
-        Err(error) => {
-            return format!(
-                "ok\nhandled=0\nreason=platform-control-unavailable\napp={}\naction={}\nerror={}\n",
-                app_id.as_str(),
-                action.as_token(),
-                sanitize_control_error(&error.to_string()),
-            );
-        }
-    };
-
-    if let Err(error) =
-        std::io::Write::write_all(&mut stream, format!("{}\n", action.as_token()).as_bytes())
-    {
-        return format!(
-            "ok\nhandled=0\nreason=platform-control-write-failed\napp={}\naction={}\nerror={}\n",
-            app_id.as_str(),
-            action.as_token(),
-            sanitize_control_error(&error.to_string()),
-        );
-    }
-    let _ = stream.shutdown(std::net::Shutdown::Write);
-
-    let mut response = String::new();
-    if let Err(error) = std::io::Read::read_to_string(&mut stream, &mut response) {
-        return format!(
-            "ok\nhandled=0\nreason=platform-control-read-failed\napp={}\naction={}\nerror={}\n",
-            app_id.as_str(),
-            action.as_token(),
-            sanitize_control_error(&error.to_string()),
-        );
-    }
-
-    if response.trim().is_empty() {
-        return format!(
-            "ok\nhandled=0\nreason=empty-app-response\napp={}\naction={}\n",
-            app_id.as_str(),
-            action.as_token()
-        );
-    }
-    response
+fn notify_lifecycle_state_to_app(
+    runtime_dir: impl AsRef<std::path::Path>,
+    app_id: AppId,
+    state: AppLifecycleState,
+) {
+    let _ = dispatch_platform_request_to_app(
+        runtime_dir,
+        app_id,
+        AppPlatformRequest::Lifecycle { state },
+    );
 }
 
 fn auto_launch_app_id() -> AppId {

@@ -78,6 +78,24 @@ export function clearMediaButtonHandler() {
   return getAudioApi().clearMediaButtonHandler();
 }
 
+export function getLifecycleState() {
+  requireShadowOs();
+  return getLifecycleStateStore().state;
+}
+
+export function setLifecycleHandler(handler) {
+  requireShadowOs();
+  if (handler != null && typeof handler !== "function") {
+    throw new TypeError("lifecycle handler must be a function");
+  }
+  getLifecycleStateStore().handler = handler ?? null;
+}
+
+export function clearLifecycleHandler() {
+  requireShadowOs();
+  getLifecycleStateStore().handler = null;
+}
+
 export function listCashuWallets(request = {}) {
   return getCashuApi().listWallets(request);
 }
@@ -118,6 +136,7 @@ function requireShadowOs() {
   if (os.audio) {
     installAudioMediaHandlerApi(os.audio);
   }
+  installLifecycleApi();
   return os;
 }
 
@@ -156,6 +175,7 @@ function getCashuApi() {
 const AUDIO_MEDIA_HANDLER_STATE_KEY = Symbol.for(
   "shadow.runtime.audio.media_handler_state",
 );
+const LIFECYCLE_STATE_KEY = Symbol.for("shadow.runtime.lifecycle.state");
 const AUDIO_MEDIA_ACTIONS = new Set([
   "next",
   "pause",
@@ -165,6 +185,7 @@ const AUDIO_MEDIA_ACTIONS = new Set([
   "volume_down",
   "volume_up",
 ]);
+const LIFECYCLE_STATES = new Set(["foreground", "background"]);
 
 function installAudioMediaHandlerApi(audio) {
   if (audio.__dispatchMediaButton) {
@@ -176,6 +197,19 @@ function installAudioMediaHandlerApi(audio) {
   return audio;
 }
 
+function installLifecycleApi() {
+  const shadow = globalThis.Shadow ?? {};
+  if (typeof shadow.__dispatchLifecycleStateChange === "function") {
+    return shadow;
+  }
+  const nextShadow = {
+    ...shadow,
+    __dispatchLifecycleStateChange: dispatchLifecycleStateChange,
+  };
+  globalThis.Shadow = nextShadow;
+  return nextShadow;
+}
+
 function getAudioMediaHandlerState() {
   if (!globalThis[AUDIO_MEDIA_HANDLER_STATE_KEY]) {
     globalThis[AUDIO_MEDIA_HANDLER_STATE_KEY] = {
@@ -183,6 +217,16 @@ function getAudioMediaHandlerState() {
     };
   }
   return globalThis[AUDIO_MEDIA_HANDLER_STATE_KEY];
+}
+
+function getLifecycleStateStore() {
+  if (!globalThis[LIFECYCLE_STATE_KEY]) {
+    globalThis[LIFECYCLE_STATE_KEY] = {
+      handler: null,
+      state: "foreground",
+    };
+  }
+  return globalThis[LIFECYCLE_STATE_KEY];
 }
 
 function normalizeAudioMediaAction(action) {
@@ -196,6 +240,25 @@ function normalizeAudioMediaAction(action) {
     );
   }
   return normalizedAction;
+}
+
+function normalizeLifecycleState(state) {
+  if (typeof state !== "string") {
+    throw new TypeError("lifecycle state must be a string");
+  }
+  const normalizedState = state.trim().toLowerCase().replace(/-/g, "_");
+  if (normalizedState === "running_foreground") {
+    return "foreground";
+  }
+  if (normalizedState === "running_background") {
+    return "background";
+  }
+  if (!LIFECYCLE_STATES.has(normalizedState)) {
+    throw new TypeError(
+      `unsupported lifecycle state ${JSON.stringify(state)}`,
+    );
+  }
+  return normalizedState;
 }
 
 function setAudioMediaButtonHandler(handler) {
@@ -216,4 +279,15 @@ async function dispatchAudioMediaButton(action) {
   }
   const handled = await handler({ action: normalizeAudioMediaAction(action) });
   return handled !== false;
+}
+
+async function dispatchLifecycleStateChange(state) {
+  const normalizedState = normalizeLifecycleState(state);
+  const lifecycleState = getLifecycleStateStore();
+  lifecycleState.state = normalizedState;
+  const handler = lifecycleState.handler;
+  if (typeof handler === "function") {
+    await handler({ state: normalizedState });
+  }
+  return true;
 }

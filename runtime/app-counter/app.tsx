@@ -1,4 +1,10 @@
-import { createSignal } from "@shadow/sdk";
+import {
+  clearLifecycleHandler,
+  createSignal,
+  getLifecycleState,
+  onCleanup,
+  setLifecycleHandler,
+} from "@shadow/sdk";
 
 const SHELL_STYLE =
   "width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:28px;box-sizing:border-box";
@@ -73,13 +79,23 @@ function Counter(props: CounterProps) {
 
 export function renderApp() {
   const [count, setCount] = createSignal(1);
+  const [lifecycleState, setLifecycleState] = createSignal(getLifecycleState());
   const active = () => count() > 1;
+
+  setLifecycleHandler(({ state }: { state: string }) => {
+    setLifecycleState(state);
+    console.error(`[shadow-runtime-counter] lifecycle_state=${state}`);
+  });
+  onCleanup(() => {
+    clearLifecycleHandler();
+  });
 
   return (
     <main
       class="shell"
       data-shadow-state={active() ? "warm" : "cool"}
       data-shadow-count={String(count())}
+      data-shadow-lifecycle={lifecycleState()}
       style={shellStyle(active())}
     >
       <div style={STACK_STYLE}>

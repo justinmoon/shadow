@@ -10,6 +10,7 @@ drm = "0.14.1"
 evdev = "0.13.2"
 libc = "0.2"
 shadow-compositor-common = { path = "../shadow-compositor-common" }
+shadow-runtime-protocol = { path = "../../../rust/shadow-runtime-protocol" }
 shadow-ui-core = { path = "../shadow-ui-core" }
 shadow-ui-software = { path = "../shadow-ui-software" }
 smithay = { version = "0.7.0", default-features = false, features = ["desktop", "wayland_frontend"] }

@@ -84,6 +84,11 @@ Deno.test("prepareRuntimeAppBundle stages sdk entrypoint files", async () => {
     assertIncludes(output, 'from "./shadow_sdk.js"', "compiled app output");
     assertNotIncludes(output, "@shadow/sdk", "compiled app output");
     assertIncludes(runner, 'from "./shadow_sdk.js"', "bundle runner");
+    assertIncludes(
+      runner,
+      "platformLifecycleChange",
+      "bundle runner lifecycle bridge",
+    );
     assert(
       await fileExists(path.join(bundleDir, "shadow_sdk.js")),
       "missing shadow_sdk.js",

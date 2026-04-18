@@ -1,4 +1,5 @@
 use crate::app::{self, AppId};
+use shadow_runtime_protocol::{AppPlatformRequest, RuntimeAudioControlAction};
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
@@ -9,7 +10,8 @@ use std::{
 
 pub const COMPOSITOR_CONTROL_ENV: &str = "SHADOW_COMPOSITOR_CONTROL";
 pub const COMPOSITOR_CONTROL_SOCKET: &str = "shadow-control.sock";
-pub const APP_PLATFORM_CONTROL_ENV: &str = "SHADOW_BLITZ_PLATFORM_CONTROL_SOCKET";
+pub const APP_PLATFORM_CONTROL_ENV: &str = "SHADOW_APP_PLATFORM_CONTROL_SOCKET";
+pub const LEGACY_APP_PLATFORM_CONTROL_ENV: &str = "SHADOW_BLITZ_PLATFORM_CONTROL_SOCKET";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaAction {
@@ -45,6 +47,20 @@ impl MediaAction {
             "volume-up" | "volume_up" => Some(Self::VolumeUp),
             "volume-down" | "volume_down" => Some(Self::VolumeDown),
             _ => None,
+        }
+    }
+}
+
+impl From<MediaAction> for RuntimeAudioControlAction {
+    fn from(value: MediaAction) -> Self {
+        match value {
+            MediaAction::PlayPause => Self::PlayPause,
+            MediaAction::Play => Self::Play,
+            MediaAction::Pause => Self::Pause,
+            MediaAction::Next => Self::Next,
+            MediaAction::Previous => Self::Previous,
+            MediaAction::VolumeUp => Self::VolumeUp,
+            MediaAction::VolumeDown => Self::VolumeDown,
         }
     }
 }
@@ -130,11 +146,36 @@ pub fn platform_control_socket_path(runtime_dir: &Path, app_id: AppId) -> PathBu
     runtime_dir.join(format!("shadow-{}-platform.sock", app_id.as_str()))
 }
 
+#[cfg(unix)]
+pub fn app_platform_request_response(
+    runtime_dir: &Path,
+    app_id: AppId,
+    request: AppPlatformRequest,
+) -> io::Result<String> {
+    let socket_path = platform_control_socket_path(runtime_dir, app_id);
+    let mut stream = UnixStream::connect(socket_path)?;
+    stream.write_all(request.encode_line().as_bytes())?;
+    stream.shutdown(std::net::Shutdown::Write)?;
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ControlRequest, MediaAction};
+    use super::{app_platform_request_response, ControlRequest, MediaAction};
     use crate::app::{COUNTER_APP_ID, PODCAST_APP_ID, TIMELINE_APP_ID};
+    use shadow_runtime_protocol::{
+        AppLifecycleState, AppPlatformRequest, RuntimeAudioControlAction,
+    };
     use std::path::PathBuf;
+
+    #[cfg(unix)]
+    use std::{
+        io::{Read, Write},
+        os::unix::net::UnixListener,
+    };
 
     #[test]
     fn launch_request_round_trips() {
@@ -213,5 +254,53 @@ mod tests {
             path,
             PathBuf::from("/tmp/shadow-runtime/shadow-podcast-platform.sock")
         );
+    }
+
+    #[test]
+    fn media_action_converts_to_runtime_audio_action() {
+        assert_eq!(
+            RuntimeAudioControlAction::from(MediaAction::VolumeDown),
+            RuntimeAudioControlAction::VolumeDown
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn app_platform_request_response_uses_socket_path() {
+        let runtime_dir = std::path::PathBuf::from(format!(
+            "/tmp/sui{}{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("unix epoch")
+                .as_micros()
+        ));
+        std::fs::create_dir_all(&runtime_dir).expect("create runtime dir");
+        let socket_path = super::platform_control_socket_path(&runtime_dir, COUNTER_APP_ID);
+        let listener = UnixListener::bind(&socket_path).expect("bind platform socket");
+
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept stream");
+            let mut request = String::new();
+            stream.read_to_string(&mut request).expect("read request");
+            assert_eq!(request, "lifecycle background\n");
+            stream
+                .write_all(b"ok\nhandled=1\nstate=background\n")
+                .expect("write response");
+        });
+
+        let response = app_platform_request_response(
+            &runtime_dir,
+            COUNTER_APP_ID,
+            AppPlatformRequest::Lifecycle {
+                state: AppLifecycleState::Background,
+            },
+        )
+        .expect("request response");
+        assert_eq!(response, "ok\nhandled=1\nstate=background\n");
+
+        server.join().expect("join server thread");
+        let _ = std::fs::remove_file(socket_path);
+        let _ = std::fs::remove_dir_all(runtime_dir);
     }
 }

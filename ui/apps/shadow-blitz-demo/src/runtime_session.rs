@@ -8,8 +8,8 @@ use shadow_runtime_protocol::{RuntimeDocumentPayload, SessionRequest, SessionRes
 use crate::log::runtime_log;
 
 pub use shadow_runtime_protocol::{
-    RuntimeAudioControlAction, RuntimeDispatchEvent, RuntimeKeyboardEvent, RuntimePointerEvent,
-    RuntimeSelectionEvent,
+    AppLifecycleState, RuntimeAudioControlAction, RuntimeDispatchEvent, RuntimeKeyboardEvent,
+    RuntimePointerEvent, RuntimeSelectionEvent,
 };
 
 const RUNTIME_APP_BUNDLE_PATH_ENV: &str = "SHADOW_RUNTIME_APP_BUNDLE_PATH";
@@ -91,6 +91,17 @@ impl RuntimeSession {
         action: RuntimeAudioControlAction,
     ) -> Result<Option<RuntimeDocumentPayload>, String> {
         match self.send_request(&SessionRequest::PlatformAudioControl { action })? {
+            SessionResponse::Ok { payload } => Ok(Some(payload)),
+            SessionResponse::NoUpdate => Ok(None),
+            SessionResponse::Error { message } => Err(message),
+        }
+    }
+
+    pub fn platform_lifecycle_change(
+        &mut self,
+        state: AppLifecycleState,
+    ) -> Result<Option<RuntimeDocumentPayload>, String> {
+        match self.send_request(&SessionRequest::PlatformLifecycleChange { state })? {
             SessionResponse::Ok { payload } => Ok(Some(payload)),
             SessionResponse::NoUpdate => Ok(None),
             SessionResponse::Error { message } => Err(message),
@@ -196,6 +207,7 @@ fn session_request_name(request: &SessionRequest) -> &'static str {
         SessionRequest::RenderIfDirty => "render_if_dirty",
         SessionRequest::Dispatch { .. } => "dispatch",
         SessionRequest::PlatformAudioControl { .. } => "platform_audio_control",
+        SessionRequest::PlatformLifecycleChange { .. } => "platform_lifecycle_change",
     }
 }
 

@@ -97,6 +97,15 @@ pub fn launch_app(
                 app_id,
             ),
         )
+        .env(
+            control::LEGACY_APP_PLATFORM_CONTROL_ENV,
+            control::platform_control_socket_path(
+                Path::new(control_socket_path)
+                    .parent()
+                    .unwrap_or_else(|| Path::new(".")),
+                app_id,
+            ),
+        )
         .env("SHADOW_APP_TITLE", app.window_title)
         .env("SHADOW_BLITZ_APP_TITLE", app.window_title)
         .env("SHADOW_APP_WAYLAND_APP_ID", app.wayland_app_id)
@@ -118,7 +127,8 @@ pub fn launch_app(
         .env(
             "SHADOW_BLITZ_SURFACE_HEIGHT",
             runtime_surface_height().to_string(),
-        );
+        )
+        .env("SHADOW_APP_LIFECYCLE_STATE", "foreground");
 
     if let Some(runtime_bundle_path) = runtime_bundle_path {
         command.env("SHADOW_RUNTIME_APP_BUNDLE_PATH", runtime_bundle_path);

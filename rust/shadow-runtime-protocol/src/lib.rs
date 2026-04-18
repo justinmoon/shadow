@@ -100,6 +100,80 @@ impl RuntimeAudioControlAction {
             Self::VolumeDown => "volume_down",
         }
     }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "play-pause" | "play_pause" => Some(Self::PlayPause),
+            "play" => Some(Self::Play),
+            "pause" => Some(Self::Pause),
+            "next" => Some(Self::Next),
+            "previous" => Some(Self::Previous),
+            "volume-up" | "volume_up" => Some(Self::VolumeUp),
+            "volume-down" | "volume_down" => Some(Self::VolumeDown),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppLifecycleState {
+    Foreground,
+    Background,
+}
+
+impl AppLifecycleState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Foreground => "foreground",
+            Self::Background => "background",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "foreground" => Some(Self::Foreground),
+            "background" => Some(Self::Background),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AppPlatformRequest {
+    Lifecycle { state: AppLifecycleState },
+    Media { action: RuntimeAudioControlAction },
+}
+
+impl AppPlatformRequest {
+    pub fn encode_line(self) -> String {
+        match self {
+            Self::Lifecycle { state } => format!("lifecycle {}\n", state.as_str()),
+            Self::Media { action } => format!("media {}\n", action.as_str()),
+        }
+    }
+
+    pub fn parse_line(input: &str) -> Option<Self> {
+        let trimmed = input.trim();
+        if let Some(state) = AppLifecycleState::parse(
+            trimmed
+                .strip_prefix("lifecycle ")
+                .or_else(|| trimmed.strip_prefix("lifecycle\t"))
+                .unwrap_or(""),
+        ) {
+            return Some(Self::Lifecycle { state });
+        }
+        if let Some(action) = RuntimeAudioControlAction::parse(
+            trimmed
+                .strip_prefix("media ")
+                .or_else(|| trimmed.strip_prefix("media\t"))
+                .unwrap_or(trimmed),
+        ) {
+            return Some(Self::Media { action });
+        }
+        None
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -109,6 +183,7 @@ pub enum SessionRequest {
     RenderIfDirty,
     Dispatch { event: RuntimeDispatchEvent },
     PlatformAudioControl { action: RuntimeAudioControlAction },
+    PlatformLifecycleChange { state: AppLifecycleState },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -121,7 +196,9 @@ pub enum SessionResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::RuntimeDocumentPayload;
+    use super::{
+        AppLifecycleState, AppPlatformRequest, RuntimeAudioControlAction, RuntimeDocumentPayload,
+    };
 
     #[test]
     fn runtime_document_payload_preserves_text_input() {
@@ -145,5 +222,38 @@ mod tests {
         assert_eq!(text_input.value, "gm");
         assert_eq!(text_input.input_mode.as_deref(), Some("text"));
         assert!(!text_input.multiline);
+    }
+
+    #[test]
+    fn app_platform_request_round_trips_lifecycle_lines() {
+        assert_eq!(
+            AppPlatformRequest::parse_line("lifecycle foreground"),
+            Some(AppPlatformRequest::Lifecycle {
+                state: AppLifecycleState::Foreground,
+            })
+        );
+        assert_eq!(
+            AppPlatformRequest::Lifecycle {
+                state: AppLifecycleState::Background,
+            }
+            .encode_line(),
+            "lifecycle background\n"
+        );
+    }
+
+    #[test]
+    fn app_platform_request_accepts_legacy_media_tokens() {
+        assert_eq!(
+            AppPlatformRequest::parse_line("play-pause"),
+            Some(AppPlatformRequest::Media {
+                action: RuntimeAudioControlAction::PlayPause,
+            })
+        );
+        assert_eq!(
+            AppPlatformRequest::parse_line("media volume-up"),
+            Some(AppPlatformRequest::Media {
+                action: RuntimeAudioControlAction::VolumeUp,
+            })
+        );
     }
 }

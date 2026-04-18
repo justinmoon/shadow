@@ -46,8 +46,19 @@ pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Resul
         .env("SHADOW_APP_WAYLAND_APP_ID", app.wayland_app_id)
         .env("SHADOW_BLITZ_WAYLAND_APP_ID", app.wayland_app_id)
         .env("SHADOW_APP_WAYLAND_INSTANCE_NAME", app.id.as_str())
+        .env("SHADOW_APP_LIFECYCLE_STATE", "foreground")
         .env(
             control::APP_PLATFORM_CONTROL_ENV,
+            control::platform_control_socket_path(
+                state
+                    .control_socket_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new(".")),
+                app_id,
+            ),
+        )
+        .env(
+            control::LEGACY_APP_PLATFORM_CONTROL_ENV,
             control::platform_control_socket_path(
                 state
                     .control_socket_path

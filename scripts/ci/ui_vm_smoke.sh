@@ -396,6 +396,29 @@ for app_id in sorted(expected_apps):
 PY
 
 echo "vm-smoke: open timeline"
+echo "vm-smoke: open counter"
+run_shadowctl open counter -t vm >/dev/null
+state_after_counter_open="$(wait_for_open_state counter "counter open")"
+
+echo "vm-smoke: home counter"
+run_shadowctl home -t vm >/dev/null
+state_after_counter_home="$(wait_for_home_state counter "counter home")"
+wait_for_log_marker \
+  "[shadow-runtime-counter] lifecycle_state=background" \
+  "counter lifecycle background"
+
+echo "vm-smoke: reopen counter"
+run_shadowctl open counter -t vm >/dev/null
+state_after_counter_reopen="$(wait_for_open_state counter "counter reopen")"
+wait_for_log_marker \
+  "[shadow-runtime-counter] lifecycle_state=foreground" \
+  "counter lifecycle foreground"
+
+echo "vm-smoke: home counter again"
+run_shadowctl home -t vm >/dev/null
+wait_for_home_state counter "counter second home" >/dev/null
+
+echo "vm-smoke: open timeline"
 run_shadowctl open timeline -t vm >/dev/null
 state_after_timeline_open="$(wait_for_open_state timeline "timeline open")"
 
@@ -446,6 +469,20 @@ wait_for_log_marker \
 echo "vm-smoke: home rust-demo"
 "$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
 state_after_rust_demo_home="$(wait_for_home_state rust-demo "rust-demo home")"
+wait_for_log_marker \
+  "shadow-rust-demo: lifecycle_state=background" \
+  "rust-demo lifecycle background"
+
+echo "vm-smoke: reopen rust-demo"
+"$SCRIPT_DIR/shadowctl" open rust-demo -t vm >/dev/null
+state_after_rust_demo_reopen="$(wait_for_open_state rust-demo "rust-demo reopen")"
+wait_for_log_marker \
+  "shadow-rust-demo: lifecycle_state=foreground" \
+  "rust-demo lifecycle foreground"
+
+echo "vm-smoke: home rust-demo again"
+"$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
+wait_for_home_state rust-demo "rust-demo second home" >/dev/null
 
 echo "vm-smoke: open podcast"
 run_shadowctl open podcast -t vm >/dev/null
@@ -455,6 +492,9 @@ echo "vm-smoke: screenshot"
 run_shadowctl screenshot -t vm "$SHOT_PATH" >/dev/null
 
 STATE_AFTER_TIMELINE_OPEN="$state_after_timeline_open" \
+STATE_AFTER_COUNTER_OPEN="$state_after_counter_open" \
+STATE_AFTER_COUNTER_HOME="$state_after_counter_home" \
+STATE_AFTER_COUNTER_REOPEN="$state_after_counter_reopen" \
 STATE_AFTER_TIMELINE_HOME="$state_after_timeline_home" \
 STATE_AFTER_TIMELINE_REOPEN="$state_after_timeline_reopen" \
 STATE_AFTER_CASHU_OPEN="$state_after_cashu_open" \
@@ -464,12 +504,16 @@ STATE_AFTER_CAMERA_OPEN="$state_after_camera_open" \
 STATE_AFTER_CAMERA_HOME="$state_after_camera_home" \
 STATE_AFTER_RUST_DEMO_OPEN="$state_after_rust_demo_open" \
 STATE_AFTER_RUST_DEMO_HOME="$state_after_rust_demo_home" \
+STATE_AFTER_RUST_DEMO_REOPEN="$state_after_rust_demo_reopen" \
 STATE_AFTER_PODCAST_OPEN="$state_after_podcast_open" \
 SHOT_PATH="$SHOT_PATH" \
 python3 - <<'PY'
 import json
 import os
 
+counter_open = json.loads(os.environ["STATE_AFTER_COUNTER_OPEN"])
+counter_home = json.loads(os.environ["STATE_AFTER_COUNTER_HOME"])
+counter_reopen = json.loads(os.environ["STATE_AFTER_COUNTER_REOPEN"])
 timeline_open = json.loads(os.environ["STATE_AFTER_TIMELINE_OPEN"])
 timeline_home = json.loads(os.environ["STATE_AFTER_TIMELINE_HOME"])
 timeline_reopen = json.loads(os.environ["STATE_AFTER_TIMELINE_REOPEN"])
@@ -480,6 +524,7 @@ camera_open = json.loads(os.environ["STATE_AFTER_CAMERA_OPEN"])
 camera_home = json.loads(os.environ["STATE_AFTER_CAMERA_HOME"])
 rust_demo_open = json.loads(os.environ["STATE_AFTER_RUST_DEMO_OPEN"])
 rust_demo_home = json.loads(os.environ["STATE_AFTER_RUST_DEMO_HOME"])
+rust_demo_reopen = json.loads(os.environ["STATE_AFTER_RUST_DEMO_REOPEN"])
 podcast_open = json.loads(os.environ["STATE_AFTER_PODCAST_OPEN"])
 
 
@@ -502,6 +547,9 @@ def expect_home(state: dict, app_id: str, label: str) -> None:
     expect(app_id in state.get("shelved", []), f"{label} shelved={state.get('shelved')!r}")
 
 
+expect_open(counter_open, "counter", "counter open")
+expect_home(counter_home, "counter", "counter home")
+expect_open(counter_reopen, "counter", "counter reopen")
 expect_open(timeline_open, "timeline", "timeline open")
 expect_home(timeline_home, "timeline", "timeline home")
 expect_open(timeline_reopen, "timeline", "timeline reopen")
@@ -512,6 +560,7 @@ expect_open(camera_open, "camera", "camera open")
 expect_home(camera_home, "camera", "camera home")
 expect_open(rust_demo_open, "rust-demo", "rust-demo open")
 expect_home(rust_demo_home, "rust-demo", "rust-demo home")
+expect_open(rust_demo_reopen, "rust-demo", "rust-demo reopen")
 expect_open(podcast_open, "podcast", "podcast open")
 
 print(

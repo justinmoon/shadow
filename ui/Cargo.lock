@@ -3257,6 +3257,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "shadow-compositor-common",
+ "shadow-runtime-protocol",
  "shadow-ui-core",
  "shadow-ui-software",
  "smithay",
@@ -3283,6 +3284,7 @@ dependencies = [
  "evdev",
  "libc",
  "shadow-compositor-common",
+ "shadow-runtime-protocol",
  "shadow-ui-core",
  "shadow-ui-software",
  "smithay",
@@ -3314,6 +3316,7 @@ name = "shadow-sdk"
 version = "0.1.0"
 dependencies = [
  "runtime-camera-host",
+ "shadow-runtime-protocol",
 ]
 
 [[package]]
@@ -3321,6 +3324,7 @@ name = "shadow-ui-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "shadow-runtime-protocol",
 ]
 
 [[package]]

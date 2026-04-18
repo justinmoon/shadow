@@ -332,6 +332,8 @@ Shadow apps should have one lifecycle model shared across TypeScript and Rust ap
 
 The shared lifecycle contract may land in the Rust path first, because that is where the new framework work is concentrated. Once the model settles, the same lifecycle should be surfaced to TypeScript apps through the shared SDK binding layer.
 
+Current implementation note: the first shipped lifecycle subset is smaller than the full target model. Today the truthful shared contract is `foreground` / `background` state, delivered over the existing per-app platform-control socket and exposed through both Rust and TypeScript SDK surfaces.
+
 ## Rendering Model
 
 ### Default Mode: App-Owned Surface

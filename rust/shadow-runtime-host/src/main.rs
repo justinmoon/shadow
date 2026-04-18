@@ -124,6 +124,11 @@ async fn handle_session_request(
                 serde_json::to_string(&action).context("encode runtime audio control action")?;
             format!("globalThis.SHADOW_RUNTIME_HOST.platformAudioControl({action_json})")
         }
+        SessionRequest::PlatformLifecycleChange { state } => {
+            let state_json =
+                serde_json::to_string(&state).context("encode runtime lifecycle state")?;
+            format!("globalThis.SHADOW_RUNTIME_HOST.platformLifecycleChange({state_json})")
+        }
     };
 
     let payload_json = execute_string_expr(runtime, &expr, "<session>").await?;
@@ -136,8 +141,9 @@ async fn handle_session_request(
                 .map(Some)
                 .context("decode runtime document payload")
         }
-        SessionRequest::PlatformAudioControl { .. } => serde_json::from_str(&payload_json)
-            .context("decode maybe runtime document payload for platform audio control"),
+        SessionRequest::PlatformAudioControl { .. }
+        | SessionRequest::PlatformLifecycleChange { .. } => serde_json::from_str(&payload_json)
+            .context("decode maybe runtime document payload for platform event"),
     }
 }
 

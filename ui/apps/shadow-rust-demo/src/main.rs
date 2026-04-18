@@ -2,7 +2,10 @@ use std::{error::Error, num::NonZeroU32};
 
 use font8x8::{UnicodeFonts, BASIC_FONTS};
 use shadow_sdk::{
-    app::{AppWindowDefaults, AppWindowEnvironment},
+    app::{
+        current_lifecycle_state, spawn_lifecycle_listener, AppWindowDefaults, AppWindowEnvironment,
+        LifecycleState,
+    },
     services::camera::{capture_still, list_cameras, CameraError, CaptureRequest},
 };
 use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
@@ -63,12 +66,13 @@ struct CameraPanelState {
 }
 
 impl CameraPanelState {
-    fn success(report: CameraProbeReport) -> Self {
+    fn success(report: CameraProbeReport, lifecycle_state: LifecycleState) -> Self {
         Self {
             background_color: BACKGROUND_SUCCESS,
             accent_color: ACCENT_SUCCESS,
             lines: vec![
                 String::from("shadow_sdk::services::camera ok"),
+                format!("lifecycle: {}", lifecycle_state.as_str()),
                 format!("cameras discovered: {}", report.camera_count),
                 format!(
                     "selected: {} [{}]",
@@ -83,12 +87,13 @@ impl CameraPanelState {
         }
     }
 
-    fn error(error: &str) -> Self {
+    fn error(error: &str, lifecycle_state: LifecycleState) -> Self {
         Self {
             background_color: BACKGROUND_ERROR,
             accent_color: ACCENT_ERROR,
             lines: vec![
                 String::from("shadow_sdk::services::camera error"),
+                format!("lifecycle: {}", lifecycle_state.as_str()),
                 error.trim().to_owned(),
             ],
         }
@@ -192,6 +197,10 @@ impl ApplicationHandler for App {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let _lifecycle_listener = spawn_lifecycle_listener(|state| {
+        eprintln!("shadow-rust-demo: lifecycle_state={}", state.as_str());
+    })
+    .ok();
     let camera_panel = load_camera_panel();
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Wait);
@@ -200,6 +209,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn load_camera_panel() -> CameraPanelState {
+    let lifecycle_state = current_lifecycle_state();
     match probe_camera_report() {
         Ok(report) => {
             eprintln!(
@@ -209,7 +219,7 @@ fn load_camera_panel() -> CameraPanelState {
                 report.selected_lens_facing,
                 report.capture_mime_type,
             );
-            CameraPanelState::success(report)
+            CameraPanelState::success(report, lifecycle_state)
         }
         Err(error) => {
             eprintln!(
@@ -217,7 +227,7 @@ fn load_camera_panel() -> CameraPanelState {
                 error.kind(),
                 error.to_string(),
             );
-            CameraPanelState::error(&error.to_string())
+            CameraPanelState::error(&error.to_string(), lifecycle_state)
         }
     }
 }

@@ -1,6 +1,18 @@
-use std::env;
+use std::{env, io, path::PathBuf, thread::JoinHandle};
+
+pub use shadow_runtime_protocol::AppLifecycleState as LifecycleState;
+
+use shadow_runtime_protocol::AppPlatformRequest;
+
+#[cfg(unix)]
+use std::{
+    io::{Read, Write},
+    os::unix::net::UnixListener,
+};
 
 pub const APP_TITLE_ENV: &str = "SHADOW_APP_TITLE";
+pub const APP_LIFECYCLE_STATE_ENV: &str = "SHADOW_APP_LIFECYCLE_STATE";
+pub const APP_PLATFORM_CONTROL_SOCKET_ENV: &str = "SHADOW_APP_PLATFORM_CONTROL_SOCKET";
 pub const SURFACE_HEIGHT_ENV: &str = "SHADOW_APP_SURFACE_HEIGHT";
 pub const SURFACE_WIDTH_ENV: &str = "SHADOW_APP_SURFACE_WIDTH";
 pub const UNDECORATED_ENV: &str = "SHADOW_APP_UNDECORATED";
@@ -8,6 +20,7 @@ pub const WAYLAND_APP_ID_ENV: &str = "SHADOW_APP_WAYLAND_APP_ID";
 pub const WAYLAND_INSTANCE_NAME_ENV: &str = "SHADOW_APP_WAYLAND_INSTANCE_NAME";
 
 const LEGACY_APP_TITLE_ENV: &str = "SHADOW_BLITZ_APP_TITLE";
+const LEGACY_APP_PLATFORM_CONTROL_SOCKET_ENV: &str = "SHADOW_BLITZ_PLATFORM_CONTROL_SOCKET";
 const LEGACY_SURFACE_HEIGHT_ENV: &str = "SHADOW_BLITZ_SURFACE_HEIGHT";
 const LEGACY_SURFACE_WIDTH_ENV: &str = "SHADOW_BLITZ_SURFACE_WIDTH";
 const LEGACY_UNDECORATED_ENV: &str = "SHADOW_BLITZ_UNDECORATED";
@@ -83,6 +96,83 @@ impl AppWindowEnvironment {
     }
 }
 
+pub fn current_lifecycle_state() -> LifecycleState {
+    env_override(APP_LIFECYCLE_STATE_ENV)
+        .as_deref()
+        .and_then(LifecycleState::parse)
+        .unwrap_or(LifecycleState::Foreground)
+}
+
+pub fn platform_control_socket_path() -> Option<PathBuf> {
+    env_override_any(&[
+        APP_PLATFORM_CONTROL_SOCKET_ENV,
+        LEGACY_APP_PLATFORM_CONTROL_SOCKET_ENV,
+    ])
+    .map(PathBuf::from)
+}
+
+#[cfg(unix)]
+pub fn spawn_lifecycle_listener<F>(mut handler: F) -> io::Result<JoinHandle<()>>
+where
+    F: FnMut(LifecycleState) + Send + 'static,
+{
+    let Some(socket_path) = platform_control_socket_path() else {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "missing {} or {}",
+                APP_PLATFORM_CONTROL_SOCKET_ENV, LEGACY_APP_PLATFORM_CONTROL_SOCKET_ENV
+            ),
+        ));
+    };
+
+    if socket_path.exists() {
+        let _ = std::fs::remove_file(&socket_path);
+    }
+
+    let listener = UnixListener::bind(&socket_path)?;
+    Ok(std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = match stream {
+                Ok(stream) => stream,
+                Err(_) => continue,
+            };
+
+            let mut request = String::new();
+            if stream.read_to_string(&mut request).is_err() {
+                let _ = stream.write_all(b"error=read-failed\n");
+                continue;
+            }
+
+            let response = match AppPlatformRequest::parse_line(&request) {
+                Some(AppPlatformRequest::Lifecycle { state }) => {
+                    handler(state);
+                    format!("ok\nhandled=1\nstate={}\n", state.as_str())
+                }
+                Some(AppPlatformRequest::Media { action }) => format!(
+                    "ok\nhandled=0\nreason=unsupported-request\nrequest={}\n",
+                    action.as_str()
+                ),
+                None => String::from("ok\nhandled=0\nreason=invalid-action\n"),
+            };
+            let _ = stream.write_all(response.as_bytes());
+        }
+
+        let _ = std::fs::remove_file(socket_path);
+    }))
+}
+
+#[cfg(not(unix))]
+pub fn spawn_lifecycle_listener<F>(_handler: F) -> io::Result<JoinHandle<()>>
+where
+    F: FnMut(LifecycleState) + Send + 'static,
+{
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "lifecycle listener requires unix domain sockets",
+    ))
+}
+
 fn derive_wayland_instance_name(app_id: &str) -> String {
     app_id
         .rsplit_once('.')
@@ -125,10 +215,21 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     use super::{
-        AppWindowDefaults, AppWindowEnvironment, APP_TITLE_ENV, LEGACY_APP_TITLE_ENV,
-        LEGACY_SURFACE_HEIGHT_ENV, LEGACY_SURFACE_WIDTH_ENV, LEGACY_UNDECORATED_ENV,
-        LEGACY_WAYLAND_APP_ID_ENV, LEGACY_WAYLAND_INSTANCE_NAME_ENV, SURFACE_HEIGHT_ENV,
-        SURFACE_WIDTH_ENV, UNDECORATED_ENV, WAYLAND_APP_ID_ENV, WAYLAND_INSTANCE_NAME_ENV,
+        current_lifecycle_state, platform_control_socket_path, spawn_lifecycle_listener,
+        AppWindowDefaults, AppWindowEnvironment, LifecycleState, APP_LIFECYCLE_STATE_ENV,
+        APP_PLATFORM_CONTROL_SOCKET_ENV, APP_TITLE_ENV, LEGACY_APP_PLATFORM_CONTROL_SOCKET_ENV,
+        LEGACY_APP_TITLE_ENV, LEGACY_SURFACE_HEIGHT_ENV, LEGACY_SURFACE_WIDTH_ENV,
+        LEGACY_UNDECORATED_ENV, LEGACY_WAYLAND_APP_ID_ENV, LEGACY_WAYLAND_INSTANCE_NAME_ENV,
+        SURFACE_HEIGHT_ENV, SURFACE_WIDTH_ENV, UNDECORATED_ENV, WAYLAND_APP_ID_ENV,
+        WAYLAND_INSTANCE_NAME_ENV,
+    };
+    use shadow_runtime_protocol::AppPlatformRequest;
+
+    #[cfg(unix)]
+    use std::{
+        io::{Read, Write},
+        os::unix::net::UnixStream,
+        time::Duration,
     };
 
     fn env_lock() -> &'static Mutex<()> {
@@ -144,7 +245,10 @@ mod tests {
             UNDECORATED_ENV,
             WAYLAND_APP_ID_ENV,
             WAYLAND_INSTANCE_NAME_ENV,
+            APP_LIFECYCLE_STATE_ENV,
+            APP_PLATFORM_CONTROL_SOCKET_ENV,
             LEGACY_APP_TITLE_ENV,
+            LEGACY_APP_PLATFORM_CONTROL_SOCKET_ENV,
             LEGACY_SURFACE_WIDTH_ENV,
             LEGACY_SURFACE_HEIGHT_ENV,
             LEGACY_UNDECORATED_ENV,
@@ -236,5 +340,119 @@ mod tests {
             parsed.wayland_instance_name.as_deref(),
             Some("legacy-instance")
         );
+    }
+
+    #[test]
+    fn lifecycle_state_defaults_to_foreground() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_window_env();
+
+        assert_eq!(current_lifecycle_state(), LifecycleState::Foreground);
+    }
+
+    #[test]
+    fn lifecycle_state_honors_env_override() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_window_env();
+        std::env::set_var(APP_LIFECYCLE_STATE_ENV, "background");
+
+        assert_eq!(current_lifecycle_state(), LifecycleState::Background);
+    }
+
+    #[test]
+    fn platform_control_socket_path_honors_shadow_env() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_window_env();
+        std::env::set_var(APP_PLATFORM_CONTROL_SOCKET_ENV, "/tmp/shadow-platform.sock");
+
+        assert_eq!(
+            platform_control_socket_path()
+                .expect("platform control path")
+                .to_string_lossy(),
+            "/tmp/shadow-platform.sock"
+        );
+    }
+
+    #[test]
+    fn platform_control_socket_path_falls_back_to_legacy_env() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_window_env();
+        std::env::set_var(
+            LEGACY_APP_PLATFORM_CONTROL_SOCKET_ENV,
+            "/tmp/shadow-legacy-platform.sock",
+        );
+
+        assert_eq!(
+            platform_control_socket_path()
+                .expect("platform control path")
+                .to_string_lossy(),
+            "/tmp/shadow-legacy-platform.sock"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_listener_receives_background_event() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_window_env();
+        let socket_path = std::env::temp_dir().join(format!(
+            "shadow-sdk-lifecycle-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("unix epoch")
+                .as_nanos()
+        ));
+        std::env::set_var(APP_PLATFORM_CONTROL_SOCKET_ENV, &socket_path);
+
+        let observed = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let observed_for_thread = observed.clone();
+        let _listener = spawn_lifecycle_listener(move |state| {
+            observed_for_thread
+                .lock()
+                .expect("observed lock")
+                .push(state);
+        })
+        .expect("spawn lifecycle listener");
+
+        for _ in 0..50 {
+            if socket_path.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let mut stream = UnixStream::connect(&socket_path).expect("connect lifecycle socket");
+        stream
+            .write_all(
+                AppPlatformRequest::Lifecycle {
+                    state: LifecycleState::Background,
+                }
+                .encode_line()
+                .as_bytes(),
+            )
+            .expect("write lifecycle request");
+        stream
+            .shutdown(std::net::Shutdown::Write)
+            .expect("shutdown write");
+
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("read lifecycle response");
+        assert_eq!(response, "ok\nhandled=1\nstate=background\n");
+
+        for _ in 0..50 {
+            if observed.lock().expect("observed lock").len() == 1 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            observed.lock().expect("observed lock").as_slice(),
+            &[LifecycleState::Background]
+        );
+
+        let _ = std::fs::remove_file(socket_path);
     }
 }
