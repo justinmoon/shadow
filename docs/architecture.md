@@ -77,6 +77,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 
 1. `flake.nix` pins the toolchain, dev shells, and packaged binaries.
    The VM lane now consumes packaged Linux `shadow-compositor` / `shadow-blitz-demo` artifacts built through Nix; `.#ui-vm-ci` is the canonical artifact-consumer runner package.
+   The branch gate also resolves a filtered `.#vm-smoke-inputs` derivation so the VM smoke is keyed by logical lane inputs instead of branch/worktree names.
    The guest should stay runtime-only.
    The guest no longer mounts the repo. It mounts `/nix/store` plus a narrow `.shadow-vm/runtime-artifacts` share staged on the host.
    Runtime app bundles are built by the shared host-side artifact builder (`scripts/runtime_build_artifacts.sh`) and staged under that artifact share.
@@ -104,6 +105,8 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 - The rooted Pixel path assumes a rooted device and uses the guest compositor control socket on-device for shell actions like `state`, `open`, `home`, `switcher`, and focused-app media control.
 - VM and Pixel are the validation targets that matter for cleanup work. Linux desktop host smokes and other historical bring-up paths are secondary.
 - The local macOS VM gate is allowed to use the local `linux-builder`; removing guest-side Cargo/Rust is part of keeping build-time and runtime responsibilities separate.
+- `just pre-merge` still proves the local VM smoke, but it now reuses a shared success record when the current `vm-smoke-inputs` store path already passed or matches landed `master`.
+- `just nightly` is the broader validation lane: `pre-commit`, the raw VM smoke, host runtime smokes with the Linux podcast URL path enabled, `pixel-ci full`, `pixel-ci cashu`, and the rooted-Pixel keyboard smoke.
 - The remaining VM impurity is intentional: host-prepared runtime app artifacts. The branch gate should keep that seam clean, manifest-driven, offline-safe for fixtures, and never built inside the guest.
 - This repo is still a bring-up repo, not a polished product repo. The cleanup goal is to make the supported system explicit and to stop advertising accidental operator surface.
 

@@ -4,7 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 runtime_flake_ref=""
+runtime_repo_root="$REPO_ROOT"
 runtime_host_package_attr="shadow-runtime-host"
+runtime_host_binary_path=""
 enable_podcast_app="0"
 bundle_rewrite_from=""
 bundle_rewrite_to=""
@@ -20,8 +22,16 @@ parse_args() {
         runtime_flake_ref="${2:-}"
         shift 2
         ;;
+      --repo-root)
+        runtime_repo_root="${2:-}"
+        shift 2
+        ;;
       --runtime-host-package)
         runtime_host_package_attr="${2:-}"
+        shift 2
+        ;;
+      --runtime-host-binary-path)
+        runtime_host_binary_path="${2:-}"
         shift 2
         ;;
       --include-podcast)
@@ -61,6 +71,7 @@ parse_args() {
 }
 
 parse_args "$@"
+runtime_repo_root="$(cd "$runtime_repo_root" && pwd)"
 
 if [[ -n "$artifact_root" || -n "$artifact_guest_root" ]]; then
   if [[ -z "$artifact_root" || -z "$artifact_guest_root" ]]; then
@@ -75,7 +86,7 @@ if [[ -n "$bundle_rewrite_from" || -n "$bundle_rewrite_to" ]]; then
   fi
 fi
 
-cd "$REPO_ROOT"
+cd "$runtime_repo_root"
 env_tmp="$(mktemp "${TMPDIR:-/tmp}/shadow-runtime-host-session-env.XXXXXX")"
 cleanup() {
   rm -f "$env_tmp"
@@ -83,12 +94,16 @@ cleanup() {
 trap cleanup EXIT
 
 builder_args=(
+  --repo-root "$runtime_repo_root"
   --runtime-host-package "$runtime_host_package_attr"
   --profile vm-shell
   --write-env "$env_tmp"
 )
 if [[ -n "$runtime_flake_ref" ]]; then
   builder_args+=(--flake-ref "$runtime_flake_ref")
+fi
+if [[ -n "$runtime_host_binary_path" ]]; then
+  builder_args+=(--runtime-host-binary-path "$runtime_host_binary_path")
 fi
 if [[ "$enable_podcast_app" == "1" ]]; then
   builder_args+=(--include-podcast)

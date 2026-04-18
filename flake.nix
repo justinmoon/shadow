@@ -55,6 +55,13 @@
           builtins.fromJSON uiVmSshPortEnv
         else
           2222;
+      runtimeHostPackageAttrForHostSystem = hostSystem:
+        if lib.hasPrefix "aarch64-" hostSystem then
+          "shadow-runtime-host-aarch64-linux-gnu"
+        else if lib.hasPrefix "x86_64-" hostSystem then
+          "shadow-runtime-host-x86_64-linux-gnu"
+        else
+          throw "unsupported host system for runtime host package selection: ${hostSystem}";
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -93,7 +100,11 @@
         "rust/vendor/temporal_rs"
       ];
       shadowUiSrc = repoSourceFromPrefixes [
-        "ui"
+        "ui/Cargo.toml"
+        "ui/Cargo.lock"
+        "ui/apps"
+        "ui/crates"
+        "ui/third_party"
         "rust/shadow-runtime-protocol"
       ];
       shadowLinuxAudioSpikeSrc = repoSourceFromPrefixes [
@@ -109,6 +120,29 @@
         "ui/third_party/wgpu_context"
         "ui/third_party/winit"
         "rust/shadow-runtime-protocol"
+      ];
+      shadowVmSmokeSrc = repoSourceFromPrefixes [
+        "flake.nix"
+        "flake.lock"
+        "justfile"
+        "patches"
+        "runtime"
+        "scripts"
+        "vm"
+        "rust/Cargo.toml"
+        "rust/Cargo.lock"
+        "rust/shadow-runtime-host"
+        "rust/shadow-runtime-protocol"
+        "rust/runtime-audio-host"
+        "rust/runtime-camera-host"
+        "rust/runtime-cashu-host"
+        "rust/runtime-nostr-host"
+        "rust/vendor/temporal_rs"
+        "ui/Cargo.toml"
+        "ui/Cargo.lock"
+        "ui/apps"
+        "ui/crates"
+        "ui/third_party"
       ];
       darwinSystems = builtins.filter (system: lib.hasSuffix "-darwin" system) systems;
       forAllSystems = f:
@@ -717,6 +751,41 @@
             shadowCompositorPackage = self.packages.${guestSystem}.shadow-compositor;
             sshPort = uiVmSshPort;
           };
+      mkVmSmokeInputsFor = pkgs:
+        let
+          hostSystem = pkgs.stdenv.hostPlatform.system;
+          runtimeHostPackageAttr = runtimeHostPackageAttrForHostSystem hostSystem;
+          runtimeHostPackage = self.packages.${hostSystem}.${runtimeHostPackageAttr};
+          uiVmRunnerPackage = self.packages.${hostSystem}.ui-vm-ci;
+          requiredAppsJson = builtins.toJSON [
+            "camera"
+            "cashu"
+            "counter"
+            "podcast"
+            "timeline"
+          ];
+        in
+          pkgs.runCommandLocal "shadow-vm-smoke-inputs" {
+            preferLocalBuild = true;
+            allowSubstitutes = false;
+          } ''
+            mkdir -p "$out"
+            ln -s ${shadowVmSmokeSrc} "$out/source"
+            ln -s ${runtimeHostPackage} "$out/runtime-host"
+            ln -s ${uiVmRunnerPackage} "$out/ui-vm-runner"
+            cat >"$out/metadata.json" <<EOF
+            {
+              "schemaVersion": 1,
+              "sourceStorePath": "${shadowVmSmokeSrc}",
+              "runtimeHostPackageAttr": "${runtimeHostPackageAttr}",
+              "runtimeHostBinaryPath": "${runtimeHostPackage}/bin/shadow-runtime-host",
+              "runtimeHostPackagePath": "${runtimeHostPackage}",
+              "uiVmRunnerPackagePath": "${uiVmRunnerPackage}",
+              "uiVmRunnerBinaryPath": "${uiVmRunnerPackage}/bin/microvm-run",
+              "requiredApps": ${requiredAppsJson}
+            }
+            EOF
+          '';
     in {
       nixosConfigurations = lib.listToAttrs (lib.concatMap (
         hostSystem:
@@ -769,6 +838,7 @@
             else
               mkUnavailablePackage pkgs "shadow-ui-vm-ci-unavailable"
                 "ui-vm-ci requires a macOS host. Use just run target=vm.";
+          vm-smoke-inputs = mkVmSmokeInputsFor pkgs;
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           shadow-blitz-demo-aarch64-linux-gnu-gpu =
@@ -794,5 +864,17 @@
           shadow-compositor-guest-device =
             mkShadowGuestCompositorFor pkgs.pkgsCross.aarch64-multiplatform-musl;
         });
+      legacyPackages = forAllSystems ({ pkgs, ... }:
+        let
+          hostSystem = pkgs.stdenv.hostPlatform.system;
+          runtimeHostPackageAttr = runtimeHostPackageAttrForHostSystem hostSystem;
+        in
+          {
+            ci = {
+              vmRuntimeHost = self.packages.${hostSystem}.${runtimeHostPackageAttr};
+              vmUiRunner = self.packages.${hostSystem}.ui-vm-ci;
+              vmSmokeInputs = mkVmSmokeInputsFor pkgs;
+            };
+          });
     };
 }

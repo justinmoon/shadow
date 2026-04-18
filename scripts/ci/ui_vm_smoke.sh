@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=./ui_vm_common.sh
 source "$SCRIPT_DIR/lib/ui_vm_common.sh"
+# shellcheck source=./ci_vm_smoke_common.sh
+source "$SCRIPT_DIR/lib/ci_vm_smoke_common.sh"
 LOG_DIR="$REPO_ROOT/build/ui-vm"
 RUN_LOG="$LOG_DIR/ui-vm-smoke.log"
 SHOT_PATH="$LOG_DIR/ui-vm-smoke.png"
@@ -18,6 +20,27 @@ UI_VM_PREP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_PREP_TIMEOUT:-900}"
 UI_VM_READY_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_READY_TIMEOUT:-1200}"
 UI_VM_APP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_APP_TIMEOUT:-90}"
 ui_vm_run_pid=""
+prepared_inputs_path="${SHADOW_UI_VM_PREPARED_INPUTS:-}"
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --prepared-inputs)
+        prepared_inputs_path="${2:-}"
+        shift 2
+        ;;
+      *)
+        echo "vm-smoke: unsupported argument $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+parse_args "$@"
+if [[ -z "$prepared_inputs_path" ]]; then
+  prepared_inputs_path="$(vm_smoke_inputs_path "$REPO_ROOT")"
+fi
 
 wait_for_open_state() {
   local app_id="$1"
@@ -136,7 +159,8 @@ rm -f "$VM_STATE_IMAGE_PATH"
 
 (
   cd "$REPO_ROOT"
-  SHADOW_RUNTIME_AUDIO_BACKEND=memory "$SCRIPT_DIR/vm/ui_vm_run.sh"
+  SHADOW_RUNTIME_AUDIO_BACKEND=memory \
+    "$SCRIPT_DIR/vm/ui_vm_run.sh" --prepared-inputs "$prepared_inputs_path"
 ) >"$RUN_LOG" 2>&1 &
 ui_vm_run_pid=$!
 
@@ -361,3 +385,5 @@ print(
     )
 )
 PY
+
+vm_smoke_record_success "$prepared_inputs_path" "$REPO_ROOT"

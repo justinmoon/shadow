@@ -9,4 +9,4 @@ ensure_bootimg_shell "$@"
 cd "$(repo_root)"
 
 just pre-commit
-just smoke target=vm
+"$SCRIPT_DIR/ci/required_vm_smoke.sh"

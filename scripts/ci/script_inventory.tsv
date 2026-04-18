@@ -2,6 +2,8 @@
 scripts/agent-brief	public	Agent context snapshot required by AGENTS.md.
 scripts/ci/app_metadata_manifest_smoke.sh	ci	Regression smoke for manifest profile filtering and uniqueness validation.
 scripts/ci/check_script_inventory.py	ci	Pre-commit taxonomy gate for every file under scripts/.
+scripts/ci/nightly.sh	ci	Broader validation lane behind just nightly.
+scripts/ci/required_vm_smoke.sh	ci	Required branch-gate VM smoke wrapper with logical-input reuse.
 scripts/runtime/ensure_cashu_test_mint.sh	runtime	Private Cashu host-smoke fixture helper.
 scripts/runtime/generate_app_metadata.py	runtime	Generates checked Rust app metadata from runtime/apps.json.
 scripts/runtime/generate_sound_demo_fixture.sh	runtime	Private sound demo fixture generator.
@@ -75,6 +77,7 @@ scripts/sc	public	Short devshell alias entrypoint for shadowctl.
 scripts/ci/script_inventory.tsv	data	Manifest consumed by check_script_inventory.py.
 scripts/lib/session_apps.sh	lib	Shared shell loader for supported session app ids.
 scripts/lib/shadow_common.sh	lib	Shared repo/bootstrap shell helper library.
+scripts/lib/ci_vm_smoke_common.sh	lib	Shared VM smoke logical-input and success-cache helper library.
 scripts/shadowctl	public	Primary target-aware Shadow development CLI.
 scripts/ci/timeline_sync_defaults_smoke.sh	ci	Static smoke for timeline sync defaults and generated runtime env.
 scripts/ui_check.sh	public	UI formatting/test/compile gate.
