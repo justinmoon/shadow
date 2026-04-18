@@ -53,7 +53,7 @@ fi
 required_markers=$(
   cat <<EOF
 runtime-event-dispatched source=auto type=click target=play
-[shadow-runtime-audio-smoke] command=play state=playing backend=linux_spike source_kind=file path=$source_path_in_bundle
+[shadow-runtime-audio-smoke] command=play state=playing backend=linux_spike source_kind=file source=$source_path_in_bundle
 EOF
 )
 if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS-}" ]]; then

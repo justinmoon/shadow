@@ -459,12 +459,41 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## Near-Term Steps
 
-- [~] Run the broader rooted Pixel and fast local gates on the pinned Turnip payload.
+- [x] Run the broader rooted Pixel and fast local gates on the pinned Turnip payload.
   - `just pre-commit` is green after the pinned payload and restore-helper changes.
-  - Remaining before landing:
-    - broader Pixel operator lane selection
-    - holistic subagent review
-- [ ] Add one more rooted shell smoke for a second app path so launch/input regressions are not Timeline-only.
+  - `just pre-merge` passed during landing.
+  - rooted proofs on the pinned no-env payload are green for:
+    - direct GPU probe
+    - 3-profile direct GPU matrix
+    - shell timeline smoke
+    - local Nostr direct-GPU smoke
+    - public `shadowctl stop` recovery path
+  - landed on root `master` as `4ac9ed4`
+- [x] Run one broader rooted Pixel operator suite after landing and fix the blockers it exposed.
+  - attempted on landed `master`:
+    - `build/pixel/runs/ci/20260417T224617Z`
+    - `build/pixel/runs/ci/20260417T230842Z`
+  - both attempts failed in `prep_shell_runtime`, not in the apps:
+    - after long host-side bundle prep, `pixel_push.sh` treated transient `adb: device ... not found` as fatal instead of waiting for the handset to reconnect
+  - fixes:
+    - add transient ADB reconnect / boot-wait retries in `scripts/pixel/pixel_push.sh`
+    - update stale sound / podcast required-marker strings from `path=` to the current `source=` runtime log field
+  - post-fix broader proof:
+    - `scripts/shadowctl ci -t 09051JEC202061 full`
+    - `build/pixel/runs/ci/20260417T233345Z`
+    - result: green
+- [x] Decide whether direct `gpu` becomes the default operator lane now, or whether `gpu_softbuffer` stays default while reboot-based restore remains part of recovery.
+  - decision:
+    - keep `gpu_softbuffer` as the boring default operator lane for now
+    - keep direct `gpu` as the proven runtime bring-up / probe path
+  - reason:
+    - public Pixel sessions and Pixel CI still flow through the shell path
+    - the shell path only supports `gpu_softbuffer` today
+    - direct `gpu` is technically working, but it is not yet the public shell/operator path
+- [x] Add one more rooted shell smoke for a second app path so launch/input regressions are not Timeline-only.
+  - covered by the broader suite:
+    - shell timeline lifecycle
+    - shell camera capture
 - [ ] Keep reducing Pixel shell cold-start churn, but treat incremental interaction latency as the primary bar.
 
 ## Implementation Notes
@@ -475,6 +504,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Restoring Android and stopping Shadow are separate concerns. Shell smokes and Pixel CI must explicitly stop stale Shadow processes before assuming the control socket state is meaningful.
 - A restore is only complete when `wm size` works again. `surfaceflinger=running` is not enough; the previous half-restore state had `surfaceflinger` back but Android's `window` service unavailable.
 - On this Pixel, full direct-KMS takeover still needs the display HAL stopped. Preserving the display HAL avoids the reboot cleanup path but prevents our compositor from setting the CRTC.
+- Long host-side prep can outlast transient rooted-Pixel ADB transport drops. Shell staging now retries `pixel_push.sh` device calls across brief `device not found` / reconnect windows instead of failing the whole suite immediately.
+- The runtime sound and podcast lanes were not broken; their smoke scripts had drifted behind the runtime log field rename from `path=` to `source=`.
 
 ## What Is Proven vs. What Is Not
 
@@ -1298,8 +1329,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
         - `bootanim=stopped`
         - no `shadow-blitz-demo`, `shadow-compositor-guest`, or `shadow-session` processes remained
   - next seam:
-    - run the remaining operator lanes on the pinned payload before landing
-    - then decide whether to keep the current Mesa patch as one known-good bring-up patch or split it into reviewable subpatches
+    - land the small shell-staging / smoke-contract follow-up
+    - then decide whether to keep the current Mesa patch as one known-good bring-up patch or split it into reviewable subpatches once the direct path stops moving
 
 ## Further Improvements
 

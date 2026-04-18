@@ -69,7 +69,7 @@ fi
 required_markers=$(
   cat <<EOF
 runtime-event-dispatched source=auto type=click target=play-00
-[shadow-runtime-podcast-player] command=play episode=00 state=playing backend=linux_spike path=$primary_episode_path
+[shadow-runtime-podcast-player] command=play episode=00 state=playing backend=linux_spike source=$primary_episode_path
 EOF
 )
 if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS-}" ]]; then

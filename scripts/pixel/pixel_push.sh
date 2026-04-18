@@ -65,7 +65,7 @@ json_manifest_string_field_from_device() {
   local manifest_path="$1"
   local field="$2"
 
-  pixel_root_shell "$serial" "cat '$manifest_path' 2>/dev/null || true" \
+  pixel_push_root_shell "cat '$manifest_path' 2>/dev/null || true" \
     | python3 -c '
 import json
 import sys
@@ -310,6 +310,99 @@ print(int(value))
 PY
 }
 
+pixel_push_retryable_adb_failure() {
+  local log_path="$1"
+
+  grep -Eq \
+    "device '.+' not found|error: device .+ not found|failed to get feature set: device '.+' not found|device offline|no devices/emulators found|closed" \
+    "$log_path"
+}
+
+pixel_push_wait_for_transport() {
+  local adb_timeout boot_timeout
+
+  adb_timeout="${PIXEL_PUSH_WAIT_FOR_ADB_TIMEOUT_SECS:-45}"
+  boot_timeout="${PIXEL_PUSH_WAIT_FOR_BOOT_TIMEOUT_SECS:-90}"
+
+  pixel_wait_for_adb "$serial" "$adb_timeout" >/dev/null 2>&1 || return 1
+  pixel_wait_for_boot_completed "$serial" "$boot_timeout" >/dev/null 2>&1 || true
+}
+
+pixel_push_adb() {
+  local attempt max_attempts retry_sleep_secs status stdout_log stderr_log combined_log
+
+  max_attempts="${PIXEL_PUSH_ADB_RETRIES:-4}"
+  retry_sleep_secs="${PIXEL_PUSH_ADB_RETRY_SLEEP_SECS:-2}"
+  stdout_log="$(mktemp "${TMPDIR:-/tmp}/pixel-push-adb-stdout.XXXXXX")"
+  stderr_log="$(mktemp "${TMPDIR:-/tmp}/pixel-push-adb-stderr.XXXXXX")"
+  combined_log="$(mktemp "${TMPDIR:-/tmp}/pixel-push-adb-combined.XXXXXX")"
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    if pixel_adb "$serial" "$@" >"$stdout_log" 2>"$stderr_log"; then
+      cat "$stderr_log" >&2
+      cat "$stdout_log"
+      rm -f "$stdout_log" "$stderr_log" "$combined_log"
+      return 0
+    fi
+
+    status="$?"
+    cat "$stdout_log" "$stderr_log" >"$combined_log"
+    if (( attempt == max_attempts )) || ! pixel_push_retryable_adb_failure "$combined_log"; then
+      cat "$stderr_log" >&2
+      cat "$stdout_log"
+      rm -f "$stdout_log" "$stderr_log" "$combined_log"
+      return "$status"
+    fi
+
+    printf 'pixel_push: waiting for transient adb reconnect on %s (%s/%s)\n' \
+      "$serial" "$attempt" "$max_attempts" >&2
+    tail -n 20 "$combined_log" >&2 || true
+    pixel_push_wait_for_transport || true
+    sleep "$retry_sleep_secs"
+  done
+
+  rm -f "$stdout_log" "$stderr_log" "$combined_log"
+  return 1
+}
+
+pixel_push_root_shell() {
+  local command attempt max_attempts retry_sleep_secs status stdout_log stderr_log combined_log
+
+  command="$1"
+  max_attempts="${PIXEL_PUSH_ROOT_RETRIES:-4}"
+  retry_sleep_secs="${PIXEL_PUSH_ROOT_RETRY_SLEEP_SECS:-2}"
+  stdout_log="$(mktemp "${TMPDIR:-/tmp}/pixel-push-root-stdout.XXXXXX")"
+  stderr_log="$(mktemp "${TMPDIR:-/tmp}/pixel-push-root-stderr.XXXXXX")"
+  combined_log="$(mktemp "${TMPDIR:-/tmp}/pixel-push-root-combined.XXXXXX")"
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    if pixel_root_shell "$serial" "$command" >"$stdout_log" 2>"$stderr_log"; then
+      cat "$stderr_log" >&2
+      cat "$stdout_log"
+      rm -f "$stdout_log" "$stderr_log" "$combined_log"
+      return 0
+    fi
+
+    status="$?"
+    cat "$stdout_log" "$stderr_log" >"$combined_log"
+    if (( attempt == max_attempts )) || ! pixel_push_retryable_adb_failure "$combined_log"; then
+      cat "$stderr_log" >&2
+      cat "$stdout_log"
+      rm -f "$stdout_log" "$stderr_log" "$combined_log"
+      return "$status"
+    fi
+
+    printf 'pixel_push: waiting for transient rooted adb reconnect on %s (%s/%s)\n' \
+      "$serial" "$attempt" "$max_attempts" >&2
+    tail -n 20 "$combined_log" >&2 || true
+    pixel_push_wait_for_transport || true
+    sleep "$retry_sleep_secs"
+  done
+
+  rm -f "$stdout_log" "$stderr_log" "$combined_log"
+  return 1
+}
+
 push_verified_file() {
   local host_path device_path tmp_path host_sum device_sum
   host_path="$1"
@@ -317,21 +410,21 @@ push_verified_file() {
   tmp_path="${device_path}.push.$$"
   host_sum="$(shasum -a 256 "$host_path" | awk '{print $1}')"
 
-  pixel_adb "$serial" shell "rm -f '$tmp_path'"
-  pixel_adb "$serial" push "$host_path" "$tmp_path" >/dev/null
+  pixel_push_adb shell "rm -f '$tmp_path'"
+  pixel_push_adb push "$host_path" "$tmp_path" >/dev/null
   device_sum="$(
-    pixel_adb "$serial" shell "toybox sha256sum '$tmp_path'" 2>/dev/null \
+    pixel_push_adb shell "toybox sha256sum '$tmp_path'" 2>/dev/null \
       | tr -d '\r' \
       | awk 'NR == 1 { print $1 }'
   )"
   if [[ -z "$device_sum" || "$device_sum" != "$host_sum" ]]; then
-    pixel_adb "$serial" shell "rm -f '$tmp_path'" >/dev/null 2>&1 || true
+    pixel_push_adb shell "rm -f '$tmp_path'" >/dev/null 2>&1 || true
     echo "pixel_push: checksum mismatch for $device_path" >&2
     echo "pixel_push: host checksum=$host_sum device checksum=${device_sum:-missing}" >&2
     return 1
   fi
 
-  pixel_adb "$serial" shell "mv '$tmp_path' '$device_path' && chmod 0755 '$device_path'"
+  pixel_push_adb shell "mv '$tmp_path' '$device_path' && chmod 0755 '$device_path'"
 }
 
 if ! pixel_require_runtime_artifacts; then
@@ -363,7 +456,7 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
       json_manifest_string_field_from_file "$runtime_host_sync_manifest_path" contentFingerprint
     )"
 
-    pixel_root_shell "$serial" "cat '$runtime_device_manifest_path' 2>/dev/null || true" \
+    pixel_push_root_shell "cat '$runtime_device_manifest_path' 2>/dev/null || true" \
       >"$runtime_device_manifest_host_path"
     runtime_device_content_fingerprint="$(
       json_manifest_string_field_from_file "$runtime_device_manifest_host_path" contentFingerprint
@@ -413,27 +506,27 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
           -T "$runtime_sync_changed_paths_path"
       fi
 
-      pixel_root_shell "$serial" "umount -l '$runtime_linux_dir/etc' >/dev/null 2>&1 || true"
+      pixel_push_root_shell "umount -l '$runtime_linux_dir/etc' >/dev/null 2>&1 || true"
       if (( runtime_sync_full_replace == 1 )); then
-        pixel_adb "$serial" shell "rm -rf '$runtime_linux_dir' && mkdir -p '$runtime_linux_dir'"
+        pixel_push_adb shell "rm -rf '$runtime_linux_dir' && mkdir -p '$runtime_linux_dir'"
       else
-        pixel_adb "$serial" shell "mkdir -p '$runtime_linux_dir' && rm -f '$runtime_linux_dir/.bundle-manifest.json'"
+        pixel_push_adb shell "mkdir -p '$runtime_linux_dir' && rm -f '$runtime_linux_dir/.bundle-manifest.json'"
         if (( runtime_sync_reset_path_count > 0 )); then
-          pixel_adb "$serial" shell "while IFS= read -r rel; do [ -n \"\$rel\" ] || continue; rm -rf '$runtime_linux_dir'/\"\$rel\"; done" \
+          pixel_push_adb shell "while IFS= read -r rel; do [ -n \"\$rel\" ] || continue; rm -rf '$runtime_linux_dir'/\"\$rel\"; done" \
             <"$runtime_sync_reset_paths_path"
         fi
       fi
-      pixel_adb "$serial" shell "while IFS='	' read -r mode rel; do [ -n \"\$rel\" ] || continue; mkdir -p '$runtime_linux_dir'/\"\$rel\" && chmod \"\$mode\" '$runtime_linux_dir'/\"\$rel\"; done" \
+      pixel_push_adb shell "while IFS='	' read -r mode rel; do [ -n \"\$rel\" ] || continue; mkdir -p '$runtime_linux_dir'/\"\$rel\" && chmod \"\$mode\" '$runtime_linux_dir'/\"\$rel\"; done" \
         <"$runtime_sync_dir_modes_path"
 
       if (( runtime_sync_changed_path_count > 0 )); then
-        pixel_adb "$serial" shell "rm -f '$runtime_bundle_archive_device'"
-        pixel_adb "$serial" push "$runtime_bundle_archive_host" "$runtime_bundle_archive_device" >/dev/null
-        pixel_adb "$serial" shell "/system/bin/tar -xf '$runtime_bundle_archive_device' -C '$runtime_linux_dir' && rm -f '$runtime_bundle_archive_device'"
+        pixel_push_adb shell "rm -f '$runtime_bundle_archive_device'"
+        pixel_push_adb push "$runtime_bundle_archive_host" "$runtime_bundle_archive_device" >/dev/null
+        pixel_push_adb shell "/system/bin/tar -xf '$runtime_bundle_archive_device' -C '$runtime_linux_dir' && rm -f '$runtime_bundle_archive_device'"
       fi
 
-      pixel_adb "$serial" push "$runtime_host_sync_manifest_path" "$runtime_device_manifest_path" >/dev/null
-      pixel_adb "$serial" shell "chmod 0644 '$runtime_device_manifest_path'"
+      pixel_push_adb push "$runtime_host_sync_manifest_path" "$runtime_device_manifest_path" >/dev/null
+      pixel_push_adb shell "chmod 0644 '$runtime_device_manifest_path'"
 
       if (( runtime_sync_full_replace == 1 )); then
         printf 'Runtime helper dir fullSync -> %s (changed=%s reset=%s bytes=%s)\n' \
@@ -450,8 +543,8 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
       fi
     fi
   else
-    pixel_root_shell "$serial" "rm -rf '$runtime_linux_dir'"
-    pixel_adb "$serial" shell "mkdir -p '$runtime_linux_dir'"
+    pixel_push_root_shell "rm -rf '$runtime_linux_dir'"
+    pixel_push_adb shell "mkdir -p '$runtime_linux_dir'"
   fi
 
   if [[ -n "$runtime_app_asset_artifact_dir" && -d "$runtime_app_asset_artifact_dir" ]]; then
@@ -471,7 +564,7 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
     json_manifest_string_field_from_device "$runtime_asset_manifest_device_path" contentFingerprint
   )"
   runtime_device_assets_present="$(
-    pixel_root_shell "$serial" "[ -e '$runtime_linux_dir/assets' ] && printf yes || true" \
+    pixel_push_root_shell "[ -e '$runtime_linux_dir/assets' ] && printf yes || true" \
       | tr -d '\r' || true
   )"
   if [[ -n "$runtime_asset_content_fingerprint" ]]; then
@@ -490,16 +583,16 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
         -C "$runtime_app_asset_artifact_dir" \
         -cf "$runtime_asset_archive_host" \
         .
-      pixel_root_shell "$serial" "rm -rf '$runtime_linux_dir/assets'; mkdir -p '$runtime_linux_dir/assets'; rm -f '$runtime_asset_archive_device'"
-      pixel_adb "$serial" push "$runtime_asset_archive_host" "$runtime_asset_archive_device" >/dev/null
-      pixel_root_shell "$serial" "mkdir -p '$runtime_linux_dir/assets' && /system/bin/tar -xf '$runtime_asset_archive_device' -C '$runtime_linux_dir/assets' && chown -R shell:shell '$runtime_linux_dir/assets' && find '$runtime_linux_dir/assets' -type d -exec chmod 0755 {} + && find '$runtime_linux_dir/assets' -type f -exec chmod 0644 {} + && rm -f '$runtime_asset_archive_device'"
-      pixel_adb "$serial" push "$runtime_asset_manifest_path" "$runtime_asset_manifest_device_path" >/dev/null
-      pixel_root_shell "$serial" "chown shell:shell '$runtime_asset_manifest_device_path' && chmod 0644 '$runtime_asset_manifest_device_path'"
+      pixel_push_root_shell "rm -rf '$runtime_linux_dir/assets'; mkdir -p '$runtime_linux_dir/assets'; rm -f '$runtime_asset_archive_device'"
+      pixel_push_adb push "$runtime_asset_archive_host" "$runtime_asset_archive_device" >/dev/null
+      pixel_push_root_shell "mkdir -p '$runtime_linux_dir/assets' && /system/bin/tar -xf '$runtime_asset_archive_device' -C '$runtime_linux_dir/assets' && chown -R shell:shell '$runtime_linux_dir/assets' && find '$runtime_linux_dir/assets' -type d -exec chmod 0755 {} + && find '$runtime_linux_dir/assets' -type f -exec chmod 0644 {} + && rm -f '$runtime_asset_archive_device'"
+      pixel_push_adb push "$runtime_asset_manifest_path" "$runtime_asset_manifest_device_path" >/dev/null
+      pixel_push_root_shell "chown shell:shell '$runtime_asset_manifest_device_path' && chmod 0644 '$runtime_asset_manifest_device_path'"
       printf 'Pushed runtime assets -> %s/assets\n' "$runtime_linux_dir"
     fi
   else
     if [[ -n "$runtime_device_asset_content_fingerprint" || "$runtime_device_assets_present" == "yes" ]]; then
-      pixel_root_shell "$serial" "rm -rf '$runtime_linux_dir/assets' '$runtime_asset_manifest_device_path'"
+      pixel_push_root_shell "rm -rf '$runtime_linux_dir/assets' '$runtime_asset_manifest_device_path'"
       printf 'Removed runtime assets -> %s/assets\n' "$runtime_linux_dir"
     fi
   fi
@@ -510,7 +603,7 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
       shasum -a 256 "$runtime_app_bundle_artifact" | awk '{print $1}'
     )"
     runtime_device_app_bundle_present="$(
-      pixel_root_shell "$serial" "test -f '$(pixel_runtime_app_bundle_dst)' && printf yes || true" \
+      pixel_push_root_shell "test -f '$(pixel_runtime_app_bundle_dst)' && printf yes || true" \
         | tr -d '\r' || true
     )"
     runtime_device_app_bundle_content_fingerprint="$(
@@ -532,9 +625,9 @@ with open(manifest_path, "w", encoding="utf-8") as handle:
     json.dump(manifest, handle, indent=2)
     handle.write("\n")
 PY
-      pixel_adb "$serial" push "$runtime_app_bundle_artifact" "$(pixel_runtime_app_bundle_dst)" >/dev/null
-      pixel_adb "$serial" push "$runtime_app_bundle_manifest_host" "$runtime_app_bundle_manifest_device_path" >/dev/null
-      pixel_root_shell "$serial" "chown shell:shell '$(pixel_runtime_app_bundle_dst)' '$runtime_app_bundle_manifest_device_path' && chmod 0644 '$(pixel_runtime_app_bundle_dst)' '$runtime_app_bundle_manifest_device_path'"
+      pixel_push_adb push "$runtime_app_bundle_artifact" "$(pixel_runtime_app_bundle_dst)" >/dev/null
+      pixel_push_adb push "$runtime_app_bundle_manifest_host" "$runtime_app_bundle_manifest_device_path" >/dev/null
+      pixel_push_root_shell "chown shell:shell '$(pixel_runtime_app_bundle_dst)' '$runtime_app_bundle_manifest_device_path' && chmod 0644 '$(pixel_runtime_app_bundle_dst)' '$runtime_app_bundle_manifest_device_path'"
       printf 'Pushed runtime app bundle -> %s\n' "$(pixel_runtime_app_bundle_dst)"
     fi
   fi
