@@ -55,6 +55,10 @@ Related docs:
   - shared stock `boot.img` fallback across worktrees
   - one-shot `fastboot boot` orchestration with structured host-side evidence capture
 - [~] Validate the log-probe boot helper on-device through the guarded inactive-slot flow and pull the first collected logs.
+- [~] Bisect the current ramdisk/init mutations on flashed active-slot images:
+  - stock boot, cmdline-only edits, and minimal repacks already boot on `11151JEC200472`
+  - stock-init log-probe images now also boot on `11151JEC200472`, so the wrapper is the remaining hard-boot suspect
+  - the next discriminating seam is a property-only stock-init probe before another helper-heavy image
 - [ ] Prove one tiny Shadow-at-boot lane before reintroducing timeline, camera, or network-heavy cases.
 - [ ] Keep the next chunks separately landable:
   - guarded on-device log-probe validation
@@ -108,7 +112,21 @@ Related docs:
   - no `shadow.boot.rc_only_probe` property from an rc-only probe that left stock `/init` untouched
   - no `shadow.boot.rc_file` property even when directly prepending `setprop` to existing `init.recovery.sunfish.rc` or `system/etc/init/hw/init.rc`
 - Working inference: on current `sunfish`, `fastboot boot` is a truthful loop for boot-image header/cmdline experiments, but not a trustworthy loop for our ramdisk-side validation. Treat negative ramdisk results from one-shot boots as non-decisive and shift the next seam back toward flashed-image validity / AVB-footer work.
+- New flashed active-slot matrix result on 2026-04-18 (`11151JEC200472`, slot `a`):
+  - flashing the stock baseline image booted Android successfully
+  - flashing a cmdline-only modified image booted Android successfully and surfaced `ro.boot.shadow_probe=flash-matrix-20260418T215506Z`
+  - flashing a minimal repack with the stock ramdisk booted Android successfully
+  - flashing the current `shadow-boot-log-probe.img` failed back into fastboot; restoring stock `boot_a` recovered the phone
+- Working inference from that matrix: the flashed active-slot path itself is real on `sunfish`; the failing delta is now inside our ramdisk/init mutations, not generic repacking, AVB footer reapplication, or slot activation.
+- The stock-init builder path is now real in repo-local tooling: `pixel_boot_build.sh --stock-init` keeps stock `/init` while still applying ramdisk `--add` / `--replace` overlays, and `pixel_boot_build_log_probe.sh --stock-init` reuses that seam for stock-init helper probes.
+- New hardware result on 2026-04-18 from that stock-init seam:
+  - flashing `shadow-boot-log-probe-stock-init.img` to active slot `a` on `11151JEC200472` booted Android successfully on slot `a`
+  - a one-shot boot of the same stock-init log-probe image on `09051JEC202061` also reached Android on slot `b`
+  - neither run produced `/data/local/tmp/shadow-boot` or helper-ready evidence, so the rc/import/helper seam still lacks a positive userspace signal
+- Working inference from the stock-init result: replacing `/init` is the remaining suspect for the hard boot failure, but the imported rc/helper path is still not proven even when stock init boots the image.
+- Next seam after that result: keep the stock-init path and reduce the userspace probe further. Build a property-only stock-init probe that proves the imported rc fragment runs without depending on `/data/local/tmp/shadow-boot`, then reintroduce the helper and finally the `/init` wrapper once each smaller seam is proven.
+- Truthfulness rule for the new boot-lab runners: top-level `status.json` and process exit codes must stay aligned with the underlying flash/collect result; false-success wrapper statuses are not acceptable evidence.
 - Because stock-init experimental flashes can disrupt the working rooted lane on the same slot, future chunks should bias toward safety rails before convenience or public surfacing.
 - Landing rule for this project: each chunk should be truthful, green, and mergeable on its own, so other worktrees can keep rebasing on `master` instead of waiting for a giant boot branch to finish.
 - Camera remains Android-bound today. Wi-Fi likely does too. Do not make them blockers for the first Shadow-at-boot milestone.
-- Next seam: use the new cmdline-proof result to narrow the flashed-image validity path. The fast loop should now focus on why slot-flashed images are rejected or fall back even though `fastboot boot` clearly honors modified boot-image cmdline state.
+- Next seam: keep the flashed active-slot stock-init path and prove one lower-noise ramdisk signal, ideally a property-only rc probe, before another helper-heavy or wrapper-based image.

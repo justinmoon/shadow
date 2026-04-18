@@ -114,8 +114,7 @@ write_status() {
 }
 
 finish() {
-  local exit_code
-  exit_code="$?"
+  local exit_code=$?
   trap - EXIT
   write_status "$exit_code"
   exit "$exit_code"

@@ -11,10 +11,11 @@ ensure_bootimg_shell "$@"
 INPUT_IMAGE="${PIXEL_BOOT_INPUT_IMAGE:-}"
 WRAPPER_BINARY="${PIXEL_INIT_WRAPPER_BIN:-$(pixel_boot_init_wrapper_bin)}"
 KEY_PATH="${AVB_TEST_KEY_PATH:-}"
-OUTPUT_IMAGE="${PIXEL_BOOT_LOG_PROBE_IMAGE:-$(pixel_boot_log_probe_img)}"
+OUTPUT_IMAGE="${PIXEL_BOOT_LOG_PROBE_IMAGE:-}"
 TRIGGER="${PIXEL_BOOT_LOG_PROBE_TRIGGER:-post-fs-data}"
 DEVICE_LOG_ROOT="$(pixel_boot_device_log_root)"
 PATCH_TARGET_OVERRIDE="${PIXEL_BOOT_LOG_PROBE_PATCH_TARGET:-}"
+BUILD_MODE="wrapper"
 KEEP_WORK_DIR=0
 WORK_DIR=""
 PATCH_TARGET=""
@@ -24,10 +25,20 @@ usage() {
 Usage: scripts/pixel/pixel_boot_build_log_probe.sh [--input PATH] [--wrapper PATH] [--key PATH]
                                                    [--output PATH] [--trigger EXPR]
                                                    [--device-log-root PATH] [--patch-target ENTRY]
+                                                   [--stock-init]
                                                    [--keep-work-dir]
 
 Build a private sunfish boot.img that imports /init.shadow.rc and runs a boot helper that only emits log markers.
 EOF
+}
+
+default_output_image() {
+  if [[ "$BUILD_MODE" == "stock-init" ]]; then
+    printf '%s/shadow-boot-log-probe-stock-init.img\n' "$(pixel_boot_dir)"
+    return 0
+  fi
+
+  pixel_boot_log_probe_img
 }
 
 validate_literal_trigger() {
@@ -145,6 +156,10 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_IMAGE="${2:?missing value for --output}"
       shift 2
       ;;
+    --stock-init)
+      BUILD_MODE="stock-init"
+      shift
+      ;;
     --trigger)
       TRIGGER="${2:?missing value for --trigger}"
       shift 2
@@ -191,6 +206,9 @@ validate_device_log_root
 validate_patch_target_override
 
 pixel_prepare_dirs
+if [[ -z "$OUTPUT_IMAGE" ]]; then
+  OUTPUT_IMAGE="$(default_output_image)"
+fi
 mkdir -p "$(dirname "$OUTPUT_IMAGE")"
 WORK_DIR="$(bootimg_prepare_work_dir shadow-pixel-boot-log-probe)"
 
@@ -299,12 +317,17 @@ chmod 0755 "$WORK_DIR/shadow-boot-helper"
 
 build_args=(
   --input "$INPUT_IMAGE"
-  --wrapper "$WRAPPER_BINARY"
   --output "$OUTPUT_IMAGE"
   --add "init.shadow.rc=$WORK_DIR/init.shadow.rc"
   --add "shadow-boot-helper=$WORK_DIR/shadow-boot-helper"
   --replace "$PATCH_TARGET=$WORK_DIR/patch-target.patched"
 )
+
+if [[ "$BUILD_MODE" == "stock-init" ]]; then
+  build_args+=(--stock-init)
+else
+  build_args+=(--wrapper "$WRAPPER_BINARY")
+fi
 
 if [[ -n "$KEY_PATH" ]]; then
   build_args+=(--key "$KEY_PATH")
@@ -313,6 +336,7 @@ fi
 "$SCRIPT_DIR/pixel/pixel_boot_build.sh" "${build_args[@]}"
 
 printf 'Wrote log-probe boot image: %s\n' "$OUTPUT_IMAGE"
+printf 'Build mode: %s\n' "$BUILD_MODE"
 printf 'Trigger: %s\n' "$TRIGGER"
 printf 'Device log root: %s\n' "$DEVICE_LOG_ROOT"
 printf 'Patch target: %s\n' "$PATCH_TARGET"
