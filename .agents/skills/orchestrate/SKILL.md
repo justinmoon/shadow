@@ -20,6 +20,7 @@ Follow the repo instructions first. In this repo, landing to `master` goes throu
 - Keep the current agent on the main thread as orchestrator.
 - Usually keep a living plan in `todos/` and update it as work lands.
 - Use subagents for most bounded research, implementation, review, and validation work once the first seam is clear.
+- Treat subagents as durable background workers. Do not kill or close them just because they are slow, a wait timed out, or you found another way forward.
 - For nontrivial chunks, default to at least one worker and at least one reviewer.
 - Add more workers or reviewers when the seam is broad enough to justify it.
 - Prefer strong subagents for architectural work: `gpt-5.4` with `xhigh` reasoning by default.
@@ -73,6 +74,8 @@ Use one reviewer when that is enough. Use multiple reviewers when independent re
 - Use sibling worktrees when seams are clearly disjoint.
 - Keep one worker per clearly owned seam.
 - The orchestrator stays responsible for integration.
+- A `wait_agent` timeout is not a stall. Let subagents keep running and harvest late results when they arrive.
+- Do not close subagents in normal operation. If a seam becomes obsolete, ignore or supersede the result; do not kill the worker midstream.
 
 ## Prompt Contract
 
