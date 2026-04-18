@@ -41,6 +41,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 - Primary loop:
   - `sc -t pixel stage shell`
   - `just run target=pixel app=<id>`
+    Default app is `shell`.
   - `just stop target=pixel`
   - `sc -t pixel doctor`
   - `sc -t pixel state`

@@ -77,7 +77,7 @@ $stderr"
 check_stdout_contains \
   just_run_uses_shadowctl_run_flags \
   0 \
-  'exec scripts/shadowctl run -t "$target_arg" --app "$app_arg" --hold "$hold_arg"' \
+  'exec scripts/shadowctl run --dry-run -t "$target_arg" --app "$app_arg" --hold "$hold_arg"' \
   just --dry-run run target=vm app=camera
 
 check_output_case \
@@ -93,6 +93,13 @@ check_output_case \
   "$(printf 'command=%s --app podcast' "$SCRIPT_DIR/vm/ui_vm_run.sh")" \
   "" \
   env SHADOWCTL_JUST_DRY_RUN=1 just run target=vm
+
+check_output_case \
+  just_run_pixel_defaults_to_shell \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh")" \
+  "" \
+  env SHADOWCTL_JUST_DRY_RUN=1 just run target=TESTSERIAL
 
 check_stdout_contains \
   just_stop_uses_shadowctl_flags \
@@ -134,6 +141,13 @@ check_output_case \
   "$(printf 'command=%s --app podcast' "$SCRIPT_DIR/vm/ui_vm_run.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" run --dry-run -t vm
+
+check_output_case \
+  shadowctl_run_pixel_default_shell \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" run --dry-run -t TESTSERIAL
 
 check_output_case \
   shadowctl_run_vm_shell \

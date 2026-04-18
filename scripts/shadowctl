@@ -220,6 +220,12 @@ def session_start_command(
     return (command, env)
 
 
+def default_session_app_id(target: TargetRef) -> str:
+    if target.kind == "pixel":
+        return SHELL_APP_ID
+    return "podcast"
+
+
 def session_stop_command(target: TargetRef) -> tuple[list[str | pathlib.Path], list[tuple[str, str]]]:
     scripts_dir = repo_root() / "scripts"
     if target.kind == "vm":
@@ -1238,9 +1244,10 @@ def cmd_wait_ready(args: argparse.Namespace) -> int:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
+    app_id = args.app if args.app is not None else default_session_app_id(args.target_ref)
     command, env = session_start_command(
         args.target_ref,
-        app_id=args.app,
+        app_id=app_id,
         hold=args.hold,
     )
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
@@ -1666,8 +1673,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--app",
-        default="podcast",
-        help="Shell app to foreground after session launch.",
+        default=None,
+        help="Shell app to foreground after session launch (default: podcast on vm, shell on pixel).",
     )
     run.add_argument(
         "--hold",
