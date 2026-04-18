@@ -32,10 +32,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Tune the local host/builder scheduling split in `~/configs`.
 - [x] Validate the final local builder config after the activation-hook fix lands cleanly.
 - [x] Land the local builder tuning in `~/configs`.
-- [~] Convert `ui-check`'s heavy Rust/test work from `nix develop -c cargo ...` into derivation-backed Nix checks.
-- [ ] Re-benchmark after the Nixified `ui-check` pass.
-- [ ] Decide whether an OCI ARM builder should be added as a shared native `aarch64-linux` builder.
-- [ ] Non-blocking: investigate ways to exceed the local `8` vCPU builder ceiling without depending on that work for the current landing.
+- [x] Convert `ui-check`'s heavy Rust/test work from `nix develop -c cargo ...` into derivation-backed Nix checks.
+- [x] Re-benchmark after the Nixified `ui-check` pass.
+- [x] Decide whether an OCI ARM builder should be added as a shared native `aarch64-linux` builder.
+- [x] Non-blocking: investigate ways to exceed the local `8` vCPU builder ceiling without depending on that work for the current landing.
 
 ## Near-Term Steps
 
@@ -47,14 +47,15 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - user-accessible `ssh builder@linux-builder`
 - [x] Re-run one short sanity build on the fixed builder to confirm the config actually took.
 - [x] Land the local builder tuning branch in `~/configs`.
-- [~] Add a first `checks.<system>` surface for the work now run by [scripts/ui_check.sh](/Users/justin/code/shadow/worktrees/nix-builds/scripts/ui_check.sh:1).
-- [ ] Switch `just ui-check` to call those Nix checks instead of direct `cargo` commands where feasible.
-- [ ] Inspect `~/configs/worktrees/oci-builder` and decide whether to wire an OCI ARM host into `/etc/nix/machines` after `ui-check` is more Nix-shaped.
+- [x] Add a first `checks.<system>` surface for the work now run by [scripts/ui_check.sh](/Users/justin/code/shadow/worktrees/nix-builds/scripts/ui_check.sh:1).
+- [x] Switch `just ui-check` to call those Nix checks instead of direct `cargo` commands where feasible.
+- [x] Inspect `~/configs/worktrees/oci-builder` and decide whether to wire an OCI ARM host into `/etc/nix/machines` after `ui-check` is more Nix-shaped.
 
 ## Implementation Notes
 
 - Current `ui-check` on `master` is still host-local execution inside a dev shell, not derivation-backed execution:
   - `nix develop .#ui -c cargo ...` in [scripts/ui_check.sh](/Users/justin/code/shadow/scripts/ui_check.sh:9)
+- Current `nix-builds` branch now resolves `just ui-check` through `checks.<system>.uiCheck` and `crane`, with dev-profile test/check commands and empty pass/fail outputs for the test derivations instead of multi-hundred-megabyte archived `target/` trees.
 - The local builder tuning is landed in `~/configs` `master` as `bfc475d build: tune local linux builder for shadow workloads`.
 - The activation-hook fix landed cleanly after the later switch, but the old `20G` guest had to be powered off once from inside the guest so launchd would recreate a fresh builder on the new config.
 - Verified fixed-builder state:
@@ -84,8 +85,21 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `shadow-compositor-guest`
 - Current Shadow-side seam:
   - `checks.<system>.uiCheck` is now being added in [flake.nix](/Users/justin/code/shadow/worktrees/nix-builds/flake.nix:641)
-  - the first cold `aarch64-darwin` aggregator build is still materializing dependencies through `crane`, so the next useful measurement should happen after that run finishes
+  - `just ui-check` now shells straight to `nix build .#checks.${host_system}.uiCheck`
+  - measured serial timings on `aarch64-darwin`:
+    - first sampled cold end-to-end `just ui-check`: `290.88s` while some component checks were already warm
+    - corrected end-to-end run after removing archived test outputs: `313.36s`
+    - immediate warm rerun: `0.39s`
+  - measured 3-way concurrent `just ui-check` on three disposable worktrees with distinct comment-only UI edits:
+    - `1408.18s`
+    - `1407.64s`
+    - `1407.61s`
+    - interpretation: distinct local macOS UI-check snapshots still contend very heavily even after Nixification; the win is deterministic reuse and near-instant reruns on the same logical inputs, not good parallel scaling on one host
 - OCI builder worktree status:
   - there is a real `aarch64-linux` NixOS host definition at [flake.nix](/Users/justin/configs/worktrees/oci-builder/flake.nix:534) and [configuration.nix](/Users/justin/configs/worktrees/oci-builder/hosts/oci-builder/configuration.nix:1)
-  - it is not yet wired into the current Mac builder list
-  - it looks worth pursuing after the local-builder landing and `ui-check` Nixification
+  - the `oci-builder` worktree also wires `oci-builder.taild659a1.ts.net` into the Mac build-machine list in [linux-builder.nix](/Users/justin/configs/worktrees/oci-builder/hosts/mac/linux-builder.nix:60)
+  - recommendation: worth pursuing for shared `aarch64-linux` derivations and Linux package builds, but it will not accelerate the local `aarch64-darwin` `ui-check` lane directly because that lane still runs host-system checks
+  - that makes OCI additive, not a prerequisite for landing this Shadow-side pass
+- Local `8` vCPU ceiling follow-on:
+  - the current nix-darwin/QEMU/HVF builder path is hard-capped at `8` vCPUs on this machine
+  - exceeding that ceiling is not a small config tweak; it means either multiple local builder VMs, a different local hypervisor/builder path, or more remote native ARM capacity

@@ -79,6 +79,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
    The VM lane now consumes packaged Linux `shadow-compositor` / `shadow-blitz-demo` artifacts built through Nix; `.#ui-vm-ci` is the canonical artifact-consumer runner package.
    The branch gate also resolves a filtered `.#vm-smoke-inputs` derivation so the VM smoke is keyed by logical lane inputs instead of branch/worktree names.
    `just ui-check` also resolves host-system `checks.<system>.uiCheck` derivations through the flake instead of running ad hoc cargo commands in a dev shell.
+   That makes the lane reproducible and cacheable, but it is still a current-host check surface: remote Linux builders help packaged Linux outputs, not the local macOS `ui-check` path directly.
    The guest should stay runtime-only.
    The guest no longer mounts the repo. It mounts `/nix/store` plus a narrow `.shadow-vm/runtime-artifacts` share staged on the host.
    Runtime app bundles are built by the shared host-side artifact builder (`scripts/runtime_build_artifacts.sh`) and staged under that artifact share.

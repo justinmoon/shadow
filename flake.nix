@@ -817,6 +817,8 @@
             // {
               inherit pname cargoArtifacts;
               doCheck = true;
+              doInstallCargoArtifacts = false;
+              installPhaseCommand = "mkdir -p $out";
             };
           mkUiCargoCheck =
             {
