@@ -13,36 +13,44 @@ ota_zip="$(pixel_root_ota_zip)"
 payload_bin="$(pixel_root_payload_bin)"
 extract_dir="$(pixel_root_payload_extract_dir)"
 boot_img="$(pixel_root_stock_boot_img)"
+shared_boot_img="$(pixel_shared_stock_boot_img)"
 magisk_apk="$(pixel_root_magisk_apk)"
 magisk_info="$(pixel_root_magisk_info_json)"
 
 mkdir -p "$(pixel_root_dir)" "$extract_dir"
 
-if [[ ! -f "$ota_zip" ]]; then
-  printf 'Downloading official Pixel 4a full OTA -> %s\n' "$ota_zip"
-  pixel_download_file "$ota_url" "$ota_zip"
-else
-  printf 'Using cached OTA %s\n' "$ota_zip"
-fi
-
-if [[ ! -f "$payload_bin" ]]; then
-  printf 'Extracting payload.bin -> %s\n' "$payload_bin"
-  unzip -p "$ota_zip" payload.bin >"$payload_bin"
-else
-  printf 'Using cached payload %s\n' "$payload_bin"
-fi
-
 if [[ ! -f "$boot_img" ]]; then
-  rm -rf "$extract_dir"
-  mkdir -p "$extract_dir"
-  printf 'Extracting boot.img from payload.bin\n'
-  payload-dumper-go -o "$extract_dir" -p boot "$payload_bin"
-  cp "$extract_dir/boot.img" "$boot_img"
+  if [[ -f "$shared_boot_img" ]]; then
+    printf 'Using shared stock boot image %s\n' "$shared_boot_img"
+    cp "$shared_boot_img" "$boot_img"
+  else
+    if [[ ! -f "$ota_zip" ]]; then
+      printf 'Downloading official Pixel 4a full OTA -> %s\n' "$ota_zip"
+      pixel_download_file "$ota_url" "$ota_zip"
+    else
+      printf 'Using cached OTA %s\n' "$ota_zip"
+    fi
+
+    if [[ ! -f "$payload_bin" ]]; then
+      printf 'Extracting payload.bin -> %s\n' "$payload_bin"
+      unzip -p "$ota_zip" payload.bin >"$payload_bin"
+    else
+      printf 'Using cached payload %s\n' "$payload_bin"
+    fi
+
+    rm -rf "$extract_dir"
+    mkdir -p "$extract_dir"
+    printf 'Extracting boot.img from payload.bin\n'
+    payload-dumper-go -o "$extract_dir" -p boot "$payload_bin"
+    cp "$extract_dir/boot.img" "$boot_img"
+  fi
 else
   printf 'Using cached boot image %s\n' "$boot_img"
 fi
 
 printf '%s\n' "$(file "$boot_img")"
+pixel_publish_shared_stock_boot_img "$boot_img"
+printf 'Shared stock boot image: %s\n' "$(pixel_shared_stock_boot_img)"
 
 printf 'Fetching latest Magisk release metadata\n'
 curl -L --fail -s https://api.github.com/repos/topjohnwu/Magisk/releases/latest >"$magisk_info.tmp"

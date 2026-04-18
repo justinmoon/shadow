@@ -53,6 +53,22 @@ repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || pwd
 }
 
+repo_common_root() {
+  local common_dir
+  if [[ -n "${SHADOW_REPO_COMMON_ROOT:-}" ]]; then
+    printf '%s\n' "$SHADOW_REPO_COMMON_ROOT"
+    return 0
+  fi
+
+  common_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+  if [[ -n "$common_dir" ]]; then
+    dirname "$common_dir"
+    return 0
+  fi
+
+  repo_root
+}
+
 state_file() {
   printf '%s/.cuttlefish-instance\n' "$(repo_root)"
 }

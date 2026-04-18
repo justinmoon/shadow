@@ -24,7 +24,8 @@ Related docs:
 - Reuse the current rooted takeover/runtime path first, then tighten the boot graph later.
 - Land boot work in small seams that can merge to `master` independently; do not stack the whole project on one long-lived boot branch.
 - Use a dedicated worktree branch per risky seam, then land or checkpoint before starting the next one.
-- Keep experimental boot tooling private until it proves itself on-device. Do not wire it into `shadowctl` or the public `just` surface early.
+- Keep experimental boot tooling private until it proves itself on-device. Private delegators may live under `shadowctl debug`, but do not promote boot-lab flows into the public `just` surface early.
+- When a boot experiment loop repeats or burns operator time twice, bias toward small private tools that capture the loop truthfully: shared immutable inputs, structured run bundles, explicit safety rails, and thin `shadowctl debug` delegation instead of more handwritten terminal choreography.
 - Prefer chunks that are inert for the current Magisk path: helper libraries, private scripts, log capture, guardrails, and wrapper-only boot images before automatic takeover changes.
 
 ## Milestones
@@ -50,6 +51,9 @@ Related docs:
   - boot-critical pieces in ramdisk
   - large runtime bundles still allowed on `/data`
 - [x] Add a device-side log capture path for wrapper, init, and Shadow boot markers.
+- [x] Add worktree-friendly boot-lab tooling:
+  - shared stock `boot.img` fallback across worktrees
+  - one-shot `fastboot boot` orchestration with structured host-side evidence capture
 - [~] Validate the log-probe boot helper on-device through the guarded inactive-slot flow and pull the first collected logs.
 - [ ] Prove one tiny Shadow-at-boot lane before reintroducing timeline, camera, or network-heavy cases.
 - [ ] Keep the next chunks separately landable:
@@ -73,6 +77,11 @@ Related docs:
 - The ramdisk patch step is back in repo-local form via `scripts/lib/cpio_edit.py`, and the minimal wrapper is a static aarch64 Rust binary at `rust/init-wrapper`.
 - `scripts/lib/cpio_edit.py` now supports entry extraction as well as add/replace/rename, and `scripts/ci/cpio_edit_smoke.sh` keeps those semantics covered in `pre-commit`.
 - `scripts/ci/pixel_boot_collect_logs_smoke.sh` now locks the collector's success-vs-wrapper-only fallback semantics into `pre-commit`.
+- The shared cross-worktree cache is intentionally narrow: only the immutable stock `boot.img` falls back through the git common-dir at `build/shared/pixel/root/boot.img`. Custom boot images, run bundles, and `last-action.json` stay worktree-local.
+- `sc -t <serial> debug boot-lab-oneshot` now stays as a thin private delegator into `scripts/pixel/pixel_boot_oneshot.sh` for the fast `fastboot boot` plus collect loop. It does not change the public `just` surface.
+- `pixel_boot_oneshot.sh` writes a run bundle under `build/pixel/boot/oneshot/<timestamp>/` with a local `boot-action.json`, collector output, and a truthful `status.json`.
+- `scripts/ci/pixel_boot_tooling_smoke.sh` now locks the shared-stock-boot and oneshot dry-run contracts into `pre-commit`, and `scripts/ci/operator_cli_smoke.sh` covers the `shadowctl` delegation path.
+- Tooling rule for later seams: prefer operator-grade helpers when they remove repeated manual steps, but keep them private, narrow, and evidence-first. Avoid “tooling” that merely hides uncertainty or bundles unrelated experiments together.
 - `rust/init-wrapper/Cargo.toml` is now standalone enough for `cargo check --manifest-path rust/init-wrapper/Cargo.toml`, and `just pre-commit` now compiles that crate directly instead of only relying on host-side boot-image builds.
 - The cached stock `boot.img` can now be unpacked, wrapped, and reflashed locally. Live device validation still remains before the flash-loop milestone can flip fully green.
 - The first imported boot-helper trigger is `post-fs-data`, wired through `system/etc/init/hw/init.rc` in the recovery-as-boot ramdisk. This is intentionally a log-only probe before any automatic takeover steps.
@@ -90,7 +99,14 @@ Related docs:
   - active-slot flash on `11151JEC200472` produced fastboot `Enter reason: no valid slot to boot` on slot `a`
   - restoring stock `boot_a` from fastboot recovered the phone, but Magisk/root on that slot is now gone until it is patched again
 - Current conclusion: the host-side probe tooling and rollback path are real, but the current custom boot image is not yet a successful on-device boot path on physical `sunfish`.
+- New probe result on 2026-04-18: a one-shot `fastboot boot` image with only an added `androidboot.shadow_probe=<tag>` cmdline token surfaced `ro.boot.shadow_probe=<tag>` on both `11151JEC200472` and `09051JEC202061`. So the passed boot image is definitely being used for header/cmdline state.
+- But the same session also showed no signal from any ramdisk-side experiment on either phone:
+  - no wrapper markers from the landed wrapper probe
+  - no helper logs from the landed imported-rc probe
+  - no `shadow.boot.rc_only_probe` property from an rc-only probe that left stock `/init` untouched
+  - no `shadow.boot.rc_file` property even when directly prepending `setprop` to existing `init.recovery.sunfish.rc` or `system/etc/init/hw/init.rc`
+- Working inference: on current `sunfish`, `fastboot boot` is a truthful loop for boot-image header/cmdline experiments, but not a trustworthy loop for our ramdisk-side validation. Treat negative ramdisk results from one-shot boots as non-decisive and shift the next seam back toward flashed-image validity / AVB-footer work.
 - Because stock-init experimental flashes can disrupt the working rooted lane on the same slot, future chunks should bias toward safety rails before convenience or public surfacing.
 - Landing rule for this project: each chunk should be truthful, green, and mergeable on its own, so other worktrees can keep rebasing on `master` instead of waiting for a giant boot branch to finish.
 - Camera remains Android-bound today. Wi-Fi likely does too. Do not make them blockers for the first Shadow-at-boot milestone.
-- Next seam: validate the stronger recovery-rc import plus wrapper markers with `fastboot boot` on `11151JEC200472`, then decide whether the next blocker is still only the rc/import path or the flashed-image validity path too.
+- Next seam: use the new cmdline-proof result to narrow the flashed-image validity path. The fast loop should now focus on why slot-flashed images are rejected or fall back even though `fastboot boot` clearly honors modified boot-image cmdline state.

@@ -33,6 +33,7 @@ SUPPORTED_PIXEL_CI_SUITES = (
 )
 SUPPORTED_PIXEL_DEBUG_TOOLS = (
     "latency",
+    "boot-lab-oneshot",
 )
 SUPPORTED_MEDIA_ACTIONS = (
     "play-pause",
@@ -291,10 +292,26 @@ def pixel_ci_command(
 def pixel_debug_command(
     target: TargetRef,
     *,
-    tool: str,
+    args: argparse.Namespace,
 ) -> tuple[list[str | pathlib.Path], list[tuple[str, str]]]:
+    tool = args.tool
     if tool == "latency":
         return script_command("debug/pixel_touch_latency_probe.sh", target=target)
+    if tool == "boot-lab-oneshot":
+        command: list[str | pathlib.Path] = [repo_root() / "scripts/pixel/pixel_boot_oneshot.sh"]
+        if args.image:
+            command.extend(["--image", args.image])
+        if args.output:
+            command.extend(["--output", args.output])
+        if args.wait_ready is not None:
+            command.extend(["--wait-ready", str(args.wait_ready)])
+        if args.adb_timeout is not None:
+            command.extend(["--adb-timeout", str(args.adb_timeout)])
+        if args.boot_timeout is not None:
+            command.extend(["--boot-timeout", str(args.boot_timeout)])
+        if args.no_wait_boot_completed:
+            command.append("--no-wait-boot-completed")
+        return command, [("PIXEL_SERIAL", target.serial or target.id)]
     supported = ", ".join(SUPPORTED_PIXEL_DEBUG_TOOLS)
     raise SystemExit(f"shadowctl: unsupported Pixel debug tool {tool!r}; expected one of {supported}")
 
@@ -1297,7 +1314,7 @@ def cmd_pixel_stage(args: argparse.Namespace) -> int:
 
 
 def cmd_pixel_debug(args: argparse.Namespace) -> int:
-    command, env = pixel_debug_command(args.target_ref, tool=args.tool)
+    command, env = pixel_debug_command(args.target_ref, args=args)
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 
@@ -1763,6 +1780,28 @@ def build_parser() -> argparse.ArgumentParser:
         parents=(target_parser,),
     )
     debug.add_argument("tool", choices=SUPPORTED_PIXEL_DEBUG_TOOLS)
+    debug.add_argument("--image", help="boot-lab-oneshot only: boot image to pass to fastboot boot.")
+    debug.add_argument("--output", help="boot-lab-oneshot only: host output dir for the run bundle.")
+    debug.add_argument(
+        "--wait-ready",
+        type=int,
+        help="boot-lab-oneshot only: collector wait time for device-side helper logs.",
+    )
+    debug.add_argument(
+        "--adb-timeout",
+        type=int,
+        help="boot-lab-oneshot only: seconds to wait for adb after fastboot boot.",
+    )
+    debug.add_argument(
+        "--boot-timeout",
+        type=int,
+        help="boot-lab-oneshot only: seconds to wait for sys.boot_completed before collecting.",
+    )
+    debug.add_argument(
+        "--no-wait-boot-completed",
+        action="store_true",
+        help="boot-lab-oneshot only: collect as soon as adb is back instead of waiting for sys.boot_completed.",
+    )
     debug.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
 
     root_prep = add_command(

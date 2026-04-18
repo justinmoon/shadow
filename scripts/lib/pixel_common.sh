@@ -17,8 +17,20 @@ pixel_root_dir() {
   printf '%s/root\n' "$(pixel_dir)"
 }
 
+pixel_shared_dir() {
+  printf '%s/build/shared/pixel\n' "$(repo_common_root)"
+}
+
+pixel_shared_root_dir() {
+  printf '%s/root\n' "$(pixel_shared_dir)"
+}
+
 pixel_boot_dir() {
   printf '%s/boot\n' "$(pixel_dir)"
+}
+
+pixel_boot_oneshots_dir() {
+  printf '%s/oneshot\n' "$(pixel_boot_dir)"
 }
 
 pixel_boot_unpacks_dir() {
@@ -928,7 +940,11 @@ pixel_reboot_and_wait_android_display() {
 }
 
 pixel_prepare_dirs() {
-  mkdir -p "$(pixel_artifacts_dir)" "$(pixel_runs_dir)" "$(pixel_root_dir)" "$(pixel_boot_dir)"
+  mkdir -p \
+    "$(pixel_artifacts_dir)" \
+    "$(pixel_runs_dir)" \
+    "$(pixel_root_dir)" \
+    "$(pixel_boot_dir)"
 }
 
 pixel_pinned_turnip_result_link() {
@@ -1656,7 +1672,53 @@ pixel_root_payload_extract_dir() {
 }
 
 pixel_root_stock_boot_img() {
-  printf '%s/boot.img\n' "$(pixel_root_dir)"
+  printf '%s\n' "${PIXEL_ROOT_STOCK_BOOT_IMG:-$(pixel_root_dir)/boot.img}"
+}
+
+pixel_shared_stock_boot_img() {
+  printf '%s\n' "${PIXEL_SHARED_STOCK_BOOT_IMG:-$(pixel_shared_root_dir)/boot.img}"
+}
+
+pixel_resolve_stock_boot_img() {
+  local candidate
+  for candidate in \
+    "$(pixel_root_stock_boot_img)" \
+    "$(pixel_shared_stock_boot_img)"; do
+    if [[ -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  cat <<EOF >&2
+pixel: stock boot image not found in either:
+  $(pixel_root_stock_boot_img)
+  $(pixel_shared_stock_boot_img)
+
+Run 'sc root-prep' first to cache the stock sunfish boot.img.
+EOF
+  return 1
+}
+
+pixel_publish_shared_stock_boot_img() {
+  local source_path target_path target_dir temp_path
+  source_path="${1:?pixel_publish_shared_stock_boot_img requires a source path}"
+  target_path="$(pixel_shared_stock_boot_img)"
+  target_dir="$(dirname "$target_path")"
+
+  [[ -f "$source_path" ]] || {
+    echo "pixel: shared stock boot source not found: $source_path" >&2
+    return 1
+  }
+
+  mkdir -p "$target_dir"
+  if [[ -f "$target_path" ]] && cmp -s "$source_path" "$target_path"; then
+    return 0
+  fi
+
+  temp_path="$(mktemp "$target_dir/.boot.img.XXXXXX")"
+  cp "$source_path" "$temp_path"
+  mv "$temp_path" "$target_path"
 }
 
 pixel_root_magisk_apk() {

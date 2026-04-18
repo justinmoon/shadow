@@ -12,6 +12,7 @@ scripts/ci/check_script_inventory.py
 scripts/runtime/generate_app_metadata.py --check
 scripts/ci/app_metadata_manifest_smoke.sh
 scripts/ci/cpio_edit_smoke.sh
+scripts/ci/pixel_boot_tooling_smoke.sh
 scripts/ci/pixel_boot_collect_logs_smoke.sh
 scripts/ci/pixel_boot_safety_smoke.sh
 shell_scripts=()

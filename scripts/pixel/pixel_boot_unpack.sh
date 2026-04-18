@@ -8,7 +8,7 @@ source "$SCRIPT_DIR/lib/pixel_common.sh"
 source "$SCRIPT_DIR/lib/bootimg_common.sh"
 ensure_bootimg_shell "$@"
 
-INPUT_IMAGE="${PIXEL_BOOT_INPUT_IMAGE:-$(pixel_root_stock_boot_img)}"
+INPUT_IMAGE="${PIXEL_BOOT_INPUT_IMAGE:-}"
 OUTPUT_DIR=""
 
 usage() {
@@ -40,6 +40,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -z "$INPUT_IMAGE" ]]; then
+  INPUT_IMAGE="$(pixel_resolve_stock_boot_img || true)"
+fi
 
 [[ -f "$INPUT_IMAGE" ]] || {
   cat <<EOF >&2

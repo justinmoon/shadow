@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/lib/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 METADATA_PATH="${PIXEL_BOOT_METADATA_PATH:-$(pixel_boot_last_action_json)}"
-RESTORE_IMAGE="${PIXEL_BOOT_RESTORE_IMAGE:-$(pixel_root_stock_boot_img)}"
+RESTORE_IMAGE="${PIXEL_BOOT_RESTORE_IMAGE:-}"
 ADB_TIMEOUT_SECS="${PIXEL_BOOT_RECOVER_ADB_TIMEOUT_SECS:-180}"
 BOOT_TIMEOUT_SECS="${PIXEL_BOOT_RECOVER_BOOT_TIMEOUT_SECS:-240}"
 RESTORE_TARGET_SLOT=1
@@ -106,6 +106,10 @@ pixel_boot_recover: metadata says known_good_slot=$known_good_slot and target_sl
 Automatic recovery is only supported for inactive-slot experimental flashes.
 EOF
   exit 1
+fi
+
+if [[ "$RESTORE_TARGET_SLOT" == "1" && -z "$RESTORE_IMAGE" ]]; then
+  RESTORE_IMAGE="$(pixel_resolve_stock_boot_img || true)"
 fi
 
 if [[ "$RESTORE_TARGET_SLOT" == "1" && ! -f "$RESTORE_IMAGE" ]]; then

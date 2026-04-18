@@ -8,7 +8,7 @@ source "$SCRIPT_DIR/lib/pixel_common.sh"
 source "$SCRIPT_DIR/lib/bootimg_common.sh"
 ensure_bootimg_shell "$@"
 
-INPUT_IMAGE="${PIXEL_BOOT_INPUT_IMAGE:-$(pixel_root_stock_boot_img)}"
+INPUT_IMAGE="${PIXEL_BOOT_INPUT_IMAGE:-}"
 WRAPPER_BINARY="${PIXEL_INIT_WRAPPER_BIN:-$(pixel_boot_init_wrapper_bin)}"
 KEY_PATH="${AVB_TEST_KEY_PATH:-}"
 OUTPUT_IMAGE="${PIXEL_BOOT_LOG_PROBE_IMAGE:-$(pixel_boot_log_probe_img)}"
@@ -172,6 +172,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -z "$INPUT_IMAGE" ]]; then
+  INPUT_IMAGE="$(pixel_resolve_stock_boot_img || true)"
+fi
 
 [[ -f "$INPUT_IMAGE" ]] || {
   cat <<EOF >&2

@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/lib/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
-IMAGE_PATH="${PIXEL_BOOT_RESTORE_IMAGE:-$(pixel_root_stock_boot_img)}"
+IMAGE_PATH="${PIXEL_BOOT_RESTORE_IMAGE:-}"
 ADB_TIMEOUT_SECS="${PIXEL_BOOT_RESTORE_ADB_TIMEOUT_SECS:-180}"
 BOOT_TIMEOUT_SECS="${PIXEL_BOOT_RESTORE_BOOT_TIMEOUT_SECS:-240}"
 REQUESTED_SLOT="${PIXEL_BOOT_RESTORE_SLOT:-}"
@@ -93,6 +93,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -z "$IMAGE_PATH" ]]; then
+  IMAGE_PATH="$(pixel_resolve_stock_boot_img || true)"
+fi
 
 [[ -f "$IMAGE_PATH" ]] || {
   cat <<EOF >&2
