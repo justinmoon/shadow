@@ -33,9 +33,9 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 
 - [x] Extend the current manifest and generated metadata to support `typescript` and `rust` app models.
 - [x] Define the first public `shadow_sdk` surface for Rust apps and the matching `@shadow/sdk` binding for TypeScript apps.
-- [ ] Decide the smallest useful internal boundaries behind the one public SDK surface.
+- [~] Decide the smallest useful internal boundaries behind the one public SDK surface.
 - [x] Prove a minimal Rust app runner for one process-isolated Shadow UI app.
-- [ ] Prove one shared capability end-to-end through both Rust and TypeScript app surfaces.
+- [~] Prove one shared capability end-to-end through both Rust and TypeScript app surfaces.
 - [ ] Prove shared lifecycle events through the Rust path first and define how they surface to TypeScript apps.
 - [ ] Prove one shell/system surface rendered directly by the compositor.
 - [ ] Land the first serious Rust demo app that exercises navigation, list rendering, and persistence.
@@ -46,7 +46,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - [ ] Decide where the generated manifest types should live as the current manifest expands.
 - [x] Sketch the minimal launch metadata required for both `typescript` and `rust` apps.
 - [x] Choose the first Rust runner spike target and keep it deliberately small.
-- [ ] Choose the first shared capability to prove through both app models.
+- [x] Choose the first shared capability to prove through both app models.
 - [ ] Decide which text-input path to spike first: single-line editor or multiline editor.
 - [ ] Pick the first shell/system surface to target for embedded rendering.
 - [ ] Decide whether broader TypeScript platform work should stay in [todos/vdom.md](../todos/vdom.md) or move to a broader `todos/typescript-apps.md`.
@@ -64,3 +64,6 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - Shell/system chrome rewrite is in scope. The current homegrown shell UI should be treated as bring-up architecture, not the final product direction.
 - The VM operator/status path now depends on truthful mixed-model probing in `scripts/shadowctl`; keep VM smoke and the operator CLI smoke in lockstep when touching that code.
 - The next spike should move from runner proof to platform proof: one shared capability or lifecycle contract that both TypeScript and Rust apps can exercise through the same public SDK story.
+- Camera is the first shared capability seam. It already has a relatively clean env-driven host implementation, explicit mock support for tests, and a small enough surface to expose natively through `shadow_sdk` without first solving the entire lifecycle/control-plane story.
+- The first Rust camera slice now keeps `runtime-camera-host` as the single implementation while `shadow_sdk::services::camera` owns the app-facing types. The public Rust SDK no longer re-exports runtime host env knobs or transport request/receipt types.
+- The Rust camera surface still intentionally stops at `list_cameras`, `capture_still`, and `decode_qr_code`. Preview remains TypeScript-only for now, so API parity and VM smoke coverage are the next camera follow-up instead of more wrapper churn.

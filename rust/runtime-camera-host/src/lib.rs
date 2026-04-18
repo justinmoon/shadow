@@ -1,4 +1,5 @@
 use std::env;
+use std::fmt;
 use std::io::Cursor;
 use std::io::ErrorKind;
 use std::io::{BufRead, BufReader, Write};
@@ -8,19 +9,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
-use deno_core::extension;
-use deno_core::op2;
-use deno_core::Extension;
+#[cfg(feature = "runtime-extension")]
+use deno_core::{extension, op2, Extension};
+#[cfg(feature = "runtime-extension")]
 use deno_error::JsErrorBox;
 use image::ImageFormat;
 use image::{DynamicImage, ImageBuffer, Luma};
 use qrcodegen::{QrCode, QrCodeEcc};
 use serde::{Deserialize, Serialize};
 
-const CAMERA_ENDPOINT_ENV: &str = "SHADOW_RUNTIME_CAMERA_ENDPOINT";
-const CAMERA_ALLOW_MOCK_ENV: &str = "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK";
-const CAMERA_MOCK_QR_PAYLOAD_ENV: &str = "SHADOW_RUNTIME_CAMERA_MOCK_QR_PAYLOAD";
-const CAMERA_TIMEOUT_MS_ENV: &str = "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS";
+pub const CAMERA_ENDPOINT_ENV: &str = "SHADOW_RUNTIME_CAMERA_ENDPOINT";
+pub const CAMERA_ALLOW_MOCK_ENV: &str = "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK";
+pub const CAMERA_MOCK_QR_PAYLOAD_ENV: &str = "SHADOW_RUNTIME_CAMERA_MOCK_QR_PAYLOAD";
+pub const CAMERA_TIMEOUT_MS_ENV: &str = "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS";
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const CONNECT_RETRY_ATTEMPTS: usize = 10;
 const CONNECT_RETRY_DELAY_MS: u64 = 250;
@@ -28,7 +29,72 @@ const MOCK_CAMERA_ID: &str = "mock/rear/0";
 const MOCK_QR_BORDER_MODULES: u32 = 4;
 const MOCK_QR_MODULE_SCALE: u32 = 8;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CameraHostErrorKind {
+    BackendNotConfigured,
+    Unavailable,
+    NoCamera,
+    InvalidImageData,
+    QrCodeNotFound,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CameraHostError {
+    kind: CameraHostErrorKind,
+    message: String,
+}
+
+impl CameraHostError {
+    pub fn kind(&self) -> CameraHostErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    fn new(kind: CameraHostErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    fn backend_not_configured(message: impl Into<String>) -> Self {
+        Self::new(CameraHostErrorKind::BackendNotConfigured, message)
+    }
+
+    fn unavailable(message: impl Into<String>) -> Self {
+        Self::new(CameraHostErrorKind::Unavailable, message)
+    }
+
+    fn no_camera(message: impl Into<String>) -> Self {
+        Self::new(CameraHostErrorKind::NoCamera, message)
+    }
+
+    fn invalid_image_data(message: impl Into<String>) -> Self {
+        Self::new(CameraHostErrorKind::InvalidImageData, message)
+    }
+
+    fn qr_code_not_found(message: impl Into<String>) -> Self {
+        Self::new(CameraHostErrorKind::QrCodeNotFound, message)
+    }
+
+    fn other(message: impl Into<String>) -> Self {
+        Self::new(CameraHostErrorKind::Other, message)
+    }
+}
+
+impl fmt::Display for CameraHostError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CameraHostError {}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CameraDevice {
     pub id: String,
     pub label: String,
@@ -41,13 +107,20 @@ pub struct CameraDevice {
     pub sensor_orientation_degrees: Option<u16>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-struct CaptureStillRequest {
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CaptureRequest {
     #[serde(rename = "cameraId")]
-    camera_id: Option<String>,
+    pub camera_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+impl CaptureRequest {
+    pub fn with_camera_id(mut self, camera_id: impl Into<String>) -> Self {
+        self.camera_id = Some(camera_id.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CaptureStillReceipt {
     pub bytes: usize,
     #[serde(rename = "cameraId")]
@@ -62,13 +135,20 @@ pub struct CaptureStillReceipt {
     pub mime_type: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-struct DecodeQrCodeRequest {
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DecodeQrCodeRequest {
     #[serde(rename = "imageDataUrl")]
-    image_data_url: Option<String>,
+    pub image_data_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+impl DecodeQrCodeRequest {
+    pub fn with_image_data_url(mut self, image_data_url: impl Into<String>) -> Self {
+        self.image_data_url = Some(image_data_url.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DecodeQrCodeReceipt {
     #[serde(rename = "codeCount")]
     pub code_count: usize,
@@ -149,7 +229,7 @@ impl CameraHostConfig {
         }
     }
 
-    fn list_cameras(&self) -> Result<Vec<CameraDevice>, String> {
+    fn list_cameras(&self) -> Result<Vec<CameraDevice>, CameraHostError> {
         match self.endpoint.as_deref() {
             Some(endpoint) => self.list_cameras_via_broker(endpoint),
             None if self.allow_mock => Ok(mock_cameras()),
@@ -157,7 +237,10 @@ impl CameraHostConfig {
         }
     }
 
-    fn capture_still(&self, request: CaptureStillRequest) -> Result<CaptureStillReceipt, String> {
+    fn capture_still(
+        &self,
+        request: CaptureRequest,
+    ) -> Result<CaptureStillReceipt, CameraHostError> {
         match self.endpoint.as_deref() {
             Some(endpoint) => self.capture_via_broker(endpoint, request),
             None if self.allow_mock => mock_capture(request.camera_id),
@@ -167,8 +250,8 @@ impl CameraHostConfig {
 
     fn capture_preview_frame(
         &self,
-        request: CaptureStillRequest,
-    ) -> Result<CaptureStillReceipt, String> {
+        request: CaptureRequest,
+    ) -> Result<CaptureStillReceipt, CameraHostError> {
         match self.endpoint.as_deref() {
             Some(endpoint) => self.capture_preview_via_broker(endpoint, request),
             None if self.allow_mock => mock_capture(request.camera_id),
@@ -176,7 +259,10 @@ impl CameraHostConfig {
         }
     }
 
-    fn list_cameras_via_broker(&self, endpoint: &str) -> Result<Vec<CameraDevice>, String> {
+    fn list_cameras_via_broker(
+        &self,
+        endpoint: &str,
+    ) -> Result<Vec<CameraDevice>, CameraHostError> {
         let response: BrokerListResponse = self.send(
             endpoint,
             BrokerRequest {
@@ -185,14 +271,18 @@ impl CameraHostConfig {
             },
         )?;
         if !response.ok {
-            return Err(response
-                .error
-                .unwrap_or_else(|| String::from("camera broker list failed")));
+            return Err(CameraHostError::unavailable(
+                response
+                    .error
+                    .unwrap_or_else(|| String::from("camera broker list failed")),
+            ));
         }
 
         if response.camera_ids.is_empty() {
             if response.cameras.is_empty() {
-                return Err(String::from("camera broker returned no camera descriptors"));
+                return Err(CameraHostError::no_camera(
+                    "camera broker returned no camera descriptors",
+                ));
             }
         }
 
@@ -202,16 +292,16 @@ impl CameraHostConfig {
     fn capture_via_broker(
         &self,
         endpoint: &str,
-        request: CaptureStillRequest,
-    ) -> Result<CaptureStillReceipt, String> {
+        request: CaptureRequest,
+    ) -> Result<CaptureStillReceipt, CameraHostError> {
         self.capture_frame_via_broker(endpoint, "capture", request)
     }
 
     fn capture_preview_via_broker(
         &self,
         endpoint: &str,
-        request: CaptureStillRequest,
-    ) -> Result<CaptureStillReceipt, String> {
+        request: CaptureRequest,
+    ) -> Result<CaptureStillReceipt, CameraHostError> {
         self.capture_frame_via_broker(endpoint, "preview", request)
     }
 
@@ -219,8 +309,8 @@ impl CameraHostConfig {
         &self,
         endpoint: &str,
         command: &'static str,
-        request: CaptureStillRequest,
-    ) -> Result<CaptureStillReceipt, String> {
+        request: CaptureRequest,
+    ) -> Result<CaptureStillReceipt, CameraHostError> {
         let response: BrokerCaptureResponse = self.send(
             endpoint,
             BrokerRequest {
@@ -229,14 +319,16 @@ impl CameraHostConfig {
             },
         )?;
         if !response.ok {
-            return Err(response
-                .error
-                .unwrap_or_else(|| format!("camera broker {command} failed")));
+            return Err(CameraHostError::unavailable(
+                response
+                    .error
+                    .unwrap_or_else(|| format!("camera broker {command} failed")),
+            ));
         }
 
-        let image_base64 = response
-            .image_base64
-            .ok_or_else(|| String::from("camera broker capture response missing imageBase64"))?;
+        let image_base64 = response.image_base64.ok_or_else(|| {
+            CameraHostError::other("camera broker capture response missing imageBase64")
+        })?;
         let mime_type = response
             .mime_type
             .filter(|value| !value.trim().is_empty())
@@ -262,44 +354,56 @@ impl CameraHostConfig {
         })
     }
 
-    fn send<Response>(&self, endpoint: &str, request: BrokerRequest<'_>) -> Result<Response, String>
+    fn send<Response>(
+        &self,
+        endpoint: &str,
+        request: BrokerRequest<'_>,
+    ) -> Result<Response, CameraHostError>
     where
         Response: for<'de> Deserialize<'de>,
     {
-        let mut addrs = endpoint
-            .to_socket_addrs()
-            .map_err(|error| format!("resolve camera endpoint {endpoint}: {error}"))?;
-        let address = addrs
-            .next()
-            .ok_or_else(|| format!("camera endpoint {endpoint} did not resolve"))?;
-        let mut stream = connect_with_retry(address, self.timeout)
-            .map_err(|error| format!("connect camera endpoint {endpoint}: {error}"))?;
+        let mut addrs = endpoint.to_socket_addrs().map_err(|error| {
+            CameraHostError::unavailable(format!("resolve camera endpoint {endpoint}: {error}"))
+        })?;
+        let address = addrs.next().ok_or_else(|| {
+            CameraHostError::unavailable(format!("camera endpoint {endpoint} did not resolve"))
+        })?;
+        let mut stream = connect_with_retry(address, self.timeout).map_err(|error| {
+            CameraHostError::unavailable(format!("connect camera endpoint {endpoint}: {error}"))
+        })?;
         stream
             .set_read_timeout(Some(self.timeout))
-            .map_err(|error| format!("set camera endpoint read timeout: {error}"))?;
+            .map_err(|error| {
+                CameraHostError::unavailable(format!("set camera endpoint read timeout: {error}"))
+            })?;
         stream
             .set_write_timeout(Some(self.timeout))
-            .map_err(|error| format!("set camera endpoint write timeout: {error}"))?;
+            .map_err(|error| {
+                CameraHostError::unavailable(format!("set camera endpoint write timeout: {error}"))
+            })?;
 
         let encoded = serde_json::to_string(&request)
-            .map_err(|error| format!("encode camera request: {error}"))?;
+            .map_err(|error| CameraHostError::other(format!("encode camera request: {error}")))?;
         writeln!(stream, "{encoded}")
             .and_then(|_| stream.flush())
-            .map_err(|error| format!("write camera request: {error}"))?;
+            .map_err(|error| {
+                CameraHostError::unavailable(format!("write camera request: {error}"))
+            })?;
 
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
-        let read = reader
-            .read_line(&mut line)
-            .map_err(|error| format!("read camera response: {error}"))?;
+        let read = reader.read_line(&mut line).map_err(|error| {
+            CameraHostError::unavailable(format!("read camera response: {error}"))
+        })?;
         if read == 0 {
-            return Err(String::from(
+            return Err(CameraHostError::unavailable(
                 "camera broker closed connection without a response",
             ));
         }
 
-        serde_json::from_str::<Response>(line.trim_end())
-            .map_err(|error| format!("decode camera response: {error}"))
+        serde_json::from_str::<Response>(line.trim_end()).map_err(|error| {
+            CameraHostError::unavailable(format!("decode camera response: {error}"))
+        })
     }
 }
 
@@ -345,48 +449,73 @@ fn parse_truthy_env(value: &str) -> bool {
     )
 }
 
-fn missing_camera_backend_error() -> String {
-    format!(
+fn missing_camera_backend_error() -> CameraHostError {
+    CameraHostError::backend_not_configured(format!(
         "camera backend not configured; set {CAMERA_ENDPOINT_ENV} for live capture or {CAMERA_ALLOW_MOCK_ENV}=1 for explicit mock mode"
-    )
+    ))
 }
 
+pub fn list_cameras() -> Result<Vec<CameraDevice>, CameraHostError> {
+    CameraHostConfig::from_env().list_cameras()
+}
+
+pub fn capture_still(request: CaptureRequest) -> Result<CaptureStillReceipt, CameraHostError> {
+    CameraHostConfig::from_env().capture_still(request)
+}
+
+pub fn capture_preview_frame(
+    request: CaptureRequest,
+) -> Result<CaptureStillReceipt, CameraHostError> {
+    CameraHostConfig::from_env().capture_preview_frame(request)
+}
+
+pub fn decode_qr_code(
+    request: DecodeQrCodeRequest,
+) -> Result<DecodeQrCodeReceipt, CameraHostError> {
+    decode_qr_code_request(request)
+}
+
+#[cfg(feature = "runtime-extension")]
 #[op2]
 #[serde]
 async fn op_runtime_camera_list_cameras() -> Result<Vec<CameraDevice>, JsErrorBox> {
-    tokio::task::spawn_blocking(|| CameraHostConfig::from_env().list_cameras())
+    tokio::task::spawn_blocking(list_cameras)
         .await
         .map_err(|error| JsErrorBox::generic(format!("camera.listCameras join: {error}")))?
-        .map_err(JsErrorBox::generic)
+        .map_err(|error| JsErrorBox::generic(error.to_string()))
 }
 
+#[cfg(feature = "runtime-extension")]
 #[op2]
 #[serde]
 async fn op_runtime_camera_capture_still(
-    #[serde] request: CaptureStillRequest,
+    #[serde] request: CaptureRequest,
 ) -> Result<CaptureStillReceipt, JsErrorBox> {
-    tokio::task::spawn_blocking(move || CameraHostConfig::from_env().capture_still(request))
+    tokio::task::spawn_blocking(move || capture_still(request))
         .await
         .map_err(|error| JsErrorBox::generic(format!("camera.captureStill join: {error}")))?
-        .map_err(JsErrorBox::generic)
+        .map_err(|error| JsErrorBox::generic(error.to_string()))
 }
 
+#[cfg(feature = "runtime-extension")]
 #[op2]
 #[serde]
 async fn op_runtime_camera_capture_preview_frame(
-    #[serde] request: CaptureStillRequest,
+    #[serde] request: CaptureRequest,
 ) -> Result<CaptureStillReceipt, JsErrorBox> {
-    tokio::task::spawn_blocking(move || CameraHostConfig::from_env().capture_preview_frame(request))
+    tokio::task::spawn_blocking(move || capture_preview_frame(request))
         .await
         .map_err(|error| JsErrorBox::generic(format!("camera.capturePreviewFrame join: {error}")))?
-        .map_err(JsErrorBox::generic)
+        .map_err(|error| JsErrorBox::generic(error.to_string()))
 }
 
+#[cfg(feature = "runtime-extension")]
 #[op2(fast)]
 fn op_runtime_camera_debug_log(#[string] message: String) {
     eprintln!("[shadow-runtime-camera] {message}");
 }
 
+#[cfg(feature = "runtime-extension")]
 #[op2]
 #[serde]
 async fn op_runtime_camera_decode_qr_code(
@@ -395,7 +524,7 @@ async fn op_runtime_camera_decode_qr_code(
     tokio::task::spawn_blocking(move || decode_qr_code(request))
         .await
         .map_err(|error| JsErrorBox::generic(format!("camera.decodeQrCode join: {error}")))?
-        .map_err(JsErrorBox::generic)
+        .map_err(|error| JsErrorBox::generic(error.to_string()))
 }
 
 fn label_for_camera_id(camera_id: &str) -> String {
@@ -472,7 +601,7 @@ fn mock_cameras() -> Vec<CameraDevice> {
     }]
 }
 
-fn mock_capture(camera_id: Option<String>) -> Result<CaptureStillReceipt, String> {
+fn mock_capture(camera_id: Option<String>) -> Result<CaptureStillReceipt, CameraHostError> {
     if let Some(payload) = env::var(CAMERA_MOCK_QR_PAYLOAD_ENV)
         .ok()
         .map(|value| value.trim().to_owned())
@@ -509,7 +638,7 @@ fn mock_capture(camera_id: Option<String>) -> Result<CaptureStillReceipt, String
 fn mock_qr_capture(
     camera_id: Option<String>,
     payload: &str,
-) -> Result<CaptureStillReceipt, String> {
+) -> Result<CaptureStillReceipt, CameraHostError> {
     let (image_data_url, bytes) = build_qr_png_data_url(payload)?;
     Ok(CaptureStillReceipt {
         bytes,
@@ -553,7 +682,7 @@ fn build_capture_image_data_url(
     mime_type: &str,
     display_rotation_degrees: u16,
     fallback_bytes: usize,
-) -> Result<(String, String, usize), String> {
+) -> Result<(String, String, usize), CameraHostError> {
     let normalized_rotation = normalize_rotation_degrees(display_rotation_degrees);
     if normalized_rotation == 0 {
         return Ok((
@@ -574,11 +703,12 @@ fn build_capture_image_data_url(
         }
     };
 
-    let image_bytes = BASE64_STANDARD
-        .decode(image_base64)
-        .map_err(|error| format!("decode captured image base64: {error}"))?;
-    let image = image::load_from_memory_with_format(&image_bytes, format)
-        .map_err(|error| format!("decode captured image: {error}"))?;
+    let image_bytes = BASE64_STANDARD.decode(image_base64).map_err(|error| {
+        CameraHostError::invalid_image_data(format!("decode captured image base64: {error}"))
+    })?;
+    let image = image::load_from_memory_with_format(&image_bytes, format).map_err(|error| {
+        CameraHostError::invalid_image_data(format!("decode captured image: {error}"))
+    })?;
     let rotated = match normalized_rotation {
         90 => image.rotate90(),
         180 => image.rotate180(),
@@ -589,7 +719,9 @@ fn build_capture_image_data_url(
     let mut encoded = Cursor::new(Vec::new());
     rotated
         .write_to(&mut encoded, ImageFormat::Png)
-        .map_err(|error| format!("encode rotated captured image: {error}"))?;
+        .map_err(|error| {
+            CameraHostError::other(format!("encode rotated captured image: {error}"))
+        })?;
     let output_bytes = encoded.into_inner();
     let output_mime = String::from("image/png");
 
@@ -603,9 +735,9 @@ fn build_capture_image_data_url(
     ))
 }
 
-fn build_qr_png_data_url(payload: &str) -> Result<(String, usize), String> {
+fn build_qr_png_data_url(payload: &str) -> Result<(String, usize), CameraHostError> {
     let qr = QrCode::encode_text(payload, QrCodeEcc::Medium)
-        .map_err(|error| format!("camera mock QR encode: {error:?}"))?;
+        .map_err(|error| CameraHostError::other(format!("camera mock QR encode: {error:?}")))?;
     let module_count = qr.size() as u32;
     let image_size = (module_count + MOCK_QR_BORDER_MODULES * 2) * MOCK_QR_MODULE_SCALE;
     let mut image = ImageBuffer::from_pixel(image_size, image_size, Luma([255_u8]));
@@ -628,7 +760,7 @@ fn build_qr_png_data_url(payload: &str) -> Result<(String, usize), String> {
     let mut encoded = Cursor::new(Vec::new());
     DynamicImage::ImageLuma8(image)
         .write_to(&mut encoded, ImageFormat::Png)
-        .map_err(|error| format!("camera mock QR encode png: {error}"))?;
+        .map_err(|error| CameraHostError::other(format!("camera mock QR encode png: {error}")))?;
     let output_bytes = encoded.into_inner();
     Ok((
         format!(
@@ -647,25 +779,32 @@ fn image_format_for_mime_type(mime_type: &str) -> Option<ImageFormat> {
     }
 }
 
-fn decode_qr_code(request: DecodeQrCodeRequest) -> Result<DecodeQrCodeReceipt, String> {
+fn decode_qr_code_request(
+    request: DecodeQrCodeRequest,
+) -> Result<DecodeQrCodeReceipt, CameraHostError> {
     let image_data_url = request
         .image_data_url
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| String::from("camera.decodeQrCode requires imageDataUrl"))?;
+        .ok_or_else(|| {
+            CameraHostError::invalid_image_data("camera.decodeQrCode requires imageDataUrl")
+        })?;
     decode_qr_code_from_image_data_url(image_data_url)
 }
 
-fn decode_qr_code_from_image_data_url(image_data_url: &str) -> Result<DecodeQrCodeReceipt, String> {
+fn decode_qr_code_from_image_data_url(
+    image_data_url: &str,
+) -> Result<DecodeQrCodeReceipt, CameraHostError> {
     let image_bytes = decode_image_data_url(image_data_url)?;
-    let image = image::load_from_memory(&image_bytes)
-        .map_err(|error| format!("camera.decodeQrCode decode image: {error}"))?;
+    let image = image::load_from_memory(&image_bytes).map_err(|error| {
+        CameraHostError::invalid_image_data(format!("camera.decodeQrCode decode image: {error}"))
+    })?;
     let mut prepared = rqrr::PreparedImage::prepare(image.to_luma8());
     let grids = prepared.detect_grids();
     let code_count = grids.len();
     if code_count == 0 {
-        return Err(String::from(
+        return Err(CameraHostError::qr_code_not_found(
             "camera.decodeQrCode found no QR code in captured image",
         ));
     }
@@ -684,26 +823,26 @@ fn decode_qr_code_from_image_data_url(image_data_url: &str) -> Result<DecodeQrCo
         }
     }
 
-    Err(format!(
+    Err(CameraHostError::qr_code_not_found(format!(
         "camera.decodeQrCode could not decode {} QR code{}: {}",
         code_count,
         if code_count == 1 { "" } else { "s" },
         errors.join("; "),
-    ))
+    )))
 }
 
-fn decode_image_data_url(image_data_url: &str) -> Result<Vec<u8>, String> {
-    let (header, payload) = image_data_url
-        .split_once(',')
-        .ok_or_else(|| String::from("camera.decodeQrCode imageDataUrl must be a data URL"))?;
+fn decode_image_data_url(image_data_url: &str) -> Result<Vec<u8>, CameraHostError> {
+    let (header, payload) = image_data_url.split_once(',').ok_or_else(|| {
+        CameraHostError::invalid_image_data("camera.decodeQrCode imageDataUrl must be a data URL")
+    })?;
     let normalized_header = header.to_ascii_lowercase();
     if !normalized_header.starts_with("data:image/") {
-        return Err(String::from(
+        return Err(CameraHostError::invalid_image_data(
             "camera.decodeQrCode imageDataUrl must contain image data",
         ));
     }
     if !normalized_header.contains(";base64") {
-        return Err(String::from(
+        return Err(CameraHostError::invalid_image_data(
             "camera.decodeQrCode imageDataUrl must be base64 encoded",
         ));
     }
@@ -712,9 +851,11 @@ fn decode_image_data_url(image_data_url: &str) -> Result<Vec<u8>, String> {
         .chars()
         .filter(|character| !character.is_ascii_whitespace())
         .collect::<String>();
-    BASE64_STANDARD
-        .decode(compact_payload)
-        .map_err(|error| format!("camera.decodeQrCode decode base64 image: {error}"))
+    BASE64_STANDARD.decode(compact_payload).map_err(|error| {
+        CameraHostError::invalid_image_data(format!(
+            "camera.decodeQrCode decode base64 image: {error}"
+        ))
+    })
 }
 
 fn normalize_rotation_degrees(rotation_degrees: u16) -> u16 {
@@ -727,6 +868,7 @@ fn normalize_rotation_degrees(rotation_degrees: u16) -> u16 {
     }
 }
 
+#[cfg(feature = "runtime-extension")]
 extension!(
     runtime_camera_host_extension,
     ops = [
@@ -740,6 +882,7 @@ extension!(
     esm = [dir "js", "bootstrap.js"],
 );
 
+#[cfg(feature = "runtime-extension")]
 pub fn init_extension() -> Extension {
     runtime_camera_host_extension::init()
 }
@@ -748,15 +891,33 @@ pub fn init_extension() -> Extension {
 mod tests {
     use super::{
         build_capture_image_data_url, build_qr_png_data_url,
-        camera_devices_from_broker_list_response, decode_image_data_url,
-        decode_qr_code_from_image_data_url, image_format_for_mime_type,
-        missing_camera_backend_error, normalize_rotation_degrees, parse_truthy_env,
-        BrokerCameraDevice, BrokerListResponse, BASE64_STANDARD, CAMERA_ALLOW_MOCK_ENV,
-        CAMERA_ENDPOINT_ENV,
+        camera_devices_from_broker_list_response, capture_still, decode_image_data_url,
+        decode_qr_code, decode_qr_code_from_image_data_url, image_format_for_mime_type,
+        list_cameras, missing_camera_backend_error, normalize_rotation_degrees, parse_truthy_env,
+        BrokerCameraDevice, BrokerListResponse, CameraHostErrorKind, CaptureRequest,
+        DecodeQrCodeRequest, BASE64_STANDARD, CAMERA_ALLOW_MOCK_ENV, CAMERA_ENDPOINT_ENV,
+        CAMERA_MOCK_QR_PAYLOAD_ENV, CAMERA_TIMEOUT_MS_ENV,
     };
     use base64::Engine as _;
     use image::{DynamicImage, ImageBuffer, ImageFormat, Luma, Rgb};
     use std::io::Cursor;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn clear_camera_env() {
+        for key in [
+            CAMERA_ALLOW_MOCK_ENV,
+            CAMERA_ENDPOINT_ENV,
+            CAMERA_MOCK_QR_PAYLOAD_ENV,
+            CAMERA_TIMEOUT_MS_ENV,
+        ] {
+            std::env::remove_var(key);
+        }
+    }
 
     fn sample_png_base64(width: u32, height: u32) -> String {
         let image = DynamicImage::ImageRgb8(ImageBuffer::from_fn(width, height, |x, _| {
@@ -822,8 +983,54 @@ mod tests {
     #[test]
     fn missing_camera_backend_error_mentions_required_envs() {
         let error = missing_camera_backend_error();
-        assert!(error.contains(CAMERA_ENDPOINT_ENV));
-        assert!(error.contains(CAMERA_ALLOW_MOCK_ENV));
+        assert_eq!(error.kind(), CameraHostErrorKind::BackendNotConfigured);
+        assert!(error.to_string().contains(CAMERA_ENDPOINT_ENV));
+        assert!(error.to_string().contains(CAMERA_ALLOW_MOCK_ENV));
+    }
+
+    #[test]
+    fn native_api_lists_mock_cameras_when_enabled() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_camera_env();
+        std::env::set_var(CAMERA_ALLOW_MOCK_ENV, "1");
+
+        let cameras = list_cameras().expect("mock cameras");
+        assert_eq!(cameras.len(), 1);
+        assert_eq!(cameras[0].id, "mock/rear/0");
+        assert_eq!(cameras[0].label, "Mock Rear Camera");
+        assert_eq!(cameras[0].lens_facing, "rear");
+    }
+
+    #[test]
+    fn native_api_captures_and_decodes_mock_qr_frames() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_camera_env();
+        std::env::set_var(CAMERA_ALLOW_MOCK_ENV, "1");
+        std::env::set_var(CAMERA_MOCK_QR_PAYLOAD_ENV, "shadow://camera-proof");
+
+        let capture = capture_still(CaptureRequest::default().with_camera_id("mock/front/1"))
+            .expect("mock qr capture");
+        assert_eq!(capture.camera_id, "mock/front/1");
+        assert!(capture.is_mock);
+        assert_eq!(capture.mime_type, "image/png");
+
+        let decoded = decode_qr_code(
+            DecodeQrCodeRequest::default().with_image_data_url(capture.image_data_url),
+        )
+        .expect("decode mock qr");
+        assert_eq!(decoded.payload, "shadow://camera-proof");
+        assert_eq!(decoded.code_count, 1);
+    }
+
+    #[test]
+    fn native_api_requires_an_explicit_backend() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_camera_env();
+
+        let error = list_cameras().unwrap_err();
+        assert_eq!(error.kind(), CameraHostErrorKind::BackendNotConfigured);
+        assert!(error.to_string().contains(CAMERA_ENDPOINT_ENV));
+        assert!(error.to_string().contains(CAMERA_ALLOW_MOCK_ENV));
     }
 
     #[test]
@@ -863,13 +1070,15 @@ mod tests {
     #[test]
     fn rejects_missing_qr_code() {
         let error = decode_qr_code_from_image_data_url(&sample_blank_png_data_url()).unwrap_err();
-        assert!(error.contains("found no QR code"));
+        assert_eq!(error.kind(), CameraHostErrorKind::QrCodeNotFound);
+        assert!(error.to_string().contains("found no QR code"));
     }
 
     #[test]
     fn rejects_non_image_data_urls() {
         let error = decode_image_data_url("data:text/plain;base64,SGVsbG8=").unwrap_err();
-        assert!(error.contains("image data"));
+        assert_eq!(error.kind(), CameraHostErrorKind::InvalidImageData);
+        assert!(error.to_string().contains("image data"));
     }
 
     #[test]

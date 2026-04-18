@@ -3,13 +3,17 @@ name = "runtime-camera-host"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+runtime-extension = ["dep:deno_core", "dep:deno_error", "dep:tokio"]
+
 [dependencies]
 base64.workspace = true
-deno_core = { workspace = true, features = ["include_icu_data"] }
-deno_error.workspace = true
-image.workspace = true
+deno_core = { workspace = true, features = ["include_icu_data"], optional = true }
+deno_error = { workspace = true, optional = true }
+image = { version = "=0.25.6", default-features = false, features = ["jpeg", "png"] }
 qrcodegen.workspace = true
 rqrr.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["rt"], optional = true }
