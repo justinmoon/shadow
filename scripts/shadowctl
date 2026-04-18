@@ -33,6 +33,7 @@ SUPPORTED_PIXEL_CI_SUITES = (
 )
 SUPPORTED_PIXEL_DEBUG_TOOLS = (
     "latency",
+    "boot-lab-flash-run",
     "boot-lab-oneshot",
 )
 SUPPORTED_MEDIA_ACTIONS = (
@@ -297,6 +298,25 @@ def pixel_debug_command(
     tool = args.tool
     if tool == "latency":
         return script_command("debug/pixel_touch_latency_probe.sh", target=target)
+    if tool == "boot-lab-flash-run":
+        command = [repo_root() / "scripts/pixel/pixel_boot_flash_run.sh"]
+        if args.image:
+            command.extend(["--image", args.image])
+        if args.slot:
+            command.extend(["--slot", args.slot])
+        if args.output:
+            command.extend(["--output", args.output])
+        if args.wait_ready is not None:
+            command.extend(["--wait-ready", str(args.wait_ready)])
+        if args.adb_timeout is not None:
+            command.extend(["--adb-timeout", str(args.adb_timeout)])
+        if args.boot_timeout is not None:
+            command.extend(["--boot-timeout", str(args.boot_timeout)])
+        if args.allow_active_slot:
+            command.append("--allow-active-slot")
+        if args.recover_after:
+            command.append("--recover-after")
+        return command, [("PIXEL_SERIAL", target.serial or target.id)]
     if tool == "boot-lab-oneshot":
         command: list[str | pathlib.Path] = [repo_root() / "scripts/pixel/pixel_boot_oneshot.sh"]
         if args.image:
@@ -1789,22 +1809,43 @@ def build_parser() -> argparse.ArgumentParser:
         parents=(target_parser,),
     )
     debug.add_argument("tool", choices=SUPPORTED_PIXEL_DEBUG_TOOLS)
-    debug.add_argument("--image", help="boot-lab-oneshot only: boot image to pass to fastboot boot.")
-    debug.add_argument("--output", help="boot-lab-oneshot only: host output dir for the run bundle.")
+    debug.add_argument(
+        "--image",
+        help="boot-lab-flash-run / boot-lab-oneshot only: boot image to use for the experiment.",
+    )
+    debug.add_argument(
+        "--slot",
+        choices=("inactive", "active", "a", "b"),
+        help="boot-lab-flash-run only: flash target slot. Defaults to inactive.",
+    )
+    debug.add_argument(
+        "--output",
+        help="boot-lab-flash-run / boot-lab-oneshot only: host output dir for the run bundle.",
+    )
     debug.add_argument(
         "--wait-ready",
         type=int,
-        help="boot-lab-oneshot only: collector wait time for device-side helper logs.",
+        help="boot-lab-flash-run / boot-lab-oneshot only: collector wait time for device-side helper logs.",
     )
     debug.add_argument(
         "--adb-timeout",
         type=int,
-        help="boot-lab-oneshot only: seconds to wait for adb after fastboot boot.",
+        help="boot-lab-flash-run / boot-lab-oneshot only: seconds to wait for adb after boot.",
     )
     debug.add_argument(
         "--boot-timeout",
         type=int,
-        help="boot-lab-oneshot only: seconds to wait for sys.boot_completed before collecting.",
+        help="boot-lab-flash-run / boot-lab-oneshot only: seconds to wait for sys.boot_completed before collecting.",
+    )
+    debug.add_argument(
+        "--allow-active-slot",
+        action="store_true",
+        help="boot-lab-flash-run only: allow overwriting the currently running slot.",
+    )
+    debug.add_argument(
+        "--recover-after",
+        action="store_true",
+        help="boot-lab-flash-run only: recover the known-good slot after collection or failure.",
     )
     debug.add_argument(
         "--no-wait-boot-completed",

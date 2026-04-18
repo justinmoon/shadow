@@ -3,7 +3,7 @@ scripts/agent-brief	public	Agent context snapshot required by AGENTS.md.
 scripts/ci/app_metadata_manifest_smoke.sh	ci	Regression smoke for manifest profile filtering and uniqueness validation.
 scripts/ci/cpio_edit_smoke.sh	ci	Fast smoke for Android ramdisk cpio extraction and patch semantics.
 scripts/ci/check_script_inventory.py	ci	Pre-commit taxonomy gate for every file under scripts/.
-scripts/ci/pixel_boot_tooling_smoke.sh	ci	Hermetic smoke for shared stock-boot resolution and boot-lab oneshot dry-run semantics.
+scripts/ci/pixel_boot_tooling_smoke.sh	ci	Hermetic smoke for shared stock-boot resolution plus boot-lab oneshot and flash-run dry-run semantics.
 scripts/ci/pixel_boot_collect_logs_smoke.sh	ci	Hermetic smoke for boot-log collection success and wrapper-only fallback semantics.
 scripts/ci/pixel_boot_safety_smoke.sh	ci	Private smoke for experimental boot-script safety rails and slot defaults.
 scripts/ci/required_vm_smoke.sh	ci	Required branch-gate VM smoke wrapper with logical-input reuse.
@@ -51,6 +51,7 @@ scripts/pixel/pixel_boot_build.sh	pixel	Private sunfish boot image wrapper/repac
 scripts/pixel/pixel_boot_build_log_probe.sh	pixel	Private sunfish boot image builder that injects a log-only boot helper.
 scripts/pixel/pixel_boot_collect_logs.sh	pixel	Private host-side collector for experimental Shadow boot helper logs.
 scripts/pixel/pixel_boot_flash.sh	pixel	Private sunfish custom boot image flash helper for the active slot.
+scripts/pixel/pixel_boot_flash_run.sh	pixel	Private flashed-slot boot-lab runner that composes flash, collect, and optional recovery.
 scripts/pixel/pixel_boot_oneshot.sh	pixel	Private one-shot boot-lab delegate behind sc debug boot-lab-oneshot.
 scripts/pixel/pixel_boot_recover.sh	pixel	Private sunfish recovery helper that switches back to the known-good slot after an experimental boot.
 scripts/pixel/pixel_boot_restore.sh	pixel	Private sunfish stock boot image rollback helper.

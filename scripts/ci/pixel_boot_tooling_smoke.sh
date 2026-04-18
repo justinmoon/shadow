@@ -10,6 +10,7 @@ LOCAL_BOOT="$TMP_DIR/local-boot.img"
 SHARED_BOOT="$TMP_DIR/shared-boot.img"
 PROBE_IMAGE="$TMP_DIR/probe.img"
 ONESHOT_OUTPUT="$TMP_DIR/oneshot-output"
+FLASH_RUN_OUTPUT="$TMP_DIR/flash-run-output"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -125,6 +126,39 @@ assert_contains "$oneshot_output" "wait_boot_completed=false"
 
 if [[ -e "$ONESHOT_OUTPUT" ]]; then
   echo "pixel_boot_tooling_smoke: dry-run should not create the output dir" >&2
+  exit 1
+fi
+
+flash_run_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 PIXEL_SERIAL=TESTSERIAL \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_flash_run.sh" \
+      --dry-run \
+      --image "$PROBE_IMAGE" \
+      --slot inactive \
+      --output "$FLASH_RUN_OUTPUT" \
+      --wait-ready 30 \
+      --adb-timeout 45 \
+      --boot-timeout 60 \
+      --allow-active-slot \
+      --recover-after
+)"
+
+assert_contains "$flash_run_output" "pixel_boot_flash_run: dry-run"
+assert_contains "$flash_run_output" "serial=TESTSERIAL"
+assert_contains "$flash_run_output" "image=$PROBE_IMAGE"
+assert_contains "$flash_run_output" "requested_slot=inactive"
+assert_contains "$flash_run_output" "output_dir=$FLASH_RUN_OUTPUT"
+assert_contains "$flash_run_output" "metadata_path=$FLASH_RUN_OUTPUT/boot-action.json"
+assert_contains "$flash_run_output" "collect_output_dir=$FLASH_RUN_OUTPUT/collect"
+assert_contains "$flash_run_output" "wait_ready_secs=30"
+assert_contains "$flash_run_output" "adb_timeout_secs=45"
+assert_contains "$flash_run_output" "boot_timeout_secs=60"
+assert_contains "$flash_run_output" "allow_active_slot=true"
+assert_contains "$flash_run_output" "recover_after=true"
+assert_contains "$flash_run_output" "activate_target=true"
+
+if [[ -e "$FLASH_RUN_OUTPUT" ]]; then
+  echo "pixel_boot_tooling_smoke: flash-run dry-run should not create the output dir" >&2
   exit 1
 fi
 

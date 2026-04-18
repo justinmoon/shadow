@@ -319,6 +319,21 @@ check_output_case \
   "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL latency
 
 check_output_case \
+  shadowctl_pixel_debug_boot_lab_flash_run \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --image /tmp/probe.img --slot inactive --output /tmp/flash-out --wait-ready 30 --adb-timeout 45 --boot-timeout 60 --allow-active-slot --recover-after' "$SCRIPT_DIR/pixel/pixel_boot_flash_run.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL boot-lab-flash-run \
+    --image /tmp/probe.img \
+    --slot inactive \
+    --output /tmp/flash-out \
+    --wait-ready 30 \
+    --adb-timeout 45 \
+    --boot-timeout 60 \
+    --allow-active-slot \
+    --recover-after
+
+check_output_case \
   shadowctl_pixel_debug_boot_lab_oneshot \
   0 \
   "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --image /tmp/probe.img --output /tmp/boot-out --wait-ready 30 --adb-timeout 45 --boot-timeout 60 --no-wait-boot-completed' "$SCRIPT_DIR/pixel/pixel_boot_oneshot.sh")" \

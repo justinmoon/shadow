@@ -80,7 +80,9 @@ Related docs:
 - The shared cross-worktree cache is intentionally narrow: only the immutable stock `boot.img` falls back through the git common-dir at `build/shared/pixel/root/boot.img`. Custom boot images, run bundles, and `last-action.json` stay worktree-local.
 - `sc -t <serial> debug boot-lab-oneshot` now stays as a thin private delegator into `scripts/pixel/pixel_boot_oneshot.sh` for the fast `fastboot boot` plus collect loop. It does not change the public `just` surface.
 - `pixel_boot_oneshot.sh` writes a run bundle under `build/pixel/boot/oneshot/<timestamp>/` with a local `boot-action.json`, collector output, and a truthful `status.json`.
-- `scripts/ci/pixel_boot_tooling_smoke.sh` now locks the shared-stock-boot and oneshot dry-run contracts into `pre-commit`, and `scripts/ci/operator_cli_smoke.sh` covers the `shadowctl` delegation path.
+- `sc -t <serial> debug boot-lab-flash-run` now stays as the flashed-slot counterpart: it composes guarded flash, automatic target-slot activation, log collection, and optional inactive-slot recovery into one private run bundle.
+- `pixel_boot_flash.sh` now accepts `PIXEL_BOOT_METADATA_PATH`, so higher-level private runners can keep flash metadata inside a per-run bundle instead of clobbering the worktree-local default.
+- `scripts/ci/pixel_boot_tooling_smoke.sh` now locks the shared-stock-boot plus oneshot and flash-run dry-run contracts into `pre-commit`, and `scripts/ci/operator_cli_smoke.sh` covers both `shadowctl` delegation paths.
 - Tooling rule for later seams: prefer operator-grade helpers when they remove repeated manual steps, but keep them private, narrow, and evidence-first. Avoid “tooling” that merely hides uncertainty or bundles unrelated experiments together.
 - `rust/init-wrapper/Cargo.toml` is now standalone enough for `cargo check --manifest-path rust/init-wrapper/Cargo.toml`, and `just pre-commit` now compiles that crate directly instead of only relying on host-side boot-image builds.
 - The cached stock `boot.img` can now be unpacked, wrapped, and reflashed locally. Live device validation still remains before the flash-loop milestone can flip fully green.

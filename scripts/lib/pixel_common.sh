@@ -53,6 +53,10 @@ pixel_boot_logs_dir() {
   printf '%s/logs\n' "$(pixel_boot_dir)"
 }
 
+pixel_boot_flash_runs_dir() {
+  printf '%s/flash-run\n' "$(pixel_boot_dir)"
+}
+
 pixel_boot_device_log_root() {
   printf '%s\n' "${PIXEL_BOOT_DEVICE_LOG_ROOT:-/data/local/tmp/shadow-boot}"
 }

@@ -10,6 +10,7 @@ IMAGE_PATH="${PIXEL_BOOT_FLASH_IMAGE:-$(pixel_boot_custom_boot_img)}"
 ADB_TIMEOUT_SECS="${PIXEL_BOOT_FLASH_ADB_TIMEOUT_SECS:-180}"
 BOOT_TIMEOUT_SECS="${PIXEL_BOOT_FLASH_BOOT_TIMEOUT_SECS:-240}"
 REQUESTED_SLOT="${PIXEL_BOOT_FLASH_SLOT:-inactive}"
+METADATA_PATH="${PIXEL_BOOT_METADATA_PATH:-$(pixel_boot_last_action_json)}"
 EXPERIMENTAL_ACK=0
 ALLOW_ACTIVE_SLOT=0
 ACTIVATE_TARGET=0
@@ -133,7 +134,6 @@ EOF
 fi
 
 boot_partition="$(pixel_boot_partition_for_slot_letter "$target_slot")"
-metadata_path="$(pixel_boot_last_action_json)"
 
 if [[ "$DRY_RUN" == "1" ]]; then
   cat <<EOF
@@ -147,7 +147,7 @@ target_partition=$boot_partition
 activate_target=$(bool_word "$ACTIVATE_TARGET")
 reboot=$(bool_word "$REBOOT_AFTER_FLASH")
 current_magisk_lane_preserved=$(if [[ "$target_slot" != "$current_slot" && "$ACTIVATE_TARGET" != "1" ]]; then printf true; else printf false; fi)
-metadata_path=$metadata_path
+metadata_path=$METADATA_PATH
 EOF
   exit 0
 fi
@@ -183,7 +183,7 @@ if [[ "$ACTIVATE_TARGET" == "1" && "$target_slot" != "$current_slot" ]]; then
 fi
 
 pixel_write_status_json \
-  "$metadata_path" \
+  "$METADATA_PATH" \
   kind=boot_flash \
   image="$IMAGE_PATH" \
   current_slot="$current_slot" \
@@ -195,7 +195,7 @@ pixel_write_status_json \
 
 if [[ "$REBOOT_AFTER_FLASH" != "1" ]]; then
   printf 'Leaving %s in fastboot with slot %s staged.\n' "$serial" "$target_slot"
-  printf 'Metadata: %s\n' "$metadata_path"
+  printf 'Metadata: %s\n' "$METADATA_PATH"
   exit 0
 fi
 
@@ -204,10 +204,10 @@ pixel_wait_for_adb "$serial" "$ADB_TIMEOUT_SECS"
 pixel_wait_for_boot_completed "$serial" "$BOOT_TIMEOUT_SECS"
 
 printf 'Boot image flash completed on %s\n' "$serial"
-printf 'Metadata: %s\n' "$metadata_path"
+printf 'Metadata: %s\n' "$METADATA_PATH"
 cat <<EOF
 Next steps:
-  inspect the staged slot metadata in $metadata_path
+  inspect the staged slot metadata in $METADATA_PATH
   if you only staged the inactive slot, the working Magisk lane should still be on slot $current_slot
   if you activated the probe slot, recover the known-good slot with:
     PIXEL_SERIAL=$serial scripts/pixel/pixel_boot_recover.sh
