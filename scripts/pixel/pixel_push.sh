@@ -56,8 +56,11 @@ json_manifest_string_field_from_file() {
 import json
 import sys
 
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    print(json.load(handle).get(sys.argv[2], ""))
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        print(json.load(handle).get(sys.argv[2], ""))
+except (FileNotFoundError, json.JSONDecodeError):
+    print("")
 PY
 }
 
@@ -304,8 +307,11 @@ json_manifest_int_field_from_file() {
 import json
 import sys
 
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    value = json.load(handle).get(sys.argv[2], 0)
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        value = json.load(handle).get(sys.argv[2], 0)
+except (FileNotFoundError, json.JSONDecodeError):
+    value = 0
 print(int(value))
 PY
 }
@@ -508,11 +514,11 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
 
       pixel_push_root_shell "umount -l '$runtime_linux_dir/etc' >/dev/null 2>&1 || true"
       if (( runtime_sync_full_replace == 1 )); then
-        pixel_push_adb shell "rm -rf '$runtime_linux_dir' && mkdir -p '$runtime_linux_dir'"
+        pixel_push_root_shell "rm -rf '$runtime_linux_dir' && mkdir -p '$runtime_linux_dir' && chown shell:shell '$runtime_linux_dir' && chmod 0755 '$runtime_linux_dir'"
       else
-        pixel_push_adb shell "mkdir -p '$runtime_linux_dir' && rm -f '$runtime_linux_dir/.bundle-manifest.json'"
+        pixel_push_root_shell "mkdir -p '$runtime_linux_dir' && chown shell:shell '$runtime_linux_dir' && chmod 0755 '$runtime_linux_dir' && rm -f '$runtime_linux_dir/.bundle-manifest.json'"
         if (( runtime_sync_reset_path_count > 0 )); then
-          pixel_push_adb shell "while IFS= read -r rel; do [ -n \"\$rel\" ] || continue; rm -rf '$runtime_linux_dir'/\"\$rel\"; done" \
+          pixel_push_root_shell "while IFS= read -r rel; do [ -n \"\$rel\" ] || continue; rm -rf '$runtime_linux_dir'/\"\$rel\"; done" \
             <"$runtime_sync_reset_paths_path"
         fi
       fi
