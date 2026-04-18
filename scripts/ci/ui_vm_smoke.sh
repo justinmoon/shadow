@@ -19,6 +19,8 @@ UI_VM_PREP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_PREP_TIMEOUT:-900}"
 # is ready. Keep the required pre-merge smoke tolerant of that path.
 UI_VM_READY_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_READY_TIMEOUT:-1200}"
 UI_VM_APP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_APP_TIMEOUT:-90}"
+UI_VM_CONTROL_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_CONTROL_TIMEOUT:-20}"
+UI_VM_STOP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_STOP_TIMEOUT:-20}"
 ui_vm_run_pid=""
 prepared_inputs_path="${SHADOW_UI_VM_PREPARED_INPUTS:-}"
 
@@ -42,14 +44,59 @@ if [[ -z "$prepared_inputs_path" ]]; then
   prepared_inputs_path="$(vm_smoke_inputs_path "$REPO_ROOT")"
 fi
 
+run_with_timeout() {
+  local timeout_secs="$1"
+  shift
+
+  COMMAND_TIMEOUT_SECS="$timeout_secs" python3 - "$@" <<'PY'
+import os
+import subprocess
+import sys
+
+timeout = float(os.environ["COMMAND_TIMEOUT_SECS"])
+cmd = sys.argv[1:]
+
+try:
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+except subprocess.TimeoutExpired:
+    joined = " ".join(cmd)
+    sys.stderr.write(
+        f"vm-smoke: command timed out after {timeout:g}s: {joined}\n"
+    )
+    raise SystemExit(124)
+
+sys.stdout.write(result.stdout)
+sys.stderr.write(result.stderr)
+raise SystemExit(result.returncode)
+PY
+}
+
+run_shadowctl() {
+  run_with_timeout "$UI_VM_CONTROL_TIMEOUT_SECS" "$SCRIPT_DIR/shadowctl" "$@"
+}
+
+run_vm_stop() {
+  run_with_timeout "$UI_VM_STOP_TIMEOUT_SECS" "$SCRIPT_DIR/vm/ui_vm_stop.sh"
+}
+
 wait_for_open_state() {
   local app_id="$1"
   local label="$2"
   local deadline=$((SECONDS + UI_VM_APP_TIMEOUT_SECS))
   local state_json=""
+  local probe_status=0
 
   while true; do
-    state_json="$("$SCRIPT_DIR/shadowctl" state -t vm --json)"
+    if ! state_json="$(run_shadowctl state -t vm --json)"; then
+      probe_status=$?
+      if (( SECONDS >= deadline )); then
+        echo "vm-smoke: timed out waiting for ${label}" >&2
+        echo "vm-smoke: state probe failed with status ${probe_status}" >&2
+        return 1
+      fi
+      sleep 1
+      continue
+    fi
     if STATE_JSON="$state_json" APP_ID="$app_id" python3 - <<'PY'
 import json
 import os
@@ -85,9 +132,19 @@ wait_for_home_state() {
   local label="$2"
   local deadline=$((SECONDS + UI_VM_APP_TIMEOUT_SECS))
   local state_json=""
+  local probe_status=0
 
   while true; do
-    state_json="$("$SCRIPT_DIR/shadowctl" state -t vm --json)"
+    if ! state_json="$(run_shadowctl state -t vm --json)"; then
+      probe_status=$?
+      if (( SECONDS >= deadline )); then
+        echo "vm-smoke: timed out waiting for ${label}" >&2
+        echo "vm-smoke: state probe failed with status ${probe_status}" >&2
+        return 1
+      fi
+      sleep 1
+      continue
+    fi
     if STATE_JSON="$state_json" APP_ID="$app_id" python3 - <<'PY'
 import json
 import os
@@ -125,25 +182,26 @@ dump_failure_context() {
   fi
 
   printf '\n== vm doctor ==\n' >&2
-  "$SCRIPT_DIR/shadowctl" doctor -t vm >&2 || true
+  run_shadowctl doctor -t vm >&2 || true
 
   printf '\n== vm logs ==\n' >&2
-  "$SCRIPT_DIR/shadowctl" logs -t vm --lines 200 >&2 || true
+  run_shadowctl logs -t vm --lines 200 >&2 || true
 
   printf '\n== vm journal ==\n' >&2
-  "$SCRIPT_DIR/shadowctl" journal -t vm --lines 120 >&2 || true
+  run_shadowctl journal -t vm --lines 120 >&2 || true
 }
 
 finish() {
   local status="$1"
 
   if (( status != 0 )); then
-    "$SCRIPT_DIR/shadowctl" screenshot -t vm "$SHOT_PATH" >/dev/null 2>&1 || true
+    run_shadowctl screenshot -t vm "$SHOT_PATH" >/dev/null 2>&1 || true
     dump_failure_context
   fi
 
-  "$SCRIPT_DIR/vm/ui_vm_stop.sh" >/dev/null 2>&1 || true
+  run_vm_stop >/dev/null 2>&1 || true
   if [[ -n "$ui_vm_run_pid" ]]; then
+    kill "$ui_vm_run_pid" >/dev/null 2>&1 || true
     wait "$ui_vm_run_pid" 2>/dev/null || true
   fi
 }
@@ -152,7 +210,7 @@ trap 'status=$?; finish "$status"; exit "$status"' EXIT
 
 mkdir -p "$LOG_DIR"
 : >"$RUN_LOG"
-"$SCRIPT_DIR/vm/ui_vm_stop.sh" >/dev/null 2>&1 || true
+run_vm_stop >/dev/null 2>&1 || true
 # The branch gate should prove a clean boot/session lifecycle, not inherit
 # whichever apps happened to be warm in the previous VM run.
 rm -f "$VM_STATE_IMAGE_PATH"
@@ -275,51 +333,51 @@ for app_id in sorted(required_apps):
 PY
 
 echo "vm-smoke: open timeline"
-"$SCRIPT_DIR/shadowctl" open timeline -t vm >/dev/null
+run_shadowctl open timeline -t vm >/dev/null
 state_after_timeline_open="$(wait_for_open_state timeline "timeline open")"
 
 echo "vm-smoke: home timeline"
-"$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
+run_shadowctl home -t vm >/dev/null
 state_after_timeline_home="$(wait_for_home_state timeline "timeline home")"
 
 echo "vm-smoke: reopen timeline"
-"$SCRIPT_DIR/shadowctl" open timeline -t vm >/dev/null
+run_shadowctl open timeline -t vm >/dev/null
 state_after_timeline_reopen="$(wait_for_open_state timeline "timeline reopen")"
 
 echo "vm-smoke: home timeline again"
-"$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
+run_shadowctl home -t vm >/dev/null
 wait_for_home_state timeline "timeline second home" >/dev/null
 
 echo "vm-smoke: open cashu"
-"$SCRIPT_DIR/shadowctl" open cashu -t vm >/dev/null
+run_shadowctl open cashu -t vm >/dev/null
 state_after_cashu_open="$(wait_for_open_state cashu "cashu open")"
 
 echo "vm-smoke: home cashu"
-"$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
+run_shadowctl home -t vm >/dev/null
 state_after_cashu_home="$(wait_for_home_state cashu "cashu home")"
 
 echo "vm-smoke: reopen cashu"
-"$SCRIPT_DIR/shadowctl" open cashu -t vm >/dev/null
+run_shadowctl open cashu -t vm >/dev/null
 state_after_cashu_reopen="$(wait_for_open_state cashu "cashu reopen")"
 
 echo "vm-smoke: home cashu again"
-"$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
+run_shadowctl home -t vm >/dev/null
 wait_for_home_state cashu "cashu second home" >/dev/null
 
 echo "vm-smoke: open camera"
-"$SCRIPT_DIR/shadowctl" open camera -t vm >/dev/null
+run_shadowctl open camera -t vm >/dev/null
 state_after_camera_open="$(wait_for_open_state camera "camera open")"
 
 echo "vm-smoke: home camera"
-"$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
+run_shadowctl home -t vm >/dev/null
 state_after_camera_home="$(wait_for_home_state camera "camera home")"
 
 echo "vm-smoke: open podcast"
-"$SCRIPT_DIR/shadowctl" open podcast -t vm >/dev/null
+run_shadowctl open podcast -t vm >/dev/null
 state_after_podcast_open="$(wait_for_open_state podcast "podcast open")"
 
 echo "vm-smoke: screenshot"
-"$SCRIPT_DIR/shadowctl" screenshot -t vm "$SHOT_PATH" >/dev/null
+run_shadowctl screenshot -t vm "$SHOT_PATH" >/dev/null
 
 STATE_AFTER_TIMELINE_OPEN="$state_after_timeline_open" \
 STATE_AFTER_TIMELINE_HOME="$state_after_timeline_home" \
