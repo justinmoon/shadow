@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=./pixel_common.sh
+source "$SCRIPT_DIR/lib/pixel_common.sh"
+ensure_bootimg_shell "$@"
+
+IMAGE_PATH="${PIXEL_BOOT_RESTORE_IMAGE:-$(pixel_root_stock_boot_img)}"
+ADB_TIMEOUT_SECS="${PIXEL_BOOT_RESTORE_ADB_TIMEOUT_SECS:-180}"
+BOOT_TIMEOUT_SECS="${PIXEL_BOOT_RESTORE_BOOT_TIMEOUT_SECS:-240}"
+REQUESTED_SLOT="${PIXEL_BOOT_RESTORE_SLOT:-}"
+ACTIVATE_TARGET=0
+REBOOT_AFTER_FLASH=1
+DRY_RUN=0
+serial=""
+current_slot=""
+target_slot=""
+boot_partition=""
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/pixel/pixel_boot_restore.sh --slot current|inactive|a|b [--image PATH]
+                                          [--activate-target] [--no-reboot] [--dry-run]
+
+Restore a stock or known-good boot image onto an explicit slot.
+
+Safety rail:
+  --slot is required so the script never silently overwrites whichever slot happens to be convenient.
+EOF
+}
+
+resolve_target_slot_letter() {
+  local requested_slot current_slot
+  requested_slot="$1"
+  current_slot="$2"
+
+  case "$requested_slot" in
+    current)
+      printf '%s\n' "$current_slot"
+      ;;
+    inactive)
+      pixel_other_slot_letter "$current_slot"
+      ;;
+    a|b)
+      printf '%s\n' "$requested_slot"
+      ;;
+    *)
+      echo "pixel_boot_restore: unsupported --slot $requested_slot; expected current, inactive, a, or b" >&2
+      exit 1
+      ;;
+  esac
+}
+
+bool_word() {
+  if [[ "$1" == "1" ]]; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --image)
+      IMAGE_PATH="${2:?missing value for --image}"
+      shift 2
+      ;;
+    --slot)
+      REQUESTED_SLOT="${2:?missing value for --slot}"
+      shift 2
+      ;;
+    --activate-target)
+      ACTIVATE_TARGET=1
+      shift
+      ;;
+    --no-reboot)
+      REBOOT_AFTER_FLASH=0
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "pixel_boot_restore: unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+[[ -f "$IMAGE_PATH" ]] || {
+  cat <<EOF >&2
+pixel_boot_restore: image not found: $IMAGE_PATH
+
+Run 'sc root-prep' first to cache the stock sunfish boot.img.
+EOF
+  exit 1
+}
+
+if [[ -z "$REQUESTED_SLOT" ]]; then
+  cat <<'EOF' >&2
+pixel_boot_restore: --slot is required.
+
+Examples:
+  scripts/pixel/pixel_boot_restore.sh --slot inactive
+  scripts/pixel/pixel_boot_restore.sh --slot current
+EOF
+  exit 1
+fi
+
+if serial="$(pixel_resolve_serial 2>/dev/null)"; then
+  current_slot="$(pixel_current_slot_letter_from_adb "$serial")"
+  target_slot="$(resolve_target_slot_letter "$REQUESTED_SLOT" "$current_slot")"
+  boot_partition="$(pixel_boot_partition_for_slot_letter "$target_slot")"
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    cat <<EOF
+pixel_boot_restore: dry-run
+transport=adb
+serial=$serial
+image=$IMAGE_PATH
+current_slot=$current_slot
+target_slot=$target_slot
+target_partition=$boot_partition
+activate_target=$(bool_word "$ACTIVATE_TARGET")
+reboot=$(bool_word "$REBOOT_AFTER_FLASH")
+EOF
+    exit 0
+  fi
+
+  pixel_adb "$serial" reboot bootloader
+  pixel_wait_for_fastboot "$serial" 60
+  bootloader_slot="$(pixel_fastboot_current_slot "$serial")"
+  if [[ "$bootloader_slot" != "$current_slot" ]]; then
+    printf 'Bootloader reports current slot %s; recomputing target from requested slot %s\n' "$bootloader_slot" "$REQUESTED_SLOT"
+    current_slot="$bootloader_slot"
+    target_slot="$(resolve_target_slot_letter "$REQUESTED_SLOT" "$current_slot")"
+    boot_partition="$(pixel_boot_partition_for_slot_letter "$target_slot")"
+  fi
+else
+  serial="$(pixel_resolve_fastboot_serial)"
+  current_slot="$(pixel_fastboot_current_slot "$serial")"
+  target_slot="$(resolve_target_slot_letter "$REQUESTED_SLOT" "$current_slot")"
+  boot_partition="$(pixel_boot_partition_for_slot_letter "$target_slot")"
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    cat <<EOF
+pixel_boot_restore: dry-run
+transport=fastboot
+serial=$serial
+image=$IMAGE_PATH
+current_slot=$current_slot
+target_slot=$target_slot
+target_partition=$boot_partition
+activate_target=$(bool_word "$ACTIVATE_TARGET")
+reboot=$(bool_word "$REBOOT_AFTER_FLASH")
+EOF
+    exit 0
+  fi
+fi
+
+printf 'Restoring %s to %s on %s\n' "$IMAGE_PATH" "$boot_partition" "$serial"
+printf 'Current slot: %s\n' "$current_slot"
+printf 'Target slot: %s\n' "$target_slot"
+
+pixel_fastboot "$serial" flash "$boot_partition" "$IMAGE_PATH"
+
+if [[ "$ACTIVATE_TARGET" == "1" && "$target_slot" != "$current_slot" ]]; then
+  printf 'Setting active slot to %s\n' "$target_slot"
+  pixel_fastboot "$serial" set_active "$target_slot"
+fi
+
+metadata_path="$(pixel_boot_last_action_json)"
+pixel_write_status_json \
+  "$metadata_path" \
+  kind=boot_restore \
+  image="$IMAGE_PATH" \
+  current_slot="$current_slot" \
+  target_slot="$target_slot" \
+  activate_target="$(bool_word "$ACTIVATE_TARGET")" \
+  reboot="$(bool_word "$REBOOT_AFTER_FLASH")"
+
+if [[ "$REBOOT_AFTER_FLASH" != "1" ]]; then
+  printf 'Leaving %s in fastboot after restoring slot %s.\n' "$serial" "$target_slot"
+  printf 'Metadata: %s\n' "$metadata_path"
+  exit 0
+fi
+
+pixel_fastboot "$serial" reboot
+pixel_wait_for_adb "$serial" "$ADB_TIMEOUT_SECS"
+pixel_wait_for_boot_completed "$serial" "$BOOT_TIMEOUT_SECS"
+
+printf 'Restored boot image and Android booted on %s\n' "$serial"
+printf 'Metadata: %s\n' "$metadata_path"

@@ -262,6 +262,17 @@
           sha256 = rustyV8ReleaseShas.${cross.stdenv.hostPlatform.system};
           meta.sourceProvenance = with lib.sourceTypes; [ binaryNativeCode ];
         };
+      mkInitWrapperFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "init-wrapper";
+          version = "0.1.0";
+          src = ./rust/init-wrapper;
+          cargoLock.lockFile = ./rust/init-wrapper/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
+        };
       mkShadowSessionFor = cross:
         cross.rustPlatform.buildRustPackage {
           pname = "shadow-session";
@@ -1018,6 +1029,7 @@
             mkShadowRuntimeHostFor pkgs.pkgsCross.gnu64;
           drm-rect = mkDrmRect pkgs;
           drm-rect-device = mkDrmRectFor pkgs.pkgsCross.aarch64-multiplatform-musl;
+          init-wrapper-device = mkInitWrapperFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           shadow-session = mkShadowSession pkgs;
           shadow-session-device = mkShadowSessionFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           default = mkShadowSession pkgs;

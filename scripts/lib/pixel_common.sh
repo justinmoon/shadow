@@ -17,6 +17,22 @@ pixel_root_dir() {
   printf '%s/root\n' "$(pixel_dir)"
 }
 
+pixel_boot_dir() {
+  printf '%s/boot\n' "$(pixel_dir)"
+}
+
+pixel_boot_unpacks_dir() {
+  printf '%s/unpack\n' "$(pixel_boot_dir)"
+}
+
+pixel_boot_init_wrapper_bin() {
+  printf '%s/init-wrapper\n' "$(pixel_boot_dir)"
+}
+
+pixel_boot_custom_boot_img() {
+  printf '%s/shadow-boot-wrapper.img\n' "$(pixel_boot_dir)"
+}
+
 pixel_runs_dir() {
   printf '%s/runs\n' "$(pixel_dir)"
 }
@@ -31,6 +47,10 @@ pixel_timestamp() {
 
 pixel_connected_serials() {
   adb devices | awk 'NR > 1 && $2 == "device" { print $1 }'
+}
+
+pixel_connected_fastboot_serials() {
+  fastboot devices | awk '$2 == "fastboot" { print $1 }'
 }
 
 pixel_connected_sideload_serials() {
@@ -208,6 +228,40 @@ pixel_resolve_sideload_serial() {
       ;;
     *)
       echo "pixel: multiple adb sideload devices detected; set PIXEL_SERIAL" >&2
+      printf '  %s\n' "${serials[@]}" >&2
+      return 1
+      ;;
+  esac
+}
+
+pixel_resolve_fastboot_serial() {
+  local requested serials serial
+  requested="${PIXEL_SERIAL:-}"
+
+  if [[ -n "$requested" ]]; then
+    if pixel_connected_fastboot_serials | grep -Fxq "$requested"; then
+      printf '%s\n' "$requested"
+      return 0
+    fi
+    echo "pixel: requested PIXEL_SERIAL is not connected in fastboot mode: $requested" >&2
+    return 1
+  fi
+
+  serials=()
+  while IFS= read -r serial; do
+    [[ -n "$serial" ]] || continue
+    serials+=("$serial")
+  done < <(pixel_connected_fastboot_serials)
+  case "${#serials[@]}" in
+    0)
+      echo "pixel: no fastboot device detected" >&2
+      return 1
+      ;;
+    1)
+      printf '%s\n' "${serials[0]}"
+      ;;
+    *)
+      echo "pixel: multiple fastboot devices detected; set PIXEL_SERIAL" >&2
       printf '  %s\n' "${serials[@]}" >&2
       return 1
       ;;
@@ -862,7 +916,7 @@ pixel_reboot_and_wait_android_display() {
 }
 
 pixel_prepare_dirs() {
-  mkdir -p "$(pixel_artifacts_dir)" "$(pixel_runs_dir)" "$(pixel_root_dir)"
+  mkdir -p "$(pixel_artifacts_dir)" "$(pixel_runs_dir)" "$(pixel_root_dir)" "$(pixel_boot_dir)"
 }
 
 pixel_pinned_turnip_result_link() {
@@ -1653,10 +1707,61 @@ pixel_slot_suffix_to_letter() {
   esac
 }
 
+pixel_other_slot_letter() {
+  case "$1" in
+    a)
+      printf 'b\n'
+      ;;
+    b)
+      printf 'a\n'
+      ;;
+    *)
+      echo "pixel: unknown slot letter: $1" >&2
+      return 1
+      ;;
+  esac
+}
+
+pixel_current_slot_letter_from_adb() {
+  local serial
+  serial="$1"
+  pixel_slot_suffix_to_letter "$(pixel_prop "$serial" ro.boot.slot_suffix)"
+}
+
 pixel_boot_partition_for_slot() {
   local slot_letter
   slot_letter="$(pixel_slot_suffix_to_letter "$1")"
   printf 'boot_%s\n' "$slot_letter"
+}
+
+pixel_boot_partition_for_slot_letter() {
+  case "$1" in
+    a|b)
+      printf 'boot_%s\n' "$1"
+      ;;
+    *)
+      echo "pixel: unknown slot letter: $1" >&2
+      return 1
+      ;;
+  esac
+}
+
+pixel_fastboot_current_slot() {
+  local serial current_slot
+  serial="$1"
+  current_slot="$(
+    pixel_fastboot "$serial" getvar current-slot 2>&1 | awk -F': *' '/current-slot:/{print $2; exit}'
+  )"
+  current_slot="${current_slot//[$'\r\n\t ']}"
+  [[ -n "$current_slot" ]] || {
+    echo "pixel: failed to determine current fastboot slot for $serial" >&2
+    return 1
+  }
+  printf '%s\n' "$current_slot"
+}
+
+pixel_boot_last_action_json() {
+  printf '%s/last-action.json\n' "$(pixel_boot_dir)"
 }
 
 pixel_expected_checksum() {

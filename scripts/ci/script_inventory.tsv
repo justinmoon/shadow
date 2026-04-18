@@ -2,6 +2,7 @@
 scripts/agent-brief	public	Agent context snapshot required by AGENTS.md.
 scripts/ci/app_metadata_manifest_smoke.sh	ci	Regression smoke for manifest profile filtering and uniqueness validation.
 scripts/ci/check_script_inventory.py	ci	Pre-commit taxonomy gate for every file under scripts/.
+scripts/ci/pixel_boot_safety_smoke.sh	ci	Private smoke for experimental boot-script safety rails and slot defaults.
 scripts/ci/required_vm_smoke.sh	ci	Required branch-gate VM smoke wrapper with logical-input reuse.
 scripts/runtime/ensure_cashu_test_mint.sh	runtime	Private Cashu host-smoke fixture helper.
 scripts/runtime/generate_app_metadata.py	runtime	Generates checked Rust app metadata from runtime/apps.json.
@@ -41,8 +42,15 @@ scripts/ci/pixel_runtime_app_nostr_timeline_local_smoke.sh	ci	Pixel CI Nostr tim
 scripts/pixel/pixel_runtime_app_podcast_player_drm.sh	pixel	Private Pixel runtime podcast app runner.
 scripts/pixel/pixel_runtime_app_sound_drm.sh	pixel	Private Pixel runtime sound app runner.
 scripts/lib/agent_tools.py	lib	Shared agent/docs hygiene helper used by agent-brief and pre-commit.
+scripts/lib/bootimg_common.sh	lib	Shared boot image unpack/repack helpers for the sunfish boot tooling.
+scripts/lib/cpio_edit.py	lib	Shared Android ramdisk cpio editor used by the boot image patching scripts.
 scripts/lib/pixel_runtime_linux_bundle_common.sh	lib	Shared Pixel runtime Linux bundle helper library.
 scripts/pixel/pixel_runtime_summary.py	pixel	Private Pixel runtime result summarizer.
+scripts/pixel/pixel_boot_build.sh	pixel	Private sunfish boot image wrapper/repack helper.
+scripts/pixel/pixel_boot_flash.sh	pixel	Private sunfish custom boot image flash helper for the active slot.
+scripts/pixel/pixel_boot_restore.sh	pixel	Private sunfish stock boot image rollback helper.
+scripts/pixel/pixel_boot_unpack.sh	pixel	Private sunfish boot image unpack/inspection helper.
+scripts/pixel/pixel_build_init_wrapper.sh	pixel	Private init-wrapper build helper for sunfish boot image patching.
 scripts/ci/pixel_shell_camera_smoke.sh	ci	Rooted-Pixel shell camera smoke used by pixel-ci.
 scripts/pixel/pixel_shell_drm.sh	pixel	Private rooted-Pixel shell session runner.
 scripts/pixel/pixel_shell_drm_hold.sh	pixel	Private rooted-Pixel hold-mode shell session runner behind sc run.

@@ -99,6 +99,32 @@ cached_avb_testkey() {
   printf '%s/avb_testkey_rsa4096.pem\n' "$(keys_dir)"
 }
 
+ensure_cached_avb_testkey() {
+  local key_path tmp_path encoded
+  key_path="$(cached_avb_testkey)"
+  if [[ -f "$key_path" ]]; then
+    printf '%s\n' "$key_path"
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$key_path")"
+  tmp_path="${key_path}.tmp"
+  encoded="$(curl -L --fail -s "$GOOGLESOURCE_AVB_TESTKEY_URL")"
+  KEY_ENCODED="$encoded" python3 - <<'PY' >"$tmp_path"
+import base64
+import os
+import sys
+
+encoded = os.environ["KEY_ENCODED"].strip()
+if not encoded:
+    raise SystemExit("empty AVB test key payload")
+sys.stdout.buffer.write(base64.b64decode(encoded))
+PY
+  mv "$tmp_path" "$key_path"
+  chmod 0600 "$key_path"
+  printf '%s\n' "$key_path"
+}
+
 record_instance() {
   printf '%s\n' "$1" >"$(state_file)"
 }
