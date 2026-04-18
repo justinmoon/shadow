@@ -56,7 +56,6 @@ bundle_fingerprint="$(
     "$repo/ui/Cargo.lock" \
     "$repo/ui/apps/shadow-blitz-demo" \
     "$repo/ui/third_party/anyrender_vello" \
-    "$repo/ui/third_party/softbuffer_window_renderer" \
     "$repo/ui/third_party/wgpu_context" \
     "$SCRIPT_DIR/pixel/pixel_prepare_blitz_demo_gpu_bundle.sh" \
     "$SCRIPT_DIR/lib/pixel_runtime_linux_bundle_common.sh" \
@@ -308,10 +307,10 @@ if [[ "$bundle_mode" != "vulkan-only" ]]; then
 fi
 overlay_vendor_turnip_tarball "$vendor_turnip_tarball"
 overlay_vendor_turnip_lib_path "$vendor_turnip_lib_path"
-rewrite_bundle_driver_manifests
 flatten_bundle_file_symlinks
 chmod -R u+w "$bundle_dir" 2>/dev/null || true
 fill_linux_bundle_runtime_deps "$bundle_dir"
+rewrite_bundle_driver_manifests
 stage_runtime_bundle_xkb_config "$bundle_dir"
 stage_runtime_bundle_android_fonts "$bundle_dir"
 

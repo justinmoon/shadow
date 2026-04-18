@@ -976,12 +976,14 @@
               uiShadowBlitzDemoAppTests = craneLib.cargoTest (mkUiTestArgs {
                 pname = "shadow-blitz-demo-app-tests";
               } // {
-                cargoTestExtraArgs = "-p shadow-blitz-demo app::tests::";
+                cargoTestExtraArgs =
+                  "-p shadow-blitz-demo --no-default-features --features cpu app::tests::";
               });
               uiShadowBlitzDemoRuntimeDocumentTests = craneLib.cargoTest (mkUiTestArgs {
                 pname = "shadow-blitz-demo-runtime-document-tests";
               } // {
-                cargoTestExtraArgs = "-p shadow-blitz-demo runtime_document";
+                cargoTestExtraArgs =
+                  "-p shadow-blitz-demo --no-default-features --features cpu runtime_document";
               });
               uiShadowCompositorGuestTests = craneLib.cargoTest (mkUiTestArgs {
                 pname = "shadow-compositor-guest-tests";
@@ -994,7 +996,8 @@
               };
               uiShadowBlitzDemoHostSystemFontsCheck = mkUiCargoCheck {
                 pname = "shadow-blitz-demo-host-system-fonts-check";
-                cargoCheckExtraArgs = "-p shadow-blitz-demo --features host_system_fonts";
+                cargoCheckExtraArgs =
+                  "-p shadow-blitz-demo --no-default-features --features cpu,host_system_fonts";
               };
               uiShadowBlitzDemoGpuCheck = mkUiCargoCheck {
                 pname = "shadow-blitz-demo-gpu-check";
@@ -1125,9 +1128,9 @@
       packages = forAllSystems ({ pkgs, ... }:
         let
           linuxShadowBlitzDemoHostSystemFonts = mkShadowBlitzDemoFor pkgs {
-            features = [ "host_system_fonts" ];
+            features = [ "cpu" "host_system_fonts" ];
             pnameSuffix = "host-system-fonts";
-            useDefaultFeatures = true;
+            useDefaultFeatures = false;
           };
           linuxShadowCompositor = mkShadowCompositorFor pkgs;
           linuxShadowRustDemo = mkShadowRustDemoFor pkgs;
@@ -1174,10 +1177,6 @@
           shadow-blitz-demo-aarch64-linux-gnu-gpu =
             mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform {
               features = [ "gpu" ];
-            };
-          shadow-blitz-demo-aarch64-linux-gnu-gpu-softbuffer =
-            mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform {
-              features = [ "gpu_softbuffer" ];
             };
           shadow-blitz-demo-host-system-fonts = linuxShadowBlitzDemoHostSystemFonts;
           shadow-compositor = linuxShadowCompositor;

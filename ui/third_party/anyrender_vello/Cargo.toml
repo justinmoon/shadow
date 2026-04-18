@@ -49,6 +49,9 @@ version = "0.6"
 [dependencies.pollster]
 version = "0.4"
 
+[dependencies.raw-window-handle]
+version = "0.6"
+
 [dependencies.rustc-hash]
 version = "2"
 

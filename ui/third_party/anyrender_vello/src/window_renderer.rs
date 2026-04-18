@@ -1,6 +1,7 @@
 use anyrender::{WindowHandle, WindowRenderer};
 use debug_timer::debug_timer;
 use peniko::Color;
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use rustc_hash::FxHashMap;
 use std::{
     env,
@@ -139,6 +140,81 @@ fn configured_optional_features() -> Features {
     }
 }
 
+fn raw_display_handle_name(handle: RawDisplayHandle) -> &'static str {
+    match handle {
+        RawDisplayHandle::UiKit(_) => "UiKit",
+        RawDisplayHandle::AppKit(_) => "AppKit",
+        RawDisplayHandle::Orbital(_) => "Orbital",
+        RawDisplayHandle::Xlib(_) => "Xlib",
+        RawDisplayHandle::Xcb(_) => "Xcb",
+        RawDisplayHandle::Wayland(_) => "Wayland",
+        RawDisplayHandle::Drm(_) => "Drm",
+        RawDisplayHandle::Gbm(_) => "Gbm",
+        RawDisplayHandle::Windows(_) => "Windows",
+        RawDisplayHandle::Web(_) => "Web",
+        RawDisplayHandle::Android(_) => "Android",
+        RawDisplayHandle::Haiku(_) => "Haiku",
+        RawDisplayHandle::Ohos(_) => "Ohos",
+        _ => "Other",
+    }
+}
+
+fn raw_window_handle_name(handle: RawWindowHandle) -> &'static str {
+    match handle {
+        RawWindowHandle::UiKit(_) => "UiKit",
+        RawWindowHandle::AppKit(_) => "AppKit",
+        RawWindowHandle::Orbital(_) => "Orbital",
+        RawWindowHandle::Xlib(_) => "Xlib",
+        RawWindowHandle::Xcb(_) => "Xcb",
+        RawWindowHandle::Wayland(_) => "Wayland",
+        RawWindowHandle::Drm(_) => "Drm",
+        RawWindowHandle::Gbm(_) => "Gbm",
+        RawWindowHandle::Win32(_) => "Win32",
+        RawWindowHandle::WinRt(_) => "WinRt",
+        RawWindowHandle::Web(_) => "Web",
+        RawWindowHandle::WebCanvas(_) => "WebCanvas",
+        RawWindowHandle::WebOffscreenCanvas(_) => "WebOffscreenCanvas",
+        RawWindowHandle::AndroidNdk(_) => "AndroidNdk",
+        RawWindowHandle::Haiku(_) => "Haiku",
+        RawWindowHandle::OhosNdk(_) => "OhosNdk",
+        _ => "Other",
+    }
+}
+
+fn log_raw_handle_diagnostics(window_handle: &dyn WindowHandle) {
+    match window_handle.display_handle() {
+        Ok(handle) => match handle.as_raw() {
+            RawDisplayHandle::Wayland(handle) => eprintln!(
+                "[shadow-anyrender-vello] raw-display-handle kind=Wayland display_ptr={:?}",
+                handle.display
+            ),
+            other => eprintln!(
+                "[shadow-anyrender-vello] raw-display-handle kind={}",
+                raw_display_handle_name(other)
+            ),
+        },
+        Err(error) => eprintln!(
+            "[shadow-anyrender-vello] raw-display-handle-error error={error:?}"
+        ),
+    }
+
+    match window_handle.window_handle() {
+        Ok(handle) => match handle.as_raw() {
+            RawWindowHandle::Wayland(handle) => eprintln!(
+                "[shadow-anyrender-vello] raw-window-handle kind=Wayland surface_ptr={:?}",
+                handle.surface
+            ),
+            other => eprintln!(
+                "[shadow-anyrender-vello] raw-window-handle kind={}",
+                raw_window_handle_name(other)
+            ),
+        },
+        Err(error) => eprintln!(
+            "[shadow-anyrender-vello] raw-window-handle-error error={error:?}"
+        ),
+    }
+}
+
 // Simple struct to hold the state of the renderer
 struct ActiveRenderState {
     renderer: VelloRenderer,
@@ -259,6 +335,7 @@ impl WindowRenderer for VelloWindowRenderer {
             "[shadow-anyrender-vello] resume-start width={} height={} present_mode={present_mode:?} alpha_mode={alpha_mode:?} maximum_frame_latency={} surface_formats={surface_formats:?}",
             width, height, maximum_frame_latency,
         );
+        log_raw_handle_diagnostics(window_handle.as_ref());
         // Create wgpu_context::SurfaceRenderer
         let render_surface = pollster::block_on(self.wgpu_context.create_surface(
             window_handle.clone(),

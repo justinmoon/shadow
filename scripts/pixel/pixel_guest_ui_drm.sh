@@ -558,6 +558,11 @@ if [[ ! -s "$frame_artifact" && "$frame_on_device" == true ]]; then
 fi
 
 set +e
+verify_frame_required=1
+if [[ "$frame_capture_mode" == "off" ]]; then
+  verify_frame_required=""
+fi
+PIXEL_VERIFY_FRAME_REQUIRED="$verify_frame_required" \
 PIXEL_VERIFY_REQUIRE_CLIENT_MARKER="$verify_require_client_marker" \
 PIXEL_VERIFY_REQUIRED_MARKERS="$required_markers_raw" \
 PIXEL_VERIFY_FORBIDDEN_MARKERS="$verify_forbidden_markers" \

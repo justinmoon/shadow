@@ -7,7 +7,6 @@ source "$SCRIPT_DIR/lib/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
-renderer="${PIXEL_RUNTIME_APP_RENDERER:-gpu_softbuffer}"
 gpu_profile="${PIXEL_RUNTIME_APP_GPU_PROFILE-}"
 run_root="${PIXEL_TOUCH_LATENCY_RUN_ROOT:-$(pixel_touch_runs_dir)}"
 run_dir="${PIXEL_TOUCH_LATENCY_RUN_DIR-}"
@@ -92,7 +91,7 @@ fi
 
 printf 'pixel touch latency probe: run_dir=%s renderer=%s profile=%s panel=%s\n' \
   "$run_dir" \
-  "$renderer" \
+  "gpu" \
   "${gpu_profile:-default}" \
   "$panel_size" | tee "$wrapper_log_path"
 
@@ -100,7 +99,6 @@ set +e
 env \
   PIXEL_GUEST_RUN_DIR="$run_dir" \
   PIXEL_RUNTIME_APP_PANEL_SIZE="$panel_size" \
-  PIXEL_RUNTIME_APP_RENDERER="$renderer" \
   PIXEL_RUNTIME_APP_GPU_PROFILE="$gpu_profile" \
   PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS="${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS:-25000}" \
   PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS:-120}" \
@@ -158,7 +156,7 @@ session_pid=""
 
 python3 "$SCRIPT_DIR/pixel/pixel_runtime_summary.py" \
   "$run_dir" \
-  --renderer "$renderer" \
+  --renderer gpu \
   --output "$summary_path"
 
 printf 'pixel touch latency summary: %s\n' "$summary_path"

@@ -71,21 +71,21 @@ unlocking in Developer options.
 Once the bootloader is unlocked and Android USB debugging is authorized again:
 
 ```sh
-PIXEL_SERIAL=<serial> just pixel-root-prep
-PIXEL_SERIAL=<serial> just pixel-root-patch
-PIXEL_SERIAL=<serial> just pixel-root-flash
+sc root-prep
+sc -t <serial> root-patch
+sc -t <serial> root-flash
 ```
 
 If `pixel-root-patch` fails, use the manual fallback:
 
 ```sh
-PIXEL_SERIAL=<serial> just pixel-root-stage
+PIXEL_SERIAL=<serial> scripts/pixel/pixel_root_stage.sh
 ```
 
 Then patch the staged boot image in the Magisk app on the phone, and run:
 
 ```sh
-PIXEL_SERIAL=<serial> just pixel-root-flash
+sc -t <serial> root-flash
 ```
 
 After the patched boot image is flashed, open the Magisk app once if root is not
@@ -93,8 +93,8 @@ available yet. Accept any additional setup or environment fix, let the phone
 reboot, and verify:
 
 ```sh
-PIXEL_SERIAL=<serial> just pixel-root-check
-PIXEL_SERIAL=<serial> just pixel-doctor
+sc -t <serial> root-check
+sc -t <serial> doctor
 ```
 
 Expected ready state:

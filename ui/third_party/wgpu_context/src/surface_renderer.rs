@@ -1,8 +1,8 @@
-use crate::{DeviceHandle, WgpuContextError, util::create_texture};
+use crate::{util::create_texture, DeviceHandle, WgpuContextError};
 use wgpu::{
-    CommandEncoderDescriptor, CompositeAlphaMode, Device, PresentMode, Queue, Surface,
-    SurfaceConfiguration, SurfaceError, SurfaceTexture, TextureFormat, TextureUsages, TextureView,
-    TextureViewDescriptor, util::TextureBlitter,
+    util::TextureBlitter, CommandEncoderDescriptor, CompositeAlphaMode, Device, PresentMode, Queue,
+    Surface, SurfaceConfiguration, SurfaceError, SurfaceTexture, TextureFormat, TextureUsages,
+    TextureView, TextureViewDescriptor,
 };
 
 #[derive(Clone)]
@@ -147,7 +147,10 @@ impl<'s> SurfaceRenderer<'s> {
                 surface_renderer_config.present_mode,
             ),
             desired_maximum_frame_latency: surface_renderer_config.desired_maximum_frame_latency,
-            alpha_mode: pick_alpha_mode(&capabilities.alpha_modes, surface_renderer_config.alpha_mode),
+            alpha_mode: pick_alpha_mode(
+                &capabilities.alpha_modes,
+                surface_renderer_config.alpha_mode,
+            ),
             view_formats: surface_renderer_config.view_formats,
         };
 
@@ -364,7 +367,12 @@ fn pick_alpha_mode(
     supported
         .iter()
         .copied()
-        .find(|mode| matches!(mode, CompositeAlphaMode::Opaque | CompositeAlphaMode::PreMultiplied))
+        .find(|mode| {
+            matches!(
+                mode,
+                CompositeAlphaMode::Opaque | CompositeAlphaMode::PreMultiplied
+            )
+        })
         .or_else(|| supported.first().copied())
         .unwrap_or(requested)
 }

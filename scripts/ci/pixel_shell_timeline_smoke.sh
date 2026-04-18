@@ -46,7 +46,7 @@ state_after_home_path="$run_dir/state-after-${app_id}-home.json"
 state_after_reopen_path="$run_dir/state-after-${app_id}-reopen.json"
 session_host_pid_path="$run_dir/guest-ui-host.pid"
 control_socket_path="$(pixel_shell_control_socket_path)"
-launcher_args=(--no-camera-runtime --app "$app_id")
+launcher_args=(--no-camera-runtime)
 if (( run_only == 1 )); then
   launcher_args=(--run-only "${launcher_args[@]}")
 fi
@@ -81,12 +81,14 @@ session_still_running() {
   if [[ -n "${session_pid:-}" ]] && kill -0 "$session_pid" >/dev/null 2>&1; then
     return 0
   fi
-
-  if pixel_root_socket_exists "$serial" "$control_socket_path"; then
-    return 0
+  if [[ -f "$session_host_pid_path" ]]; then
+    local host_pid
+    host_pid="$(tr -cd '0-9' <"$session_host_pid_path")"
+    if [[ -n "$host_pid" ]] && kill -0 "$host_pid" >/dev/null 2>&1; then
+      return 0
+    fi
   fi
-
-  pixel_root_process_exists "$serial" "$(basename "$(pixel_compositor_dst)")"
+  pixel_shell_socket_exists "$serial" "$control_socket_path"
 }
 
 stop_session_process() {
@@ -238,7 +240,7 @@ wait_for_state() {
 }
 
 shell_control_socket_ready() {
-  pixel_root_socket_exists "$serial" "$control_socket_path"
+  pixel_shell_socket_exists "$serial" "$control_socket_path"
 }
 
 pixel_stop_shadow_session_best_effort "$serial"
@@ -248,12 +250,13 @@ pixel_restore_android_best_effort "$serial" "$restore_timeout_secs"
   cd "$REPO_ROOT"
   PIXEL_SERIAL="$serial" \
   PIXEL_GUEST_UI_HOST_PID_PATH="$session_host_pid_path" \
-  PIXEL_SHELL_RENDERER=gpu_softbuffer \
+  PIXEL_GUEST_FRAME_CAPTURE_MODE=off \
     "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh" "${launcher_args[@]}"
 ) >"$run_log" 2>&1 &
 session_pid="$!"
 
 wait_for_state "rooted Pixel shell control socket" 300 shell_control_socket_ready
+"$SCRIPT_DIR/shadowctl" --target "$serial" open "$app_id" >/dev/null
 wait_for_state "${app_id} launch through rooted Pixel shell" 60 \
   state_matches "$app_id" "$app_id" '' '' "$app_id"
 printf '%s\n' "$latest_state_json" >"$state_after_open_path"

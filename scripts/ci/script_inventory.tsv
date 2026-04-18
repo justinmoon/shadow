@@ -13,7 +13,6 @@ scripts/runtime/generate_sound_demo_fixture.sh	runtime	Private sound demo fixtur
 scripts/land.sh	public	Canonical local landing gate.
 scripts/ci/operator_cli_smoke.sh	ci	Dry-run smoke coverage for the public just/shadowctl routing surface.
 scripts/pixel/pixel_build.sh	pixel	Private Pixel build delegate used by rooted device staging.
-scripts/pixel/pixel_build_guest_client.sh	pixel	Private Pixel guest-client build delegate.
 scripts/pixel/pixel_build_local_turnip.sh	pixel	Private local Turnip override builder for direct-GPU probe work.
 scripts/pixel/pixel_build_openlog_preload.sh	pixel	Private Pixel preload build delegate.
 scripts/pixel/pixel_runtime_app_drm_gpu_matrix.sh	pixel	Private rooted-Pixel direct-GPU probe matrix helper.
@@ -27,7 +26,6 @@ scripts/pixel/pixel_openlog_preload.c	data	C source for the Pixel openlog preloa
 scripts/pixel/pixel_ota_sideload.sh	pixel	Pixel setup/recovery delegate behind sc ota-sideload.
 scripts/pixel/pixel_prep_settings.sh	pixel	Non-root Pixel test-device settings helper behind just pixel-prep-settings.
 scripts/pixel/pixel_prepare_blitz_demo_gpu_bundle.sh	pixel	Private Pixel GPU Blitz bundle staging helper.
-scripts/pixel/pixel_prepare_blitz_demo_gpu_softbuffer_bundle.sh	pixel	Private Pixel softbuffer Blitz bundle staging helper.
 scripts/pixel/pixel_prepare_runtime_app_artifacts.sh	pixel	Private Pixel runtime app artifact staging helper.
 scripts/pixel/pixel_prepare_shell_runtime_artifacts.sh	pixel	Private Pixel shell runtime artifact staging helper.
 scripts/pixel/pixel_push.sh	pixel	Private Pixel artifact push helper.

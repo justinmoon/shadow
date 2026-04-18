@@ -97,15 +97,6 @@ TOUCH_SIGNAL_DETECTED_RE = re.compile(
 RUNTIME_SESSION_RESPONSE_RE = re.compile(
     r"\[shadow-runtime-demo ts_ms=(\d+)\s+\+\s*\d+ms\] runtime-session-response op=(\S+) elapsed_ms=(\d+)"
 )
-SOFTBUFFER_RENDER_RE = re.compile(
-    r"\[shadow-softbuffer \+\s*(\d+)ms\] render-to-vec-done"
-)
-SOFTBUFFER_SWIZZLE_RE = re.compile(
-    r"\[shadow-softbuffer \+\s*(\d+)ms\] swizzle-done"
-)
-SOFTBUFFER_PRESENT_RE = re.compile(
-    r"\[shadow-softbuffer \+\s*(\d+)ms\] present-done"
-)
 WROTE_FRAME_ARTIFACT_RE = re.compile(
     r"\[shadow-guest-compositor\] wrote-frame-artifact path=\S+ checksum=([0-9a-f]+) size=([0-9]+x[0-9]+)"
 )
@@ -241,7 +232,7 @@ def infer_failure_phase(
         if "NoCompatibleDevice" in probe_error or "No compatible device" in probe_error:
             if last_startup_stage is None:
                 return "gpu-probe"
-            if last_startup_stage.startswith(("renderer-summary-probe", "cpu-summary")):
+            if last_startup_stage.startswith("renderer-summary-probe"):
                 return "renderer-probe"
             if last_startup_stage.startswith(("create-event-loop", "proxy-ready", "window-config")):
                 return "surface-create"
@@ -313,9 +304,6 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
     touch_replaced_count = 0
     touch_signal_writes: dict[str, int] = {}
     touch_signal_detect_delays_ms: list[float] = []
-    softbuffer_render_ms: list[float] = []
-    softbuffer_swizzle_ms: list[float] = []
-    softbuffer_present_ms: list[float] = []
     runtime_session_ms: dict[str, list[float]] = {}
     frame_capture_to_artifact_ms: list[float] = []
     frame_artifact_to_present_ms: list[float] = []
@@ -429,21 +417,6 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
             runtime_session_ms.setdefault(op, []).append(
                 float(runtime_session_response_match.group(3))
             )
-
-        softbuffer_render_match = SOFTBUFFER_RENDER_RE.search(line)
-        if softbuffer_render_match:
-            softbuffer_render_ms.append(float(softbuffer_render_match.group(1)))
-            continue
-
-        softbuffer_swizzle_match = SOFTBUFFER_SWIZZLE_RE.search(line)
-        if softbuffer_swizzle_match:
-            softbuffer_swizzle_ms.append(float(softbuffer_swizzle_match.group(1)))
-            continue
-
-        softbuffer_present_match = SOFTBUFFER_PRESENT_RE.search(line)
-        if softbuffer_present_match:
-            softbuffer_present_ms.append(float(softbuffer_present_match.group(1)))
-            continue
 
         match = CLIENT_START_RE.search(line)
         if match:
@@ -634,32 +607,8 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
             "mode": inferred_mode,
             "wall_ms": fallback_start_wall_ms,
         }
-    if client_summary is None and effective_renderer == "cpu":
-        client_summary = {
-            "renderer": "cpu",
-            "mode": (client_start or {}).get("mode", inferred_mode or "runtime"),
-            "backend": None,
-            "device_type": None,
-            "adapter_name": None,
-            "driver": None,
-            "driver_info": None,
-            "software_backed": True,
-            "source": "cpu",
-            "probe_error": None,
-        }
-
     summary_source = (client_summary or {}).get("source")
     software_backed = (client_summary or {}).get("software_backed")
-    if software_backed is None:
-        if (
-            effective_renderer == "gpu_softbuffer"
-            and openlog["dri_open_count"] > 0
-            and openlog["kgsl_open_count"] == 0
-            and egl_dri2_failed
-            and buffer_type == "shm"
-        ):
-            software_backed = True
-            summary_source = "openlog-egl-shm"
 
     if probe_error is None:
         probe_error = (client_summary or {}).get("probe_error")
@@ -733,11 +682,6 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
         }
     touch_signal_latency = summarize_samples(touch_signal_detect_delays_ms)
     touch_signal_latency["count"] = len(touch_signal_detect_delays_ms)
-    softbuffer_latency = {
-        "render_to_vec": summarize_samples(softbuffer_render_ms),
-        "swizzle": summarize_samples(softbuffer_swizzle_ms),
-        "present": summarize_samples(softbuffer_present_ms),
-    }
     compositor_frame_latency = {
         "capture_to_artifact": summarize_samples(frame_capture_to_artifact_ms),
         "artifact_to_present": summarize_samples(frame_artifact_to_present_ms),
@@ -832,7 +776,6 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
         "updated_frame_checksum": updated_frame_checksum,
         "touch_latency": touch_latency,
         "touch_signal_latency": touch_signal_latency,
-        "softbuffer_latency": softbuffer_latency,
         "compositor_frame_latency": compositor_frame_latency,
         "runtime_session_latency": runtime_session_latency,
         "boot_splash_checksum": boot_checksum,

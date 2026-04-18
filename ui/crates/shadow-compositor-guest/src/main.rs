@@ -28,8 +28,8 @@ use shadow_ui_core::{
     app::{self, AppId},
     control::{ControlRequest, MediaAction},
     scene::{
-        APP_VIEWPORT_HEIGHT, APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH, APP_VIEWPORT_WIDTH_PX,
-        APP_VIEWPORT_X, APP_VIEWPORT_Y, HEIGHT, WIDTH,
+        APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX, APP_VIEWPORT_X, APP_VIEWPORT_Y, HEIGHT,
+        WIDTH,
     },
     shell::{ShellAction, ShellEvent, ShellModel, ShellStatus},
 };
@@ -721,15 +721,7 @@ impl ShadowGuestCompositor {
     }
 
     fn app_window_size(&self) -> smithay::utils::Size<i32, Logical> {
-        if self.shell_enabled {
-            (
-                APP_VIEWPORT_WIDTH.round() as i32,
-                APP_VIEWPORT_HEIGHT.round() as i32,
-            )
-                .into()
-        } else {
-            self.configured_toplevel_size()
-        }
+        self.configured_toplevel_size()
     }
 
     fn shell_render_size(&mut self) -> (u32, u32) {

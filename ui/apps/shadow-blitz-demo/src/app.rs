@@ -1,39 +1,17 @@
-#[cfg(any(
-    all(feature = "cpu", feature = "gpu"),
-    all(feature = "cpu", feature = "gpu_softbuffer"),
-    all(feature = "cpu", feature = "hybrid"),
-    all(feature = "gpu", feature = "gpu_softbuffer"),
-    all(feature = "gpu", feature = "hybrid"),
-    all(feature = "gpu_softbuffer", feature = "hybrid"),
-))]
+#[cfg(all(feature = "cpu", feature = "gpu"))]
 compile_error!("shadow-blitz-demo renderer features are mutually exclusive");
-#[cfg(not(any(
-    feature = "cpu",
-    feature = "gpu",
-    feature = "gpu_softbuffer",
-    feature = "hybrid"
-)))]
+#[cfg(not(any(feature = "cpu", feature = "gpu")))]
 compile_error!("enable one shadow-blitz-demo renderer feature");
 
-#[cfg(feature = "gpu")]
-use anyrender_vello::VelloWindowRenderer as WindowRenderer;
-#[cfg(feature = "gpu_softbuffer")]
-type WindowRenderer = softbuffer_window_renderer::SoftbufferWindowRenderer<
-    anyrender_vello_cpu::VelloCpuImageRenderer,
->;
 use crate::log::{runtime_log, runtime_log_json, runtime_wall_ms};
 use crate::runtime_document::{
     runtime_ignore_safe_area_from_env, runtime_surface_size_from_env, RuntimeDocument,
 };
 use crate::runtime_session::RuntimeAudioControlAction;
-#[cfg(all(not(feature = "gpu"), not(feature = "hybrid"), feature = "cpu"))]
+#[cfg(feature = "gpu")]
+use anyrender_vello::VelloWindowRenderer as WindowRenderer;
+#[cfg(all(not(feature = "gpu"), feature = "cpu"))]
 use anyrender_vello_cpu::VelloCpuWindowRenderer as WindowRenderer;
-#[cfg(all(
-    not(feature = "gpu"),
-    not(feature = "gpu_softbuffer"),
-    feature = "hybrid"
-))]
-use anyrender_vello_hybrid::VelloHybridWindowRenderer as WindowRenderer;
 use blitz_shell::{
     create_default_event_loop, BlitzShellEvent, BlitzShellProxy, View, WindowConfig,
 };
@@ -493,7 +471,7 @@ fn window_event_name(event: &WindowEvent) -> &'static str {
     }
 }
 
-#[cfg(any(feature = "gpu", feature = "hybrid"))]
+#[cfg(feature = "gpu")]
 fn log_renderer_backend(window: &View<WindowRenderer>, source: &str) {
     let Some(device_handle) = window.renderer.current_device_handle() else {
         runtime_log(format!("renderer-backend source={source} state=suspended"));
@@ -516,10 +494,10 @@ fn log_renderer_backend(window: &View<WindowRenderer>, source: &str) {
     log_adapter_summary(renderer_name(), &info, "live");
 }
 
-#[cfg(all(not(feature = "gpu"), not(feature = "hybrid")))]
+#[cfg(not(feature = "gpu"))]
 fn log_renderer_backend(_window: &View<WindowRenderer>, _source: &str) {}
 
-#[cfg(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid"))]
+#[cfg(feature = "gpu")]
 fn init_gpu_logging() {
     let mut builder =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
@@ -527,7 +505,7 @@ fn init_gpu_logging() {
     let _ = builder.try_init();
 }
 
-#[cfg(not(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid")))]
+#[cfg(not(feature = "gpu"))]
 fn init_gpu_logging() {}
 
 #[derive(Serialize)]
@@ -555,14 +533,6 @@ fn renderer_name() -> &'static str {
     #[cfg(feature = "gpu")]
     {
         return "gpu";
-    }
-    #[cfg(feature = "gpu_softbuffer")]
-    {
-        return "gpu_softbuffer";
-    }
-    #[cfg(feature = "hybrid")]
-    {
-        return "hybrid";
     }
     #[cfg(feature = "cpu")]
     {
@@ -603,7 +573,7 @@ fn renderer_summary_probe_enabled() -> bool {
     env::var_os("SHADOW_BLITZ_GPU_SUMMARY").is_some()
 }
 
-#[cfg(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid"))]
+#[cfg(feature = "gpu")]
 fn log_wgpu_probe() {
     let descriptor = wgpu::InstanceDescriptor {
         backends: wgpu::Backends::from_env().unwrap_or_default(),
@@ -657,10 +627,10 @@ fn log_wgpu_probe() {
     }
 }
 
-#[cfg(not(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid")))]
+#[cfg(not(feature = "gpu"))]
 fn log_wgpu_probe() {}
 
-#[cfg(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid"))]
+#[cfg(feature = "gpu")]
 fn log_renderer_summary_probe() {
     let descriptor = wgpu::InstanceDescriptor {
         backends: wgpu::Backends::from_env().unwrap_or_default(),
@@ -695,12 +665,12 @@ fn log_renderer_summary_probe() {
     }
 }
 
-#[cfg(not(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid")))]
+#[cfg(not(feature = "gpu"))]
 fn log_renderer_summary_probe() {
     log_cpu_renderer_summary();
 }
 
-#[cfg(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid"))]
+#[cfg(feature = "gpu")]
 fn log_adapter_summary(renderer: &str, info: &wgpu::AdapterInfo, source: &str) {
     let summary = ClientRendererSummary {
         renderer,
@@ -717,7 +687,7 @@ fn log_adapter_summary(renderer: &str, info: &wgpu::AdapterInfo, source: &str) {
     runtime_log_json("gpu-summary-client", &summary);
 }
 
-#[cfg(any(feature = "gpu", feature = "gpu_softbuffer", feature = "hybrid"))]
+#[cfg(feature = "gpu")]
 fn adapter_is_software(info: &wgpu::AdapterInfo) -> bool {
     if matches!(info.device_type, wgpu::DeviceType::Cpu) {
         return true;

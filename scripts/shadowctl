@@ -813,7 +813,7 @@ def pixel_control_request(serial: str, command: str) -> subprocess.CompletedProc
         "fi; "
         f"printf '%s\\n' {shlex.quote(command)} | nc -U \"$control_socket\""
     )
-    return pixel_root_command(serial, phone_script)
+    return pixel_adb(serial, "shell", phone_script, check=False)
 
 
 def pixel_getprops(serial: str) -> dict[str, str]:
@@ -842,7 +842,16 @@ def pixel_status_payload(target: TargetRef) -> dict[str, Any]:
     state_error: str | None = None
 
     if su_user:
-        control_socket_exists = pixel_root_test(serial, f"[ -S {shlex.quote(control_socket)} ]")
+        control_socket_exists = (
+            pixel_adb(
+                serial,
+                "shell",
+                f"[ -S {shlex.quote(control_socket)} ]",
+                capture_output=True,
+                check=False,
+            ).returncode
+            == 0
+        )
         if control_socket_exists:
             state_result = pixel_control_request(serial, "state")
             if state_result.returncode == 0:

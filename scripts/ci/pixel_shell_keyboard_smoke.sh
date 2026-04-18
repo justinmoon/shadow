@@ -13,6 +13,7 @@ guest_run_dir="$run_dir/guest"
 run_log="$run_dir/pixel-shell-keyboard-smoke.log"
 session_output_path="$guest_run_dir/session-output.txt"
 state_after_launch_path="$run_dir/state-after-launch.json"
+session_host_pid_path="$run_dir/guest-ui-host.pid"
 control_socket_path="$(pixel_shell_control_socket_path)"
 startup_timeout_secs="${PIXEL_SHELL_SMOKE_STARTUP_TIMEOUT_SECS:-600}"
 restore_timeout_secs="${PIXEL_SHELL_SMOKE_RESTORE_TIMEOUT_SECS:-60}"
@@ -46,12 +47,14 @@ session_still_running() {
   if [[ -n "${session_pid:-}" ]] && kill -0 "$session_pid" >/dev/null 2>&1; then
     return 0
   fi
-
-  if pixel_root_socket_exists "$serial" "$control_socket_path"; then
-    return 0
+  if [[ -f "$session_host_pid_path" ]]; then
+    local host_pid
+    host_pid="$(tr -cd '0-9' <"$session_host_pid_path")"
+    if [[ -n "$host_pid" ]] && kill -0 "$host_pid" >/dev/null 2>&1; then
+      return 0
+    fi
   fi
-
-  pixel_root_process_exists "$serial" "$(basename "$(pixel_compositor_dst)")"
+  pixel_shell_socket_exists "$serial" "$control_socket_path"
 }
 
 capture_state_json() {
@@ -66,7 +69,7 @@ capture_state_json() {
 }
 
 shell_control_socket_ready() {
-  pixel_root_socket_exists "$serial" "$control_socket_path"
+  pixel_shell_socket_exists "$serial" "$control_socket_path"
 }
 
 session_output_has_marker() {
@@ -237,14 +240,15 @@ restore_android_best_effort
   cd "$REPO_ROOT"
   PIXEL_SERIAL="$serial" \
   PIXEL_GUEST_RUN_DIR="$guest_run_dir" \
-  PIXEL_SHELL_RENDERER=gpu_softbuffer \
-  PIXEL_SHELL_START_APP_ID=timeline \
+  PIXEL_GUEST_UI_HOST_PID_PATH="$session_host_pid_path" \
+  PIXEL_GUEST_FRAME_CAPTURE_MODE=off \
   PIXEL_SHELL_EXTRA_GUEST_CLIENT_ENV='SHADOW_BLITZ_DEBUG_TARGET_HITMAP_IDS=draft,__shadow_keyboard__a' \
-    "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh"
+    "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh" --no-camera-runtime
 ) >"$run_log" 2>&1 &
 session_pid="$!"
 
 wait_for_checkpoint "rooted Pixel shell control socket" "$startup_timeout_secs" shell_control_socket_ready
+"$SCRIPT_DIR/shadowctl" --target "$serial" open timeline >/dev/null
 wait_for_checkpoint "timeline compose field through rooted Pixel shell" 60 timeline_compose_ready
 if capture_state_json; then
   printf '%s\n' "$latest_state_json" >"$state_after_launch_path"

@@ -888,6 +888,13 @@ pixel_root_socket_exists() {
   pixel_root_shell "$serial" "[ -S '$path' ]"
 }
 
+pixel_shell_socket_exists() {
+  local serial path
+  serial="$1"
+  path="$2"
+  pixel_adb "$serial" shell "[ -S '$path' ]" >/dev/null 2>&1
+}
+
 pixel_shell_control_request() {
   local serial request control_socket phone_script
   serial="$1"
@@ -905,7 +912,7 @@ printf '%s\n' $(printf '%q' "$request") | nc -U "\$control_socket"
 EOF
   )
 
-  pixel_root_shell "$serial" "$phone_script"
+  pixel_adb "$serial" shell "$phone_script"
 }
 
 pixel_wait_for_condition() {
@@ -1114,11 +1121,7 @@ pixel_shell_runtime_host_bundle_artifact_dir() {
 }
 
 pixel_guest_client_artifact() {
-  if [[ -n "${PIXEL_GUEST_CLIENT_ARTIFACT:-}" ]]; then
-    printf '%s\n' "$PIXEL_GUEST_CLIENT_ARTIFACT"
-  else
-    pixel_artifact_path shadow-blitz-demo
-  fi
+  pixel_artifact_path run-shadow-blitz-demo-gpu
 }
 
 pixel_session_dst() {
@@ -1130,11 +1133,7 @@ pixel_compositor_dst() {
 }
 
 pixel_guest_client_dst() {
-  if [[ -n "${PIXEL_GUEST_CLIENT_DST:-}" ]]; then
-    printf '%s\n' "$PIXEL_GUEST_CLIENT_DST"
-  else
-    printf '%s\n' "/data/local/tmp/shadow-blitz-demo"
-  fi
+  printf '%s/run-shadow-blitz-demo\n' "$(pixel_runtime_linux_dir)"
 }
 
 pixel_runtime_dir() {
@@ -1883,12 +1882,13 @@ pixel_client_marker() {
 }
 
 pixel_require_runtime_artifacts() {
-  local path missing
+  local path missing guest_client_artifact
   missing=0
+  guest_client_artifact="$(pixel_guest_client_artifact)" || return 1
   for path in \
     "$(pixel_session_artifact)" \
     "$(pixel_compositor_artifact)" \
-    "$(pixel_guest_client_artifact)"; do
+    "$guest_client_artifact"; do
     if [[ ! -f "$path" ]]; then
       echo "pixel: missing built artifact: $path" >&2
       missing=1

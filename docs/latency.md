@@ -43,12 +43,12 @@ Important summary fields:
 - `touch_latency.dispatch_to_flush`: compositor handle to Wayland/client dispatch.
 - `touch_latency.routes.app-scroll.input_to_present`: finger move to presented scroll frame.
 - `touch_signal_latency`: compositor touch-signal file write to runtime fallback detection. On Linux/Pixel this is event-driven with an inotify watcher and falls back to polling if watching is unavailable.
-- `softbuffer_latency.render_to_vec`: app-side CPU raster time before softbuffer present.
+- `softbuffer_latency.render_to_vec`: app-side CPU raster time before softbuffer present. Historical only for retired Pixel CPU/softbuffer runs.
 - `compositor_frame_latency.capture_to_artifact`: compositor capture to PPM artifact write when continuous artifacts are explicitly enabled.
 - `compositor_frame_latency.capture_to_present`: compositor frame capture to DRM present.
 - `runtime_session_latency`: host session request cost by operation.
 
-Current gpu-softbuffer Pixel 4a result from `build/latency/probe-timeline-4`:
+Historical pre-hard-cut `gpu_softbuffer` Pixel 4a result from `build/latency/probe-timeline-4`:
 
 - Raw compositor dispatch is not the main problem: `dispatch_to_flush` p50 was
   `0.035ms`.
@@ -65,11 +65,18 @@ After the event-driven touch-signal watcher, `build/latency/probe-inotify-090`
 measured `touch_signal_latency` p50 `0ms`, p95 `0ms` across 4 samples on Pixel
 `09051JEC202061`.
 
+Current direction:
+
+- Pixel operator paths are now GPU-only.
+- The next latency problem is scrolling on the supported GPU shell lane, not
+  deciding whether to leave CPU softbuffer behind.
+
 Interpretation:
 
 - Fast event dispatch plus slow present means input plumbing is usable, but the
   visible frame pipeline is not.
-- For scroll, prioritize getting off CPU softbuffer. Per-frame PPM artifacts are
-  now opt-in; use `sc -t pixel frame` or `sc -t <serial> frame` for snapshots.
+- For scroll, measure the supported GPU shell lane directly. Per-frame PPM
+  artifacts are now opt-in; use `sc -t pixel frame` or `sc -t <serial> frame`
+  for snapshots.
 - For shell/runtime async updates, avoid 100ms fixed polling. The Pixel shell
   default is now 16ms; touch-signal detection is event-driven on Linux/Pixel.

@@ -79,7 +79,14 @@ impl WGPUContext {
         intermediate_texture_config: Option<TextureConfiguration>,
     ) -> Result<SurfaceRenderer<'w>, WgpuContextError> {
         // Create a surface from the window handle
-        let surface = self.instance.create_surface(window.into())?;
+        let surface = match self.instance.create_surface(window.into()) {
+            Ok(surface) => surface,
+            Err(error) => {
+                eprintln!("[shadow-wgpu-context] create-surface-target-error error={error:#}");
+                eprintln!("[shadow-wgpu-context] create-surface-target-error-debug={error:?}");
+                return Err(error.into());
+            }
+        };
         log_surface_diagnostics(&self.instance, &surface, "create-surface");
 
         // Find or create a suitable device for rendering to the surface

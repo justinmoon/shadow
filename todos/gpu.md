@@ -1331,6 +1331,44 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - next seam:
     - land the small shell-staging / smoke-contract follow-up
     - then decide whether to keep the current Mesa patch as one known-good bring-up patch or split it into reviewable subpatches once the direct path stops moving
+  - pure GPU shell cutover:
+    - the shell direct-GPU failure was stale shell runtime staging, not a shell-only `wgpu` bug
+    - proof run:
+      - `build/pixel/shell/20260418T183426Z`
+      - `result=pixel-shell-timeline-ok`
+    - corresponding guest log:
+      - `build/pixel/drm-guest/20260418T182546Z`
+      - valid Wayland raw handles
+      - `surface-diagnostics source=create-surface adapter_count=1`
+      - `resume-surface-ready backend=Vulkan`
+    - follow-up cleanup landed in-tree:
+      - removed the Pixel `gpu_softbuffer` bundle/staging path
+      - removed the `shadow-blitz-demo` `gpu_softbuffer` feature/package variant
+      - `gpu` is now the only supported Pixel GPU lane
+    - local verification after cleanup:
+      - `cargo check` for `shadow-blitz-demo` on `cpu`, `gpu`, and `hybrid`: green
+      - `just pre-commit`: green
+    - remaining product issue before scroll work:
+      - keep treating scrolling latency as the next problem once the pure-GPU lane is boring
+  - 2026-04-18 hard-cut status:
+    - Pixel script/operator paths are now GPU-only:
+      - removed `PIXEL_SHELL_RENDERER`, `PIXEL_RUNTIME_APP_RENDERER`, `PIXEL_RUNTIME_GPU_RENDERER`
+      - removed `scripts/pixel/pixel_build_guest_client.sh`
+      - removed the standalone Pixel guest-client fallback artifact / dst defaults
+      - removed Pixel-side `gpu_softbuffer` / softbuffer analysis branches from the active script path
+    - shell proof after the hard cut:
+      - `build/pixel/shell/20260418T190516Z`
+      - `result=pixel-shell-timeline-ok`
+      - note: the full smoke first timed out on host-side staging; `--run-only` is the meaningful verdict for the current script cut
+    - runtime bring-up status after refreshing stale runtime host/app staging:
+      - stale failure fixed:
+        - `file:///runtime-app-bundle.js` missing from the old runtime stage
+      - current remaining failure:
+        - `build/pixel/runtime-gpu-probe/20260418T191058Z/run-vulkan_kgsl_first`
+        - app launches, runtime host renders, compositor presents boot / early frames, then `anyrender_vello` fails `create_surface` during `window-resume-start`
+    - interpretation:
+      - the Pixel hard cut is done at the script / operator layer
+      - the remaining blocker is a real direct-runtime GPU bring-up bug, not a CPU fallback path
 
 ## Further Improvements
 

@@ -1,5 +1,7 @@
 use std::{
+    env,
     io::{self, Read, Write},
+    os::unix::fs::PermissionsExt,
     os::unix::net::UnixListener,
     path::PathBuf,
 };
@@ -16,6 +18,27 @@ pub struct ControlLogMessages {
     pub read_failed: &'static str,
 }
 
+fn parse_octal_mode_from_env(var: &str) -> io::Result<Option<u32>> {
+    let Ok(raw_value) = env::var(var) else {
+        return Ok(None);
+    };
+
+    let trimmed = raw_value.trim();
+    let normalized = trimmed
+        .strip_prefix("0o")
+        .or_else(|| trimmed.strip_prefix("0O"))
+        .or_else(|| trimmed.strip_prefix('0'))
+        .filter(|value| !value.is_empty())
+        .unwrap_or(trimmed);
+    let mode = u32::from_str_radix(normalized, 8).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid {var}={trimmed:?}: {error}"),
+        )
+    })?;
+    Ok(Some(mode))
+}
+
 pub fn init_control_listener<State, F>(
     event_loop: &mut EventLoop<State>,
     path: PathBuf,
@@ -30,6 +53,9 @@ where
     }
 
     let listener = UnixListener::bind(&path)?;
+    if let Some(mode) = parse_octal_mode_from_env("SHADOW_COMPOSITOR_CONTROL_SOCKET_MODE")? {
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))?;
+    }
     listener.set_nonblocking(true)?;
 
     event_loop

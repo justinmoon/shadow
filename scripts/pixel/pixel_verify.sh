@@ -25,6 +25,7 @@ fi
 compositor_ok=false
 client_ok=false
 frame_ok=false
+frame_required="${PIXEL_VERIFY_FRAME_REQUIRED-1}"
 require_client_marker="${PIXEL_VERIFY_REQUIRE_CLIENT_MARKER-1}"
 required_markers_raw="${PIXEL_VERIFY_REQUIRED_MARKERS-}"
 required_markers_ok=true
@@ -40,6 +41,8 @@ elif grep -Fq "$client_marker" "$session_output"; then
   client_ok=true
 fi
 if [[ -s "$frame_artifact" ]]; then
+  frame_ok=true
+elif [[ -z "$frame_required" ]]; then
   frame_ok=true
 fi
 if [[ -n "$required_markers_raw" ]]; then
@@ -72,6 +75,7 @@ pixel_write_status_json "$run_dir/status.json" \
   client_marker_seen="$client_ok" \
   required_markers_seen="$required_markers_ok" \
   forbidden_markers_clear="$forbidden_markers_clear" \
+  frame_artifact_required="$([[ -n "$frame_required" ]] && echo true || echo false)" \
   frame_artifact_present="$frame_ok" \
   success="$success"
 

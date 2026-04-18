@@ -18,7 +18,9 @@ host_launcher_artifact="$host_bundle_dir/run-shadow-runtime-host"
 host_bundle_manifest_path="$host_bundle_dir/.bundle-manifest.json"
 runtime_manifest_path="$host_bundle_dir/.runtime-bundle-manifest.json"
 package_ref="$repo#packages.${linux_system}.shadow-runtime-host"
-extra_bundle_dir="${PIXEL_RUNTIME_EXTRA_BUNDLE_ARTIFACT_DIR-}"
+extra_bundle_binary_name="shadow-blitz-demo"
+extra_bundle_dir="$(pixel_artifact_path shadow-blitz-demo-gpu-gnu)"
+extra_bundle_package_ref="$repo#packages.${linux_system}.shadow-blitz-demo-aarch64-linux-gnu-gpu"
 audio_enabled="${PIXEL_SHELL_ENABLE_LINUX_AUDIO:-1}"
 audio_package_ref="$repo#packages.${linux_system}.shadow-linux-audio-spike-aarch64-linux-gnu"
 audio_out_link="$(pixel_dir)/shadow-linux-audio-spike-aarch64-linux-gnu-result"
@@ -51,6 +53,7 @@ podcast_episode_ids="${SHADOW_PODCAST_PLAYER_EPISODE_IDS:-00}"
 app_artifact_root="${PIXEL_SHELL_APP_ARTIFACT_ROOT:-build/runtime/pixel-shell-app-artifacts}"
 podcast_asset_dir=""
 podcast_config_json=""
+extra_bundle_fingerprint="__no_extra_bundle__"
 
 mapfile -t supported_runtime_app_ids < <(pixel_runtime_shell_app_ids)
 
@@ -117,6 +120,45 @@ if ((${#selected_runtime_app_ids[@]} == 0)); then
 fi
 selected_shell_app_ids_csv="$(IFS=,; printf '%s' "${selected_runtime_app_ids[*]}")"
 
+cached_shell_app_manifest_json() {
+  local manifest_path
+  manifest_path="$app_artifact_root/artifact-manifest.json"
+
+  if [[ ! -f "$manifest_path" ]]; then
+    return 1
+  fi
+
+  SELECTED_APPS_CSV="$selected_shell_app_ids_csv" MANIFEST_PATH="$manifest_path" python3 - <<'PY'
+import json
+import os
+import sys
+
+manifest_path = os.environ["MANIFEST_PATH"]
+selected = [
+    app_id
+    for app_id in os.environ.get("SELECTED_APPS_CSV", "").split(",")
+    if app_id
+]
+
+with open(manifest_path, "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+
+if data.get("profile") != "pixel-shell":
+    raise SystemExit(1)
+
+apps = data.get("apps", {})
+for app_id in selected:
+    app_entry = apps.get(app_id)
+    if not isinstance(app_entry, dict):
+        raise SystemExit(1)
+    bundle_path = app_entry.get("effectiveBundlePath")
+    if not bundle_path or not os.path.isfile(bundle_path):
+        raise SystemExit(1)
+
+print(json.dumps(data))
+PY
+}
+
 manifest_app_field() {
   local app_id="$1"
   local field="$2"
@@ -134,30 +176,37 @@ elif value is not None:
 PY
 }
 
-if [[ -n "$extra_bundle_dir" ]]; then
-  extra_bundle_dir="$(normalize_runtime_bundle_input_path "$extra_bundle_dir")"
-  if [[ ! -d "$extra_bundle_dir" ]]; then
-    echo "pixel_prepare_shell_runtime_artifacts: extra bundle dir not found: $extra_bundle_dir" >&2
-    exit 1
-  fi
+extra_bundle_dir="$(normalize_runtime_bundle_input_path "$extra_bundle_dir")"
+if [[ ! -d "$extra_bundle_dir" ]]; then
+  echo "pixel_prepare_shell_runtime_artifacts: missing GPU bundle dir: $extra_bundle_dir" >&2
+  exit 1
 fi
+require_runtime_bundle_entry \
+  "$extra_bundle_dir" \
+  "$extra_bundle_binary_name" \
+  "pixel_prepare_shell_runtime_artifacts"
+extra_bundle_fingerprint="$(runtime_bundle_directory_fingerprint "$extra_bundle_dir")"
 
-app_manifest_json="$(
-  runtime_build_args=(--profile pixel-shell --artifact-root "$app_artifact_root")
-  if runtime_app_selected podcast; then
-    runtime_build_args+=(--include-podcast)
-  fi
-  for selected_app_id in "${selected_runtime_app_ids[@]}"; do
-    runtime_build_args+=(--include-app "$selected_app_id")
-  done
-  if ((${#selected_runtime_app_ids[@]})); then
-    SHADOW_PODCAST_PLAYER_EPISODE_IDS="$podcast_episode_ids" \
-      "$SCRIPT_DIR/runtime_build_artifacts.sh" \
-        "${runtime_build_args[@]}"
-  else
-    printf '{\n  "apps": {}\n}\n'
-  fi
-)"
+if app_manifest_json="$(cached_shell_app_manifest_json)"; then
+  printf 'Shell runtime app artifact cacheHit -> %s\n' "$app_artifact_root"
+else
+  app_manifest_json="$(
+    runtime_build_args=(--profile pixel-shell --artifact-root "$app_artifact_root")
+    if runtime_app_selected podcast; then
+      runtime_build_args+=(--include-podcast)
+    fi
+    for selected_app_id in "${selected_runtime_app_ids[@]}"; do
+      runtime_build_args+=(--include-app "$selected_app_id")
+    done
+    if ((${#selected_runtime_app_ids[@]})); then
+      SHADOW_PODCAST_PLAYER_EPISODE_IDS="$podcast_episode_ids" \
+        "$SCRIPT_DIR/runtime_build_artifacts.sh" \
+          "${runtime_build_args[@]}"
+    else
+      printf '{\n  "apps": {}\n}\n'
+    fi
+  )"
+fi
 
 runtime_app_ids=("${selected_runtime_app_ids[@]}")
 
@@ -201,7 +250,9 @@ host_bundle_source_fingerprint="$(
     "__pixel_shell_enable_linux_audio__${audio_enabled}" \
     "__pixel_shell_audio_package_ref__${audio_package_ref}" \
     "__pixel_shell_podcast_config__${podcast_config_json:-__podcast_unselected__}" \
-    "${extra_bundle_dir:-__no_extra_bundle__}"
+    "__extra_bundle_dir__${extra_bundle_dir:-}" \
+    "__extra_bundle_package_ref__${extra_bundle_package_ref:-}" \
+    "__extra_bundle_fingerprint__${extra_bundle_fingerprint}"
 )"
 
 host_bundle_cache_hit=0
@@ -221,6 +272,9 @@ if [[ "${PIXEL_FORCE_LINUX_BUNDLE_REBUILD-}" != 1 ]] \
   && [[ ! -L "$host_bundle_dir/share/X11/xkb" ]] \
   && runtime_bundle_manifest_matches "$host_bundle_manifest_path" "$host_bundle_source_fingerprint"; then
   host_bundle_cache_hit=1
+  if [[ ! -f "$host_bundle_dir/$extra_bundle_binary_name" ]]; then
+    host_bundle_cache_hit=0
+  fi
   if [[ "$audio_enabled" == "1" ]] \
     && { [[ ! -x "$audio_launcher_artifact" ]] || [[ ! -f "$host_bundle_dir/$audio_binary_name" ]]; }; then
     host_bundle_cache_hit=0
@@ -245,10 +299,10 @@ else
     copy_closure_dir_into_bundle "lib/alsa-lib" "$host_bundle_dir/lib/alsa-lib" optional
   fi
 
-  if [[ -n "$extra_bundle_dir" ]]; then
-    chmod -R u+w "$host_bundle_dir" 2>/dev/null || true
-    cp -R "$extra_bundle_dir"/. "$host_bundle_dir"/
-  fi
+  chmod -R u+w "$host_bundle_dir" 2>/dev/null || true
+  cp -R "$extra_bundle_dir"/. "$host_bundle_dir"/
+  append_runtime_closure_from_package_ref "$extra_bundle_package_ref"
+  fill_linux_bundle_runtime_deps "$host_bundle_dir"
 
   if [[ "$audio_enabled" == "1" ]]; then
     cat >"$audio_launcher_artifact" <<EOF
@@ -306,15 +360,15 @@ EOF
 fi
 
 declare -a host_bundle_app_paths=()
-for app_id in "${supported_shell_app_ids[@]}"; do
+for app_id in "${supported_runtime_app_ids[@]}"; do
   rm -f "$host_bundle_dir/$(basename "$(pixel_runtime_app_bundle_dst_for "$app_id")")"
 done
-for index in "${!shell_app_ids[@]}"; do
+for index in "${!runtime_app_ids[@]}"; do
   host_bundle_app_path="$host_bundle_dir/$(basename "${shell_app_bundle_destinations[$index]}")"
   cp "${shell_app_bundle_artifacts[$index]}" "$host_bundle_app_path"
   host_bundle_app_paths+=("$host_bundle_app_path")
 done
-if shell_app_selected podcast && [[ -n "$podcast_asset_dir" ]]; then
+if runtime_app_selected podcast && [[ -n "$podcast_asset_dir" ]]; then
   chmod -R u+w "$host_bundle_dir/assets" 2>/dev/null || true
   rm -rf "$host_bundle_dir/assets"
   cp -R "$podcast_asset_dir"/. "$host_bundle_dir"/

@@ -25,8 +25,10 @@ audio_package_ref="$repo#packages.${linux_system}.shadow-linux-audio-spike-aarch
 audio_out_link="$(pixel_dir)/shadow-linux-audio-spike-aarch64-linux-gnu-result"
 audio_binary_name="shadow-linux-audio-spike"
 audio_launcher_artifact="$host_bundle_dir/run-$audio_binary_name"
-extra_bundle_dir="${PIXEL_RUNTIME_EXTRA_BUNDLE_ARTIFACT_DIR-}"
 extra_asset_dir="${PIXEL_RUNTIME_APP_EXTRA_ASSET_DIR-}"
+extra_bundle_binary_name="shadow-blitz-demo"
+extra_bundle_dir="$(pixel_artifact_path shadow-blitz-demo-gpu-gnu)"
+extra_bundle_package_ref="$repo#packages.${linux_system}.shadow-blitz-demo-aarch64-linux-gnu-gpu"
 host_bundle_manifest_path="$host_bundle_dir/.bundle-manifest.json"
 runtime_manifest_path="$host_bundle_dir/.runtime-bundle-manifest.json"
 asset_manifest_path="$asset_artifact_dir/.runtime-assets-manifest.json"
@@ -40,6 +42,7 @@ runtime_helper_content_fingerprint=""
 asset_cache_hit=0
 asset_source_fingerprint=""
 asset_content_fingerprint=""
+extra_bundle_fingerprint="__no_extra_bundle__"
 xkb_source_dir="$(runtime_bundle_xkb_source_dir)"
 android_font_source_dir="$(runtime_bundle_android_font_source_dir)"
 declare -a runtime_host_source_inputs=()
@@ -114,13 +117,16 @@ mkdir -p "$(dirname "$bundle_artifact")"
 cp "$bundle_source_path" "$bundle_artifact"
 chmod 0644 "$bundle_artifact"
 
-if [[ -n "$extra_bundle_dir" ]]; then
-  extra_bundle_dir="$(normalize_runtime_bundle_input_path "$extra_bundle_dir")"
-  if [[ ! -d "$extra_bundle_dir" ]]; then
-    echo "pixel_prepare_runtime_app_artifacts: extra bundle dir not found: $extra_bundle_dir" >&2
-    exit 1
-  fi
+extra_bundle_dir="$(normalize_runtime_bundle_input_path "$extra_bundle_dir")"
+if [[ ! -d "$extra_bundle_dir" ]]; then
+  echo "pixel_prepare_runtime_app_artifacts: missing GPU bundle dir: $extra_bundle_dir" >&2
+  exit 1
 fi
+require_runtime_bundle_entry \
+  "$extra_bundle_dir" \
+  "$extra_bundle_binary_name" \
+  "pixel_prepare_runtime_app_artifacts"
+extra_bundle_fingerprint="$(runtime_bundle_directory_fingerprint "$extra_bundle_dir")"
 if [[ -n "$extra_asset_dir" ]]; then
   extra_asset_dir="$(normalize_runtime_bundle_input_path "$extra_asset_dir")"
   if [[ ! -d "$extra_asset_dir" ]]; then
@@ -144,7 +150,9 @@ host_bundle_source_fingerprint="$(
     "$SCRIPT_DIR/runtime/runtime_compile_solid.ts" \
     "$xkb_source_dir" \
     "$android_font_source_dir" \
-    "${extra_bundle_dir:-__no_extra_bundle__}" \
+    "__extra_bundle_dir__${extra_bundle_dir:-}" \
+    "__extra_bundle_package_ref__${extra_bundle_package_ref:-}" \
+    "__extra_bundle_fingerprint__${extra_bundle_fingerprint}" \
     "__pixel_runtime_enable_linux_audio__${audio_enabled}" \
     "__pixel_runtime_audio_package_ref__${audio_package_ref}"
 )"
@@ -157,6 +165,9 @@ if [[ "${PIXEL_FORCE_LINUX_BUNDLE_REBUILD-}" != 1 ]] \
   && [[ ! -L "$host_bundle_dir/share/X11/xkb" ]] \
   && runtime_bundle_manifest_matches "$host_bundle_manifest_path" "$host_bundle_source_fingerprint"; then
   host_bundle_cache_hit=1
+  if [[ ! -f "$host_bundle_dir/$extra_bundle_binary_name" ]]; then
+    host_bundle_cache_hit=0
+  fi
   if [[ "$audio_enabled" == "1" ]] \
     && { [[ ! -x "$audio_launcher_artifact" ]] || [[ ! -f "$host_bundle_dir/$audio_binary_name" ]]; }; then
     host_bundle_cache_hit=0
@@ -183,10 +194,10 @@ if [[ "$host_bundle_cache_hit" != "1" ]]; then
     copy_closure_dir_into_bundle "lib/alsa-lib" "$host_bundle_dir/lib/alsa-lib" optional
   fi
 
-  if [[ -n "$extra_bundle_dir" ]]; then
-    chmod -R u+w "$host_bundle_dir" 2>/dev/null || true
-    cp -R "$extra_bundle_dir"/. "$host_bundle_dir"/
-  fi
+  chmod -R u+w "$host_bundle_dir" 2>/dev/null || true
+  cp -R "$extra_bundle_dir"/. "$host_bundle_dir"/
+  append_runtime_closure_from_package_ref "$extra_bundle_package_ref"
+  fill_linux_bundle_runtime_deps "$host_bundle_dir"
 
   if [[ "$audio_enabled" == "1" ]]; then
     cat >"$audio_launcher_artifact" <<EOF

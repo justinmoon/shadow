@@ -4,25 +4,14 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["cpu"]
+default = []
 cpu = ["dep:anyrender_vello_cpu", "anyrender_vello_cpu/softbuffer_window_renderer"]
 gpu = ["dep:anyrender_vello", "dep:wgpu", "dep:pollster", "dep:env_logger"]
-gpu_softbuffer = [
-  "dep:anyrender_vello",
-  "dep:anyrender_vello_cpu",
-  "dep:softbuffer_window_renderer",
-  "dep:wgpu",
-  "dep:pollster",
-  "dep:env_logger",
-]
-hybrid = ["dep:anyrender_vello_hybrid", "dep:wgpu", "dep:pollster", "dep:env_logger"]
 host_system_fonts = ["blitz-dom/system_fonts"]
 
 [dependencies]
 anyrender_vello = { version = "0.8", optional = true }
 anyrender_vello_cpu = { version = "0.10", optional = true }
-anyrender_vello_hybrid = { version = "0.3", optional = true }
-softbuffer_window_renderer = { path = "../../third_party/softbuffer_window_renderer", optional = true }
 blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-dom", default-features = false }
 blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-html", default-features = false }
 blitz-shell = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "blitz-shell", default-features = false, features = ["data-uri"] }

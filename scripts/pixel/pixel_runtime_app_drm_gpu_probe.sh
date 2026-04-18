@@ -9,7 +9,7 @@ ensure_bootimg_shell "$@"
 pixel_prepare_dirs
 
 profile="${1:-${PIXEL_RUNTIME_APP_GPU_PROFILE:-vulkan_kgsl_first}}"
-renderer="${PIXEL_RUNTIME_GPU_RENDERER:-gpu}"
+renderer="gpu"
 probe_root="$(pixel_dir)/runtime-gpu-probe"
 probe_dir="${PIXEL_RUNTIME_GPU_PROBE_DIR-}"
 profile="${profile#profile=}"
@@ -31,7 +31,6 @@ printf 'pixel runtime direct gpu probe: renderer=%s profile=%s\n' "$renderer" "$
 
 set +e
 env \
-  PIXEL_RUNTIME_APP_RENDERER="$renderer" \
   PIXEL_RUNTIME_APP_GPU_PROFILE="$profile" \
   PIXEL_GUEST_RUN_DIR="$run_dir" \
   PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS:-45}" \

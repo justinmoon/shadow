@@ -1,4 +1,4 @@
-use crate::{DeviceHandle, block_on_wgpu, util::create_texture};
+use crate::{block_on_wgpu, util::create_texture, DeviceHandle};
 use wgpu::{
     BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Device, Extent3d, Queue,
     TexelCopyBufferInfo, TexelCopyBufferLayout, TextureFormat, TextureUsages, TextureView,

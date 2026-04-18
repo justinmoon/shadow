@@ -187,6 +187,21 @@ runtime_bundle_directory_fingerprint() {
   ) | shasum -a 256 | awk '{print $1}'
 }
 
+require_runtime_bundle_entry() {
+  local bundle_dir relative_path context path
+  bundle_dir="$1"
+  relative_path="$2"
+  context="${3:-runtime bundle}"
+  path="$bundle_dir/$relative_path"
+
+  if [[ -e "$path" ]]; then
+    return 0
+  fi
+
+  echo "$context: missing required path $relative_path in $bundle_dir" >&2
+  return 1
+}
+
 runtime_bundle_manifest_matches() {
   local manifest_path expected_fingerprint
   manifest_path="$1"
@@ -528,6 +543,9 @@ stage_runtime_host_linux_bundle() {
   copy_runtime_optional_lib "libnss_dns.so.2" "$bundle_lib_dir"
   copy_runtime_optional_lib "libnss_files.so.2" "$bundle_lib_dir"
   copy_runtime_optional_lib "libresolv.so.2" "$bundle_lib_dir"
+  copy_runtime_optional_lib "libdl.so.2" "$bundle_lib_dir"
+  copy_runtime_optional_lib "libpthread.so.0" "$bundle_lib_dir"
+  copy_runtime_optional_lib "librt.so.1" "$bundle_lib_dir"
 
   cat >"$bundle_etc_dir/nsswitch.conf" <<'EOF'
 hosts: files dns

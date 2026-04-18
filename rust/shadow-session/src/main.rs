@@ -29,6 +29,30 @@ fn path_exists(path: &str) -> bool {
     unsafe { libc::access(c_path.as_ptr(), libc::F_OK) == 0 }
 }
 
+fn parse_octal_mode_from_env(var: &str, default: u32) -> u32 {
+    let Ok(raw_value) = env::var(var) else {
+        return default;
+    };
+
+    let trimmed = raw_value.trim();
+    let normalized = trimmed
+        .strip_prefix("0o")
+        .or_else(|| trimmed.strip_prefix("0O"))
+        .or_else(|| trimmed.strip_prefix('0'))
+        .filter(|value| !value.is_empty())
+        .unwrap_or(trimmed);
+
+    match u32::from_str_radix(normalized, 8) {
+        Ok(mode) => mode,
+        Err(error) => {
+            log_line(&format!(
+                "invalid {var}={trimmed:?}: {error}; falling back to {default:o}"
+            ));
+            default
+        }
+    }
+}
+
 fn describe_path_state(path: &str) -> String {
     match fs::metadata(path) {
         Ok(metadata) => {
@@ -102,10 +126,11 @@ fn run_command(mut command: Command, label: &str) -> ! {
 fn prepare_guest_runtime_dir() -> Result<&'static str, String> {
     let runtime_dir =
         env::var("SHADOW_RUNTIME_DIR").unwrap_or_else(|_| "/shadow-runtime".to_string());
+    let runtime_dir_mode = parse_octal_mode_from_env("SHADOW_RUNTIME_DIR_MODE", 0o700);
 
     fs::create_dir_all(&runtime_dir)
         .map_err(|error| format!("create_dir_all({runtime_dir}) failed: {error}"))?;
-    fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(0o700))
+    fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(runtime_dir_mode))
         .map_err(|error| format!("set_permissions({runtime_dir}) failed: {error}"))?;
 
     Ok(Box::leak(runtime_dir.into_boxed_str()))

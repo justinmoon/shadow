@@ -13,9 +13,7 @@ if [[ -z "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" && -z "${PIXEL_VENDOR_TURNIP_TARBALL
   PIXEL_VENDOR_TURNIP_LIB_PATH="$(pixel_ensure_pinned_turnip_lib)"
   export PIXEL_VENDOR_TURNIP_LIB_PATH
 fi
-# Deterministic default. Never infer renderer mode from optional GPU assets.
-# CPU stays opt-in through PIXEL_RUNTIME_APP_RENDERER=cpu.
-: "${PIXEL_RUNTIME_APP_RENDERER:=gpu_softbuffer}"
+# Pixel runtime app is GPU-only.
 runtime_stage_only=0
 runtime_run_only=0
 
@@ -30,85 +28,41 @@ if (( runtime_stage_only == 1 && runtime_run_only == 1 )); then
   exit 64
 fi
 
-build_include_guest_client=1
-if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu_softbuffer" || "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
-  build_include_guest_client=0
-fi
-
 if (( runtime_run_only == 0 )); then
-  PIXEL_BUILD_INCLUDE_GUEST_CLIENT="$build_include_guest_client" \
-    "$SCRIPT_DIR/pixel/pixel_build.sh"
+  "$SCRIPT_DIR/pixel/pixel_build.sh"
 fi
 
-guest_client_artifact="$(pixel_guest_client_artifact)"
-guest_client_dst="$(pixel_guest_client_dst)"
-runtime_prepare_extra_env=()
 runtime_gpu_profile="${PIXEL_RUNTIME_APP_GPU_PROFILE-}"
 runtime_gpu_bundle_mode="${PIXEL_BLITZ_GPU_BUNDLE_MODE-}"
 
-case "$PIXEL_RUNTIME_APP_RENDERER" in
-  cpu)
-    if (( runtime_run_only == 0 )); then
-      PIXEL_BLITZ_RENDERER=cpu "$SCRIPT_DIR/pixel/pixel_build_guest_client.sh"
-    fi
-    ;;
-  gpu)
-    if (( runtime_run_only == 0 )); then
-      if [[ -z "$runtime_gpu_bundle_mode" ]]; then
-        if [[ -n "$runtime_gpu_profile" ]]; then
-          case "$runtime_gpu_profile" in
-            vulkan*)
-              runtime_gpu_bundle_mode="vulkan-only"
-              ;;
-            *)
-              runtime_gpu_bundle_mode="full"
-              ;;
-          esac
-        elif [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" || -n "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" ]]; then
-          runtime_gpu_bundle_mode="vulkan-only"
-        else
+if (( runtime_run_only == 0 )); then
+  if [[ -z "$runtime_gpu_bundle_mode" ]]; then
+    if [[ -n "$runtime_gpu_profile" ]]; then
+      case "$runtime_gpu_profile" in
+        vulkan*)
           runtime_gpu_bundle_mode="full"
-        fi
-      fi
-      PIXEL_BLITZ_GPU_BUNDLE_MODE="$runtime_gpu_bundle_mode" \
-        "$SCRIPT_DIR/pixel/pixel_prepare_blitz_demo_gpu_bundle.sh"
+          ;;
+        *)
+          runtime_gpu_bundle_mode="full"
+          ;;
+      esac
+    else
+      runtime_gpu_bundle_mode="full"
     fi
-    guest_client_artifact="$(pixel_artifact_path run-shadow-blitz-demo-gpu)"
-    guest_client_dst="$(pixel_runtime_linux_dir)/run-shadow-blitz-demo"
-    runtime_prepare_extra_env=(
-      "PIXEL_RUNTIME_EXTRA_BUNDLE_ARTIFACT_DIR=$(pixel_artifact_path shadow-blitz-demo-gpu-gnu)"
-    )
-    if [[ -z "$runtime_gpu_profile" ]]; then
-      if [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" || -n "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" ]]; then
-        runtime_gpu_profile="vulkan_kgsl_first"
-      else
-        runtime_gpu_profile="gl"
-      fi
-    fi
-    ;;
-  hybrid)
-    if (( runtime_run_only == 0 )); then
-      PIXEL_BLITZ_RENDERER=hybrid "$SCRIPT_DIR/pixel/pixel_build_guest_client.sh"
-    fi
-    ;;
-  gpu_softbuffer)
-    if (( runtime_run_only == 0 )); then
-      "$SCRIPT_DIR/pixel/pixel_prepare_blitz_demo_gpu_softbuffer_bundle.sh"
-    fi
-    guest_client_artifact="$(pixel_artifact_path run-shadow-blitz-demo-gpu-softbuffer)"
-    guest_client_dst="$(pixel_runtime_linux_dir)/run-shadow-blitz-demo"
-    runtime_prepare_extra_env=(
-      "PIXEL_RUNTIME_EXTRA_BUNDLE_ARTIFACT_DIR=$(pixel_artifact_path shadow-blitz-demo-gnu)"
-    )
-    ;;
-  *)
-    echo "pixel_runtime_app_drm: unsupported PIXEL_RUNTIME_APP_RENDERER: $PIXEL_RUNTIME_APP_RENDERER" >&2
-    exit 1
-    ;;
-esac
+  fi
+  PIXEL_BLITZ_GPU_BUNDLE_MODE="$runtime_gpu_bundle_mode" \
+    "$SCRIPT_DIR/pixel/pixel_prepare_blitz_demo_gpu_bundle.sh"
+fi
+if [[ -z "$runtime_gpu_profile" ]]; then
+  if [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" || -n "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" ]]; then
+    runtime_gpu_profile="vulkan_kgsl_first"
+  else
+    runtime_gpu_profile="gl"
+  fi
+fi
 
 if (( runtime_run_only == 0 )); then
-  env "${runtime_prepare_extra_env[@]}" "$SCRIPT_DIR/pixel/pixel_prepare_runtime_app_artifacts.sh"
+  "$SCRIPT_DIR/pixel/pixel_prepare_runtime_app_artifacts.sh"
 fi
 
 : "${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS:=12000}"
@@ -131,8 +85,6 @@ runtime_mesa_cache_dir="$(pixel_runtime_mesa_cache_dir)"
 runtime_viewport_mode="${PIXEL_RUNTIME_APP_VIEWPORT_MODE-}"
 
 if (( runtime_stage_only == 1 )); then
-  PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
-  PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
   PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_runtime_host_bundle_artifact_dir)" \
   PIXEL_RUNTIME_APP_ASSET_ARTIFACT_DIR="$(pixel_runtime_app_asset_artifact_dir)" \
   PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT="$(pixel_runtime_app_bundle_artifact)" \
@@ -149,11 +101,7 @@ if [[ -z "$panel_size" ]]; then
   exit 1
 fi
 if [[ -z "$runtime_viewport_mode" ]]; then
-  if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
-    runtime_viewport_mode="panel"
-  else
-    runtime_viewport_mode="fit"
-  fi
+  runtime_viewport_mode="panel"
 fi
 
 case "$runtime_viewport_mode" in
@@ -201,28 +149,16 @@ fi
 if [[ "$runtime_viewport_mode" == "panel" ]]; then
   runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_BLITZ_IGNORE_SAFE_AREA=1"
 fi
-if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu_softbuffer" || "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
-  runtime_guest_env="${runtime_guest_env}"$'\n'"MESA_SHADER_CACHE_DIR=$runtime_mesa_cache_dir"
-  if [[ "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
-    runtime_gpu_profile_env="$(pixel_runtime_gpu_profile_lines "$runtime_gpu_profile")" || {
-      echo "pixel_runtime_app_drm: unsupported PIXEL_RUNTIME_APP_GPU_PROFILE: $runtime_gpu_profile" >&2
-      exit 1
-    }
-    while IFS= read -r env_line; do
-      [[ -n "$env_line" ]] || continue
-      runtime_guest_env="${runtime_guest_env}"$'\n'"$env_line"
-    done < <(printf '%s\n' "$runtime_gpu_profile_env")
-    runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_WGPU_PRESENT_MODE=${SHADOW_WGPU_PRESENT_MODE:-fifo}"
-  elif [[ -n "${PIXEL_VENDOR_TURNIP_TARBALL-}" || -n "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" ]]; then
-    runtime_guest_env="${runtime_guest_env}"$'\n'"WGPU_BACKEND=${WGPU_BACKEND:-vulkan}"
-    runtime_guest_env="${runtime_guest_env}"$'\n'"MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}"
-    runtime_guest_env="${runtime_guest_env}"$'\n'"TU_DEBUG=${TU_DEBUG:-noconform}"
-    runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_LINUX_LD_PRELOAD=$(pixel_runtime_openlog_preload_dst)"
-    runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_OPENLOG_DENY_DRI=${SHADOW_OPENLOG_DENY_DRI:-1}"
-  else
-    runtime_guest_env="${runtime_guest_env}"$'\n'"WGPU_BACKEND=${WGPU_BACKEND:-gl}"
-  fi
-fi
+runtime_guest_env="${runtime_guest_env}"$'\n'"MESA_SHADER_CACHE_DIR=$runtime_mesa_cache_dir"
+runtime_gpu_profile_env="$(pixel_runtime_gpu_profile_lines "$runtime_gpu_profile")" || {
+  echo "pixel_runtime_app_drm: unsupported PIXEL_RUNTIME_APP_GPU_PROFILE: $runtime_gpu_profile" >&2
+  exit 1
+}
+while IFS= read -r env_line; do
+  [[ -n "$env_line" ]] || continue
+  runtime_guest_env="${runtime_guest_env}"$'\n'"$env_line"
+done < <(printf '%s\n' "$runtime_gpu_profile_env")
+runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_WGPU_PRESENT_MODE=${SHADOW_WGPU_PRESENT_MODE:-fifo}"
 if [[ -n "$extra_guest_env" ]]; then
   runtime_guest_env="${runtime_guest_env}"$'\n'"${extra_guest_env}"
 fi
@@ -251,15 +187,18 @@ fi
 
 takeover_restore_in_session="${PIXEL_TAKEOVER_RESTORE_IN_SESSION-}"
 takeover_reboot_on_restore_failure="${PIXEL_TAKEOVER_REBOOT_ON_RESTORE_FAILURE-}"
-if [[ -z "$takeover_restore_in_session" && "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
+if [[ -z "$takeover_restore_in_session" ]]; then
   takeover_restore_in_session=0
 fi
-if [[ -z "$takeover_reboot_on_restore_failure" && "$PIXEL_RUNTIME_APP_RENDERER" == "gpu" ]]; then
+if [[ -z "$takeover_reboot_on_restore_failure" ]]; then
   takeover_reboot_on_restore_failure=1
 fi
 
-PIXEL_GUEST_CLIENT_ARTIFACT="$guest_client_artifact" \
-PIXEL_GUEST_CLIENT_DST="$guest_client_dst" \
+# Runtime app smokes validate startup, required app markers, and clean exit.
+# Do not implicitly request an extra compositor frame artifact on short-lived
+# runs; opt back in explicitly when a debug session needs it.
+: "${PIXEL_GUEST_FRAME_CAPTURE_MODE:=off}"
+
 PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_runtime_host_bundle_artifact_dir)" \
 PIXEL_RUNTIME_APP_ASSET_ARTIFACT_DIR="$(pixel_runtime_app_asset_artifact_dir)" \
 PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT="$(pixel_runtime_app_bundle_artifact)" \
@@ -276,8 +215,9 @@ PIXEL_GUEST_SESSION_EXIT_TIMEOUT_SECS="$runtime_session_exit_timeout_secs" \
 PIXEL_GUEST_CLIENT_ENV="$runtime_guest_env" \
 PIXEL_GUEST_SESSION_ENV="$runtime_session_env" \
 PIXEL_GUEST_PRECREATE_DIRS="$(pixel_runtime_precreate_dirs_lines)" \
+PIXEL_GUEST_FRAME_CAPTURE_MODE="$PIXEL_GUEST_FRAME_CAPTURE_MODE" \
 PIXEL_VERIFY_FORBIDDEN_MARKERS="$forbidden_markers" \
-PIXEL_RUNTIME_SUMMARY_RENDERER="$PIXEL_RUNTIME_APP_RENDERER" \
+  PIXEL_RUNTIME_SUMMARY_RENDERER="gpu" \
 PIXEL_GUEST_SKIP_PUSH="$([[ "$runtime_run_only" == 1 ]] && printf 1 || true)" \
 PIXEL_TAKEOVER_RESTORE_IN_SESSION="$takeover_restore_in_session" \
 PIXEL_TAKEOVER_REBOOT_ON_RESTORE_FAILURE="$takeover_reboot_on_restore_failure" \
