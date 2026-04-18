@@ -143,15 +143,8 @@ const runtimeDocumentCss =
     ? appModule.runtimeDocumentCss
     : null;
 const runtimeAppConfig = ${runtimeConfigLiteral};
-const initialLifecycleState = Deno.env.get("SHADOW_APP_LIFECYCLE_STATE");
 
 ensureShadowRuntimeOs();
-if (initialLifecycleState) {
-  globalThis.Shadow = {
-    ...(globalThis.Shadow ?? {}),
-    __initialLifecycleState: initialLifecycleState,
-  };
-}
 if (runtimeAppConfig !== null) {
   globalThis.SHADOW_RUNTIME_APP_CONFIG = runtimeAppConfig;
 }

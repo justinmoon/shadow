@@ -9,6 +9,7 @@ use deno_core::v8;
 use deno_core::{FsModuleLoader, JsRuntime, PollEventLoopOptions, RuntimeOptions};
 use shadow_runtime_protocol::{RuntimeDocumentPayload, SessionRequest, SessionResponse};
 
+const APP_LIFECYCLE_STATE_ENV: &str = "SHADOW_APP_LIFECYCLE_STATE";
 const RENDER_EXPR: &str = "globalThis.SHADOW_RUNTIME_HOST.render()";
 const RENDER_IF_DIRTY_EXPR: &str = "globalThis.SHADOW_RUNTIME_HOST.renderIfDirty()";
 const SESSION_USAGE: &str = "usage: shadow-runtime-host --session <bundle-path>";
@@ -53,6 +54,7 @@ async fn load_runtime(main_module: &Url) -> Result<JsRuntime> {
         extensions: shadow_sdk::runtime_host::runtime_extensions(),
         ..Default::default()
     });
+    seed_initial_lifecycle_state(&mut runtime)?;
 
     let module_id = runtime
         .load_main_es_module(main_module)
@@ -65,6 +67,32 @@ async fn load_runtime(main_module: &Url) -> Result<JsRuntime> {
         .context("run deno_core event loop")?;
     evaluation.await.context("evaluate module")?;
     Ok(runtime)
+}
+
+fn seed_initial_lifecycle_state(runtime: &mut JsRuntime) -> Result<()> {
+    let Some(script) = initial_lifecycle_bootstrap_script()? else {
+        return Ok(());
+    };
+
+    runtime
+        .execute_script("<lifecycle-bootstrap>".to_owned(), script)
+        .context("seed initial lifecycle state")?;
+    Ok(())
+}
+
+fn initial_lifecycle_bootstrap_script() -> Result<Option<String>> {
+    let Some(state) = env::var(APP_LIFECYCLE_STATE_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    let encoded = serde_json::to_string(&state).context("encode initial lifecycle state")?;
+    Ok(Some(format!(
+        "globalThis.Shadow = {{ ...(globalThis.Shadow ?? {{}}), __initialLifecycleState: {encoded} }};"
+    )))
 }
 
 async fn run_session(runtime: &mut JsRuntime) -> Result<()> {
@@ -200,7 +228,16 @@ fn resolve_main_module(path: String) -> Result<Url> {
 
 #[cfg(test)]
 mod tests {
-    use super::RuntimeDocumentPayload;
+    use std::sync::{Mutex, OnceLock};
+
+    use super::{
+        initial_lifecycle_bootstrap_script, RuntimeDocumentPayload, APP_LIFECYCLE_STATE_ENV,
+    };
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn runtime_document_payload_preserves_text_input() {
@@ -224,5 +261,29 @@ mod tests {
         assert_eq!(text_input.value, "gm");
         assert_eq!(text_input.input_mode.as_deref(), Some("text"));
         assert!(!text_input.multiline);
+    }
+
+    #[test]
+    fn lifecycle_bootstrap_script_is_absent_without_env() {
+        let _guard = env_lock().lock().expect("env lock");
+        std::env::remove_var(APP_LIFECYCLE_STATE_ENV);
+
+        assert_eq!(
+            initial_lifecycle_bootstrap_script().expect("bootstrap script"),
+            None
+        );
+    }
+
+    #[test]
+    fn lifecycle_bootstrap_script_uses_trimmed_env_state() {
+        let _guard = env_lock().lock().expect("env lock");
+        std::env::set_var(APP_LIFECYCLE_STATE_ENV, " background ");
+
+        let script = initial_lifecycle_bootstrap_script()
+            .expect("bootstrap script")
+            .expect("bootstrap value");
+        assert!(script.contains("__initialLifecycleState: \"background\""));
+
+        std::env::remove_var(APP_LIFECYCLE_STATE_ENV);
     }
 }

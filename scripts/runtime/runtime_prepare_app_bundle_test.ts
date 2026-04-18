@@ -89,11 +89,6 @@ Deno.test("prepareRuntimeAppBundle stages sdk entrypoint files", async () => {
       "platformLifecycleChange",
       "bundle runner lifecycle bridge",
     );
-    assertIncludes(
-      runner,
-      "__initialLifecycleState",
-      "bundle runner lifecycle bootstrap",
-    );
     assert(
       await fileExists(path.join(bundleDir, "shadow_sdk.js")),
       "missing shadow_sdk.js",
