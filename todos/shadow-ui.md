@@ -44,6 +44,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 
 - [~] Expand the first `shadow_sdk` slice beyond app env and service bindings.
 - [ ] Decide where the generated manifest types should live as the current manifest expands.
+- [ ] Rename target-specific compositor crates and binaries to match their deployment lanes more clearly.
 - [x] Sketch the minimal launch metadata required for both `typescript` and `rust` apps.
 - [x] Choose the first Rust runner spike target and keep it deliberately small.
 - [x] Choose the first shared capability to prove through both app models.
@@ -55,7 +56,9 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 
 - The one-manifest direction has landed in the repo. This platform effort should extend that work to cover both app models instead of bypassing it.
 - The manifest now carries `model`, generated Rust metadata exposes a launch-spec view, and runtime artifact builders skip `rust` apps by default while still rejecting explicit `--include-app <rust-app>` requests.
+- `generated_apps.rs` is acceptable as a short-term static bridge, but it is not the end state. Revisit whether generation should emit a smaller typed data layer or move behind a build/runtime boundary before this metadata surface grows much further.
 - VM now supports a real mixed-model shell session: the session package contains `shadow-compositor` plus manifest-declared VM app binaries, the VM launch path no longer exports a global Blitz client override, and a minimal `shadow-rust-demo` binary can be launched through the normal control surface.
+- The compositor crate and binary names should become deployment-descriptive. `shadow-compositor` and `shadow-compositor-guest` are too implicit once both VM and Pixel lanes matter.
 - Pixel remains TypeScript-only for now. Mixed-model manifests are valid, but rooted-Pixel staging and shell surfaces still filter to TypeScript until the native packaging path exists there too.
 - The current `runtime-<something>-host` naming pattern should collapse toward one shared SDK/service surface.
 - The public app-authoring surface should feel like one SDK, not a pile of crates and one-off bindings.
