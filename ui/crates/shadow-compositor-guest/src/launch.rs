@@ -5,25 +5,32 @@ use std::{
     process::{Child, Command},
 };
 
+use shadow_compositor_common::launch::first_env_value;
 use shadow_ui_core::{
-    app::{find_app, AppId},
+    app::{launch_spec, AppId},
     control,
 };
 
 use crate::ShadowGuestCompositor;
 
 pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Result<Child> {
-    let Some(app) = find_app(app_id) else {
+    let Some(app) = launch_spec(app_id) else {
         return Err(io::Error::new(io::ErrorKind::NotFound, "unknown demo app"));
     };
-    let runtime_bundle_path = std::env::var(app.runtime_bundle_env).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("missing runtime bundle env {}", app.runtime_bundle_env),
-        )
-    })?;
+    let runtime_bundle_path = app
+        .typescript_runtime()
+        .map(|runtime| {
+            std::env::var(runtime.bundle_env).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("missing runtime bundle env {}", runtime.bundle_env),
+                )
+            })
+        })
+        .transpose()?;
 
-    let client_path = state.client_config.app_client_path.clone();
+    let client_path = first_env_value(&["SHADOW_APP_CLIENT", "SHADOW_GUEST_CLIENT"])
+        .unwrap_or_else(|| state.client_config.app_client_path.clone());
     let mut command = Command::new(&client_path);
     configure_guest_client_command(
         &mut command,
@@ -42,8 +49,10 @@ pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Resul
                     .unwrap_or_else(|| Path::new(".")),
                 app_id,
             ),
-        )
-        .env("SHADOW_RUNTIME_APP_BUNDLE_PATH", runtime_bundle_path);
+        );
+    if let Some(runtime_bundle_path) = runtime_bundle_path {
+        command.env("SHADOW_RUNTIME_APP_BUNDLE_PATH", runtime_bundle_path);
+    }
     apply_software_keyboard_policy(&mut command);
 
     state.spawn_wayland_command(command, &client_path)

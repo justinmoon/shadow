@@ -31,7 +31,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 
 ## Milestones
 
-- [ ] Extend the current manifest and generated metadata to support `typescript` and `rust` app models.
+- [x] Extend the current manifest and generated metadata to support `typescript` and `rust` app models.
 - [ ] Define the public `shadow_sdk` surface for Rust apps and the matching single binding surface for TypeScript apps.
 - [ ] Decide the smallest useful internal boundaries behind the one public SDK surface.
 - [ ] Prove a minimal Rust app runner for one process-isolated Shadow UI app.
@@ -44,7 +44,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 
 - [ ] Tighten the spec one more pass around `shadow_sdk` naming, modules, and binding language for TypeScript.
 - [ ] Decide where the generated manifest types should live as the current manifest expands.
-- [ ] Sketch the minimal launch metadata required for both `typescript` and `rust` apps.
+- [x] Sketch the minimal launch metadata required for both `typescript` and `rust` apps.
 - [ ] Choose the first Rust runner spike target and keep it deliberately small.
 - [ ] Choose the first shared capability to prove through both app models.
 - [ ] Decide which text-input path to spike first: single-line editor or multiline editor.
@@ -54,8 +54,11 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 ## Implementation Notes
 
 - The one-manifest direction has landed in the repo. This platform effort should extend that work to cover both app models instead of bypassing it.
+- The manifest now carries `model`, generated Rust metadata exposes a launch-spec view, and runtime artifact builders skip `rust` apps by default while still rejecting explicit `--include-app <rust-app>` requests.
+- The current VM and Pixel shell lanes now surface only launchable TypeScript apps. That is intentional until the Rust runner/client packaging seam exists; mixed-model manifests are valid, but `rust` shell apps are still hidden/rejected in the current operator surface.
 - The current `runtime-<something>-host` naming pattern should collapse toward one shared SDK/service surface.
 - The public app-authoring surface should feel like one SDK, not a pile of crates and one-off bindings.
 - Masonry/Xilem remains the leading foundation candidate for the Rust UI implementation layer because it supports both external event-loop integration and rendering into caller-provided textures.
 - Shell/system chrome rewrite is in scope. The current homegrown shell UI should be treated as bring-up architecture, not the final product direction.
-- The first spikes should kill risk in the Rust runner, shared SDK binding, text/IME, and embedded rendering before broader API work hardens.
+- The next spike should prove the smallest Rust runner path end to end: one packaged Rust client binary, one manifest entry, one VM launch path, and no global Blitz-only client override in that path.
+- After the runner spike, revisit the session-visible app filters so `rust` apps can participate in VM/Pixel shell profiles on equal footing.

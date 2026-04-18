@@ -7,7 +7,7 @@ use std::{
 
 use shadow_compositor_common::launch::{first_env_value, sibling_binary_path, workspace_manifest};
 use shadow_ui_core::{
-    app::{find_app, AppId},
+    app::{launch_spec, AppId},
     control,
     scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX},
 };
@@ -19,16 +19,21 @@ pub fn launch_app(
     socket_name: &OsStr,
     control_socket_path: &OsStr,
 ) -> io::Result<Child> {
-    let Some(app) = find_app(app_id) else {
+    let Some(app) = launch_spec(app_id) else {
         return Err(io::Error::new(io::ErrorKind::NotFound, "unknown demo app"));
     };
     let binary_name = app.binary_name;
-    let runtime_bundle_path = std::env::var(app.runtime_bundle_env).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("missing runtime bundle env {}", app.runtime_bundle_env),
-        )
-    })?;
+    let runtime_bundle_path = app
+        .typescript_runtime()
+        .map(|runtime| {
+            std::env::var(runtime.bundle_env).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("missing runtime bundle env {}", runtime.bundle_env),
+                )
+            })
+        })
+        .transpose()?;
 
     let mut command = if let Some(explicit) =
         first_env_value(&["SHADOW_APP_CLIENT", "SHADOW_DEMO_CLIENT"])
@@ -94,8 +99,11 @@ pub fn launch_app(
         .env(
             "SHADOW_BLITZ_SURFACE_HEIGHT",
             runtime_surface_height().to_string(),
-        )
-        .env("SHADOW_RUNTIME_APP_BUNDLE_PATH", runtime_bundle_path);
+        );
+
+    if let Some(runtime_bundle_path) = runtime_bundle_path {
+        command.env("SHADOW_RUNTIME_APP_BUNDLE_PATH", runtime_bundle_path);
+    }
 
     command.spawn()
 }

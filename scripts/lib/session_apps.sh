@@ -17,19 +17,22 @@ print(manifest.get("shell", {}).get("id", "shell"))
 PY
 }
 
-shadow_load_session_apps() {
-  local profile="${1:-${SHADOW_SESSION_APP_PROFILE:-}}"
+shadow_load_manifest_apps() {
+  local profile="$1"
+  local model_filter="${2:-}"
+  local include_shell="${3:-1}"
 
-  mapfile -t shadow_session_apps < <(python3 - "$SESSION_APPS_MANIFEST" "$profile" <<'PY'
+  mapfile -t shadow_session_apps < <(python3 - "$SESSION_APPS_MANIFEST" "$profile" "$model_filter" "$include_shell" <<'PY'
 import json
 import sys
 
-manifest_path, profile = sys.argv[1:3]
+manifest_path, profile, model_filter, include_shell = sys.argv[1:5]
 with open(manifest_path, encoding="utf-8") as handle:
     manifest = json.load(handle)
 
 shell_id = manifest.get("shell", {}).get("id", "shell")
-print(shell_id)
+if include_shell == "1":
+    print(shell_id)
 for app in manifest.get("apps", []):
     profiles = set(app.get("profiles", []))
     if profile:
@@ -37,10 +40,22 @@ for app in manifest.get("apps", []):
             continue
     elif not profiles & {"vm-shell", "pixel-shell"}:
         continue
+    if model_filter and app.get("model") != model_filter:
+        continue
     if app["id"] != shell_id:
         print(app["id"])
 PY
 )
+}
+
+shadow_load_session_apps() {
+  local profile="${1:-${SHADOW_SESSION_APP_PROFILE:-}}"
+  shadow_load_manifest_apps "$profile" "typescript" 1
+}
+
+shadow_load_typescript_runtime_apps() {
+  local profile="${1:-${SHADOW_SESSION_APP_PROFILE:-}}"
+  shadow_load_manifest_apps "$profile" "typescript" 0
 }
 
 shadow_session_app_is_shell() {

@@ -29,10 +29,10 @@ android_font_source_dir="$(runtime_bundle_android_font_source_dir)"
 declare -a shell_app_bundle_artifacts=()
 declare -a shell_app_bundle_destinations=()
 declare -a shell_app_bundle_source_paths=()
-declare -a shell_app_ids=()
+declare -a runtime_app_ids=()
 declare -a shell_runtime_source_inputs=()
-declare -a supported_shell_app_ids=()
-selected_shell_app_ids=()
+declare -a supported_runtime_app_ids=()
+selected_runtime_app_ids=()
 
 mapfile -t shell_runtime_source_inputs < <(
   printf '%s\n' "$repo/rust/Cargo.toml"
@@ -51,11 +51,7 @@ app_artifact_root="${PIXEL_SHELL_APP_ARTIFACT_ROOT:-build/runtime/pixel-shell-ap
 podcast_asset_dir=""
 podcast_config_json=""
 
-mapfile -t supported_shell_app_ids < <(pixel_runtime_shell_app_ids)
-if ((${#supported_shell_app_ids[@]} == 0)); then
-  echo "pixel_prepare_shell_runtime_artifacts: no shell apps found in runtime/apps.json" >&2
-  exit 1
-fi
+mapfile -t supported_runtime_app_ids < <(pixel_runtime_shell_app_ids)
 
 trim_whitespace() {
   local value="$1"
@@ -64,11 +60,11 @@ trim_whitespace() {
   printf '%s' "$value"
 }
 
-shell_app_is_supported() {
+runtime_app_is_supported() {
   local app_id="$1"
   local supported_app_id
 
-  for supported_app_id in "${supported_shell_app_ids[@]}"; do
+  for supported_app_id in "${supported_runtime_app_ids[@]}"; do
     if [[ "$supported_app_id" == "$app_id" ]]; then
       return 0
     fi
@@ -76,11 +72,11 @@ shell_app_is_supported() {
   return 1
 }
 
-shell_app_selected() {
+runtime_app_selected() {
   local app_id="$1"
   local selected_app_id
 
-  for selected_app_id in "${selected_shell_app_ids[@]}"; do
+  for selected_app_id in "${selected_runtime_app_ids[@]}"; do
     if [[ "$selected_app_id" == "$app_id" ]]; then
       return 0
     fi
@@ -88,16 +84,16 @@ shell_app_selected() {
   return 1
 }
 
-append_selected_shell_app() {
+append_selected_runtime_app() {
   local app_id="$1"
   local selected_app_id
 
-  for selected_app_id in "${selected_shell_app_ids[@]}"; do
+  for selected_app_id in "${selected_runtime_app_ids[@]}"; do
     if [[ "$selected_app_id" == "$app_id" ]]; then
       return 0
     fi
   done
-  selected_shell_app_ids+=("$app_id")
+  selected_runtime_app_ids+=("$app_id")
 }
 
 selected_shell_app_ids_csv="${PIXEL_SHELL_APP_IDS:-}"
@@ -108,17 +104,17 @@ if [[ -n "$selected_shell_app_ids_csv" ]]; then
     if [[ -z "$requested_app_id" ]]; then
       continue
     fi
-    if ! shell_app_is_supported "$requested_app_id"; then
-      echo "pixel_prepare_shell_runtime_artifacts: unsupported PIXEL_SHELL_APP_IDS entry: $requested_app_id" >&2
+    if ! runtime_app_is_supported "$requested_app_id"; then
+      echo "pixel_prepare_shell_runtime_artifacts: unsupported TypeScript runtime app in PIXEL_SHELL_APP_IDS: $requested_app_id" >&2
       exit 1
     fi
-    append_selected_shell_app "$requested_app_id"
+    append_selected_runtime_app "$requested_app_id"
   done
 fi
-if ((${#selected_shell_app_ids[@]} == 0)); then
-  selected_shell_app_ids=("${supported_shell_app_ids[@]}")
+if ((${#selected_runtime_app_ids[@]} == 0)); then
+  selected_runtime_app_ids=("${supported_runtime_app_ids[@]}")
 fi
-selected_shell_app_ids_csv="$(IFS=,; printf '%s' "${selected_shell_app_ids[*]}")"
+selected_shell_app_ids_csv="$(IFS=,; printf '%s' "${selected_runtime_app_ids[*]}")"
 
 manifest_app_field() {
   local app_id="$1"
@@ -147,21 +143,25 @@ fi
 
 app_manifest_json="$(
   runtime_build_args=(--profile pixel-shell --artifact-root "$app_artifact_root")
-  if shell_app_selected podcast; then
+  if runtime_app_selected podcast; then
     runtime_build_args+=(--include-podcast)
   fi
-  for selected_app_id in "${selected_shell_app_ids[@]}"; do
+  for selected_app_id in "${selected_runtime_app_ids[@]}"; do
     runtime_build_args+=(--include-app "$selected_app_id")
   done
-  SHADOW_PODCAST_PLAYER_EPISODE_IDS="$podcast_episode_ids" \
-    "$SCRIPT_DIR/runtime_build_artifacts.sh" \
-      "${runtime_build_args[@]}"
+  if ((${#selected_runtime_app_ids[@]})); then
+    SHADOW_PODCAST_PLAYER_EPISODE_IDS="$podcast_episode_ids" \
+      "$SCRIPT_DIR/runtime_build_artifacts.sh" \
+        "${runtime_build_args[@]}"
+  else
+    printf '{\n  "apps": {}\n}\n'
+  fi
 )"
 
-shell_app_ids=("${selected_shell_app_ids[@]}")
+runtime_app_ids=("${selected_runtime_app_ids[@]}")
 
 mkdir -p "$(pixel_artifacts_dir)"
-for app_id in "${shell_app_ids[@]}"; do
+for app_id in "${runtime_app_ids[@]}"; do
   bundle_source_path="$(manifest_app_field "$app_id" effectiveBundlePath)"
   bundle_artifact="$(pixel_runtime_app_bundle_artifact_for "$app_id")"
   bundle_destination="$(pixel_runtime_app_bundle_dst_for "$app_id")"

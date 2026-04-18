@@ -1003,18 +1003,34 @@ pixel_runtime_apps_manifest() {
   printf '%s\n' "${SHADOW_APP_METADATA_MANIFEST:-$(repo_root)/runtime/apps.json}"
 }
 
-pixel_runtime_shell_app_ids() {
-  python3 - "$(pixel_runtime_apps_manifest)" <<'PY'
+pixel_manifest_profile_app_ids() {
+  local profile="$1"
+  local model_filter="${2:-}"
+
+  python3 - "$(pixel_runtime_apps_manifest)" "$profile" "$model_filter" <<'PY'
 import json
 import sys
 
-with open(sys.argv[1], encoding="utf-8") as handle:
+manifest_path, profile, model_filter = sys.argv[1:4]
+with open(manifest_path, encoding="utf-8") as handle:
     manifest = json.load(handle)
 
 for app in manifest.get("apps", []):
-    if "pixel-shell" in set(app.get("profiles", [])):
-        print(app["id"])
+    profiles = set(app.get("profiles", []))
+    if profile not in profiles:
+        continue
+    if model_filter and app.get("model") != model_filter:
+        continue
+    print(app["id"])
 PY
+}
+
+pixel_session_shell_app_ids() {
+  pixel_manifest_profile_app_ids "pixel-shell" "typescript"
+}
+
+pixel_runtime_shell_app_ids() {
+  pixel_manifest_profile_app_ids "pixel-shell" "typescript"
 }
 
 pixel_runtime_app_manifest_field() {

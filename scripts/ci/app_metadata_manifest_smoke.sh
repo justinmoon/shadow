@@ -66,6 +66,7 @@ manifest = {
     "apps": [
         {
             "id": "pixel-only",
+            "model": "typescript",
             "title": "Pixel Only",
             "iconLabel": "PO",
             "subtitle": "Pixel lane",
@@ -87,6 +88,7 @@ manifest = {
         },
         {
             "id": "vm-only",
+            "model": "typescript",
             "title": "VM Only",
             "iconLabel": "VO",
             "subtitle": "VM lane",
@@ -108,6 +110,7 @@ manifest = {
         },
         {
             "id": "shared",
+            "model": "typescript",
             "title": "Shared",
             "iconLabel": "SH",
             "subtitle": "Shared lane",
@@ -154,6 +157,7 @@ manifest = {
     "apps": [
         {
             "id": "one",
+            "model": "typescript",
             "title": "One",
             "iconLabel": "01",
             "subtitle": "One",
@@ -175,6 +179,7 @@ manifest = {
         },
         {
             "id": "two",
+            "model": "typescript",
             "title": "Two",
             "iconLabel": "02",
             "subtitle": "Two",
@@ -220,6 +225,7 @@ manifest = {
     "apps": [
         {
             "id": "one",
+            "model": "typescript",
             "title": "One",
             "iconLabel": "01",
             "subtitle": "One",
@@ -241,6 +247,7 @@ manifest = {
         },
         {
             "id": "two",
+            "model": "typescript",
             "title": "Two",
             "iconLabel": "02",
             "subtitle": "Two",
@@ -269,9 +276,108 @@ PY
   printf '%s\n' "$manifest_path"
 }
 
+write_rust_fixture() {
+  local manifest_path
+  manifest_path="$(mktemp_tracked)"
+  python3 - "$manifest_path" <<'PY'
+import json
+import sys
+
+manifest_path = sys.argv[1]
+manifest = {
+    "schemaVersion": 1,
+    "shell": {
+        "id": "shell",
+        "waylandAppId": "dev.shadow.shell",
+    },
+    "apps": [
+        {
+            "id": "rust-notes",
+            "model": "rust",
+            "title": "Rust Notes",
+            "iconLabel": "RN",
+            "subtitle": "Rust lane",
+            "lifecycleHint": "Rust app placeholder.",
+            "binaryName": "shadow-rust-demo",
+            "waylandAppId": "dev.shadow.rust-notes",
+            "windowTitle": "Rust Notes",
+            "profiles": ["vm-shell"],
+            "ui": {"iconColor": "ICON_PURPLE"},
+        },
+    ],
+}
+with open(manifest_path, "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2)
+    handle.write("\n")
+PY
+  printf '%s\n' "$manifest_path"
+}
+
+write_mixed_model_fixture() {
+  local manifest_path
+  manifest_path="$(mktemp_tracked)"
+  python3 - "$manifest_path" <<'PY'
+import json
+import sys
+
+manifest_path = sys.argv[1]
+manifest = {
+    "schemaVersion": 1,
+    "shell": {
+        "id": "shell",
+        "waylandAppId": "dev.shadow.shell",
+    },
+    "apps": [
+        {
+            "id": "mixed-ts",
+            "model": "typescript",
+            "title": "Mixed TS",
+            "iconLabel": "MT",
+            "subtitle": "TypeScript lane",
+            "lifecycleHint": "TypeScript app in mixed profile.",
+            "binaryName": "shadow-blitz-demo",
+            "waylandAppId": "dev.shadow.mixed-ts",
+            "windowTitle": "Mixed TS",
+            "runtime": {
+                "bundleEnv": "SHADOW_RUNTIME_APP_MIXED_TS_BUNDLE_PATH",
+                "bundleFilename": "runtime-app-mixed-ts-bundle.js",
+                "inputPath": "runtime/app-counter/app.tsx",
+                "cacheDirs": {
+                    "pixel-shell": "build/runtime/pixel-mixed-ts",
+                    "vm-shell": "build/runtime/vm-mixed-ts",
+                },
+                "config": None,
+            },
+            "profiles": ["vm-shell", "pixel-shell"],
+            "ui": {"iconColor": "ICON_CYAN"},
+        },
+        {
+            "id": "mixed-rust",
+            "model": "rust",
+            "title": "Mixed Rust",
+            "iconLabel": "MR",
+            "subtitle": "Rust lane",
+            "lifecycleHint": "Rust app in mixed profile.",
+            "binaryName": "shadow-rust-demo",
+            "waylandAppId": "dev.shadow.mixed-rust",
+            "windowTitle": "Mixed Rust",
+            "profiles": ["vm-shell", "pixel-shell"],
+            "ui": {"iconColor": "ICON_PURPLE"},
+        },
+    ],
+}
+with open(manifest_path, "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2)
+    handle.write("\n")
+PY
+  printf '%s\n' "$manifest_path"
+}
+
 profile_manifest="$(write_profile_fixture)"
 duplicate_env_manifest="$(write_duplicate_env_fixture)"
 duplicate_filename_manifest="$(write_duplicate_filename_fixture)"
+rust_manifest="$(write_rust_fixture)"
+mixed_model_manifest="$(write_mixed_model_fixture)"
 rust_out="$(mktemp_tracked)"
 
 scripts/runtime/generate_app_metadata.py --manifest "$profile_manifest" --rust-out "$rust_out" >/dev/null
@@ -298,6 +404,42 @@ if "VM_ONLY_APP" not in vm_shell_apps or "SHARED_APP" not in vm_shell_apps or "P
     raise SystemExit("app_metadata_manifest_smoke: generated VM_SHELL_DEMO_APPS is not profile filtered")
 if "PIXEL_ONLY_APP" not in pixel_shell_apps or "SHARED_APP" not in pixel_shell_apps or "VM_ONLY_APP" in pixel_shell_apps:
     raise SystemExit("app_metadata_manifest_smoke: generated PIXEL_SHELL_DEMO_APPS is not profile filtered")
+PY
+
+scripts/runtime/generate_app_metadata.py --manifest "$rust_manifest" --rust-out "$rust_out" >/dev/null
+python3 - "$rust_out" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+
+if 'pub const RUST_NOTES_MODEL: AppModel = AppModel::Rust;' not in text:
+    raise SystemExit("app_metadata_manifest_smoke: rust app model was not generated")
+if "typescript_runtime: None" not in text:
+    raise SystemExit("app_metadata_manifest_smoke: rust app should not get TypeScript runtime metadata")
+PY
+
+scripts/runtime/generate_app_metadata.py --manifest "$mixed_model_manifest" --rust-out "$rust_out" >/dev/null
+python3 - "$rust_out" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+
+def array_body(name: str) -> str:
+    marker = f"pub const {name}:"
+    start = text.index(marker)
+    start = text.index("[\n", start) + 2
+    end = text.index("];", start)
+    return text[start:end]
+
+vm_shell_apps = array_body("VM_SHELL_DEMO_APPS")
+pixel_shell_apps = array_body("PIXEL_SHELL_DEMO_APPS")
+
+if "MIXED_TS_APP" not in vm_shell_apps or "MIXED_RUST_APP" in vm_shell_apps:
+    raise SystemExit("app_metadata_manifest_smoke: generated VM_SHELL_DEMO_APPS should only include launchable mixed-model apps")
+if "MIXED_TS_APP" not in pixel_shell_apps or "MIXED_RUST_APP" in pixel_shell_apps:
+    raise SystemExit("app_metadata_manifest_smoke: generated PIXEL_SHELL_DEMO_APPS should only include launchable mixed-model apps")
 PY
 
 check_output_case \
@@ -352,6 +494,53 @@ check_output_case \
     bash -lc 'cd "$0" && source scripts/lib/pixel_common.sh && pixel_runtime_shell_app_ids' "$REPO_ROOT"
 
 check_output_case \
+  shadowctl_vm_rejects_mixed_rust_session_app \
+  1 \
+  "" \
+  "unsupported app 'mixed-rust'" \
+  env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" "$SHADOWCTL_SCRIPT" run --dry-run -t vm --app mixed-rust
+
+check_output_case \
+  shadowctl_vm_accepts_mixed_typescript_session_app \
+  0 \
+  "command=$SCRIPT_DIR/vm/ui_vm_run.sh --app mixed-ts" \
+  "" \
+  env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" "$SHADOWCTL_SCRIPT" run --dry-run -t vm --app mixed-ts
+
+check_output_case \
+  session_apps_helper_filters_mixed_launchable_apps \
+  0 \
+  "$(printf 'shell\nmixed-ts')" \
+  "" \
+  env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" SHADOW_SESSION_APP_PROFILE=vm-shell \
+    bash -lc 'cd "$0" && source scripts/lib/session_apps.sh && shadow_load_session_apps && printf "%s\n" "${shadow_session_apps[@]}"' "$REPO_ROOT"
+
+check_output_case \
+  pixel_common_filters_mixed_launchable_apps \
+  0 \
+  "mixed-ts" \
+  "" \
+  env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" \
+    bash -lc 'cd "$0" && source scripts/lib/pixel_common.sh && pixel_session_shell_app_ids' "$REPO_ROOT"
+
+check_output_case \
+  pixel_common_filters_mixed_runtime_apps \
+  0 \
+  "mixed-ts" \
+  "" \
+  env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" \
+    bash -lc 'cd "$0" && source scripts/lib/pixel_common.sh && pixel_runtime_shell_app_ids' "$REPO_ROOT"
+
+check_output_case \
+  runtime_build_artifacts_accepts_mixed_model_profile \
+  0 \
+  "\"mixed-ts\"" \
+  "" \
+  env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" \
+    deno run --quiet --allow-env --allow-read --allow-write --allow-run \
+      scripts/runtime/runtime_build_artifacts.ts --profile vm-shell
+
+check_output_case \
   generate_app_metadata_rejects_duplicate_bundle_env \
   1 \
   "" \
@@ -382,5 +571,23 @@ check_output_case \
   env SHADOW_APP_METADATA_MANIFEST="$duplicate_filename_manifest" \
     deno run --quiet --allow-env --allow-read --allow-write --allow-run \
       scripts/runtime/runtime_build_artifacts.ts --profile vm-shell
+
+check_output_case \
+  runtime_build_artifacts_rejects_rust_app_model \
+  1 \
+  "" \
+  "uses model rust; runtime_build_artifacts only supports typescript apps" \
+  env SHADOW_APP_METADATA_MANIFEST="$rust_manifest" \
+    deno run --quiet --allow-env --allow-read --allow-write --allow-run \
+      scripts/runtime/runtime_build_artifacts.ts --profile vm-shell --include-app rust-notes
+
+check_output_case \
+  runtime_build_artifacts_rejects_mixed_profile_rust_include \
+  1 \
+  "" \
+  "uses model rust; runtime_build_artifacts only supports typescript apps" \
+  env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" \
+    deno run --quiet --allow-env --allow-read --allow-write --allow-run \
+      scripts/runtime/runtime_build_artifacts.ts --profile vm-shell --include-app mixed-rust
 
 printf 'app_metadata_manifest_smoke: ok\n'

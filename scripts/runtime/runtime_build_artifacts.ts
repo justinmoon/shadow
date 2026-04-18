@@ -8,6 +8,7 @@ import {
 
 type Profile = "single" | "vm-shell" | "pixel-shell";
 type ShellProfile = Exclude<Profile, "single">;
+type AppModel = "typescript" | "rust";
 
 type CliOptions = {
   appId: string;
@@ -54,19 +55,22 @@ type BuiltApp = PreparedRuntimeAppBundle & {
   runtimeAppConfig: unknown;
 };
 
+type TypeScriptRuntimeAppMetadata = {
+  assetResolver?: "podcast-demo";
+  bundleEnv: string;
+  bundleFilename: string;
+  cacheDirs: Partial<Record<ShellProfile, string>>;
+  config?: unknown;
+  configEnv?: string;
+  inputPath: string;
+  optionalBundle?: boolean;
+};
+
 type RuntimeAppMetadata = {
   id: string;
+  model: AppModel;
   profiles: ShellProfile[];
-  runtime: {
-    assetResolver?: "podcast-demo";
-    bundleEnv: string;
-    bundleFilename: string;
-    cacheDirs: Partial<Record<ShellProfile, string>>;
-    config?: unknown;
-    configEnv?: string;
-    inputPath: string;
-    optionalBundle?: boolean;
-  };
+  runtime?: TypeScriptRuntimeAppMetadata;
 };
 
 type RuntimeAppsManifest = {
@@ -173,51 +177,72 @@ async function buildSpecs(
   const manifest = await loadRuntimeAppsManifest(cwd);
   const requestedAppIds = options.includeAppIds;
   const selectedAppIds = requestedAppIds.length > 0 ? requestedAppIds : null;
+  const manifestAppsById = new Map(
+    manifest.apps.map((app) => [app.id, app] as const),
+  );
   const specsById = new Map<string, AppSpec>();
   for (const app of manifest.apps) {
     if (!app.profiles.includes(profile)) {
       continue;
     }
+    if (app.model !== "typescript") {
+      continue;
+    }
+    const runtime = app.runtime;
+    if (!runtime) {
+      throw new Error(
+        `runtime/apps.json: app ${app.id} uses model typescript but is missing runtime`,
+      );
+    }
     if (selectedAppIds && !selectedAppIds.includes(app.id)) {
       continue;
     }
     if (
-      app.runtime.optionalBundle &&
+      runtime.optionalBundle &&
       !options.includePodcast &&
       !(selectedAppIds?.includes(app.id))
     ) {
       continue;
     }
 
-    let config = runtimeAppConfig(app);
+    let config = runtimeAppConfig(runtime);
     let extraAssetDir: string | null = null;
-    if (app.runtime.assetResolver === "podcast-demo") {
+    if (runtime.assetResolver === "podcast-demo") {
       const podcast = await resolvePodcastAssets(cwd);
       config = podcast.config;
       extraAssetDir = podcast.assetDir;
     }
     const prefix = appEnvPrefix(app.id);
-    const cacheDir = app.runtime.cacheDirs[profile];
+    const cacheDir = runtime.cacheDirs[profile];
     if (!cacheDir) {
       throw new Error(
         `runtime/apps.json: app ${app.id} is missing runtime.cacheDirs.${profile}`,
       );
     }
     specsById.set(app.id, {
-      bundleEnv: app.runtime.bundleEnv,
-      bundleFilename: app.runtime.bundleFilename,
+      bundleEnv: runtime.bundleEnv,
+      bundleFilename: runtime.bundleFilename,
       cacheDir: profileEnv(profile, `${prefix}_CACHE_DIR`) ??
         cacheDir,
       config,
       extraAssetDir,
       id: app.id,
       inputPath: profileEnv(profile, `${prefix}_INPUT_PATH`) ??
-        app.runtime.inputPath,
+        runtime.inputPath,
     });
   }
 
   if (selectedAppIds) {
     return selectedAppIds.map((appId) => {
+      const manifestApp = manifestAppsById.get(appId);
+      if (!manifestApp) {
+        throw new Error(`unsupported app ${appId} for profile ${profile}`);
+      }
+      if (manifestApp.model !== "typescript") {
+        throw new Error(
+          `app ${appId} uses model ${manifestApp.model}; runtime_build_artifacts only supports typescript apps`,
+        );
+      }
       const spec = specsById.get(appId);
       if (!spec) {
         throw new Error(`unsupported app ${appId} for profile ${profile}`);
@@ -344,6 +369,7 @@ function validateRuntimeAppsManifest(
     }
     const metadata = app as {
       id?: unknown;
+      model?: unknown;
       profiles?: unknown;
       runtime?: {
         bundleEnv?: unknown;
@@ -362,7 +388,25 @@ function validateRuntimeAppsManifest(
         `${manifestPath}: app ${metadata.id} must declare profiles`,
       );
     }
-    const bundleEnv = metadata.runtime?.bundleEnv;
+    if (metadata.model !== "typescript" && metadata.model !== "rust") {
+      throw new Error(
+        `${manifestPath}: app ${metadata.id} must declare model "typescript" or "rust"`,
+      );
+    }
+    if (metadata.model === "rust") {
+      if (Object.prototype.hasOwnProperty.call(metadata, "runtime")) {
+        throw new Error(
+          `${manifestPath}: app ${metadata.id} uses model rust and must not declare runtime`,
+        );
+      }
+      continue;
+    }
+    if (!metadata.runtime || typeof metadata.runtime !== "object") {
+      throw new Error(
+        `${manifestPath}: app ${metadata.id} must declare runtime`,
+      );
+    }
+    const bundleEnv = metadata.runtime.bundleEnv;
     if (typeof bundleEnv !== "string" || !bundleEnv) {
       throw new Error(
         `${manifestPath}: app ${metadata.id} must declare runtime.bundleEnv`,
@@ -374,7 +418,7 @@ function validateRuntimeAppsManifest(
       );
     }
     seenBundleEnvs.add(bundleEnv);
-    const bundleFilename = metadata.runtime?.bundleFilename;
+    const bundleFilename = metadata.runtime.bundleFilename;
     if (typeof bundleFilename !== "string" || !bundleFilename) {
       throw new Error(
         `${manifestPath}: app ${metadata.id} must declare runtime.bundleFilename`,
@@ -394,15 +438,19 @@ async function defaultSingleAppSpec(
 ): Promise<{ cacheDir: string; inputPath: string }> {
   const manifest = await loadRuntimeAppsManifest(cwd);
   const app = manifest.apps.find((candidate) =>
+    candidate.model === "typescript" &&
+    candidate.runtime &&
     candidate.profiles.includes("vm-shell") &&
     typeof candidate.runtime.cacheDirs["vm-shell"] === "string"
   );
   if (!app) {
-    throw new Error("runtime/apps.json must contain at least one vm-shell app");
+    throw new Error(
+      "runtime/apps.json must contain at least one typescript vm-shell app",
+    );
   }
   return {
-    cacheDir: app.runtime.cacheDirs["vm-shell"]!,
-    inputPath: app.runtime.inputPath,
+    cacheDir: app.runtime!.cacheDirs["vm-shell"]!,
+    inputPath: app.runtime!.inputPath,
   };
 }
 
@@ -410,14 +458,14 @@ function appEnvPrefix(appId: string): string {
   return appId.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
 }
 
-function runtimeAppConfig(app: RuntimeAppMetadata): unknown {
-  const configEnv = app.runtime.configEnv
-    ? Deno.env.get(app.runtime.configEnv)
+function runtimeAppConfig(runtime: TypeScriptRuntimeAppMetadata): unknown {
+  const configEnv = runtime.configEnv
+    ? Deno.env.get(runtime.configEnv)
     : undefined;
   if (configEnv !== undefined) {
     return parseConfigJson(configEnv);
   }
-  return app.runtime.config ?? null;
+  return runtime.config ?? null;
 }
 
 async function resolvePodcastAssets(

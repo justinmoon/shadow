@@ -77,6 +77,7 @@ def load_supported_session_apps(
     manifest: dict[str, Any],
     *,
     profile: str,
+    model: str = "typescript",
 ) -> tuple[str, ...]:
     shell_id = manifest_shell_id(manifest)
     apps = (
@@ -85,6 +86,7 @@ def load_supported_session_apps(
             app["id"]
             for app in manifest.get("apps", [])
             if profile in set(app.get("profiles", ()))
+            and app.get("model") == model
         ),
     )
     apps = tuple(dict.fromkeys(apps))

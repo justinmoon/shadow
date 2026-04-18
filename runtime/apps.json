@@ -7,6 +7,7 @@
   "apps": [
     {
       "id": "counter",
+      "model": "typescript",
       "title": "Counter",
       "iconLabel": "01",
       "subtitle": "Counter demo",
@@ -34,6 +35,7 @@
     },
     {
       "id": "camera",
+      "model": "typescript",
       "title": "Camera",
       "iconLabel": "CM",
       "subtitle": "Take and review a photo",
@@ -61,6 +63,7 @@
     },
     {
       "id": "timeline",
+      "model": "typescript",
       "title": "Timeline",
       "iconLabel": "TL",
       "subtitle": "Local Nostr cache",
@@ -92,6 +95,7 @@
     },
     {
       "id": "podcast",
+      "model": "typescript",
       "title": "Podcast",
       "iconLabel": "NS",
       "subtitle": "No Solutions",
@@ -121,6 +125,7 @@
     },
     {
       "id": "cashu",
+      "model": "typescript",
       "title": "Cashu",
       "iconLabel": "CU",
       "subtitle": "Wallet + Lightning",

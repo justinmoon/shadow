@@ -19,6 +19,7 @@ VALID_ICON_COLORS = {
     "ICON_YELLOW",
     "ICON_PURPLE",
 }
+VALID_APP_MODELS = {"typescript", "rust"}
 VALID_PROFILES = {"vm-shell", "pixel-shell"}
 
 
@@ -72,6 +73,10 @@ def validate_manifest(manifest: dict[str, Any], path: Path) -> None:
         if app_id in seen_ids:
             raise SystemExit(f"{label}: duplicate app id {app_id!r}")
         seen_ids.add(app_id)
+        model = require_string(app, "model", label)
+        if model not in VALID_APP_MODELS:
+            valid = ", ".join(sorted(VALID_APP_MODELS))
+            raise SystemExit(f"{label}: model must be one of {valid}")
         for field in (
             "title",
             "iconLabel",
@@ -95,34 +100,44 @@ def validate_manifest(manifest: dict[str, Any], path: Path) -> None:
             raise SystemExit(f"{label}: unsupported profiles: {unknown}")
 
         runtime = app.get("runtime")
-        if not isinstance(runtime, dict):
-            raise SystemExit(f"{label}: runtime must be an object")
-        for field in ("bundleEnv", "bundleFilename", "inputPath"):
-            require_string(runtime, field, f"{label}.runtime")
-        if runtime["bundleEnv"] in seen_bundle_envs:
-            raise SystemExit(
-                f"{label}.runtime: duplicate bundleEnv {runtime['bundleEnv']!r}"
-            )
-        seen_bundle_envs.add(runtime["bundleEnv"])
-        if runtime["bundleFilename"] in seen_bundle_filenames:
-            raise SystemExit(
-                f"{label}.runtime: duplicate bundleFilename {runtime['bundleFilename']!r}"
-            )
-        seen_bundle_filenames.add(runtime["bundleFilename"])
-        cache_dirs = runtime.get("cacheDirs")
-        if not isinstance(cache_dirs, dict):
-            raise SystemExit(f"{label}.runtime: cacheDirs must be an object")
-        for profile in profiles:
-            require_string(cache_dirs, profile, f"{label}.runtime.cacheDirs")
-        config_env = runtime.get("configEnv")
-        if config_env is not None and not isinstance(config_env, str):
-            raise SystemExit(f"{label}.runtime: configEnv must be a string when present")
-        asset_resolver = runtime.get("assetResolver")
-        if asset_resolver is not None and asset_resolver != "podcast-demo":
-            raise SystemExit(f"{label}.runtime: unsupported assetResolver {asset_resolver!r}")
-        optional_bundle = runtime.get("optionalBundle")
-        if optional_bundle is not None and not isinstance(optional_bundle, bool):
-            raise SystemExit(f"{label}.runtime: optionalBundle must be a boolean when present")
+        if model == "rust":
+            if runtime is not None:
+                raise SystemExit(f"{label}: rust apps must not declare runtime")
+        else:
+            if not isinstance(runtime, dict):
+                raise SystemExit(f"{label}: runtime must be an object")
+            for field in ("bundleEnv", "bundleFilename", "inputPath"):
+                require_string(runtime, field, f"{label}.runtime")
+            if runtime["bundleEnv"] in seen_bundle_envs:
+                raise SystemExit(
+                    f"{label}.runtime: duplicate bundleEnv {runtime['bundleEnv']!r}"
+                )
+            seen_bundle_envs.add(runtime["bundleEnv"])
+            if runtime["bundleFilename"] in seen_bundle_filenames:
+                raise SystemExit(
+                    f"{label}.runtime: duplicate bundleFilename {runtime['bundleFilename']!r}"
+                )
+            seen_bundle_filenames.add(runtime["bundleFilename"])
+            cache_dirs = runtime.get("cacheDirs")
+            if not isinstance(cache_dirs, dict):
+                raise SystemExit(f"{label}.runtime: cacheDirs must be an object")
+            for profile in profiles:
+                require_string(cache_dirs, profile, f"{label}.runtime.cacheDirs")
+            config_env = runtime.get("configEnv")
+            if config_env is not None and not isinstance(config_env, str):
+                raise SystemExit(
+                    f"{label}.runtime: configEnv must be a string when present"
+                )
+            asset_resolver = runtime.get("assetResolver")
+            if asset_resolver is not None and asset_resolver != "podcast-demo":
+                raise SystemExit(
+                    f"{label}.runtime: unsupported assetResolver {asset_resolver!r}"
+                )
+            optional_bundle = runtime.get("optionalBundle")
+            if optional_bundle is not None and not isinstance(optional_bundle, bool):
+                raise SystemExit(
+                    f"{label}.runtime: optionalBundle must be a boolean when present"
+                )
 
         ui = app.get("ui")
         if not isinstance(ui, dict):
@@ -154,6 +169,14 @@ def rust_runtime_cache_dir(runtime: dict[str, Any]) -> str:
     return cache_dirs.get("vm-shell") or next(iter(cache_dirs.values()))
 
 
+def rust_app_model(model: str) -> str:
+    if model == "typescript":
+        return "AppModel::TypeScript"
+    if model == "rust":
+        return "AppModel::Rust"
+    raise AssertionError(f"unsupported app model {model!r}")
+
+
 def rust_app_array(array_name: str, app_const_names: list[str]) -> list[str]:
     lines = [f"pub const {array_name}: [DemoApp; {len(app_const_names)}] = ["]
     lines.extend(f"    {name}," for name in app_const_names)
@@ -171,9 +194,12 @@ def display_path(path: Path) -> str:
 def generate_rust(manifest: dict[str, Any]) -> str:
     apps = manifest["apps"]
     icon_colors = sorted({app["ui"]["iconColor"] for app in apps})
+    super_imports = ["AppId", "AppModel", "DemoApp"]
+    if any(app["model"] == "typescript" for app in apps):
+        super_imports.append("TypeScriptAppRuntime")
     lines: list[str] = [
         "// @generated by scripts/runtime/generate_app_metadata.py; do not edit by hand.",
-        "use super::{AppId, DemoApp};",
+        f"use super::{{{', '.join(super_imports)}}};",
         f"use crate::color::{{{', '.join(icon_colors)}}};",
         "",
     ]
@@ -192,26 +218,55 @@ def generate_rust(manifest: dict[str, Any]) -> str:
     pixel_shell_app_const_names: list[str] = []
     for app in apps:
         app_id = app["id"]
-        runtime = app["runtime"]
+        model = app["model"]
+        runtime = app.get("runtime")
         id_const = rust_const_name(app_id, "APP_ID")
         app_const = rust_const_name(app_id, "APP")
+        model_const = rust_const_name(app_id, "MODEL")
         app_const_names.append(app_const)
         profiles = set(app["profiles"])
-        if "vm-shell" in profiles:
+        if "vm-shell" in profiles and model == "typescript":
             vm_shell_app_const_names.append(app_const)
-        if "pixel-shell" in profiles:
+        if "pixel-shell" in profiles and model == "typescript":
             pixel_shell_app_const_names.append(app_const)
         lines.extend(
             [
                 f"pub const {id_const}: AppId = AppId::new({rust_str(app_id)});",
                 f"pub const {rust_const_name(app_id, 'WAYLAND_APP_ID')}: &str = {rust_str(app['waylandAppId'])};",
                 f"pub const {rust_const_name(app_id, 'WINDOW_TITLE')}: &str = {rust_str(app['windowTitle'])};",
-                f"pub const {rust_const_name(app_id, 'RUNTIME_BUNDLE_ENV')}: &str = {rust_str(runtime['bundleEnv'])};",
-                f"pub const {rust_const_name(app_id, 'RUNTIME_INPUT_PATH')}: &str = {rust_str(runtime['inputPath'])};",
-                f"pub const {rust_const_name(app_id, 'RUNTIME_CACHE_DIR')}: &str = {rust_str(rust_runtime_cache_dir(runtime))};",
+                f"pub const {model_const}: AppModel = {rust_app_model(model)};",
                 "",
+            ]
+        )
+        if model == "typescript":
+            assert isinstance(runtime, dict)
+            lines.extend(
+                [
+                    f"pub const {rust_const_name(app_id, 'RUNTIME_BUNDLE_ENV')}: &str = {rust_str(runtime['bundleEnv'])};",
+                    f"pub const {rust_const_name(app_id, 'RUNTIME_INPUT_PATH')}: &str = {rust_str(runtime['inputPath'])};",
+                    f"pub const {rust_const_name(app_id, 'RUNTIME_CACHE_DIR')}: &str = {rust_str(rust_runtime_cache_dir(runtime))};",
+                    f"pub const {rust_const_name(app_id, 'TYPESCRIPT_RUNTIME')}: TypeScriptAppRuntime = TypeScriptAppRuntime {{",
+                    f"    bundle_env: {rust_const_name(app_id, 'RUNTIME_BUNDLE_ENV')},",
+                    f"    input_path: {rust_const_name(app_id, 'RUNTIME_INPUT_PATH')},",
+                    f"    cache_dir: {rust_const_name(app_id, 'RUNTIME_CACHE_DIR')},",
+                    "};",
+                    "",
+                ]
+            )
+            typescript_runtime = f"Some({rust_const_name(app_id, 'TYPESCRIPT_RUNTIME')})"
+            runtime_bundle_env = rust_const_name(app_id, "RUNTIME_BUNDLE_ENV")
+            runtime_input_path = rust_const_name(app_id, "RUNTIME_INPUT_PATH")
+            runtime_cache_dir = rust_const_name(app_id, "RUNTIME_CACHE_DIR")
+        else:
+            typescript_runtime = "None"
+            runtime_bundle_env = '""'
+            runtime_input_path = '""'
+            runtime_cache_dir = '""'
+        lines.extend(
+            [
                 f"pub const {app_const}: DemoApp = DemoApp {{",
                 f"    id: {id_const},",
+                f"    model: {model_const},",
                 f"    icon_label: {rust_str(app['iconLabel'])},",
                 f"    title: {rust_str(app['title'])},",
                 f"    subtitle: {rust_str(app['subtitle'])},",
@@ -219,9 +274,10 @@ def generate_rust(manifest: dict[str, Any]) -> str:
                 f"    binary_name: {rust_str(app['binaryName'])},",
                 f"    wayland_app_id: {rust_const_name(app_id, 'WAYLAND_APP_ID')},",
                 f"    window_title: {rust_const_name(app_id, 'WINDOW_TITLE')},",
-                f"    runtime_bundle_env: {rust_const_name(app_id, 'RUNTIME_BUNDLE_ENV')},",
-                f"    runtime_input_path: {rust_const_name(app_id, 'RUNTIME_INPUT_PATH')},",
-                f"    runtime_cache_dir: {rust_const_name(app_id, 'RUNTIME_CACHE_DIR')},",
+                f"    typescript_runtime: {typescript_runtime},",
+                f"    runtime_bundle_env: {runtime_bundle_env},",
+                f"    runtime_input_path: {runtime_input_path},",
+                f"    runtime_cache_dir: {runtime_cache_dir},",
                 f"    icon_color: {app['ui']['iconColor']},",
                 "};",
                 "",

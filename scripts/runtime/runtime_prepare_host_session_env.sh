@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=./session_apps.sh
+source "$SCRIPT_DIR/lib/session_apps.sh"
 runtime_flake_ref=""
 runtime_repo_root="$REPO_ROOT"
 runtime_host_package_attr="shadow-runtime-host"
@@ -93,6 +95,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+shadow_load_typescript_runtime_apps "vm-shell"
 builder_args=(
   --repo-root "$runtime_repo_root"
   --runtime-host-package "$runtime_host_package_attr"
@@ -121,6 +124,18 @@ if [[ -n "$state_dir_override" ]]; then
   builder_args+=(--state-dir "$state_dir_override")
 fi
 
-"$SCRIPT_DIR/runtime_build_artifacts.sh" "${builder_args[@]}" >/dev/null
+if ((${#shadow_session_apps[@]})); then
+  for app_id in "${shadow_session_apps[@]}"; do
+    builder_args+=(--include-app "$app_id")
+  done
+  "$SCRIPT_DIR/runtime_build_artifacts.sh" "${builder_args[@]}" >/dev/null
+else
+  {
+    printf 'export SHADOW_SESSION_APP_PROFILE=%q\n' "vm-shell"
+    if [[ -n "$audio_backend" ]]; then
+      printf 'export SHADOW_RUNTIME_AUDIO_BACKEND=%q\n' "$audio_backend"
+    fi
+  } >"$env_tmp"
+fi
 
 cat "$env_tmp"
