@@ -328,7 +328,10 @@
           CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
           cargoBuildFlags = [ "-p" "shadow-compositor" ];
           cargoInstallFlags = [ "-p" "shadow-compositor" ];
-          nativeBuildInputs = [ cross.buildPackages.pkg-config ];
+          nativeBuildInputs = [
+            cross.buildPackages.pkg-config
+            cross.buildPackages.python3
+          ];
           depsBuildBuild =
             lib.optionals cross.stdenv.buildPlatform.isDarwin [
               cross.buildPackages.stdenv.cc

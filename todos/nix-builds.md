@@ -100,6 +100,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - the `oci-builder` worktree also wires `oci-builder.taild659a1.ts.net` into the Mac build-machine list in [linux-builder.nix](/Users/justin/configs/worktrees/oci-builder/hosts/mac/linux-builder.nix:60)
   - recommendation: worth pursuing for shared `aarch64-linux` derivations and Linux package builds, but it will not accelerate the local `aarch64-darwin` `ui-check` lane directly because that lane still runs host-system checks
   - that makes OCI additive, not a prerequisite for landing this Shadow-side pass
+- Landing surfaced one Linux-only packaging regression in this branch:
+  - `mkShadowCompositorFor` reused the new workspace-pruning `postPatch` helper but was missing `cross.buildPackages.python3` in `nativeBuildInputs`
+  - the targeted `.#packages.aarch64-linux.shadow-compositor` build now passes again after adding it
 - Local `8` vCPU ceiling follow-on:
   - the current nix-darwin/QEMU/HVF builder path is hard-capped at `8` vCPUs on this machine
   - exceeding that ceiling is not a small config tweak; it means either multiple local builder VMs, a different local hypervisor/builder path, or more remote native ARM capacity
