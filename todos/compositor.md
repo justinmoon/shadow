@@ -50,3 +50,13 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The goal is shared policy and smaller files, not forcing one binary.
 - The guest compositor is on the critical path for both VM smoke and rooted-Pixel shell runs. Prefer boring, testable extractions.
 - Any change that touches launch mode, control socket state, app focus, or frame output needs VM smoke coverage before landing.
+- Latest Pixel scroll measurements changed the performance picture: shell app
+  compositing is no longer the main problem after the fast-path work. The
+  supported shell lane still pays heavily for per-app render plus dmabuf CPU
+  capture. That means the "move Blitz into the compositor" direction from
+  `todos/vdom.md` is now a performance simplification, not just an architectural
+  cleanup idea.
+- The control case now matters: direct runtime on the same Pixel reached
+  `app-scroll.input_to_present` p50 about `38ms` after the Pixel AA cut, while
+  the supported shell lane remained around `91ms`. The gap is now mostly the
+  shell-side frame hop, not generic input plumbing.

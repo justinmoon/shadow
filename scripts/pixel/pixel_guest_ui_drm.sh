@@ -105,6 +105,13 @@ if [[ "$frame_capture_mode" == "publish" ]]; then
     guest_session_env='SHADOW_GUEST_FRAME_ARTIFACTS=1'
   fi
 fi
+if [[ "$frame_capture_mode" == "request" ]]; then
+  if [[ -n "$guest_session_env" ]]; then
+    guest_session_env="${guest_session_env}"$'\n''SHADOW_GUEST_FRAME_SNAPSHOT_CACHE=1'
+  else
+    guest_session_env='SHADOW_GUEST_FRAME_SNAPSHOT_CACHE=1'
+  fi
+fi
 
 if [[ -n "$host_pid_path" ]]; then
   mkdir -p "$(dirname "$host_pid_path")"

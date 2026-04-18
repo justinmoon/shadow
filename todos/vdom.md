@@ -78,6 +78,47 @@ The mutation protocol from phase 1 becomes the clean IPC boundary for phase 2.
 The MutationApplier doesn't care which process it lives in — moving it from
 shadow-blitz-demo to the compositor is a relocation, not a rewrite.
 
+## Current Reality Check
+
+The pure-GPU Pixel latency probe in
+`build/pixel/touch/20260418T214921Z` says phase 1 is probably not the first
+scroll fix:
+
+- `touch_latency.routes.app-scroll.input_to_present` p50 was `205.264ms`, p95
+  was `222.971ms`.
+- `touch_latency.dispatch_to_flush` p50 was `0.055ms`.
+- During the swipe window, the runtime saw only touch-down refresh dispatches
+  (`runtime-dispatch-start ... type=click target=refresh`). The `app-scroll`
+  move path itself was compositor dispatch plus present, not repeated runtime
+  DOM updates.
+
+Implication:
+
+- Phase 1 incremental mutations still make sense for TS app update latency and
+  general correctness.
+- For the current slow-scroll problem, phase 2 is more likely to matter:
+  eliminate the per-app process/surface/render-present path before spending a
+  lot of time polishing full-HTML replacement on the move path.
+- Shell-lane measurements after compositor fast-path work reinforce that:
+  `build/pixel/touch/shell-post-cut-runonly2` still spent about `204ms` in app
+  render and `102ms` in dmabuf CPU capture on a panel-sized surface, while shell
+  app compositing was only about `4ms` p50. Shrinking the shell viewport to the
+  logical app size (`build/pixel/touch/shell-small-surface`) dropped those to
+  about `81ms` render and `27ms` capture. The biggest remaining tax is still
+  "one app process renders a surface, then the compositor captures and
+  composites it", which is exactly what phase 2 removes.
+- Even after lowering Pixel antialiasing to `Area`
+  (`build/pixel/touch/shell-area-aa`), the supported shell lane still lands
+  around `53ms` app render + `26ms` dmabuf capture + `17ms` shell composite on
+  scroll frames. That is materially better, but still not a path to smooth
+  60fps scroll without removing the per-app surface hop.
+- The strongest evidence is the direct-runtime control case:
+  `build/pixel/touch/runtime-area-aa` reached `app-scroll.input_to_present` p50
+  `38.336ms` on the same device after the AA cut. That means the app/client path
+  itself is no longer catastrophically slow; the supported shell lane remains
+  slow because it still pays the extra surface capture/composite step that phase
+  2 removes.
+
 ### Current process architecture
 
 ```

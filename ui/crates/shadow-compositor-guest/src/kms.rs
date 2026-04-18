@@ -49,6 +49,16 @@ impl CapturedFrame {
     }
 }
 
+pub fn copy_frame_view(frame: CapturedFrameView<'_>, format: wl_shm::Format) -> CapturedFrame {
+    CapturedFrame {
+        width: frame.width,
+        height: frame.height,
+        stride: frame.stride,
+        format,
+        pixels: frame.pixels.to_vec(),
+    }
+}
+
 pub fn capture_shm_frame(ptr: *const u8, len: usize, data: BufferData) -> Result<CapturedFrame> {
     let width = u32::try_from(data.width).context("negative shm width")?;
     let height = u32::try_from(data.height).context("negative shm height")?;

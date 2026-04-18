@@ -168,26 +168,53 @@ pub fn composite_app_frame(
     let source_stride = app_frame.stride as usize;
     let target_stride = target_width as usize * 4;
     let source = app_frame.pixels;
+    let opaque_xrgb = matches!(app_frame.format, wl_shm::Format::Xrgb8888);
+
+    if opaque_xrgb && app_frame.width == copy_width {
+        let row_bytes = copy_width as usize * 4;
+        for row in 0..copy_height as usize {
+            let target_row = viewport_y as usize + row;
+            let source_row = row * app_frame.height as usize / copy_height as usize;
+            let target_index = target_row * target_stride + viewport_x as usize * 4;
+            let source_index = source_row * source_stride;
+            target[target_index..target_index + row_bytes]
+                .copy_from_slice(&source[source_index..source_index + row_bytes]);
+        }
+        return;
+    }
+
+    let source_cols = if opaque_xrgb {
+        Some(
+            (0..copy_width as usize)
+                .map(|col| col * app_frame.width as usize / copy_width as usize)
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        None
+    };
 
     for row in 0..copy_height as usize {
         let target_row = viewport_y as usize + row;
-        let source_row = ((row as f32 / copy_height as f32) * app_frame.height as f32)
-            .floor()
-            .clamp(0.0, app_frame.height.saturating_sub(1) as f32)
-            as usize;
+        let source_row = row * app_frame.height as usize / copy_height as usize;
+        let source_row_start = source_row * source_stride;
         for col in 0..copy_width as usize {
             let target_x = viewport_x as usize + col;
-            let source_x = ((col as f32 / copy_width as f32) * app_frame.width as f32)
-                .floor()
-                .clamp(0.0, app_frame.width.saturating_sub(1) as f32)
-                as usize;
             let target_index = target_row * target_stride + target_x * 4;
-            let source_index = source_row * source_stride + source_x * 4;
-            blend_bgra_pixel(
-                &mut target[target_index..target_index + 4],
-                &source[source_index..source_index + 4],
-                app_frame.format,
-            );
+            let source_x = source_cols
+                .as_ref()
+                .map(|cols| cols[col])
+                .unwrap_or_else(|| col * app_frame.width as usize / copy_width as usize);
+            let source_index = source_row_start + source_x * 4;
+            let source_pixel = &source[source_index..source_index + 4];
+            if opaque_xrgb {
+                target[target_index..target_index + 4].copy_from_slice(source_pixel);
+            } else {
+                blend_bgra_pixel(
+                    &mut target[target_index..target_index + 4],
+                    source_pixel,
+                    app_frame.format,
+                );
+            }
         }
     }
 }
@@ -387,6 +414,30 @@ mod tests {
         composite_app_frame(&mut target, 1, 1, app_frame);
 
         assert_eq!(target, vec![1, 2, 3, 0]);
+    }
+
+    #[test]
+    fn composite_app_frame_fast_path_copies_opaque_rows_when_width_matches() {
+        let mut target = vec![0u8; (4 * 70 * 4) as usize];
+        let app_frame = AppFrame {
+            width: 4,
+            height: 2,
+            stride: 16,
+            format: wl_shm::Format::Xrgb8888,
+            pixels: &[
+                1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9, 0, 10, 11, 12, 0, //
+                13, 14, 15, 0, 16, 17, 18, 0, 19, 20, 21, 0, 22, 23, 24, 0,
+            ],
+        };
+
+        composite_app_frame(&mut target, 4, 70, app_frame);
+
+        let (_, viewport_y, _, _) = viewport_bounds(4, 70).expect("scaled viewport");
+        let viewport_origin = (viewport_y as usize) * 4 * 4;
+        assert_eq!(
+            &target[viewport_origin..viewport_origin + 16],
+            &[1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9, 0, 10, 11, 12, 0,]
+        );
     }
 
     #[test]

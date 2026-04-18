@@ -159,6 +159,7 @@ while IFS= read -r env_line; do
   runtime_guest_env="${runtime_guest_env}"$'\n'"$env_line"
 done < <(printf '%s\n' "$runtime_gpu_profile_env")
 runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_WGPU_PRESENT_MODE=${SHADOW_WGPU_PRESENT_MODE:-fifo}"
+runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_WGPU_ANTIALIASING=${SHADOW_WGPU_ANTIALIASING:-area}"
 if [[ -n "$extra_guest_env" ]]; then
   runtime_guest_env="${runtime_guest_env}"$'\n'"${extra_guest_env}"
 fi

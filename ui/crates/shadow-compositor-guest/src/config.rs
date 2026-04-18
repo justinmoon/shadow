@@ -51,6 +51,8 @@ pub(crate) struct GuestStartupConfig {
     pub(crate) dmabuf_format_profile: DmabufFormatProfile,
     pub(crate) touch_signal_path: Option<PathBuf>,
     pub(crate) touch_latency_trace: bool,
+    pub(crate) frame_snapshot_cache_enabled: bool,
+    pub(crate) frame_checksum_enabled: bool,
     pub(crate) frame_artifact_path: PathBuf,
     pub(crate) frame_artifacts_enabled: bool,
     pub(crate) frame_artifact_every_frame: bool,
@@ -112,6 +114,8 @@ impl GuestStartupConfig {
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from),
             touch_latency_trace: env_flag("SHADOW_GUEST_TOUCH_LATENCY_TRACE"),
+            frame_snapshot_cache_enabled: env_flag("SHADOW_GUEST_FRAME_SNAPSHOT_CACHE"),
+            frame_checksum_enabled: env_flag("SHADOW_GUEST_FRAME_CHECKSUM"),
             frame_artifact_path: env::var_os("SHADOW_GUEST_FRAME_PATH")
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from)
@@ -287,6 +291,8 @@ mod tests {
             ("SHADOW_GUEST_COMPOSITOR_DMABUF_FORMAT_PROFILE", None),
             ("SHADOW_GUEST_FRAME_ARTIFACTS", None),
             ("SHADOW_GUEST_FRAME_WRITE_EVERY_FRAME", None),
+            ("SHADOW_GUEST_FRAME_SNAPSHOT_CACHE", None),
+            ("SHADOW_GUEST_FRAME_CHECKSUM", None),
             ("SHADOW_GUEST_CLIENT_ENV", None),
             ("SHADOW_GUEST_CLIENT_LINGER_MS", None),
         ];
@@ -382,6 +388,8 @@ mod tests {
             assert!(config.dmabuf_global_enabled);
             assert!(!config.dmabuf_feedback_enabled);
             assert_eq!(config.dmabuf_format_profile, DmabufFormatProfile::Default);
+            assert!(!config.frame_snapshot_cache_enabled);
+            assert!(!config.frame_checksum_enabled);
             assert!(!config.frame_artifacts_enabled);
             assert!(!config.frame_artifact_every_frame);
         });
@@ -431,6 +439,25 @@ mod tests {
         with_env(vec![("SHADOW_GUEST_FRAME_ARTIFACTS", Some("1"))], || {
             let config = GuestStartupConfig::from_env().expect("frame-artifact config");
             assert!(config.frame_artifacts_enabled);
+        });
+    }
+
+    #[test]
+    fn config_can_enable_frame_snapshot_cache() {
+        with_env(
+            vec![("SHADOW_GUEST_FRAME_SNAPSHOT_CACHE", Some("1"))],
+            || {
+                let config = GuestStartupConfig::from_env().expect("frame-snapshot-cache config");
+                assert!(config.frame_snapshot_cache_enabled);
+            },
+        );
+    }
+
+    #[test]
+    fn config_can_enable_frame_checksum_logging() {
+        with_env(vec![("SHADOW_GUEST_FRAME_CHECKSUM", Some("1"))], || {
+            let config = GuestStartupConfig::from_env().expect("frame-checksum config");
+            assert!(config.frame_checksum_enabled);
         });
     }
 

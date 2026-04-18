@@ -88,6 +88,7 @@ shell_gpu_profile="${PIXEL_SHELL_GPU_PROFILE-}"
 shell_gpu_bundle_mode="${PIXEL_BLITZ_GPU_BUNDLE_MODE-}"
 shell_surface_width=""
 shell_surface_height=""
+shell_viewport_mode="${PIXEL_SHELL_VIEWPORT_MODE-logical}"
 
 if (( shell_run_only == 0 )); then
   if [[ -z "$shell_gpu_bundle_mode" ]]; then
@@ -131,8 +132,30 @@ if [[ -z "$shell_panel_size" ]]; then
   echo "pixel_shell_drm: failed to determine display size; set PIXEL_SHELL_PANEL_SIZE or PIXEL_PANEL_SIZE" >&2
   exit 1
 fi
-shell_surface_width="${shell_panel_size%x*}"
-shell_surface_height="${shell_panel_size#*x}"
+case "$shell_viewport_mode" in
+  panel)
+    shell_surface_width="${shell_panel_size%x*}"
+    shell_surface_height="${shell_panel_size#*x}"
+    ;;
+  logical)
+    shell_viewport="$(python3 "$SCRIPT_DIR/runtime/runtime_viewport.py")"
+    shell_surface_width="$(printf '%s\n' "$shell_viewport" | awk -F= '/^viewport_width=/{print $2}')"
+    shell_surface_height="$(printf '%s\n' "$shell_viewport" | awk -F= '/^viewport_height=/{print $2}')"
+    ;;
+  fit)
+    shell_viewport="$(python3 "$SCRIPT_DIR/runtime/runtime_viewport.py" --fit "$shell_panel_size")"
+    shell_surface_width="$(printf '%s\n' "$shell_viewport" | awk -F= '/^fitted_width=/{print $2}')"
+    shell_surface_height="$(printf '%s\n' "$shell_viewport" | awk -F= '/^fitted_height=/{print $2}')"
+    ;;
+  *)
+    echo "pixel_shell_drm: unsupported PIXEL_SHELL_VIEWPORT_MODE: $shell_viewport_mode" >&2
+    exit 64
+    ;;
+esac
+if [[ -z "$shell_surface_width" || -z "$shell_surface_height" ]]; then
+  echo "pixel_shell_drm: failed to derive shell viewport from $shell_panel_size (mode=$shell_viewport_mode)" >&2
+  exit 1
+fi
 
 PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS="${PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS-}"
 PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS-}"
@@ -141,6 +164,10 @@ extra_session_env="${PIXEL_SHELL_EXTRA_SESSION_ENV-}"
 extra_required_markers="${PIXEL_SHELL_EXTRA_REQUIRED_MARKERS-}"
 runtime_mesa_cache_dir="$(pixel_runtime_mesa_cache_dir)"
 expect_client_process=''
+
+# Shell operator runs do not need per-frame snapshot caching by default.
+# Opt back in explicitly when a debug session wants publish/request capture.
+: "${PIXEL_GUEST_FRAME_CAPTURE_MODE:=off}"
 
 shell_guest_env=$(
   cat <<EOF
@@ -170,6 +197,7 @@ while IFS= read -r env_line; do
   shell_guest_env="${shell_guest_env}"$'\n'"$env_line"
 done < <(printf '%s\n' "$shell_gpu_profile_env")
 shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_WGPU_PRESENT_MODE=${SHADOW_WGPU_PRESENT_MODE:-fifo}"
+shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_WGPU_ANTIALIASING=${SHADOW_WGPU_ANTIALIASING:-area}"
 if [[ -n "$extra_guest_env" ]]; then
   shell_guest_env="${shell_guest_env}"$'\n'"${extra_guest_env}"
 fi
@@ -220,6 +248,7 @@ exec env \
   PIXEL_GUEST_CLIENT_ENV="$shell_guest_env" \
   PIXEL_GUEST_SESSION_ENV="$shell_session_env" \
   PIXEL_GUEST_PRECREATE_DIRS="$(pixel_runtime_precreate_dirs_lines)" \
+  PIXEL_GUEST_FRAME_CAPTURE_MODE="$PIXEL_GUEST_FRAME_CAPTURE_MODE" \
   PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT="$camera_start_command" \
   PIXEL_GUEST_POST_SESSION_DEVICE_SCRIPT="$camera_cleanup_command" \
   PIXEL_TAKEOVER_STOP_ALLOCATOR="${PIXEL_TAKEOVER_STOP_ALLOCATOR:-0}" \

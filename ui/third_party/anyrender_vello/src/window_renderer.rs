@@ -9,6 +9,7 @@ use std::{
         Arc,
         atomic::{self, AtomicU64},
     },
+    time::Instant,
 };
 use vello::{
     AaConfig, AaSupport, RenderParams, Renderer as VelloRenderer, RendererOptions,
@@ -30,12 +31,25 @@ const SHADOW_WGPU_SURFACE_FORMAT_ENV: &str = "SHADOW_WGPU_SURFACE_FORMAT";
 const SHADOW_WGPU_ALPHA_MODE_ENV: &str = "SHADOW_WGPU_ALPHA_MODE";
 const SHADOW_WGPU_MAX_FRAME_LATENCY_ENV: &str = "SHADOW_WGPU_MAX_FRAME_LATENCY";
 const SHADOW_WGPU_FEATURE_PROFILE_ENV: &str = "SHADOW_WGPU_FEATURE_PROFILE";
+const SHADOW_WGPU_ANTIALIASING_ENV: &str = "SHADOW_WGPU_ANTIALIASING";
+const SHADOW_WGPU_FRAME_TRACE_ENV: &str = "SHADOW_WGPU_FRAME_TRACE";
+const SHADOW_WGPU_WAIT_FOR_IDLE_ENV: &str = "SHADOW_WGPU_WAIT_FOR_IDLE";
 
 fn configured_env_value(name: &str) -> Option<String> {
     env::var(name)
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
+}
+
+fn configured_env_flag(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .map(|value| {
+            let trimmed = value.trim().to_ascii_lowercase();
+            !matches!(trimmed.as_str(), "" | "0" | "false" | "off" | "no")
+        })
+        .unwrap_or_else(|| env::var_os(name).is_some())
 }
 
 fn configured_present_mode() -> PresentMode {
@@ -138,6 +152,50 @@ fn configured_optional_features() -> Features {
             Features::CLEAR_TEXTURE | Features::PIPELINE_CACHE
         }
     }
+}
+
+fn configured_antialiasing_method() -> Option<AaConfig> {
+    let raw_value = configured_env_value(SHADOW_WGPU_ANTIALIASING_ENV)?;
+    match raw_value.as_str() {
+        "area" => Some(AaConfig::Area),
+        "msaa8" | "msaa-8" => Some(AaConfig::Msaa8),
+        "msaa16" | "msaa-16" => Some(AaConfig::Msaa16),
+        other => {
+            eprintln!(
+                "[shadow-anyrender-vello] invalid-antialiasing env={} raw_value={other:?} fallback=default",
+                SHADOW_WGPU_ANTIALIASING_ENV
+            );
+            None
+        }
+    }
+}
+
+fn antialiasing_support_for(method: AaConfig) -> AaSupport {
+    match method {
+        AaConfig::Area => AaSupport {
+            area: true,
+            msaa8: false,
+            msaa16: false,
+        },
+        AaConfig::Msaa8 => AaSupport {
+            area: false,
+            msaa8: true,
+            msaa16: false,
+        },
+        AaConfig::Msaa16 => AaSupport {
+            area: false,
+            msaa8: false,
+            msaa16: true,
+        },
+    }
+}
+
+fn frame_trace_enabled() -> bool {
+    configured_env_flag(SHADOW_WGPU_FRAME_TRACE_ENV)
+}
+
+fn wait_for_idle_enabled() -> bool {
+    configured_env_flag(SHADOW_WGPU_WAIT_FOR_IDLE_ENV)
 }
 
 fn raw_display_handle_name(handle: RawDisplayHandle) -> &'static str {
@@ -275,11 +333,16 @@ impl VelloWindowRenderer {
     }
 
     pub fn with_options(config: VelloRendererOptions) -> Self {
+        let mut config = config;
         let features = config.features.unwrap_or_default() | configured_optional_features();
+        if let Some(antialiasing_method) = configured_antialiasing_method() {
+            config.antialiasing_method = antialiasing_method;
+        }
         eprintln!(
-            "[shadow-anyrender-vello] requested-features env_profile={} features={features:?}",
+            "[shadow-anyrender-vello] requested-features env_profile={} antialiasing={:?} features={features:?}",
             configured_env_value(SHADOW_WGPU_FEATURE_PROFILE_ENV)
-                .unwrap_or_else(|| "default".to_string())
+                .unwrap_or_else(|| "default".to_string()),
+            config.antialiasing_method
         );
         Self {
             wgpu_context: WGPUContext::with_features_and_limits(
@@ -379,7 +442,7 @@ impl WindowRenderer for VelloWindowRenderer {
         let renderer = VelloRenderer::new(
             render_surface.device(),
             RendererOptions {
-                antialiasing_support: AaSupport::all(),
+                antialiasing_support: antialiasing_support_for(self.config.antialiasing_method),
                 use_cpu: false,
                 num_init_threads: DEFAULT_THREADS,
                 // TODO: add pipeline cache
@@ -428,17 +491,23 @@ impl WindowRenderer for VelloWindowRenderer {
         };
 
         let render_surface = &mut state.render_surface;
+        let frame_started = Instant::now();
+        let trace_enabled = frame_trace_enabled();
+        let wait_for_idle = wait_for_idle_enabled();
 
         debug_timer!(timer, feature = "log_frame_times");
 
         // Regenerate the vello scene
+        let cmd_started = Instant::now();
         draw_fn(&mut VelloScenePainter {
             inner: &mut self.scene,
             renderer: Some(&mut state.renderer),
             custom_paint_sources: Some(&mut self.custom_paint_sources),
         });
+        let cmd_elapsed = cmd_started.elapsed();
         timer.record_time("cmd");
 
+        let acquire_started = Instant::now();
         match render_surface.ensure_current_surface_texture() {
             Ok(_) => {}
             Err(SurfaceError::Timeout | SurfaceError::Lost | SurfaceError::Outdated) => {
@@ -448,10 +517,12 @@ impl WindowRenderer for VelloWindowRenderer {
             Err(SurfaceError::OutOfMemory) => panic!("Out of memory"),
             Err(SurfaceError::Other) => panic!("Unknown error getting surface"),
         };
+        let acquire_elapsed = acquire_started.elapsed();
 
         let texture_view = render_surface
             .target_texture_view()
             .expect("handled errorss from ensure_current_surface_texture above");
+        let render_started = Instant::now();
         state
             .renderer
             .render_to_texture(
@@ -467,22 +538,43 @@ impl WindowRenderer for VelloWindowRenderer {
                 },
             )
             .expect("failed to render to texture");
+        let render_elapsed = render_started.elapsed();
         timer.record_time("render");
 
         drop(texture_view);
 
+        let present_started = Instant::now();
         render_surface
             .maybe_blit_and_present()
             .expect("handled errorss from ensure_current_surface_texture above");
+        let present_elapsed = present_started.elapsed();
         timer.record_time("present");
 
-        render_surface
-            .device()
-            .poll(wgpu::PollType::wait_indefinitely())
-            .unwrap();
+        let wait_started = Instant::now();
+        if wait_for_idle {
+            render_surface
+                .device()
+                .poll(wgpu::PollType::wait_indefinitely())
+                .unwrap();
+        }
+        let wait_elapsed = wait_started.elapsed();
 
         timer.record_time("wait");
         timer.print_times("vello: ");
+
+        let total_elapsed = frame_started.elapsed();
+        if trace_enabled || total_elapsed.as_millis() >= 8 {
+            eprintln!(
+                "[shadow-anyrender-vello] frame-stats cmd_ms={} acquire_ms={} render_ms={} present_ms={} wait_ms={} total_ms={} wait_for_idle={}",
+                cmd_elapsed.as_millis(),
+                acquire_elapsed.as_millis(),
+                render_elapsed.as_millis(),
+                present_elapsed.as_millis(),
+                wait_elapsed.as_millis(),
+                total_elapsed.as_millis(),
+                wait_for_idle
+            );
+        }
 
         // static COUNTER: AtomicU64 = AtomicU64::new(0);
         // println!("FRAME {}", COUNTER.fetch_add(1, atomic::Ordering::Relaxed));

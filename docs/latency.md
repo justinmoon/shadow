@@ -65,6 +65,50 @@ After the event-driven touch-signal watcher, `build/latency/probe-inotify-090`
 measured `touch_signal_latency` p50 `0ms`, p95 `0ms` across 4 samples on Pixel
 `09051JEC202061`.
 
+Pure-GPU direct-runtime result from
+`build/pixel/touch/20260418T214921Z` on Pixel `0B191JEC203253`:
+
+- Compositor dispatch is still cheap: `dispatch_to_flush` p50 was `0.055ms`,
+  p95 was `0.111ms`.
+- Scroll is still far too slow on the visible path: `app-scroll.input_to_present`
+  p50 was `205.264ms`, p95 was `222.971ms`.
+- Scroll-stop frames are worse: `app-scroll-stop.input_to_present` p50 was
+  `306.940ms`.
+- Runtime dispatch was not on the move path. The probe saw 5 runtime dispatches,
+  all `click target=refresh` events on touch-down, while scroll move events were
+  compositor `app-scroll` dispatches with no matching runtime dispatch.
+- The runtime side was not saturated: `runtime_session_latency.dispatch` p50 was
+  `4ms`, and `render_if_dirty` p50 was `0ms`.
+- After lowering Pixel antialiasing to `Area`, the direct-runtime probe in
+  `build/pixel/touch/runtime-area-aa` improved sharply:
+  - `app-scroll.input_to_present` p50 `38.336ms`, p95 `60.109ms`
+  - overall `input_to_present` p50 `53.209ms` (worse because scroll-stop frames
+    are still expensive)
+  - compositor dispatch stayed cheap: `dispatch_to_flush` p50 `0.088ms`
+
+Shell-lane follow-up after cutting accidental CPU capture from direct-present
+runtime and optimizing shell app compositing:
+
+- Panel-sized shell surface in `build/pixel/touch/shell-post-cut-runonly2`
+  still spent most time outside shell compositing:
+  - `app-scroll.input_to_present` average `155.7ms`
+  - app `render_ms` p50 `204ms`
+  - compositor `capture_ms` p50 `102ms`
+  - shell `app_composite_ms` p50 `4ms`
+- Logical shell surface (`540x1106`) in
+  `build/pixel/touch/shell-small-surface` materially improved the supported
+  shell lane:
+  - `app-scroll.input_to_present` p50 `96.2ms`
+  - app `render_ms` p50 `81ms`
+  - compositor `capture_ms` p50 `27ms`
+  - shell `app_composite_ms` p50 `17ms`
+- Adding cheaper Vello antialiasing for Pixel shell/runtime in
+  `build/pixel/touch/shell-area-aa` improved the same logical shell lane again:
+  - `app-scroll.input_to_present` p50 `91.0ms`
+  - app `render_ms` p50 `53ms`
+  - compositor `capture_ms` p50 `26ms`
+  - shell `app_composite_ms` p50 `17ms`
+
 Current direction:
 
 - Pixel operator paths are now GPU-only.
@@ -75,6 +119,21 @@ Interpretation:
 
 - Fast event dispatch plus slow present means input plumbing is usable, but the
   visible frame pipeline is not.
+- The pure-GPU runtime probe suggests full-document TS rerender is not the
+  first-order cause of slow scroll. The next suspects are app render cost during
+  scroll and compositor/present cadence after dispatch.
+- The updated direct-runtime probe with cheaper AA shows the app can scroll much
+  better without the shell path. That shifts the supported-lane diagnosis even
+  harder toward the per-app surface hop: render app frame, CPU-capture dmabuf,
+  composite into shell, then present.
+- Shell compositing is no longer the dominant cost after the fast-path work.
+  The remaining supported-lane problem is: rerendering a large app surface every
+  scroll frame, then CPU-capturing that surface for shell composition.
+- Reducing the shell app surface to the logical viewport is a practical near-term
+  mitigation and is now the default Pixel shell mode.
+- Lowering Pixel Vello antialiasing from the previous default `Msaa16` to
+  `Area` is another practical near-term mitigation. It materially cut app render
+  time, but the supported shell lane is still too slow for truly smooth scroll.
 - For scroll, measure the supported GPU shell lane directly. Per-frame PPM
   artifacts are now opt-in; use `sc -t pixel frame` or `sc -t <serial> frame`
   for snapshots.
