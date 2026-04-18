@@ -223,10 +223,22 @@ function getLifecycleStateStore() {
   if (!globalThis[LIFECYCLE_STATE_KEY]) {
     globalThis[LIFECYCLE_STATE_KEY] = {
       handler: null,
-      state: "foreground",
+      state: readInitialLifecycleState(),
     };
   }
   return globalThis[LIFECYCLE_STATE_KEY];
+}
+
+function readInitialLifecycleState() {
+  const initialState = globalThis.Shadow?.__initialLifecycleState;
+  if (typeof initialState !== "string") {
+    return "foreground";
+  }
+  try {
+    return normalizeLifecycleState(initialState);
+  } catch {
+    return "foreground";
+  }
 }
 
 function normalizeAudioMediaAction(action) {

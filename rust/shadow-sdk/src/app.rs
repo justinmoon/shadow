@@ -1,4 +1,9 @@
-use std::{env, io, path::PathBuf, thread::JoinHandle};
+use std::{
+    env, io,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+    thread::JoinHandle,
+};
 
 pub use shadow_runtime_protocol::AppLifecycleState as LifecycleState;
 
@@ -97,10 +102,16 @@ impl AppWindowEnvironment {
 }
 
 pub fn current_lifecycle_state() -> LifecycleState {
-    env_override(APP_LIFECYCLE_STATE_ENV)
-        .as_deref()
-        .and_then(LifecycleState::parse)
-        .unwrap_or(LifecycleState::Foreground)
+    let mut state = lifecycle_state_cell()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    if let Some(state) = *state {
+        return state;
+    }
+
+    let current = lifecycle_state_from_env();
+    *state = Some(current);
+    current
 }
 
 pub fn platform_control_socket_path() -> Option<PathBuf> {
@@ -146,6 +157,7 @@ where
 
             let response = match AppPlatformRequest::parse_line(&request) {
                 Some(AppPlatformRequest::Lifecycle { state }) => {
+                    update_current_lifecycle_state(state);
                     handler(state);
                     format!("ok\nhandled=1\nstate={}\n", state.as_str())
                 }
@@ -178,6 +190,25 @@ fn derive_wayland_instance_name(app_id: &str) -> String {
         .rsplit_once('.')
         .map(|(_, suffix)| suffix.to_owned())
         .unwrap_or_else(|| app_id.to_owned())
+}
+
+fn lifecycle_state_from_env() -> LifecycleState {
+    env_override(APP_LIFECYCLE_STATE_ENV)
+        .as_deref()
+        .and_then(LifecycleState::parse)
+        .unwrap_or(LifecycleState::Foreground)
+}
+
+fn lifecycle_state_cell() -> &'static Mutex<Option<LifecycleState>> {
+    static STATE: OnceLock<Mutex<Option<LifecycleState>>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(None))
+}
+
+fn update_current_lifecycle_state(state: LifecycleState) {
+    let mut current = lifecycle_state_cell()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    *current = Some(state);
 }
 
 fn env_override(key: &str) -> Option<String> {
@@ -257,6 +288,9 @@ mod tests {
         ] {
             std::env::remove_var(key);
         }
+        *super::lifecycle_state_cell()
+            .lock()
+            .expect("lifecycle state lock") = None;
     }
 
     fn defaults() -> AppWindowDefaults<'static> {
@@ -452,6 +486,7 @@ mod tests {
             observed.lock().expect("observed lock").as_slice(),
             &[LifecycleState::Background]
         );
+        assert_eq!(current_lifecycle_state(), LifecycleState::Background);
 
         let _ = std::fs::remove_file(socket_path);
     }

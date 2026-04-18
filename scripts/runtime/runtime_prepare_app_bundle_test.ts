@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   prepareRuntimeAppBundle,
@@ -89,6 +89,11 @@ Deno.test("prepareRuntimeAppBundle stages sdk entrypoint files", async () => {
       "platformLifecycleChange",
       "bundle runner lifecycle bridge",
     );
+    assertIncludes(
+      runner,
+      "__initialLifecycleState",
+      "bundle runner lifecycle bootstrap",
+    );
     assert(
       await fileExists(path.join(bundleDir, "shadow_sdk.js")),
       "missing shadow_sdk.js",
@@ -108,6 +113,38 @@ Deno.test("prepareRuntimeAppBundle stages sdk entrypoint files", async () => {
     assert(await fileExists(bundlePath), "missing bundle.js");
   } finally {
     await Deno.remove(cacheDir, { recursive: true });
+  }
+});
+
+Deno.test("shadow sdk lifecycle state honors runner-seeded initial state", async () => {
+  const cwd = repoRoot();
+  const lifecycleStateKey = Symbol.for("shadow.runtime.lifecycle.state");
+  const runtimeGlobal = globalThis as typeof globalThis & {
+    Shadow?: Record<string, unknown>;
+    [key: symbol]: unknown;
+  };
+  const moduleUrl = `${
+    pathToFileURL(path.resolve(
+      cwd,
+      "runtime/app-runtime/shadow_sdk_services.js",
+    )).href
+  }?test=${crypto.randomUUID()}`;
+
+  runtimeGlobal.Shadow = {
+    os: {},
+    __initialLifecycleState: "background",
+  };
+  delete runtimeGlobal[lifecycleStateKey];
+
+  try {
+    const services = await import(moduleUrl);
+    assert(
+      services.getLifecycleState() === "background",
+      "seeded lifecycle state should be background",
+    );
+  } finally {
+    delete runtimeGlobal.Shadow;
+    delete runtimeGlobal[lifecycleStateKey];
   }
 });
 
