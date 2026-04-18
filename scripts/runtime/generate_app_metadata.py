@@ -225,7 +225,7 @@ def generate_rust(manifest: dict[str, Any]) -> str:
         model_const = rust_const_name(app_id, "MODEL")
         app_const_names.append(app_const)
         profiles = set(app["profiles"])
-        if "vm-shell" in profiles and model == "typescript":
+        if "vm-shell" in profiles:
             vm_shell_app_const_names.append(app_const)
         if "pixel-shell" in profiles and model == "typescript":
             pixel_shell_app_const_names.append(app_const)

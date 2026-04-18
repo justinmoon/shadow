@@ -150,6 +150,23 @@
       "ui": {
         "iconColor": "ICON_GREEN"
       }
+    },
+    {
+      "id": "rust-demo",
+      "model": "rust",
+      "title": "Rust Demo",
+      "iconLabel": "RS",
+      "subtitle": "Native VM window",
+      "lifecycleHint": "VM-only Rust window that proves the native binary launch path.",
+      "binaryName": "shadow-rust-demo",
+      "waylandAppId": "dev.shadow.rust-demo",
+      "windowTitle": "Shadow Rust Demo",
+      "profiles": [
+        "vm-shell"
+      ],
+      "ui": {
+        "iconColor": "ICON_PURPLE"
+      }
     }
   ]
 }

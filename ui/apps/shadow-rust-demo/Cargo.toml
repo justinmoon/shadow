@@ -1,0 +1,9 @@
+[package]
+name = "shadow-rust-demo"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shadow-ui-core = { path = "../../crates/shadow-ui-core" }
+softbuffer = "0.4.8"
+winit = { version = "=0.31.0-beta.2", default-features = false, features = ["wayland"] }

@@ -50,7 +50,11 @@ PY
 
 shadow_load_session_apps() {
   local profile="${1:-${SHADOW_SESSION_APP_PROFILE:-}}"
-  shadow_load_manifest_apps "$profile" "typescript" 1
+  local model_filter="typescript"
+  if [[ "$profile" == "vm-shell" ]]; then
+    model_filter=""
+  fi
+  shadow_load_manifest_apps "$profile" "$model_filter" 1
 }
 
 shadow_load_typescript_runtime_apps() {

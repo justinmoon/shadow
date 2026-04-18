@@ -155,14 +155,30 @@ mod tests {
         app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, home_apps,
         launch_spec, AppId, AppLaunchModel, AppLaunchSpec, AppModel, DemoApp, CAMERA_APP,
         CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP, CASHU_APP_ID, CASHU_WAYLAND_APP_ID,
-        COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, DEMO_APPS, PODCAST_APP,
-        PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, SESSION_APP_PROFILE_ENV, SHELL_APP_ID,
-        SHELL_WAYLAND_APP_ID, TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID,
+        COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, DEMO_APPS, PIXEL_SHELL_DEMO_APPS,
+        PODCAST_APP, PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, RUST_DEMO_APP, RUST_DEMO_APP_ID,
+        RUST_DEMO_WAYLAND_APP_ID, SESSION_APP_PROFILE_ENV, SHELL_APP_ID, SHELL_WAYLAND_APP_ID,
+        TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID, VM_SHELL_DEMO_APPS,
     };
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_session_profile<T>(profile: Option<&str>, run: impl FnOnce() -> T) -> T {
+        let _guard = env_lock().lock().expect("env lock");
+        let previous = std::env::var(SESSION_APP_PROFILE_ENV).ok();
+        match profile {
+            Some(profile) => std::env::set_var(SESSION_APP_PROFILE_ENV, profile),
+            None => std::env::remove_var(SESSION_APP_PROFILE_ENV),
+        }
+        let result = run();
+        match previous {
+            Some(previous) => std::env::set_var(SESSION_APP_PROFILE_ENV, previous),
+            None => std::env::remove_var(SESSION_APP_PROFILE_ENV),
+        }
+        result
     }
 
     fn assert_current_typescript_app(app: &DemoApp) {
@@ -215,98 +231,156 @@ mod tests {
 
     #[test]
     fn counter_app_lookup_round_trips() {
-        let app = find_app(COUNTER_APP_ID).expect("counter app present");
-        assert_eq!(app, &COUNTER_APP);
-        assert_eq!(COUNTER_APP_ID.as_str(), "counter");
-        assert_eq!(find_app_by_str("counter"), Some(&COUNTER_APP));
-        assert_eq!(binary_name_for(COUNTER_APP_ID), Some("shadow-blitz-demo"));
-        assert_eq!(app.icon_label, "01");
-        assert!(app.lifecycle_hint.contains("live counter"));
-        assert_current_typescript_app(app);
-        assert_eq!(
-            app_id_from_wayland_app_id(COUNTER_WAYLAND_APP_ID),
-            Some(COUNTER_APP_ID)
-        );
-        assert_eq!(
-            app_id_from_wayland_app_id(SHELL_WAYLAND_APP_ID),
-            Some(SHELL_APP_ID)
-        );
-        assert_eq!(home_apps()[0].id, COUNTER_APP_ID);
+        with_session_profile(None, || {
+            let app = find_app(COUNTER_APP_ID).expect("counter app present");
+            assert_eq!(app, &COUNTER_APP);
+            assert_eq!(COUNTER_APP_ID.as_str(), "counter");
+            assert_eq!(find_app_by_str("counter"), Some(&COUNTER_APP));
+            assert_eq!(binary_name_for(COUNTER_APP_ID), Some("shadow-blitz-demo"));
+            assert_eq!(app.icon_label, "01");
+            assert!(app.lifecycle_hint.contains("live counter"));
+            assert_current_typescript_app(app);
+            assert_eq!(
+                app_id_from_wayland_app_id(COUNTER_WAYLAND_APP_ID),
+                Some(COUNTER_APP_ID)
+            );
+            assert_eq!(
+                app_id_from_wayland_app_id(SHELL_WAYLAND_APP_ID),
+                Some(SHELL_APP_ID)
+            );
+            assert_eq!(home_apps()[0].id, COUNTER_APP_ID);
+        });
     }
 
     #[test]
     fn camera_app_lookup_round_trips() {
-        let app = find_app(CAMERA_APP_ID).expect("camera app present");
-        assert_eq!(app, &CAMERA_APP);
-        assert_eq!(CAMERA_APP_ID.as_str(), "camera");
-        assert_eq!(find_app_by_str("camera"), Some(&CAMERA_APP));
-        assert_eq!(binary_name_for(CAMERA_APP_ID), Some("shadow-blitz-demo"));
-        assert_eq!(app.icon_label, "CM");
-        assert!(app.lifecycle_hint.contains("captured frame"));
-        assert_current_typescript_app(app);
-        assert_eq!(
-            app_id_from_wayland_app_id(CAMERA_WAYLAND_APP_ID),
-            Some(CAMERA_APP_ID)
-        );
-        assert_eq!(home_apps()[1].id, CAMERA_APP_ID);
+        with_session_profile(None, || {
+            let app = find_app(CAMERA_APP_ID).expect("camera app present");
+            assert_eq!(app, &CAMERA_APP);
+            assert_eq!(CAMERA_APP_ID.as_str(), "camera");
+            assert_eq!(find_app_by_str("camera"), Some(&CAMERA_APP));
+            assert_eq!(binary_name_for(CAMERA_APP_ID), Some("shadow-blitz-demo"));
+            assert_eq!(app.icon_label, "CM");
+            assert!(app.lifecycle_hint.contains("captured frame"));
+            assert_current_typescript_app(app);
+            assert_eq!(
+                app_id_from_wayland_app_id(CAMERA_WAYLAND_APP_ID),
+                Some(CAMERA_APP_ID)
+            );
+            assert_eq!(home_apps()[1].id, CAMERA_APP_ID);
+        });
     }
 
     #[test]
     fn timeline_app_lookup_round_trips() {
-        let app = find_app(TIMELINE_APP_ID).expect("timeline app present");
-        assert_eq!(app, &TIMELINE_APP);
-        assert_eq!(TIMELINE_APP_ID.as_str(), "timeline");
-        assert_eq!(find_app_by_str("timeline"), Some(&TIMELINE_APP));
-        assert_eq!(binary_name_for(TIMELINE_APP_ID), Some("shadow-blitz-demo"));
-        assert_eq!(app.icon_label, "TL");
-        assert!(app.lifecycle_hint.contains("live draft"));
-        assert_current_typescript_app(app);
-        assert_eq!(
-            app_id_from_wayland_app_id(TIMELINE_WAYLAND_APP_ID),
-            Some(TIMELINE_APP_ID)
-        );
-        assert_eq!(home_apps()[2].id, TIMELINE_APP_ID);
+        with_session_profile(None, || {
+            let app = find_app(TIMELINE_APP_ID).expect("timeline app present");
+            assert_eq!(app, &TIMELINE_APP);
+            assert_eq!(TIMELINE_APP_ID.as_str(), "timeline");
+            assert_eq!(find_app_by_str("timeline"), Some(&TIMELINE_APP));
+            assert_eq!(binary_name_for(TIMELINE_APP_ID), Some("shadow-blitz-demo"));
+            assert_eq!(app.icon_label, "TL");
+            assert!(app.lifecycle_hint.contains("live draft"));
+            assert_current_typescript_app(app);
+            assert_eq!(
+                app_id_from_wayland_app_id(TIMELINE_WAYLAND_APP_ID),
+                Some(TIMELINE_APP_ID)
+            );
+            assert_eq!(home_apps()[2].id, TIMELINE_APP_ID);
+        });
     }
 
     #[test]
     fn podcast_app_lookup_round_trips() {
-        let app = find_app(PODCAST_APP_ID).expect("podcast app present");
-        assert_eq!(app, &PODCAST_APP);
-        assert_eq!(PODCAST_APP_ID.as_str(), "podcast");
-        assert_eq!(find_app_by_str("podcast"), Some(&PODCAST_APP));
-        assert_eq!(binary_name_for(PODCAST_APP_ID), Some("shadow-blitz-demo"));
-        assert_eq!(app.icon_label, "NS");
-        assert!(app.lifecycle_hint.contains("episode"));
-        assert_current_typescript_app(app);
-        assert_eq!(
-            app_id_from_wayland_app_id(PODCAST_WAYLAND_APP_ID),
-            Some(PODCAST_APP_ID)
-        );
-        assert_eq!(home_apps()[3].id, PODCAST_APP_ID);
+        with_session_profile(None, || {
+            let app = find_app(PODCAST_APP_ID).expect("podcast app present");
+            assert_eq!(app, &PODCAST_APP);
+            assert_eq!(PODCAST_APP_ID.as_str(), "podcast");
+            assert_eq!(find_app_by_str("podcast"), Some(&PODCAST_APP));
+            assert_eq!(binary_name_for(PODCAST_APP_ID), Some("shadow-blitz-demo"));
+            assert_eq!(app.icon_label, "NS");
+            assert!(app.lifecycle_hint.contains("episode"));
+            assert_current_typescript_app(app);
+            assert_eq!(
+                app_id_from_wayland_app_id(PODCAST_WAYLAND_APP_ID),
+                Some(PODCAST_APP_ID)
+            );
+            assert_eq!(home_apps()[3].id, PODCAST_APP_ID);
+        });
     }
 
     #[test]
     fn cashu_app_lookup_round_trips() {
-        let app = find_app(CASHU_APP_ID).expect("cashu app present");
-        assert_eq!(app, &CASHU_APP);
-        assert_eq!(CASHU_APP_ID.as_str(), "cashu");
-        assert_eq!(find_app_by_str("cashu"), Some(&CASHU_APP));
-        assert_eq!(binary_name_for(CASHU_APP_ID), Some("shadow-blitz-demo"));
-        assert_eq!(app.icon_label, "CU");
-        assert!(app.lifecycle_hint.contains("trusted mints"));
-        assert_current_typescript_app(app);
-        assert_eq!(
-            app_id_from_wayland_app_id(CASHU_WAYLAND_APP_ID),
-            Some(CASHU_APP_ID)
-        );
-        assert_eq!(home_apps()[4].id, CASHU_APP_ID);
+        with_session_profile(None, || {
+            let app = find_app(CASHU_APP_ID).expect("cashu app present");
+            assert_eq!(app, &CASHU_APP);
+            assert_eq!(CASHU_APP_ID.as_str(), "cashu");
+            assert_eq!(find_app_by_str("cashu"), Some(&CASHU_APP));
+            assert_eq!(binary_name_for(CASHU_APP_ID), Some("shadow-blitz-demo"));
+            assert_eq!(app.icon_label, "CU");
+            assert!(app.lifecycle_hint.contains("trusted mints"));
+            assert_current_typescript_app(app);
+            assert_eq!(
+                app_id_from_wayland_app_id(CASHU_WAYLAND_APP_ID),
+                Some(CASHU_APP_ID)
+            );
+            assert_eq!(home_apps()[4].id, CASHU_APP_ID);
+        });
+    }
+
+    #[test]
+    fn rust_demo_app_lookup_round_trips() {
+        with_session_profile(None, || {
+            let app = find_app(RUST_DEMO_APP_ID).expect("rust demo app present");
+            assert_eq!(app, &RUST_DEMO_APP);
+            assert_eq!(RUST_DEMO_APP_ID.as_str(), "rust-demo");
+            assert_eq!(find_app_by_str("rust-demo"), Some(&RUST_DEMO_APP));
+            assert_eq!(binary_name_for(RUST_DEMO_APP_ID), Some("shadow-rust-demo"));
+            assert_eq!(app.icon_label, "RS");
+            assert!(app.lifecycle_hint.contains("native binary launch path"));
+            assert_eq!(app.model, AppModel::Rust);
+            assert_eq!(
+                launch_spec(RUST_DEMO_APP_ID),
+                Some(AppLaunchSpec {
+                    id: RUST_DEMO_APP_ID,
+                    binary_name: "shadow-rust-demo",
+                    wayland_app_id: RUST_DEMO_WAYLAND_APP_ID,
+                    window_title: "Shadow Rust Demo",
+                    model: AppLaunchModel::Rust,
+                })
+            );
+            assert_eq!(
+                app_id_from_wayland_app_id(RUST_DEMO_WAYLAND_APP_ID),
+                Some(RUST_DEMO_APP_ID)
+            );
+            assert_eq!(home_apps()[5].id, RUST_DEMO_APP_ID);
+        });
+    }
+
+    #[test]
+    fn vm_shell_profile_includes_rust_demo() {
+        with_session_profile(Some("vm-shell"), || {
+            assert_eq!(home_apps(), &VM_SHELL_DEMO_APPS);
+            assert!(home_apps().iter().any(|app| app.id == RUST_DEMO_APP_ID));
+        });
+    }
+
+    #[test]
+    fn pixel_shell_profile_stays_typescript_only() {
+        with_session_profile(Some("pixel-shell"), || {
+            assert_eq!(home_apps(), &PIXEL_SHELL_DEMO_APPS);
+            assert!(home_apps()
+                .iter()
+                .all(|app| app.model == AppModel::TypeScript));
+            assert!(home_apps().iter().all(|app| app.id != RUST_DEMO_APP_ID));
+            assert_eq!(find_app(RUST_DEMO_APP_ID), None);
+        });
     }
 
     #[test]
     fn unknown_profile_env_falls_back_to_full_app_list() {
-        let _guard = env_lock().lock().expect("env lock");
-        std::env::set_var(SESSION_APP_PROFILE_ENV, "unknown-profile");
-        assert_eq!(home_apps().len(), DEMO_APPS.len());
-        std::env::remove_var(SESSION_APP_PROFILE_ENV);
+        with_session_profile(Some("unknown-profile"), || {
+            assert_eq!(home_apps().len(), DEMO_APPS.len());
+        });
     }
 }

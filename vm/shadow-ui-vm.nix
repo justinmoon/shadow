@@ -1,8 +1,10 @@
-{ hostSystem, microvm, nixpkgs, shadowBlitzDemoPackage, shadowCompositorPackage, sshPort }:
+{ hostSystem, microvm, nixpkgs, requiredBinaryNames, shadowUiVmSessionPackage, sshPort }:
 
 let
   lib = nixpkgs.lib;
   guestSystem = builtins.replaceStrings [ "-darwin" ] [ "-linux" ] hostSystem;
+  requiredSessionBinaries = [ "shadow-compositor" ] ++ requiredBinaryNames;
+  requiredSessionBinaryArgs = lib.escapeShellArgs requiredSessionBinaries;
 in
 nixpkgs.lib.nixosSystem {
   system = guestSystem;
@@ -54,7 +56,6 @@ nixpkgs.lib.nixosSystem {
           export LD_LIBRARY_PATH="${runtimeLibDir}:${guestLibraryPath}:''${LD_LIBRARY_PATH:-}"
           export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri:''${LIBGL_DRIVERS_PATH:-}"
           export XDG_RUNTIME_DIR="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-          export SHADOW_APP_CLIENT=${shadowBlitzDemoPackage}/bin/shadow-blitz-demo
 
           mkdir -p "$HOME" "$XDG_CACHE_HOME" ${logDir} ${runtimeLibDir}
           cp -fL ${pkgs.libglvnd}/lib/libEGL.so.1 ${runtimeLibDir}/libEGL.so.1
@@ -68,7 +69,6 @@ nixpkgs.lib.nixosSystem {
           export LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
           export LIBGL_DRIVERS_PATH="$LIBGL_DRIVERS_PATH"
           export XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR"
-          export SHADOW_APP_CLIENT="$SHADOW_APP_CLIENT"
           EOF
         '';
         shadowUiSession = pkgs.writeShellApplication {
@@ -159,11 +159,11 @@ PY
             export SHADOW_RUNTIME_NOSTR_DB_PATH=${stateDir}/runtime-nostr.sqlite3
             echo "runtime bundle=$SHADOW_RUNTIME_APP_BUNDLE_PATH"
             echo "runtime host=$SHADOW_RUNTIME_HOST_BINARY_PATH"
-            echo "app client=$SHADOW_APP_CLIENT"
+            echo "app launch mode=metadata"
             echo "runtime nostr db=$SHADOW_RUNTIME_NOSTR_DB_PATH"
             echo "runtime cashu dir=$SHADOW_RUNTIME_CASHU_DATA_DIR"
 
-            ${shadowCompositorPackage}/bin/shadow-compositor &
+            ${shadowUiVmSessionPackage}/bin/shadow-compositor &
             compositor_pid=$!
 
             cleanup() {
@@ -243,7 +243,6 @@ PY
               "export LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH\"" \
               "export LIBGL_DRIVERS_PATH=\"$LIBGL_DRIVERS_PATH\"" \
               "export XDG_RUNTIME_DIR=\"$XDG_RUNTIME_DIR\"" \
-              "export SHADOW_APP_CLIENT=\"$SHADOW_APP_CLIENT\"" \
               "export SHADOW_RUNTIME_APP_BUNDLE_PATH=\"$SHADOW_RUNTIME_APP_BUNDLE_PATH\"" \
               "export SHADOW_RUNTIME_HOST_BINARY_PATH=\"$SHADOW_RUNTIME_HOST_BINARY_PATH\"" \
               "export WAYLAND_DISPLAY=\"$nested_wayland\"" \
@@ -305,8 +304,7 @@ PY
         environment.systemPackages =
           guestSystemPkgs
           ++ [
-            shadowBlitzDemoPackage
-            shadowCompositorPackage
+            shadowUiVmSessionPackage
           ];
 
         systemd.services.shadow-ui-smoke = {

@@ -74,6 +74,59 @@ $stderr"
   [[ "$combined" == *"$expected_substring"* ]] || fail "$name output missing substring: $expected_substring"
 }
 
+mixed_model_manifest="$(mktemp_tracked)"
+cat >"$mixed_model_manifest" <<'JSON'
+{
+  "schemaVersion": 1,
+  "shell": {
+    "id": "shell",
+    "waylandAppId": "dev.shadow.shell"
+  },
+  "apps": [
+    {
+      "id": "mixed-ts",
+      "model": "typescript",
+      "title": "Mixed TS",
+      "iconLabel": "TS",
+      "subtitle": "TypeScript lane",
+      "lifecycleHint": "Mixed TypeScript app.",
+      "binaryName": "shadow-blitz-demo",
+      "waylandAppId": "dev.shadow.mixed-ts",
+      "windowTitle": "Mixed TS",
+      "runtime": {
+        "bundleEnv": "SHADOW_RUNTIME_APP_MIXED_TS_BUNDLE_PATH",
+        "bundleFilename": "runtime-app-mixed-ts-bundle.js",
+        "inputPath": "runtime/app-counter/app.tsx",
+        "cacheDirs": {
+          "vm-shell": "build/runtime/mixed-ts-vm",
+          "pixel-shell": "build/runtime/mixed-ts-pixel"
+        },
+        "config": null
+      },
+      "profiles": ["vm-shell", "pixel-shell"],
+      "ui": {
+        "iconColor": "ICON_CYAN"
+      }
+    },
+    {
+      "id": "mixed-rust",
+      "model": "rust",
+      "title": "Mixed Rust",
+      "iconLabel": "RS",
+      "subtitle": "Rust lane",
+      "lifecycleHint": "Mixed Rust app.",
+      "binaryName": "shadow-rust-demo",
+      "waylandAppId": "dev.shadow.mixed-rust",
+      "windowTitle": "Mixed Rust",
+      "profiles": ["vm-shell", "pixel-shell"],
+      "ui": {
+        "iconColor": "ICON_GREEN"
+      }
+    }
+  ]
+}
+JSON
+
 check_stdout_contains \
   just_run_uses_shadowctl_run_flags \
   0 \
@@ -162,6 +215,38 @@ check_output_case \
   "$(printf 'command=%s --app camera' "$SCRIPT_DIR/vm/ui_vm_run.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" run --dry-run -t vm --app camera
+
+check_output_case \
+  shadowctl_run_vm_mixed_rust \
+  0 \
+  "$(printf 'command=%s --app mixed-rust' "$SCRIPT_DIR/vm/ui_vm_run.sh")" \
+  "" \
+  env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" \
+    "$SHADOWCTL_SCRIPT" run --dry-run -t vm --app mixed-rust
+
+check_output_case \
+  shadowctl_run_pixel_rejects_mixed_rust \
+  1 \
+  "" \
+  "unsupported app 'mixed-rust'" \
+  env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" \
+    "$SHADOWCTL_SCRIPT" run --dry-run -t TESTSERIAL --app mixed-rust
+
+check_output_case \
+  session_apps_helper_vm_lists_mixed_rust \
+  0 \
+  "$(printf 'shell\nmixed-ts\nmixed-rust')" \
+  "" \
+  env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" SHADOW_SESSION_APP_PROFILE=vm-shell \
+    bash -lc 'cd "$0" && source scripts/lib/session_apps.sh && shadow_load_session_apps && printf "%s\n" "${shadow_session_apps[@]}"' "$REPO_ROOT"
+
+check_output_case \
+  session_apps_helper_pixel_keeps_typescript_only \
+  0 \
+  "$(printf 'shell\nmixed-ts')" \
+  "" \
+  env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" SHADOW_SESSION_APP_PROFILE=pixel-shell \
+    bash -lc 'cd "$0" && source scripts/lib/session_apps.sh && shadow_load_session_apps && printf "%s\n" "${shadow_session_apps[@]}"' "$REPO_ROOT"
 
 check_output_case \
   shadowctl_run_pixel_timeline \

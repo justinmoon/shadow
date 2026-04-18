@@ -68,7 +68,16 @@
         "x86_64-darwin"
         "aarch64-darwin"
       ];
-      repoRoot = ./.;
+      repoRoot =
+        if uiVmSource != null then
+          /. + uiVmSource
+        else
+          ./.;
+      appManifestPath =
+        if uiVmSource != null then
+          /. + "${uiVmSource}/runtime/apps.json"
+        else
+          ./runtime/apps.json;
       repoRootStr = toString repoRoot;
       repoSourceFromPrefixes = prefixes:
         lib.cleanSourceWith {
@@ -91,6 +100,7 @@
       shadowRuntimeHostSrc = repoSourceFromPrefixes [
         "rust/Cargo.toml"
         "rust/Cargo.lock"
+        "rust/shadow-sdk"
         "rust/shadow-runtime-host"
         "rust/shadow-runtime-protocol"
         "rust/runtime-audio-host"
@@ -105,6 +115,12 @@
         "ui/apps"
         "ui/crates"
         "ui/third_party"
+        "rust/Cargo.toml"
+        "rust/shadow-sdk"
+        "rust/runtime-audio-host"
+        "rust/runtime-camera-host"
+        "rust/runtime-cashu-host"
+        "rust/runtime-nostr-host"
         "rust/shadow-runtime-protocol"
       ];
       shadowUiCoreSrc = repoSourceFromPrefixes [
@@ -134,6 +150,19 @@
         "ui/third_party"
         "rust/shadow-runtime-protocol"
       ];
+      shadowVmAppBinaryNames =
+        let
+          manifest = builtins.fromJSON (builtins.readFile appManifestPath);
+          vmApps = builtins.filter (
+            app:
+            let
+              profiles = app.profiles or [ ];
+            in
+              builtins.elem "vm-shell" profiles
+          ) (manifest.apps or [ ]);
+          binaryNames = builtins.map (app: app.binaryName or "") vmApps;
+        in
+          lib.unique (builtins.filter (name: name != "") binaryNames);
       shadowLinuxAudioSpikeSrc = repoSourceFromPrefixes [
         "rust/shadow-linux-audio-spike"
       ];
@@ -158,6 +187,7 @@
         "vm"
         "rust/Cargo.toml"
         "rust/Cargo.lock"
+        "rust/shadow-sdk"
         "rust/shadow-runtime-host"
         "rust/shadow-runtime-protocol"
         "rust/runtime-audio-host"
@@ -506,6 +536,81 @@
           '';
           meta.mainProgram = "shadow-blitz-demo";
         };
+      mkShadowRustDemoFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "shadow-rust-demo";
+          version = "0.1.0";
+          src = shadowUiSrc;
+          cargoRoot = "ui";
+          buildAndTestSubdir = "ui";
+          cargoLock = {
+            lockFile = ./ui/Cargo.lock;
+            outputHashes = uiBlitzOutputHashes;
+          };
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          cargoBuildFlags = [ "-p" "shadow-rust-demo" ];
+          cargoInstallFlags = [ "-p" "shadow-rust-demo" ];
+          nativeBuildInputs = [
+            cross.buildPackages.pkg-config
+            cross.buildPackages.python3
+          ];
+          postPatch = mkUiWorkspaceMembersPostPatch "ui/Cargo.toml" [
+            "crates/shadow-ui-core"
+            "apps/shadow-rust-demo"
+          ];
+          depsBuildBuild =
+            lib.optionals cross.stdenv.buildPlatform.isDarwin [
+              cross.buildPackages.stdenv.cc
+              cross.buildPackages.libiconv
+            ];
+          buildInputs = [
+            cross.expat
+            cross.fontconfig
+            cross.freetype
+            cross.libdrm
+            cross.libffi
+            cross.libglvnd
+            cross.libxkbcommon
+            cross.mesa
+            cross.vulkan-loader
+            cross.wayland
+            cross.wayland-protocols
+          ];
+          meta.mainProgram = "shadow-rust-demo";
+        };
+      mkShadowUiVmSessionPackage =
+        pkgs:
+        {
+          shadowCompositorPackage,
+          appPackagesByBinaryName,
+          requiredBinaryNames,
+        }:
+        let
+          missingBinaryNames = builtins.filter (
+            name: !(builtins.hasAttr name appPackagesByBinaryName)
+          ) requiredBinaryNames;
+          copyAppBinaries = lib.concatMapStringsSep "\n" (
+            name:
+            let
+              package = appPackagesByBinaryName.${name};
+            in
+              ''
+                cp -fL ${package}/bin/${name} "$out/bin/${name}"
+                chmod 0555 "$out/bin/${name}"
+              ''
+          ) requiredBinaryNames;
+        in
+          if missingBinaryNames != [ ] then
+            throw "shadow-ui-vm-session missing packages for VM app binaries: ${lib.concatStringsSep ", " missingBinaryNames}"
+          else
+            pkgs.runCommand "shadow-ui-vm-session" { } ''
+              mkdir -p "$out/bin"
+              cp -fL ${shadowCompositorPackage}/bin/shadow-compositor "$out/bin/shadow-compositor"
+              chmod 0555 "$out/bin/shadow-compositor"
+              ${copyAppBinaries}
+            '';
       mesaTurnipKnownGoodRev = "81feb2e7f1196dec7faee7791e17e472f9d8702a";
       mesaTurnipKnownGoodArchive =
         "https://gitlab.freedesktop.org/mesa/mesa/-/archive/${mesaTurnipKnownGoodRev}/mesa-${mesaTurnipKnownGoodRev}.tar.gz";
@@ -946,9 +1051,8 @@
         in
           import ./vm/shadow-ui-vm.nix {
             inherit hostSystem microvm nixpkgs;
-            shadowBlitzDemoPackage =
-              self.packages.${guestSystem}.shadow-blitz-demo-host-system-fonts;
-            shadowCompositorPackage = self.packages.${guestSystem}.shadow-compositor;
+            requiredBinaryNames = shadowVmAppBinaryNames;
+            shadowUiVmSessionPackage = self.packages.${guestSystem}.shadow-ui-vm-session;
             sshPort = uiVmSshPort;
           };
       mkVmSmokeInputsFor = pkgs:
@@ -1012,6 +1116,24 @@
         default = mkBootimgShell pkgs;
       });
       packages = forAllSystems ({ pkgs, ... }:
+        let
+          linuxShadowBlitzDemoHostSystemFonts = mkShadowBlitzDemoFor pkgs {
+            features = [ "host_system_fonts" ];
+            pnameSuffix = "host-system-fonts";
+            useDefaultFeatures = true;
+          };
+          linuxShadowCompositor = mkShadowCompositorFor pkgs;
+          linuxShadowRustDemo = mkShadowRustDemoFor pkgs;
+          linuxShadowVmAppPackagesByBinaryName = {
+            "shadow-blitz-demo" = linuxShadowBlitzDemoHostSystemFonts;
+            "shadow-rust-demo" = linuxShadowRustDemo;
+          };
+          linuxShadowUiVmSession = mkShadowUiVmSessionPackage pkgs {
+            shadowCompositorPackage = linuxShadowCompositor;
+            appPackagesByBinaryName = linuxShadowVmAppPackagesByBinaryName;
+            requiredBinaryNames = shadowVmAppBinaryNames;
+          };
+        in
         {
           shadow-linux-audio-spike =
             if pkgs.stdenv.isLinux then
@@ -1050,13 +1172,9 @@
             mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform {
               features = [ "gpu_softbuffer" ];
             };
-          shadow-blitz-demo-host-system-fonts =
-            mkShadowBlitzDemoFor pkgs {
-              features = [ "host_system_fonts" ];
-              pnameSuffix = "host-system-fonts";
-              useDefaultFeatures = true;
-            };
-          shadow-compositor = mkShadowCompositorFor pkgs;
+          shadow-blitz-demo-host-system-fonts = linuxShadowBlitzDemoHostSystemFonts;
+          shadow-compositor = linuxShadowCompositor;
+          shadow-ui-vm-session = linuxShadowUiVmSession;
           shadow-pinned-turnip-mesa-aarch64-linux =
             mkShadowPinnedTurnipMesaFor pkgs.pkgsCross.aarch64-multiplatform;
           shadow-local-turnip-mesa-aarch64-linux =
@@ -1064,6 +1182,7 @@
           shadow-compositor-guest = mkShadowGuestCompositor pkgs;
           shadow-compositor-guest-device =
             mkShadowGuestCompositorFor pkgs.pkgsCross.aarch64-multiplatform-musl;
+          shadow-rust-demo = linuxShadowRustDemo;
         });
       legacyPackages = forAllSystems ({ pkgs, ... }:
         let

@@ -77,7 +77,7 @@ def load_supported_session_apps(
     manifest: dict[str, Any],
     *,
     profile: str,
-    model: str = "typescript",
+    model: str | None = None,
 ) -> tuple[str, ...]:
     shell_id = manifest_shell_id(manifest)
     apps = (
@@ -86,7 +86,7 @@ def load_supported_session_apps(
             app["id"]
             for app in manifest.get("apps", [])
             if profile in set(app.get("profiles", ()))
-            and app.get("model") == model
+            and (model is None or app.get("model") == model)
         ),
     )
     apps = tuple(dict.fromkeys(apps))
@@ -95,10 +95,28 @@ def load_supported_session_apps(
     return apps
 
 
+def load_manifest_app_binary_names(
+    manifest: dict[str, Any],
+    *,
+    profile: str | None = None,
+) -> tuple[str, ...]:
+    names = tuple(
+        dict.fromkeys(
+            app["binaryName"]
+            for app in manifest.get("apps", [])
+            if isinstance(app.get("binaryName"), str)
+            and app["binaryName"]
+            and (profile is None or profile in set(app.get("profiles", ())))
+        )
+    )
+    return names
+
+
 APP_MANIFEST = load_app_manifest()
 SHELL_APP_ID = manifest_shell_id(APP_MANIFEST)
+VM_APP_BINARY_NAMES = load_manifest_app_binary_names(APP_MANIFEST, profile="vm-shell")
 SUPPORTED_SESSION_APPS_BY_TARGET = {
-    "pixel": load_supported_session_apps(APP_MANIFEST, profile="pixel-shell"),
+    "pixel": load_supported_session_apps(APP_MANIFEST, profile="pixel-shell", model="typescript"),
     "vm": load_supported_session_apps(APP_MANIFEST, profile="vm-shell"),
 }
 
@@ -310,9 +328,8 @@ def vm_artifact_share(process_lines: list[str]) -> str | None:
 
 def running_apps(process_lines: list[str]) -> list[str]:
     apps: list[str] = []
-    names = ("shadow-blitz-demo",)
     for line in process_lines:
-        for name in names:
+        for name in VM_APP_BINARY_NAMES:
             if f" {name}" in f" {line}" or name in line:
                 apps.append(name)
     return sorted(set(apps))
@@ -377,6 +394,8 @@ def _qmp_read_message(client: socket.socket) -> dict[str, Any]:
 
 def vm_status_payload() -> dict[str, Any]:
     local_processes = vm_processes()
+    vm_process_names = ("shadow-compositor", *VM_APP_BINARY_NAMES)
+    vm_process_names_json = json.dumps(vm_process_names)
     payload: dict[str, Any] = {
         "kind": "vm",
         "target": "vm",
@@ -403,6 +422,7 @@ import subprocess
 runtime_dir = pathlib.Path("/run/user/1000")
 session_log = pathlib.Path("/var/lib/shadow-ui/log/shadow-ui-session.log")
 control_socket = runtime_dir / "shadow-control.sock"
+process_names = __VM_PROCESS_NAMES_JSON__
 
 def cmd(*argv):
     result = subprocess.run(argv, text=True, capture_output=True, check=False)
@@ -416,7 +436,7 @@ for line in cmd("systemctl", "show", "shadow-ui-smoke.service", "-p", "ActiveSta
 
 process_lines = []
 for line in cmd("ps", "-eo", "pid=,comm=,args=")[1].splitlines():
-    if not any(name in line for name in ("shadow-compositor", "shadow-blitz-demo")):
+    if not any(name in line for name in process_names):
         continue
     if "python3 - <<'PY'" in line:
         continue
@@ -437,6 +457,7 @@ payload = {
 print(json.dumps(payload))
 PY
 """
+    remote_script = remote_script.replace("__VM_PROCESS_NAMES_JSON__", vm_process_names_json)
 
     remote = run_remote(remote_script, check=False)
     payload["remote"] = {

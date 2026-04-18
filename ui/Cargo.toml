@@ -7,6 +7,7 @@ members = [
     "crates/shadow-compositor",
     "crates/shadow-compositor-guest",
     "apps/shadow-blitz-demo",
+    "apps/shadow-rust-demo",
 ]
 default-members = [
     "crates/shadow-ui-core",

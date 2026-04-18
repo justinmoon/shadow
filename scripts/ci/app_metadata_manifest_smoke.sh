@@ -436,8 +436,8 @@ def array_body(name: str) -> str:
 vm_shell_apps = array_body("VM_SHELL_DEMO_APPS")
 pixel_shell_apps = array_body("PIXEL_SHELL_DEMO_APPS")
 
-if "MIXED_TS_APP" not in vm_shell_apps or "MIXED_RUST_APP" in vm_shell_apps:
-    raise SystemExit("app_metadata_manifest_smoke: generated VM_SHELL_DEMO_APPS should only include launchable mixed-model apps")
+if "MIXED_TS_APP" not in vm_shell_apps or "MIXED_RUST_APP" not in vm_shell_apps:
+    raise SystemExit("app_metadata_manifest_smoke: generated VM_SHELL_DEMO_APPS should include both mixed-model VM apps")
 if "MIXED_TS_APP" not in pixel_shell_apps or "MIXED_RUST_APP" in pixel_shell_apps:
     raise SystemExit("app_metadata_manifest_smoke: generated PIXEL_SHELL_DEMO_APPS should only include launchable mixed-model apps")
 PY
@@ -494,10 +494,10 @@ check_output_case \
     bash -lc 'cd "$0" && source scripts/lib/pixel_common.sh && pixel_runtime_shell_app_ids' "$REPO_ROOT"
 
 check_output_case \
-  shadowctl_vm_rejects_mixed_rust_session_app \
-  1 \
+  shadowctl_vm_accepts_mixed_rust_session_app \
+  0 \
+  "command=$SCRIPT_DIR/vm/ui_vm_run.sh --app mixed-rust" \
   "" \
-  "unsupported app 'mixed-rust'" \
   env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" "$SHADOWCTL_SCRIPT" run --dry-run -t vm --app mixed-rust
 
 check_output_case \
@@ -510,7 +510,7 @@ check_output_case \
 check_output_case \
   session_apps_helper_filters_mixed_launchable_apps \
   0 \
-  "$(printf 'shell\nmixed-ts')" \
+  "$(printf 'shell\nmixed-ts\nmixed-rust')" \
   "" \
   env SHADOW_APP_METADATA_MANIFEST="$mixed_model_manifest" SHADOW_SESSION_APP_PROFILE=vm-shell \
     bash -lc 'cd "$0" && source scripts/lib/session_apps.sh && shadow_load_session_apps && printf "%s\n" "${shadow_session_apps[@]}"' "$REPO_ROOT"

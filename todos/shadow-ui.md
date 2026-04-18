@@ -34,7 +34,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - [x] Extend the current manifest and generated metadata to support `typescript` and `rust` app models.
 - [ ] Define the public `shadow_sdk` surface for Rust apps and the matching single binding surface for TypeScript apps.
 - [ ] Decide the smallest useful internal boundaries behind the one public SDK surface.
-- [ ] Prove a minimal Rust app runner for one process-isolated Shadow UI app.
+- [x] Prove a minimal Rust app runner for one process-isolated Shadow UI app.
 - [ ] Prove one shared capability end-to-end through both Rust and TypeScript app surfaces.
 - [ ] Prove shared lifecycle events through the Rust path first and define how they surface to TypeScript apps.
 - [ ] Prove one shell/system surface rendered directly by the compositor.
@@ -45,7 +45,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - [ ] Tighten the spec one more pass around `shadow_sdk` naming, modules, and binding language for TypeScript.
 - [ ] Decide where the generated manifest types should live as the current manifest expands.
 - [x] Sketch the minimal launch metadata required for both `typescript` and `rust` apps.
-- [ ] Choose the first Rust runner spike target and keep it deliberately small.
+- [x] Choose the first Rust runner spike target and keep it deliberately small.
 - [ ] Choose the first shared capability to prove through both app models.
 - [ ] Decide which text-input path to spike first: single-line editor or multiline editor.
 - [ ] Pick the first shell/system surface to target for embedded rendering.
@@ -55,10 +55,11 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 
 - The one-manifest direction has landed in the repo. This platform effort should extend that work to cover both app models instead of bypassing it.
 - The manifest now carries `model`, generated Rust metadata exposes a launch-spec view, and runtime artifact builders skip `rust` apps by default while still rejecting explicit `--include-app <rust-app>` requests.
-- The current VM and Pixel shell lanes now surface only launchable TypeScript apps. That is intentional until the Rust runner/client packaging seam exists; mixed-model manifests are valid, but `rust` shell apps are still hidden/rejected in the current operator surface.
+- VM now supports a real mixed-model shell session: the session package contains `shadow-compositor` plus manifest-declared VM app binaries, the VM launch path no longer exports a global Blitz client override, and a minimal `shadow-rust-demo` binary can be launched through the normal control surface.
+- Pixel remains TypeScript-only for now. Mixed-model manifests are valid, but rooted-Pixel staging and shell surfaces still filter to TypeScript until the native packaging path exists there too.
 - The current `runtime-<something>-host` naming pattern should collapse toward one shared SDK/service surface.
 - The public app-authoring surface should feel like one SDK, not a pile of crates and one-off bindings.
 - Masonry/Xilem remains the leading foundation candidate for the Rust UI implementation layer because it supports both external event-loop integration and rendering into caller-provided textures.
 - Shell/system chrome rewrite is in scope. The current homegrown shell UI should be treated as bring-up architecture, not the final product direction.
-- The next spike should prove the smallest Rust runner path end to end: one packaged Rust client binary, one manifest entry, one VM launch path, and no global Blitz-only client override in that path.
-- After the runner spike, revisit the session-visible app filters so `rust` apps can participate in VM/Pixel shell profiles on equal footing.
+- The VM operator/status path now depends on truthful mixed-model probing in `scripts/shadowctl`; keep VM smoke and the operator CLI smoke in lockstep when touching that code.
+- The next spike should move from runner proof to platform proof: one shared capability or lifecycle contract that both TypeScript and Rust apps can exercise through the same public SDK story.
