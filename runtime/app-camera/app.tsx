@@ -570,6 +570,12 @@ export function renderApp() {
       class="camera-shell"
       data-shadow-camera-count={String(cameras().length)}
       data-shadow-selected-camera={selectedCameraId() ?? ""}
+      data-shadow-preview-kind={previewStatus().kind}
+      data-shadow-preview-enabled={String(previewEnabled())}
+      data-shadow-preview-camera-id={previewFrame()?.cameraId ?? ""}
+      data-shadow-preview-is-mock={previewFrame() == null ? "" : String(previewFrame()!.isMock)}
+      data-shadow-preview-bytes={String(previewFrame()?.bytes ?? "")}
+      data-shadow-preview-mime-type={previewFrame()?.mimeType ?? ""}
       data-shadow-status-kind={status().kind}
       data-shadow-last-capture-camera-id={lastCapture()?.cameraId ?? ""}
       data-shadow-last-capture-is-mock={lastCapture() == null ? "" : String(lastCapture()!.isMock)}
