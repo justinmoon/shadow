@@ -14,10 +14,14 @@ KEY_PATH="${AVB_TEST_KEY_PATH:-}"
 OUTPUT_IMAGE="${PIXEL_BOOT_OUTPUT_IMAGE:-$(pixel_boot_custom_boot_img)}"
 KEEP_WORK_DIR=0
 WORK_DIR=""
+declare -a ADD_SPECS=()
+declare -a REPLACE_SPECS=()
 
 usage() {
   cat <<'EOF'
-Usage: scripts/pixel/pixel_boot_build.sh [--input PATH] [--wrapper PATH] [--key PATH] [--output PATH] [--keep-work-dir]
+Usage: scripts/pixel/pixel_boot_build.sh [--input PATH] [--wrapper PATH] [--key PATH] [--output PATH]
+                                         [--add ENTRY=HOST_PATH] [--replace ENTRY=HOST_PATH]
+                                         [--keep-work-dir]
 
 Rebuild a sunfish boot.img with a minimal /init wrapper that logs and chainloads stock init.
 EOF
@@ -50,6 +54,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --output)
       OUTPUT_IMAGE="${2:?missing value for --output}"
+      shift 2
+      ;;
+    --add)
+      ADD_SPECS+=("${2:?missing value for --add}")
+      shift 2
+      ;;
+    --replace)
+      REPLACE_SPECS+=("${2:?missing value for --replace}")
       shift 2
       ;;
     --keep-work-dir)
@@ -101,11 +113,22 @@ ramdisk_compression="$(
   bootimg_decompress_ramdisk "$WORK_DIR/unpacked/out/ramdisk" "$WORK_DIR/ramdisk.cpio"
 )"
 
-python3 "$SCRIPT_DIR/lib/cpio_edit.py" \
-  --input "$WORK_DIR/ramdisk.cpio" \
-  --output "$WORK_DIR/ramdisk.modified.cpio" \
-  --rename init=init.stock \
+cpio_args=(
+  --input "$WORK_DIR/ramdisk.cpio"
+  --output "$WORK_DIR/ramdisk.modified.cpio"
+  --rename init=init.stock
   --add init="$WORK_DIR/init-wrapper"
+)
+
+for spec in "${ADD_SPECS[@]}"; do
+  cpio_args+=(--add "$spec")
+done
+
+for spec in "${REPLACE_SPECS[@]}"; do
+  cpio_args+=(--replace "$spec")
+done
+
+python3 "$SCRIPT_DIR/lib/cpio_edit.py" "${cpio_args[@]}"
 
 bootimg_compress_ramdisk \
   "$ramdisk_compression" \
@@ -122,6 +145,12 @@ printf '%s\n' "$(file "$OUTPUT_IMAGE")"
 
 printf 'Wrote wrapped boot image: %s\n' "$OUTPUT_IMAGE"
 printf 'Ramdisk compression: %s\n' "$ramdisk_compression"
+if ((${#ADD_SPECS[@]})); then
+  printf 'Extra added entries: %s\n' "${#ADD_SPECS[@]}"
+fi
+if ((${#REPLACE_SPECS[@]})); then
+  printf 'Extra replaced entries: %s\n' "${#REPLACE_SPECS[@]}"
+fi
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
   printf 'Kept workdir: %s\n' "$WORK_DIR"
 fi

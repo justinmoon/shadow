@@ -45,25 +45,30 @@ Related docs:
 - [~] Add a safe on-device validation shape:
   - prefer inactive-slot or otherwise isolated flashing when possible
   - keep rollback obvious and scripted
-- [ ] Pick the first automatic takeover trigger.
+- [x] Pick the first automatic takeover trigger.
 - [ ] Pick the first phase-1 payload layout:
   - boot-critical pieces in ramdisk
   - large runtime bundles still allowed on `/data`
-- [ ] Add a device-side log capture path for wrapper, init, and Shadow boot markers.
+- [x] Add a device-side log capture path for wrapper, init, and Shadow boot markers.
+- [~] Validate the log-probe boot helper on-device through the guarded inactive-slot flow and pull the first collected logs.
 - [ ] Prove one tiny Shadow-at-boot lane before reintroducing timeline, camera, or network-heavy cases.
 - [ ] Keep the next chunks separately landable:
-  - guardrails and rollback polish
-  - log capture and inspection
-  - init import / boot helper trigger
-  - automatic takeover
+  - guarded on-device log-probe validation
+  - automatic takeover using the same imported boot-helper seam
+  - service-stop tightening and `shadow-session` launch
 
 ## Implementation Notes
 
 - `sunfish` boots from `boot.img`, boot header v2, with recovery-as-boot. The old Cuttlefish `init_boot` work is a reference, not the real device path.
 - The repo already has a usable host-side `bootimg` shell with `unpack_bootimg`, `mkbootimg`, and `avbtool`.
-- The new private boot helpers live under `scripts/pixel/`: `pixel_boot_unpack.sh`, `pixel_boot_build.sh`, `pixel_boot_flash.sh`, `pixel_boot_restore.sh`, and `pixel_build_init_wrapper.sh`.
+- The new private boot helpers live under `scripts/pixel/`: `pixel_boot_unpack.sh`, `pixel_boot_build.sh`, `pixel_boot_build_log_probe.sh`, `pixel_boot_collect_logs.sh`, `pixel_boot_flash.sh`, `pixel_boot_restore.sh`, and `pixel_build_init_wrapper.sh`.
+- `pixel_boot_build.sh` now accepts additive ramdisk `--add` and `--replace` overlays so later boot seams can reuse one wrapper/repack path instead of cloning it.
+- `pixel_boot_build_log_probe.sh` now injects `/init.shadow.rc`, patches `system/etc/init/hw/init.rc`, and adds a log-only `/shadow-boot-helper` triggered from `post-fs-data`.
+- `pixel_boot_collect_logs.sh` now pulls `/data/local/tmp/shadow-boot` plus host-visible `logcat`/`getprop` snapshots into `build/pixel/boot/logs/<timestamp>/`.
 - The ramdisk patch step is back in repo-local form via `scripts/lib/cpio_edit.py`, and the minimal wrapper is a static aarch64 Rust binary at `rust/init-wrapper`.
+- `scripts/lib/cpio_edit.py` now supports entry extraction as well as add/replace/rename, and `scripts/ci/cpio_edit_smoke.sh` keeps those semantics covered in `pre-commit`.
 - The cached stock `boot.img` can now be unpacked, wrapped, and reflashed locally. Live device validation still remains before the flash-loop milestone can flip fully green.
+- The first imported boot-helper trigger is `post-fs-data`, wired through `system/etc/init/hw/init.rc` in the recovery-as-boot ramdisk. This is intentionally a log-only probe before any automatic takeover steps.
 - The current rooted takeover path is already close to the desired runtime surface: it waits for DRM, stops Android display services, and launches `shadow-session`.
 - Phase 1 should build on stock `boot.img`, not the Magisk-patched image. Magisk already rewrites init flow and adds avoidable complexity.
 - Stock init still owns the hardest early responsibilities: first-stage mounts, `ueventd`, kernel modules, `/data` decryption, and service labelling.
@@ -71,7 +76,14 @@ Related docs:
 - `pixel_boot_flash.sh` now requires `--experimental`, defaults to `--slot inactive`, refuses to touch the running slot unless `--allow-active-slot` is also passed, and supports `--dry-run` plus optional target-slot activation.
 - `pixel_boot_restore.sh` now requires an explicit `--slot current|inactive|a|b` so recovery never silently overwrites whichever slot happens to be convenient.
 - `scripts/ci/pixel_boot_safety_smoke.sh` locks the current safety contract into `just pre-commit`.
+- `bootimg_unpack_to_dir()` now resolves the input path before `cd` so host inspection scripts work with relative image paths too.
+- Hardware result on 2026-04-18:
+  - inactive-slot activation on `11151JEC200472` (`a -> b`) returned to slot `a` with no probe logs
+  - inactive-slot activation on `09051JEC202061` (`b -> a`) returned to slot `b` with no probe logs
+  - active-slot flash on `11151JEC200472` produced fastboot `Enter reason: no valid slot to boot` on slot `a`
+  - restoring stock `boot_a` from fastboot recovered the phone, but Magisk/root on that slot is now gone until it is patched again
+- Current conclusion: the host-side probe tooling and rollback path are real, but the current custom boot image is not yet a successful on-device boot path on physical `sunfish`.
 - Because stock-init experimental flashes can disrupt the working rooted lane on the same slot, future chunks should bias toward safety rails before convenience or public surfacing.
 - Landing rule for this project: each chunk should be truthful, green, and mergeable on its own, so other worktrees can keep rebasing on `master` instead of waiting for a giant boot branch to finish.
 - Camera remains Android-bound today. Wi-Fi likely does too. Do not make them blockers for the first Shadow-at-boot milestone.
-- Next seam: use the guarded inactive-slot flow on a real device, prove the current Magisk lane survives the staging path, then add the first `init` import / boot helper trigger after stock init has mounted `/data`.
+- Next seam: inspect why the wrapped `boot.img` never yields `[shadow-init]` or `/data/local/tmp/shadow-boot` on real `sunfish`, then tighten the ramdisk/header assumptions before attempting another active-slot probe boot.

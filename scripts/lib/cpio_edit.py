@@ -201,6 +201,8 @@ def parse_mapping(raw_items: Sequence[str], separator: str = "=") -> Dict[str, s
         value = value.strip()
         if not key or not value:
             raise ValueError(f"invalid mapping '{item}', empty key or value")
+        if key in mapping:
+            raise ValueError(f"duplicate mapping for '{key}'")
         mapping[key] = value
     return mapping
 
@@ -251,6 +253,7 @@ def process_archive(
 ) -> CpioArchive:
     remove_lookup = set(remove_set)
     updated_entries: List[CpioEntry] = []
+    final_names = set()
 
     for entry in archive.without_trailer():
         if entry.name in remove_lookup:
@@ -260,6 +263,10 @@ def process_archive(
 
         if entry.name in rename_map:
             new_entry.name = rename_map[entry.name]
+
+        if new_entry.name in final_names:
+            raise ValueError(f"duplicate archive entry '{new_entry.name}'")
+        final_names.add(new_entry.name)
 
         target_name = new_entry.name
         if target_name in replace_map:
@@ -276,12 +283,34 @@ def process_archive(
 
     next_ino = archive.next_inode()
     for name, path in add_map.items():
+        if name in final_names:
+            raise ValueError(f"duplicate archive entry '{name}'")
         entry = build_entry_from_path(name, path, next_ino)
         next_ino += 1
         updated_entries.append(entry)
+        final_names.add(name)
 
     updated_entries.append(archive.trailer.clone())
     return CpioArchive(updated_entries, archive.trailing_padding)
+
+
+def extract_archive_entries(
+    archive: CpioArchive,
+    extract_map: Dict[str, Path],
+) -> None:
+    remaining = dict(extract_map)
+
+    for entry in archive.without_trailer():
+        output_path = remaining.pop(entry.name, None)
+        if output_path is None:
+            continue
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(entry.data)
+
+    if remaining:
+        missing = ", ".join(sorted(remaining))
+        raise ValueError(f"missing entries in cpio archive: {missing}")
 
 
 def main(argv: Sequence[str]) -> int:
@@ -289,7 +318,7 @@ def main(argv: Sequence[str]) -> int:
         description="Edit cpio newc archives without extracting to disk.",
     )
     parser.add_argument("-i", "--input", type=Path, required=True, help="input cpio path")
-    parser.add_argument("-o", "--output", type=Path, required=True, help="output cpio path")
+    parser.add_argument("-o", "--output", type=Path, help="output cpio path")
     parser.add_argument(
         "--rename",
         action="append",
@@ -314,6 +343,12 @@ def main(argv: Sequence[str]) -> int:
         default=[],
         help="add new entry from file, e.g. path/in/archive=local/path.bin",
     )
+    parser.add_argument(
+        "--extract",
+        action="append",
+        default=[],
+        help="extract entry contents to a host file, e.g. init.rc=local/init.rc",
+    )
 
     args = parser.parse_args(argv)
 
@@ -328,8 +363,21 @@ def main(argv: Sequence[str]) -> int:
         if args.add
         else {}
     )
+    extract_map = (
+        {key: Path(value) for key, value in parse_mapping(args.extract).items()}
+        if args.extract
+        else {}
+    )
 
     archive = read_cpio(args.input)
+    if extract_map:
+        extract_archive_entries(archive, extract_map)
+
+    if args.output is None:
+        if rename_map or replace_map or args.remove or add_map:
+            raise ValueError("--output is required when modifying the cpio archive")
+        return 0
+
     processed = process_archive(
         archive=archive,
         rename_map=rename_map,

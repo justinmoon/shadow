@@ -33,6 +33,18 @@ pixel_boot_custom_boot_img() {
   printf '%s/shadow-boot-wrapper.img\n' "$(pixel_boot_dir)"
 }
 
+pixel_boot_log_probe_img() {
+  printf '%s/shadow-boot-log-probe.img\n' "$(pixel_boot_dir)"
+}
+
+pixel_boot_logs_dir() {
+  printf '%s/logs\n' "$(pixel_boot_dir)"
+}
+
+pixel_boot_device_log_root() {
+  printf '%s\n' "${PIXEL_BOOT_DEVICE_LOG_ROOT:-/data/local/tmp/shadow-boot}"
+}
+
 pixel_runs_dir() {
   printf '%s/runs\n' "$(pixel_dir)"
 }

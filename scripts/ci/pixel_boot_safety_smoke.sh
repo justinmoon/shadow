@@ -134,6 +134,7 @@ flash_default="$(
     "$REPO_ROOT/scripts/pixel/pixel_boot_flash.sh" --experimental --dry-run --image "$MOCK_IMAGE"
 )"
 assert_contains "$flash_default" "current_slot=a"
+assert_contains "$flash_default" "known_good_slot=a"
 assert_contains "$flash_default" "target_slot=b"
 assert_contains "$flash_default" "current_magisk_lane_preserved=true"
 
@@ -163,5 +164,23 @@ restore_inactive="$(
 )"
 assert_contains "$restore_inactive" "transport=adb"
 assert_contains "$restore_inactive" "target_slot=b"
+
+cat >"$TMP_DIR/last-action.json" <<'EOF'
+{
+  "activate_target": true,
+  "current_slot": "a",
+  "kind": "boot_flash",
+  "known_good_slot": "a",
+  "target_slot": "b"
+}
+EOF
+
+recover_dry_run="$(
+  assert_success env PATH="$TEST_PATH" SHADOW_BOOTIMG_SHELL=1 PIXEL_SERIAL=TESTSERIAL \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_recover.sh" --metadata "$TMP_DIR/last-action.json" --dry-run --image "$MOCK_IMAGE"
+)"
+assert_contains "$recover_dry_run" "known_good_slot=a"
+assert_contains "$recover_dry_run" "target_slot=b"
+assert_contains "$recover_dry_run" "restore_target_slot=true"
 
 echo "pixel_boot_safety_smoke: ok"

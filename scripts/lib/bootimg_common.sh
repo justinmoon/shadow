@@ -21,6 +21,14 @@ bootimg_unpack_to_dir() {
   local input_image output_dir
   input_image="$1"
   output_dir="$2"
+  input_image="$(
+    python3 - "$input_image" <<'PY'
+from pathlib import Path
+import sys
+
+print(Path(sys.argv[1]).resolve())
+PY
+  )"
 
   mkdir -p "$output_dir"
   (

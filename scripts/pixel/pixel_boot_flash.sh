@@ -141,6 +141,7 @@ pixel_boot_flash: dry-run
 serial=$serial
 image=$IMAGE_PATH
 current_slot=$current_slot
+known_good_slot=$current_slot
 target_slot=$target_slot
 target_partition=$boot_partition
 activate_target=$(bool_word "$ACTIVATE_TARGET")
@@ -153,6 +154,7 @@ fi
 
 printf 'Flashing %s to %s on %s\n' "$IMAGE_PATH" "$boot_partition" "$serial"
 printf 'Current slot: %s\n' "$current_slot"
+printf 'Known-good slot: %s\n' "$current_slot"
 printf 'Target slot: %s\n' "$target_slot"
 if [[ "$target_slot" != "$current_slot" && "$ACTIVATE_TARGET" != "1" ]]; then
   printf 'Safety rail: current Magisk lane stays on slot %s; the experimental image is only staged on slot %s.\n' "$current_slot" "$target_slot"
@@ -185,6 +187,7 @@ pixel_write_status_json \
   kind=boot_flash \
   image="$IMAGE_PATH" \
   current_slot="$current_slot" \
+  known_good_slot="$current_slot" \
   target_slot="$target_slot" \
   activate_target="$(bool_word "$ACTIVATE_TARGET")" \
   reboot="$(bool_word "$REBOOT_AFTER_FLASH")" \
@@ -206,7 +209,8 @@ cat <<EOF
 Next steps:
   inspect the staged slot metadata in $metadata_path
   if you only staged the inactive slot, the working Magisk lane should still be on slot $current_slot
-  restore an explicit slot later with:
-    PIXEL_SERIAL=$serial scripts/pixel/pixel_boot_restore.sh --slot current
+  if you activated the probe slot, recover the known-good slot with:
+    PIXEL_SERIAL=$serial scripts/pixel/pixel_boot_recover.sh
+  if you only want to clear the experimental slot later without switching active slots:
     PIXEL_SERIAL=$serial scripts/pixel/pixel_boot_restore.sh --slot inactive
 EOF

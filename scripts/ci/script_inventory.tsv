@@ -1,6 +1,7 @@
 # path	bucket	note
 scripts/agent-brief	public	Agent context snapshot required by AGENTS.md.
 scripts/ci/app_metadata_manifest_smoke.sh	ci	Regression smoke for manifest profile filtering and uniqueness validation.
+scripts/ci/cpio_edit_smoke.sh	ci	Fast smoke for Android ramdisk cpio extraction and patch semantics.
 scripts/ci/check_script_inventory.py	ci	Pre-commit taxonomy gate for every file under scripts/.
 scripts/ci/pixel_boot_safety_smoke.sh	ci	Private smoke for experimental boot-script safety rails and slot defaults.
 scripts/ci/required_vm_smoke.sh	ci	Required branch-gate VM smoke wrapper with logical-input reuse.
@@ -47,7 +48,10 @@ scripts/lib/cpio_edit.py	lib	Shared Android ramdisk cpio editor used by the boot
 scripts/lib/pixel_runtime_linux_bundle_common.sh	lib	Shared Pixel runtime Linux bundle helper library.
 scripts/pixel/pixel_runtime_summary.py	pixel	Private Pixel runtime result summarizer.
 scripts/pixel/pixel_boot_build.sh	pixel	Private sunfish boot image wrapper/repack helper.
+scripts/pixel/pixel_boot_build_log_probe.sh	pixel	Private sunfish boot image builder that injects a log-only boot helper.
+scripts/pixel/pixel_boot_collect_logs.sh	pixel	Private host-side collector for experimental Shadow boot helper logs.
 scripts/pixel/pixel_boot_flash.sh	pixel	Private sunfish custom boot image flash helper for the active slot.
+scripts/pixel/pixel_boot_recover.sh	pixel	Private sunfish recovery helper that switches back to the known-good slot after an experimental boot.
 scripts/pixel/pixel_boot_restore.sh	pixel	Private sunfish stock boot image rollback helper.
 scripts/pixel/pixel_boot_unpack.sh	pixel	Private sunfish boot image unpack/inspection helper.
 scripts/pixel/pixel_build_init_wrapper.sh	pixel	Private init-wrapper build helper for sunfish boot image patching.
