@@ -6,15 +6,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$REPO_ROOT"
 
-nix develop .#ui -c cargo fmt --manifest-path ui/Cargo.toml --all --check
-nix develop .#ui -c cargo test --manifest-path ui/Cargo.toml -p shadow-ui-core
-nix develop .#ui -c cargo test --manifest-path ui/Cargo.toml -p shadow-blitz-demo app::tests::
-nix develop .#ui -c cargo test --manifest-path ui/Cargo.toml -p shadow-blitz-demo runtime_document
-nix develop .#ui -c cargo test --manifest-path ui/Cargo.toml -p shadow-compositor-guest
-nix develop .#ui -c cargo check --manifest-path ui/Cargo.toml -p shadow-blitz-demo --features host_system_fonts
-nix develop .#ui -c cargo check --manifest-path ui/Cargo.toml -p shadow-blitz-demo --no-default-features --features gpu
+host_system="$(nix eval --impure --raw --expr builtins.currentSystem)"
 
-if [[ "$(uname -s)" == "Linux" ]]; then
-  nix develop .#ui -c cargo check --manifest-path ui/Cargo.toml -p shadow-compositor
-  nix develop .#ui -c cargo check --manifest-path ui/Cargo.toml -p shadow-compositor-guest
-fi
+nix build --accept-flake-config --no-link -L ".#checks.${host_system}.uiCheck"

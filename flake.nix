@@ -107,6 +107,33 @@
         "ui/third_party"
         "rust/shadow-runtime-protocol"
       ];
+      shadowUiCoreSrc = repoSourceFromPrefixes [
+        "ui/Cargo.toml"
+        "ui/Cargo.lock"
+        "ui/crates/shadow-ui-core"
+        "ui/third_party"
+        "rust/shadow-runtime-protocol"
+      ];
+      shadowCompositorSrc = repoSourceFromPrefixes [
+        "ui/Cargo.toml"
+        "ui/Cargo.lock"
+        "ui/crates/shadow-ui-core"
+        "ui/crates/shadow-ui-software"
+        "ui/crates/shadow-compositor-common"
+        "ui/crates/shadow-compositor"
+        "ui/third_party"
+        "rust/shadow-runtime-protocol"
+      ];
+      shadowCompositorGuestSrc = repoSourceFromPrefixes [
+        "ui/Cargo.toml"
+        "ui/Cargo.lock"
+        "ui/crates/shadow-ui-core"
+        "ui/crates/shadow-ui-software"
+        "ui/crates/shadow-compositor-common"
+        "ui/crates/shadow-compositor-guest"
+        "ui/third_party"
+        "rust/shadow-runtime-protocol"
+      ];
       shadowLinuxAudioSpikeSrc = repoSourceFromPrefixes [
         "rust/shadow-linux-audio-spike"
       ];
@@ -186,6 +213,36 @@
         "stylo_taffy-0.2.0" = "sha256-RWQ5RpapA5ZmxJ9+LuUlL+RTwBcHRgZDM7Kok6yHpi8=";
         "taffy-0.9.2" = "sha256-PrLnNpo6pjChOKUzc1KgN7uxxAbGhY4tFffVMf2ZXbc=";
       };
+      uiCraneOutputHashes = {
+        "git+https://github.com/DioxusLabs/blitz?rev=781ae63fdb6e76baa0969ba8cbce557327c7dfca#781ae63fdb6e76baa0969ba8cbce557327c7dfca" =
+          "sha256-RWQ5RpapA5ZmxJ9+LuUlL+RTwBcHRgZDM7Kok6yHpi8=";
+        "git+https://github.com/DioxusLabs/taffy?rev=4b6687da0ca1e9d71da4e48b4c659f5c45060707#4b6687da0ca1e9d71da4e48b4c659f5c45060707" =
+          "sha256-PrLnNpo6pjChOKUzc1KgN7uxxAbGhY4tFffVMf2ZXbc=";
+        "git+https://github.com/linebender/parley?rev=07980878fc9ea4b16ddc197ac789d01fb8ada7a3#07980878fc9ea4b16ddc197ac789d01fb8ada7a3" =
+          "sha256-dhczFDIFbcl2mMUtTIZaeaTtXWTHNw1fl2xgVcp93NE=";
+      };
+      mkUiWorkspaceMembersPostPatch =
+        cargoTomlPath: members:
+        let
+          memberLines = lib.concatMapStringsSep "" (member: "    \"${member}\",\n") members;
+          replacement = "members = [\n${memberLines}]";
+        in
+          ''
+            python3 - <<'PY'
+            from pathlib import Path
+            import re
+
+            cargo_toml = Path(${builtins.toJSON cargoTomlPath})
+            data = cargo_toml.read_text()
+            data = re.sub(
+                r"members = \[\n(?:    \".*\",\n)+\]",
+                ${builtins.toJSON replacement},
+                data,
+                count=1,
+            )
+            cargo_toml.write_text(data)
+            PY
+          '';
       rustyV8ReleaseVersion = "146.8.0";
       rustyV8ReleaseShas = {
         "x86_64-linux" = "sha256-deV+2rJD9EstgAtaFRk+z1Wk/l+j5yF9lxlLGHoCbII=";
@@ -224,13 +281,19 @@
         in cross.rustPlatform.buildRustPackage {
           pname = "shadow-compositor-guest";
           version = "0.1.0";
-          src = shadowUiSrc;
+          src = shadowCompositorGuestSrc;
           cargoRoot = "ui";
           buildAndTestSubdir = "ui";
           cargoLock = {
             lockFile = ./ui/Cargo.lock;
             outputHashes = uiBlitzOutputHashes;
           };
+          postPatch = mkUiWorkspaceMembersPostPatch "ui/Cargo.toml" [
+            "crates/shadow-ui-core"
+            "crates/shadow-ui-software"
+            "crates/shadow-compositor-common"
+            "crates/shadow-compositor-guest"
+          ];
           doCheck = false;
           strictDeps = true;
           CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
@@ -247,13 +310,19 @@
         cross.rustPlatform.buildRustPackage {
           pname = "shadow-compositor";
           version = "0.1.0";
-          src = shadowUiSrc;
+          src = shadowCompositorSrc;
           cargoRoot = "ui";
           buildAndTestSubdir = "ui";
           cargoLock = {
             lockFile = ./ui/Cargo.lock;
             outputHashes = uiBlitzOutputHashes;
           };
+          postPatch = mkUiWorkspaceMembersPostPatch "ui/Cargo.toml" [
+            "crates/shadow-ui-core"
+            "crates/shadow-ui-software"
+            "crates/shadow-compositor-common"
+            "crates/shadow-compositor"
+          ];
           doCheck = false;
           strictDeps = true;
           CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
@@ -370,22 +439,10 @@
             cross.buildPackages.pkg-config
             cross.buildPackages.python3
           ];
-          postPatch = ''
-            python3 - <<'PY'
-            from pathlib import Path
-            import re
-
-            cargo_toml = Path("ui/Cargo.toml")
-            data = cargo_toml.read_text()
-            data = re.sub(
-                r"members = \[\n(?:    \".*\",\n)+\]",
-                'members = [\n    "crates/shadow-ui-core",\n    "apps/shadow-blitz-demo",\n]',
-                data,
-                count=1,
-            )
-            cargo_toml.write_text(data)
-            PY
-          '';
+          postPatch = mkUiWorkspaceMembersPostPatch "ui/Cargo.toml" [
+            "crates/shadow-ui-core"
+            "apps/shadow-blitz-demo"
+          ];
           depsBuildBuild =
             lib.optionals cross.stdenv.buildPlatform.isDarwin [
               cross.buildPackages.stdenv.cc
@@ -707,6 +764,133 @@
             ${shadowCliShellHook}
           '';
         };
+      uiCheckRuntimeLibsFor = pkgs:
+        [ pkgs.libxkbcommon ]
+        ++ pkgs.lib.optionals pkgs.stdenv.isLinux (with pkgs; [
+          libdrm
+          libGL
+          mesa
+          vulkan-loader
+          wayland
+          wayland-protocols
+          libx11
+          libxcursor
+          libxi
+          libxrandr
+        ]);
+      uiCheckNativeBuildInputsFor = pkgs: with pkgs; [
+        pkg-config
+        python3
+      ];
+      mkShadowUiChecksFor = pkgs:
+        let
+          craneLib = crane.mkLib pkgs;
+          commonArgs = {
+            pname = "shadow-ui-workspace";
+            version = "0.1.0";
+            src = shadowUiSrc;
+            cargoLock = ./ui/Cargo.lock;
+            cargoToml = ./ui/Cargo.toml;
+            outputHashes = uiCraneOutputHashes;
+            cargoExtraArgs = "--locked";
+            doCheck = false;
+            strictDeps = true;
+            CARGO_PROFILE = "";
+            postUnpack = ''
+              cd "$sourceRoot/ui"
+              sourceRoot="."
+            '';
+            nativeBuildInputs = uiCheckNativeBuildInputsFor pkgs;
+            buildInputs = uiCheckRuntimeLibsFor pkgs;
+          };
+          cargoVendorDir = craneLib.vendorCargoDeps commonArgs;
+          cargoArgs = commonArgs // { inherit cargoVendorDir; };
+          cargoArtifacts = craneLib.buildDepsOnly ((builtins.removeAttrs cargoArgs [ "src" ]) // {
+            pname = "shadow-ui-workspace-deps";
+            dummySrc = craneLib.mkDummySrc commonArgs;
+          });
+          mkUiTestArgs =
+            {
+              pname,
+            }:
+            cargoArgs
+            // {
+              inherit pname cargoArtifacts;
+              doCheck = true;
+            };
+          mkUiCargoCheck =
+            {
+              pname,
+              cargoCheckExtraArgs,
+            }:
+            craneLib.mkCargoDerivation (cargoArgs // {
+              inherit pname cargoArtifacts;
+              doInstallCargoArtifacts = false;
+              buildPhaseCargoCommand =
+                "cargo check --locked ${cargoCheckExtraArgs}";
+              checkPhaseCargoCommand = "";
+              installPhaseCommand = "mkdir -p $out";
+            });
+          coreChecks =
+            {
+              uiFmt = craneLib.cargoFmt {
+                pname = "shadow-ui-workspace";
+                version = "0.1.0";
+                src = shadowUiSrc;
+                cargoToml = ./ui/Cargo.toml;
+                cargoExtraArgs = "--all";
+                postUnpack = ''
+                  cd "$sourceRoot/ui"
+                  sourceRoot="."
+                '';
+              };
+              uiShadowUiCoreTests = craneLib.cargoTest (mkUiTestArgs {
+                pname = "shadow-ui-core";
+              } // {
+                cargoTestExtraArgs = "-p shadow-ui-core";
+              });
+              uiShadowBlitzDemoAppTests = craneLib.cargoTest (mkUiTestArgs {
+                pname = "shadow-blitz-demo-app-tests";
+              } // {
+                cargoTestExtraArgs = "-p shadow-blitz-demo app::tests::";
+              });
+              uiShadowBlitzDemoRuntimeDocumentTests = craneLib.cargoTest (mkUiTestArgs {
+                pname = "shadow-blitz-demo-runtime-document-tests";
+              } // {
+                cargoTestExtraArgs = "-p shadow-blitz-demo runtime_document";
+              });
+              uiShadowCompositorGuestTests = craneLib.cargoTest (mkUiTestArgs {
+                pname = "shadow-compositor-guest-tests";
+              } // {
+                cargoTestExtraArgs = "-p shadow-compositor-guest";
+              });
+              uiShadowBlitzDemoHostSystemFontsCheck = mkUiCargoCheck {
+                pname = "shadow-blitz-demo-host-system-fonts-check";
+                cargoCheckExtraArgs = "-p shadow-blitz-demo --features host_system_fonts";
+              };
+              uiShadowBlitzDemoGpuCheck = mkUiCargoCheck {
+                pname = "shadow-blitz-demo-gpu-check";
+                cargoCheckExtraArgs =
+                  "-p shadow-blitz-demo --no-default-features --features gpu";
+              };
+            }
+            // lib.optionalAttrs pkgs.stdenv.isLinux {
+              uiShadowCompositorCheck = mkUiCargoCheck {
+                pname = "shadow-compositor-check";
+                cargoCheckExtraArgs = "-p shadow-compositor";
+              };
+              uiShadowCompositorGuestCheck = mkUiCargoCheck {
+                pname = "shadow-compositor-guest-check";
+                cargoCheckExtraArgs = "-p shadow-compositor-guest";
+              };
+            };
+        in
+          coreChecks
+          // {
+            uiCheck = pkgs.linkFarm "shadow-ui-check" (
+              lib.mapAttrsToList (name: path: { inherit name path; }) coreChecks
+            );
+          };
       mkRuntimeShell = pkgs:
         let
           toolPkgs = with pkgs; [
@@ -876,5 +1060,8 @@
               vmSmokeInputs = mkVmSmokeInputsFor pkgs;
             };
           });
+      checks = forAllSystems ({ pkgs, ... }:
+        mkShadowUiChecksFor pkgs
+      );
     };
 }
