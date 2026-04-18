@@ -20,6 +20,7 @@ PATCHED_INIT_RC="$TMP_DIR/init.rc.patched"
 WRAPPER_OUTPUT_IMAGE="$TMP_DIR/wrapper-output.img"
 STOCK_INIT_OUTPUT_IMAGE="$TMP_DIR/stock-init-output.img"
 LOG_PROBE_OUTPUT_IMAGE="$TMP_DIR/log-probe-stock-init.img"
+RC_PROBE_OUTPUT_IMAGE="$TMP_DIR/rc-probe-stock-init.img"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -334,7 +335,8 @@ oneshot_output="$(
       --wait-ready 30 \
       --adb-timeout 45 \
       --boot-timeout 60 \
-      --no-wait-boot-completed
+      --no-wait-boot-completed \
+      --proof-prop shadow.boot.rc_probe=ready
 )"
 
 assert_contains "$oneshot_output" "pixel_boot_oneshot: dry-run"
@@ -347,6 +349,7 @@ assert_contains "$oneshot_output" "wait_ready_secs=30"
 assert_contains "$oneshot_output" "adb_timeout_secs=45"
 assert_contains "$oneshot_output" "boot_timeout_secs=60"
 assert_contains "$oneshot_output" "wait_boot_completed=false"
+assert_contains "$oneshot_output" "proof_prop=shadow.boot.rc_probe=ready"
 
 if [[ -e "$ONESHOT_OUTPUT" ]]; then
   echo "pixel_boot_tooling_smoke: dry-run should not create the output dir" >&2
@@ -364,7 +367,8 @@ flash_run_output="$(
       --adb-timeout 45 \
       --boot-timeout 60 \
       --allow-active-slot \
-      --recover-after
+      --recover-after \
+      --proof-prop shadow.boot.rc_probe=ready
 )"
 
 assert_contains "$flash_run_output" "pixel_boot_flash_run: dry-run"
@@ -379,6 +383,7 @@ assert_contains "$flash_run_output" "adb_timeout_secs=45"
 assert_contains "$flash_run_output" "boot_timeout_secs=60"
 assert_contains "$flash_run_output" "allow_active_slot=true"
 assert_contains "$flash_run_output" "recover_after=true"
+assert_contains "$flash_run_output" "proof_prop=shadow.boot.rc_probe=ready"
 assert_contains "$flash_run_output" "activate_target=true"
 
 if [[ -e "$FLASH_RUN_OUTPUT" ]]; then
@@ -434,5 +439,25 @@ assert_cpio_entry_missing "$LOG_PROBE_OUTPUT_IMAGE" init.stock
 assert_cpio_entry_startswith "$LOG_PROBE_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n'
 assert_cpio_entry_startswith "$LOG_PROBE_OUTPUT_IMAGE" init.shadow.rc $'on post-fs-data\n'
 assert_cpio_entry_startswith "$LOG_PROBE_OUTPUT_IMAGE" shadow-boot-helper $'#!/system/bin/sh\n'
+
+rc_probe_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_rc_probe.sh" \
+      --stock-init \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$RC_PROBE_OUTPUT_IMAGE" \
+      --trigger post-fs-data \
+      --property shadow.boot.rc_probe=ready
+)"
+assert_contains "$rc_probe_output" "Build mode: stock-init"
+assert_contains "$rc_probe_output" "Patch target: system/etc/init/hw/init.rc"
+assert_contains "$rc_probe_output" "Trigger: post-fs-data"
+assert_contains "$rc_probe_output" "Property: shadow.boot.rc_probe=ready"
+assert_cpio_entry_equals "$RC_PROBE_OUTPUT_IMAGE" init $'stock-init\n'
+assert_cpio_entry_missing "$RC_PROBE_OUTPUT_IMAGE" init.stock
+assert_cpio_entry_startswith "$RC_PROBE_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n'
+assert_cpio_entry_equals "$RC_PROBE_OUTPUT_IMAGE" init.shadow.rc $'on post-fs-data\n    setprop shadow.boot.rc_probe ready\n'
+assert_cpio_entry_missing "$RC_PROBE_OUTPUT_IMAGE" shadow-boot-helper
 
 echo "pixel_boot_tooling_smoke: ok"

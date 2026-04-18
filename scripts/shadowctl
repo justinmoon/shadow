@@ -316,6 +316,8 @@ def pixel_debug_command(
             command.append("--allow-active-slot")
         if args.recover_after:
             command.append("--recover-after")
+        if args.proof_prop:
+            command.extend(["--proof-prop", args.proof_prop])
         return command, [("PIXEL_SERIAL", target.serial or target.id)]
     if tool == "boot-lab-oneshot":
         command: list[str | pathlib.Path] = [repo_root() / "scripts/pixel/pixel_boot_oneshot.sh"]
@@ -331,6 +333,8 @@ def pixel_debug_command(
             command.extend(["--boot-timeout", str(args.boot_timeout)])
         if args.no_wait_boot_completed:
             command.append("--no-wait-boot-completed")
+        if args.proof_prop:
+            command.extend(["--proof-prop", args.proof_prop])
         return command, [("PIXEL_SERIAL", target.serial or target.id)]
     supported = ", ".join(SUPPORTED_PIXEL_DEBUG_TOOLS)
     raise SystemExit(f"shadowctl: unsupported Pixel debug tool {tool!r}; expected one of {supported}")
@@ -1851,6 +1855,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-wait-boot-completed",
         action="store_true",
         help="boot-lab-oneshot only: collect as soon as adb is back instead of waiting for sys.boot_completed.",
+    )
+    debug.add_argument(
+        "--proof-prop",
+        help="boot-lab-flash-run / boot-lab-oneshot only: treat KEY=VALUE getprop match as the boot proof signal.",
     )
     debug.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
 

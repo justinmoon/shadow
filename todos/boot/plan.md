@@ -58,7 +58,8 @@ Related docs:
 - [~] Bisect the current ramdisk/init mutations on flashed active-slot images:
   - stock boot, cmdline-only edits, and minimal repacks already boot on `11151JEC200472`
   - stock-init log-probe images now also boot on `11151JEC200472`, so the wrapper is the remaining hard-boot suspect
-  - the next discriminating seam is a property-only stock-init probe before another helper-heavy image
+  - property-only stock-init rc-probe images now also boot on real hardware without surfacing the proof property
+  - the next discriminating seam is patch-target / trigger selection before another wrapper-heavy image
 - [ ] Prove one tiny Shadow-at-boot lane before reintroducing timeline, camera, or network-heavy cases.
 - [ ] Keep the next chunks separately landable:
   - guarded on-device log-probe validation
@@ -119,14 +120,20 @@ Related docs:
   - flashing the current `shadow-boot-log-probe.img` failed back into fastboot; restoring stock `boot_a` recovered the phone
 - Working inference from that matrix: the flashed active-slot path itself is real on `sunfish`; the failing delta is now inside our ramdisk/init mutations, not generic repacking, AVB footer reapplication, or slot activation.
 - The stock-init builder path is now real in repo-local tooling: `pixel_boot_build.sh --stock-init` keeps stock `/init` while still applying ramdisk `--add` / `--replace` overlays, and `pixel_boot_build_log_probe.sh --stock-init` reuses that seam for stock-init helper probes.
+- The property-proof path is now real in repo-local tooling too: `pixel_boot_build_rc_probe.sh --stock-init` builds an imported-rc image that only sets a transient `shadow.boot.*` property, and the boot-lab runners / collector now accept `--proof-prop KEY=VALUE` so a live non-persistent property can count as success without `/data/local/tmp/shadow-boot`.
 - New hardware result on 2026-04-18 from that stock-init seam:
   - flashing `shadow-boot-log-probe-stock-init.img` to active slot `a` on `11151JEC200472` booted Android successfully on slot `a`
   - a one-shot boot of the same stock-init log-probe image on `09051JEC202061` also reached Android on slot `b`
   - neither run produced `/data/local/tmp/shadow-boot` or helper-ready evidence, so the rc/import/helper seam still lacks a positive userspace signal
 - Working inference from the stock-init result: replacing `/init` is the remaining suspect for the hard boot failure, but the imported rc/helper path is still not proven even when stock init boots the image.
-- Next seam after that result: keep the stock-init path and reduce the userspace probe further. Build a property-only stock-init probe that proves the imported rc fragment runs without depending on `/data/local/tmp/shadow-boot`, then reintroduce the helper and finally the `/init` wrapper once each smaller seam is proven.
+- New hardware result on 2026-04-18 from the property-only stock-init seam (`09051JEC202061`, slot `b`):
+  - one-shot boot of `shadow-boot-rc-probe-stock-init.img` reached Android on slot `b`, but `shadow.boot.rc_probe` never appeared
+  - flashed active-slot boot of the same image also reached Android on slot `b`, but `shadow.boot.rc_probe` still never appeared
+  - both runs now leave truthful property-mode bundles, so the negative result is about the rc/import seam itself rather than missing helper-log plumbing
+- Working inference from the property-only result: stock-init images still boot, but the current imported rc fragment is not executing in a way that surfaces either helper logs or a transient property. The wrapper remains a separate hard-boot suspect, but the next bottleneck is now rc patch-target / trigger choice.
+- Next seam after that result: stay on `09051JEC202061`, keep the property-only stock-init probe, and vary the rc patch target or trigger directly. The first candidate is forcing `--patch-target system/etc/init/hw/init.rc` before spending more time on helper payloads or wrapper handoff.
 - Truthfulness rule for the new boot-lab runners: top-level `status.json` and process exit codes must stay aligned with the underlying flash/collect result; false-success wrapper statuses are not acceptable evidence.
 - Because stock-init experimental flashes can disrupt the working rooted lane on the same slot, future chunks should bias toward safety rails before convenience or public surfacing.
 - Landing rule for this project: each chunk should be truthful, green, and mergeable on its own, so other worktrees can keep rebasing on `master` instead of waiting for a giant boot branch to finish.
 - Camera remains Android-bound today. Wi-Fi likely does too. Do not make them blockers for the first Shadow-at-boot milestone.
-- Next seam: keep the flashed active-slot stock-init path and prove one lower-noise ramdisk signal, ideally a property-only rc probe, before another helper-heavy or wrapper-based image.
+- Next seam: use the landed property-only stock-init probe on `09051JEC202061` to test rc patch-target / trigger assumptions directly, starting with a forced `system/etc/init/hw/init.rc` path.

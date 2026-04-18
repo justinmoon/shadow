@@ -14,6 +14,7 @@ ADB_TIMEOUT_SECS="${PIXEL_BOOT_FLASH_RUN_ADB_TIMEOUT_SECS:-180}"
 BOOT_TIMEOUT_SECS="${PIXEL_BOOT_FLASH_RUN_BOOT_TIMEOUT_SECS:-240}"
 ALLOW_ACTIVE_SLOT=0
 RECOVER_AFTER=0
+PROOF_PROP_SPEC="${PIXEL_BOOT_PROOF_PROP:-}"
 DRY_RUN=0
 ORIGINAL_ARGS=("$@")
 
@@ -37,7 +38,8 @@ usage() {
 Usage: scripts/pixel/pixel_boot_flash_run.sh [--image PATH] [--slot inactive|active|a|b]
                                             [--output DIR] [--wait-ready SECONDS]
                                             [--adb-timeout SECONDS] [--boot-timeout SECONDS]
-                                            [--allow-active-slot] [--recover-after] [--dry-run]
+                                            [--allow-active-slot] [--recover-after]
+                                            [--proof-prop KEY=VALUE] [--dry-run]
 
 Run the flashed-slot boot validation loop: guarded flash with activation, wait for Android,
 collect boot-lab evidence, and optionally recover the known-good slot afterward.
@@ -119,6 +121,7 @@ write_status() {
     boot_timeout_secs="$BOOT_TIMEOUT_SECS" \
     allow_active_slot="$ALLOW_ACTIVE_SLOT" \
     recover_after="$RECOVER_AFTER" \
+    proof_prop="$PROOF_PROP_SPEC" \
     slot_before="$slot_before" \
     flash_succeeded="$flash_succeeded" \
     collect_succeeded="$collect_succeeded" \
@@ -193,6 +196,10 @@ while [[ $# -gt 0 ]]; do
       RECOVER_AFTER=1
       shift
       ;;
+    --proof-prop)
+      PROOF_PROP_SPEC="${2:?missing value for --proof-prop}"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -239,6 +246,7 @@ adb_timeout_secs=$ADB_TIMEOUT_SECS
 boot_timeout_secs=$BOOT_TIMEOUT_SECS
 allow_active_slot=$(bool_word "$ALLOW_ACTIVE_SLOT")
 recover_after=$(bool_word "$RECOVER_AFTER")
+proof_prop=$PROOF_PROP_SPEC
 activate_target=true
 EOF
   exit 0
@@ -259,6 +267,7 @@ pixel_write_status_json \
   adb_timeout_secs="$ADB_TIMEOUT_SECS" \
   boot_timeout_secs="$BOOT_TIMEOUT_SECS" \
   allow_active_slot="$(bool_word "$ALLOW_ACTIVE_SLOT")" \
+  proof_prop="$PROOF_PROP_SPEC" \
   recover_after="$(bool_word "$RECOVER_AFTER")"
 
 printf 'Flash-running %s on %s\n' "$IMAGE_PATH" "$serial"
@@ -289,10 +298,17 @@ else
   exit 1
 fi
 
+collect_args=(
+  --output "$collect_output_dir"
+  --wait-ready "$WAIT_READY_SECS"
+)
+if [[ -n "$PROOF_PROP_SPEC" ]]; then
+  collect_args+=(--proof-prop "$PROOF_PROP_SPEC")
+fi
+
 if PIXEL_SERIAL="$serial" PIXEL_BOOT_METADATA_PATH="$metadata_path" \
   "$SCRIPT_DIR/pixel/pixel_boot_collect_logs.sh" \
-    --output "$collect_output_dir" \
-    --wait-ready "$WAIT_READY_SECS"; then
+    "${collect_args[@]}"; then
   collect_succeeded=true
 else
   failure_stage="collect"
