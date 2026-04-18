@@ -14,15 +14,17 @@ KEY_PATH="${AVB_TEST_KEY_PATH:-}"
 OUTPUT_IMAGE="${PIXEL_BOOT_LOG_PROBE_IMAGE:-$(pixel_boot_log_probe_img)}"
 TRIGGER="${PIXEL_BOOT_LOG_PROBE_TRIGGER:-post-fs-data}"
 DEVICE_LOG_ROOT="$(pixel_boot_device_log_root)"
+PATCH_TARGET_OVERRIDE="${PIXEL_BOOT_LOG_PROBE_PATCH_TARGET:-}"
 KEEP_WORK_DIR=0
 WORK_DIR=""
-PATCH_TARGET="system/etc/init/hw/init.rc"
+PATCH_TARGET=""
 
 usage() {
   cat <<'EOF'
 Usage: scripts/pixel/pixel_boot_build_log_probe.sh [--input PATH] [--wrapper PATH] [--key PATH]
                                                    [--output PATH] [--trigger EXPR]
-                                                   [--device-log-root PATH] [--keep-work-dir]
+                                                   [--device-log-root PATH] [--patch-target ENTRY]
+                                                   [--keep-work-dir]
 
 Build a private sunfish boot.img that imports /init.shadow.rc and runs a boot helper that only emits log markers.
 EOF
@@ -44,6 +46,74 @@ validate_device_log_root() {
     echo "pixel_boot_build_log_probe: --device-log-root contains unsupported characters" >&2
     exit 1
   }
+}
+
+validate_patch_target_override() {
+  [[ -z "$PATCH_TARGET_OVERRIDE" ]] && return 0
+  [[ "$PATCH_TARGET_OVERRIDE" =~ ^[A-Za-z0-9._/-]+$ ]] || {
+    echo "pixel_boot_build_log_probe: --patch-target contains unsupported characters" >&2
+    exit 1
+  }
+}
+
+detect_patch_target() {
+  local ramdisk_cpio explicit_target
+  ramdisk_cpio="${1:?detect_patch_target requires a ramdisk path}"
+  explicit_target="${2:-}"
+
+  python3 - "$ramdisk_cpio" "$explicit_target" "$SCRIPT_DIR/lib" <<'PY'
+from pathlib import Path
+import sys
+
+sys.path.insert(0, sys.argv[3])
+from cpio_edit import read_cpio
+
+archive = read_cpio(Path(sys.argv[1]))
+entries = {entry.name for entry in archive.without_trailer()}
+explicit_target = sys.argv[2]
+
+if explicit_target:
+    if explicit_target not in entries:
+        print(
+            f"pixel_boot_build_log_probe: requested --patch-target entry not present in ramdisk: {explicit_target}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(explicit_target)
+    sys.exit(0)
+
+hardware_recovery_targets = sorted(
+    name
+    for name in entries
+    if name.startswith("init.recovery.") and name.endswith(".rc") and name != "init.recovery.rc"
+)
+if len(hardware_recovery_targets) == 1:
+    print(hardware_recovery_targets[0])
+    sys.exit(0)
+if len(hardware_recovery_targets) > 1:
+    print(
+        "pixel_boot_build_log_probe: multiple root recovery rc anchors found; pass --patch-target explicitly",
+        file=sys.stderr,
+    )
+    for target in hardware_recovery_targets:
+        print(f"  {target}", file=sys.stderr)
+    sys.exit(1)
+
+if "init.recovery.rc" in entries:
+    print("init.recovery.rc")
+    sys.exit(0)
+
+fallback_target = "system/etc/init/hw/init.rc"
+if fallback_target in entries:
+    print(fallback_target)
+    sys.exit(0)
+
+print(
+    "pixel_boot_build_log_probe: no supported rc import anchor found in ramdisk",
+    file=sys.stderr,
+)
+sys.exit(1)
+PY
 }
 
 cleanup() {
@@ -83,6 +153,10 @@ while [[ $# -gt 0 ]]; do
       DEVICE_LOG_ROOT="${2:?missing value for --device-log-root}"
       shift 2
       ;;
+    --patch-target)
+      PATCH_TARGET_OVERRIDE="${2:?missing value for --patch-target}"
+      shift 2
+      ;;
     --keep-work-dir)
       KEEP_WORK_DIR=1
       shift
@@ -110,6 +184,7 @@ EOF
 
 validate_literal_trigger
 validate_device_log_root
+validate_patch_target_override
 
 pixel_prepare_dirs
 mkdir -p "$(dirname "$OUTPUT_IMAGE")"
@@ -117,20 +192,21 @@ WORK_DIR="$(bootimg_prepare_work_dir shadow-pixel-boot-log-probe)"
 
 bootimg_unpack_to_dir "$INPUT_IMAGE" "$WORK_DIR/unpacked"
 bootimg_decompress_ramdisk "$WORK_DIR/unpacked/out/ramdisk" "$WORK_DIR/ramdisk.cpio" >/dev/null
+PATCH_TARGET="$(detect_patch_target "$WORK_DIR/ramdisk.cpio" "$PATCH_TARGET_OVERRIDE")"
 
 python3 "$SCRIPT_DIR/lib/cpio_edit.py" \
   --input "$WORK_DIR/ramdisk.cpio" \
-  --extract "$PATCH_TARGET=$WORK_DIR/init.rc.stock"
+  --extract "$PATCH_TARGET=$WORK_DIR/patch-target.stock"
 
-if grep -Fxq 'import /init.shadow.rc' "$WORK_DIR/init.rc.stock"; then
-  cp "$WORK_DIR/init.rc.stock" "$WORK_DIR/init.rc.patched"
+if grep -Fxq 'import /init.shadow.rc' "$WORK_DIR/patch-target.stock"; then
+  cp "$WORK_DIR/patch-target.stock" "$WORK_DIR/patch-target.patched"
 else
   {
     printf 'import /init.shadow.rc\n\n'
-    cat "$WORK_DIR/init.rc.stock"
-  } >"$WORK_DIR/init.rc.patched"
+    cat "$WORK_DIR/patch-target.stock"
+  } >"$WORK_DIR/patch-target.patched"
 fi
-chmod 0644 "$WORK_DIR/init.rc.patched"
+chmod 0644 "$WORK_DIR/patch-target.patched"
 
 cat >"$WORK_DIR/init.shadow.rc" <<EOF
 on ${TRIGGER}
@@ -198,6 +274,7 @@ capture_output "\$log_root/logcat-shadow.txt" logcat -d -s shadow-init:I shadow-
 {
   printf 'trigger=%s\n' "${TRIGGER}"
   printf 'device_log_root=%s\n' "${DEVICE_LOG_ROOT}"
+  printf 'patch_target=%s\n' "${PATCH_TARGET}"
   printf 'boot_id=%s\n' "\$boot_id"
   printf 'slot_suffix=%s\n' "\$slot_suffix"
   printf 'bootmode=%s\n' "\$(getprop ro.bootmode | tr -d '\r')"
@@ -222,7 +299,7 @@ build_args=(
   --output "$OUTPUT_IMAGE"
   --add "init.shadow.rc=$WORK_DIR/init.shadow.rc"
   --add "shadow-boot-helper=$WORK_DIR/shadow-boot-helper"
-  --replace "$PATCH_TARGET=$WORK_DIR/init.rc.patched"
+  --replace "$PATCH_TARGET=$WORK_DIR/patch-target.patched"
 )
 
 if [[ -n "$KEY_PATH" ]]; then
@@ -234,6 +311,7 @@ fi
 printf 'Wrote log-probe boot image: %s\n' "$OUTPUT_IMAGE"
 printf 'Trigger: %s\n' "$TRIGGER"
 printf 'Device log root: %s\n' "$DEVICE_LOG_ROOT"
+printf 'Patch target: %s\n' "$PATCH_TARGET"
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
   printf 'Kept payload workdir: %s\n' "$WORK_DIR"
 fi

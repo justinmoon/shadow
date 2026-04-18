@@ -65,8 +65,15 @@ Related docs:
 - `pixel_boot_build.sh` now accepts additive ramdisk `--add` and `--replace` overlays so later boot seams can reuse one wrapper/repack path instead of cloning it.
 - `pixel_boot_build_log_probe.sh` now injects `/init.shadow.rc`, patches `system/etc/init/hw/init.rc`, and adds a log-only `/shadow-boot-helper` triggered from `post-fs-data`.
 - `pixel_boot_collect_logs.sh` now pulls `/data/local/tmp/shadow-boot` plus host-visible `logcat`/`getprop` snapshots into `build/pixel/boot/logs/<timestamp>/`.
+- The log-probe seam now prefers a root recovery rc import anchor when one exists in the ramdisk, falling back to `system/etc/init/hw/init.rc` only when recovery rc is unavailable. On current `sunfish` stock images that resolves to `init.recovery.sunfish.rc`.
+- The init wrapper now drops persistent stage markers under `/.shadow-init-wrapper/` so later userspace collection can prove whether the wrapper ran even if early stdout or `/dev/kmsg` logs are lost.
+- `pixel_boot_collect_logs.sh` now gathers those wrapper markers best-effort and records wrapper-only evidence in `status.json` without treating that as a full helper success.
+- Collector success now also requires a successful pull of the helper log root; partial helper pulls and wrapper-only evidence stay non-successful by design.
+- The collector's timeout path now keeps writing `status.json` even if later `adb shell getprop` / `logcat` / `ps` calls fail, so slow or degraded boots still leave a truthful artifact bundle behind.
 - The ramdisk patch step is back in repo-local form via `scripts/lib/cpio_edit.py`, and the minimal wrapper is a static aarch64 Rust binary at `rust/init-wrapper`.
 - `scripts/lib/cpio_edit.py` now supports entry extraction as well as add/replace/rename, and `scripts/ci/cpio_edit_smoke.sh` keeps those semantics covered in `pre-commit`.
+- `scripts/ci/pixel_boot_collect_logs_smoke.sh` now locks the collector's success-vs-wrapper-only fallback semantics into `pre-commit`.
+- `rust/init-wrapper/Cargo.toml` is now standalone enough for `cargo check --manifest-path rust/init-wrapper/Cargo.toml`, and `just pre-commit` now compiles that crate directly instead of only relying on host-side boot-image builds.
 - The cached stock `boot.img` can now be unpacked, wrapped, and reflashed locally. Live device validation still remains before the flash-loop milestone can flip fully green.
 - The first imported boot-helper trigger is `post-fs-data`, wired through `system/etc/init/hw/init.rc` in the recovery-as-boot ramdisk. This is intentionally a log-only probe before any automatic takeover steps.
 - The current rooted takeover path is already close to the desired runtime surface: it waits for DRM, stops Android display services, and launches `shadow-session`.
@@ -86,4 +93,4 @@ Related docs:
 - Because stock-init experimental flashes can disrupt the working rooted lane on the same slot, future chunks should bias toward safety rails before convenience or public surfacing.
 - Landing rule for this project: each chunk should be truthful, green, and mergeable on its own, so other worktrees can keep rebasing on `master` instead of waiting for a giant boot branch to finish.
 - Camera remains Android-bound today. Wi-Fi likely does too. Do not make them blockers for the first Shadow-at-boot milestone.
-- Next seam: inspect why the wrapped `boot.img` never yields `[shadow-init]` or `/data/local/tmp/shadow-boot` on real `sunfish`, then tighten the ramdisk/header assumptions before attempting another active-slot probe boot.
+- Next seam: validate the stronger recovery-rc import plus wrapper markers with `fastboot boot` on `11151JEC200472`, then decide whether the next blocker is still only the rc/import path or the flashed-image validity path too.

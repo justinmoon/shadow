@@ -15,10 +15,19 @@ mkdir -p "$TMP_DIR/input" "$TMP_DIR/output"
 printf 'stock-init\n' >"$TMP_DIR/input/init"
 chmod 0755 "$TMP_DIR/input/init"
 printf 'import /init.recovery.sunfish.rc\n' >"$TMP_DIR/input/init.rc"
+cat >"$TMP_DIR/input/init.recovery.sunfish.rc" <<'EOF'
+on fs
+    wait /dev/block/platform/soc/${ro.boot.bootdevice}
+EOF
 printf '#!/system/bin/sh\necho wrapper\n' >"$TMP_DIR/input/init-wrapper"
 chmod 0755 "$TMP_DIR/input/init-wrapper"
 printf 'import /init.shadow.rc\n' >"$TMP_DIR/input/init.shadow.rc"
-printf 'import /init.shadow.rc\n\nimport /init.recovery.sunfish.rc\n' >"$TMP_DIR/input/init.rc.patched"
+cat >"$TMP_DIR/input/init.recovery.sunfish.rc.patched" <<'EOF'
+import /init.shadow.rc
+
+on fs
+    wait /dev/block/platform/soc/${ro.boot.bootdevice}
+EOF
 
 PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$TMP_DIR" <<'PY'
 from pathlib import Path
@@ -30,6 +39,7 @@ tmp_dir = Path(sys.argv[1])
 entries = [
     build_entry_from_path("init", tmp_dir / "input/init", 1),
     build_entry_from_path("system/etc/init/hw/init.rc", tmp_dir / "input/init.rc", 2),
+    build_entry_from_path("init.recovery.sunfish.rc", tmp_dir / "input/init.recovery.sunfish.rc", 3),
 ]
 trailer = CpioEntry(
     name="TRAILER!!!",
@@ -52,9 +62,9 @@ PY
 
 python3 "$REPO_ROOT/scripts/lib/cpio_edit.py" \
   --input "$TMP_DIR/input/ramdisk.cpio" \
-  --extract "system/etc/init/hw/init.rc=$TMP_DIR/output/init.rc"
+  --extract "init.recovery.sunfish.rc=$TMP_DIR/output/init.recovery.sunfish.rc"
 
-grep -Fq 'import /init.recovery.sunfish.rc' "$TMP_DIR/output/init.rc"
+grep -Fq 'wait /dev/block/platform/soc/${ro.boot.bootdevice}' "$TMP_DIR/output/init.recovery.sunfish.rc"
 
 python3 "$REPO_ROOT/scripts/lib/cpio_edit.py" \
   --input "$TMP_DIR/input/ramdisk.cpio" \
@@ -62,7 +72,7 @@ python3 "$REPO_ROOT/scripts/lib/cpio_edit.py" \
   --rename init=init.stock \
   --add "init=$TMP_DIR/input/init-wrapper" \
   --add "init.shadow.rc=$TMP_DIR/input/init.shadow.rc" \
-  --replace "system/etc/init/hw/init.rc=$TMP_DIR/input/init.rc.patched"
+  --replace "init.recovery.sunfish.rc=$TMP_DIR/input/init.recovery.sunfish.rc.patched"
 
 PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$TMP_DIR" <<'PY'
 from pathlib import Path
@@ -78,9 +88,11 @@ entries = {entry.name: entry for entry in archive.without_trailer()}
 assert "init" in entries
 assert "init.stock" in entries
 assert "init.shadow.rc" in entries
+assert "init.recovery.sunfish.rc" in entries
 assert entries["init.stock"].data == b"stock-init\n"
 assert entries["init"].data.startswith(b"#!/system/bin/sh")
-assert entries["system/etc/init/hw/init.rc"].data.startswith(b"import /init.shadow.rc\n")
+assert entries["system/etc/init/hw/init.rc"].data == b"import /init.recovery.sunfish.rc\n"
+assert entries["init.recovery.sunfish.rc"].data.startswith(b"import /init.shadow.rc\n")
 assert stat.S_IMODE(entries["init"].mode) == 0o755
 PY
 

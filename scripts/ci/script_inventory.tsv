@@ -3,6 +3,7 @@ scripts/agent-brief	public	Agent context snapshot required by AGENTS.md.
 scripts/ci/app_metadata_manifest_smoke.sh	ci	Regression smoke for manifest profile filtering and uniqueness validation.
 scripts/ci/cpio_edit_smoke.sh	ci	Fast smoke for Android ramdisk cpio extraction and patch semantics.
 scripts/ci/check_script_inventory.py	ci	Pre-commit taxonomy gate for every file under scripts/.
+scripts/ci/pixel_boot_collect_logs_smoke.sh	ci	Hermetic smoke for boot-log collection success and wrapper-only fallback semantics.
 scripts/ci/pixel_boot_safety_smoke.sh	ci	Private smoke for experimental boot-script safety rails and slot defaults.
 scripts/ci/required_vm_smoke.sh	ci	Required branch-gate VM smoke wrapper with logical-input reuse.
 scripts/runtime/ensure_cashu_test_mint.sh	runtime	Private Cashu host-smoke fixture helper.

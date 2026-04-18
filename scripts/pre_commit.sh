@@ -12,6 +12,7 @@ scripts/ci/check_script_inventory.py
 scripts/runtime/generate_app_metadata.py --check
 scripts/ci/app_metadata_manifest_smoke.sh
 scripts/ci/cpio_edit_smoke.sh
+scripts/ci/pixel_boot_collect_logs_smoke.sh
 scripts/ci/pixel_boot_safety_smoke.sh
 shell_scripts=()
 while IFS= read -r -d '' script_path; do
@@ -33,6 +34,7 @@ scripts/ci/timeline_sync_defaults_smoke.sh
 scripts/lib/agent_tools.py check-docs
 scripts/lib/agent_tools.py check-justfile
 nix flake check --no-build
+nix develop .#runtime -c cargo check --manifest-path rust/init-wrapper/Cargo.toml
 nix develop .#runtime -c cargo test --manifest-path rust/Cargo.toml -p shadow-sdk --features runtime-host
 nix develop .#runtime -c cargo check --manifest-path rust/Cargo.toml -p shadow-runtime-host
 nix develop .#runtime -c deno test --allow-read --allow-write --allow-run --allow-env scripts/runtime/runtime_prepare_app_bundle_test.ts
