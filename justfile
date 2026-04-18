@@ -9,7 +9,6 @@ help:
 	'Branch gates:' \
 	'  just pre-commit' \
 	'  just pre-merge' \
-	'  just nightly' \
 	'  just land' \
 	'' \
 	'Target sessions:' \
@@ -65,10 +64,6 @@ pre-commit:
 # Run the required branch gate
 pre-merge:
 	@scripts/pre_merge.sh
-
-# Run the broader validation lane across local, host-runtime, and rooted-Pixel checks
-nightly *args='':
-	@scripts/ci/nightly.sh {{args}}
 
 # Run the rooted-Pixel CI lane. Examples: `just pixel-ci`, `just pixel-ci camera`, `just pixel-ci --target <serial>`
 pixel-ci *args='':

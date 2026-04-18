@@ -41,7 +41,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Refactor `just smoke target=vm` to consume prepared outputs instead of preparing them inline.
 - [x] Add path filters so the VM lane only runs when relevant inputs changed.
 - [x] Teach `just land` to reuse a green result when the rebased lane inputs are unchanged.
-- [x] Add a broader `just nightly` lane so the full local/host/device suite is explicit without bloating `pre-merge`.
+- [ ] Add a broader `just nightly` lane so the full local/host/device suite is explicit without bloating `pre-merge`.
 - [ ] Decide whether a Jericho-style prepared-output handoff layer is still necessary after the simpler Nix-first pass.
 
 ## Near-Term Steps
@@ -92,4 +92,3 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - passing results are recorded under the shared git common dir at `.git/shadow-ci/vm-smoke-success`, so every worktree can reuse them.
   - the branch-gate wrapper first compares the current logical input path to root `master` when available, then falls back to the shared success cache, and only boots the VM when neither reuse path applies.
   - the VM runner still has to be built per worktree port, so the prepared input path supplies the immutable flake snapshot while `ui_vm_run.sh` rebuilds `ui-vm-ci` from that snapshot with the current SSH port.
-  - `just nightly` now aggregates the broader suite outside the branch gate: `pre-commit`, raw VM smoke, host runtime smokes with the Linux podcast URL path enabled, `pixel-ci full`, `pixel-ci cashu`, and the rooted-Pixel keyboard smoke.

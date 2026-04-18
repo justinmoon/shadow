@@ -106,7 +106,6 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 - VM and Pixel are the validation targets that matter for cleanup work. Linux desktop host smokes and other historical bring-up paths are secondary.
 - The local macOS VM gate is allowed to use the local `linux-builder`; removing guest-side Cargo/Rust is part of keeping build-time and runtime responsibilities separate.
 - `just pre-merge` still proves the local VM smoke, but it now reuses a shared success record when the current `vm-smoke-inputs` store path already passed or matches landed `master`.
-- `just nightly` is the broader validation lane: `pre-commit`, the raw VM smoke, host runtime smokes with the Linux podcast URL path enabled, `pixel-ci full`, `pixel-ci cashu`, and the rooted-Pixel keyboard smoke.
 - The remaining VM impurity is intentional: host-prepared runtime app artifacts. The branch gate should keep that seam clean, manifest-driven, offline-safe for fixtures, and never built inside the guest.
 - This repo is still a bring-up repo, not a polished product repo. The cleanup goal is to make the supported system explicit and to stop advertising accidental operator surface.
 
