@@ -4914,6 +4914,7 @@ name = "shadow-sdk"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "copypasta",
  "image",
  "masonry_winit",
  "nostr",

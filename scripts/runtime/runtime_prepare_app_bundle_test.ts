@@ -211,6 +211,44 @@ Deno.test("shadow sdk nostr account helpers delegate to the runtime host", async
   }
 });
 
+Deno.test("shadow sdk clipboard helpers delegate to the runtime host", async () => {
+  const cwd = repoRoot();
+  const runtimeGlobal = globalThis as typeof globalThis & {
+    Shadow?: Record<string, unknown>;
+  };
+  const moduleUrl = `${
+    pathToFileURL(path.resolve(
+      cwd,
+      "runtime/app-runtime/shadow_sdk_services.js",
+    )).href
+  }?test=${crypto.randomUUID()}`;
+
+  const writes: string[] = [];
+  runtimeGlobal.Shadow = {
+    os: {
+      clipboard: {
+        writeText: async (text: string) => {
+          writes.push(text);
+        },
+      },
+    },
+  };
+
+  try {
+    const services = await import(moduleUrl);
+    await services.writeClipboardText("npub1shadowclipboard");
+    await services.clipboard.writeText("npub1shadowgrouped");
+
+    assert(
+      JSON.stringify(writes) ===
+        JSON.stringify(["npub1shadowclipboard", "npub1shadowgrouped"]),
+      "clipboard helpers should forward write requests to the runtime host",
+    );
+  } finally {
+    delete runtimeGlobal.Shadow;
+  }
+});
+
 Deno.test("shadow sdk window metrics honors runner-seeded initial metrics", async () => {
   const cwd = repoRoot();
   const windowMetricsKey = Symbol.for("shadow.runtime.window_metrics");

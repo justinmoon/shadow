@@ -8,6 +8,7 @@ use shadow_sdk::{
         current_lifecycle_state, spawn_lifecycle_listener, AppWindowDefaults, AppWindowEnvironment,
         AppWindowMetrics,
     },
+    services::clipboard::write_text as write_clipboard_text,
     services::nostr::{
         current_account, generate_account, get_event, get_replaceable, import_account_nsec, query,
         sync, NostrAccountSource, NostrAccountSummary, NostrEvent, NostrQuery,
@@ -74,6 +75,12 @@ enum AccountActionKind {
 #[derive(Clone, Debug)]
 struct PendingAccountAction {
     kind: AccountActionKind,
+    token: u64,
+}
+
+#[derive(Clone, Debug)]
+struct PendingClipboardWrite {
+    text: String,
     token: u64,
 }
 
@@ -178,6 +185,7 @@ struct TimelineApp {
     metrics: AppWindowMetrics,
     nsec_input: String,
     pending_account_action: Option<PendingAccountAction>,
+    pending_clipboard_write: Option<PendingClipboardWrite>,
     notes: Vec<NostrEvent>,
     pending_refresh: Option<PendingRefresh>,
     pending_thread_sync: Option<PendingThreadSync>,
@@ -248,6 +256,7 @@ impl TimelineApp {
             metrics,
             nsec_input: String::new(),
             pending_account_action: None,
+            pending_clipboard_write: None,
             notes,
             pending_refresh: None,
             pending_thread_sync: None,
@@ -343,6 +352,27 @@ impl TimelineApp {
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Pulling thread context from relays..."),
+        };
+    }
+
+    fn begin_copy_account_npub(&mut self) {
+        if self.pending_clipboard_write.is_some() {
+            return;
+        }
+        let Some(account) = self.account.as_ref() else {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("No active account is available to copy."),
+            };
+            return;
+        };
+        self.pending_clipboard_write = Some(PendingClipboardWrite {
+            text: account.npub.clone(),
+            token: self.next_token(),
+        });
+        self.status = TimelineStatus {
+            tone: Tone::Accent,
+            message: String::from("Copying the active npub to the clipboard..."),
         };
     }
 
@@ -477,6 +507,27 @@ impl TimelineApp {
         }
     }
 
+    fn finish_clipboard_write(&mut self, token: u64, result: Result<(), String>) {
+        let Some(pending) = &self.pending_clipboard_write else {
+            return;
+        };
+        if pending.token != token {
+            return;
+        }
+        self.pending_clipboard_write = None;
+
+        self.status = match result {
+            Ok(()) => TimelineStatus {
+                tone: Tone::Success,
+                message: String::from("Copied the active npub to the clipboard."),
+            },
+            Err(message) => TimelineStatus {
+                tone: Tone::Danger,
+                message,
+            },
+        };
+    }
+
     fn current_route(&self) -> Route {
         self.route_stack.last().cloned().unwrap_or(Route::Timeline)
     }
@@ -609,6 +660,7 @@ fn main() -> Result<(), ui::EventLoopError> {
 
 fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
     let pending_account_action = app.pending_account_action.clone();
+    let pending_clipboard_write = app.pending_clipboard_write.clone();
     let pending_refresh = app.pending_refresh.clone();
     let pending_thread_sync = app.pending_thread_sync.clone();
     let theme = Theme::shadow_dark();
@@ -616,7 +668,13 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
     app.prepare_route(&route);
 
     let body = match route {
-        Route::Account => account_screen(theme, app.account.clone(), app.status.clone()).boxed(),
+        Route::Account => account_screen(
+            theme,
+            app.account.clone(),
+            app.status.clone(),
+            pending_clipboard_write.is_some(),
+        )
+        .boxed(),
         Route::Onboarding => onboarding_screen(
             theme,
             app.nsec_input.clone(),
@@ -672,6 +730,14 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
          job: PendingAccountAction,
          result: Result<ActiveAccount, String>| {
             app.finish_account_action(job.token, result);
+        },
+    );
+    let content = with_blocking_task(
+        content,
+        pending_clipboard_write,
+        run_clipboard_write,
+        |app: &mut TimelineApp, job: PendingClipboardWrite, result: Result<(), String>| {
+            app.finish_clipboard_write(job.token, result);
         },
     );
     let content = with_blocking_task(
@@ -836,6 +902,7 @@ fn account_screen(
     theme: Theme,
     account: Option<ActiveAccount>,
     status: TimelineStatus,
+    clipboard_pending: bool,
 ) -> impl WidgetView<TimelineApp> {
     match account {
         Some(account) => column((
@@ -854,8 +921,23 @@ fn account_screen(
                     status_chip(account.source.label(), Tone::Neutral, theme),
                     caption_text("npub", theme),
                     prose_text(account.npub, 15.0, theme),
+                    secondary_button(
+                        if clipboard_pending {
+                            "Copying npub..."
+                        } else {
+                            "Copy npub"
+                        },
+                        theme,
+                        |app: &mut TimelineApp| {
+                            app.begin_copy_account_npub();
+                        },
+                    ),
                     column((
                         status_chip(status.message, status.tone, theme),
+                        caption_text(
+                            "Use the clipboard to move this device identity into another app.",
+                            theme,
+                        ),
                         caption_text("This app does not offer publish controls yet.", theme),
                     ))
                     .gap(8.0.px()),
@@ -1151,6 +1233,10 @@ fn run_account_action(job: PendingAccountAction) -> Result<ActiveAccount, String
             .map(ActiveAccount::from)
             .map_err(|error| error.to_string()),
     }
+}
+
+fn run_clipboard_write(job: PendingClipboardWrite) -> Result<(), String> {
+    write_clipboard_text(job.text).map_err(|error| error.to_string())
 }
 
 fn sync_notes(job: PendingRefresh) -> Result<RefreshOutcome, String> {

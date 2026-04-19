@@ -1,5 +1,6 @@
 export {
   addCashuMint,
+  clipboard,
   capturePreviewFrame,
   captureStill,
   checkCashuMintQuote,
@@ -40,4 +41,5 @@ export {
   syncNostr,
   syncKind1,
   countNostr,
+  writeClipboardText,
 } from "./shadow_sdk_services.js";

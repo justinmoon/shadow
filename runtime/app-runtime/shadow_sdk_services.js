@@ -2,6 +2,10 @@ export function ensureShadowRuntimeOs() {
   return requireShadowOs();
 }
 
+export function writeClipboardText(text) {
+  return getClipboardApi().writeText(String(text));
+}
+
 export function listKind1(query = {}) {
   return getNostrApi().listKind1(query);
 }
@@ -173,6 +177,10 @@ export function payCashuInvoice(request = {}) {
   return getCashuApi().payInvoice(request);
 }
 
+export const clipboard = Object.freeze({
+  writeText: writeClipboardText,
+});
+
 export const nostr = Object.freeze({
   currentAccount: currentNostrAccount,
   count: countNostr,
@@ -206,6 +214,14 @@ function getCameraApi() {
     throw new Error("Shadow.os.camera is not installed by the runtime host");
   }
   return camera;
+}
+
+function getClipboardApi() {
+  const clipboard = requireShadowOs().clipboard;
+  if (!clipboard) {
+    throw new Error("Shadow.os.clipboard is not installed by the runtime host");
+  }
+  return clipboard;
 }
 
 function getNostrApi() {

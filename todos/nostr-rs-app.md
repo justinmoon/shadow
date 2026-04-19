@@ -74,6 +74,14 @@ Do not hard-code event kinds into top-level SDK function names. The core API sho
   - the Rust timeline app now gates first run on account setup and exposes the active `npub` in-app
   - TypeScript runtime host ops and `@shadow/sdk` now expose the same account entrypoints: `currentNostrAccount`, `generateNostrAccount`, `importNostrAccountNsec`, plus the grouped `nostr.currentAccount()` / `generateAccount()` / `importAccountNsec()` forms
   - shared protocol/event/filter typing between Rust and TypeScript is still incomplete; this slice only closes the account/read API gap
+- A shared clipboard seam now exists across both app models:
+  - `shadow_sdk::services::clipboard::write_text` is the Rust-side public API
+  - `shadow-system` binds that into the TypeScript runtime as `clipboard.writeText(...)` and `writeClipboardText(...)`
+  - the Rust timeline account screen can now copy the active `npub` into the device clipboard instead of trapping identity inside the app UI
+- The next below-app Nostr seam should likely be shared contract parity:
+  - move the public Nostr request/response/account/event types behind one explicit `shadow_sdk::services::nostr` type module
+  - expose the same shapes to TypeScript with real declarations instead of per-app aliases and test-local shape drift
+  - do that before a real signer/write path so approval and publish APIs sit on stable shared types
 - The signer should be OS-owned, Amber-style. Apps request publication or signing work from the OS; the OS decides whether to prompt, deny, sign once, or sign automatically because the user already granted standing approval.
 - The first public SDK should likely expose:
   - protocol types like `Event`, `EventId`, `Filter`, `Kind`, `PublicKey`, `RelayUrl`, `Timestamp`

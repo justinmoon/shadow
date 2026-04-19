@@ -72,6 +72,11 @@ function installShadowSystemOs() {
       return await core.ops.op_runtime_cashu_pay_invoice(request);
     },
   };
+  const clipboard = {
+    async writeText(text = "") {
+      return await core.ops.op_runtime_clipboard_write_text(String(text));
+    },
+  };
   const nostr = {
     currentAccount() {
       return core.ops.op_runtime_nostr_current_account();
@@ -122,6 +127,7 @@ function installShadowSystemOs() {
       audio,
       camera,
       cashu,
+      clipboard,
       nostr,
     },
   };

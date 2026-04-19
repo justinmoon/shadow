@@ -8,6 +8,7 @@ pub fn runtime_extensions() -> Vec<Extension> {
         services::nostr::init_extension(),
         services::audio::init_extension(),
         services::cashu::init_extension(),
+        services::clipboard::init_extension(),
         services::bootstrap::init_extension(),
     ]
 }
@@ -18,6 +19,6 @@ mod tests {
 
     #[test]
     fn runtime_extensions_include_all_current_hosts() {
-        assert_eq!(runtime_extensions().len(), 5);
+        assert_eq!(runtime_extensions().len(), 6);
     }
 }
