@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/lib/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
-runtime_host_bundle_artifact_dir="${PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR-}"
+system_bundle_artifact_dir="${PIXEL_SYSTEM_BUNDLE_ARTIFACT_DIR-}"
 runtime_app_asset_artifact_dir="${PIXEL_RUNTIME_APP_ASSET_ARTIFACT_DIR-}"
 runtime_app_bundle_artifact="${PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT-}"
 runtime_bundle_archive_host=""
@@ -438,17 +438,17 @@ if ! pixel_require_runtime_artifacts; then
 fi
 
 printf 'Pushing device artifacts to %s\n' "$serial"
-if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_dir" || -n "$runtime_app_bundle_artifact" ]]; then
+if [[ -n "$system_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_dir" || -n "$runtime_app_bundle_artifact" ]]; then
   runtime_linux_dir="$(pixel_runtime_linux_dir)"
-  runtime_manifest_path="$runtime_host_bundle_artifact_dir/.runtime-bundle-manifest.json"
+  runtime_manifest_path="$system_bundle_artifact_dir/.runtime-bundle-manifest.json"
   runtime_device_manifest_path="$runtime_linux_dir/.runtime-bundle-manifest.json"
   runtime_asset_manifest_path="$runtime_app_asset_artifact_dir/.runtime-assets-manifest.json"
   runtime_asset_manifest_device_path="$runtime_linux_dir/.runtime-assets-manifest.json"
   printf 'Pushing runtime support to %s\n' "$serial"
 
-  if [[ -n "$runtime_host_bundle_artifact_dir" ]]; then
+  if [[ -n "$system_bundle_artifact_dir" ]]; then
     runtime_sync_work_dir="$(mktemp -d "${TMPDIR:-/tmp}/shadow-runtime-sync.XXXXXX")"
-    runtime_host_sync_manifest_path="$runtime_sync_work_dir/shadow-system-manifest.json"
+    system_sync_manifest_path="$runtime_sync_work_dir/shadow-system-manifest.json"
     runtime_device_manifest_host_path="$runtime_sync_work_dir/runtime-device-manifest.json"
     runtime_sync_plan_path="$runtime_sync_work_dir/runtime-sync-plan.json"
     runtime_sync_changed_paths_path="$runtime_sync_work_dir/runtime-changed-paths.txt"
@@ -456,10 +456,10 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
     runtime_sync_dir_modes_path="$runtime_sync_work_dir/runtime-dir-modes.tsv"
 
     write_runtime_helper_sync_manifest \
-      "$runtime_host_bundle_artifact_dir" \
-      "$runtime_host_sync_manifest_path"
+      "$system_bundle_artifact_dir" \
+      "$system_sync_manifest_path"
     runtime_helper_content_fingerprint="$(
-      json_manifest_string_field_from_file "$runtime_host_sync_manifest_path" contentFingerprint
+      json_manifest_string_field_from_file "$system_sync_manifest_path" contentFingerprint
     )"
 
     pixel_push_root_shell "cat '$runtime_device_manifest_path' 2>/dev/null || true" \
@@ -477,7 +477,7 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
       runtime_sync_full_replace=0
 
       write_runtime_helper_sync_plan \
-        "$runtime_host_sync_manifest_path" \
+        "$system_sync_manifest_path" \
         "$runtime_device_manifest_host_path" \
         "$runtime_sync_plan_path" \
         "$runtime_sync_changed_paths_path" \
@@ -507,7 +507,7 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
           --owner=0 \
           --group=0 \
           --no-xattrs \
-          -C "$runtime_host_bundle_artifact_dir" \
+          -C "$system_bundle_artifact_dir" \
           -cf "$runtime_bundle_archive_host" \
           -T "$runtime_sync_changed_paths_path"
       fi
@@ -531,7 +531,7 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
         pixel_push_adb shell "/system/bin/tar -xf '$runtime_bundle_archive_device' -C '$runtime_linux_dir' && rm -f '$runtime_bundle_archive_device'"
       fi
 
-      pixel_push_adb push "$runtime_host_sync_manifest_path" "$runtime_device_manifest_path" >/dev/null
+      pixel_push_adb push "$system_sync_manifest_path" "$runtime_device_manifest_path" >/dev/null
       pixel_push_adb shell "chmod 0644 '$runtime_device_manifest_path'"
 
       if (( runtime_sync_full_replace == 1 )); then

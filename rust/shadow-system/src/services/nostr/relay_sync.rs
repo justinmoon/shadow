@@ -4,7 +4,7 @@ use nostr::prelude::{Filter, Kind, PublicKey, RelayUrl, Timestamp, ToBech32};
 use nostr_sdk::prelude::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::Kind1Event;
+use shadow_sdk::services::nostr::Kind1Event;
 
 const DEFAULT_SYNC_TIMEOUT_MS: u64 = 8_000;
 const DEFAULT_SYNC_LIMIT: usize = 12;

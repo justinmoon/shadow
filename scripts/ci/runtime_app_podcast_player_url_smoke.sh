@@ -72,11 +72,8 @@ sync_remote_tree() {
     rust/Cargo.toml \
     rust/Cargo.lock \
     rust/shadow-linux-audio-spike \
+    rust/shadow-sdk \
     rust/shadow-system \
-    rust/runtime-audio-host \
-    rust/runtime-camera-host \
-    rust/runtime-cashu-host \
-    rust/runtime-nostr-host \
     rust/shadow-runtime-protocol \
     rust/vendor \
     | remote_ssh "mkdir -p $(printf '%q' "$dir") && rm -rf $(printf '%q' "$dir/runtime") $(printf '%q' "$dir/rust") $(printf '%q' "$dir/scripts") $(printf '%q' "$dir/flake.nix") $(printf '%q' "$dir/flake.lock") $(printf '%q' "$dir/justfile") && tar -xf - -C $(printf '%q' "$dir")"
@@ -190,7 +187,7 @@ try:
     session = json.loads(session_json)
     bundle_dir = Path(session["bundleDir"])
     bundle_path = session["bundlePath"]
-    binary_path = session["runtimeHostBinaryPath"]
+    binary_path = session["systemBinaryPath"]
 
     for name in os.listdir(FIXTURE_DIR):
         source_path = FIXTURE_DIR / name
@@ -388,8 +385,8 @@ try:
                     "fixtureRequestCount": CountingHandler.request_count,
                     "helperBinaryPath": str(helper_binary_path),
                     "result": "podcast-player-url-audio-ok",
-                    "runtimeHostBinaryName": session["runtimeHostBinaryName"],
-                    "runtimeHostPackageAttr": session["runtimeHostPackageAttr"],
+                    "systemBinaryName": session["systemBinaryName"],
+                    "systemPackageAttr": session["systemPackageAttr"],
                     "sourceUrl": source_url,
                 },
                 indent=2,

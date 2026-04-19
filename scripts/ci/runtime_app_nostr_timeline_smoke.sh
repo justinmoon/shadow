@@ -201,7 +201,7 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
         runtime_env = os.environ.copy()
         runtime_env["SHADOW_RUNTIME_NOSTR_DB_PATH"] = str(db_path)
         process = subprocess.Popen(
-            [session["runtimeHostBinaryPath"], "--session", session["bundlePath"]],
+            [session["systemBinaryPath"], "--session", session["bundlePath"]],
             cwd=REPO_ROOT,
             env=runtime_env,
             stdin=subprocess.PIPE,
@@ -286,7 +286,7 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
             process.wait(timeout=10)
 
             process = subprocess.Popen(
-                [session["runtimeHostBinaryPath"], "--session", session["bundlePath"]],
+                [session["systemBinaryPath"], "--session", session["bundlePath"]],
                 cwd=REPO_ROOT,
                 env=runtime_env,
                 stdin=subprocess.PIPE,

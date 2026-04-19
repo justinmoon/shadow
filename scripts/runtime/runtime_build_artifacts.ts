@@ -26,8 +26,8 @@ type CliOptions = {
   inputPath: string;
   manifestOut: string;
   profile: Profile;
-  runtimeHostBinaryPath: string;
-  runtimeHostPackageAttr: string;
+  systemBinaryPath: string;
+  systemPackageAttr: string;
   stateDir: string;
   writeEnv: string;
 };
@@ -85,8 +85,8 @@ type ArtifactManifest = {
   audioBackend: string | null;
   generatedAt: string;
   profile: Profile;
-  runtimeHostBinaryPath: string | null;
-  runtimeHostPackageAttr: string | null;
+  systemBinaryPath: string | null;
+  systemPackageAttr: string | null;
   schemaVersion: 1;
   stateDir: string;
 };
@@ -117,8 +117,8 @@ async function main() {
     audioBackend: options.audioBackend || null,
     generatedAt: new Date().toISOString(),
     profile: options.profile,
-    runtimeHostBinaryPath: options.runtimeHostBinaryPath || null,
-    runtimeHostPackageAttr: options.runtimeHostPackageAttr || null,
+    systemBinaryPath: options.systemBinaryPath || null,
+    systemPackageAttr: options.systemPackageAttr || null,
     schemaVersion: 1,
     stateDir: await resolveStateDir(options.stateDir),
   };
@@ -544,9 +544,8 @@ function buildEnvScript(
     exports.SHADOW_SESSION_APP_PROFILE = manifest.profile;
   }
 
-  if (manifest.runtimeHostBinaryPath) {
-    exports.SHADOW_RUNTIME_HOST_BINARY_PATH = manifest.runtimeHostBinaryPath;
-    exports.SHADOW_SYSTEM_BINARY_PATH = manifest.runtimeHostBinaryPath;
+  if (manifest.systemBinaryPath) {
+    exports.SHADOW_SYSTEM_BINARY_PATH = manifest.systemBinaryPath;
   }
   for (const app of Object.values(apps)) {
     if (!app.bundleEnv) {
@@ -668,8 +667,8 @@ function parseArgs(args: string[]): CliOptions {
     inputPath: Deno.env.get("SHADOW_RUNTIME_APP_INPUT_PATH") ?? "",
     manifestOut: "",
     profile: "single",
-    runtimeHostBinaryPath: "",
-    runtimeHostPackageAttr: "",
+    systemBinaryPath: "",
+    systemPackageAttr: "",
     stateDir: "",
     writeEnv: "",
   };
@@ -721,14 +720,12 @@ function parseArgs(args: string[]): CliOptions {
         options.writeEnv = requireValue(arg, args[index + 1]);
         index += 1;
         break;
-      case "--runtime-host-binary-path":
       case "--system-binary-path":
-        options.runtimeHostBinaryPath = requireValue(arg, args[index + 1]);
+        options.systemBinaryPath = requireValue(arg, args[index + 1]);
         index += 1;
         break;
-      case "--runtime-host-package":
       case "--system-package":
-        options.runtimeHostPackageAttr = requireValue(arg, args[index + 1]);
+        options.systemPackageAttr = requireValue(arg, args[index + 1]);
         index += 1;
         break;
       case "--audio-backend":

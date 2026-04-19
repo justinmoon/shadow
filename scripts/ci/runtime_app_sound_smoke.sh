@@ -82,7 +82,7 @@ def run_scenario(
     after_play=None,
 ):
     bundle_path = session["bundlePath"]
-    binary_path = session["runtimeHostBinaryPath"]
+    binary_path = session["systemBinaryPath"]
     process_env = dict(os.environ)
     process_env.update(extra_env)
     process = subprocess.Popen(
@@ -331,8 +331,8 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         )
 
 print(json.dumps({
-    "runtimeHostPackageAttr": file_session["runtimeHostPackageAttr"],
-    "runtimeHostBinaryName": file_session["runtimeHostBinaryName"],
+    "systemPackageAttr": file_session["systemPackageAttr"],
+    "systemBinaryName": file_session["systemBinaryName"],
     "bundlePath": file_session["bundlePath"],
     "result": "sound-audio-api-ok",
     "linuxSpikeProtocolGuard": "ok",

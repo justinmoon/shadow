@@ -208,7 +208,7 @@ SHADOW_SESSION_APP_PROFILE=pixel-shell
 SHADOW_RUNTIME_DIR_MODE=0711
 SHADOW_COMPOSITOR_CONTROL_SOCKET_MODE=0666
 $(pixel_runtime_shell_bundle_env_lines)
-$(pixel_runtime_host_env_lines)
+$(pixel_system_env_lines)
 SHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM=1
 EOF
 )
@@ -229,13 +229,13 @@ if [[ -n "$extra_required_markers" ]]; then
 fi
 
 if (( shell_stage_only == 1 )); then
-  PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_shell_runtime_host_bundle_artifact_dir)" \
+  PIXEL_SYSTEM_BUNDLE_ARTIFACT_DIR="$(pixel_shell_system_bundle_artifact_dir)" \
     "$SCRIPT_DIR/pixel/pixel_push.sh"
   exit 0
 fi
 
 exec env \
-  PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_shell_runtime_host_bundle_artifact_dir)" \
+  PIXEL_SYSTEM_BUNDLE_ARTIFACT_DIR="$(pixel_shell_system_bundle_artifact_dir)" \
   PIXEL_COMPOSITOR_MARKER='[shadow-guest-compositor] presented-frame' \
   PIXEL_GUEST_REQUIRED_MARKERS="$required_markers" \
   PIXEL_GUEST_EXPECT_COMPOSITOR_PROCESS='' \

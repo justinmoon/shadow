@@ -21,7 +21,7 @@ nixpkgs.lib.nixosSystem {
         sessionLog = "${logDir}/shadow-ui-session.log";
         sessionEnv = "${stateDir}/shadow-ui-session-env.sh";
         runtimeArtifactManifest = "${runtimeArtifactDir}/artifact-manifest.json";
-        runtimeHostEnvScript = "${runtimeArtifactDir}/runtime-system-session-env.sh";
+        systemEnvScript = "${runtimeArtifactDir}/runtime-system-session-env.sh";
         guestSystemPkgs = with pkgs; [
           bash
           coreutils
@@ -91,8 +91,8 @@ nixpkgs.lib.nixosSystem {
             echo "runtime artifact dir=${runtimeArtifactDir}"
 
             echo "preparing runtime app session"
-            if [[ ! -f ${runtimeHostEnvScript} ]]; then
-              echo "shadow-ui-session: missing host-prepared runtime env ${runtimeHostEnvScript}" >&2
+            if [[ ! -f ${systemEnvScript} ]]; then
+              echo "shadow-ui-session: missing host-prepared runtime env ${systemEnvScript}" >&2
               exit 1
             fi
             if [[ ! -f ${runtimeArtifactManifest} ]]; then
@@ -153,14 +153,14 @@ PY
             done
             echo "session binaries validated"
             # shellcheck source=/dev/null
-            source ${runtimeHostEnvScript}
+            source ${systemEnvScript}
             runtime_bundle_path="''${SHADOW_RUNTIME_APP_BUNDLE_PATH:-}"
-            runtime_host_path="''${SHADOW_RUNTIME_HOST_BINARY_PATH:-}"
+            system_path="''${SHADOW_SYSTEM_BINARY_PATH:-}"
             echo "runtime env source=host-cache"
             export SHADOW_RUNTIME_CASHU_DATA_DIR=${stateDir}/runtime-cashu
             export SHADOW_RUNTIME_NOSTR_DB_PATH=${stateDir}/runtime-nostr.sqlite3
             echo "runtime bundle=''${runtime_bundle_path:-unset}"
-            echo "runtime host=''${runtime_host_path:-unset}"
+            echo "system binary=''${system_path:-unset}"
             echo "app launch mode=metadata"
             echo "runtime nostr db=$SHADOW_RUNTIME_NOSTR_DB_PATH"
             echo "runtime cashu dir=$SHADOW_RUNTIME_CASHU_DATA_DIR"
@@ -246,7 +246,7 @@ PY
               "export LIBGL_DRIVERS_PATH=\"$LIBGL_DRIVERS_PATH\"" \
               "export XDG_RUNTIME_DIR=\"$XDG_RUNTIME_DIR\"" \
               "export SHADOW_RUNTIME_APP_BUNDLE_PATH=\"$runtime_bundle_path\"" \
-              "export SHADOW_RUNTIME_HOST_BINARY_PATH=\"$runtime_host_path\"" \
+              "export SHADOW_SYSTEM_BINARY_PATH=\"$system_path\"" \
               "export WAYLAND_DISPLAY=\"$nested_wayland\"" \
               "export SHADOW_COMPOSITOR_CONTROL=\"$control_socket\"" \
               >${sessionEnv}

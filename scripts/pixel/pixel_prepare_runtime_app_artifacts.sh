@@ -14,7 +14,7 @@ linux_system="${PIXEL_GUEST_BUILD_SYSTEM:-aarch64-linux}"
 input_path="${PIXEL_RUNTIME_APP_INPUT_PATH:-runtime/app-counter/app.tsx}"
 cache_dir="${PIXEL_RUNTIME_APP_CACHE_DIR:-build/runtime/pixel-counter}"
 bundle_artifact="$(pixel_runtime_app_bundle_artifact)"
-host_bundle_dir="$(pixel_runtime_host_bundle_artifact_dir)"
+host_bundle_dir="$(pixel_system_bundle_artifact_dir)"
 asset_artifact_dir="$(pixel_runtime_app_asset_artifact_dir)"
 host_bundle_out_link="$(pixel_dir)/shadow-system-aarch64-linux-gnu-result"
 host_binary_name="shadow-system"
@@ -45,17 +45,13 @@ asset_content_fingerprint=""
 extra_bundle_fingerprint="__no_extra_bundle__"
 xkb_source_dir="$(runtime_bundle_xkb_source_dir)"
 android_font_source_dir="$(runtime_bundle_android_font_source_dir)"
-declare -a runtime_host_source_inputs=()
+declare -a system_source_inputs=()
 
-mapfile -t runtime_host_source_inputs < <(
+mapfile -t system_source_inputs < <(
   printf '%s\n' "$repo/rust/Cargo.toml"
   printf '%s\n' "$repo/rust/Cargo.lock"
-  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-camera-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-sdk"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-system"
-  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-audio-host"
-  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-cashu-host"
-  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-nostr-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-runtime-protocol"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-linux-audio-spike"
 )
@@ -140,7 +136,7 @@ host_bundle_source_fingerprint="$(
     "$package_ref" \
     "$repo/flake.nix" \
     "$repo/flake.lock" \
-    "${runtime_host_source_inputs[@]}" \
+    "${system_source_inputs[@]}" \
     "$repo/rust/vendor/temporal_rs" \
     "$SCRIPT_DIR/pixel/pixel_prepare_runtime_app_artifacts.sh" \
     "$SCRIPT_DIR/lib/pixel_runtime_linux_bundle_common.sh" \
@@ -173,12 +169,12 @@ if [[ "${PIXEL_FORCE_LINUX_BUNDLE_REBUILD-}" != 1 ]] \
     host_bundle_cache_hit=0
   fi
   if [[ "$host_bundle_cache_hit" == "1" ]]; then
-    printf 'Runtime host bundle cacheHit -> %s\n' "$host_bundle_dir"
+    printf 'System bundle cacheHit -> %s\n' "$host_bundle_dir"
   fi
 fi
 
 if [[ "$host_bundle_cache_hit" != "1" ]]; then
-  stage_runtime_host_linux_bundle "$package_ref" "$host_bundle_out_link" "$host_bundle_dir" "$host_binary_name"
+  stage_system_linux_bundle "$package_ref" "$host_bundle_out_link" "$host_bundle_dir" "$host_binary_name"
   if [[ "$audio_enabled" == "1" ]]; then
     pixel_retry_nix_build nix build --accept-flake-config "$audio_package_ref" --out-link "$audio_out_link"
     cp "$audio_out_link/bin/$audio_binary_name" "$host_bundle_dir/$audio_binary_name"
@@ -395,7 +391,7 @@ print(json.dumps({
     "runtimeAppAssetArtifactDir": os.path.abspath(asset_artifact_dir) if asset_artifact_dir else None,
     "runtimeAppAssetsCacheHit": asset_cache_hit == "1",
     "runtimeAppAssetsContentFingerprint": asset_content_fingerprint or None,
-    "runtimeHostBundleCacheHit": host_bundle_cache_hit == "1",
+    "systemBundleCacheHit": host_bundle_cache_hit == "1",
     "runtimeHelperContentFingerprint": json.load(open(os.path.join(host_bundle_dir, ".runtime-bundle-manifest.json"), "r", encoding="utf-8"))["contentFingerprint"],
     "inputPath": input_path,
     "runtimeBundleAssetDir": os.path.abspath(bundle_asset_dir) if bundle_asset_dir else None,
@@ -404,8 +400,8 @@ print(json.dumps({
     "runtimeExtraBundleArtifactDir": os.path.abspath(extra_bundle_dir) if extra_bundle_dir else None,
     "runtimeAppBundleArtifact": os.path.abspath(bundle_artifact),
     "runtimeAppBundleDevicePath": "/data/local/tmp/shadow-runtime-gnu/runtime-app-bundle.js",
-    "runtimeHostBundleArtifactDir": os.path.abspath(host_bundle_dir),
-    "runtimeHostBinaryDevicePath": "/data/local/tmp/shadow-runtime-gnu/shadow-system",
-    "runtimeHostLauncherDevicePath": "/data/local/tmp/shadow-runtime-gnu/run-shadow-system",
+    "systemBundleArtifactDir": os.path.abspath(host_bundle_dir),
+    "systemBinaryDevicePath": "/data/local/tmp/shadow-runtime-gnu/shadow-system",
+    "systemLauncherDevicePath": "/data/local/tmp/shadow-runtime-gnu/run-shadow-system",
 }, indent=2))
 PY

@@ -2833,61 +2833,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runtime-audio-host"
-version = "0.1.0"
-dependencies = [
- "deno_core",
- "deno_error",
- "libc",
- "serde",
-]
-
-[[package]]
-name = "runtime-camera-host"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "deno_core",
- "deno_error",
- "image",
- "qrcodegen",
- "rqrr",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "runtime-cashu-host"
-version = "0.1.0"
-dependencies = [
- "bip39",
- "cdk",
- "cdk-redb",
- "deno_core",
- "deno_error",
- "getrandom 0.2.17",
- "qrcodegen",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "runtime-nostr-host"
-version = "0.1.0"
-dependencies = [
- "deno_core",
- "deno_error",
- "nostr",
- "nostr-sdk",
- "qrcodegen",
- "rusqlite",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "rusqlite"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3230,8 +3175,13 @@ dependencies = [
 name = "shadow-sdk"
 version = "0.1.0"
 dependencies = [
- "runtime-camera-host",
- "runtime-nostr-host",
+ "base64 0.22.1",
+ "image",
+ "qrcodegen",
+ "rqrr",
+ "rusqlite",
+ "serde",
+ "serde_json",
  "shadow-runtime-protocol",
 ]
 
@@ -3239,11 +3189,16 @@ dependencies = [
 name = "shadow-system"
 version = "0.1.0"
 dependencies = [
+ "bip39",
+ "cdk",
+ "cdk-redb",
  "deno_core",
- "runtime-audio-host",
- "runtime-camera-host",
- "runtime-cashu-host",
- "runtime-nostr-host",
+ "deno_error",
+ "getrandom 0.2.17",
+ "libc",
+ "nostr",
+ "nostr-sdk",
+ "qrcodegen",
  "serde",
  "serde_json",
  "shadow-runtime-protocol",

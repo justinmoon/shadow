@@ -1,11 +1,14 @@
 use deno_core::Extension;
 
+use crate::services;
+
 pub fn runtime_extensions() -> Vec<Extension> {
     vec![
-        runtime_camera_host::init_extension(),
-        runtime_nostr_host::init_extension(),
-        runtime_audio_host::init_extension(),
-        runtime_cashu_host::init_extension(),
+        services::camera::init_extension(),
+        services::nostr::init_extension(),
+        services::audio::init_extension(),
+        services::cashu::init_extension(),
+        services::bootstrap::init_extension(),
     ]
 }
 
@@ -15,6 +18,6 @@ mod tests {
 
     #[test]
     fn runtime_extensions_include_all_current_hosts() {
-        assert_eq!(runtime_extensions().len(), 4);
+        assert_eq!(runtime_extensions().len(), 5);
     }
 }

@@ -288,7 +288,7 @@ overlay_vendor_turnip_lib_path() {
   cp -Lf "$lib_path" "$bundle_dir/lib/libvulkan_freedreno.so"
 }
 
-stage_runtime_host_linux_bundle "$package_ref" "$bundle_out_link" "$bundle_dir" "shadow-blitz-demo"
+stage_system_linux_bundle "$package_ref" "$bundle_out_link" "$bundle_dir" "shadow-blitz-demo"
 
 chmod -R u+w "$bundle_dir" 2>/dev/null || true
 stage_openlog_preload
@@ -318,7 +318,7 @@ cat >"$launcher_artifact" <<EOF
 #!/system/bin/sh
 DIR=\$(cd "\$(dirname "\$0")" && pwd)
 GNU_LD_PRELOAD="\${SHADOW_LINUX_LD_PRELOAD:-}"
-RUNTIME_HOST_PATH="\${SHADOW_RUNTIME_HOST_BINARY_PATH:-}"
+SYSTEM_PATH="\${SHADOW_SYSTEM_BINARY_PATH:-}"
 RUNTIME_BUNDLE_PATH="\${SHADOW_RUNTIME_APP_BUNDLE_PATH:-}"
 
 unset LD_PRELOAD
@@ -337,8 +337,8 @@ mkdir -p "\$HOME" "\$XDG_CACHE_HOME" "\$XDG_CONFIG_HOME" "\$MESA_SHADER_CACHE_DI
 
 export XKB_CONFIG_EXTRA_PATH="\${XKB_CONFIG_EXTRA_PATH:-\$DIR/etc/xkb}"
 export XKB_CONFIG_ROOT="\${XKB_CONFIG_ROOT:-\$DIR/share/X11/xkb}"
-unset SHADOW_RUNTIME_HOST_STAGE_LOADER_PATH
-unset SHADOW_RUNTIME_HOST_STAGE_LIBRARY_PATH
+unset SHADOW_SYSTEM_STAGE_LOADER_PATH
+unset SHADOW_SYSTEM_STAGE_LIBRARY_PATH
 export SHADOW_RUNTIME_AUDIO_BACKEND="linux_spike"
 export SHADOW_RUNTIME_AUDIO_SPIKE_BINARY="\$DIR/shadow-linux-audio-spike"
 export SHADOW_RUNTIME_AUDIO_SPIKE_STAGE_LOADER_PATH="\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME"

@@ -1,6 +1,11 @@
 use std::fmt;
 
-pub use runtime_nostr_host::{ListKind1Query, NostrEvent, NostrQuery, NostrReplaceableQuery};
+mod store;
+
+pub use store::{
+    Kind1Event, ListKind1Query, NostrEvent, NostrHostError, NostrQuery, NostrReplaceableQuery,
+    PublishKind1Request, SqliteNostrService, DEFAULT_PUBLISH_PUBKEY, NOSTR_DB_PATH_ENV,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NostrErrorKind {
@@ -27,8 +32,8 @@ impl fmt::Display for NostrError {
 
 impl std::error::Error for NostrError {}
 
-impl From<runtime_nostr_host::NostrHostError> for NostrError {
-    fn from(error: runtime_nostr_host::NostrHostError) -> Self {
+impl From<NostrHostError> for NostrError {
+    fn from(error: NostrHostError) -> Self {
         Self {
             kind: NostrErrorKind::Other,
             message: error.to_string(),
@@ -37,25 +42,32 @@ impl From<runtime_nostr_host::NostrHostError> for NostrError {
 }
 
 pub fn query(query: NostrQuery) -> Result<Vec<NostrEvent>, NostrError> {
-    runtime_nostr_host::query(query).map_err(NostrError::from)
+    store::query(query).map_err(NostrError::from)
 }
 
 pub fn count(query: NostrQuery) -> Result<usize, NostrError> {
-    runtime_nostr_host::count(query).map_err(NostrError::from)
+    store::count(query).map_err(NostrError::from)
 }
 
 pub fn get_event(id: impl AsRef<str>) -> Result<Option<NostrEvent>, NostrError> {
-    runtime_nostr_host::get_event(id).map_err(NostrError::from)
+    store::get_event(id).map_err(NostrError::from)
 }
 
 pub fn get_replaceable(query: NostrReplaceableQuery) -> Result<Option<NostrEvent>, NostrError> {
-    runtime_nostr_host::get_replaceable(query).map_err(NostrError::from)
+    store::get_replaceable(query).map_err(NostrError::from)
+}
+
+pub fn list_kind1(query: ListKind1Query) -> Result<Vec<Kind1Event>, NostrError> {
+    store::list_kind1(query).map_err(NostrError::from)
+}
+
+pub fn publish_kind1(request: PublishKind1Request) -> Result<Kind1Event, NostrError> {
+    store::publish_kind1(request).map_err(NostrError::from)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{count, get_event, query, NostrEvent, NostrQuery};
-    use runtime_nostr_host::NOSTR_DB_PATH_ENV;
+    use super::{count, get_event, query, NostrEvent, NostrQuery, NOSTR_DB_PATH_ENV};
     use std::fs;
     use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -80,7 +92,7 @@ mod tests {
     }
 
     #[test]
-    fn query_reads_seeded_events_from_runtime_host_store() {
+    fn query_reads_seeded_events_from_sqlite_service() {
         with_temp_db(|| {
             let events = query(NostrQuery::default()).expect("query events");
 

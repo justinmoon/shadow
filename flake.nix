@@ -103,10 +103,6 @@
         "rust/shadow-sdk"
         "rust/shadow-system"
         "rust/shadow-runtime-protocol"
-        "rust/runtime-audio-host"
-        "rust/runtime-camera-host"
-        "rust/runtime-cashu-host"
-        "rust/runtime-nostr-host"
         "rust/vendor/temporal_rs"
       ];
       shadowUiSrc = repoSourceFromPrefixes [
@@ -119,10 +115,6 @@
         "rust/Cargo.lock"
         "rust/shadow-sdk"
         "rust/shadow-system"
-        "rust/runtime-audio-host"
-        "rust/runtime-camera-host"
-        "rust/runtime-cashu-host"
-        "rust/runtime-nostr-host"
         "rust/shadow-runtime-protocol"
         "rust/vendor/temporal_rs"
       ];
@@ -193,10 +185,6 @@
         "rust/shadow-sdk"
         "rust/shadow-system"
         "rust/shadow-runtime-protocol"
-        "rust/runtime-audio-host"
-        "rust/runtime-camera-host"
-        "rust/runtime-cashu-host"
-        "rust/runtime-nostr-host"
         "rust/vendor/temporal_rs"
         "ui/Cargo.toml"
         "ui/Cargo.lock"
@@ -1123,15 +1111,15 @@
           } ''
             mkdir -p "$out"
             ln -s ${shadowVmSmokeSrc} "$out/source"
-            ln -s ${systemPackage} "$out/runtime-host"
+            ln -s ${systemPackage} "$out/system"
             ln -s ${uiVmRunnerPackage} "$out/ui-vm-runner"
             cat >"$out/metadata.json" <<EOF
             {
               "schemaVersion": 1,
               "sourceStorePath": "${shadowVmSmokeSrc}",
-              "runtimeHostPackageAttr": "${systemPackageAttr}",
-              "runtimeHostBinaryPath": "${systemPackage}/bin/shadow-system",
-              "runtimeHostPackagePath": "${systemPackage}",
+              "systemPackageAttr": "${systemPackageAttr}",
+              "systemBinaryPath": "${systemPackage}/bin/shadow-system",
+              "systemPackagePath": "${systemPackage}",
               "uiVmRunnerPackagePath": "${uiVmRunnerPackage}",
               "uiVmRunnerBinaryPath": "${uiVmRunnerPackage}/bin/microvm-run",
               "requiredApps": ${requiredAppsJson}
@@ -1245,7 +1233,7 @@
         in
           {
             ci = {
-              vmRuntimeHost = self.packages.${hostSystem}.${systemPackageAttr};
+              vmSystem = self.packages.${hostSystem}.${systemPackageAttr};
               vmUiRunner = self.packages.${hostSystem}.ui-vm-ci;
               vmSmokeInputs = mkVmSmokeInputsFor pkgs;
             };

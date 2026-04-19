@@ -11,7 +11,7 @@ ensure_bootimg_shell "$@"
 pixel_prepare_dirs
 repo="$(repo_root)"
 linux_system="${PIXEL_GUEST_BUILD_SYSTEM:-aarch64-linux}"
-host_bundle_dir="$(pixel_shell_runtime_host_bundle_artifact_dir)"
+host_bundle_dir="$(pixel_shell_system_bundle_artifact_dir)"
 host_bundle_out_link="$(pixel_dir)/shadow-system-shell-aarch64-linux-gnu-result"
 host_binary_name="shadow-system"
 host_launcher_artifact="$host_bundle_dir/run-shadow-system"
@@ -39,12 +39,8 @@ selected_runtime_app_ids=()
 mapfile -t shell_runtime_source_inputs < <(
   printf '%s\n' "$repo/rust/Cargo.toml"
   printf '%s\n' "$repo/rust/Cargo.lock"
-  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-camera-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-sdk"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-system"
-  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-audio-host"
-  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-cashu-host"
-  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-nostr-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-runtime-protocol"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-linux-audio-spike"
 )
@@ -281,9 +277,9 @@ if [[ "${PIXEL_FORCE_LINUX_BUNDLE_REBUILD-}" != 1 ]] \
   fi
 fi
 if [[ "$host_bundle_cache_hit" == "1" ]]; then
-  printf 'Shell runtime host bundle cacheHit -> %s\n' "$host_bundle_dir"
+  printf 'Shell system bundle cacheHit -> %s\n' "$host_bundle_dir"
 else
-  stage_runtime_host_linux_bundle "$package_ref" "$host_bundle_out_link" "$host_bundle_dir" "$host_binary_name"
+  stage_system_linux_bundle "$package_ref" "$host_bundle_out_link" "$host_bundle_dir" "$host_binary_name"
   if [[ "$audio_enabled" == "1" ]]; then
     pixel_retry_nix_build nix build --accept-flake-config "$audio_package_ref" --out-link "$audio_out_link"
     cp "$audio_out_link/bin/$audio_binary_name" "$host_bundle_dir/$audio_binary_name"
@@ -421,7 +417,7 @@ with open(manifest_path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 
-APP_MANIFEST_JSON="$app_manifest_json" python3 - "$host_bundle_dir" "$host_bundle_cache_hit" "$(pixel_runtime_host_launcher_dst)" <<'PY'
+APP_MANIFEST_JSON="$app_manifest_json" python3 - "$host_bundle_dir" "$host_bundle_cache_hit" "$(pixel_system_launcher_dst)" <<'PY'
 import json
 import os
 import sys
@@ -429,7 +425,7 @@ import sys
 (
     host_bundle_dir,
     host_bundle_cache_hit,
-    runtime_host_launcher_device_path,
+    system_launcher_device_path,
 ) = sys.argv[1:4]
 artifact_manifest = json.loads(os.environ["APP_MANIFEST_JSON"])
 
@@ -454,9 +450,9 @@ payload = {
     **legacy,
     "apps": apps,
     "mode": "pixel-shell-runtime",
-    "runtimeHostBundleArtifactDir": os.path.abspath(host_bundle_dir),
-    "runtimeHostBundleCacheHit": host_bundle_cache_hit == "1",
-    "runtimeHostLauncherDevicePath": runtime_host_launcher_device_path,
+    "systemBundleArtifactDir": os.path.abspath(host_bundle_dir),
+    "systemBundleCacheHit": host_bundle_cache_hit == "1",
+    "systemLauncherDevicePath": system_launcher_device_path,
     "selectedAppIds": sorted(apps.keys()),
 }
 print(json.dumps(payload, indent=2))

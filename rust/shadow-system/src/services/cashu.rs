@@ -722,8 +722,6 @@ extension!(
         op_runtime_cashu_send_token,
         op_runtime_cashu_pay_invoice
     ],
-    esm_entry_point = "ext:runtime_cashu_host_extension/bootstrap.js",
-    esm = [dir "js", "bootstrap.js"],
     state = |state| {
         state.put(CashuHostState::from_env());
     },

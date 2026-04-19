@@ -15,7 +15,7 @@ import sys
 
 session = json.loads(os.environ["SESSION_JSON"])
 bundle_path = session["bundlePath"]
-binary_path = session["runtimeHostBinaryPath"]
+binary_path = session["systemBinaryPath"]
 
 process = subprocess.Popen(
     [binary_path, "--session", bundle_path],
@@ -162,8 +162,8 @@ for fragment in expected_fragments:
         )
 
 print(json.dumps({
-    "runtimeHostPackageAttr": session["runtimeHostPackageAttr"],
-    "runtimeHostBinaryName": session["runtimeHostBinaryName"],
+    "systemPackageAttr": session["systemPackageAttr"],
+    "systemBinaryName": session["systemBinaryName"],
     "bundlePath": bundle_path,
     "result": "keyboard-ok",
 }, indent=2))

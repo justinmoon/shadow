@@ -330,8 +330,6 @@ if actual_apps != expected_apps:
 env_text = env_output_path.read_text(encoding="utf-8")
 if "export SHADOW_SESSION_APP_PROFILE='vm-shell'" not in env_text:
     raise SystemExit("session env missing SHADOW_SESSION_APP_PROFILE")
-if "export SHADOW_RUNTIME_HOST_BINARY_PATH='/tmp/shadow-system'" not in env_text:
-    raise SystemExit("session env missing SHADOW_RUNTIME_HOST_BINARY_PATH")
 if "export SHADOW_SYSTEM_BINARY_PATH='/tmp/shadow-system'" not in env_text:
     raise SystemExit("session env missing SHADOW_SYSTEM_BINARY_PATH")
 

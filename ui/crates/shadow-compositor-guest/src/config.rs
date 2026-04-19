@@ -65,7 +65,7 @@ pub(crate) struct GuestStartupConfig {
 pub(crate) struct GuestClientConfig {
     pub(crate) app_client_path: String,
     pub(crate) runtime_dir: PathBuf,
-    pub(crate) runtime_host_binary_path: Option<std::ffi::OsString>,
+    pub(crate) system_binary_path: Option<std::ffi::OsString>,
     pub(crate) env_assignments: Vec<(String, String)>,
     pub(crate) exit_on_configure: bool,
     pub(crate) linger_ms: Option<u64>,
@@ -89,7 +89,7 @@ impl GuestStartupConfig {
                 app_client_path: first_env_value(&["SHADOW_APP_CLIENT", "SHADOW_GUEST_CLIENT"])
                     .unwrap_or_else(crate::default_guest_client_path),
                 runtime_dir: runtime_dir_from_env_or(|| "/data/local/tmp/shadow-runtime".into()),
-                runtime_host_binary_path: env::var_os("SHADOW_RUNTIME_HOST_BINARY_PATH"),
+                system_binary_path: env::var_os("SHADOW_SYSTEM_BINARY_PATH"),
                 env_assignments: env::var("SHADOW_GUEST_CLIENT_ENV")
                     .ok()
                     .map(|value| parse_env_assignments(&value))

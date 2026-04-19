@@ -55,7 +55,7 @@ asset_dir = os.environ["ASSET_DIR"]
 session = json.loads(os.environ["SESSION_JSON"])
 bundle_dir = session["bundleDir"]
 bundle_path = session["bundlePath"]
-binary_path = session["runtimeHostBinaryPath"]
+binary_path = session["systemBinaryPath"]
 
 for name in os.listdir(asset_dir):
     source_path = os.path.join(asset_dir, name)
@@ -187,7 +187,7 @@ if "State:</span> released" not in released_html:
 print(json.dumps({
     "bundlePath": bundle_path,
     "result": "podcast-player-audio-api-ok",
-    "runtimeHostBinaryName": session["runtimeHostBinaryName"],
-    "runtimeHostPackageAttr": session["runtimeHostPackageAttr"],
+    "systemBinaryName": session["systemBinaryName"],
+    "systemPackageAttr": session["systemPackageAttr"],
 }, indent=2))
 PY

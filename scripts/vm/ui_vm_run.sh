@@ -61,8 +61,8 @@ if [[ -z "$prepared_inputs_path" ]]; then
 fi
 
 prepared_source_root="$(vm_smoke_metadata_value "$prepared_inputs_path" sourceStorePath)"
-runtime_host_package_attr="$(vm_smoke_metadata_value "$prepared_inputs_path" runtimeHostPackageAttr)"
-runtime_host_binary_path="$(vm_smoke_metadata_value "$prepared_inputs_path" runtimeHostBinaryPath)"
+system_package_attr="$(vm_smoke_metadata_value "$prepared_inputs_path" systemPackageAttr)"
+system_binary_path="$(vm_smoke_metadata_value "$prepared_inputs_path" systemBinaryPath)"
 
 if lsof -nP -iTCP:"$ui_vm_ssh_port_value" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "vm: SSH port $ui_vm_ssh_port_value is already in use" >&2
@@ -80,8 +80,8 @@ SHADOW_PODCAST_PLAYER_ASSET_DIR="$podcast_fixture_dir" \
 SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 \
 scripts/runtime/runtime_prepare_host_session_env.sh \
   --flake-ref "$prepared_source_root" \
-  --system-package "$runtime_host_package_attr" \
-  --system-binary-path "$runtime_host_binary_path" \
+  --system-package "$system_package_attr" \
+  --system-binary-path "$system_binary_path" \
   --include-podcast \
   --artifact-root "$RUNTIME_ARTIFACT_DIR" \
   --artifact-guest-root "$RUNTIME_GUEST_DIR" \

@@ -174,7 +174,7 @@ def start_runtime(session, wallet_data_dir: Path, *, qr_payload=None):
         runtime_env["SHADOW_RUNTIME_CAMERA_ALLOW_MOCK"] = "1"
         runtime_env["SHADOW_RUNTIME_CAMERA_MOCK_QR_PAYLOAD"] = qr_payload
     return subprocess.Popen(
-        [session["runtimeHostBinaryPath"], "--session", session["bundlePath"]],
+        [session["systemBinaryPath"], "--session", session["bundlePath"]],
         cwd=REPO_ROOT,
         env=runtime_env,
         stdin=subprocess.PIPE,

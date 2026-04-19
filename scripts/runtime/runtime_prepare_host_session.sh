@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INPUT_PATH="${SHADOW_RUNTIME_APP_INPUT_PATH:-}"
 CACHE_DIR="${SHADOW_RUNTIME_APP_CACHE_DIR:-}"
 runtime_flake_ref=""
-runtime_host_package_attr="shadow-system"
+system_package_attr="shadow-system"
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -15,12 +15,8 @@ parse_args() {
         runtime_flake_ref="${2:-}"
         shift 2
         ;;
-      --runtime-host-package)
-        runtime_host_package_attr="${2:-}"
-        shift 2
-        ;;
       --system-package)
-        runtime_host_package_attr="${2:-}"
+        system_package_attr="${2:-}"
         shift 2
         ;;
       *)
@@ -38,7 +34,7 @@ cd "$REPO_ROOT"
 
 builder_args=(
   --flake-ref "$REPO_FLAKE_REF"
-  --system-package "$runtime_host_package_attr"
+  --system-package "$system_package_attr"
   --profile single
   --app-id app
 )
@@ -71,13 +67,13 @@ data = json.load(sys.stdin)
 print(data["apps"]["app"]["effectiveBundleDir"])
 '
 )"
-runtime_host_binary_path="$(
+system_binary_path="$(
   printf '%s\n' "$manifest_json" | python3 -c '
 import json
 import sys
 
 data = json.load(sys.stdin)
-print(data["runtimeHostBinaryPath"])
+print(data["systemBinaryPath"])
 '
 )"
 input_path="$(
@@ -116,14 +112,14 @@ if [[ -z "$viewport_width" || -z "$viewport_height" ]]; then
   exit 1
 fi
 
-python3 - "$bundle_path" "$bundle_dir" "$runtime_host_binary_path" "$input_path" "$cache_dir" "$runtime_host_package_attr" "$viewport_width" "$viewport_height" <<'PY'
+python3 - "$bundle_path" "$bundle_dir" "$system_binary_path" "$input_path" "$cache_dir" "$system_package_attr" "$viewport_width" "$viewport_height" <<'PY'
 import json
 import os
 import shlex
 import sys
 
-bundle_path, bundle_dir, runtime_host_binary_path, input_path, cache_dir, package_attr, viewport_width, viewport_height = sys.argv[1:9]
-runtime_host_env = {
+bundle_path, bundle_dir, system_binary_path, input_path, cache_dir, package_attr, viewport_width, viewport_height = sys.argv[1:9]
+system_env = {
     "SHADOW_APP_SURFACE_WIDTH": viewport_width,
     "SHADOW_APP_SURFACE_HEIGHT": viewport_height,
     "SHADOW_APP_SAFE_AREA_LEFT": "0",
@@ -142,19 +138,19 @@ os.makedirs(os.path.dirname(wrapper_path), exist_ok=True)
 with open(wrapper_path, "w", encoding="utf-8") as wrapper:
     wrapper.write("#!/usr/bin/env bash\n")
     wrapper.write("set -euo pipefail\n")
-    for key, value in runtime_host_env.items():
+    for key, value in system_env.items():
         wrapper.write(f"export {key}={shlex.quote(value)}\n")
-    wrapper.write(f"exec {shlex.quote(runtime_host_binary_path)} \"$@\"\n")
+    wrapper.write(f"exec {shlex.quote(system_binary_path)} \"$@\"\n")
 os.chmod(wrapper_path, 0o755)
 print(json.dumps({
     "bundlePath": bundle_path,
     "bundleDir": bundle_dir,
     "cacheDir": cache_dir,
     "inputPath": input_path,
-    "runtimeHostBinaryPath": wrapper_path,
-    "runtimeHostBinaryName": os.path.basename(runtime_host_binary_path),
-    "runtimeHostEnv": runtime_host_env,
-    "runtimeHostExecPath": runtime_host_binary_path,
-    "runtimeHostPackageAttr": package_attr,
+    "systemBinaryPath": wrapper_path,
+    "systemBinaryName": os.path.basename(system_binary_path),
+    "systemEnv": system_env,
+    "systemExecPath": system_binary_path,
+    "systemPackageAttr": package_attr,
 }, indent=2))
 PY

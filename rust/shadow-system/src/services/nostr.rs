@@ -1,17 +1,15 @@
 mod relay_publish;
 mod relay_sync;
-mod store;
 
 use deno_core::{extension, op2, Extension, OpState};
 use deno_error::JsErrorBox;
-
-use crate::relay_publish::{PublishEphemeralKind1Request, PublishedKind1Receipt};
-use crate::relay_sync::{SyncKind1Request, SyncedKind1Receipt};
-pub use crate::store::{
-    count, get_event, get_replaceable, list_kind1, publish_kind1, query, Kind1Event,
-    ListKind1Query, NostrEvent, NostrHostError, NostrQuery, NostrReplaceableQuery,
-    PublishKind1Request, SqliteNostrService, NOSTR_DB_PATH_ENV,
+use shadow_sdk::services::nostr::{
+    Kind1Event, ListKind1Query, NostrEvent, NostrQuery, NostrReplaceableQuery, PublishKind1Request,
+    SqliteNostrService,
 };
+
+use self::relay_publish::{PublishEphemeralKind1Request, PublishedKind1Receipt};
+use self::relay_sync::{SyncKind1Request, SyncedKind1Receipt};
 
 #[derive(Debug)]
 struct NostrHostState {
@@ -161,7 +159,7 @@ async fn op_runtime_nostr_publish_ephemeral_kind1(
 }
 
 extension!(
-    runtime_nostr_host_extension,
+    shadow_system_nostr_extension,
     ops = [
         op_runtime_nostr_query,
         op_runtime_nostr_count,
@@ -172,13 +170,11 @@ extension!(
         op_runtime_nostr_sync_kind1,
         op_runtime_nostr_publish_ephemeral_kind1
     ],
-    esm_entry_point = "ext:runtime_nostr_host_extension/bootstrap.js",
-    esm = [dir "js", "bootstrap.js"],
     state = |state| {
         state.put(NostrHostState::from_env());
     },
 );
 
 pub fn init_extension() -> Extension {
-    runtime_nostr_host_extension::init()
+    shadow_system_nostr_extension::init()
 }

@@ -153,13 +153,13 @@ impl AudioBackend {
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| {
                         format!(
-                            "runtime audio host: {AUDIO_SPIKE_BINARY_ENV} is required for linux_spike backend"
+                            "shadow-system audio: {AUDIO_SPIKE_BINARY_ENV} is required for linux_spike backend"
                         )
                     })?;
                 Ok(Self::LinuxSpike { binary_path })
             }
             _ => Err(format!(
-                "runtime audio host: unsupported backend '{value}', expected memory or linux_spike"
+                "shadow-system audio: unsupported backend '{value}', expected memory or linux_spike"
             )),
         }
     }
@@ -605,7 +605,7 @@ impl LinuxSpikePlayerRuntime {
                 self.child = None;
                 self.started_at = None;
                 eprintln!(
-                    "runtime-audio-host linux-spike-exit success={} status={}",
+                    "shadow-system-audio linux-spike-exit success={} status={}",
                     status.success(),
                     status
                 );
@@ -761,7 +761,7 @@ impl LinuxSpikePlayerRuntime {
         let resolved_gain = (configured_gain * volume).max(0.0);
         let start_ms = duration_to_millis_u32(start_position);
         eprintln!(
-            "runtime-audio-host linux-spike-config binary={} loader={} library_path={} base_gain={} player_volume={} resolved_gain={} start_ms={}",
+            "shadow-system-audio linux-spike-config binary={} loader={} library_path={} base_gain={} player_volume={} resolved_gain={} start_ms={}",
             binary_path,
             stage_loader_path.as_deref().unwrap_or("none"),
             stage_library_path.as_deref().unwrap_or("none"),
@@ -817,7 +817,7 @@ impl LinuxSpikePlayerRuntime {
         match source {
             AudioSource::Tone(source) => {
                 eprintln!(
-                    "runtime-audio-host linux-spike-spawn binary={} kind=tone duration_ms={} frequency_hz={} start_ms={} volume={} pid={}",
+                    "shadow-system-audio linux-spike-spawn binary={} kind=tone duration_ms={} frequency_hz={} start_ms={} volume={} pid={}",
                     binary_path,
                     source.duration_ms,
                     source.frequency_hz,
@@ -828,7 +828,7 @@ impl LinuxSpikePlayerRuntime {
             }
             AudioSource::File(source) => {
                 eprintln!(
-                    "runtime-audio-host linux-spike-spawn binary={} kind=file duration_ms={} path={} start_ms={} volume={} pid={}",
+                    "shadow-system-audio linux-spike-spawn binary={} kind=file duration_ms={} path={} start_ms={} volume={} pid={}",
                     binary_path,
                     source.duration_ms,
                     source.path,
@@ -839,7 +839,7 @@ impl LinuxSpikePlayerRuntime {
             }
             AudioSource::Url(source) => {
                 eprintln!(
-                    "runtime-audio-host linux-spike-spawn binary={} kind=url duration_ms={} url={} start_ms={} volume={} pid={}",
+                    "shadow-system-audio linux-spike-spawn binary={} kind=url duration_ms={} url={} start_ms={} volume={} pid={}",
                     binary_path,
                     source.duration_ms,
                     source.url,
@@ -1274,8 +1274,6 @@ extension!(
         op_runtime_audio_seek,
         op_runtime_audio_set_volume
     ],
-    esm_entry_point = "ext:runtime_audio_host_extension/bootstrap.js",
-    esm = [dir "js", "bootstrap.js"],
     state = |state| {
         state.put(AudioHostState::from_env());
     },

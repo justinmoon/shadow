@@ -486,7 +486,7 @@ fill_linux_bundle_runtime_deps() {
   done
 }
 
-stage_runtime_host_linux_bundle() {
+stage_system_linux_bundle() {
   local package_ref out_link bundle_dir binary_name
   local binary_host_path bundle_lib_dir bundle_etc_dir file_output
   local interpreter_path loader_name needed_lib lib_source_path

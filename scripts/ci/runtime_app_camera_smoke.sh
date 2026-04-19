@@ -5,11 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$REPO_ROOT"
-if [[ -n "${SHADOW_RUNTIME_HOST_BINARY_OVERRIDE:-}" ]]; then
+if [[ -n "${SHADOW_SYSTEM_BINARY_OVERRIDE:-}" ]]; then
   session_json="$(
     deno run --quiet --allow-env --allow-read --allow-write --allow-run \
       scripts/runtime/runtime_build_artifacts.ts \
-      --runtime-host-binary-path "${SHADOW_RUNTIME_HOST_BINARY_OVERRIDE}" \
+      --system-binary-path "${SHADOW_SYSTEM_BINARY_OVERRIDE}" \
       --profile single \
       --app-id app \
       --input runtime/app-camera/app.tsx \
@@ -34,14 +34,14 @@ from html.parser import HTMLParser
 session = json.loads(os.environ["SESSION_JSON"])
 if "bundlePath" in session:
     bundle_path = session["bundlePath"]
-    binary_path = session["runtimeHostBinaryPath"]
-    runtime_host_binary_name = session["runtimeHostBinaryName"]
-    runtime_host_package_attr = session["runtimeHostPackageAttr"]
+    binary_path = session["systemBinaryPath"]
+    system_binary_name = session["systemBinaryName"]
+    system_package_attr = session["systemPackageAttr"]
 else:
     bundle_path = session["apps"]["app"]["effectiveBundlePath"]
-    binary_path = session["runtimeHostBinaryPath"]
-    runtime_host_binary_name = os.path.basename(binary_path)
-    runtime_host_package_attr = session.get("runtimeHostPackageAttr")
+    binary_path = session["systemBinaryPath"]
+    system_binary_name = os.path.basename(binary_path)
+    system_package_attr = session.get("systemPackageAttr")
 
 process = subprocess.Popen(
     [binary_path, "--session", bundle_path],
@@ -192,8 +192,8 @@ print(
         {
             "bundlePath": bundle_path,
             "result": "camera-explicit-mock-capture-ok",
-            "runtimeHostBinaryName": runtime_host_binary_name,
-            "runtimeHostPackageAttr": runtime_host_package_attr,
+            "systemBinaryName": system_binary_name,
+            "systemPackageAttr": system_package_attr,
         },
         indent=2,
     )

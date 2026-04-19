@@ -16,7 +16,7 @@ import time
 
 session = json.loads(os.environ["SESSION_JSON"])
 bundle_path = session["bundlePath"]
-binary_path = session["runtimeHostBinaryPath"]
+binary_path = session["systemBinaryPath"]
 
 process = subprocess.Popen(
     [binary_path, "--session", bundle_path],
@@ -96,8 +96,8 @@ if return_code not in (0, None):
     raise SystemExit(f"runtime-app-nostr-gm-smoke: runtime host exited {return_code}\n{stderr}")
 
 print(json.dumps({
-    "runtimeHostPackageAttr": session["runtimeHostPackageAttr"],
-    "runtimeHostBinaryName": session["runtimeHostBinaryName"],
+    "systemPackageAttr": session["systemPackageAttr"],
+    "systemBinaryName": session["systemBinaryName"],
     "bundlePath": bundle_path,
     "result": "GM sent" if "GM sent" in final_html else "Relay publish failed",
 }, indent=2))

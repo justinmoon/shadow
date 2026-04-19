@@ -117,7 +117,7 @@ impl SqliteNostrService {
 
         let connection = Connection::open(db_path).map_err(|error| {
             NostrHostError::new(format!(
-                "runtime nostr host: open sqlite db {db_path}: {error}"
+                "shadow nostr service: open sqlite db {db_path}: {error}"
             ))
         })?;
         let service = Self { connection };
@@ -146,7 +146,7 @@ impl SqliteNostrService {
             )
             .map_err(|error| {
                 NostrHostError::new(format!(
-                    "runtime nostr host: initialize sqlite schema: {error}"
+                    "shadow nostr service: initialize sqlite schema: {error}"
                 ))
             })?;
 
@@ -156,7 +156,7 @@ impl SqliteNostrService {
             .connection
             .query_row("SELECT COUNT(*) FROM nostr_events", [], |row| row.get(0))
             .map_err(|error| {
-                NostrHostError::new(format!("runtime nostr host: count sqlite rows: {error}"))
+                NostrHostError::new(format!("shadow nostr service: count sqlite rows: {error}"))
             })?;
         if row_count == 0 {
             self.seed_initial_events()?;
@@ -175,7 +175,7 @@ impl SqliteNostrService {
             )
             .map_err(|error| {
                 NostrHostError::new(format!(
-                    "runtime nostr host: inspect legacy sqlite schema: {error}"
+                    "shadow nostr service: inspect legacy sqlite schema: {error}"
                 ))
             })?;
         if !legacy_exists {
@@ -200,7 +200,7 @@ impl SqliteNostrService {
             )
             .map_err(|error| {
                 NostrHostError::new(format!(
-                    "runtime nostr host: import legacy kind1 rows: {error}"
+                    "shadow nostr service: import legacy kind1 rows: {error}"
                 ))
             })?;
 
@@ -244,7 +244,7 @@ impl SqliteNostrService {
                 )
                 .map_err(|error| {
                     NostrHostError::new(format!(
-                        "runtime nostr host: seed sqlite note {id}: {error}"
+                        "shadow nostr service: seed sqlite note {id}: {error}"
                     ))
                 })?;
         }
@@ -504,7 +504,7 @@ impl SqliteNostrService {
             )
             .map_err(|error| {
                 NostrHostError::new(format!(
-                    "runtime nostr host: insert sqlite note {}: {error}",
+                    "shadow nostr service: insert sqlite note {}: {error}",
                     event.id
                 ))
             })?;
@@ -574,7 +574,7 @@ fn ensure_db_parent_dir(db_path: &str) -> Result<(), NostrHostError> {
     {
         fs::create_dir_all(parent).map_err(|error| {
             NostrHostError::new(format!(
-                "runtime nostr host: create sqlite parent dir {}: {error}",
+                "shadow nostr service: create sqlite parent dir {}: {error}",
                 parent.display()
             ))
         })?;

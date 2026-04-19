@@ -51,13 +51,13 @@ expect_fixed \
 
 expect_fixed \
   "$REPO_ROOT/scripts/pixel/pixel_shell_drm.sh" \
-  '$(pixel_runtime_host_env_lines)' \
-  "pixel shell nostr sqlite path"
+  '$(pixel_system_env_lines)' \
+  "pixel shell system env nostr sqlite path"
 
 expect_fixed \
   "$REPO_ROOT/scripts/pixel/pixel_runtime_app_drm.sh" \
-  '$(pixel_runtime_host_env_lines)' \
-  "pixel runtime nostr sqlite path"
+  '$(pixel_system_env_lines)' \
+  "pixel runtime system env nostr sqlite path"
 
 expect_fixed \
   "$REPO_ROOT/runtime/app-nostr-timeline/app.tsx" \

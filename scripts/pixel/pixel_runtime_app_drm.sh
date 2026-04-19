@@ -85,7 +85,7 @@ runtime_mesa_cache_dir="$(pixel_runtime_mesa_cache_dir)"
 runtime_viewport_mode="${PIXEL_RUNTIME_APP_VIEWPORT_MODE-}"
 
 if (( runtime_stage_only == 1 )); then
-  PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_runtime_host_bundle_artifact_dir)" \
+  PIXEL_SYSTEM_BUNDLE_ARTIFACT_DIR="$(pixel_system_bundle_artifact_dir)" \
   PIXEL_RUNTIME_APP_ASSET_ARTIFACT_DIR="$(pixel_runtime_app_asset_artifact_dir)" \
   PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT="$(pixel_runtime_app_bundle_artifact)" \
     "$SCRIPT_DIR/pixel/pixel_push.sh"
@@ -139,7 +139,7 @@ SHADOW_BLITZ_UNDECORATED=1
 SHADOW_BLITZ_ANDROID_FONTS=${SHADOW_BLITZ_ANDROID_FONTS:-curated}
 SHADOW_BLITZ_SOFTWARE_KEYBOARD=${SHADOW_BLITZ_SOFTWARE_KEYBOARD:-1}
 SHADOW_RUNTIME_APP_BUNDLE_PATH=$(pixel_runtime_app_bundle_dst)
-$(pixel_runtime_host_env_lines)
+$(pixel_system_env_lines)
 $(pixel_runtime_linux_user_env_lines)
 EOF
 )
@@ -200,7 +200,7 @@ fi
 # runs; opt back in explicitly when a debug session needs it.
 : "${PIXEL_GUEST_FRAME_CAPTURE_MODE:=off}"
 
-PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR="$(pixel_runtime_host_bundle_artifact_dir)" \
+PIXEL_SYSTEM_BUNDLE_ARTIFACT_DIR="$(pixel_system_bundle_artifact_dir)" \
 PIXEL_RUNTIME_APP_ASSET_ARTIFACT_DIR="$(pixel_runtime_app_asset_artifact_dir)" \
 PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT="$(pixel_runtime_app_bundle_artifact)" \
 PIXEL_COMPOSITOR_MARKER='[shadow-guest-compositor] presented-frame' \

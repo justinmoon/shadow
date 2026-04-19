@@ -1,5 +1,7 @@
 use std::fmt;
 
+use super::camera_backend;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CameraInfo {
     pub id: String,
@@ -90,21 +92,19 @@ impl fmt::Display for CameraError {
 
 impl std::error::Error for CameraError {}
 
-impl From<runtime_camera_host::CameraHostError> for CameraError {
-    fn from(error: runtime_camera_host::CameraHostError) -> Self {
+impl From<camera_backend::CameraHostError> for CameraError {
+    fn from(error: camera_backend::CameraHostError) -> Self {
         let kind = match error.kind() {
-            runtime_camera_host::CameraHostErrorKind::BackendNotConfigured => {
+            camera_backend::CameraHostErrorKind::BackendNotConfigured => {
                 CameraErrorKind::NotConfigured
             }
-            runtime_camera_host::CameraHostErrorKind::Unavailable => CameraErrorKind::Unavailable,
-            runtime_camera_host::CameraHostErrorKind::NoCamera => CameraErrorKind::NoCamera,
-            runtime_camera_host::CameraHostErrorKind::InvalidImageData => {
+            camera_backend::CameraHostErrorKind::Unavailable => CameraErrorKind::Unavailable,
+            camera_backend::CameraHostErrorKind::NoCamera => CameraErrorKind::NoCamera,
+            camera_backend::CameraHostErrorKind::InvalidImageData => {
                 CameraErrorKind::InvalidImageData
             }
-            runtime_camera_host::CameraHostErrorKind::QrCodeNotFound => {
-                CameraErrorKind::QrCodeNotFound
-            }
-            runtime_camera_host::CameraHostErrorKind::Other => CameraErrorKind::Other,
+            camera_backend::CameraHostErrorKind::QrCodeNotFound => CameraErrorKind::QrCodeNotFound,
+            camera_backend::CameraHostErrorKind::Other => CameraErrorKind::Other,
         };
         Self {
             kind,
@@ -123,27 +123,27 @@ impl From<String> for CameraError {
 }
 
 pub fn list_cameras() -> Result<Vec<CameraInfo>, CameraError> {
-    runtime_camera_host::list_cameras()
+    camera_backend::list_cameras()
         .map(|devices| devices.into_iter().map(CameraInfo::from).collect())
         .map_err(CameraError::from)
 }
 
 pub fn capture_still(request: CaptureRequest) -> Result<CaptureResult, CameraError> {
-    runtime_camera_host::capture_still(request.into())
+    camera_backend::capture_still(request.into())
         .map(CaptureResult::from)
         .map_err(CameraError::from)
 }
 
 pub fn decode_qr_code(image_data_url: impl Into<String>) -> Result<DecodedQrCode, CameraError> {
-    runtime_camera_host::decode_qr_code(runtime_camera_host::DecodeQrCodeRequest {
+    camera_backend::decode_qr_code(camera_backend::DecodeQrCodeRequest {
         image_data_url: Some(image_data_url.into()),
     })
     .map(DecodedQrCode::from)
     .map_err(CameraError::from)
 }
 
-impl From<runtime_camera_host::CameraDevice> for CameraInfo {
-    fn from(value: runtime_camera_host::CameraDevice) -> Self {
+impl From<camera_backend::CameraDevice> for CameraInfo {
+    fn from(value: camera_backend::CameraDevice) -> Self {
         Self {
             id: value.id,
             label: value.label,
@@ -164,7 +164,7 @@ impl From<String> for LensFacing {
     }
 }
 
-impl From<CaptureRequest> for runtime_camera_host::CaptureRequest {
+impl From<CaptureRequest> for camera_backend::CaptureRequest {
     fn from(value: CaptureRequest) -> Self {
         Self {
             camera_id: value.camera_id,
@@ -172,8 +172,8 @@ impl From<CaptureRequest> for runtime_camera_host::CaptureRequest {
     }
 }
 
-impl From<runtime_camera_host::CaptureStillReceipt> for CaptureResult {
-    fn from(value: runtime_camera_host::CaptureStillReceipt) -> Self {
+impl From<camera_backend::CaptureStillReceipt> for CaptureResult {
+    fn from(value: camera_backend::CaptureStillReceipt) -> Self {
         Self {
             bytes: value.bytes,
             camera_id: value.camera_id,
@@ -184,8 +184,8 @@ impl From<runtime_camera_host::CaptureStillReceipt> for CaptureResult {
     }
 }
 
-impl From<runtime_camera_host::DecodeQrCodeReceipt> for DecodedQrCode {
-    fn from(value: runtime_camera_host::DecodeQrCodeReceipt) -> Self {
+impl From<camera_backend::DecodeQrCodeReceipt> for DecodedQrCode {
+    fn from(value: camera_backend::DecodeQrCodeReceipt) -> Self {
         Self {
             code_count: value.code_count,
             payload: value.payload,
@@ -199,32 +199,15 @@ mod tests {
         capture_still, decode_qr_code, list_cameras, CameraError, CameraErrorKind, CaptureRequest,
         LensFacing,
     };
-    use runtime_camera_host::{
-        CAMERA_ALLOW_MOCK_ENV, CAMERA_ENDPOINT_ENV, CAMERA_MOCK_QR_PAYLOAD_ENV,
-        CAMERA_TIMEOUT_MS_ENV,
+    use crate::services::camera_backend::{
+        clear_test_camera_env, test_camera_env_lock, CAMERA_ALLOW_MOCK_ENV, CAMERA_ENDPOINT_ENV,
+        CAMERA_MOCK_QR_PAYLOAD_ENV,
     };
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn clear_camera_env() {
-        for key in [
-            CAMERA_ALLOW_MOCK_ENV,
-            CAMERA_ENDPOINT_ENV,
-            CAMERA_MOCK_QR_PAYLOAD_ENV,
-            CAMERA_TIMEOUT_MS_ENV,
-        ] {
-            std::env::remove_var(key);
-        }
-    }
 
     #[test]
     fn camera_api_uses_the_shared_mock_path() {
-        let _guard = env_lock().lock().expect("env lock");
-        clear_camera_env();
+        let _guard = test_camera_env_lock().lock().expect("env lock");
+        clear_test_camera_env();
         std::env::set_var(CAMERA_ALLOW_MOCK_ENV, "1");
 
         let cameras = list_cameras().expect("mock cameras");
@@ -240,8 +223,8 @@ mod tests {
 
     #[test]
     fn camera_api_decodes_mock_qr_payloads() {
-        let _guard = env_lock().lock().expect("env lock");
-        clear_camera_env();
+        let _guard = test_camera_env_lock().lock().expect("env lock");
+        clear_test_camera_env();
         std::env::set_var(CAMERA_ALLOW_MOCK_ENV, "1");
         std::env::set_var(CAMERA_MOCK_QR_PAYLOAD_ENV, "shadow://camera-sdk");
 
@@ -254,8 +237,8 @@ mod tests {
 
     #[test]
     fn camera_error_preserves_backend_configuration_failures() {
-        let _guard = env_lock().lock().expect("env lock");
-        clear_camera_env();
+        let _guard = test_camera_env_lock().lock().expect("env lock");
+        clear_test_camera_env();
 
         let error = list_cameras().unwrap_err();
         assert_eq!(error.kind(), CameraErrorKind::NotConfigured);

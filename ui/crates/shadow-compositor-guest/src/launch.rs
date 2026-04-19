@@ -104,8 +104,8 @@ fn configure_guest_client_command(
         .env("XDG_RUNTIME_DIR", &client_config.runtime_dir)
         .env(control::COMPOSITOR_CONTROL_ENV, control_socket_path);
 
-    if let Some(value) = &client_config.runtime_host_binary_path {
-        command.env("SHADOW_RUNTIME_HOST_BINARY_PATH", value);
+    if let Some(value) = &client_config.system_binary_path {
+        command.env("SHADOW_SYSTEM_BINARY_PATH", value);
     }
     for (key, value) in &client_config.env_assignments {
         command.env(key, value);

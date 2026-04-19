@@ -9,10 +9,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
-#[cfg(feature = "runtime-extension")]
-use deno_core::{extension, op2, Extension};
-#[cfg(feature = "runtime-extension")]
-use deno_error::JsErrorBox;
 use image::ImageFormat;
 use image::{DynamicImage, ImageBuffer, Luma};
 use qrcodegen::{QrCode, QrCodeEcc};
@@ -475,58 +471,6 @@ pub fn decode_qr_code(
     decode_qr_code_request(request)
 }
 
-#[cfg(feature = "runtime-extension")]
-#[op2]
-#[serde]
-async fn op_runtime_camera_list_cameras() -> Result<Vec<CameraDevice>, JsErrorBox> {
-    tokio::task::spawn_blocking(list_cameras)
-        .await
-        .map_err(|error| JsErrorBox::generic(format!("camera.listCameras join: {error}")))?
-        .map_err(|error| JsErrorBox::generic(error.to_string()))
-}
-
-#[cfg(feature = "runtime-extension")]
-#[op2]
-#[serde]
-async fn op_runtime_camera_capture_still(
-    #[serde] request: CaptureRequest,
-) -> Result<CaptureStillReceipt, JsErrorBox> {
-    tokio::task::spawn_blocking(move || capture_still(request))
-        .await
-        .map_err(|error| JsErrorBox::generic(format!("camera.captureStill join: {error}")))?
-        .map_err(|error| JsErrorBox::generic(error.to_string()))
-}
-
-#[cfg(feature = "runtime-extension")]
-#[op2]
-#[serde]
-async fn op_runtime_camera_capture_preview_frame(
-    #[serde] request: CaptureRequest,
-) -> Result<CaptureStillReceipt, JsErrorBox> {
-    tokio::task::spawn_blocking(move || capture_preview_frame(request))
-        .await
-        .map_err(|error| JsErrorBox::generic(format!("camera.capturePreviewFrame join: {error}")))?
-        .map_err(|error| JsErrorBox::generic(error.to_string()))
-}
-
-#[cfg(feature = "runtime-extension")]
-#[op2(fast)]
-fn op_runtime_camera_debug_log(#[string] message: String) {
-    eprintln!("[shadow-runtime-camera] {message}");
-}
-
-#[cfg(feature = "runtime-extension")]
-#[op2]
-#[serde]
-async fn op_runtime_camera_decode_qr_code(
-    #[serde] request: DecodeQrCodeRequest,
-) -> Result<DecodeQrCodeReceipt, JsErrorBox> {
-    tokio::task::spawn_blocking(move || decode_qr_code(request))
-        .await
-        .map_err(|error| JsErrorBox::generic(format!("camera.decodeQrCode join: {error}")))?
-        .map_err(|error| JsErrorBox::generic(error.to_string()))
-}
-
 fn label_for_camera_id(camera_id: &str) -> String {
     if camera_id.ends_with("/0") {
         return String::from("Rear Camera");
@@ -868,56 +812,38 @@ fn normalize_rotation_degrees(rotation_degrees: u16) -> u16 {
     }
 }
 
-#[cfg(feature = "runtime-extension")]
-extension!(
-    runtime_camera_host_extension,
-    ops = [
-        op_runtime_camera_list_cameras,
-        op_runtime_camera_capture_still,
-        op_runtime_camera_capture_preview_frame,
-        op_runtime_camera_debug_log,
-        op_runtime_camera_decode_qr_code
-    ],
-    esm_entry_point = "ext:runtime_camera_host_extension/bootstrap.js",
-    esm = [dir "js", "bootstrap.js"],
-);
+#[cfg(test)]
+pub(crate) fn test_camera_env_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
 
-#[cfg(feature = "runtime-extension")]
-pub fn init_extension() -> Extension {
-    runtime_camera_host_extension::init()
+#[cfg(test)]
+pub(crate) fn clear_test_camera_env() {
+    for key in [
+        CAMERA_ALLOW_MOCK_ENV,
+        CAMERA_ENDPOINT_ENV,
+        CAMERA_MOCK_QR_PAYLOAD_ENV,
+        CAMERA_TIMEOUT_MS_ENV,
+    ] {
+        std::env::remove_var(key);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         build_capture_image_data_url, build_qr_png_data_url,
-        camera_devices_from_broker_list_response, capture_still, decode_image_data_url,
-        decode_qr_code, decode_qr_code_from_image_data_url, image_format_for_mime_type,
-        list_cameras, missing_camera_backend_error, normalize_rotation_degrees, parse_truthy_env,
-        BrokerCameraDevice, BrokerListResponse, CameraHostErrorKind, CaptureRequest,
-        DecodeQrCodeRequest, BASE64_STANDARD, CAMERA_ALLOW_MOCK_ENV, CAMERA_ENDPOINT_ENV,
-        CAMERA_MOCK_QR_PAYLOAD_ENV, CAMERA_TIMEOUT_MS_ENV,
+        camera_devices_from_broker_list_response, capture_still, clear_test_camera_env,
+        decode_image_data_url, decode_qr_code, decode_qr_code_from_image_data_url,
+        image_format_for_mime_type, list_cameras, missing_camera_backend_error,
+        normalize_rotation_degrees, parse_truthy_env, test_camera_env_lock, BrokerCameraDevice,
+        BrokerListResponse, CameraHostErrorKind, CaptureRequest, DecodeQrCodeRequest,
+        BASE64_STANDARD, CAMERA_ALLOW_MOCK_ENV, CAMERA_ENDPOINT_ENV, CAMERA_MOCK_QR_PAYLOAD_ENV,
     };
     use base64::Engine as _;
     use image::{DynamicImage, ImageBuffer, ImageFormat, Luma, Rgb};
     use std::io::Cursor;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn clear_camera_env() {
-        for key in [
-            CAMERA_ALLOW_MOCK_ENV,
-            CAMERA_ENDPOINT_ENV,
-            CAMERA_MOCK_QR_PAYLOAD_ENV,
-            CAMERA_TIMEOUT_MS_ENV,
-        ] {
-            std::env::remove_var(key);
-        }
-    }
 
     fn sample_png_base64(width: u32, height: u32) -> String {
         let image = DynamicImage::ImageRgb8(ImageBuffer::from_fn(width, height, |x, _| {
@@ -990,8 +916,8 @@ mod tests {
 
     #[test]
     fn native_api_lists_mock_cameras_when_enabled() {
-        let _guard = env_lock().lock().expect("env lock");
-        clear_camera_env();
+        let _guard = test_camera_env_lock().lock().expect("env lock");
+        clear_test_camera_env();
         std::env::set_var(CAMERA_ALLOW_MOCK_ENV, "1");
 
         let cameras = list_cameras().expect("mock cameras");
@@ -1003,8 +929,8 @@ mod tests {
 
     #[test]
     fn native_api_captures_and_decodes_mock_qr_frames() {
-        let _guard = env_lock().lock().expect("env lock");
-        clear_camera_env();
+        let _guard = test_camera_env_lock().lock().expect("env lock");
+        clear_test_camera_env();
         std::env::set_var(CAMERA_ALLOW_MOCK_ENV, "1");
         std::env::set_var(CAMERA_MOCK_QR_PAYLOAD_ENV, "shadow://camera-proof");
 
@@ -1024,8 +950,8 @@ mod tests {
 
     #[test]
     fn native_api_requires_an_explicit_backend() {
-        let _guard = env_lock().lock().expect("env lock");
-        clear_camera_env();
+        let _guard = test_camera_env_lock().lock().expect("env lock");
+        clear_test_camera_env();
 
         let error = list_cameras().unwrap_err();
         assert_eq!(error.kind(), CameraHostErrorKind::BackendNotConfigured);

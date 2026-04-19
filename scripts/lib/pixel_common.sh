@@ -1214,7 +1214,7 @@ pixel_runtime_app_bundle_artifact_for() {
   pixel_artifact_path "$(pixel_runtime_app_bundle_filename "$1")"
 }
 
-pixel_runtime_host_bundle_artifact_dir() {
+pixel_system_bundle_artifact_dir() {
   pixel_artifact_path shadow-runtime-gnu
 }
 
@@ -1222,7 +1222,7 @@ pixel_runtime_app_asset_artifact_dir() {
   pixel_artifact_path shadow-runtime-app-assets
 }
 
-pixel_shell_runtime_host_bundle_artifact_dir() {
+pixel_shell_system_bundle_artifact_dir() {
   pixel_artifact_path shadow-runtime-shell-gnu
 }
 
@@ -1309,11 +1309,11 @@ pixel_runtime_app_bundle_dst_for() {
   printf '%s/%s\n' "$(pixel_runtime_linux_dir)" "$(pixel_runtime_app_bundle_filename "$1")"
 }
 
-pixel_runtime_host_binary_dst() {
+pixel_system_binary_dst() {
   printf '%s/shadow-system\n' "$(pixel_runtime_linux_dir)"
 }
 
-pixel_runtime_host_launcher_dst() {
+pixel_system_launcher_dst() {
   printf '%s/run-shadow-system\n' "$(pixel_runtime_linux_dir)"
 }
 
@@ -1321,9 +1321,9 @@ pixel_runtime_openlog_preload_dst() {
   printf '%s/lib/shadow-openlog-preload.so\n' "$(pixel_runtime_linux_dir)"
 }
 
-pixel_runtime_host_env_lines() {
+pixel_system_env_lines() {
   cat <<EOF
-SHADOW_RUNTIME_HOST_BINARY_PATH=$(pixel_runtime_host_launcher_dst)
+SHADOW_SYSTEM_BINARY_PATH=$(pixel_system_launcher_dst)
 SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)
 EOF
 }
@@ -2004,8 +2004,8 @@ pixel_require_runtime_artifacts() {
     echo "pixel: missing runtime app bundle artifact: ${PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT}" >&2
     missing=1
   fi
-  if [[ -n "${PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR:-}" && ! -d "${PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR}" ]]; then
-    echo "pixel: missing runtime host bundle artifact dir: ${PIXEL_RUNTIME_HOST_BUNDLE_ARTIFACT_DIR}" >&2
+  if [[ -n "${PIXEL_SYSTEM_BUNDLE_ARTIFACT_DIR:-}" && ! -d "${PIXEL_SYSTEM_BUNDLE_ARTIFACT_DIR}" ]]; then
+    echo "pixel: missing system bundle artifact dir: ${PIXEL_SYSTEM_BUNDLE_ARTIFACT_DIR}" >&2
     missing=1
   fi
   return "$missing"

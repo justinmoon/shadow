@@ -79,7 +79,7 @@ impl RuntimeDocument {
                 Self::with_runtime(payload, Some(runtime_session))
             }
             Ok(None) => panic!(
-                "configure runtime session: missing SHADOW_RUNTIME_APP_BUNDLE_PATH and SHADOW_RUNTIME_HOST_BINARY_PATH"
+                "configure runtime session: missing SHADOW_RUNTIME_APP_BUNDLE_PATH and SHADOW_SYSTEM_BINARY_PATH"
             ),
             Err(error) => panic!("configure runtime session: {error}"),
         }

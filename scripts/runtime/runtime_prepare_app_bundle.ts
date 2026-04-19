@@ -151,7 +151,7 @@ if (runtimeAppConfig !== null) {
 const runtimeApp = createRuntimeApp(renderApp, { css: runtimeDocumentCss });
 const documentPayload = runtimeApp.renderDocument();
 globalThis.SHADOW_RUNTIME_APP = runtimeApp;
-globalThis.SHADOW_RUNTIME_HOST = {
+const shadowSystem = {
   dispatch(event) {
     return JSON.stringify(runtimeApp.dispatch(event));
   },
@@ -181,6 +181,7 @@ globalThis.SHADOW_RUNTIME_HOST = {
     return JSON.stringify(runtimeApp.renderIfDirty());
   },
 };
+globalThis.SHADOW_SYSTEM = shadowSystem;
 globalThis.RUNTIME_APP_DOCUMENT = documentPayload;
 `;
 }

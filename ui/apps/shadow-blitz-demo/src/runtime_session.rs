@@ -13,11 +13,11 @@ pub use shadow_runtime_protocol::{
 };
 
 const RUNTIME_APP_BUNDLE_PATH_ENV: &str = "SHADOW_RUNTIME_APP_BUNDLE_PATH";
-const RUNTIME_HOST_BINARY_PATH_ENV: &str = "SHADOW_RUNTIME_HOST_BINARY_PATH";
-const RUNTIME_HOST_STAGE_LOADER_PATH_ENV: &str = "SHADOW_RUNTIME_HOST_STAGE_LOADER_PATH";
-const RUNTIME_HOST_STAGE_LIBRARY_PATH_ENV: &str = "SHADOW_RUNTIME_HOST_STAGE_LIBRARY_PATH";
+const SYSTEM_BINARY_PATH_ENV: &str = "SHADOW_SYSTEM_BINARY_PATH";
+const SYSTEM_STAGE_LOADER_PATH_ENV: &str = "SHADOW_SYSTEM_STAGE_LOADER_PATH";
+const SYSTEM_STAGE_LIBRARY_PATH_ENV: &str = "SHADOW_SYSTEM_STAGE_LIBRARY_PATH";
 const RUNTIME_DIAGNOSTIC_PREFIX: &str = "[shadow-runtime-";
-const RUNTIME_HOST_CLEAN_ENV: &[&str] = &[
+const SYSTEM_CLEAN_ENV: &[&str] = &[
     "LD_LIBRARY_PATH",
     "LD_PRELOAD",
     "LIBGL_DRIVERS_PATH",
@@ -28,8 +28,8 @@ const RUNTIME_HOST_CLEAN_ENV: &[&str] = &[
     "MESA_SHADER_CACHE_DIR",
     "SHADOW_LINUX_LD_PRELOAD",
     "SHADOW_OPENLOG_DENY_DRI",
-    RUNTIME_HOST_STAGE_LOADER_PATH_ENV,
-    RUNTIME_HOST_STAGE_LIBRARY_PATH_ENV,
+    SYSTEM_STAGE_LOADER_PATH_ENV,
+    SYSTEM_STAGE_LIBRARY_PATH_ENV,
     "TU_DEBUG",
 ];
 
@@ -42,7 +42,7 @@ pub struct RuntimeSession {
 impl RuntimeSession {
     pub fn from_env() -> Result<Option<Self>, String> {
         let bundle_path = env::var(RUNTIME_APP_BUNDLE_PATH_ENV).ok();
-        let host_binary_path = env::var(RUNTIME_HOST_BINARY_PATH_ENV).ok();
+        let host_binary_path = env::var(SYSTEM_BINARY_PATH_ENV).ok();
 
         match (host_binary_path, bundle_path) {
             (None, None) => Ok(None),
@@ -50,7 +50,7 @@ impl RuntimeSession {
                 Self::spawn(host_binary_path, bundle_path).map(Some)
             }
             _ => Err(format!(
-                "runtime session requires both {RUNTIME_HOST_BINARY_PATH_ENV} and {RUNTIME_APP_BUNDLE_PATH_ENV}"
+                "runtime session requires both {SYSTEM_BINARY_PATH_ENV} and {RUNTIME_APP_BUNDLE_PATH_ENV}"
             )),
         }
     }
@@ -109,8 +109,8 @@ impl RuntimeSession {
     }
 
     fn spawn(host_binary_path: String, bundle_path: String) -> Result<Self, String> {
-        let stage_loader_path = env::var(RUNTIME_HOST_STAGE_LOADER_PATH_ENV).ok();
-        let stage_library_path = env::var(RUNTIME_HOST_STAGE_LIBRARY_PATH_ENV).ok();
+        let stage_loader_path = env::var(SYSTEM_STAGE_LOADER_PATH_ENV).ok();
+        let stage_library_path = env::var(SYSTEM_STAGE_LIBRARY_PATH_ENV).ok();
         runtime_log(format!(
             "runtime-session-spawn host_binary={} bundle={} stage_loader={} stage_library={}",
             host_binary_path,
@@ -130,7 +130,7 @@ impl RuntimeSession {
             }
             None => Command::new(&host_binary_path),
         };
-        for key in RUNTIME_HOST_CLEAN_ENV {
+        for key in SYSTEM_CLEAN_ENV {
             command.env_remove(key);
         }
         let mut child = command

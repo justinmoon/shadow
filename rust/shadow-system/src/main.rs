@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 mod runtime_extensions;
+mod services;
 
 use deno_core::anyhow::{anyhow, Context, Result};
 use deno_core::url::Url;
@@ -13,8 +14,8 @@ use shadow_runtime_protocol::{RuntimeDocumentPayload, SessionRequest, SessionRes
 use shadow_sdk::app::app_window_metrics_from_env;
 
 const APP_LIFECYCLE_STATE_ENV: &str = shadow_sdk::app::APP_LIFECYCLE_STATE_ENV;
-const RENDER_EXPR: &str = "globalThis.SHADOW_RUNTIME_HOST.render()";
-const RENDER_IF_DIRTY_EXPR: &str = "globalThis.SHADOW_RUNTIME_HOST.renderIfDirty()";
+const RENDER_EXPR: &str = "globalThis.SHADOW_SYSTEM.render()";
+const RENDER_IF_DIRTY_EXPR: &str = "globalThis.SHADOW_SYSTEM.renderIfDirty()";
 const SESSION_USAGE: &str = "usage: shadow-system --session <bundle-path>";
 
 fn main() -> Result<()> {
@@ -181,17 +182,17 @@ async fn handle_session_request(
         SessionRequest::Dispatch { event } => {
             let event_json =
                 serde_json::to_string(&event).context("encode runtime dispatch event")?;
-            format!("globalThis.SHADOW_RUNTIME_HOST.dispatch({event_json})")
+            format!("globalThis.SHADOW_SYSTEM.dispatch({event_json})")
         }
         SessionRequest::PlatformAudioControl { action } => {
             let action_json =
                 serde_json::to_string(&action).context("encode runtime audio control action")?;
-            format!("globalThis.SHADOW_RUNTIME_HOST.platformAudioControl({action_json})")
+            format!("globalThis.SHADOW_SYSTEM.platformAudioControl({action_json})")
         }
         SessionRequest::PlatformLifecycleChange { state } => {
             let state_json =
                 serde_json::to_string(&state).context("encode runtime lifecycle state")?;
-            format!("globalThis.SHADOW_RUNTIME_HOST.platformLifecycleChange({state_json})")
+            format!("globalThis.SHADOW_SYSTEM.platformLifecycleChange({state_json})")
         }
     };
 
