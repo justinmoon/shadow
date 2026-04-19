@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -366,7 +368,28 @@ def generate_rust(manifest: dict[str, Any]) -> str:
     lines.extend(rust_app_array("DEMO_APPS", app_const_names))
     lines.extend(rust_app_array("VM_SHELL_DEMO_APPS", vm_shell_app_const_names))
     lines.extend(rust_app_array("PIXEL_SHELL_DEMO_APPS", pixel_shell_app_const_names))
-    return "\n".join(lines)
+    return rustfmt_source("\n".join(lines))
+
+
+def rustfmt_source(content: str) -> str:
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", suffix=".rs", delete=False
+    ) as handle:
+        handle.write(content)
+        temp_path = Path(handle.name)
+    try:
+        result = subprocess.run(
+            ["rustfmt", "--edition", "2021", str(temp_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.strip() or "rustfmt failed without stderr output"
+            raise SystemExit(f"generate_app_metadata: rustfmt failed: {stderr}")
+        return temp_path.read_text(encoding="utf-8")
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def check_or_write(path: Path, content: str, *, check: bool) -> int:

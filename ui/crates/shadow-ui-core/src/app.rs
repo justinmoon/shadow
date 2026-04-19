@@ -162,7 +162,8 @@ mod tests {
         CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP, CASHU_APP_ID, CASHU_WAYLAND_APP_ID,
         COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, DEMO_APPS, PIXEL_SHELL_DEMO_APPS,
         PODCAST_APP, PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, RUST_DEMO_APP, RUST_DEMO_APP_ID,
-        RUST_DEMO_WAYLAND_APP_ID, SESSION_APP_PROFILE_ENV, SHELL_APP_ID, SHELL_WAYLAND_APP_ID,
+        RUST_DEMO_WAYLAND_APP_ID, RUST_TIMELINE_APP, RUST_TIMELINE_APP_ID,
+        RUST_TIMELINE_WAYLAND_APP_ID, SESSION_APP_PROFILE_ENV, SHELL_APP_ID, SHELL_WAYLAND_APP_ID,
         TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID, VM_SHELL_DEMO_APPS,
     };
 
@@ -288,7 +289,7 @@ mod tests {
             assert_eq!(find_app_by_str("timeline"), Some(&TIMELINE_APP));
             assert_eq!(binary_name_for(TIMELINE_APP_ID), Some("shadow-blitz-demo"));
             assert_eq!(app.icon_label, "TL");
-            assert!(app.lifecycle_hint.contains("live draft"));
+            assert!(app.lifecycle_hint.contains("cached feed"));
             assert_current_typescript_app(app);
             assert_eq!(
                 app_id_from_wayland_app_id(TIMELINE_WAYLAND_APP_ID),
@@ -371,10 +372,51 @@ mod tests {
     }
 
     #[test]
-    fn vm_shell_profile_includes_rust_demo() {
+    fn rust_timeline_app_lookup_round_trips() {
+        with_session_profile(None, || {
+            let app = find_app(RUST_TIMELINE_APP_ID).expect("rust timeline app present");
+            assert_eq!(app, &RUST_TIMELINE_APP);
+            assert_eq!(RUST_TIMELINE_APP_ID.as_str(), "rust-timeline");
+            assert_eq!(find_app_by_str("rust-timeline"), Some(&RUST_TIMELINE_APP));
+            assert_eq!(
+                binary_name_for(RUST_TIMELINE_APP_ID),
+                Some("shadow-rust-timeline")
+            );
+            assert_eq!(app.icon_label, "NR");
+            assert!(app.lifecycle_hint.contains("cache-backed feed"));
+            assert_eq!(app.model, AppModel::Rust);
+            assert_eq!(
+                launch_spec(RUST_TIMELINE_APP_ID),
+                Some(AppLaunchSpec {
+                    id: RUST_TIMELINE_APP_ID,
+                    binary_name: "shadow-rust-timeline",
+                    wayland_app_id: RUST_TIMELINE_WAYLAND_APP_ID,
+                    window_title: "Shadow Rust Timeline",
+                    model: AppLaunchModel::Rust,
+                    launch_env: &[
+                        ("SHADOW_RUST_TIMELINE_LIMIT", "18"),
+                        (
+                            "SHADOW_RUST_TIMELINE_RELAY_URLS",
+                            "wss://relay.primal.net/,wss://relay.damus.io/",
+                        ),
+                        ("SHADOW_RUST_TIMELINE_SYNC_ON_START", "1"),
+                    ],
+                })
+            );
+            assert_eq!(
+                app_id_from_wayland_app_id(RUST_TIMELINE_WAYLAND_APP_ID),
+                Some(RUST_TIMELINE_APP_ID)
+            );
+            assert_eq!(home_apps()[6].id, RUST_TIMELINE_APP_ID);
+        });
+    }
+
+    #[test]
+    fn vm_shell_profile_includes_rust_apps() {
         with_session_profile(Some("vm-shell"), || {
             assert_eq!(home_apps(), &VM_SHELL_DEMO_APPS);
             assert!(home_apps().iter().any(|app| app.id == RUST_DEMO_APP_ID));
+            assert!(home_apps().iter().any(|app| app.id == RUST_TIMELINE_APP_ID));
         });
     }
 
@@ -386,7 +428,9 @@ mod tests {
                 .iter()
                 .all(|app| app.model == AppModel::TypeScript));
             assert!(home_apps().iter().all(|app| app.id != RUST_DEMO_APP_ID));
+            assert!(home_apps().iter().all(|app| app.id != RUST_TIMELINE_APP_ID));
             assert_eq!(find_app(RUST_DEMO_APP_ID), None);
+            assert_eq!(find_app(RUST_TIMELINE_APP_ID), None);
         });
     }
 

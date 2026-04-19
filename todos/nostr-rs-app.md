@@ -24,30 +24,55 @@ Do not hard-code event kinds into top-level SDK function names. The core API sho
 
 ## Milestones
 
-- [ ] Replace the current per-call runtime Nostr host path with one persistent OS Nostr service.
+- [x] Replace the current per-call runtime Nostr host path with one persistent OS Nostr service.
 - [ ] Share one relay pool and one websocket connection per relay within an account scope.
 - [ ] Share one verified event cache and local index across apps.
 - [ ] Define the first public `shadow_sdk::nostr` API for Rust and matching `@shadow/sdk` bindings for TypeScript.
 - [ ] Define the OS-owned signer flow with approval prompts and durable app-level policy.
-- [ ] Land the first read-first Rust Nostr app: timeline, thread, profile, refresh, warm restore.
+- [ ] Land the first read-first Rust Nostr app: account bootstrap, timeline, thread, profile, refresh, warm restore.
 - [ ] Add compose and publish once the text-input seam is ready.
 
 ## Near-Term Steps
 
 - [x] Freeze scope language: use `account` or `identity` for Nostr ownership, not manifest `profiles`.
 - [ ] Decide the initial internal scope model: one active account today, but account-scoped service boundaries from the start.
+- [x] Land one OS-owned active Nostr account slice: load current account, import `nsec`, generate a new account, and persist it outside app-local state.
 - [x] Replace `listKind1` / `publishKind1` as the conceptual center with `query`, `count`, `get_event`, `get_replaceable`, `subscribe`, `publish`, and `sync`.
 - [x] Freeze the first seam semantics: `query` / `count` / `get_event` / `get_replaceable` are local cache reads; `sync` is explicit relay import; `publish` is reserved for signed relay publication, not local fake insertion.
 - [ ] Decide whether to back the shared cache with `nostr-sqlite` directly or keep a thinner Shadow-owned storage layer over SQLite first.
 - [ ] Sketch the first Rust and TypeScript SDK calls and the event/filter types they share.
 - [ ] Define the first signer prompt and permission states: deny, allow once, always allow.
-- [ ] Choose the read-first app slice order: home timeline -> thread -> profile.
+- [x] Choose the read-first app slice order: home timeline -> thread -> profile.
 - [x] Land the first generic read-side SDK slice with a single filter object first, then keep the old kind1 helpers only as compatibility wrappers until their callers migrate.
+- [~] Land the first Rust UI framework seam in `shadow_sdk::ui`: app runner, window/env wiring, theme, and a tiny set of reusable primitives over Xilem/Masonry.
+- [~] Land the first Rust timeline slice on that framework: feed-first list, refresh, note detail, warm restore, visible sync state.
+- [x] Add first-run timeline onboarding: import or generate an account, then expose the active `npub` in-app.
+- [x] Remove shared-store demo seed notes so the Rust app only surfaces real cached relay data.
+- [x] Remove the TypeScript timeline's fake demo feed and local fake publish path so the compatibility app also stays read-first over real cached relay data.
 
 ## Implementation Notes
 
+- The current shared-engine slice now exists:
+  - `shadow-system` can run a dedicated `--nostr-service <socket-path>` daemon.
+  - TypeScript runtime hosts auto-start that daemon on first Nostr use when a socket path can be derived from the state dir / sqlite path.
+  - The daemon owns the long-lived `nostr_sdk::Client`, relay registry, and sqlite-backed cache writes.
+  - `shadow_sdk::services::nostr` now speaks to that daemon when `SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET` is set, while still falling back to direct sqlite reads in local/unit-test environments.
+  - the TypeScript runtime now has a generic `nostr.sync(...)` path, with `syncKind1(...)` kept as a compatibility wrapper.
+- This is a single-account, single-daemon slice for now. It improves the real OS-owned seam without pretending multi-account, signer policy, or live subscriptions are solved.
 - There is no real Shadow multi-user or profile system yet. The `profiles` field in [runtime/apps.json](../runtime/apps.json) is for target/build lanes like `vm-shell` and `pixel-shell`, not end-user identity.
 - The Nostr service should still be internally account-scoped from day one so we do not hard-wire the whole stack to a singleton. Start with one active default account and make the scope explicit in the internal model.
+- The next product seam is not more generic timeline chrome by itself. The app needs a real user identity first:
+  - one OS-owned active Nostr account persisted alongside the shared Nostr state
+  - app-visible summary only (`npub`, source, setup state), not raw secret leakage as the long-term API
+  - first-run app onboarding that can import an `nsec` or generate a new account
+  - a simple in-app account screen so the user can see the active `npub` on-device
+  - starter-feed polish can begin before a full follow-graph model exists, but the real follow/contact model belongs with the later signer/write path
+- The current account/bootstrap slice now exists:
+  - `shadow_sdk::services::nostr` exposes `current_account`, `generate_account`, and `import_account_nsec`
+  - the shared Nostr daemon persists account state next to the shared Nostr sqlite/db state
+  - Rust apps can now auto-start that daemon through `SHADOW_SYSTEM_BINARY_PATH` when the socket is configured but the service is not running yet
+  - the Rust timeline app now gates first run on account setup and exposes the active `npub` in-app
+  - TypeScript runtime host ops now expose the same host-side account surface, but `@shadow/sdk` bindings still need to be added
 - The signer should be OS-owned, Amber-style. Apps request publication or signing work from the OS; the OS decides whether to prompt, deny, sign once, or sign automatically because the user already granted standing approval.
 - The first public SDK should likely expose:
   - protocol types like `Event`, `EventId`, `Filter`, `Kind`, `PublicKey`, `RelayUrl`, `Timestamp`
@@ -73,6 +98,11 @@ Do not hard-code event kinds into top-level SDK function names. The core API sho
   - it creates short-lived `nostr_sdk::Client` instances per sync/publish path
   - it is useful as a proof, but it does not satisfy the shared-pool or shared-cache architecture we want
 - The immediate implementation seam is to introduce the generic read-side API shape now, backed by the current host/store, while deferring the persistent shared engine and real signer to the next deeper seams.
+- The next product slice should stay read-first:
+  - keep the timeline mostly feed-first
+  - use the shared `query` + `sync` path
+  - demote or remove misleading local-only compose affordances
+  - add note detail before thread/profile, unless the cache grows reply/profile metadata first
 - The Rust `shadow_sdk::services::nostr` module is feature-gated for now:
   - enable `shadow-sdk/nostr` for the generic cache API
   - `shadow-system` pulls that host-side feature in when it binds the TypeScript runtime
@@ -83,3 +113,31 @@ Do not hard-code event kinds into top-level SDK function names. The core API sho
   - profile navigation
   - cached warm restore
   - visible sync state
+- The immediate framework/app seam is:
+  - keep the public app-facing model under `shadow_sdk::ui` so app authors still see one SDK
+  - use Xilem/Masonry as the implementation foundation, not the product API
+  - add a Shadow-owned app runner that applies Shadow window env, safe-area padding, and Wayland app-id wiring
+  - start with a very small primitive set: screen, panel/card, section title, buttons, text input, and scroll container
+  - keep note/timeline-specific components in the app crate until repeated product patterns become obvious
+- The current Rust UI seam is still a spike, not the final product API:
+  - the first app compiles and renders through `shadow_sdk::ui`, but it still reaches into upstream Xilem composition/effect types in places
+  - the next framework seam should wrap more of that surface behind Shadow-owned context, composition, and effect helpers instead of reexporting raw upstream building blocks forever
+- The first Rust timeline slice now includes:
+  - cache-backed feed
+  - explicit refresh against the shared Nostr engine
+  - route-based timeline -> thread -> profile navigation
+  - cached kind-0 profile metadata headers via `get_replaceable`
+  - local thread parent/reply loading from shared cached reference data
+  - on-demand thread fetch through the shared engine: exact parent ids plus generic referenced-event sync for replies
+  - thread-only cached notes can now be opened even when they never appeared in the top-level timeline feed
+  - startup and lifecycle log markers for smoke coverage
+  - VM launcher metadata/tests and VM smoke coverage
+- The shared Nostr store no longer seeds fake `shadow-note-*` rows into empty caches, and initialization now scrubs those old demo ids from existing sqlite state so upgraded VMs do not keep surfacing placeholder notes.
+- Timeline refresh failures should be presented as cache state, not product panic: when relays fail but cached notes exist, the app should keep showing the feed with a neutral cached-data message and log the relay error separately.
+- The TypeScript timeline compatibility app is now read-only over the shared cache:
+  - it no longer falls back to hard-coded demo notes when the cache is empty
+  - it no longer exposes the local `publishKind1` fake-note path in product UI
+  - runtime and Pixel smokes now validate real relay-seeded note persistence instead of fake local compose
+- The next Nostr product blocker is now clear:
+  - the shared cache now stores reply/root relationships, exact references, and cache-side reply/reference queries
+  - the next deeper app seam is the first real write path: a reply composer that forces multiline editing, sheet/dialog presentation, and a less ad hoc async/navigation model in `shadow_sdk::ui`

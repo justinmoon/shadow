@@ -12,7 +12,7 @@ help:
 	'  just land' \
 	'' \
 	'Target sessions:' \
-	'  just run target=vm [app=shell|counter|timeline|camera|podcast|cashu]          # default app: podcast' \
+	'  just run target=vm [app=shell|counter|timeline|camera|podcast|cashu|rust-demo|rust-timeline]  # default app: podcast' \
 	'  just run target=pixel [app=shell|counter|timeline|camera|podcast|cashu] [hold=0|1]  # default app: shell' \
 	'  just stop target=vm' \
 	'  just stop target=pixel' \
@@ -21,7 +21,7 @@ help:
 	'Target control:' \
 	'  sc devices' \
 	'  sc -t vm status' \
-	'  sc -t vm open timeline' \
+	'  sc -t vm open rust-timeline' \
 	'  sc -t vm media play-pause' \
 	'  sc -t vm ssh' \
 	'  sc -t pixel state' \

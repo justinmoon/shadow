@@ -593,9 +593,12 @@
           '';
           meta.mainProgram = "shadow-blitz-demo";
         };
-      mkShadowRustDemoFor = cross:
+      mkShadowRustUiAppFor =
+        cross:
+        pname:
+        appPath:
         cross.rustPlatform.buildRustPackage {
-          pname = "shadow-rust-demo";
+          inherit pname;
           version = "0.1.0";
           src = shadowUiSrc;
           cargoRoot = "ui";
@@ -607,15 +610,15 @@
           doCheck = false;
           strictDeps = true;
           CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
-          cargoBuildFlags = [ "-p" "shadow-rust-demo" ];
-          cargoInstallFlags = [ "-p" "shadow-rust-demo" ];
+          cargoBuildFlags = [ "-p" pname ];
+          cargoInstallFlags = [ "-p" pname ];
           nativeBuildInputs = [
             cross.buildPackages.pkg-config
             cross.buildPackages.python3
           ];
           postPatch = mkUiWorkspaceMembersPostPatch "ui/Cargo.toml" [
             "crates/shadow-ui-core"
-            "apps/shadow-rust-demo"
+            appPath
           ];
           depsBuildBuild =
             lib.optionals cross.stdenv.buildPlatform.isDarwin [
@@ -635,8 +638,12 @@
             cross.wayland
             cross.wayland-protocols
           ];
-          meta.mainProgram = "shadow-rust-demo";
+          meta.mainProgram = pname;
         };
+      mkShadowRustDemoFor = cross:
+        mkShadowRustUiAppFor cross "shadow-rust-demo" "apps/shadow-rust-demo";
+      mkShadowRustTimelineFor = cross:
+        mkShadowRustUiAppFor cross "shadow-rust-timeline" "apps/shadow-rust-timeline";
       mkShadowUiVmSessionPackage =
         pkgs:
         {
@@ -1048,6 +1055,10 @@
                 pname = "shadow-rust-demo-check";
                 cargoCheckExtraArgs = "-p shadow-rust-demo";
               };
+              uiShadowRustTimelineCheck = mkUiCargoCheck {
+                pname = "shadow-rust-timeline-check";
+                cargoCheckExtraArgs = "-p shadow-rust-timeline";
+              };
               uiShadowBlitzDemoHostSystemFontsCheck = mkUiCargoCheck {
                 pname = "shadow-blitz-demo-host-system-fonts-check";
                 cargoCheckExtraArgs =
@@ -1188,9 +1199,11 @@
           };
           linuxShadowCompositor = mkShadowCompositorFor pkgs;
           linuxShadowRustDemo = mkShadowRustDemoFor pkgs;
+          linuxShadowRustTimeline = mkShadowRustTimelineFor pkgs;
           linuxShadowVmAppPackagesByBinaryName = {
             "shadow-blitz-demo" = linuxShadowBlitzDemoHostSystemFonts;
             "shadow-rust-demo" = linuxShadowRustDemo;
+            "shadow-rust-timeline" = linuxShadowRustTimeline;
           };
           linuxShadowUiVmSession = mkShadowUiVmSessionPackage pkgs {
             shadowCompositorPackage = linuxShadowCompositor;
@@ -1254,6 +1267,7 @@
           shadow-compositor-guest-device =
             mkShadowGuestCompositorFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           shadow-rust-demo = linuxShadowRustDemo;
+          shadow-rust-timeline = linuxShadowRustTimeline;
         });
       legacyPackages = forAllSystems ({ pkgs, ... }:
         let

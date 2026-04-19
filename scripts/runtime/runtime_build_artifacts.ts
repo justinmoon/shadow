@@ -533,6 +533,10 @@ function buildEnvScript(
       manifest.stateDir,
       "runtime-nostr.sqlite3",
     ),
+    SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET: path.join(
+      manifest.stateDir,
+      "runtime-nostr.sock",
+    ),
   };
   if (defaultApp) {
     exports.SHADOW_RUNTIME_APP_BUNDLE_PATH = rewriteBundlePath(

@@ -1,138 +1,115 @@
+mod daemon;
 mod relay_publish;
 mod relay_sync;
 
-use deno_core::{extension, op2, Extension, OpState};
+use std::path::PathBuf;
+
+use deno_core::{extension, op2, Extension};
 use deno_error::JsErrorBox;
 use shadow_sdk::services::nostr::{
-    Kind1Event, ListKind1Query, NostrEvent, NostrQuery, NostrReplaceableQuery, PublishKind1Request,
+    self as sdk_nostr, Kind1Event, ListKind1Query, NostrAccountSummary, NostrEvent, NostrQuery,
+    NostrReplaceableQuery, NostrSyncReceipt, NostrSyncRequest, PublishKind1Request,
     SqliteNostrService,
 };
 
 use self::relay_publish::{PublishEphemeralKind1Request, PublishedKind1Receipt};
-use self::relay_sync::{SyncKind1Request, SyncedKind1Receipt};
 
-#[derive(Debug)]
-struct NostrHostState {
-    service: Result<SqliteNostrService, String>,
-}
-
-impl NostrHostState {
-    fn from_env() -> Self {
-        Self {
-            service: SqliteNostrService::from_env().map_err(|error| error.to_string()),
-        }
-    }
-
-    fn service(&self) -> Result<&SqliteNostrService, JsErrorBox> {
-        self.service
-            .as_ref()
-            .map_err(|error| JsErrorBox::generic(error.clone()))
-    }
+#[op2]
+#[serde]
+fn op_runtime_nostr_current_account() -> Result<Option<NostrAccountSummary>, JsErrorBox> {
+    ensure_nostr_service_running()?;
+    sdk_nostr::current_account().map_err(to_js_error)
 }
 
 #[op2]
 #[serde]
-fn op_runtime_nostr_query(
-    state: &mut OpState,
-    #[serde] query: NostrQuery,
-) -> Result<Vec<NostrEvent>, JsErrorBox> {
-    state
-        .borrow::<NostrHostState>()
-        .service()?
-        .query(query)
-        .map_err(|error| JsErrorBox::generic(error.to_string()))
+fn op_runtime_nostr_generate_account() -> Result<NostrAccountSummary, JsErrorBox> {
+    ensure_nostr_service_running()?;
+    sdk_nostr::generate_account().map_err(to_js_error)
 }
 
 #[op2]
 #[serde]
-fn op_runtime_nostr_count(
-    state: &mut OpState,
-    #[serde] query: NostrQuery,
-) -> Result<usize, JsErrorBox> {
-    state
-        .borrow::<NostrHostState>()
-        .service()?
-        .count(query)
-        .map_err(|error| JsErrorBox::generic(error.to_string()))
+fn op_runtime_nostr_import_account_nsec(
+    #[string] nsec: String,
+) -> Result<NostrAccountSummary, JsErrorBox> {
+    ensure_nostr_service_running()?;
+    sdk_nostr::import_account_nsec(nsec).map_err(to_js_error)
 }
 
 #[op2]
 #[serde]
-fn op_runtime_nostr_get_event(
-    state: &mut OpState,
-    #[string] id: String,
-) -> Result<Option<NostrEvent>, JsErrorBox> {
-    state
-        .borrow::<NostrHostState>()
-        .service()?
-        .get_event(&id)
-        .map_err(|error| JsErrorBox::generic(error.to_string()))
+fn op_runtime_nostr_query(#[serde] query: NostrQuery) -> Result<Vec<NostrEvent>, JsErrorBox> {
+    ensure_nostr_service_running()?;
+    sdk_nostr::query(query).map_err(to_js_error)
+}
+
+#[op2]
+#[serde]
+fn op_runtime_nostr_count(#[serde] query: NostrQuery) -> Result<usize, JsErrorBox> {
+    ensure_nostr_service_running()?;
+    sdk_nostr::count(query).map_err(to_js_error)
+}
+
+#[op2]
+#[serde]
+fn op_runtime_nostr_get_event(#[string] id: String) -> Result<Option<NostrEvent>, JsErrorBox> {
+    ensure_nostr_service_running()?;
+    sdk_nostr::get_event(id).map_err(to_js_error)
 }
 
 #[op2]
 #[serde]
 fn op_runtime_nostr_get_replaceable(
-    state: &mut OpState,
     #[serde] query: NostrReplaceableQuery,
 ) -> Result<Option<NostrEvent>, JsErrorBox> {
-    state
-        .borrow::<NostrHostState>()
-        .service()?
-        .get_replaceable(query)
-        .map_err(|error| JsErrorBox::generic(error.to_string()))
+    ensure_nostr_service_running()?;
+    sdk_nostr::get_replaceable(query).map_err(to_js_error)
 }
 
 #[op2]
 #[serde]
 fn op_runtime_nostr_list_kind1(
-    state: &mut OpState,
     #[serde] query: ListKind1Query,
 ) -> Result<Vec<Kind1Event>, JsErrorBox> {
-    state
-        .borrow::<NostrHostState>()
-        .service()?
-        .list_kind1(query)
-        .map_err(|error| JsErrorBox::generic(error.to_string()))
+    ensure_nostr_service_running()?;
+    sdk_nostr::list_kind1(query).map_err(to_js_error)
 }
 
 #[op2]
 #[serde]
 fn op_runtime_nostr_publish_kind1(
-    state: &mut OpState,
     #[serde] request: PublishKind1Request,
 ) -> Result<Kind1Event, JsErrorBox> {
-    state
-        .borrow::<NostrHostState>()
-        .service()?
-        .publish_kind1(request)
-        .map_err(|error| JsErrorBox::generic(error.to_string()))
+    ensure_nostr_service_running()?;
+    sdk_nostr::publish_kind1(request).map_err(to_js_error)
+}
+
+#[op2]
+#[serde]
+async fn op_runtime_nostr_sync(
+    #[serde] request: NostrSyncRequest,
+) -> Result<NostrSyncReceipt, JsErrorBox> {
+    sync_nostr_request(request).await
 }
 
 #[op2]
 #[serde]
 async fn op_runtime_nostr_sync_kind1(
-    #[serde] request: SyncKind1Request,
-) -> Result<SyncedKind1Receipt, JsErrorBox> {
-    let fetched = relay_sync::sync_kind1(request)
-        .await
-        .map_err(JsErrorBox::generic)?;
-    let service =
-        SqliteNostrService::from_env().map_err(|error| JsErrorBox::generic(error.to_string()))?;
-    let mut imported_count = 0_usize;
-    for event in fetched.events.iter() {
-        if service
-            .store_kind1_event(event)
-            .map_err(|error| JsErrorBox::generic(error.to_string()))?
-        {
-            imported_count += 1;
-        }
-    }
+    #[serde] request: NostrSyncRequest,
+) -> Result<NostrSyncReceipt, JsErrorBox> {
+    let mut request = request;
+    request.query.kinds = Some(vec![1]);
+    sync_nostr_request(request).await
+}
 
-    Ok(SyncedKind1Receipt {
-        relay_urls: fetched.relay_urls,
-        fetched_count: fetched.events.len(),
-        imported_count,
+async fn sync_nostr_request(request: NostrSyncRequest) -> Result<NostrSyncReceipt, JsErrorBox> {
+    tokio::task::spawn_blocking(move || {
+        ensure_nostr_service_running()?;
+        sdk_nostr::sync(request).map_err(to_js_error)
     })
+    .await
+    .map_err(|error| JsErrorBox::generic(format!("nostr.sync join blocking task: {error}")))?
 }
 
 #[op2]
@@ -152,6 +129,9 @@ async fn op_runtime_nostr_publish_ephemeral_kind1(
             kind: 1,
             pubkey: published.npub.clone(),
             identifier: None,
+            root_event_id: None,
+            reply_to_event_id: None,
+            references: Vec::new(),
         });
     }
 
@@ -161,20 +141,33 @@ async fn op_runtime_nostr_publish_ephemeral_kind1(
 extension!(
     shadow_system_nostr_extension,
     ops = [
+        op_runtime_nostr_current_account,
+        op_runtime_nostr_generate_account,
+        op_runtime_nostr_import_account_nsec,
         op_runtime_nostr_query,
         op_runtime_nostr_count,
         op_runtime_nostr_get_event,
         op_runtime_nostr_get_replaceable,
         op_runtime_nostr_list_kind1,
         op_runtime_nostr_publish_kind1,
+        op_runtime_nostr_sync,
         op_runtime_nostr_sync_kind1,
         op_runtime_nostr_publish_ephemeral_kind1
     ],
-    state = |state| {
-        state.put(NostrHostState::from_env());
-    },
 );
 
 pub fn init_extension() -> Extension {
     shadow_system_nostr_extension::init()
+}
+
+pub fn run_service(socket_path: PathBuf) -> Result<(), String> {
+    daemon::run(socket_path)
+}
+
+fn ensure_nostr_service_running() -> Result<(), JsErrorBox> {
+    sdk_nostr::ipc::ensure_service_running().map_err(|error| JsErrorBox::generic(error.to_string()))
+}
+
+fn to_js_error(error: sdk_nostr::NostrError) -> JsErrorBox {
+    JsErrorBox::generic(error.to_string())
 }

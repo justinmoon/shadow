@@ -69,6 +69,7 @@ export {
   settleCashuMintQuote,
   setVolume,
   stop,
+  syncNostr,
   syncKind1,
   countNostr,
 } from "./shadow_sdk_services.js";

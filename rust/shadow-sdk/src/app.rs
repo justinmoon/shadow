@@ -75,6 +75,7 @@ pub struct AppWindowDefaults<'a> {
     pub title: &'a str,
     pub surface_width: u32,
     pub surface_height: u32,
+    pub undecorated: bool,
     pub wayland_app_id: Option<&'a str>,
     pub wayland_instance_name: Option<&'a str>,
 }
@@ -85,9 +86,15 @@ impl<'a> AppWindowDefaults<'a> {
             title,
             surface_width,
             surface_height,
+            undecorated: false,
             wayland_app_id: None,
             wayland_instance_name: None,
         }
+    }
+
+    pub const fn with_undecorated(mut self, value: bool) -> Self {
+        self.undecorated = value;
+        self
     }
 
     pub const fn with_wayland_app_id(mut self, value: &'a str) -> Self {
@@ -134,7 +141,8 @@ impl AppWindowEnvironment {
             surface_height: env_u32_any(&[SURFACE_HEIGHT_ENV, LEGACY_SURFACE_HEIGHT_ENV])
                 .unwrap_or(defaults.surface_height),
             safe_area_insets: AppSafeAreaInsets::from_env(),
-            undecorated: env_flag_any(&[UNDECORATED_ENV, LEGACY_UNDECORATED_ENV]),
+            undecorated: defaults.undecorated
+                || env_flag_any(&[UNDECORATED_ENV, LEGACY_UNDECORATED_ENV]),
             wayland_app_id,
             wayland_instance_name,
         }
@@ -391,6 +399,15 @@ mod tests {
             parsed.wayland_instance_name.as_deref(),
             Some("notes-window")
         );
+    }
+
+    #[test]
+    fn window_env_honors_undecorated_default() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_window_env();
+
+        let parsed = AppWindowEnvironment::from_env(defaults().with_undecorated(true));
+        assert!(parsed.undecorated);
     }
 
     #[test]

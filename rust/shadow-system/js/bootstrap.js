@@ -88,6 +88,13 @@ function installShadowSystemOs() {
     listKind1(query = {}) {
       return core.ops.op_runtime_nostr_list_kind1(query);
     },
+    sync(request = {}) {
+      return core.ops.op_runtime_nostr_sync({
+        ...normalizeQuery(request),
+        relayUrls: request?.relayUrls,
+        timeoutMs: request?.timeoutMs,
+      });
+    },
     syncKind1(request = {}) {
       return core.ops.op_runtime_nostr_sync_kind1(request);
     },

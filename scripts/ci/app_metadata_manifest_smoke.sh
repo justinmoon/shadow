@@ -569,16 +569,17 @@ rust_out="$(mktemp_tracked)"
 scripts/runtime/generate_app_metadata.py --manifest "$profile_manifest" --rust-out "$rust_out" >/dev/null
 python3 - "$rust_out" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 
 def array_body(name: str) -> str:
-    marker = f"pub const {name}:"
-    start = text.index(marker)
-    start = text.index("[\n", start) + 2
-    end = text.index("];", start)
-    return text[start:end]
+    pattern = rf"pub const {name}: .*? = \[(.*?)\];"
+    match = re.search(pattern, text, re.DOTALL)
+    if match is None:
+        raise SystemExit(f"app_metadata_manifest_smoke: could not parse {name}")
+    return match.group(1)
 
 all_apps = array_body("DEMO_APPS")
 vm_shell_apps = array_body("VM_SHELL_DEMO_APPS")
@@ -615,16 +616,17 @@ check_output_case \
 scripts/runtime/generate_app_metadata.py --manifest "$mixed_model_manifest" --rust-out "$rust_out" >/dev/null
 python3 - "$rust_out" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 
 def array_body(name: str) -> str:
-    marker = f"pub const {name}:"
-    start = text.index(marker)
-    start = text.index("[\n", start) + 2
-    end = text.index("];", start)
-    return text[start:end]
+    pattern = rf"pub const {name}: .*? = \[(.*?)\];"
+    match = re.search(pattern, text, re.DOTALL)
+    if match is None:
+        raise SystemExit(f"app_metadata_manifest_smoke: could not parse {name}")
+    return match.group(1)
 
 vm_shell_apps = array_body("VM_SHELL_DEMO_APPS")
 pixel_shell_apps = array_body("PIXEL_SHELL_DEMO_APPS")
@@ -642,7 +644,7 @@ import sys
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 
-if 'pub const LAUNCH_ENV_RUST_LAUNCH_ENV: [AppLaunchEnv; 1] = [' not in text:
+if "pub const LAUNCH_ENV_RUST_LAUNCH_ENV: [AppLaunchEnv; 1]" not in text:
     raise SystemExit("app_metadata_manifest_smoke: launchEnv constant was not generated")
 if '("SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "1")' not in text:
     raise SystemExit("app_metadata_manifest_smoke: launchEnv entry was not generated")

@@ -1,17 +1,24 @@
 use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
 
+use nostr::prelude::{Keys, ToBech32};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_PUBLISH_PUBKEY: &str = "npub-shadow-os";
+pub const NOSTR_ACCOUNT_NSEC_ENV: &str = "SHADOW_RUNTIME_NOSTR_ACCOUNT_NSEC";
+pub const NOSTR_ACCOUNT_PATH_ENV: &str = "SHADOW_RUNTIME_NOSTR_ACCOUNT_PATH";
 pub const NOSTR_DB_PATH_ENV: &str = "SHADOW_RUNTIME_NOSTR_DB_PATH";
 
 const IN_MEMORY_DB_PATH: &str = ":memory:";
 const INITIAL_CREATED_AT_BASE: u64 = 1_700_000_000;
 const LEGACY_KIND1_TABLE: &str = "nostr_kind1_events";
+const NOSTR_ACCOUNT_BASENAME: &str = "runtime-nostr-account.json";
+const LEGACY_DEMO_EVENT_IDS: [&str; 3] = ["shadow-note-1", "shadow-note-2", "shadow-note-3"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NostrHostError {
@@ -44,6 +51,34 @@ impl From<String> for NostrHostError {
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NostrAccountSource {
+    Generated,
+    Imported,
+    Env,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct NostrAccountSummary {
+    pub npub: String,
+    pub source: NostrAccountSource,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+struct PersistedNostrAccount {
+    nsec: String,
+    source: NostrAccountSource,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct NostrEventReference {
+    #[serde(rename = "eventId")]
+    pub event_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub marker: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct NostrEvent {
     pub content: String,
@@ -53,6 +88,12 @@ pub struct NostrEvent {
     pub pubkey: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "rootEventId")]
+    pub root_event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "replyToEventId")]
+    pub reply_to_event_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<NostrEventReference>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -69,9 +110,33 @@ pub struct NostrQuery {
     pub ids: Option<Vec<String>>,
     pub authors: Option<Vec<String>>,
     pub kinds: Option<Vec<u32>>,
+    #[serde(rename = "referencedIds")]
+    pub referenced_ids: Option<Vec<String>>,
+    #[serde(rename = "replyToIds")]
+    pub reply_to_ids: Option<Vec<String>>,
     pub since: Option<u64>,
     pub until: Option<u64>,
     pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct NostrSyncRequest {
+    #[serde(flatten)]
+    pub query: NostrQuery,
+    #[serde(rename = "relayUrls")]
+    pub relay_urls: Option<Vec<String>>,
+    #[serde(rename = "timeoutMs")]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct NostrSyncReceipt {
+    #[serde(rename = "relayUrls")]
+    pub relay_urls: Vec<String>,
+    #[serde(rename = "fetchedCount")]
+    pub fetched_count: usize,
+    #[serde(rename = "importedCount")]
+    pub imported_count: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -136,12 +201,17 @@ impl SqliteNostrService {
                     pubkey TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     content TEXT NOT NULL,
-                    identifier TEXT
+                    identifier TEXT,
+                    root_event_id TEXT,
+                    reply_to_event_id TEXT,
+                    references_json TEXT NOT NULL DEFAULT '[]'
                 );
                 CREATE INDEX IF NOT EXISTS nostr_events_created_at_idx
                     ON nostr_events (created_at DESC, sequence DESC);
                 CREATE INDEX IF NOT EXISTS nostr_events_replaceable_idx
                     ON nostr_events (kind, pubkey, identifier, created_at DESC, sequence DESC);
+                CREATE INDEX IF NOT EXISTS nostr_events_reply_idx
+                    ON nostr_events (reply_to_event_id, created_at DESC, sequence DESC);
                 ",
             )
             .map_err(|error| {
@@ -149,19 +219,81 @@ impl SqliteNostrService {
                     "shadow nostr service: initialize sqlite schema: {error}"
                 ))
             })?;
+        self.ensure_nostr_events_columns()?;
 
         self.import_legacy_kind1_events()?;
+        self.remove_legacy_demo_events()?;
 
-        let row_count: u64 = self
-            .connection
-            .query_row("SELECT COUNT(*) FROM nostr_events", [], |row| row.get(0))
+        Ok(())
+    }
+
+    fn ensure_nostr_events_columns(&self) -> Result<(), NostrHostError> {
+        self.ensure_nostr_events_column(
+            "root_event_id",
+            "ALTER TABLE nostr_events ADD COLUMN root_event_id TEXT",
+        )?;
+        self.ensure_nostr_events_column(
+            "reply_to_event_id",
+            "ALTER TABLE nostr_events ADD COLUMN reply_to_event_id TEXT",
+        )?;
+        self.ensure_nostr_events_column(
+            "references_json",
+            "ALTER TABLE nostr_events ADD COLUMN references_json TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        self.connection
+            .execute(
+                "
+                CREATE INDEX IF NOT EXISTS nostr_events_reply_idx
+                ON nostr_events (reply_to_event_id, created_at DESC, sequence DESC)
+                ",
+                [],
+            )
             .map_err(|error| {
-                NostrHostError::new(format!("shadow nostr service: count sqlite rows: {error}"))
+                NostrHostError::new(format!(
+                    "shadow nostr service: ensure reply sqlite index: {error}"
+                ))
             })?;
-        if row_count == 0 {
-            self.seed_initial_events()?;
+        Ok(())
+    }
+
+    fn ensure_nostr_events_column(
+        &self,
+        column_name: &str,
+        alter_sql: &str,
+    ) -> Result<(), NostrHostError> {
+        let mut statement = self
+            .connection
+            .prepare("PRAGMA table_info(nostr_events)")
+            .map_err(|error| {
+                NostrHostError::new(format!(
+                    "shadow nostr service: inspect sqlite schema columns: {error}"
+                ))
+            })?;
+        let mut rows = statement.query([]).map_err(|error| {
+            NostrHostError::new(format!(
+                "shadow nostr service: query sqlite schema columns: {error}"
+            ))
+        })?;
+        while let Some(row) = rows.next().map_err(|error| {
+            NostrHostError::new(format!(
+                "shadow nostr service: decode sqlite schema columns: {error}"
+            ))
+        })? {
+            let existing: String = row.get("name").map_err(|error| {
+                NostrHostError::new(format!(
+                    "shadow nostr service: read sqlite column name: {error}"
+                ))
+            })?;
+            if existing == column_name {
+                return Ok(());
+            }
         }
 
+        self.connection.execute(alter_sql, []).map_err(|error| {
+            NostrHostError::new(format!(
+                "shadow nostr service: alter sqlite schema for {column_name}: {error}"
+            ))
+        })?;
         Ok(())
     }
 
@@ -191,9 +323,12 @@ impl SqliteNostrService {
                     pubkey,
                     created_at,
                     content,
-                    identifier
+                    identifier,
+                    root_event_id,
+                    reply_to_event_id,
+                    references_json
                 )
-                SELECT id, kind, pubkey, created_at, content, NULL
+                SELECT id, kind, pubkey, created_at, content, NULL, NULL, NULL, '[]'
                 FROM nostr_kind1_events
                 ",
                 [],
@@ -207,49 +342,71 @@ impl SqliteNostrService {
         Ok(())
     }
 
-    fn seed_initial_events(&self) -> Result<(), NostrHostError> {
-        for (id, created_at, pubkey, content) in [
-            (
-                "shadow-note-1",
-                1_700_000_001_u64,
-                "npub-feed-a",
-                "shadow os owns nostr for tiny apps",
-            ),
-            (
-                "shadow-note-2",
-                1_700_000_002_u64,
-                "npub-feed-a",
-                "relay subscriptions will live below app code",
-            ),
-            (
-                "shadow-note-3",
-                1_700_000_003_u64,
-                "npub-feed-b",
-                "local cache warmed from the system service",
-            ),
-        ] {
-            self.connection
-                .execute(
-                    "
-                    INSERT INTO nostr_events (
-                        id,
-                        kind,
-                        pubkey,
-                        created_at,
-                        content,
-                        identifier
-                    ) VALUES (?1, 1, ?2, ?3, ?4, NULL)
-                    ",
-                    params![id, pubkey, created_at, content],
-                )
-                .map_err(|error| {
-                    NostrHostError::new(format!(
-                        "shadow nostr service: seed sqlite note {id}: {error}"
-                    ))
-                })?;
+    fn remove_legacy_demo_events(&self) -> Result<(), NostrHostError> {
+        self.connection
+            .execute(
+                "DELETE FROM nostr_events WHERE id IN (?1, ?2, ?3)",
+                params![
+                    LEGACY_DEMO_EVENT_IDS[0],
+                    LEGACY_DEMO_EVENT_IDS[1],
+                    LEGACY_DEMO_EVENT_IDS[2],
+                ],
+            )
+            .map_err(|error| {
+                NostrHostError::new(format!(
+                    "shadow nostr service: delete legacy demo events: {error}"
+                ))
+            })?;
+        Ok(())
+    }
+
+    pub fn current_account(&self) -> Result<Option<NostrAccountSummary>, NostrHostError> {
+        if let Some(summary) = env_account_summary()? {
+            return Ok(Some(summary));
         }
 
-        Ok(())
+        let Some(account_path) = account_path() else {
+            return Ok(None);
+        };
+        read_persisted_account(&account_path)
+    }
+
+    pub fn generate_account(&self) -> Result<NostrAccountSummary, NostrHostError> {
+        self.persist_active_account(Keys::generate(), NostrAccountSource::Generated)
+    }
+
+    pub fn import_account_nsec(
+        &self,
+        nsec: impl AsRef<str>,
+    ) -> Result<NostrAccountSummary, NostrHostError> {
+        let keys = parse_account_keys(
+            nsec.as_ref(),
+            "nostr.importAccountNsec requires a valid nsec or hex secret key",
+        )?;
+        self.persist_active_account(keys, NostrAccountSource::Imported)
+    }
+
+    fn persist_active_account(
+        &self,
+        keys: Keys,
+        source: NostrAccountSource,
+    ) -> Result<NostrAccountSummary, NostrHostError> {
+        let account_path = account_path().ok_or_else(|| {
+            NostrHostError::new(format!(
+                "shadow nostr service: cannot resolve account path; set {NOSTR_ACCOUNT_PATH_ENV} or configure {NOSTR_DB_PATH_ENV}"
+            ))
+        })?;
+        let persisted = PersistedNostrAccount {
+            nsec: keys.secret_key().to_bech32().map_err(|error| {
+                NostrHostError::new(format!(
+                    "shadow nostr service: encode account nsec for {}: {error}",
+                    account_path.display()
+                ))
+            })?,
+            source,
+        };
+        write_persisted_account(&account_path, &persisted)?;
+        summarize_account(&keys, source)
     }
 
     pub fn query(&self, query: NostrQuery) -> Result<Vec<NostrEvent>, NostrHostError> {
@@ -257,6 +414,8 @@ impl SqliteNostrService {
             ids,
             authors,
             kinds,
+            referenced_ids,
+            reply_to_ids,
             since,
             until,
             limit,
@@ -264,13 +423,18 @@ impl SqliteNostrService {
         let ids = ids.map(|ids| ids.into_iter().collect::<BTreeSet<_>>());
         let authors = authors.map(|authors| authors.into_iter().collect::<BTreeSet<_>>());
         let kinds = kinds.map(|kinds| kinds.into_iter().collect::<BTreeSet<_>>());
+        let referenced_ids = referenced_ids
+            .map(|referenced_ids| referenced_ids.into_iter().collect::<BTreeSet<_>>());
+        let reply_to_ids =
+            reply_to_ids.map(|reply_to_ids| reply_to_ids.into_iter().collect::<BTreeSet<_>>());
         let limit = limit.unwrap_or(usize::MAX);
 
         let mut statement = self
             .connection
             .prepare(
                 "
-                SELECT id, kind, pubkey, created_at, content, identifier
+                SELECT id, kind, pubkey, created_at, content, identifier,
+                       root_event_id, reply_to_event_id, references_json
                 FROM nostr_events
                 ORDER BY created_at DESC, sequence DESC
                 ",
@@ -305,6 +469,22 @@ impl SqliteNostrService {
             {
                 continue;
             }
+            if referenced_ids.as_ref().is_some_and(|referenced_ids| {
+                !event
+                    .references
+                    .iter()
+                    .any(|reference| referenced_ids.contains(reference.event_id.as_str()))
+            }) {
+                continue;
+            }
+            if reply_to_ids.as_ref().is_some_and(|reply_to_ids| {
+                !event
+                    .reply_to_event_id
+                    .as_deref()
+                    .is_some_and(|reply_to_id| reply_to_ids.contains(reply_to_id))
+            }) {
+                continue;
+            }
             if since.is_some_and(|since| event.created_at < since) {
                 continue;
             }
@@ -336,7 +516,8 @@ impl SqliteNostrService {
         self.connection
             .query_row(
                 "
-                SELECT id, kind, pubkey, created_at, content, identifier
+                SELECT id, kind, pubkey, created_at, content, identifier,
+                       root_event_id, reply_to_event_id, references_json
                 FROM nostr_events
                 WHERE id = ?1
                 ",
@@ -369,7 +550,8 @@ impl SqliteNostrService {
         let identifier = normalize_optional_string(query.identifier);
         let sql = if identifier.is_some() {
             "
-            SELECT id, kind, pubkey, created_at, content, identifier
+            SELECT id, kind, pubkey, created_at, content, identifier,
+                   root_event_id, reply_to_event_id, references_json
             FROM nostr_events
             WHERE kind = ?1 AND pubkey = ?2 AND identifier = ?3
             ORDER BY created_at DESC, sequence DESC
@@ -377,7 +559,8 @@ impl SqliteNostrService {
             "
         } else {
             "
-            SELECT id, kind, pubkey, created_at, content, identifier
+            SELECT id, kind, pubkey, created_at, content, identifier,
+                   root_event_id, reply_to_event_id, references_json
             FROM nostr_events
             WHERE kind = ?1 AND pubkey = ?2 AND identifier IS NULL
             ORDER BY created_at DESC, sequence DESC
@@ -412,6 +595,8 @@ impl SqliteNostrService {
             ids: None,
             authors: query.authors,
             kinds: Some(vec![1]),
+            referenced_ids: None,
+            reply_to_ids: None,
             since: query.since,
             until: query.until,
             limit: query.limit,
@@ -468,6 +653,9 @@ impl SqliteNostrService {
             kind: 1,
             pubkey,
             identifier: None,
+            root_event_id: None,
+            reply_to_event_id: None,
+            references: Vec::new(),
         };
         self.store_event(&event).map_err(|error| {
             NostrHostError::new(format!(
@@ -490,8 +678,11 @@ impl SqliteNostrService {
                     pubkey,
                     created_at,
                     content,
-                    identifier
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    identifier,
+                    root_event_id,
+                    reply_to_event_id,
+                    references_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                 ",
                 params![
                     event.id,
@@ -499,7 +690,10 @@ impl SqliteNostrService {
                     event.pubkey,
                     event.created_at,
                     event.content,
-                    event.identifier
+                    event.identifier,
+                    event.root_event_id,
+                    event.reply_to_event_id,
+                    encode_references_json(&event.references)?
                 ],
             )
             .map_err(|error| {
@@ -538,8 +732,23 @@ impl From<Kind1Event> for NostrEvent {
             kind: value.kind,
             pubkey: value.pubkey,
             identifier: None,
+            root_event_id: None,
+            reply_to_event_id: None,
+            references: Vec::new(),
         }
     }
+}
+
+pub fn current_account() -> Result<Option<NostrAccountSummary>, NostrHostError> {
+    SqliteNostrService::from_env()?.current_account()
+}
+
+pub fn generate_account() -> Result<NostrAccountSummary, NostrHostError> {
+    SqliteNostrService::from_env()?.generate_account()
+}
+
+pub fn import_account_nsec(nsec: impl AsRef<str>) -> Result<NostrAccountSummary, NostrHostError> {
+    SqliteNostrService::from_env()?.import_account_nsec(nsec)
 }
 
 pub fn query(query: NostrQuery) -> Result<Vec<NostrEvent>, NostrHostError> {
@@ -566,15 +775,42 @@ pub fn publish_kind1(request: PublishKind1Request) -> Result<Kind1Event, NostrHo
     SqliteNostrService::from_env()?.publish_kind1(request)
 }
 
+fn account_path() -> Option<PathBuf> {
+    std::env::var(NOSTR_ACCOUNT_PATH_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(default_account_path)
+}
+
+fn default_account_path() -> Option<PathBuf> {
+    let db_path = std::env::var(NOSTR_DB_PATH_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())?;
+    if db_path == IN_MEMORY_DB_PATH {
+        return None;
+    }
+
+    let parent = Path::new(&db_path)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())?;
+    Some(parent.join(NOSTR_ACCOUNT_BASENAME))
+}
+
 fn ensure_db_parent_dir(db_path: &str) -> Result<(), NostrHostError> {
-    let path = Path::new(db_path);
+    ensure_parent_dir(Path::new(db_path), "sqlite parent")
+}
+
+fn ensure_parent_dir(path: &Path, label: &str) -> Result<(), NostrHostError> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
         fs::create_dir_all(parent).map_err(|error| {
             NostrHostError::new(format!(
-                "shadow nostr service: create sqlite parent dir {}: {error}",
+                "shadow nostr service: create {label} dir {}: {error}",
                 parent.display()
             ))
         })?;
@@ -582,7 +818,103 @@ fn ensure_db_parent_dir(db_path: &str) -> Result<(), NostrHostError> {
     Ok(())
 }
 
+fn env_account_summary() -> Result<Option<NostrAccountSummary>, NostrHostError> {
+    let Some(nsec) = std::env::var(NOSTR_ACCOUNT_NSEC_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let keys = parse_account_keys(
+        &nsec,
+        &format!(
+            "shadow nostr service: {NOSTR_ACCOUNT_NSEC_ENV} must be a valid nsec or hex secret key"
+        ),
+    )?;
+    summarize_account(&keys, NostrAccountSource::Env).map(Some)
+}
+
+fn read_persisted_account(
+    account_path: &Path,
+) -> Result<Option<NostrAccountSummary>, NostrHostError> {
+    if !account_path.exists() {
+        return Ok(None);
+    }
+
+    let encoded = fs::read_to_string(account_path).map_err(|error| {
+        NostrHostError::new(format!(
+            "shadow nostr service: read account file {}: {error}",
+            account_path.display()
+        ))
+    })?;
+    let persisted: PersistedNostrAccount = serde_json::from_str(&encoded).map_err(|error| {
+        NostrHostError::new(format!(
+            "shadow nostr service: decode account file {}: {error}",
+            account_path.display()
+        ))
+    })?;
+    let keys = parse_account_keys(
+        &persisted.nsec,
+        &format!(
+            "shadow nostr service: parse account file {}",
+            account_path.display()
+        ),
+    )?;
+    summarize_account(&keys, persisted.source).map(Some)
+}
+
+fn write_persisted_account(
+    account_path: &Path,
+    persisted: &PersistedNostrAccount,
+) -> Result<(), NostrHostError> {
+    ensure_parent_dir(account_path, "account")?;
+    let encoded = serde_json::to_string(persisted).map_err(|error| {
+        NostrHostError::new(format!(
+            "shadow nostr service: encode account file {}: {error}",
+            account_path.display()
+        ))
+    })?;
+    let temp_path = account_path.with_extension("tmp");
+    fs::write(&temp_path, encoded.as_bytes()).map_err(|error| {
+        NostrHostError::new(format!(
+            "shadow nostr service: write account temp file {}: {error}",
+            temp_path.display()
+        ))
+    })?;
+    fs::rename(&temp_path, account_path).map_err(|error| {
+        NostrHostError::new(format!(
+            "shadow nostr service: rename account temp file {} -> {}: {error}",
+            temp_path.display(),
+            account_path.display()
+        ))
+    })?;
+    Ok(())
+}
+
+fn parse_account_keys(input: &str, context: &str) -> Result<Keys, NostrHostError> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(NostrHostError::new(context));
+    }
+
+    Keys::parse(trimmed).map_err(|error| NostrHostError::new(format!("{context}: {error}")))
+}
+
+fn summarize_account(
+    keys: &Keys,
+    source: NostrAccountSource,
+) -> Result<NostrAccountSummary, NostrHostError> {
+    let npub = keys.public_key().to_bech32().map_err(|error| {
+        NostrHostError::new(format!(
+            "shadow nostr service: encode account npub: {error}"
+        ))
+    })?;
+    Ok(NostrAccountSummary { npub, source })
+}
+
 fn map_nostr_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<NostrEvent> {
+    let references_json: String = row.get("references_json")?;
     Ok(NostrEvent {
         id: row.get("id")?,
         kind: row.get("kind")?,
@@ -590,6 +922,15 @@ fn map_nostr_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<NostrEvent> {
         created_at: row.get("created_at")?,
         content: row.get("content")?,
         identifier: row.get("identifier")?,
+        root_event_id: row.get("root_event_id")?,
+        reply_to_event_id: row.get("reply_to_event_id")?,
+        references: decode_references_json(&references_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                references_json.len(),
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
     })
 }
 
@@ -605,13 +946,39 @@ fn kind_is_replaceable(kind: u32) -> bool {
     kind == 0 || kind == 3 || (10_000..20_000).contains(&kind) || (30_000..40_000).contains(&kind)
 }
 
+fn encode_references_json(references: &[NostrEventReference]) -> Result<String, NostrHostError> {
+    serde_json::to_string(references).map_err(|error| {
+        NostrHostError::new(format!(
+            "shadow nostr service: encode event references json: {error}"
+        ))
+    })
+}
+
+fn decode_references_json(
+    references_json: &str,
+) -> Result<Vec<NostrEventReference>, serde_json::Error> {
+    serde_json::from_str(references_json)
+}
+
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Kind1Event, ListKind1Query, NostrEvent, NostrQuery, NostrReplaceableQuery,
-        SqliteNostrService,
+        account_path, current_account, default_account_path, generate_account, import_account_nsec,
+        test_env_lock, Kind1Event, ListKind1Query, NostrAccountSource, NostrEvent,
+        NostrEventReference, NostrQuery, NostrReplaceableQuery, SqliteNostrService,
+        LEGACY_DEMO_EVENT_IDS, NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,
     };
+    use nostr::prelude::{Keys, ToBech32};
     use rusqlite::Connection;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn in_memory_service() -> SqliteNostrService {
         let service = SqliteNostrService {
@@ -621,29 +988,192 @@ mod tests {
         service
     }
 
+    fn store_cached_test_events(service: &SqliteNostrService) {
+        for event in [
+            NostrEvent {
+                content: String::from("first cached note"),
+                created_at: 1_700_000_001,
+                id: String::from("test-note-1"),
+                kind: 1,
+                pubkey: String::from("npub-test-a"),
+                identifier: None,
+                root_event_id: None,
+                reply_to_event_id: None,
+                references: Vec::new(),
+            },
+            NostrEvent {
+                content: String::from("second cached note"),
+                created_at: 1_700_000_002,
+                id: String::from("test-note-2"),
+                kind: 1,
+                pubkey: String::from("npub-test-a"),
+                identifier: None,
+                root_event_id: None,
+                reply_to_event_id: None,
+                references: Vec::new(),
+            },
+            NostrEvent {
+                content: String::from("third cached note"),
+                created_at: 1_700_000_003,
+                id: String::from("test-note-3"),
+                kind: 1,
+                pubkey: String::from("npub-test-b"),
+                identifier: None,
+                root_event_id: None,
+                reply_to_event_id: None,
+                references: Vec::new(),
+            },
+        ] {
+            service
+                .store_event(&event)
+                .expect("store cached test event");
+        }
+    }
+
+    fn with_temp_env<T>(f: impl FnOnce(PathBuf, PathBuf) -> T) -> T {
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("shadow-sdk-nostr-account-{timestamp}"));
+        let db_path = temp_dir.join("runtime-nostr.sqlite3");
+        let account_path = temp_dir.join("runtime-nostr-account.json");
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        std::env::set_var(NOSTR_DB_PATH_ENV, &db_path);
+        std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
+        std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
+
+        let output = f(db_path.clone(), account_path.clone());
+
+        std::env::remove_var(NOSTR_DB_PATH_ENV);
+        std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
+        std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
+        let _ = fs::remove_dir_all(&temp_dir);
+        output
+    }
+
+    #[test]
+    fn default_account_path_uses_nostr_db_parent() {
+        with_temp_env(|db_path, expected_account_path| {
+            assert_eq!(default_account_path(), Some(expected_account_path.clone()));
+            assert_eq!(account_path(), Some(expected_account_path.clone()));
+            assert_eq!(db_path.parent(), expected_account_path.parent());
+        });
+    }
+
+    #[test]
+    fn default_account_path_is_none_for_in_memory_db() {
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        std::env::set_var(NOSTR_DB_PATH_ENV, ":memory:");
+        std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
+        std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
+
+        assert_eq!(default_account_path(), None);
+        assert_eq!(account_path(), None);
+
+        std::env::remove_var(NOSTR_DB_PATH_ENV);
+    }
+
+    #[test]
+    fn generate_and_current_account_persist_shared_account_state() {
+        with_temp_env(|_db_path, account_path| {
+            let generated = generate_account().expect("generate account");
+            assert_eq!(generated.source, NostrAccountSource::Generated);
+            assert!(generated.npub.starts_with("npub1"));
+            assert!(account_path.exists());
+
+            let persisted = fs::read_to_string(&account_path).expect("read account file");
+            assert!(persisted.contains("\"source\":\"generated\""));
+            assert!(persisted.contains("\"nsec\":\"nsec1"));
+            assert!(!persisted.contains(&generated.npub));
+
+            let current = current_account()
+                .expect("read current account")
+                .expect("persisted account");
+            assert_eq!(current, generated);
+        });
+    }
+
+    #[test]
+    fn import_account_nsec_persists_imported_source() {
+        with_temp_env(|_db_path, account_path| {
+            let keys = Keys::generate();
+            let nsec = keys
+                .secret_key()
+                .to_bech32()
+                .expect("encode generated nsec");
+
+            let imported = import_account_nsec(&nsec).expect("import account");
+            assert_eq!(imported.source, NostrAccountSource::Imported);
+            assert_eq!(
+                imported.npub,
+                keys.public_key()
+                    .to_bech32()
+                    .expect("encode generated npub")
+            );
+
+            let persisted = fs::read_to_string(&account_path).expect("read imported account file");
+            assert!(persisted.contains("\"source\":\"imported\""));
+            assert!(persisted.contains(&nsec));
+        });
+    }
+
+    #[test]
+    fn import_account_nsec_rejects_invalid_secret_material() {
+        with_temp_env(|_db_path, _account_path| {
+            let error = import_account_nsec("not-a-secret").expect_err("reject invalid nsec");
+            assert!(error.message().contains("valid nsec"));
+        });
+    }
+
+    #[test]
+    fn current_account_prefers_env_seeded_override() {
+        with_temp_env(|_db_path, _account_path| {
+            let keys = Keys::generate();
+            let nsec = keys.secret_key().to_bech32().expect("encode env nsec");
+            std::env::set_var(NOSTR_ACCOUNT_NSEC_ENV, &nsec);
+
+            let current = current_account()
+                .expect("read env current account")
+                .expect("env current account");
+            assert_eq!(current.source, NostrAccountSource::Env);
+            assert_eq!(
+                current.npub,
+                keys.public_key().to_bech32().expect("encode env npub")
+            );
+        });
+    }
+
     #[test]
     fn query_filters_by_author_and_limit() {
         let service = in_memory_service();
+        store_cached_test_events(&service);
 
         let events = service
             .query(NostrQuery {
-                authors: Some(vec![String::from("npub-feed-a")]),
+                authors: Some(vec![String::from("npub-test-a")]),
                 limit: Some(1),
                 ..NostrQuery::default()
             })
             .expect("query cached events");
 
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].id, "shadow-note-2");
+        assert_eq!(events[0].id, "test-note-2");
     }
 
     #[test]
     fn count_uses_generic_query_filters() {
         let service = in_memory_service();
+        store_cached_test_events(&service);
 
         let count = service
             .count(NostrQuery {
-                authors: Some(vec![String::from("npub-feed-a")]),
+                authors: Some(vec![String::from("npub-test-a")]),
                 since: Some(1_700_000_002),
                 ..NostrQuery::default()
             })
@@ -653,16 +1183,17 @@ mod tests {
     }
 
     #[test]
-    fn get_event_reads_seeded_cache_rows() {
+    fn get_event_reads_cached_rows() {
         let service = in_memory_service();
+        store_cached_test_events(&service);
 
         let event = service
-            .get_event("shadow-note-3")
+            .get_event("test-note-3")
             .expect("read cached event")
-            .expect("seeded event");
+            .expect("cached event");
 
         assert_eq!(event.kind, 1);
-        assert_eq!(event.pubkey, "npub-feed-b");
+        assert_eq!(event.pubkey, "npub-test-b");
     }
 
     #[test]
@@ -676,6 +1207,9 @@ mod tests {
                 kind: 0,
                 pubkey: String::from("npub-feed-a"),
                 identifier: None,
+                root_event_id: None,
+                reply_to_event_id: None,
+                references: Vec::new(),
             },
             NostrEvent {
                 content: String::from("profile-v2"),
@@ -684,6 +1218,9 @@ mod tests {
                 kind: 0,
                 pubkey: String::from("npub-feed-a"),
                 identifier: None,
+                root_event_id: None,
+                reply_to_event_id: None,
+                references: Vec::new(),
             },
         ] {
             service
@@ -705,16 +1242,119 @@ mod tests {
     }
 
     #[test]
+    fn query_filters_by_reply_to_event_id() {
+        let service = in_memory_service();
+        store_cached_test_events(&service);
+        service
+            .store_event(&NostrEvent {
+                content: String::from("first reply"),
+                created_at: 1_700_000_300,
+                id: String::from("reply-1"),
+                kind: 1,
+                pubkey: String::from("npub-test-a"),
+                identifier: None,
+                root_event_id: Some(String::from("test-note-1")),
+                reply_to_event_id: Some(String::from("test-note-1")),
+                references: vec![NostrEventReference {
+                    event_id: String::from("test-note-1"),
+                    marker: Some(String::from("reply")),
+                }],
+            })
+            .expect("store reply");
+        service
+            .store_event(&NostrEvent {
+                content: String::from("other reply"),
+                created_at: 1_700_000_301,
+                id: String::from("reply-2"),
+                kind: 1,
+                pubkey: String::from("npub-test-b"),
+                identifier: None,
+                root_event_id: Some(String::from("test-note-2")),
+                reply_to_event_id: Some(String::from("test-note-2")),
+                references: vec![NostrEventReference {
+                    event_id: String::from("test-note-2"),
+                    marker: Some(String::from("reply")),
+                }],
+            })
+            .expect("store other reply");
+
+        let replies = service
+            .query(NostrQuery {
+                ids: None,
+                authors: None,
+                kinds: Some(vec![1]),
+                referenced_ids: None,
+                reply_to_ids: Some(vec![String::from("test-note-1")]),
+                since: None,
+                until: None,
+                limit: None,
+            })
+            .expect("query replies");
+
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].id, "reply-1");
+        assert_eq!(replies[0].reply_to_event_id.as_deref(), Some("test-note-1"));
+    }
+
+    #[test]
+    fn query_filters_by_referenced_event_id() {
+        let service = in_memory_service();
+        store_cached_test_events(&service);
+        service
+            .store_event(&NostrEvent {
+                content: String::from("quoted reply"),
+                created_at: 1_700_000_320,
+                id: String::from("reply-ref-1"),
+                kind: 1,
+                pubkey: String::from("npub-test-c"),
+                identifier: None,
+                root_event_id: Some(String::from("test-note-1")),
+                reply_to_event_id: Some(String::from("test-note-1")),
+                references: vec![
+                    NostrEventReference {
+                        event_id: String::from("test-note-1"),
+                        marker: Some(String::from("root")),
+                    },
+                    NostrEventReference {
+                        event_id: String::from("test-note-2"),
+                        marker: Some(String::from("reply")),
+                    },
+                ],
+            })
+            .expect("store referenced event");
+
+        let referenced = service
+            .query(NostrQuery {
+                ids: None,
+                authors: None,
+                kinds: Some(vec![1]),
+                referenced_ids: Some(vec![String::from("test-note-2")]),
+                reply_to_ids: None,
+                since: None,
+                until: None,
+                limit: None,
+            })
+            .expect("query referenced events");
+
+        assert_eq!(referenced.len(), 1);
+        assert_eq!(referenced[0].id, "reply-ref-1");
+    }
+
+    #[test]
     fn list_kind1_compatibility_stays_kind1_only() {
         let service = in_memory_service();
+        store_cached_test_events(&service);
         service
             .store_event(&NostrEvent {
                 content: String::from("{\"name\":\"shadow\"}"),
                 created_at: 1_700_000_500,
                 id: String::from("profile-metadata"),
                 kind: 0,
-                pubkey: String::from("npub-feed-a"),
+                pubkey: String::from("npub-test-a"),
                 identifier: None,
+                root_event_id: None,
+                reply_to_event_id: None,
+                references: Vec::new(),
             })
             .expect("store non-kind1 event");
 
@@ -724,6 +1364,17 @@ mod tests {
 
         assert!(events.iter().all(|event: &Kind1Event| event.kind == 1));
         assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn initialize_leaves_new_cache_empty() {
+        let service = in_memory_service();
+
+        let events = service
+            .query(NostrQuery::default())
+            .expect("query initialized cache");
+
+        assert!(events.is_empty());
     }
 
     #[test]
@@ -770,13 +1421,62 @@ mod tests {
     }
 
     #[test]
+    fn initialize_removes_legacy_demo_rows() {
+        let service = in_memory_service();
+        for id in LEGACY_DEMO_EVENT_IDS {
+            service
+                .store_event(&NostrEvent {
+                    content: String::from("old demo row"),
+                    created_at: 1_700_000_010,
+                    id: String::from(id),
+                    kind: 1,
+                    pubkey: String::from("npub-demo"),
+                    identifier: None,
+                    root_event_id: None,
+                    reply_to_event_id: None,
+                    references: Vec::new(),
+                })
+                .expect("store legacy demo row");
+        }
+        service
+            .store_event(&NostrEvent {
+                content: String::from("real cached row"),
+                created_at: 1_700_000_011,
+                id: String::from("real-note"),
+                kind: 1,
+                pubkey: String::from("npub-real"),
+                identifier: None,
+                root_event_id: None,
+                reply_to_event_id: None,
+                references: Vec::new(),
+            })
+            .expect("store real cached row");
+
+        service.initialize().expect("reinitialize service");
+
+        for id in LEGACY_DEMO_EVENT_IDS {
+            assert!(
+                service.get_event(id).expect("query demo row").is_none(),
+                "expected {id} to be removed"
+            );
+        }
+        assert!(
+            service
+                .get_event("real-note")
+                .expect("query real row")
+                .is_some(),
+            "expected real row to remain"
+        );
+    }
+
+    #[test]
     fn get_replaceable_rejects_non_replaceable_kinds() {
         let service = in_memory_service();
 
         let error = service
             .get_replaceable(NostrReplaceableQuery {
                 kind: 1,
-                pubkey: String::from("npub-feed-a"),
+                pubkey: String::from("npub-test-a"),
                 identifier: None,
             })
             .expect_err("non-replaceable kinds should fail");

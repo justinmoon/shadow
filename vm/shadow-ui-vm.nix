@@ -159,10 +159,12 @@ PY
             echo "runtime env source=host-cache"
             export SHADOW_RUNTIME_CASHU_DATA_DIR=${stateDir}/runtime-cashu
             export SHADOW_RUNTIME_NOSTR_DB_PATH=${stateDir}/runtime-nostr.sqlite3
+            export SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=${stateDir}/runtime-nostr.sock
             echo "runtime bundle=''${runtime_bundle_path:-unset}"
             echo "system binary=''${system_path:-unset}"
             echo "app launch mode=metadata"
             echo "runtime nostr db=$SHADOW_RUNTIME_NOSTR_DB_PATH"
+            echo "runtime nostr socket=$SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET"
             echo "runtime cashu dir=$SHADOW_RUNTIME_CASHU_DATA_DIR"
 
             ${shadowUiVmSessionPackage}/bin/shadow-compositor &

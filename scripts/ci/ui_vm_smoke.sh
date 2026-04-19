@@ -582,6 +582,34 @@ echo "vm-smoke: home rust-demo again"
 "$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
 wait_for_home_state rust-demo "rust-demo second home" >/dev/null
 
+echo "vm-smoke: open rust-timeline"
+"$SCRIPT_DIR/shadowctl" open rust-timeline -t vm >/dev/null
+state_after_rust_timeline_open="$(wait_for_open_state rust-timeline "rust-timeline open")"
+wait_for_log_marker \
+  "shadow-rust-timeline: window_metrics surface=540x1042 safe_area=l0 t0 r0 b0" \
+  "rust-timeline window metrics"
+wait_for_log_marker \
+  "shadow-rust-timeline: lifecycle_state=foreground" \
+  "rust-timeline lifecycle foreground"
+
+echo "vm-smoke: home rust-timeline"
+"$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
+state_after_rust_timeline_home="$(wait_for_home_state rust-timeline "rust-timeline home")"
+wait_for_log_marker \
+  "shadow-rust-timeline: lifecycle_state=background" \
+  "rust-timeline lifecycle background"
+
+echo "vm-smoke: reopen rust-timeline"
+"$SCRIPT_DIR/shadowctl" open rust-timeline -t vm >/dev/null
+state_after_rust_timeline_reopen="$(wait_for_open_state rust-timeline "rust-timeline reopen")"
+wait_for_log_marker \
+  "shadow-rust-timeline: lifecycle_state=foreground" \
+  "rust-timeline lifecycle foreground again"
+
+echo "vm-smoke: home rust-timeline again"
+"$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
+wait_for_home_state rust-timeline "rust-timeline second home" >/dev/null
+
 echo "vm-smoke: open podcast"
 run_shadowctl open podcast -t vm >/dev/null
 state_after_podcast_open="$(wait_for_open_state podcast "podcast open")"
@@ -603,6 +631,9 @@ STATE_AFTER_CAMERA_HOME="$state_after_camera_home" \
 STATE_AFTER_RUST_DEMO_OPEN="$state_after_rust_demo_open" \
 STATE_AFTER_RUST_DEMO_HOME="$state_after_rust_demo_home" \
 STATE_AFTER_RUST_DEMO_REOPEN="$state_after_rust_demo_reopen" \
+STATE_AFTER_RUST_TIMELINE_OPEN="$state_after_rust_timeline_open" \
+STATE_AFTER_RUST_TIMELINE_HOME="$state_after_rust_timeline_home" \
+STATE_AFTER_RUST_TIMELINE_REOPEN="$state_after_rust_timeline_reopen" \
 STATE_AFTER_PODCAST_OPEN="$state_after_podcast_open" \
 SHOT_PATH="$SHOT_PATH" \
 python3 - <<'PY'
@@ -623,6 +654,9 @@ camera_home = json.loads(os.environ["STATE_AFTER_CAMERA_HOME"])
 rust_demo_open = json.loads(os.environ["STATE_AFTER_RUST_DEMO_OPEN"])
 rust_demo_home = json.loads(os.environ["STATE_AFTER_RUST_DEMO_HOME"])
 rust_demo_reopen = json.loads(os.environ["STATE_AFTER_RUST_DEMO_REOPEN"])
+rust_timeline_open = json.loads(os.environ["STATE_AFTER_RUST_TIMELINE_OPEN"])
+rust_timeline_home = json.loads(os.environ["STATE_AFTER_RUST_TIMELINE_HOME"])
+rust_timeline_reopen = json.loads(os.environ["STATE_AFTER_RUST_TIMELINE_REOPEN"])
 podcast_open = json.loads(os.environ["STATE_AFTER_PODCAST_OPEN"])
 
 
@@ -659,6 +693,9 @@ expect_home(camera_home, "camera", "camera home")
 expect_open(rust_demo_open, "rust-demo", "rust-demo open")
 expect_home(rust_demo_home, "rust-demo", "rust-demo home")
 expect_open(rust_demo_reopen, "rust-demo", "rust-demo reopen")
+expect_open(rust_timeline_open, "rust-timeline", "rust-timeline open")
+expect_home(rust_timeline_home, "rust-timeline", "rust-timeline home")
+expect_open(rust_timeline_reopen, "rust-timeline", "rust-timeline reopen")
 expect_open(podcast_open, "podcast", "podcast open")
 
 print(

@@ -16,18 +16,30 @@ use shadow_sdk::app::app_window_metrics_from_env;
 const APP_LIFECYCLE_STATE_ENV: &str = shadow_sdk::app::APP_LIFECYCLE_STATE_ENV;
 const RENDER_EXPR: &str = "globalThis.SHADOW_SYSTEM.render()";
 const RENDER_IF_DIRTY_EXPR: &str = "globalThis.SHADOW_SYSTEM.renderIfDirty()";
-const SESSION_USAGE: &str = "usage: shadow-system --session <bundle-path>";
+const SESSION_USAGE: &str =
+    "usage: shadow-system --session <bundle-path>\n       shadow-system --nostr-service <socket-path>";
 
-fn main() -> Result<()> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("build tokio runtime")?;
-    runtime.block_on(run())
+enum LaunchMode {
+    Session(String),
+    NostrService(PathBuf),
 }
 
-async fn run() -> Result<()> {
-    let session_module_path = parse_session_module_path()?;
+fn main() -> Result<()> {
+    match parse_launch_mode()? {
+        LaunchMode::Session(session_module_path) => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("build tokio runtime")?;
+            runtime.block_on(run(session_module_path))
+        }
+        LaunchMode::NostrService(socket_path) => {
+            services::nostr::run_service(socket_path).map_err(|error| anyhow!(error))
+        }
+    }
+}
+
+async fn run(session_module_path: String) -> Result<()> {
     configure_runtime_bundle_dir(&session_module_path)?;
     let main_module = resolve_main_module(session_module_path)?;
     let mut runtime = load_runtime(&main_module).await?;
@@ -237,24 +249,24 @@ fn v8_value_to_string(runtime: &mut JsRuntime, value: v8::Global<v8::Value>) -> 
         .map(|value| value.to_rust_string_lossy(scope))
 }
 
-fn parse_session_module_path() -> Result<String> {
+fn parse_launch_mode() -> Result<LaunchMode> {
     let mut args = env::args().skip(1);
 
     let Some(mode) = args.next() else {
         return Err(anyhow!(SESSION_USAGE));
     };
-    if mode != "--session" {
-        return Err(anyhow!(SESSION_USAGE));
-    }
-
-    let Some(module_path) = args.next() else {
+    let Some(path) = args.next() else {
         return Err(anyhow!(SESSION_USAGE));
     };
     if args.next().is_some() {
         return Err(anyhow!(SESSION_USAGE));
     }
 
-    Ok(module_path)
+    match mode.as_str() {
+        "--session" => Ok(LaunchMode::Session(path)),
+        "--nostr-service" => Ok(LaunchMode::NostrService(PathBuf::from(path))),
+        _ => Err(anyhow!(SESSION_USAGE)),
+    }
 }
 
 fn resolve_main_module(path: String) -> Result<Url> {

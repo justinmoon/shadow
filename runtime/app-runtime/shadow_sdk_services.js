@@ -30,6 +30,10 @@ export function syncKind1(request = {}) {
   return getNostrApi().syncKind1(request);
 }
 
+export function syncNostr(request = {}) {
+  return getNostrApi().sync(request);
+}
+
 export function publishKind1(request) {
   return getNostrApi().publishKind1(request);
 }
@@ -165,6 +169,7 @@ export const nostr = Object.freeze({
   publishEphemeralKind1,
   publishKind1,
   query: queryNostr,
+  sync: syncNostr,
   syncKind1,
 });
 

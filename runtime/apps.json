@@ -66,8 +66,8 @@
       "model": "typescript",
       "title": "Timeline",
       "iconLabel": "TL",
-      "subtitle": "Local Nostr cache",
-      "lifecycleHint": "Shelving keeps the live draft warm. Full restart reloads cached notes.",
+      "subtitle": "Shared Nostr cache",
+      "lifecycleHint": "Shelving keeps the latest cached feed warm. Full restart reloads shared notes.",
       "binaryName": "shadow-blitz-demo",
       "waylandAppId": "dev.shadow.timeline",
       "windowTitle": "Shadow Timeline",
@@ -169,6 +169,28 @@
       ],
       "ui": {
         "iconColor": "ICON_PURPLE"
+      }
+    },
+    {
+      "id": "rust-timeline",
+      "model": "rust",
+      "title": "Rust Nostr",
+      "iconLabel": "NR",
+      "subtitle": "Shared Nostr engine",
+      "lifecycleHint": "Shelving keeps the selected note and cache-backed feed one tap away.",
+      "binaryName": "shadow-rust-timeline",
+      "waylandAppId": "dev.shadow.rust-timeline",
+      "windowTitle": "Shadow Rust Timeline",
+      "launchEnv": {
+        "SHADOW_RUST_TIMELINE_LIMIT": "18",
+        "SHADOW_RUST_TIMELINE_RELAY_URLS": "wss://relay.primal.net/,wss://relay.damus.io/",
+        "SHADOW_RUST_TIMELINE_SYNC_ON_START": "1"
+      },
+      "profiles": [
+        "vm-shell"
+      ],
+      "ui": {
+        "iconColor": "ICON_RED"
       }
     }
   ]

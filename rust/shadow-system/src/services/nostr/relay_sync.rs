@@ -1,59 +1,36 @@
+use std::collections::BTreeSet;
 use std::time::Duration;
 
-use nostr::prelude::{Filter, Kind, PublicKey, RelayUrl, Timestamp, ToBech32};
+use nostr::prelude::{
+    Event, EventId, Filter, Kind, PublicKey, RelayUrl, TagStandard, Timestamp, ToBech32,
+};
 use nostr_sdk::prelude::Client;
-use serde::{Deserialize, Serialize};
 
-use shadow_sdk::services::nostr::Kind1Event;
+use shadow_sdk::services::nostr::{NostrEvent, NostrEventReference, NostrQuery, NostrSyncRequest};
 
 const DEFAULT_SYNC_TIMEOUT_MS: u64 = 8_000;
 const DEFAULT_SYNC_LIMIT: usize = 12;
 
-#[derive(Debug, Default, Deserialize)]
-pub struct SyncKind1Request {
-    #[serde(rename = "relayUrls")]
-    pub relay_urls: Option<Vec<String>>,
-    pub authors: Option<Vec<String>>,
-    pub since: Option<u64>,
-    pub until: Option<u64>,
-    pub limit: Option<usize>,
-    #[serde(rename = "timeoutMs")]
-    pub timeout_ms: Option<u64>,
-}
-
 #[derive(Debug)]
-pub struct FetchedKind1Batch {
+pub struct FetchedEventBatch {
     pub relay_urls: Vec<String>,
-    pub events: Vec<Kind1Event>,
+    pub events: Vec<NostrEvent>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct SyncedKind1Receipt {
-    #[serde(rename = "relayUrls")]
-    pub relay_urls: Vec<String>,
-    #[serde(rename = "fetchedCount")]
-    pub fetched_count: usize,
-    #[serde(rename = "importedCount")]
-    pub imported_count: usize,
-}
-
-pub async fn sync_kind1(request: SyncKind1Request) -> Result<FetchedKind1Batch, String> {
-    let filter = build_kind1_filter(&request)?;
+pub async fn sync_with_client(
+    client: &Client,
+    relay_registry: &mut BTreeSet<String>,
+    request: NostrSyncRequest,
+) -> Result<FetchedEventBatch, String> {
+    let filter = build_filter(&request.query)?;
     let relay_urls = normalize_relay_urls(request.relay_urls)?;
+    ensure_relays(client, relay_registry, &relay_urls).await?;
     let timeout = Duration::from_millis(
         request
             .timeout_ms
             .filter(|timeout_ms| *timeout_ms > 0)
             .unwrap_or(DEFAULT_SYNC_TIMEOUT_MS),
     );
-
-    let client = Client::default();
-    for relay_url in relay_urls.iter() {
-        client
-            .add_relay(relay_url)
-            .await
-            .map_err(|error| format!("nostr.syncKind1 add relay {relay_url}: {error}"))?;
-    }
 
     let connect_output = client.try_connect(Duration::from_secs(4)).await;
     if connect_output.success.is_empty() {
@@ -63,14 +40,11 @@ pub async fn sync_kind1(request: SyncKind1Request) -> Result<FetchedKind1Batch, 
             .map(|(relay_url, error)| format!("{relay_url} ({error})"))
             .collect::<Vec<_>>();
         failed_relays.sort();
-        client.shutdown().await;
         if failed_relays.is_empty() {
-            return Err(String::from(
-                "nostr.syncKind1 could not connect to any relay",
-            ));
+            return Err(String::from("nostr.sync could not connect to any relay"));
         }
         return Err(format!(
-            "nostr.syncKind1 could not connect to any relay: {}",
+            "nostr.sync could not connect to any relay: {}",
             failed_relays.join(", ")
         ));
     }
@@ -78,23 +52,27 @@ pub async fn sync_kind1(request: SyncKind1Request) -> Result<FetchedKind1Batch, 
     let events = client
         .fetch_events(filter, timeout)
         .await
-        .map_err(|error| format!("nostr.syncKind1 fetch events: {error}"))?;
-    client.shutdown().await;
+        .map_err(|error| format!("nostr.sync fetch events: {error}"))?;
 
     let mut events = events
         .into_iter()
-        .filter(|event| event.kind == Kind::TextNote)
         .map(|event| {
             let npub = event
                 .pubkey
                 .to_bech32()
-                .map_err(|error| format!("nostr.syncKind1 encode npub: {error}"))?;
-            Ok(Kind1Event {
+                .map_err(|error| format!("nostr.sync encode npub: {error}"))?;
+            let references = extract_event_references(&event);
+            let (root_event_id, reply_to_event_id) = derive_thread_links(&references);
+            Ok(NostrEvent {
                 content: event.content,
                 created_at: event.created_at.as_secs(),
                 id: event.id.to_string(),
-                kind: 1,
+                kind: event.kind.as_u16() as u32,
                 pubkey: npub,
+                identifier: event.tags.identifier().map(str::to_owned),
+                root_event_id,
+                reply_to_event_id,
+                references,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -105,32 +83,73 @@ pub async fn sync_kind1(request: SyncKind1Request) -> Result<FetchedKind1Batch, 
             .then_with(|| left.id.cmp(&right.id))
     });
 
-    Ok(FetchedKind1Batch { relay_urls, events })
+    Ok(FetchedEventBatch { relay_urls, events })
 }
 
-fn build_kind1_filter(request: &SyncKind1Request) -> Result<Filter, String> {
-    let mut filter = Filter::new().kind(Kind::TextNote);
-    if let Some(authors) = request
-        .authors
+fn build_filter(query: &NostrQuery) -> Result<Filter, String> {
+    let mut filter = Filter::new();
+    if query
+        .reply_to_ids
         .as_ref()
-        .filter(|authors| !authors.is_empty())
+        .is_some_and(|reply_to_ids| !reply_to_ids.is_empty())
     {
+        return Err(String::from(
+            "nostr.sync does not yet support reply-to filters; query the local cache instead",
+        ));
+    }
+    if let Some(ids) = query.ids.as_ref().filter(|ids| !ids.is_empty()) {
+        let ids = ids
+            .iter()
+            .map(|id| {
+                EventId::parse(id.trim())
+                    .map_err(|error| format!("nostr.sync invalid event id {id}: {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        filter = filter.ids(ids);
+    }
+    if let Some(referenced_ids) = query
+        .referenced_ids
+        .as_ref()
+        .filter(|referenced_ids| !referenced_ids.is_empty())
+    {
+        let referenced_ids = referenced_ids
+            .iter()
+            .map(|id| {
+                EventId::parse(id.trim()).map_err(|error| {
+                    format!("nostr.sync invalid referenced event id {id}: {error}")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        filter = filter.events(referenced_ids);
+    }
+    if let Some(authors) = query.authors.as_ref().filter(|authors| !authors.is_empty()) {
         let authors = authors
             .iter()
             .map(|author| {
                 PublicKey::parse(author.trim())
-                    .map_err(|error| format!("nostr.syncKind1 invalid author {author}: {error}"))
+                    .map_err(|error| format!("nostr.sync invalid author {author}: {error}"))
             })
             .collect::<Result<Vec<_>, _>>()?;
         filter = filter.authors(authors);
     }
-    if let Some(since) = request.since {
+    if let Some(kinds) = query.kinds.as_ref().filter(|kinds| !kinds.is_empty()) {
+        let kinds = kinds
+            .iter()
+            .map(|kind| {
+                u16::try_from(*kind)
+                    .map(Kind::from)
+                    .map_err(|_| format!("nostr.sync invalid kind {kind}: out of range"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        filter = filter.kinds(kinds);
+    }
+    if let Some(since) = query.since {
         filter = filter.since(Timestamp::from_secs(since));
     }
-    if let Some(until) = request.until {
+    if let Some(until) = query.until {
         filter = filter.until(Timestamp::from_secs(until));
     }
-    filter = filter.limit(request.limit.unwrap_or(DEFAULT_SYNC_LIMIT));
+    filter = filter.limit(query.limit.unwrap_or(DEFAULT_SYNC_LIMIT));
     Ok(filter)
 }
 
@@ -157,9 +176,72 @@ fn normalize_relay_urls(relay_urls: Option<Vec<String>>) -> Result<Vec<String>, 
         .collect()
 }
 
+async fn ensure_relays(
+    client: &Client,
+    relay_registry: &mut BTreeSet<String>,
+    relay_urls: &[String],
+) -> Result<(), String> {
+    for relay_url in relay_urls.iter() {
+        if relay_registry.contains(relay_url) {
+            continue;
+        }
+
+        client
+            .add_relay(relay_url)
+            .await
+            .map_err(|error| format!("nostr.sync add relay {relay_url}: {error}"))?;
+        relay_registry.insert(relay_url.clone());
+    }
+
+    Ok(())
+}
+
 fn default_relay_urls() -> Vec<String> {
     vec![
         String::from("wss://relay.primal.net/"),
         String::from("wss://relay.damus.io/"),
     ]
+}
+
+fn extract_event_references(event: &Event) -> Vec<NostrEventReference> {
+    event
+        .tags
+        .iter()
+        .filter_map(|tag| match tag.as_standardized() {
+            Some(TagStandard::Event {
+                event_id, marker, ..
+            }) => Some(NostrEventReference {
+                event_id: event_id.to_string(),
+                marker: marker.map(|marker| marker.to_string()),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn derive_thread_links(references: &[NostrEventReference]) -> (Option<String>, Option<String>) {
+    let explicit_root = references
+        .iter()
+        .find(|reference| reference.marker.as_deref() == Some("root"))
+        .map(|reference| reference.event_id.clone());
+    let explicit_reply = references
+        .iter()
+        .find(|reference| reference.marker.as_deref() == Some("reply"))
+        .map(|reference| reference.event_id.clone());
+    let reply_to_event_id = explicit_reply.or_else(|| {
+        references
+            .last()
+            .map(|reference| reference.event_id.clone())
+    });
+    let root_event_id = explicit_root.or_else(|| {
+        if references.len() > 1 {
+            references
+                .first()
+                .map(|reference| reference.event_id.clone())
+        } else {
+            reply_to_event_id.clone()
+        }
+    });
+
+    (root_event_id, reply_to_event_id)
 }

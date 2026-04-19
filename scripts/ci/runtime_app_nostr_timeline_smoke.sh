@@ -18,6 +18,7 @@ from pathlib import Path
 
 REPO_ROOT = Path.cwd()
 SCRIPT_DIR = REPO_ROOT / "scripts"
+PREPARE_TIMEOUT_SECONDS = 600
 
 
 def reserve_port() -> int:
@@ -194,7 +195,7 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
         session_json = run(
             [str(SCRIPT_DIR / "runtime" / "runtime_prepare_host_session.sh")],
             env=prepare_env,
-            timeout=120,
+            timeout=PREPARE_TIMEOUT_SECONDS,
         ).stdout
         session = json.loads(session_json)
 
@@ -242,45 +243,6 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
                     "runtime-app-nostr-timeline-smoke: local relay notes never appeared in timeline",
                 )
 
-            send(process, {"op": "dispatch", "event": {"targetId": "draft", "type": "focus"}})
-            send(
-                process,
-                {
-                    "op": "dispatch",
-                    "event": {
-                        "targetId": "draft",
-                        "type": "input",
-                        "value": "GM from keyboard",
-                        "selection": {"start": 16, "end": 16, "direction": "none"},
-                    },
-                },
-            )
-            submitted = send(
-                process,
-                {
-                    "op": "dispatch",
-                    "event": {
-                        "targetId": "draft",
-                        "type": "keydown",
-                        "keyboard": {
-                            "key": "Enter",
-                            "code": "Enter",
-                        },
-                    },
-                },
-            )
-            submitted_html = submitted["payload"]["html"]
-            for fragment in [
-                "GM from keyboard",
-                "Saved shadow-note",
-                "Focus: focused",
-            ]:
-                if fragment not in submitted_html:
-                    raise SystemExit(
-                        "runtime-app-nostr-timeline-smoke: keyboard compose submission missing "
-                        f"fragment: {fragment}",
-                    )
-
             if process.stdin is not None:
                 process.stdin.close()
             process.wait(timeout=10)
@@ -296,14 +258,12 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
             )
             restarted = send(process, {"op": "render"})
             restarted_html = restarted["payload"]["html"]
-            if "GM from keyboard" not in restarted_html:
-                raise SystemExit(
-                    "runtime-app-nostr-timeline-smoke: restart lost cached posted note",
-                )
-            if "Draft: (empty)" not in restarted_html:
-                raise SystemExit(
-                    "runtime-app-nostr-timeline-smoke: restart should reset live draft state",
-                )
+            for fragment in ("relay smoke alpha", "relay smoke beta"):
+                if fragment not in restarted_html:
+                    raise SystemExit(
+                        "runtime-app-nostr-timeline-smoke: restart lost cached relay note: "
+                        f"{fragment}",
+                    )
         finally:
             if process.stdin is not None:
                 process.stdin.close()

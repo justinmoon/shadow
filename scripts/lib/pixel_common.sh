@@ -1325,6 +1325,7 @@ pixel_system_env_lines() {
   cat <<EOF
 SHADOW_SYSTEM_BINARY_PATH=$(pixel_system_launcher_dst)
 SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)
+SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=$(pixel_runtime_dir)/runtime-nostr.sock
 EOF
 }
 
