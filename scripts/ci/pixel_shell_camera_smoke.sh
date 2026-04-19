@@ -259,7 +259,7 @@ expect(preview_home_frame_checksum is not None, "missing shell home frame checks
 preview_frame_after_click_line_index = line_index_matching_after(
     preview_session_lines,
     preview_click_line_index + 1,
-    r"\[shadow-guest-compositor\] captured-frame checksum=",
+    r"\[shadow-guest-compositor\] (captured-frame|captured-dmabuf-frame) checksum=",
 )
 preview_frame_after_click_checksum = line_regex_group(
     preview_session_lines,
