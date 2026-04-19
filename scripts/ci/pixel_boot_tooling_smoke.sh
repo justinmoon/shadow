@@ -13,6 +13,8 @@ ONESHOT_OUTPUT="$TMP_DIR/oneshot-output"
 FLASH_RUN_OUTPUT="$TMP_DIR/flash-run-output"
 BOOT_BUILD_INPUT="$TMP_DIR/build-input.img"
 BOOT_BUILD_RAMDISK="$TMP_DIR/build-ramdisk.cpio"
+BOOT_BUILD_SYSTEM_INIT_RAMDISK="$TMP_DIR/build-system-init-ramdisk.cpio"
+BOOT_BUILD_SYSTEM_INIT_NONSTOCK_ROOT_RAMDISK="$TMP_DIR/build-system-init-nonstock-root-ramdisk.cpio"
 WRAPPER_STANDARD_BIN="$TMP_DIR/init-wrapper-standard"
 WRAPPER_MINIMAL_BIN="$TMP_DIR/init-wrapper-minimal"
 AVB_KEY_PATH="$TMP_DIR/avb-testkey.pem"
@@ -26,6 +28,7 @@ MINIMAL_BUILD_OUTPUT="$TMP_DIR/built-init-wrapper-minimal"
 C_WRAPPER_BUILD_OUTPUT="$TMP_DIR/built-init-wrapper-c-minimal"
 STOCK_INIT_OUTPUT_IMAGE="$TMP_DIR/stock-init-output.img"
 INIT_SYMLINK_OUTPUT_IMAGE="$TMP_DIR/init-symlink-output.img"
+SYSTEM_INIT_SYMLINK_OUTPUT_IMAGE="$TMP_DIR/system-init-symlink-output.img"
 LOG_PROBE_OUTPUT_IMAGE="$TMP_DIR/log-probe-stock-init.img"
 RC_PROBE_OUTPUT_IMAGE="$TMP_DIR/rc-probe-stock-init.img"
 MOCK_STORE_STANDARD="$TMP_DIR/store-standard"
@@ -97,6 +100,106 @@ init_rc_path.chmod(0o644)
 entries = [
     build_entry_from_path("init", init_path, 1),
     build_entry_from_path("system/etc/init/hw/init.rc", init_rc_path, 2),
+]
+trailer = CpioEntry(
+    name="TRAILER!!!",
+    ino=0,
+    mode=0,
+    uid=0,
+    gid=0,
+    nlink=1,
+    mtime=0,
+    filesize=0,
+    devmajor=0,
+    devminor=0,
+    rdevmajor=0,
+    rdevminor=0,
+    check=0,
+    data=b"",
+)
+write_cpio(CpioArchive(entries + [trailer], b""), ramdisk_path)
+PY
+
+PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$BOOT_BUILD_SYSTEM_INIT_RAMDISK" <<'PY'
+from pathlib import Path
+import os
+import sys
+
+from cpio_edit import CpioArchive, CpioEntry, build_entry_from_path, write_cpio
+
+ramdisk_path = Path(sys.argv[1])
+tmp_dir = ramdisk_path.parent
+
+root_init_path = tmp_dir / "root-init"
+try:
+    root_init_path.unlink()
+except FileNotFoundError:
+    pass
+os.symlink("/system/bin/init", root_init_path)
+
+system_init_path = tmp_dir / "system-bin-init"
+system_init_path.write_text("stock-system-init\n", encoding="utf-8")
+system_init_path.chmod(0o755)
+
+init_rc_path = tmp_dir / "stock-system-init.rc"
+init_rc_path.write_text(
+    "on boot\n    setprop shadow.boot.base 1\n",
+    encoding="utf-8",
+)
+init_rc_path.chmod(0o644)
+
+entries = [
+    build_entry_from_path("init", root_init_path, 1),
+    build_entry_from_path("system/bin/init", system_init_path, 2),
+    build_entry_from_path("system/etc/init/hw/init.rc", init_rc_path, 3),
+]
+trailer = CpioEntry(
+    name="TRAILER!!!",
+    ino=0,
+    mode=0,
+    uid=0,
+    gid=0,
+    nlink=1,
+    mtime=0,
+    filesize=0,
+    devmajor=0,
+    devminor=0,
+    rdevmajor=0,
+    rdevminor=0,
+    check=0,
+    data=b"",
+)
+write_cpio(CpioArchive(entries + [trailer], b""), ramdisk_path)
+PY
+
+PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$BOOT_BUILD_SYSTEM_INIT_NONSTOCK_ROOT_RAMDISK" <<'PY'
+from pathlib import Path
+import sys
+
+from cpio_edit import CpioArchive, CpioEntry, build_entry_from_path, write_cpio
+
+ramdisk_path = Path(sys.argv[1])
+tmp_dir = ramdisk_path.parent
+
+root_init_path = tmp_dir / "nonstock-root-init"
+root_init_path.write_text("nonstock-root-init\n", encoding="utf-8")
+root_init_path.chmod(0o755)
+
+system_init_path = tmp_dir / "nonstock-system-bin-init"
+system_init_path.write_text("stock-system-init\n", encoding="utf-8")
+system_init_path.chmod(0o755)
+
+init_rc_path = tmp_dir / "nonstock-system-init.rc"
+init_rc_path.write_text(
+    "on boot\n    setprop shadow.boot.base 1\n",
+    encoding="utf-8",
+)
+init_rc_path.chmod(0o644)
+
+entries = [
+    build_entry_from_path("init", root_init_path, 1),
+    build_entry_from_path("system/bin/init", system_init_path, 2),
+    build_entry_from_path("system/etc/init/hw/init.rc", init_rc_path, 3),
 ]
 trailer = CpioEntry(
     name="TRAILER!!!",
@@ -594,6 +697,40 @@ assert_contains "$init_symlink_build_output" "Init path mutation: rename init=in
 assert_contains "$init_symlink_build_output" "Init symlink target: init.stock"
 assert_cpio_entry_symlink_target "$INIT_SYMLINK_OUTPUT_IMAGE" init "init.stock"
 assert_cpio_entry_equals "$INIT_SYMLINK_OUTPUT_IMAGE" init.stock $'stock-init\n'
+
+system_init_symlink_build_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_SYSTEM_INIT_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_system_init_symlink_probe.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$SYSTEM_INIT_SYMLINK_OUTPUT_IMAGE"
+)"
+assert_contains "$system_init_symlink_build_output" "Build mode: stock-init"
+assert_contains "$system_init_symlink_build_output" "Extra renamed entries: 1"
+assert_contains "$system_init_symlink_build_output" "Extra added entries: 1"
+assert_contains "$system_init_symlink_build_output" "Probe mode: system-init-symlink"
+assert_contains "$system_init_symlink_build_output" "Root init path: preserve stock /init -> /system/bin/init symlink"
+assert_contains "$system_init_symlink_build_output" "System init mutation: rename system/bin/init=system/bin/init.stock and restore system/bin/init as a symlink"
+assert_contains "$system_init_symlink_build_output" "System init symlink target: init.stock"
+assert_cpio_entry_symlink_target "$SYSTEM_INIT_SYMLINK_OUTPUT_IMAGE" init "/system/bin/init"
+assert_cpio_entry_symlink_target "$SYSTEM_INIT_SYMLINK_OUTPUT_IMAGE" system/bin/init "init.stock"
+assert_cpio_entry_equals "$SYSTEM_INIT_SYMLINK_OUTPUT_IMAGE" system/bin/init.stock $'stock-system-init\n'
+
+set +e
+system_init_nonstock_root_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_SYSTEM_INIT_NONSTOCK_ROOT_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_system_init_symlink_probe.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-system-init-symlink-nonstock-root.img" 2>&1
+)"
+system_init_nonstock_root_status="$?"
+set -e
+if [[ "$system_init_nonstock_root_status" -eq 0 ]]; then
+  echo "pixel_boot_tooling_smoke: system-init symlink probe should reject a non-stock root /init shape" >&2
+  exit 1
+fi
+assert_contains "$system_init_nonstock_root_output" "expected stock root /init symlink to /system/bin/init"
 
 log_probe_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

@@ -166,8 +166,14 @@ Related docs:
   - after the yellow corrupt-device warning was acknowledged, the phone hung at the `Google` screen with no `adb` or `fastboot` visibility
   - forcing fastboot and restoring stock `boot_a` recovered the device; it booted Android successfully again on slot `b`, with `sys.boot_completed=1`
 - Tightened inference after unpacking the stock ramdisk and running the symlink probe: changing `/init` from the stock one-hop symlink (`/init -> /system/bin/init`) into a two-hop chain (`/init -> /init.stock -> /system/bin/init`) is already enough to break `sunfish` boot. So the next seam should preserve the stock `/init` link itself and move one level deeper, likely around `system/bin/init` rather than root-path aliasing.
+- Current probe plan after that result: keep `/init -> /system/bin/init` exactly as stock, then test whether a deeper `system/bin/init -> init.stock` hop is tolerated before trying any new foreign-PID1 handoff at that path.
+- New hardware result on 2026-04-19 from the deeper `system/bin/init` symlink probe (`09051JEC202061`, inactive slot `a`):
+  - flashing `shadow-boot-system-init-symlink-probe.img` to inactive slot `a` and activating it also failed to reach Android on `a`
+  - the guarded runner again saw no `adb` or `fastboot` on its own before timing out
+  - once the phone was pushed into fastboot, the host restored stock `boot_a`, switched back to slot `b`, and the device booted Android successfully again with `sys.boot_completed=1`
+- Tightened inference after the deeper probe: preserving the stock root `/init -> /system/bin/init` link is still not enough if `system/bin/init` itself becomes a symlink hop to `system/bin/init.stock`. So the current device constraint is stricter than “keep `/init` special”; even a symlink indirection at the real first-stage init path appears to break `sunfish` boot.
 - Truthfulness rule for the new boot-lab runners: top-level `status.json` and process exit codes must stay aligned with the underlying flash/collect result; false-success wrapper statuses are not acceptable evidence.
 - Because stock-init experimental flashes can disrupt the working rooted lane on the same slot, future chunks should bias toward safety rails before convenience or public surfacing.
 - Landing rule for this project: each chunk should be truthful, green, and mergeable on its own, so other worktrees can keep rebasing on `master` instead of waiting for a giant boot branch to finish.
 - Camera remains Android-bound today. Wi-Fi likely does too. Do not make them blockers for the first Shadow-at-boot milestone.
-- Next seam: preserve the stock `/init -> /system/bin/init` link exactly and probe one level deeper, starting with a `system/bin/init`-level experiment rather than any further root `/init` rewrites.
+- Next seam: stop adding pathname indirection around init entirely and probe a seam that leaves both `/init` and `system/bin/init` at their stock paths, likely by patching or interposing at the real `system/bin/init` binary boundary rather than by rename-and-symlink tricks.
