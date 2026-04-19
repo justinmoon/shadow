@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INPUT_PATH="${SHADOW_RUNTIME_APP_INPUT_PATH:-}"
 CACHE_DIR="${SHADOW_RUNTIME_APP_CACHE_DIR:-}"
 runtime_flake_ref=""
-runtime_host_package_attr="shadow-runtime-host"
+runtime_host_package_attr="shadow-system"
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -16,6 +16,10 @@ parse_args() {
         shift 2
         ;;
       --runtime-host-package)
+        runtime_host_package_attr="${2:-}"
+        shift 2
+        ;;
+      --system-package)
         runtime_host_package_attr="${2:-}"
         shift 2
         ;;
@@ -34,7 +38,7 @@ cd "$REPO_ROOT"
 
 builder_args=(
   --flake-ref "$REPO_FLAKE_REF"
-  --runtime-host-package "$runtime_host_package_attr"
+  --system-package "$runtime_host_package_attr"
   --profile single
   --app-id app
 )
@@ -133,7 +137,7 @@ runtime_host_env = {
     "SHADOW_BLITZ_SAFE_AREA_RIGHT": "0",
     "SHADOW_BLITZ_SAFE_AREA_BOTTOM": "0",
 }
-wrapper_path = os.path.join(os.path.abspath(cache_dir), "shadow-runtime-host-launch.sh")
+wrapper_path = os.path.join(os.path.abspath(cache_dir), "shadow-system-launch.sh")
 os.makedirs(os.path.dirname(wrapper_path), exist_ok=True)
 with open(wrapper_path, "w", encoding="utf-8") as wrapper:
     wrapper.write("#!/usr/bin/env bash\n")

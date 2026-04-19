@@ -289,7 +289,7 @@ check_runtime_session_env_case() {
     cd "$REPO_ROOT"
     env SHADOW_APP_METADATA_MANIFEST="$manifest_path" \
       scripts/runtime/runtime_prepare_host_session_env.sh \
-        --runtime-host-binary-path /tmp/shadow-runtime-host \
+        --system-binary-path /tmp/shadow-system \
         --artifact-root "$artifact_root" \
         --artifact-guest-root /opt/shadow-runtime \
         >"$env_output_path"
@@ -330,8 +330,10 @@ if actual_apps != expected_apps:
 env_text = env_output_path.read_text(encoding="utf-8")
 if "export SHADOW_SESSION_APP_PROFILE='vm-shell'" not in env_text:
     raise SystemExit("session env missing SHADOW_SESSION_APP_PROFILE")
-if "export SHADOW_RUNTIME_HOST_BINARY_PATH='/tmp/shadow-runtime-host'" not in env_text:
+if "export SHADOW_RUNTIME_HOST_BINARY_PATH='/tmp/shadow-system'" not in env_text:
     raise SystemExit("session env missing SHADOW_RUNTIME_HOST_BINARY_PATH")
+if "export SHADOW_SYSTEM_BINARY_PATH='/tmp/shadow-system'" not in env_text:
+    raise SystemExit("session env missing SHADOW_SYSTEM_BINARY_PATH")
 
 if expected_apps:
     if "export SHADOW_RUNTIME_APP_BUNDLE_PATH=" not in env_text:

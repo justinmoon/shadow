@@ -1,11 +1,15 @@
 [package]
-name = "shadow-runtime-host"
+name = "shadow-system"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 deno_core = { workspace = true, features = ["include_icu_data", "reactor-tokio"] }
-shadow-sdk = { workspace = true, features = ["runtime-host"] }
+runtime-audio-host.workspace = true
+runtime-camera-host = { workspace = true, features = ["runtime-extension"] }
+runtime-cashu-host.workspace = true
+runtime-nostr-host.workspace = true
+shadow-sdk.workspace = true
 shadow-runtime-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true

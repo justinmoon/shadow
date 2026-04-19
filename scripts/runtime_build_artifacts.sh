@@ -23,7 +23,15 @@ while [[ $# -gt 0 ]]; do
       runtime_host_package_attr="${2:-}"
       shift 2
       ;;
+    --system-package)
+      runtime_host_package_attr="${2:-}"
+      shift 2
+      ;;
     --runtime-host-binary-path)
+      runtime_host_binary_path="${2:-}"
+      shift 2
+      ;;
+    --system-binary-path)
       runtime_host_binary_path="${2:-}"
       shift 2
       ;;
@@ -39,10 +47,10 @@ REPO_FLAKE_REF="${runtime_flake_ref:-${runtime_repo_root}}"
 
 if [[ -n "$runtime_host_binary_path" ]]; then
   if [[ -n "$runtime_host_package_attr" ]]; then
-    passthrough+=(--runtime-host-package "$runtime_host_package_attr")
+    passthrough+=(--system-package "$runtime_host_package_attr")
   fi
   passthrough+=(
-    --runtime-host-binary-path "$runtime_host_binary_path"
+    --system-binary-path "$runtime_host_binary_path"
   )
 elif [[ -n "$runtime_host_package_attr" ]]; then
   runtime_host_prefix="$(
@@ -51,8 +59,8 @@ elif [[ -n "$runtime_host_package_attr" ]]; then
       --print-out-paths
   )"
   passthrough+=(
-    --runtime-host-package "$runtime_host_package_attr"
-    --runtime-host-binary-path "$runtime_host_prefix/bin/shadow-runtime-host"
+    --system-package "$runtime_host_package_attr"
+    --system-binary-path "$runtime_host_prefix/bin/shadow-system"
   )
 fi
 

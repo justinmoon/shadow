@@ -21,7 +21,7 @@ nixpkgs.lib.nixosSystem {
         sessionLog = "${logDir}/shadow-ui-session.log";
         sessionEnv = "${stateDir}/shadow-ui-session-env.sh";
         runtimeArtifactManifest = "${runtimeArtifactDir}/artifact-manifest.json";
-        runtimeHostEnvScript = "${runtimeArtifactDir}/runtime-host-session-env.sh";
+        runtimeHostEnvScript = "${runtimeArtifactDir}/runtime-system-session-env.sh";
         guestSystemPkgs = with pkgs; [
           bash
           coreutils

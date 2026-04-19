@@ -75,8 +75,8 @@ Do not hard-code event kinds into top-level SDK function names. The core API sho
 - The immediate implementation seam is to introduce the generic read-side API shape now, backed by the current host/store, while deferring the persistent shared engine and real signer to the next deeper seams.
 - The Rust `shadow_sdk::services::nostr` module is feature-gated for now:
   - enable `shadow-sdk/nostr` for the generic cache API
-  - `shadow-sdk/runtime-host` includes that feature automatically
-  - default UI workspace builds keep the module off so we do not force the UI vendor set to absorb `deno_core` yet
+  - `shadow-system` pulls that host-side feature in when it binds the TypeScript runtime
+  - default UI workspace builds keep the module off so app-facing SDK builds do not pull in extra runtime-service dependencies unless they need them
 - The first Rust app should validate product reality, not just plumbing. Read-first is enough for the first serious slice if it has:
   - timeline list quality
   - thread navigation

@@ -6,11 +6,11 @@ members = [
     "runtime-cashu-host",
     "runtime-nostr-host",
     "shadow-sdk",
-    "shadow-runtime-host",
+    "shadow-system",
     "shadow-runtime-protocol",
 ]
 default-members = [
-    "shadow-runtime-host",
+    "shadow-system",
 ]
 exclude = [
     "drm-rect",

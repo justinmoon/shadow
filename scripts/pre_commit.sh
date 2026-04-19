@@ -36,7 +36,7 @@ scripts/lib/agent_tools.py check-docs
 scripts/lib/agent_tools.py check-justfile
 nix flake check --no-build
 nix develop .#runtime -c cargo check --manifest-path rust/init-wrapper/Cargo.toml
-nix develop .#runtime -c cargo test --manifest-path rust/Cargo.toml -p shadow-sdk --features runtime-host
-nix develop .#runtime -c cargo check --manifest-path rust/Cargo.toml -p shadow-runtime-host
+nix develop .#runtime -c cargo test --manifest-path rust/Cargo.toml -p shadow-sdk --features nostr
+nix develop .#runtime -c cargo test --manifest-path rust/Cargo.toml -p shadow-system
 nix develop .#runtime -c deno test --allow-read --allow-write --allow-run --allow-env scripts/runtime/runtime_prepare_app_bundle_test.ts
 just ui-check

@@ -75,13 +75,13 @@ if [[ -S "$SOCKET_PATH" ]]; then
 fi
 
 rm -f .shadow-vm/nix-store-overlay.img
-runtime_env_tmp="$(mktemp "$RUNTIME_ARTIFACT_DIR/runtime-host-session-env.XXXXXX")"
+runtime_env_tmp="$(mktemp "$RUNTIME_ARTIFACT_DIR/runtime-system-session-env.XXXXXX")"
 SHADOW_PODCAST_PLAYER_ASSET_DIR="$podcast_fixture_dir" \
 SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 \
 scripts/runtime/runtime_prepare_host_session_env.sh \
   --flake-ref "$prepared_source_root" \
-  --runtime-host-package "$runtime_host_package_attr" \
-  --runtime-host-binary-path "$runtime_host_binary_path" \
+  --system-package "$runtime_host_package_attr" \
+  --system-binary-path "$runtime_host_binary_path" \
   --include-podcast \
   --artifact-root "$RUNTIME_ARTIFACT_DIR" \
   --artifact-guest-root "$RUNTIME_GUEST_DIR" \

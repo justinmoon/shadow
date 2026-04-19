@@ -1310,11 +1310,11 @@ pixel_runtime_app_bundle_dst_for() {
 }
 
 pixel_runtime_host_binary_dst() {
-  printf '%s/shadow-runtime-host\n' "$(pixel_runtime_linux_dir)"
+  printf '%s/shadow-system\n' "$(pixel_runtime_linux_dir)"
 }
 
 pixel_runtime_host_launcher_dst() {
-  printf '%s/run-shadow-runtime-host\n' "$(pixel_runtime_linux_dir)"
+  printf '%s/run-shadow-system\n' "$(pixel_runtime_linux_dir)"
 }
 
 pixel_runtime_openlog_preload_dst() {

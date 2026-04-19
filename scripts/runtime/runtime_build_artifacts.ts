@@ -546,6 +546,7 @@ function buildEnvScript(
 
   if (manifest.runtimeHostBinaryPath) {
     exports.SHADOW_RUNTIME_HOST_BINARY_PATH = manifest.runtimeHostBinaryPath;
+    exports.SHADOW_SYSTEM_BINARY_PATH = manifest.runtimeHostBinaryPath;
   }
   for (const app of Object.values(apps)) {
     if (!app.bundleEnv) {
@@ -721,10 +722,12 @@ function parseArgs(args: string[]): CliOptions {
         index += 1;
         break;
       case "--runtime-host-binary-path":
+      case "--system-binary-path":
         options.runtimeHostBinaryPath = requireValue(arg, args[index + 1]);
         index += 1;
         break;
       case "--runtime-host-package":
+      case "--system-package":
         options.runtimeHostPackageAttr = requireValue(arg, args[index + 1]);
         index += 1;
         break;

@@ -495,7 +495,7 @@ stage_runtime_host_linux_bundle() {
   package_ref="$1"
   out_link="$2"
   bundle_dir="$3"
-  binary_name="${4:-shadow-runtime-host}"
+  binary_name="${4:-shadow-system}"
   bundle_lib_dir="$bundle_dir/lib"
   bundle_etc_dir="$bundle_dir/etc"
 

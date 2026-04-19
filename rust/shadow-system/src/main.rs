@@ -3,6 +3,8 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
 
+mod runtime_extensions;
+
 use deno_core::anyhow::{anyhow, Context, Result};
 use deno_core::url::Url;
 use deno_core::v8;
@@ -13,7 +15,7 @@ use shadow_sdk::app::app_window_metrics_from_env;
 const APP_LIFECYCLE_STATE_ENV: &str = shadow_sdk::app::APP_LIFECYCLE_STATE_ENV;
 const RENDER_EXPR: &str = "globalThis.SHADOW_RUNTIME_HOST.render()";
 const RENDER_IF_DIRTY_EXPR: &str = "globalThis.SHADOW_RUNTIME_HOST.renderIfDirty()";
-const SESSION_USAGE: &str = "usage: shadow-runtime-host --session <bundle-path>";
+const SESSION_USAGE: &str = "usage: shadow-system --session <bundle-path>";
 
 fn main() -> Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -52,7 +54,7 @@ fn configure_runtime_bundle_dir(session_module_path: &str) -> Result<()> {
 async fn load_runtime(main_module: &Url) -> Result<JsRuntime> {
     let mut runtime = JsRuntime::new(RuntimeOptions {
         module_loader: Some(Rc::new(FsModuleLoader)),
-        extensions: shadow_sdk::runtime_host::runtime_extensions(),
+        extensions: runtime_extensions::runtime_extensions(),
         ..Default::default()
     });
     seed_initial_lifecycle_state(&mut runtime)?;

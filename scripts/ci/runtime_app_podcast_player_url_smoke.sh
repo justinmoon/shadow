@@ -72,7 +72,7 @@ sync_remote_tree() {
     rust/Cargo.toml \
     rust/Cargo.lock \
     rust/shadow-linux-audio-spike \
-    rust/shadow-runtime-host \
+    rust/shadow-system \
     rust/runtime-audio-host \
     rust/runtime-camera-host \
     rust/runtime-cashu-host \

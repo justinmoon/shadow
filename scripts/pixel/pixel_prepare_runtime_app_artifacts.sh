@@ -16,10 +16,10 @@ cache_dir="${PIXEL_RUNTIME_APP_CACHE_DIR:-build/runtime/pixel-counter}"
 bundle_artifact="$(pixel_runtime_app_bundle_artifact)"
 host_bundle_dir="$(pixel_runtime_host_bundle_artifact_dir)"
 asset_artifact_dir="$(pixel_runtime_app_asset_artifact_dir)"
-host_bundle_out_link="$(pixel_dir)/shadow-runtime-host-aarch64-linux-gnu-result"
-host_binary_name="shadow-runtime-host"
-host_launcher_artifact="$host_bundle_dir/run-shadow-runtime-host"
-package_ref="$repo#packages.${linux_system}.shadow-runtime-host"
+host_bundle_out_link="$(pixel_dir)/shadow-system-aarch64-linux-gnu-result"
+host_binary_name="shadow-system"
+host_launcher_artifact="$host_bundle_dir/run-shadow-system"
+package_ref="$repo#packages.${linux_system}.shadow-system"
 audio_enabled="${PIXEL_RUNTIME_ENABLE_LINUX_AUDIO:-0}"
 audio_package_ref="$repo#packages.${linux_system}.shadow-linux-audio-spike-aarch64-linux-gnu"
 audio_out_link="$(pixel_dir)/shadow-linux-audio-spike-aarch64-linux-gnu-result"
@@ -52,7 +52,7 @@ mapfile -t runtime_host_source_inputs < <(
   printf '%s\n' "$repo/rust/Cargo.lock"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-camera-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-sdk"
-  runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-runtime-host"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-system"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-audio-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-cashu-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-nostr-host"
@@ -405,7 +405,7 @@ print(json.dumps({
     "runtimeAppBundleArtifact": os.path.abspath(bundle_artifact),
     "runtimeAppBundleDevicePath": "/data/local/tmp/shadow-runtime-gnu/runtime-app-bundle.js",
     "runtimeHostBundleArtifactDir": os.path.abspath(host_bundle_dir),
-    "runtimeHostBinaryDevicePath": "/data/local/tmp/shadow-runtime-gnu/shadow-runtime-host",
-    "runtimeHostLauncherDevicePath": "/data/local/tmp/shadow-runtime-gnu/run-shadow-runtime-host",
+    "runtimeHostBinaryDevicePath": "/data/local/tmp/shadow-runtime-gnu/shadow-system",
+    "runtimeHostLauncherDevicePath": "/data/local/tmp/shadow-runtime-gnu/run-shadow-system",
 }, indent=2))
 PY

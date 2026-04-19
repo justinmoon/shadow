@@ -94,7 +94,7 @@ Shadow apps are built with three layers: SolidJS for UI components, Deno for Jav
 ┌──────────────────────────────────┐
 │  SolidJS (app.tsx)               │  Reactive components → virtual DOM
 ├──────────────────────────────────┤
-│  Deno (shadow-runtime-host)      │  JS execution + Rust platform APIs
+│  Deno (shadow-system)            │  JS execution + Rust platform APIs
 ├──────────────────────────────────┤
 │  Blitz (shadow-blitz-demo)       │  HTML/CSS → pixels via Vello/wgpu
 └──────────────────────────────────┘
@@ -128,7 +128,7 @@ The build pipeline compiles TSX through Babel with `babel-preset-solid`, then bu
 
 ### Deno
 
-The JavaScript runtime is `shadow-runtime-host`, which embeds `deno_core` (not the full Deno CLI — just the V8 engine wrapper). It runs as a subprocess spawned by Blitz.
+The JavaScript runtime is `shadow-system`, which embeds `deno_core` (not the full Deno CLI — just the V8 engine wrapper). It runs as a subprocess spawned by Blitz.
 
 **Communication protocol:** Line-delimited JSON on stdin/stdout.
 
@@ -360,9 +360,9 @@ Three shells serve different parts of the project:
 - Linux-specific: libdrm, mesa, vulkan-loader, wayland, libxkbcommon
 - Used for: `just ui-check`, compositor iteration
 
-**`runtime`** — V8/Deno runtime work:
+**`runtime`** — V8/Deno `shadow-system` work:
 - cargo, cmake, deno, gn, ninja, sqlite
-- Used for: building the runtime host, bundling apps
+- Used for: building `shadow-system`, bundling apps
 
 Enter any shell with `nix develop .#<name>` or use direnv (the `.envrc` calls `use flake` automatically).
 

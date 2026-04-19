@@ -6,18 +6,8 @@ edition.workspace = true
 [features]
 default = []
 nostr = ["dep:runtime-nostr-host"]
-runtime-host = [
-    "dep:deno_core",
-    "nostr",
-    "dep:runtime-audio-host",
-    "dep:runtime-cashu-host",
-    "runtime-camera-host/runtime-extension",
-]
 
 [dependencies]
-deno_core = { workspace = true, features = ["include_icu_data", "reactor-tokio"], optional = true }
-runtime-audio-host = { path = "../runtime-audio-host", optional = true }
 runtime-camera-host = { path = "../runtime-camera-host" }
-runtime-cashu-host = { path = "../runtime-cashu-host", optional = true }
 runtime-nostr-host = { path = "../runtime-nostr-host", optional = true }
 shadow-runtime-protocol.workspace = true

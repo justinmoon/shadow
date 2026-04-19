@@ -17,7 +17,7 @@ ui_vm_runtime_artifact_dir() {
 }
 
 ui_vm_runtime_env_path() {
-  printf '%s/runtime-host-session-env.sh\n' "$(ui_vm_runtime_artifact_dir)"
+  printf '%s/runtime-system-session-env.sh\n' "$(ui_vm_runtime_artifact_dir)"
 }
 
 ui_vm_runtime_guest_dir() {

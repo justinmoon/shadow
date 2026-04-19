@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/session_apps.sh"
 runtime_flake_ref=""
 runtime_repo_root="$REPO_ROOT"
-runtime_host_package_attr="shadow-runtime-host"
+runtime_host_package_attr="shadow-system"
 runtime_host_binary_path=""
 enable_podcast_app="0"
 bundle_rewrite_from=""
@@ -32,7 +32,15 @@ parse_args() {
         runtime_host_package_attr="${2:-}"
         shift 2
         ;;
+      --system-package)
+        runtime_host_package_attr="${2:-}"
+        shift 2
+        ;;
       --runtime-host-binary-path)
+        runtime_host_binary_path="${2:-}"
+        shift 2
+        ;;
+      --system-binary-path)
         runtime_host_binary_path="${2:-}"
         shift 2
         ;;
@@ -89,7 +97,7 @@ if [[ -n "$bundle_rewrite_from" || -n "$bundle_rewrite_to" ]]; then
 fi
 
 cd "$runtime_repo_root"
-env_tmp="$(mktemp "${TMPDIR:-/tmp}/shadow-runtime-host-session-env.XXXXXX")"
+env_tmp="$(mktemp "${TMPDIR:-/tmp}/shadow-system-session-env.XXXXXX")"
 cleanup() {
   rm -f "$env_tmp"
 }
@@ -97,7 +105,7 @@ trap cleanup EXIT
 
 builder_args=(
   --repo-root "$runtime_repo_root"
-  --runtime-host-package "$runtime_host_package_attr"
+  --system-package "$runtime_host_package_attr"
   --profile vm-shell
   --write-env "$env_tmp"
 )
@@ -105,7 +113,7 @@ if [[ -n "$runtime_flake_ref" ]]; then
   builder_args+=(--flake-ref "$runtime_flake_ref")
 fi
 if [[ -n "$runtime_host_binary_path" ]]; then
-  builder_args+=(--runtime-host-binary-path "$runtime_host_binary_path")
+  builder_args+=(--system-binary-path "$runtime_host_binary_path")
 fi
 if [[ "$enable_podcast_app" == "1" ]]; then
   builder_args+=(--include-podcast)

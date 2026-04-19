@@ -55,13 +55,13 @@
           builtins.fromJSON uiVmSshPortEnv
         else
           2222;
-      runtimeHostPackageAttrForHostSystem = hostSystem:
+      systemPackageAttrForHostSystem = hostSystem:
         if lib.hasPrefix "aarch64-" hostSystem then
-          "shadow-runtime-host-aarch64-linux-gnu"
+          "shadow-system-aarch64-linux-gnu"
         else if lib.hasPrefix "x86_64-" hostSystem then
-          "shadow-runtime-host-x86_64-linux-gnu"
+          "shadow-system-x86_64-linux-gnu"
         else
-          throw "unsupported host system for runtime host package selection: ${hostSystem}";
+          throw "unsupported host system for Shadow system package selection: ${hostSystem}";
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -97,11 +97,11 @@
             in
               lib.any pathMatchesPrefix prefixes || lib.any pathIsPrefixAncestor prefixes;
         };
-      shadowRuntimeHostSrc = repoSourceFromPrefixes [
+      shadowSystemSrc = repoSourceFromPrefixes [
         "rust/Cargo.toml"
         "rust/Cargo.lock"
         "rust/shadow-sdk"
-        "rust/shadow-runtime-host"
+        "rust/shadow-system"
         "rust/shadow-runtime-protocol"
         "rust/runtime-audio-host"
         "rust/runtime-camera-host"
@@ -118,7 +118,7 @@
         "rust/Cargo.toml"
         "rust/Cargo.lock"
         "rust/shadow-sdk"
-        "rust/shadow-runtime-host"
+        "rust/shadow-system"
         "rust/runtime-audio-host"
         "rust/runtime-camera-host"
         "rust/runtime-cashu-host"
@@ -191,7 +191,7 @@
         "rust/Cargo.toml"
         "rust/Cargo.lock"
         "rust/shadow-sdk"
-        "rust/shadow-runtime-host"
+        "rust/shadow-system"
         "rust/shadow-runtime-protocol"
         "rust/runtime-audio-host"
         "rust/runtime-camera-host"
@@ -720,16 +720,16 @@
                 ./patches/mesa/0001-turnip-kgsl-ignore-khr-display.patch
               ];
           };
-      mkShadowRuntimeHostFor = cross:
+      mkShadowSystemFor = cross:
         let
           craneLib = crane.mkLib cross;
           commonArgs = {
-            pname = "shadow-runtime-host";
+            pname = "shadow-system";
             version = "0.1.0";
-            src = shadowRuntimeHostSrc;
+            src = shadowSystemSrc;
             cargoLock = ./rust/Cargo.lock;
             cargoToml = ./rust/Cargo.toml;
-            cargoExtraArgs = "--locked -p shadow-runtime-host";
+            cargoExtraArgs = "--locked -p shadow-system";
             doCheck = false;
             strictDeps = true;
             CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.rust.rustcTarget;
@@ -748,7 +748,7 @@
           cargoVendorDir = craneLib.vendorCargoDeps commonArgs;
           cargoArgs = commonArgs // { inherit cargoVendorDir; };
           cargoArtifacts = craneLib.buildDepsOnly ((builtins.removeAttrs cargoArgs [ "src" ]) // {
-            pname = "shadow-runtime-host-deps";
+            pname = "shadow-system-deps";
             dummySrc = craneLib.mkDummySrc (commonArgs // {
               extraDummyScript = ''
                 rm -rf "$out/rust/vendor/temporal_rs"
@@ -760,7 +760,7 @@
           });
         in craneLib.buildPackage (cargoArgs // {
           inherit cargoArtifacts;
-          meta.mainProgram = "shadow-runtime-host";
+          meta.mainProgram = "shadow-system";
         });
       mkShadowLinuxAudioSpikeFor = cross:
         cross.rustPlatform.buildRustPackage {
@@ -1106,8 +1106,8 @@
       mkVmSmokeInputsFor = pkgs:
         let
           hostSystem = pkgs.stdenv.hostPlatform.system;
-          runtimeHostPackageAttr = runtimeHostPackageAttrForHostSystem hostSystem;
-          runtimeHostPackage = self.packages.${hostSystem}.${runtimeHostPackageAttr};
+          systemPackageAttr = systemPackageAttrForHostSystem hostSystem;
+          systemPackage = self.packages.${hostSystem}.${systemPackageAttr};
           uiVmRunnerPackage = self.packages.${hostSystem}.ui-vm-ci;
           requiredAppsJson = builtins.toJSON [
             "camera"
@@ -1123,15 +1123,15 @@
           } ''
             mkdir -p "$out"
             ln -s ${shadowVmSmokeSrc} "$out/source"
-            ln -s ${runtimeHostPackage} "$out/runtime-host"
+            ln -s ${systemPackage} "$out/runtime-host"
             ln -s ${uiVmRunnerPackage} "$out/ui-vm-runner"
             cat >"$out/metadata.json" <<EOF
             {
               "schemaVersion": 1,
               "sourceStorePath": "${shadowVmSmokeSrc}",
-              "runtimeHostPackageAttr": "${runtimeHostPackageAttr}",
-              "runtimeHostBinaryPath": "${runtimeHostPackage}/bin/shadow-runtime-host",
-              "runtimeHostPackagePath": "${runtimeHostPackage}",
+              "runtimeHostPackageAttr": "${systemPackageAttr}",
+              "runtimeHostBinaryPath": "${systemPackage}/bin/shadow-system",
+              "runtimeHostPackagePath": "${systemPackage}",
               "uiVmRunnerPackagePath": "${uiVmRunnerPackage}",
               "uiVmRunnerBinaryPath": "${uiVmRunnerPackage}/bin/microvm-run",
               "requiredApps": ${requiredAppsJson}
@@ -1192,11 +1192,11 @@
           shadow-linux-audio-spike-aarch64-linux-gnu =
             mkShadowLinuxAudioSpikeFor pkgs.pkgsCross.aarch64-multiplatform;
           shadow-camera-provider-host = mkShadowCameraProviderHostFor pkgs;
-          shadow-runtime-host = mkShadowRuntimeHostFor pkgs;
-          shadow-runtime-host-aarch64-linux-gnu =
-            mkShadowRuntimeHostFor pkgs.pkgsCross.aarch64-multiplatform;
-          shadow-runtime-host-x86_64-linux-gnu =
-            mkShadowRuntimeHostFor pkgs.pkgsCross.gnu64;
+          shadow-system = mkShadowSystemFor pkgs;
+          shadow-system-aarch64-linux-gnu =
+            mkShadowSystemFor pkgs.pkgsCross.aarch64-multiplatform;
+          shadow-system-x86_64-linux-gnu =
+            mkShadowSystemFor pkgs.pkgsCross.gnu64;
           drm-rect = mkDrmRect pkgs;
           drm-rect-device = mkDrmRectFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           init-wrapper-device = mkInitWrapperFor pkgs.pkgsCross.aarch64-multiplatform-musl { };
@@ -1241,11 +1241,11 @@
       legacyPackages = forAllSystems ({ pkgs, ... }:
         let
           hostSystem = pkgs.stdenv.hostPlatform.system;
-          runtimeHostPackageAttr = runtimeHostPackageAttrForHostSystem hostSystem;
+          systemPackageAttr = systemPackageAttrForHostSystem hostSystem;
         in
           {
             ci = {
-              vmRuntimeHost = self.packages.${hostSystem}.${runtimeHostPackageAttr};
+              vmRuntimeHost = self.packages.${hostSystem}.${systemPackageAttr};
               vmUiRunner = self.packages.${hostSystem}.ui-vm-ci;
               vmSmokeInputs = mkVmSmokeInputsFor pkgs;
             };

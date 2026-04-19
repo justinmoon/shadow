@@ -34,7 +34,7 @@ The following are current implementation bets and may change:
 
 - Masonry/Xilem as the leading Rust UI foundation
 - exact module names inside `shadow_sdk`
-- whether internal implementation ends up as one crate or several non-public crates/packages
+- whether internal implementation ends up as one crate or several non-public crates/packages beyond the current `shadow-system` boundary
 
 The target model is:
 
@@ -178,7 +178,12 @@ The same UI foundation should support both app-owned surfaces and embedded syste
 
 App code should depend on Shadow-owned APIs, not directly on `xilem`, `masonry`, or scattered service-specific runtime hosts.
 
-The current `runtime-<something>-host` pattern is transitional and should converge on one shared SDK/service surface.
+The public split is:
+
+- `shadow_sdk`: app-facing APIs, types, lifecycle, services, and UI surface
+- `shadow-system`: privileged system-side implementation that binds those services into the TypeScript runtime and owns host-side policy/wiring
+
+The remaining `runtime-<something>-host` crates are transitional internal implementation crates. They should shrink or disappear over time behind `shadow-system`, not leak into app authoring.
 
 ## Public SDK Shape
 
@@ -236,6 +241,12 @@ Examples:
 - TypeScript apps and Rust apps should not have separate conceptual platform APIs for the same service
 
 The host implementation can still have internal layers, but the app-facing model should be unified.
+
+### What "services" means
+
+`shadow_sdk::services` is the app-visible capability surface. A service is a product capability family such as camera, audio, storage, nostr, or cashu: the types, requests, subscriptions, and convenience helpers app code uses.
+
+It does not mean "every privileged daemon or helper gets its own public crate." Internal system implementation can use modules or private crates where needed, but app authors should see coherent platform capabilities, not transport seams.
 
 ### Internal boundaries
 

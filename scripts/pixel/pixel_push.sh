@@ -448,7 +448,7 @@ if [[ -n "$runtime_host_bundle_artifact_dir" || -n "$runtime_app_asset_artifact_
 
   if [[ -n "$runtime_host_bundle_artifact_dir" ]]; then
     runtime_sync_work_dir="$(mktemp -d "${TMPDIR:-/tmp}/shadow-runtime-sync.XXXXXX")"
-    runtime_host_sync_manifest_path="$runtime_sync_work_dir/runtime-host-manifest.json"
+    runtime_host_sync_manifest_path="$runtime_sync_work_dir/shadow-system-manifest.json"
     runtime_device_manifest_host_path="$runtime_sync_work_dir/runtime-device-manifest.json"
     runtime_sync_plan_path="$runtime_sync_work_dir/runtime-sync-plan.json"
     runtime_sync_changed_paths_path="$runtime_sync_work_dir/runtime-changed-paths.txt"
