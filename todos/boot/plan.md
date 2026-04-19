@@ -10,65 +10,88 @@ Related docs:
 ## Scope
 
 - Boot a Pixel 4a (`sunfish`) into Shadow from a custom `boot.img`.
-- Treat ownership as "from `boot.img` and ramdisk upward" on unlocked hardware.
+- Treat ownership as "from kernel handoff / PID 1 upward" on unlocked hardware.
+- Keep the stock Pixel kernel and vendor kernel support at first, but do not depend on stock Android userspace in the new boot lane.
 - Keep the current shell/home/app experience as the first product target.
-- Use stock kernel and vendor pieces at first. Do not start by replacing the whole Android distro.
 - Keep the current Magisk/rooted takeover lane usable for normal development while the new boot lane iterates in parallel.
+- Use the rooted lane as a reference for subsystem behavior, not as the target boot architecture.
 
 ## Approach
 
 - Keep the physical Pixel 4a as the truth environment for boot work.
 - Use host-side `bootimg` tooling for the inner loop: unpack, patch, repack, inspect, sign.
-- Use Cuttlefish only for Android-generic `init` or `rc` experiments, not as the primary model for `sunfish`.
-- Keep Android `init` in the loop for phase 1 so mounts, `ueventd`, module loading, and encrypted `/data` keep working.
-- Reuse the current rooted takeover/runtime path first, then tighten the boot graph later.
+- Use Cuttlefish only for generic bring-up ideas, not as the primary model for `sunfish`.
+- Primary strategy: boot the stock Pixel kernel into a Shadow-owned ramdisk and custom PID 1. Do not treat `wrapper -> stock init -> later takeover` as the main path anymore.
+- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-init` (direct DRM/KMS fill), then minimal control/transport, then Shadow services.
+- Reuse the current rooted takeover/runtime path for DRM, input, audio, and packaging knowledge, but not as the boot graph we are trying to ship.
 - Land boot work in small seams that can merge to `master` independently; do not stack the whole project on one long-lived boot branch.
 - Use a dedicated worktree branch per risky seam, then land or checkpoint before starting the next one.
 - Keep experimental boot tooling private until it proves itself on-device. Private delegators may live under `shadowctl debug`, but do not promote boot-lab flows into the public `just` surface early.
 - When a boot experiment loop repeats or burns operator time twice, bias toward small private tools that capture the loop truthfully: shared immutable inputs, structured run bundles, explicit safety rails, and thin `shadowctl debug` delegation instead of more handwritten terminal choreography.
-- Prefer chunks that are inert for the current Magisk path: helper libraries, private scripts, log capture, guardrails, and wrapper-only boot images before automatic takeover changes.
+- Prefer chunks that are inert for the current Magisk path: helper libraries, private scripts, log capture, guardrails, and tiny owned-userspace proofs before Shadow-launch changes.
+- Prefer visible or durable proofs over speculative Android-`init` hook churn. A screen color or `kmsg` marker is better evidence than another late userspace property probe.
 
 ## Milestones
 
 - [x] Confirm the real `sunfish` boot seam and round-trip the stock `boot.img` with repo-local tooling.
 - [~] Recreate a safe custom `boot.img` flash loop on-device with clear rollback steps.
-- [~] Restore a minimal `/init` wrapper that logs, preserves `/init.stock`, and chainloads stock init.
-- [ ] Inject a Shadow init fragment that launches automatic boot takeover with no manual `adb` or `su` step.
-- [ ] Boot directly into Shadow shell/home on a physical Pixel with no manual rooted takeover after boot.
+- [x] Bound the old stock-init-handoff seam tightly enough to stop treating it as primary:
+  - foreign PID 1 handoff wrappers fail
+  - extra symlink hops at `/init` or `system/bin/init` fail
+  - imported ramdisk rc hooks can perturb boot but do not give clean proof on normal `sunfish` boots
+- [ ] Boot the stock kernel into a tiny Shadow-owned PID 1 that never execs stock Android init (`hello-init`).
+- [ ] From that owned userspace, paint the panel orange with a minimal DRM/KMS proof (`orange-init`).
+- [ ] Reach one minimal control lane from owned userspace when needed, without reintroducing stock Android init or framework.
+- [ ] Launch a minimal Shadow-owned service graph from PID 1 with no stock Android userspace handoff.
+- [ ] Start `shadow-session` / `shadow-compositor-guest` from owned userspace and present one frame.
+- [ ] Boot directly into Shadow shell/home on a physical Pixel with no Android userspace handoff.
 - [ ] Reduce or eliminate the first-boot dependence on pre-staged `/data/local/tmp` runtime artifacts.
 - [ ] Decide the long-lived subsystem strategy for camera, Wi-Fi, and update/recovery.
 
 ## Near-Term Steps
 
 - [x] Add repo-local scripts for `sunfish` boot unpack/repack and ramdisk patching.
-- [x] Restore or rewrite the old deleted `init-wrapper` flow from `08b0b1b^` for `boot.img` instead of `init_boot.img`.
 - [x] Add explicit flash guardrails so experimental boot images do not accidentally clobber the working Magisk development lane.
 - [~] Add a safe on-device validation shape:
   - prefer inactive-slot or otherwise isolated flashing when possible
   - keep rollback obvious and scripted
-- [x] Pick the first automatic takeover trigger.
-- [ ] Pick the first phase-1 payload layout:
-  - boot-critical pieces in ramdisk
-  - large runtime bundles still allowed on `/data`
 - [x] Add a device-side log capture path for wrapper, init, and Shadow boot markers.
 - [x] Add worktree-friendly boot-lab tooling:
   - shared stock `boot.img` fallback across worktrees
   - one-shot `fastboot boot` orchestration with structured host-side evidence capture
-- [~] Validate the log-probe boot helper on-device through the guarded inactive-slot flow and pull the first collected logs.
-- [~] Bisect the current ramdisk/init mutations on flashed active-slot images:
-  - stock boot, cmdline-only edits, and minimal repacks already boot on `11151JEC200472`
-  - stock-init log-probe images now also boot on `11151JEC200472`, so the wrapper is the remaining hard-boot suspect
-  - property-only stock-init rc-probe images now also boot on real hardware without surfacing the proof property
-  - live-device inspection now shows the ramdisk-patched `system/etc/init/hw/init.rc` is masked by the mounted system partition during normal boot, and `/init.shadow.rc` is absent on the live rootfs
-  - the next discriminating seam is a minimal `/init`-owned proof again, not more stock-init rc patch-target churn
-- [ ] Prove one tiny Shadow-at-boot lane before reintroducing timeline, camera, or network-heavy cases.
+- [ ] Add a dedicated owned-userspace boot builder that installs a tiny custom `/init` without any stock-init handoff.
+- [ ] Implement `hello-init` as the first boot-owned payload:
+  - static arm64 PID 1
+  - mount `/proc`, `/sys`, and `/dev`
+  - write durable breadcrumbs to `/dev/kmsg`
+  - hold long enough for observation, then reboot bootloader or power off cleanly
+- [ ] Pick the first truthful proof channel for owned userspace:
+  - prefer `kmsg` or a visible screen proof over an interactive shell
+  - only add USB transport after the PID 1 seam is stable
+- [ ] Package a minimal DRM proof payload:
+  - reuse `rust/drm-rect` or a smaller equivalent
+  - make the color, hold time, and logging explicit
+- [ ] Probe the smallest prerequisite set for DRM on stock kernel:
+  - does `/dev/dri/card0` exist under owned PID 1 with only `devtmpfs`
+  - if not, add the smallest necessary coldplug, module, firmware, or mount step
+- [ ] Prove one tiny owned-userspace boot lane before reintroducing timeline, camera, or network-heavy cases.
 - [ ] Keep the next chunks separately landable:
-  - guarded on-device log-probe validation
-  - automatic takeover using the same imported boot-helper seam
-  - service-stop tightening and `shadow-session` launch
+  - owned-userspace builder and guarded runner
+  - `hello-init`
+  - `orange-init`
+  - minimal service supervisor and Shadow launch
+- [~] Run the next boot-lab seams concurrently when the experiments are genuinely different:
+  - use one device per seam and keep the serial ownership explicit in the run bundle
+  - use one sibling worktree per risky seam so partial results can land independently
+  - spend concurrency on discriminating owned-userspace hypotheses and recovery/tooling, not duplicate reruns of the same failing image
 
 ## Implementation Notes
 
+- Strategy pivot on 2026-04-19:
+  - the project target is now "stock Pixel kernel, Shadow-owned userspace from PID 1 onward"
+  - the rooted Magisk lane remains the working runtime reference, but not the target boot architecture
+  - the old wrapper and stock-init-import probes are now evidence about constraints, not the primary roadmap
+  - `spec-phase1-shadow-at-boot.md` still describes the earlier stock-init-handoff plan and should be rewritten once the first owned-userspace proof lands
 - `sunfish` boots from `boot.img`, boot header v2, with recovery-as-boot. The old Cuttlefish `init_boot` work is a reference, not the real device path.
 - The repo already has a usable host-side `bootimg` shell with `unpack_bootimg`, `mkbootimg`, and `avbtool`.
 - The new private boot helpers live under `scripts/pixel/`: `pixel_boot_unpack.sh`, `pixel_boot_build.sh`, `pixel_boot_build_log_probe.sh`, `pixel_boot_collect_logs.sh`, `pixel_boot_flash.sh`, `pixel_boot_restore.sh`, and `pixel_build_init_wrapper.sh`.
@@ -96,6 +119,10 @@ Related docs:
 - `pixel_boot_flash.sh` now accepts `PIXEL_BOOT_METADATA_PATH`, so higher-level private runners can keep flash metadata inside a per-run bundle instead of clobbering the worktree-local default.
 - `scripts/ci/pixel_boot_tooling_smoke.sh` now locks the shared-stock-boot plus oneshot and flash-run dry-run contracts into `pre-commit`, and `scripts/ci/operator_cli_smoke.sh` covers both `shadowctl` delegation paths.
 - Tooling rule for later seams: prefer operator-grade helpers when they remove repeated manual steps, but keep them private, narrow, and evidence-first. Avoid “tooling” that merely hides uncertainty or bundles unrelated experiments together.
+- Current boot-lab lane split:
+  - `09051JEC202061` and `11151JEC200472` are both available for concurrent boot experiments
+  - treat each serial as a separately owned lane with its own guarded run bundle, recovery path, and worktree seam
+  - prefer concurrent experiments only when the images probe different stock-init-owned hypotheses
 - `rust/init-wrapper/Cargo.toml` is now standalone enough for `cargo check --manifest-path rust/init-wrapper/Cargo.toml`, and `just pre-commit` now compiles that crate directly instead of only relying on host-side boot-image builds.
 - The private wrapper seam now has two build flavors: the default wrapper still writes markers and restores `/init`, while `pixel_boot_build.sh --wrapper-mode minimal` builds `shadow-boot-wrapper-minimal.img` with a wrapper that directly `execv`s `/init.stock` using `/init` as `argv[0]`.
 - The minimal wrapper build path now enforces mode-tagged binaries, rejects cross-mode cache-path mistakes, and still leaves a `shadow-init` kmsg breadcrumb so later on-device collection can tell whether the wrapper reached userspace at all.
@@ -187,3 +214,16 @@ Related docs:
   - manual recovery back to stock `boot_a` restored the device, and it booted Android successfully again on slot `_b` with `sys.boot_completed=1`
 - Tightened inference after the exact-path wrapper probe: even when both visible init paths stay exact (`/init -> /system/bin/init`, real wrapper binary installed at `system/bin/init`, stock binary moved to `system/bin/init.stock`), a foreign first-stage PID 1 that later `execv()`s the stock init path still appears to break normal `sunfish` boot. That pushes the next seam away from wrapper handoff variants and toward mechanisms that leave stock first-stage init itself in control.
 - Next seam: stop replacing init binaries entirely and probe a stock-init-owned hook point such as bootconfig/cmdline-triggered behavior, first-stage-visible imported config that stock init already consumes, or an even narrower binary patch that preserves the stock init image shape instead of swapping in a new ELF.
+- Current parallel next seams:
+  - a visible stock-init-owned proof that should leave an external transport or other durable signal if the patched rc actually executes
+  - tighter serial-safe boot-lab orchestration so two devices can be exercised concurrently without ambiguous recovery state
+- New concurrent hardware result on 2026-04-19 from two stock-init USB transport probes:
+  - `11151JEC200472` flashed `shadow-boot-rc-probe-stock-init-fastboot.img` to inactive slot `b`; `09051JEC202061` flashed `shadow-boot-usb-transport-fastboot.img` to inactive slot `a`
+  - both devices left Android, both later showed fastboot screens on-device, and neither returned to host-visible `adb` on its own within the guarded flash-run window
+  - direct bundle-local `pixel_boot_recover.sh` recovery succeeded on both phones once they were visible in fastboot again, restoring `11151JEC200472` to slot `_a` and `09051JEC202061` to slot `_b`, both with `sys.boot_completed=1`
+- Tightened inference after the first concurrent stock-init transport lab:
+  - imported-rc transport probes are now strong enough to alter boot outcome on real hardware, but they still do not yield a clean, automatically consumable proof of rc execution for normal `sunfish` boot
+  - both the simple `sys.usb.config=fastboot` probe and the stronger `sys.usb.config none -> fastboot` transport-reset probe ended at fastboot screens rather than a clean Android boot or a host-visible transport that the current runner could harvest directly
+- Current tooling gap after the same run:
+  - the deferred bundle-local recovery watcher still failed in real hardware use even though the phones later became visible in fastboot
+  - the truthful recovery path today is the direct serial-scoped `pixel_boot_recover.sh` invocation with bundle metadata, not the detached watcher handoff
