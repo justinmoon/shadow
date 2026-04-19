@@ -3,6 +3,7 @@ scripts/agent-brief	public	Agent context snapshot required by AGENTS.md.
 scripts/ci/app_metadata_manifest_smoke.sh	ci	Regression smoke for manifest profile filtering and uniqueness validation.
 scripts/ci/cpio_edit_smoke.sh	ci	Fast smoke for Android ramdisk cpio extraction and patch semantics.
 scripts/ci/check_script_inventory.py	ci	Pre-commit taxonomy gate for every file under scripts/.
+scripts/ci/pixel_boot_hello_init_smoke.sh	ci	Hermetic smoke for the owned-userspace hello-init boot seam that preserves /init and replaces system/bin/init.
 scripts/ci/pixel_boot_tooling_smoke.sh	ci	Hermetic smoke for shared stock-boot resolution plus boot-lab oneshot and flash-run dry-run semantics.
 scripts/ci/pixel_boot_collect_logs_smoke.sh	ci	Hermetic smoke for boot-log collection success and wrapper-only fallback semantics.
 scripts/ci/pixel_boot_safety_smoke.sh	ci	Private smoke for experimental boot-script safety rails and slot defaults.
@@ -58,10 +59,13 @@ scripts/pixel/pixel_boot_recover.sh	pixel	Private sunfish recovery helper that s
 scripts/pixel/pixel_boot_restore.sh	pixel	Private sunfish stock boot image rollback helper.
 scripts/pixel/pixel_boot_unpack.sh	pixel	Private sunfish boot image unpack/inspection helper.
 scripts/pixel/pixel_boot_build_init_symlink_probe.sh	pixel	Private stock-init boot image builder that restores /init as a symlink to init.stock.
+scripts/pixel/pixel_boot_build_hello_init.sh	pixel	Private owned-userspace boot image builder that preserves /init and replaces system/bin/init with hello-init plus a tiny ramdisk config.
 scripts/pixel/pixel_boot_build_system_init_symlink_probe.sh	pixel	Private stock-init boot image builder that preserves /init and restores system/bin/init as a symlink to init.stock.
 scripts/pixel/pixel_boot_build_system_init_wrapper_probe.sh	pixel	Private stock-init boot image builder that preserves /init and restores system/bin/init as an exact-path static wrapper.
+scripts/pixel/pixel_build_hello_init.sh	pixel	Private static hello-init PID 1 build helper for the owned-userspace boot seam.
 scripts/pixel/pixel_build_init_wrapper.sh	pixel	Private init-wrapper build helper for sunfish boot image patching.
 scripts/pixel/pixel_build_init_wrapper_c.sh	pixel	Private minimal C init-wrapper build helper for sunfish stock-init handoff experiments.
+scripts/pixel/pixel_hello_init.c	data	C source for the private static hello-init PID 1 used by the owned-userspace boot seam.
 scripts/pixel/pixel_init_wrapper_handoff.c	data	C source for the private minimal sunfish init-wrapper handoff binary.
 scripts/ci/pixel_shell_camera_smoke.sh	ci	Rooted-Pixel shell camera smoke used by pixel-ci.
 scripts/pixel/pixel_shell_drm.sh	pixel	Private rooted-Pixel shell session runner.

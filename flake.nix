@@ -332,6 +332,34 @@
             runHook postInstall
           '';
         };
+      mkHelloInitFor = cross:
+        let
+          initSource = builtins.path {
+            path = ./scripts/pixel/pixel_hello_init.c;
+            name = "pixel-hello-init.c";
+          };
+        in
+        cross.stdenv.mkDerivation {
+          pname = "hello-init";
+          version = "0.1.0";
+          dontUnpack = true;
+          dontConfigure = true;
+          doCheck = false;
+          strictDeps = true;
+          buildPhase = ''
+            runHook preBuild
+            $CC -static -Os -s -std=c11 -Wall -Wextra -Werror \
+              ${initSource} \
+              -o hello-init
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/bin
+            cp hello-init $out/bin/hello-init
+            runHook postInstall
+          '';
+        };
       mkShadowSessionFor = cross:
         cross.rustPlatform.buildRustPackage {
           pname = "shadow-session";
@@ -1198,6 +1226,7 @@
               stockInitPath = "/system/bin/init.stock";
               packageSuffix = "system-init";
             };
+          hello-init-device = mkHelloInitFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           shadow-session = mkShadowSession pkgs;
           shadow-session-device = mkShadowSessionFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           default = mkShadowSession pkgs;

@@ -39,7 +39,7 @@ Related docs:
   - foreign PID 1 handoff wrappers fail
   - extra symlink hops at `/init` or `system/bin/init` fail
   - imported ramdisk rc hooks can perturb boot but do not give clean proof on normal `sunfish` boots
-- [ ] Boot the stock kernel into a tiny Shadow-owned PID 1 that never execs stock Android init (`hello-init`).
+- [~] Boot the stock kernel into a tiny Shadow-owned PID 1 that never execs stock Android init (`hello-init`).
 - [ ] From that owned userspace, paint the panel orange with a minimal DRM/KMS proof (`orange-init`).
 - [ ] Reach one minimal control lane from owned userspace when needed, without reintroducing stock Android init or framework.
 - [ ] Launch a minimal Shadow-owned service graph from PID 1 with no stock Android userspace handoff.
@@ -59,8 +59,8 @@ Related docs:
 - [x] Add worktree-friendly boot-lab tooling:
   - shared stock `boot.img` fallback across worktrees
   - one-shot `fastboot boot` orchestration with structured host-side evidence capture
-- [ ] Add a dedicated owned-userspace boot builder that installs a tiny custom `/init` without any stock-init handoff.
-- [ ] Implement `hello-init` as the first boot-owned payload:
+- [x] Add a dedicated owned-userspace boot builder that installs a tiny custom `/init` without any stock-init handoff.
+- [~] Implement `hello-init` as the first boot-owned payload:
   - static arm64 PID 1
   - mount `/proc`, `/sys`, and `/dev`
   - write durable breadcrumbs to `/dev/kmsg`
@@ -227,3 +227,14 @@ Related docs:
 - Current tooling gap after the same run:
   - the deferred bundle-local recovery watcher still failed in real hardware use even though the phones later became visible in fastboot
   - the truthful recovery path today is the direct serial-scoped `pixel_boot_recover.sh` invocation with bundle metadata, not the detached watcher handoff
+- New implementation seam on 2026-04-19:
+  - `hello-init` now exists as a private static aarch64 PID 1 that preserves the stock `/init -> /system/bin/init` link, replaces the ramdisk `system/bin/init` ELF, mounts `/dev` / `/proc` / `/sys`, reads `/shadow-init.cfg`, writes to `/dev/kmsg`, holds, and then reboots
+  - the repo now has `scripts/pixel/pixel_build_hello_init.sh`, `scripts/pixel/pixel_boot_build_hello_init.sh`, `scripts/ci/pixel_boot_hello_init_smoke.sh`, and a real `hello-init-device` flake package wired into `just pre-commit`
+- New hardware result on 2026-04-19 from `fastboot boot` hello-init oneshot runs (`09051JEC202061` and `0B191JEC203253`):
+  - `hold=9`, `hold=21`, and a later `hold=0` image all left fastboot successfully and later returned to normal `adb` Android on the original slot (`_b` on `09051JEC202061`, `_a` on `0B191JEC203253`)
+  - the return-to-`adb` timing clustered around 46-48 seconds after the boot handoff regardless of the configured hold value
+  - unpacked images do contain the expected distinct `/shadow-init.cfg` payloads (`hold_seconds=0`, `9`, and `21`) plus the `hello-init` replacement binary, so the one-shot path is currently not a truthful proof of the config-driven runtime behavior
+- Tightened inference after the first hello-init oneshot runs:
+  - `fastboot boot` is strong enough to show the owned-userspace image is not rejected immediately at the bootloader seam because the device leaves fastboot and comes back alive
+  - but the current oneshot loop does not yet prove that `hello-init` is reading `/shadow-init.cfg` or that `reboot_target=bootloader` is honored on `sunfish`
+  - the next discriminating owned-userspace seam should avoid treating one-shot return timing as proof and should either add a better host-visible success signal or use the guarded flashed-slot path when an operator is present for recovery
