@@ -18,6 +18,10 @@ use std::{
 pub const APP_TITLE_ENV: &str = "SHADOW_APP_TITLE";
 pub const APP_LIFECYCLE_STATE_ENV: &str = "SHADOW_APP_LIFECYCLE_STATE";
 pub const APP_PLATFORM_CONTROL_SOCKET_ENV: &str = "SHADOW_APP_PLATFORM_CONTROL_SOCKET";
+pub const SAFE_AREA_BOTTOM_ENV: &str = "SHADOW_APP_SAFE_AREA_BOTTOM";
+pub const SAFE_AREA_LEFT_ENV: &str = "SHADOW_APP_SAFE_AREA_LEFT";
+pub const SAFE_AREA_RIGHT_ENV: &str = "SHADOW_APP_SAFE_AREA_RIGHT";
+pub const SAFE_AREA_TOP_ENV: &str = "SHADOW_APP_SAFE_AREA_TOP";
 pub const SURFACE_HEIGHT_ENV: &str = "SHADOW_APP_SURFACE_HEIGHT";
 pub const SURFACE_WIDTH_ENV: &str = "SHADOW_APP_SURFACE_WIDTH";
 pub const UNDECORATED_ENV: &str = "SHADOW_APP_UNDECORATED";
@@ -26,11 +30,45 @@ pub const WAYLAND_INSTANCE_NAME_ENV: &str = "SHADOW_APP_WAYLAND_INSTANCE_NAME";
 
 const LEGACY_APP_TITLE_ENV: &str = "SHADOW_BLITZ_APP_TITLE";
 const LEGACY_APP_PLATFORM_CONTROL_SOCKET_ENV: &str = "SHADOW_BLITZ_PLATFORM_CONTROL_SOCKET";
+const LEGACY_SAFE_AREA_BOTTOM_ENV: &str = "SHADOW_BLITZ_SAFE_AREA_BOTTOM";
+const LEGACY_SAFE_AREA_LEFT_ENV: &str = "SHADOW_BLITZ_SAFE_AREA_LEFT";
+const LEGACY_SAFE_AREA_RIGHT_ENV: &str = "SHADOW_BLITZ_SAFE_AREA_RIGHT";
+const LEGACY_SAFE_AREA_TOP_ENV: &str = "SHADOW_BLITZ_SAFE_AREA_TOP";
 const LEGACY_SURFACE_HEIGHT_ENV: &str = "SHADOW_BLITZ_SURFACE_HEIGHT";
 const LEGACY_SURFACE_WIDTH_ENV: &str = "SHADOW_BLITZ_SURFACE_WIDTH";
 const LEGACY_UNDECORATED_ENV: &str = "SHADOW_BLITZ_UNDECORATED";
 const LEGACY_WAYLAND_APP_ID_ENV: &str = "SHADOW_BLITZ_WAYLAND_APP_ID";
 const LEGACY_WAYLAND_INSTANCE_NAME_ENV: &str = "SHADOW_BLITZ_WAYLAND_INSTANCE_NAME";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AppSafeAreaInsets {
+    pub left: u32,
+    pub top: u32,
+    pub right: u32,
+    pub bottom: u32,
+}
+
+impl AppSafeAreaInsets {
+    fn from_env() -> Self {
+        Self {
+            left: env_u32_allow_zero_any(&[SAFE_AREA_LEFT_ENV, LEGACY_SAFE_AREA_LEFT_ENV])
+                .unwrap_or(0),
+            top: env_u32_allow_zero_any(&[SAFE_AREA_TOP_ENV, LEGACY_SAFE_AREA_TOP_ENV])
+                .unwrap_or(0),
+            right: env_u32_allow_zero_any(&[SAFE_AREA_RIGHT_ENV, LEGACY_SAFE_AREA_RIGHT_ENV])
+                .unwrap_or(0),
+            bottom: env_u32_allow_zero_any(&[SAFE_AREA_BOTTOM_ENV, LEGACY_SAFE_AREA_BOTTOM_ENV])
+                .unwrap_or(0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AppWindowMetrics {
+    pub surface_width: u32,
+    pub surface_height: u32,
+    pub safe_area_insets: AppSafeAreaInsets,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AppWindowDefaults<'a> {
@@ -68,6 +106,7 @@ pub struct AppWindowEnvironment {
     pub title: String,
     pub surface_width: u32,
     pub surface_height: u32,
+    pub safe_area_insets: AppSafeAreaInsets,
     pub undecorated: bool,
     pub wayland_app_id: Option<String>,
     pub wayland_instance_name: Option<String>,
@@ -94,11 +133,28 @@ impl AppWindowEnvironment {
                 .unwrap_or(defaults.surface_width),
             surface_height: env_u32_any(&[SURFACE_HEIGHT_ENV, LEGACY_SURFACE_HEIGHT_ENV])
                 .unwrap_or(defaults.surface_height),
+            safe_area_insets: AppSafeAreaInsets::from_env(),
             undecorated: env_flag_any(&[UNDECORATED_ENV, LEGACY_UNDECORATED_ENV]),
             wayland_app_id,
             wayland_instance_name,
         }
     }
+
+    pub fn metrics(&self) -> AppWindowMetrics {
+        AppWindowMetrics {
+            surface_width: self.surface_width,
+            surface_height: self.surface_height,
+            safe_area_insets: self.safe_area_insets,
+        }
+    }
+}
+
+pub fn app_window_metrics_from_env() -> Option<AppWindowMetrics> {
+    Some(AppWindowMetrics {
+        surface_width: env_u32_any(&[SURFACE_WIDTH_ENV, LEGACY_SURFACE_WIDTH_ENV])?,
+        surface_height: env_u32_any(&[SURFACE_HEIGHT_ENV, LEGACY_SURFACE_HEIGHT_ENV])?,
+        safe_area_insets: AppSafeAreaInsets::from_env(),
+    })
 }
 
 pub fn current_lifecycle_state() -> LifecycleState {
@@ -233,6 +289,16 @@ fn env_u32_any(keys: &[&str]) -> Option<u32> {
     keys.iter().find_map(|key| env_u32(key))
 }
 
+fn env_u32_allow_zero(key: &str) -> Option<u32> {
+    env::var(key)
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+}
+
+fn env_u32_allow_zero_any(keys: &[&str]) -> Option<u32> {
+    keys.iter().find_map(|key| env_u32_allow_zero(key))
+}
+
 fn env_flag(key: &str) -> bool {
     env::var_os(key).is_some()
 }
@@ -246,13 +312,15 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     use super::{
-        current_lifecycle_state, platform_control_socket_path, spawn_lifecycle_listener,
-        AppWindowDefaults, AppWindowEnvironment, LifecycleState, APP_LIFECYCLE_STATE_ENV,
-        APP_PLATFORM_CONTROL_SOCKET_ENV, APP_TITLE_ENV, LEGACY_APP_PLATFORM_CONTROL_SOCKET_ENV,
-        LEGACY_APP_TITLE_ENV, LEGACY_SURFACE_HEIGHT_ENV, LEGACY_SURFACE_WIDTH_ENV,
-        LEGACY_UNDECORATED_ENV, LEGACY_WAYLAND_APP_ID_ENV, LEGACY_WAYLAND_INSTANCE_NAME_ENV,
-        SURFACE_HEIGHT_ENV, SURFACE_WIDTH_ENV, UNDECORATED_ENV, WAYLAND_APP_ID_ENV,
-        WAYLAND_INSTANCE_NAME_ENV,
+        app_window_metrics_from_env, current_lifecycle_state, platform_control_socket_path,
+        spawn_lifecycle_listener, AppSafeAreaInsets, AppWindowDefaults, AppWindowEnvironment,
+        LifecycleState, APP_LIFECYCLE_STATE_ENV, APP_PLATFORM_CONTROL_SOCKET_ENV, APP_TITLE_ENV,
+        LEGACY_APP_PLATFORM_CONTROL_SOCKET_ENV, LEGACY_APP_TITLE_ENV, LEGACY_SAFE_AREA_BOTTOM_ENV,
+        LEGACY_SAFE_AREA_LEFT_ENV, LEGACY_SAFE_AREA_RIGHT_ENV, LEGACY_SAFE_AREA_TOP_ENV,
+        LEGACY_SURFACE_HEIGHT_ENV, LEGACY_SURFACE_WIDTH_ENV, LEGACY_UNDECORATED_ENV,
+        LEGACY_WAYLAND_APP_ID_ENV, LEGACY_WAYLAND_INSTANCE_NAME_ENV, SAFE_AREA_BOTTOM_ENV,
+        SAFE_AREA_LEFT_ENV, SAFE_AREA_RIGHT_ENV, SAFE_AREA_TOP_ENV, SURFACE_HEIGHT_ENV,
+        SURFACE_WIDTH_ENV, UNDECORATED_ENV, WAYLAND_APP_ID_ENV, WAYLAND_INSTANCE_NAME_ENV,
     };
     use shadow_runtime_protocol::AppPlatformRequest;
 
@@ -271,6 +339,10 @@ mod tests {
     fn clear_window_env() {
         for key in [
             APP_TITLE_ENV,
+            SAFE_AREA_LEFT_ENV,
+            SAFE_AREA_TOP_ENV,
+            SAFE_AREA_RIGHT_ENV,
+            SAFE_AREA_BOTTOM_ENV,
             SURFACE_WIDTH_ENV,
             SURFACE_HEIGHT_ENV,
             UNDECORATED_ENV,
@@ -280,6 +352,10 @@ mod tests {
             APP_PLATFORM_CONTROL_SOCKET_ENV,
             LEGACY_APP_TITLE_ENV,
             LEGACY_APP_PLATFORM_CONTROL_SOCKET_ENV,
+            LEGACY_SAFE_AREA_LEFT_ENV,
+            LEGACY_SAFE_AREA_TOP_ENV,
+            LEGACY_SAFE_AREA_RIGHT_ENV,
+            LEGACY_SAFE_AREA_BOTTOM_ENV,
             LEGACY_SURFACE_WIDTH_ENV,
             LEGACY_SURFACE_HEIGHT_ENV,
             LEGACY_UNDECORATED_ENV,
@@ -308,6 +384,7 @@ mod tests {
         assert_eq!(parsed.title, "Shadow Notes");
         assert_eq!(parsed.surface_width, 540);
         assert_eq!(parsed.surface_height, 1042);
+        assert_eq!(parsed.safe_area_insets, AppSafeAreaInsets::default());
         assert!(!parsed.undecorated);
         assert_eq!(parsed.wayland_app_id.as_deref(), Some("dev.shadow.notes"));
         assert_eq!(
@@ -323,6 +400,10 @@ mod tests {
         std::env::set_var(APP_TITLE_ENV, " Custom Title ");
         std::env::set_var(SURFACE_WIDTH_ENV, "720");
         std::env::set_var(SURFACE_HEIGHT_ENV, "1280");
+        std::env::set_var(SAFE_AREA_LEFT_ENV, "12");
+        std::env::set_var(SAFE_AREA_TOP_ENV, "24");
+        std::env::set_var(SAFE_AREA_RIGHT_ENV, "18");
+        std::env::set_var(SAFE_AREA_BOTTOM_ENV, "30");
         std::env::set_var(UNDECORATED_ENV, "");
         std::env::set_var(WAYLAND_APP_ID_ENV, "dev.shadow.custom");
         std::env::set_var(WAYLAND_INSTANCE_NAME_ENV, "custom-instance");
@@ -331,6 +412,15 @@ mod tests {
         assert_eq!(parsed.title, "Custom Title");
         assert_eq!(parsed.surface_width, 720);
         assert_eq!(parsed.surface_height, 1280);
+        assert_eq!(
+            parsed.safe_area_insets,
+            AppSafeAreaInsets {
+                left: 12,
+                top: 24,
+                right: 18,
+                bottom: 30,
+            }
+        );
         assert!(parsed.undecorated);
         assert_eq!(parsed.wayland_app_id.as_deref(), Some("dev.shadow.custom"));
         assert_eq!(
@@ -358,6 +448,10 @@ mod tests {
         let _guard = env_lock().lock().expect("env lock");
         clear_window_env();
         std::env::set_var(LEGACY_APP_TITLE_ENV, " Legacy Title ");
+        std::env::set_var(LEGACY_SAFE_AREA_LEFT_ENV, "4");
+        std::env::set_var(LEGACY_SAFE_AREA_TOP_ENV, "6");
+        std::env::set_var(LEGACY_SAFE_AREA_RIGHT_ENV, "8");
+        std::env::set_var(LEGACY_SAFE_AREA_BOTTOM_ENV, "10");
         std::env::set_var(LEGACY_SURFACE_WIDTH_ENV, "900");
         std::env::set_var(LEGACY_SURFACE_HEIGHT_ENV, "1600");
         std::env::set_var(LEGACY_UNDECORATED_ENV, "");
@@ -368,11 +462,43 @@ mod tests {
         assert_eq!(parsed.title, "Legacy Title");
         assert_eq!(parsed.surface_width, 900);
         assert_eq!(parsed.surface_height, 1600);
+        assert_eq!(
+            parsed.safe_area_insets,
+            AppSafeAreaInsets {
+                left: 4,
+                top: 6,
+                right: 8,
+                bottom: 10,
+            }
+        );
         assert!(parsed.undecorated);
         assert_eq!(parsed.wayland_app_id.as_deref(), Some("dev.shadow.legacy"));
         assert_eq!(
             parsed.wayland_instance_name.as_deref(),
             Some("legacy-instance")
+        );
+    }
+
+    #[test]
+    fn app_window_metrics_reads_launcher_seeded_surface_and_safe_area() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_window_env();
+        std::env::set_var(SURFACE_WIDTH_ENV, "540");
+        std::env::set_var(SURFACE_HEIGHT_ENV, "1042");
+        std::env::set_var(SAFE_AREA_TOP_ENV, "16");
+
+        assert_eq!(
+            app_window_metrics_from_env(),
+            Some(super::AppWindowMetrics {
+                surface_width: 540,
+                surface_height: 1042,
+                safe_area_insets: AppSafeAreaInsets {
+                    left: 0,
+                    top: 16,
+                    right: 0,
+                    bottom: 0,
+                },
+            })
         );
     }
 

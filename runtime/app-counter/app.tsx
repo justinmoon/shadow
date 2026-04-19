@@ -2,7 +2,9 @@ import {
   clearLifecycleHandler,
   createSignal,
   getLifecycleState,
+  getWindowMetrics,
   onCleanup,
+  onMount,
   setLifecycleHandler,
 } from "@shadow/sdk";
 
@@ -80,11 +82,17 @@ function Counter(props: CounterProps) {
 export function renderApp() {
   const [count, setCount] = createSignal(1);
   const [lifecycleState, setLifecycleState] = createSignal(getLifecycleState());
+  const windowMetrics = getWindowMetrics();
   const active = () => count() > 1;
 
   setLifecycleHandler(({ state }: { state: string }) => {
     setLifecycleState(state);
     console.error(`[shadow-runtime-counter] lifecycle_state=${state}`);
+  });
+  onMount(() => {
+    console.error(
+      `[shadow-runtime-counter] window_metrics surface=${windowMetrics.surfaceWidth}x${windowMetrics.surfaceHeight} safe_area=l${windowMetrics.safeAreaInsets.left} t${windowMetrics.safeAreaInsets.top} r${windowMetrics.safeAreaInsets.right} b${windowMetrics.safeAreaInsets.bottom}`,
+    );
   });
   onCleanup(() => {
     clearLifecycleHandler();

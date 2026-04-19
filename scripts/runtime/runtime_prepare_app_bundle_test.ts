@@ -143,6 +143,94 @@ Deno.test("shadow sdk lifecycle state honors runner-seeded initial state", async
   }
 });
 
+Deno.test("shadow sdk window metrics honors runner-seeded initial metrics", async () => {
+  const cwd = repoRoot();
+  const windowMetricsKey = Symbol.for("shadow.runtime.window_metrics");
+  const runtimeGlobal = globalThis as typeof globalThis & {
+    Shadow?: Record<string, unknown>;
+    [key: symbol]: unknown;
+  };
+  const moduleUrl = `${
+    pathToFileURL(path.resolve(
+      cwd,
+      "runtime/app-runtime/shadow_sdk_services.js",
+    )).href
+  }?test=${crypto.randomUUID()}`;
+
+  runtimeGlobal.Shadow = {
+    os: {},
+    __initialWindowMetrics: {
+      surfaceWidth: 540,
+      surfaceHeight: 1042,
+      safeAreaInsets: {
+        left: 8,
+        top: 12,
+        right: 6,
+        bottom: 4,
+      },
+    },
+  };
+  delete runtimeGlobal[windowMetricsKey];
+
+  try {
+    const services = await import(moduleUrl);
+    const metrics = services.getWindowMetrics();
+    assert(metrics.surfaceWidth === 540, "seeded surface width should match");
+    assert(
+      metrics.surfaceHeight === 1042,
+      "seeded surface height should match",
+    );
+    assert(
+      JSON.stringify(metrics.safeAreaInsets) ===
+        JSON.stringify({ left: 8, top: 12, right: 6, bottom: 4 }),
+      "seeded safe area should match",
+    );
+  } finally {
+    delete runtimeGlobal.Shadow;
+    delete runtimeGlobal[windowMetricsKey];
+  }
+});
+
+Deno.test(
+  "shadow sdk window metrics throws when the runtime host omits them",
+  async () => {
+    const cwd = repoRoot();
+    const windowMetricsKey = Symbol.for("shadow.runtime.window_metrics");
+    const runtimeGlobal = globalThis as typeof globalThis & {
+      Shadow?: Record<string, unknown>;
+      [key: symbol]: unknown;
+    };
+    const moduleUrl = `${
+      pathToFileURL(path.resolve(
+        cwd,
+        "runtime/app-runtime/shadow_sdk_services.js",
+      )).href
+    }?test=${crypto.randomUUID()}`;
+
+    runtimeGlobal.Shadow = { os: {} };
+    delete runtimeGlobal[windowMetricsKey];
+
+    try {
+      const services = await import(moduleUrl);
+      let error: unknown = null;
+      try {
+        services.getWindowMetrics();
+      } catch (thrown) {
+        error = thrown;
+      }
+      assert(error instanceof Error, "missing window metrics should throw");
+      assertIncludes(
+        error.message,
+        "window metrics are not installed by the runtime host",
+        "window metrics error",
+      );
+    } finally {
+      delete runtimeGlobal.Shadow;
+      delete runtimeGlobal[windowMetricsKey];
+    }
+  },
+);
+
 async function fileExists(filePath: string): Promise<boolean> {
   try {
     const stat = await Deno.stat(filePath);

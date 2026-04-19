@@ -83,6 +83,15 @@ export function getLifecycleState() {
   return getLifecycleStateStore().state;
 }
 
+export function getWindowMetrics() {
+  requireShadowOs();
+  const metrics = getWindowMetricsStore().metrics;
+  if (metrics == null) {
+    throw new Error("window metrics are not installed by the runtime host");
+  }
+  return cloneWindowMetrics(metrics);
+}
+
 export function setLifecycleHandler(handler) {
   requireShadowOs();
   if (handler != null && typeof handler !== "function") {
@@ -176,6 +185,7 @@ const AUDIO_MEDIA_HANDLER_STATE_KEY = Symbol.for(
   "shadow.runtime.audio.media_handler_state",
 );
 const LIFECYCLE_STATE_KEY = Symbol.for("shadow.runtime.lifecycle.state");
+const WINDOW_METRICS_STATE_KEY = Symbol.for("shadow.runtime.window_metrics");
 const AUDIO_MEDIA_ACTIONS = new Set([
   "next",
   "pause",
@@ -229,6 +239,16 @@ function getLifecycleStateStore() {
   return globalThis[LIFECYCLE_STATE_KEY];
 }
 
+function getWindowMetricsStore() {
+  if (!globalThis[WINDOW_METRICS_STATE_KEY]) {
+    const metrics = readInitialWindowMetrics();
+    globalThis[WINDOW_METRICS_STATE_KEY] = {
+      metrics: metrics == null ? null : freezeWindowMetrics(metrics),
+    };
+  }
+  return globalThis[WINDOW_METRICS_STATE_KEY];
+}
+
 function readInitialLifecycleState() {
   const initialState = globalThis.Shadow?.__initialLifecycleState;
   if (typeof initialState !== "string") {
@@ -239,6 +259,85 @@ function readInitialLifecycleState() {
   } catch {
     return "foreground";
   }
+}
+
+function readInitialWindowMetrics() {
+  const metrics = globalThis.Shadow?.__initialWindowMetrics;
+  if (!isPlainObject(metrics)) {
+    return null;
+  }
+  return normalizeWindowMetrics(metrics);
+}
+
+function normalizeWindowMetrics(metrics) {
+  const safeAreaSource = isPlainObject(metrics.safeAreaInsets)
+    ? metrics.safeAreaInsets
+    : {};
+  return {
+    surfaceWidth: normalizeRequiredMetricNumber(
+      metrics.surfaceWidth,
+      "window metrics surface width",
+    ),
+    surfaceHeight: normalizeRequiredMetricNumber(
+      metrics.surfaceHeight,
+      "window metrics surface height",
+    ),
+    safeAreaInsets: {
+      left: normalizeOptionalMetricNumber(safeAreaSource.left),
+      top: normalizeOptionalMetricNumber(safeAreaSource.top),
+      right: normalizeOptionalMetricNumber(safeAreaSource.right),
+      bottom: normalizeOptionalMetricNumber(safeAreaSource.bottom),
+    },
+  };
+}
+
+function normalizeRequiredMetricNumber(value, label) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new TypeError(`${label} must be a finite number`);
+  }
+  const normalized = Math.trunc(value);
+  if (normalized <= 0) {
+    throw new RangeError(`${label} must be greater than zero`);
+  }
+  return normalized;
+}
+
+function normalizeOptionalMetricNumber(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.trunc(value));
+}
+
+function freezeWindowMetrics(metrics) {
+  const safeAreaInsets = Object.freeze({
+    left: metrics.safeAreaInsets.left,
+    top: metrics.safeAreaInsets.top,
+    right: metrics.safeAreaInsets.right,
+    bottom: metrics.safeAreaInsets.bottom,
+  });
+  return Object.freeze({
+    surfaceWidth: metrics.surfaceWidth,
+    surfaceHeight: metrics.surfaceHeight,
+    safeAreaInsets,
+  });
+}
+
+function cloneWindowMetrics(metrics) {
+  return {
+    surfaceWidth: metrics.surfaceWidth,
+    surfaceHeight: metrics.surfaceHeight,
+    safeAreaInsets: {
+      left: metrics.safeAreaInsets.left,
+      top: metrics.safeAreaInsets.top,
+      right: metrics.safeAreaInsets.right,
+      bottom: metrics.safeAreaInsets.bottom,
+    },
+  };
+}
+
+function isPlainObject(value) {
+  return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizeAudioMediaAction(action) {

@@ -46,6 +46,7 @@ export {
   ensureShadowRuntimeOs,
   getLifecycleState,
   getStatus,
+  getWindowMetrics,
   listCameras,
   listCashuWallets,
   listKind1,

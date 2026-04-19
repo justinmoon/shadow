@@ -8,8 +8,9 @@ use deno_core::url::Url;
 use deno_core::v8;
 use deno_core::{FsModuleLoader, JsRuntime, PollEventLoopOptions, RuntimeOptions};
 use shadow_runtime_protocol::{RuntimeDocumentPayload, SessionRequest, SessionResponse};
+use shadow_sdk::app::app_window_metrics_from_env;
 
-const APP_LIFECYCLE_STATE_ENV: &str = "SHADOW_APP_LIFECYCLE_STATE";
+const APP_LIFECYCLE_STATE_ENV: &str = shadow_sdk::app::APP_LIFECYCLE_STATE_ENV;
 const RENDER_EXPR: &str = "globalThis.SHADOW_RUNTIME_HOST.render()";
 const RENDER_IF_DIRTY_EXPR: &str = "globalThis.SHADOW_RUNTIME_HOST.renderIfDirty()";
 const SESSION_USAGE: &str = "usage: shadow-runtime-host --session <bundle-path>";
@@ -55,6 +56,7 @@ async fn load_runtime(main_module: &Url) -> Result<JsRuntime> {
         ..Default::default()
     });
     seed_initial_lifecycle_state(&mut runtime)?;
+    seed_initial_window_metrics(&mut runtime)?;
 
     let module_id = runtime
         .load_main_es_module(main_module)
@@ -80,6 +82,17 @@ fn seed_initial_lifecycle_state(runtime: &mut JsRuntime) -> Result<()> {
     Ok(())
 }
 
+fn seed_initial_window_metrics(runtime: &mut JsRuntime) -> Result<()> {
+    let Some(script) = initial_window_metrics_bootstrap_script()? else {
+        return Ok(());
+    };
+
+    runtime
+        .execute_script("<window-metrics-bootstrap>".to_owned(), script)
+        .context("seed initial window metrics")?;
+    Ok(())
+}
+
 fn initial_lifecycle_bootstrap_script() -> Result<Option<String>> {
     let Some(state) = env::var(APP_LIFECYCLE_STATE_ENV)
         .ok()
@@ -92,6 +105,27 @@ fn initial_lifecycle_bootstrap_script() -> Result<Option<String>> {
     let encoded = serde_json::to_string(&state).context("encode initial lifecycle state")?;
     Ok(Some(format!(
         "globalThis.Shadow = {{ ...(globalThis.Shadow ?? {{}}), __initialLifecycleState: {encoded} }};"
+    )))
+}
+
+fn initial_window_metrics_bootstrap_script() -> Result<Option<String>> {
+    let Some(metrics) = app_window_metrics_from_env() else {
+        return Ok(None);
+    };
+
+    let encoded = serde_json::json!({
+        "surfaceWidth": metrics.surface_width,
+        "surfaceHeight": metrics.surface_height,
+        "safeAreaInsets": {
+            "left": metrics.safe_area_insets.left,
+            "top": metrics.safe_area_insets.top,
+            "right": metrics.safe_area_insets.right,
+            "bottom": metrics.safe_area_insets.bottom,
+        },
+    });
+    let encoded = serde_json::to_string(&encoded).context("encode initial window metrics")?;
+    Ok(Some(format!(
+        "globalThis.Shadow = {{ ...(globalThis.Shadow ?? {{}}), __initialWindowMetrics: {encoded} }};"
     )))
 }
 
@@ -231,12 +265,43 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     use super::{
-        initial_lifecycle_bootstrap_script, RuntimeDocumentPayload, APP_LIFECYCLE_STATE_ENV,
+        initial_lifecycle_bootstrap_script, initial_window_metrics_bootstrap_script,
+        RuntimeDocumentPayload, APP_LIFECYCLE_STATE_ENV,
     };
+    use shadow_sdk::app::{
+        SAFE_AREA_BOTTOM_ENV, SAFE_AREA_LEFT_ENV, SAFE_AREA_RIGHT_ENV, SAFE_AREA_TOP_ENV,
+        SURFACE_HEIGHT_ENV, SURFACE_WIDTH_ENV,
+    };
+
+    const LEGACY_SURFACE_WIDTH_ENV: &str = "SHADOW_BLITZ_SURFACE_WIDTH";
+    const LEGACY_SURFACE_HEIGHT_ENV: &str = "SHADOW_BLITZ_SURFACE_HEIGHT";
+    const LEGACY_SAFE_AREA_LEFT_ENV: &str = "SHADOW_BLITZ_SAFE_AREA_LEFT";
+    const LEGACY_SAFE_AREA_TOP_ENV: &str = "SHADOW_BLITZ_SAFE_AREA_TOP";
+    const LEGACY_SAFE_AREA_RIGHT_ENV: &str = "SHADOW_BLITZ_SAFE_AREA_RIGHT";
+    const LEGACY_SAFE_AREA_BOTTOM_ENV: &str = "SHADOW_BLITZ_SAFE_AREA_BOTTOM";
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn clear_window_metric_env() {
+        for key in [
+            SURFACE_WIDTH_ENV,
+            SURFACE_HEIGHT_ENV,
+            SAFE_AREA_LEFT_ENV,
+            SAFE_AREA_TOP_ENV,
+            SAFE_AREA_RIGHT_ENV,
+            SAFE_AREA_BOTTOM_ENV,
+            LEGACY_SURFACE_WIDTH_ENV,
+            LEGACY_SURFACE_HEIGHT_ENV,
+            LEGACY_SAFE_AREA_LEFT_ENV,
+            LEGACY_SAFE_AREA_TOP_ENV,
+            LEGACY_SAFE_AREA_RIGHT_ENV,
+            LEGACY_SAFE_AREA_BOTTOM_ENV,
+        ] {
+            std::env::remove_var(key);
+        }
     }
 
     #[test]
@@ -285,5 +350,41 @@ mod tests {
         assert!(script.contains("__initialLifecycleState: \"background\""));
 
         std::env::remove_var(APP_LIFECYCLE_STATE_ENV);
+    }
+
+    #[test]
+    fn window_metrics_bootstrap_script_is_absent_without_surface_env() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_window_metric_env();
+
+        assert_eq!(
+            initial_window_metrics_bootstrap_script().expect("bootstrap script"),
+            None
+        );
+    }
+
+    #[test]
+    fn window_metrics_bootstrap_script_uses_seeded_surface_and_safe_area() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_window_metric_env();
+        std::env::set_var(SURFACE_WIDTH_ENV, "540");
+        std::env::set_var(SURFACE_HEIGHT_ENV, "1042");
+        std::env::set_var(SAFE_AREA_LEFT_ENV, "8");
+        std::env::set_var(SAFE_AREA_TOP_ENV, "12");
+        std::env::set_var(SAFE_AREA_RIGHT_ENV, "6");
+        std::env::set_var(SAFE_AREA_BOTTOM_ENV, "4");
+
+        let script = initial_window_metrics_bootstrap_script()
+            .expect("bootstrap script")
+            .expect("bootstrap value");
+        assert!(script.contains("__initialWindowMetrics"));
+        assert!(script.contains("\"surfaceWidth\":540"));
+        assert!(script.contains("\"surfaceHeight\":1042"));
+        assert!(script.contains("\"left\":8"));
+        assert!(script.contains("\"top\":12"));
+        assert!(script.contains("\"right\":6"));
+        assert!(script.contains("\"bottom\":4"));
+
+        clear_window_metric_env();
     }
 }

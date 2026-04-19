@@ -66,13 +66,22 @@ struct CameraPanelState {
 }
 
 impl CameraPanelState {
-    fn success(report: CameraProbeReport, lifecycle_state: LifecycleState) -> Self {
+    fn success(
+        report: CameraProbeReport,
+        lifecycle_state: LifecycleState,
+        window_env: &AppWindowEnvironment,
+    ) -> Self {
         Self {
             background_color: BACKGROUND_SUCCESS,
             accent_color: ACCENT_SUCCESS,
             lines: vec![
                 String::from("shadow_sdk::services::camera ok"),
                 format!("lifecycle: {}", lifecycle_state.as_str()),
+                format!(
+                    "surface: {}x{}",
+                    window_env.surface_width, window_env.surface_height
+                ),
+                format!("safe area: {}", format_safe_area(window_env)),
                 format!("cameras discovered: {}", report.camera_count),
                 format!(
                     "selected: {} [{}]",
@@ -87,13 +96,22 @@ impl CameraPanelState {
         }
     }
 
-    fn error(error: &str, lifecycle_state: LifecycleState) -> Self {
+    fn error(
+        error: &str,
+        lifecycle_state: LifecycleState,
+        window_env: &AppWindowEnvironment,
+    ) -> Self {
         Self {
             background_color: BACKGROUND_ERROR,
             accent_color: ACCENT_ERROR,
             lines: vec![
                 String::from("shadow_sdk::services::camera error"),
                 format!("lifecycle: {}", lifecycle_state.as_str()),
+                format!(
+                    "surface: {}x{}",
+                    window_env.surface_width, window_env.surface_height
+                ),
+                format!("safe area: {}", format_safe_area(window_env)),
                 error.trim().to_owned(),
             ],
         }
@@ -102,13 +120,15 @@ impl CameraPanelState {
 
 struct App {
     camera_panel: CameraPanelState,
+    window_env: AppWindowEnvironment,
     window: Option<WindowState>,
 }
 
 impl App {
-    fn new(camera_panel: CameraPanelState) -> Self {
+    fn new(camera_panel: CameraPanelState, window_env: AppWindowEnvironment) -> Self {
         Self {
             camera_panel,
+            window_env,
             window: None,
         }
     }
@@ -116,7 +136,7 @@ impl App {
 
 impl ApplicationHandler for App {
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
-        let window = match event_loop.create_window(window_attributes()) {
+        let window = match event_loop.create_window(window_attributes(&self.window_env)) {
             Ok(window) => window,
             Err(error) => {
                 eprintln!("shadow-rust-demo: failed to create window: {error}");
@@ -197,18 +217,20 @@ impl ApplicationHandler for App {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let window_env = window_environment();
+    log_window_metrics(&window_env);
     let _lifecycle_listener = spawn_lifecycle_listener(|state| {
         eprintln!("shadow-rust-demo: lifecycle_state={}", state.as_str());
     })
     .ok();
-    let camera_panel = load_camera_panel();
+    let camera_panel = load_camera_panel(&window_env);
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Wait);
-    event_loop.run_app(App::new(camera_panel))?;
+    event_loop.run_app(App::new(camera_panel, window_env))?;
     Ok(())
 }
 
-fn load_camera_panel() -> CameraPanelState {
+fn load_camera_panel(window_env: &AppWindowEnvironment) -> CameraPanelState {
     let lifecycle_state = current_lifecycle_state();
     match probe_camera_report() {
         Ok(report) => {
@@ -219,7 +241,7 @@ fn load_camera_panel() -> CameraPanelState {
                 report.selected_lens_facing,
                 report.capture_mime_type,
             );
-            CameraPanelState::success(report, lifecycle_state)
+            CameraPanelState::success(report, lifecycle_state, window_env)
         }
         Err(error) => {
             eprintln!(
@@ -227,7 +249,7 @@ fn load_camera_panel() -> CameraPanelState {
                 error.kind(),
                 error.to_string(),
             );
-            CameraPanelState::error(&error.to_string(), lifecycle_state)
+            CameraPanelState::error(&error.to_string(), lifecycle_state, window_env)
         }
     }
 }
@@ -250,10 +272,9 @@ fn probe_camera_report() -> Result<CameraProbeReport, CameraError> {
     })
 }
 
-fn window_attributes() -> WindowAttributes {
-    let window_env = window_environment();
+fn window_attributes(window_env: &AppWindowEnvironment) -> WindowAttributes {
     let attributes = WindowAttributes::default()
-        .with_title(window_env.title)
+        .with_title(window_env.title.clone())
         .with_resizable(false)
         .with_decorations(!window_env.undecorated)
         .with_surface_size(LogicalSize::new(
@@ -266,9 +287,11 @@ fn window_attributes() -> WindowAttributes {
         let wayland_attributes = WindowAttributesWayland::default().with_name(
             window_env
                 .wayland_app_id
+                .clone()
                 .expect("shadow-rust-demo defaults require a Wayland app id"),
             window_env
                 .wayland_instance_name
+                .clone()
                 .expect("shadow-rust-demo defaults require a Wayland instance name"),
         );
         return attributes.with_platform_attributes(Box::new(wayland_attributes));
@@ -280,6 +303,25 @@ fn window_attributes() -> WindowAttributes {
 
 fn window_environment() -> AppWindowEnvironment {
     AppWindowEnvironment::from_env(WINDOW_DEFAULTS)
+}
+
+fn format_safe_area(window_env: &AppWindowEnvironment) -> String {
+    format!(
+        "l{} t{} r{} b{}",
+        window_env.safe_area_insets.left,
+        window_env.safe_area_insets.top,
+        window_env.safe_area_insets.right,
+        window_env.safe_area_insets.bottom
+    )
+}
+
+fn log_window_metrics(window_env: &AppWindowEnvironment) {
+    eprintln!(
+        "shadow-rust-demo: window_metrics surface={}x{} safe_area={}",
+        window_env.surface_width,
+        window_env.surface_height,
+        format_safe_area(window_env)
+    );
 }
 
 fn resize_surface(

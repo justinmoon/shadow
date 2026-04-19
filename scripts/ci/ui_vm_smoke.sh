@@ -399,6 +399,9 @@ echo "vm-smoke: open timeline"
 echo "vm-smoke: open counter"
 run_shadowctl open counter -t vm >/dev/null
 state_after_counter_open="$(wait_for_open_state counter "counter open")"
+wait_for_log_marker \
+  "[shadow-runtime-counter] window_metrics surface=540x1042 safe_area=l0 t0 r0 b0" \
+  "counter window metrics"
 
 echo "vm-smoke: home counter"
 run_shadowctl home -t vm >/dev/null
@@ -461,6 +464,9 @@ state_after_camera_home="$(wait_for_home_state camera "camera home")"
 echo "vm-smoke: open rust-demo"
 "$SCRIPT_DIR/shadowctl" open rust-demo -t vm >/dev/null
 state_after_rust_demo_open="$(wait_for_open_state rust-demo "rust-demo open")"
+wait_for_log_marker \
+  "shadow-rust-demo: window_metrics surface=540x1042 safe_area=l0 t0 r0 b0" \
+  "rust-demo window metrics"
 wait_for_log_marker \
   "shadow-rust-demo: camera_probe=ok" \
   "rust-demo camera probe" \

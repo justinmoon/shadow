@@ -199,6 +199,7 @@ Suggested module structure:
   - app identity
   - lifecycle hooks
   - environment
+  - launch-time window metrics
   - task/effect helpers
   - background behavior
 - `shadow_sdk::ui`
