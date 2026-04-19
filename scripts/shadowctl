@@ -312,6 +312,10 @@ def pixel_debug_command(
             command.extend(["--adb-timeout", str(args.adb_timeout)])
         if args.boot_timeout is not None:
             command.extend(["--boot-timeout", str(args.boot_timeout)])
+        if args.success_signal:
+            command.extend(["--success-signal", args.success_signal])
+        if args.return_timeout is not None:
+            command.extend(["--return-timeout", str(args.return_timeout)])
         if args.allow_active_slot:
             command.append("--allow-active-slot")
         if args.recover_after:
@@ -331,6 +335,10 @@ def pixel_debug_command(
             command.extend(["--adb-timeout", str(args.adb_timeout)])
         if args.boot_timeout is not None:
             command.extend(["--boot-timeout", str(args.boot_timeout)])
+        if args.success_signal:
+            command.extend(["--success-signal", args.success_signal])
+        if args.return_timeout is not None:
+            command.extend(["--return-timeout", str(args.return_timeout)])
         if args.no_wait_boot_completed:
             command.append("--no-wait-boot-completed")
         if args.proof_prop:
@@ -1850,6 +1858,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--boot-timeout",
         type=int,
         help="boot-lab-flash-run / boot-lab-oneshot only: seconds to wait for sys.boot_completed before collecting.",
+    )
+    debug.add_argument(
+        "--success-signal",
+        choices=("adb", "fastboot-return"),
+        help="boot-lab-flash-run / boot-lab-oneshot only: expected success condition. Defaults to adb.",
+    )
+    debug.add_argument(
+        "--return-timeout",
+        type=int,
+        help="boot-lab-flash-run / boot-lab-oneshot only: when --success-signal fastboot-return, seconds to wait for fastboot to come back.",
     )
     debug.add_argument(
         "--allow-active-slot",

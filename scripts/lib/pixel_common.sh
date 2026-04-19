@@ -2102,6 +2102,58 @@ pixel_wait_for_fastboot() {
   return 1
 }
 
+pixel_fastboot_device_present() {
+  local serial
+  serial="$1"
+  pixel_connected_fastboot_serials | grep -Fxq "$serial"
+}
+
+pixel_fastboot_device_absent() {
+  local serial
+  serial="$1"
+  ! pixel_fastboot_device_present "$serial"
+}
+
+pixel_reset_fastboot_cycle_status() {
+  PIXEL_FASTBOOT_CYCLE_DEPARTED=false
+  PIXEL_FASTBOOT_CYCLE_RETURNED=false
+  PIXEL_FASTBOOT_CYCLE_LEAVE_ELAPSED_SECS=0
+  PIXEL_FASTBOOT_CYCLE_RETURN_ELAPSED_SECS=0
+  PIXEL_FASTBOOT_CYCLE_TOTAL_ELAPSED_SECS=0
+}
+
+pixel_wait_for_fastboot_cycle() {
+  local serial leave_timeout_secs return_timeout_secs cycle_started_at departed_at
+  serial="$1"
+  leave_timeout_secs="${2:-15}"
+  return_timeout_secs="${3:-45}"
+
+  pixel_reset_fastboot_cycle_status
+  cycle_started_at=$SECONDS
+
+  if ! pixel_wait_for_condition "$leave_timeout_secs" 1 pixel_fastboot_device_absent "$serial"; then
+    PIXEL_FASTBOOT_CYCLE_LEAVE_ELAPSED_SECS=$((SECONDS - cycle_started_at))
+    PIXEL_FASTBOOT_CYCLE_TOTAL_ELAPSED_SECS="$PIXEL_FASTBOOT_CYCLE_LEAVE_ELAPSED_SECS"
+    echo "pixel: timed out waiting for fastboot device $serial to leave fastboot" >&2
+    return 1
+  fi
+
+  PIXEL_FASTBOOT_CYCLE_DEPARTED=true
+  departed_at=$SECONDS
+  PIXEL_FASTBOOT_CYCLE_LEAVE_ELAPSED_SECS=$((departed_at - cycle_started_at))
+
+  if ! pixel_wait_for_condition "$return_timeout_secs" 1 pixel_fastboot_device_present "$serial"; then
+    PIXEL_FASTBOOT_CYCLE_RETURN_ELAPSED_SECS=$((SECONDS - departed_at))
+    PIXEL_FASTBOOT_CYCLE_TOTAL_ELAPSED_SECS=$((SECONDS - cycle_started_at))
+    echo "pixel: timed out waiting for fastboot device $serial to return after leaving fastboot" >&2
+    return 1
+  fi
+
+  PIXEL_FASTBOOT_CYCLE_RETURNED=true
+  PIXEL_FASTBOOT_CYCLE_RETURN_ELAPSED_SECS=$((SECONDS - departed_at))
+  PIXEL_FASTBOOT_CYCLE_TOTAL_ELAPSED_SECS=$((SECONDS - cycle_started_at))
+}
+
 pixel_wait_for_adb() {
   local serial timeout
   serial="$1"

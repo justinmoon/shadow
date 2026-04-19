@@ -335,6 +335,19 @@ check_output_case \
     --proof-prop shadow.boot.rc_probe=ready
 
 check_output_case \
+  shadowctl_pixel_debug_boot_lab_flash_run_fastboot_return \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --image /tmp/probe.img --slot inactive --output /tmp/flash-out --success-signal fastboot-return --return-timeout 45 --recover-after' "$SCRIPT_DIR/pixel/pixel_boot_flash_run.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL boot-lab-flash-run \
+    --image /tmp/probe.img \
+    --slot inactive \
+    --output /tmp/flash-out \
+    --success-signal fastboot-return \
+    --return-timeout 45 \
+    --recover-after
+
+check_output_case \
   shadowctl_pixel_debug_boot_lab_oneshot \
   0 \
   "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --image /tmp/probe.img --output /tmp/boot-out --wait-ready 30 --adb-timeout 45 --boot-timeout 60 --no-wait-boot-completed --proof-prop shadow.boot.rc_probe=ready' "$SCRIPT_DIR/pixel/pixel_boot_oneshot.sh")" \
@@ -347,6 +360,17 @@ check_output_case \
     --boot-timeout 60 \
     --no-wait-boot-completed \
     --proof-prop shadow.boot.rc_probe=ready
+
+check_output_case \
+  shadowctl_pixel_debug_boot_lab_oneshot_fastboot_return \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --image /tmp/probe.img --output /tmp/boot-out --success-signal fastboot-return --return-timeout 45' "$SCRIPT_DIR/pixel/pixel_boot_oneshot.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL boot-lab-oneshot \
+    --image /tmp/probe.img \
+    --output /tmp/boot-out \
+    --success-signal fastboot-return \
+    --return-timeout 45
 
 check_output_case \
   shadowctl_pixel_ci_run_only_podcast \

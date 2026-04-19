@@ -12,6 +12,9 @@ OUTPUT_DIR=""
 WAIT_READY_SECS="${PIXEL_BOOT_FLASH_RUN_WAIT_READY_SECS:-120}"
 ADB_TIMEOUT_SECS="${PIXEL_BOOT_FLASH_RUN_ADB_TIMEOUT_SECS:-180}"
 BOOT_TIMEOUT_SECS="${PIXEL_BOOT_FLASH_RUN_BOOT_TIMEOUT_SECS:-240}"
+SUCCESS_SIGNAL="${PIXEL_BOOT_FLASH_RUN_SUCCESS_SIGNAL:-adb}"
+RETURN_TIMEOUT_SECS="${PIXEL_BOOT_FLASH_RUN_RETURN_TIMEOUT_SECS:-45}"
+FASTBOOT_LEAVE_TIMEOUT_SECS="${PIXEL_BOOT_FLASH_RUN_FASTBOOT_LEAVE_TIMEOUT_SECS:-15}"
 ALLOW_ACTIVE_SLOT=0
 RECOVER_AFTER=0
 PROOF_PROP_SPEC="${PIXEL_BOOT_PROOF_PROP:-}"
@@ -25,12 +28,19 @@ collect_output_dir=""
 image_sha256=""
 slot_before=""
 flash_succeeded=false
+collect_attempted=false
 collect_succeeded=false
 recover_attempted=false
 recover_succeeded=false
 metadata_present=false
 adb_visible_after_failure=false
 fastboot_visible_after_failure=false
+fastboot_departed=false
+fastboot_returned=false
+fastboot_leave_elapsed_secs=0
+fastboot_return_elapsed_secs=0
+fastboot_cycle_elapsed_secs=0
+fastboot_slot_after_return=""
 failure_stage=""
 
 usage() {
@@ -38,11 +48,13 @@ usage() {
 Usage: scripts/pixel/pixel_boot_flash_run.sh [--image PATH] [--slot inactive|active|a|b]
                                             [--output DIR] [--wait-ready SECONDS]
                                             [--adb-timeout SECONDS] [--boot-timeout SECONDS]
+                                            [--success-signal adb|fastboot-return]
+                                            [--return-timeout SECONDS]
                                             [--allow-active-slot] [--recover-after]
                                             [--proof-prop KEY=VALUE] [--dry-run]
 
-Run the flashed-slot boot validation loop: guarded flash with activation, wait for Android,
-collect boot-lab evidence, and optionally recover the known-good slot afterward.
+Run the flashed-slot boot validation loop: guarded flash with activation, then either
+wait for Android and collect evidence or treat a bounded return to fastboot as success.
 
 This private helper is intended to sit behind:
   sc -t <serial> debug boot-lab-flash-run
@@ -64,6 +76,30 @@ resolve_serial_for_mode() {
   fi
 
   pixel_resolve_serial
+}
+
+validate_success_mode() {
+  case "$SUCCESS_SIGNAL" in
+    adb|fastboot-return)
+      ;;
+    *)
+      echo "pixel_boot_flash_run: unsupported --success-signal $SUCCESS_SIGNAL; expected adb or fastboot-return" >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ "$SUCCESS_SIGNAL" == "fastboot-return" && -n "$PROOF_PROP_SPEC" ]]; then
+    echo "pixel_boot_flash_run: --proof-prop is only supported with --success-signal adb" >&2
+    exit 1
+  fi
+}
+
+capture_fastboot_cycle_status() {
+  fastboot_departed="${PIXEL_FASTBOOT_CYCLE_DEPARTED:-false}"
+  fastboot_returned="${PIXEL_FASTBOOT_CYCLE_RETURNED:-false}"
+  fastboot_leave_elapsed_secs="${PIXEL_FASTBOOT_CYCLE_LEAVE_ELAPSED_SECS:-0}"
+  fastboot_return_elapsed_secs="${PIXEL_FASTBOOT_CYCLE_RETURN_ELAPSED_SECS:-0}"
+  fastboot_cycle_elapsed_secs="${PIXEL_FASTBOOT_CYCLE_TOTAL_ELAPSED_SECS:-0}"
 }
 
 prepare_output_dir() {
@@ -95,6 +131,51 @@ update_failure_visibility() {
   fi
 }
 
+run_flash_action() {
+  local -a flash_args
+
+  flash_args=(
+    --experimental
+    --slot "$REQUESTED_SLOT"
+    --activate-target
+    --image "$IMAGE_PATH"
+  )
+  if [[ "$ALLOW_ACTIVE_SLOT" == "1" ]]; then
+    flash_args+=(--allow-active-slot)
+  fi
+  if [[ "$SUCCESS_SIGNAL" == "fastboot-return" ]]; then
+    flash_args+=(--no-reboot)
+  fi
+
+  if ! PIXEL_SERIAL="$serial" PIXEL_BOOT_METADATA_PATH="$metadata_path" \
+    PIXEL_BOOT_FLASH_ADB_TIMEOUT_SECS="$ADB_TIMEOUT_SECS" \
+    PIXEL_BOOT_FLASH_BOOT_TIMEOUT_SECS="$BOOT_TIMEOUT_SECS" \
+    "$SCRIPT_DIR/pixel/pixel_boot_flash.sh" \
+      "${flash_args[@]}"; then
+    failure_stage="flash"
+    return 1
+  fi
+
+  flash_succeeded=true
+  metadata_present=true
+
+  if [[ "$SUCCESS_SIGNAL" != "fastboot-return" ]]; then
+    return 0
+  fi
+
+  printf 'Rebooting activated slot and waiting for fastboot return on %s\n' "$serial"
+  pixel_fastboot "$serial" reboot
+  if ! pixel_wait_for_fastboot_cycle "$serial" "$FASTBOOT_LEAVE_TIMEOUT_SECS" "$RETURN_TIMEOUT_SECS"; then
+    capture_fastboot_cycle_status
+    failure_stage="wait-fastboot-return"
+    return 1
+  fi
+
+  capture_fastboot_cycle_status
+  fastboot_slot_after_return="$(pixel_fastboot_current_slot "$serial" 2>/dev/null || true)"
+  return 0
+}
+
 write_status() {
   local exit_code ok
   exit_code="$1"
@@ -119,17 +200,27 @@ write_status() {
     wait_ready_secs="$WAIT_READY_SECS" \
     adb_timeout_secs="$ADB_TIMEOUT_SECS" \
     boot_timeout_secs="$BOOT_TIMEOUT_SECS" \
+    success_signal="$SUCCESS_SIGNAL" \
+    return_timeout_secs="$RETURN_TIMEOUT_SECS" \
+    fastboot_leave_timeout_secs="$FASTBOOT_LEAVE_TIMEOUT_SECS" \
     allow_active_slot="$ALLOW_ACTIVE_SLOT" \
     recover_after="$RECOVER_AFTER" \
     proof_prop="$PROOF_PROP_SPEC" \
     slot_before="$slot_before" \
     flash_succeeded="$flash_succeeded" \
+    collect_attempted="$collect_attempted" \
     collect_succeeded="$collect_succeeded" \
     recover_attempted="$recover_attempted" \
     recover_succeeded="$recover_succeeded" \
     metadata_present="$metadata_present" \
     adb_visible_after_failure="$adb_visible_after_failure" \
     fastboot_visible_after_failure="$fastboot_visible_after_failure" \
+    fastboot_departed="$fastboot_departed" \
+    fastboot_returned="$fastboot_returned" \
+    fastboot_leave_elapsed_secs="$fastboot_leave_elapsed_secs" \
+    fastboot_return_elapsed_secs="$fastboot_return_elapsed_secs" \
+    fastboot_cycle_elapsed_secs="$fastboot_cycle_elapsed_secs" \
+    fastboot_slot_after_return="$fastboot_slot_after_return" \
     failure_stage="$failure_stage"
 }
 
@@ -188,6 +279,14 @@ while [[ $# -gt 0 ]]; do
       BOOT_TIMEOUT_SECS="${2:?missing value for --boot-timeout}"
       shift 2
       ;;
+    --success-signal)
+      SUCCESS_SIGNAL="${2:?missing value for --success-signal}"
+      shift 2
+      ;;
+    --return-timeout)
+      RETURN_TIMEOUT_SECS="${2:?missing value for --return-timeout}"
+      shift 2
+      ;;
     --allow-active-slot)
       ALLOW_ACTIVE_SLOT=1
       shift
@@ -216,6 +315,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+validate_success_mode
+
 [[ -f "$IMAGE_PATH" ]] || {
   echo "pixel_boot_flash_run: image not found: $IMAGE_PATH" >&2
   exit 1
@@ -228,7 +329,9 @@ prepare_output_dir
 
 metadata_path="$OUTPUT_DIR/boot-action.json"
 status_path="$OUTPUT_DIR/status.json"
-collect_output_dir="$OUTPUT_DIR/collect"
+if [[ "$SUCCESS_SIGNAL" == "adb" ]]; then
+  collect_output_dir="$OUTPUT_DIR/collect"
+fi
 image_sha256="$(shasum -a 256 "$IMAGE_PATH" | awk '{print $1}')"
 
 if [[ "$DRY_RUN" == "1" ]]; then
@@ -240,15 +343,20 @@ image_sha256=$image_sha256
 requested_slot=$REQUESTED_SLOT
 output_dir=$OUTPUT_DIR
 metadata_path=$metadata_path
-collect_output_dir=$collect_output_dir
+success_signal=$SUCCESS_SIGNAL
 wait_ready_secs=$WAIT_READY_SECS
 adb_timeout_secs=$ADB_TIMEOUT_SECS
 boot_timeout_secs=$BOOT_TIMEOUT_SECS
+return_timeout_secs=$RETURN_TIMEOUT_SECS
+fastboot_leave_timeout_secs=$FASTBOOT_LEAVE_TIMEOUT_SECS
 allow_active_slot=$(bool_word "$ALLOW_ACTIVE_SLOT")
 recover_after=$(bool_word "$RECOVER_AFTER")
 proof_prop=$PROOF_PROP_SPEC
 activate_target=true
 EOF
+  if [[ -n "$collect_output_dir" ]]; then
+    printf 'collect_output_dir=%s\n' "$collect_output_dir"
+  fi
   exit 0
 fi
 
@@ -266,36 +374,33 @@ pixel_write_status_json \
   wait_ready_secs="$WAIT_READY_SECS" \
   adb_timeout_secs="$ADB_TIMEOUT_SECS" \
   boot_timeout_secs="$BOOT_TIMEOUT_SECS" \
+  success_signal="$SUCCESS_SIGNAL" \
+  return_timeout_secs="$RETURN_TIMEOUT_SECS" \
+  fastboot_leave_timeout_secs="$FASTBOOT_LEAVE_TIMEOUT_SECS" \
   allow_active_slot="$(bool_word "$ALLOW_ACTIVE_SLOT")" \
   proof_prop="$PROOF_PROP_SPEC" \
   recover_after="$(bool_word "$RECOVER_AFTER")"
 
 printf 'Flash-running %s on %s\n' "$IMAGE_PATH" "$serial"
 printf 'Current slot before flash: %s\n' "$slot_before"
-flash_args=(
-  --experimental
-  --slot "$REQUESTED_SLOT"
-  --activate-target
-  --image "$IMAGE_PATH"
-)
-if [[ "$ALLOW_ACTIVE_SLOT" == "1" ]]; then
-  flash_args+=(--allow-active-slot)
-fi
-if PIXEL_SERIAL="$serial" PIXEL_BOOT_METADATA_PATH="$metadata_path" \
-  PIXEL_BOOT_FLASH_ADB_TIMEOUT_SECS="$ADB_TIMEOUT_SECS" \
-  PIXEL_BOOT_FLASH_BOOT_TIMEOUT_SECS="$BOOT_TIMEOUT_SECS" \
-  "$SCRIPT_DIR/pixel/pixel_boot_flash.sh" \
-    "${flash_args[@]}"; then
-  flash_succeeded=true
-  metadata_present=true
-else
-  failure_stage="flash"
+if ! run_flash_action; then
   if [[ -f "$metadata_path" ]]; then
     metadata_present=true
   fi
   update_failure_visibility
   maybe_recover || true
   exit 1
+fi
+
+if [[ "$SUCCESS_SIGNAL" == "fastboot-return" ]]; then
+  if ! maybe_recover; then
+    failure_stage="recover"
+    exit 1
+  fi
+
+  printf 'Observed fastboot return after %ss on %s\n' "$fastboot_cycle_elapsed_secs" "$serial"
+  printf 'Run status: %s\n' "$status_path"
+  exit 0
 fi
 
 collect_args=(
@@ -306,6 +411,7 @@ if [[ -n "$PROOF_PROP_SPEC" ]]; then
   collect_args+=(--proof-prop "$PROOF_PROP_SPEC")
 fi
 
+collect_attempted=true
 if PIXEL_SERIAL="$serial" PIXEL_BOOT_METADATA_PATH="$metadata_path" \
   "$SCRIPT_DIR/pixel/pixel_boot_collect_logs.sh" \
     "${collect_args[@]}"; then

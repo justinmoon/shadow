@@ -65,7 +65,7 @@ Related docs:
   - mount `/proc`, `/sys`, and `/dev`
   - write durable breadcrumbs to `/dev/kmsg`
   - hold long enough for observation, then reboot bootloader or power off cleanly
-- [ ] Pick the first truthful proof channel for owned userspace:
+- [~] Pick the first truthful proof channel for owned userspace:
   - prefer `kmsg` or a visible screen proof over an interactive shell
   - only add USB transport after the PID 1 seam is stable
 - [ ] Package a minimal DRM proof payload:
@@ -238,3 +238,6 @@ Related docs:
   - `fastboot boot` is strong enough to show the owned-userspace image is not rejected immediately at the bootloader seam because the device leaves fastboot and comes back alive
   - but the current oneshot loop does not yet prove that `hello-init` is reading `/shadow-init.cfg` or that `reboot_target=bootloader` is honored on `sunfish`
   - the next discriminating owned-userspace seam should avoid treating one-shot return timing as proof and should either add a better host-visible success signal or use the guarded flashed-slot path when an operator is present for recovery
+- New tooling seam on 2026-04-19:
+  - the private boot-lab runners now support `--success-signal fastboot-return` plus a bounded `--return-timeout`, backed by a shared fastboot-cycle helper and truthful `status.json` fields for fastboot departure / return timing
+  - hermetic coverage now exercises the new success mode and dry-run delegation shape through both the script layer and `shadowctl`

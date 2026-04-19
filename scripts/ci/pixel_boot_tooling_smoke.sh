@@ -9,8 +9,13 @@ COMMON_ROOT="$TMP_DIR/common-root"
 LOCAL_BOOT="$TMP_DIR/local-boot.img"
 SHARED_BOOT="$TMP_DIR/shared-boot.img"
 PROBE_IMAGE="$TMP_DIR/probe.img"
+STOCK_BOOT_IMAGE="$TMP_DIR/stock-boot.img"
 ONESHOT_OUTPUT="$TMP_DIR/oneshot-output"
 FLASH_RUN_OUTPUT="$TMP_DIR/flash-run-output"
+ONESHOT_FASTBOOT_RETURN_OUTPUT="$TMP_DIR/oneshot-fastboot-return-output"
+ONESHOT_FASTBOOT_RETURN_FAIL_OUTPUT="$TMP_DIR/oneshot-fastboot-return-fail-output"
+FLASH_RUN_FASTBOOT_RETURN_OUTPUT="$TMP_DIR/flash-run-fastboot-return-output"
+MOCK_DEVICE_STATE_DIR="$TMP_DIR/mock-device-state"
 BOOT_BUILD_INPUT="$TMP_DIR/build-input.img"
 BOOT_BUILD_RAMDISK="$TMP_DIR/build-ramdisk.cpio"
 BOOT_BUILD_SYSTEM_INIT_RAMDISK="$TMP_DIR/build-system-init-ramdisk.cpio"
@@ -50,6 +55,7 @@ mkdir -p "$MOCK_BIN"
 printf 'local boot image\n' >"$LOCAL_BOOT"
 printf 'shared boot image\n' >"$SHARED_BOOT"
 printf 'probe image\n' >"$PROBE_IMAGE"
+printf 'stock boot image\n' >"$STOCK_BOOT_IMAGE"
 printf 'boot build input\n' >"$BOOT_BUILD_INPUT"
 mkdir -p "$MOCK_STORE_STANDARD/bin" "$MOCK_STORE_MINIMAL/bin" "$MOCK_STORE_C/bin" "$MOCK_STORE_C_SYSTEM/bin"
 
@@ -422,6 +428,252 @@ assert_contains() {
   fi
 }
 
+assert_json_field() {
+  local json_path key expected
+  json_path="$1"
+  key="$2"
+  expected="$3"
+
+  python3 - "$json_path" "$key" "$expected" <<'PY'
+import json
+import sys
+
+json_path, key, expected_raw = sys.argv[1:4]
+with open(json_path, "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+if expected_raw == "true":
+    expected = True
+elif expected_raw == "false":
+    expected = False
+else:
+    try:
+        expected = int(expected_raw)
+    except ValueError:
+        expected = expected_raw
+
+actual = payload.get(key)
+if actual != expected:
+    raise SystemExit(
+        f"unexpected json field {key!r}: actual={actual!r} expected={expected!r}"
+    )
+PY
+}
+
+install_fastboot_cycle_mocks() {
+  cat >"$MOCK_BIN/adb" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir="${MOCK_DEVICE_STATE_DIR:?}"
+serial="${PIXEL_SERIAL:-TESTSERIAL}"
+if [[ "${1:-}" == "-s" ]]; then
+  serial="$2"
+  shift 2
+fi
+
+advance_pending_transport() {
+  local pending_transport pending_polls
+  if [[ ! -f "$state_dir/pending_transport" ]]; then
+    return 0
+  fi
+
+  pending_transport="$(<"$state_dir/pending_transport")"
+  pending_polls="$(<"$state_dir/pending_polls")"
+  pending_polls=$((pending_polls - 1))
+  if (( pending_polls <= 0 )); then
+    printf '%s\n' "$pending_transport" >"$state_dir/transport"
+    rm -f "$state_dir/pending_transport" "$state_dir/pending_polls"
+  else
+    printf '%s\n' "$pending_polls" >"$state_dir/pending_polls"
+  fi
+}
+
+slot_suffix() {
+  printf '_%s\n' "$(<"$state_dir/active_slot")"
+}
+
+case "${1:-}" in
+  devices)
+    advance_pending_transport
+    printf 'List of devices attached\n'
+    if [[ -f "$state_dir/transport" ]] && [[ "$(<"$state_dir/transport")" == "adb" ]]; then
+      printf '%s\tdevice\n' "$serial"
+    fi
+    ;;
+  reboot)
+    if [[ "${2:-}" == "bootloader" ]]; then
+      printf 'fastboot\n' >"$state_dir/transport"
+      rm -f "$state_dir/pending_transport" "$state_dir/pending_polls"
+      exit 0
+    fi
+    echo "mock adb: unsupported reboot args: $*" >&2
+    exit 1
+    ;;
+  shell)
+    if [[ "${2:-}" == "getprop" ]]; then
+      case "${3:-}" in
+        ro.boot.slot_suffix)
+          slot_suffix
+          ;;
+        ro.build.fingerprint)
+          printf '%s\n' "${MOCK_BUILD_FINGERPRINT:-google/sunfish/sunfish:13/TQ3A.230805.001.S2/12655424:user/release-keys}"
+          ;;
+        sys.boot_completed)
+          if [[ -f "$state_dir/transport" ]] && [[ "$(<"$state_dir/transport")" == "adb" ]]; then
+            printf '1\n'
+          else
+            printf '0\n'
+          fi
+          ;;
+        ro.boot.shadow_probe)
+          printf 'mock-probe\n'
+          ;;
+        *)
+          printf '\n'
+          ;;
+      esac
+      exit 0
+    fi
+    echo "mock adb: unsupported shell args: $*" >&2
+    exit 1
+    ;;
+  *)
+    echo "mock adb: unsupported args: $*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  cat >"$MOCK_BIN/fastboot" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir="${MOCK_DEVICE_STATE_DIR:?}"
+probe_image="${MOCK_PROBE_IMAGE_PATH:?}"
+stock_image="${MOCK_STOCK_IMAGE_PATH:?}"
+serial="${PIXEL_SERIAL:-TESTSERIAL}"
+if [[ "${1:-}" == "-s" ]]; then
+  serial="$2"
+  shift 2
+fi
+
+advance_pending_transport() {
+  local pending_transport pending_polls
+  if [[ ! -f "$state_dir/pending_transport" ]]; then
+    return 0
+  fi
+
+  pending_transport="$(<"$state_dir/pending_transport")"
+  pending_polls="$(<"$state_dir/pending_polls")"
+  pending_polls=$((pending_polls - 1))
+  if (( pending_polls <= 0 )); then
+    printf '%s\n' "$pending_transport" >"$state_dir/transport"
+    rm -f "$state_dir/pending_transport" "$state_dir/pending_polls"
+  else
+    printf '%s\n' "$pending_polls" >"$state_dir/pending_polls"
+  fi
+}
+
+set_pending_transport() {
+  local transport polls
+  transport="$1"
+  polls="$2"
+  printf 'none\n' >"$state_dir/transport"
+  printf '%s\n' "$transport" >"$state_dir/pending_transport"
+  printf '%s\n' "$polls" >"$state_dir/pending_polls"
+}
+
+slot_image_type() {
+  local slot
+  slot="$1"
+  cat "$state_dir/boot_${slot}_image"
+}
+
+case "${1:-}" in
+  devices)
+    advance_pending_transport
+    if [[ -f "$state_dir/transport" ]] && [[ "$(<"$state_dir/transport")" == "fastboot" ]]; then
+      printf '%s\tfastboot\n' "$serial"
+    fi
+    ;;
+  getvar)
+    if [[ "${2:-}" != "current-slot" ]]; then
+      echo "mock fastboot: unsupported getvar args: $*" >&2
+      exit 1
+    fi
+    printf 'current-slot: %s\n' "$(<"$state_dir/active_slot")" >&2
+    ;;
+  flash)
+    partition="${2:-}"
+    image_path="${3:-}"
+    case "$partition" in
+      boot_a|boot_b)
+        slot="${partition#boot_}"
+        ;;
+      *)
+        echo "mock fastboot: unsupported flash partition: $partition" >&2
+        exit 1
+        ;;
+    esac
+    if [[ "$image_path" == "$probe_image" ]]; then
+      printf 'probe\n' >"$state_dir/boot_${slot}_image"
+    elif [[ "$image_path" == "$stock_image" ]]; then
+      printf 'stock\n' >"$state_dir/boot_${slot}_image"
+    else
+      printf 'other\n' >"$state_dir/boot_${slot}_image"
+    fi
+    ;;
+  set_active)
+    printf '%s\n' "${2:-}" >"$state_dir/active_slot"
+    ;;
+  reboot)
+    active_slot="$(<"$state_dir/active_slot")"
+    if [[ "$(slot_image_type "$active_slot")" == "probe" ]]; then
+      if [[ "${MOCK_FASTBOOT_RETURN_MODE:-return}" == "never" ]]; then
+        printf 'none\n' >"$state_dir/transport"
+        rm -f "$state_dir/pending_transport" "$state_dir/pending_polls"
+      else
+        set_pending_transport fastboot "${MOCK_FASTBOOT_RETURN_POLLS:-2}"
+      fi
+    else
+      set_pending_transport adb "${MOCK_ADB_RETURN_POLLS:-1}"
+    fi
+    ;;
+  boot)
+    image_path="${2:-}"
+    if [[ "$image_path" != "$probe_image" ]]; then
+      echo "mock fastboot: expected probe image for fastboot boot: $image_path" >&2
+      exit 1
+    fi
+    if [[ "${MOCK_FASTBOOT_RETURN_MODE:-return}" == "never" ]]; then
+      printf 'none\n' >"$state_dir/transport"
+      rm -f "$state_dir/pending_transport" "$state_dir/pending_polls"
+    else
+      set_pending_transport fastboot "${MOCK_FASTBOOT_RETURN_POLLS:-2}"
+    fi
+    ;;
+  *)
+    echo "mock fastboot: unsupported args: $*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  chmod 0755 "$MOCK_BIN/adb" "$MOCK_BIN/fastboot"
+}
+
+reset_fastboot_cycle_state() {
+  mkdir -p "$MOCK_DEVICE_STATE_DIR"
+  printf 'adb\n' >"$MOCK_DEVICE_STATE_DIR/transport"
+  printf 'a\n' >"$MOCK_DEVICE_STATE_DIR/active_slot"
+  printf 'stock\n' >"$MOCK_DEVICE_STATE_DIR/boot_a_image"
+  printf 'stock\n' >"$MOCK_DEVICE_STATE_DIR/boot_b_image"
+  rm -f \
+    "$MOCK_DEVICE_STATE_DIR/pending_transport" \
+    "$MOCK_DEVICE_STATE_DIR/pending_polls"
+}
+
 assert_cpio_entry_equals() {
   local archive_path entry_name expected_data
   archive_path="$1"
@@ -630,6 +882,131 @@ if [[ -e "$FLASH_RUN_OUTPUT" ]]; then
   echo "pixel_boot_tooling_smoke: flash-run dry-run should not create the output dir" >&2
   exit 1
 fi
+
+oneshot_fastboot_return_dry_run_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 PIXEL_SERIAL=TESTSERIAL \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+      --dry-run \
+      --image "$PROBE_IMAGE" \
+      --output "$ONESHOT_FASTBOOT_RETURN_OUTPUT" \
+      --success-signal fastboot-return \
+      --return-timeout 45
+)"
+
+assert_contains "$oneshot_fastboot_return_dry_run_output" "pixel_boot_oneshot: dry-run"
+assert_contains "$oneshot_fastboot_return_dry_run_output" "success_signal=fastboot-return"
+assert_contains "$oneshot_fastboot_return_dry_run_output" "return_timeout_secs=45"
+assert_contains "$oneshot_fastboot_return_dry_run_output" "fastboot_leave_timeout_secs=15"
+
+flash_run_fastboot_return_dry_run_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 PIXEL_SERIAL=TESTSERIAL \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_flash_run.sh" \
+      --dry-run \
+      --image "$PROBE_IMAGE" \
+      --slot inactive \
+      --output "$FLASH_RUN_FASTBOOT_RETURN_OUTPUT" \
+      --success-signal fastboot-return \
+      --return-timeout 45 \
+      --recover-after
+)"
+
+assert_contains "$flash_run_fastboot_return_dry_run_output" "pixel_boot_flash_run: dry-run"
+assert_contains "$flash_run_fastboot_return_dry_run_output" "success_signal=fastboot-return"
+assert_contains "$flash_run_fastboot_return_dry_run_output" "return_timeout_secs=45"
+assert_contains "$flash_run_fastboot_return_dry_run_output" "recover_after=true"
+
+install_fastboot_cycle_mocks
+
+reset_fastboot_cycle_state
+oneshot_fastboot_return_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    MOCK_DEVICE_STATE_DIR="$MOCK_DEVICE_STATE_DIR" \
+    MOCK_PROBE_IMAGE_PATH="$PROBE_IMAGE" \
+    MOCK_STOCK_IMAGE_PATH="$STOCK_BOOT_IMAGE" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+      --image "$PROBE_IMAGE" \
+      --output "$ONESHOT_FASTBOOT_RETURN_OUTPUT" \
+      --success-signal fastboot-return \
+      --return-timeout 4
+)"
+
+assert_contains "$oneshot_fastboot_return_output" "Observed fastboot return after"
+assert_json_field "$ONESHOT_FASTBOOT_RETURN_OUTPUT/status.json" ok true
+assert_json_field "$ONESHOT_FASTBOOT_RETURN_OUTPUT/status.json" success_signal fastboot-return
+assert_json_field "$ONESHOT_FASTBOOT_RETURN_OUTPUT/status.json" collect_attempted false
+assert_json_field "$ONESHOT_FASTBOOT_RETURN_OUTPUT/status.json" collect_succeeded false
+assert_json_field "$ONESHOT_FASTBOOT_RETURN_OUTPUT/status.json" fastboot_departed true
+assert_json_field "$ONESHOT_FASTBOOT_RETURN_OUTPUT/status.json" fastboot_returned true
+assert_json_field "$ONESHOT_FASTBOOT_RETURN_OUTPUT/status.json" fastboot_slot_after_return a
+
+reset_fastboot_cycle_state
+oneshot_fastboot_return_fail_stdout="$TMP_DIR/oneshot-fastboot-return-fail.stdout"
+oneshot_fastboot_return_fail_stderr="$TMP_DIR/oneshot-fastboot-return-fail.stderr"
+set +e
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  SHADOW_BOOTIMG_SHELL=1 \
+  PIXEL_SERIAL=TESTSERIAL \
+  PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+  MOCK_DEVICE_STATE_DIR="$MOCK_DEVICE_STATE_DIR" \
+  MOCK_PROBE_IMAGE_PATH="$PROBE_IMAGE" \
+  MOCK_STOCK_IMAGE_PATH="$STOCK_BOOT_IMAGE" \
+  MOCK_FASTBOOT_RETURN_MODE=never \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+    --image "$PROBE_IMAGE" \
+    --output "$ONESHOT_FASTBOOT_RETURN_FAIL_OUTPUT" \
+    --success-signal fastboot-return \
+    --return-timeout 2 \
+    >"$oneshot_fastboot_return_fail_stdout" \
+    2>"$oneshot_fastboot_return_fail_stderr"
+oneshot_fastboot_return_fail_status=$?
+set -e
+if [[ "$oneshot_fastboot_return_fail_status" -eq 0 ]]; then
+  echo "pixel_boot_tooling_smoke: expected fastboot-return oneshot failure" >&2
+  exit 1
+fi
+assert_contains "$(cat "$oneshot_fastboot_return_fail_stderr")" "timed out waiting for fastboot device TESTSERIAL to return after leaving fastboot"
+assert_json_field "$ONESHOT_FASTBOOT_RETURN_FAIL_OUTPUT/status.json" ok false
+assert_json_field "$ONESHOT_FASTBOOT_RETURN_FAIL_OUTPUT/status.json" failure_stage wait-fastboot-return
+assert_json_field "$ONESHOT_FASTBOOT_RETURN_FAIL_OUTPUT/status.json" collect_attempted false
+assert_json_field "$ONESHOT_FASTBOOT_RETURN_FAIL_OUTPUT/status.json" fastboot_departed true
+assert_json_field "$ONESHOT_FASTBOOT_RETURN_FAIL_OUTPUT/status.json" fastboot_returned false
+
+reset_fastboot_cycle_state
+flash_run_fastboot_return_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$STOCK_BOOT_IMAGE" \
+    MOCK_DEVICE_STATE_DIR="$MOCK_DEVICE_STATE_DIR" \
+    MOCK_PROBE_IMAGE_PATH="$PROBE_IMAGE" \
+    MOCK_STOCK_IMAGE_PATH="$STOCK_BOOT_IMAGE" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_flash_run.sh" \
+      --image "$PROBE_IMAGE" \
+      --slot inactive \
+      --output "$FLASH_RUN_FASTBOOT_RETURN_OUTPUT" \
+      --success-signal fastboot-return \
+      --return-timeout 4 \
+      --recover-after
+)"
+
+assert_contains "$flash_run_fastboot_return_output" "Observed fastboot return after"
+assert_json_field "$FLASH_RUN_FASTBOOT_RETURN_OUTPUT/status.json" ok true
+assert_json_field "$FLASH_RUN_FASTBOOT_RETURN_OUTPUT/status.json" success_signal fastboot-return
+assert_json_field "$FLASH_RUN_FASTBOOT_RETURN_OUTPUT/status.json" flash_succeeded true
+assert_json_field "$FLASH_RUN_FASTBOOT_RETURN_OUTPUT/status.json" collect_attempted false
+assert_json_field "$FLASH_RUN_FASTBOOT_RETURN_OUTPUT/status.json" collect_succeeded false
+assert_json_field "$FLASH_RUN_FASTBOOT_RETURN_OUTPUT/status.json" fastboot_departed true
+assert_json_field "$FLASH_RUN_FASTBOOT_RETURN_OUTPUT/status.json" fastboot_returned true
+assert_json_field "$FLASH_RUN_FASTBOOT_RETURN_OUTPUT/status.json" fastboot_slot_after_return b
+assert_json_field "$FLASH_RUN_FASTBOOT_RETURN_OUTPUT/status.json" recover_attempted true
+assert_json_field "$FLASH_RUN_FASTBOOT_RETURN_OUTPUT/status.json" recover_succeeded true
 
 wrapper_build_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
