@@ -66,6 +66,7 @@ pub fn init_winit(
                 let size = backend.window_size();
                 let damage = Rectangle::from_size(size);
                 let shell_plan = state.shell_render_plan(&ShellStatus::demo(chrono::Local::now()));
+                state.ensure_shell_overlay_surfaces(&shell_plan);
 
                 {
                     let (renderer, mut framebuffer) = backend.bind().unwrap();
@@ -75,7 +76,7 @@ pub fn init_winit(
                         Some((
                             &shell_plan,
                             &mut state.shell_base_surface,
-                            Some(&mut state.shell_overlay_surface),
+                            state.shell_overlay_surfaces.as_mut_slice(),
                         )),
                         renderer,
                         &mut framebuffer,

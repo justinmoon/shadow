@@ -294,7 +294,7 @@ mod tests {
     }
 
     fn defaults() -> AppWindowDefaults<'static> {
-        AppWindowDefaults::new("Shadow Notes", 540, 1106)
+        AppWindowDefaults::new("Shadow Notes", 540, 1042)
             .with_wayland_app_id("dev.shadow.notes")
             .with_wayland_instance_name("notes-window")
     }
@@ -307,7 +307,7 @@ mod tests {
         let parsed = AppWindowEnvironment::from_env(defaults());
         assert_eq!(parsed.title, "Shadow Notes");
         assert_eq!(parsed.surface_width, 540);
-        assert_eq!(parsed.surface_height, 1106);
+        assert_eq!(parsed.surface_height, 1042);
         assert!(!parsed.undecorated);
         assert_eq!(parsed.wayland_app_id.as_deref(), Some("dev.shadow.notes"));
         assert_eq!(
@@ -345,7 +345,7 @@ mod tests {
         clear_window_env();
         std::env::set_var(WAYLAND_APP_ID_ENV, "dev.shadow.timeline");
 
-        let parsed = AppWindowEnvironment::from_env(AppWindowDefaults::new("Timeline", 540, 1106));
+        let parsed = AppWindowEnvironment::from_env(AppWindowDefaults::new("Timeline", 540, 1042));
         assert_eq!(
             parsed.wayland_app_id.as_deref(),
             Some("dev.shadow.timeline")

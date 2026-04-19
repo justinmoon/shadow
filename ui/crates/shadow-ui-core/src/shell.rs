@@ -13,7 +13,9 @@ use crate::{
         APP_VIEWPORT_WIDTH, APP_VIEWPORT_X, APP_VIEWPORT_Y, HEIGHT, WIDTH,
     },
     system_chrome::{
-        append_top_chrome_strip, TopChromeStripState, TOP_CHROME_STRIP_HEIGHT,
+        append_bottom_navigation_pill, append_top_chrome_strip, BottomNavigationPillState,
+        TopChromeStripState, BOTTOM_NAVIGATION_PILL_HEIGHT, BOTTOM_NAVIGATION_PILL_WIDTH,
+        BOTTOM_NAVIGATION_PILL_X, BOTTOM_NAVIGATION_PILL_Y, TOP_CHROME_STRIP_HEIGHT,
         TOP_CHROME_STRIP_WIDTH, TOP_CHROME_STRIP_X, TOP_CHROME_STRIP_Y,
     },
 };
@@ -168,7 +170,7 @@ impl ShellModel {
         self.current_scene(status, true)
     }
 
-    pub fn scene_without_top_strip(&mut self, status: &ShellStatus) -> Scene {
+    pub fn scene_without_compositor_chrome(&mut self, status: &ShellStatus) -> Scene {
         self.trim_expired_flash();
 
         self.current_scene(status, false)
@@ -183,12 +185,18 @@ impl ShellModel {
         }
     }
 
-    fn current_scene(&self, status: &ShellStatus, include_top_strip: bool) -> Scene {
+    pub fn bottom_navigation_pill_state(&self) -> BottomNavigationPillState {
+        BottomNavigationPillState {
+            active: self.home_indicator_active(),
+        }
+    }
+
+    fn current_scene(&self, status: &ShellStatus, include_compositor_chrome: bool) -> Scene {
         if let Some(app_id) = self.foreground_app {
-            return self.app_scene(status, app_id, include_top_strip);
+            return self.app_scene(status, app_id, include_compositor_chrome);
         }
 
-        self.home_scene(status, include_top_strip)
+        self.home_scene(status, include_compositor_chrome)
     }
 
     pub fn captures_point(&self, x: f32, y: f32) -> bool {
@@ -196,12 +204,14 @@ impl ShellModel {
 
         if self.foreground_app.is_some() {
             !app_viewport_frame().contains(point)
+                || home_indicator_frame().contains(point)
+                || bottom_navigation_pill_frame().contains(point)
         } else {
             shell_frame().contains(point)
         }
     }
 
-    fn home_scene(&self, status: &ShellStatus, include_top_strip: bool) -> Scene {
+    fn home_scene(&self, status: &ShellStatus, include_compositor_chrome: bool) -> Scene {
         let mut rects = Vec::new();
         let mut texts = Vec::new();
 
@@ -230,13 +240,13 @@ impl ShellModel {
             SURFACE_ACCENT.with_alpha(0.96),
         ));
 
-        if include_top_strip {
+        if include_compositor_chrome {
             append_top_chrome_strip(&mut rects, &mut texts, &self.top_chrome_strip_state(status));
+            append_bottom_navigation_pill(&mut rects, self.bottom_navigation_pill_state());
         }
         build_clock(&mut rects, &mut texts, status, self.recent_app_titles());
         build_panel_header(&mut rects, &mut texts, self);
         build_app_grid(&mut rects, &mut texts, self);
-        build_navigation_bar(&mut rects, self.home_indicator_active());
 
         Scene {
             clear_color: BACKGROUND,
@@ -245,13 +255,19 @@ impl ShellModel {
         }
     }
 
-    fn app_scene(&self, status: &ShellStatus, app_id: AppId, include_top_strip: bool) -> Scene {
+    fn app_scene(
+        &self,
+        status: &ShellStatus,
+        app_id: AppId,
+        include_compositor_chrome: bool,
+    ) -> Scene {
         let mut rects = Vec::new();
         let mut texts = Vec::new();
         let _app = find_app(app_id).expect("foreground app metadata");
 
-        if include_top_strip {
+        if include_compositor_chrome {
             append_top_chrome_strip(&mut rects, &mut texts, &self.top_chrome_strip_state(status));
+            append_bottom_navigation_pill(&mut rects, self.bottom_navigation_pill_state());
         }
 
         Scene {
@@ -385,7 +401,12 @@ impl ShellModel {
         if self.foreground_app.is_some() {
             return home_indicator_frame()
                 .contains(point)
-                .then_some(Target::HomeIndicator);
+                .then_some(Target::HomeIndicator)
+                .or_else(|| {
+                    bottom_navigation_pill_frame()
+                        .contains(point)
+                        .then_some(Target::HomeIndicator)
+                });
         }
 
         home_apps()
@@ -398,6 +419,11 @@ impl ShellModel {
             })
             .or_else(|| {
                 home_indicator_frame()
+                    .contains(point)
+                    .then_some(Target::HomeIndicator)
+            })
+            .or_else(|| {
+                bottom_navigation_pill_frame()
                     .contains(point)
                     .then_some(Target::HomeIndicator)
             })
@@ -707,25 +733,6 @@ fn build_app_grid(rects: &mut Vec<RoundedRect>, texts: &mut Vec<TextBlock>, mode
     });
 }
 
-fn build_navigation_bar(rects: &mut Vec<RoundedRect>, active: bool) {
-    rects.push(RoundedRect::new(
-        186.0,
-        1106.0,
-        168.0,
-        14.0,
-        7.0,
-        SURFACE_GLASS.with_alpha(if active { 0.96 } else { 0.88 }),
-    ));
-    rects.push(RoundedRect::new(
-        222.0,
-        1110.0,
-        96.0,
-        6.0,
-        3.0,
-        TEXT_PRIMARY.with_alpha(if active { 0.96 } else { 0.76 }),
-    ));
-}
-
 fn grid_origin() -> Point {
     Point { x: 52.0, y: 546.0 }
 }
@@ -774,6 +781,15 @@ fn home_indicator_frame() -> Frame {
         y: TOP_CHROME_STRIP_Y,
         w: TOP_CHROME_STRIP_WIDTH,
         h: TOP_CHROME_STRIP_HEIGHT,
+    }
+}
+
+fn bottom_navigation_pill_frame() -> Frame {
+    Frame {
+        x: BOTTOM_NAVIGATION_PILL_X,
+        y: BOTTOM_NAVIGATION_PILL_Y,
+        w: BOTTOM_NAVIGATION_PILL_WIDTH,
+        h: BOTTOM_NAVIGATION_PILL_HEIGHT,
     }
 }
 
@@ -881,7 +897,59 @@ mod tests {
     }
 
     #[test]
-    fn scene_without_top_strip_drops_overlay_primitives() {
+    fn bottom_navigation_pill_state_tracks_home_availability() {
+        let mut shell = ShellModel::new();
+
+        assert_eq!(
+            shell.bottom_navigation_pill_state(),
+            BottomNavigationPillState { active: false }
+        );
+
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+
+        assert_eq!(
+            shell.bottom_navigation_pill_state(),
+            BottomNavigationPillState { active: true }
+        );
+    }
+
+    #[test]
+    fn foreground_home_accepts_top_strip_and_bottom_pill_taps() {
+        let mut shell = ShellModel::new();
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+        let top = home_indicator_frame();
+        let bottom = bottom_navigation_pill_frame();
+
+        assert_eq!(
+            shell.handle(ShellEvent::TouchTap {
+                x: top.x + top.w * 0.5,
+                y: top.y + top.h * 0.5,
+            }),
+            Some(ShellAction::Home)
+        );
+        assert_eq!(
+            shell.handle(ShellEvent::TouchTap {
+                x: bottom.x + bottom.w * 0.5,
+                y: bottom.y + bottom.h * 0.5,
+            }),
+            Some(ShellAction::Home)
+        );
+    }
+
+    #[test]
+    fn foreground_capture_includes_top_strip_and_bottom_pill_only() {
+        let mut shell = ShellModel::new();
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+        let top = home_indicator_frame();
+        let bottom = bottom_navigation_pill_frame();
+
+        assert!(shell.captures_point(top.x + top.w * 0.5, top.y + top.h * 0.5));
+        assert!(shell.captures_point(bottom.x + bottom.w * 0.5, bottom.y + bottom.h * 0.5,));
+        assert!(!shell.captures_point(APP_VIEWPORT_WIDTH * 0.5, APP_VIEWPORT_Y + 120.0));
+    }
+
+    #[test]
+    fn scene_without_compositor_chrome_drops_overlay_primitives() {
         let mut shell = ShellModel::new();
         let status = ShellStatus {
             time_label: "09:41".to_string(),
@@ -891,16 +959,25 @@ mod tests {
         };
 
         let full_scene = shell.scene(&status);
-        let scene_without_strip = shell.scene_without_top_strip(&status);
+        let scene_without_strip = shell.scene_without_compositor_chrome(&status);
 
-        assert_eq!(full_scene.rects.len(), scene_without_strip.rects.len() + 7);
+        assert_eq!(full_scene.rects.len(), scene_without_strip.rects.len() + 9);
         assert_eq!(full_scene.texts.len(), scene_without_strip.texts.len() + 1);
         assert_eq!(scene_without_strip.clear_color.rgba8(), BACKGROUND.rgba8());
         assert_eq!(scene_without_strip.texts[0].content, status.time_label);
 
         shell.set_foreground_app(Some(COUNTER_APP_ID));
-        let foreground_scene = shell.scene_without_top_strip(&status);
+        let foreground_full_scene = shell.scene(&status);
+        let foreground_scene = shell.scene_without_compositor_chrome(&status);
 
+        assert_eq!(
+            foreground_full_scene.rects.len(),
+            foreground_scene.rects.len() + 9
+        );
+        assert_eq!(
+            foreground_full_scene.texts.len(),
+            foreground_scene.texts.len() + 1
+        );
         assert!(foreground_scene.rects.is_empty());
         assert!(foreground_scene.texts.is_empty());
         assert_eq!(foreground_scene.clear_color.rgba8(), [0, 0, 0, 0]);

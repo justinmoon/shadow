@@ -1,19 +1,59 @@
 #!/usr/bin/env python3
 import argparse
 import re
+from functools import lru_cache
 from pathlib import Path
 
 
 SCENE_RS = Path(__file__).resolve().parents[2] / "ui" / "crates" / "shadow-ui-core" / "src" / "scene.rs"
 
 
+@lru_cache(maxsize=1)
+def const_expressions() -> dict[str, str]:
+    pattern = re.compile(r"pub const (\w+): u32 =\s*([^;]+);", re.MULTILINE)
+    return {
+        name: expression.strip()
+        for name, expression in pattern.findall(SCENE_RS.read_text(encoding="utf-8"))
+    }
+
+
 def read_const(name: str) -> int:
-    pattern = re.compile(rf"pub const {re.escape(name)}: u32 = (\d+);")
-    text = SCENE_RS.read_text(encoding="utf-8")
-    match = pattern.search(text)
-    if not match:
+    return eval_const(name, ())
+
+
+def eval_const(name: str, stack: tuple[str, ...]) -> int:
+    expression = const_expressions().get(name)
+    if expression is None:
         raise SystemExit(f"runtime_viewport.py: missing {name} in {SCENE_RS}")
-    return int(match.group(1))
+    if name in stack:
+        cycle = " -> ".join((*stack, name))
+        raise SystemExit(f"runtime_viewport.py: const cycle detected: {cycle}")
+
+    tokens = expression.split()
+    if not tokens:
+        raise SystemExit(f"runtime_viewport.py: empty expression for {name}")
+
+    value = eval_token(tokens[0], stack + (name,))
+    index = 1
+    while index < len(tokens):
+        if index + 1 >= len(tokens):
+            raise SystemExit(f"runtime_viewport.py: malformed expression for {name}: {expression!r}")
+        operator = tokens[index]
+        rhs = eval_token(tokens[index + 1], stack + (name,))
+        if operator == "+":
+            value += rhs
+        elif operator == "-":
+            value -= rhs
+        else:
+            raise SystemExit(f"runtime_viewport.py: unsupported operator {operator!r} in {name}")
+        index += 2
+    return value
+
+
+def eval_token(token: str, stack: tuple[str, ...]) -> int:
+    if token.isdigit():
+        return int(token)
+    return eval_const(token, stack)
 
 
 def fit_within(viewport_width: int, viewport_height: int, max_width: int, max_height: int) -> tuple[int, int]:
@@ -42,11 +82,8 @@ def main() -> None:
     parser.add_argument("--fit", metavar="WIDTHxHEIGHT")
     args = parser.parse_args()
 
-    shell_width = read_const("SHELL_WIDTH_PX")
-    shell_height = read_const("SHELL_HEIGHT_PX")
-    app_viewport_y = read_const("APP_VIEWPORT_Y_PX")
-    viewport_width = shell_width
-    viewport_height = shell_height - app_viewport_y
+    viewport_width = read_const("APP_VIEWPORT_WIDTH_PX")
+    viewport_height = read_const("APP_VIEWPORT_HEIGHT_PX")
 
     if args.fit:
         max_width, max_height = parse_size(args.fit)

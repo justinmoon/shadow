@@ -30,11 +30,17 @@ impl ShellSurfaceView {
 }
 
 #[derive(Clone, Debug)]
+pub struct ShellOverlayPlan {
+    pub scene: Scene,
+    pub view: ShellSurfaceView,
+    pub size: (u32, u32),
+}
+
+#[derive(Clone, Debug)]
 pub struct ShellRenderPlan {
     pub base_scene: Scene,
     pub base_view: ShellSurfaceView,
-    pub overlay_scene: Option<Scene>,
-    pub overlay_view: Option<ShellSurfaceView>,
+    pub overlays: Vec<ShellOverlayPlan>,
 }
 
 impl ShellRenderPlan {
@@ -42,23 +48,16 @@ impl ShellRenderPlan {
         Self {
             base_scene: scene,
             base_view: ShellSurfaceView::full(location),
-            overlay_scene: None,
-            overlay_view: None,
+            overlays: Vec::new(),
         }
     }
 
-    pub fn with_overlay(
-        base_scene: Scene,
-        base_location: (i32, i32),
-        overlay_scene: Scene,
-        overlay_location: (i32, i32),
-    ) -> Self {
-        Self {
-            base_scene,
-            base_view: ShellSurfaceView::full(base_location),
-            overlay_scene: Some(overlay_scene),
-            overlay_view: Some(ShellSurfaceView::full(overlay_location)),
-        }
+    pub fn push_overlay(&mut self, scene: Scene, location: (i32, i32), size: (u32, u32)) {
+        self.overlays.push(ShellOverlayPlan {
+            scene,
+            view: ShellSurfaceView::full(location),
+            size,
+        });
     }
 }
 
@@ -138,7 +137,7 @@ impl ShellSurface {
 
 #[cfg(test)]
 mod tests {
-    use super::{ShellRenderPlan, ShellSurfaceView};
+    use super::{ShellOverlayPlan, ShellRenderPlan, ShellSurfaceView};
     use shadow_ui_core::{color::BACKGROUND, scene::Scene};
 
     fn empty_scene() -> Scene {
@@ -150,22 +149,34 @@ mod tests {
     }
 
     #[test]
-    fn with_overlay_keeps_independent_base_and_overlay_locations() {
-        let plan = ShellRenderPlan::with_overlay(empty_scene(), (12, 24), empty_scene(), (28, 40));
+    fn push_overlay_keeps_independent_base_and_overlay_locations() {
+        let mut plan = ShellRenderPlan::single(empty_scene(), (12, 24));
+        plan.push_overlay(empty_scene(), (28, 40), (64, 32));
 
         assert_eq!(plan.base_view, ShellSurfaceView::full((12, 24)));
-        assert_eq!(
-            plan.overlay_view.expect("overlay view"),
-            ShellSurfaceView::full((28, 40))
-        );
+        assert_eq!(plan.overlays.len(), 1);
+        assert_eq!(plan.overlays[0].view, ShellSurfaceView::full((28, 40)));
+        assert_eq!(plan.overlays[0].size, (64, 32));
+    }
+
+    #[test]
+    fn push_overlay_preserves_multiple_overlay_order_and_sizes() {
+        let mut plan = ShellRenderPlan::single(empty_scene(), (12, 24));
+        plan.push_overlay(empty_scene(), (28, 40), (64, 32));
+        plan.push_overlay(empty_scene(), (44, 52), (96, 14));
+
+        assert_eq!(plan.overlays.len(), 2);
+        assert_eq!(plan.overlays[0].view, ShellSurfaceView::full((28, 40)));
+        assert_eq!(plan.overlays[0].size, (64, 32));
+        assert_eq!(plan.overlays[1].view, ShellSurfaceView::full((44, 52)));
+        assert_eq!(plan.overlays[1].size, (96, 14));
     }
 
     #[test]
     fn single_plan_has_no_overlay() {
         let plan = ShellRenderPlan::single(empty_scene(), (12, 24));
 
-        assert!(plan.overlay_scene.is_none());
-        assert!(plan.overlay_view.is_none());
+        assert!(plan.overlays.is_empty());
         assert_eq!(plan.base_view, ShellSurfaceView::full((12, 24)));
     }
 }

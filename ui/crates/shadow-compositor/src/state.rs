@@ -9,8 +9,9 @@ use shadow_ui_core::{
     },
     shell::{ShellAction, ShellEvent, ShellModel, ShellStatus},
     system_chrome::{
-        top_chrome_strip_scene, TOP_CHROME_STRIP_HEIGHT, TOP_CHROME_STRIP_WIDTH,
-        TOP_CHROME_STRIP_X, TOP_CHROME_STRIP_Y,
+        bottom_navigation_pill_scene, top_chrome_strip_scene, BOTTOM_NAVIGATION_PILL_HEIGHT,
+        BOTTOM_NAVIGATION_PILL_WIDTH, BOTTOM_NAVIGATION_PILL_X, BOTTOM_NAVIGATION_PILL_Y,
+        TOP_CHROME_STRIP_HEIGHT, TOP_CHROME_STRIP_WIDTH, TOP_CHROME_STRIP_X, TOP_CHROME_STRIP_Y,
     },
 };
 use smithay::{
@@ -63,7 +64,7 @@ pub struct ShadowCompositor {
     pub seat: Seat<Self>,
     pub shell: ShellModel,
     pub shell_base_surface: ShellSurface,
-    pub shell_overlay_surface: ShellSurface,
+    pub shell_overlay_surfaces: Vec<ShellSurface>,
     launched_apps: HashMap<AppId, Child>,
     surface_apps: HashMap<WlSurface, AppId>,
     pub(crate) shelved_windows: HashMap<AppId, Window>,
@@ -110,10 +111,7 @@ impl ShadowCompositor {
             seat,
             shell: ShellModel::new(),
             shell_base_surface: ShellSurface::new(WIDTH as u32, HEIGHT as u32),
-            shell_overlay_surface: ShellSurface::new(
-                TOP_CHROME_STRIP_WIDTH.round() as u32,
-                TOP_CHROME_STRIP_HEIGHT.round() as u32,
-            ),
+            shell_overlay_surfaces: Vec::new(),
             launched_apps: HashMap::new(),
             surface_apps: HashMap::new(),
             shelved_windows: HashMap::new(),
@@ -151,15 +149,42 @@ impl ShadowCompositor {
         )
     }
 
-    pub fn shell_render_plan(&mut self, status: &ShellStatus) -> ShellRenderPlan {
-        let base_scene = self.shell.scene_without_top_strip(status);
-        let overlay_scene = top_chrome_strip_scene(&self.shell.top_chrome_strip_state(status));
-        ShellRenderPlan::with_overlay(
-            base_scene,
-            self.shell_location(),
-            overlay_scene,
-            self.top_chrome_location(),
+    pub fn bottom_navigation_pill_location(&self) -> (i32, i32) {
+        let (shell_x, shell_y) = self.shell_location();
+        (
+            shell_x + BOTTOM_NAVIGATION_PILL_X.round() as i32,
+            shell_y + BOTTOM_NAVIGATION_PILL_Y.round() as i32,
         )
+    }
+
+    pub fn shell_render_plan(&mut self, status: &ShellStatus) -> ShellRenderPlan {
+        let base_scene = self.shell.scene_without_compositor_chrome(status);
+        let mut plan = ShellRenderPlan::single(base_scene, self.shell_location());
+        plan.push_overlay(
+            top_chrome_strip_scene(&self.shell.top_chrome_strip_state(status)),
+            self.top_chrome_location(),
+            (
+                TOP_CHROME_STRIP_WIDTH.round() as u32,
+                TOP_CHROME_STRIP_HEIGHT.round() as u32,
+            ),
+        );
+        plan.push_overlay(
+            bottom_navigation_pill_scene(self.shell.bottom_navigation_pill_state()),
+            self.bottom_navigation_pill_location(),
+            (
+                BOTTOM_NAVIGATION_PILL_WIDTH.round() as u32,
+                BOTTOM_NAVIGATION_PILL_HEIGHT.round() as u32,
+            ),
+        );
+        plan
+    }
+
+    pub fn ensure_shell_overlay_surfaces(&mut self, plan: &ShellRenderPlan) {
+        while self.shell_overlay_surfaces.len() < plan.overlays.len() {
+            let overlay = &plan.overlays[self.shell_overlay_surfaces.len()];
+            self.shell_overlay_surfaces
+                .push(ShellSurface::new(overlay.size.0, overlay.size.1));
+        }
     }
 
     pub fn shell_local_point(&self, position: Point<f64, Logical>) -> Option<(f32, f32)> {

@@ -1,6 +1,6 @@
 use crate::{
     color::{Color, SURFACE_GLASS, TEXT_PRIMARY},
-    scene::{RoundedRect, Scene, TextAlign, TextBlock, TextWeight, WIDTH},
+    scene::{RoundedRect, Scene, TextAlign, TextBlock, TextWeight, APP_VIEWPORT_BOTTOM_PX, WIDTH},
 };
 
 pub const TOP_CHROME_STRIP_X: f32 = 16.0;
@@ -33,12 +33,29 @@ const WIFI_BAR_WIDTH: f32 = 7.0;
 const WIFI_BAR_BASE_HEIGHT: f32 = 6.0;
 const WIFI_BAR_STEP_HEIGHT: f32 = 3.0;
 
+pub const BOTTOM_NAVIGATION_PILL_X: f32 = 186.0;
+pub const BOTTOM_NAVIGATION_PILL_Y: f32 = APP_VIEWPORT_BOTTOM_PX as f32;
+pub const BOTTOM_NAVIGATION_PILL_WIDTH: f32 = 168.0;
+pub const BOTTOM_NAVIGATION_PILL_HEIGHT: f32 = 14.0;
+
+const BOTTOM_NAVIGATION_PILL_RADIUS: f32 = BOTTOM_NAVIGATION_PILL_HEIGHT * 0.5;
+const BOTTOM_NAVIGATION_PILL_INNER_X: f32 = 36.0;
+const BOTTOM_NAVIGATION_PILL_INNER_Y: f32 = 4.0;
+const BOTTOM_NAVIGATION_PILL_INNER_WIDTH: f32 = 96.0;
+const BOTTOM_NAVIGATION_PILL_INNER_HEIGHT: f32 = 6.0;
+const BOTTOM_NAVIGATION_PILL_INNER_RADIUS: f32 = BOTTOM_NAVIGATION_PILL_INNER_HEIGHT * 0.5;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TopChromeStripState {
     pub time_label: String,
     pub battery_percent: u8,
     pub wifi_strength: u8,
     pub home_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BottomNavigationPillState {
+    pub active: bool,
 }
 
 pub fn top_chrome_strip_scene(state: &TopChromeStripState) -> Scene {
@@ -50,6 +67,17 @@ pub fn top_chrome_strip_scene(state: &TopChromeStripState) -> Scene {
         clear_color: Color::rgba(0, 0, 0, 0),
         rects,
         texts,
+    }
+}
+
+pub fn bottom_navigation_pill_scene(state: BottomNavigationPillState) -> Scene {
+    let mut rects = Vec::new();
+    append_bottom_navigation_pill_at(&mut rects, state, 0.0, 0.0);
+
+    Scene {
+        clear_color: Color::rgba(0, 0, 0, 0),
+        rects,
+        texts: Vec::new(),
     }
 }
 
@@ -133,6 +161,42 @@ fn append_top_chrome_strip_at(
     }
 }
 
+pub(crate) fn append_bottom_navigation_pill(
+    rects: &mut Vec<RoundedRect>,
+    state: BottomNavigationPillState,
+) {
+    append_bottom_navigation_pill_at(
+        rects,
+        state,
+        BOTTOM_NAVIGATION_PILL_X,
+        BOTTOM_NAVIGATION_PILL_Y,
+    );
+}
+
+fn append_bottom_navigation_pill_at(
+    rects: &mut Vec<RoundedRect>,
+    state: BottomNavigationPillState,
+    origin_x: f32,
+    origin_y: f32,
+) {
+    rects.push(RoundedRect::new(
+        origin_x,
+        origin_y,
+        BOTTOM_NAVIGATION_PILL_WIDTH,
+        BOTTOM_NAVIGATION_PILL_HEIGHT,
+        BOTTOM_NAVIGATION_PILL_RADIUS,
+        SURFACE_GLASS.with_alpha(if state.active { 0.96 } else { 0.88 }),
+    ));
+    rects.push(RoundedRect::new(
+        origin_x + BOTTOM_NAVIGATION_PILL_INNER_X,
+        origin_y + BOTTOM_NAVIGATION_PILL_INNER_Y,
+        BOTTOM_NAVIGATION_PILL_INNER_WIDTH,
+        BOTTOM_NAVIGATION_PILL_INNER_HEIGHT,
+        BOTTOM_NAVIGATION_PILL_INNER_RADIUS,
+        TEXT_PRIMARY.with_alpha(if state.active { 0.96 } else { 0.76 }),
+    ));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,6 +221,25 @@ mod tests {
                 && rect.y >= 0.0
                 && rect.x + rect.width <= TOP_CHROME_STRIP_WIDTH
                 && rect.y + rect.height <= TOP_CHROME_STRIP_HEIGHT
+        }));
+    }
+
+    #[test]
+    fn bottom_navigation_pill_scene_is_transparent_overlay_with_shared_bounds() {
+        let scene = bottom_navigation_pill_scene(BottomNavigationPillState { active: true });
+
+        assert_eq!(scene.clear_color.rgba8(), [0, 0, 0, 0]);
+        assert_eq!(scene.rects.len(), 2);
+        assert_eq!(scene.rects[0].x, 0.0);
+        assert_eq!(scene.rects[0].y, 0.0);
+        assert_eq!(scene.rects[0].width, BOTTOM_NAVIGATION_PILL_WIDTH);
+        assert_eq!(scene.rects[0].height, BOTTOM_NAVIGATION_PILL_HEIGHT);
+        assert!(scene.texts.is_empty());
+        assert!(scene.rects.iter().all(|rect| {
+            rect.x >= 0.0
+                && rect.y >= 0.0
+                && rect.x + rect.width <= BOTTOM_NAVIGATION_PILL_WIDTH
+                && rect.y + rect.height <= BOTTOM_NAVIGATION_PILL_HEIGHT
         }));
     }
 }

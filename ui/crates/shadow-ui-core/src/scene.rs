@@ -4,8 +4,11 @@ pub const SHELL_WIDTH_PX: u32 = 540;
 pub const SHELL_HEIGHT_PX: u32 = 1170;
 pub const APP_VIEWPORT_X_PX: u32 = 0;
 pub const APP_VIEWPORT_Y_PX: u32 = 64;
+pub const APP_VIEWPORT_BOTTOM_INSET_PX: u32 = 64;
 pub const APP_VIEWPORT_WIDTH_PX: u32 = SHELL_WIDTH_PX;
-pub const APP_VIEWPORT_HEIGHT_PX: u32 = SHELL_HEIGHT_PX - APP_VIEWPORT_Y_PX;
+pub const APP_VIEWPORT_HEIGHT_PX: u32 =
+    SHELL_HEIGHT_PX - APP_VIEWPORT_Y_PX - APP_VIEWPORT_BOTTOM_INSET_PX;
+pub const APP_VIEWPORT_BOTTOM_PX: u32 = APP_VIEWPORT_Y_PX + APP_VIEWPORT_HEIGHT_PX;
 
 pub const WIDTH: f32 = SHELL_WIDTH_PX as f32;
 pub const HEIGHT: f32 = SHELL_HEIGHT_PX as f32;
@@ -101,8 +104,8 @@ pub struct Scene {
 #[cfg(test)]
 mod tests {
     use super::{
-        fitted_app_viewport_size, APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX, SHELL_HEIGHT_PX,
-        SHELL_WIDTH_PX,
+        fitted_app_viewport_size, APP_VIEWPORT_BOTTOM_INSET_PX, APP_VIEWPORT_HEIGHT_PX,
+        APP_VIEWPORT_WIDTH_PX, SHELL_HEIGHT_PX, SHELL_WIDTH_PX,
     };
 
     #[test]
@@ -110,16 +113,17 @@ mod tests {
         assert_eq!(SHELL_WIDTH_PX, 540);
         assert_eq!(SHELL_HEIGHT_PX, 1170);
         assert_eq!(APP_VIEWPORT_WIDTH_PX, 540);
-        assert_eq!(APP_VIEWPORT_HEIGHT_PX, 1106);
+        assert_eq!(APP_VIEWPORT_HEIGHT_PX, 1042);
+        assert_eq!(APP_VIEWPORT_BOTTOM_INSET_PX, 64);
     }
 
     #[test]
     fn fitted_viewport_uses_full_width_on_pixel_4a_panel() {
-        assert_eq!(fitted_app_viewport_size(1080, 2340), Some((1080, 2212)));
+        assert_eq!(fitted_app_viewport_size(1080, 2340), Some((1080, 2084)));
     }
 
     #[test]
     fn fitted_viewport_uses_full_height_when_target_is_wider() {
-        assert_eq!(fitted_app_viewport_size(384, 720), Some((351, 720)));
+        assert_eq!(fitted_app_viewport_size(384, 720), Some((373, 720)));
     }
 }
