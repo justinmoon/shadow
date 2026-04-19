@@ -74,7 +74,9 @@ Use one reviewer when that is enough. Use multiple reviewers when independent re
 - Use sibling worktrees when seams are clearly disjoint.
 - Keep one worker per clearly owned seam.
 - The orchestrator stays responsible for integration.
-- A `wait_agent` timeout is not a stall. Let subagents keep running and harvest late results when they arrive.
+- If you delegate a critical-path seam, actually wait for the subagent result before doing overlapping local work, integrating the seam, or landing the chunk.
+- A `wait_agent` timeout is not a stall and not permission to ignore the worker. Wait longer, keep the seam blocked, and harvest the late result when it arrives.
+- Do not re-implement a delegated seam locally just because the worker is slow. Only supersede a worker when you explicitly decide the delegation is obsolete, say so to the user, and change course intentionally.
 - Do not close subagents in normal operation. If a seam becomes obsolete, ignore or supersede the result; do not kill the worker midstream.
 
 ## Prompt Contract
