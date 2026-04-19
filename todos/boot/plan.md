@@ -23,11 +23,13 @@ Related docs:
 - Use Cuttlefish only for generic bring-up ideas, not as the primary model for `sunfish`.
 - Primary strategy: boot the stock Pixel kernel into a Shadow-owned ramdisk and custom PID 1. Do not treat `wrapper -> stock init -> later takeover` as the main path anymore.
 - Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-init` (direct DRM/KMS fill), then minimal control/transport, then Shadow services.
+- Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
 - Reuse the current rooted takeover/runtime path for DRM, input, audio, and packaging knowledge, but not as the boot graph we are trying to ship.
 - Land boot work in small seams that can merge to `master` independently; do not stack the whole project on one long-lived boot branch.
 - Use a dedicated worktree branch per risky seam, then land or checkpoint before starting the next one.
 - Keep experimental boot tooling private until it proves itself on-device. Private delegators may live under `shadowctl debug`, but do not promote boot-lab flows into the public `just` surface early.
 - When a boot experiment loop repeats or burns operator time twice, bias toward small private tools that capture the loop truthfully: shared immutable inputs, structured run bundles, explicit safety rails, and thin `shadowctl debug` delegation instead of more handwritten terminal choreography.
+- Keep the image repack loop fast by reusing stable built payload binaries when the payload source is unchanged; do not hide avoidable rebuilds inside temp-workdir packers.
 - Prefer chunks that are inert for the current Magisk path: helper libraries, private scripts, log capture, guardrails, and tiny owned-userspace proofs before Shadow-launch changes.
 - Prefer visible or durable proofs over speculative Android-`init` hook churn. A screen color or `kmsg` marker is better evidence than another late userspace property probe.
 
@@ -59,15 +61,24 @@ Related docs:
 - [x] Add worktree-friendly boot-lab tooling:
   - shared stock `boot.img` fallback across worktrees
   - one-shot `fastboot boot` orchestration with structured host-side evidence capture
-- [x] Add a dedicated owned-userspace boot builder that installs a tiny custom `/init` without any stock-init handoff.
+- [x] Add a dedicated owned-userspace boot builder that preserves stock `/init -> /system/bin/init` and replaces `system/bin/init` with a tiny custom PID 1.
 - [~] Implement `hello-init` as the first boot-owned payload:
   - static arm64 PID 1
   - mount `/proc`, `/sys`, and `/dev`
   - write durable breadcrumbs to `/dev/kmsg`
   - hold long enough for observation, then reboot bootloader or power off cleanly
 - [~] Pick the first truthful proof channel for owned userspace:
-  - prefer `kmsg` or a visible screen proof over an interactive shell
+  - `hello-init`: bounded host-visible `fastboot-return` is the first automation-friendly proof that does not require Android userspace
+  - `orange-init`: a visible panel fill is the first direct proof of owned userspace beyond PID 1; pair it with a later reboot-to-fastboot for host correlation
+  - treat `/dev/kmsg` as one breadcrumb channel, not the primary success criterion
+  - emit the same stage markers to `kmsg`, `pmsg` when present, and process stdio so the host can recover whichever channel survives on real hardware
+  - do not depend on `adb`, transient properties, or `/data/local/tmp` for the owned-userspace proof path
   - only add USB transport after the PID 1 seam is stable
+- [ ] Add an observability-first recovery loop for owned-userspace runs:
+  - every run bundle should record the exact evidence collection attempt, not just the boot action
+  - after the phone returns to Android, harvest previous-run traces immediately before another reboot can overwrite them
+  - recover best-effort evidence from readable Android-side channels such as prior-boot log buffers, dropbox boot reports, and bootreason props
+  - do not treat any single recovery channel as guaranteed until it proves itself repeatedly on hardware
 - [ ] Package a minimal DRM proof payload:
   - reuse `rust/drm-rect` or a smaller equivalent
   - make the color, hold time, and logging explicit
@@ -241,3 +252,26 @@ Related docs:
 - New tooling seam on 2026-04-19:
   - the private boot-lab runners now support `--success-signal fastboot-return` plus a bounded `--return-timeout`, backed by a shared fastboot-cycle helper and truthful `status.json` fields for fastboot departure / return timing
   - hermetic coverage now exercises the new success mode and dry-run delegation shape through both the script layer and `shadowctl`
+- New build-loop tightening on 2026-04-19:
+  - `pixel_boot_build_hello_init.sh` no longer asks `pixel_build_hello_init.sh` to compile into a fresh temp-workdir path on every repack
+  - `pixel_build_hello_init.sh` now reuses a stable cached `build/pixel/boot/hello-init` binary when the current `pixel_hello_init.c` plus `flake.nix` / `flake.lock` inputs are unchanged, and only falls back to `nix build` when that cache is stale
+  - this keeps repeated ramdisk/config repacks fast without weakening the real-build guarantee in `pre-commit`
+- New observability facts on 2026-04-19 from read-only Android-side probes on `09051JEC202061`:
+  - `/dev/pmsg0` exists on stock `sunfish`, so owned PID 1 should write there in addition to `/dev/kmsg` when available
+  - unprivileged `adb shell logcat -L` did not recover a manual `/dev/pmsg0` probe token on this device, so `pmsg` is currently best-effort rather than a proven shell-readable recovery path
+  - `dumpsys dropbox --print SYSTEM_BOOT` and bootreason props are readable from the normal Android shell, so every post-run recovery bundle should capture them automatically
+- New owned-userspace isolation result on 2026-04-19 from the trimmed `hello-init` matrix on `09051JEC202061`:
+  - `mount_dev=false mount_proc=false mount_sys=false log_kmsg=false log_pmsg=false` returned to Android with `ro.boot.bootreason=reboot`
+  - `mount_dev=true mount_proc=true mount_sys=true log_kmsg=false log_pmsg=false` returned to Android with `ro.boot.bootreason=kernel_panic`
+  - `mount_dev=true mount_proc=false mount_sys=false log_kmsg=false log_pmsg=false` also returned `kernel_panic`
+  - that isolates the current failure boundary to the `/dev` strategy rather than the mere existence of a Shadow-owned PID 1 or the `/dev/kmsg` / `/dev/pmsg0` writers
+- New stock-ramdisk fact on 2026-04-19 from local unpacked `sunfish` analysis:
+  - the stock ramdisk carries `/dev`, `/proc`, and `/sys` only as empty directories; there are no pre-existing `dev/*` nodes in the shipped cpio
+  - stock recovery init imports `init.recovery.${ro.hardware}.rc`, starts `ueventd`, and expects runtime `/dev` population instead of a pre-populated devtmpfs tree
+- New `/dev` mount-strategy result on 2026-04-19 from the same owned-userspace matrix:
+  - switching the owned `/dev` mount from `devtmpfs` to `tmpfs` changed the outcome on `09051JEC202061` from `kernel_panic` back to `reboot`
+  - `tmpfs /dev` plus `proc` and `sysfs` also returned cleanly on `09051JEC202061`
+  - the same `tmpfs /dev` owned-userspace image returned cleanly on `11151JEC200472`, which is now proven as an adb-visible second boot-lab serial
+- Tightened inference after the `/dev` mount matrix:
+  - the bad actor is specifically the `devtmpfs` model we introduced, not the broader idea of mounting something on `/dev`
+  - the next owned-userspace step should model stock Android more closely: `tmpfs /dev` first, then the smallest truthful device-population mechanism needed for logs or DRM instead of mounting `devtmpfs`

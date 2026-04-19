@@ -15,6 +15,8 @@ SUCCESS_SIGNAL="${PIXEL_BOOT_ONESHOT_SUCCESS_SIGNAL:-adb}"
 RETURN_TIMEOUT_SECS="${PIXEL_BOOT_ONESHOT_RETURN_TIMEOUT_SECS:-45}"
 FASTBOOT_LEAVE_TIMEOUT_SECS="${PIXEL_BOOT_ONESHOT_FASTBOOT_LEAVE_TIMEOUT_SECS:-15}"
 WAIT_BOOT_COMPLETED=1
+SKIP_COLLECT="${PIXEL_BOOT_ONESHOT_SKIP_COLLECT:-0}"
+RECOVER_TRACES_AFTER="${PIXEL_BOOT_ONESHOT_RECOVER_TRACES_AFTER:-0}"
 PROOF_PROP_SPEC="${PIXEL_BOOT_PROOF_PROP:-}"
 DRY_RUN=0
 ORIGINAL_ARGS=("$@")
@@ -23,6 +25,7 @@ serial=""
 metadata_path=""
 status_path=""
 collect_output_dir=""
+recover_traces_output_dir=""
 image_sha256=""
 slot_before=""
 slot_after=""
@@ -32,12 +35,22 @@ boot_completed=false
 collect_attempted=false
 collect_succeeded=false
 boot_completed_required_failed=false
+recover_traces_attempted=false
+recover_traces_succeeded=false
+recover_traces_matched_any_shadow_tags=false
+recover_traces_recovered_previous_boot_traces=false
 fastboot_departed=false
 fastboot_returned=false
 fastboot_leave_elapsed_secs=0
 fastboot_return_elapsed_secs=0
 fastboot_cycle_elapsed_secs=0
 fastboot_slot_after_return=""
+bootreason_ro_boot_bootreason=""
+bootreason_sys_boot_reason=""
+bootreason_sys_boot_reason_last=""
+bootreason_persist_sys_boot_reason_history=""
+bootreason_ro_boot_bootreason_history=""
+bootreason_ro_boot_bootreason_last=""
 failure_stage=""
 
 usage() {
@@ -46,6 +59,7 @@ Usage: scripts/pixel/pixel_boot_oneshot.sh [--image PATH] [--output DIR] [--wait
                                           [--adb-timeout SECONDS] [--boot-timeout SECONDS]
                                           [--success-signal adb|fastboot-return]
                                           [--return-timeout SECONDS]
+                                          [--skip-collect] [--recover-traces-after]
                                           [--no-wait-boot-completed] [--proof-prop KEY=VALUE]
                                           [--dry-run]
 
@@ -63,6 +77,10 @@ bool_word() {
   else
     printf 'false\n'
   fi
+}
+
+flag_enabled() {
+  [[ "$(bool_word "$1")" == "true" ]]
 }
 
 wait_boot_completed_status_word() {
@@ -102,6 +120,21 @@ validate_success_mode() {
     echo "pixel_boot_oneshot: --proof-prop is only supported with --success-signal adb" >&2
     exit 1
   fi
+
+  if [[ "$SUCCESS_SIGNAL" == "fastboot-return" ]] && flag_enabled "$SKIP_COLLECT"; then
+    echo "pixel_boot_oneshot: --skip-collect is only supported with --success-signal adb" >&2
+    exit 1
+  fi
+
+  if [[ "$SUCCESS_SIGNAL" == "fastboot-return" ]] && flag_enabled "$RECOVER_TRACES_AFTER"; then
+    echo "pixel_boot_oneshot: --recover-traces-after is only supported with --success-signal adb" >&2
+    exit 1
+  fi
+
+  if flag_enabled "$SKIP_COLLECT" && [[ -n "$PROOF_PROP_SPEC" ]]; then
+    echo "pixel_boot_oneshot: --proof-prop requires helper-dir collection; omit it when using --skip-collect" >&2
+    exit 1
+  fi
 }
 
 capture_fastboot_cycle_status() {
@@ -110,6 +143,15 @@ capture_fastboot_cycle_status() {
   fastboot_leave_elapsed_secs="${PIXEL_FASTBOOT_CYCLE_LEAVE_ELAPSED_SECS:-0}"
   fastboot_return_elapsed_secs="${PIXEL_FASTBOOT_CYCLE_RETURN_ELAPSED_SECS:-0}"
   fastboot_cycle_elapsed_secs="${PIXEL_FASTBOOT_CYCLE_TOTAL_ELAPSED_SECS:-0}"
+}
+
+capture_bootreason_props() {
+  bootreason_ro_boot_bootreason="$(pixel_prop "$serial" ro.boot.bootreason 2>/dev/null || true)"
+  bootreason_sys_boot_reason="$(pixel_prop "$serial" sys.boot.reason 2>/dev/null || true)"
+  bootreason_sys_boot_reason_last="$(pixel_prop "$serial" sys.boot.reason.last 2>/dev/null || true)"
+  bootreason_persist_sys_boot_reason_history="$(pixel_prop "$serial" persist.sys.boot.reason.history 2>/dev/null || true)"
+  bootreason_ro_boot_bootreason_history="$(pixel_prop "$serial" ro.boot.bootreason_history 2>/dev/null || true)"
+  bootreason_ro_boot_bootreason_last="$(pixel_prop "$serial" ro.boot.bootreason_last 2>/dev/null || true)"
 }
 
 prepare_output_dir() {
@@ -142,39 +184,82 @@ write_status() {
 
   [[ -n "$status_path" ]] || return 0
 
-  pixel_write_status_json \
+  python3 - \
     "$status_path" \
-    kind=boot_oneshot \
-    ok="$ok" \
-    serial="$serial" \
-    image="$IMAGE_PATH" \
-    image_sha256="$image_sha256" \
-    output_dir="$OUTPUT_DIR" \
-    metadata_path="$metadata_path" \
-    collect_output_dir="$collect_output_dir" \
-    wait_ready_secs="$WAIT_READY_SECS" \
-    adb_timeout_secs="$ADB_TIMEOUT_SECS" \
-    boot_timeout_secs="$BOOT_TIMEOUT_SECS" \
-    success_signal="$SUCCESS_SIGNAL" \
-    return_timeout_secs="$RETURN_TIMEOUT_SECS" \
-    fastboot_leave_timeout_secs="$FASTBOOT_LEAVE_TIMEOUT_SECS" \
-    wait_boot_completed="$(wait_boot_completed_status_word)" \
-    proof_prop="$PROOF_PROP_SPEC" \
-    slot_before="$slot_before" \
-    slot_after="$slot_after" \
-    shadow_probe_prop="$shadow_probe_prop" \
-    adb_ready="$adb_ready" \
-    boot_completed="$boot_completed" \
-    boot_completed_required_failed="$boot_completed_required_failed" \
-    collect_attempted="$collect_attempted" \
-    collect_succeeded="$collect_succeeded" \
-    fastboot_departed="$fastboot_departed" \
-    fastboot_returned="$fastboot_returned" \
-    fastboot_leave_elapsed_secs="$fastboot_leave_elapsed_secs" \
-    fastboot_return_elapsed_secs="$fastboot_return_elapsed_secs" \
-    fastboot_cycle_elapsed_secs="$fastboot_cycle_elapsed_secs" \
-    fastboot_slot_after_return="$fastboot_slot_after_return" \
-    failure_stage="$failure_stage"
+    "kind=boot_oneshot" \
+    "ok=$ok" \
+    "serial=$serial" \
+    "image=$IMAGE_PATH" \
+    "image_sha256=$image_sha256" \
+    "output_dir=$OUTPUT_DIR" \
+    "metadata_path=$metadata_path" \
+    "collect_output_dir=$collect_output_dir" \
+    "recover_traces_output_dir=$recover_traces_output_dir" \
+    "wait_ready_secs=$WAIT_READY_SECS" \
+    "adb_timeout_secs=$ADB_TIMEOUT_SECS" \
+    "boot_timeout_secs=$BOOT_TIMEOUT_SECS" \
+    "success_signal=$SUCCESS_SIGNAL" \
+    "return_timeout_secs=$RETURN_TIMEOUT_SECS" \
+    "fastboot_leave_timeout_secs=$FASTBOOT_LEAVE_TIMEOUT_SECS" \
+    "wait_boot_completed=$(wait_boot_completed_status_word)" \
+    "skip_collect=$(bool_word "$SKIP_COLLECT")" \
+    "recover_traces_after=$(bool_word "$RECOVER_TRACES_AFTER")" \
+    "proof_prop=$PROOF_PROP_SPEC" \
+    "slot_before=$slot_before" \
+    "slot_after=$slot_after" \
+    "shadow_probe_prop=$shadow_probe_prop" \
+    "adb_ready=$adb_ready" \
+    "boot_completed=$boot_completed" \
+    "boot_completed_required_failed=$boot_completed_required_failed" \
+    "collect_attempted=$collect_attempted" \
+    "collect_succeeded=$collect_succeeded" \
+    "recover_traces_attempted=$recover_traces_attempted" \
+    "recover_traces_succeeded=$recover_traces_succeeded" \
+    "recover_traces_matched_any_shadow_tags=$recover_traces_matched_any_shadow_tags" \
+    "recover_traces_recovered_previous_boot_traces=$recover_traces_recovered_previous_boot_traces" \
+    "fastboot_departed=$fastboot_departed" \
+    "fastboot_returned=$fastboot_returned" \
+    "fastboot_leave_elapsed_secs=$fastboot_leave_elapsed_secs" \
+    "fastboot_return_elapsed_secs=$fastboot_return_elapsed_secs" \
+    "fastboot_cycle_elapsed_secs=$fastboot_cycle_elapsed_secs" \
+    "fastboot_slot_after_return=$fastboot_slot_after_return" \
+    "failure_stage=$failure_stage" \
+    "bootreason_prop:ro.boot.bootreason=$bootreason_ro_boot_bootreason" \
+    "bootreason_prop:sys.boot.reason=$bootreason_sys_boot_reason" \
+    "bootreason_prop:sys.boot.reason.last=$bootreason_sys_boot_reason_last" \
+    "bootreason_prop:persist.sys.boot.reason.history=$bootreason_persist_sys_boot_reason_history" \
+    "bootreason_prop:ro.boot.bootreason_history=$bootreason_ro_boot_bootreason_history" \
+    "bootreason_prop:ro.boot.bootreason_last=$bootreason_ro_boot_bootreason_last" <<'PY'
+import json
+import sys
+
+output = sys.argv[1]
+payload = {}
+bootreason_props = {}
+
+for item in sys.argv[2:]:
+    key, value = item.split("=", 1)
+    if value == "true":
+        parsed = True
+    elif value == "false":
+        parsed = False
+    else:
+        try:
+            parsed = int(value)
+        except ValueError:
+            parsed = value
+
+    if key.startswith("bootreason_prop:"):
+        bootreason_props[key.split(":", 1)[1]] = value
+    else:
+        payload[key] = parsed
+
+payload["bootreason_props"] = bootreason_props
+
+with open(output, "w", encoding="utf-8") as fh:
+    json.dump(payload, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
 }
 
 finish() {
@@ -182,6 +267,56 @@ finish() {
   trap - EXIT
   write_status "$exit_code"
   exit "$exit_code"
+}
+
+maybe_recover_traces() {
+  local recover_status_path recover_summary
+
+  if ! flag_enabled "$RECOVER_TRACES_AFTER"; then
+    return 0
+  fi
+
+  recover_traces_attempted=true
+  recover_args=(
+    --output "$recover_traces_output_dir"
+    --adb-timeout "$ADB_TIMEOUT_SECS"
+    --boot-timeout "$BOOT_TIMEOUT_SECS"
+  )
+  if [[ "$WAIT_BOOT_COMPLETED" != "1" ]]; then
+    recover_args+=(--no-wait-boot-completed)
+  fi
+
+  if PIXEL_SERIAL="$serial" \
+    "$SCRIPT_DIR/pixel/pixel_boot_recover_traces.sh" \
+      "${recover_args[@]}"; then
+    recover_traces_succeeded=true
+    recover_status_path="$recover_traces_output_dir/status.json"
+    if [[ -f "$recover_status_path" ]]; then
+      recover_summary="$(
+        python3 - "$recover_status_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+matched = "true" if payload.get("matched_any_shadow_tags") else "false"
+previous = "true" if payload.get("recovered_previous_boot_traces") else "false"
+print(f"{matched}\t{previous}")
+PY
+      )"
+      if [[ -n "$recover_summary" ]]; then
+        recover_traces_matched_any_shadow_tags="${recover_summary%%$'\t'*}"
+        recover_traces_recovered_previous_boot_traces="${recover_summary#*$'\t'}"
+      fi
+    fi
+    return 0
+  fi
+
+  if [[ -z "$failure_stage" ]]; then
+    failure_stage="recover-traces"
+  fi
+  return 1
 }
 
 while [[ $# -gt 0 ]]; do
@@ -213,6 +348,14 @@ while [[ $# -gt 0 ]]; do
     --return-timeout)
       RETURN_TIMEOUT_SECS="${2:?missing value for --return-timeout}"
       shift 2
+      ;;
+    --skip-collect)
+      SKIP_COLLECT=1
+      shift
+      ;;
+    --recover-traces-after)
+      RECOVER_TRACES_AFTER=1
+      shift
       ;;
     --no-wait-boot-completed)
       WAIT_BOOT_COMPLETED=0
@@ -252,8 +395,11 @@ prepare_output_dir
 
 metadata_path="$OUTPUT_DIR/boot-action.json"
 status_path="$OUTPUT_DIR/status.json"
-if [[ "$SUCCESS_SIGNAL" == "adb" ]]; then
+if [[ "$SUCCESS_SIGNAL" == "adb" ]] && ! flag_enabled "$SKIP_COLLECT"; then
   collect_output_dir="$OUTPUT_DIR/collect"
+fi
+if [[ "$SUCCESS_SIGNAL" == "adb" ]] && flag_enabled "$RECOVER_TRACES_AFTER"; then
+  recover_traces_output_dir="$OUTPUT_DIR/recover-traces"
 fi
 image_sha256="$(shasum -a 256 "$IMAGE_PATH" | awk '{print $1}')"
 
@@ -272,10 +418,15 @@ boot_timeout_secs=$BOOT_TIMEOUT_SECS
 return_timeout_secs=$RETURN_TIMEOUT_SECS
 fastboot_leave_timeout_secs=$FASTBOOT_LEAVE_TIMEOUT_SECS
 wait_boot_completed=$(wait_boot_completed_status_word)
+skip_collect=$(bool_word "$SKIP_COLLECT")
+recover_traces_after=$(bool_word "$RECOVER_TRACES_AFTER")
 proof_prop=$PROOF_PROP_SPEC
 EOF
   if [[ -n "$collect_output_dir" ]]; then
     printf 'collect_output_dir=%s\n' "$collect_output_dir"
+  fi
+  if [[ -n "$recover_traces_output_dir" ]]; then
+    printf 'recover_traces_output_dir=%s\n' "$recover_traces_output_dir"
   fi
   exit 0
 fi
@@ -297,7 +448,9 @@ pixel_write_status_json \
   return_timeout_secs="$RETURN_TIMEOUT_SECS" \
   fastboot_leave_timeout_secs="$FASTBOOT_LEAVE_TIMEOUT_SECS" \
   proof_prop="$PROOF_PROP_SPEC" \
-  wait_boot_completed="$(wait_boot_completed_status_word)"
+  wait_boot_completed="$(wait_boot_completed_status_word)" \
+  skip_collect="$(bool_word "$SKIP_COLLECT")" \
+  recover_traces_after="$(bool_word "$RECOVER_TRACES_AFTER")"
 
 printf 'One-shot booting %s on %s\n' "$IMAGE_PATH" "$serial"
 printf 'Current slot before fastboot boot: %s\n' "$slot_before"
@@ -336,24 +489,36 @@ if [[ "$WAIT_BOOT_COMPLETED" == "1" ]]; then
     failure_stage="wait-boot-completed"
   fi
 fi
+capture_bootreason_props
 
-collect_args=(
-  --output "$collect_output_dir"
-  --wait-ready "$WAIT_READY_SECS"
-)
-if [[ -n "$PROOF_PROP_SPEC" ]]; then
-  collect_args+=(--proof-prop "$PROOF_PROP_SPEC")
+collect_failed=false
+if ! flag_enabled "$SKIP_COLLECT"; then
+  collect_args=(
+    --output "$collect_output_dir"
+    --wait-ready "$WAIT_READY_SECS"
+  )
+  if [[ -n "$PROOF_PROP_SPEC" ]]; then
+    collect_args+=(--proof-prop "$PROOF_PROP_SPEC")
+  fi
+
+  collect_attempted=true
+  if PIXEL_SERIAL="$serial" PIXEL_BOOT_METADATA_PATH="$metadata_path" \
+    "$SCRIPT_DIR/pixel/pixel_boot_collect_logs.sh" \
+      "${collect_args[@]}"; then
+    collect_succeeded=true
+  else
+    if [[ -z "$failure_stage" ]]; then
+      failure_stage="collect"
+    fi
+    collect_failed=true
+  fi
 fi
 
-collect_attempted=true
-if PIXEL_SERIAL="$serial" PIXEL_BOOT_METADATA_PATH="$metadata_path" \
-  "$SCRIPT_DIR/pixel/pixel_boot_collect_logs.sh" \
-    "${collect_args[@]}"; then
-  collect_succeeded=true
-else
-  if [[ -z "$failure_stage" ]]; then
-    failure_stage="collect"
-  fi
+if ! maybe_recover_traces; then
+  exit 1
+fi
+
+if [[ "$collect_failed" == "true" ]]; then
   exit 1
 fi
 
@@ -361,5 +526,13 @@ if [[ "$boot_completed_required_failed" == "true" ]]; then
   exit 1
 fi
 
-printf 'Collected one-shot boot evidence: %s\n' "$collect_output_dir"
+if flag_enabled "$SKIP_COLLECT"; then
+  printf 'Skipped helper-dir collection for one-shot boot run\n'
+else
+  printf 'Collected one-shot boot evidence: %s\n' "$collect_output_dir"
+fi
+if [[ "$recover_traces_succeeded" == "true" ]]; then
+  printf 'Captured Android-side recovery bundle: %s\n' "$recover_traces_output_dir"
+  printf 'Recovery bundle matched shadow tags: %s\n' "$recover_traces_matched_any_shadow_tags"
+fi
 printf 'Run status: %s\n' "$status_path"

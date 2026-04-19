@@ -3,18 +3,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/shadow-pixel-boot-hello-init.XXXXXX")"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/shadow-pixel-boot-orange-init.XXXXXX")"
 MOCK_BIN="$TMP_DIR/bin"
 BOOT_BUILD_INPUT="$TMP_DIR/build-input.img"
 NONSTOCK_INPUT="$TMP_DIR/nonstock-input.img"
 BOOT_BUILD_RAMDISK="$TMP_DIR/build-ramdisk.cpio"
 BOOT_BUILD_NONSTOCK_RAMDISK="$TMP_DIR/build-nonstock-ramdisk.cpio"
-HELLO_INIT_OUTPUT="$TMP_DIR/hello-init"
-OUTPUT_IMAGE="$TMP_DIR/hello-init-boot.img"
-MINIMAL_OUTPUT_IMAGE="$TMP_DIR/hello-init-boot-minimal.img"
+ORANGE_INIT_OUTPUT="$TMP_DIR/orange-init"
+OUTPUT_IMAGE="$TMP_DIR/orange-init-boot.img"
 AVB_KEY_PATH="$TMP_DIR/avb-testkey.pem"
 MOCK_STORE_HELLO="$TMP_DIR/store-hello"
-BAD_HELLO_INIT_BINARY="$TMP_DIR/bad-hello-init"
+MOCK_STORE_ORANGE="$TMP_DIR/store-orange"
+BAD_ORANGE_INIT_BINARY="$TMP_DIR/bad-orange-init"
+ORANGE_INIT_CACHE_OUTPUT="$TMP_DIR/orange-init-cache"
 HELLO_INIT_CACHE_OUTPUT="$TMP_DIR/hello-init-cache"
 MOCK_NIX_CALLS_FILE="$TMP_DIR/mock-nix-calls"
 
@@ -24,12 +25,12 @@ cleanup() {
 
 trap cleanup EXIT
 
-mkdir -p "$MOCK_BIN" "$MOCK_STORE_HELLO/bin"
+mkdir -p "$MOCK_BIN" "$MOCK_STORE_HELLO/bin" "$MOCK_STORE_ORANGE/bin"
 printf 'boot build input\n' >"$BOOT_BUILD_INPUT"
 printf 'nonstock build input\n' >"$NONSTOCK_INPUT"
 printf 'mock avb key\n' >"$AVB_KEY_PATH"
 
-cat >"$HELLO_INIT_OUTPUT" <<'EOF'
+cat >"$MOCK_STORE_HELLO/bin/hello-init" <<'EOF'
 #!/system/bin/sh
 # shadow-owned-init-role:hello-init
 # shadow-owned-init-impl:c-static
@@ -37,16 +38,25 @@ cat >"$HELLO_INIT_OUTPUT" <<'EOF'
 # shadow-owned-init-mounts:dev=true,proc=true,sys=true
 echo hello-init
 EOF
-chmod 0755 "$HELLO_INIT_OUTPUT"
-cp "$HELLO_INIT_OUTPUT" "$MOCK_STORE_HELLO/bin/hello-init"
+chmod 0755 "$MOCK_STORE_HELLO/bin/hello-init"
 
-cat >"$BAD_HELLO_INIT_BINARY" <<'EOF'
+cat >"$ORANGE_INIT_OUTPUT" <<'EOF'
 #!/system/bin/sh
-# shadow-owned-init-impl:c-static
-# shadow-owned-init-config:/shadow-init.cfg
-echo bad-hello-init
+# shadow-owned-init-role:orange-init
+# shadow-owned-init-impl:drm-rect-device
+# shadow-owned-init-path:/orange-init
+echo orange-init
 EOF
-chmod 0755 "$BAD_HELLO_INIT_BINARY"
+chmod 0755 "$ORANGE_INIT_OUTPUT"
+cp "$ORANGE_INIT_OUTPUT" "$MOCK_STORE_ORANGE/bin/drm-rect"
+
+cat >"$BAD_ORANGE_INIT_BINARY" <<'EOF'
+#!/system/bin/sh
+# shadow-owned-init-impl:drm-rect-device
+# shadow-owned-init-path:/orange-init
+echo bad-orange-init
+EOF
+chmod 0755 "$BAD_ORANGE_INIT_BINARY"
 printf '0\n' >"$MOCK_NIX_CALLS_FILE"
 
 PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$BOOT_BUILD_RAMDISK" <<'PY'
@@ -249,6 +259,9 @@ case "\$*" in
   *hello-init-device*)
     printf '%s\n' "$MOCK_STORE_HELLO"
     ;;
+  *drm-rect-device*)
+    printf '%s\n' "$MOCK_STORE_ORANGE"
+    ;;
   *)
     echo "mock nix: unexpected package ref: \$*" >&2
     exit 1
@@ -272,7 +285,7 @@ assert_contains() {
   needle="$2"
 
   if ! grep -Fq -- "$needle" <<<"$haystack"; then
-    echo "pixel_boot_hello_init_smoke: expected output to contain: $needle" >&2
+    echo "pixel_boot_orange_init_smoke: expected output to contain: $needle" >&2
     echo "$haystack" >&2
     exit 1
   fi
@@ -284,7 +297,7 @@ assert_file_contains() {
   needle="$2"
 
   if ! grep -Fq -- "$needle" "$file_path"; then
-    echo "pixel_boot_hello_init_smoke: expected $file_path to contain: $needle" >&2
+    echo "pixel_boot_orange_init_smoke: expected $file_path to contain: $needle" >&2
     exit 1
   fi
 }
@@ -369,135 +382,113 @@ if actual_target != expected_target:
 PY
 }
 
-hello_build_output="$(
+orange_build_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 \
-    "$REPO_ROOT/scripts/pixel/pixel_build_hello_init.sh" \
-      --output "$HELLO_INIT_OUTPUT"
+    "$REPO_ROOT/scripts/pixel/pixel_build_orange_init.sh" \
+      --output "$ORANGE_INIT_OUTPUT"
 )"
-assert_contains "$hello_build_output" "Built hello-init -> $HELLO_INIT_OUTPUT"
-assert_contains "$(cat "$HELLO_INIT_OUTPUT")" "shadow-owned-init-role:hello-init"
-assert_contains "$(cat "$HELLO_INIT_OUTPUT")" "shadow-owned-init-impl:c-static"
-assert_contains "$(cat "$HELLO_INIT_OUTPUT")" "shadow-owned-init-config:/shadow-init.cfg"
-assert_contains "$(cat "$HELLO_INIT_OUTPUT")" "shadow-owned-init-mounts:dev=true,proc=true,sys=true"
-assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'shadow-owned-init-observability:kmsg=%s,pmsg=%s,stdio=true'
-assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"observability-degraded"'
-assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"%sdev=%s,proc=%s,sys=%s"'
+assert_contains "$orange_build_output" "Built orange-init -> $ORANGE_INIT_OUTPUT"
+assert_contains "$(cat "$ORANGE_INIT_OUTPUT")" "shadow-owned-init-role:orange-init"
+assert_contains "$(cat "$ORANGE_INIT_OUTPUT")" "shadow-owned-init-impl:drm-rect-device"
+assert_contains "$(cat "$ORANGE_INIT_OUTPUT")" "shadow-owned-init-path:/orange-init"
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'setenv(SHADOW_HELLO_INIT_ORANGE_MODE_ENV, "orange-init", 1)'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'setenv(SHADOW_HELLO_INIT_ORANGE_HOLD_ENV, hold_seconds, 1)'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'execl('
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange-init payload failed with status=%d; holding for observation before reboot'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'hold_for_observation(config.hold_seconds);'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'log_stage("<6>", "orange-wait", "pid=%d seconds=%u", child_pid, waited_seconds);'
+assert_file_contains "$REPO_ROOT/rust/drm-rect/src/main.rs" 'env::var("SHADOW_DRM_RECT_MODE").as_deref() == Ok("orange-init")'
+assert_file_contains "$REPO_ROOT/rust/drm-rect/src/main.rs" 'invoked_as_orange_init()'
+assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" 'write_device_log("/dev/pmsg0", &line);'
+assert_file_contains "$REPO_ROOT/rust/drm-rect/src/main.rs" 'fatal fill error: {error:#}'
 
-hello_reuse_output="$(
+orange_reuse_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 \
-    "$REPO_ROOT/scripts/pixel/pixel_build_hello_init.sh" \
-      --output "$HELLO_INIT_OUTPUT"
+    "$REPO_ROOT/scripts/pixel/pixel_build_orange_init.sh" \
+      --output "$ORANGE_INIT_OUTPUT"
 )"
-assert_contains "$hello_reuse_output" "Reusing cached hello-init -> $HELLO_INIT_OUTPUT"
+assert_contains "$orange_reuse_output" "Reusing cached orange-init -> $ORANGE_INIT_OUTPUT"
 if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "1" ]]; then
-  echo "pixel_boot_hello_init_smoke: expected pixel_build_hello_init.sh to avoid a second nix build" >&2
+  echo "pixel_boot_orange_init_smoke: expected orange-init reuse to avoid a second nix build" >&2
   exit 1
 fi
 
-hello_boot_output="$(
+orange_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
-    "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
+    PIXEL_ORANGE_INIT_DEFAULT_BIN="$ORANGE_INIT_CACHE_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_init.sh" \
       --input "$BOOT_BUILD_INPUT" \
       --key "$AVB_KEY_PATH" \
       --output "$OUTPUT_IMAGE" \
-      --payload hello \
-      --hold-secs 17 \
+      --hold-secs 19 \
       --reboot-target bootloader
 )"
-assert_contains "$hello_boot_output" "Build mode: stock-init"
-assert_contains "$hello_boot_output" "Extra added entries: 1"
-assert_contains "$hello_boot_output" "Extra replaced entries: 1"
-assert_contains "$hello_boot_output" "Owned userspace mode: hello-init"
-assert_contains "$hello_boot_output" "Root init path: preserve stock /init -> /system/bin/init symlink"
-assert_contains "$hello_boot_output" "System init mutation: replace system/bin/init with the owned static hello-init PID 1"
-assert_contains "$hello_boot_output" "Config path: /shadow-init.cfg"
-assert_contains "$hello_boot_output" "Payload: hello"
-assert_contains "$hello_boot_output" "Hold seconds: 17"
-assert_contains "$hello_boot_output" "Reboot target: bootloader"
-assert_contains "$hello_boot_output" "Dev mount style: devtmpfs"
-assert_contains "$hello_boot_output" "Mount /dev: true"
-assert_contains "$hello_boot_output" "Mount proc: true"
-assert_contains "$hello_boot_output" "Mount sys: true"
-assert_contains "$hello_boot_output" "Log kmsg: true"
-assert_contains "$hello_boot_output" "Log pmsg: true"
-assert_contains "$hello_boot_output" "Built hello-init -> $HELLO_INIT_CACHE_OUTPUT"
+assert_contains "$orange_boot_output" "Build mode: stock-init"
+assert_contains "$orange_boot_output" "Extra added entries: 2"
+assert_contains "$orange_boot_output" "Extra replaced entries: 1"
+assert_contains "$orange_boot_output" "Owned userspace mode: orange-init"
+assert_contains "$orange_boot_output" "Root init path: preserve stock /init -> /system/bin/init symlink"
+assert_contains "$orange_boot_output" "System init mutation: replace system/bin/init with hello-init PID 1"
+assert_contains "$orange_boot_output" "Payload contract: hello-init executes /orange-init when payload=orange-init"
+assert_contains "$orange_boot_output" "Payload path: /orange-init"
+assert_contains "$orange_boot_output" "Config path: /shadow-init.cfg"
+assert_contains "$orange_boot_output" "Hold seconds: 19"
+assert_contains "$orange_boot_output" "Reboot target: bootloader"
+assert_contains "$orange_boot_output" "Built hello-init -> $HELLO_INIT_CACHE_OUTPUT"
+assert_contains "$orange_boot_output" "Built orange-init -> $ORANGE_INIT_CACHE_OUTPUT"
 assert_cpio_entry_symlink_target "$OUTPUT_IMAGE" init "/system/bin/init"
 assert_cpio_entry_equals "$OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:c-static\n# shadow-owned-init-config:/shadow-init.cfg\n# shadow-owned-init-mounts:dev=true,proc=true,sys=true\necho hello-init\n'
-assert_cpio_entry_equals "$OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_hello_init.sh\npayload=hello\nhold_seconds=17\nreboot_target=bootloader\n'
+assert_cpio_entry_equals "$OUTPUT_IMAGE" orange-init $'#!/system/bin/sh\n# shadow-owned-init-role:orange-init\n# shadow-owned-init-impl:drm-rect-device\n# shadow-owned-init-path:/orange-init\necho orange-init\n'
+assert_cpio_entry_equals "$OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_orange_init.sh\npayload=orange-init\nhold_seconds=19\nreboot_target=bootloader\n'
 assert_cpio_entry_missing "$OUTPUT_IMAGE" system/bin/init.stock
 
-minimal_hello_boot_output="$(
+second_orange_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
-    "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
+    PIXEL_ORANGE_INIT_DEFAULT_BIN="$ORANGE_INIT_CACHE_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_init.sh" \
       --input "$BOOT_BUILD_INPUT" \
       --key "$AVB_KEY_PATH" \
-      --output "$MINIMAL_OUTPUT_IMAGE" \
-      --payload hello \
-      --hold-secs 0 \
-      --reboot-target restart \
-      --dev-mount tmpfs \
-      --mount-dev false \
-      --mount-proc false \
-      --mount-sys false \
-      --log-kmsg false \
-      --log-pmsg false
-)"
-assert_contains "$minimal_hello_boot_output" "Dev mount style: tmpfs"
-assert_contains "$minimal_hello_boot_output" "Mount /dev: false"
-assert_contains "$minimal_hello_boot_output" "Mount proc: false"
-assert_contains "$minimal_hello_boot_output" "Mount sys: false"
-assert_contains "$minimal_hello_boot_output" "Log kmsg: false"
-assert_contains "$minimal_hello_boot_output" "Log pmsg: false"
-assert_cpio_entry_equals "$MINIMAL_OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_hello_init.sh\npayload=hello\nhold_seconds=0\nreboot_target=restart\ndev_mount=tmpfs\nmount_dev=false\nmount_proc=false\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\n'
-
-second_hello_boot_output="$(
-  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
-    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
-    PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
-    "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
-      --input "$BOOT_BUILD_INPUT" \
-      --key "$AVB_KEY_PATH" \
-      --output "$TMP_DIR/hello-init-boot-second.img" \
-      --payload hello \
-      --hold-secs 11 \
+      --output "$TMP_DIR/orange-init-boot-second.img" \
+      --hold-secs 7 \
       --reboot-target bootloader
 )"
-assert_contains "$second_hello_boot_output" "Reusing cached hello-init -> $HELLO_INIT_CACHE_OUTPUT"
-if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "2" ]]; then
-  echo "pixel_boot_hello_init_smoke: expected exactly two nix builds total after two boot-image builds" >&2
-  exit 1
-fi
-
-chmod 0644 "$HELLO_INIT_CACHE_OUTPUT"
-mode_repair_output="$(
-  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 \
-    "$REPO_ROOT/scripts/pixel/pixel_build_hello_init.sh" \
-      --output "$HELLO_INIT_CACHE_OUTPUT"
-)"
-assert_contains "$mode_repair_output" "Reusing cached hello-init -> $HELLO_INIT_CACHE_OUTPUT"
-if [[ ! -x "$HELLO_INIT_CACHE_OUTPUT" ]]; then
-  echo "pixel_boot_hello_init_smoke: expected cached hello-init reuse to restore execute permissions" >&2
-  exit 1
-fi
-if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "2" ]]; then
-  echo "pixel_boot_hello_init_smoke: expected mode repair reuse to avoid a new nix build" >&2
-  exit 1
-fi
-
-printf '%s\n' 'deadbeef' >"$HELLO_INIT_CACHE_OUTPUT.build-id"
-poisoned_cache_output="$(
-  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 \
-    "$REPO_ROOT/scripts/pixel/pixel_build_hello_init.sh" \
-      --output "$HELLO_INIT_CACHE_OUTPUT"
-)"
-assert_contains "$poisoned_cache_output" "Built hello-init -> $HELLO_INIT_CACHE_OUTPUT"
+assert_contains "$second_orange_boot_output" "Reusing cached hello-init -> $HELLO_INIT_CACHE_OUTPUT"
+assert_contains "$second_orange_boot_output" "Reusing cached orange-init -> $ORANGE_INIT_CACHE_OUTPUT"
 if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "3" ]]; then
-  echo "pixel_boot_hello_init_smoke: expected poisoned cache rebuild to perform one more nix build" >&2
+  echo "pixel_boot_orange_init_smoke: expected exactly three nix builds total after orange boot-image reuse" >&2
+  exit 1
+fi
+
+chmod 0644 "$ORANGE_INIT_CACHE_OUTPUT"
+orange_mode_repair_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 \
+    "$REPO_ROOT/scripts/pixel/pixel_build_orange_init.sh" \
+      --output "$ORANGE_INIT_CACHE_OUTPUT"
+)"
+assert_contains "$orange_mode_repair_output" "Reusing cached orange-init -> $ORANGE_INIT_CACHE_OUTPUT"
+if [[ ! -x "$ORANGE_INIT_CACHE_OUTPUT" ]]; then
+  echo "pixel_boot_orange_init_smoke: expected cached orange-init reuse to restore execute permissions" >&2
+  exit 1
+fi
+if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "3" ]]; then
+  echo "pixel_boot_orange_init_smoke: expected mode repair reuse to avoid a new nix build" >&2
+  exit 1
+fi
+
+printf '%s\n' 'deadbeef' >"$ORANGE_INIT_CACHE_OUTPUT.build-id"
+poisoned_orange_cache_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 \
+    "$REPO_ROOT/scripts/pixel/pixel_build_orange_init.sh" \
+      --output "$ORANGE_INIT_CACHE_OUTPUT"
+)"
+assert_contains "$poisoned_orange_cache_output" "Built orange-init -> $ORANGE_INIT_CACHE_OUTPUT"
+if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "4" ]]; then
+  echo "pixel_boot_orange_init_smoke: expected poisoned orange-init cache rebuild to perform one more nix build" >&2
   exit 1
 fi
 
@@ -506,7 +497,8 @@ nonstock_root_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_NONSTOCK_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
-    "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
+    PIXEL_ORANGE_INIT_DEFAULT_BIN="$ORANGE_INIT_CACHE_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_init.sh" \
       --input "$BOOT_BUILD_INPUT" \
       --key "$AVB_KEY_PATH" \
       --output "$TMP_DIR/should-fail-nonstock-root.img" 2>&1
@@ -514,7 +506,7 @@ nonstock_root_output="$(
 nonstock_root_status="$?"
 set -e
 if [[ "$nonstock_root_status" -eq 0 ]]; then
-  echo "pixel_boot_hello_init_smoke: hello-init builder should reject a non-stock root /init shape" >&2
+  echo "pixel_boot_orange_init_smoke: orange-init builder should reject a non-stock root /init shape" >&2
   exit 1
 fi
 assert_contains "$nonstock_root_output" "expected stock root /init symlink to /system/bin/init"
@@ -524,45 +516,28 @@ bad_binary_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
-    "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
+    PIXEL_ORANGE_INIT_DEFAULT_BIN="$ORANGE_INIT_CACHE_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_init.sh" \
       --input "$BOOT_BUILD_INPUT" \
-      --init "$BAD_HELLO_INIT_BINARY" \
+      --orange-init "$BAD_ORANGE_INIT_BINARY" \
       --key "$AVB_KEY_PATH" \
-      --output "$TMP_DIR/should-fail-bad-hello-init.img" 2>&1
+      --output "$TMP_DIR/should-fail-bad-orange-init.img" 2>&1
 )"
 bad_binary_status="$?"
 set -e
 if [[ "$bad_binary_status" -eq 0 ]]; then
-  echo "pixel_boot_hello_init_smoke: hello-init builder should reject a binary without the role sentinel" >&2
+  echo "pixel_boot_orange_init_smoke: orange-init builder should reject a binary without the role sentinel" >&2
   exit 1
 fi
-assert_contains "$bad_binary_output" "binary is missing the hello-init role sentinel"
-
-set +e
-bad_bool_output="$(
-  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
-    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
-    PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
-    "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
-      --input "$BOOT_BUILD_INPUT" \
-      --key "$AVB_KEY_PATH" \
-      --output "$TMP_DIR/should-fail-bad-bool.img" \
-      --mount-dev maybe 2>&1
-)"
-bad_bool_status="$?"
-set -e
-if [[ "$bad_bool_status" -eq 0 ]]; then
-  echo "pixel_boot_hello_init_smoke: hello-init builder should reject unsupported bool words" >&2
-  exit 1
-fi
-assert_contains "$bad_bool_output" "mount-dev must be true or false: maybe"
+assert_contains "$bad_binary_output" "binary is missing the orange-init role sentinel"
 
 set +e
 long_reboot_target_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
-    "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
+    PIXEL_ORANGE_INIT_DEFAULT_BIN="$ORANGE_INIT_CACHE_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_init.sh" \
       --input "$BOOT_BUILD_INPUT" \
       --key "$AVB_KEY_PATH" \
       --output "$TMP_DIR/should-fail-long-reboot-target.img" \
@@ -571,17 +546,38 @@ long_reboot_target_output="$(
 long_reboot_target_status="$?"
 set -e
 if [[ "$long_reboot_target_status" -eq 0 ]]; then
-  echo "pixel_boot_hello_init_smoke: hello-init builder should reject an oversized reboot target" >&2
+  echo "pixel_boot_orange_init_smoke: orange-init builder should reject an oversized reboot target" >&2
   exit 1
 fi
 assert_contains "$long_reboot_target_output" "reboot-target value exceeds max length 31"
+
+set +e
+bad_hold_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
+    PIXEL_ORANGE_INIT_DEFAULT_BIN="$ORANGE_INIT_CACHE_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_init.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-bad-hold.img" \
+      --hold-secs nope 2>&1
+)"
+bad_hold_status="$?"
+set -e
+if [[ "$bad_hold_status" -eq 0 ]]; then
+  echo "pixel_boot_orange_init_smoke: orange-init builder should reject a non-integer hold value" >&2
+  exit 1
+fi
+assert_contains "$bad_hold_output" "hold seconds must be an integer: nope"
 
 set +e
 nonstock_input_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
-    "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
+    PIXEL_ORANGE_INIT_DEFAULT_BIN="$ORANGE_INIT_CACHE_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_init.sh" \
       --input "$NONSTOCK_INPUT" \
       --key "$AVB_KEY_PATH" \
       --output "$TMP_DIR/should-fail-nonstock-input.img" 2>&1
@@ -589,9 +585,9 @@ nonstock_input_output="$(
 nonstock_input_status="$?"
 set -e
 if [[ "$nonstock_input_status" -eq 0 ]]; then
-  echo "pixel_boot_hello_init_smoke: hello-init builder should reject a non-stock input image" >&2
+  echo "pixel_boot_orange_init_smoke: orange-init builder should reject a non-stock input image" >&2
   exit 1
 fi
 assert_contains "$nonstock_input_output" "input image must match the cached stock boot image exactly"
 
-echo "pixel_boot_hello_init_smoke: ok"
+echo "pixel_boot_orange_init_smoke: ok"

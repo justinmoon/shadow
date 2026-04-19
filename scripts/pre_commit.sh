@@ -13,11 +13,16 @@ scripts/runtime/generate_app_metadata.py --check
 scripts/ci/app_metadata_manifest_smoke.sh
 scripts/ci/cpio_edit_smoke.sh
 scripts/ci/pixel_boot_hello_init_smoke.sh
+scripts/ci/pixel_boot_orange_init_smoke.sh
 # Keep the real cross-build in the fast gate so the mocked smoke cannot hide a broken flake/package seam.
 tmp_hello_init="$(mktemp "${TMPDIR:-/tmp}/shadow-hello-init.XXXXXX")"
 rm -f "$tmp_hello_init"
 scripts/pixel/pixel_build_hello_init.sh --output "$tmp_hello_init"
-rm -f "$tmp_hello_init"
+rm -f "$tmp_hello_init" "$tmp_hello_init.build-id"
+tmp_orange_init="$(mktemp "${TMPDIR:-/tmp}/shadow-orange-init.XXXXXX")"
+rm -f "$tmp_orange_init"
+scripts/pixel/pixel_build_orange_init.sh --output "$tmp_orange_init"
+rm -f "$tmp_orange_init" "$tmp_orange_init.build-id"
 scripts/ci/pixel_boot_tooling_smoke.sh
 scripts/ci/pixel_boot_collect_logs_smoke.sh
 scripts/ci/pixel_boot_safety_smoke.sh

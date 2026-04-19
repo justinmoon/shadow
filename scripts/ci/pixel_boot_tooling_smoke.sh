@@ -12,6 +12,8 @@ PROBE_IMAGE="$TMP_DIR/probe.img"
 STOCK_BOOT_IMAGE="$TMP_DIR/stock-boot.img"
 ONESHOT_OUTPUT="$TMP_DIR/oneshot-output"
 FLASH_RUN_OUTPUT="$TMP_DIR/flash-run-output"
+ONESHOT_ADB_RETURN_OUTPUT="$TMP_DIR/oneshot-adb-return-output"
+ONESHOT_ADB_RETURN_NOWAIT_OUTPUT="$TMP_DIR/oneshot-adb-return-nowait-output"
 ONESHOT_FASTBOOT_RETURN_OUTPUT="$TMP_DIR/oneshot-fastboot-return-output"
 ONESHOT_FASTBOOT_RETURN_FAIL_OUTPUT="$TMP_DIR/oneshot-fastboot-return-fail-output"
 FLASH_RUN_FASTBOOT_RETURN_OUTPUT="$TMP_DIR/flash-run-fastboot-return-output"
@@ -429,18 +431,22 @@ assert_contains() {
 }
 
 assert_json_field() {
-  local json_path key expected
+  local json_path key_path expected
   json_path="$1"
-  key="$2"
+  key_path="$2"
   expected="$3"
 
-  python3 - "$json_path" "$key" "$expected" <<'PY'
+  python3 - "$json_path" "$key_path" "$expected" <<'PY'
 import json
 import sys
 
-json_path, key, expected_raw = sys.argv[1:4]
+json_path, key_path, expected_raw = sys.argv[1:4]
 with open(json_path, "r", encoding="utf-8") as fh:
     payload = json.load(fh)
+
+actual = payload
+for part in key_path.split("/"):
+    actual = actual[part]
 
 if expected_raw == "true":
     expected = True
@@ -452,10 +458,9 @@ else:
     except ValueError:
         expected = expected_raw
 
-actual = payload.get(key)
 if actual != expected:
     raise SystemExit(
-        f"unexpected json field {key!r}: actual={actual!r} expected={expected!r}"
+        f"unexpected json field {key_path!r}: actual={actual!r} expected={expected!r}"
     )
 PY
 }
@@ -466,6 +471,7 @@ install_fastboot_cycle_mocks() {
 set -euo pipefail
 
 state_dir="${MOCK_DEVICE_STATE_DIR:?}"
+trace_mode="${MOCK_TRACE_MODE:-clean}"
 serial="${PIXEL_SERIAL:-TESTSERIAL}"
 if [[ "${1:-}" == "-s" ]]; then
   serial="$2"
@@ -493,6 +499,65 @@ slot_suffix() {
   printf '_%s\n' "$(<"$state_dir/active_slot")"
 }
 
+android_boot_completed() {
+  if [[ -f "$state_dir/transport" ]] && [[ "$(<"$state_dir/transport")" == "adb" ]]; then
+    printf '%s\n' "${MOCK_SYS_BOOT_COMPLETED:-1}"
+  else
+    printf '0\n'
+  fi
+}
+
+prop_value() {
+  case "$1" in
+    ro.boot.slot_suffix)
+      slot_suffix
+      ;;
+    ro.build.fingerprint)
+      printf '%s\n' "${MOCK_BUILD_FINGERPRINT:-google/sunfish/sunfish:13/TQ3A.230805.001.S2/12655424:user/release-keys}"
+      ;;
+    sys.boot_completed|dev.bootcomplete)
+      android_boot_completed
+      ;;
+    ro.boot.shadow_probe)
+      printf '%s\n' "${MOCK_SHADOW_PROBE_PROP:-}"
+      ;;
+    ro.boot.bootreason)
+      printf '%s\n' "${MOCK_RO_BOOT_BOOTREASON:-kernel_panic}"
+      ;;
+    sys.boot.reason)
+      printf '%s\n' "${MOCK_SYS_BOOT_REASON:-kernel_panic}"
+      ;;
+    sys.boot.reason.last)
+      printf '%s\n' "${MOCK_SYS_BOOT_REASON_LAST:-}"
+      ;;
+    persist.sys.boot.reason.history)
+      printf '%s\n' "${MOCK_PERSIST_SYS_BOOT_REASON_HISTORY:-}"
+      ;;
+    ro.boot.bootreason_history)
+      printf '%s\n' "${MOCK_RO_BOOT_BOOTREASON_HISTORY:-}"
+      ;;
+    ro.boot.bootreason_last)
+      printf '%s\n' "${MOCK_RO_BOOT_BOOTREASON_LAST:-}"
+      ;;
+    *)
+      printf '\n'
+      ;;
+  esac
+}
+
+print_bootreason_props() {
+  local key
+  for key in \
+    ro.boot.bootreason \
+    sys.boot.reason \
+    sys.boot.reason.last \
+    persist.sys.boot.reason.history \
+    ro.boot.bootreason_history \
+    ro.boot.bootreason_last; do
+    printf '%s=%s\n' "$key" "$(prop_value "$key" | tr -d '\r\n')"
+  done
+}
+
 case "${1:-}" in
   devices)
     advance_pending_transport
@@ -511,32 +576,69 @@ case "${1:-}" in
     exit 1
     ;;
   shell)
-    if [[ "${2:-}" == "getprop" ]]; then
-      case "${3:-}" in
-        ro.boot.slot_suffix)
-          slot_suffix
-          ;;
-        ro.build.fingerprint)
-          printf '%s\n' "${MOCK_BUILD_FINGERPRINT:-google/sunfish/sunfish:13/TQ3A.230805.001.S2/12655424:user/release-keys}"
-          ;;
-        sys.boot_completed)
-          if [[ -f "$state_dir/transport" ]] && [[ "$(<"$state_dir/transport")" == "adb" ]]; then
-            printf '1\n'
-          else
-            printf '0\n'
-          fi
-          ;;
-        ro.boot.shadow_probe)
-          printf 'mock-probe\n'
-          ;;
-        *)
-          printf '\n'
-          ;;
-      esac
-      exit 0
-    fi
-    echo "mock adb: unsupported shell args: $*" >&2
-    exit 1
+    shift
+    cmd="$*"
+    case "$cmd" in
+      "cat /proc/sys/kernel/random/boot_id 2>/dev/null")
+        printf '%s\n' "${MOCK_BOOT_ID:-11111111-2222-3333-4444-555555555555}"
+        ;;
+      "getprop")
+        printf '[ro.boot.slot_suffix]: [%s]\n' "$(slot_suffix | tr -d '\r\n')"
+        printf '[ro.boot.bootreason]: [%s]\n' "$(prop_value ro.boot.bootreason | tr -d '\r\n')"
+        printf '[sys.boot.reason]: [%s]\n' "$(prop_value sys.boot.reason | tr -d '\r\n')"
+        if [[ -n "${MOCK_SHADOW_PROBE_PROP:-}" ]]; then
+          printf '[ro.boot.shadow_probe]: [%s]\n' "$(prop_value ro.boot.shadow_probe | tr -d '\r\n')"
+        fi
+        if [[ "$trace_mode" == "matched" ]]; then
+          printf '[shadow.boot.marker]: [shadow-hello-init]\n'
+        fi
+        ;;
+      "getprop "*)
+        prop_value "${cmd#getprop }"
+        ;;
+      "logcat -L -d -v threadtime")
+        if [[ "$trace_mode" == "matched" ]]; then
+          printf '04-19 10:00:00.000 root root I shadow-hello-init: previous boot breadcrumb\n'
+        else
+          printf '04-19 10:00:00.000 root root I bootstat: cold boot\n'
+        fi
+        ;;
+      "dumpsys dropbox --print SYSTEM_BOOT")
+        if [[ "$trace_mode" == "matched" ]]; then
+          printf 'SYSTEM_BOOT\n[shadow-drm] restored previous boot trace\n'
+        else
+          printf 'SYSTEM_BOOT\nBoot completed normally\n'
+        fi
+        ;;
+      "cat /dev/pmsg0")
+        if [[ "$trace_mode" == "matched" ]]; then
+          printf 'shadow-owned-init-role:hello-init\nshadow-owned-init-impl:c-static\n'
+        else
+          printf 'audit: pmsg readable but empty of shadow tags\n'
+        fi
+        ;;
+      *"ro.boot.bootreason"*)
+        print_bootreason_props
+        ;;
+      "logcat -d -v threadtime")
+        if [[ "$trace_mode" == "matched" ]]; then
+          printf '04-19 10:05:00.000 root root I shadow-drm: current boot kernel handoff summary\n'
+        else
+          printf '04-19 10:05:00.000 root root I ActivityManager: idle\n'
+        fi
+        ;;
+      "logcat -b kernel -d -v threadtime")
+        if [[ "$trace_mode" == "matched" ]]; then
+          printf '<6>[shadow-drm] current kernel snapshot\n'
+        else
+          printf '<6>[kernel] boot complete\n'
+        fi
+        ;;
+      *)
+        echo "mock adb: unsupported shell args: $cmd" >&2
+        exit 1
+        ;;
+    esac
     ;;
   *)
     echo "mock adb: unsupported args: $*" >&2
@@ -642,16 +744,34 @@ case "${1:-}" in
     ;;
   boot)
     image_path="${2:-}"
+    oneshot_return_mode="${MOCK_FASTBOOT_BOOT_RETURN_MODE:-}"
     if [[ "$image_path" != "$probe_image" ]]; then
       echo "mock fastboot: expected probe image for fastboot boot: $image_path" >&2
       exit 1
     fi
-    if [[ "${MOCK_FASTBOOT_RETURN_MODE:-return}" == "never" ]]; then
-      printf 'none\n' >"$state_dir/transport"
-      rm -f "$state_dir/pending_transport" "$state_dir/pending_polls"
-    else
-      set_pending_transport fastboot "${MOCK_FASTBOOT_RETURN_POLLS:-2}"
+    if [[ -z "$oneshot_return_mode" ]]; then
+      if [[ "${MOCK_FASTBOOT_RETURN_MODE:-return}" == "never" ]]; then
+        oneshot_return_mode=never
+      else
+        oneshot_return_mode=fastboot
+      fi
     fi
+    case "$oneshot_return_mode" in
+      fastboot)
+        set_pending_transport fastboot "${MOCK_FASTBOOT_RETURN_POLLS:-2}"
+        ;;
+      adb)
+        set_pending_transport adb "${MOCK_ADB_RETURN_POLLS:-1}"
+        ;;
+      never)
+        printf 'none\n' >"$state_dir/transport"
+        rm -f "$state_dir/pending_transport" "$state_dir/pending_polls"
+        ;;
+      *)
+        echo "mock fastboot: unsupported oneshot return mode: $oneshot_return_mode" >&2
+        exit 1
+        ;;
+    esac
     ;;
   *)
     echo "mock fastboot: unsupported args: $*" >&2
@@ -848,6 +968,32 @@ if [[ -e "$ONESHOT_OUTPUT" ]]; then
   exit 1
 fi
 
+oneshot_adb_return_dry_run_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 PIXEL_SERIAL=TESTSERIAL \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+      --dry-run \
+      --image "$PROBE_IMAGE" \
+      --output "$ONESHOT_ADB_RETURN_OUTPUT" \
+      --adb-timeout 45 \
+      --boot-timeout 60 \
+      --skip-collect \
+      --recover-traces-after
+)"
+
+assert_contains "$oneshot_adb_return_dry_run_output" "pixel_boot_oneshot: dry-run"
+assert_contains "$oneshot_adb_return_dry_run_output" "skip_collect=true"
+assert_contains "$oneshot_adb_return_dry_run_output" "recover_traces_after=true"
+assert_contains "$oneshot_adb_return_dry_run_output" "recover_traces_output_dir=$ONESHOT_ADB_RETURN_OUTPUT/recover-traces"
+if grep -Fq 'collect_output_dir=' <<<"$oneshot_adb_return_dry_run_output"; then
+  echo "pixel_boot_tooling_smoke: skip-collect dry-run should not advertise a collect output dir" >&2
+  exit 1
+fi
+
+if [[ -e "$ONESHOT_ADB_RETURN_OUTPUT" ]]; then
+  echo "pixel_boot_tooling_smoke: skip-collect dry-run should not create the output dir" >&2
+  exit 1
+fi
+
 flash_run_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 PIXEL_SERIAL=TESTSERIAL \
     "$REPO_ROOT/scripts/pixel/pixel_boot_flash_run.sh" \
@@ -916,6 +1062,85 @@ assert_contains "$flash_run_fastboot_return_dry_run_output" "return_timeout_secs
 assert_contains "$flash_run_fastboot_return_dry_run_output" "recover_after=true"
 
 install_fastboot_cycle_mocks
+
+reset_fastboot_cycle_state
+printf 'b\n' >"$MOCK_DEVICE_STATE_DIR/active_slot"
+oneshot_adb_return_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    MOCK_DEVICE_STATE_DIR="$MOCK_DEVICE_STATE_DIR" \
+    MOCK_PROBE_IMAGE_PATH="$PROBE_IMAGE" \
+    MOCK_STOCK_IMAGE_PATH="$STOCK_BOOT_IMAGE" \
+    MOCK_FASTBOOT_BOOT_RETURN_MODE=adb \
+    MOCK_ADB_RETURN_POLLS=2 \
+    MOCK_RO_BOOT_BOOTREASON=kernel_panic \
+    MOCK_SYS_BOOT_REASON=kernel_panic \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+      --image "$PROBE_IMAGE" \
+      --output "$ONESHOT_ADB_RETURN_OUTPUT" \
+      --skip-collect \
+      --recover-traces-after
+)"
+
+assert_contains "$oneshot_adb_return_output" "Skipped helper-dir collection for one-shot boot run"
+assert_contains "$oneshot_adb_return_output" "Captured Android-side recovery bundle: $ONESHOT_ADB_RETURN_OUTPUT/recover-traces"
+assert_contains "$oneshot_adb_return_output" "Recovery bundle matched shadow tags: false"
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" ok true
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" success_signal adb
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" skip_collect true
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" collect_attempted false
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" collect_succeeded false
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_after true
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_attempted true
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_succeeded true
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_matched_any_shadow_tags false
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" boot_completed true
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" slot_after b
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" bootreason_props/ro.boot.bootreason kernel_panic
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" bootreason_props/sys.boot.reason kernel_panic
+test -f "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json"
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" matched_any_shadow_tags false
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" bootreason_props/ro.boot.bootreason kernel_panic
+if [[ -e "$ONESHOT_ADB_RETURN_OUTPUT/collect" ]]; then
+  echo "pixel_boot_tooling_smoke: skip-collect adb-return run should not create the helper collect dir" >&2
+  exit 1
+fi
+
+reset_fastboot_cycle_state
+oneshot_adb_return_nowait_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    MOCK_DEVICE_STATE_DIR="$MOCK_DEVICE_STATE_DIR" \
+    MOCK_PROBE_IMAGE_PATH="$PROBE_IMAGE" \
+    MOCK_STOCK_IMAGE_PATH="$STOCK_BOOT_IMAGE" \
+    MOCK_FASTBOOT_BOOT_RETURN_MODE=adb \
+    MOCK_ADB_RETURN_POLLS=2 \
+    MOCK_SYS_BOOT_COMPLETED=0 \
+    MOCK_RO_BOOT_BOOTREASON=kernel_panic \
+    MOCK_SYS_BOOT_REASON=kernel_panic \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+      --image "$PROBE_IMAGE" \
+      --output "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT" \
+      --skip-collect \
+      --recover-traces-after \
+      --no-wait-boot-completed
+)"
+
+assert_contains "$oneshot_adb_return_nowait_output" "Captured Android-side recovery bundle: $ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/recover-traces"
+assert_contains "$oneshot_adb_return_nowait_output" "Recovery bundle matched shadow tags: false"
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" ok true
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" wait_boot_completed false
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" boot_completed false
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_succeeded true
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_matched_any_shadow_tags false
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/recover-traces/status.json" wait_boot_completed false
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/recover-traces/status.json" matched_any_shadow_tags false
 
 reset_fastboot_cycle_state
 oneshot_fastboot_return_output="$(
@@ -1276,5 +1501,7 @@ assert_cpio_entry_missing "$RC_PROBE_OUTPUT_IMAGE" init.stock
 assert_cpio_entry_startswith "$RC_PROBE_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n'
 assert_cpio_entry_equals "$RC_PROBE_OUTPUT_IMAGE" init.shadow.rc $'on post-fs-data\n    setprop shadow.boot.rc_probe ready\n'
 assert_cpio_entry_missing "$RC_PROBE_OUTPUT_IMAGE" shadow-boot-helper
+
+"$REPO_ROOT/scripts/ci/pixel_boot_recover_traces_smoke.sh"
 
 echo "pixel_boot_tooling_smoke: ok"

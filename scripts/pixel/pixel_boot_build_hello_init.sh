@@ -15,6 +15,12 @@ OUTPUT_IMAGE="${PIXEL_BOOT_HELLO_INIT_IMAGE:-}"
 PAYLOAD="${PIXEL_HELLO_INIT_PAYLOAD:-hello}"
 HOLD_SECS="${PIXEL_HELLO_INIT_HOLD_SECS:-30}"
 REBOOT_TARGET="${PIXEL_HELLO_INIT_REBOOT_TARGET:-bootloader}"
+DEV_MOUNT="${PIXEL_HELLO_INIT_DEV_MOUNT:-devtmpfs}"
+MOUNT_DEV="${PIXEL_HELLO_INIT_MOUNT_DEV:-true}"
+MOUNT_PROC="${PIXEL_HELLO_INIT_MOUNT_PROC:-true}"
+MOUNT_SYS="${PIXEL_HELLO_INIT_MOUNT_SYS:-true}"
+LOG_KMSG="${PIXEL_HELLO_INIT_LOG_KMSG:-true}"
+LOG_PMSG="${PIXEL_HELLO_INIT_LOG_PMSG:-true}"
 KEEP_WORK_DIR=0
 WORK_DIR=""
 CONFIG_ENTRY="shadow-init.cfg"
@@ -25,6 +31,12 @@ Usage: scripts/pixel/pixel_boot_build_hello_init.sh [--input PATH] [--init PATH]
                                                     [--key PATH] [--output PATH]
                                                     [--payload NAME] [--hold-secs N]
                                                     [--reboot-target TARGET]
+                                                    [--dev-mount devtmpfs|tmpfs]
+                                                    [--mount-dev true|false]
+                                                    [--mount-proc true|false]
+                                                    [--mount-sys true|false]
+                                                    [--log-kmsg true|false]
+                                                    [--log-pmsg true|false]
                                                     [--keep-work-dir]
 
 Build a private stock-kernel sunfish boot.img whose real first-stage userspace is our
@@ -34,6 +46,25 @@ EOF
 
 default_output_image() {
   printf '%s/shadow-boot-hello-init.img\n' "$(pixel_boot_dir)"
+}
+
+default_hello_init_binary() {
+  printf '%s\n' "${PIXEL_HELLO_INIT_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init}"
+}
+
+assert_input_matches_stock_boot() {
+  local stock_image
+  stock_image="$(pixel_resolve_stock_boot_img)"
+
+  if ! cmp -s "$INPUT_IMAGE" "$stock_image"; then
+    cat <<EOF >&2
+pixel_boot_build_hello_init: input image must match the cached stock boot image exactly
+
+Input image: $INPUT_IMAGE
+Stock image: $stock_image
+EOF
+    exit 1
+  fi
 }
 
 assert_stock_root_init_shape() {
@@ -141,6 +172,35 @@ assert_safe_word() {
   fi
 }
 
+assert_bool_word() {
+  local label value
+  label="${1:?assert_bool_word requires a label}"
+  value="${2:?assert_bool_word requires a value}"
+
+  case "$value" in
+    true|false)
+      ;;
+    *)
+      echo "pixel_boot_build_hello_init: $label must be true or false: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
+assert_dev_mount_word() {
+  local value
+  value="${1:?assert_dev_mount_word requires a value}"
+
+  case "$value" in
+    devtmpfs|tmpfs)
+      ;;
+    *)
+      echo "pixel_boot_build_hello_init: dev-mount must be devtmpfs or tmpfs: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
 render_config() {
   local output_path
   output_path="${1:?render_config requires an output path}"
@@ -151,6 +211,26 @@ payload=$PAYLOAD
 hold_seconds=$HOLD_SECS
 reboot_target=$REBOOT_TARGET
 EOF
+
+  if [[ "$DEV_MOUNT" != "devtmpfs" ]]; then
+    printf 'dev_mount=%s\n' "$DEV_MOUNT" >>"$output_path"
+  fi
+
+  if [[ "$MOUNT_DEV" != "true" ]]; then
+    printf 'mount_dev=%s\n' "$MOUNT_DEV" >>"$output_path"
+  fi
+  if [[ "$MOUNT_PROC" != "true" ]]; then
+    printf 'mount_proc=%s\n' "$MOUNT_PROC" >>"$output_path"
+  fi
+  if [[ "$MOUNT_SYS" != "true" ]]; then
+    printf 'mount_sys=%s\n' "$MOUNT_SYS" >>"$output_path"
+  fi
+  if [[ "$LOG_KMSG" != "true" ]]; then
+    printf 'log_kmsg=%s\n' "$LOG_KMSG" >>"$output_path"
+  fi
+  if [[ "$LOG_PMSG" != "true" ]]; then
+    printf 'log_pmsg=%s\n' "$LOG_PMSG" >>"$output_path"
+  fi
 }
 
 cleanup() {
@@ -194,6 +274,30 @@ while [[ $# -gt 0 ]]; do
       REBOOT_TARGET="${2:?missing value for --reboot-target}"
       shift 2
       ;;
+    --dev-mount)
+      DEV_MOUNT="${2:?missing value for --dev-mount}"
+      shift 2
+      ;;
+    --mount-dev)
+      MOUNT_DEV="${2:?missing value for --mount-dev}"
+      shift 2
+      ;;
+    --mount-proc)
+      MOUNT_PROC="${2:?missing value for --mount-proc}"
+      shift 2
+      ;;
+    --mount-sys)
+      MOUNT_SYS="${2:?missing value for --mount-sys}"
+      shift 2
+      ;;
+    --log-kmsg)
+      LOG_KMSG="${2:?missing value for --log-kmsg}"
+      shift 2
+      ;;
+    --log-pmsg)
+      LOG_PMSG="${2:?missing value for --log-pmsg}"
+      shift 2
+      ;;
     --keep-work-dir)
       KEEP_WORK_DIR=1
       shift
@@ -233,6 +337,12 @@ if (( HOLD_SECS > 3600 )); then
 fi
 assert_safe_word payload "$PAYLOAD" 31
 assert_safe_word reboot-target "$REBOOT_TARGET" 31
+assert_dev_mount_word "$DEV_MOUNT"
+assert_bool_word mount-dev "$MOUNT_DEV"
+assert_bool_word mount-proc "$MOUNT_PROC"
+assert_bool_word mount-sys "$MOUNT_SYS"
+assert_bool_word log-kmsg "$LOG_KMSG"
+assert_bool_word log-pmsg "$LOG_PMSG"
 
 if [[ -z "$KEY_PATH" ]]; then
   KEY_PATH="$(ensure_cached_avb_testkey)"
@@ -244,10 +354,11 @@ if [[ -z "$OUTPUT_IMAGE" ]]; then
 fi
 mkdir -p "$(dirname "$OUTPUT_IMAGE")"
 WORK_DIR="$(bootimg_prepare_work_dir shadow-pixel-boot-hello-init)"
+assert_input_matches_stock_boot
 assert_stock_root_init_shape
 
 if [[ -z "$HELLO_INIT_BINARY" ]]; then
-  HELLO_INIT_BINARY="$WORK_DIR/hello-init"
+  HELLO_INIT_BINARY="$(default_hello_init_binary)"
   "$SCRIPT_DIR/pixel/pixel_build_hello_init.sh" --output "$HELLO_INIT_BINARY"
 fi
 
@@ -283,6 +394,12 @@ printf 'Config path: /%s\n' "$CONFIG_ENTRY"
 printf 'Payload: %s\n' "$PAYLOAD"
 printf 'Hold seconds: %s\n' "$HOLD_SECS"
 printf 'Reboot target: %s\n' "$REBOOT_TARGET"
+printf 'Dev mount style: %s\n' "$DEV_MOUNT"
+printf 'Mount /dev: %s\n' "$MOUNT_DEV"
+printf 'Mount proc: %s\n' "$MOUNT_PROC"
+printf 'Mount sys: %s\n' "$MOUNT_SYS"
+printf 'Log kmsg: %s\n' "$LOG_KMSG"
+printf 'Log pmsg: %s\n' "$LOG_PMSG"
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
   printf 'Kept hello-init workdir: %s\n' "$WORK_DIR"
 fi

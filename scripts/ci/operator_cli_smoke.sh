@@ -373,6 +373,27 @@ check_output_case \
     --return-timeout 45
 
 check_output_case \
+  shadowctl_pixel_debug_boot_lab_oneshot_adb_return_private \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --image /tmp/probe.img --output /tmp/boot-out --adb-timeout 45 --boot-timeout 60 --skip-collect --recover-traces-after' "$SCRIPT_DIR/pixel/pixel_boot_oneshot.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL boot-lab-oneshot \
+    --image /tmp/probe.img \
+    --output /tmp/boot-out \
+    --adb-timeout 45 \
+    --boot-timeout 60 \
+    --skip-collect \
+    --recover-traces-after
+
+check_output_case \
+  shadowctl_pixel_debug_boot_lab_recover_traces \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --output /tmp/recover-out' "$SCRIPT_DIR/pixel/pixel_boot_recover_traces.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL boot-lab-recover-traces \
+    --output /tmp/recover-out
+
+check_output_case \
   shadowctl_pixel_ci_run_only_podcast \
   0 \
   "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --run-only podcast' "$SCRIPT_DIR/ci/pixel_ci.sh")" \

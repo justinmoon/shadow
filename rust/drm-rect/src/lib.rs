@@ -1,10 +1,10 @@
 #![warn(clippy::all, clippy::pedantic)]
 
-use anyhow::{Context, Result, anyhow};
-use drm::Device as BasicDevice;
+use anyhow::{anyhow, Context, Result};
 use drm::buffer::DrmFourcc;
 use drm::control::dumbbuffer::DumbBuffer;
-use drm::control::{Device as ControlDevice, connector};
+use drm::control::{connector, Device as ControlDevice};
+use drm::Device as BasicDevice;
 use drm::DriverCapability;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -12,13 +12,25 @@ use std::os::unix::io::{AsFd, BorrowedFd};
 use std::time::Duration;
 
 pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
-    log_line("starting");
+    log_line(&format!(
+        "trace stage=fill-start color=#{:02x}{:02x}{:02x} hold_secs={}",
+        color.0,
+        color.1,
+        color.2,
+        duration.as_secs()
+    ));
 
     let mut card = open_card("/dev/dri/card0")?;
     let master_locked = acquire_master_lock_if_supported(&card)?;
     let res_handles = card
         .resource_handles()
         .context("failed to fetch DRM resource handles")?;
+    log_line(&format!(
+        "trace stage=resource-handles crtcs={} connectors={} encoders={}",
+        res_handles.crtcs().len(),
+        res_handles.connectors().len(),
+        res_handles.encoders().len()
+    ));
 
     let connector_info = find_connected_connector(&card, &res_handles)?;
     let connector_handle = connector_info.handle();
@@ -41,12 +53,14 @@ pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
     let encoder = card
         .get_encoder(encoder_handle)
         .with_context(|| format!("failed to query encoder {encoder_handle:?}"))?;
-    let crtc_handle =
-        select_crtc_handle(&encoder, &res_handles, connector_handle, encoder_handle)?;
+    let crtc_handle = select_crtc_handle(&encoder, &res_handles, connector_handle, encoder_handle)?;
 
     let (width, height) = mode.size();
     let width = u32::from(width);
     let height = u32::from(height);
+    log_line(&format!(
+        "trace stage=dumb-buffer-create width={width} height={height}"
+    ));
     let mut dumb = card
         .create_dumb_buffer((width, height), DrmFourcc::Xrgb8888, 32)
         .context("failed to allocate dumb buffer")?;
@@ -65,12 +79,16 @@ pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
         Some(mode),
     )
     .context("failed to set CRTC configuration")?;
+    log_line("trace stage=crtc-set success=true");
     log_line("success");
 
     std::thread::sleep(duration);
+    log_line("trace stage=hold-complete");
 
     if let Err(error) = card.set_crtc(crtc_handle, None, (0, 0), &[], None) {
         log_line(&format!("failed to clear crtc: {error}"));
+    } else {
+        log_line("trace stage=crtc-clear success=true");
     }
 
     if master_locked {
@@ -151,13 +169,18 @@ pub fn probe_node(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn log_line(message: &str) {
+pub fn log_line(message: &str) {
     let line = format!("[shadow-drm] {message}\n");
     let _ = std::io::stdout().write_all(line.as_bytes());
     let _ = std::io::stderr().write_all(line.as_bytes());
 
-    if let Ok(mut file) = OpenOptions::new().write(true).open("/dev/kmsg") {
-        let _ = file.write_all(format!("<6>[shadow-drm] {message}\n").as_bytes());
+    write_device_log("/dev/kmsg", &format!("<6>[shadow-drm] {message}\n"));
+    write_device_log("/dev/pmsg0", &line);
+}
+
+fn write_device_log(path: &str, message: &str) {
+    if let Ok(mut file) = OpenOptions::new().write(true).open(path) {
+        let _ = file.write_all(message.as_bytes());
         let _ = file.flush();
     }
 }
