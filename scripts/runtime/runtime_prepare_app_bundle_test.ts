@@ -143,6 +143,74 @@ Deno.test("shadow sdk lifecycle state honors runner-seeded initial state", async
   }
 });
 
+Deno.test("shadow sdk nostr account helpers delegate to the runtime host", async () => {
+  const cwd = repoRoot();
+  const runtimeGlobal = globalThis as typeof globalThis & {
+    Shadow?: Record<string, unknown>;
+  };
+  const moduleUrl = `${
+    pathToFileURL(path.resolve(
+      cwd,
+      "runtime/app-runtime/shadow_sdk_services.js",
+    )).href
+  }?test=${crypto.randomUUID()}`;
+
+  const importedCalls: string[] = [];
+  runtimeGlobal.Shadow = {
+    os: {
+      nostr: {
+        currentAccount: async () => ({
+          npub: "npub1testcurrent",
+          pubkey: "pubkey-current",
+          source: "generated",
+        }),
+        generateAccount: async () => ({
+          npub: "npub1testgenerated",
+          pubkey: "pubkey-generated",
+          source: "generated",
+        }),
+        importAccountNsec: async (nsec: string) => {
+          importedCalls.push(nsec);
+          return {
+            npub: "npub1testimported",
+            pubkey: "pubkey-imported",
+            source: "imported",
+          };
+        },
+      },
+    },
+  };
+
+  try {
+    const services = await import(moduleUrl);
+    const current = await services.currentNostrAccount();
+    const generated = await services.generateNostrAccount();
+    const imported = await services.importNostrAccountNsec("nsec1test");
+
+    assert(current.npub === "npub1testcurrent", "current account should round-trip");
+    assert(
+      generated.npub === "npub1testgenerated",
+      "generated account should round-trip",
+    );
+    assert(
+      imported.npub === "npub1testimported",
+      "imported account should round-trip",
+    );
+    assert(
+      JSON.stringify(importedCalls) === JSON.stringify(["nsec1test"]),
+      "importAccountNsec should forward the provided nsec",
+    );
+
+    const nostrCurrent = await services.nostr.currentAccount();
+    assert(
+      nostrCurrent.npub === "npub1testcurrent",
+      "nostr.currentAccount should be exposed on the grouped api",
+    );
+  } finally {
+    delete runtimeGlobal.Shadow;
+  }
+});
+
 Deno.test("shadow sdk window metrics honors runner-seeded initial metrics", async () => {
   const cwd = repoRoot();
   const windowMetricsKey = Symbol.for("shadow.runtime.window_metrics");

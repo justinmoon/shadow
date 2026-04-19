@@ -6,6 +6,18 @@ export function listKind1(query = {}) {
   return getNostrApi().listKind1(query);
 }
 
+export function currentNostrAccount() {
+  return getNostrApi().currentAccount();
+}
+
+export function generateNostrAccount() {
+  return getNostrApi().generateAccount();
+}
+
+export function importNostrAccountNsec(nsec) {
+  return getNostrApi().importAccountNsec(String(nsec));
+}
+
 export function queryNostr(query = {}) {
   return getNostrApi().query(normalizeNostrQuery(query));
 }
@@ -162,9 +174,12 @@ export function payCashuInvoice(request = {}) {
 }
 
 export const nostr = Object.freeze({
+  currentAccount: currentNostrAccount,
   count: countNostr,
+  generateAccount: generateNostrAccount,
   getEvent: getNostrEvent,
   getReplaceable: getNostrReplaceable,
+  importAccountNsec: importNostrAccountNsec,
   listKind1,
   publishEphemeralKind1,
   publishKind1,

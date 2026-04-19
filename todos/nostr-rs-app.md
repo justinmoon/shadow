@@ -40,7 +40,7 @@ Do not hard-code event kinds into top-level SDK function names. The core API sho
 - [x] Replace `listKind1` / `publishKind1` as the conceptual center with `query`, `count`, `get_event`, `get_replaceable`, `subscribe`, `publish`, and `sync`.
 - [x] Freeze the first seam semantics: `query` / `count` / `get_event` / `get_replaceable` are local cache reads; `sync` is explicit relay import; `publish` is reserved for signed relay publication, not local fake insertion.
 - [ ] Decide whether to back the shared cache with `nostr-sqlite` directly or keep a thinner Shadow-owned storage layer over SQLite first.
-- [ ] Sketch the first Rust and TypeScript SDK calls and the event/filter types they share.
+- [~] Sketch the first Rust and TypeScript SDK calls and the event/filter types they share.
 - [ ] Define the first signer prompt and permission states: deny, allow once, always allow.
 - [x] Choose the read-first app slice order: home timeline -> thread -> profile.
 - [x] Land the first generic read-side SDK slice with a single filter object first, then keep the old kind1 helpers only as compatibility wrappers until their callers migrate.
@@ -72,7 +72,8 @@ Do not hard-code event kinds into top-level SDK function names. The core API sho
   - the shared Nostr daemon persists account state next to the shared Nostr sqlite/db state
   - Rust apps can now auto-start that daemon through `SHADOW_SYSTEM_BINARY_PATH` when the socket is configured but the service is not running yet
   - the Rust timeline app now gates first run on account setup and exposes the active `npub` in-app
-  - TypeScript runtime host ops now expose the same host-side account surface, but `@shadow/sdk` bindings still need to be added
+  - TypeScript runtime host ops and `@shadow/sdk` now expose the same account entrypoints: `currentNostrAccount`, `generateNostrAccount`, `importNostrAccountNsec`, plus the grouped `nostr.currentAccount()` / `generateAccount()` / `importAccountNsec()` forms
+  - shared protocol/event/filter typing between Rust and TypeScript is still incomplete; this slice only closes the account/read API gap
 - The signer should be OS-owned, Amber-style. Apps request publication or signing work from the OS; the OS decides whether to prompt, deny, sign once, or sign automatically because the user already granted standing approval.
 - The first public SDK should likely expose:
   - protocol types like `Event`, `EventId`, `Filter`, `Kind`, `PublicKey`, `RelayUrl`, `Timestamp`

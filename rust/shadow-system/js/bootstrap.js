@@ -73,6 +73,15 @@ function installShadowSystemOs() {
     },
   };
   const nostr = {
+    currentAccount() {
+      return core.ops.op_runtime_nostr_current_account();
+    },
+    generateAccount() {
+      return core.ops.op_runtime_nostr_generate_account();
+    },
+    importAccountNsec(nsec) {
+      return core.ops.op_runtime_nostr_import_account_nsec(String(nsec));
+    },
     query(query = {}) {
       return core.ops.op_runtime_nostr_query(normalizeQuery(query));
     },
