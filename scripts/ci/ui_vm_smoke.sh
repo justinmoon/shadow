@@ -23,10 +23,9 @@ UI_VM_READY_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_READY_TIMEOUT:-1200}"
 UI_VM_APP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_APP_TIMEOUT:-90}"
 UI_VM_CONTROL_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_CONTROL_TIMEOUT:-20}"
 UI_VM_STOP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_STOP_TIMEOUT:-20}"
-# shadowctl taps use compositor-window coordinates, not shell-local coordinates.
-# In the current 660x1240 nested VM window, the 540x1170 shell is centered at 60,35.
-VM_COUNTER_TILE_TAP_X=164
-VM_COUNTER_TILE_TAP_Y=652
+# Counter is the first launcher tile in the current shell-local home grid.
+COUNTER_TILE_LOCAL_CENTER_X=104
+COUNTER_TILE_LOCAL_CENTER_Y=617
 ui_vm_run_pid=""
 prepared_inputs_path="${SHADOW_UI_VM_PREPARED_INPUTS:-}"
 vm_smoke_succeeded=0
@@ -211,6 +210,36 @@ wait_for_log_marker() {
 
     sleep 1
   done
+}
+
+counter_launcher_tap() {
+  local shell_state
+  local tap_coords
+
+  shell_state="$(run_shadowctl state -t vm --json)"
+  tap_coords="$(
+    COUNTER_TILE_LOCAL_CENTER_X="$COUNTER_TILE_LOCAL_CENTER_X" \
+      COUNTER_TILE_LOCAL_CENTER_Y="$COUNTER_TILE_LOCAL_CENTER_Y" \
+      python3 -c '
+import json
+import os
+import sys
+
+state = json.load(sys.stdin)
+shell_x = state.get("shell_x")
+shell_y = state.get("shell_y")
+if shell_x is None or shell_y is None:
+    raise SystemExit("vm-smoke: missing shell geometry in shadowctl state -t vm --json")
+counter_tile_local_center_x = int(os.environ["COUNTER_TILE_LOCAL_CENTER_X"])
+counter_tile_local_center_y = int(os.environ["COUNTER_TILE_LOCAL_CENTER_Y"])
+print(f"{shell_x + counter_tile_local_center_x} {shell_y + counter_tile_local_center_y}")
+      ' <<<"$shell_state"
+  )"
+
+  local tap_x
+  local tap_y
+  read -r tap_x tap_y <<<"$tap_coords"
+  run_shadowctl tap -t vm "$tap_x" "$tap_y" >/dev/null
 }
 
 dump_failure_context() {
@@ -400,7 +429,7 @@ for app_id in sorted(expected_apps):
 PY
 
 echo "vm-smoke: tap counter launcher tile"
-run_shadowctl tap -t vm "$VM_COUNTER_TILE_TAP_X" "$VM_COUNTER_TILE_TAP_Y" >/dev/null
+counter_launcher_tap
 state_after_counter_open="$(wait_for_open_state counter "counter open")"
 wait_for_log_marker \
   "[shadow-runtime-counter] window_metrics surface=540x1042 safe_area=l0 t0 r0 b0" \
@@ -414,7 +443,7 @@ wait_for_log_marker \
   "counter lifecycle background"
 
 echo "vm-smoke: reopen counter"
-run_shadowctl open counter -t vm >/dev/null
+counter_launcher_tap
 state_after_counter_reopen="$(wait_for_open_state counter "counter reopen")"
 wait_for_log_marker \
   "[shadow-runtime-counter] lifecycle_state=foreground" \

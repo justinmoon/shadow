@@ -630,6 +630,10 @@ def parse_control_state(response: str) -> dict[str, Any]:
         "transport": state.get("transport") or None,
         "control_socket": control_socket,
         "socket": control_socket,
+        "shell_x": int(state["shell_x"]) if "shell_x" in state else None,
+        "shell_y": int(state["shell_y"]) if "shell_y" in state else None,
+        "shell_width": int(state["shell_width"]) if "shell_width" in state else None,
+        "shell_height": int(state["shell_height"]) if "shell_height" in state else None,
     }
 
 
@@ -642,6 +646,12 @@ def print_control_state(state: dict[str, Any]) -> None:
     print(f"transport={state.get('transport') or ''}")
     print(f"control_socket={state.get('control_socket') or ''}")
     print(f"socket={state.get('socket') or ''}")
+    if state.get("shell_x") is not None and state.get("shell_y") is not None:
+        print(f"shell_x={state['shell_x']}")
+        print(f"shell_y={state['shell_y']}")
+    if state.get("shell_width") is not None and state.get("shell_height") is not None:
+        print(f"shell_width={state['shell_width']}")
+        print(f"shell_height={state['shell_height']}")
 
 
 def adb_devices() -> list[dict[str, str]]:
@@ -1706,7 +1716,7 @@ def build_parser() -> argparse.ArgumentParser:
     tap = add_command(
         subparsers,
         "tap",
-        "Dispatch a shell tap at compositor-window coordinates.",
+        "Dispatch a shell tap at target display coordinates.",
         cmd_tap,
         supported_target_kinds=("vm", "pixel"),
         parents=(target_parser,),

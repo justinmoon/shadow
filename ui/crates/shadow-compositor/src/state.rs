@@ -557,10 +557,13 @@ impl ShadowCompositor {
         let mapped = self.mapped_app_ids();
         let launched = self.launched_app_ids();
         let shelved = self.shelved_app_ids();
+        let (shell_x, shell_y) = self.shell_location();
         format!(
-            "focused={focused}\nmapped={mapped}\nlaunched={launched}\nshelved={shelved}\nwindows={}\nsocket={}\n",
+            "focused={focused}\nmapped={mapped}\nlaunched={launched}\nshelved={shelved}\nwindows={}\nsocket={}\nshell_x={shell_x}\nshell_y={shell_y}\nshell_width={}\nshell_height={}\n",
             self.space.elements().count(),
             self.socket_name.to_string_lossy(),
+            WIDTH.round() as i32,
+            HEIGHT.round() as i32,
         )
     }
 
