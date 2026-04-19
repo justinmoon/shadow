@@ -59,6 +59,7 @@ scripts/pixel/pixel_boot_restore.sh	pixel	Private sunfish stock boot image rollb
 scripts/pixel/pixel_boot_unpack.sh	pixel	Private sunfish boot image unpack/inspection helper.
 scripts/pixel/pixel_boot_build_init_symlink_probe.sh	pixel	Private stock-init boot image builder that restores /init as a symlink to init.stock.
 scripts/pixel/pixel_boot_build_system_init_symlink_probe.sh	pixel	Private stock-init boot image builder that preserves /init and restores system/bin/init as a symlink to init.stock.
+scripts/pixel/pixel_boot_build_system_init_wrapper_probe.sh	pixel	Private stock-init boot image builder that preserves /init and restores system/bin/init as an exact-path static wrapper.
 scripts/pixel/pixel_build_init_wrapper.sh	pixel	Private init-wrapper build helper for sunfish boot image patching.
 scripts/pixel/pixel_build_init_wrapper_c.sh	pixel	Private minimal C init-wrapper build helper for sunfish stock-init handoff experiments.
 scripts/pixel/pixel_init_wrapper_handoff.c	data	C source for the private minimal sunfish init-wrapper handoff binary.

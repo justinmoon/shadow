@@ -308,14 +308,22 @@
           SHADOW_INIT_WRAPPER_MODE = mode;
           RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
         };
-      mkInitWrapperCFor = cross:
+      mkInitWrapperCFor = cross: {
+        presentedPath ? "/init",
+        stockInitPath ? "/init.stock",
+        packageSuffix ? "",
+      }:
         let
           wrapperSource = builtins.path {
             path = ./scripts/pixel/pixel_init_wrapper_handoff.c;
             name = "pixel-init-wrapper-handoff.c";
           };
+          wrapperDefines = [
+            ''-DSHADOW_INIT_WRAPPER_PRESENTED_PATH="${presentedPath}"''
+            ''-DSHADOW_INIT_WRAPPER_STOCK_INIT_PATH="${stockInitPath}"''
+          ];
         in cross.stdenv.mkDerivation {
-          pname = "init-wrapper-c";
+          pname = "init-wrapper-c" + lib.optionalString (packageSuffix != "") "-${packageSuffix}";
           version = "0.1.0";
           dontUnpack = true;
           dontConfigure = true;
@@ -324,6 +332,7 @@
           buildPhase = ''
             runHook preBuild
             $CC -static -Os -s -std=c11 -Wall -Wextra -Werror \
+              ${lib.concatMapStringsSep " " lib.escapeShellArg wrapperDefines} \
               ${wrapperSource} \
               -o init-wrapper
             runHook postBuild
@@ -1194,7 +1203,13 @@
           init-wrapper-device-minimal = mkInitWrapperFor pkgs.pkgsCross.aarch64-multiplatform-musl {
             mode = "minimal";
           };
-          init-wrapper-c-device = mkInitWrapperCFor pkgs.pkgsCross.aarch64-multiplatform-musl;
+          init-wrapper-c-device = mkInitWrapperCFor pkgs.pkgsCross.aarch64-multiplatform-musl { };
+          init-wrapper-c-device-system-init =
+            mkInitWrapperCFor pkgs.pkgsCross.aarch64-multiplatform-musl {
+              presentedPath = "/system/bin/init";
+              stockInitPath = "/system/bin/init.stock";
+              packageSuffix = "system-init";
+            };
           shadow-session = mkShadowSession pkgs;
           shadow-session-device = mkShadowSessionFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           default = mkShadowSession pkgs;

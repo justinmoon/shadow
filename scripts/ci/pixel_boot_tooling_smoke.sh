@@ -26,14 +26,19 @@ C_WRAPPER_OUTPUT_IMAGE="$TMP_DIR/wrapper-c-minimal-output.img"
 WRAPPER_BUILD_OUTPUT="$TMP_DIR/built-init-wrapper-standard"
 MINIMAL_BUILD_OUTPUT="$TMP_DIR/built-init-wrapper-minimal"
 C_WRAPPER_BUILD_OUTPUT="$TMP_DIR/built-init-wrapper-c-minimal"
+C_WRAPPER_SYSTEM_BUILD_OUTPUT="$TMP_DIR/built-init-wrapper-c-system-init-minimal"
+BAD_C_WRAPPER_SYSTEM_BUILD_OUTPUT="$TMP_DIR/bad-init-wrapper-c-system-init-minimal"
+WRONG_TARGET_C_WRAPPER_SYSTEM_BUILD_OUTPUT="$TMP_DIR/wrong-target-init-wrapper-c-system-init-minimal"
 STOCK_INIT_OUTPUT_IMAGE="$TMP_DIR/stock-init-output.img"
 INIT_SYMLINK_OUTPUT_IMAGE="$TMP_DIR/init-symlink-output.img"
 SYSTEM_INIT_SYMLINK_OUTPUT_IMAGE="$TMP_DIR/system-init-symlink-output.img"
+SYSTEM_INIT_WRAPPER_OUTPUT_IMAGE="$TMP_DIR/system-init-wrapper-output.img"
 LOG_PROBE_OUTPUT_IMAGE="$TMP_DIR/log-probe-stock-init.img"
 RC_PROBE_OUTPUT_IMAGE="$TMP_DIR/rc-probe-stock-init.img"
 MOCK_STORE_STANDARD="$TMP_DIR/store-standard"
 MOCK_STORE_MINIMAL="$TMP_DIR/store-minimal"
 MOCK_STORE_C="$TMP_DIR/store-c"
+MOCK_STORE_C_SYSTEM="$TMP_DIR/store-c-system"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -46,7 +51,7 @@ printf 'local boot image\n' >"$LOCAL_BOOT"
 printf 'shared boot image\n' >"$SHARED_BOOT"
 printf 'probe image\n' >"$PROBE_IMAGE"
 printf 'boot build input\n' >"$BOOT_BUILD_INPUT"
-mkdir -p "$MOCK_STORE_STANDARD/bin" "$MOCK_STORE_MINIMAL/bin" "$MOCK_STORE_C/bin"
+mkdir -p "$MOCK_STORE_STANDARD/bin" "$MOCK_STORE_MINIMAL/bin" "$MOCK_STORE_C/bin" "$MOCK_STORE_C_SYSTEM/bin"
 
 cat >"$WRAPPER_STANDARD_BIN" <<'EOF'
 #!/system/bin/sh
@@ -62,12 +67,39 @@ cat >"$C_WRAPPER_BUILD_OUTPUT" <<'EOF'
 #!/system/bin/sh
 # shadow-init-wrapper-mode:minimal
 # shadow-init-wrapper-impl:tinyc-direct
+# shadow-init-wrapper-path:/init
+# shadow-init-wrapper-target:/init.stock
 echo wrapper-c-minimal
 EOF
-chmod 0755 "$WRAPPER_STANDARD_BIN" "$WRAPPER_MINIMAL_BIN"
+cat >"$C_WRAPPER_SYSTEM_BUILD_OUTPUT" <<'EOF'
+#!/system/bin/sh
+# shadow-init-wrapper-mode:minimal
+# shadow-init-wrapper-impl:tinyc-direct
+# shadow-init-wrapper-path:/system/bin/init
+# shadow-init-wrapper-target:/system/bin/init.stock
+echo wrapper-c-system-init-minimal
+EOF
+cat >"$BAD_C_WRAPPER_SYSTEM_BUILD_OUTPUT" <<'EOF'
+#!/system/bin/sh
+# shadow-init-wrapper-mode:minimal
+# shadow-init-wrapper-impl:tinyc-direct
+# shadow-init-wrapper-path:/system/bin/init
+# shadow-init-wrapper-target:/system/bin/init.stock
+echo bad-wrapper-c-system-init-minimal
+EOF
+cat >"$WRONG_TARGET_C_WRAPPER_SYSTEM_BUILD_OUTPUT" <<'EOF'
+#!/system/bin/sh
+# shadow-init-wrapper-mode:minimal
+# shadow-init-wrapper-impl:tinyc-direct
+# shadow-init-wrapper-path:/system/bin/init
+# shadow-init-wrapper-target:/init.stock
+echo wrong-target-wrapper-c-system-init-minimal
+EOF
+chmod 0755 "$WRAPPER_STANDARD_BIN" "$WRAPPER_MINIMAL_BIN" "$C_WRAPPER_BUILD_OUTPUT" "$C_WRAPPER_SYSTEM_BUILD_OUTPUT"
 cp "$WRAPPER_STANDARD_BIN" "$MOCK_STORE_STANDARD/bin/init-wrapper"
 cp "$WRAPPER_MINIMAL_BIN" "$MOCK_STORE_MINIMAL/bin/init-wrapper"
 cp "$C_WRAPPER_BUILD_OUTPUT" "$MOCK_STORE_C/bin/init-wrapper"
+cp "$C_WRAPPER_SYSTEM_BUILD_OUTPUT" "$MOCK_STORE_C_SYSTEM/bin/init-wrapper"
 printf 'mock avb key\n' >"$AVB_KEY_PATH"
 printf 'import /init.extra.rc\n' >"$ADDED_RC"
 cat >"$PATCHED_INIT_RC" <<'EOF'
@@ -317,7 +349,14 @@ EOF
 cat >"$MOCK_BIN/file" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$1"
+case "$1" in
+  *bad-init-wrapper-c-system-init-minimal*)
+    printf '%s: POSIX shell script, ASCII text executable\n' "$1"
+    ;;
+  *)
+    printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$1"
+    ;;
+esac
 EOF
 
 cat >"$MOCK_BIN/nix" <<EOF
@@ -330,6 +369,9 @@ if [[ "\$1" != build ]]; then
 fi
 
 case "\$*" in
+  *init-wrapper-c-device-system-init*)
+    printf '%s\n' "$MOCK_STORE_C_SYSTEM"
+    ;;
   *init-wrapper-c-device*)
     printf '%s\n' "$MOCK_STORE_C"
     ;;
@@ -624,8 +666,26 @@ c_wrapper_helper_output="$(
     "$REPO_ROOT/scripts/pixel/pixel_build_init_wrapper_c.sh" --output "$C_WRAPPER_BUILD_OUTPUT"
 )"
 assert_contains "$c_wrapper_helper_output" "Built init-wrapper-c (minimal) -> $C_WRAPPER_BUILD_OUTPUT"
+assert_contains "$c_wrapper_helper_output" "Wrapper entry path: /init"
+assert_contains "$c_wrapper_helper_output" "Wrapper handoff target: /init.stock"
 assert_contains "$(cat "$C_WRAPPER_BUILD_OUTPUT")" "shadow-init-wrapper-mode:minimal"
 assert_contains "$(cat "$C_WRAPPER_BUILD_OUTPUT")" "shadow-init-wrapper-impl:tinyc-direct"
+assert_contains "$(cat "$C_WRAPPER_BUILD_OUTPUT")" "shadow-init-wrapper-path:/init"
+assert_contains "$(cat "$C_WRAPPER_BUILD_OUTPUT")" "shadow-init-wrapper-target:/init.stock"
+
+system_c_wrapper_helper_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 \
+    "$REPO_ROOT/scripts/pixel/pixel_build_init_wrapper_c.sh" \
+      --output "$C_WRAPPER_SYSTEM_BUILD_OUTPUT" \
+      --stock-path /system/bin/init.stock
+)"
+assert_contains "$system_c_wrapper_helper_output" "Built init-wrapper-c (minimal) -> $C_WRAPPER_SYSTEM_BUILD_OUTPUT"
+assert_contains "$system_c_wrapper_helper_output" "Wrapper entry path: /system/bin/init"
+assert_contains "$system_c_wrapper_helper_output" "Wrapper handoff target: /system/bin/init.stock"
+assert_contains "$(cat "$C_WRAPPER_SYSTEM_BUILD_OUTPUT")" "shadow-init-wrapper-mode:minimal"
+assert_contains "$(cat "$C_WRAPPER_SYSTEM_BUILD_OUTPUT")" "shadow-init-wrapper-impl:tinyc-direct"
+assert_contains "$(cat "$C_WRAPPER_SYSTEM_BUILD_OUTPUT")" "shadow-init-wrapper-path:/system/bin/init"
+assert_contains "$(cat "$C_WRAPPER_SYSTEM_BUILD_OUTPUT")" "shadow-init-wrapper-target:/system/bin/init.stock"
 
 minimal_wrapper_build_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -652,7 +712,7 @@ c_wrapper_build_output="$(
 )"
 assert_contains "$c_wrapper_build_output" "Build mode: wrapper"
 assert_contains "$c_wrapper_build_output" "Wrapper mode: minimal"
-assert_cpio_entry_equals "$C_WRAPPER_OUTPUT_IMAGE" init $'#!/system/bin/sh\n# shadow-init-wrapper-mode:minimal\n# shadow-init-wrapper-impl:tinyc-direct\necho wrapper-c-minimal\n'
+assert_cpio_entry_equals "$C_WRAPPER_OUTPUT_IMAGE" init $'#!/system/bin/sh\n# shadow-init-wrapper-mode:minimal\n# shadow-init-wrapper-impl:tinyc-direct\n# shadow-init-wrapper-path:/init\n# shadow-init-wrapper-target:/init.stock\necho wrapper-c-minimal\n'
 assert_cpio_entry_equals "$C_WRAPPER_OUTPUT_IMAGE" init.stock $'stock-init\n'
 
 if env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -716,6 +776,25 @@ assert_cpio_entry_symlink_target "$SYSTEM_INIT_SYMLINK_OUTPUT_IMAGE" init "/syst
 assert_cpio_entry_symlink_target "$SYSTEM_INIT_SYMLINK_OUTPUT_IMAGE" system/bin/init "init.stock"
 assert_cpio_entry_equals "$SYSTEM_INIT_SYMLINK_OUTPUT_IMAGE" system/bin/init.stock $'stock-system-init\n'
 
+system_init_wrapper_build_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_SYSTEM_INIT_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_system_init_wrapper_probe.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$SYSTEM_INIT_WRAPPER_OUTPUT_IMAGE"
+)"
+assert_contains "$system_init_wrapper_build_output" "Build mode: stock-init"
+assert_contains "$system_init_wrapper_build_output" "Extra renamed entries: 1"
+assert_contains "$system_init_wrapper_build_output" "Extra added entries: 1"
+assert_contains "$system_init_wrapper_build_output" "Probe mode: system-init-wrapper"
+assert_contains "$system_init_wrapper_build_output" "Root init path: preserve stock /init -> /system/bin/init symlink"
+assert_contains "$system_init_wrapper_build_output" "System init mutation: rename system/bin/init=system/bin/init.stock and replace system/bin/init with an exact-path wrapper"
+assert_contains "$system_init_wrapper_build_output" "Wrapper entry path: /system/bin/init"
+assert_contains "$system_init_wrapper_build_output" "Wrapper handoff target: /system/bin/init.stock"
+assert_cpio_entry_symlink_target "$SYSTEM_INIT_WRAPPER_OUTPUT_IMAGE" init "/system/bin/init"
+assert_cpio_entry_equals "$SYSTEM_INIT_WRAPPER_OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-init-wrapper-mode:minimal\n# shadow-init-wrapper-impl:tinyc-direct\n# shadow-init-wrapper-path:/system/bin/init\n# shadow-init-wrapper-target:/system/bin/init.stock\necho wrapper-c-system-init-minimal\n'
+assert_cpio_entry_equals "$SYSTEM_INIT_WRAPPER_OUTPUT_IMAGE" system/bin/init.stock $'stock-system-init\n'
+
 set +e
 system_init_nonstock_root_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_SYSTEM_INIT_NONSTOCK_ROOT_RAMDISK" \
@@ -731,6 +810,57 @@ if [[ "$system_init_nonstock_root_status" -eq 0 ]]; then
   exit 1
 fi
 assert_contains "$system_init_nonstock_root_output" "expected stock root /init symlink to /system/bin/init"
+
+set +e
+system_init_wrapper_mismatch_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_SYSTEM_INIT_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_system_init_wrapper_probe.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --wrapper "$C_WRAPPER_BUILD_OUTPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-system-init-wrapper-mismatch.img" 2>&1
+)"
+system_init_wrapper_mismatch_status="$?"
+set -e
+if [[ "$system_init_wrapper_mismatch_status" -eq 0 ]]; then
+  echo "pixel_boot_tooling_smoke: system-init wrapper probe should reject the root-init wrapper variant" >&2
+  exit 1
+fi
+assert_contains "$system_init_wrapper_mismatch_output" "wrapper binary is missing the expected entry-path sentinel: shadow-init-wrapper-path:/system/bin/init"
+
+set +e
+system_init_wrapper_nonelf_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_SYSTEM_INIT_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_system_init_wrapper_probe.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --wrapper "$BAD_C_WRAPPER_SYSTEM_BUILD_OUTPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-system-init-wrapper-nonelf.img" 2>&1
+)"
+system_init_wrapper_nonelf_status="$?"
+set -e
+if [[ "$system_init_wrapper_nonelf_status" -eq 0 ]]; then
+  echo "pixel_boot_tooling_smoke: system-init wrapper probe should reject a non-ELF explicit wrapper" >&2
+  exit 1
+fi
+assert_contains "$system_init_wrapper_nonelf_output" "expected an arm64 wrapper binary"
+
+set +e
+system_init_wrapper_wrong_target_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_SYSTEM_INIT_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_system_init_wrapper_probe.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --wrapper "$WRONG_TARGET_C_WRAPPER_SYSTEM_BUILD_OUTPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-system-init-wrapper-wrong-target.img" 2>&1
+)"
+system_init_wrapper_wrong_target_status="$?"
+set -e
+if [[ "$system_init_wrapper_wrong_target_status" -eq 0 ]]; then
+  echo "pixel_boot_tooling_smoke: system-init wrapper probe should reject the wrong handoff target variant" >&2
+  exit 1
+fi
+assert_contains "$system_init_wrapper_wrong_target_output" "wrapper binary is missing the expected handoff-path sentinel: shadow-init-wrapper-target:/system/bin/init.stock"
 
 log_probe_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

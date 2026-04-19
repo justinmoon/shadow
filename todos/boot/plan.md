@@ -83,6 +83,11 @@ Related docs:
 - The collector's timeout path now keeps writing `status.json` even if later `adb shell getprop` / `logcat` / `ps` calls fail, so slow or degraded boots still leave a truthful artifact bundle behind.
 - The ramdisk patch step is back in repo-local form via `scripts/lib/cpio_edit.py`, and the minimal wrapper is a static aarch64 Rust binary at `rust/init-wrapper`.
 - `scripts/lib/cpio_edit.py` now supports entry extraction as well as add/replace/rename, and `scripts/ci/cpio_edit_smoke.sh` keeps those semantics covered in `pre-commit`.
+- Fundroid prior art is useful mainly as tooling guidance, not as a proof that Pixel 4a boot bring-up already worked there:
+  - keep deriving mkbootimg arguments and AVB footer inputs from the stock image rather than copying hardcoded demo metadata
+  - keep ramdisk mutation surgical through cpio entry editing so device nodes and other special archive entries survive unchanged
+  - prefer direct `execv()` handoff to the stock init path, plus `/dev/kmsg` breadcrumbs, over extra shell or symlink indirection when probing a foreign first-stage wrapper
+  - treat Fundroid's successful boot/init results as mostly Cuttlefish-host evidence; the Pixel 4a material there is a plan, not completed hardware proof
 - `scripts/ci/pixel_boot_collect_logs_smoke.sh` now locks the collector's success-vs-wrapper-only fallback semantics into `pre-commit`.
 - The shared cross-worktree cache is intentionally narrow: only the immutable stock `boot.img` falls back through the git common-dir at `build/shared/pixel/root/boot.img`. Custom boot images, run bundles, and `last-action.json` stay worktree-local.
 - `sc -t <serial> debug boot-lab-oneshot` now stays as a thin private delegator into `scripts/pixel/pixel_boot_oneshot.sh` for the fast `fastboot boot` plus collect loop. It does not change the public `just` surface.
@@ -176,4 +181,9 @@ Related docs:
 - Because stock-init experimental flashes can disrupt the working rooted lane on the same slot, future chunks should bias toward safety rails before convenience or public surfacing.
 - Landing rule for this project: each chunk should be truthful, green, and mergeable on its own, so other worktrees can keep rebasing on `master` instead of waiting for a giant boot branch to finish.
 - Camera remains Android-bound today. Wi-Fi likely does too. Do not make them blockers for the first Shadow-at-boot milestone.
-- Next seam: stop adding pathname indirection around init entirely and probe a seam that leaves both `/init` and `system/bin/init` at their stock paths, likely by patching or interposing at the real `system/bin/init` binary boundary rather than by rename-and-symlink tricks.
+- New hardware result on 2026-04-19 from the exact-path `system/bin/init` wrapper seam (`09051JEC202061`, inactive slot `a`):
+  - flashing `shadow-boot-system-init-wrapper-probe.img` to inactive slot `a` and activating it did not return to Android on `a`
+  - the guarded flash-run saw the slot flash and reboot succeed, but no `adb` or `fastboot` visibility came back before timeout, so automatic recovery did not complete on its own
+  - manual recovery back to stock `boot_a` restored the device, and it booted Android successfully again on slot `_b` with `sys.boot_completed=1`
+- Tightened inference after the exact-path wrapper probe: even when both visible init paths stay exact (`/init -> /system/bin/init`, real wrapper binary installed at `system/bin/init`, stock binary moved to `system/bin/init.stock`), a foreign first-stage PID 1 that later `execv()`s the stock init path still appears to break normal `sunfish` boot. That pushes the next seam away from wrapper handoff variants and toward mechanisms that leave stock first-stage init itself in control.
+- Next seam: stop replacing init binaries entirely and probe a stock-init-owned hook point such as bootconfig/cmdline-triggered behavior, first-stage-visible imported config that stock init already consumes, or an even narrower binary patch that preserves the stock init image shape instead of swapping in a new ELF.
