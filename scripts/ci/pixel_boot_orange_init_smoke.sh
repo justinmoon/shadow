@@ -302,6 +302,32 @@ assert_file_contains() {
   fi
 }
 
+assert_json_field_equals() {
+  local file_path key expected
+  file_path="$1"
+  key="$2"
+  expected="$3"
+
+  python3 - "$file_path" "$key" "$expected" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+file_path, key, expected = sys.argv[1:4]
+payload = json.loads(Path(file_path).read_text(encoding="utf-8"))
+actual = payload.get(key)
+if isinstance(actual, bool):
+    actual = "true" if actual else "false"
+elif actual is None:
+    actual = ""
+else:
+    actual = str(actual)
+
+if actual != expected:
+    raise SystemExit(f"unexpected json value for {key}: {actual!r} != {expected!r}")
+PY
+}
+
 assert_cpio_entry_equals() {
   local archive_path entry_name expected_data
   archive_path="$1"
@@ -398,10 +424,24 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange-init payload failed with status=%d; holding for observation before reboot'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'hold_for_observation(config.hold_seconds);'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'log_stage("<6>", "orange-wait", "pid=%d seconds=%u", child_pid, waited_seconds);'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"pre-dev-bootstrap"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"payload=%s mount_dev=%s dev_mount=%s dri_bootstrap=%s"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'bootstrap_tmpfs_dri_runtime(&config)'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'ensure_char_device("/dev/dri/card0", 0600, 226U, 0U)'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'ensure_char_device("/dev/dri/renderD128", 0600, 226U, 128U)'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"tmpfs-coldboot-complete"'
 assert_file_contains "$REPO_ROOT/rust/drm-rect/src/main.rs" 'env::var("SHADOW_DRM_RECT_MODE").as_deref() == Ok("orange-init")'
 assert_file_contains "$REPO_ROOT/rust/drm-rect/src/main.rs" 'invoked_as_orange_init()'
+assert_file_contains "$REPO_ROOT/rust/drm-rect/src/main.rs" 'drm_rect::emit_runtime_context(&ORANGE_PREFLIGHT_PATHS);'
 assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" 'write_device_log("/dev/pmsg0", &line);'
+assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" 'shadow-owned-init-run-token:{run_token}'
+assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" 'log_mount_state("/metadata");'
+assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" 'log_path_state("/dev/dri/card0");'
+assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" 'probe-node path={path} error={error:#}'
+assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" 'required KMS node /dev/dri/card0 failed'
 assert_file_contains "$REPO_ROOT/rust/drm-rect/src/main.rs" 'fatal fill error: {error:#}'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_init.sh" "printf 'dri_bootstrap=%s\\n' \"\$DRI_BOOTSTRAP\""
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_init.sh" "printf 'DRI bootstrap: %s\\n' \"\$DRI_BOOTSTRAP\""
 
 orange_reuse_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 \
@@ -424,7 +464,12 @@ orange_boot_output="$(
       --key "$AVB_KEY_PATH" \
       --output "$OUTPUT_IMAGE" \
       --hold-secs 19 \
-      --reboot-target bootloader
+      --reboot-target bootloader \
+      --run-token orange-smoke-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false
 )"
 assert_contains "$orange_boot_output" "Build mode: stock-init"
 assert_contains "$orange_boot_output" "Extra added entries: 2"
@@ -437,17 +482,39 @@ assert_contains "$orange_boot_output" "Payload path: /orange-init"
 assert_contains "$orange_boot_output" "Config path: /shadow-init.cfg"
 assert_contains "$orange_boot_output" "Hold seconds: 19"
 assert_contains "$orange_boot_output" "Reboot target: bootloader"
+assert_contains "$orange_boot_output" "Run token: orange-smoke-run-token"
+assert_contains "$orange_boot_output" "Dev mount style: tmpfs"
+assert_contains "$orange_boot_output" "Mount /dev: true"
+assert_contains "$orange_boot_output" "Mount proc: true"
+assert_contains "$orange_boot_output" "Mount sys: false"
+assert_contains "$orange_boot_output" "Log kmsg: false"
+assert_contains "$orange_boot_output" "Log pmsg: false"
+assert_contains "$orange_boot_output" "DRI bootstrap: sunfish-card0-renderD128"
+assert_contains "$orange_boot_output" "Metadata path: $OUTPUT_IMAGE.hello-init.json"
 assert_contains "$orange_boot_output" "Built hello-init -> $HELLO_INIT_CACHE_OUTPUT"
 assert_contains "$orange_boot_output" "Built orange-init -> $ORANGE_INIT_CACHE_OUTPUT"
 assert_cpio_entry_symlink_target "$OUTPUT_IMAGE" init "/system/bin/init"
 assert_cpio_entry_equals "$OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:c-static\n# shadow-owned-init-config:/shadow-init.cfg\n# shadow-owned-init-mounts:dev=true,proc=true,sys=true\necho hello-init\n'
 assert_cpio_entry_equals "$OUTPUT_IMAGE" orange-init $'#!/system/bin/sh\n# shadow-owned-init-role:orange-init\n# shadow-owned-init-impl:drm-rect-device\n# shadow-owned-init-path:/orange-init\necho orange-init\n'
-assert_cpio_entry_equals "$OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_orange_init.sh\npayload=orange-init\nhold_seconds=19\nreboot_target=bootloader\n'
+assert_cpio_entry_equals "$OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_orange_init.sh\npayload=orange-init\nhold_seconds=19\nreboot_target=bootloader\nrun_token=orange-smoke-run-token\ndev_mount=tmpfs\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\ndri_bootstrap=sunfish-card0-renderD128\n'
 assert_cpio_entry_missing "$OUTPUT_IMAGE" system/bin/init.stock
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" kind "orange_init_build"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" payload "orange-init"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" hold_seconds "19"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" reboot_target "bootloader"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" run_token "orange-smoke-run-token"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" dev_mount "tmpfs"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" mount_dev "true"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" mount_proc "true"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" mount_sys "false"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" log_kmsg "false"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" log_pmsg "false"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" dri_bootstrap "sunfish-card0-renderD128"
 
 second_orange_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    PIXEL_HELLO_INIT_DEV_MOUNT=devtmpfs \
     PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
     PIXEL_ORANGE_INIT_DEFAULT_BIN="$ORANGE_INIT_CACHE_OUTPUT" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_init.sh" \
@@ -459,6 +526,20 @@ second_orange_boot_output="$(
 )"
 assert_contains "$second_orange_boot_output" "Reusing cached hello-init -> $HELLO_INIT_CACHE_OUTPUT"
 assert_contains "$second_orange_boot_output" "Reusing cached orange-init -> $ORANGE_INIT_CACHE_OUTPUT"
+assert_contains "$second_orange_boot_output" "Dev mount style: tmpfs"
+assert_contains "$second_orange_boot_output" "Mount /dev: true"
+assert_contains "$second_orange_boot_output" "Mount proc: true"
+assert_contains "$second_orange_boot_output" "Mount sys: true"
+assert_contains "$second_orange_boot_output" "Log kmsg: true"
+assert_contains "$second_orange_boot_output" "Log pmsg: true"
+assert_contains "$second_orange_boot_output" "DRI bootstrap: sunfish-card0-renderD128"
+assert_json_field_equals "$TMP_DIR/orange-init-boot-second.img.hello-init.json" dev_mount "tmpfs"
+assert_json_field_equals "$TMP_DIR/orange-init-boot-second.img.hello-init.json" mount_dev "true"
+assert_json_field_equals "$TMP_DIR/orange-init-boot-second.img.hello-init.json" mount_proc "true"
+assert_json_field_equals "$TMP_DIR/orange-init-boot-second.img.hello-init.json" mount_sys "true"
+assert_json_field_equals "$TMP_DIR/orange-init-boot-second.img.hello-init.json" log_kmsg "true"
+assert_json_field_equals "$TMP_DIR/orange-init-boot-second.img.hello-init.json" log_pmsg "true"
+assert_json_field_equals "$TMP_DIR/orange-init-boot-second.img.hello-init.json" dri_bootstrap "sunfish-card0-renderD128"
 if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "3" ]]; then
   echo "pixel_boot_orange_init_smoke: expected exactly three nix builds total after orange boot-image reuse" >&2
   exit 1

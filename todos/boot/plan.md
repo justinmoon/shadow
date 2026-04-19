@@ -42,7 +42,7 @@ Related docs:
   - extra symlink hops at `/init` or `system/bin/init` fail
   - imported ramdisk rc hooks can perturb boot but do not give clean proof on normal `sunfish` boots
 - [~] Boot the stock kernel into a tiny Shadow-owned PID 1 that never execs stock Android init (`hello-init`).
-- [ ] From that owned userspace, paint the panel orange with a minimal DRM/KMS proof (`orange-init`).
+- [~] From that owned userspace, paint the panel orange with a minimal DRM/KMS proof (`orange-init`).
 - [ ] Reach one minimal control lane from owned userspace when needed, without reintroducing stock Android init or framework.
 - [ ] Launch a minimal Shadow-owned service graph from PID 1 with no stock Android userspace handoff.
 - [ ] Start `shadow-session` / `shadow-compositor-guest` from owned userspace and present one frame.
@@ -67,6 +67,7 @@ Related docs:
   - mount `/proc`, `/sys`, and `/dev`
   - write durable breadcrumbs to `/dev/kmsg`
   - hold long enough for observation, then reboot bootloader or power off cleanly
+  - do not let experimental images silently fall back to the known-bad `devtmpfs /dev` path on `sunfish`; either stay on `tmpfs /dev` with explicit node bootstrap or emit a breadcrumb before and after the `/dev` transition
 - [~] Pick the first truthful proof channel for owned userspace:
   - `hello-init`: bounded host-visible `fastboot-return` is the first automation-friendly proof that does not require Android userspace
   - `orange-init`: a visible panel fill is the first direct proof of owned userspace beyond PID 1; pair it with a later reboot-to-fastboot for host correlation
@@ -79,14 +80,15 @@ Related docs:
   - after the phone returns to Android, harvest previous-run traces immediately before another reboot can overwrite them
   - recover best-effort evidence from readable Android-side channels such as prior-boot log buffers, dropbox boot reports, and bootreason props
   - do not treat any single recovery channel as guaranteed until it proves itself repeatedly on hardware
+  - classify stage evidence separately from transport evidence: `fastboot-return` proves the device came back, not which owned-userspace stage it reached
 - [ ] Add one durable non-log breadcrumb seam for owned PID 1 runs:
   - prefer something that survives a reboot without Android logging, such as a `/metadata` marker or equivalent
   - keep it secondary to the primary visible-proof path; do not let it delay `orange-init`
-- [ ] Package a minimal DRM proof payload:
+- [~] Package a minimal DRM proof payload:
   - reuse `rust/drm-rect` or a smaller equivalent
   - make the color, hold time, and logging explicit
 - [ ] Probe the smallest prerequisite set for DRM on stock kernel:
-  - does `/dev/dri/card0` exist under owned PID 1 with only `devtmpfs`
+  - does `/dev/dri/card0` exist under owned PID 1 with only `tmpfs /dev`
   - if not, add the smallest necessary coldplug, module, firmware, or mount step
 - [ ] Prove one tiny owned-userspace boot lane before reintroducing timeline, camera, or network-heavy cases.
 - [ ] Keep the next chunks separately landable:
@@ -226,6 +228,36 @@ Related docs:
   - hardware reality is still negative on both `09051JEC202061` and `11151JEC200472`: tokenized `hello-init` one-shots with tmpfs `/dev` logging recovered zero correlated hits, zero uncorrelated shadow-tag hints, and zero current-boot hits
 - Working inference after that observability pass: the host-side boot-lab tooling is now good enough to trust a negative result, and the current `hello-init` log channels are not landing anywhere Android can recover on `sunfish`.
 - Next discriminating seam after landing this tooling chunk: stop grinding purely log-based proof on the same image shape and move to a visible owned-userspace proof (`orange-init` / direct framebuffer or DRM fill), optionally paired with one durable non-log marker such as `/metadata` if the panel proof needs a post-reboot cross-check.
+- New hardware result on 2026-04-19 from the first explicit `tmpfs /dev` orange-init proof run (`0B191JEC203253`):
+  - `pixel_boot_build_orange_init.sh` now carries the same run-token and mount/log metadata surface as `hello-init`, and `drm-rect` now emits its own run-token, mount-state, and `/dev/dri` / `/metadata` breadcrumbs
+  - the first real orange image was built with `--dev-mount tmpfs` specifically to avoid the known-bad `devtmpfs /dev` failure mode on `sunfish`
+  - a one-shot boot of that image left fastboot successfully but never returned to `adb` within the runner window; the phone later sat in fastboot with no automatic recovery traces collected
+  - after a manual `fastboot reboot` back to stock Android on slot `_a`, `pixel_boot_recover_traces.sh` recovered the bundle and found `sys.boot.reason=bootloader` plus zero correlated run-token matches and zero shadow-tag matches across all readable channels
+- Tightened inference after that orange-init run:
+  - the explicit `tmpfs /dev` guardrail worked, so this negative result is no longer confounded by the old `devtmpfs` failure mode
+  - stock boot ramdisk inspection shows only a bare `dev/` directory, so `mount_dev=false` will not surface `/dev/dri/card0` on its own
+  - the remaining blocker for visible proof is now the smallest truthful device-population seam under owned PID 1, not more blind orange reruns on the same `/dev` shape
+- Follow-up hardware result on 2026-04-19 from the default-path orange-init one-shot (`11151JEC200472`):
+  - after changing the private orange builder default from `devtmpfs` to `tmpfs`, a one-shot boot of `shadow-boot-orange-init-default-tmpfs-hold5.img` returned to fastboot in 27 seconds
+  - after rebooting back to stock Android on slot `_a`, trace recovery loaded the image-sidecar run token `orange-default-tmpfs-20260419` and still found zero shadow tags and zero run-token matches across all readable Android-side channels
+  - bootreason props for that run were `ro.boot.bootreason=reboot` and `sys.boot.reason=bootloader`
+- Tightened inference after the default-path follow-up:
+  - the new default is now hardware-validated on a second `sunfish` and behaves the same as the earlier explicit `--dev-mount tmpfs` run
+  - so the orange seam is no longer blocked on mount-strategy ambiguity; it is blocked on minimal device population under `tmpfs /dev`
+- Breakthrough hardware result on 2026-04-19 from the minimal `/dev/dri` bootstrap proof (`11151JEC200472`):
+  - a dedicated orange-proof image that kept `tmpfs /dev` and created only `/dev/dri/card0` (`226:0`) plus `/dev/dri/renderD128` (`226:128`) did paint the panel orange on real hardware; the orange screen was directly observed during the run
+  - that image held orange for roughly 20 seconds and then returned to bootloader as designed
+  - after rebooting back to stock Android, Android-side recovery still found zero shadow tags and zero run-token matches, so the visible proof outran the current surviving-log channels
+- Tightened inference after the orange proof:
+  - the first visible owned-userspace milestone is now real on `sunfish`; the remaining work is to package that exact minimal `/dev/dri` bootstrap cleanly in the main tree and then improve post-run breadcrumbs around it
+  - this also confirms that the earlier dark orange runs were not blocked on DRM or the panel in the abstract; they were blocked specifically on device-node availability under `tmpfs /dev`
+- New hardware result on 2026-04-19 from the `/metadata` breadcrumb experiment (`09051JEC202061`):
+  - a hello-init variant that attempted targeted tmpfs coldboot plus `/metadata` breadcrumb writes still failed on real hardware with `ro.boot.bootreason=kernel_panic`
+  - `pixel_boot_recover_traces.sh` was able to look for `/metadata/shadow-hello-init/{latest,by-token/...}` after recovery, but the recovered `metadata-breadcrumb.txt` stayed empty on-device
+  - the only correlated evidence from that lane came from existing Android-side boot reports such as `SYSTEM_LAST_KMSG`, not from the new durable breadcrumb
+- Tightened inference after the `/metadata` lane:
+  - durable breadcrumb collection is still worth keeping in the host recovery toolbox, but the attempted writer should not become the default hello-init path yet
+  - the current blocker is still earlier in owned userspace: create only the minimum device population needed for the next proof, rather than broadening hello-init with more mounts and block-node work at once
 - Because stock-init experimental flashes can disrupt the working rooted lane on the same slot, future chunks should bias toward safety rails before convenience or public surfacing.
 - Landing rule for this project: each chunk should be truthful, green, and mergeable on its own, so other worktrees can keep rebasing on `master` instead of waiting for a giant boot branch to finish.
 - Camera remains Android-bound today. Wi-Fi likely does too. Do not make them blockers for the first Shadow-at-boot milestone.
@@ -285,3 +317,6 @@ Related docs:
 - Tightened inference after the `/dev` mount matrix:
   - the bad actor is specifically the `devtmpfs` model we introduced, not the broader idea of mounting something on `/dev`
   - the next owned-userspace step should model stock Android more closely: `tmpfs /dev` first, then the smallest truthful device-population mechanism needed for logs or DRM instead of mounting `devtmpfs`
+- Read-only review result on 2026-04-19:
+  - the remaining blind spot is early stage classification around `/dev` bootstrap: negative recovery is now trustworthy, but a dark run can still fail before durable breadcrumbs or DRM ever execute
+  - so the next discriminating experiments must either preserve a durable non-log marker such as `/metadata` or make the pre-`/dev` and post-`/dev` boundary observable before treating a dark run as evidence about later stages

@@ -6,10 +6,14 @@ use drm::control::dumbbuffer::DumbBuffer;
 use drm::control::{connector, Device as ControlDevice};
 use drm::Device as BasicDevice;
 use drm::DriverCapability;
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::io::{AsFd, BorrowedFd};
+use std::path::Path;
 use std::time::Duration;
+
+const SHADOW_INIT_CONFIG_PATH: &str = "/shadow-init.cfg";
 
 pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
     log_line(&format!(
@@ -19,6 +23,13 @@ pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
         color.2,
         duration.as_secs()
     ));
+    log_mount_state("/dev");
+    log_mount_state("/sys");
+    log_mount_state("/metadata");
+    log_path_state("/dev/dri");
+    log_path_state("/dev/dri/card0");
+    log_path_state("/dev/dri/renderD128");
+    log_path_state("/sys/class/drm/card0/device");
 
     let mut card = open_card("/dev/dri/card0")?;
     let master_locked = acquire_master_lock_if_supported(&card)?;
@@ -106,13 +117,45 @@ pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
 }
 
 pub fn probe_nodes(paths: &[&str]) -> Result<()> {
+    let card0_requested = paths.contains(&"/dev/dri/card0");
+    let mut card0_succeeded = false;
+    let mut success_count = 0usize;
+    let mut failures = Vec::new();
+
     for path in paths {
-        probe_node(path)?;
+        match probe_node(path) {
+            Ok(()) => {
+                success_count += 1;
+                if *path == "/dev/dri/card0" {
+                    card0_succeeded = true;
+                }
+            }
+            Err(error) => {
+                log_line(&format!("probe-node path={path} error={error:#}"));
+                failures.push(format!("{path}: {error:#}"));
+            }
+        }
     }
-    Ok(())
+
+    if card0_requested && !card0_succeeded {
+        return Err(anyhow!(
+            "required KMS node /dev/dri/card0 failed: {}",
+            failures.join("; ")
+        ));
+    }
+
+    if success_count > 0 {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "failed to probe any DRM nodes: {}",
+            failures.join("; ")
+        ))
+    }
 }
 
 pub fn probe_node(path: &str) -> Result<()> {
+    log_path_state(path);
     let card = open_card(path)?;
     let driver = card
         .get_driver()
@@ -160,6 +203,24 @@ pub fn probe_node(path: &str) -> Result<()> {
                 resources.connectors().len(),
                 resources.encoders().len(),
             ));
+            for connector_handle in resources.connectors() {
+                match card.get_connector(*connector_handle, true) {
+                    Ok(info) => {
+                        log_line(&format!(
+                            "probe-connector path={path} handle={connector_handle:?} state={:?} modes={} encoders={} current_encoder={:?}",
+                            info.state(),
+                            info.modes().len(),
+                            info.encoders().len(),
+                            info.current_encoder(),
+                        ));
+                    }
+                    Err(error) => {
+                        log_line(&format!(
+                            "probe-connector path={path} handle={connector_handle:?} error={error}"
+                        ));
+                    }
+                }
+            }
         }
         Err(error) => {
             log_line(&format!("probe-resources path={path} error={error}"));
@@ -178,11 +239,126 @@ pub fn log_line(message: &str) {
     write_device_log("/dev/pmsg0", &line);
 }
 
+pub fn emit_runtime_context(paths: &[&str]) {
+    let run_token = load_shadow_init_run_token();
+    let run_token = run_token.as_deref().unwrap_or("unset");
+
+    log_line(&format!(
+        "trace stage=runtime-context config_path={SHADOW_INIT_CONFIG_PATH} run_token={run_token}"
+    ));
+    if run_token != "unset" {
+        log_line(&format!("shadow-owned-init-run-token:{run_token}"));
+    }
+
+    log_mount_state("/dev");
+    log_mount_state("/sys");
+    log_mount_state("/metadata");
+    for path in paths {
+        log_path_state(path);
+    }
+}
+
 fn write_device_log(path: &str, message: &str) {
     if let Ok(mut file) = OpenOptions::new().write(true).open(path) {
         let _ = file.write_all(message.as_bytes());
         let _ = file.flush();
     }
+}
+
+fn load_shadow_init_run_token() -> Option<String> {
+    let raw = fs::read_to_string(SHADOW_INIT_CONFIG_PATH).ok()?;
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let (key, value) = line.split_once('=')?;
+        if key == "run_token" {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn log_mount_state(mountpoint: &str) {
+    let mounts = match fs::read_to_string("/proc/mounts") {
+        Ok(contents) => contents,
+        Err(error) => {
+            log_line(&format!(
+                "trace stage=mount-state mountpoint={mountpoint} mounted=unknown error={error}"
+            ));
+            return;
+        }
+    };
+
+    for line in mounts.lines() {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.len() < 3 {
+            continue;
+        }
+        if fields[1] == mountpoint {
+            log_line(&format!(
+                "trace stage=mount-state mountpoint={mountpoint} mounted=true source={} fstype={}",
+                fields[0], fields[2]
+            ));
+            return;
+        }
+    }
+
+    log_line(&format!(
+        "trace stage=mount-state mountpoint={mountpoint} mounted=false"
+    ));
+}
+
+fn log_path_state(path: &str) {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            log_line(&format!(
+                "trace stage=path-state path={path} exists=false error={error}"
+            ));
+            return;
+        }
+    };
+
+    let file_type = metadata.file_type();
+    let kind = if file_type.is_char_device() {
+        "char"
+    } else if file_type.is_dir() {
+        "dir"
+    } else if file_type.is_file() {
+        "file"
+    } else if file_type.is_symlink() {
+        "symlink"
+    } else {
+        "other"
+    };
+
+    let symlink_target = if file_type.is_symlink() {
+        fs::read_link(path)
+            .ok()
+            .map(|target| target.display().to_string())
+            .unwrap_or_else(|| "<unreadable>".to_string())
+    } else {
+        "-".to_string()
+    };
+
+    let canonical = fs::canonicalize(Path::new(path))
+        .ok()
+        .map(|target| target.display().to_string())
+        .unwrap_or_else(|| "<unresolved>".to_string());
+
+    log_line(&format!(
+        "trace stage=path-state path={path} exists=true kind={kind} mode={:o} symlink_target={} canonical={}",
+        metadata.permissions().mode() & 0o7777,
+        symlink_target,
+        canonical,
+    ));
 }
 
 fn open_card(path: &str) -> Result<Card> {

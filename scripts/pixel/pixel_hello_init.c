@@ -49,6 +49,7 @@ struct hello_init_config {
     char reboot_target[32];
     char run_token[64];
     char dev_mount[16];
+    char dri_bootstrap[32];
     bool mount_dev;
     bool mount_proc;
     bool mount_sys;
@@ -110,6 +111,7 @@ static void init_default_config(struct hello_init_config *config) {
     (void)copy_string(config->reboot_target, sizeof(config->reboot_target), "bootloader");
     config->run_token[0] = '\0';
     (void)copy_string(config->dev_mount, sizeof(config->dev_mount), "devtmpfs");
+    (void)copy_string(config->dri_bootstrap, sizeof(config->dri_bootstrap), "none");
     config->mount_dev = true;
     config->mount_proc = true;
     config->mount_sys = true;
@@ -496,6 +498,42 @@ static int bootstrap_proc_stdio_links(const struct hello_init_config *config) {
     return 0;
 }
 
+static int bootstrap_tmpfs_dri_runtime(const struct hello_init_config *config) {
+    if (!config->mount_dev || strcmp(config->dev_mount, "tmpfs") != 0) {
+        return 0;
+    }
+
+    if (strcmp(config->dri_bootstrap, "none") == 0) {
+        log_stage("<6>", "tmpfs-coldboot-skip", "reason=dri_bootstrap_none");
+        return 0;
+    }
+
+    if (strcmp(config->dri_bootstrap, "sunfish-card0-renderD128") != 0) {
+        log_boot("<3>", "unsupported dri_bootstrap value: %s", config->dri_bootstrap);
+        return -1;
+    }
+
+    log_stage("<6>", "tmpfs-coldboot-start", "mode=%s", config->dri_bootstrap);
+
+    if (ensure_directory("/dev/dri", 0755) != 0) {
+        return -1;
+    }
+    if (ensure_char_device("/dev/dri/card0", 0600, 226U, 0U) != 0) {
+        return -1;
+    }
+    if (ensure_char_device("/dev/dri/renderD128", 0600, 226U, 128U) != 0) {
+        return -1;
+    }
+
+    log_stage(
+        "<6>",
+        "tmpfs-coldboot-complete",
+        "mode=%s card0=226:0 renderD128=226:128",
+        config->dri_bootstrap
+    );
+    return 0;
+}
+
 static int mount_pseudofs(
     const char *source,
     const char *target,
@@ -600,6 +638,25 @@ static bool parse_dev_mount_value(const char *raw, char *dest, size_t dest_size)
     return copy_string(dest, dest_size, value);
 }
 
+static bool parse_dri_bootstrap_value(const char *raw, char *dest, size_t dest_size) {
+    char buffer[32];
+    char *value;
+
+    if (!copy_string(buffer, sizeof(buffer), raw)) {
+        return false;
+    }
+
+    value = trim_whitespace(buffer);
+    if (
+        strcmp(value, "none") != 0 &&
+        strcmp(value, "sunfish-card0-renderD128") != 0
+    ) {
+        return false;
+    }
+
+    return copy_string(dest, dest_size, value);
+}
+
 static bool parse_run_token_value(const char *raw, char *dest, size_t dest_size) {
     char buffer[64];
     char *value;
@@ -680,6 +737,20 @@ static void apply_config_value(
     if (strcmp(key, "dev_mount") == 0 || strcmp(key, "dev_mount_style") == 0) {
         if (!parse_dev_mount_value(value, config->dev_mount, sizeof(config->dev_mount))) {
             log_boot("<3>", "invalid dev_mount value: %s", value);
+            return;
+        }
+        return;
+    }
+
+    if (strcmp(key, "dri_bootstrap") == 0) {
+        if (
+            !parse_dri_bootstrap_value(
+                value,
+                config->dri_bootstrap,
+                sizeof(config->dri_bootstrap)
+            )
+        ) {
+            log_boot("<3>", "invalid dri_bootstrap value: %s", value);
             return;
         }
         return;
@@ -966,6 +1037,15 @@ int main(void) {
     (void)copy_string(shadow_run_token, sizeof(shadow_run_token), config.run_token);
     shadow_log_kmsg = config.log_kmsg;
     shadow_log_pmsg = config.log_pmsg;
+    log_stage(
+        "<6>",
+        "pre-dev-bootstrap",
+        "payload=%s mount_dev=%s dev_mount=%s dri_bootstrap=%s",
+        config.payload,
+        bool_word(config.mount_dev),
+        config.dev_mount,
+        config.dri_bootstrap
+    );
 
     if (config.mount_dev) {
         if (ensure_directory("/dev", 0755) != 0) {
@@ -978,6 +1058,7 @@ int main(void) {
             return 1;
         }
         log_boot("<6>", "mounted %s on /dev", config.dev_mount);
+        log_stage("<6>", "post-dev-bootstrap", "dev_mount=%s", config.dev_mount);
     }
 
     log_boot("<6>", "starting owned PID 1");
@@ -1023,16 +1104,20 @@ int main(void) {
         bool_word(config.mount_proc),
         bool_word(config.mount_sys)
     );
+    if (bootstrap_tmpfs_dri_runtime(&config) != 0) {
+        return 1;
+    }
 
     log_stage(
         "<6>",
         "config-loaded",
-        "payload=%s hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "payload=%s hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.hold_seconds,
         config.reboot_target,
         run_token_or_unset(),
         config.dev_mount,
+        config.dri_bootstrap,
         bool_word(config.mount_dev),
         bool_word(config.mount_proc),
         bool_word(config.mount_sys),
@@ -1041,12 +1126,13 @@ int main(void) {
     );
     log_boot(
         "<6>",
-        "config payload=%s hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "config payload=%s hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.hold_seconds,
         config.reboot_target,
         run_token_or_unset(),
         config.dev_mount,
+        config.dri_bootstrap,
         bool_word(config.mount_dev),
         bool_word(config.mount_proc),
         bool_word(config.mount_sys),

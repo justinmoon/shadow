@@ -5,6 +5,12 @@ const ORANGE_INIT_COLOR: (u8, u8, u8) = (0xff, 0x7a, 0x00);
 const ORANGE_INIT_ROLE_SENTINEL: &str = "shadow-owned-init-role:orange-init";
 const ORANGE_INIT_IMPL_SENTINEL: &str = "shadow-owned-init-impl:drm-rect-device";
 const ORANGE_INIT_PATH_SENTINEL: &str = "shadow-owned-init-path:/orange-init";
+const ORANGE_PREFLIGHT_PATHS: [&str; 4] = [
+    "/dev/dri",
+    "/dev/dri/card0",
+    "/dev/dri/renderD128",
+    "/sys/class/drm/card0/device",
+];
 
 fn invoked_as_orange_init() -> bool {
     env::args_os()
@@ -15,6 +21,8 @@ fn invoked_as_orange_init() -> bool {
 }
 
 fn main() -> anyhow::Result<()> {
+    drm_rect::emit_runtime_context(&ORANGE_PREFLIGHT_PATHS);
+
     if env::var("SHADOW_DRM_RECT_MODE").as_deref() == Ok("probe") {
         let paths = env::var("SHADOW_DRM_PROBE_PATHS")
             .unwrap_or_else(|_| "/dev/dri/card0:/dev/dri/renderD128".to_string());
@@ -64,6 +72,7 @@ fn main() -> anyhow::Result<()> {
     let result = drm_rect::fill_display(color, Duration::from_secs(hold_secs));
     if let Err(error) = &result {
         drm_rect::log_line(&format!("fatal fill error: {error:#}"));
+        let _ = drm_rect::probe_nodes(&["/dev/dri/card0", "/dev/dri/renderD128"]);
     }
     result
 }
