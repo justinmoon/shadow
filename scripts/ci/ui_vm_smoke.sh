@@ -23,6 +23,10 @@ UI_VM_READY_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_READY_TIMEOUT:-1200}"
 UI_VM_APP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_APP_TIMEOUT:-90}"
 UI_VM_CONTROL_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_CONTROL_TIMEOUT:-20}"
 UI_VM_STOP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_STOP_TIMEOUT:-20}"
+# shadowctl taps use compositor-window coordinates, not shell-local coordinates.
+# In the current 660x1240 nested VM window, the 540x1170 shell is centered at 60,35.
+VM_COUNTER_TILE_TAP_X=164
+VM_COUNTER_TILE_TAP_Y=652
 ui_vm_run_pid=""
 prepared_inputs_path="${SHADOW_UI_VM_PREPARED_INPUTS:-}"
 vm_smoke_succeeded=0
@@ -395,9 +399,8 @@ for app_id in sorted(expected_apps):
         )
 PY
 
-echo "vm-smoke: open timeline"
-echo "vm-smoke: open counter"
-run_shadowctl open counter -t vm >/dev/null
+echo "vm-smoke: tap counter launcher tile"
+run_shadowctl tap -t vm "$VM_COUNTER_TILE_TAP_X" "$VM_COUNTER_TILE_TAP_Y" >/dev/null
 state_after_counter_open="$(wait_for_open_state counter "counter open")"
 wait_for_log_marker \
   "[shadow-runtime-counter] window_metrics surface=540x1042 safe_area=l0 t0 r0 b0" \

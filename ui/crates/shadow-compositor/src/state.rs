@@ -158,8 +158,15 @@ impl ShadowCompositor {
     }
 
     pub fn shell_render_plan(&mut self, status: &ShellStatus) -> ShellRenderPlan {
-        let base_scene = self.shell.scene_without_compositor_chrome(status);
+        let base_scene = self.shell.base_scene();
         let mut plan = ShellRenderPlan::single(base_scene, self.shell_location());
+        if let Some(launcher_scene) = self.shell.home_launcher_scene(status) {
+            plan.push_overlay(
+                launcher_scene,
+                self.shell_location(),
+                (WIDTH.round() as u32, HEIGHT.round() as u32),
+            );
+        }
         plan.push_overlay(
             top_chrome_strip_scene(&self.shell.top_chrome_strip_state(status)),
             self.top_chrome_location(),

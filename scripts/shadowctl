@@ -1706,7 +1706,7 @@ def build_parser() -> argparse.ArgumentParser:
     tap = add_command(
         subparsers,
         "tap",
-        "Dispatch a shell tap at panel coordinates.",
+        "Dispatch a shell tap at compositor-window coordinates.",
         cmd_tap,
         supported_target_kinds=("vm", "pixel"),
         parents=(target_parser,),

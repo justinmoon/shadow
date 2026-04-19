@@ -176,6 +176,31 @@ impl ShellModel {
         self.current_scene(status, false)
     }
 
+    pub fn base_scene(&mut self) -> Scene {
+        self.trim_expired_flash();
+
+        if self.foreground_app.is_some() {
+            Scene {
+                clear_color: crate::color::Color::rgba(0, 0, 0, 0),
+                rects: Vec::new(),
+                texts: Vec::new(),
+            }
+        } else {
+            Scene {
+                clear_color: BACKGROUND,
+                rects: Vec::new(),
+                texts: Vec::new(),
+            }
+        }
+    }
+
+    pub fn home_launcher_scene(&mut self, status: &ShellStatus) -> Option<Scene> {
+        self.trim_expired_flash();
+        self.foreground_app
+            .is_none()
+            .then(|| self.home_launcher_scene_only(status))
+    }
+
     pub fn top_chrome_strip_state(&self, status: &ShellStatus) -> TopChromeStripState {
         TopChromeStripState {
             time_label: status.time_label.clone(),
@@ -215,41 +240,27 @@ impl ShellModel {
         let mut rects = Vec::new();
         let mut texts = Vec::new();
 
-        rects.push(RoundedRect::new(
-            0.0,
-            0.0,
-            WIDTH,
-            HEIGHT,
-            0.0,
-            SURFACE.with_alpha(0.18),
-        ));
-        rects.push(RoundedRect::new(
-            32.0,
-            92.0,
-            476.0,
-            314.0,
-            54.0,
-            SURFACE.with_alpha(0.22),
-        ));
-        rects.push(RoundedRect::new(
-            20.0,
-            APP_PANEL_Y,
-            500.0,
-            APP_PANEL_HEIGHT,
-            44.0,
-            SURFACE_ACCENT.with_alpha(0.96),
-        ));
+        append_home_launcher(&mut rects, &mut texts, status, self);
 
         if include_compositor_chrome {
             append_top_chrome_strip(&mut rects, &mut texts, &self.top_chrome_strip_state(status));
             append_bottom_navigation_pill(&mut rects, self.bottom_navigation_pill_state());
         }
-        build_clock(&mut rects, &mut texts, status, self.recent_app_titles());
-        build_panel_header(&mut rects, &mut texts, self);
-        build_app_grid(&mut rects, &mut texts, self);
 
         Scene {
             clear_color: BACKGROUND,
+            rects,
+            texts,
+        }
+    }
+
+    fn home_launcher_scene_only(&self, status: &ShellStatus) -> Scene {
+        let mut rects = Vec::new();
+        let mut texts = Vec::new();
+        append_home_launcher(&mut rects, &mut texts, status, self);
+
+        Scene {
+            clear_color: crate::color::Color::rgba(0, 0, 0, 0),
             rects,
             texts,
         }
@@ -591,6 +602,41 @@ fn build_panel_header(
         weight: TextWeight::Normal,
         color: TEXT_MUTED,
     });
+}
+
+fn append_home_launcher(
+    rects: &mut Vec<RoundedRect>,
+    texts: &mut Vec<TextBlock>,
+    status: &ShellStatus,
+    model: &ShellModel,
+) {
+    rects.push(RoundedRect::new(
+        0.0,
+        0.0,
+        WIDTH,
+        HEIGHT,
+        0.0,
+        SURFACE.with_alpha(0.18),
+    ));
+    rects.push(RoundedRect::new(
+        32.0,
+        92.0,
+        476.0,
+        314.0,
+        54.0,
+        SURFACE.with_alpha(0.22),
+    ));
+    rects.push(RoundedRect::new(
+        20.0,
+        APP_PANEL_Y,
+        500.0,
+        APP_PANEL_HEIGHT,
+        44.0,
+        SURFACE_ACCENT.with_alpha(0.96),
+    ));
+    build_clock(rects, texts, status, model.recent_app_titles());
+    build_panel_header(rects, texts, model);
+    build_app_grid(rects, texts, model);
 }
 
 fn build_app_grid(rects: &mut Vec<RoundedRect>, texts: &mut Vec<TextBlock>, model: &ShellModel) {
@@ -981,5 +1027,46 @@ mod tests {
         assert!(foreground_scene.rects.is_empty());
         assert!(foreground_scene.texts.is_empty());
         assert_eq!(foreground_scene.clear_color.rgba8(), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn base_scene_is_background_only_on_home_and_transparent_in_foreground() {
+        let mut shell = ShellModel::new();
+
+        let home_scene = shell.base_scene();
+        assert_eq!(home_scene.clear_color.rgba8(), BACKGROUND.rgba8());
+        assert!(home_scene.rects.is_empty());
+        assert!(home_scene.texts.is_empty());
+
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+
+        let foreground_scene = shell.base_scene();
+        assert_eq!(foreground_scene.clear_color.rgba8(), [0, 0, 0, 0]);
+        assert!(foreground_scene.rects.is_empty());
+        assert!(foreground_scene.texts.is_empty());
+    }
+
+    #[test]
+    fn home_launcher_scene_is_transparent_overlay_only_on_home() {
+        let mut shell = ShellModel::new();
+        let status = ShellStatus {
+            time_label: "09:41".to_string(),
+            date_label: "Friday, April 18".to_string(),
+            battery_percent: 61,
+            wifi_strength: 2,
+        };
+
+        let launcher = shell
+            .home_launcher_scene(&status)
+            .expect("home launcher scene");
+        assert_eq!(launcher.clear_color.rgba8(), [0, 0, 0, 0]);
+        assert!(!launcher.rects.is_empty());
+        assert!(launcher
+            .texts
+            .iter()
+            .any(|text| text.content == "Home stack"));
+
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+        assert!(shell.home_launcher_scene(&status).is_none());
     }
 }

@@ -80,6 +80,8 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - The first embedded shell/system surface is now the VM top chrome strip. `shadow-ui-core` exposes it as a reusable local overlay scene, the VM compositor renders it as a second compositor-owned shell surface, and guest/pixel keep the legacy full-shell scene for now.
 - The VM proof for that seam now covers both the normal smoke lane and a direct tap on the compositor-owned strip: `just smoke target=vm` passes, and a host-space tap at `330,59` shelves `podcast` through the overlay path in the current 660x1240 nested VM window.
 - The next shell chrome seam is now fully on the shared geometry path too: the shell model treats the bottom navigation pill as a second Home affordance, the VM compositor renders it as another compositor-owned shell surface, foreground capture reserves both top strip and bottom pill for shell input, and the shared app viewport now reserves the lower system-chrome inset instead of rendering under that pill.
+- Home / launcher content is now on the compositor-owned VM path too: the shell model exposes a background-only base scene plus a transparent launcher overlay scene, the VM compositor composes that overlay below the top strip and bottom pill, and VM smoke now proves the path by opening `counter` from a real launcher-tile tap instead of a control-plane `open`.
+- IME stays deferred for now. The compositor can render another system-owned surface, but it still cannot observe focused-app `textInput` state over the current app platform-control socket, so a real compositor-owned keyboard needs a protocol extension before it is worth implementing.
 - The next seam should move to the next embedded shell surface or the first text/input contract, rather than more launch/env churn.
 
 ## Shell/System Chrome Migration
@@ -89,9 +91,9 @@ This is a real product track inside this plan, not a vague later cleanup. The cu
 - [~] Move the existing shell/system chrome onto Shadow UI surfaces.
 - [x] Top chrome strip.
 - [x] Bottom navigation / home affordance.
-- [ ] Home / launcher content.
+- [x] Home / launcher content.
 - [ ] App switcher / recents surfaces.
 - [ ] Notifications, quick settings, and other pull-down system surfaces.
 - [ ] Lock, IME, and other always-on system-owned surfaces.
 
-The top chrome strip and bottom navigation pill are now both live Home affordances in the shell model, and the shared viewport contract now reserves the lower system-surface inset instead of letting app content render under the compositor-owned pill.
+The top chrome strip and bottom navigation pill are now both live Home affordances in the shell model, the shared viewport contract now reserves the lower system-surface inset instead of letting app content render under the compositor-owned pill, and the VM home/launcher surface now rides the same compositor-owned overlay path.
