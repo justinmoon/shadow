@@ -74,11 +74,14 @@ Related docs:
   - emit the same stage markers to `kmsg`, `pmsg` when present, and process stdio so the host can recover whichever channel survives on real hardware
   - do not depend on `adb`, transient properties, or `/data/local/tmp` for the owned-userspace proof path
   - only add USB transport after the PID 1 seam is stable
-- [ ] Add an observability-first recovery loop for owned-userspace runs:
+- [~] Add an observability-first recovery loop for owned-userspace runs:
   - every run bundle should record the exact evidence collection attempt, not just the boot action
   - after the phone returns to Android, harvest previous-run traces immediately before another reboot can overwrite them
   - recover best-effort evidence from readable Android-side channels such as prior-boot log buffers, dropbox boot reports, and bootreason props
   - do not treat any single recovery channel as guaranteed until it proves itself repeatedly on hardware
+- [ ] Add one durable non-log breadcrumb seam for owned PID 1 runs:
+  - prefer something that survives a reboot without Android logging, such as a `/metadata` marker or equivalent
+  - keep it secondary to the primary visible-proof path; do not let it delay `orange-init`
 - [ ] Package a minimal DRM proof payload:
   - reuse `rust/drm-rect` or a smaller equivalent
   - make the color, hold time, and logging explicit
@@ -216,6 +219,13 @@ Related docs:
   - once the phone was pushed into fastboot, the host restored stock `boot_a`, switched back to slot `b`, and the device booted Android successfully again with `sys.boot_completed=1`
 - Tightened inference after the deeper probe: preserving the stock root `/init -> /system/bin/init` link is still not enough if `system/bin/init` itself becomes a symlink hop to `system/bin/init.stock`. So the current device constraint is stricter than “keep `/init` special”; even a symlink indirection at the real first-stage init path appears to break `sunfish` boot.
 - Truthfulness rule for the new boot-lab runners: top-level `status.json` and process exit codes must stay aligned with the underlying flash/collect result; false-success wrapper statuses are not acceptable evidence.
+- New observability result on 2026-04-19 from the tokenized `hello-init` log seam:
+  - `pixel_boot_build_hello_init.sh` now emits a per-image run token and image-sidecar metadata, `hello-init` logs that token in its own breadcrumbs, and `pixel_boot_oneshot.sh` / `pixel_boot_recover_traces.sh` now carry the token through the live one-shot recovery path
+  - the recovery/status path now distinguishes correlated hits (`run token + shadow tag`) from stale hints and token-only noise, and stale bootreason history no longer marks a clean current run as failed
+  - focused gates now cover the stale-history false-failure case and the token-only false-positive case
+  - hardware reality is still negative on both `09051JEC202061` and `11151JEC200472`: tokenized `hello-init` one-shots with tmpfs `/dev` logging recovered zero correlated hits, zero uncorrelated shadow-tag hints, and zero current-boot hits
+- Working inference after that observability pass: the host-side boot-lab tooling is now good enough to trust a negative result, and the current `hello-init` log channels are not landing anywhere Android can recover on `sunfish`.
+- Next discriminating seam after landing this tooling chunk: stop grinding purely log-based proof on the same image shape and move to a visible owned-userspace proof (`orange-init` / direct framebuffer or DRM fill), optionally paired with one durable non-log marker such as `/metadata` if the panel proof needs a post-reboot cross-check.
 - Because stock-init experimental flashes can disrupt the working rooted lane on the same slot, future chunks should bias toward safety rails before convenience or public surfacing.
 - Landing rule for this project: each chunk should be truthful, green, and mergeable on its own, so other worktrees can keep rebasing on `master` instead of waiting for a giant boot branch to finish.
 - Camera remains Android-bound today. Wi-Fi likely does too. Do not make them blockers for the first Shadow-at-boot milestone.

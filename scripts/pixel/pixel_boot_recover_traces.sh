@@ -20,6 +20,11 @@ META_DIR=""
 serial=""
 live_boot_id=""
 live_slot_suffix=""
+EXPECTED_RUN_TOKEN="${PIXEL_HELLO_INIT_RUN_TOKEN:-}"
+EXPECTED_RUN_TOKEN_SOURCE=""
+SOURCE_IMAGE_PATH=""
+SOURCE_IMAGE_METADATA_PATH=""
+IMAGE_METADATA_SUFFIX=".hello-init.json"
 
 usage() {
   cat <<'EOF'
@@ -60,15 +65,98 @@ prepare_output_dir() {
   mkdir -p "$OUTPUT_DIR"
 }
 
+hello_init_metadata_path() {
+  local image_path
+  image_path="${1:?hello_init_metadata_path requires an image path}"
+  printf '%s%s\n' "$image_path" "$IMAGE_METADATA_SUFFIX"
+}
+
+discover_source_image_path() {
+  local parent_status
+  parent_status="$OUTPUT_DIR/../status.json"
+
+  if [[ ! -f "$parent_status" ]]; then
+    return 0
+  fi
+
+  SOURCE_IMAGE_PATH="$(
+    python3 - "$parent_status" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+image = payload.get("image", "")
+print(image if isinstance(image, str) else "")
+PY
+  )"
+}
+
+load_run_token_from_metadata() {
+  local metadata_path
+  metadata_path="${1:?load_run_token_from_metadata requires a metadata path}"
+
+  if [[ ! -f "$metadata_path" ]]; then
+    return 0
+  fi
+
+  python3 - "$metadata_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+token = payload.get("run_token", "")
+print(token if isinstance(token, str) else "")
+PY
+}
+
+discover_expected_run_token() {
+  local metadata_token=""
+
+  discover_source_image_path
+  if [[ -n "$SOURCE_IMAGE_PATH" ]]; then
+    SOURCE_IMAGE_METADATA_PATH="$(hello_init_metadata_path "$SOURCE_IMAGE_PATH")"
+    metadata_token="$(load_run_token_from_metadata "$SOURCE_IMAGE_METADATA_PATH")"
+  fi
+
+  if [[ -n "$EXPECTED_RUN_TOKEN" ]]; then
+    EXPECTED_RUN_TOKEN_SOURCE="env:PIXEL_HELLO_INIT_RUN_TOKEN"
+    return 0
+  fi
+
+  if [[ -n "$metadata_token" ]]; then
+    EXPECTED_RUN_TOKEN="$metadata_token"
+    EXPECTED_RUN_TOKEN_SOURCE="image-metadata"
+    return 0
+  fi
+
+  EXPECTED_RUN_TOKEN_SOURCE="unavailable"
+}
+
+write_expected_run_token_summary() {
+  cat >"$META_DIR/expected-run-token.txt" <<EOF
+expected_run_token=$EXPECTED_RUN_TOKEN
+expected_run_token_present=$( [[ -n "$EXPECTED_RUN_TOKEN" ]] && printf true || printf false )
+expected_run_token_source=$EXPECTED_RUN_TOKEN_SOURCE
+source_image_path=$SOURCE_IMAGE_PATH
+source_image_metadata_path=$SOURCE_IMAGE_METADATA_PATH
+EOF
+}
+
 shell_best_effort() {
-  local output_path stderr_path status_path
-  local available matched match_count channel_status recorded_command
+  local output_path stderr_path status_path run_token_status_path
+  local available matched matched_run_token correlated
+  local match_count run_token_match_count channel_status recorded_command correlation_state
   local name="$1"
   local scope="$2"
   local command="$3"
   output_path="$CHANNEL_DIR/$name.txt"
   stderr_path="$CHANNEL_DIR/$name.stderr.txt"
-  status_path="$MATCH_DIR/$name.txt"
+  status_path="$MATCH_DIR/$name.shadow-tags.txt"
+  run_token_status_path="$MATCH_DIR/$name.run-token.txt"
 
   set +e
   pixel_adb "$serial" shell "$command" >"$output_path" 2>"$stderr_path"
@@ -84,6 +172,27 @@ shell_best_effort() {
     matched=false
   fi
 
+  if [[ -n "$EXPECTED_RUN_TOKEN" ]] && grep -aF "$EXPECTED_RUN_TOKEN" "$output_path" >"$run_token_status_path"; then
+    run_token_match_count="$(wc -l <"$run_token_status_path" | tr -d '[:space:]')"
+    matched_run_token=true
+  else
+    : >"$run_token_status_path"
+    run_token_match_count=0
+    matched_run_token=false
+  fi
+
+  correlated=false
+  if [[ "$matched" == "true" && "$matched_run_token" == "true" ]]; then
+    correlated=true
+    correlation_state="correlated"
+  elif [[ "$matched_run_token" == "true" ]]; then
+    correlation_state="token-only"
+  elif [[ "$matched" == "true" ]]; then
+    correlation_state="shadow-hint-only"
+  else
+    correlation_state="none"
+  fi
+
   available=false
   if [[ "$channel_status" -eq 0 ]]; then
     available=true
@@ -92,7 +201,7 @@ shell_best_effort() {
   recorded_command="${command//$'\n'/\\n}"
   recorded_command="${recorded_command//$'\t'/\\t}"
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$name" \
     "$scope" \
     "$recorded_command" \
@@ -102,7 +211,12 @@ shell_best_effort() {
     "$available" \
     "$matched" \
     "$match_count" \
-    "matches/$name.txt" >>"$CHANNEL_STATUS_TSV"
+    "$matched_run_token" \
+    "$run_token_match_count" \
+    "$correlated" \
+    "$correlation_state" \
+    "matches/$name.shadow-tags.txt" \
+    "matches/$name.run-token.txt" >>"$CHANNEL_STATUS_TSV"
 }
 
 capture_current_boot_state() {
@@ -165,7 +279,36 @@ with output_path.open("w", encoding="utf-8") as fh:
         text = match_path.read_text(encoding="utf-8", errors="replace")
         if not text.strip():
             continue
-        fh.write(f"== {row['name']} ==\n")
+        fh.write(
+            f"== {row['name']} scope={row['scope']} correlation_state={row['correlation_state']} ==\n"
+        )
+        fh.write(text)
+        if not text.endswith("\n"):
+            fh.write("\n")
+PY
+}
+
+write_all_run_token_matches() {
+  python3 - "$CHANNEL_STATUS_TSV" "$OUTPUT_DIR/matches/all-run-token-matches.txt" <<'PY'
+import csv
+import sys
+from pathlib import Path
+
+status_path = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+
+with status_path.open("r", encoding="utf-8") as fh:
+    rows = list(csv.DictReader(fh, delimiter="\t"))
+
+with output_path.open("w", encoding="utf-8") as fh:
+    for row in rows:
+        match_path = status_path.parent / row["run_token_matches_path"]
+        text = match_path.read_text(encoding="utf-8", errors="replace")
+        if not text.strip():
+            continue
+        fh.write(
+            f"== {row['name']} scope={row['scope']} correlation_state={row['correlation_state']} ==\n"
+        )
         fh.write(text)
         if not text.endswith("\n"):
             fh.write("\n")
@@ -173,7 +316,18 @@ PY
 }
 
 write_status_json() {
-  python3 - "$OUTPUT_DIR/status.json" "$CHANNEL_STATUS_TSV" "$live_boot_id" "$live_slot_suffix" "$serial" "$SHADOW_TAG_REGEX" "$WAIT_BOOT_COMPLETED" <<'PY'
+  python3 - \
+    "$OUTPUT_DIR/status.json" \
+    "$CHANNEL_STATUS_TSV" \
+    "$live_boot_id" \
+    "$live_slot_suffix" \
+    "$serial" \
+    "$SHADOW_TAG_REGEX" \
+    "$WAIT_BOOT_COMPLETED" \
+    "$EXPECTED_RUN_TOKEN" \
+    "$EXPECTED_RUN_TOKEN_SOURCE" \
+    "$SOURCE_IMAGE_PATH" \
+    "$SOURCE_IMAGE_METADATA_PATH" <<'PY'
 import csv
 import json
 import sys
@@ -186,13 +340,22 @@ live_slot_suffix = sys.argv[4]
 serial = sys.argv[5]
 shadow_tag_regex = sys.argv[6]
 wait_boot_completed = sys.argv[7] == "1"
+expected_run_token = sys.argv[8]
+expected_run_token_source = sys.argv[9]
+source_image_path = sys.argv[10]
+source_image_metadata_path = sys.argv[11]
 
 rows = []
 previous_boot_matches = 0
 current_boot_matches = 0
 previous_boot_attempts = 0
 current_boot_attempts = 0
-channels_with_matches = 0
+previous_boot_hint_matches = 0
+current_boot_hint_matches = 0
+matched_any_shadow_tags = False
+matched_any_correlated_shadow_tags = False
+matched_any_expected_run_token = False
+matched_any_uncorrelated_shadow_tags = False
 bootreason_values = {}
 
 with channel_status_path.open("r", encoding="utf-8") as fh:
@@ -200,7 +363,10 @@ with channel_status_path.open("r", encoding="utf-8") as fh:
         output_path = channel_status_path.parent / row["output_path"]
         stderr_path = channel_status_path.parent / row["stderr_path"]
         matches_path = channel_status_path.parent / row["matches_path"]
-        matched = row["matched"] == "true"
+        run_token_matches_path = channel_status_path.parent / row["run_token_matches_path"]
+        matched_shadow_tags = row["matched_shadow_tags"] == "true"
+        matched_expected_run_token = row["matched_expected_run_token"] == "true"
+        correlated = row["correlated"] == "true"
         available = row["available"] == "true"
         entry = {
             "scope": row["scope"],
@@ -208,26 +374,45 @@ with channel_status_path.open("r", encoding="utf-8") as fh:
             "attempted": True,
             "exit_code": int(row["exit_code"]),
             "available": available,
-            "matched_shadow_tags": matched,
-            "match_count": int(row["match_count"]),
+            "matched_shadow_tags": matched_shadow_tags,
+            "match_count": int(row["shadow_match_count"]),
+            "shadow_match_count": int(row["shadow_match_count"]),
+            "matched_expected_run_token": matched_expected_run_token,
+            "run_token_match_count": int(row["run_token_match_count"]),
+            "correlated": correlated,
+            "correlation_state": row["correlation_state"],
             "output_path": row["output_path"],
             "stderr_path": row["stderr_path"],
             "matches_path": row["matches_path"],
+            "run_token_matches_path": row["run_token_matches_path"],
             "output_bytes": output_path.stat().st_size if output_path.exists() else 0,
             "stderr_bytes": stderr_path.stat().st_size if stderr_path.exists() else 0,
             "matches_bytes": matches_path.stat().st_size if matches_path.exists() else 0,
+            "run_token_matches_bytes": (
+                run_token_matches_path.stat().st_size if run_token_matches_path.exists() else 0
+            ),
         }
         rows.append((row["name"], entry))
+        if matched_shadow_tags:
+            matched_any_shadow_tags = True
+        if correlated:
+            matched_any_correlated_shadow_tags = True
+        if matched_expected_run_token:
+            matched_any_expected_run_token = True
+        if matched_shadow_tags and not correlated:
+            matched_any_uncorrelated_shadow_tags = True
         if row["scope"] == "previous-boot":
             previous_boot_attempts += 1
-            if matched:
+            if correlated:
                 previous_boot_matches += 1
-        else:
+            elif matched_shadow_tags:
+                previous_boot_hint_matches += 1
+        elif row["scope"] == "current-boot":
             current_boot_attempts += 1
-            if matched:
+            if correlated:
                 current_boot_matches += 1
-        if matched:
-            channels_with_matches += 1
+            elif matched_shadow_tags:
+                current_boot_hint_matches += 1
 
 bootreason_path = channel_status_path.parent / "channels/bootreason-props.txt"
 if bootreason_path.exists():
@@ -243,6 +428,11 @@ payload = {
     "serial": serial,
     "output_dir": str(status_output.parent),
     "shadow_tag_regex": shadow_tag_regex,
+    "expected_run_token": expected_run_token,
+    "expected_run_token_source": expected_run_token_source,
+    "expected_run_token_present": bool(expected_run_token),
+    "source_image_path": source_image_path,
+    "source_image_metadata_path": source_image_metadata_path,
     "live_boot_id": live_boot_id,
     "live_slot_suffix": live_slot_suffix,
     "wait_boot_completed": wait_boot_completed,
@@ -250,7 +440,14 @@ payload = {
     "previous_boot_channels_with_matches": previous_boot_matches,
     "current_boot_channel_attempts": current_boot_attempts,
     "current_boot_channels_with_matches": current_boot_matches,
-    "matched_any_shadow_tags": channels_with_matches > 0,
+    "previous_boot_channels_with_shadow_hints": previous_boot_hint_matches,
+    "current_boot_channels_with_shadow_hints": current_boot_hint_matches,
+    "uncorrelated_previous_boot_channel_attempts": previous_boot_attempts,
+    "uncorrelated_previous_boot_channels_with_matches": previous_boot_hint_matches,
+    "matched_any_shadow_tags": matched_any_shadow_tags,
+    "matched_any_correlated_shadow_tags": matched_any_correlated_shadow_tags,
+    "matched_any_expected_run_token": matched_any_expected_run_token,
+    "matched_any_uncorrelated_shadow_tags": matched_any_uncorrelated_shadow_tags,
     "recovered_previous_boot_traces": previous_boot_matches > 0,
     "channels": {name: entry for name, entry in rows},
     "bootreason_props": bootreason_values,
@@ -325,7 +522,8 @@ MATCH_DIR="$OUTPUT_DIR/matches"
 META_DIR="$OUTPUT_DIR/meta"
 mkdir -p "$CHANNEL_DIR" "$MATCH_DIR" "$META_DIR"
 CHANNEL_STATUS_TSV="$OUTPUT_DIR/channel-status.tsv"
-printf 'name\tscope\tcommand\toutput_path\tstderr_path\texit_code\tavailable\tmatched\tmatch_count\tmatches_path\n' >"$CHANNEL_STATUS_TSV"
+discover_expected_run_token
+printf 'name\tscope\tcommand\toutput_path\tstderr_path\texit_code\tavailable\tmatched_shadow_tags\tshadow_match_count\tmatched_expected_run_token\trun_token_match_count\tcorrelated\tcorrelation_state\tmatches_path\trun_token_matches_path\n' >"$CHANNEL_STATUS_TSV"
 cat >"$META_DIR/shadow-tag-patterns.txt" <<EOF
 shadow-hello-init
 shadow-drm
@@ -333,9 +531,11 @@ shadow-owned-init-
 EOF
 
 capture_current_boot_state
+write_expected_run_token_summary
 
 shell_best_effort "logcat-last" "previous-boot" "logcat -L -d -v threadtime"
 shell_best_effort "dropbox-system-boot" "previous-boot" "dumpsys dropbox --print SYSTEM_BOOT"
+shell_best_effort "dropbox-system-last-kmsg" "previous-boot" "dumpsys dropbox --print SYSTEM_LAST_KMSG"
 shell_best_effort "pmsg0" "previous-boot" "cat /dev/pmsg0"
 shell_best_effort "bootreason-props" "current-boot" $'for key in ro.boot.bootreason sys.boot.reason sys.boot.reason.last persist.sys.boot.reason.history ro.boot.bootreason_history ro.boot.bootreason_last; do\n  printf "%s=%s\\n" "$key" "$(getprop "$key" | tr -d "\\r")"\ndone'
 shell_best_effort "getprop" "current-boot" "getprop"
@@ -344,6 +544,7 @@ shell_best_effort "logcat-kernel-current" "current-boot" "logcat -b kernel -d -v
 
 write_bootreason_summary
 write_all_matches
+write_all_run_token_matches
 write_status_json
 
 printf 'Recovered boot traces: %s\n' "$OUTPUT_DIR"

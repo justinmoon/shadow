@@ -38,7 +38,11 @@ boot_completed_required_failed=false
 recover_traces_attempted=false
 recover_traces_succeeded=false
 recover_traces_matched_any_shadow_tags=false
+recover_traces_matched_any_uncorrelated_shadow_tags=false
 recover_traces_recovered_previous_boot_traces=false
+recover_traces_previous_boot_channels_with_matches=0
+recover_traces_uncorrelated_previous_boot_channels_with_matches=0
+recover_traces_current_boot_channels_with_matches=0
 fastboot_departed=false
 fastboot_returned=false
 fastboot_leave_elapsed_secs=0
@@ -51,6 +55,8 @@ bootreason_sys_boot_reason_last=""
 bootreason_persist_sys_boot_reason_history=""
 bootreason_ro_boot_bootreason_history=""
 bootreason_ro_boot_bootreason_last=""
+bootreason_indicates_failure=false
+bootreason_failure_summary=""
 failure_stage=""
 
 usage() {
@@ -81,6 +87,36 @@ bool_word() {
 
 flag_enabled() {
   [[ "$(bool_word "$1")" == "true" ]]
+}
+
+trim_trailing_whitespace() {
+  printf '%s' "${1%"${1##*[![:space:]]}"}"
+}
+
+hello_init_metadata_path() {
+  local image_path
+  image_path="${1:?hello_init_metadata_path requires an image path}"
+  printf '%s.hello-init.json\n' "$image_path"
+}
+
+load_hello_init_run_token() {
+  local metadata_path
+  metadata_path="$(hello_init_metadata_path "$IMAGE_PATH")"
+
+  if [[ ! -f "$metadata_path" ]]; then
+    return 0
+  fi
+
+  python3 - "$metadata_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+token = payload.get("run_token", "")
+print(token if isinstance(token, str) else "")
+PY
 }
 
 wait_boot_completed_status_word() {
@@ -154,6 +190,47 @@ capture_bootreason_props() {
   bootreason_ro_boot_bootreason_last="$(pixel_prop "$serial" ro.boot.bootreason_last 2>/dev/null || true)"
 }
 
+bootreason_value_indicates_failure() {
+  local normalized="${1,,}"
+  [[ -n "$normalized" ]] || return 1
+
+  case "$normalized" in
+    *kernel_panic*|*panic*|*watchdog*|*crash*|*failure*|*fault*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+evaluate_bootreason_status() {
+  local details=()
+
+  if bootreason_value_indicates_failure "$bootreason_ro_boot_bootreason"; then
+    details+=("ro.boot.bootreason=$bootreason_ro_boot_bootreason")
+  fi
+  if bootreason_value_indicates_failure "$bootreason_sys_boot_reason"; then
+    details+=("sys.boot.reason=$bootreason_sys_boot_reason")
+  fi
+  if bootreason_value_indicates_failure "$bootreason_sys_boot_reason_last"; then
+    details+=("sys.boot.reason.last=$bootreason_sys_boot_reason_last")
+  fi
+  if bootreason_value_indicates_failure "$bootreason_ro_boot_bootreason_last"; then
+    details+=("ro.boot.bootreason_last=$bootreason_ro_boot_bootreason_last")
+  fi
+
+  if [[ "${#details[@]}" -gt 0 ]]; then
+    bootreason_indicates_failure=true
+    printf -v bootreason_failure_summary '%s; ' "${details[@]}"
+    bootreason_failure_summary="$(trim_trailing_whitespace "${bootreason_failure_summary%; }")"
+    return 0
+  fi
+
+  bootreason_indicates_failure=false
+  bootreason_failure_summary=""
+}
+
 prepare_output_dir() {
   if [[ -z "$OUTPUT_DIR" ]]; then
     if [[ "$DRY_RUN" == "1" ]]; then
@@ -216,7 +293,11 @@ write_status() {
     "recover_traces_attempted=$recover_traces_attempted" \
     "recover_traces_succeeded=$recover_traces_succeeded" \
     "recover_traces_matched_any_shadow_tags=$recover_traces_matched_any_shadow_tags" \
+    "recover_traces_matched_any_uncorrelated_shadow_tags=$recover_traces_matched_any_uncorrelated_shadow_tags" \
     "recover_traces_recovered_previous_boot_traces=$recover_traces_recovered_previous_boot_traces" \
+    "recover_traces_previous_boot_channels_with_matches=$recover_traces_previous_boot_channels_with_matches" \
+    "recover_traces_uncorrelated_previous_boot_channels_with_matches=$recover_traces_uncorrelated_previous_boot_channels_with_matches" \
+    "recover_traces_current_boot_channels_with_matches=$recover_traces_current_boot_channels_with_matches" \
     "fastboot_departed=$fastboot_departed" \
     "fastboot_returned=$fastboot_returned" \
     "fastboot_leave_elapsed_secs=$fastboot_leave_elapsed_secs" \
@@ -229,7 +310,9 @@ write_status() {
     "bootreason_prop:sys.boot.reason.last=$bootreason_sys_boot_reason_last" \
     "bootreason_prop:persist.sys.boot.reason.history=$bootreason_persist_sys_boot_reason_history" \
     "bootreason_prop:ro.boot.bootreason_history=$bootreason_ro_boot_bootreason_history" \
-    "bootreason_prop:ro.boot.bootreason_last=$bootreason_ro_boot_bootreason_last" <<'PY'
+    "bootreason_prop:ro.boot.bootreason_last=$bootreason_ro_boot_bootreason_last" \
+    "bootreason_indicates_failure=$bootreason_indicates_failure" \
+    "bootreason_failure_summary=$bootreason_failure_summary" <<'PY'
 import json
 import sys
 
@@ -270,7 +353,7 @@ finish() {
 }
 
 maybe_recover_traces() {
-  local recover_status_path recover_summary
+  local recover_status_path recover_summary hello_init_run_token
 
   if ! flag_enabled "$RECOVER_TRACES_AFTER"; then
     return 0
@@ -286,7 +369,9 @@ maybe_recover_traces() {
     recover_args+=(--no-wait-boot-completed)
   fi
 
+  hello_init_run_token="$(load_hello_init_run_token)"
   if PIXEL_SERIAL="$serial" \
+    PIXEL_HELLO_INIT_RUN_TOKEN="$hello_init_run_token" \
     "$SCRIPT_DIR/pixel/pixel_boot_recover_traces.sh" \
       "${recover_args[@]}"; then
     recover_traces_succeeded=true
@@ -301,13 +386,29 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
     payload = json.load(fh)
 
 matched = "true" if payload.get("matched_any_shadow_tags") else "false"
+uncorrelated = "true" if payload.get("matched_any_uncorrelated_shadow_tags") else "false"
 previous = "true" if payload.get("recovered_previous_boot_traces") else "false"
-print(f"{matched}\t{previous}")
+previous_matches = payload.get("previous_boot_channels_with_matches", 0)
+uncorrelated_matches = payload.get("uncorrelated_previous_boot_channels_with_matches", 0)
+current_matches = payload.get("current_boot_channels_with_matches", 0)
+print(
+    f"{matched}\t{uncorrelated}\t{previous}\t"
+    f"{previous_matches}\t{uncorrelated_matches}\t{current_matches}"
+)
 PY
       )"
       if [[ -n "$recover_summary" ]]; then
         recover_traces_matched_any_shadow_tags="${recover_summary%%$'\t'*}"
-        recover_traces_recovered_previous_boot_traces="${recover_summary#*$'\t'}"
+        recover_summary="${recover_summary#*$'\t'}"
+        recover_traces_matched_any_uncorrelated_shadow_tags="${recover_summary%%$'\t'*}"
+        recover_summary="${recover_summary#*$'\t'}"
+        recover_traces_recovered_previous_boot_traces="${recover_summary%%$'\t'*}"
+        recover_summary="${recover_summary#*$'\t'}"
+        recover_traces_previous_boot_channels_with_matches="${recover_summary%%$'\t'*}"
+        recover_summary="${recover_summary#*$'\t'}"
+        recover_traces_uncorrelated_previous_boot_channels_with_matches="${recover_summary%%$'\t'*}"
+        recover_summary="${recover_summary#*$'\t'}"
+        recover_traces_current_boot_channels_with_matches="$recover_summary"
       fi
     fi
     return 0
@@ -490,6 +591,7 @@ if [[ "$WAIT_BOOT_COMPLETED" == "1" ]]; then
   fi
 fi
 capture_bootreason_props
+evaluate_bootreason_status
 
 collect_failed=false
 if ! flag_enabled "$SKIP_COLLECT"; then
@@ -526,6 +628,26 @@ if [[ "$boot_completed_required_failed" == "true" ]]; then
   exit 1
 fi
 
+if [[ "$bootreason_indicates_failure" == "true" ]]; then
+  failure_stage="${failure_stage:-bootreason-failure}"
+  if flag_enabled "$SKIP_COLLECT"; then
+    printf 'Skipped helper-dir collection for one-shot boot run\n'
+  else
+    printf 'Collected one-shot boot evidence: %s\n' "$collect_output_dir"
+  fi
+  if [[ "$recover_traces_succeeded" == "true" ]]; then
+    printf 'Captured Android-side recovery bundle: %s\n' "$recover_traces_output_dir"
+    printf 'Recovery bundle matched shadow tags: %s\n' "$recover_traces_matched_any_shadow_tags"
+    printf 'Recovery bundle matched uncorrelated shadow tags: %s\n' "$recover_traces_matched_any_uncorrelated_shadow_tags"
+    printf 'Recovery bundle previous-boot matches: %s\n' "$recover_traces_previous_boot_channels_with_matches"
+    printf 'Recovery bundle uncorrelated previous-boot matches: %s\n' "$recover_traces_uncorrelated_previous_boot_channels_with_matches"
+    printf 'Recovery bundle current-boot matches: %s\n' "$recover_traces_current_boot_channels_with_matches"
+  fi
+  printf 'Bootreason indicates failed Android boot: %s\n' "$bootreason_failure_summary"
+  printf 'Run status: %s\n' "$status_path"
+  exit 1
+fi
+
 if flag_enabled "$SKIP_COLLECT"; then
   printf 'Skipped helper-dir collection for one-shot boot run\n'
 else
@@ -534,5 +656,9 @@ fi
 if [[ "$recover_traces_succeeded" == "true" ]]; then
   printf 'Captured Android-side recovery bundle: %s\n' "$recover_traces_output_dir"
   printf 'Recovery bundle matched shadow tags: %s\n' "$recover_traces_matched_any_shadow_tags"
+  printf 'Recovery bundle matched uncorrelated shadow tags: %s\n' "$recover_traces_matched_any_uncorrelated_shadow_tags"
+  printf 'Recovery bundle previous-boot matches: %s\n' "$recover_traces_previous_boot_channels_with_matches"
+  printf 'Recovery bundle uncorrelated previous-boot matches: %s\n' "$recover_traces_uncorrelated_previous_boot_channels_with_matches"
+  printf 'Recovery bundle current-boot matches: %s\n' "$recover_traces_current_boot_channels_with_matches"
 fi
 printf 'Run status: %s\n' "$status_path"

@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/shadow-pixel-boot-recover.XXXXXX")"
 MOCK_BIN="$TMP_DIR/bin"
+RUN_TOKEN="recover-run-token-1234"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -19,6 +20,7 @@ cat >"$MOCK_BIN/adb" <<'EOF'
 set -euo pipefail
 
 TRACE_MODE="${MOCK_TRACE_MODE:?}"
+TRACE_RUN_TOKEN="${MOCK_TRACE_RUN_TOKEN:-}"
 
 if [[ "${1:-}" == "devices" ]]; then
   printf 'List of devices attached\nTESTSERIAL\tdevice\n'
@@ -50,21 +52,32 @@ case "${1:-}" in
         ;;
       "logcat -L -d -v threadtime")
         if [[ "$TRACE_MODE" == "matched" ]]; then
-          printf '04-19 10:00:00.000 root root I shadow-hello-init: previous boot breadcrumb\n'
+          printf '04-19 10:00:00.000 root root I shadow-hello-init: previous boot breadcrumb run_token=%s\n' "$TRACE_RUN_TOKEN"
+        elif [[ "$TRACE_MODE" == "token-only" ]]; then
+          printf '04-19 10:00:00.000 root root I bootstat: previous boot breadcrumb run_token=%s\n' "$TRACE_RUN_TOKEN"
         else
           printf '04-19 10:00:00.000 root root I bootstat: cold boot\n'
         fi
         ;;
       "dumpsys dropbox --print SYSTEM_BOOT")
         if [[ "$TRACE_MODE" == "matched" ]]; then
-          printf 'SYSTEM_BOOT\n[shadow-drm] restored previous boot trace\n'
+          printf 'SYSTEM_BOOT\n[shadow-drm] restored previous boot trace run_token=%s\n' "$TRACE_RUN_TOKEN"
         else
           printf 'SYSTEM_BOOT\nBoot completed normally\n'
         fi
         ;;
+      "dumpsys dropbox --print SYSTEM_LAST_KMSG")
+        if [[ "$TRACE_MODE" == "matched" ]]; then
+          printf 'SYSTEM_LAST_KMSG\n<6>[shadow-hello-init] previous kernel breadcrumb\n'
+        else
+          printf 'SYSTEM_LAST_KMSG\nkernel boot without shadow tags\n'
+        fi
+        ;;
       "cat /dev/pmsg0")
         if [[ "$TRACE_MODE" == "matched" ]]; then
-          printf 'shadow-owned-init-role:hello-init\nshadow-owned-init-impl:c-static\n'
+          printf 'shadow-owned-init-run-token:%s\nshadow-owned-init-role:hello-init\nshadow-owned-init-impl:c-static\n' "$TRACE_RUN_TOKEN"
+        elif [[ "$TRACE_MODE" == "token-only" ]]; then
+          printf 'run_token=%s\n' "$TRACE_RUN_TOKEN"
         else
           printf 'audit: pmsg readable but empty of shadow tags\n'
         fi
@@ -162,40 +175,109 @@ if rendered != expected:
 PY
 }
 
-MATCHED_OUTPUT="$TMP_DIR/output-matched"
+write_recover_context() {
+  local parent_dir image_path run_token
+  parent_dir="$1"
+  image_path="$2"
+  run_token="$3"
+
+  mkdir -p "$parent_dir"
+  cat >"$parent_dir/status.json" <<EOF
+{
+  "image": "$image_path",
+  "kind": "boot_oneshot"
+}
+EOF
+  cat >"$image_path.hello-init.json" <<EOF
+{
+  "kind": "hello_init_build",
+  "run_token": "$run_token"
+}
+EOF
+}
+
+MATCHED_PARENT="$TMP_DIR/output-matched"
+MATCHED_IMAGE="$TMP_DIR/output-matched.img"
+MATCHED_OUTPUT="$MATCHED_PARENT/recover-traces"
+write_recover_context "$MATCHED_PARENT" "$MATCHED_IMAGE" "$RUN_TOKEN"
 env \
   PATH="$MOCK_BIN:$PATH" \
   PIXEL_SERIAL=TESTSERIAL \
   MOCK_TRACE_MODE=matched \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
   "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
   --output "$MATCHED_OUTPUT" >/dev/null
 
 test -f "$MATCHED_OUTPUT/channels/logcat-last.txt"
 test -f "$MATCHED_OUTPUT/meta/bootreason-props-summary.txt"
+test -f "$MATCHED_OUTPUT/meta/expected-run-token.txt"
 test -f "$MATCHED_OUTPUT/matches/all-shadow-tags.txt"
+test -f "$MATCHED_OUTPUT/matches/all-run-token-matches.txt"
 grep -Fq 'shadow-hello-init' "$MATCHED_OUTPUT/matches/all-shadow-tags.txt"
 grep -Fq 'shadow-owned-init-role:hello-init' "$MATCHED_OUTPUT/matches/all-shadow-tags.txt"
+grep -Fq "$RUN_TOKEN" "$MATCHED_OUTPUT/matches/all-run-token-matches.txt"
 assert_json_field "$MATCHED_OUTPUT/status.json" recovered_previous_boot_traces true
 assert_json_field "$MATCHED_OUTPUT/status.json" matched_any_shadow_tags true
+assert_json_field "$MATCHED_OUTPUT/status.json" matched_any_correlated_shadow_tags true
+assert_json_field "$MATCHED_OUTPUT/status.json" expected_run_token "$RUN_TOKEN"
+assert_json_field "$MATCHED_OUTPUT/status.json" expected_run_token_source image-metadata
 assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channels_with_matches 3
+assert_json_field "$MATCHED_OUTPUT/status.json" uncorrelated_previous_boot_channels_with_matches 1
+assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channels_with_shadow_hints 1
+assert_json_field "$MATCHED_OUTPUT/status.json" matched_any_uncorrelated_shadow_tags true
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/logcat-last/matched_expected_run_token true
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/logcat-last/correlated true
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/logcat-last/correlation_state correlated
 assert_json_field "$MATCHED_OUTPUT/status.json" channels/logcat-last/matched_shadow_tags true
 assert_json_field "$MATCHED_OUTPUT/status.json" channels/dropbox-system-boot/matched_shadow_tags true
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/dropbox-system-boot/matched_expected_run_token true
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/dropbox-system-last-kmsg/matched_shadow_tags true
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/dropbox-system-last-kmsg/matched_expected_run_token false
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/dropbox-system-last-kmsg/correlation_state shadow-hint-only
 assert_json_field "$MATCHED_OUTPUT/status.json" channels/bootreason-props/available true
 assert_json_field "$MATCHED_OUTPUT/status.json" bootreason_props/ro.boot.bootreason reboot,adb
 
-CLEAN_OUTPUT="$TMP_DIR/output-clean"
+CLEAN_PARENT="$TMP_DIR/output-clean"
+CLEAN_IMAGE="$TMP_DIR/output-clean.img"
+CLEAN_OUTPUT="$CLEAN_PARENT/recover-traces"
+write_recover_context "$CLEAN_PARENT" "$CLEAN_IMAGE" "$RUN_TOKEN"
 env \
   PATH="$MOCK_BIN:$PATH" \
   PIXEL_SERIAL=TESTSERIAL \
   MOCK_TRACE_MODE=clean \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
   "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
   --output "$CLEAN_OUTPUT" >/dev/null
 
 test -f "$CLEAN_OUTPUT/channels/getprop.txt"
 assert_json_field "$CLEAN_OUTPUT/status.json" recovered_previous_boot_traces false
 assert_json_field "$CLEAN_OUTPUT/status.json" matched_any_shadow_tags false
+assert_json_field "$CLEAN_OUTPUT/status.json" matched_any_correlated_shadow_tags false
+assert_json_field "$CLEAN_OUTPUT/status.json" matched_any_uncorrelated_shadow_tags false
 assert_json_field "$CLEAN_OUTPUT/status.json" previous_boot_channels_with_matches 0
 assert_json_field "$CLEAN_OUTPUT/status.json" channels/pmsg0/matched_shadow_tags false
 assert_json_field "$CLEAN_OUTPUT/status.json" bootreason_props/sys.boot.reason reboot,recovery
+
+TOKEN_ONLY_PARENT="$TMP_DIR/output-token-only"
+TOKEN_ONLY_IMAGE="$TMP_DIR/output-token-only.img"
+TOKEN_ONLY_OUTPUT="$TOKEN_ONLY_PARENT/recover-traces"
+write_recover_context "$TOKEN_ONLY_PARENT" "$TOKEN_ONLY_IMAGE" "$RUN_TOKEN"
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=token-only \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$TOKEN_ONLY_OUTPUT" >/dev/null
+
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" matched_any_shadow_tags false
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" matched_any_expected_run_token true
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" matched_any_correlated_shadow_tags false
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" recovered_previous_boot_traces false
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" previous_boot_channels_with_matches 0
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlation_state token-only
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlated false
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/matched_expected_run_token true
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/matched_shadow_tags false
 
 printf 'pixel_boot_recover_traces_smoke: ok\n'

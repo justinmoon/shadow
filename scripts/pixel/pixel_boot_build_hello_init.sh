@@ -21,9 +21,11 @@ MOUNT_PROC="${PIXEL_HELLO_INIT_MOUNT_PROC:-true}"
 MOUNT_SYS="${PIXEL_HELLO_INIT_MOUNT_SYS:-true}"
 LOG_KMSG="${PIXEL_HELLO_INIT_LOG_KMSG:-true}"
 LOG_PMSG="${PIXEL_HELLO_INIT_LOG_PMSG:-true}"
+RUN_TOKEN="${PIXEL_HELLO_INIT_RUN_TOKEN:-}"
 KEEP_WORK_DIR=0
 WORK_DIR=""
 CONFIG_ENTRY="shadow-init.cfg"
+METADATA_SUFFIX=".hello-init.json"
 
 usage() {
   cat <<'EOF'
@@ -50,6 +52,20 @@ default_output_image() {
 
 default_hello_init_binary() {
   printf '%s\n' "${PIXEL_HELLO_INIT_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init}"
+}
+
+hello_init_metadata_path() {
+  local image_path
+  image_path="${1:?hello_init_metadata_path requires an image path}"
+  printf '%s%s\n' "$image_path" "$METADATA_SUFFIX"
+}
+
+generate_run_token() {
+  python3 - <<'PY'
+import secrets
+
+print(secrets.token_hex(16))
+PY
 }
 
 assert_input_matches_stock_boot() {
@@ -210,6 +226,7 @@ render_config() {
 payload=$PAYLOAD
 hold_seconds=$HOLD_SECS
 reboot_target=$REBOOT_TARGET
+run_token=$RUN_TOKEN
 EOF
 
   if [[ "$DEV_MOUNT" != "devtmpfs" ]]; then
@@ -231,6 +248,67 @@ EOF
   if [[ "$LOG_PMSG" != "true" ]]; then
     printf 'log_pmsg=%s\n' "$LOG_PMSG" >>"$output_path"
   fi
+}
+
+write_metadata() {
+  local metadata_path
+  metadata_path="$(hello_init_metadata_path "$OUTPUT_IMAGE")"
+
+  python3 - \
+    "$metadata_path" \
+    "$OUTPUT_IMAGE" \
+    "$PAYLOAD" \
+    "$HOLD_SECS" \
+    "$REBOOT_TARGET" \
+    "$RUN_TOKEN" \
+    "$DEV_MOUNT" \
+    "$MOUNT_DEV" \
+    "$MOUNT_PROC" \
+    "$MOUNT_SYS" \
+    "$LOG_KMSG" \
+    "$LOG_PMSG" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+(
+    metadata_path,
+    image_path,
+    payload,
+    hold_seconds,
+    reboot_target,
+    run_token,
+    dev_mount,
+    mount_dev,
+    mount_proc,
+    mount_sys,
+    log_kmsg,
+    log_pmsg,
+) = sys.argv[1:]
+
+
+def parse_bool(raw: str) -> bool:
+    return raw == "true"
+
+
+payload_json = {
+    "kind": "hello_init_build",
+    "image": image_path,
+    "payload": payload,
+    "hold_seconds": int(hold_seconds),
+    "reboot_target": reboot_target,
+    "run_token": run_token,
+    "dev_mount": dev_mount,
+    "mount_dev": parse_bool(mount_dev),
+    "mount_proc": parse_bool(mount_proc),
+    "mount_sys": parse_bool(mount_sys),
+    "log_kmsg": parse_bool(log_kmsg),
+    "log_pmsg": parse_bool(log_pmsg),
+}
+
+target = Path(metadata_path)
+target.write_text(json.dumps(payload_json, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
 }
 
 cleanup() {
@@ -343,6 +421,10 @@ assert_bool_word mount-proc "$MOUNT_PROC"
 assert_bool_word mount-sys "$MOUNT_SYS"
 assert_bool_word log-kmsg "$LOG_KMSG"
 assert_bool_word log-pmsg "$LOG_PMSG"
+if [[ -z "$RUN_TOKEN" ]]; then
+  RUN_TOKEN="$(generate_run_token)"
+fi
+assert_safe_word run-token "$RUN_TOKEN" 63
 
 if [[ -z "$KEY_PATH" ]]; then
   KEY_PATH="$(ensure_cached_avb_testkey)"
@@ -386,6 +468,7 @@ if [[ "$KEEP_WORK_DIR" == "1" ]]; then
 fi
 
 "$SCRIPT_DIR/pixel/pixel_boot_build.sh" "${build_args[@]}"
+write_metadata
 
 printf 'Owned userspace mode: hello-init\n'
 printf 'Root init path: preserve stock /init -> /system/bin/init symlink\n'
@@ -394,12 +477,14 @@ printf 'Config path: /%s\n' "$CONFIG_ENTRY"
 printf 'Payload: %s\n' "$PAYLOAD"
 printf 'Hold seconds: %s\n' "$HOLD_SECS"
 printf 'Reboot target: %s\n' "$REBOOT_TARGET"
+printf 'Run token: %s\n' "$RUN_TOKEN"
 printf 'Dev mount style: %s\n' "$DEV_MOUNT"
 printf 'Mount /dev: %s\n' "$MOUNT_DEV"
 printf 'Mount proc: %s\n' "$MOUNT_PROC"
 printf 'Mount sys: %s\n' "$MOUNT_SYS"
 printf 'Log kmsg: %s\n' "$LOG_KMSG"
 printf 'Log pmsg: %s\n' "$LOG_PMSG"
+printf 'Metadata path: %s\n' "$(hello_init_metadata_path "$OUTPUT_IMAGE")"
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
   printf 'Kept hello-init workdir: %s\n' "$WORK_DIR"
 fi

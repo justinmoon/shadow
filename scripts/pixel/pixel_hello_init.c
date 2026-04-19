@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -37,6 +38,8 @@ static const char kOwnedInitConfigSentinel[] =
     "shadow-owned-init-config:" SHADOW_HELLO_INIT_CONFIG_PATH;
 static const char kOwnedInitMountsSentinelPrefix[] =
     "shadow-owned-init-mounts:";
+static const char kOwnedInitRunTokenSentinelPrefix[] =
+    "shadow-owned-init-run-token:";
 static const char kOwnedInitOrangePayloadSentinel[] =
     "shadow-owned-init-payload-path:" SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH;
 
@@ -44,6 +47,7 @@ struct hello_init_config {
     char payload[32];
     unsigned int hold_seconds;
     char reboot_target[32];
+    char run_token[64];
     char dev_mount[16];
     bool mount_dev;
     bool mount_proc;
@@ -58,6 +62,29 @@ static uint64_t shadow_boot_start_ms = 0;
 static bool shadow_log_stdio = true;
 static bool shadow_log_kmsg = false;
 static bool shadow_log_pmsg = false;
+static char shadow_run_token[64] = "";
+
+static bool fd_is_open(int fd) {
+    return fcntl(fd, F_GETFL) != -1 || errno != EBADF;
+}
+
+static bool fd_is_dev_null(int fd) {
+    struct stat st;
+
+    if (fstat(fd, &st) != 0) {
+        return false;
+    }
+
+    return S_ISCHR(st.st_mode) &&
+           major(st.st_rdev) == 1U &&
+           minor(st.st_rdev) == 3U;
+}
+
+static bool stdio_is_available(void) {
+    return fd_is_open(STDIN_FILENO) &&
+           fd_is_open(STDOUT_FILENO) &&
+           fd_is_open(STDERR_FILENO);
+}
 
 static bool copy_string(char *dest, size_t dest_size, const char *src) {
     size_t src_length;
@@ -81,6 +108,7 @@ static void init_default_config(struct hello_init_config *config) {
     (void)copy_string(config->payload, sizeof(config->payload), "hello");
     config->hold_seconds = SHADOW_HELLO_INIT_DEFAULT_HOLD_SECONDS;
     (void)copy_string(config->reboot_target, sizeof(config->reboot_target), "bootloader");
+    config->run_token[0] = '\0';
     (void)copy_string(config->dev_mount, sizeof(config->dev_mount), "devtmpfs");
     config->mount_dev = true;
     config->mount_proc = true;
@@ -101,6 +129,10 @@ static uint64_t monotonic_millis(void) {
     }
 
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+}
+
+static const char *run_token_or_unset(void) {
+    return shadow_run_token[0] != '\0' ? shadow_run_token : "unset";
 }
 
 static void ensure_kmsg_fd(void) {
@@ -228,6 +260,9 @@ static void log_stage(const char *level, const char *stage, const char *fmt, ...
 static void log_observability_status(void) {
     bool kmsg_available;
     bool pmsg_available;
+    bool stdio_available;
+    bool stdio_observable;
+    const char *stdio_status;
 
     if (shadow_log_kmsg) {
         ensure_kmsg_fd();
@@ -237,20 +272,35 @@ static void log_observability_status(void) {
     }
     kmsg_available = !shadow_log_kmsg || shadow_kmsg_fd >= 0;
     pmsg_available = !shadow_log_pmsg || shadow_pmsg_fd >= 0;
+    stdio_available = stdio_is_available();
+    stdio_observable = stdio_available &&
+                       !fd_is_dev_null(STDOUT_FILENO) &&
+                       !fd_is_dev_null(STDERR_FILENO);
+    if (!stdio_available) {
+        stdio_status = "false";
+    } else if (!stdio_observable) {
+        stdio_status = "dev-null";
+    } else {
+        stdio_status = "true";
+    }
 
     log_boot(
         "<6>",
-        "shadow-owned-init-observability:kmsg=%s,pmsg=%s,stdio=true",
+        "shadow-owned-init-observability:kmsg=%s,pmsg=%s,stdio=%s,run_token=%s",
         shadow_log_kmsg ? bool_word(kmsg_available) : "disabled",
-        shadow_log_pmsg ? bool_word(pmsg_available) : "disabled"
+        shadow_log_pmsg ? bool_word(pmsg_available) : "disabled",
+        stdio_status,
+        run_token_or_unset()
     );
-    if (!kmsg_available || !pmsg_available) {
+    if (!kmsg_available || !pmsg_available || !stdio_observable) {
         log_stage(
             "<4>",
             "observability-degraded",
-            "kmsg=%s pmsg=%s",
+            "kmsg=%s pmsg=%s stdio=%s run_token=%s",
             bool_word(kmsg_available),
-            bool_word(pmsg_available)
+            bool_word(pmsg_available),
+            stdio_status,
+            run_token_or_unset()
         );
     }
 }
@@ -267,6 +317,183 @@ static int ensure_directory(const char *path, mode_t mode) {
 
     log_boot("<3>", "mkdir(%s) failed: errno=%d", path, errno);
     return -1;
+}
+
+static int ensure_char_device(
+    const char *path,
+    mode_t mode,
+    unsigned int major_num,
+    unsigned int minor_num
+) {
+    struct stat st;
+    dev_t expected_device;
+    mode_t old_umask;
+
+    expected_device = makedev(major_num, minor_num);
+
+    if (lstat(path, &st) == 0) {
+        if (S_ISCHR(st.st_mode) && st.st_rdev == expected_device) {
+            return 0;
+        }
+
+        log_boot(
+            "<3>",
+            "device path %s exists with unexpected mode=%o rdev=%llu:%llu",
+            path,
+            st.st_mode,
+            (unsigned long long)major(st.st_rdev),
+            (unsigned long long)minor(st.st_rdev)
+        );
+        return -1;
+    }
+    if (errno != ENOENT) {
+        log_boot("<3>", "lstat(%s) failed: errno=%d", path, errno);
+        return -1;
+    }
+
+    old_umask = umask(0);
+    if (mknod(path, S_IFCHR | mode, expected_device) != 0 && errno != EEXIST) {
+        int saved_errno = errno;
+
+        (void)umask(old_umask);
+        log_boot(
+            "<3>",
+            "mknod(%s major=%u minor=%u) failed: errno=%d",
+            path,
+            major_num,
+            minor_num,
+            saved_errno
+        );
+        return -1;
+    }
+    (void)umask(old_umask);
+
+    if (lstat(path, &st) != 0) {
+        log_boot("<3>", "post-mknod lstat(%s) failed: errno=%d", path, errno);
+        return -1;
+    }
+    if (!S_ISCHR(st.st_mode) || st.st_rdev != expected_device) {
+        log_boot(
+            "<3>",
+            "device path %s did not resolve to expected char device %u:%u",
+            path,
+            major_num,
+            minor_num
+        );
+        return -1;
+    }
+
+    return 0;
+}
+
+static int ensure_symlink_target(const char *path, const char *target) {
+    struct stat st;
+    char actual_target[64];
+    ssize_t actual_length;
+
+    if (lstat(path, &st) == 0) {
+        if (!S_ISLNK(st.st_mode)) {
+            log_boot("<3>", "path %s exists and is not a symlink", path);
+            return -1;
+        }
+
+        actual_length = readlink(path, actual_target, sizeof(actual_target) - 1);
+        if (actual_length < 0) {
+            log_boot("<3>", "readlink(%s) failed: errno=%d", path, errno);
+            return -1;
+        }
+        actual_target[actual_length] = '\0';
+        if (strcmp(actual_target, target) == 0) {
+            return 0;
+        }
+
+        log_boot(
+            "<3>",
+            "symlink %s points to %s, expected %s",
+            path,
+            actual_target,
+            target
+        );
+        return -1;
+    }
+    if (errno != ENOENT) {
+        log_boot("<3>", "lstat(%s) failed: errno=%d", path, errno);
+        return -1;
+    }
+
+    if (symlink(target, path) != 0 && errno != EEXIST) {
+        log_boot("<3>", "symlink(%s -> %s) failed: errno=%d", path, target, errno);
+        return -1;
+    }
+
+    return 0;
+}
+
+static void ensure_stdio_fds(void) {
+    int null_fd;
+
+    if (stdio_is_available()) {
+        return;
+    }
+
+    null_fd = open("/dev/null", O_RDWR | O_CLOEXEC | O_NOCTTY);
+    if (null_fd < 0) {
+        return;
+    }
+
+    if (!fd_is_open(STDIN_FILENO)) {
+        (void)dup2(null_fd, STDIN_FILENO);
+    }
+    if (!fd_is_open(STDOUT_FILENO)) {
+        (void)dup2(null_fd, STDOUT_FILENO);
+    }
+    if (!fd_is_open(STDERR_FILENO)) {
+        (void)dup2(null_fd, STDERR_FILENO);
+    }
+
+    if (null_fd > STDERR_FILENO) {
+        close(null_fd);
+    }
+}
+
+static int bootstrap_tmpfs_dev_runtime(const struct hello_init_config *config) {
+    if (!config->mount_dev || strcmp(config->dev_mount, "tmpfs") != 0) {
+        return 0;
+    }
+
+    if (ensure_char_device("/dev/null", 0666, 1U, 3U) != 0) {
+        return -1;
+    }
+    if (ensure_char_device("/dev/console", 0600, 5U, 1U) != 0) {
+        return -1;
+    }
+    if (config->log_kmsg && ensure_char_device("/dev/kmsg", 0600, 1U, 11U) != 0) {
+        return -1;
+    }
+    if (config->log_pmsg && ensure_char_device("/dev/pmsg0", 0222, 250U, 0U) != 0) {
+        return -1;
+    }
+
+    ensure_stdio_fds();
+    return 0;
+}
+
+static int bootstrap_proc_stdio_links(const struct hello_init_config *config) {
+    if (!config->mount_dev || !config->mount_proc || strcmp(config->dev_mount, "tmpfs") != 0) {
+        return 0;
+    }
+
+    if (ensure_symlink_target("/dev/stdin", "/proc/self/fd/0") != 0) {
+        return -1;
+    }
+    if (ensure_symlink_target("/dev/stdout", "/proc/self/fd/1") != 0) {
+        return -1;
+    }
+    if (ensure_symlink_target("/dev/stderr", "/proc/self/fd/2") != 0) {
+        return -1;
+    }
+
+    return 0;
 }
 
 static int mount_pseudofs(
@@ -373,6 +600,31 @@ static bool parse_dev_mount_value(const char *raw, char *dest, size_t dest_size)
     return copy_string(dest, dest_size, value);
 }
 
+static bool parse_run_token_value(const char *raw, char *dest, size_t dest_size) {
+    char buffer[64];
+    char *value;
+    size_t index;
+
+    if (!copy_string(buffer, sizeof(buffer), raw)) {
+        return false;
+    }
+
+    value = trim_whitespace(buffer);
+    if (*value == '\0') {
+        return false;
+    }
+
+    for (index = 0; value[index] != '\0'; index++) {
+        unsigned char ch = (unsigned char)value[index];
+
+        if (!isalnum(ch) && ch != '.' && ch != '_' && ch != '-') {
+            return false;
+        }
+    }
+
+    return copy_string(dest, dest_size, value);
+}
+
 static void apply_config_value(
     struct hello_init_config *config,
     const char *key,
@@ -404,6 +656,14 @@ static void apply_config_value(
                 "reboot_target value truncated to %zu bytes",
                 sizeof(config->reboot_target) - 1
             );
+        }
+        return;
+    }
+
+    if (strcmp(key, "run_token") == 0) {
+        if (!parse_run_token_value(value, config->run_token, sizeof(config->run_token))) {
+            log_boot("<3>", "invalid run_token value: %s", value);
+            return;
         }
         return;
     }
@@ -703,6 +963,7 @@ int main(void) {
 
     init_default_config(&config);
     load_config(&config);
+    (void)copy_string(shadow_run_token, sizeof(shadow_run_token), config.run_token);
     shadow_log_kmsg = config.log_kmsg;
     shadow_log_pmsg = config.log_pmsg;
 
@@ -711,6 +972,9 @@ int main(void) {
             return 1;
         }
         if (mount(config.dev_mount, "/dev", config.dev_mount, MS_NOSUID, "mode=0755") != 0 && errno != EBUSY) {
+            return 1;
+        }
+        if (bootstrap_tmpfs_dev_runtime(&config) != 0) {
             return 1;
         }
         log_boot("<6>", "mounted %s on /dev", config.dev_mount);
@@ -729,6 +993,7 @@ int main(void) {
         bool_word(config.mount_proc),
         bool_word(config.mount_sys)
     );
+    log_boot("<6>", "%s%s", kOwnedInitRunTokenSentinelPrefix, run_token_or_unset());
     log_observability_status();
 
     if (config.mount_proc) {
@@ -736,6 +1001,9 @@ int main(void) {
             return 1;
         }
         if (mount_pseudofs("proc", "/proc", "proc", MS_NOSUID | MS_NOEXEC | MS_NODEV, "") != 0) {
+            return 1;
+        }
+        if (bootstrap_proc_stdio_links(&config) != 0) {
             return 1;
         }
     }
@@ -759,10 +1027,11 @@ int main(void) {
     log_stage(
         "<6>",
         "config-loaded",
-        "payload=%s hold_seconds=%u reboot_target=%s dev_mount=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "payload=%s hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.hold_seconds,
         config.reboot_target,
+        run_token_or_unset(),
         config.dev_mount,
         bool_word(config.mount_dev),
         bool_word(config.mount_proc),
@@ -772,10 +1041,11 @@ int main(void) {
     );
     log_boot(
         "<6>",
-        "config payload=%s hold_seconds=%u reboot_target=%s dev_mount=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "config payload=%s hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.hold_seconds,
         config.reboot_target,
+        run_token_or_unset(),
         config.dev_mount,
         bool_word(config.mount_dev),
         bool_word(config.mount_proc),

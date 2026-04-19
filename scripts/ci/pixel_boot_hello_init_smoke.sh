@@ -12,11 +12,16 @@ BOOT_BUILD_NONSTOCK_RAMDISK="$TMP_DIR/build-nonstock-ramdisk.cpio"
 HELLO_INIT_OUTPUT="$TMP_DIR/hello-init"
 OUTPUT_IMAGE="$TMP_DIR/hello-init-boot.img"
 MINIMAL_OUTPUT_IMAGE="$TMP_DIR/hello-init-boot-minimal.img"
+TMPFS_LOG_OUTPUT_IMAGE="$TMP_DIR/hello-init-boot-tmpfs-logs.img"
 AVB_KEY_PATH="$TMP_DIR/avb-testkey.pem"
 MOCK_STORE_HELLO="$TMP_DIR/store-hello"
 BAD_HELLO_INIT_BINARY="$TMP_DIR/bad-hello-init"
 HELLO_INIT_CACHE_OUTPUT="$TMP_DIR/hello-init-cache"
 MOCK_NIX_CALLS_FILE="$TMP_DIR/mock-nix-calls"
+HELLO_RUN_TOKEN="hello-run-token-17"
+TMPFS_RUN_TOKEN="tmpfs-log-token-00"
+MINIMAL_RUN_TOKEN="minimal-run-token-00"
+SECOND_RUN_TOKEN="second-run-token-11"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -289,6 +294,36 @@ assert_file_contains() {
   fi
 }
 
+assert_json_field() {
+  local json_path key_path expected
+  json_path="$1"
+  key_path="$2"
+  expected="$3"
+
+  python3 - "$json_path" "$key_path" "$expected" <<'PY'
+import json
+import sys
+
+path, key_path, expected = sys.argv[1:4]
+with open(path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+
+value = data
+for part in key_path.split("/"):
+    value = value[part]
+
+if isinstance(value, bool):
+    rendered = "true" if value else "false"
+elif value is None:
+    rendered = ""
+else:
+    rendered = str(value)
+
+if rendered != expected:
+    raise SystemExit(f"{key_path}: expected {expected!r}, got {rendered!r}")
+PY
+}
+
 assert_cpio_entry_equals() {
   local archive_path entry_name expected_data
   archive_path="$1"
@@ -379,9 +414,16 @@ assert_contains "$(cat "$HELLO_INIT_OUTPUT")" "shadow-owned-init-role:hello-init
 assert_contains "$(cat "$HELLO_INIT_OUTPUT")" "shadow-owned-init-impl:c-static"
 assert_contains "$(cat "$HELLO_INIT_OUTPUT")" "shadow-owned-init-config:/shadow-init.cfg"
 assert_contains "$(cat "$HELLO_INIT_OUTPUT")" "shadow-owned-init-mounts:dev=true,proc=true,sys=true"
-assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'shadow-owned-init-observability:kmsg=%s,pmsg=%s,stdio=true'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'shadow-owned-init-observability:kmsg=%s,pmsg=%s,stdio=%s,run_token=%s'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"observability-degraded"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"%sdev=%s,proc=%s,sys=%s"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'shadow-owned-init-run-token:'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'run_token=%s dev_mount=%s'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'ensure_char_device("/dev/kmsg", 0600, 1U, 11U)'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'ensure_char_device("/dev/pmsg0", 0222, 250U, 0U)'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'ensure_symlink_target("/dev/stdout", "/proc/self/fd/1")'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'bootstrap_tmpfs_dev_runtime(&config)'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'bootstrap_proc_stdio_links(&config)'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'log_stage("<6>", "orange-wait", "pid=%d seconds=%u", child_pid, waited_seconds);'
 
 hello_reuse_output="$(
@@ -399,6 +441,7 @@ hello_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
+    PIXEL_HELLO_INIT_RUN_TOKEN="$HELLO_RUN_TOKEN" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
       --input "$BOOT_BUILD_INPUT" \
       --key "$AVB_KEY_PATH" \
@@ -417,22 +460,57 @@ assert_contains "$hello_boot_output" "Config path: /shadow-init.cfg"
 assert_contains "$hello_boot_output" "Payload: hello"
 assert_contains "$hello_boot_output" "Hold seconds: 17"
 assert_contains "$hello_boot_output" "Reboot target: bootloader"
+assert_contains "$hello_boot_output" "Run token: $HELLO_RUN_TOKEN"
 assert_contains "$hello_boot_output" "Dev mount style: devtmpfs"
 assert_contains "$hello_boot_output" "Mount /dev: true"
 assert_contains "$hello_boot_output" "Mount proc: true"
 assert_contains "$hello_boot_output" "Mount sys: true"
 assert_contains "$hello_boot_output" "Log kmsg: true"
 assert_contains "$hello_boot_output" "Log pmsg: true"
+assert_contains "$hello_boot_output" "Metadata path: $OUTPUT_IMAGE.hello-init.json"
 assert_contains "$hello_boot_output" "Built hello-init -> $HELLO_INIT_CACHE_OUTPUT"
 assert_cpio_entry_symlink_target "$OUTPUT_IMAGE" init "/system/bin/init"
 assert_cpio_entry_equals "$OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:c-static\n# shadow-owned-init-config:/shadow-init.cfg\n# shadow-owned-init-mounts:dev=true,proc=true,sys=true\necho hello-init\n'
-assert_cpio_entry_equals "$OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_hello_init.sh\npayload=hello\nhold_seconds=17\nreboot_target=bootloader\n'
+assert_cpio_entry_equals "$OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_hello_init.sh\npayload=hello\nhold_seconds=17\nreboot_target=bootloader\nrun_token=hello-run-token-17\n'
 assert_cpio_entry_missing "$OUTPUT_IMAGE" system/bin/init.stock
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" kind hello_init_build
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" image "$OUTPUT_IMAGE"
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" payload hello
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" run_token "$HELLO_RUN_TOKEN"
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" log_kmsg true
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" log_pmsg true
+
+tmpfs_log_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
+    PIXEL_HELLO_INIT_RUN_TOKEN="$TMPFS_RUN_TOKEN" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMPFS_LOG_OUTPUT_IMAGE" \
+      --payload hello \
+      --hold-secs 0 \
+      --reboot-target restart \
+      --dev-mount tmpfs \
+      --mount-sys false
+)"
+assert_contains "$tmpfs_log_boot_output" "Dev mount style: tmpfs"
+assert_contains "$tmpfs_log_boot_output" "Mount /dev: true"
+assert_contains "$tmpfs_log_boot_output" "Mount proc: true"
+assert_contains "$tmpfs_log_boot_output" "Mount sys: false"
+assert_contains "$tmpfs_log_boot_output" "Log kmsg: true"
+assert_contains "$tmpfs_log_boot_output" "Log pmsg: true"
+assert_contains "$tmpfs_log_boot_output" "Run token: $TMPFS_RUN_TOKEN"
+assert_cpio_entry_equals "$TMPFS_LOG_OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_hello_init.sh\npayload=hello\nhold_seconds=0\nreboot_target=restart\nrun_token=tmpfs-log-token-00\ndev_mount=tmpfs\nmount_sys=false\n'
+assert_json_field "$TMPFS_LOG_OUTPUT_IMAGE.hello-init.json" run_token "$TMPFS_RUN_TOKEN"
+assert_json_field "$TMPFS_LOG_OUTPUT_IMAGE.hello-init.json" dev_mount tmpfs
 
 minimal_hello_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
+    PIXEL_HELLO_INIT_RUN_TOKEN="$MINIMAL_RUN_TOKEN" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
       --input "$BOOT_BUILD_INPUT" \
       --key "$AVB_KEY_PATH" \
@@ -453,12 +531,17 @@ assert_contains "$minimal_hello_boot_output" "Mount proc: false"
 assert_contains "$minimal_hello_boot_output" "Mount sys: false"
 assert_contains "$minimal_hello_boot_output" "Log kmsg: false"
 assert_contains "$minimal_hello_boot_output" "Log pmsg: false"
-assert_cpio_entry_equals "$MINIMAL_OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_hello_init.sh\npayload=hello\nhold_seconds=0\nreboot_target=restart\ndev_mount=tmpfs\nmount_dev=false\nmount_proc=false\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\n'
+assert_contains "$minimal_hello_boot_output" "Run token: $MINIMAL_RUN_TOKEN"
+assert_cpio_entry_equals "$MINIMAL_OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_hello_init.sh\npayload=hello\nhold_seconds=0\nreboot_target=restart\nrun_token=minimal-run-token-00\ndev_mount=tmpfs\nmount_dev=false\nmount_proc=false\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\n'
+assert_json_field "$MINIMAL_OUTPUT_IMAGE.hello-init.json" run_token "$MINIMAL_RUN_TOKEN"
+assert_json_field "$MINIMAL_OUTPUT_IMAGE.hello-init.json" mount_dev false
+assert_json_field "$MINIMAL_OUTPUT_IMAGE.hello-init.json" mount_proc false
 
 second_hello_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     PIXEL_HELLO_INIT_DEFAULT_BIN="$HELLO_INIT_CACHE_OUTPUT" \
+    PIXEL_HELLO_INIT_RUN_TOKEN="$SECOND_RUN_TOKEN" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
       --input "$BOOT_BUILD_INPUT" \
       --key "$AVB_KEY_PATH" \
@@ -468,6 +551,7 @@ second_hello_boot_output="$(
       --reboot-target bootloader
 )"
 assert_contains "$second_hello_boot_output" "Reusing cached hello-init -> $HELLO_INIT_CACHE_OUTPUT"
+assert_contains "$second_hello_boot_output" "Run token: $SECOND_RUN_TOKEN"
 if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "2" ]]; then
   echo "pixel_boot_hello_init_smoke: expected exactly two nix builds total after two boot-image builds" >&2
   exit 1
