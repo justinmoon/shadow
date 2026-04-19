@@ -12,6 +12,7 @@ source "$SCRIPT_DIR/lib/session_apps.sh"
 LOG_DIR="$REPO_ROOT/build/ui-vm"
 RUN_LOG="$LOG_DIR/ui-vm-smoke.log"
 SHOT_PATH="$LOG_DIR/ui-vm-smoke.png"
+HOME_SURFACE_SHOT_PATH="$LOG_DIR/ui-vm-home-surface.ppm"
 VM_SOCKET_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-vm.sock"
 VM_STATE_IMAGE_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-state.img"
 RUNTIME_ARTIFACT_DIR="$(ui_vm_runtime_artifact_dir)"
@@ -242,6 +243,64 @@ print(f"{shell_x + counter_tile_local_center_x} {shell_y + counter_tile_local_ce
   run_shadowctl tap -t vm "$tap_x" "$tap_y" >/dev/null
 }
 
+assert_home_surface_visible() {
+  local shell_state
+
+  shell_state="$(run_shadowctl state -t vm --json)"
+  run_shadowctl screenshot -t vm "$HOME_SURFACE_SHOT_PATH" >/dev/null
+  STATE_JSON="$shell_state" HOME_SURFACE_SHOT_PATH="$HOME_SURFACE_SHOT_PATH" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+state = json.loads(os.environ["STATE_JSON"])
+shell_x = state.get("shell_x")
+shell_y = state.get("shell_y")
+if shell_x is None or shell_y is None:
+    raise SystemExit("vm-smoke: missing shell geometry for home-surface assertion")
+
+payload = Path(os.environ["HOME_SURFACE_SHOT_PATH"]).read_bytes()
+if not payload.startswith(b"P6\n"):
+    raise SystemExit("vm-smoke: expected QMP screendump P6 frame")
+
+rest = payload[3:]
+header = []
+index = 0
+while len(header) < 3:
+    while rest[index:index + 1] in b" \n\r\t":
+        index += 1
+    start = index
+    while rest[index:index + 1] not in b" \n\r\t":
+        index += 1
+    header.append(rest[start:index])
+while rest[index:index + 1] in b" \n\r\t":
+    index += 1
+width, height, max_value = map(int, header)
+if max_value != 255:
+    raise SystemExit(f"vm-smoke: unsupported PPM max value {max_value}")
+pixels = memoryview(rest[index:])
+
+def pixel(x: int, y: int) -> tuple[int, int, int]:
+    offset = (y * width + x) * 3
+    return tuple(pixels[offset:offset + 3])
+
+background = pixel(shell_x + 10, shell_y + 10)
+samples = {
+    "top_strip": pixel(shell_x + 270, shell_y + 25),
+    "clock_card": pixel(shell_x + 120, shell_y + 160),
+    "app_panel": pixel(shell_x + 270, shell_y + 520),
+    "bottom_pill": pixel(shell_x + 270, shell_y + 1113),
+}
+required = ("top_strip", "app_panel", "bottom_pill")
+missing = {name: samples[name] for name in required if samples[name] == background}
+if missing:
+    raise SystemExit(
+        "vm-smoke: home surface screenshot is missing expected launcher/chrome surfaces "
+        f"(background={background}, missing={missing}, samples={samples})"
+    )
+PY
+}
+
 dump_failure_context() {
   if [[ -f "$RUN_LOG" ]]; then
     printf '\n== vm-smoke run log ==\n' >&2
@@ -438,6 +497,7 @@ wait_for_log_marker \
 echo "vm-smoke: home counter"
 run_shadowctl home -t vm >/dev/null
 state_after_counter_home="$(wait_for_home_state counter "counter home")"
+assert_home_surface_visible
 wait_for_log_marker \
   "[shadow-runtime-counter] lifecycle_state=background" \
   "counter lifecycle background"

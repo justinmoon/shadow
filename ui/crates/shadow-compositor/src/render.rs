@@ -24,14 +24,10 @@ pub fn render_output<'a, 'd>(
 {
     let mut shell_elements: Vec<MemoryRenderBufferRenderElement<GlesRenderer>> = Vec::new();
     if let Some((plan, base_surface, overlay_surfaces)) = shell {
-        shell_elements.push(
-            base_surface
-                .render_element(renderer, &plan.base_scene, plan.base_view)
-                .map_err(OutputDamageTrackerError::Rendering)?,
-        );
-
         debug_assert!(overlay_surfaces.len() >= plan.overlays.len());
-        for (overlay, overlay_surface) in plan.overlays.iter().zip(overlay_surfaces.iter_mut()) {
+        for (overlay, overlay_surface) in
+            plan.overlays.iter().rev().zip(overlay_surfaces.iter_mut())
+        {
             overlay_surface.resize(overlay.size.0, overlay.size.1);
             shell_elements.push(
                 overlay_surface
@@ -39,6 +35,14 @@ pub fn render_output<'a, 'd>(
                     .map_err(OutputDamageTrackerError::Rendering)?,
             );
         }
+        // Smithay's render pipeline composites later slice entries behind earlier ones, so
+        // we submit shell elements front-to-back: chrome overlays first, launcher beneath
+        // them, and the base last.
+        shell_elements.push(
+            base_surface
+                .render_element(renderer, &plan.base_scene, plan.base_view)
+                .map_err(OutputDamageTrackerError::Rendering)?,
+        );
     }
 
     space::render_output(
