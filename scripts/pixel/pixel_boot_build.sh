@@ -9,7 +9,9 @@ source "$SCRIPT_DIR/lib/bootimg_common.sh"
 ensure_bootimg_shell "$@"
 
 INPUT_IMAGE="${PIXEL_BOOT_INPUT_IMAGE:-}"
-WRAPPER_BINARY="${PIXEL_INIT_WRAPPER_BIN:-$(pixel_boot_init_wrapper_bin)}"
+WRAPPER_BINARY="${PIXEL_INIT_WRAPPER_BIN:-}"
+WRAPPER_MODE="${PIXEL_INIT_WRAPPER_MODE:-standard}"
+WRAPPER_BINARY_EXPLICIT=0
 KEY_PATH="${AVB_TEST_KEY_PATH:-}"
 OUTPUT_IMAGE="${PIXEL_BOOT_OUTPUT_IMAGE:-}"
 BUILD_MODE="wrapper"
@@ -21,6 +23,7 @@ declare -a REPLACE_SPECS=()
 usage() {
   cat <<'EOF'
 Usage: scripts/pixel/pixel_boot_build.sh [--input PATH] [--wrapper PATH] [--key PATH] [--output PATH]
+                                         [--wrapper-mode standard|minimal]
                                          [--add ENTRY=HOST_PATH] [--replace ENTRY=HOST_PATH]
                                          [--stock-init]
                                          [--keep-work-dir]
@@ -35,7 +38,7 @@ default_output_image() {
     return 0
   fi
 
-  pixel_boot_custom_boot_img
+  pixel_boot_custom_boot_img_for_wrapper_mode "$WRAPPER_MODE"
 }
 
 cleanup() {
@@ -57,6 +60,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --wrapper)
       WRAPPER_BINARY="${2:?missing value for --wrapper}"
+      WRAPPER_BINARY_EXPLICIT=1
+      shift 2
+      ;;
+    --wrapper-mode)
+      WRAPPER_MODE="${2:?missing value for --wrapper-mode}"
       shift 2
       ;;
     --key)
@@ -95,6 +103,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "$WRAPPER_MODE" in
+  standard|minimal)
+    ;;
+  *)
+    echo "pixel_boot_build: unsupported wrapper mode: $WRAPPER_MODE" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -z "$WRAPPER_BINARY" && "$BUILD_MODE" == "wrapper" ]]; then
+  WRAPPER_BINARY="$(pixel_boot_init_wrapper_bin_for_mode "$WRAPPER_MODE")"
+elif [[ -n "$WRAPPER_BINARY" && "$BUILD_MODE" == "wrapper" ]]; then
+  WRAPPER_BINARY_EXPLICIT=1
+fi
+
 if [[ -z "$INPUT_IMAGE" ]]; then
   INPUT_IMAGE="$(pixel_resolve_stock_boot_img || true)"
 fi
@@ -114,14 +137,26 @@ if [[ -z "$OUTPUT_IMAGE" ]]; then
 fi
 
 if [[ "$BUILD_MODE" == "wrapper" ]]; then
+  pixel_assert_wrapper_cache_path_mode "$WRAPPER_BINARY" "$WRAPPER_MODE"
+
+  if [[ -f "$WRAPPER_BINARY" ]] && ! pixel_wrapper_binary_matches_mode "$WRAPPER_BINARY" "$WRAPPER_MODE"; then
+    if [[ "$WRAPPER_BINARY_EXPLICIT" == "1" ]]; then
+      pixel_assert_wrapper_binary_mode "$WRAPPER_BINARY" "$WRAPPER_MODE"
+    else
+      rm -f "$WRAPPER_BINARY"
+    fi
+  fi
+
   if [[ ! -f "$WRAPPER_BINARY" ]]; then
-    "$SCRIPT_DIR/pixel/pixel_build_init_wrapper.sh"
+    "$SCRIPT_DIR/pixel/pixel_build_init_wrapper.sh" --mode "$WRAPPER_MODE"
   fi
 
   if [[ ! -f "$WRAPPER_BINARY" ]]; then
     echo "pixel_boot_build: wrapper binary not found: $WRAPPER_BINARY" >&2
     exit 1
   fi
+
+  pixel_assert_wrapper_binary_mode "$WRAPPER_BINARY" "$WRAPPER_MODE"
 fi
 
 if [[ -z "$KEY_PATH" ]]; then
@@ -177,6 +212,9 @@ printf '%s\n' "$(file "$OUTPUT_IMAGE")"
 
 printf 'Wrote boot image: %s\n' "$OUTPUT_IMAGE"
 printf 'Build mode: %s\n' "$BUILD_MODE"
+if [[ "$BUILD_MODE" == "wrapper" ]]; then
+  printf 'Wrapper mode: %s\n' "$WRAPPER_MODE"
+fi
 printf 'Ramdisk compression: %s\n' "$ramdisk_compression"
 if ((${#ADD_SPECS[@]})); then
   printf 'Extra added entries: %s\n' "${#ADD_SPECS[@]}"

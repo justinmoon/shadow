@@ -41,8 +41,110 @@ pixel_boot_init_wrapper_bin() {
   printf '%s/init-wrapper\n' "$(pixel_boot_dir)"
 }
 
+pixel_boot_init_wrapper_bin_for_mode() {
+  local wrapper_mode
+  wrapper_mode="${1:-standard}"
+
+  case "$wrapper_mode" in
+    standard)
+      pixel_boot_init_wrapper_bin
+      ;;
+    minimal)
+      printf '%s/init-wrapper-minimal\n' "$(pixel_boot_dir)"
+      ;;
+    *)
+      echo "pixel: unsupported init wrapper mode: $wrapper_mode" >&2
+      return 1
+      ;;
+  esac
+}
+
+pixel_other_wrapper_mode() {
+  local wrapper_mode
+  wrapper_mode="${1:-standard}"
+
+  case "$wrapper_mode" in
+    standard)
+      printf 'minimal\n'
+      ;;
+    minimal)
+      printf 'standard\n'
+      ;;
+    *)
+      echo "pixel: unsupported init wrapper mode: $wrapper_mode" >&2
+      return 1
+      ;;
+  esac
+}
+
+pixel_init_wrapper_mode_sentinel() {
+  local wrapper_mode
+  wrapper_mode="${1:-standard}"
+  printf 'shadow-init-wrapper-mode:%s\n' "$wrapper_mode"
+}
+
+pixel_wrapper_binary_matches_mode() {
+  local wrapper_path wrapper_mode sentinel
+  wrapper_path="${1:?pixel_wrapper_binary_matches_mode requires a wrapper path}"
+  wrapper_mode="${2:?pixel_wrapper_binary_matches_mode requires a wrapper mode}"
+  sentinel="$(pixel_init_wrapper_mode_sentinel "$wrapper_mode")"
+  grep -aFq -- "$sentinel" "$wrapper_path"
+}
+
+pixel_assert_wrapper_binary_mode() {
+  local wrapper_path wrapper_mode
+  wrapper_path="${1:?pixel_assert_wrapper_binary_mode requires a wrapper path}"
+  wrapper_mode="${2:?pixel_assert_wrapper_binary_mode requires a wrapper mode}"
+
+  if ! pixel_wrapper_binary_matches_mode "$wrapper_path" "$wrapper_mode"; then
+    cat <<EOF >&2
+pixel: init-wrapper binary does not match requested mode '$wrapper_mode': $wrapper_path
+
+Rebuild the matching wrapper with:
+  scripts/pixel/pixel_build_init_wrapper.sh --mode $wrapper_mode
+EOF
+    return 1
+  fi
+}
+
+pixel_assert_wrapper_cache_path_mode() {
+  local wrapper_path wrapper_mode opposite_mode opposite_path
+  wrapper_path="${1:?pixel_assert_wrapper_cache_path_mode requires a wrapper path}"
+  wrapper_mode="${2:?pixel_assert_wrapper_cache_path_mode requires a wrapper mode}"
+  opposite_mode="$(pixel_other_wrapper_mode "$wrapper_mode")"
+  opposite_path="$(pixel_boot_init_wrapper_bin_for_mode "$opposite_mode")"
+
+  if [[ "$wrapper_path" == "$opposite_path" ]]; then
+    cat <<EOF >&2
+pixel: wrapper path conflicts with requested mode '$wrapper_mode': $wrapper_path
+
+Use the matching cache path instead:
+  $(pixel_boot_init_wrapper_bin_for_mode "$wrapper_mode")
+EOF
+    return 1
+  fi
+}
+
 pixel_boot_custom_boot_img() {
   printf '%s/shadow-boot-wrapper.img\n' "$(pixel_boot_dir)"
+}
+
+pixel_boot_custom_boot_img_for_wrapper_mode() {
+  local wrapper_mode
+  wrapper_mode="${1:-standard}"
+
+  case "$wrapper_mode" in
+    standard)
+      pixel_boot_custom_boot_img
+      ;;
+    minimal)
+      printf '%s/shadow-boot-wrapper-minimal.img\n' "$(pixel_boot_dir)"
+      ;;
+    *)
+      echo "pixel: unsupported init wrapper mode: $wrapper_mode" >&2
+      return 1
+      ;;
+  esac
 }
 
 pixel_boot_log_probe_img() {

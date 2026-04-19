@@ -59,7 +59,8 @@ Related docs:
   - stock boot, cmdline-only edits, and minimal repacks already boot on `11151JEC200472`
   - stock-init log-probe images now also boot on `11151JEC200472`, so the wrapper is the remaining hard-boot suspect
   - property-only stock-init rc-probe images now also boot on real hardware without surfacing the proof property
-  - the next discriminating seam is patch-target / trigger selection before another wrapper-heavy image
+  - live-device inspection now shows the ramdisk-patched `system/etc/init/hw/init.rc` is masked by the mounted system partition during normal boot, and `/init.shadow.rc` is absent on the live rootfs
+  - the next discriminating seam is a minimal `/init`-owned proof again, not more stock-init rc patch-target churn
 - [ ] Prove one tiny Shadow-at-boot lane before reintroducing timeline, camera, or network-heavy cases.
 - [ ] Keep the next chunks separately landable:
   - guarded on-device log-probe validation
@@ -90,6 +91,8 @@ Related docs:
 - `scripts/ci/pixel_boot_tooling_smoke.sh` now locks the shared-stock-boot plus oneshot and flash-run dry-run contracts into `pre-commit`, and `scripts/ci/operator_cli_smoke.sh` covers both `shadowctl` delegation paths.
 - Tooling rule for later seams: prefer operator-grade helpers when they remove repeated manual steps, but keep them private, narrow, and evidence-first. Avoid “tooling” that merely hides uncertainty or bundles unrelated experiments together.
 - `rust/init-wrapper/Cargo.toml` is now standalone enough for `cargo check --manifest-path rust/init-wrapper/Cargo.toml`, and `just pre-commit` now compiles that crate directly instead of only relying on host-side boot-image builds.
+- The private wrapper seam now has two build flavors: the default wrapper still writes markers and restores `/init`, while `pixel_boot_build.sh --wrapper-mode minimal` builds `shadow-boot-wrapper-minimal.img` with a wrapper that directly `execv`s `/init.stock` using `/init` as `argv[0]`.
+- The minimal wrapper build path now enforces mode-tagged binaries, rejects cross-mode cache-path mistakes, and still leaves a `shadow-init` kmsg breadcrumb so later on-device collection can tell whether the wrapper reached userspace at all.
 - The cached stock `boot.img` can now be unpacked, wrapped, and reflashed locally. Live device validation still remains before the flash-loop milestone can flip fully green.
 - The first imported boot-helper trigger is `post-fs-data`, wired through `system/etc/init/hw/init.rc` in the recovery-as-boot ramdisk. This is intentionally a log-only probe before any automatic takeover steps.
 - The current rooted takeover path is already close to the desired runtime surface: it waits for DRM, stops Android display services, and launches `shadow-session`.
@@ -131,9 +134,25 @@ Related docs:
   - flashed active-slot boot of the same image also reached Android on slot `b`, but `shadow.boot.rc_probe` still never appeared
   - both runs now leave truthful property-mode bundles, so the negative result is about the rc/import seam itself rather than missing helper-log plumbing
 - Working inference from the property-only result: stock-init images still boot, but the current imported rc fragment is not executing in a way that surfaces either helper logs or a transient property. The wrapper remains a separate hard-boot suspect, but the next bottleneck is now rc patch-target / trigger choice.
-- Next seam after that result: stay on `09051JEC202061`, keep the property-only stock-init probe, and vary the rc patch target or trigger directly. The first candidate is forcing `--patch-target system/etc/init/hw/init.rc` before spending more time on helper payloads or wrapper handoff.
+- Follow-up fact from the same line of work: `shadow.boot.rc_probe` is not a safe proof namespace on this device for shell-driven checks, while `debug.shadow.boot.rc_probe` is settable manually. That tightened the proof mechanism, but it did not change the boot result.
+- New hardware result on 2026-04-18 from the forced `system/etc/init/hw/init.rc` debug-property seam (`09051JEC202061`, slot `b`):
+  - flashing `shadow-boot-rc-probe-stock-init-system-initrc-debugprop.img` to active slot `b` still booted Android successfully on slot `b`
+  - there was still no helper dir, no wrapper markers, and no `debug.shadow.boot.rc_probe`
+  - the live booted device showed stock `/system/etc/init/hw/init.rc` contents with no `import /init.shadow.rc`
+  - `/init.shadow.rc` was absent on the live rootfs after boot
+- Working inference from that live-device check: ramdisk-side rc patching of `system/etc/init/hw/init.rc` and the recovery rc files is not in the normal `sunfish` boot init graph once the system partition is mounted. Continuing to vary stock-init rc patch targets is low-value churn.
+- Follow-up hardware result on 2026-04-18 from the explicit `init.recovery.sunfish.rc` debug-property seam (`09051JEC202061`, slot `b`):
+  - flashing `shadow-boot-rc-probe-stock-init-recovery-debugprop.img` to active slot `b` still booted Android successfully on slot `b`
+  - there was still no helper dir, no wrapper markers, and no `debug.shadow.boot.rc_probe`
+  - so both current ramdisk rc import anchors now fail to surface any live proof on flashed normal boots
+- Tightened inference after both rc-anchor checks: the imported stock-init rc strategy is effectively exhausted for normal `sunfish` boots. Further rc-target or trigger churn is unlikely to teach us more than a direct `/init` seam.
+- New hardware result on 2026-04-19 from the minimal wrapper seam (`09051JEC202061`, inactive slot `a`):
+  - flashing `shadow-boot-wrapper-minimal.img` to inactive slot `a` and activating it did not produce a successful boot on `a`
+  - the device recovered back to Android on slot `b`, with `sys.boot_completed=1` on the known-good slot
+  - the minimal wrapper removed the old marker/rename choreography, so the failure now points at the wrapper seam itself rather than the extra bookkeeping layered on top of it
+- Tightened inference after that wrapper test: even a direct `execv("/init.stock")` chainload is not yet a valid `sunfish` boot handoff. The next discriminating seam should change the wrapper implementation itself, not more stock-init rc imports.
 - Truthfulness rule for the new boot-lab runners: top-level `status.json` and process exit codes must stay aligned with the underlying flash/collect result; false-success wrapper statuses are not acceptable evidence.
 - Because stock-init experimental flashes can disrupt the working rooted lane on the same slot, future chunks should bias toward safety rails before convenience or public surfacing.
 - Landing rule for this project: each chunk should be truthful, green, and mergeable on its own, so other worktrees can keep rebasing on `master` instead of waiting for a giant boot branch to finish.
 - Camera remains Android-bound today. Wi-Fi likely does too. Do not make them blockers for the first Shadow-at-boot milestone.
-- Next seam: use the landed property-only stock-init probe on `09051JEC202061` to test rc patch-target / trigger assumptions directly, starting with a forced `system/etc/init/hw/init.rc` path.
+- Next seam: replace or simplify the wrapper implementation again, starting with the smallest possible PID 1 handoff primitive that can still leave one trustworthy kmsg breadcrumb on `09051JEC202061`.

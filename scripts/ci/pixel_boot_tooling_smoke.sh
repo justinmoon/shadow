@@ -13,14 +13,20 @@ ONESHOT_OUTPUT="$TMP_DIR/oneshot-output"
 FLASH_RUN_OUTPUT="$TMP_DIR/flash-run-output"
 BOOT_BUILD_INPUT="$TMP_DIR/build-input.img"
 BOOT_BUILD_RAMDISK="$TMP_DIR/build-ramdisk.cpio"
-WRAPPER_BIN="$TMP_DIR/init-wrapper"
+WRAPPER_STANDARD_BIN="$TMP_DIR/init-wrapper-standard"
+WRAPPER_MINIMAL_BIN="$TMP_DIR/init-wrapper-minimal"
 AVB_KEY_PATH="$TMP_DIR/avb-testkey.pem"
 ADDED_RC="$TMP_DIR/init.extra.rc"
 PATCHED_INIT_RC="$TMP_DIR/init.rc.patched"
 WRAPPER_OUTPUT_IMAGE="$TMP_DIR/wrapper-output.img"
+MINIMAL_WRAPPER_OUTPUT_IMAGE="$TMP_DIR/wrapper-minimal-output.img"
+WRAPPER_BUILD_OUTPUT="$TMP_DIR/built-init-wrapper-standard"
+MINIMAL_BUILD_OUTPUT="$TMP_DIR/built-init-wrapper-minimal"
 STOCK_INIT_OUTPUT_IMAGE="$TMP_DIR/stock-init-output.img"
 LOG_PROBE_OUTPUT_IMAGE="$TMP_DIR/log-probe-stock-init.img"
 RC_PROBE_OUTPUT_IMAGE="$TMP_DIR/rc-probe-stock-init.img"
+MOCK_STORE_STANDARD="$TMP_DIR/store-standard"
+MOCK_STORE_MINIMAL="$TMP_DIR/store-minimal"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -33,11 +39,21 @@ printf 'local boot image\n' >"$LOCAL_BOOT"
 printf 'shared boot image\n' >"$SHARED_BOOT"
 printf 'probe image\n' >"$PROBE_IMAGE"
 printf 'boot build input\n' >"$BOOT_BUILD_INPUT"
-cat >"$WRAPPER_BIN" <<'EOF'
+mkdir -p "$MOCK_STORE_STANDARD/bin" "$MOCK_STORE_MINIMAL/bin"
+
+cat >"$WRAPPER_STANDARD_BIN" <<'EOF'
 #!/system/bin/sh
-echo wrapper
+# shadow-init-wrapper-mode:standard
+echo wrapper-standard
 EOF
-chmod 0755 "$WRAPPER_BIN"
+cat >"$WRAPPER_MINIMAL_BIN" <<'EOF'
+#!/system/bin/sh
+# shadow-init-wrapper-mode:minimal
+echo wrapper-minimal
+EOF
+chmod 0755 "$WRAPPER_STANDARD_BIN" "$WRAPPER_MINIMAL_BIN"
+cp "$WRAPPER_STANDARD_BIN" "$MOCK_STORE_STANDARD/bin/init-wrapper"
+cp "$WRAPPER_MINIMAL_BIN" "$MOCK_STORE_MINIMAL/bin/init-wrapper"
 printf 'mock avb key\n' >"$AVB_KEY_PATH"
 printf 'import /init.extra.rc\n' >"$ADDED_RC"
 cat >"$PATCHED_INIT_RC" <<'EOF'
@@ -184,9 +200,40 @@ INFO
 esac
 EOF
 
+cat >"$MOCK_BIN/file" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$1"
+EOF
+
+cat >"$MOCK_BIN/nix" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "\$1" != build ]]; then
+  echo "mock nix: unexpected args: \$*" >&2
+  exit 1
+fi
+
+case "\$*" in
+  *init-wrapper-device-minimal*)
+    printf '%s\n' "$MOCK_STORE_MINIMAL"
+    ;;
+  *init-wrapper-device*)
+    printf '%s\n' "$MOCK_STORE_STANDARD"
+    ;;
+  *)
+    echo "mock nix: unexpected package ref: \$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
 chmod 0755 \
   "$MOCK_BIN/adb" \
+  "$MOCK_BIN/file" \
   "$MOCK_BIN/just" \
+  "$MOCK_BIN/nix" \
   "$MOCK_BIN/payload-dumper-go" \
   "$MOCK_BIN/unpack_bootimg" \
   "$MOCK_BIN/mkbootimg" \
@@ -395,16 +442,56 @@ wrapper_build_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build.sh" \
       --input "$BOOT_BUILD_INPUT" \
-      --wrapper "$WRAPPER_BIN" \
+      --wrapper "$WRAPPER_STANDARD_BIN" \
       --key "$AVB_KEY_PATH" \
       --output "$WRAPPER_OUTPUT_IMAGE" \
       --add "init.extra.rc=$ADDED_RC"
 )"
 assert_contains "$wrapper_build_output" "Build mode: wrapper"
-assert_cpio_entry_equals "$WRAPPER_OUTPUT_IMAGE" init $'#!/system/bin/sh\necho wrapper\n'
+assert_contains "$wrapper_build_output" "Wrapper mode: standard"
+assert_cpio_entry_equals "$WRAPPER_OUTPUT_IMAGE" init $'#!/system/bin/sh\n# shadow-init-wrapper-mode:standard\necho wrapper-standard\n'
 assert_cpio_entry_equals "$WRAPPER_OUTPUT_IMAGE" init.stock $'stock-init\n'
 assert_cpio_entry_equals "$WRAPPER_OUTPUT_IMAGE" init.extra.rc $'import /init.extra.rc\n'
 assert_cpio_entry_equals "$WRAPPER_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'on boot\n    setprop shadow.boot.base 1\n'
+
+wrapper_helper_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 INIT_WRAPPER_OUT="$WRAPPER_BUILD_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_build_init_wrapper.sh" --mode standard
+)"
+assert_contains "$wrapper_helper_output" "Built init-wrapper (standard) -> $WRAPPER_BUILD_OUTPUT"
+assert_contains "$(cat "$WRAPPER_BUILD_OUTPUT")" "shadow-init-wrapper-mode:standard"
+
+minimal_wrapper_helper_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 INIT_WRAPPER_OUT="$MINIMAL_BUILD_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_build_init_wrapper.sh" --mode minimal
+)"
+assert_contains "$minimal_wrapper_helper_output" "Built init-wrapper (minimal) -> $MINIMAL_BUILD_OUTPUT"
+assert_contains "$(cat "$MINIMAL_BUILD_OUTPUT")" "shadow-init-wrapper-mode:minimal"
+
+minimal_wrapper_build_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build.sh" \
+      --wrapper-mode minimal \
+      --input "$BOOT_BUILD_INPUT" \
+      --wrapper "$WRAPPER_MINIMAL_BIN" \
+      --key "$AVB_KEY_PATH" \
+      --output "$MINIMAL_WRAPPER_OUTPUT_IMAGE"
+)"
+assert_contains "$minimal_wrapper_build_output" "Build mode: wrapper"
+assert_contains "$minimal_wrapper_build_output" "Wrapper mode: minimal"
+assert_cpio_entry_equals "$MINIMAL_WRAPPER_OUTPUT_IMAGE" init $'#!/system/bin/sh\n# shadow-init-wrapper-mode:minimal\necho wrapper-minimal\n'
+assert_cpio_entry_equals "$MINIMAL_WRAPPER_OUTPUT_IMAGE" init.stock $'stock-init\n'
+
+if env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_build.sh" \
+    --wrapper-mode minimal \
+    --input "$BOOT_BUILD_INPUT" \
+    --wrapper "$WRAPPER_STANDARD_BIN" \
+    --key "$AVB_KEY_PATH" \
+    --output "$TMP_DIR/should-fail-wrapper-mode-mismatch.img" >/dev/null 2>&1; then
+  echo "pixel_boot_tooling_smoke: minimal wrapper build should reject a standard wrapper binary" >&2
+  exit 1
+fi
 
 stock_init_build_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
