@@ -5,11 +5,12 @@ edition.workspace = true
 
 [features]
 default = []
+nostr = ["dep:runtime-nostr-host"]
 runtime-host = [
     "dep:deno_core",
+    "nostr",
     "dep:runtime-audio-host",
     "dep:runtime-cashu-host",
-    "dep:runtime-nostr-host",
     "runtime-camera-host/runtime-extension",
 ]
 

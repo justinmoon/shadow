@@ -6,6 +6,26 @@ export function listKind1(query = {}) {
   return getNostrApi().listKind1(query);
 }
 
+export function queryNostr(query = {}) {
+  return getNostrApi().query(normalizeNostrQuery(query));
+}
+
+export function countNostr(query = {}) {
+  return getNostrApi().count(normalizeNostrQuery(query));
+}
+
+export function getNostrEvent(id) {
+  return getNostrApi().getEvent(id);
+}
+
+export function getNostrReplaceable(kind, pubkey, identifier) {
+  return getNostrApi().getReplaceable({
+    kind,
+    pubkey,
+    identifier,
+  });
+}
+
 export function syncKind1(request = {}) {
   return getNostrApi().syncKind1(request);
 }
@@ -137,6 +157,17 @@ export function payCashuInvoice(request = {}) {
   return getCashuApi().payInvoice(request);
 }
 
+export const nostr = Object.freeze({
+  count: countNostr,
+  getEvent: getNostrEvent,
+  getReplaceable: getNostrReplaceable,
+  listKind1,
+  publishEphemeralKind1,
+  publishKind1,
+  query: queryNostr,
+  syncKind1,
+});
+
 function requireShadowOs() {
   const os = globalThis.Shadow?.os;
   if (!os) {
@@ -163,6 +194,24 @@ function getNostrApi() {
     throw new Error("Shadow.os.nostr is not installed by the runtime host");
   }
   return nostr;
+}
+
+function normalizeNostrQuery(query) {
+  if (Array.isArray(query)) {
+    if (query.length === 0) {
+      return {};
+    }
+    if (query.length === 1) {
+      return query[0];
+    }
+    throw new TypeError(
+      "nostr.query currently accepts a single filter object, not multiple filters",
+    );
+  }
+  if (query == null) {
+    return {};
+  }
+  return query;
 }
 
 function getAudioApi() {

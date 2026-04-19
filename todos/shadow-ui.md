@@ -83,6 +83,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - Home / launcher content is now on the compositor-owned VM path too: the shell model exposes a background-only base scene plus a transparent launcher overlay scene, the VM compositor composes that overlay below the top strip and bottom pill, and VM smoke now proves the path by opening `counter` from a real launcher-tile tap instead of a control-plane `open`.
 - IME stays deferred for now. The compositor can render another system-owned surface, but it still cannot observe focused-app `textInput` state over the current app platform-control socket, so a real compositor-owned keyboard needs a protocol extension before it is worth implementing.
 - The next seam should move to the next embedded shell surface or the first text/input contract, rather than more launch/env churn.
+- The first serious Rust app is now concretely the Nostr client track in [todos/nostr-rs-app.md](../todos/nostr-rs-app.md), not a generic demo-app placeholder.
 
 ## Shell/System Chrome Migration
 

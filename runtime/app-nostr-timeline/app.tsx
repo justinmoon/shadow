@@ -2,7 +2,7 @@ import {
   createSignal,
   For,
   invalidateRuntimeApp,
-  listKind1,
+  nostr,
   onMount,
   publishKind1,
   Show,
@@ -572,7 +572,7 @@ export function renderApp() {
 }
 
 function loadCachedNotes(limit: number): Kind1Event[] {
-  return listKind1({ limit }) as Kind1Event[];
+  return nostr.query({ kinds: [1], limit }) as Kind1Event[];
 }
 
 function loadInitialFeed(config: Required<TimelineConfig>): {

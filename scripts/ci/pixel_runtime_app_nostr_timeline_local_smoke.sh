@@ -203,7 +203,8 @@ def query_db_contents(db_path: Path) -> list[str]:
         rows = connection.execute(
             """
             SELECT content
-            FROM nostr_kind1_events
+            FROM nostr_events
+            WHERE kind = 1
             ORDER BY created_at DESC, sequence DESC
             """
         ).fetchall()

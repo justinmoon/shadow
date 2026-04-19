@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-deno_core = { workspace = true, features = ["include_icu_data"] }
+deno_core = { workspace = true, features = ["include_icu_data", "reactor-tokio"] }
 deno_error.workspace = true
 nostr.workspace = true
 nostr-sdk.workspace = true
