@@ -252,6 +252,7 @@ def process_archive(
     add_map: Dict[str, Path],
 ) -> CpioArchive:
     remove_lookup = set(remove_set)
+    remaining_renames = set(rename_map)
     updated_entries: List[CpioEntry] = []
     final_names = set()
 
@@ -263,6 +264,7 @@ def process_archive(
 
         if entry.name in rename_map:
             new_entry.name = rename_map[entry.name]
+            remaining_renames.discard(entry.name)
 
         if new_entry.name in final_names:
             raise ValueError(f"duplicate archive entry '{new_entry.name}'")
@@ -280,6 +282,10 @@ def process_archive(
             new_entry = replacement
 
         updated_entries.append(new_entry)
+
+    if remaining_renames:
+        missing = ", ".join(sorted(remaining_renames))
+        raise ValueError(f"missing entries in cpio archive for rename: {missing}")
 
     next_ino = archive.next_inode()
     for name, path in add_map.items():

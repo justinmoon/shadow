@@ -17,6 +17,7 @@ OUTPUT_IMAGE="${PIXEL_BOOT_OUTPUT_IMAGE:-}"
 BUILD_MODE="wrapper"
 KEEP_WORK_DIR=0
 WORK_DIR=""
+declare -a RENAME_SPECS=()
 declare -a ADD_SPECS=()
 declare -a REPLACE_SPECS=()
 
@@ -24,7 +25,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/pixel/pixel_boot_build.sh [--input PATH] [--wrapper PATH] [--key PATH] [--output PATH]
                                          [--wrapper-mode standard|minimal]
-                                         [--add ENTRY=HOST_PATH] [--replace ENTRY=HOST_PATH]
+                                         [--rename OLD=NEW] [--add ENTRY=HOST_PATH] [--replace ENTRY=HOST_PATH]
                                          [--stock-init]
                                          [--keep-work-dir]
 
@@ -78,6 +79,10 @@ while [[ $# -gt 0 ]]; do
     --stock-init)
       BUILD_MODE="stock-init"
       shift
+      ;;
+    --rename)
+      RENAME_SPECS+=("${2:?missing value for --rename}")
+      shift 2
       ;;
     --add)
       ADD_SPECS+=("${2:?missing value for --add}")
@@ -187,6 +192,10 @@ if [[ "$BUILD_MODE" == "wrapper" ]]; then
   )
 fi
 
+for spec in "${RENAME_SPECS[@]}"; do
+  cpio_args+=(--rename "$spec")
+done
+
 for spec in "${ADD_SPECS[@]}"; do
   cpio_args+=(--add "$spec")
 done
@@ -216,6 +225,9 @@ if [[ "$BUILD_MODE" == "wrapper" ]]; then
   printf 'Wrapper mode: %s\n' "$WRAPPER_MODE"
 fi
 printf 'Ramdisk compression: %s\n' "$ramdisk_compression"
+if ((${#RENAME_SPECS[@]})); then
+  printf 'Extra renamed entries: %s\n' "${#RENAME_SPECS[@]}"
+fi
 if ((${#ADD_SPECS[@]})); then
   printf 'Extra added entries: %s\n' "${#ADD_SPECS[@]}"
 fi

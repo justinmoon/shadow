@@ -111,4 +111,19 @@ if [[ "$duplicate_status" -eq 0 ]]; then
 fi
 grep -Fq "duplicate archive entry 'init'" <<<"$duplicate_output"
 
+set +e
+missing_rename_output="$(
+  python3 "$REPO_ROOT/scripts/lib/cpio_edit.py" \
+    --input "$TMP_DIR/input/ramdisk.cpio" \
+    --output "$TMP_DIR/output/missing-rename.cpio" \
+    --rename does-not-exist=init.stock 2>&1
+)"
+missing_rename_status="$?"
+set -e
+if [[ "$missing_rename_status" -eq 0 ]]; then
+  echo "cpio_edit_smoke: expected missing rename to fail" >&2
+  exit 1
+fi
+grep -Fq "missing entries in cpio archive for rename: does-not-exist" <<<"$missing_rename_output"
+
 echo "cpio_edit_smoke: ok"

@@ -20,13 +20,17 @@ ADDED_RC="$TMP_DIR/init.extra.rc"
 PATCHED_INIT_RC="$TMP_DIR/init.rc.patched"
 WRAPPER_OUTPUT_IMAGE="$TMP_DIR/wrapper-output.img"
 MINIMAL_WRAPPER_OUTPUT_IMAGE="$TMP_DIR/wrapper-minimal-output.img"
+C_WRAPPER_OUTPUT_IMAGE="$TMP_DIR/wrapper-c-minimal-output.img"
 WRAPPER_BUILD_OUTPUT="$TMP_DIR/built-init-wrapper-standard"
 MINIMAL_BUILD_OUTPUT="$TMP_DIR/built-init-wrapper-minimal"
+C_WRAPPER_BUILD_OUTPUT="$TMP_DIR/built-init-wrapper-c-minimal"
 STOCK_INIT_OUTPUT_IMAGE="$TMP_DIR/stock-init-output.img"
+INIT_SYMLINK_OUTPUT_IMAGE="$TMP_DIR/init-symlink-output.img"
 LOG_PROBE_OUTPUT_IMAGE="$TMP_DIR/log-probe-stock-init.img"
 RC_PROBE_OUTPUT_IMAGE="$TMP_DIR/rc-probe-stock-init.img"
 MOCK_STORE_STANDARD="$TMP_DIR/store-standard"
 MOCK_STORE_MINIMAL="$TMP_DIR/store-minimal"
+MOCK_STORE_C="$TMP_DIR/store-c"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -39,7 +43,7 @@ printf 'local boot image\n' >"$LOCAL_BOOT"
 printf 'shared boot image\n' >"$SHARED_BOOT"
 printf 'probe image\n' >"$PROBE_IMAGE"
 printf 'boot build input\n' >"$BOOT_BUILD_INPUT"
-mkdir -p "$MOCK_STORE_STANDARD/bin" "$MOCK_STORE_MINIMAL/bin"
+mkdir -p "$MOCK_STORE_STANDARD/bin" "$MOCK_STORE_MINIMAL/bin" "$MOCK_STORE_C/bin"
 
 cat >"$WRAPPER_STANDARD_BIN" <<'EOF'
 #!/system/bin/sh
@@ -51,9 +55,16 @@ cat >"$WRAPPER_MINIMAL_BIN" <<'EOF'
 # shadow-init-wrapper-mode:minimal
 echo wrapper-minimal
 EOF
+cat >"$C_WRAPPER_BUILD_OUTPUT" <<'EOF'
+#!/system/bin/sh
+# shadow-init-wrapper-mode:minimal
+# shadow-init-wrapper-impl:tinyc-direct
+echo wrapper-c-minimal
+EOF
 chmod 0755 "$WRAPPER_STANDARD_BIN" "$WRAPPER_MINIMAL_BIN"
 cp "$WRAPPER_STANDARD_BIN" "$MOCK_STORE_STANDARD/bin/init-wrapper"
 cp "$WRAPPER_MINIMAL_BIN" "$MOCK_STORE_MINIMAL/bin/init-wrapper"
+cp "$C_WRAPPER_BUILD_OUTPUT" "$MOCK_STORE_C/bin/init-wrapper"
 printf 'mock avb key\n' >"$AVB_KEY_PATH"
 printf 'import /init.extra.rc\n' >"$ADDED_RC"
 cat >"$PATCHED_INIT_RC" <<'EOF'
@@ -216,6 +227,9 @@ if [[ "\$1" != build ]]; then
 fi
 
 case "\$*" in
+  *init-wrapper-c-device*)
+    printf '%s\n' "$MOCK_STORE_C"
+    ;;
   *init-wrapper-device-minimal*)
     printf '%s\n' "$MOCK_STORE_MINIMAL"
     ;;
@@ -332,6 +346,40 @@ if entry_name not in entries:
 if not entries[entry_name].startswith(prefix.encode("utf-8")):
     raise SystemExit(
         f"cpio entry {entry_name} did not start with expected prefix: {entries[entry_name]!r}"
+    )
+PY
+}
+
+assert_cpio_entry_symlink_target() {
+  local archive_path entry_name expected_target
+  archive_path="$1"
+  entry_name="$2"
+  expected_target="$3"
+
+  PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$archive_path" "$entry_name" "$expected_target" <<'PY'
+from pathlib import Path
+import stat
+import sys
+
+from cpio_edit import read_cpio
+
+archive_path, entry_name, expected_target = sys.argv[1:4]
+entries = {
+    entry.name: entry
+    for entry in read_cpio(Path(archive_path)).without_trailer()
+}
+
+if entry_name not in entries:
+    raise SystemExit(f"missing cpio entry: {entry_name}")
+
+entry = entries[entry_name]
+if not stat.S_ISLNK(entry.mode):
+    raise SystemExit(f"cpio entry is not a symlink: {entry_name} mode={entry.mode:o}")
+
+actual_target = entry.data.decode("utf-8")
+if actual_target != expected_target:
+    raise SystemExit(
+        f"unexpected symlink target for {entry_name}: {actual_target!r} != {expected_target!r}"
     )
 PY
 }
@@ -468,6 +516,14 @@ minimal_wrapper_helper_output="$(
 assert_contains "$minimal_wrapper_helper_output" "Built init-wrapper (minimal) -> $MINIMAL_BUILD_OUTPUT"
 assert_contains "$(cat "$MINIMAL_BUILD_OUTPUT")" "shadow-init-wrapper-mode:minimal"
 
+c_wrapper_helper_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 \
+    "$REPO_ROOT/scripts/pixel/pixel_build_init_wrapper_c.sh" --output "$C_WRAPPER_BUILD_OUTPUT"
+)"
+assert_contains "$c_wrapper_helper_output" "Built init-wrapper-c (minimal) -> $C_WRAPPER_BUILD_OUTPUT"
+assert_contains "$(cat "$C_WRAPPER_BUILD_OUTPUT")" "shadow-init-wrapper-mode:minimal"
+assert_contains "$(cat "$C_WRAPPER_BUILD_OUTPUT")" "shadow-init-wrapper-impl:tinyc-direct"
+
 minimal_wrapper_build_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build.sh" \
@@ -481,6 +537,20 @@ assert_contains "$minimal_wrapper_build_output" "Build mode: wrapper"
 assert_contains "$minimal_wrapper_build_output" "Wrapper mode: minimal"
 assert_cpio_entry_equals "$MINIMAL_WRAPPER_OUTPUT_IMAGE" init $'#!/system/bin/sh\n# shadow-init-wrapper-mode:minimal\necho wrapper-minimal\n'
 assert_cpio_entry_equals "$MINIMAL_WRAPPER_OUTPUT_IMAGE" init.stock $'stock-init\n'
+
+c_wrapper_build_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build.sh" \
+      --wrapper-mode minimal \
+      --input "$BOOT_BUILD_INPUT" \
+      --wrapper "$C_WRAPPER_BUILD_OUTPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$C_WRAPPER_OUTPUT_IMAGE"
+)"
+assert_contains "$c_wrapper_build_output" "Build mode: wrapper"
+assert_contains "$c_wrapper_build_output" "Wrapper mode: minimal"
+assert_cpio_entry_equals "$C_WRAPPER_OUTPUT_IMAGE" init $'#!/system/bin/sh\n# shadow-init-wrapper-mode:minimal\n# shadow-init-wrapper-impl:tinyc-direct\necho wrapper-c-minimal\n'
+assert_cpio_entry_equals "$C_WRAPPER_OUTPUT_IMAGE" init.stock $'stock-init\n'
 
 if env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
   "$REPO_ROOT/scripts/pixel/pixel_boot_build.sh" \
@@ -508,6 +578,22 @@ assert_cpio_entry_equals "$STOCK_INIT_OUTPUT_IMAGE" init $'stock-init\n'
 assert_cpio_entry_missing "$STOCK_INIT_OUTPUT_IMAGE" init.stock
 assert_cpio_entry_equals "$STOCK_INIT_OUTPUT_IMAGE" init.extra.rc $'import /init.extra.rc\n'
 assert_cpio_entry_equals "$STOCK_INIT_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n\non boot\n    setprop shadow.boot.rc_probe ready\n'
+
+init_symlink_build_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_init_symlink_probe.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$INIT_SYMLINK_OUTPUT_IMAGE"
+)"
+assert_contains "$init_symlink_build_output" "Build mode: stock-init"
+assert_contains "$init_symlink_build_output" "Extra renamed entries: 1"
+assert_contains "$init_symlink_build_output" "Extra added entries: 1"
+assert_contains "$init_symlink_build_output" "Probe mode: init-symlink"
+assert_contains "$init_symlink_build_output" "Init path mutation: rename init=init.stock and restore /init as a symlink"
+assert_contains "$init_symlink_build_output" "Init symlink target: init.stock"
+assert_cpio_entry_symlink_target "$INIT_SYMLINK_OUTPUT_IMAGE" init "init.stock"
+assert_cpio_entry_equals "$INIT_SYMLINK_OUTPUT_IMAGE" init.stock $'stock-init\n'
 
 log_probe_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

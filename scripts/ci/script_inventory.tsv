@@ -57,7 +57,10 @@ scripts/pixel/pixel_boot_oneshot.sh	pixel	Private one-shot boot-lab delegate beh
 scripts/pixel/pixel_boot_recover.sh	pixel	Private sunfish recovery helper that switches back to the known-good slot after an experimental boot.
 scripts/pixel/pixel_boot_restore.sh	pixel	Private sunfish stock boot image rollback helper.
 scripts/pixel/pixel_boot_unpack.sh	pixel	Private sunfish boot image unpack/inspection helper.
+scripts/pixel/pixel_boot_build_init_symlink_probe.sh	pixel	Private stock-init boot image builder that restores /init as a symlink to init.stock.
 scripts/pixel/pixel_build_init_wrapper.sh	pixel	Private init-wrapper build helper for sunfish boot image patching.
+scripts/pixel/pixel_build_init_wrapper_c.sh	pixel	Private minimal C init-wrapper build helper for sunfish stock-init handoff experiments.
+scripts/pixel/pixel_init_wrapper_handoff.c	data	C source for the private minimal sunfish init-wrapper handoff binary.
 scripts/ci/pixel_shell_camera_smoke.sh	ci	Rooted-Pixel shell camera smoke used by pixel-ci.
 scripts/pixel/pixel_shell_drm.sh	pixel	Private rooted-Pixel shell session runner.
 scripts/pixel/pixel_shell_drm_hold.sh	pixel	Private rooted-Pixel hold-mode shell session runner behind sc run.

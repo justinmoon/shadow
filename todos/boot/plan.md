@@ -72,6 +72,7 @@ Related docs:
 - `sunfish` boots from `boot.img`, boot header v2, with recovery-as-boot. The old Cuttlefish `init_boot` work is a reference, not the real device path.
 - The repo already has a usable host-side `bootimg` shell with `unpack_bootimg`, `mkbootimg`, and `avbtool`.
 - The new private boot helpers live under `scripts/pixel/`: `pixel_boot_unpack.sh`, `pixel_boot_build.sh`, `pixel_boot_build_log_probe.sh`, `pixel_boot_collect_logs.sh`, `pixel_boot_flash.sh`, `pixel_boot_restore.sh`, and `pixel_build_init_wrapper.sh`.
+- The wrapper seam now also has a separate static C build path: `scripts/pixel/pixel_build_init_wrapper_c.sh` builds a minimal `/init.stock` handoff binary that stays out of the default Rust wrapper cache and plugs into `pixel_boot_build.sh --wrapper`.
 - `pixel_boot_build.sh` now accepts additive ramdisk `--add` and `--replace` overlays so later boot seams can reuse one wrapper/repack path instead of cloning it.
 - `pixel_boot_build_log_probe.sh` now injects `/init.shadow.rc`, patches `system/etc/init/hw/init.rc`, and adds a log-only `/shadow-boot-helper` triggered from `post-fs-data`.
 - `pixel_boot_collect_logs.sh` now pulls `/data/local/tmp/shadow-boot` plus host-visible `logcat`/`getprop` snapshots into `build/pixel/boot/logs/<timestamp>/`.
@@ -150,9 +151,23 @@ Related docs:
   - flashing `shadow-boot-wrapper-minimal.img` to inactive slot `a` and activating it did not produce a successful boot on `a`
   - the device recovered back to Android on slot `b`, with `sys.boot_completed=1` on the known-good slot
   - the minimal wrapper removed the old marker/rename choreography, so the failure now points at the wrapper seam itself rather than the extra bookkeeping layered on top of it
-- Tightened inference after that wrapper test: even a direct `execv("/init.stock")` chainload is not yet a valid `sunfish` boot handoff. The next discriminating seam should change the wrapper implementation itself, not more stock-init rc imports.
+- Follow-up hardware result on 2026-04-19 from the tiny static C wrapper seam (`09051JEC202061`, inactive slot `a`):
+  - flashing `shadow-boot-wrapper-c-minimal.img` to inactive slot `a` triggered the yellow corrupt-device warning instead of reaching Android
+  - the guarded runner did not see `adb` or `fastboot` on its own after the failure, so host-side recovery needed manual fastboot entry before it could restore stock `boot_a`
+  - after recovery, the device booted Android successfully on slot `b`, with `sys.boot_completed=1`
+- Tightened inference after both minimal wrapper tests: the failure is not Rust-specific and likely not about wrapper bookkeeping. On this device, a foreign PID 1 that later `execv()`s `/init.stock` is probably not a valid stand-in for stock `/init`.
+- Next discriminating seam: keep stock Android init as the kernel-launched `/init` path and test a path-preserving ramdisk mutation instead of another foreign-PID1 wrapper variant.
+- Candidate landable tool seam for that probe: add a dedicated private builder that renames the stock ramdisk `init` to `init.stock`, reintroduces `init` as a symlink or equivalent path-preserving shim to `init.stock`, and reuses the existing guarded flash/collect tooling on `09051JEC202061`.
+- Follow-up fact from the same line of work on 2026-04-19:
+  - the stock ramdisk already ships `init` as a symlink to `/system/bin/init`
+  - the ramdisk also contains the real `system/bin/init` ELF, so the device does not boot a root-level regular-file `/init` today
+- New hardware result on 2026-04-19 from the path-preserving symlink probe (`09051JEC202061`, inactive slot `a`):
+  - flashing `shadow-boot-init-symlink-probe.img` to inactive slot `a` and activating it did not reach Android on `a`
+  - after the yellow corrupt-device warning was acknowledged, the phone hung at the `Google` screen with no `adb` or `fastboot` visibility
+  - forcing fastboot and restoring stock `boot_a` recovered the device; it booted Android successfully again on slot `b`, with `sys.boot_completed=1`
+- Tightened inference after unpacking the stock ramdisk and running the symlink probe: changing `/init` from the stock one-hop symlink (`/init -> /system/bin/init`) into a two-hop chain (`/init -> /init.stock -> /system/bin/init`) is already enough to break `sunfish` boot. So the next seam should preserve the stock `/init` link itself and move one level deeper, likely around `system/bin/init` rather than root-path aliasing.
 - Truthfulness rule for the new boot-lab runners: top-level `status.json` and process exit codes must stay aligned with the underlying flash/collect result; false-success wrapper statuses are not acceptable evidence.
 - Because stock-init experimental flashes can disrupt the working rooted lane on the same slot, future chunks should bias toward safety rails before convenience or public surfacing.
 - Landing rule for this project: each chunk should be truthful, green, and mergeable on its own, so other worktrees can keep rebasing on `master` instead of waiting for a giant boot branch to finish.
 - Camera remains Android-bound today. Wi-Fi likely does too. Do not make them blockers for the first Shadow-at-boot milestone.
-- Next seam: replace or simplify the wrapper implementation again, starting with the smallest possible PID 1 handoff primitive that can still leave one trustworthy kmsg breadcrumb on `09051JEC202061`.
+- Next seam: preserve the stock `/init -> /system/bin/init` link exactly and probe one level deeper, starting with a `system/bin/init`-level experiment rather than any further root `/init` rewrites.

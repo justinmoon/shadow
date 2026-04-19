@@ -308,6 +308,33 @@
           SHADOW_INIT_WRAPPER_MODE = mode;
           RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
         };
+      mkInitWrapperCFor = cross:
+        let
+          wrapperSource = builtins.path {
+            path = ./scripts/pixel/pixel_init_wrapper_handoff.c;
+            name = "pixel-init-wrapper-handoff.c";
+          };
+        in cross.stdenv.mkDerivation {
+          pname = "init-wrapper-c";
+          version = "0.1.0";
+          dontUnpack = true;
+          dontConfigure = true;
+          doCheck = false;
+          strictDeps = true;
+          buildPhase = ''
+            runHook preBuild
+            $CC -static -Os -s -std=c11 -Wall -Wextra -Werror \
+              ${wrapperSource} \
+              -o init-wrapper
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/bin
+            cp init-wrapper $out/bin/init-wrapper
+            runHook postInstall
+          '';
+        };
       mkShadowSessionFor = cross:
         cross.rustPlatform.buildRustPackage {
           pname = "shadow-session";
@@ -1167,6 +1194,7 @@
           init-wrapper-device-minimal = mkInitWrapperFor pkgs.pkgsCross.aarch64-multiplatform-musl {
             mode = "minimal";
           };
+          init-wrapper-c-device = mkInitWrapperCFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           shadow-session = mkShadowSession pkgs;
           shadow-session-device = mkShadowSessionFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           default = mkShadowSession pkgs;
