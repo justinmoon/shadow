@@ -65,23 +65,23 @@ pub fn init_winit(
             WinitEvent::Redraw => {
                 let size = backend.window_size();
                 let damage = Rectangle::from_size(size);
-                let scene = state.shell.scene(&ShellStatus::demo(chrono::Local::now()));
-                let shell_location = state.shell_location();
+                let shell_plan = state.shell_render_plan(&ShellStatus::demo(chrono::Local::now()));
 
                 {
                     let (renderer, mut framebuffer) = backend.bind().unwrap();
                     render::render_output(
                         &output,
                         &state.space,
-                        &scene,
-                        &mut state.shell_surface,
-                        shell_location,
+                        Some((
+                            &shell_plan,
+                            &mut state.shell_base_surface,
+                            Some(&mut state.shell_overlay_surface),
+                        )),
                         renderer,
                         &mut framebuffer,
                         &mut damage_tracker,
                         0,
                         BACKGROUND.linear_rgba(),
-                        true,
                     )
                     .unwrap();
                 }

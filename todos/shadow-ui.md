@@ -37,7 +37,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - [x] Prove a minimal Rust app runner for one process-isolated Shadow UI app.
 - [x] Prove one shared capability end-to-end through both Rust and TypeScript app surfaces.
 - [x] Prove shared lifecycle events through the Rust path first and define how they surface to TypeScript apps.
-- [ ] Prove one shell/system surface rendered directly by the compositor.
+- [x] Prove one shell/system surface rendered directly by the compositor.
 - [ ] Land the first serious Rust demo app that exercises navigation, list rendering, and persistence.
 
 ## Near-Term Steps
@@ -49,7 +49,7 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - [x] Choose the first Rust runner spike target and keep it deliberately small.
 - [x] Choose the first shared capability to prove through both app models.
 - [ ] Decide which text-input path to spike first: single-line editor or multiline editor.
-- [ ] Pick the first shell/system surface to target for embedded rendering.
+- [x] Pick the first shell/system surface to target for embedded rendering.
 - [ ] Decide whether broader TypeScript platform work should stay in [todos/vdom.md](../todos/vdom.md) or move to a broader `todos/typescript-apps.md`.
 
 ## Implementation Notes
@@ -76,4 +76,6 @@ Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as th
 - Lifecycle now uses the existing per-app platform-control socket instead of a second transport. The first truthful contract is intentionally smaller than the long-term spec: apps start in `foreground` by default and receive `background` / `foreground` transitions as the shell shelves and resumes them.
 - Rust apps now read lifecycle state from `shadow_sdk::app` and can spawn a lifecycle listener on the same app platform-control socket. TypeScript apps now use `getLifecycleState`, `setLifecycleHandler`, and `clearLifecycleHandler` from `@shadow/sdk`, backed by the same host/app transport.
 - VM smoke now proves the lifecycle seam through both app models: `counter` logs TypeScript lifecycle markers on home/reopen, and `rust-demo` logs Rust lifecycle markers on the same transitions.
-- The next seam should move to a richer platform contract on top of this base, likely text/input or one embedded shell surface, rather than adding more launch/env churn.
+- The first embedded shell/system surface is now the VM top chrome strip. `shadow-ui-core` exposes it as a reusable local overlay scene, the VM compositor renders it as a second compositor-owned shell surface, and guest/pixel keep the legacy full-shell scene for now.
+- The VM proof for that seam now covers both the normal smoke lane and a direct tap on the compositor-owned strip: `just smoke target=vm` passes, and a host-space tap at `330,59` shelves `podcast` through the overlay path in the current 660x1240 nested VM window.
+- The next seam should move to the next embedded shell surface or the first text/input contract, rather than more launch/env churn.

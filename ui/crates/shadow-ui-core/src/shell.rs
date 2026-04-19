@@ -12,13 +12,13 @@ use crate::{
         RoundedRect, Scene, TextAlign, TextBlock, TextWeight, APP_VIEWPORT_HEIGHT,
         APP_VIEWPORT_WIDTH, APP_VIEWPORT_X, APP_VIEWPORT_Y, HEIGHT, WIDTH,
     },
+    system_chrome::{
+        append_top_chrome_strip, TopChromeStripState, TOP_CHROME_STRIP_HEIGHT,
+        TOP_CHROME_STRIP_WIDTH, TOP_CHROME_STRIP_X, TOP_CHROME_STRIP_Y,
+    },
 };
 
 const PRESS_FLASH: Duration = Duration::from_millis(160);
-const STATUS_BAR_X: f32 = 16.0;
-const STATUS_BAR_Y: f32 = 10.0;
-const STATUS_BAR_WIDTH: f32 = WIDTH - 32.0;
-const STATUS_BAR_HEIGHT: f32 = 30.0;
 const CLOCK_CARD_Y: f32 = 124.0;
 const CLOCK_CARD_HEIGHT: f32 = 250.0;
 const APP_PANEL_Y: f32 = 420.0;
@@ -165,11 +165,30 @@ impl ShellModel {
     pub fn scene(&mut self, status: &ShellStatus) -> Scene {
         self.trim_expired_flash();
 
+        self.current_scene(status, true)
+    }
+
+    pub fn scene_without_top_strip(&mut self, status: &ShellStatus) -> Scene {
+        self.trim_expired_flash();
+
+        self.current_scene(status, false)
+    }
+
+    pub fn top_chrome_strip_state(&self, status: &ShellStatus) -> TopChromeStripState {
+        TopChromeStripState {
+            time_label: status.time_label.clone(),
+            battery_percent: status.battery_percent,
+            wifi_strength: status.wifi_strength,
+            home_enabled: self.home_indicator_active(),
+        }
+    }
+
+    fn current_scene(&self, status: &ShellStatus, include_top_strip: bool) -> Scene {
         if let Some(app_id) = self.foreground_app {
-            return self.app_scene(status, app_id);
+            return self.app_scene(status, app_id, include_top_strip);
         }
 
-        self.home_scene(status)
+        self.home_scene(status, include_top_strip)
     }
 
     pub fn captures_point(&self, x: f32, y: f32) -> bool {
@@ -182,7 +201,7 @@ impl ShellModel {
         }
     }
 
-    fn home_scene(&self, status: &ShellStatus) -> Scene {
+    fn home_scene(&self, status: &ShellStatus, include_top_strip: bool) -> Scene {
         let mut rects = Vec::new();
         let mut texts = Vec::new();
 
@@ -211,7 +230,9 @@ impl ShellModel {
             SURFACE_ACCENT.with_alpha(0.96),
         ));
 
-        build_status_bar(&mut rects, &mut texts, status);
+        if include_top_strip {
+            append_top_chrome_strip(&mut rects, &mut texts, &self.top_chrome_strip_state(status));
+        }
         build_clock(&mut rects, &mut texts, status, self.recent_app_titles());
         build_panel_header(&mut rects, &mut texts, self);
         build_app_grid(&mut rects, &mut texts, self);
@@ -224,12 +245,14 @@ impl ShellModel {
         }
     }
 
-    fn app_scene(&self, status: &ShellStatus, app_id: AppId) -> Scene {
+    fn app_scene(&self, status: &ShellStatus, app_id: AppId, include_top_strip: bool) -> Scene {
         let mut rects = Vec::new();
         let mut texts = Vec::new();
         let _app = find_app(app_id).expect("foreground app metadata");
 
-        build_status_bar(&mut rects, &mut texts, status);
+        if include_top_strip {
+            append_top_chrome_strip(&mut rects, &mut texts, &self.top_chrome_strip_state(status));
+        }
 
         Scene {
             clear_color: crate::color::Color::rgba(0, 0, 0, 0),
@@ -421,76 +444,6 @@ fn wrap_index(current: usize, delta: isize) -> usize {
         return 0;
     }
     ((current as isize + delta).rem_euclid(len)) as usize
-}
-
-fn build_status_bar(
-    rects: &mut Vec<RoundedRect>,
-    texts: &mut Vec<TextBlock>,
-    status: &ShellStatus,
-) {
-    rects.push(RoundedRect::new(
-        STATUS_BAR_X,
-        STATUS_BAR_Y,
-        STATUS_BAR_WIDTH,
-        STATUS_BAR_HEIGHT,
-        STATUS_BAR_HEIGHT * 0.5,
-        SURFACE_GLASS,
-    ));
-
-    texts.push(TextBlock {
-        content: status.time_label.clone(),
-        left: 34.0,
-        top: 16.0,
-        width: 100.0,
-        height: 18.0,
-        size: 14.0,
-        line_height: 16.0,
-        align: TextAlign::Left,
-        weight: TextWeight::Semibold,
-        color: TEXT_PRIMARY,
-    });
-
-    let battery_fill = (status.battery_percent.min(100) as f32 / 100.0).max(0.12);
-    rects.push(RoundedRect::new(
-        450.0,
-        18.0,
-        22.0,
-        12.0,
-        3.0,
-        TEXT_PRIMARY.with_alpha(0.18),
-    ));
-    rects.push(RoundedRect::new(
-        473.0,
-        21.0,
-        4.0,
-        6.0,
-        2.0,
-        TEXT_PRIMARY.with_alpha(0.65),
-    ));
-    rects.push(RoundedRect::new(
-        452.0,
-        31.0,
-        18.0 * battery_fill,
-        8.0,
-        2.0,
-        TEXT_PRIMARY.with_alpha(0.78),
-    ));
-
-    for index in 0..3 {
-        let alpha = if index < status.wifi_strength.min(3) as usize {
-            0.72
-        } else {
-            0.24 + index as f32 * 0.06
-        };
-        rects.push(RoundedRect::new(
-            408.0 + index as f32 * 10.0,
-            24.0 - index as f32 * 4.0,
-            7.0,
-            6.0 + index as f32 * 3.0,
-            3.0,
-            TEXT_PRIMARY.with_alpha(alpha),
-        ));
-    }
 }
 
 fn build_clock(
@@ -817,10 +770,10 @@ fn app_frame(index: usize) -> Frame {
 
 fn home_indicator_frame() -> Frame {
     Frame {
-        x: STATUS_BAR_X,
-        y: STATUS_BAR_Y,
-        w: STATUS_BAR_WIDTH,
-        h: STATUS_BAR_HEIGHT,
+        x: TOP_CHROME_STRIP_X,
+        y: TOP_CHROME_STRIP_Y,
+        w: TOP_CHROME_STRIP_WIDTH,
+        h: TOP_CHROME_STRIP_HEIGHT,
     }
 }
 
@@ -892,5 +845,64 @@ mod tests {
         );
         assert_eq!(shell.focused_tile, 0);
         assert_eq!(shell.pressed_target, None);
+    }
+
+    #[test]
+    fn top_chrome_strip_state_tracks_home_availability() {
+        let mut shell = ShellModel::new();
+        let status = ShellStatus {
+            time_label: "09:41".to_string(),
+            date_label: "Friday, April 18".to_string(),
+            battery_percent: 61,
+            wifi_strength: 2,
+        };
+
+        assert_eq!(
+            shell.top_chrome_strip_state(&status),
+            TopChromeStripState {
+                time_label: "09:41".to_string(),
+                battery_percent: 61,
+                wifi_strength: 2,
+                home_enabled: false,
+            }
+        );
+
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+
+        assert_eq!(
+            shell.top_chrome_strip_state(&status),
+            TopChromeStripState {
+                time_label: "09:41".to_string(),
+                battery_percent: 61,
+                wifi_strength: 2,
+                home_enabled: true,
+            }
+        );
+    }
+
+    #[test]
+    fn scene_without_top_strip_drops_overlay_primitives() {
+        let mut shell = ShellModel::new();
+        let status = ShellStatus {
+            time_label: "09:41".to_string(),
+            date_label: "Friday, April 18".to_string(),
+            battery_percent: 61,
+            wifi_strength: 2,
+        };
+
+        let full_scene = shell.scene(&status);
+        let scene_without_strip = shell.scene_without_top_strip(&status);
+
+        assert_eq!(full_scene.rects.len(), scene_without_strip.rects.len() + 7);
+        assert_eq!(full_scene.texts.len(), scene_without_strip.texts.len() + 1);
+        assert_eq!(scene_without_strip.clear_color.rgba8(), BACKGROUND.rgba8());
+        assert_eq!(scene_without_strip.texts[0].content, status.time_label);
+
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+        let foreground_scene = shell.scene_without_top_strip(&status);
+
+        assert!(foreground_scene.rects.is_empty());
+        assert!(foreground_scene.texts.is_empty());
+        assert_eq!(foreground_scene.clear_color.rgba8(), [0, 0, 0, 0]);
     }
 }
