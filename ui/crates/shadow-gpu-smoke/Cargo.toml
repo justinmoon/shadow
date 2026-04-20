@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+ash = "0.38.0"
 drm = "0.14.1"
 kurbo = "0.13"
 libc = "0.2"

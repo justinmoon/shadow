@@ -22,7 +22,7 @@ Related docs:
 - Use host-side `bootimg` tooling for the inner loop: unpack, patch, repack, inspect, sign.
 - Use Cuttlefish only for generic bring-up ideas, not as the primary model for `sunfish`.
 - Primary strategy: boot the stock Pixel kernel into a Shadow-owned ramdisk and custom PID 1. Do not treat `wrapper -> stock init -> later takeover` as the main path anymore.
-- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `gpu-kms-bridge` (the same GPU smoke presented through rooted display takeover so render/present can be debugged without boot ownership), then `boot-bundle-exec` (boot-owned dynamic bundle exec with visible prelude/checkpoint/postlude), then `boot-vulkan-instance-smoke` (boot-owned strict Vulkan instance creation plus return), then `boot-vulkan-enumerate-adapters-count-smoke` (boot-owned strict Vulkan raw adapter enumeration count plus return), then `boot-vulkan-enumerate-adapters-smoke` (boot-owned strict Vulkan adapter enumeration plus per-adapter info extraction plus return), then `boot-vulkan-adapter-smoke` (boot-owned strict Vulkan adapter selection plus return), then `boot-vulkan-device-request-smoke` (boot-owned strict Vulkan device request plus return), then `boot-vulkan-device-smoke` (boot-owned strict Vulkan buffer-renderer allocation plus return), then `boot-vulkan-offscreen` (boot-owned strict Vulkan offscreen render plus return), then `orange-gpu` (boot-owned GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
+- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `gpu-kms-bridge` (the same GPU smoke presented through rooted display takeover so render/present can be debugged without boot ownership), then `boot-bundle-exec` (boot-owned dynamic bundle exec with visible prelude/checkpoint/postlude), then `boot-vulkan-instance-smoke` (boot-owned strict Vulkan instance creation plus return), then `boot-raw-vulkan-instance-smoke` (boot-owned raw Vulkan loader plus `vkCreateInstance` / `vkDestroyInstance` plus return), then `boot-vulkan-enumerate-adapters-count-smoke` (boot-owned strict Vulkan raw wgpu adapter enumeration count plus return), then `boot-vulkan-enumerate-adapters-smoke` (boot-owned strict Vulkan adapter enumeration plus per-adapter info extraction plus return), then `boot-vulkan-adapter-smoke` (boot-owned strict Vulkan adapter selection plus return), then `boot-vulkan-device-request-smoke` (boot-owned strict Vulkan device request plus return), then `boot-vulkan-device-smoke` (boot-owned strict Vulkan buffer-renderer allocation plus return), then `boot-vulkan-offscreen` (boot-owned strict Vulkan offscreen render plus return), then `orange-gpu` (boot-owned GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
 - Rust cutoff:
   - keep the C PID 1 seam only long enough to prove `boot-vulkan-offscreen` once on real hardware
   - immediately after the first successful `boot-vulkan-offscreen` proof, port `hello-init` / the boot-owned PID 1 bootstrap seam to Rust
@@ -79,6 +79,10 @@ Related docs:
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs
   - stop immediately after `enumerate_adapters(...)` returns so failures narrow to raw enumeration count only
+- [ ] Prove boot-owned raw Vulkan loader plus `vkCreateInstance` / `vkDestroyInstance` and return (`boot-raw-vulkan-instance-smoke`):
+  - reuse the staged `shadow-gpu-smoke` bundle and the same strict env/bootstrap path
+  - load Vulkan directly and create/destroy an instance without touching wgpu adapter enumeration
+  - stop before Vulkan physical-device enumeration and all later wgpu adapter selection
 - [ ] Prove boot-owned strict Vulkan adapter enumeration and return (`boot-vulkan-enumerate-adapters-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs
@@ -177,6 +181,10 @@ Related docs:
 - [ ] Package the boot-owned strict Vulkan raw adapter-enumeration-count payload (`boot-vulkan-enumerate-adapters-count-smoke`):
   - run the real `shadow-gpu-smoke` strict Vulkan env plus raw `enumerate_adapters(...)` count in owned userspace
   - stop before per-adapter `get_info()`, default adapter request/selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
+  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
+- [ ] Package the boot-owned raw Vulkan instance payload (`boot-raw-vulkan-instance-smoke`):
+  - run the real `shadow-gpu-smoke` bundle in the same strict env but use direct Vulkan loader plus `vkCreateInstance` / `vkDestroyInstance`
+  - stop before Vulkan physical-device enumeration, all wgpu adapter enumeration/selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
   - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
 - [ ] Package the boot-owned strict Vulkan adapter-enumeration payload (`boot-vulkan-enumerate-adapters-smoke`):
   - run the real `shadow-gpu-smoke` strict Vulkan env plus adapter-enumeration path in owned userspace
@@ -490,9 +498,11 @@ Related docs:
 - New instance result on 2026-04-20:
   - `11151JEC200472` showed three visible orange pulses on the `shadow-boot-orange-gpu-vulkan-instance-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
   - that proves boot-owned strict Vulkan instance creation returns successfully under the owned `hello-init` environment
+- New enumerate-count result on 2026-04-20:
+  - `11151JEC200472` showed two visible orange pulses on the `shadow-boot-orange-gpu-vulkan-enumerate-adapters-count-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
+  - that means the visible prelude and validation checkpoint ran, then the raw wgpu adapter-enumeration-count branch failed to return before the watchdog restart
 - Tightened inference after the bundle/offscreen/device-request/device/adapter/instance proofs:
   - bundle-exec and instance-smoke now both return successfully on `11151JEC200472`, each with three visible orange pulses
-  - every stricter Vulkan rung tried so far (`boot-vulkan-adapter-smoke`, `boot-vulkan-device-request-smoke`, `boot-vulkan-device-smoke`, and `boot-vulkan-offscreen`) still stops after two visible orange pulses
-  - so the active failing seam has moved forward: boot-owned strict Vulkan instance creation works, but adapter selection still does not return
-  - the previous `boot-vulkan-enumerate-adapters-smoke` split still hid ambiguity because it bundled raw `enumerate_adapters(...)` with per-adapter `get_info()` / summary extraction
-  - the next smaller rung is boot-owned strict Vulkan raw adapter enumeration count only, so raw enumeration can be separated cleanly from per-adapter info extraction and later adapter selection
+  - raw wgpu enumeration-count still stops after two visible orange pulses, so further wgpu-only micro-splits are currently low-yield
+  - the active question has shifted from “which wgpu enumeration step?” to “does the strict boot-owned raw Vulkan instance lifecycle return at all under this env?”
+  - the next discriminator is `boot-raw-vulkan-instance-smoke`, reusing the same bundle and visible contract but bypassing wgpu adapter enumeration entirely
