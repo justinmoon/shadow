@@ -10,8 +10,8 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - Land changes to `master` only through the `land` skill or `scripts/land.sh`. Do not manually merge worktree branches into `master`.
 - `scripts/land.sh` rebases the current worktree branch onto root `master`, runs `just pre-merge`, and only then fast-forwards the root `master` branch.
 - Run `just pre-commit` during iteration for the fast local structural gate.
-- Run `just nightly` for the slow superset lane that adds `ui-check` plus the real Pixel boot artifact cross-builds on top of `pre-merge`.
-- Run `just ui-check` when working in the `ui/` workspace.
+- Run `just nightly` for the slow superset lane that adds `ui-check`, derivation-backed private Pixel boot/tooling checks, and the real Pixel boot artifact cross-builds on top of `pre-merge`.
+- Run `just ui-check [suite...]` when working in the `ui/` workspace. Supported suites: `fmt`, `core`, `apps`, `blitz-demo`, `compositor`.
 - Run `just smoke target=vm` when you want the same local VM shell/app smoke that backs `just pre-merge`.
 - Use `just run target=vm` / `just stop target=vm` as the public VM session entry/exit path.
 - Use `sc -t vm <subcommand>` for VM diagnostics, logs, screenshots, app open/home, SSH, and other VM control actions. Use `just shadowctl ...` only when the devshell `sc` alias is unavailable.
@@ -22,14 +22,14 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 
 ## Current Checks
 
-- `just ui-check` runs formatting, core tests, and compositor/runtime compile checks for the `ui/` workspace.
+- `just ui-check [suite...]` runs the host-system `checks.<system>.uiCheck*` derivations for the requested UI suites; no arguments still run the aggregate UI gate.
 - `just smoke target=vm` runs the required local VM shell/app smoke: timeline launch/home/reopen plus camera and podcast launch.
 - `just smoke target=vm` keeps the VM lane local-only, artifact-driven, and free of guest-side Cargo/Rust while still resetting the runtime state image each run.
 - `just run target=vm` / `just stop target=vm` are the public VM session entrypoints. VM inspection/control goes through `sc -t vm <subcommand>`.
 - `scripts/shadowctl` is the target-aware operator CLI behind the public run/stop wrappers, VM diagnostics, and rooted-Pixel shell control recipes; use `-t vm`, `-t pixel`, or a specific Pixel serial as needed.
 - `just pre-commit` runs script inventory, app metadata checks, recursive shell syntax checks, and lightweight operator/docs/justfile checks.
-- `just pre-merge` runs `just pre-commit`, flake evaluation, runtime compile-and-test checks, lightweight rooted-Pixel init/tooling validation, and `just smoke target=vm`.
-- `just nightly` runs `just pre-merge`, `just ui-check`, and the real `hello-init` / `orange-init` cross-builds.
+- `just pre-merge` runs `just pre-commit`, host-system `checks.<system>.preMergeCheck`, and `just smoke target=vm`.
+- `just nightly` runs `just pre-merge`, `just ui-check`, host-system `legacyPackages.<system>.ci.pixelBootCheck`, and the real `hello-init` / `orange-init` cross-builds.
 - `just pixel-ci full` runs the current rooted-Pixel CI lane: timeline lifecycle, camera capture, runtime sound, runtime podcast playback, and the runtime Nostr timeline against a host-local relay over USB on a connected rooted device.
 - `sc -t pixel ci <subset>` is the preferred ad hoc hardware gate for invasive app- or device-specific changes before landing; use a specific serial from `sc devices` when multiple Pixels are attached.
 - `just pixel-ci <subset>` remains a convenience wrapper over that canonical CLI shape.

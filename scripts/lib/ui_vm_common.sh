@@ -46,12 +46,6 @@ print(base + (int(digest[:8], 16) % span))
 PY
 }
 
-ui_vm_build_runner() {
-  mkdir -p "$(ui_vm_state_dir)" "$(ui_vm_runtime_artifact_dir)"
-  SHADOW_UI_VM_SSH_PORT="$(ui_vm_ssh_port)" \
-    nix build --impure --accept-flake-config -o "$(ui_vm_runner_link)" .#ui-vm-ci >/dev/null
-}
-
 ui_vm_ssh() {
   ssh \
     -p "$(ui_vm_ssh_port)" \

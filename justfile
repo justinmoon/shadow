@@ -99,9 +99,9 @@ pixel-prep-settings:
 land:
 	@scripts/land.sh
 
-# Run UI formatting, tests, and compile checks
-ui-check:
-	@scripts/ui_check.sh
+# Run UI formatting, tests, and compile checks. Examples: `just ui-check`, `just ui-check core apps`
+ui-check *args='':
+	@scripts/ui_check.sh {{args}}
 
 # Enter the Nix shell for the runtime / V8 exploration lane
 runtime-shell:

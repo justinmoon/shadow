@@ -10,6 +10,8 @@ cd "$(repo_root)"
 
 just pre-merge
 just ui-check
+host_system="$(nix eval --impure --raw --expr builtins.currentSystem)"
+nix build --accept-flake-config --no-link -L ".#legacyPackages.${host_system}.ci.pixelBootCheck"
 tmp_hello_init="$(mktemp "${TMPDIR:-/tmp}/shadow-hello-init.XXXXXX")"
 rm -f "$tmp_hello_init"
 scripts/pixel/pixel_build_hello_init.sh --output "$tmp_hello_init"

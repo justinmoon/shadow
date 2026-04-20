@@ -54,6 +54,45 @@ cleanup_runtime_env_tmp() {
   fi
 }
 
+prepare_runner_link() {
+  local package_path="$1"
+  local binary_path="$2"
+  local ssh_port="$3"
+  local runner_tmp
+
+  runner_tmp="$(mktemp -d "$REPO_ROOT/.shadow-vm/ui-vm-runner.XXXXXX")"
+  mkdir -p "$runner_tmp/bin"
+  ln -s "$package_path" "$runner_tmp/store"
+  ln -s "$package_path/bin/microvm-shutdown" "$runner_tmp/bin/microvm-shutdown"
+  if [[ -x "$package_path/bin/microvm-balloon" ]]; then
+    ln -s "$package_path/bin/microvm-balloon" "$runner_tmp/bin/microvm-balloon"
+  fi
+
+  python3 - "$binary_path" "$ssh_port" "$runner_tmp/bin/microvm-run" <<'PY'
+import pathlib
+import re
+import sys
+
+source_path = pathlib.Path(sys.argv[1])
+ssh_port = sys.argv[2]
+target_path = pathlib.Path(sys.argv[3])
+script = source_path.read_text(encoding="utf-8")
+rewritten, count = re.subn(
+    r"hostfwd=tcp::\d+-:22,",
+    f"hostfwd=tcp::{ssh_port}-:22,",
+    script,
+    count=1,
+)
+if count != 1:
+    raise SystemExit("vm: failed to rewrite ui-vm runner SSH port")
+target_path.write_text(rewritten, encoding="utf-8")
+target_path.chmod(0o755)
+PY
+
+  rm -rf "$RUNNER_LINK"
+  mv "$runner_tmp" "$RUNNER_LINK"
+}
+
 trap cleanup_runtime_env_tmp EXIT
 
 if [[ -z "$prepared_inputs_path" ]]; then
@@ -63,6 +102,8 @@ fi
 prepared_source_root="$(vm_smoke_metadata_value "$prepared_inputs_path" sourceStorePath)"
 system_package_attr="$(vm_smoke_metadata_value "$prepared_inputs_path" systemPackageAttr)"
 system_binary_path="$(vm_smoke_metadata_value "$prepared_inputs_path" systemBinaryPath)"
+ui_vm_runner_package_path="$(vm_smoke_metadata_value "$prepared_inputs_path" uiVmRunnerPackagePath)"
+ui_vm_runner_binary_path="$(vm_smoke_metadata_value "$prepared_inputs_path" uiVmRunnerBinaryPath)"
 
 if lsof -nP -iTCP:"$ui_vm_ssh_port_value" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "vm: SSH port $ui_vm_ssh_port_value is already in use" >&2
@@ -102,9 +143,16 @@ mv "$runtime_env_tmp" "$RUNTIME_ENV_PATH"
 chmod 0644 "$RUNTIME_ENV_PATH"
 runtime_env_tmp=""
 
-SHADOW_UI_VM_SSH_PORT="$ui_vm_ssh_port_value" \
-  nix build --impure --accept-flake-config -o "$RUNNER_LINK" \
-  "${prepared_source_root}#ui-vm-ci" >/dev/null
+[[ -d "$ui_vm_runner_package_path" ]] || {
+  echo "vm: prepared runner package not found: $ui_vm_runner_package_path" >&2
+  exit 1
+}
+[[ -x "$ui_vm_runner_binary_path" ]] || {
+  echo "vm: prepared runner binary not found: $ui_vm_runner_binary_path" >&2
+  exit 1
+}
+
+prepare_runner_link "$ui_vm_runner_package_path" "$ui_vm_runner_binary_path" "$ui_vm_ssh_port_value"
 
 echo "vm: launching Shadow UI VM"
 echo "vm: qemu window will host the real Linux compositor"

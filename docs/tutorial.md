@@ -465,9 +465,10 @@ Edit an app under `runtime/`, re-run `just run target=vm app=<id>`. That's the l
 Key checks:
 ```bash
 just pre-commit    # Fast local structural gate
-just ui-check      # UI workspace checks
+just ui-check      # Aggregate UI workspace checks
+just ui-check core apps  # Narrow UI suites
 just smoke target=vm # Local VM shell/app smoke used by pre-merge
-just pre-merge     # Required branch gate (pre-commit + runtime checks + lightweight rooted-Pixel validation + VM smoke)
-just nightly       # Slow superset lane (pre-merge + ui-check + real Pixel boot artifact builds)
+just pre-merge     # Required branch gate (pre-commit + derivation-backed runtime + VM smoke)
+just nightly       # Slow superset lane (pre-merge + ui-check + hermetic private Pixel boot/tooling checks + real Pixel boot artifact builds)
 sc -t pixel ci     # Rooted-Pixel CI suite runner (`quick|shell|timeline|camera|nostr|sound|audio|podcast|runtime|full`)
 ```

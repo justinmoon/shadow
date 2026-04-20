@@ -68,6 +68,13 @@
         "x86_64-darwin"
         "aarch64-darwin"
       ];
+      publicDevShellNames = [
+        "default"
+        "bootimg"
+        "ui"
+        "runtime"
+        "android"
+      ];
       repoRoot =
         if uiVmSource != null then
           /. + uiVmSource
@@ -105,6 +112,101 @@
         "rust/shadow-runtime-protocol"
         "rust/vendor/temporal_rs"
       ];
+      shadowInitWrapperSrc = repoSourceFromPrefixes [
+        "rust/init-wrapper"
+      ];
+      shadowRuntimeBundleTestSrc = repoSourceFromPrefixes [
+        "deno.json"
+        "deno.lock"
+        "runtime/app-counter"
+        "runtime/app-runtime"
+        "scripts/runtime/runtime_compile_solid.ts"
+        "scripts/runtime/runtime_prepare_app_bundle.ts"
+        "scripts/runtime/runtime_prepare_app_bundle_test.ts"
+      ];
+      shadowPixelBootShellCommonPrefixes = [
+        "scripts/lib/pixel_common.sh"
+        "scripts/lib/shadow_common.sh"
+      ];
+      shadowPixelBootBootimgCommonPrefixes = shadowPixelBootShellCommonPrefixes ++ [
+        "scripts/lib/bootimg_common.sh"
+        "scripts/lib/cpio_edit.py"
+      ];
+      shadowPixelBootNixBuildPrefixes = [
+        "flake.nix"
+        "flake.lock"
+      ];
+      shadowPixelBootHelloInitSmokeSrc = repoSourceFromPrefixes (
+        shadowPixelBootBootimgCommonPrefixes
+        ++ shadowPixelBootNixBuildPrefixes
+        ++ [
+          "scripts/ci/pixel_boot_hello_init_smoke.sh"
+          "scripts/pixel/pixel_boot_build.sh"
+          "scripts/pixel/pixel_build_hello_init.sh"
+          "scripts/pixel/pixel_boot_build_hello_init.sh"
+          "scripts/pixel/pixel_hello_init.c"
+        ]
+      );
+      shadowPixelBootOrangeInitSmokeSrc = repoSourceFromPrefixes (
+        shadowPixelBootBootimgCommonPrefixes
+        ++ shadowPixelBootNixBuildPrefixes
+        ++ [
+          "scripts/ci/pixel_boot_orange_init_smoke.sh"
+          "scripts/pixel/pixel_boot_build.sh"
+          "scripts/pixel/pixel_build_hello_init.sh"
+          "scripts/pixel/pixel_build_orange_init.sh"
+          "scripts/pixel/pixel_boot_build_orange_init.sh"
+          "scripts/pixel/pixel_hello_init.c"
+          "rust/drm-rect/Cargo.toml"
+          "rust/drm-rect/Cargo.lock"
+          "rust/drm-rect/src/lib.rs"
+          "rust/drm-rect/src/main.rs"
+        ]
+      );
+      shadowPixelBootToolingSmokeSrc = repoSourceFromPrefixes (
+        shadowPixelBootBootimgCommonPrefixes
+        ++ [
+          "scripts/ci/pixel_boot_recover_traces_smoke.sh"
+          "scripts/ci/pixel_boot_tooling_smoke.sh"
+          "scripts/pixel/pixel_boot_build.sh"
+          "scripts/pixel/pixel_boot_build_init_symlink_probe.sh"
+          "scripts/pixel/pixel_boot_build_log_probe.sh"
+          "scripts/pixel/pixel_boot_build_rc_probe.sh"
+          "scripts/pixel/pixel_boot_build_system_init_symlink_probe.sh"
+          "scripts/pixel/pixel_boot_build_system_init_wrapper_probe.sh"
+          "scripts/pixel/pixel_boot_collect_logs.sh"
+          "scripts/pixel/pixel_boot_flash.sh"
+          "scripts/pixel/pixel_boot_flash_run.sh"
+          "scripts/pixel/pixel_boot_oneshot.sh"
+          "scripts/pixel/pixel_boot_recover.sh"
+          "scripts/pixel/pixel_boot_recover_traces.sh"
+          "scripts/pixel/pixel_build_init_wrapper.sh"
+          "scripts/pixel/pixel_build_init_wrapper_c.sh"
+        ]
+      );
+      shadowPixelBootRecoverTracesSmokeSrc = repoSourceFromPrefixes (
+        shadowPixelBootShellCommonPrefixes
+        ++ [
+          "scripts/ci/pixel_boot_recover_traces_smoke.sh"
+          "scripts/pixel/pixel_boot_recover_traces.sh"
+        ]
+      );
+      shadowPixelBootCollectLogsSmokeSrc = repoSourceFromPrefixes (
+        shadowPixelBootShellCommonPrefixes
+        ++ [
+          "scripts/ci/pixel_boot_collect_logs_smoke.sh"
+          "scripts/pixel/pixel_boot_collect_logs.sh"
+        ]
+      );
+      shadowPixelBootSafetySmokeSrc = repoSourceFromPrefixes (
+        shadowPixelBootShellCommonPrefixes
+        ++ [
+          "scripts/ci/pixel_boot_safety_smoke.sh"
+          "scripts/pixel/pixel_boot_flash.sh"
+          "scripts/pixel/pixel_boot_recover.sh"
+          "scripts/pixel/pixel_boot_restore.sh"
+        ]
+      );
       shadowUiSrc = repoSourceFromPrefixes [
         "ui/Cargo.toml"
         "ui/Cargo.lock"
@@ -118,34 +220,85 @@
         "rust/shadow-runtime-protocol"
         "rust/vendor/temporal_rs"
       ];
-      shadowUiCoreSrc = repoSourceFromPrefixes [
-        "ui/Cargo.toml"
-        "ui/Cargo.lock"
-        "ui/crates/shadow-ui-core"
-        "ui/third_party"
-        "rust/shadow-runtime-protocol"
+      shadowUiWorkspaceMemberCargoTomlPrefixes = [
+        "ui/apps/shadow-blitz-demo/Cargo.toml"
+        "ui/apps/shadow-rust-demo/Cargo.toml"
+        "ui/apps/shadow-rust-timeline/Cargo.toml"
+        "ui/crates/shadow-compositor/Cargo.toml"
+        "ui/crates/shadow-compositor-common/Cargo.toml"
+        "ui/crates/shadow-compositor-guest/Cargo.toml"
+        "ui/crates/shadow-ui-core/Cargo.toml"
+        "ui/crates/shadow-ui-software/Cargo.toml"
       ];
-      shadowCompositorSrc = repoSourceFromPrefixes [
-        "ui/Cargo.toml"
-        "ui/Cargo.lock"
-        "ui/crates/shadow-ui-core"
-        "ui/crates/shadow-ui-software"
-        "ui/crates/shadow-compositor-common"
-        "ui/crates/shadow-compositor"
-        "ui/third_party"
-        "rust/shadow-runtime-protocol"
+      shadowUiWorkspaceMemberTargetPrefixes = [
+        "ui/apps/shadow-rust-demo/src/main.rs"
+        "ui/apps/shadow-rust-timeline/src/main.rs"
+        "ui/crates/shadow-compositor/src/main.rs"
+        "ui/crates/shadow-compositor-common/src/lib.rs"
+        "ui/crates/shadow-compositor-guest/src/main.rs"
+        "ui/crates/shadow-ui-software/src/lib.rs"
       ];
-      shadowCompositorGuestSrc = repoSourceFromPrefixes [
-        "ui/Cargo.toml"
-        "ui/Cargo.lock"
-        "ui/apps/shadow-blitz-demo"
-        "ui/crates/shadow-ui-core"
-        "ui/crates/shadow-ui-software"
-        "ui/crates/shadow-compositor-common"
-        "ui/crates/shadow-compositor-guest"
-        "ui/third_party"
-        "rust/shadow-runtime-protocol"
+      shadowUiRustWorkspaceManifestPrefixes = [
+        "rust/Cargo.toml"
+        "rust/shadow-sdk/Cargo.toml"
+        "rust/shadow-system/Cargo.toml"
       ];
+      shadowUiRustWorkspaceTargetPrefixes = [
+        "rust/shadow-sdk/src/lib.rs"
+        "rust/shadow-system/src/main.rs"
+      ];
+      shadowUiCoreSrc = repoSourceFromPrefixes (
+        [
+          "ui/Cargo.toml"
+          "ui/Cargo.lock"
+        ]
+        ++ shadowUiWorkspaceMemberCargoTomlPrefixes
+        ++ shadowUiWorkspaceMemberTargetPrefixes
+        ++ shadowUiRustWorkspaceManifestPrefixes
+        ++ shadowUiRustWorkspaceTargetPrefixes
+        ++ [
+          "ui/crates/shadow-ui-core"
+          "ui/third_party"
+          "rust/shadow-runtime-protocol"
+        ]
+      );
+      shadowCompositorSrc = repoSourceFromPrefixes (
+        [
+          "ui/Cargo.toml"
+          "ui/Cargo.lock"
+        ]
+        ++ shadowUiWorkspaceMemberCargoTomlPrefixes
+        ++ shadowUiWorkspaceMemberTargetPrefixes
+        ++ shadowUiRustWorkspaceManifestPrefixes
+        ++ shadowUiRustWorkspaceTargetPrefixes
+        ++ [
+          "ui/crates/shadow-ui-core"
+          "ui/crates/shadow-ui-software"
+          "ui/crates/shadow-compositor-common"
+          "ui/crates/shadow-compositor"
+          "ui/third_party"
+          "rust/shadow-runtime-protocol"
+        ]
+      );
+      shadowCompositorGuestSrc = repoSourceFromPrefixes (
+        [
+          "ui/Cargo.toml"
+          "ui/Cargo.lock"
+        ]
+        ++ shadowUiWorkspaceMemberCargoTomlPrefixes
+        ++ shadowUiWorkspaceMemberTargetPrefixes
+        ++ shadowUiRustWorkspaceManifestPrefixes
+        ++ shadowUiRustWorkspaceTargetPrefixes
+        ++ [
+          "ui/apps/shadow-blitz-demo"
+          "ui/crates/shadow-ui-core"
+          "ui/crates/shadow-ui-software"
+          "ui/crates/shadow-compositor-common"
+          "ui/crates/shadow-compositor-guest"
+          "ui/third_party"
+          "rust/shadow-runtime-protocol"
+        ]
+      );
       shadowVmAppBinaryNames =
         let
           manifest = builtins.fromJSON (builtins.readFile appManifestPath);
@@ -162,37 +315,56 @@
       shadowLinuxAudioSpikeSrc = repoSourceFromPrefixes [
         "rust/shadow-linux-audio-spike"
       ];
-      shadowBlitzDemoSrc = repoSourceFromPrefixes [
-        "ui/Cargo.toml"
-        "ui/Cargo.lock"
-        "ui/apps/shadow-blitz-demo"
-        "ui/crates/shadow-ui-core"
-        "ui/third_party/anyrender_vello"
-        "ui/third_party/softbuffer_window_renderer"
-        "ui/third_party/wgpu_context"
-        "ui/third_party/winit"
-        "rust/shadow-runtime-protocol"
+      shadowBlitzDemoSrc = repoSourceFromPrefixes (
+        [
+          "ui/Cargo.toml"
+          "ui/Cargo.lock"
+        ]
+        ++ shadowUiWorkspaceMemberCargoTomlPrefixes
+        ++ shadowUiWorkspaceMemberTargetPrefixes
+        ++ shadowUiRustWorkspaceManifestPrefixes
+        ++ shadowUiRustWorkspaceTargetPrefixes
+        ++ [
+          "ui/apps/shadow-blitz-demo"
+          "ui/crates/shadow-ui-core"
+          "ui/third_party"
+          "rust/shadow-runtime-protocol"
+        ]
+      );
+      shadowVmSmokeControllerPrefixes = [
+        "scripts/ci/required_vm_smoke.sh"
+        "scripts/ci/ui_vm_smoke.sh"
+        "scripts/lib/ci_vm_smoke_common.sh"
+        "scripts/lib/session_apps.sh"
+        "scripts/lib/shadow_common.sh"
+        "scripts/lib/ui_vm_common.sh"
+        "scripts/shadowctl"
+        "scripts/vm/ui_vm_run.sh"
+        "scripts/vm/ui_vm_stop.sh"
       ];
-      shadowVmSmokeSrc = repoSourceFromPrefixes [
+      shadowVmSmokeRuntimeBuilderPrefixes = [
+        "deno.json"
+        "deno.lock"
         "flake.nix"
         "flake.lock"
-        "justfile"
-        "patches"
-        "runtime"
-        "scripts"
-        "vm"
-        "rust/Cargo.toml"
-        "rust/Cargo.lock"
-        "rust/shadow-sdk"
-        "rust/shadow-system"
-        "rust/shadow-runtime-protocol"
-        "rust/vendor/temporal_rs"
-        "ui/Cargo.toml"
-        "ui/Cargo.lock"
-        "ui/apps"
-        "ui/crates"
-        "ui/third_party"
+        "runtime/app-camera"
+        "runtime/app-cashu-wallet"
+        "runtime/app-counter"
+        "runtime/app-nostr-timeline"
+        "runtime/app-podcast-player"
+        "runtime/app-runtime"
+        "runtime/apps.json"
+        "scripts/runtime/prepare_podcast_player_demo_assets.sh"
+        "scripts/runtime/runtime_build_artifacts.ts"
+        "scripts/runtime/runtime_compile_solid.ts"
+        "scripts/runtime/runtime_prepare_app_bundle.ts"
+        "scripts/runtime/runtime_prepare_host_session_env.sh"
+        "scripts/runtime_build_artifacts.sh"
       ];
+      shadowVmSmokeSrc = repoSourceFromPrefixes (
+        shadowVmSmokeControllerPrefixes
+        ++ shadowVmSmokeRuntimeBuilderPrefixes
+      );
       darwinSystems = builtins.filter (system: lib.hasSuffix "-darwin" system) systems;
       forAllSystems = f:
         lib.genAttrs systems (
@@ -244,10 +416,30 @@
           "sha256-dhczFDIFbcl2mMUtTIZaeaTtXWTHNw1fl2xgVcp93NE=";
       };
       mkUiWorkspaceMembersPostPatch =
-        cargoTomlPath: members:
+        cargoTomlPath: membersOrSpec:
         let
+          workspaceSpec =
+            if builtins.isList membersOrSpec then
+              {
+                members = membersOrSpec;
+                defaultMembers = null;
+              }
+            else
+              membersOrSpec;
+          members = workspaceSpec.members;
+          defaultMembers = workspaceSpec.defaultMembers;
           memberLines = lib.concatMapStringsSep "" (member: "    \"${member}\",\n") members;
           replacement = "members = [\n${memberLines}]";
+          defaultMemberLines =
+            if defaultMembers == null then
+              null
+            else
+              lib.concatMapStringsSep "" (member: "    \"${member}\",\n") defaultMembers;
+          defaultReplacement =
+            if defaultMembers == null then
+              null
+            else
+              "default-members = [\n${defaultMemberLines}]";
         in
           ''
             python3 - <<'PY'
@@ -262,6 +454,16 @@
                 data,
                 count=1,
             )
+            ${
+              lib.optionalString (defaultMembers != null) ''
+                data = re.sub(
+                    r"default-members = \[\n(?:    \".*\",\n)+\]",
+                    ${builtins.toJSON defaultReplacement},
+                    data,
+                    count=1,
+                )
+              ''
+            }
             cargo_toml.write_text(data)
             PY
           '';
@@ -277,6 +479,12 @@
           echo ${builtins.toJSON message} >&2
           exit 1
         '';
+      mkDrvPathManifestEntry = attr: drv: {
+        inherit attr;
+        drvPath = drv.drvPath;
+      };
+      mkDrvPathManifestCheck = pkgs: name: payload:
+        pkgs.writeText name (builtins.unsafeDiscardStringContext (builtins.toJSON payload));
       mkRustyV8ArchiveFor = cross:
         cross.fetchurl {
           name = "librusty_v8-${rustyV8ReleaseVersion}";
@@ -970,55 +1178,169 @@
       mkShadowUiChecksFor = pkgs:
         let
           craneLib = crane.mkLib pkgs;
-          commonArgs = {
+          mkUiCheckFamily =
+            {
+              pname,
+              src,
+              workspaceMembers ? null,
+              artifactCargoExtraArgs ? "",
+              useDummySrc ? true,
+            }:
+            let
+              # Narrowed workspaces need to refresh Cargo.lock offline after trimming members.
+              leafCargoExtraArgs =
+                if workspaceMembers != null then
+                  "--offline"
+                else
+                  "--locked";
+              artifactLockedCargoExtraArgs =
+                lib.concatStringsSep " " (
+                  [ "--locked" ]
+                  ++ lib.optionals (artifactCargoExtraArgs != "") [ artifactCargoExtraArgs ]
+                );
+              artifactBuildCargoExtraArgs =
+                lib.concatStringsSep " " (
+                  [
+                    (
+                      if workspaceMembers != null then
+                        "--offline"
+                      else
+                        "--locked"
+                    )
+                  ]
+                  ++ lib.optionals (artifactCargoExtraArgs != "") [ artifactCargoExtraArgs ]
+                );
+              commonArgs = {
+                inherit pname src;
+                version = "0.1.0";
+                cargoLock = ./ui/Cargo.lock;
+                cargoToml = ./ui/Cargo.toml;
+                outputHashes = uiCraneOutputHashes;
+                cargoExtraArgs = leafCargoExtraArgs;
+                doCheck = false;
+                strictDeps = true;
+                CARGO_PROFILE = "";
+                postUnpack = ''
+                  cd "$sourceRoot/ui"
+                  sourceRoot="."
+                '';
+                nativeBuildInputs = uiCheckNativeBuildInputsFor pkgs;
+                buildInputs = uiCheckRuntimeLibsFor pkgs;
+              }
+              // lib.optionalAttrs (workspaceMembers != null) {
+                postPatch = mkUiWorkspaceMembersPostPatch "Cargo.toml" workspaceMembers;
+              };
+              artifactBaseArgs = builtins.removeAttrs commonArgs [ "cargoExtraArgs" ];
+              artifactVendorArgs = artifactBaseArgs // {
+                cargoExtraArgs = artifactLockedCargoExtraArgs;
+              };
+              artifactBuildArgs = artifactBaseArgs // {
+                cargoExtraArgs = artifactBuildCargoExtraArgs;
+              };
+              cargoVendorDir = craneLib.vendorCargoDeps artifactVendorArgs;
+              cargoArgs = commonArgs // { inherit cargoVendorDir; };
+              cargoArtifacts = craneLib.buildDepsOnly (
+                if useDummySrc then
+                  ((builtins.removeAttrs (artifactBuildArgs // {
+                    inherit cargoVendorDir;
+                  }) [ "src" ]) // {
+                    pname = "${pname}-deps";
+                    dummySrc = craneLib.mkDummySrc artifactBuildArgs;
+                  })
+                else
+                  ((builtins.removeAttrs (artifactBuildArgs // {
+                    inherit cargoVendorDir;
+                    pname = "${pname}-deps";
+                  }) [ "src" ]) // {
+                    dummySrc = artifactBuildArgs.src;
+                  })
+              );
+              mkUiTestArgs =
+                {
+                  pname,
+                }:
+                cargoArgs
+                // {
+                  inherit pname cargoArtifacts;
+                  doCheck = true;
+                  doInstallCargoArtifacts = false;
+                  installPhaseCommand = "mkdir -p $out";
+                };
+              mkUiCargoCheck =
+                {
+                  pname,
+                  cargoCheckExtraArgs,
+                }:
+                craneLib.mkCargoDerivation (cargoArgs // {
+                  inherit pname cargoArtifacts;
+                  doInstallCargoArtifacts = false;
+                  buildPhaseCargoCommand =
+                    "cargo check ${leafCargoExtraArgs} ${cargoCheckExtraArgs}";
+                  checkPhaseCargoCommand = "";
+                  installPhaseCommand = "mkdir -p $out";
+                });
+            in
+              {
+                inherit mkUiCargoCheck mkUiTestArgs;
+              };
+          broadUiCheckFamily = mkUiCheckFamily {
             pname = "shadow-ui-workspace";
-            version = "0.1.0";
             src = shadowUiSrc;
-            cargoLock = ./ui/Cargo.lock;
-            cargoToml = ./ui/Cargo.toml;
-            outputHashes = uiCraneOutputHashes;
-            cargoExtraArgs = "--locked";
-            doCheck = false;
-            strictDeps = true;
-            CARGO_PROFILE = "";
-            postUnpack = ''
-              cd "$sourceRoot/ui"
-              sourceRoot="."
-            '';
-            nativeBuildInputs = uiCheckNativeBuildInputsFor pkgs;
-            buildInputs = uiCheckRuntimeLibsFor pkgs;
           };
-          cargoVendorDir = craneLib.vendorCargoDeps commonArgs;
-          cargoArgs = commonArgs // { inherit cargoVendorDir; };
-          cargoArtifacts = craneLib.buildDepsOnly ((builtins.removeAttrs cargoArgs [ "src" ]) // {
-            pname = "shadow-ui-workspace-deps";
-            dummySrc = craneLib.mkDummySrc commonArgs;
-          });
-          mkUiTestArgs =
-            {
-              pname,
-            }:
-            cargoArgs
-            // {
-              inherit pname cargoArtifacts;
-              doCheck = true;
-              doInstallCargoArtifacts = false;
-              installPhaseCommand = "mkdir -p $out";
-            };
-          mkUiCargoCheck =
-            {
-              pname,
-              cargoCheckExtraArgs,
-            }:
-            craneLib.mkCargoDerivation (cargoArgs // {
-              inherit pname cargoArtifacts;
-              doInstallCargoArtifacts = false;
-              buildPhaseCargoCommand =
-                "cargo check --locked ${cargoCheckExtraArgs}";
-              checkPhaseCargoCommand = "";
-              installPhaseCommand = "mkdir -p $out";
-            });
-          coreChecks =
+          shadowUiCoreCheckFamily = mkUiCheckFamily {
+            pname = "shadow-ui-core-workspace";
+            src = shadowUiCoreSrc;
+            workspaceMembers = [
+              "crates/shadow-ui-core"
+            ];
+            artifactCargoExtraArgs = "-p shadow-ui-core";
+          };
+          shadowBlitzDemoCpuCheckFamily = mkUiCheckFamily {
+            pname = "shadow-ui-blitz-demo-cpu-workspace";
+            src = shadowBlitzDemoSrc;
+            workspaceMembers = [
+              "crates/shadow-ui-core"
+              "apps/shadow-blitz-demo"
+            ];
+            artifactCargoExtraArgs = "-p shadow-blitz-demo --no-default-features --features cpu";
+            useDummySrc = false;
+          };
+          shadowBlitzDemoGpuCheckFamily = mkUiCheckFamily {
+            pname = "shadow-ui-blitz-demo-gpu-workspace";
+            src = shadowBlitzDemoSrc;
+            workspaceMembers = [
+              "crates/shadow-ui-core"
+              "apps/shadow-blitz-demo"
+            ];
+            artifactCargoExtraArgs = "-p shadow-blitz-demo --no-default-features --features gpu";
+            useDummySrc = false;
+          };
+          shadowCompositorCheckFamily = mkUiCheckFamily {
+            pname = "shadow-ui-compositor-workspace";
+            src = shadowCompositorSrc;
+            workspaceMembers = [
+              "crates/shadow-ui-core"
+              "crates/shadow-ui-software"
+              "crates/shadow-compositor-common"
+              "crates/shadow-compositor"
+            ];
+            artifactCargoExtraArgs = "-p shadow-compositor";
+            useDummySrc = false;
+          };
+          shadowCompositorGuestCheckFamily = mkUiCheckFamily {
+            pname = "shadow-ui-compositor-guest-workspace";
+            src = shadowCompositorGuestSrc;
+            workspaceMembers = [
+              "apps/shadow-blitz-demo"
+              "crates/shadow-ui-core"
+              "crates/shadow-ui-software"
+              "crates/shadow-compositor-common"
+              "crates/shadow-compositor-guest"
+            ];
+            artifactCargoExtraArgs = "-p shadow-compositor-guest";
+            useDummySrc = false;
+          };
+          leafChecks =
             {
               uiFmt = craneLib.cargoFmt {
                 pname = "shadow-ui-workspace";
@@ -1031,67 +1353,392 @@
                   sourceRoot="."
                 '';
               };
-              uiShadowUiCoreTests = craneLib.cargoTest (mkUiTestArgs {
+              uiShadowUiCoreTests = craneLib.cargoTest (shadowUiCoreCheckFamily.mkUiTestArgs {
                 pname = "shadow-ui-core";
               } // {
                 cargoTestExtraArgs = "-p shadow-ui-core";
               });
-              uiShadowBlitzDemoAppTests = craneLib.cargoTest (mkUiTestArgs {
+              uiShadowBlitzDemoAppTests = craneLib.cargoTest (shadowBlitzDemoCpuCheckFamily.mkUiTestArgs {
                 pname = "shadow-blitz-demo-app-tests";
               } // {
                 cargoTestExtraArgs =
                   "-p shadow-blitz-demo --no-default-features --features cpu app::tests::";
               });
-              uiShadowBlitzDemoRuntimeDocumentTests = craneLib.cargoTest (mkUiTestArgs {
+              uiShadowBlitzDemoRuntimeDocumentTests = craneLib.cargoTest (shadowBlitzDemoCpuCheckFamily.mkUiTestArgs {
                 pname = "shadow-blitz-demo-runtime-document-tests";
               } // {
                 cargoTestExtraArgs =
                   "-p shadow-blitz-demo --no-default-features --features cpu runtime_document";
               });
-              uiShadowCompositorGuestTests = craneLib.cargoTest (mkUiTestArgs {
+              uiShadowCompositorGuestTests = craneLib.cargoTest (shadowCompositorGuestCheckFamily.mkUiTestArgs {
                 pname = "shadow-compositor-guest-tests";
               } // {
                 cargoTestExtraArgs = "-p shadow-compositor-guest";
               });
-              uiShadowRustDemoCheck = mkUiCargoCheck {
+              uiShadowRustDemoCheck = broadUiCheckFamily.mkUiCargoCheck {
                 pname = "shadow-rust-demo-check";
                 cargoCheckExtraArgs = "-p shadow-rust-demo";
               };
-              uiShadowRustTimelineCheck = mkUiCargoCheck {
+              uiShadowRustTimelineCheck = broadUiCheckFamily.mkUiCargoCheck {
                 pname = "shadow-rust-timeline-check";
                 cargoCheckExtraArgs = "-p shadow-rust-timeline";
               };
-              uiShadowBlitzDemoHostSystemFontsCheck = mkUiCargoCheck {
+              uiShadowBlitzDemoHostSystemFontsCheck = shadowBlitzDemoCpuCheckFamily.mkUiCargoCheck {
                 pname = "shadow-blitz-demo-host-system-fonts-check";
                 cargoCheckExtraArgs =
                   "-p shadow-blitz-demo --no-default-features --features cpu,host_system_fonts";
               };
-              uiShadowBlitzDemoGpuCheck = mkUiCargoCheck {
+              uiShadowBlitzDemoGpuCheck = shadowBlitzDemoGpuCheckFamily.mkUiCargoCheck {
                 pname = "shadow-blitz-demo-gpu-check";
                 cargoCheckExtraArgs =
                   "-p shadow-blitz-demo --no-default-features --features gpu";
               };
             }
             // lib.optionalAttrs pkgs.stdenv.isLinux {
-              uiShadowCompositorTests = craneLib.cargoTest (mkUiTestArgs {
+              uiShadowCompositorTests = craneLib.cargoTest (shadowCompositorCheckFamily.mkUiTestArgs {
                 pname = "shadow-compositor-tests";
               } // {
                 cargoTestExtraArgs = "-p shadow-compositor";
               });
-              uiShadowCompositorCheck = mkUiCargoCheck {
+              uiShadowCompositorCheck = shadowCompositorCheckFamily.mkUiCargoCheck {
                 pname = "shadow-compositor-check";
                 cargoCheckExtraArgs = "-p shadow-compositor";
               };
-              uiShadowCompositorGuestCheck = mkUiCargoCheck {
+              uiShadowCompositorGuestCheck = shadowCompositorGuestCheckFamily.mkUiCargoCheck {
                 pname = "shadow-compositor-guest-check";
                 cargoCheckExtraArgs = "-p shadow-compositor-guest";
               };
             };
+          fmtSuiteMembers = [ "uiFmt" ];
+          coreSuiteMembers = [ "uiShadowUiCoreTests" ];
+          appsSuiteMembers = [
+            "uiShadowRustDemoCheck"
+            "uiShadowRustTimelineCheck"
+          ];
+          blitzDemoSuiteMembers = [
+            "uiShadowBlitzDemoAppTests"
+            "uiShadowBlitzDemoRuntimeDocumentTests"
+            "uiShadowBlitzDemoHostSystemFontsCheck"
+            "uiShadowBlitzDemoGpuCheck"
+          ];
+          compositorSuiteMembers =
+            [ "uiShadowCompositorGuestTests" ]
+            ++ lib.optionals pkgs.stdenv.isLinux [
+              "uiShadowCompositorTests"
+              "uiShadowCompositorCheck"
+              "uiShadowCompositorGuestCheck"
+            ];
+          allSuiteMembers =
+            fmtSuiteMembers
+            ++ coreSuiteMembers
+            ++ appsSuiteMembers
+            ++ blitzDemoSuiteMembers
+            ++ compositorSuiteMembers;
+          mkUiCheckSuite = suiteName: members:
+            pkgs.linkFarm suiteName (
+              builtins.map (name: { inherit name; path = leafChecks.${name}; }) members
+            );
         in
-          coreChecks
+          leafChecks
           // {
-            uiCheck = pkgs.linkFarm "shadow-ui-check" (
-              lib.mapAttrsToList (name: path: { inherit name path; }) coreChecks
+            uiCheckFmt = mkUiCheckSuite "shadow-ui-check-fmt" fmtSuiteMembers;
+            uiCheckCore = mkUiCheckSuite "shadow-ui-check-core" coreSuiteMembers;
+            uiCheckApps = mkUiCheckSuite "shadow-ui-check-apps" appsSuiteMembers;
+            uiCheckBlitzDemo = mkUiCheckSuite "shadow-ui-check-blitz-demo" blitzDemoSuiteMembers;
+            uiCheckCompositor = mkUiCheckSuite "shadow-ui-check-compositor" compositorSuiteMembers;
+            uiCheck = mkUiCheckSuite "shadow-ui-check" allSuiteMembers;
+          };
+      mkInitWrapperCheckFor = pkgs:
+        let
+          craneLib = crane.mkLib pkgs;
+          initWrapperCommonArgs = {
+            pname = "shadow-init-wrapper";
+            version = "0.1.0";
+            src = shadowInitWrapperSrc;
+            cargoLock = ./rust/init-wrapper/Cargo.lock;
+            cargoToml = ./rust/init-wrapper/Cargo.toml;
+            cargoExtraArgs = "--locked";
+            doCheck = false;
+            strictDeps = true;
+            postUnpack = ''
+              cd "$sourceRoot/rust/init-wrapper"
+              sourceRoot="."
+            '';
+          };
+          initWrapperCargoVendorDir = craneLib.vendorCargoDeps initWrapperCommonArgs;
+          initWrapperCargoArgs = initWrapperCommonArgs // {
+            cargoVendorDir = initWrapperCargoVendorDir;
+          };
+          initWrapperCargoArtifacts = craneLib.buildDepsOnly ((builtins.removeAttrs initWrapperCargoArgs [ "src" ]) // {
+            pname = "shadow-init-wrapper-deps";
+            dummySrc = craneLib.mkDummySrc initWrapperCommonArgs;
+          });
+        in
+          craneLib.mkCargoDerivation (initWrapperCargoArgs // {
+            pname = "shadow-init-wrapper-check";
+            cargoArtifacts = initWrapperCargoArtifacts;
+            doInstallCargoArtifacts = false;
+            buildPhaseCargoCommand = "cargo check --locked";
+            checkPhaseCargoCommand = "";
+            installPhaseCommand = "mkdir -p $out";
+          });
+      mkShadowRuntimeChecksFor = pkgs:
+        let
+          craneLib = crane.mkLib pkgs;
+          runtimeRustCommonArgs = {
+            pname = "shadow-runtime-workspace";
+            version = "0.1.0";
+            src = shadowSystemSrc;
+            cargoLock = ./rust/Cargo.lock;
+            cargoToml = ./rust/Cargo.toml;
+            cargoExtraArgs = "--locked";
+            doCheck = false;
+            strictDeps = true;
+            postUnpack = ''
+              cd "$sourceRoot/rust"
+              sourceRoot="."
+            '';
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            depsBuildBuild =
+              lib.optionals pkgs.stdenv.buildPlatform.isDarwin [
+                pkgs.stdenv.cc
+                pkgs.libiconv
+              ];
+            RUSTY_V8_ARCHIVE = mkRustyV8ArchiveFor pkgs;
+          };
+          runtimeRustCargoVendorDir = craneLib.vendorCargoDeps runtimeRustCommonArgs;
+          runtimeRustCargoArgs = runtimeRustCommonArgs // {
+            cargoVendorDir = runtimeRustCargoVendorDir;
+          };
+          runtimeRustCargoArtifacts = craneLib.buildDepsOnly ((builtins.removeAttrs runtimeRustCargoArgs [ "src" ]) // {
+            pname = "shadow-runtime-workspace-deps";
+            dummySrc = craneLib.mkDummySrc (runtimeRustCommonArgs // {
+              extraDummyScript = ''
+                rm -rf "$out/rust/vendor/temporal_rs"
+                mkdir -p "$out/rust/vendor"
+                cp --recursive --no-preserve=ownership ${./rust/vendor/temporal_rs} "$out/rust/vendor/temporal_rs"
+                chmod +w -R "$out/rust/vendor/temporal_rs"
+              '';
+            });
+          });
+          mkRuntimeRustTestArgs =
+            {
+              pname,
+            }:
+            runtimeRustCargoArgs
+            // {
+              inherit pname;
+              cargoArtifacts = runtimeRustCargoArtifacts;
+              doCheck = true;
+              doInstallCargoArtifacts = false;
+              installPhaseCommand = "mkdir -p $out";
+            };
+          runtimeBundleDenoCache = pkgs.stdenvNoCC.mkDerivation {
+            pname = "shadow-runtime-bundle-test-deno-cache";
+            version = "0.1.0";
+            src = shadowRuntimeBundleTestSrc;
+            nativeBuildInputs = [ pkgs.deno ];
+            dontUnpack = true;
+            phases = [ "buildPhase" ];
+            outputHashMode = "recursive";
+            outputHashAlgo = "sha256";
+            outputHash = "sha256-iXh8mICg/xokpFNQQCgRC0DNUNf8AAFqnlSTNckJ0E8=";
+            buildPhase = ''
+              export HOME="$TMPDIR/home"
+              export DENO_DIR="$TMPDIR/deno-dir"
+              mkdir -p "$HOME" "$DENO_DIR"
+              cp -R "$src" source
+              chmod -R u+w source
+              cd source
+              deno test \
+                --lock=deno.lock \
+                --allow-read \
+                --allow-write \
+                --allow-run \
+                --allow-env \
+                scripts/runtime/runtime_prepare_app_bundle_test.ts
+              mkdir -p "$out/deno-dir"
+              cp -R "$DENO_DIR"/. "$out/deno-dir"/
+              if [ -d node_modules ]; then
+                cp -R node_modules "$out/node_modules"
+              fi
+            '';
+          };
+          leafChecks = {
+            runtimeShadowSdkNostrTests = craneLib.cargoTest (mkRuntimeRustTestArgs {
+              pname = "shadow-sdk-nostr-tests";
+            } // {
+              cargoTestExtraArgs = "-p shadow-sdk --features nostr";
+            });
+            runtimeShadowSystemTests = craneLib.cargoTest (mkRuntimeRustTestArgs {
+              pname = "shadow-system-tests";
+            } // {
+              cargoTestExtraArgs = "-p shadow-system";
+            });
+            runtimePrepareAppBundleTests = pkgs.runCommand "shadow-runtime-prepare-app-bundle-tests" {
+              nativeBuildInputs = [ pkgs.deno ];
+            } ''
+              export HOME="$TMPDIR/home"
+              export DENO_DIR="$TMPDIR/deno-dir"
+              mkdir -p "$HOME" "$DENO_DIR"
+              cp -R ${shadowRuntimeBundleTestSrc} source
+              chmod -R u+w source
+              cp -R ${runtimeBundleDenoCache}/deno-dir/. "$DENO_DIR"/
+              chmod -R u+w "$DENO_DIR"
+              if [ -d ${runtimeBundleDenoCache}/node_modules ]; then
+                cp -R ${runtimeBundleDenoCache}/node_modules source/node_modules
+                chmod -R u+w source/node_modules
+              fi
+              cd source
+              deno test \
+                --lock=deno.lock \
+                --cached-only \
+                --allow-read \
+                --allow-write \
+                --allow-run \
+                --allow-env \
+                scripts/runtime/runtime_prepare_app_bundle_test.ts
+              mkdir -p "$out"
+            '';
+          };
+        in
+          leafChecks
+          // {
+            runtimeCheck = pkgs.linkFarm "shadow-runtime-check" (
+              lib.mapAttrsToList (name: path: { inherit name path; }) leafChecks
+            );
+          };
+      mkShadowPreMergeChecksFor = pkgs: runtimeChecks:
+        let
+          hostSystem = pkgs.stdenv.hostPlatform.system;
+          systemPackageAttr = systemPackageAttrForHostSystem hostSystem;
+          preMergeSurfaceCheck =
+            mkDrvPathManifestCheck pkgs "shadow-pre-merge-surface-check.json" {
+              schemaVersion = 1;
+              hostSystem = hostSystem;
+              entries =
+                (builtins.map
+                  (
+                    shellName:
+                    mkDrvPathManifestEntry
+                      "devShells.${hostSystem}.${shellName}"
+                      self.devShells.${hostSystem}.${shellName}
+                  )
+                  publicDevShellNames
+                )
+                ++ [
+                  (mkDrvPathManifestEntry
+                    "packages.${hostSystem}.${systemPackageAttr}"
+                    self.packages.${hostSystem}.${systemPackageAttr})
+                  (mkDrvPathManifestEntry
+                    "packages.${hostSystem}.ui-vm-ci"
+                    self.packages.${hostSystem}.ui-vm-ci)
+                  (mkDrvPathManifestEntry
+                    "packages.${hostSystem}.vm-smoke-inputs"
+                    self.packages.${hostSystem}.vm-smoke-inputs)
+                ];
+            };
+        in
+          {
+            inherit preMergeSurfaceCheck;
+            preMergeCheck = pkgs.linkFarm "shadow-pre-merge-check" [
+              {
+                name = "pre-merge-surface-check.json";
+                path = preMergeSurfaceCheck;
+              }
+              {
+                name = "runtime-check";
+                path = runtimeChecks.runtimeCheck;
+              }
+            ];
+          };
+      mkShadowNightlyChecksFor = pkgs:
+        let
+          pixelBootSmokeNativeBuildInputs = with pkgs; [
+            bash
+            coreutils
+            file
+            findutils
+            gawk
+            gnugrep
+            gnused
+            gzip
+            lz4
+            perl
+            python3
+          ];
+          mkPixelBootSmokeCheck =
+            {
+              pname,
+              script,
+              src,
+            }:
+            pkgs.runCommand pname {
+              nativeBuildInputs = pixelBootSmokeNativeBuildInputs;
+            } ''
+              export HOME="$TMPDIR/home"
+              mkdir -p "$HOME" "$TMPDIR/check-bin"
+              printf '%s\n' \
+                '#!/usr/bin/env bash' \
+                'set -euo pipefail' \
+                'if [ "$#" -gt 0 ] && [ "$1" = "-st" ]; then' \
+                '  shift' \
+                '  timeout="$1"' \
+                '  shift' \
+                '  lock_path="$1"' \
+                '  shift' \
+                '  exec "$@"' \
+                'fi' \
+                'lock_path="$1"' \
+                'shift' \
+                'exec "$@"' \
+                >"$TMPDIR/check-bin/lockf"
+              chmod 0755 "$TMPDIR/check-bin/lockf"
+              export PATH="$TMPDIR/check-bin:$PATH"
+              cp -R ${src} source
+              chmod -R u+w source
+              cd source
+              bash ${script}
+              mkdir -p "$out"
+            '';
+          leafChecks = {
+            pixelBootInitWrapperCheck = mkInitWrapperCheckFor pkgs;
+            pixelBootHelloInitSmoke = mkPixelBootSmokeCheck {
+              pname = "shadow-pixel-boot-hello-init-smoke";
+              script = "./scripts/ci/pixel_boot_hello_init_smoke.sh";
+              src = shadowPixelBootHelloInitSmokeSrc;
+            };
+            pixelBootOrangeInitSmoke = mkPixelBootSmokeCheck {
+              pname = "shadow-pixel-boot-orange-init-smoke";
+              script = "./scripts/ci/pixel_boot_orange_init_smoke.sh";
+              src = shadowPixelBootOrangeInitSmokeSrc;
+            };
+            pixelBootToolingSmoke = mkPixelBootSmokeCheck {
+              pname = "shadow-pixel-boot-tooling-smoke";
+              script = "./scripts/ci/pixel_boot_tooling_smoke.sh";
+              src = shadowPixelBootToolingSmokeSrc;
+            };
+            pixelBootRecoverTracesSmoke = mkPixelBootSmokeCheck {
+              pname = "shadow-pixel-boot-recover-traces-smoke";
+              script = "./scripts/ci/pixel_boot_recover_traces_smoke.sh";
+              src = shadowPixelBootRecoverTracesSmokeSrc;
+            };
+            pixelBootCollectLogsSmoke = mkPixelBootSmokeCheck {
+              pname = "shadow-pixel-boot-collect-logs-smoke";
+              script = "./scripts/ci/pixel_boot_collect_logs_smoke.sh";
+              src = shadowPixelBootCollectLogsSmokeSrc;
+            };
+            pixelBootSafetySmoke = mkPixelBootSmokeCheck {
+              pname = "shadow-pixel-boot-safety-smoke";
+              script = "./scripts/ci/pixel_boot_safety_smoke.sh";
+              src = shadowPixelBootSafetySmokeSrc;
+            };
+          };
+        in
+          leafChecks
+          // {
+            pixelBootCheck = pkgs.linkFarm "shadow-pixel-boot-check" (
+              lib.mapAttrsToList (name: path: { inherit name path; }) leafChecks
             );
           };
       mkRuntimeShell = pkgs:
@@ -1282,16 +1929,24 @@
         let
           hostSystem = pkgs.stdenv.hostPlatform.system;
           systemPackageAttr = systemPackageAttrForHostSystem hostSystem;
+          nightlyCiChecks = mkShadowNightlyChecksFor pkgs;
         in
           {
             ci = {
               vmSystem = self.packages.${hostSystem}.${systemPackageAttr};
               vmUiRunner = self.packages.${hostSystem}.ui-vm-ci;
               vmSmokeInputs = mkVmSmokeInputsFor pkgs;
+              pixelBootCheck = nightlyCiChecks.pixelBootCheck;
+              pixelBootChecks = nightlyCiChecks;
             };
           });
       checks = forAllSystems ({ pkgs, ... }:
-        mkShadowUiChecksFor pkgs
+        let
+          runtimeChecks = mkShadowRuntimeChecksFor pkgs;
+        in
+          mkShadowUiChecksFor pkgs
+          // runtimeChecks
+          // mkShadowPreMergeChecksFor pkgs runtimeChecks
       );
     };
 }

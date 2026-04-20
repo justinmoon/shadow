@@ -12,10 +12,29 @@ PROCESS_PORT="$(ui_vm_ssh_port)"
 cd "$REPO_ROOT"
 
 process_pids() {
+  local pids
+
+  pids="$(
+    ps -Ao pid=,command= \
+      | grep -F "microvm@shadow-ui-vm" \
+      | grep -F "hostfwd=tcp::${PROCESS_PORT}-:22" \
+      | awk '{print $1}'
+  )"
+  if [[ -n "$pids" ]]; then
+    printf '%s\n' "$pids"
+    return 0
+  fi
+
   ps -Ao pid=,command= \
     | grep -F "microvm@shadow-ui-vm" \
-    | grep -F "hostfwd=tcp::${PROCESS_PORT}-:22" \
-    | awk '{print $1}'
+    | awk '{print $1}' \
+    | while read -r pid; do
+        [[ -n "$pid" ]] || continue
+        cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+        if [[ "$cwd" == "$REPO_ROOT" ]]; then
+          printf '%s\n' "$pid"
+        fi
+      done
 }
 
 process_running() {
@@ -49,6 +68,26 @@ terminate_vm_process() {
   wait_for_stop 3 || true
 }
 
+shutdown_via_socket() {
+  python3 - "$SOCKET_PATH" <<'PY'
+import json
+import socket
+import sys
+
+socket_path = sys.argv[1]
+
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+    client.connect(socket_path)
+    client.recv(4096)
+    for command in (
+        {"execute": "qmp_capabilities"},
+        {"execute": "quit"},
+    ):
+        client.sendall((json.dumps(command) + "\r\n").encode("utf-8"))
+        client.recv(4096)
+PY
+}
+
 if [[ ! -S "$SOCKET_PATH" ]]; then
   if process_running; then
     terminate_vm_process
@@ -60,9 +99,14 @@ fi
 
 mkdir -p .shadow-vm
 if [[ ! -x "$RUNNER_LINK/bin/microvm-shutdown" ]]; then
-  mkdir -p "$REPO_ROOT/.shadow-vm/runtime-artifacts"
-  SHADOW_UI_VM_SSH_PORT="$PROCESS_PORT" \
-    nix build --impure --accept-flake-config -o "$RUNNER_LINK" .#ui-vm-ci >/dev/null
+  shutdown_via_socket >/dev/null 2>&1 || true
+  if wait_for_stop 10; then
+    rm -f "$SOCKET_PATH"
+    exit 0
+  fi
+  terminate_vm_process
+  rm -f "$SOCKET_PATH"
+  exit 0
 fi
 
 shutdown_pid=""

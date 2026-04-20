@@ -127,19 +127,19 @@ Related docs:
   - keep ramdisk mutation surgical through cpio entry editing so device nodes and other special archive entries survive unchanged
   - prefer direct `execv()` handoff to the stock init path, plus `/dev/kmsg` breadcrumbs, over extra shell or symlink indirection when probing a foreign first-stage wrapper
   - treat Fundroid's successful boot/init results as mostly Cuttlefish-host evidence; the Pixel 4a material there is a plan, not completed hardware proof
-- `scripts/ci/pixel_boot_collect_logs_smoke.sh` now locks the collector's success-vs-wrapper-only fallback semantics into `pre-commit`.
+- `scripts/ci/pixel_boot_collect_logs_smoke.sh` now locks the collector's success-vs-wrapper-only fallback semantics into derivation-backed `just nightly`.
 - The shared cross-worktree cache is intentionally narrow: only the immutable stock `boot.img` falls back through the git common-dir at `build/shared/pixel/root/boot.img`. Custom boot images, run bundles, and `last-action.json` stay worktree-local.
 - `sc -t <serial> debug boot-lab-oneshot` now stays as a thin private delegator into `scripts/pixel/pixel_boot_oneshot.sh` for the fast `fastboot boot` plus collect loop. It does not change the public `just` surface.
 - `pixel_boot_oneshot.sh` writes a run bundle under `build/pixel/boot/oneshot/<timestamp>/` with a local `boot-action.json`, collector output, and a truthful `status.json`.
 - `sc -t <serial> debug boot-lab-flash-run` now stays as the flashed-slot counterpart: it composes guarded flash, automatic target-slot activation, log collection, and optional inactive-slot recovery into one private run bundle.
 - `pixel_boot_flash.sh` now accepts `PIXEL_BOOT_METADATA_PATH`, so higher-level private runners can keep flash metadata inside a per-run bundle instead of clobbering the worktree-local default.
-- `scripts/ci/pixel_boot_tooling_smoke.sh` now locks the shared-stock-boot plus oneshot and flash-run dry-run contracts into `pre-commit`, and `scripts/ci/operator_cli_smoke.sh` covers both `shadowctl` delegation paths.
+- `scripts/ci/pixel_boot_tooling_smoke.sh` now locks the shared-stock-boot plus oneshot and flash-run dry-run contracts into derivation-backed `just nightly`, and `scripts/ci/operator_cli_smoke.sh` covers both `shadowctl` delegation paths.
 - Tooling rule for later seams: prefer operator-grade helpers when they remove repeated manual steps, but keep them private, narrow, and evidence-first. Avoid “tooling” that merely hides uncertainty or bundles unrelated experiments together.
 - Current boot-lab lane split:
   - `09051JEC202061` and `11151JEC200472` are both available for concurrent boot experiments
   - treat each serial as a separately owned lane with its own guarded run bundle, recovery path, and worktree seam
   - prefer concurrent experiments only when the images probe different stock-init-owned hypotheses
-- `rust/init-wrapper/Cargo.toml` is now standalone enough for `cargo check --manifest-path rust/init-wrapper/Cargo.toml`, and `just pre-commit` now compiles that crate directly instead of only relying on host-side boot-image builds.
+- `rust/init-wrapper/Cargo.toml` is now standalone enough for `cargo check --manifest-path rust/init-wrapper/Cargo.toml`, and the crate now rides in nightly through the derivation-backed `pixelBootInitWrapperCheck` instead of only relying on host-side boot-image builds.
 - The private wrapper seam now has two build flavors: the default wrapper still writes markers and restores `/init`, while `pixel_boot_build.sh --wrapper-mode minimal` builds `shadow-boot-wrapper-minimal.img` with a wrapper that directly `execv`s `/init.stock` using `/init` as `argv[0]`.
 - The minimal wrapper build path now enforces mode-tagged binaries, rejects cross-mode cache-path mistakes, and still leaves a `shadow-init` kmsg breadcrumb so later on-device collection can tell whether the wrapper reached userspace at all.
 - The cached stock `boot.img` can now be unpacked, wrapped, and reflashed locally. Live device validation still remains before the flash-loop milestone can flip fully green.
@@ -150,7 +150,7 @@ Related docs:
 - The new flash and rollback scripts intentionally target stock-init images, not Magisk-patched ones. After those scripts reboot successfully, ADB should come back but Magisk root should not.
 - `pixel_boot_flash.sh` now requires `--experimental`, defaults to `--slot inactive`, refuses to touch the running slot unless `--allow-active-slot` is also passed, and supports `--dry-run` plus optional target-slot activation.
 - `pixel_boot_restore.sh` now requires an explicit `--slot current|inactive|a|b` so recovery never silently overwrites whichever slot happens to be convenient.
-- `scripts/ci/pixel_boot_safety_smoke.sh` locks the current safety contract into `just pre-commit`.
+- `scripts/ci/pixel_boot_safety_smoke.sh` locks the current safety contract into derivation-backed `just nightly`.
 - `bootimg_unpack_to_dir()` now resolves the input path before `cd` so host inspection scripts work with relative image paths too.
 - Hardware result on 2026-04-18:
   - inactive-slot activation on `11151JEC200472` (`a -> b`) returned to slot `a` with no probe logs
@@ -282,7 +282,7 @@ Related docs:
   - the truthful recovery path today is the direct serial-scoped `pixel_boot_recover.sh` invocation with bundle metadata, not the detached watcher handoff
 - New implementation seam on 2026-04-19:
   - `hello-init` now exists as a private static aarch64 PID 1 that preserves the stock `/init -> /system/bin/init` link, replaces the ramdisk `system/bin/init` ELF, mounts `/dev` / `/proc` / `/sys`, reads `/shadow-init.cfg`, writes to `/dev/kmsg`, holds, and then reboots
-  - the repo now has `scripts/pixel/pixel_build_hello_init.sh`, `scripts/pixel/pixel_boot_build_hello_init.sh`, `scripts/ci/pixel_boot_hello_init_smoke.sh`, and a real `hello-init-device` flake package wired into `just pre-commit`
+  - the repo now has `scripts/pixel/pixel_build_hello_init.sh`, `scripts/pixel/pixel_boot_build_hello_init.sh`, `scripts/ci/pixel_boot_hello_init_smoke.sh`, and a real `hello-init-device` flake package wired into `just nightly` alongside the hermetic nightly-only smoke lane
 - New hardware result on 2026-04-19 from `fastboot boot` hello-init oneshot runs (`09051JEC202061` and `0B191JEC203253`):
   - `hold=9`, `hold=21`, and a later `hold=0` image all left fastboot successfully and later returned to normal `adb` Android on the original slot (`_b` on `09051JEC202061`, `_a` on `0B191JEC203253`)
   - the return-to-`adb` timing clustered around 46-48 seconds after the boot handoff regardless of the configured hold value
@@ -297,7 +297,7 @@ Related docs:
 - New build-loop tightening on 2026-04-19:
   - `pixel_boot_build_hello_init.sh` no longer asks `pixel_build_hello_init.sh` to compile into a fresh temp-workdir path on every repack
   - `pixel_build_hello_init.sh` now reuses a stable cached `build/pixel/boot/hello-init` binary when the current `pixel_hello_init.c` plus `flake.nix` / `flake.lock` inputs are unchanged, and only falls back to `nix build` when that cache is stale
-  - this keeps repeated ramdisk/config repacks fast without weakening the real-build guarantee in `pre-commit`
+  - this keeps repeated ramdisk/config repacks fast without weakening the real-build guarantee in `nightly`
 - New observability facts on 2026-04-19 from read-only Android-side probes on `09051JEC202061`:
   - `/dev/pmsg0` exists on stock `sunfish`, so owned PID 1 should write there in addition to `/dev/kmsg` when available
   - unprivileged `adb shell logcat -L` did not recover a manual `/dev/pmsg0` probe token on this device, so `pmsg` is currently best-effort rather than a proven shell-readable recovery path
