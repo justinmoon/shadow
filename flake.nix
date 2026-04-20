@@ -742,6 +742,51 @@
           ];
           PKG_CONFIG_ALL_STATIC = "1";
         };
+      mkShadowGpuSmokeFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "shadow-gpu-smoke";
+          version = "0.1.0";
+          src = shadowUiSrc;
+          cargoRoot = "ui";
+          buildAndTestSubdir = "ui";
+          cargoLock = {
+            lockFile = ./ui/Cargo.lock;
+            outputHashes = uiBlitzOutputHashes;
+          };
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          cargoBuildFlags = [ "-p" "shadow-gpu-smoke" ];
+          cargoInstallFlags = [ "-p" "shadow-gpu-smoke" ];
+          postPatch = mkUiWorkspaceMembersPostPatch "ui/Cargo.toml" [
+            "crates/shadow-gpu-smoke"
+          ];
+          nativeBuildInputs = [
+            cross.buildPackages.pkg-config
+            cross.buildPackages.python3
+          ];
+          depsBuildBuild =
+            lib.optionals cross.stdenv.buildPlatform.isDarwin [
+              cross.buildPackages.stdenv.cc
+              cross.buildPackages.libiconv
+            ];
+          buildInputs = lib.optionals cross.stdenv.hostPlatform.isLinux [
+            cross.libdrm
+            cross.mesa
+            cross.vulkan-loader
+          ];
+          postInstall = lib.optionalString cross.stdenv.hostPlatform.isLinux ''
+            mkdir -p "$out/runtime-libs"
+            ln -s "${cross.libdrm}" "$out/runtime-libs/libdrm"
+            ln -s "${cross.mesa}" "$out/runtime-libs/mesa-drivers"
+            ln -s "${cross.vulkan-loader}" "$out/runtime-libs/vulkan-loader"
+            if [ -d "${cross.mesa}/share/vulkan/icd.d" ]; then
+              mkdir -p "$out/share/vulkan"
+              ln -s "${cross.mesa}/share/vulkan/icd.d" "$out/share/vulkan/icd.d"
+            fi
+          '';
+          meta.mainProgram = "shadow-gpu-smoke";
+        };
       mkShadowBlitzDemoFor =
         cross:
         {
@@ -1443,6 +1488,11 @@
                 cargoCheckExtraArgs =
                   "-p shadow-blitz-demo --no-default-features --features gpu";
               };
+              uiShadowGpuSmokeCheck = mkUiCargoCheck {
+                pname = "shadow-gpu-smoke-check";
+                cargoCheckExtraArgs = "-p shadow-gpu-smoke";
+              };
+              uiShadowGpuSmokePackageCheck = mkShadowGpuSmokeFor pkgs;
             }
             // lib.optionalAttrs pkgs.stdenv.isLinux {
               uiShadowCompositorTests = craneLib.cargoTest (shadowCompositorCheckFamily.mkUiTestArgs {
@@ -1934,6 +1984,9 @@
             mkShadowSystemFor pkgs.pkgsCross.aarch64-multiplatform;
           shadow-system-x86_64-linux-gnu =
             mkShadowSystemFor pkgs.pkgsCross.gnu64;
+          shadow-gpu-smoke = mkShadowGpuSmokeFor pkgs;
+          shadow-gpu-smoke-aarch64-linux-gnu =
+            mkShadowGpuSmokeFor pkgs.pkgsCross.aarch64-multiplatform;
           drm-rect = mkDrmRect pkgs;
           drm-rect-device = mkDrmRectFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           init-wrapper-device = mkInitWrapperFor pkgs.pkgsCross.aarch64-multiplatform-musl { };

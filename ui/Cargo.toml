@@ -6,6 +6,7 @@ members = [
     "crates/shadow-compositor-common",
     "crates/shadow-compositor",
     "crates/shadow-compositor-guest",
+    "crates/shadow-gpu-smoke",
     "apps/shadow-blitz-demo",
     "apps/shadow-rust-demo",
     "apps/shadow-rust-timeline",

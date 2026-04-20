@@ -22,7 +22,7 @@ Related docs:
 - Use host-side `bootimg` tooling for the inner loop: unpack, patch, repack, inspect, sign.
 - Use Cuttlefish only for generic bring-up ideas, not as the primary model for `sunfish`.
 - Primary strategy: boot the stock Pixel kernel into a Shadow-owned ramdisk and custom PID 1. Do not treat `wrapper -> stock init -> later takeover` as the main path anymore.
-- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-init` (direct DRM/KMS fill), then minimal control/transport, then Shadow services.
+- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `orange-gpu` (GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
 - Reuse the current rooted takeover/runtime path for DRM, input, audio, and packaging knowledge, but not as the boot graph we are trying to ship.
 - Land boot work in small seams that can merge to `master` independently; do not stack the whole project on one long-lived boot branch.
@@ -32,6 +32,8 @@ Related docs:
 - Keep the image repack loop fast by reusing stable built payload binaries when the payload source is unchanged; do not hide avoidable rebuilds inside temp-workdir packers.
 - Prefer chunks that are inert for the current Magisk path: helper libraries, private scripts, log capture, guardrails, and tiny owned-userspace proofs before Shadow-launch changes.
 - Prefer visible or durable proofs over speculative Android-`init` hook churn. A screen color or `kmsg` marker is better evidence than another late userspace property probe.
+- Keep low-level scanout proofs separate from future renderer proofs. `orange-kms` should remain the “can we own the panel at all?” probe even after `orange-gpu` exists, because the compositor/Blitz path will fail differently from a direct dumb-buffer scanout path.
+- Do not treat “boot the whole Shadow UX” as the next integration target after display. First prove exactly one new seam per rung on tiny owned-userspace demos: boot ownership, raw scanout, GPU render, repeated frames, input-driven redraw, compositor-owned scene, app-owned surface, app runtimes, shell, then services.
 
 ## Milestones
 
@@ -42,11 +44,27 @@ Related docs:
   - extra symlink hops at `/init` or `system/bin/init` fail
   - imported ramdisk rc hooks can perturb boot but do not give clean proof on normal `sunfish` boots
 - [~] Boot the stock kernel into a tiny Shadow-owned PID 1 that never execs stock Android init (`hello-init`).
-- [~] From that owned userspace, paint the panel orange with a minimal DRM/KMS proof (`orange-init`).
+- [x] From that owned userspace, paint the panel orange with a minimal DRM/KMS proof (`orange-kms`).
+- [x] Prove GPU-only bring-up with a minimal debug smoke (`gpu-smoke`):
+  - offscreen Vulkan/wgpu render
+  - readback hash or equivalent host-verifiable checksum
+  - no compositor, no TS runtime, no shell
+- [ ] From that owned userspace, render one orange GPU frame and present it through dma-buf/KMS (`orange-gpu`).
+- [ ] Prove repeated GPU frame submission and synchronization for 2-3 seconds (`orange-gpu-loop`).
+- [ ] Prove one minimal input-driven redraw on the real GPU render/present path (`touch-counter-gpu`).
+- [ ] Prove a tiny compositor-owned scene with no app/runtime complexity (`compositor-scene`).
+- [ ] Prove an app-owned surface that the compositor imports/presents, with no shell (`app-direct-present`).
+- [ ] Prove a minimal TypeScript app in owned userspace with no shell (`ts-app-minimal`).
+- [ ] Prove a minimal Rust app in owned userspace with no shell (`rust-app-minimal`).
+- [ ] Boot into a static shell/home scene with no launched apps (`shell-home-static`).
+- [ ] Prove shell launch of a minimal TS app (`shell-launch-ts-app`).
+- [ ] Prove shell launch of a minimal Rust app (`shell-launch-rust-app`).
+- [ ] Prove the first usable shell interaction loop: home, open/close app, back, switcher (`shell-interaction`).
+- [ ] Add narrow service spikes on top of the owned renderer/runtime path:
+  - audio tone
+  - camera preview
+  - simple storage/network/control seams as needed
 - [ ] Reach one minimal control lane from owned userspace when needed, without reintroducing stock Android init or framework.
-- [ ] Launch a minimal Shadow-owned service graph from PID 1 with no stock Android userspace handoff.
-- [ ] Start `shadow-session` / `shadow-compositor-guest` from owned userspace and present one frame.
-- [ ] Boot directly into Shadow shell/home on a physical Pixel with no Android userspace handoff.
 - [ ] Reduce or eliminate the first-boot dependence on pre-staged `/data/local/tmp` runtime artifacts.
 - [ ] Decide the long-lived subsystem strategy for camera, Wi-Fi, and update/recovery.
 
@@ -87,10 +105,34 @@ Related docs:
 - [~] Package a minimal DRM proof payload:
   - reuse `rust/drm-rect` or a smaller equivalent
   - make the color, hold time, and logging explicit
+- [ ] Package the smallest truthful GPU-only proof payload (`gpu-smoke`):
+  - offscreen render plus readback hash
+  - no compositor event loop, no TS runtime, no shell, no extra drivers beyond what basic GPU bring-up needs
+  - make this the first discriminator when later onscreen GPU proofs fail
+- [x] Add a rooted-Pixel direct-bundle `gpu-smoke` runner:
+  - stage only the `shadow-gpu-smoke` GNU/Linux binary plus minimal Vulkan bundle pieces
+  - push and run it without `shadow-system`, guest compositor, or JS runtime coupling
+  - require pulled `summary.json` plus strict Vulkan/hardware invariants before calling the run a success
+- [ ] Package the first on-screen GPU present payload (`orange-gpu`):
+  - render a flat orange frame on GPU
+  - export/import through the intended buffer path
+  - present through KMS
+  - keep it separate from app/session launch
+- [ ] Package one short repeated-frame proof (`orange-gpu-loop`):
+  - animate color or a frame counter for 2-3 seconds
+  - use it to prove repeated submission and sync, not just one lucky frame
 - [ ] Probe the smallest prerequisite set for DRM on stock kernel:
   - does `/dev/dri/card0` exist under owned PID 1 with only `tmpfs /dev`
   - if not, add the smallest necessary coldplug, module, firmware, or mount step
-- [ ] Prove one tiny owned-userspace boot lane before reintroducing timeline, camera, or network-heavy cases.
+- [ ] Prove one tiny owned-userspace boot lane before reintroducing compositor complexity, app runtimes, or service-heavy cases.
+- [ ] Keep post-orange bring-up spikes narrow and device-oriented:
+  - one GPU-only smoke
+  - one on-screen GPU present
+  - one repeated-frame proof
+  - one input proof
+  - one compositor-only scene
+  - one app-surface proof
+  - only then app runtimes and shell
 - [ ] Keep the next chunks separately landable:
   - owned-userspace builder and guarded runner
   - `hello-init`
@@ -109,6 +151,19 @@ Related docs:
   - the old wrapper and stock-init-import probes are now evidence about constraints, not the primary roadmap
   - `spec-phase1-shadow-at-boot.md` still describes the earlier stock-init-handoff plan and should be rewritten once the first owned-userspace proof lands
 - `sunfish` boots from `boot.img`, boot header v2, with recovery-as-boot. The old Cuttlefish `init_boot` work is a reference, not the real device path.
+- Strategy correction on 2026-04-19:
+  - a Blitz/TypeScript runtime proof is not `orange-gpu`; that is a later `ts-app-minimal` rung
+  - `gpu-smoke` should be the quickest discriminator when the on-screen GPU path fails, because it removes KMS/compositor/app concerns
+  - `orange-gpu` should add exactly one seam beyond `gpu-smoke`: GPU render-to-scanout
+- Candidate implementation seam for `gpu-smoke` on 2026-04-19:
+  - `ui/third_party/anyrender_vello::VelloImageRenderer` already does offscreen GPU render-to-texture plus CPU readback through `wgpu_context::BufferRenderer`
+  - `ui/third_party/wgpu_context` already logs adapter selection and surface/device diagnostics
+  - the most truthful next chunk is likely a tiny standalone binary around those two pieces: render one trivial scene, hash the readback bytes, and emit a structured summary
+- New `gpu-smoke` result on 2026-04-20:
+  - `ui/crates/shadow-gpu-smoke` now enforces strict Vulkan-by-default and rejects software fallback unless explicitly relaxed for host debugging
+  - `scripts/pixel/pixel_prepare_gpu_smoke_bundle.sh` and `scripts/pixel/pixel_gpu_smoke.sh` provide a private rooted-Pixel direct-bundle runner with no compositor / runtime / shell coupling
+  - `11151JEC200472` proved the rung first, then `09051JEC202061` reproduced it with the same checksum `e317ffe624895aa5`
+  - both rooted devices reported `adapter.backend=Vulkan`, `name=Turnip Adreno (TM) 618`, `software_backed=false`, and strict proof artifacts were pulled to host run dirs
 - The repo already has a usable host-side `bootimg` shell with `unpack_bootimg`, `mkbootimg`, and `avbtool`.
 - The new private boot helpers live under `scripts/pixel/`: `pixel_boot_unpack.sh`, `pixel_boot_build.sh`, `pixel_boot_build_log_probe.sh`, `pixel_boot_collect_logs.sh`, `pixel_boot_flash.sh`, `pixel_boot_restore.sh`, and `pixel_build_init_wrapper.sh`.
 - The wrapper seam now also has a separate static C build path: `scripts/pixel/pixel_build_init_wrapper_c.sh` builds a minimal `/init.stock` handoff binary that stays out of the default Rust wrapper cache and plugs into `pixel_boot_build.sh --wrapper`.
@@ -136,9 +191,12 @@ Related docs:
 - `scripts/ci/pixel_boot_tooling_smoke.sh` now locks the shared-stock-boot plus oneshot and flash-run dry-run contracts into derivation-backed `just nightly`, and `scripts/ci/operator_cli_smoke.sh` covers both `shadowctl` delegation paths.
 - Tooling rule for later seams: prefer operator-grade helpers when they remove repeated manual steps, but keep them private, narrow, and evidence-first. Avoid “tooling” that merely hides uncertainty or bundles unrelated experiments together.
 - Current boot-lab lane split:
-  - `09051JEC202061` and `11151JEC200472` are both available for concurrent boot experiments
+  - `11151JEC200472` is the primary boot-lab phone for new display / renderer spikes
+  - `09051JEC202061` is the confirmation phone for follow-up repro and second-device checks
+  - do not use other attached phones for boot-lab work unless the plan changes explicitly
   - treat each serial as a separately owned lane with its own guarded run bundle, recovery path, and worktree seam
-  - prefer concurrent experiments only when the images probe different stock-init-owned hypotheses
+  - prefer concurrent experiments only when the images probe different owned-userspace hypotheses
+  - keep an explicit boot-lab ledger in the thread or plan: allowed serials, device role, root state, slot, active hypothesis, and recovery path
 - `rust/init-wrapper/Cargo.toml` is now standalone enough for `cargo check --manifest-path rust/init-wrapper/Cargo.toml`, and the crate now rides in nightly through the derivation-backed `pixelBootInitWrapperCheck` instead of only relying on host-side boot-image builds.
 - The private wrapper seam now has two build flavors: the default wrapper still writes markers and restores `/init`, while `pixel_boot_build.sh --wrapper-mode minimal` builds `shadow-boot-wrapper-minimal.img` with a wrapper that directly `execv`s `/init.stock` using `/init` as `argv[0]`.
 - The minimal wrapper build path now enforces mode-tagged binaries, rejects cross-mode cache-path mistakes, and still leaves a `shadow-init` kmsg breadcrumb so later on-device collection can tell whether the wrapper reached userspace at all.
@@ -249,8 +307,9 @@ Related docs:
   - that image held orange for roughly 20 seconds and then returned to bootloader as designed
   - after rebooting back to stock Android, Android-side recovery still found zero shadow tags and zero run-token matches, so the visible proof outran the current surviving-log channels
 - Tightened inference after the orange proof:
-  - the first visible owned-userspace milestone is now real on `sunfish`; the remaining work is to package that exact minimal `/dev/dri` bootstrap cleanly in the main tree and then improve post-run breadcrumbs around it
-  - this also confirms that the earlier dark orange runs were not blocked on DRM or the panel in the abstract; they were blocked specifically on device-node availability under `tmpfs /dev`
+  - the first visible owned-userspace milestone is now real on `sunfish`; the remaining work is to improve post-run breadcrumbs around it and then move one layer up the stack
+  - this confirms that the earlier dark orange runs were not blocked on DRM or the panel in the abstract; they were blocked specifically on device-node availability under `tmpfs /dev`
+  - this milestone is `orange-kms`, not `orange-gpu`: it proves scanout and panel ownership, but it does not yet prove the future compositor / Blitz renderer path
 - New hardware result on 2026-04-19 from the `/metadata` breadcrumb experiment (`09051JEC202061`):
   - a hello-init variant that attempted targeted tmpfs coldboot plus `/metadata` breadcrumb writes still failed on real hardware with `ro.boot.bootreason=kernel_panic`
   - `pixel_boot_recover_traces.sh` was able to look for `/metadata/shadow-hello-init/{latest,by-token/...}` after recovery, but the recovered `metadata-breadcrumb.txt` stayed empty on-device

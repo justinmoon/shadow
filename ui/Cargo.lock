@@ -4423,6 +4423,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "shadow-gpu-smoke"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "drm",
+ "kurbo 0.13.0",
+ "libc",
+ "pollster",
+ "serde",
+ "serde_json",
+ "vello 0.8.0",
+ "wgpu 28.0.0",
+ "wgpu_context",
+]
+
+[[package]]
 name = "shadow-runtime-protocol"
 version = "0.1.0"
 dependencies = [
