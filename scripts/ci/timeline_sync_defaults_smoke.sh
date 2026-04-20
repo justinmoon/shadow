@@ -44,10 +44,10 @@ expect_fixed \
   "runtime_app_config_json='{\"limit\":12,\"relayUrls\":[\"wss://relay.primal.net/\",\"wss://relay.damus.io/\"],\"syncOnStart\":true}'" \
   "pixel direct timeline relay sync default"
 
-expect_fixed \
-  "$REPO_ROOT/scripts/lib/pixel_common.sh" \
-  'SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)' \
-  "pixel runtime host env nostr sqlite path"
+if ! bash -lc 'cd "$0" && source scripts/lib/pixel_common.sh && pixel_system_env_lines' "$REPO_ROOT" \
+  | grep -Fq -- 'SHADOW_RUNTIME_NOSTR_DB_PATH=/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3'; then
+  fail "pixel runtime host env nostr sqlite path missing from sourced pixel_system_env_lines output"
+fi
 
 expect_fixed \
   "$REPO_ROOT/scripts/pixel/pixel_shell_drm.sh" \

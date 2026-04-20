@@ -53,6 +53,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [ ] Avoid broad rewrites until VM smoke and Pixel shell startup behavior are covered by stable tests.
 - [x] Split Smithay handler glue out of guest `main.rs` once the render/present seam is stable.
 - [x] Finish the remaining guest startup-config cleanup: remove direct startup env reads from `launch.rs` / `hosted.rs` where `config.rs` should already own that policy.
+- [x] Start shrinking `scripts/lib/pixel_common.sh` with a low-risk first split: runtime/session path and env helpers into a dedicated sourced module while keeping the public shell function surface stable.
 - [ ] Treat `scripts/lib/pixel_common.sh` the same way: stop growing one giant sourced shell library, and carve out target/session/operator behavior that should live in `shadowctl`.
 
 ## Responsibility Map
@@ -156,6 +157,16 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   responsibilities in one file. Shared target/operator behavior should migrate
   into `scripts/shadowctl` or smaller typed helper modules instead of continuing
   to accumulate in one sourced shell file.
+- First Pixel script seam: pull the runtime/session path and env helper cluster
+  out of `pixel_common.sh` into its own sourced library before attempting any
+  larger operator-flow moves into `shadowctl`. That reduces file size and makes
+  the next CLI migration more incremental instead of all-or-nothing.
+- Pixel script seam note: the first extraction is now real.
+  `pixel_runtime_session_common.sh` owns the runtime/session path, artifact,
+  manifest, env, and guest-session env-word helpers, while `pixel_common.sh`
+  stays the compatibility shim that existing Pixel scripts source. The next
+  useful split is probably boot/root recovery helpers versus live device/service
+  control helpers, not another runtime-path churn pass.
 - Shell polish note: home/chrome rendering and focused app interaction are now
   less architecturally distinct than before. The remaining useful split is
   product lane versus control lane, not "real shell path" versus "direct
