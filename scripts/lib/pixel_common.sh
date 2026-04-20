@@ -268,19 +268,73 @@ pixel_retryable_nix_build_failure() {
 }
 
 pixel_retry_nix_build() {
-  local attempt max_attempts retry_sleep_secs status log_path
+  local attempt max_attempts retry_sleep_secs heartbeat_secs status log_path pid started_at next_heartbeat old_term_trap old_int_trap
   max_attempts="${PIXEL_NIX_BUILD_RETRIES:-3}"
   retry_sleep_secs="${PIXEL_NIX_BUILD_RETRY_SLEEP_SECS:-3}"
+  heartbeat_secs="${PIXEL_NIX_BUILD_HEARTBEAT_SECS:-30}"
   log_path="$(mktemp "${TMPDIR:-/tmp}/pixel-nix-build.XXXXXX")"
+  old_term_trap="$(trap -p TERM || true)"
+  old_int_trap="$(trap -p INT || true)"
 
   for attempt in $(seq 1 "$max_attempts"); do
-    if "$@" >"$log_path" 2>&1; then
+    pid=""
+    "$@" >"$log_path" 2>&1 &
+    pid=$!
+    trap '
+      if [[ -n "${pid:-}" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+        kill "$pid" >/dev/null 2>&1 || true
+        wait "$pid" >/dev/null 2>&1 || true
+      fi
+      exit 143
+    ' TERM
+    trap '
+      if [[ -n "${pid:-}" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+        kill "$pid" >/dev/null 2>&1 || true
+        wait "$pid" >/dev/null 2>&1 || true
+      fi
+      exit 130
+    ' INT
+    started_at="$SECONDS"
+    next_heartbeat=$((started_at + heartbeat_secs))
+    while kill -0 "$pid" >/dev/null 2>&1; do
+      sleep 1
+      if (( heartbeat_secs > 0 && SECONDS >= next_heartbeat )); then
+        printf 'pixel: nix build still running (%ss elapsed): %s\n' \
+          "$((SECONDS - started_at))" \
+          "$*" >&2
+        next_heartbeat=$((SECONDS + heartbeat_secs))
+      fi
+    done
+
+    if wait "$pid"; then
+      pid=""
       cat "$log_path"
+      if [[ -n "$old_term_trap" ]]; then
+        eval "$old_term_trap"
+      else
+        trap - TERM
+      fi
+      if [[ -n "$old_int_trap" ]]; then
+        eval "$old_int_trap"
+      else
+        trap - INT
+      fi
       rm -f "$log_path"
       return 0
     fi
 
+    pid=""
     status="$?"
+    if [[ -n "$old_term_trap" ]]; then
+      eval "$old_term_trap"
+    else
+      trap - TERM
+    fi
+    if [[ -n "$old_int_trap" ]]; then
+      eval "$old_int_trap"
+    else
+      trap - INT
+    fi
     if (( attempt == max_attempts )) || ! pixel_retryable_nix_build_failure "$log_path"; then
       cat "$log_path" >&2
       rm -f "$log_path"
@@ -297,22 +351,76 @@ pixel_retry_nix_build() {
 }
 
 pixel_retry_nix_build_print_out_paths() {
-  local attempt max_attempts retry_sleep_secs status stdout_log stderr_log combined_log
+  local attempt max_attempts retry_sleep_secs heartbeat_secs status stdout_log stderr_log combined_log pid started_at next_heartbeat old_term_trap old_int_trap
   max_attempts="${PIXEL_NIX_BUILD_RETRIES:-3}"
   retry_sleep_secs="${PIXEL_NIX_BUILD_RETRY_SLEEP_SECS:-3}"
+  heartbeat_secs="${PIXEL_NIX_BUILD_HEARTBEAT_SECS:-30}"
   stdout_log="$(mktemp "${TMPDIR:-/tmp}/pixel-nix-build-stdout.XXXXXX")"
   stderr_log="$(mktemp "${TMPDIR:-/tmp}/pixel-nix-build-stderr.XXXXXX")"
   combined_log="$(mktemp "${TMPDIR:-/tmp}/pixel-nix-build-combined.XXXXXX")"
+  old_term_trap="$(trap -p TERM || true)"
+  old_int_trap="$(trap -p INT || true)"
 
   for attempt in $(seq 1 "$max_attempts"); do
-    if "$@" >"$stdout_log" 2>"$stderr_log"; then
+    pid=""
+    "$@" >"$stdout_log" 2>"$stderr_log" &
+    pid=$!
+    trap '
+      if [[ -n "${pid:-}" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+        kill "$pid" >/dev/null 2>&1 || true
+        wait "$pid" >/dev/null 2>&1 || true
+      fi
+      exit 143
+    ' TERM
+    trap '
+      if [[ -n "${pid:-}" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+        kill "$pid" >/dev/null 2>&1 || true
+        wait "$pid" >/dev/null 2>&1 || true
+      fi
+      exit 130
+    ' INT
+    started_at="$SECONDS"
+    next_heartbeat=$((started_at + heartbeat_secs))
+    while kill -0 "$pid" >/dev/null 2>&1; do
+      sleep 1
+      if (( heartbeat_secs > 0 && SECONDS >= next_heartbeat )); then
+        printf 'pixel: nix build still running (%ss elapsed): %s\n' \
+          "$((SECONDS - started_at))" \
+          "$*" >&2
+        next_heartbeat=$((SECONDS + heartbeat_secs))
+      fi
+    done
+
+    if wait "$pid"; then
+      pid=""
       cat "$stderr_log" >&2
       cat "$stdout_log"
+      if [[ -n "$old_term_trap" ]]; then
+        eval "$old_term_trap"
+      else
+        trap - TERM
+      fi
+      if [[ -n "$old_int_trap" ]]; then
+        eval "$old_int_trap"
+      else
+        trap - INT
+      fi
       rm -f "$stdout_log" "$stderr_log" "$combined_log"
       return 0
     fi
 
+    pid=""
     status="$?"
+    if [[ -n "$old_term_trap" ]]; then
+      eval "$old_term_trap"
+    else
+      trap - TERM
+    fi
+    if [[ -n "$old_int_trap" ]]; then
+      eval "$old_int_trap"
+    else
+      trap - INT
+    fi
     cat "$stdout_log" "$stderr_log" >"$combined_log"
     if (( attempt == max_attempts )) || ! pixel_retryable_nix_build_failure "$combined_log"; then
       cat "$stderr_log" >&2

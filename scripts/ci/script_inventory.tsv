@@ -14,6 +14,7 @@ scripts/runtime/ensure_cashu_test_mint.sh	runtime	Private Cashu host-smoke fixtu
 scripts/runtime/generate_app_metadata.py	runtime	Generates checked Rust app metadata from runtime/apps.json.
 scripts/runtime/generate_sound_demo_fixture.sh	runtime	Private sound demo fixture generator.
 scripts/land.sh	public	Canonical local landing gate.
+scripts/nightly.sh	public	Slow nightly gate: pre-merge plus ui-check and real Pixel boot artifact cross-builds.
 scripts/ci/operator_cli_smoke.sh	ci	Dry-run smoke coverage for the public just/shadowctl routing surface.
 scripts/pixel/pixel_build.sh	pixel	Private Pixel build delegate used by rooted device staging.
 scripts/pixel/pixel_build_local_turnip.sh	pixel	Private local Turnip override builder for direct-GPU probe work.

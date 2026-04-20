@@ -12,20 +12,6 @@ scripts/ci/check_script_inventory.py
 scripts/runtime/generate_app_metadata.py --check
 scripts/ci/app_metadata_manifest_smoke.sh
 scripts/ci/cpio_edit_smoke.sh
-scripts/ci/pixel_boot_hello_init_smoke.sh
-scripts/ci/pixel_boot_orange_init_smoke.sh
-# Keep the real cross-build in the fast gate so the mocked smoke cannot hide a broken flake/package seam.
-tmp_hello_init="$(mktemp "${TMPDIR:-/tmp}/shadow-hello-init.XXXXXX")"
-rm -f "$tmp_hello_init"
-scripts/pixel/pixel_build_hello_init.sh --output "$tmp_hello_init"
-rm -f "$tmp_hello_init" "$tmp_hello_init.build-id"
-tmp_orange_init="$(mktemp "${TMPDIR:-/tmp}/shadow-orange-init.XXXXXX")"
-rm -f "$tmp_orange_init"
-scripts/pixel/pixel_build_orange_init.sh --output "$tmp_orange_init"
-rm -f "$tmp_orange_init" "$tmp_orange_init.build-id"
-scripts/ci/pixel_boot_tooling_smoke.sh
-scripts/ci/pixel_boot_collect_logs_smoke.sh
-scripts/ci/pixel_boot_safety_smoke.sh
 shell_scripts=()
 while IFS= read -r -d '' script_path; do
   if [[ "$script_path" == *.sh ]]; then
@@ -45,9 +31,3 @@ scripts/ci/operator_cli_smoke.sh
 scripts/ci/timeline_sync_defaults_smoke.sh
 scripts/lib/agent_tools.py check-docs
 scripts/lib/agent_tools.py check-justfile
-nix flake check --no-build
-nix develop .#runtime -c cargo check --manifest-path rust/init-wrapper/Cargo.toml
-nix develop .#runtime -c cargo test --manifest-path rust/Cargo.toml -p shadow-sdk --features nostr
-nix develop .#runtime -c cargo test --manifest-path rust/Cargo.toml -p shadow-system
-nix develop .#runtime -c deno test --allow-read --allow-write --allow-run --allow-env scripts/runtime/runtime_prepare_app_bundle_test.ts
-just ui-check

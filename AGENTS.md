@@ -9,7 +9,8 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - This repo uses git worktrees for implementation. Keep the root repo at `../..` on `master`, and do feature work from a worktree branch under `worktrees/`.
 - Land changes to `master` only through the `land` skill or `scripts/land.sh`. Do not manually merge worktree branches into `master`.
 - `scripts/land.sh` rebases the current worktree branch onto root `master`, runs `just pre-merge`, and only then fast-forwards the root `master` branch.
-- Run `just pre-commit` during iteration for the fast local gate.
+- Run `just pre-commit` during iteration for the fast local structural gate.
+- Run `just nightly` for the slow superset lane that adds `ui-check` plus the real Pixel boot artifact cross-builds on top of `pre-merge`.
 - Run `just ui-check` when working in the `ui/` workspace.
 - Run `just smoke target=vm` when you want the same local VM shell/app smoke that backs `just pre-merge`.
 - Use `just run target=vm` / `just stop target=vm` as the public VM session entry/exit path.
@@ -26,8 +27,9 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - `just smoke target=vm` keeps the VM lane local-only, artifact-driven, and free of guest-side Cargo/Rust while still resetting the runtime state image each run.
 - `just run target=vm` / `just stop target=vm` are the public VM session entrypoints. VM inspection/control goes through `sc -t vm <subcommand>`.
 - `scripts/shadowctl` is the target-aware operator CLI behind the public run/stop wrappers, VM diagnostics, and rooted-Pixel shell control recipes; use `-t vm`, `-t pixel`, or a specific Pixel serial as needed.
-- `just pre-commit` runs the script inventory check, recursive shell syntax checks, flake evaluation, and `just ui-check`.
-- `just pre-merge` runs `just pre-commit` and `just smoke target=vm`.
+- `just pre-commit` runs script inventory, app metadata checks, recursive shell syntax checks, and lightweight operator/docs/justfile checks.
+- `just pre-merge` runs `just pre-commit`, flake evaluation, runtime compile-and-test checks, lightweight rooted-Pixel init/tooling validation, and `just smoke target=vm`.
+- `just nightly` runs `just pre-merge`, `just ui-check`, and the real `hello-init` / `orange-init` cross-builds.
 - `just pixel-ci full` runs the current rooted-Pixel CI lane: timeline lifecycle, camera capture, runtime sound, runtime podcast playback, and the runtime Nostr timeline against a host-local relay over USB on a connected rooted device.
 - `sc -t pixel ci <subset>` is the preferred ad hoc hardware gate for invasive app- or device-specific changes before landing; use a specific serial from `sc devices` when multiple Pixels are attached.
 - `just pixel-ci <subset>` remains a convenience wrapper over that canonical CLI shape.
