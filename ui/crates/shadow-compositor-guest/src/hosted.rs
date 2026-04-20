@@ -37,14 +37,14 @@ impl HostedAppState {
             )
         })?;
         let host_binary_path = client_config
-            .runtime_host_binary_path
+            .system_binary_path
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned())
-            .or_else(|| std::env::var("SHADOW_RUNTIME_HOST_BINARY_PATH").ok())
+            .or_else(|| std::env::var("SHADOW_SYSTEM_BINARY_PATH").ok())
             .ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::NotFound,
-                    "missing SHADOW_RUNTIME_HOST_BINARY_PATH for hosted runtime app",
+                    "missing SHADOW_SYSTEM_BINARY_PATH for hosted runtime app",
                 )
             })?;
 

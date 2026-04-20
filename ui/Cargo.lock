@@ -4400,9 +4400,9 @@ dependencies = [
  "drm-sys",
  "evdev",
  "font8x8",
- "kurbo",
+ "kurbo 0.13.0",
  "libc",
- "peniko",
+ "peniko 0.6.0",
  "shadow-blitz-demo",
  "shadow-compositor-common",
  "shadow-runtime-protocol",
@@ -4412,7 +4412,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-subscriber",
- "wgpu",
+ "wgpu 28.0.0",
  "wgpu_context",
 ]
 
