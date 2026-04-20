@@ -12,6 +12,8 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - Run `just pre-commit` during iteration for the fast local structural gate.
 - Run `just nightly` for the slow superset lane that adds `ui-check`, derivation-backed private Pixel boot/tooling checks, and the real Pixel boot artifact cross-builds on top of `pre-merge`.
 - Run `just ui-check [suite...]` when working in the `ui/` workspace. Supported suites: `fmt`, `core`, `apps`, `blitz-demo`, `compositor`.
+- `git add` new files before Nix-backed checks or smokes; the source filter omits untracked paths.
+- When you delegate blocking work to subagents, wait with minutes-scale `wait_agent` timeouts; high / xhigh agents often need longer than the 30s default.
 - Run `just smoke target=vm` when you want the same local VM shell/app smoke that backs `just pre-merge`.
 - Use `just run target=vm` / `just stop target=vm` as the public VM session entry/exit path.
 - Use `sc -t vm <subcommand>` for VM diagnostics, logs, screenshots, app open/home, SSH, and other VM control actions. Use `just shadowctl ...` only when the devshell `sc` alias is unavailable.

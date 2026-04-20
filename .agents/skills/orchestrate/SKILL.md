@@ -20,7 +20,8 @@ Follow the repo instructions first. In this repo, landing to `master` goes throu
 - Keep the current agent on the main thread as orchestrator.
 - Usually keep a living plan in `todos/` and update it as work lands.
 - Use subagents for most bounded research, implementation, review, and validation work once the first seam is clear.
-- Treat subagents as durable background workers. Do not kill or close them just because they are slow, a wait timed out, or you found another way forward.
+- Classify each spawned subagent as blocking or background.
+- Treat subagents as durable workers. Do not kill one just because it is slow, a wait timed out, or you found another way forward.
 - For nontrivial chunks, default to at least one worker and at least one reviewer.
 - Add more workers or reviewers when the seam is broad enough to justify it.
 - Prefer strong subagents for architectural work: `gpt-5.4` with `xhigh` reasoning by default.
@@ -74,10 +75,11 @@ Use one reviewer when that is enough. Use multiple reviewers when independent re
 - Use sibling worktrees when seams are clearly disjoint.
 - Keep one worker per clearly owned seam.
 - The orchestrator stays responsible for integration.
-- If you delegate a critical-path seam, actually wait for the subagent result before doing overlapping local work, integrating the seam, or landing the chunk.
-- A `wait_agent` timeout is not a stall and not permission to ignore the worker. Wait longer, keep the seam blocked, and harvest the late result when it arrives.
+- For blocking seams, wait for the subagent result before doing overlapping local work, integrating the seam, landing the chunk, or sending the final answer.
+- Use minutes-scale `wait_agent` timeouts for blocking seams, especially with `high` or `xhigh` reasoning; the 30s default is often too short.
+- A `wait_agent` timeout is not a stall and not permission to ignore the worker. Wait again, keep the seam blocked, and harvest the late result when it arrives.
 - Do not re-implement a delegated seam locally just because the worker is slow. Only supersede a worker when you explicitly decide the delegation is obsolete, say so to the user, and change course intentionally.
-- Do not close subagents in normal operation. If a seam becomes obsolete, ignore or supersede the result; do not kill the worker midstream.
+- Close completed subagents after you harvest and integrate their result. If a seam becomes obsolete, ignore or supersede the result; do not kill the worker midstream.
 
 ## Prompt Contract
 

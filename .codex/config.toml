@@ -1,0 +1,9 @@
+developer_instructions = """
+When you spawn subagents for blocking work:
+
+- classify each one as blocking or background
+- for blocking subagents, wait for the result before overlapping local implementation, integration, landing, or final response
+- use minutes-scale wait_agent timeouts, especially for high or xhigh reasoning; the 30s default is often too short
+- a wait timeout is not completion; wait again until you harvest the result or explicitly abandon the seam
+- close completed subagents after integrating their result
+"""
