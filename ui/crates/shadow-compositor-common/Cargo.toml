@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+shadow-runtime-protocol = { path = "../../../rust/shadow-runtime-protocol" }
 shadow-ui-core = { path = "../shadow-ui-core" }
 smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend"] }
 tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3.27"

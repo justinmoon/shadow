@@ -4374,6 +4374,7 @@ dependencies = [
  "shadow-ui-core",
  "shadow-ui-software",
  "smithay",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
 ]
@@ -4382,8 +4383,10 @@ dependencies = [
 name = "shadow-compositor-common"
 version = "0.1.0"
 dependencies = [
+ "shadow-runtime-protocol",
  "shadow-ui-core",
  "smithay",
+ "tempfile",
  "tracing",
 ]
 

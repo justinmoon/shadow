@@ -1073,6 +1073,11 @@
               };
             }
             // lib.optionalAttrs pkgs.stdenv.isLinux {
+              uiShadowCompositorTests = craneLib.cargoTest (mkUiTestArgs {
+                pname = "shadow-compositor-tests";
+              } // {
+                cargoTestExtraArgs = "-p shadow-compositor";
+              });
               uiShadowCompositorCheck = mkUiCargoCheck {
                 pname = "shadow-compositor-check";
                 cargoCheckExtraArgs = "-p shadow-compositor";

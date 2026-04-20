@@ -8,6 +8,7 @@ use shadow_ui_core::app::{self, AppId};
 use crate::{DEFAULT_TOPLEVEL_HEIGHT, DEFAULT_TOPLEVEL_WIDTH};
 
 const DEFAULT_FRAME_ARTIFACT_PATH: &str = "/shadow-frame.ppm";
+const DEFAULT_BACKGROUND_APP_RESIDENT_LIMIT: usize = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StartupAction {
@@ -61,6 +62,7 @@ pub(crate) struct GuestStartupConfig {
     pub(crate) toplevel_width: i32,
     pub(crate) toplevel_height: i32,
     pub(crate) keyboard_seat_enabled: bool,
+    pub(crate) background_app_resident_limit: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -135,6 +137,10 @@ impl GuestStartupConfig {
                 DEFAULT_TOPLEVEL_HEIGHT,
             )?,
             keyboard_seat_enabled: false,
+            background_app_resident_limit: parse_usize_env(
+                "SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT",
+                DEFAULT_BACKGROUND_APP_RESIDENT_LIMIT,
+            )?,
         })
     }
 }
@@ -226,6 +232,16 @@ fn parse_u64_env(key: &'static str) -> Result<Option<u64>, ConfigError> {
         .map_err(|_| ConfigError::InvalidU64 { key, value })
 }
 
+fn parse_usize_env(key: &'static str, default: usize) -> Result<usize, ConfigError> {
+    let Some(value) = parse_u64_env(key)? else {
+        return Ok(default);
+    };
+    usize::try_from(value).map_err(|_| ConfigError::InvalidU64 {
+        key,
+        value: value.to_string(),
+    })
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ConfigError {
     InvalidAppId { key: &'static str, value: String },
@@ -300,6 +316,7 @@ mod tests {
             ("SHADOW_GUEST_FRAME_CHECKSUM", None),
             ("SHADOW_GUEST_CLIENT_ENV", None),
             ("SHADOW_GUEST_CLIENT_LINGER_MS", None),
+            ("SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT", None),
         ];
         updates_with_defaults.extend(updates);
 
@@ -398,7 +415,19 @@ mod tests {
             assert!(!config.frame_checksum_enabled);
             assert!(!config.frame_artifacts_enabled);
             assert!(!config.frame_artifact_every_frame);
+            assert_eq!(config.background_app_resident_limit, 3);
         });
+    }
+
+    #[test]
+    fn config_can_override_background_app_limit() {
+        with_env(
+            vec![("SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT", Some("1"))],
+            || {
+                let config = GuestStartupConfig::from_env().expect("background app limit config");
+                assert_eq!(config.background_app_resident_limit, 1);
+            },
+        );
     }
 
     #[test]

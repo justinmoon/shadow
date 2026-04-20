@@ -1,6 +1,16 @@
-use std::{collections::HashMap, ffi::OsString, path::PathBuf, process::Child, sync::Arc};
+use std::{
+    collections::HashMap,
+    ffi::OsString,
+    path::{Path, PathBuf},
+    process::Child,
+    sync::Arc,
+};
 
-use shadow_runtime_protocol::{AppLifecycleState, AppPlatformRequest};
+use shadow_compositor_common::app_control::{
+    dispatch_media_action_to_app, notify_lifecycle_state_to_app,
+};
+use shadow_compositor_common::state_report::{render_control_state, sorted_unique_app_ids_csv};
+use shadow_runtime_protocol::AppLifecycleState;
 use shadow_ui_core::{
     app::AppId,
     control::{ControlRequest, MediaAction},
@@ -127,6 +137,12 @@ impl ShadowCompositor {
             shell_x + APP_VIEWPORT_X.round() as i32,
             shell_y + APP_VIEWPORT_Y.round() as i32,
         )
+    }
+
+    pub(crate) fn control_runtime_dir(&self) -> &Path {
+        self.control_socket_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
     }
 
     pub fn app_window_size(&self) -> Size<i32, Logical> {
@@ -352,25 +368,14 @@ impl ShadowCompositor {
         let Some(app_id) = self.focused_app else {
             return "ok\nhandled=0\nreason=no-focused-app\n".to_string();
         };
-        dispatch_media_action_to_app(
-            self.control_socket_path
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new("."))
-                .to_path_buf(),
-            app_id,
-            action,
-        )
+        dispatch_media_action_to_app(self.control_runtime_dir(), app_id, action)
     }
 
     pub(crate) fn dispatch_control_media_async(&self, action: MediaAction) {
         let Some(app_id) = self.focused_app else {
             return;
         };
-        let runtime_dir = self
-            .control_socket_path
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .to_path_buf();
+        let runtime_dir = self.control_runtime_dir().to_path_buf();
         std::thread::spawn(move || {
             let response = dispatch_media_action_to_app(runtime_dir, app_id, action);
             tracing::info!(
@@ -468,9 +473,7 @@ impl ShadowCompositor {
 
         self.focus_window(None, self.next_serial());
         notify_lifecycle_state_to_app(
-            self.control_socket_path
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new(".")),
+            self.control_runtime_dir(),
             app_id,
             AppLifecycleState::Background,
         );
@@ -494,9 +497,7 @@ impl ShadowCompositor {
         if let Some(window) = self.mapped_window_for_app(app_id) {
             self.focus_window(Some(window), self.next_serial());
             notify_lifecycle_state_to_app(
-                self.control_socket_path
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new(".")),
+                self.control_runtime_dir(),
                 app_id,
                 AppLifecycleState::Foreground,
             );
@@ -508,9 +509,7 @@ impl ShadowCompositor {
                 .map_element(window.clone(), self.app_window_location(), false);
             self.focus_window(Some(window), self.next_serial());
             notify_lifecycle_state_to_app(
-                self.control_socket_path
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new(".")),
+                self.control_runtime_dir(),
                 app_id,
                 AppLifecycleState::Foreground,
             );
@@ -553,54 +552,40 @@ impl ShadowCompositor {
     fn control_state_response(&mut self) -> String {
         self.reap_children();
 
-        let focused = self.focused_app.map(AppId::as_str).unwrap_or("");
         let mapped = self.mapped_app_ids();
         let launched = self.launched_app_ids();
         let shelved = self.shelved_app_ids();
         let (shell_x, shell_y) = self.shell_location();
-        format!(
-            "focused={focused}\nmapped={mapped}\nlaunched={launched}\nshelved={shelved}\nwindows={}\nsocket={}\nshell_x={shell_x}\nshell_y={shell_y}\nshell_width={}\nshell_height={}\n",
+        let extra_fields = vec![
+            ("socket", self.socket_name.to_string_lossy().into_owned()),
+            ("shell_x", shell_x.to_string()),
+            ("shell_y", shell_y.to_string()),
+            ("shell_width", (WIDTH.round() as i32).to_string()),
+            ("shell_height", (HEIGHT.round() as i32).to_string()),
+        ];
+        render_control_state(
+            self.focused_app,
+            &mapped,
+            &launched,
+            &shelved,
             self.space.elements().count(),
-            self.socket_name.to_string_lossy(),
-            WIDTH.round() as i32,
-            HEIGHT.round() as i32,
+            &extra_fields,
         )
     }
 
     fn mapped_app_ids(&self) -> String {
-        let mut app_ids: Vec<_> = self
-            .space
-            .elements()
-            .filter_map(|window| {
-                let surface = window.toplevel()?.wl_surface().clone();
-                self.surface_apps.get(&surface).copied().map(AppId::as_str)
-            })
-            .collect();
-        app_ids.sort_unstable();
-        app_ids.dedup();
-        app_ids.join(",")
+        sorted_unique_app_ids_csv(self.space.elements().filter_map(|window| {
+            let surface = window.toplevel()?.wl_surface().clone();
+            self.surface_apps.get(&surface).copied()
+        }))
     }
 
     fn launched_app_ids(&self) -> String {
-        let mut app_ids: Vec<_> = self
-            .launched_apps
-            .keys()
-            .copied()
-            .map(AppId::as_str)
-            .collect();
-        app_ids.sort_unstable();
-        app_ids.join(",")
+        sorted_unique_app_ids_csv(self.launched_apps.keys().copied())
     }
 
     fn shelved_app_ids(&self) -> String {
-        let mut app_ids: Vec<_> = self
-            .shelved_windows
-            .keys()
-            .copied()
-            .map(AppId::as_str)
-            .collect();
-        app_ids.sort_unstable();
-        app_ids.join(",")
+        sorted_unique_app_ids_csv(self.shelved_windows.keys().copied())
     }
 
     fn centered_location(&self, size: Size<i32, Logical>) -> (i32, i32) {
@@ -653,71 +638,6 @@ impl ShadowCompositor {
     }
 }
 
-fn sanitize_control_error(message: &str) -> String {
-    message.replace('\n', " ")
-}
-
-fn dispatch_platform_request_to_app(
-    runtime_dir: impl AsRef<std::path::Path>,
-    app_id: AppId,
-    request: AppPlatformRequest,
-) -> String {
-    let runtime_dir = runtime_dir.as_ref();
-    let request_label = match request {
-        AppPlatformRequest::Lifecycle { state } => state.as_str().to_string(),
-        AppPlatformRequest::Media { action } => action.as_str().to_string(),
-    };
-    match shadow_ui_core::control::app_platform_request_response(runtime_dir, app_id, request) {
-        Ok(response) if !response.trim().is_empty() => response,
-        Ok(_) => format!(
-            "ok\nhandled=0\nreason=empty-app-response\napp={}\nrequest={}\n",
-            app_id.as_str(),
-            request_label,
-        ),
-        Err(error) => {
-            let reason = match error.kind() {
-                std::io::ErrorKind::NotFound
-                | std::io::ErrorKind::ConnectionRefused
-                | std::io::ErrorKind::AddrNotAvailable => "platform-control-unavailable",
-                std::io::ErrorKind::BrokenPipe => "platform-control-write-failed",
-                _ => "platform-control-read-failed",
-            };
-            format!(
-                "ok\nhandled=0\nreason={reason}\napp={}\nrequest={}\nerror={}\n",
-                app_id.as_str(),
-                request_label,
-                sanitize_control_error(&error.to_string()),
-            )
-        }
-    }
-}
-
-fn dispatch_media_action_to_app(
-    runtime_dir: impl AsRef<std::path::Path>,
-    app_id: AppId,
-    action: MediaAction,
-) -> String {
-    dispatch_platform_request_to_app(
-        runtime_dir,
-        app_id,
-        AppPlatformRequest::Media {
-            action: action.into(),
-        },
-    )
-}
-
-fn notify_lifecycle_state_to_app(
-    runtime_dir: impl AsRef<std::path::Path>,
-    app_id: AppId,
-    state: AppLifecycleState,
-) {
-    let _ = dispatch_platform_request_to_app(
-        runtime_dir,
-        app_id,
-        AppPlatformRequest::Lifecycle { state },
-    );
-}
-
 fn auto_launch_app_id() -> AppId {
     std::env::var("SHADOW_COMPOSITOR_START_APP_ID")
         .ok()
@@ -751,6 +671,9 @@ impl ClientData for ClientState {
         tracing::info!(?reason, "shadow-compositor: client disconnected");
     }
 }
+
+#[cfg(test)]
+mod session_tests;
 
 #[cfg(test)]
 mod tests {
