@@ -1986,7 +1986,11 @@
             mkShadowSystemFor pkgs.pkgsCross.gnu64;
           shadow-gpu-smoke = mkShadowGpuSmokeFor pkgs;
           shadow-gpu-smoke-aarch64-linux-gnu =
-            mkShadowGpuSmokeFor pkgs.pkgsCross.aarch64-multiplatform;
+            if pkgs.stdenv.isLinux then
+              mkShadowGpuSmokeFor pkgs.pkgsCross.aarch64-multiplatform
+            else
+              mkUnavailablePackage pkgs "shadow-gpu-smoke-aarch64-linux-gnu-unavailable"
+                "shadow-gpu-smoke-aarch64-linux-gnu is only exposed on Linux host package sets; use packages.aarch64-linux.* when building for Pixel bundles.";
           drm-rect = mkDrmRect pkgs;
           drm-rect-device = mkDrmRectFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           init-wrapper-device = mkInitWrapperFor pkgs.pkgsCross.aarch64-multiplatform-musl { };

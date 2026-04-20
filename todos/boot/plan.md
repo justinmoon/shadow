@@ -34,6 +34,15 @@ Related docs:
 - Prefer visible or durable proofs over speculative Android-`init` hook churn. A screen color or `kmsg` marker is better evidence than another late userspace property probe.
 - Keep low-level scanout proofs separate from future renderer proofs. `orange-kms` should remain the “can we own the panel at all?” probe even after `orange-gpu` exists, because the compositor/Blitz path will fail differently from a direct dumb-buffer scanout path.
 - Do not treat “boot the whole Shadow UX” as the next integration target after display. First prove exactly one new seam per rung on tiny owned-userspace demos: boot ownership, raw scanout, GPU render, repeated frames, input-driven redraw, compositor-owned scene, app-owned surface, app runtimes, shell, then services.
+- Keep every ladder rung mechanically deletable:
+  - each demo should own a narrow binary or payload, a narrow runner, and a narrow smoke or gate entry
+  - do not let product code depend on demo-only wrappers or ad hoc demo binaries
+  - when a rung becomes obsolete, delete its binary, runner, smoke, and plan entry together instead of preserving it as historical ballast
+- CI policy for boot demos:
+  - repo-wide `pre-commit` keeps only cheap structural invariants for private boot-demo code paths: syntax, script inventory, dry-run CLI routing, and shared library compile coverage that is already paid for elsewhere
+  - real boot-demo cross-builds and hermetic seam smokes belong in a dedicated boot-demo lane, not the universal fast gate
+  - `pre-merge` should invoke that dedicated boot-demo lane only when the branch touches demo-owned paths, with an explicit override for manual forcing
+  - hardware proofs stay outside universal CI; use boot-lab runs as the truth environment for device-visible results
 
 ## Milestones
 
@@ -138,6 +147,10 @@ Related docs:
   - one compositor-only scene
   - one app-surface proof
   - only then app runtimes and shell
+- [ ] Keep demo retirement mechanical:
+  - maintain one deleteable owner per rung: payload, runner, smoke
+  - avoid shared production dependencies on demo-only files
+  - once the full owned Shadow path is real, delete superseded ladder rungs instead of keeping them as permanent fixtures
 - [ ] Keep the next chunks separately landable:
   - owned-userspace builder and guarded runner
   - `hello-init`
@@ -169,6 +182,11 @@ Related docs:
   - `scripts/pixel/pixel_prepare_gpu_smoke_bundle.sh` and `scripts/pixel/pixel_gpu_smoke.sh` provide a private rooted-Pixel direct-bundle runner with no compositor / runtime / shell coupling
   - `11151JEC200472` proved the rung first, then `09051JEC202061` reproduced it with the same checksum `e317ffe624895aa5`
   - both rooted devices reported `adapter.backend=Vulkan`, `name=Turnip Adreno (TM) 618`, `software_backed=false`, and strict proof artifacts were pulled to host run dirs
+- Gate strategy update on 2026-04-20:
+  - `scripts/pre_commit.sh` no longer pays the private boot-demo cross-build tax for every branch
+  - `scripts/ci/pixel_boot_demo_check.sh` is now the dedicated host-side boot-demo gate for hello/orange/tooling/gpu demo seams
+  - `scripts/pre_merge.sh` should run that dedicated gate only when the branch touches demo-owned paths, so boot work still gets protected while unrelated branches stay fast
+  - keep hardware validation separate from the host-side demo gate; device-visible proofs remain a boot-lab responsibility
 - The repo already has a usable host-side `bootimg` shell with `unpack_bootimg`, `mkbootimg`, and `avbtool`.
 - The new private boot helpers live under `scripts/pixel/`: `pixel_boot_unpack.sh`, `pixel_boot_build.sh`, `pixel_boot_build_log_probe.sh`, `pixel_boot_collect_logs.sh`, `pixel_boot_flash.sh`, `pixel_boot_restore.sh`, and `pixel_build_init_wrapper.sh`.
 - The wrapper seam now also has a separate static C build path: `scripts/pixel/pixel_build_init_wrapper_c.sh` builds a minimal `/init.stock` handoff binary that stays out of the default Rust wrapper cache and plugs into `pixel_boot_build.sh --wrapper`.

@@ -62,6 +62,10 @@ help-all:
 pre-commit:
 	@scripts/pre_commit.sh
 
+# Run the dedicated host-side gate for private boot demo seams
+boot-demo-check:
+	@scripts/ci/pixel_boot_demo_check.sh
+
 # Run the required branch gate
 pre-merge:
 	@scripts/pre_merge.sh
