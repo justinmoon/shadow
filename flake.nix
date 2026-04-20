@@ -1435,6 +1435,15 @@
             ];
             useDummySrc = false;
           };
+          shadowGpuSmokeCheckFamily = mkUiCheckFamily {
+            pname = "shadow-ui-gpu-smoke-workspace";
+            src = shadowUiSrc;
+            workspaceMembers = [
+              "crates/shadow-gpu-smoke"
+            ];
+            artifactCargoExtraArgs = "-p shadow-gpu-smoke";
+            useDummySrc = false;
+          };
           leafChecks =
             {
               uiFmt = craneLib.cargoFmt {
@@ -1488,7 +1497,7 @@
                 cargoCheckExtraArgs =
                   "-p shadow-blitz-demo --no-default-features --features gpu";
               };
-              uiShadowGpuSmokeCheck = mkUiCargoCheck {
+              uiShadowGpuSmokeCheck = shadowGpuSmokeCheckFamily.mkUiCargoCheck {
                 pname = "shadow-gpu-smoke-check";
                 cargoCheckExtraArgs = "-p shadow-gpu-smoke";
               };
