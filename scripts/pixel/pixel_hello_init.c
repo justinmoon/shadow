@@ -765,6 +765,7 @@ static bool parse_orange_gpu_mode_value(const char *raw, char *dest, size_t dest
         strcmp(value, "bundle-smoke") != 0 &&
         strcmp(value, "vulkan-instance-smoke") != 0 &&
         strcmp(value, "raw-vulkan-instance-smoke") != 0 &&
+        strcmp(value, "raw-vulkan-physical-device-count-query-no-destroy-smoke") != 0 &&
         strcmp(value, "raw-vulkan-physical-device-count-query-smoke") != 0 &&
         strcmp(value, "raw-vulkan-physical-device-count-smoke") != 0 &&
         strcmp(value, "vulkan-enumerate-adapters-count-smoke") != 0 &&
@@ -1040,6 +1041,10 @@ static bool orange_gpu_mode_is_raw_vulkan_instance_smoke(const struct hello_init
     return strcmp(config->orange_gpu_mode, "raw-vulkan-instance-smoke") == 0;
 }
 
+static bool orange_gpu_mode_is_raw_vulkan_physical_device_count_query_no_destroy_smoke(const struct hello_init_config *config) {
+    return strcmp(config->orange_gpu_mode, "raw-vulkan-physical-device-count-query-no-destroy-smoke") == 0;
+}
+
 static bool orange_gpu_mode_is_raw_vulkan_physical_device_count_query_smoke(const struct hello_init_config *config) {
     return strcmp(config->orange_gpu_mode, "raw-vulkan-physical-device-count-query-smoke") == 0;
 }
@@ -1072,6 +1077,7 @@ static bool orange_gpu_mode_uses_success_postlude(const struct hello_init_config
     return orange_gpu_mode_is_bundle_smoke(config) ||
            orange_gpu_mode_is_vulkan_instance_smoke(config) ||
            orange_gpu_mode_is_raw_vulkan_instance_smoke(config) ||
+           orange_gpu_mode_is_raw_vulkan_physical_device_count_query_no_destroy_smoke(config) ||
            orange_gpu_mode_is_raw_vulkan_physical_device_count_query_smoke(config) ||
            orange_gpu_mode_is_raw_vulkan_physical_device_count_smoke(config) ||
            orange_gpu_mode_is_vulkan_enumerate_adapters_count_smoke(config) ||
@@ -1477,6 +1483,29 @@ static int run_orange_gpu_payload(const struct hello_init_config *config) {
                 SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
                 "--scene",
                 "raw-vulkan-physical-device-count-smoke",
+                "--summary-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH,
+                (char *)NULL
+            );
+        } else if (orange_gpu_mode_is_raw_vulkan_physical_device_count_query_no_destroy_smoke(config)) {
+            if (set_orange_gpu_child_env() != 0) {
+                _exit(126);
+            }
+            log_stage(
+                "<6>",
+                "orange-gpu-child-exec",
+                "argv0=%s binary=%s scene=raw-vulkan-physical-device-count-query-no-destroy-smoke mode=raw-vulkan-physical-device-count-query-no-destroy-smoke",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH
+            );
+            execl(
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                "--library-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LIBRARY_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+                "--scene",
+                "raw-vulkan-physical-device-count-query-no-destroy-smoke",
                 "--summary-path",
                 SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH,
                 (char *)NULL
