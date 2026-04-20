@@ -153,8 +153,8 @@ fn build_raw_vulkan_instance_smoke_summary(
 
     let application_name =
         CString::new("shadow-gpu-smoke").map_err(|error| format!("app name cstring: {error}"))?;
-    let engine_name =
-        CString::new("shadow-gpu-smoke").map_err(|error| format!("engine name cstring: {error}"))?;
+    let engine_name = CString::new("shadow-gpu-smoke")
+        .map_err(|error| format!("engine name cstring: {error}"))?;
     let app_info = vk::ApplicationInfo::default()
         .application_name(application_name.as_c_str())
         .application_version(0)
@@ -231,9 +231,7 @@ fn build_enumerate_adapters_count_smoke_summary(
     }
 }
 
-fn build_enumerate_adapters_smoke_summary(
-    config: &Config,
-) -> EnumerateAdaptersSmokeSummary {
+fn build_enumerate_adapters_smoke_summary(config: &Config) -> EnumerateAdaptersSmokeSummary {
     let context = WGPUContext::new();
     let backends = wgpu::Backends::from_env().unwrap_or_default();
     let device_pool_len = context.device_pool.len();
@@ -295,7 +293,9 @@ fn build_adapter_smoke_summary(config: &Config) -> Result<AdapterSmokeSummary, S
     })
 }
 
-fn build_device_request_smoke_summary(config: &Config) -> Result<DeviceRequestSmokeSummary, String> {
+fn build_device_request_smoke_summary(
+    config: &Config,
+) -> Result<DeviceRequestSmokeSummary, String> {
     let requested_device = request_device_handle(config)?;
 
     Ok(DeviceRequestSmokeSummary {
@@ -943,7 +943,8 @@ impl Config {
                 Self::usage()
             ));
         }
-        if matches!(scene, RenderScene::BundleSmoke | RenderScene::DeviceSmoke) && !hold_secs_specified
+        if matches!(scene, RenderScene::BundleSmoke | RenderScene::DeviceSmoke)
+            && !hold_secs_specified
         {
             hold_secs = 0;
         }
