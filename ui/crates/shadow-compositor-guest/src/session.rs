@@ -574,6 +574,7 @@ mod tests {
                 toplevel_width: crate::DEFAULT_TOPLEVEL_WIDTH,
                 toplevel_height: crate::DEFAULT_TOPLEVEL_HEIGHT,
                 keyboard_seat_enabled: false,
+                software_keyboard_enabled: true,
                 background_app_resident_limit,
             };
 

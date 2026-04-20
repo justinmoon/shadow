@@ -62,6 +62,7 @@ pub(crate) struct GuestStartupConfig {
     pub(crate) toplevel_width: i32,
     pub(crate) toplevel_height: i32,
     pub(crate) keyboard_seat_enabled: bool,
+    pub(crate) software_keyboard_enabled: bool,
     pub(crate) background_app_resident_limit: usize,
 }
 
@@ -79,6 +80,7 @@ impl GuestStartupConfig {
     pub(crate) fn from_env() -> Result<Self, ConfigError> {
         let start_app_id = parse_start_app_id_env()?;
         let shell_start_app_id = parse_shell_start_app_id_env()?;
+        let keyboard_seat_enabled = false;
         let startup_action = match start_app_id {
             Some(app_id) if app_id == app::SHELL_APP_ID => StartupAction::Shell {
                 start_app_id: shell_start_app_id,
@@ -136,7 +138,8 @@ impl GuestStartupConfig {
                 "SHADOW_GUEST_COMPOSITOR_TOPLEVEL_HEIGHT",
                 DEFAULT_TOPLEVEL_HEIGHT,
             )?,
-            keyboard_seat_enabled: false,
+            keyboard_seat_enabled,
+            software_keyboard_enabled: parse_software_keyboard_enabled(keyboard_seat_enabled),
             background_app_resident_limit: parse_usize_env(
                 "SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT",
                 DEFAULT_BACKGROUND_APP_RESIDENT_LIMIT,
@@ -232,6 +235,18 @@ fn parse_u64_env(key: &'static str) -> Result<Option<u64>, ConfigError> {
         .map_err(|_| ConfigError::InvalidU64 { key, value })
 }
 
+fn parse_software_keyboard_enabled(keyboard_seat_enabled: bool) -> bool {
+    match env::var("SHADOW_BLITZ_SOFTWARE_KEYBOARD")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+    {
+        Some("1") | Some("true") | Some("on") => true,
+        Some("0") | Some("false") | Some("off") => false,
+        _ => !keyboard_seat_enabled,
+    }
+}
+
 fn parse_usize_env(key: &'static str, default: usize) -> Result<usize, ConfigError> {
     let Some(value) = parse_u64_env(key)? else {
         return Ok(default);
@@ -316,6 +331,7 @@ mod tests {
             ("SHADOW_GUEST_FRAME_CHECKSUM", None),
             ("SHADOW_GUEST_CLIENT_ENV", None),
             ("SHADOW_GUEST_CLIENT_LINGER_MS", None),
+            ("SHADOW_BLITZ_SOFTWARE_KEYBOARD", None),
             ("SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT", None),
         ];
         updates_with_defaults.extend(updates);
@@ -415,8 +431,28 @@ mod tests {
             assert!(!config.frame_checksum_enabled);
             assert!(!config.frame_artifacts_enabled);
             assert!(!config.frame_artifact_every_frame);
+            assert!(config.software_keyboard_enabled);
             assert_eq!(config.background_app_resident_limit, 3);
         });
+    }
+
+    #[test]
+    fn config_can_disable_software_keyboard() {
+        with_env(vec![("SHADOW_BLITZ_SOFTWARE_KEYBOARD", Some("0"))], || {
+            let config = GuestStartupConfig::from_env().expect("software-keyboard config");
+            assert!(!config.software_keyboard_enabled);
+        });
+    }
+
+    #[test]
+    fn config_can_enable_software_keyboard_explicitly() {
+        with_env(
+            vec![("SHADOW_BLITZ_SOFTWARE_KEYBOARD", Some("true"))],
+            || {
+                let config = GuestStartupConfig::from_env().expect("software-keyboard config");
+                assert!(config.software_keyboard_enabled);
+            },
+        );
     }
 
     #[test]

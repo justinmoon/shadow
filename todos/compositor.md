@@ -52,6 +52,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Add focused tests for foreground/background/shelved transitions before touching input or DRM/KMS code.
 - [ ] Avoid broad rewrites until VM smoke and Pixel shell startup behavior are covered by stable tests.
 - [x] Split Smithay handler glue out of guest `main.rs` once the render/present seam is stable.
+- [x] Finish the remaining guest startup-config cleanup: remove direct startup env reads from `launch.rs` / `hosted.rs` where `config.rs` should already own that policy.
 - [ ] Treat `scripts/lib/pixel_common.sh` the same way: stop growing one giant sourced shell library, and carve out target/session/operator behavior that should live in `shadowctl`.
 
 ## Responsibility Map
@@ -128,14 +129,22 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Render seam note: guest shell composition, frame publication, boot splash,
   dmabuf/shm surface capture, and frame-callback flushing now live in
   `render.rs`, while `kms.rs` remains the low-level scanout/capture primitive
-  layer. `main.rs` is down to roughly `1.3k` lines, and the next obvious guest
-  seam is Smithay handler glue rather than more frame-path churn.
+  layer. The large structural seams are mostly split now; the next guest work
+  should be smaller follow-on config cleanup and seam tests rather than another
+  major module extraction.
 - Handler seam note: guest Smithay handler implementations now live under
   `src/handlers/` with a structure closer to the host compositor: compositor,
   dmabuf, and xdg-shell callbacks are split from `main.rs`, and guest client
   state / seat glue lives alongside those delegates instead of in the startup
   entrypoint. The next cleanup should be smaller follow-on test coverage or
   config cleanup, not another large structural move.
+- Config seam note: `config.rs` is the intended boundary for guest startup env
+  parsing, but a few launch/runtime helpers still re-read startup env directly.
+  App launch and hosted runtime now consume typed startup config for guest
+  client path, system binary path, and software-keyboard policy instead of
+  re-reading startup env at use sites. The remaining direct env reads in guest
+  compositor code are narrower runtime/control toggles such as per-app runtime
+  bundle lookup and GPU profile tracing, not the broad startup-policy path.
 - Test coverage note: the host compositor now has focused session tests for the
   same launch/home resident-process behavior we already covered on the guest
   side, and `flake.nix` now exposes a Linux `uiShadowCompositorTests` check so

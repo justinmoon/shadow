@@ -5,7 +5,6 @@ use std::{
     process::{Child, Command},
 };
 
-use shadow_compositor_common::launch::first_env_value;
 use shadow_ui_core::{
     app::{launch_spec, AppId},
     control,
@@ -29,8 +28,7 @@ pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Resul
         })
         .transpose()?;
 
-    let client_path = first_env_value(&["SHADOW_APP_CLIENT", "SHADOW_GUEST_CLIENT"])
-        .unwrap_or_else(|| state.client_config.app_client_path.clone());
+    let client_path = state.client_config.app_client_path.clone();
     let mut command = Command::new(&client_path);
     for (key, value) in app.launch_env {
         command.env(key, value);
@@ -70,7 +68,7 @@ pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Resul
     if let Some(runtime_bundle_path) = runtime_bundle_path {
         command.env("SHADOW_RUNTIME_APP_BUNDLE_PATH", runtime_bundle_path);
     }
-    apply_software_keyboard_policy(&mut command);
+    apply_software_keyboard_policy(&mut command, state.software_keyboard_enabled);
 
     state.spawn_wayland_command(command, &client_path)
 }
@@ -85,14 +83,11 @@ pub fn spawn_client(state: &mut ShadowGuestCompositor) -> io::Result<Child> {
     state.spawn_wayland_command(command, &client_path)
 }
 
-fn apply_software_keyboard_policy(command: &mut Command) {
-    let enabled = std::env::var("SHADOW_BLITZ_SOFTWARE_KEYBOARD")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| String::from("1"));
-    command
-        .env("SHADOW_GUEST_KEYBOARD_SEAT", "0")
-        .env("SHADOW_BLITZ_SOFTWARE_KEYBOARD", enabled);
+fn apply_software_keyboard_policy(command: &mut Command, enabled: bool) {
+    command.env("SHADOW_GUEST_KEYBOARD_SEAT", "0").env(
+        "SHADOW_BLITZ_SOFTWARE_KEYBOARD",
+        if enabled { "1" } else { "0" },
+    );
 }
 
 fn configure_guest_client_command(
@@ -118,4 +113,91 @@ fn configure_guest_client_command(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_software_keyboard_policy, configure_guest_client_command};
+    use crate::config::GuestClientConfig;
+    use shadow_ui_core::control;
+    use std::{
+        ffi::{OsStr, OsString},
+        path::PathBuf,
+        process::Command,
+    };
+
+    fn env_value(command: &Command, key: &str) -> Option<OsString> {
+        command.get_envs().find_map(|(env_key, value)| {
+            if env_key == OsStr::new(key) {
+                value.map(|value| value.to_os_string())
+            } else {
+                None
+            }
+        })
+    }
+
+    #[test]
+    fn configure_guest_client_command_sets_configured_runtime_env() {
+        let client_config = GuestClientConfig {
+            app_client_path: "/tmp/shadow-client".into(),
+            runtime_dir: PathBuf::from("/tmp/shadow-runtime"),
+            system_binary_path: Some("/tmp/shadow-system".into()),
+            env_assignments: vec![("A".into(), "1".into()), ("B".into(), "two".into())],
+            exit_on_configure: true,
+            linger_ms: Some(25),
+        };
+        let mut command = Command::new("env");
+
+        configure_guest_client_command(&mut command, &client_config, OsStr::new("/tmp/control"))
+            .expect("guest client command");
+
+        assert_eq!(
+            env_value(&command, "XDG_RUNTIME_DIR"),
+            Some(OsString::from("/tmp/shadow-runtime"))
+        );
+        assert_eq!(
+            env_value(&command, control::COMPOSITOR_CONTROL_ENV),
+            Some(OsString::from("/tmp/control"))
+        );
+        assert_eq!(
+            env_value(&command, "SHADOW_SYSTEM_BINARY_PATH"),
+            Some(OsString::from("/tmp/shadow-system"))
+        );
+        assert_eq!(env_value(&command, "A"), Some(OsString::from("1")));
+        assert_eq!(env_value(&command, "B"), Some(OsString::from("two")));
+        assert_eq!(
+            env_value(&command, "SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE"),
+            Some(OsString::from("1"))
+        );
+        assert_eq!(
+            env_value(&command, "SHADOW_GUEST_CLIENT_LINGER_MS"),
+            Some(OsString::from("25"))
+        );
+    }
+
+    #[test]
+    fn apply_software_keyboard_policy_sets_explicit_guest_defaults() {
+        let mut command = Command::new("env");
+        apply_software_keyboard_policy(&mut command, true);
+
+        assert_eq!(
+            env_value(&command, "SHADOW_GUEST_KEYBOARD_SEAT"),
+            Some(OsString::from("0"))
+        );
+        assert_eq!(
+            env_value(&command, "SHADOW_BLITZ_SOFTWARE_KEYBOARD"),
+            Some(OsString::from("1"))
+        );
+    }
+
+    #[test]
+    fn apply_software_keyboard_policy_can_disable_software_keyboard() {
+        let mut command = Command::new("env");
+        apply_software_keyboard_policy(&mut command, false);
+
+        assert_eq!(
+            env_value(&command, "SHADOW_BLITZ_SOFTWARE_KEYBOARD"),
+            Some(OsString::from("0"))
+        );
+    }
 }

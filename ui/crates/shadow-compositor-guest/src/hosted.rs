@@ -40,7 +40,6 @@ impl HostedAppState {
             .system_binary_path
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned())
-            .or_else(|| std::env::var("SHADOW_SYSTEM_BINARY_PATH").ok())
             .ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::NotFound,
