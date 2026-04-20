@@ -33,6 +33,10 @@ pull_ppm_log_path="$run_dir/pull-ppm.txt"
 status_path="$run_dir/status.json"
 summary_path="$run_dir/summary.json"
 ppm_path="$run_dir/shadow-gpu-smoke.ppm"
+takeover_display="${PIXEL_GPU_SMOKE_TAKEOVER_DISPLAY-}"
+present_kms_requested=false
+services_stopped=false
+android_restored=false
 
 require_safe_device_dir() {
   local path="$1"
@@ -60,6 +64,26 @@ quote_args() {
   done
   printf '%s' "${quoted[*]}"
 }
+
+restore_android_display() {
+  printf '[gpu-smoke] restoring Android display services\n' | tee -a "$checkpoint_log_path"
+  if pixel_restore_android_best_effort "$serial" 30; then
+    android_restored=true
+    printf '[gpu-smoke] Android display services restored\n' | tee -a "$checkpoint_log_path"
+    return 0
+  fi
+
+  printf '[gpu-smoke] Android display restore failed\n' | tee -a "$checkpoint_log_path"
+  return 1
+}
+
+cleanup() {
+  if [[ "$takeover_display" == "1" && "$services_stopped" == true && "$android_restored" != true ]]; then
+    restore_android_display || true
+  fi
+}
+
+trap cleanup EXIT
 
 printf '[gpu-smoke] serial=%s\n' "$serial" | tee -a "$checkpoint_log_path"
 printf '[gpu-smoke] run_dir=%s\n' "$run_dir" | tee -a "$checkpoint_log_path"
@@ -96,6 +120,35 @@ device_args=(
 )
 if [[ "$#" -gt 0 ]]; then
   device_args+=("$@")
+fi
+
+for arg in "${device_args[@]}"; do
+  if [[ "$arg" == "--present-kms" ]]; then
+    present_kms_requested=true
+    break
+  fi
+done
+
+if [[ -z "$takeover_display" ]]; then
+  if [[ "$present_kms_requested" == true ]]; then
+    takeover_display=1
+  else
+    takeover_display=0
+  fi
+fi
+
+printf '[gpu-smoke] present_kms=%s takeover_display=%s\n' \
+  "$present_kms_requested" "$takeover_display" | tee -a "$checkpoint_log_path"
+
+if [[ "$takeover_display" == "1" ]]; then
+  printf '[gpu-smoke] stopping Android display services\n' | tee -a "$checkpoint_log_path"
+  pixel_root_shell "$serial" "$(pixel_takeover_stop_services_script)" >/dev/null
+  if ! pixel_wait_for_condition 15 1 pixel_display_services_stopped "$serial"; then
+    echo "pixel_gpu_smoke: Android display services did not stop cleanly" >&2
+    exit 1
+  fi
+  services_stopped=true
+  printf '[gpu-smoke] Android display services stopped\n' | tee -a "$checkpoint_log_path"
 fi
 
 cat >"$device_command_path" <<EOF
@@ -139,19 +192,37 @@ else
   printf 'missing: %s\n' "$device_ppm_path" >"$pull_ppm_log_path"
 fi
 
+if [[ "$takeover_display" == "1" ]]; then
+  restore_android_display || true
+fi
+
 set +e
-python3 - "$status_path" "$serial" "$device_dir" "$summary_path" "$ppm_path" "$run_status" "$summary_pulled" "$ppm_pulled" <<'PY'
+python3 - "$status_path" "$serial" "$device_dir" "$summary_path" "$ppm_path" "$run_status" "$summary_pulled" "$ppm_pulled" "$present_kms_requested" "$takeover_display" "$android_restored" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-status_path, serial, device_dir, summary_path_raw, ppm_path_raw, run_status_raw, summary_pulled_raw, ppm_pulled_raw = sys.argv[1:9]
+(
+    status_path,
+    serial,
+    device_dir,
+    summary_path_raw,
+    ppm_path_raw,
+    run_status_raw,
+    summary_pulled_raw,
+    ppm_pulled_raw,
+    present_kms_requested_raw,
+    takeover_display_raw,
+    android_restored_raw,
+) = sys.argv[1:12]
 summary_path = Path(summary_path_raw)
 ppm_path = Path(ppm_path_raw)
 run_status = int(run_status_raw)
+present_kms_requested = present_kms_requested_raw == "true"
 summary_payload = None
 summary_error = None
 strict_invariants_ok = False
+present_kms_ok = False
 if summary_path.is_file():
     try:
         summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -170,11 +241,27 @@ if summary_payload is not None:
     )
     if not strict_invariants_ok and summary_error is None:
         summary_error = "summary did not satisfy strict gpu-smoke invariants"
+    if present_kms_requested:
+        kms_present = summary_payload.get("kms_present")
+        present_kms_ok = (
+            summary_payload.get("present_kms") is True
+            and isinstance(kms_present, dict)
+            and kms_present.get("mode_width")
+            and kms_present.get("mode_height")
+            and kms_present.get("hold_secs") == summary_payload.get("hold_secs")
+            and kms_present.get("source_width") == summary_payload.get("width")
+            and kms_present.get("source_height") == summary_payload.get("height")
+        )
+        if not present_kms_ok and summary_error is None:
+            summary_error = "summary did not prove kms presentation"
+    else:
+        present_kms_ok = True
 
-proof_ok = summary_payload is not None and summary_error is None and strict_invariants_ok
+proof_ok = summary_payload is not None and summary_error is None and strict_invariants_ok and present_kms_ok
 run_succeeded = run_status == 0 and proof_ok
 
 payload = {
+    "androidRestored": android_restored_raw == "true",
     "serial": serial,
     "deviceDir": device_dir,
     "runSucceeded": run_succeeded,
@@ -185,6 +272,9 @@ payload = {
     "summaryPath": str(summary_path) if summary_path.is_file() else None,
     "ppmPath": str(ppm_path) if ppm_path.is_file() else None,
     "strictInvariantsOk": strict_invariants_ok,
+    "presentKmsRequested": present_kms_requested,
+    "presentKmsOk": present_kms_ok,
+    "takeoverDisplay": takeover_display_raw == "1",
     "summaryError": summary_error,
     "summary": summary_payload,
 }

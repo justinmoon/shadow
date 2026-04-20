@@ -22,7 +22,7 @@ Related docs:
 - Use host-side `bootimg` tooling for the inner loop: unpack, patch, repack, inspect, sign.
 - Use Cuttlefish only for generic bring-up ideas, not as the primary model for `sunfish`.
 - Primary strategy: boot the stock Pixel kernel into a Shadow-owned ramdisk and custom PID 1. Do not treat `wrapper -> stock init -> later takeover` as the main path anymore.
-- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `orange-gpu` (GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
+- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `gpu-kms-bridge` (the same GPU smoke presented through rooted display takeover so render/present can be debugged without boot ownership), then `orange-gpu` (boot-owned GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
 - Reuse the current rooted takeover/runtime path for DRM, input, audio, and packaging knowledge, but not as the boot graph we are trying to ship.
 - Land boot work in small seams that can merge to `master` independently; do not stack the whole project on one long-lived boot branch.
@@ -49,6 +49,11 @@ Related docs:
   - offscreen Vulkan/wgpu render
   - readback hash or equivalent host-verifiable checksum
   - no compositor, no TS runtime, no shell
+- [x] Prove the render/present bridge on rooted hardware before boot ownership (`gpu-kms-bridge`):
+  - reuse `gpu-smoke`'s strict Vulkan/wgpu render path
+  - present the rendered pixels through KMS under explicit rooted display takeover
+  - restore Android after the run so the lab device stays reusable
+  - do not treat this as a substitute for boot-owned `orange-gpu`
 - [ ] From that owned userspace, render one orange GPU frame and present it through dma-buf/KMS (`orange-gpu`).
 - [ ] Prove repeated GPU frame submission and synchronization for 2-3 seconds (`orange-gpu-loop`).
 - [ ] Prove one minimal input-driven redraw on the real GPU render/present path (`touch-counter-gpu`).
