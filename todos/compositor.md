@@ -38,7 +38,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Map the remaining `shadow-compositor-guest/src/main.rs` responsibilities.
 - [x] Split guest launch/session policy out of `main.rs`.
 - [x] Replace unconditional guest "terminate other apps" behavior with bounded background-app residency closer to Android and current host compositor behavior.
-- [ ] Split touch/input handling out of `main.rs`.
+- [x] Split touch/input handling out of `main.rs`.
 - [ ] Split DRM/KMS present and scanout handling behind a narrow module boundary.
 - [ ] Replace remaining stringly env blobs with structured config where practical.
 - [ ] Add focused unit tests around each extracted seam.
@@ -113,6 +113,16 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   sorted app-id reporting live in `shadow-compositor-common`. Keep the shared
   layer focused on deterministic policy/reporting helpers rather than backend
   plumbing.
+- Guest touch/input routing is now split more cleanly: `touch.rs` keeps raw
+  evdev ingestion and normalization, while `input.rs` owns synthetic control
+  taps, touch-source wiring, shell-vs-app-vs-hosted routing, gesture
+  thresholding, and hosted touch frame scheduling. That leaves `main.rs`
+  responsible for startup, render/present, and Smithay handler glue instead of
+  mixing in the full touch state machine.
+- Input seam note: there is now at least one small focused unit-tested helper
+  in the extracted guest input module for scroll-threshold detection. The larger
+  touch routing behavior still needs deeper seam tests later, but it no longer
+  has to stay trapped in `main.rs` to be testable.
 - Test coverage note: the host compositor now has focused session tests for the
   same launch/home resident-process behavior we already covered on the guest
   side, and `flake.nix` now exposes a Linux `uiShadowCompositorTests` check so
