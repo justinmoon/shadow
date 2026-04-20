@@ -465,7 +465,7 @@ start = source.find(marker)
 if start < 0:
     raise SystemExit("missing instance-smoke branch marker")
 start += len(marker)
-end = source.find("\n        } else if (orange_gpu_mode_is_vulkan_enumerate_adapters_smoke(config)) {", start)
+end = source.find("\n        } else if (orange_gpu_mode_is_vulkan_enumerate_adapters_count_smoke(config)) {", start)
 if end < 0:
     raise SystemExit("missing end of instance-smoke branch")
 branch = source[start:end]
@@ -481,6 +481,36 @@ for needle in required:
 for needle in ['"--present-kms"', 'hold_seconds,']:
     if needle in branch:
         raise SystemExit(f"unexpected instance-smoke branch needle: {needle}")
+PY
+}
+
+assert_orange_gpu_enumerate_adapters_count_branch_shape() {
+  python3 - "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+marker = "} else if (orange_gpu_mode_is_vulkan_enumerate_adapters_count_smoke(config)) {"
+start = source.find(marker)
+if start < 0:
+    raise SystemExit("missing enumerate-adapters-count-smoke branch marker")
+start += len(marker)
+end = source.find("\n        } else if (orange_gpu_mode_is_vulkan_enumerate_adapters_smoke(config)) {", start)
+if end < 0:
+    raise SystemExit("missing end of enumerate-adapters-count-smoke branch")
+branch = source[start:end]
+required = [
+    'scene=enumerate-adapters-count-smoke mode=vulkan-enumerate-adapters-count-smoke',
+    '"--scene"',
+    '"enumerate-adapters-count-smoke"',
+    '"--summary-path"',
+]
+for needle in required:
+    if needle not in branch:
+        raise SystemExit(f"missing enumerate-adapters-count-smoke branch needle: {needle}")
+for needle in ['"--present-kms"', 'hold_seconds,']:
+    if needle in branch:
+        raise SystemExit(f"unexpected enumerate-adapters-count-smoke branch needle: {needle}")
 PY
 }
 
@@ -647,7 +677,7 @@ program = """#include <ctype.h>
 {functions}
 
 int main(void) {{
-    char buffer[32];
+    char buffer[64];
 
     if (!parse_orange_gpu_mode_value("vulkan-instance-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid instance-smoke mode\\n");
@@ -657,49 +687,57 @@ int main(void) {{
         fprintf(stderr, "unexpected parsed instance-smoke mode: %s\\n", buffer);
         return 2;
     }}
+    if (!parse_orange_gpu_mode_value("vulkan-enumerate-adapters-count-smoke", buffer, sizeof(buffer))) {{
+        fprintf(stderr, "failed to parse valid enumerate-adapters-count-smoke mode\\n");
+        return 3;
+    }}
+    if (strcmp(buffer, "vulkan-enumerate-adapters-count-smoke") != 0) {{
+        fprintf(stderr, "unexpected parsed enumerate-adapters-count-smoke mode: %s\\n", buffer);
+        return 4;
+    }}
     if (!parse_orange_gpu_mode_value("vulkan-enumerate-adapters-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid enumerate-adapters-smoke mode\\n");
-        return 3;
+        return 5;
     }}
     if (strcmp(buffer, "vulkan-enumerate-adapters-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed enumerate-adapters-smoke mode: %s\\n", buffer);
-        return 4;
+        return 6;
     }}
     if (!parse_orange_gpu_mode_value("vulkan-adapter-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid adapter-smoke mode\\n");
-        return 5;
+        return 7;
     }}
     if (strcmp(buffer, "vulkan-adapter-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed adapter-smoke mode: %s\\n", buffer);
-        return 6;
+        return 8;
     }}
     if (!parse_orange_gpu_mode_value("vulkan-device-request-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid device-request-smoke mode\\n");
-        return 7;
+        return 9;
     }}
     if (strcmp(buffer, "vulkan-device-request-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed device-request-smoke mode: %s\\n", buffer);
-        return 8;
+        return 10;
     }}
     if (!parse_orange_gpu_mode_value("vulkan-device-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid device-smoke mode\\n");
-        return 9;
+        return 11;
     }}
     if (strcmp(buffer, "vulkan-device-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed device-smoke mode: %s\\n", buffer);
-        return 10;
+        return 12;
     }}
     if (!parse_orange_gpu_mode_value(" vulkan-offscreen ", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse trimmed offscreen mode\\n");
-        return 11;
+        return 13;
     }}
     if (strcmp(buffer, "vulkan-offscreen") != 0) {{
         fprintf(stderr, "unexpected parsed offscreen mode: %s\\n", buffer);
-        return 12;
+        return 14;
     }}
     if (parse_orange_gpu_mode_value("nope", buffer, sizeof(buffer))) {{
         fprintf(stderr, "unexpectedly accepted invalid mode\\n");
-        return 13;
+        return 15;
     }}
 
     return 0;
@@ -774,7 +812,7 @@ start = source.find(marker)
 if start < 0:
     raise SystemExit("missing build_instance_smoke_summary helper")
 start += len(marker)
-end = source.find("\n}\n\nfn build_enumerate_adapters_smoke_summary(", start)
+end = source.find("\n}\n\nfn build_enumerate_adapters_count_smoke_summary(", start)
 if end < 0:
     raise SystemExit("missing end of build_instance_smoke_summary helper")
 body = source[start:end]
@@ -789,6 +827,37 @@ for needle in required:
 for needle in ["create_headless_adapter_info()", "create_headless_device_handle()"]:
     if needle in body:
         raise SystemExit(f"unexpected build_instance_smoke_summary helper needle: {needle}")
+PY
+}
+
+assert_shadow_gpu_enumerate_adapters_count_helper_shape() {
+  python3 - "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+marker = "fn build_enumerate_adapters_count_smoke_summary("
+start = source.find(marker)
+if start < 0:
+    raise SystemExit("missing build_enumerate_adapters_count_smoke_summary helper")
+start += len(marker)
+end = source.find("\n}\n\nfn build_enumerate_adapters_smoke_summary(", start)
+if end < 0:
+    raise SystemExit("missing end of build_enumerate_adapters_count_smoke_summary helper")
+body = source[start:end]
+required = [
+    'mode: "enumerate-adapters-count-smoke"',
+    "context.instance.enumerate_adapters(backends)",
+    "enumerated_adapter_count: adapters.len()",
+    "adapter_info_extracted: false",
+    "adapter_selection_attempted: false",
+]
+for needle in required:
+    if needle not in body:
+        raise SystemExit(f"missing build_enumerate_adapters_count_smoke_summary helper needle: {needle}")
+for needle in ["create_headless_adapter_info()", "create_headless_device_handle()", ".get_info()", "AdapterSummary::from_info"]:
+    if needle in body:
+        raise SystemExit(f"unexpected build_enumerate_adapters_count_smoke_summary helper needle: {needle}")
 PY
 }
 
@@ -810,7 +879,9 @@ body = source[start:end]
 required = [
     'mode: "enumerate-adapters-smoke"',
     "context.instance.enumerate_adapters(backends)",
+    "AdapterSummary::from_info(&adapter.get_info())",
     "enumerated_adapter_count: adapters.len()",
+    "adapter_info_extracted: true",
     "adapter_selection_attempted: false",
 ]
 for needle in required:
@@ -840,6 +911,44 @@ assert_shadow_gpu_instance_smoke_cli() {
   assert_json_field_equals "$summary_path" adapter_selected "false"
 }
 
+assert_shadow_gpu_enumerate_adapters_count_smoke_cli() {
+  local summary_path="$TMP_DIR/enumerate-adapters-count-smoke-summary.json"
+  local output
+
+  output="$(
+    nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
+      --scene enumerate-adapters-count-smoke \
+      --summary-path "$summary_path"
+  )"
+
+  assert_contains "$output" '"mode": "enumerate-adapters-count-smoke"'
+  assert_contains "$output" '"scene": "enumerate-adapters-count-smoke"'
+  assert_json_field_equals "$summary_path" mode "enumerate-adapters-count-smoke"
+  assert_json_field_equals "$summary_path" scene "enumerate-adapters-count-smoke"
+  python3 - "$summary_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if payload.get("instance_created") is not True:
+    raise SystemExit("expected instance_created=true")
+if payload.get("adapters_enumerated") is not True:
+    raise SystemExit("expected adapters_enumerated=true")
+if payload.get("adapter_info_extracted") is not False:
+    raise SystemExit("expected adapter_info_extracted=false")
+if payload.get("adapter_selection_attempted") is not False:
+    raise SystemExit("expected adapter_selection_attempted=false")
+if payload.get("adapter_selected") is not False:
+    raise SystemExit("expected adapter_selected=false")
+count = payload.get("enumerated_adapter_count")
+if not isinstance(count, int):
+    raise SystemExit("expected integer enumerated_adapter_count")
+if "adapters" in payload:
+    raise SystemExit("did not expect adapters list in raw count smoke summary")
+PY
+}
+
 assert_shadow_gpu_enumerate_adapters_smoke_cli() {
   local summary_path="$TMP_DIR/enumerate-adapters-smoke-summary.json"
   local output
@@ -864,6 +973,8 @@ if payload.get("instance_created") is not True:
     raise SystemExit("expected instance_created=true")
 if payload.get("adapters_enumerated") is not True:
     raise SystemExit("expected adapters_enumerated=true")
+if payload.get("adapter_info_extracted") is not True:
+    raise SystemExit("expected adapter_info_extracted=true")
 if payload.get("adapter_selection_attempted") is not False:
     raise SystemExit("expected adapter_selection_attempted=false")
 if payload.get("adapter_selected") is not False:
@@ -882,42 +993,63 @@ PY
 }
 
 assert_shadow_gpu_instance_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene instance-smoke \
       --hold-secs 1
 }
 
+assert_shadow_gpu_enumerate_adapters_count_smoke_rejects_hold_secs() {
+  assert_command_fails_contains "--scene instance-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+    nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
+      --scene enumerate-adapters-count-smoke \
+      --hold-secs 1
+}
+
 assert_shadow_gpu_enumerate_adapters_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene enumerate-adapters-smoke \
       --hold-secs 1
 }
 
 assert_shadow_gpu_instance_smoke_rejects_present_kms() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene instance-smoke \
       --present-kms
 }
 
+assert_shadow_gpu_enumerate_adapters_count_smoke_rejects_present_kms() {
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
+    nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
+      --scene enumerate-adapters-count-smoke \
+      --present-kms
+}
+
 assert_shadow_gpu_enumerate_adapters_smoke_rejects_present_kms() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene enumerate-adapters-smoke \
       --present-kms
 }
 
 assert_shadow_gpu_instance_smoke_rejects_ppm_path() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene instance-smoke \
       --ppm-path "$TMP_DIR/instance-smoke.ppm"
 }
 
+assert_shadow_gpu_enumerate_adapters_count_smoke_rejects_ppm_path() {
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
+    nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
+      --scene enumerate-adapters-count-smoke \
+      --ppm-path "$TMP_DIR/enumerate-adapters-count-smoke.ppm"
+}
+
 assert_shadow_gpu_enumerate_adapters_smoke_rejects_ppm_path() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene enumerate-adapters-smoke \
       --ppm-path "$TMP_DIR/enumerate-adapters-smoke.ppm"
@@ -942,7 +1074,7 @@ assert_shadow_gpu_adapter_smoke_cli() {
 }
 
 assert_shadow_gpu_adapter_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene adapter-smoke \
       --allow-non-vulkan \
@@ -969,7 +1101,7 @@ assert_shadow_gpu_device_request_smoke_cli() {
 }
 
 assert_shadow_gpu_device_request_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene device-request-smoke \
       --allow-non-vulkan \
@@ -1003,6 +1135,7 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"bundle-smoke"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"vulkan-instance-smoke"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"vulkan-enumerate-adapters-count-smoke"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"vulkan-enumerate-adapters-smoke"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"vulkan-offscreen"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH'
@@ -1024,6 +1157,8 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'checkpoint=v
 assert_hello_init_orange_gpu_mode_parser_smoke
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_vulkan_instance_smoke'
 assert_orange_gpu_instance_branch_shape
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_vulkan_enumerate_adapters_count_smoke'
+assert_orange_gpu_enumerate_adapters_count_branch_shape
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_vulkan_enumerate_adapters_smoke'
 assert_orange_gpu_enumerate_adapters_branch_shape
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_vulkan_adapter_smoke'
@@ -1039,6 +1174,11 @@ assert_shadow_gpu_instance_smoke_cli
 assert_shadow_gpu_instance_smoke_rejects_hold_secs
 assert_shadow_gpu_instance_smoke_rejects_present_kms
 assert_shadow_gpu_instance_smoke_rejects_ppm_path
+assert_shadow_gpu_enumerate_adapters_count_helper_shape
+assert_shadow_gpu_enumerate_adapters_count_smoke_cli
+assert_shadow_gpu_enumerate_adapters_count_smoke_rejects_hold_secs
+assert_shadow_gpu_enumerate_adapters_count_smoke_rejects_present_kms
+assert_shadow_gpu_enumerate_adapters_count_smoke_rejects_ppm_path
 assert_shadow_gpu_enumerate_adapters_helper_shape
 assert_shadow_gpu_enumerate_adapters_smoke_cli
 assert_shadow_gpu_enumerate_adapters_smoke_rejects_hold_secs
@@ -1051,18 +1191,21 @@ assert_shadow_gpu_adapter_smoke_rejects_hold_secs
 assert_shadow_gpu_device_request_smoke_cli
 assert_shadow_gpu_device_request_smoke_rejects_hold_secs
 assert_shadow_gpu_device_smoke_cli
-assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" '[--scene smoke|flat-orange|bundle-smoke|instance-smoke|enumerate-adapters-smoke|adapter-smoke|device-request-smoke|device-smoke]'
+assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" '[--scene smoke|flat-orange|bundle-smoke|instance-smoke|enumerate-adapters-count-smoke|enumerate-adapters-smoke|adapter-smoke|device-request-smoke|device-smoke]'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'BundleSmokeSummary'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'InstanceSmokeSummary'
+assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'EnumerateAdaptersCountSmokeSummary'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'EnumerateAdaptersSmokeSummary'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'AdapterSmokeSummary'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'DeviceRequestSmokeSummary'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'DeviceSmokeSummary'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'mode: "bundle-smoke",'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'mode: "instance-smoke",'
+assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'mode: "enumerate-adapters-count-smoke",'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'mode: "enumerate-adapters-smoke",'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'Self::BundleSmoke => "bundle-smoke"'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'Self::InstanceSmoke => "instance-smoke"'
+assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'Self::EnumerateAdaptersCountSmoke => "enumerate-adapters-count-smoke"'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'Self::EnumerateAdaptersSmoke => "enumerate-adapters-smoke"'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'Self::AdapterSmoke => "adapter-smoke"'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'Self::DeviceRequestSmoke => "device-request-smoke"'
@@ -1076,6 +1219,7 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU mode: %s\\n' \"\$ORANGE_GPU_MODE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Bundle exec mode: bundle-smoke\\n'"
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict Vulkan instance creation\\n'"
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict Vulkan raw adapter enumeration count\\n'"
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict Vulkan adapter enumeration\\n'"
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict Vulkan adapter selection\\n'"
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict Vulkan device request\\n'"
@@ -1228,6 +1372,42 @@ assert_json_field_equals "$TMP_DIR/orange-gpu-instance-boot.img.hello-init.json"
 assert_json_field_equals "$TMP_DIR/orange-gpu-instance-boot.img.hello-init.json" success_postlude "orange-init"
 assert_json_field_equals "$TMP_DIR/orange-gpu-instance-boot.img.hello-init.json" checkpoint_hold_seconds "1"
 assert_json_field_equals "$TMP_DIR/orange-gpu-instance-boot.img.hello-init.json" dri_bootstrap "sunfish-card0-renderD128-kgsl3d0"
+
+enumerate_adapters_count_smoke_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-enumerate-adapters-count-boot.img" \
+      --hold-secs 7 \
+      --prelude orange-init \
+      --prelude-hold-secs 2 \
+      --orange-gpu-mode vulkan-enumerate-adapters-count-smoke \
+      --reboot-target bootloader \
+      --run-token orange-gpu-enumerate-adapters-count-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false
+)"
+
+assert_contains "$enumerate_adapters_count_smoke_boot_output" "Owned userspace mode: orange-gpu"
+assert_contains "$enumerate_adapters_count_smoke_boot_output" "Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan raw adapter-enumeration-count mode from /orange-gpu"
+assert_contains "$enumerate_adapters_count_smoke_boot_output" "Orange GPU mode: vulkan-enumerate-adapters-count-smoke"
+assert_contains "$enumerate_adapters_count_smoke_boot_output" "GPU proof: strict Vulkan raw adapter enumeration count"
+assert_contains "$enumerate_adapters_count_smoke_boot_output" "Prelude: orange-init"
+assert_contains "$enumerate_adapters_count_smoke_boot_output" "Derived success postlude: orange-init"
+assert_contains "$enumerate_adapters_count_smoke_boot_output" "Visible checkpoint hold seconds: 1"
+assert_contains "$enumerate_adapters_count_smoke_boot_output" "DRI bootstrap: sunfish-card0-renderD128-kgsl3d0"
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-enumerate-adapters-count-boot.img" shadow-init.cfg $'# Generated by pixel_boot_build_orange_gpu.sh\npayload=orange-gpu\norange_gpu_mode=vulkan-enumerate-adapters-count-smoke\nhold_seconds=7\nreboot_target=bootloader\nrun_token=orange-gpu-enumerate-adapters-count-run-token\nprelude=orange-init\nprelude_hold_seconds=2\ndev_mount=tmpfs\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\ndri_bootstrap=sunfish-card0-renderD128-kgsl3d0\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-enumerate-adapters-count-boot.img.hello-init.json" orange_gpu_mode "vulkan-enumerate-adapters-count-smoke"
+assert_json_field_equals "$TMP_DIR/orange-gpu-enumerate-adapters-count-boot.img.hello-init.json" success_postlude "orange-init"
+assert_json_field_equals "$TMP_DIR/orange-gpu-enumerate-adapters-count-boot.img.hello-init.json" checkpoint_hold_seconds "1"
+assert_json_field_equals "$TMP_DIR/orange-gpu-enumerate-adapters-count-boot.img.hello-init.json" dri_bootstrap "sunfish-card0-renderD128-kgsl3d0"
 
 enumerate_adapters_smoke_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -1429,7 +1609,7 @@ assert_command_fails_contains "expected an aarch64 ELF gpu binary" \
       --key "$AVB_KEY_PATH" \
       --output "$TMP_DIR/should-fail-bad-binary.img"
 
-assert_command_fails_contains "orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen" \
+assert_command_fails_contains "orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen" \
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
