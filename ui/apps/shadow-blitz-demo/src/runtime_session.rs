@@ -108,6 +108,13 @@ impl RuntimeSession {
         }
     }
 
+    pub(crate) fn spawn_explicit(
+        host_binary_path: String,
+        bundle_path: String,
+    ) -> Result<Self, String> {
+        Self::spawn(host_binary_path, bundle_path)
+    }
+
     fn spawn(host_binary_path: String, bundle_path: String) -> Result<Self, String> {
         let stage_loader_path = env::var(SYSTEM_STAGE_LOADER_PATH_ENV).ok();
         let stage_library_path = env::var(SYSTEM_STAGE_LIBRARY_PATH_ENV).ok();

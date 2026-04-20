@@ -1,17 +1,21 @@
 use anyhow::{anyhow, Context, Result};
-use drm::buffer::{Buffer as DrmBuffer, DrmFourcc, Handle as DrmBufferHandle, PlanarBuffer};
+use drm::buffer::{
+    Buffer as DrmBuffer, DrmFourcc, DrmModifier, Handle as DrmBufferHandle, PlanarBuffer,
+};
 use drm::control::Device as ControlDevice;
-use drm::control::{connector, crtc, dumbbuffer::DumbBuffer, framebuffer, FbCmd2Flags};
+use drm::control::{connector, crtc, dumbbuffer::DumbBuffer, framebuffer, plane, FbCmd2Flags};
 use drm::Device as BasicDevice;
 use smithay::backend::allocator::dmabuf::{Dmabuf, DmabufMappingMode, DmabufSyncFlags};
 use smithay::backend::allocator::Buffer as SmithayBuffer;
 use smithay::backend::allocator::Fourcc;
 use smithay::reexports::wayland_server::protocol::wl_shm;
 use smithay::wayland::shm::BufferData;
+use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
 use std::os::fd::{AsFd, BorrowedFd};
 use std::path::Path;
+use std::sync::Once;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -20,6 +24,12 @@ const BYTES_PER_PIXEL: usize = 4;
 const BACKGROUND_PIXEL: [u8; 4] = [0x18, 0x12, 0x10, 0xFF];
 const BOOT_SPLASH_WIDTH: u32 = 384;
 const BOOT_SPLASH_HEIGHT: u32 = 720;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScanoutFormatCandidate {
+    pub fourcc: DrmFourcc,
+    pub modifiers: Vec<DrmModifier>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CapturedFrame {
@@ -307,12 +317,15 @@ pub struct KmsDisplay {
     master_locked: bool,
     connector_handle: connector::Handle,
     crtc_handle: crtc::Handle,
+    primary_plane_handle: Option<plane::Handle>,
     mode: drm::control::Mode,
     dumb: Option<DumbBuffer>,
     fb_handle: Option<framebuffer::Handle>,
     imported_fb: Option<ImportedFramebuffer>,
     width: u32,
     height: u32,
+    strict_gpu_resident: bool,
+    scanout_candidates: Vec<ScanoutFormatCandidate>,
 }
 
 struct ImportedFramebuffer {
@@ -356,8 +369,10 @@ impl PlanarBuffer for ImportedDmabufFramebuffer {
 }
 
 impl KmsDisplay {
-    pub fn open_default() -> Result<Self> {
+    pub fn open_default(strict_gpu_resident: bool) -> Result<Self> {
         let card = open_card(DRM_DEVICE_PATH)?;
+        let _ = card.set_client_capability(drm::ClientCapability::UniversalPlanes, true);
+        let _ = card.set_client_capability(drm::ClientCapability::Atomic, true);
         let master_locked = acquire_master_lock_if_supported(&card)?;
         let res_handles = card
             .resource_handles()
@@ -379,10 +394,22 @@ impl KmsDisplay {
             .with_context(|| format!("failed to query encoder {encoder_handle:?}"))?;
         let crtc_handle =
             select_crtc_handle(&encoder, &res_handles, connector_handle, encoder_handle)?;
+        let primary_plane_handle = find_primary_plane(&card, &res_handles, crtc_handle)
+            .context("failed to locate primary plane")?;
 
         let (width, height) = mode.size();
         let width = u32::from(width);
         let height = u32::from(height);
+        let scanout_candidates = match discover_scanout_candidates(&card, &res_handles, crtc_handle)
+        {
+            Ok(candidates) => candidates,
+            Err(error) => {
+                tracing::warn!(
+                    "[shadow-guest-compositor] kms-scanout-discovery-failed error={error:#}"
+                );
+                Vec::new()
+            }
+        };
         let dumb = card
             .create_dumb_buffer((width, height), DrmFourcc::Xrgb8888, 32)
             .context("failed to allocate dumb buffer")?;
@@ -395,12 +422,15 @@ impl KmsDisplay {
             master_locked,
             connector_handle,
             crtc_handle,
+            primary_plane_handle,
             mode,
             dumb: Some(dumb),
             fb_handle: Some(fb_handle),
             imported_fb: None,
             width,
             height,
+            strict_gpu_resident,
+            scanout_candidates,
         };
 
         display.clear()?;
@@ -409,12 +439,12 @@ impl KmsDisplay {
         Ok(display)
     }
 
-    pub fn open_when_ready(timeout: Duration) -> Result<Self> {
+    pub fn open_when_ready(timeout: Duration, strict_gpu_resident: bool) -> Result<Self> {
         let deadline = Instant::now() + timeout;
         let mut last_error;
 
         loop {
-            match Self::open_default() {
+            match Self::open_default(strict_gpu_resident) {
                 Ok(display) => return Ok(display),
                 Err(error) => last_error = error,
             }
@@ -435,7 +465,12 @@ impl KmsDisplay {
         (self.width, self.height)
     }
 
+    pub fn scanout_candidates(&self) -> &[ScanoutFormatCandidate] {
+        &self.scanout_candidates
+    }
+
     pub fn present_frame_view(&mut self, frame: CapturedFrameView<'_>) -> Result<()> {
+        note_cpu_dumb_buffer_present(self.strict_gpu_resident)?;
         self.release_imported_framebuffer()?;
         let present_started = Instant::now();
         let dumb = self
@@ -468,10 +503,29 @@ impl KmsDisplay {
     }
 
     pub fn present_dmabuf(&mut self, dmabuf: &Dmabuf) -> Result<()> {
+        let import_started = Instant::now();
         let imported = self.import_dmabuf_framebuffer(dmabuf)?;
-        self.program_crtc_with_framebuffer(imported.fb_handle)?;
+        let import_elapsed = import_started.elapsed();
+        let size = dmabuf.size();
+        let src_width = u32::try_from(size.w).context("negative dmabuf width")?;
+        let src_height = u32::try_from(size.h).context("negative dmabuf height")?;
+        let program_started = Instant::now();
+        self.program_plane_with_framebuffer(imported.fb_handle, src_width, src_height)?;
+        let program_elapsed = program_started.elapsed();
         self.release_imported_framebuffer()?;
         self.imported_fb = Some(imported);
+        if gpu_profile_enabled() {
+            tracing::info!(
+                "[shadow-guest-compositor] gpu-profile-kms import_ms={} program_ms={} total_ms={} src={}x{} dst={}x{}",
+                import_elapsed.as_millis(),
+                program_elapsed.as_millis(),
+                (import_elapsed + program_elapsed).as_millis(),
+                src_width,
+                src_height,
+                self.width,
+                self.height
+            );
+        }
         Ok(())
     }
 
@@ -505,6 +559,33 @@ impl KmsDisplay {
                 Some(self.mode),
             )
             .context("failed to set CRTC configuration")
+    }
+
+    fn program_plane_with_framebuffer(
+        &mut self,
+        fb_handle: framebuffer::Handle,
+        src_width: u32,
+        src_height: u32,
+    ) -> Result<()> {
+        let Some(primary_plane_handle) = self.primary_plane_handle else {
+            return self.program_crtc_with_framebuffer(fb_handle);
+        };
+        let src_width = src_width
+            .checked_shl(16)
+            .ok_or_else(|| anyhow!("source width overflowed fixed-point plane coordinates"))?;
+        let src_height = src_height
+            .checked_shl(16)
+            .ok_or_else(|| anyhow!("source height overflowed fixed-point plane coordinates"))?;
+        self.card
+            .set_plane(
+                primary_plane_handle,
+                self.crtc_handle,
+                Some(fb_handle),
+                0,
+                (0, 0, self.width, self.height),
+                (0, 0, src_width, src_height),
+            )
+            .context("failed to set primary plane configuration")
     }
 
     fn import_dmabuf_framebuffer(&mut self, dmabuf: &Dmabuf) -> Result<ImportedFramebuffer> {
@@ -585,6 +666,25 @@ impl KmsDisplay {
 
         Ok(())
     }
+}
+
+fn gpu_profile_enabled() -> bool {
+    std::env::var_os("SHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE").is_some()
+}
+
+fn note_cpu_dumb_buffer_present(strict_gpu_resident: bool) -> Result<()> {
+    static WARNED: Once = Once::new();
+    WARNED.call_once(|| {
+        tracing::warn!(
+            "[shadow-guest-compositor] cpu-crossing kms-dumb-buffer-present path=KmsDisplay::present_frame_view"
+        );
+    });
+    if strict_gpu_resident {
+        return Err(anyhow!(
+            "strict gpu resident mode rejected KMS dumb-buffer present"
+        ));
+    }
+    Ok(())
 }
 
 impl Drop for KmsDisplay {
@@ -746,6 +846,12 @@ fn blit_frame(
         return copy_frame_exact(framebuffer, framebuffer_stride, frame);
     }
 
+    if framebuffer_width == frame.width.saturating_mul(2)
+        && framebuffer_height == frame.height.saturating_mul(2)
+    {
+        return copy_frame_exact_2x(framebuffer, framebuffer_stride, frame);
+    }
+
     clear_framebuffer(framebuffer);
     blit_frame_centered(
         framebuffer,
@@ -805,9 +911,67 @@ fn copy_frame_exact(
     Ok(())
 }
 
+fn copy_frame_exact_2x(
+    framebuffer: &mut [u8],
+    framebuffer_stride: usize,
+    frame: CapturedFrameView<'_>,
+) -> Result<()> {
+    if frame.stride < frame.width * BYTES_PER_PIXEL as u32 {
+        return Err(anyhow!(
+            "frame stride {} too small for width {}",
+            frame.stride,
+            frame.width
+        ));
+    }
+
+    let src_stride = usize::try_from(frame.stride).context("invalid source stride")?;
+    let expanded_row_bytes = usize::try_from(frame.width)
+        .context("frame width overflowed usize")?
+        .checked_mul(BYTES_PER_PIXEL * 2)
+        .context("frame width overflowed expanded row bytes")?;
+
+    for src_row in 0..usize::try_from(frame.height).context("frame height overflowed usize")? {
+        let src_offset = src_row
+            .checked_mul(src_stride)
+            .context("source offset overflowed")?;
+        let src_end = src_offset
+            .checked_add(usize::try_from(frame.width).unwrap() * BYTES_PER_PIXEL)
+            .context("source end overflowed")?;
+        if src_end > frame.pixels.len() {
+            return Err(anyhow!("copy range exceeded source bounds"));
+        }
+
+        let src_pixels = &frame.pixels[src_offset..src_end];
+        let dst_row = src_row * 2;
+        let dst1_offset = dst_row
+            .checked_mul(framebuffer_stride)
+            .context("destination offset overflowed")?;
+        let dst1_end = dst1_offset
+            .checked_add(expanded_row_bytes)
+            .context("destination end overflowed")?;
+        let (before_dst2, dst2_and_after) = framebuffer.split_at_mut(dst1_end);
+        let dst1 = &mut before_dst2[dst1_offset..dst1_end];
+
+        let mut dst_offset = 0;
+        for pixel in src_pixels.chunks_exact(BYTES_PER_PIXEL) {
+            dst1[dst_offset..dst_offset + BYTES_PER_PIXEL].copy_from_slice(pixel);
+            dst1[dst_offset + BYTES_PER_PIXEL..dst_offset + BYTES_PER_PIXEL * 2]
+                .copy_from_slice(pixel);
+            dst_offset += BYTES_PER_PIXEL * 2;
+        }
+
+        let dst2 = &mut dst2_and_after[..expanded_row_bytes];
+        dst2.copy_from_slice(dst1);
+    }
+
+    Ok(())
+}
+
 fn drm_fourcc_from_dmabuf(dmabuf: &Dmabuf) -> Result<DrmFourcc> {
     match dmabuf.format().code {
+        Fourcc::Abgr8888 => Ok(DrmFourcc::Abgr8888),
         Fourcc::Argb8888 => Ok(DrmFourcc::Argb8888),
+        Fourcc::Xbgr8888 => Ok(DrmFourcc::Xbgr8888),
         Fourcc::Xrgb8888 => Ok(DrmFourcc::Xrgb8888),
         other => Err(anyhow!(
             "unsupported dmabuf fourcc for direct scanout: {other:?}"
@@ -817,10 +981,206 @@ fn drm_fourcc_from_dmabuf(dmabuf: &Dmabuf) -> Result<DrmFourcc> {
 
 fn wl_shm_format_from_dmabuf(dmabuf: &Dmabuf) -> Result<wl_shm::Format> {
     match dmabuf.format().code {
+        Fourcc::Abgr8888 => Ok(wl_shm::Format::Abgr8888),
         Fourcc::Argb8888 => Ok(wl_shm::Format::Argb8888),
+        Fourcc::Xbgr8888 => Ok(wl_shm::Format::Xbgr8888),
         Fourcc::Xrgb8888 => Ok(wl_shm::Format::Xrgb8888),
         other => Err(anyhow!("unsupported dmabuf fourcc for capture: {other:?}")),
     }
+}
+
+fn discover_scanout_candidates(
+    card: &Card,
+    res_handles: &drm::control::ResourceHandles,
+    crtc_handle: crtc::Handle,
+) -> Result<Vec<ScanoutFormatCandidate>> {
+    let Some(primary_plane) = find_primary_plane(card, res_handles, crtc_handle)? else {
+        tracing::warn!(
+            "[shadow-guest-compositor] kms-scanout-primary-plane-missing crtc={crtc_handle:?}"
+        );
+        return Ok(Vec::new());
+    };
+    let modifier_map = plane_format_modifiers(card, primary_plane)?;
+
+    let mut candidates = Vec::new();
+    for fourcc in [
+        DrmFourcc::Xbgr8888,
+        DrmFourcc::Abgr8888,
+        DrmFourcc::Xrgb8888,
+        DrmFourcc::Argb8888,
+    ] {
+        let Some(modifiers) = modifier_map.get(&fourcc) else {
+            continue;
+        };
+        if modifiers.is_empty() {
+            continue;
+        }
+        candidates.push(ScanoutFormatCandidate {
+            fourcc,
+            modifiers: modifiers.clone(),
+        });
+    }
+
+    if candidates.is_empty() {
+        let supported_formats = modifier_map.keys().copied().collect::<Vec<_>>();
+        tracing::warn!(
+            "[shadow-guest-compositor] kms-scanout-candidates-empty plane={primary_plane:?} formats={supported_formats:?}"
+        );
+    } else {
+        tracing::info!(
+            "[shadow-guest-compositor] kms-scanout-candidates {:?}",
+            candidates
+        );
+    }
+
+    Ok(candidates)
+}
+
+fn find_primary_plane(
+    card: &Card,
+    res_handles: &drm::control::ResourceHandles,
+    crtc_handle: crtc::Handle,
+) -> Result<Option<plane::Handle>> {
+    let plane_handles = card.plane_handles().context("failed to list DRM planes")?;
+    let mut fallback = None;
+
+    for handle in plane_handles {
+        let info = card
+            .get_plane(handle)
+            .with_context(|| format!("failed to query plane {handle:?}"))?;
+        if !res_handles
+            .filter_crtcs(info.possible_crtcs())
+            .contains(&crtc_handle)
+        {
+            continue;
+        }
+        if fallback.is_none() {
+            fallback = Some(handle);
+        }
+
+        let properties = match card.get_properties(handle) {
+            Ok(properties) => properties,
+            Err(_) => continue,
+        };
+        for (&property_handle, &raw_value) in properties.iter() {
+            let property = match card.get_property(property_handle) {
+                Ok(property) => property,
+                Err(_) => continue,
+            };
+            if property.name().to_bytes() == b"type"
+                && raw_value == (drm::control::PlaneType::Primary as u64)
+            {
+                return Ok(Some(handle));
+            }
+        }
+    }
+
+    Ok(fallback)
+}
+
+fn plane_format_modifiers(
+    card: &Card,
+    plane_handle: plane::Handle,
+) -> Result<HashMap<DrmFourcc, Vec<DrmModifier>>> {
+    let plane_info = card
+        .get_plane(plane_handle)
+        .with_context(|| format!("failed to query plane {plane_handle:?}"))?;
+    let mut modifier_map = HashMap::<DrmFourcc, Vec<DrmModifier>>::new();
+    for raw_format in plane_info.formats() {
+        if let Ok(fourcc) = DrmFourcc::try_from(*raw_format) {
+            modifier_map
+                .entry(fourcc)
+                .or_insert_with(|| vec![DrmModifier::Linear]);
+        }
+    }
+
+    let properties = card
+        .get_properties(plane_handle)
+        .with_context(|| format!("failed to fetch plane properties for {plane_handle:?}"))?;
+    let in_formats_blob = properties
+        .iter()
+        .find_map(|(&property_handle, &raw_value)| {
+            let property = card.get_property(property_handle).ok()?;
+            (property.name().to_bytes() == b"IN_FORMATS").then_some(raw_value)
+        });
+    let Some(blob_id) = in_formats_blob else {
+        return Ok(modifier_map);
+    };
+
+    let blob = card
+        .get_property_blob(blob_id)
+        .with_context(|| format!("failed to fetch IN_FORMATS blob {blob_id}"))?;
+    for (fourcc, modifiers) in parse_format_modifier_blob(&blob)? {
+        modifier_map.insert(fourcc, modifiers);
+    }
+    Ok(modifier_map)
+}
+
+fn parse_format_modifier_blob(blob: &[u8]) -> Result<HashMap<DrmFourcc, Vec<DrmModifier>>> {
+    let header = read_pod::<drm_sys::drm_format_modifier_blob>(blob, 0)
+        .context("invalid drm_format_modifier_blob header")?;
+    let formats = read_pod_slice::<u32>(
+        blob,
+        usize::try_from(header.formats_offset).context("formats_offset overflowed")?,
+        usize::try_from(header.count_formats).context("count_formats overflowed")?,
+    )
+    .context("invalid drm format list")?;
+    let modifiers = read_pod_slice::<drm_sys::drm_format_modifier>(
+        blob,
+        usize::try_from(header.modifiers_offset).context("modifiers_offset overflowed")?,
+        usize::try_from(header.count_modifiers).context("count_modifiers overflowed")?,
+    )
+    .context("invalid drm modifier list")?;
+
+    let mut entries = HashMap::<DrmFourcc, Vec<DrmModifier>>::new();
+    for modifier in modifiers {
+        for bit in 0..64_u32 {
+            if modifier.formats & (1_u64 << bit) == 0 {
+                continue;
+            }
+            let format_index = usize::try_from(modifier.offset)
+                .context("modifier offset overflowed")?
+                + bit as usize;
+            let Some(raw_format) = formats.get(format_index).copied() else {
+                continue;
+            };
+            let Ok(fourcc) = DrmFourcc::try_from(raw_format) else {
+                continue;
+            };
+            let modifiers = entries.entry(fourcc).or_default();
+            let modifier = DrmModifier::from(modifier.modifier);
+            if !modifiers.contains(&modifier) {
+                modifiers.push(modifier);
+            }
+        }
+    }
+    Ok(entries)
+}
+
+fn read_pod<T: Copy>(bytes: &[u8], offset: usize) -> Result<T> {
+    let size = std::mem::size_of::<T>();
+    let end = offset.checked_add(size).context("blob offset overflowed")?;
+    let slice = bytes
+        .get(offset..end)
+        .ok_or_else(|| anyhow!("blob slice out of bounds"))?;
+    Ok(unsafe { std::ptr::read_unaligned(slice.as_ptr().cast::<T>()) })
+}
+
+fn read_pod_slice<T: Copy>(bytes: &[u8], offset: usize, count: usize) -> Result<Vec<T>> {
+    let item_size = std::mem::size_of::<T>();
+    let byte_len = item_size
+        .checked_mul(count)
+        .context("blob byte length overflowed")?;
+    let end = offset
+        .checked_add(byte_len)
+        .context("blob slice end overflowed")?;
+    let slice = bytes
+        .get(offset..end)
+        .ok_or_else(|| anyhow!("blob slice out of bounds"))?;
+    Ok(slice
+        .chunks_exact(item_size)
+        .map(|chunk| unsafe { std::ptr::read_unaligned(chunk.as_ptr().cast::<T>()) })
+        .collect())
 }
 
 fn open_card(path: &str) -> Result<Card> {

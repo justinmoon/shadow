@@ -78,6 +78,7 @@ scripts/pixel/pixel_shell_drm.sh	pixel	Private rooted-Pixel shell session runner
 scripts/pixel/pixel_shell_drm_hold.sh	pixel	Private rooted-Pixel hold-mode shell session runner behind sc run.
 scripts/ci/pixel_shell_keyboard_smoke.sh	ci	Rooted-Pixel shell keyboard smoke helper.
 scripts/ci/pixel_shell_timeline_smoke.sh	ci	Rooted-Pixel shell timeline smoke used by pixel-ci.
+scripts/debug/pixel_shell_scroll_latency_probe.sh	debug	Rooted-Pixel shell scroll benchmark exposed as shadowctl debug scroll-latency and summarized by pixel_runtime_summary.py.
 scripts/debug/pixel_touch_latency_probe.sh	debug	Pixel latency probe exposed as shadowctl debug latency and documented in docs/latency.md.
 scripts/pixel/pixel_verify.sh	pixel	Private rooted-Pixel session verification helper.
 scripts/pre_commit.sh	public	Fast local gate.

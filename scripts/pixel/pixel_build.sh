@@ -105,23 +105,11 @@ fi
 if [[ "$(uname -s)" == "Linux" ]]; then
   build_one shadow-compositor-guest-device shadow-compositor-guest
 else
-  remote_repo=""
-  cleanup_remote_repo() {
-    [[ -n "$remote_repo" ]] || return 0
-    remote_shell "rm -rf $(printf '%q' "$remote_repo")" >/dev/null 2>&1 || true
-  }
-  trap cleanup_remote_repo EXIT
-
   for attr in shadow-compositor-guest-device; do
     binary_name="${attr%-device}"
-    if copy_linux_package_binary "$attr" "$binary_name"; then
-      continue
+    if ! copy_linux_package_binary "$attr" "$binary_name"; then
+      echo "pixel_build: failed to build $binary_name via flake package; repo-sync fallback is disabled" >&2
+      exit 1
     fi
-
-    echo "pixel_build: falling back to remote guest build repo sync for $binary_name" >&2
-    if [[ -z "$remote_repo" ]]; then
-      remote_repo="$(sync_remote_guest_build_tree)"
-    fi
-    copy_remote_binary "$remote_repo" "$attr" "$binary_name"
   done
 fi

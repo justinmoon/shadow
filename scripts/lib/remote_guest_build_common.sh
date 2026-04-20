@@ -28,6 +28,9 @@ sync_remote_guest_build_tree() {
     --exclude=artifacts \
     --exclude=build \
     --exclude=out \
+    --exclude=target \
+    --exclude='*/target' \
+    --exclude='*/target/*' \
     --exclude=ui/target \
     --exclude=worktrees \
     -cf - \

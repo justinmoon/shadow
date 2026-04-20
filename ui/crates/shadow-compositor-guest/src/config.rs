@@ -46,6 +46,8 @@ pub(crate) struct GuestStartupConfig {
     pub(crate) exit_on_first_dma_buffer: bool,
     pub(crate) boot_splash_drm: bool,
     pub(crate) drm_enabled: bool,
+    pub(crate) gpu_shell: bool,
+    pub(crate) strict_gpu_resident: bool,
     pub(crate) dmabuf_global_enabled: bool,
     pub(crate) dmabuf_feedback_enabled: bool,
     pub(crate) dmabuf_format_profile: DmabufFormatProfile,
@@ -107,6 +109,8 @@ impl GuestStartupConfig {
             exit_on_first_dma_buffer: env_flag("SHADOW_GUEST_COMPOSITOR_EXIT_ON_FIRST_DMA_BUFFER"),
             boot_splash_drm: env_flag("SHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM"),
             drm_enabled: env_flag("SHADOW_GUEST_COMPOSITOR_ENABLE_DRM"),
+            gpu_shell: env_flag("SHADOW_GUEST_COMPOSITOR_GPU_SHELL"),
+            strict_gpu_resident: env_flag("SHADOW_GUEST_COMPOSITOR_STRICT_GPU_RESIDENT"),
             dmabuf_global_enabled: !env_flag("SHADOW_GUEST_COMPOSITOR_DISABLE_DMABUF_GLOBAL"),
             dmabuf_feedback_enabled: env_flag("SHADOW_GUEST_COMPOSITOR_DMABUF_FEEDBACK"),
             dmabuf_format_profile: parse_dmabuf_format_profile()?,
@@ -289,6 +293,7 @@ mod tests {
             ("SHADOW_GUEST_COMPOSITOR_DISABLE_DMABUF_GLOBAL", None),
             ("SHADOW_GUEST_COMPOSITOR_DMABUF_FEEDBACK", None),
             ("SHADOW_GUEST_COMPOSITOR_DMABUF_FORMAT_PROFILE", None),
+            ("SHADOW_GUEST_COMPOSITOR_STRICT_GPU_RESIDENT", None),
             ("SHADOW_GUEST_FRAME_ARTIFACTS", None),
             ("SHADOW_GUEST_FRAME_WRITE_EVERY_FRAME", None),
             ("SHADOW_GUEST_FRAME_SNAPSHOT_CACHE", None),
@@ -388,6 +393,7 @@ mod tests {
             assert!(config.dmabuf_global_enabled);
             assert!(!config.dmabuf_feedback_enabled);
             assert_eq!(config.dmabuf_format_profile, DmabufFormatProfile::Default);
+            assert!(!config.strict_gpu_resident);
             assert!(!config.frame_snapshot_cache_enabled);
             assert!(!config.frame_checksum_enabled);
             assert!(!config.frame_artifacts_enabled);
@@ -430,6 +436,17 @@ mod tests {
                     config.dmabuf_format_profile,
                     DmabufFormatProfile::LinearOnly
                 );
+            },
+        );
+    }
+
+    #[test]
+    fn config_can_enable_strict_gpu_resident() {
+        with_env(
+            vec![("SHADOW_GUEST_COMPOSITOR_STRICT_GPU_RESIDENT", Some("1"))],
+            || {
+                let config = GuestStartupConfig::from_env().expect("strict-gpu-resident config");
+                assert!(config.strict_gpu_resident);
             },
         );
     }

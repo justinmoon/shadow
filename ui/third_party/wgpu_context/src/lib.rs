@@ -3,7 +3,7 @@
 
 //! Simple helpers for managing wgpu state and surfaces.
 
-use std::env;
+use std::{env, ffi::CStr};
 
 use wgpu::{
     Adapter, Device, Features, Instance, Limits, MemoryHints, Queue, Surface, SurfaceTarget,
@@ -39,6 +39,7 @@ pub struct WGPUContext {
     // Config
     extra_features: Option<Features>,
     override_limits: Option<Limits>,
+    extra_vulkan_device_extensions: Vec<&'static CStr>,
 }
 
 const SHADOW_WGPU_MEMORY_HINT_ENV: &str = "SHADOW_WGPU_MEMORY_HINT";
@@ -58,6 +59,18 @@ impl WGPUContext {
         extra_features: Option<Features>,
         override_limits: Option<Limits>,
     ) -> Self {
+        Self::with_features_limits_and_vulkan_extensions(
+            extra_features,
+            override_limits,
+            Vec::new(),
+        )
+    }
+
+    pub fn with_features_limits_and_vulkan_extensions(
+        extra_features: Option<Features>,
+        override_limits: Option<Limits>,
+        extra_vulkan_device_extensions: Vec<&'static CStr>,
+    ) -> Self {
         Self {
             instance: Instance::new(&wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::from_env().unwrap_or_default(),
@@ -68,6 +81,7 @@ impl WGPUContext {
             device_pool: Vec::new(),
             extra_features,
             override_limits,
+            extra_vulkan_device_extensions,
         }
     }
 
@@ -210,11 +224,70 @@ impl WGPUContext {
             label: None,
             required_features,
             required_limits,
-            memory_hints,
+            memory_hints: memory_hints.clone(),
             trace: wgpu::Trace::default(),
             experimental_features: wgpu::ExperimentalFeatures::default(),
         };
-        let (device, queue) = adapter.request_device(&descripter).await?;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let use_custom_vulkan_device = !self.extra_vulkan_device_extensions.is_empty()
+            && matches!(info.backend, wgpu::Backend::Vulkan);
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let use_custom_vulkan_device = false;
+
+        let (device, queue) = if use_custom_vulkan_device {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+            let extra_vulkan_device_extensions = self.extra_vulkan_device_extensions.clone();
+            unsafe {
+                let Some(hal_adapter) = adapter.as_hal::<wgpu::hal::vulkan::Api>() else {
+                    return Err(WgpuContextError::NoCompatibleDevice);
+                };
+                let unsupported_extensions = extra_vulkan_device_extensions
+                    .iter()
+                    .copied()
+                    .filter(|extension| {
+                        !hal_adapter
+                            .physical_device_capabilities()
+                            .supports_extension(extension)
+                    })
+                    .collect::<Vec<_>>();
+                if !unsupported_extensions.is_empty() {
+                    eprintln!(
+                        "[shadow-wgpu-context] unsupported-vulkan-device-extensions backend={:?} extensions={unsupported_extensions:?}",
+                        info.backend
+                    );
+                    return Err(WgpuContextError::NoCompatibleDevice);
+                }
+                let open_device = hal_adapter.open_with_callback(
+                    required_features,
+                    &memory_hints,
+                    Some(Box::new(move |mut args| {
+                        for extension in extra_vulkan_device_extensions {
+                            if !args.extensions.contains(&extension) {
+                                args.extensions.push(extension);
+                            }
+                        }
+                    })),
+                )
+                .map_err(|error| {
+                    eprintln!(
+                        "[shadow-wgpu-context] open-vulkan-device-error error={error:#}"
+                    );
+                    WgpuContextError::NoCompatibleDevice
+                })?;
+                adapter.create_device_from_hal::<wgpu::hal::vulkan::Api>(
+                    open_device,
+                    &descripter,
+                )?
+            }
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            {
+                unreachable!("custom Vulkan device path is only compiled on Linux/Android");
+            }
+        } else {
+            adapter.request_device(&descripter).await?
+        };
 
         // Create the device handle and store in the pool
         let device_handle = DeviceHandle {

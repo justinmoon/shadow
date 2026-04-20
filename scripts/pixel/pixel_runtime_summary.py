@@ -88,6 +88,12 @@ TOUCH_PRESENT_RE = re.compile(
 TOUCH_REPLACED_RE = re.compile(
     r"\[shadow-guest-compositor\] touch-latency-replaced prev_seq=(\d+) prev_route=(\S+) seq=(\d+) route=(\S+)"
 )
+SCROLL_FRAME_BUILD_RE = re.compile(
+    r"\[shadow-guest-compositor\] scroll-frame-build seq=(\d+) route=(\S+) phase=(\S+) frame_marker=(\S+) input_age_us=(\d+) dispatch_age_us=(\d+) coalesced_moves=(\d+)"
+)
+SCROLL_FRAME_PRESENT_RE = re.compile(
+    r"\[shadow-guest-compositor\] scroll-frame-present seq=(\d+) route=(\S+) phase=(\S+) frame_marker=(\S+) input_wall_ms=(\d+) input_age_us=(\d+) render_to_present_us=(\d+) input_to_present_us=(\d+) coalesced_moves=(\d+)"
+)
 TOUCH_SIGNAL_WRITE_RE = re.compile(
     r"\[shadow-guest-compositor\] touch-signal-write counter=(\d+) seq=(\d+) wall_ms=(\d+)"
 )
@@ -140,6 +146,20 @@ def summarize_samples(values: list[float]) -> dict:
 
 def summarize_micros(values: list[int]) -> dict:
     return summarize_samples([value / 1000.0 for value in values])
+
+
+def summarize_integers(values: list[int]) -> dict:
+    if not values:
+        return {"count": 0}
+    ordered = sorted(values)
+    return {
+        "count": len(ordered),
+        "min": ordered[0],
+        "avg": round(sum(ordered) / len(ordered), 3),
+        "p50": round(percentile(ordered, 0.50) or 0.0, 3),
+        "p95": round(percentile(ordered, 0.95) or 0.0, 3),
+        "max": ordered[-1],
+    }
 
 
 def compute_first_visible_ms(
@@ -302,6 +322,8 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
     touch_commits: list[dict] = []
     touch_presents: list[dict] = []
     touch_replaced_count = 0
+    scroll_frame_builds: list[dict] = []
+    scroll_frame_presents: list[dict] = []
     touch_signal_writes: dict[str, int] = {}
     touch_signal_detect_delays_ms: list[float] = []
     runtime_session_ms: dict[str, list[float]] = {}
@@ -394,6 +416,38 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
 
         if TOUCH_REPLACED_RE.search(line):
             touch_replaced_count += 1
+            continue
+
+        scroll_frame_build_match = SCROLL_FRAME_BUILD_RE.search(line)
+        if scroll_frame_build_match:
+            scroll_frame_builds.append(
+                {
+                    "seq": int(scroll_frame_build_match.group(1)),
+                    "route": scroll_frame_build_match.group(2),
+                    "phase": scroll_frame_build_match.group(3),
+                    "frame_marker": scroll_frame_build_match.group(4),
+                    "input_age_us": int(scroll_frame_build_match.group(5)),
+                    "dispatch_age_us": int(scroll_frame_build_match.group(6)),
+                    "coalesced_moves": int(scroll_frame_build_match.group(7)),
+                }
+            )
+            continue
+
+        scroll_frame_present_match = SCROLL_FRAME_PRESENT_RE.search(line)
+        if scroll_frame_present_match:
+            scroll_frame_presents.append(
+                {
+                    "seq": int(scroll_frame_present_match.group(1)),
+                    "route": scroll_frame_present_match.group(2),
+                    "phase": scroll_frame_present_match.group(3),
+                    "frame_marker": scroll_frame_present_match.group(4),
+                    "input_wall_ms": int(scroll_frame_present_match.group(5)),
+                    "input_age_us": int(scroll_frame_present_match.group(6)),
+                    "render_to_present_us": int(scroll_frame_present_match.group(7)),
+                    "input_to_present_us": int(scroll_frame_present_match.group(8)),
+                    "coalesced_moves": int(scroll_frame_present_match.group(9)),
+                }
+            )
             continue
 
         touch_signal_write_match = TOUCH_SIGNAL_WRITE_RE.search(line)
@@ -680,6 +734,57 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
             "input_to_present": summarize_micros(route_presents),
             "commit_to_present": summarize_micros(route_commit_to_present),
         }
+    scroll_routes = sorted(
+        {
+            sample["route"]
+            for sample in scroll_frame_builds + scroll_frame_presents
+            if sample.get("route")
+        }
+    )
+    scroll_frame_latency = {
+        "input_age_at_render_start": summarize_micros(
+            [sample["input_age_us"] for sample in scroll_frame_builds]
+        ),
+        "dispatch_age_at_render_start": summarize_micros(
+            [sample["dispatch_age_us"] for sample in scroll_frame_builds]
+        ),
+        "input_age_at_present": summarize_micros(
+            [sample["input_age_us"] for sample in scroll_frame_presents]
+        ),
+        "render_to_present": summarize_micros(
+            [sample["render_to_present_us"] for sample in scroll_frame_presents]
+        ),
+        "input_to_present": summarize_micros(
+            [sample["input_to_present_us"] for sample in scroll_frame_presents]
+        ),
+        "coalesced_move_count": summarize_integers(
+            [sample["coalesced_moves"] for sample in scroll_frame_presents]
+        ),
+        "routes": {},
+    }
+    for route in scroll_routes:
+        route_builds = [sample for sample in scroll_frame_builds if sample["route"] == route]
+        route_presents = [sample for sample in scroll_frame_presents if sample["route"] == route]
+        scroll_frame_latency["routes"][route] = {
+            "input_age_at_render_start": summarize_micros(
+                [sample["input_age_us"] for sample in route_builds]
+            ),
+            "dispatch_age_at_render_start": summarize_micros(
+                [sample["dispatch_age_us"] for sample in route_builds]
+            ),
+            "input_age_at_present": summarize_micros(
+                [sample["input_age_us"] for sample in route_presents]
+            ),
+            "render_to_present": summarize_micros(
+                [sample["render_to_present_us"] for sample in route_presents]
+            ),
+            "input_to_present": summarize_micros(
+                [sample["input_to_present_us"] for sample in route_presents]
+            ),
+            "coalesced_move_count": summarize_integers(
+                [sample["coalesced_moves"] for sample in route_presents]
+            ),
+        }
     touch_signal_latency = summarize_samples(touch_signal_detect_delays_ms)
     touch_signal_latency["count"] = len(touch_signal_detect_delays_ms)
     compositor_frame_latency = {
@@ -775,6 +880,7 @@ def load_summary(session_output: Path, renderer: str | None) -> dict:
         "click_source": click_source,
         "updated_frame_checksum": updated_frame_checksum,
         "touch_latency": touch_latency,
+        "scroll_frame_latency": scroll_frame_latency,
         "touch_signal_latency": touch_signal_latency,
         "compositor_frame_latency": compositor_frame_latency,
         "runtime_session_latency": runtime_session_latency,

@@ -15,9 +15,13 @@ host_bundle_dir="$(pixel_shell_system_bundle_artifact_dir)"
 host_bundle_out_link="$(pixel_dir)/shadow-system-shell-aarch64-linux-gnu-result"
 host_binary_name="shadow-system"
 host_launcher_artifact="$host_bundle_dir/run-shadow-system"
+compositor_out_link="$(pixel_dir)/shadow-compositor-guest-aarch64-linux-gnu-result"
+compositor_binary_name="shadow-compositor-guest"
+compositor_launcher_artifact="$host_bundle_dir/run-shadow-compositor-guest"
 host_bundle_manifest_path="$host_bundle_dir/.bundle-manifest.json"
 runtime_manifest_path="$host_bundle_dir/.runtime-bundle-manifest.json"
 package_ref="$repo#packages.${linux_system}.shadow-system"
+compositor_package_ref="$repo#packages.${linux_system}.shadow-compositor-guest-aarch64-linux-gnu"
 extra_bundle_binary_name="shadow-blitz-demo"
 extra_bundle_dir="$(pixel_artifact_path shadow-blitz-demo-gpu-gnu)"
 extra_bundle_package_ref="$repo#packages.${linux_system}.shadow-blitz-demo-aarch64-linux-gnu-gpu"
@@ -37,12 +41,23 @@ declare -a supported_runtime_app_ids=()
 selected_runtime_app_ids=()
 
 mapfile -t shell_runtime_source_inputs < <(
+  printf '%s\n' "$repo/ui/Cargo.toml"
+  printf '%s\n' "$repo/ui/Cargo.lock"
   printf '%s\n' "$repo/rust/Cargo.toml"
   printf '%s\n' "$repo/rust/Cargo.lock"
+  runtime_bundle_cargo_package_source_inputs "$repo/ui/apps/shadow-blitz-demo"
+  runtime_bundle_cargo_package_source_inputs "$repo/ui/crates/shadow-compositor-common"
+  runtime_bundle_cargo_package_source_inputs "$repo/ui/crates/shadow-compositor-guest"
+  runtime_bundle_cargo_package_source_inputs "$repo/ui/crates/shadow-ui-core"
+  runtime_bundle_cargo_package_source_inputs "$repo/ui/crates/shadow-ui-software"
+  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-camera-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-sdk"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-system"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-runtime-protocol"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-linux-audio-spike"
+  printf '%s\n' "$repo/ui/third_party/anyrender_vello"
+  printf '%s\n' "$repo/ui/third_party/wgpu_context"
+  printf '%s\n' "$repo/ui/third_party/winit"
 )
 
 podcast_episode_ids="${SHADOW_PODCAST_PLAYER_EPISODE_IDS:-00}"
@@ -246,6 +261,7 @@ host_bundle_source_fingerprint="$(
     "__pixel_shell_enable_linux_audio__${audio_enabled}" \
     "__pixel_shell_audio_package_ref__${audio_package_ref}" \
     "__pixel_shell_podcast_config__${podcast_config_json:-__podcast_unselected__}" \
+    "__pixel_shell_compositor_package_ref__${compositor_package_ref}" \
     "__extra_bundle_dir__${extra_bundle_dir:-}" \
     "__extra_bundle_package_ref__${extra_bundle_package_ref:-}" \
     "__extra_bundle_fingerprint__${extra_bundle_fingerprint}"
@@ -262,7 +278,9 @@ done
 if [[ "${PIXEL_FORCE_LINUX_BUNDLE_REBUILD-}" != 1 ]] \
   && [[ -d "$host_bundle_dir" ]] \
   && [[ -x "$host_launcher_artifact" ]] \
+  && [[ -x "$compositor_launcher_artifact" ]] \
   && [[ -f "$host_bundle_dir/$host_binary_name" ]] \
+  && [[ -f "$host_bundle_dir/$compositor_binary_name" ]] \
   && [[ "$host_bundle_apps_present" == "1" ]] \
   && [[ -d "$host_bundle_dir/share/X11/xkb" ]] \
   && [[ ! -L "$host_bundle_dir/share/X11/xkb" ]] \
@@ -280,6 +298,10 @@ if [[ "$host_bundle_cache_hit" == "1" ]]; then
   printf 'Shell system bundle cacheHit -> %s\n' "$host_bundle_dir"
 else
   stage_system_linux_bundle "$package_ref" "$host_bundle_out_link" "$host_bundle_dir" "$host_binary_name"
+  pixel_retry_nix_build nix build --accept-flake-config "$compositor_package_ref" --out-link "$compositor_out_link"
+  cp "$compositor_out_link/bin/$compositor_binary_name" "$host_bundle_dir/$compositor_binary_name"
+  chmod 0755 "$host_bundle_dir/$compositor_binary_name"
+  append_runtime_closure_from_package_ref "$compositor_package_ref"
   if [[ "$audio_enabled" == "1" ]]; then
     pixel_retry_nix_build nix build --accept-flake-config "$audio_package_ref" --out-link "$audio_out_link"
     cp "$audio_out_link/bin/$audio_binary_name" "$host_bundle_dir/$audio_binary_name"
@@ -348,6 +370,24 @@ exec "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$
 EOF
   fi
   chmod 0755 "$host_launcher_artifact"
+
+  cat >"$compositor_launcher_artifact" <<EOF
+#!/system/bin/sh
+DIR=\$(cd "\$(dirname "\$0")" && pwd)
+export HOME="\${HOME:-\$DIR/home}"
+export XDG_CACHE_HOME="\${XDG_CACHE_HOME:-\$HOME/.cache}"
+export XDG_CONFIG_HOME="\${XDG_CONFIG_HOME:-\$HOME/.config}"
+export MESA_SHADER_CACHE_DIR="\${MESA_SHADER_CACHE_DIR:-\$XDG_CACHE_HOME/mesa}"
+export LD_LIBRARY_PATH="\$DIR/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+export LIBGL_DRIVERS_PATH="\$DIR/lib/dri\${LIBGL_DRIVERS_PATH:+:\$LIBGL_DRIVERS_PATH}"
+export __EGL_VENDOR_LIBRARY_DIRS="\${__EGL_VENDOR_LIBRARY_DIRS:-\$DIR/share/glvnd/egl_vendor.d}"
+export VK_ICD_FILENAMES="\${VK_ICD_FILENAMES:-\$DIR/share/vulkan/icd.d/freedreno_icd.aarch64.json}"
+export XKB_CONFIG_EXTRA_PATH="\${XKB_CONFIG_EXTRA_PATH:-\$DIR/etc/xkb}"
+export XKB_CONFIG_ROOT="\${XKB_CONFIG_ROOT:-\$DIR/share/X11/xkb}"
+mkdir -p "\$HOME" "\$XDG_CACHE_HOME" "\$XDG_CONFIG_HOME" "\$MESA_SHADER_CACHE_DIR"
+exec "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$DIR/$compositor_binary_name" "\$@"
+EOF
+  chmod 0755 "$compositor_launcher_artifact"
 
   write_runtime_bundle_manifest \
     "$host_bundle_manifest_path" \

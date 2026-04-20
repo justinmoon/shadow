@@ -2,7 +2,8 @@ use std::{env, path::PathBuf, sync::Arc, time::Instant};
 
 use blitz_dom::{DocumentConfig, FontContext};
 use blitz_html::{HtmlDocument, HtmlProvider};
-use blitz_shell::DataUriNetProvider;
+use blitz_traits::net::{Bytes, NetHandler, NetProvider, NetWaker, Request};
+use data_url::DataUrl;
 
 pub const FRAME_HTML: &str = r#"
 <!doctype html>
@@ -161,6 +162,36 @@ pub fn template_document() -> HtmlDocument {
         start.elapsed().as_millis()
     );
     document
+}
+
+struct DataUriNetProvider {
+    #[allow(unused)]
+    waker: Option<Arc<dyn NetWaker>>,
+}
+
+impl DataUriNetProvider {
+    fn new(waker: Option<Arc<dyn NetWaker>>) -> Self {
+        Self { waker }
+    }
+
+    fn shared(waker: Option<Arc<dyn NetWaker>>) -> Arc<dyn NetProvider> {
+        Arc::new(Self::new(waker))
+    }
+}
+
+impl NetProvider for DataUriNetProvider {
+    fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
+        if request.url.scheme() != "data" {
+            return;
+        }
+        let Ok(data_url) = DataUrl::process(request.url.as_str()) else {
+            return;
+        };
+        let Ok(decoded) = data_url.decode_to_vec() else {
+            return;
+        };
+        handler.bytes(request.url.to_string(), Bytes::from(decoded.0));
+    }
 }
 
 fn platform_font_context() -> Option<FontContext> {

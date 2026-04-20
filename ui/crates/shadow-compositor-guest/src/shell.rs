@@ -1,21 +1,35 @@
+use anyhow::Result;
+use shadow_blitz_demo::hosted_runtime::HostedRuntimeApp;
 use shadow_ui_core::scene::{
     RoundedRect, Scene, TextBlock, APP_VIEWPORT_HEIGHT, APP_VIEWPORT_WIDTH, APP_VIEWPORT_X,
     APP_VIEWPORT_Y, HEIGHT, WIDTH,
 };
 use shadow_ui_software::SoftwareRenderer;
+use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::reexports::wayland_server::protocol::wl_shm;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::Once;
 use std::time::Duration;
+use std::time::Instant;
+
+use crate::{kms::ScanoutFormatCandidate, shell_gpu::GpuShellRenderer};
 
 pub struct GuestShellSurface {
     width: u32,
     height: u32,
-    renderer: SoftwareRenderer,
+    renderer: ShellRenderer,
+    strict_gpu_resident: bool,
     base_pixels: Vec<u8>,
     pixels: Vec<u8>,
+    presentable_dmabuf: Option<Dmabuf>,
     last_scene_key: Option<u64>,
     last_frame_had_app: bool,
+}
+
+enum ShellRenderer {
+    Software(SoftwareRenderer),
+    Gpu(GpuShellRenderer),
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -36,13 +50,19 @@ pub struct AppFrame<'a> {
 }
 
 impl GuestShellSurface {
-    pub fn new(width: u32, height: u32) -> Self {
+    pub fn new(width: u32, height: u32, gpu_enabled: bool, strict_gpu_resident: bool) -> Self {
         Self {
             width,
             height,
-            renderer: SoftwareRenderer::new(width, height),
+            renderer: if gpu_enabled {
+                ShellRenderer::Gpu(GpuShellRenderer::new(width, height, strict_gpu_resident))
+            } else {
+                ShellRenderer::Software(SoftwareRenderer::new(width, height))
+            },
+            strict_gpu_resident,
             base_pixels: vec![0; (width * height * 4) as usize],
             pixels: vec![0; (width * height * 4) as usize],
+            presentable_dmabuf: None,
             last_scene_key: None,
             last_frame_had_app: false,
         }
@@ -60,18 +80,30 @@ impl GuestShellSurface {
             .resize((width as usize) * (height as usize) * 4, 0);
         self.pixels
             .resize((width as usize) * (height as usize) * 4, 0);
+        self.presentable_dmabuf = None;
         self.last_scene_key = None;
         self.last_frame_had_app = false;
     }
 
     #[cfg(test)]
     pub fn render_scene(&mut self, scene: &Scene) -> &[u8] {
-        self.render_scene_with_app_frame(scene, None);
+        self.render_scene_with_app_frame(scene, None).unwrap();
         &self.pixels
     }
 
     pub fn take_pixels(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.pixels)
+    }
+
+    pub fn take_presentable_dmabuf(&mut self) -> Option<Dmabuf> {
+        self.presentable_dmabuf.take()
+    }
+
+    pub fn configure_gpu_scanout(&mut self, candidates: &[ScanoutFormatCandidate]) -> Result<()> {
+        if let ShellRenderer::Gpu(renderer) = &mut self.renderer {
+            renderer.configure_scanout(candidates)?;
+        }
+        Ok(())
     }
 
     pub fn restore_pixels(&mut self, mut pixels: Vec<u8>) {
@@ -85,13 +117,26 @@ impl GuestShellSurface {
         &mut self,
         scene: &Scene,
         app_frame: Option<AppFrame<'_>>,
-    ) -> ShellRenderStats {
+    ) -> Result<ShellRenderStats> {
         let mut stats = ShellRenderStats::default();
+        self.presentable_dmabuf = None;
+        if app_frame.is_none() {
+            if let ShellRenderer::Gpu(renderer) = &mut self.renderer {
+                if renderer.has_scanout() {
+                    let scene_render_start = std::time::Instant::now();
+                    let scaled_scene = scale_scene(scene, self.width, self.height);
+                    self.presentable_dmabuf = Some(renderer.render_scene_to_dmabuf(&scaled_scene)?);
+                    stats.scene_render = scene_render_start.elapsed();
+                    self.last_scene_key = None;
+                    self.last_frame_had_app = false;
+                    return Ok(stats);
+                }
+            }
+        }
         let scene_key = scene_cache_key(scene, self.width, self.height);
         let scene_changed = self.last_scene_key != Some(scene_key);
         if scene_changed {
             let scene_render_start = std::time::Instant::now();
-            self.renderer.resize(self.width, self.height);
             let scaled_scene = scale_scene(scene, self.width, self.height);
             let scene_pixels = self.renderer.render(&scaled_scene);
             self.base_pixels.copy_from_slice(scene_pixels);
@@ -116,6 +161,7 @@ impl GuestShellSurface {
         stats.base_copy = base_copy_start.elapsed();
 
         if let Some(app_frame) = app_frame {
+            note_cpu_app_composite(self.strict_gpu_resident);
             let app_composite_start = std::time::Instant::now();
             composite_app_frame(&mut self.pixels, self.width, self.height, app_frame);
             stats.app_composite = app_composite_start.elapsed();
@@ -123,7 +169,87 @@ impl GuestShellSurface {
 
         self.last_frame_had_app = has_app;
 
-        stats
+        Ok(stats)
+    }
+
+    pub fn render_scene_with_hosted_app(
+        &mut self,
+        scene: &Scene,
+        hosted_app: &mut HostedRuntimeApp,
+    ) -> Result<ShellRenderStats> {
+        let mut stats = ShellRenderStats::default();
+        let Some((viewport_x, viewport_y, viewport_width, viewport_height)) =
+            viewport_bounds(self.width, self.height)
+        else {
+            return self.render_scene_with_app_frame(scene, None);
+        };
+
+        let ShellRenderer::Gpu(renderer) = &mut self.renderer else {
+            return self.render_scene_with_app_frame(scene, None);
+        };
+
+        let scene_render_start = Instant::now();
+        let scale_started = Instant::now();
+        let scaled_scene = scale_scene(scene, self.width, self.height);
+        let scale_elapsed = scale_started.elapsed();
+        let render_started = Instant::now();
+        self.presentable_dmabuf = Some(renderer.render_with_hosted_app(
+            &scaled_scene,
+            hosted_app,
+            viewport_x,
+            viewport_y,
+            viewport_width,
+            viewport_height,
+        )?);
+        let render_elapsed = render_started.elapsed();
+        stats.scene_render = scene_render_start.elapsed();
+        if gpu_profile_enabled() {
+            tracing::info!(
+                "[shadow-guest-compositor] gpu-profile-shell scale_scene_ms={} hosted_render_ms={} render={}x{} viewport={}x{}",
+                scale_elapsed.as_millis(),
+                render_elapsed.as_millis(),
+                self.width,
+                self.height,
+                viewport_width,
+                viewport_height
+            );
+        }
+        self.last_scene_key = None;
+        self.last_frame_had_app = true;
+        Ok(stats)
+    }
+}
+
+fn gpu_profile_enabled() -> bool {
+    std::env::var_os("SHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE").is_some()
+}
+
+fn note_cpu_app_composite(strict_gpu_resident: bool) {
+    static WARNED: Once = Once::new();
+    WARNED.call_once(|| {
+        tracing::warn!(
+            "[shadow-guest-compositor] cpu-crossing shell-app-composite path=GuestShellSurface::composite_app_frame"
+        );
+    });
+    assert!(
+        !strict_gpu_resident,
+        "strict gpu resident mode rejected CPU app composition in GuestShellSurface"
+    );
+}
+
+impl ShellRenderer {
+    fn resize(&mut self, width: u32, height: u32) {
+        match self {
+            Self::Software(renderer) => renderer.resize(width, height),
+            Self::Gpu(renderer) => renderer.resize(width, height),
+        }
+    }
+
+    fn render(&mut self, scene: &Scene) -> &[u8] {
+        match self {
+            Self::Software(renderer) => renderer.render(scene),
+            Self::Gpu(renderer) => renderer.render(scene),
+        }
     }
 }
 
@@ -143,6 +269,12 @@ fn restore_viewport_from_base(
     let stride = target_width as usize * 4;
     let row_bytes = viewport_width as usize * 4;
     let start_x = viewport_x as usize * 4;
+    if viewport_x == 0 && viewport_width == target_width {
+        let range_start = viewport_y as usize * stride;
+        let range_end = range_start + viewport_height as usize * stride;
+        target[range_start..range_end].copy_from_slice(&base[range_start..range_end]);
+        return;
+    }
 
     for row in 0..viewport_height as usize {
         let row_start = (viewport_y as usize + row) * stride + start_x;
@@ -169,6 +301,20 @@ pub fn composite_app_frame(
     let target_stride = target_width as usize * 4;
     let source = app_frame.pixels;
     let opaque_xrgb = matches!(app_frame.format, wl_shm::Format::Xrgb8888);
+
+    if opaque_xrgb
+        && app_frame.width.checked_mul(2) == Some(copy_width)
+        && app_frame.height.checked_mul(2) == Some(copy_height)
+    {
+        composite_opaque_app_frame_2x(
+            target,
+            target_stride,
+            viewport_x as usize,
+            viewport_y as usize,
+            app_frame,
+        );
+        return;
+    }
 
     if opaque_xrgb && app_frame.width == copy_width {
         let row_bytes = copy_width as usize * 4;
@@ -216,6 +362,41 @@ pub fn composite_app_frame(
                 );
             }
         }
+    }
+}
+
+fn composite_opaque_app_frame_2x(
+    target: &mut [u8],
+    target_stride: usize,
+    viewport_x: usize,
+    viewport_y: usize,
+    app_frame: AppFrame<'_>,
+) {
+    let source_stride = app_frame.stride as usize;
+    let source = app_frame.pixels;
+    let expanded_row_bytes = app_frame.width as usize * 8;
+    let target_x = viewport_x * 4;
+
+    for src_row in 0..app_frame.height as usize {
+        let src_start = src_row * source_stride;
+        let src_end = src_start + app_frame.width as usize * 4;
+        let src_pixels = &source[src_start..src_end];
+
+        let dst_row = viewport_y + src_row * 2;
+        let dst1_start = dst_row * target_stride + target_x;
+        let dst1_end = dst1_start + expanded_row_bytes;
+        let (before_dst2, dst2_and_after) = target.split_at_mut(dst1_end);
+        let dst1 = &mut before_dst2[dst1_start..dst1_end];
+
+        let mut dst_offset = 0;
+        for pixel in src_pixels.chunks_exact(4) {
+            dst1[dst_offset..dst_offset + 4].copy_from_slice(pixel);
+            dst1[dst_offset + 4..dst_offset + 8].copy_from_slice(pixel);
+            dst_offset += 8;
+        }
+
+        let dst2 = &mut dst2_and_after[..expanded_row_bytes];
+        dst2.copy_from_slice(dst1);
     }
 }
 
@@ -365,7 +546,7 @@ mod tests {
             rects: Vec::new(),
             texts: Vec::new(),
         };
-        let mut surface = GuestShellSurface::new(2, 2);
+        let mut surface = GuestShellSurface::new(2, 2, false, false);
 
         let pixels = surface.render_scene(&scene);
 
@@ -447,12 +628,16 @@ mod tests {
             rects: Vec::new(),
             texts: Vec::new(),
         };
-        let mut surface = GuestShellSurface::new(2, 2);
+        let mut surface = GuestShellSurface::new(2, 2, false, false);
 
-        let first = surface.render_scene_with_app_frame(&scene, None);
+        let first = surface
+            .render_scene_with_app_frame(&scene, None)
+            .expect("first render succeeds");
         assert!(!first.scene_cache_hit);
 
-        let second = surface.render_scene_with_app_frame(&scene, None);
+        let second = surface
+            .render_scene_with_app_frame(&scene, None)
+            .expect("second render succeeds");
         assert!(second.scene_cache_hit);
     }
 
@@ -463,7 +648,7 @@ mod tests {
             rects: Vec::new(),
             texts: Vec::new(),
         };
-        let mut surface = GuestShellSurface::new(4, 70);
+        let mut surface = GuestShellSurface::new(4, 70, false, false);
         let app_frame = AppFrame {
             width: 2,
             height: 2,
@@ -475,7 +660,9 @@ mod tests {
             ],
         };
 
-        surface.render_scene_with_app_frame(&scene, Some(app_frame));
+        surface
+            .render_scene_with_app_frame(&scene, Some(app_frame))
+            .expect("render with app frame succeeds");
         let (_, viewport_y, _, _) = viewport_bounds(4, 70).expect("scaled viewport");
         let viewport_origin = (viewport_y as usize) * 4 * 4;
         assert_eq!(
@@ -483,7 +670,9 @@ mod tests {
             &[0, 255, 0, 255]
         );
 
-        surface.render_scene_with_app_frame(&scene, None);
+        surface
+            .render_scene_with_app_frame(&scene, None)
+            .expect("render without app frame succeeds");
         assert_eq!(
             &surface.pixels[viewport_origin..viewport_origin + 4],
             &[0, 0, 255, 255]

@@ -1425,6 +1425,14 @@ pixel_system_launcher_dst() {
   printf '%s/run-shadow-system\n' "$(pixel_runtime_linux_dir)"
 }
 
+pixel_runtime_compositor_binary_dst() {
+  printf '%s/shadow-compositor-guest\n' "$(pixel_runtime_linux_dir)"
+}
+
+pixel_runtime_compositor_launcher_dst() {
+  printf '%s/run-shadow-compositor-guest\n' "$(pixel_runtime_linux_dir)"
+}
+
 pixel_runtime_openlog_preload_dst() {
   printf '%s/lib/shadow-openlog-preload.so\n' "$(pixel_runtime_linux_dir)"
 }
@@ -1442,6 +1450,21 @@ pixel_runtime_linux_user_env_lines() {
 HOME=$(pixel_runtime_home_dir)
 XDG_CACHE_HOME=$(pixel_runtime_cache_dir)
 XDG_CONFIG_HOME=$(pixel_runtime_config_dir)
+XKB_CONFIG_ROOT=$(pixel_runtime_xkb_config_root)
+EOF
+}
+
+pixel_runtime_linux_bundle_env_lines() {
+  cat <<EOF
+HOME=$(pixel_runtime_home_dir)
+XDG_CACHE_HOME=$(pixel_runtime_cache_dir)
+XDG_CONFIG_HOME=$(pixel_runtime_config_dir)
+MESA_SHADER_CACHE_DIR=$(pixel_runtime_mesa_cache_dir)
+LD_LIBRARY_PATH=$(pixel_runtime_linux_dir)/lib
+LIBGL_DRIVERS_PATH=$(pixel_runtime_linux_dir)/lib/dri
+__EGL_VENDOR_LIBRARY_DIRS=$(pixel_runtime_linux_dir)/share/glvnd/egl_vendor.d
+VK_ICD_FILENAMES=$(pixel_runtime_linux_dir)/share/vulkan/icd.d/freedreno_icd.aarch64.json
+XKB_CONFIG_EXTRA_PATH=$(pixel_runtime_linux_dir)/etc/xkb
 XKB_CONFIG_ROOT=$(pixel_runtime_xkb_config_root)
 EOF
 }
@@ -1537,8 +1560,6 @@ pixel_guest_ui_session_env_words() {
   local guest_client_env="${8:-}"
   local guest_session_env="${9:-}"
 
-  pixel_lines_quoted "$guest_session_env"
-
   pixel_shell_words_quoted \
     "XKB_CONFIG_ROOT=$(pixel_runtime_xkb_config_root)" \
     'SHADOW_SESSION_MODE=guest-ui' \
@@ -1561,6 +1582,8 @@ pixel_guest_ui_session_env_words() {
   if [[ -n "$guest_client_env" ]]; then
     pixel_shell_words_quoted "SHADOW_GUEST_CLIENT_ENV=$guest_client_env"
   fi
+
+  pixel_lines_quoted "$guest_session_env"
 
   pixel_shell_words_quoted \
     "SHADOW_GUEST_FRAME_PATH=$frame_path" \

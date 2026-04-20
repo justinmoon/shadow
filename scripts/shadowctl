@@ -33,6 +33,7 @@ SUPPORTED_PIXEL_CI_SUITES = (
 )
 SUPPORTED_PIXEL_DEBUG_TOOLS = (
     "latency",
+    "scroll-latency",
     "boot-lab-flash-run",
     "boot-lab-oneshot",
     "boot-lab-recover-traces",
@@ -299,6 +300,8 @@ def pixel_debug_command(
     tool = args.tool
     if tool == "latency":
         return script_command("debug/pixel_touch_latency_probe.sh", target=target)
+    if tool == "scroll-latency":
+        return script_command("debug/pixel_shell_scroll_latency_probe.sh", target=target)
     if tool == "boot-lab-flash-run":
         command = [repo_root() / "scripts/pixel/pixel_boot_flash_run.sh"]
         if args.image:
@@ -1616,7 +1619,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  sc -t vm open timeline\n"
             "  sc -t pixel open camera\n"
             "  sc -t pixel ci camera\n"
-            "  sc -t pixel debug latency"
+            "  sc -t pixel debug latency\n"
+            "  sc -t pixel debug scroll-latency"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

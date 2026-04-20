@@ -85,6 +85,14 @@ impl RuntimeDocument {
         }
     }
 
+    pub(crate) fn from_runtime_session(
+        mut runtime_session: RuntimeSession,
+    ) -> Result<Self, String> {
+        let payload = runtime_session.render_document()?;
+        runtime_log("runtime-session-ready");
+        Ok(Self::with_runtime(payload, Some(runtime_session)))
+    }
+
     fn with_runtime(
         payload: RuntimeDocumentPayload,
         runtime_session: Option<RuntimeSession>,

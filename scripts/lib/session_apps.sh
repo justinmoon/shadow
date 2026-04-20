@@ -21,8 +21,9 @@ shadow_load_manifest_apps() {
   local profile="$1"
   local model_filter="${2:-}"
   local include_shell="${3:-1}"
+  local apps_output app_id
 
-  mapfile -t shadow_session_apps < <(python3 - "$SESSION_APPS_MANIFEST" "$profile" "$model_filter" "$include_shell" <<'PY'
+  apps_output="$(python3 - "$SESSION_APPS_MANIFEST" "$profile" "$model_filter" "$include_shell" <<'PY'
 import json
 import sys
 
@@ -45,7 +46,13 @@ for app in manifest.get("apps", []):
     if app["id"] != shell_id:
         print(app["id"])
 PY
-)
+)"
+
+  shadow_session_apps=()
+  while IFS= read -r app_id; do
+    [[ -n "$app_id" ]] || continue
+    shadow_session_apps+=("$app_id")
+  done <<< "$apps_output"
 }
 
 shadow_load_session_apps() {

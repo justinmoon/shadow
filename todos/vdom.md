@@ -118,6 +118,49 @@ Implication:
   itself is no longer catastrophically slow; the supported shell lane remains
   slow because it still pays the extra surface capture/composite step that phase
   2 removes.
+- The latest hosted-GPU result is
+  `build/pixel/touch/phase2-shell-hosted-gpu-worker-fastcopy-logical2x-20260419T043116Z`,
+  which reached `app-scroll.input_to_present` p50 `87.873ms`. That is better
+  than the older `~93ms` hosted-GPU shell slice, but it is still nowhere near
+  the `~38ms` direct-runtime control case.
+- Follow-up micro-optimizations after that did not change the answer:
+  a viewport-copy fast path regressed, and a BGRA/no-swizzle attempt failed
+  because the current Vello image-renderer pipeline still expects
+  `Rgba8Unorm` storage textures. So the next meaningful phase-2 step is still
+  compositor-native GPU composition, not more shell-copy or hosted-image
+  micro-tuning.
+- The first real phase-2 prototype changed the shape of the problem again:
+  compositor-hosted CPU Blitz does remove the per-app Wayland surface hop, but
+  it only helps if hosted rendering does not block the compositor thread.
+  Results on Pixel:
+  - `build/pixel/touch/phase2-shell-hosted-20260419T011433Z`: catastrophic
+    inline-render version, `app-scroll.input_to_present` p50 `3208.377ms`
+  - `build/pixel/touch/phase2-shell-hosted-coalesced-20260419T011731Z`:
+    coalesced render version, `app-scroll.input_to_present` p50 `223.745ms`
+  - `build/pixel/touch/phase2-shell-hosted-aligned-20260419T012612Z`:
+    stale-publish fix, `app-scroll.input_to_present` p50 `120.745ms`
+  - Current landed shell control case is still better at about `91ms` p50 in
+    `build/pixel/touch/shell-area-aa`
+- So the architectural direction still looks right, but the current hosted
+  CPU-first slice is not landable as the new default.
+- The next hosted-GPU slices clarified the remaining limit:
+  - `build/pixel/touch/phase2-shell-hosted-gpu-gnu2-runonly-20260419T020333Z`
+    got to `app-scroll.input_to_present` p50 `105.053ms`
+  - `build/pixel/touch/phase2-shell-hosted-gpu-worker-20260419T021247Z`
+    improved that to p50 `95.616ms` by moving hosted render work onto a worker
+    and waking the compositor on frame-ready instead of a fixed poll loop
+  - `build/pixel/touch/phase2-shell-hosted-gpu-worker-fastcopy-20260419T021530Z`
+    improved again to p50 `93.344ms` after specializing the shell compositor's
+    Pixel 2x app-frame scale path
+- That is useful because it tells us what phase 2 still does not solve:
+  compositor-hosted GPU Blitz can get near the current shipped shell lane, but
+  it does not approach the direct-runtime control case (`38.336ms` p50) while
+  the shell still composites CPU pixels and presents through the dumb-buffer
+  DRM path.
+- So the next viable phase-2 move is no longer "hosted Blitz without
+  compositor-thread render stalls". That part is mostly handled. The next move
+  is "compositor-native GPU scene composition", otherwise we keep paying the
+  shell software compose/present tax even after moving Blitz in-process.
 
 ### Current process architecture
 
@@ -296,4 +339,11 @@ phase 1.
 
 ## Implementation Notes
 
-(none yet)
+- Latest Pixel measurements keep phase 2 scoped honestly: compositor-hosted
+  Blitz is still interesting if it eventually lets us do compositor-native GPU
+  scene composition, but the current supported shell lane already removed the
+  old app-surface CPU hop for focused apps with direct dmabuf present. The new
+  GPU-shell prewarm work helps home-screen startup polish, not scroll. So phase
+  2 only becomes the primary scroll path again if it replaces the remaining
+  shell/chrome composition model rather than reintroducing a compositor-owned
+  CPU image path.

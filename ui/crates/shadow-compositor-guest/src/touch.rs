@@ -228,8 +228,8 @@ pub fn map_normalized_touch_to_frame(
     }
 
     Some((
-        f64::from(src_x) + (panel_x - dst_x_f),
-        f64::from(src_y) + (panel_y - dst_y_f),
+        f64::from(src_x) + (panel_x - dst_x_f) * f64::from(frame_width) / copy_width_f,
+        f64::from(src_y) + (panel_y - dst_y_f) * f64::from(frame_height) / copy_height_f,
     ))
 }
 
@@ -265,6 +265,19 @@ fn frame_mapping(
 ) -> Option<FrameMapping> {
     if panel_width == 0 || panel_height == 0 || frame_width == 0 || frame_height == 0 {
         return None;
+    }
+
+    if panel_width == frame_width.saturating_mul(2)
+        && panel_height == frame_height.saturating_mul(2)
+    {
+        return Some(FrameMapping {
+            copy_width: panel_width,
+            copy_height: panel_height,
+            dst_x: 0,
+            dst_y: 0,
+            src_x: 0,
+            src_y: 0,
+        });
     }
 
     let copy_width = frame_width.min(panel_width);

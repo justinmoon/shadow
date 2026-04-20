@@ -138,6 +138,7 @@
       shadowCompositorGuestSrc = repoSourceFromPrefixes [
         "ui/Cargo.toml"
         "ui/Cargo.lock"
+        "ui/apps/shadow-blitz-demo"
         "ui/crates/shadow-ui-core"
         "ui/crates/shadow-ui-software"
         "ui/crates/shadow-compositor-common"
@@ -387,6 +388,7 @@
             outputHashes = uiBlitzOutputHashes;
           };
           postPatch = mkUiWorkspaceMembersPostPatch "ui/Cargo.toml" [
+            "apps/shadow-blitz-demo"
             "crates/shadow-ui-core"
             "crates/shadow-ui-software"
             "crates/shadow-compositor-common"
@@ -1256,6 +1258,8 @@
             mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform {
               features = [ "gpu" ];
             };
+          shadow-compositor-guest-aarch64-linux-gnu =
+            mkShadowGuestCompositorFor pkgs.pkgsCross.aarch64-multiplatform;
           shadow-blitz-demo-host-system-fonts = linuxShadowBlitzDemoHostSystemFonts;
           shadow-compositor = linuxShadowCompositor;
           shadow-ui-vm-session = linuxShadowUiVmSession;

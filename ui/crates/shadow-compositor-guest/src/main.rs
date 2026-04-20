@@ -1,9 +1,12 @@
 mod config;
 mod control;
+mod gpu_scanout;
+mod hosted;
 mod kms;
 mod launch;
 mod media_keys;
 mod shell;
+mod shell_gpu;
 mod touch;
 
 use std::{
@@ -111,6 +114,24 @@ struct PendingTouchTrace {
     commit_at: Option<Instant>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ScrollBenchmarkSample {
+    sequence: u64,
+    phase: touch::TouchPhase,
+    route: &'static str,
+    generation: u64,
+    input_captured_at: Instant,
+    input_wall_msec: u128,
+    dispatch_started_at: Instant,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingScrollFrameTrace {
+    sample: ScrollBenchmarkSample,
+    render_started_at: Instant,
+    coalesced_moves: u64,
+}
+
 fn init_logging() {
     if let Ok(filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
         tracing_subscriber::fmt().with_env_filter(filter).init();
@@ -144,11 +165,17 @@ struct ShadowGuestCompositor {
     seat: Seat<Self>,
     launched_clients: Vec<Child>,
     launched_apps: HashMap<AppId, Child>,
+    hosted_apps: HashMap<AppId, hosted::HostedAppState>,
+    shell_frame_retry_sender: Option<channel::Sender<()>>,
+    shell_frame_retry_pending: bool,
+    hosted_touch_move_frame_sender: Option<channel::Sender<()>>,
+    hosted_touch_move_frame_pending: bool,
     app_frames: HashMap<AppId, kms::CapturedFrame>,
     surface_apps: HashMap<WlSurface, AppId>,
     shelved_windows: HashMap<AppId, Window>,
     focused_app: Option<AppId>,
     shell_enabled: bool,
+    gpu_shell: bool,
     client_config: GuestClientConfig,
     shell: ShellModel,
     shell_surface: GuestShellSurface,
@@ -160,6 +187,7 @@ struct ShadowGuestCompositor {
     exit_on_first_dma_buffer: bool,
     boot_splash_drm: bool,
     kms_display: Option<kms::KmsDisplay>,
+    strict_gpu_resident: bool,
     last_frame_size: Option<(u32, u32)>,
     last_published_frame: Option<kms::CapturedFrame>,
     last_buffer_signature: Option<String>,
@@ -175,6 +203,10 @@ struct ShadowGuestCompositor {
     touch_signal_path: Option<PathBuf>,
     touch_latency_trace: bool,
     pending_touch_trace: Option<PendingTouchTrace>,
+    latest_scroll_benchmark_sample: Option<ScrollBenchmarkSample>,
+    pending_scroll_frame_trace: Option<PendingScrollFrameTrace>,
+    scroll_benchmark_generation: u64,
+    last_presented_scroll_generation: Option<u64>,
 }
 
 impl ShadowGuestCompositor {
@@ -247,14 +279,25 @@ impl ShadowGuestCompositor {
             seat,
             launched_clients: Vec::new(),
             launched_apps: HashMap::new(),
+            hosted_apps: HashMap::new(),
+            shell_frame_retry_sender: None,
+            shell_frame_retry_pending: false,
+            hosted_touch_move_frame_sender: None,
+            hosted_touch_move_frame_pending: false,
             app_frames: HashMap::new(),
             surface_apps: HashMap::new(),
             shelved_windows: HashMap::new(),
             focused_app: None,
             shell_enabled,
+            gpu_shell: config.gpu_shell,
             client_config: config.client.clone(),
             shell: ShellModel::new(),
-            shell_surface: GuestShellSurface::new(WIDTH as u32, HEIGHT as u32),
+            shell_surface: GuestShellSurface::new(
+                WIDTH as u32,
+                HEIGHT as u32,
+                config.gpu_shell,
+                config.strict_gpu_resident,
+            ),
             shell_touch_active: false,
             app_touch_gesture: None,
             control_socket_path,
@@ -263,6 +306,7 @@ impl ShadowGuestCompositor {
             exit_on_first_dma_buffer: config.exit_on_first_dma_buffer,
             boot_splash_drm: config.boot_splash_drm,
             kms_display: None,
+            strict_gpu_resident: config.strict_gpu_resident,
             last_frame_size: None,
             last_published_frame: None,
             last_buffer_signature: None,
@@ -278,6 +322,10 @@ impl ShadowGuestCompositor {
             touch_signal_path: config.touch_signal_path.clone(),
             touch_latency_trace: config.touch_latency_trace,
             pending_touch_trace: None,
+            latest_scroll_benchmark_sample: None,
+            pending_scroll_frame_trace: None,
+            scroll_benchmark_generation: 0,
+            last_presented_scroll_generation: None,
         };
         if config.dmabuf_global_enabled {
             let feedback_mode = if config.dmabuf_feedback_enabled {
@@ -294,6 +342,14 @@ impl ShadowGuestCompositor {
             tracing::info!("[shadow-guest-compositor] dmabuf-global-disabled");
         }
         tracing::info!("[shadow-guest-compositor] presentation-global-ready");
+        tracing::info!(
+            "[shadow-guest-compositor] shell-config shell_enabled={} gpu_shell={} strict_gpu_resident={} toplevel={}x{}",
+            state.shell_enabled,
+            state.gpu_shell,
+            state.strict_gpu_resident,
+            state.toplevel_size.w,
+            state.toplevel_size.h
+        );
         if let Some(path) = state.touch_signal_path.as_ref() {
             tracing::info!(
                 "[shadow-guest-compositor] touch-signal-ready path={}",
@@ -311,6 +367,9 @@ impl ShadowGuestCompositor {
         }
         state.insert_touch_source(event_loop);
         state.insert_media_key_source(event_loop);
+        state.insert_hosted_app_poll_source(event_loop);
+        state.insert_shell_frame_retry_source(event_loop);
+        state.insert_hosted_touch_move_frame_source(event_loop);
         state
     }
 
@@ -487,9 +546,94 @@ impl ShadowGuestCompositor {
         }
     }
 
+    fn note_scroll_benchmark_sample(
+        &mut self,
+        event: &touch::TouchInputEvent,
+        route: &'static str,
+        dispatch_started_at: Instant,
+    ) {
+        if !self.touch_latency_trace || route != "app-scroll" {
+            return;
+        }
+
+        self.scroll_benchmark_generation = self.scroll_benchmark_generation.saturating_add(1);
+        self.latest_scroll_benchmark_sample = Some(ScrollBenchmarkSample {
+            sequence: event.sequence,
+            phase: event.phase,
+            route,
+            generation: self.scroll_benchmark_generation,
+            input_captured_at: event.captured_at,
+            input_wall_msec: event.wall_msec,
+            dispatch_started_at,
+        });
+    }
+
+    fn begin_scroll_frame_trace(&mut self, frame_marker: &str) {
+        if !self.touch_latency_trace {
+            return;
+        }
+        let Some(sample) = self.latest_scroll_benchmark_sample else {
+            return;
+        };
+
+        let render_started_at = Instant::now();
+        let coalesced_moves = self
+            .last_presented_scroll_generation
+            .map(|generation| {
+                sample
+                    .generation
+                    .saturating_sub(generation)
+                    .saturating_sub(1)
+            })
+            .unwrap_or(0);
+        tracing::info!(
+            "[shadow-guest-compositor] scroll-frame-build seq={} route={} phase={:?} frame_marker={} input_age_us={} dispatch_age_us={} coalesced_moves={}",
+            sample.sequence,
+            sample.route,
+            sample.phase,
+            frame_marker,
+            render_started_at.duration_since(sample.input_captured_at).as_micros(),
+            render_started_at.duration_since(sample.dispatch_started_at).as_micros(),
+            coalesced_moves
+        );
+        self.pending_scroll_frame_trace = Some(PendingScrollFrameTrace {
+            sample,
+            render_started_at,
+            coalesced_moves,
+        });
+    }
+
+    fn record_scroll_frame_present(&mut self, frame_marker: &str) {
+        let Some(trace) = self.pending_scroll_frame_trace.take() else {
+            return;
+        };
+
+        let present_at = Instant::now();
+        tracing::info!(
+            "[shadow-guest-compositor] scroll-frame-present seq={} route={} phase={:?} frame_marker={} input_wall_ms={} input_age_us={} render_to_present_us={} input_to_present_us={} coalesced_moves={}",
+            trace.sample.sequence,
+            trace.sample.route,
+            trace.sample.phase,
+            frame_marker,
+            trace.sample.input_wall_msec,
+            present_at.duration_since(trace.sample.input_captured_at).as_micros(),
+            present_at.duration_since(trace.render_started_at).as_micros(),
+            present_at.duration_since(trace.sample.input_captured_at).as_micros(),
+            trace.coalesced_moves
+        );
+        self.last_presented_scroll_generation = Some(trace.sample.generation);
+    }
+
     fn ensure_kms_display(&mut self) -> Option<&mut kms::KmsDisplay> {
+        self.ensure_kms_display_with_timeout(Duration::from_secs(18))
+    }
+
+    fn ensure_kms_display_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Option<&mut kms::KmsDisplay> {
         if self.kms_display.is_none() {
-            match kms::KmsDisplay::open_when_ready(Duration::from_secs(15)) {
+            match kms::KmsDisplay::open_when_ready(timeout, self.strict_gpu_resident) {
                 Ok(kms_display) => {
                     let mode = kms_display.mode_summary();
                     tracing::info!("[shadow-guest-compositor] drm-ready mode={mode}");
@@ -630,6 +774,127 @@ impl ShadowGuestCompositor {
             });
     }
 
+    fn insert_hosted_app_poll_source(&mut self, event_loop: &mut EventLoop<Self>) {
+        let (sender, receiver) = channel::channel();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(hosted::HOSTED_IDLE_POLL_INTERVAL);
+            if sender.send(()).is_err() {
+                break;
+            }
+        });
+        event_loop
+            .handle()
+            .insert_source(receiver, |event, _, state| match event {
+                channel::Event::Msg(()) => state.poll_hosted_apps(),
+                channel::Event::Closed => {
+                    tracing::warn!("[shadow-guest-compositor] hosted-app-poll-source closed")
+                }
+            })
+            .expect("insert hosted app poll source");
+    }
+
+    fn insert_shell_frame_retry_source(&mut self, event_loop: &mut EventLoop<Self>) {
+        let (sender, receiver) = channel::channel();
+        self.shell_frame_retry_sender = Some(sender);
+        event_loop
+            .handle()
+            .insert_source(receiver, |event, _, state| match event {
+                channel::Event::Msg(()) => {
+                    state.shell_frame_retry_pending = false;
+                    if state.shell_overlay_visible() {
+                        state.publish_visible_shell_frame("shell-home-frame-retry");
+                    }
+                }
+                channel::Event::Closed => {
+                    tracing::warn!("[shadow-guest-compositor] shell-frame-retry-source closed")
+                }
+            })
+            .expect("insert shell frame retry source");
+    }
+
+    fn insert_hosted_touch_move_frame_source(&mut self, event_loop: &mut EventLoop<Self>) {
+        let (sender, receiver) = channel::channel();
+        self.hosted_touch_move_frame_sender = Some(sender);
+        event_loop
+            .handle()
+            .insert_source(receiver, |event, _, state| match event {
+                channel::Event::Msg(()) => {
+                    if !state.hosted_touch_move_frame_pending {
+                        return;
+                    }
+                    state.hosted_touch_move_frame_pending = false;
+                    if state.shell_overlay_visible() {
+                        state.publish_visible_shell_frame("hosted-touch-move-frame");
+                    }
+                }
+                channel::Event::Closed => {
+                    tracing::warn!(
+                        "[shadow-guest-compositor] hosted-touch-move-frame-source closed"
+                    )
+                }
+            })
+            .expect("insert hosted touch move frame source");
+    }
+
+    fn schedule_shell_frame_retry(&mut self) {
+        if self.shell_frame_retry_pending || !self.shell_overlay_visible() {
+            return;
+        }
+        let Some(sender) = self.shell_frame_retry_sender.clone() else {
+            return;
+        };
+        self.shell_frame_retry_pending = true;
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(250));
+            let _ = sender.send(());
+        });
+    }
+
+    fn schedule_hosted_touch_move_frame(&mut self) {
+        if !self.shell_overlay_visible() {
+            return;
+        }
+        let Some(sender) = self.hosted_touch_move_frame_sender.clone() else {
+            self.publish_visible_shell_frame("hosted-touch-move-frame");
+            return;
+        };
+        if self.hosted_touch_move_frame_pending {
+            return;
+        }
+
+        self.hosted_touch_move_frame_pending = true;
+        if sender.send(()).is_err() {
+            self.hosted_touch_move_frame_pending = false;
+            tracing::warn!("[shadow-guest-compositor] hosted-touch-move-frame-send failed");
+            self.publish_visible_shell_frame("hosted-touch-move-frame");
+        }
+    }
+
+    fn poll_hosted_apps(&mut self) {
+        if self.hosted_apps.is_empty() {
+            return;
+        }
+
+        let focused_app = self.focused_app;
+        let app_ids: Vec<_> = self.hosted_apps.keys().copied().collect();
+        let mut focused_changed = false;
+
+        for app_id in app_ids {
+            let result = self
+                .hosted_apps
+                .get_mut(&app_id)
+                .expect("hosted app present")
+                .poll();
+            if self.apply_hosted_app_update(app_id, result) {
+                focused_changed |= focused_app == Some(app_id);
+            }
+        }
+
+        if focused_changed {
+            self.publish_visible_shell_frame("hosted-app-poll-frame");
+        }
+    }
+
     fn drain_client_exit_statuses(&mut self, timeout: Duration) {
         let deadline = Instant::now() + timeout;
         loop {
@@ -729,10 +994,99 @@ impl ShadowGuestCompositor {
         self.configured_toplevel_size()
     }
 
-    fn shell_render_size(&mut self) -> (u32, u32) {
-        self.ensure_kms_display()
-            .map(|display| display.dimensions())
-            .unwrap_or((WIDTH.round() as u32, HEIGHT.round() as u32))
+    fn hosted_app_local_point(&self, position: Point<f64, Logical>) -> Option<(f32, f32)> {
+        self.hosted_app_local_point_with_clamp(position, false)
+    }
+
+    fn hosted_app_local_point_clamped(&self, position: Point<f64, Logical>) -> Option<(f32, f32)> {
+        self.hosted_app_local_point_with_clamp(position, true)
+    }
+
+    fn hosted_app_local_point_with_clamp(
+        &self,
+        position: Point<f64, Logical>,
+        clamp: bool,
+    ) -> Option<(f32, f32)> {
+        let (origin_x, origin_y) = if self.shell_enabled {
+            (APP_VIEWPORT_X.round() as i32, APP_VIEWPORT_Y.round() as i32)
+        } else {
+            (0, 0)
+        };
+        let size = self.app_window_size();
+        let width = f64::from(size.w.max(0));
+        let height = f64::from(size.h.max(0));
+        if width <= 0.0 || height <= 0.0 {
+            return None;
+        }
+
+        let mut local_x = position.x - f64::from(origin_x);
+        let mut local_y = position.y - f64::from(origin_y);
+        if clamp {
+            local_x = local_x.clamp(0.0, (width - 1.0).max(0.0));
+            local_y = local_y.clamp(0.0, (height - 1.0).max(0.0));
+        } else if !(0.0..=width).contains(&local_x) || !(0.0..=height).contains(&local_y) {
+            return None;
+        }
+
+        Some((local_x as f32, local_y as f32))
+    }
+
+    fn focused_hosted_app(&self) -> Option<AppId> {
+        self.focused_app
+            .filter(|app_id| self.hosted_apps.contains_key(app_id))
+    }
+
+    fn shell_overlay_visible(&self) -> bool {
+        self.shell_enabled
+    }
+
+    fn should_host_app(&self, app_id: AppId) -> bool {
+        self.shell_enabled
+            && app::launch_spec(app_id)
+                .and_then(|spec| spec.typescript_runtime())
+                .is_some()
+    }
+
+    fn apply_hosted_app_update(&mut self, app_id: AppId, result: std::io::Result<bool>) -> bool {
+        match result {
+            Ok(changed) => changed,
+            Err(error) => {
+                tracing::warn!(
+                    "[shadow-guest-compositor] hosted-app-refresh-error app={} error={error}",
+                    app_id.as_str()
+                );
+                self.terminate_app(app_id);
+                false
+            }
+        }
+    }
+
+    fn focus_hosted_app(&mut self, app_id: AppId, frame_marker: &str) {
+        self.focus_window(None);
+        self.focused_app = Some(app_id);
+        self.shell.set_foreground_app(Some(app_id));
+        tracing::info!(
+            "[shadow-guest-compositor] mapped-window app={} hosted=1",
+            app_id.as_str()
+        );
+        tracing::info!(
+            "[shadow-guest-compositor] surface-app-tracked app={} transport=hosted",
+            app_id.as_str()
+        );
+        self.publish_visible_shell_frame(frame_marker);
+    }
+
+    fn shell_render_size(&self) -> (u32, u32) {
+        if self.drm_enabled && self.gpu_shell {
+            return (WIDTH.round() as u32, HEIGHT.round() as u32);
+        }
+        if let Some(display) = self.kms_display.as_ref() {
+            return display.dimensions();
+        }
+
+        let width = u32::try_from(self.toplevel_size.w.max(1)).unwrap_or(WIDTH.round() as u32);
+        let height = u32::try_from(self.toplevel_size.h.max(1)).unwrap_or(HEIGHT.round() as u32);
+        (width, height)
     }
 
     fn shell_local_point(&self, position: Point<f64, Logical>) -> Option<(f32, f32)> {
@@ -741,7 +1095,7 @@ impl ShadowGuestCompositor {
     }
 
     fn shell_captures_point(&self, position: Point<f64, Logical>) -> Option<(f32, f32)> {
-        if !self.shell_enabled {
+        if !self.shell_overlay_visible() {
             return None;
         }
 
@@ -773,26 +1127,81 @@ impl ShadowGuestCompositor {
     }
 
     fn publish_visible_shell_frame(&mut self, frame_marker: &str) {
-        if !self.shell_enabled {
+        if !self.shell_overlay_visible() {
             return;
+        }
+        if frame_marker != "hosted-touch-move-frame" {
+            self.hosted_touch_move_frame_pending = false;
+        }
+        if frame_marker == "hosted-touch-move-frame" {
+            self.begin_scroll_frame_trace(frame_marker);
         }
 
         let status = ShellStatus::demo(Local::now());
         let scene = self.shell.scene(&status);
         let (render_width, render_height) = self.shell_render_size();
+        let focused_hosted_app = self.gpu_shell.then(|| self.focused_hosted_app()).flatten();
         self.shell_surface.resize(render_width, render_height);
-        let app_frame = self.focused_app.and_then(|app_id| {
-            self.app_frames.get(&app_id).map(|frame| AppFrame {
-                width: frame.width,
-                height: frame.height,
-                stride: frame.stride,
-                format: frame.format,
-                pixels: &frame.pixels,
+        if self.drm_enabled && self.gpu_shell {
+            let scanout_candidates = self
+                .ensure_kms_display()
+                .map(|display| display.scanout_candidates().to_vec())
+                .unwrap_or_default();
+            if let Err(error) = self
+                .shell_surface
+                .configure_gpu_scanout(&scanout_candidates)
+            {
+                if self.strict_gpu_resident {
+                    panic!(
+                        "strict gpu resident mode rejected shell GPU scanout configuration: {error:#}"
+                    );
+                }
+                tracing::warn!(
+                    "[shadow-guest-compositor] gpu-scanout-unavailable size={}x{} error={error:#}",
+                    render_width,
+                    render_height
+                );
+            }
+        }
+        let app_frame = focused_hosted_app
+            .is_none()
+            .then(|| {
+                self.focused_app.and_then(|app_id| {
+                    self.app_frames.get(&app_id).map(|frame| AppFrame {
+                        width: frame.width,
+                        height: frame.height,
+                        stride: frame.stride,
+                        format: frame.format,
+                        pixels: &frame.pixels,
+                    })
+                })
             })
-        });
-        let shell_stats = self
-            .shell_surface
-            .render_scene_with_app_frame(&scene, app_frame);
+            .flatten();
+        let shell_stats = if let Some(app_id) = focused_hosted_app {
+            let (shell_surface, hosted_apps) = (&mut self.shell_surface, &mut self.hosted_apps);
+            let hosted_app = hosted_apps
+                .get_mut(&app_id)
+                .expect("focused hosted app present")
+                .app_mut();
+            shell_surface.render_scene_with_hosted_app(&scene, hosted_app)
+        } else {
+            self.shell_surface
+                .render_scene_with_app_frame(&scene, app_frame)
+        };
+        let shell_stats = match shell_stats {
+            Ok(stats) => stats,
+            Err(error) => {
+                if self.strict_gpu_resident {
+                    panic!(
+                        "strict gpu resident mode rejected visible shell frame render: {error:#}"
+                    );
+                }
+                tracing::warn!(
+                    "[shadow-guest-compositor] shell-frame-render-failed frame_marker={frame_marker} error={error:#}"
+                );
+                return;
+            }
+        };
         let shell_total =
             shell_stats.scene_render + shell_stats.base_copy + shell_stats.app_composite;
         if shell_total.as_millis() >= 8 {
@@ -805,6 +1214,64 @@ impl ShadowGuestCompositor {
                 shell_total.as_millis()
             );
         }
+        if let Some(dmabuf) = self.shell_surface.take_presentable_dmabuf() {
+            let debug_cpu_frame_requested = self.frame_artifacts_enabled
+                || self.frame_snapshot_cache_enabled
+                || self.frame_checksum_enabled;
+            let mut presented = false;
+            if debug_cpu_frame_requested {
+                match kms::capture_dmabuf_frame(&dmabuf) {
+                    Ok(frame) => {
+                        self.record_frame_view(frame.view(), frame_marker);
+                        if self.frame_snapshot_cache_enabled {
+                            self.last_published_frame = Some(frame);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            "[shadow-guest-compositor] shell-dmabuf-capture failed: {error}"
+                        );
+                    }
+                }
+            } else {
+                let size = dmabuf.size();
+                self.last_frame_size = Some((size.w.max(0) as u32, size.h.max(0) as u32));
+            }
+
+            if self.drm_enabled {
+                if let Some(display) = self.ensure_kms_display_with_timeout(Duration::from_secs(2))
+                {
+                    match display.present_dmabuf(&dmabuf) {
+                        Ok(()) => {
+                            presented = true;
+                            tracing::info!(
+                                "[shadow-guest-compositor] presented-shell-dmabuf size={}x{} fourcc={:?} modifier={:?}",
+                                dmabuf.size().w,
+                                dmabuf.size().h,
+                                dmabuf.format().code,
+                                dmabuf.format().modifier
+                            );
+                            tracing::info!("[shadow-guest-compositor] presented-frame");
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                "[shadow-guest-compositor] present-shell-dmabuf failed: {error}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            self.record_touch_present(frame_marker);
+            self.record_scroll_frame_present(frame_marker);
+            if self.exit_on_first_frame {
+                self.loop_signal.stop();
+            }
+            if self.drm_enabled && !presented {
+                self.schedule_shell_frame_retry();
+            }
+            return;
+        }
         let pixels = self.shell_surface.take_pixels();
         let frame = kms::CapturedFrameView {
             width: render_width,
@@ -812,8 +1279,70 @@ impl ShadowGuestCompositor {
             stride: render_width * 4,
             pixels: &pixels,
         };
-        self.publish_frame_view(frame, frame_marker);
+        let presented =
+            self.publish_frame_view_with_timeout(frame, frame_marker, Duration::from_secs(2));
         self.shell_surface.restore_pixels(pixels);
+        if self.drm_enabled && !presented {
+            self.schedule_shell_frame_retry();
+        }
+    }
+
+    fn prewarm_visible_shell_frame(&mut self) {
+        if !self.shell_overlay_visible() {
+            return;
+        }
+
+        let status = ShellStatus::demo(Local::now());
+        let scene = self.shell.scene(&status);
+        let (render_width, render_height) = self.shell_render_size();
+        self.shell_surface.resize(render_width, render_height);
+        if self.drm_enabled && self.gpu_shell {
+            let scanout_candidates = self
+                .ensure_kms_display()
+                .map(|display| display.scanout_candidates().to_vec())
+                .unwrap_or_default();
+            if let Err(error) = self
+                .shell_surface
+                .configure_gpu_scanout(&scanout_candidates)
+            {
+                if self.strict_gpu_resident {
+                    panic!(
+                        "strict gpu resident mode rejected shell prewarm scanout configuration: {error:#}"
+                    );
+                }
+                tracing::warn!(
+                    "[shadow-guest-compositor] shell-prewarm-scanout-unavailable size={}x{} error={error:#}",
+                    render_width,
+                    render_height
+                );
+            }
+        }
+        let shell_stats = self.shell_surface.render_scene_with_app_frame(&scene, None);
+        let shell_stats = match shell_stats {
+            Ok(stats) => stats,
+            Err(error) => {
+                if self.strict_gpu_resident {
+                    panic!("strict gpu resident mode rejected shell prewarm render: {error:#}");
+                }
+                tracing::warn!(
+                    "[shadow-guest-compositor] shell-prewarm-render-failed error={error:#}"
+                );
+                return;
+            }
+        };
+        let _ = self.shell_surface.take_presentable_dmabuf();
+        let shell_total =
+            shell_stats.scene_render + shell_stats.base_copy + shell_stats.app_composite;
+        if shell_total.as_millis() >= 8 {
+            tracing::info!(
+                "[shadow-guest-compositor] shell-prewarm-stats cache_hit={} scene_render_ms={} base_copy_ms={} app_composite_ms={} total_ms={}",
+                shell_stats.scene_cache_hit,
+                shell_stats.scene_render.as_millis(),
+                shell_stats.base_copy.as_millis(),
+                shell_stats.app_composite.as_millis(),
+                shell_total.as_millis()
+            );
+        }
     }
 
     fn window_for_surface(&self, surface: &WlSurface) -> Option<Window> {
@@ -914,13 +1443,18 @@ impl ShadowGuestCompositor {
         }
 
         self.focus_window(None);
-        notify_lifecycle_state_to_app(
-            self.control_socket_path
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new(".")),
-            app_id,
-            AppLifecycleState::Background,
-        );
+        if let Some(hosted_app) = self.hosted_apps.get_mut(&app_id) {
+            let update = hosted_app.handle_platform_lifecycle_change(AppLifecycleState::Background);
+            let _ = self.apply_hosted_app_update(app_id, update);
+        } else {
+            notify_lifecycle_state_to_app(
+                self.control_socket_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new(".")),
+                app_id,
+                AppLifecycleState::Background,
+            );
+        }
         self.publish_visible_shell_frame("shell-home-frame");
     }
 
@@ -947,6 +1481,7 @@ impl ShadowGuestCompositor {
         }
         self.shell.set_app_running(app_id, false);
         self.app_frames.remove(&app_id);
+        self.hosted_apps.remove(&app_id);
 
         if let Some(mut child) = self.launched_apps.remove(&app_id) {
             let pid = child.id();
@@ -977,6 +1512,7 @@ impl ShadowGuestCompositor {
         let mut to_terminate: Vec<_> = self
             .launched_apps
             .keys()
+            .chain(self.hosted_apps.keys())
             .chain(self.shelved_windows.keys())
             .chain(self.surface_apps.values())
             .copied()
@@ -1035,6 +1571,38 @@ impl ShadowGuestCompositor {
             return Ok(());
         }
 
+        tracing::info!(
+            "[shadow-guest-compositor] app-launch-mode app={} hosted={}",
+            app_id.as_str(),
+            self.should_host_app(app_id)
+        );
+
+        if self.should_host_app(app_id) {
+            if self.hosted_apps.contains_key(&app_id) {
+                let update = self
+                    .hosted_apps
+                    .get_mut(&app_id)
+                    .expect("hosted app present")
+                    .handle_platform_lifecycle_change(AppLifecycleState::Foreground);
+                let _ = self.apply_hosted_app_update(app_id, update);
+                self.focus_hosted_app(app_id, "shell-app-focus-frame");
+                return Ok(());
+            }
+
+            let size = self.app_window_size();
+            let hosted_app = hosted::HostedAppState::launch(
+                app_id,
+                &self.client_config,
+                size.w.max(1) as u32,
+                size.h.max(1) as u32,
+            )?;
+            self.hosted_apps.insert(app_id, hosted_app);
+            self.app_frames.remove(&app_id);
+            self.shell.set_app_running(app_id, true);
+            self.focus_hosted_app(app_id, "shell-app-launch-frame");
+            return Ok(());
+        }
+
         let child = launch::launch_app(self, app_id)?;
         self.launched_apps.insert(app_id, child);
         Ok(())
@@ -1058,10 +1626,18 @@ impl ShadowGuestCompositor {
         }
     }
 
-    fn handle_control_media(&self, action: MediaAction) -> String {
+    fn handle_control_media(&mut self, action: MediaAction) -> String {
         let Some(app_id) = self.focused_app else {
             return "ok\nhandled=0\nreason=no-focused-app\n".to_string();
         };
+        if let Some(hosted_app) = self.hosted_apps.get_mut(&app_id) {
+            let update = hosted_app.handle_platform_audio_control(action.into());
+            let _ = self.apply_hosted_app_update(app_id, update);
+            if self.focused_app == Some(app_id) {
+                self.publish_visible_shell_frame("control-media-hosted-frame");
+            }
+            return "ok\nhandled=1\nsource=hosted\n".to_string();
+        }
         dispatch_media_action_to_app(
             self.control_socket_path
                 .parent()
@@ -1072,10 +1648,22 @@ impl ShadowGuestCompositor {
         )
     }
 
-    fn dispatch_control_media_async(&self, action: MediaAction) {
+    fn dispatch_control_media_async(&mut self, action: MediaAction) {
         let Some(app_id) = self.focused_app else {
             return;
         };
+        if let Some(hosted_app) = self.hosted_apps.get_mut(&app_id) {
+            let update = hosted_app.handle_platform_audio_control(action.into());
+            let _ = self.apply_hosted_app_update(app_id, update);
+            if self.focused_app == Some(app_id) {
+                self.publish_visible_shell_frame("media-key-hosted-frame");
+            }
+            tracing::info!(
+                "[shadow-guest-compositor] media-key-dispatch action={} response=ok handled=1 source=hosted",
+                action.as_token(),
+            );
+            return;
+        }
         let runtime_dir = self
             .control_socket_path
             .parent()
@@ -1146,6 +1734,37 @@ impl ShadowGuestCompositor {
             return Ok("ok\n".to_string());
         }
 
+        if let Some(app_id) = self.focused_hosted_app() {
+            let Some((local_x, local_y)) = self.hosted_app_local_point(position) else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("tap target {x},{y} is outside the current content"),
+                ));
+            };
+            tracing::info!(
+                "[shadow-guest-compositor] control-tap-app x={} y={} hosted=1 app={} local_x={:.1} local_y={:.1}",
+                x,
+                y,
+                app_id.as_str(),
+                local_x,
+                local_y
+            );
+            let down = self
+                .hosted_apps
+                .get_mut(&app_id)
+                .expect("hosted app present")
+                .handle_pointer_down(local_x, local_y);
+            let _ = self.apply_hosted_app_update(app_id, down);
+            let up = self
+                .hosted_apps
+                .get_mut(&app_id)
+                .expect("hosted app present")
+                .handle_pointer_up(local_x, local_y);
+            let _ = self.apply_hosted_app_update(app_id, up);
+            self.publish_visible_shell_frame("control-tap-hosted-frame");
+            return Ok("ok\n".to_string());
+        }
+
         let Some(under) = self.surface_under(position) else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -1208,7 +1827,7 @@ impl ShadowGuestCompositor {
         };
         format!(
             "focused={focused}\nmapped={mapped}\nlaunched={launched}\nshelved={shelved}\nwindows={}\ntransport={transport}\ncontrol_socket={}\n",
-            self.space.elements().count(),
+            self.space.elements().count() + usize::from(self.focused_hosted_app().is_some()),
             self.control_socket_path.display(),
         )
     }
@@ -1222,6 +1841,9 @@ impl ShadowGuestCompositor {
                 self.surface_apps.get(&surface).copied().map(AppId::as_str)
             })
             .collect();
+        if let Some(app_id) = self.focused_hosted_app() {
+            app_ids.push(app_id.as_str());
+        }
         app_ids.sort_unstable();
         app_ids.dedup();
         app_ids.join(",")
@@ -1231,10 +1853,12 @@ impl ShadowGuestCompositor {
         let mut app_ids: Vec<_> = self
             .launched_apps
             .keys()
+            .chain(self.hosted_apps.keys())
             .copied()
             .map(AppId::as_str)
             .collect();
         app_ids.sort_unstable();
+        app_ids.dedup();
         app_ids.join(",")
     }
 
@@ -1245,7 +1869,15 @@ impl ShadowGuestCompositor {
             .copied()
             .map(AppId::as_str)
             .collect();
+        app_ids.extend(
+            self.hosted_apps
+                .keys()
+                .copied()
+                .filter(|app_id| Some(*app_id) != self.focused_app)
+                .map(AppId::as_str),
+        );
         app_ids.sort_unstable();
+        app_ids.dedup();
         app_ids.join(",")
     }
 
@@ -1410,6 +2042,11 @@ impl ShadowGuestCompositor {
                 }
                 self.shell_touch_active = false;
                 self.handle_shell_event(ShellEvent::PointerLeft);
+                if let Some(app_id) = self.focused_hosted_app() {
+                    if self.handle_hosted_touch_input(app_id, &event, position) {
+                        return;
+                    }
+                }
                 let under = self.surface_under(position);
                 tracing::info!(
                     "[shadow-guest-compositor] touch-pointer phase={:?} x={:.1} y={:.1} surface={}",
@@ -1493,6 +2130,9 @@ impl ShadowGuestCompositor {
                         } else {
                             None
                         };
+                        if let Some(route) = route {
+                            self.note_scroll_benchmark_sample(&event, route, dispatch_started_at);
+                        }
                         self.app_touch_gesture = Some(gesture);
                         pointer.frame(self);
                         self.flush_wayland_clients();
@@ -1536,6 +2176,15 @@ impl ShadowGuestCompositor {
                     self.handle_shell_event(ShellEvent::PointerLeft);
                 }
                 tracing::info!("[shadow-guest-compositor] touch-input phase=Up");
+                if let Some(app_id) = self.focused_hosted_app() {
+                    if let Some(position) =
+                        self.touch_position(event.normalized_x, event.normalized_y)
+                    {
+                        if self.handle_hosted_touch_input(app_id, &event, position) {
+                            return;
+                        }
+                    }
+                }
                 let mut route = None;
                 let dispatch_started_at = Instant::now();
                 if let Some(gesture) = self.app_touch_gesture.take() {
@@ -1598,6 +2247,111 @@ impl ShadowGuestCompositor {
                 if let Some(route) = route {
                     self.finish_touch_dispatch(&event, route, dispatch_started_at);
                 }
+            }
+        }
+    }
+
+    fn handle_hosted_touch_input(
+        &mut self,
+        app_id: AppId,
+        event: &touch::TouchInputEvent,
+        position: Point<f64, Logical>,
+    ) -> bool {
+        match event.phase {
+            touch::TouchPhase::Down => {
+                let Some((local_x, local_y)) = self.hosted_app_local_point(position) else {
+                    return false;
+                };
+                tracing::info!(
+                    "[shadow-guest-compositor] touch-hosted phase=Down app={} x={:.1} y={:.1}",
+                    app_id.as_str(),
+                    local_x,
+                    local_y
+                );
+                self.app_touch_gesture = Some(AppTouchGesture {
+                    start: position,
+                    last: position,
+                    scrolling: false,
+                });
+                let frame = self
+                    .hosted_apps
+                    .get_mut(&app_id)
+                    .expect("hosted app present")
+                    .handle_pointer_down(local_x, local_y);
+                if self.apply_hosted_app_update(app_id, frame) {
+                    self.publish_visible_shell_frame("hosted-touch-down-frame");
+                }
+                true
+            }
+            touch::TouchPhase::Move => {
+                let Some(mut gesture) = self.app_touch_gesture.take() else {
+                    return false;
+                };
+                let Some((local_x, local_y)) = self.hosted_app_local_point_clamped(position) else {
+                    self.app_touch_gesture = Some(gesture);
+                    return false;
+                };
+                let dispatch_started_at = Instant::now();
+                let frame = self
+                    .hosted_apps
+                    .get_mut(&app_id)
+                    .expect("hosted app present")
+                    .handle_pointer_move(local_x, local_y);
+                let frame_changed = self.apply_hosted_app_update(app_id, frame);
+
+                let total_dx = position.x - gesture.start.x;
+                let total_dy = position.y - gesture.start.y;
+                if !gesture.scrolling
+                    && (total_dx.abs() >= APP_TOUCH_SCROLL_THRESHOLD
+                        || total_dy.abs() >= APP_TOUCH_SCROLL_THRESHOLD)
+                {
+                    gesture.scrolling = true;
+                }
+
+                let route = gesture.scrolling.then_some("app-scroll");
+                gesture.last = position;
+                self.app_touch_gesture = Some(gesture);
+
+                if let Some(route) = route {
+                    self.note_scroll_benchmark_sample(event, route, dispatch_started_at);
+                }
+                if let Some(route) = route {
+                    self.finish_touch_dispatch(event, route, dispatch_started_at);
+                }
+                if frame_changed {
+                    self.schedule_hosted_touch_move_frame();
+                }
+                true
+            }
+            touch::TouchPhase::Up => {
+                let Some(gesture) = self.app_touch_gesture.take() else {
+                    return false;
+                };
+                let local = self
+                    .hosted_app_local_point(position)
+                    .or_else(|| self.hosted_app_local_point_clamped(gesture.last));
+                let Some((local_x, local_y)) = local else {
+                    return false;
+                };
+                let dispatch_started_at = Instant::now();
+                let frame = self
+                    .hosted_apps
+                    .get_mut(&app_id)
+                    .expect("hosted app present")
+                    .handle_pointer_up(local_x, local_y);
+                let frame_changed = self.apply_hosted_app_update(app_id, frame);
+                let route = if gesture.scrolling {
+                    Some("app-scroll-stop")
+                } else {
+                    Some("app-tap")
+                };
+                if frame_changed {
+                    self.publish_visible_shell_frame("hosted-touch-up-frame");
+                }
+                if let Some(route) = route {
+                    self.finish_touch_dispatch(event, route, dispatch_started_at);
+                }
+                true
             }
         }
     }
@@ -1756,15 +2510,28 @@ impl ShadowGuestCompositor {
     }
 
     fn publish_frame_view(&mut self, frame: kms::CapturedFrameView<'_>, frame_marker: &str) {
+        self.publish_frame_view_with_timeout(frame, frame_marker, Duration::from_secs(18));
+    }
+
+    fn publish_frame_view_with_timeout(
+        &mut self,
+        frame: kms::CapturedFrameView<'_>,
+        frame_marker: &str,
+        kms_timeout: Duration,
+    ) -> bool {
         self.record_frame_view(frame, frame_marker);
         if self.frame_snapshot_cache_enabled {
             self.last_published_frame = Some(kms::copy_frame_view(frame, wl_shm::Format::Xrgb8888));
         }
 
+        let mut presented = false;
         if self.drm_enabled {
-            if let Some(display) = self.ensure_kms_display() {
+            if let Some(display) = self.ensure_kms_display_with_timeout(kms_timeout) {
                 match display.present_frame_view(frame) {
-                    Ok(()) => tracing::info!("[shadow-guest-compositor] presented-frame"),
+                    Ok(()) => {
+                        presented = true;
+                        tracing::info!("[shadow-guest-compositor] presented-frame");
+                    }
                     Err(error) => {
                         tracing::warn!("[shadow-guest-compositor] present-frame failed: {error}")
                     }
@@ -1773,10 +2540,13 @@ impl ShadowGuestCompositor {
         }
 
         self.record_touch_present(frame_marker);
+        self.record_scroll_frame_present(frame_marker);
 
         if self.exit_on_first_frame {
             self.loop_signal.stop();
         }
+
+        presented
     }
 
     fn record_frame_view(&mut self, frame: kms::CapturedFrameView<'_>, frame_marker: &str) {
@@ -1790,7 +2560,7 @@ impl ShadowGuestCompositor {
                 frame.height
             );
         }
-        if let Some(display) = self.ensure_kms_display() {
+        if let Some(display) = self.kms_display.as_ref() {
             let (panel_width, panel_height) = display.dimensions();
             if let Some((dst_x, dst_y, copy_width, copy_height)) =
                 touch::frame_content_rect(panel_width, panel_height, frame.width, frame.height)
@@ -1896,6 +2666,9 @@ impl ShadowGuestCompositor {
             return;
         };
         let observed_type = self.observe_surface_buffer(&buffer);
+        let debug_cpu_frame_requested = self.frame_artifacts_enabled
+            || self.frame_snapshot_cache_enabled
+            || self.frame_checksum_enabled;
         if matches!(observed_type, Some(BufferType::Dma)) {
             let dmabuf = get_dmabuf(&buffer).expect("dmabuf-managed buffer");
             let mut directly_presented = false;
@@ -1920,11 +2693,8 @@ impl ShadowGuestCompositor {
                 }
             }
 
-            let direct_present_needs_cpu_frame = self.shell_enabled
-                || !directly_presented
-                || self.frame_artifacts_enabled
-                || self.frame_snapshot_cache_enabled
-                || self.frame_checksum_enabled;
+            let direct_present_needs_cpu_frame =
+                self.shell_enabled || !directly_presented || debug_cpu_frame_requested;
             if directly_presented && !direct_present_needs_cpu_frame {
                 let size = dmabuf.size();
                 self.last_frame_size = Some((size.w.max(0) as u32, size.h.max(0) as u32));
@@ -2342,6 +3112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<ShadowGuestCompositor> = EventLoop::try_new()?;
     let display: Display<ShadowGuestCompositor> = Display::new()?;
     let mut state = ShadowGuestCompositor::new(&config, &mut event_loop, display);
+    let shell_mode = matches!(config.startup_action, StartupAction::Shell { .. });
 
     match &state.transport {
         WaylandTransport::NamedSocket(socket_name) => tracing::info!(
@@ -2352,20 +3123,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!("[shadow-guest-compositor] transport=direct-client-fd")
         }
     }
-    if state.boot_splash_drm {
+    if state.boot_splash_drm && !shell_mode {
         tracing::info!("[shadow-guest-compositor] boot-splash-drm enabled");
         state.run_boot_splash();
+    } else if state.boot_splash_drm && shell_mode {
+        tracing::info!("[shadow-guest-compositor] boot-splash-drm skipped shell-mode");
     }
     match config.startup_action {
         StartupAction::Shell { start_app_id } => {
             tracing::info!("[shadow-guest-compositor] shell-mode enabled");
-            state.publish_visible_shell_frame("shell-home-frame");
             if let Some(app_id) = start_app_id {
+                tracing::info!("[shadow-guest-compositor] shell-startup-prewarm-begin");
+                state.prewarm_visible_shell_frame();
+                tracing::info!("[shadow-guest-compositor] shell-startup-prewarm-done");
+                tracing::info!("[shadow-guest-compositor] shell-startup-home-frame-begin");
+                state.publish_visible_shell_frame("shell-home-frame");
+                tracing::info!("[shadow-guest-compositor] shell-startup-home-frame-done");
                 tracing::info!(
                     "[shadow-guest-compositor] shell-start-app-id={}",
                     app_id.as_str()
                 );
                 state.launch_or_focus_app(app_id)?;
+            } else {
+                tracing::info!("[shadow-guest-compositor] shell-startup-prewarm-begin");
+                state.prewarm_visible_shell_frame();
+                tracing::info!("[shadow-guest-compositor] shell-startup-prewarm-done");
+                tracing::info!("[shadow-guest-compositor] shell-startup-home-frame-begin");
+                state.publish_visible_shell_frame("shell-home-frame");
+                tracing::info!("[shadow-guest-compositor] shell-startup-home-frame-done");
             }
         }
         StartupAction::App { app_id } => {

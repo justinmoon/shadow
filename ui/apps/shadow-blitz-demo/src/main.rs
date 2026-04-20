@@ -1,9 +1,9 @@
-mod app;
-mod frame;
-mod log;
-mod runtime_document;
-mod runtime_session;
-
+#[cfg(any(feature = "cpu", feature = "gpu"))]
 fn main() {
-    app::run();
+    shadow_blitz_demo::app::run();
+}
+
+#[cfg(not(any(feature = "cpu", feature = "gpu")))]
+fn main() {
+    panic!("enable one shadow-blitz-demo renderer feature");
 }

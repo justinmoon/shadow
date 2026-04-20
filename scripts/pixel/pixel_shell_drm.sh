@@ -132,26 +132,8 @@ if [[ -z "$shell_panel_size" ]]; then
   echo "pixel_shell_drm: failed to determine display size; set PIXEL_SHELL_PANEL_SIZE or PIXEL_PANEL_SIZE" >&2
   exit 1
 fi
-case "$shell_viewport_mode" in
-  panel)
-    shell_surface_width="${shell_panel_size%x*}"
-    shell_surface_height="${shell_panel_size#*x}"
-    ;;
-  logical)
-    shell_viewport="$(python3 "$SCRIPT_DIR/runtime/runtime_viewport.py")"
-    shell_surface_width="$(printf '%s\n' "$shell_viewport" | awk -F= '/^viewport_width=/{print $2}')"
-    shell_surface_height="$(printf '%s\n' "$shell_viewport" | awk -F= '/^viewport_height=/{print $2}')"
-    ;;
-  fit)
-    shell_viewport="$(python3 "$SCRIPT_DIR/runtime/runtime_viewport.py" --fit "$shell_panel_size")"
-    shell_surface_width="$(printf '%s\n' "$shell_viewport" | awk -F= '/^fitted_width=/{print $2}')"
-    shell_surface_height="$(printf '%s\n' "$shell_viewport" | awk -F= '/^fitted_height=/{print $2}')"
-    ;;
-  *)
-    echo "pixel_shell_drm: unsupported PIXEL_SHELL_VIEWPORT_MODE: $shell_viewport_mode" >&2
-    exit 64
-    ;;
-esac
+shell_surface_width="${shell_panel_size%x*}"
+shell_surface_height="${shell_panel_size#*x}"
 if [[ -z "$shell_surface_width" || -z "$shell_surface_height" ]]; then
   echo "pixel_shell_drm: failed to derive shell viewport from $shell_panel_size (mode=$shell_viewport_mode)" >&2
   exit 1
@@ -207,6 +189,7 @@ SHADOW_GUEST_START_APP_ID=$shell_app_id
 SHADOW_SESSION_APP_PROFILE=pixel-shell
 SHADOW_RUNTIME_DIR_MODE=0711
 SHADOW_COMPOSITOR_CONTROL_SOCKET_MODE=0666
+SHADOW_GUEST_COMPOSITOR_BIN=$(pixel_runtime_compositor_launcher_dst)
 $(pixel_runtime_shell_bundle_env_lines)
 $(pixel_system_env_lines)
 SHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM=1
@@ -214,6 +197,12 @@ EOF
 )
 shell_session_env="${shell_session_env}"$'\n'"SHADOW_GUEST_COMPOSITOR_TOPLEVEL_WIDTH=$shell_surface_width"
 shell_session_env="${shell_session_env}"$'\n'"SHADOW_GUEST_COMPOSITOR_TOPLEVEL_HEIGHT=$shell_surface_height"
+shell_session_env="${shell_session_env}"$'\n''SHADOW_GUEST_COMPOSITOR_GPU_SHELL=1'
+shell_session_env="${shell_session_env}"$'\n''SHADOW_GUEST_COMPOSITOR_STRICT_GPU_RESIDENT=1'
+while IFS= read -r env_line; do
+  [[ -n "$env_line" ]] || continue
+  shell_session_env="${shell_session_env}"$'\n'"$env_line"
+done < <(printf '%s\n' "$shell_gpu_profile_env")
 if [[ -n "$shell_start_app_id" ]]; then
   shell_session_env="${shell_session_env}"$'\n'"SHADOW_GUEST_SHELL_START_APP_ID=$shell_start_app_id"
   extra_required_markers="${extra_required_markers}"$'\n''[shadow-guest-compositor] mapped-window'

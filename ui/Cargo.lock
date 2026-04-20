@@ -4343,12 +4343,15 @@ dependencies = [
 name = "shadow-blitz-demo"
 version = "0.1.0"
 dependencies = [
+ "anyrender",
  "anyrender_vello",
  "anyrender_vello_cpu",
  "blitz-dom",
  "blitz-html",
+ "blitz-paint",
  "blitz-shell",
  "blitz-traits",
+ "data-url",
  "env_logger",
  "image",
  "libc",
@@ -4389,10 +4392,18 @@ name = "shadow-compositor-guest"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "anyrender",
+ "anyrender_vello",
+ "ash",
  "chrono",
  "drm",
+ "drm-sys",
  "evdev",
+ "font8x8",
+ "kurbo",
  "libc",
+ "peniko",
+ "shadow-blitz-demo",
  "shadow-compositor-common",
  "shadow-runtime-protocol",
  "shadow-ui-core",
@@ -4401,6 +4412,8 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-subscriber",
+ "wgpu",
+ "wgpu_context",
 ]
 
 [[package]]
