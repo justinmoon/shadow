@@ -1658,7 +1658,7 @@
               lib.mapAttrsToList (name: path: { inherit name path; }) leafChecks
             );
           };
-      mkShadowPreMergeChecksFor = pkgs: runtimeChecks:
+      mkShadowPreMergeChecksFor = pkgs: uiChecks: runtimeChecks:
         let
           hostSystem = pkgs.stdenv.hostPlatform.system;
           systemPackageAttr = systemPackageAttrForHostSystem hostSystem;
@@ -1699,6 +1699,10 @@
               {
                 name = "runtime-check";
                 path = runtimeChecks.runtimeCheck;
+              }
+              {
+                name = "ui-check-compositor";
+                path = uiChecks.uiCheckCompositor;
               }
             ];
           };
@@ -1992,11 +1996,12 @@
           });
       checks = forAllSystems ({ pkgs, ... }:
         let
+          uiChecks = mkShadowUiChecksFor pkgs;
           runtimeChecks = mkShadowRuntimeChecksFor pkgs;
         in
-          mkShadowUiChecksFor pkgs
+          uiChecks
           // runtimeChecks
-          // mkShadowPreMergeChecksFor pkgs runtimeChecks
+          // mkShadowPreMergeChecksFor pkgs uiChecks runtimeChecks
       );
     };
 }

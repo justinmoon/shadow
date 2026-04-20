@@ -172,3 +172,44 @@ fn going_home_keeps_unmapped_process_resident() {
     assert!(response.contains("focused=\n"));
     assert!(response.contains("launched=rust-demo\n"));
 }
+
+#[test]
+fn relaunching_existing_unmapped_app_is_idempotent() {
+    let mut harness = HostSessionHarness::new();
+
+    harness
+        .state
+        .launch_or_focus_app(app::RUST_DEMO_APP_ID)
+        .expect("launch app");
+
+    let first_pid = harness
+        .state
+        .launched_apps
+        .get(&app::RUST_DEMO_APP_ID)
+        .expect("first app child")
+        .id();
+
+    harness
+        .state
+        .launch_or_focus_app(app::RUST_DEMO_APP_ID)
+        .expect("relaunch app");
+
+    assert_eq!(harness.state.launched_apps.len(), 1);
+    assert_eq!(
+        harness
+            .state
+            .launched_apps
+            .get(&app::RUST_DEMO_APP_ID)
+            .expect("app child after relaunch")
+            .id(),
+        first_pid
+    );
+    assert!(harness
+        .state
+        .launched_apps
+        .get_mut(&app::RUST_DEMO_APP_ID)
+        .expect("app child after relaunch")
+        .try_wait()
+        .expect("poll app")
+        .is_none());
+}

@@ -151,6 +151,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   side, and `flake.nix` now exposes a Linux `uiShadowCompositorTests` check so
   those tests can run on a real supported target instead of disappearing behind
   the macOS stub binary.
+- Gate note: `preMergeCheck` now pulls in the compositor-only UI suite instead
+  of relying only on the broader runtime and VM smoke path, so extracted guest
+  and shared compositor seams get exercised in the normal branch gate again.
+  The explicit Linux-only nested compositor test remains a separate derivation;
+  keep evaluating whether its remote-builder cost is acceptable for a faster
+  lane before forcing it into every local pre-merge run.
 - Script-layer note: `scripts/lib/pixel_common.sh` is now over `2k` lines and is
   acting as both low-level helper library and operator orchestration layer. That
   is the same smell as `shadow-compositor-guest/src/main.rs`: too many
