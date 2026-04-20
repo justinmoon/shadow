@@ -80,3 +80,35 @@ pub struct NostrSyncReceipt {
     #[serde(rename = "importedCount")]
     pub imported_count: usize,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct NostrPublishRequest {
+    pub kind: u32,
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "rootEventId")]
+    pub root_event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "replyToEventId")]
+    pub reply_to_event_id: Option<String>,
+    #[serde(rename = "relayUrls")]
+    pub relay_urls: Option<Vec<String>>,
+    #[serde(rename = "timeoutMs")]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct NostrPublishedRelayFailure {
+    #[serde(rename = "relayUrl")]
+    pub relay_url: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct NostrPublishReceipt {
+    pub event: NostrEvent,
+    #[serde(rename = "relayUrls")]
+    pub relay_urls: Vec<String>,
+    #[serde(rename = "publishedRelays")]
+    pub published_relays: Vec<String>,
+    #[serde(rename = "failedRelays")]
+    pub failed_relays: Vec<NostrPublishedRelayFailure>,
+}

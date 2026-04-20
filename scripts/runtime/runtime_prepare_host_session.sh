@@ -7,6 +7,7 @@ INPUT_PATH="${SHADOW_RUNTIME_APP_INPUT_PATH:-}"
 CACHE_DIR="${SHADOW_RUNTIME_APP_CACHE_DIR:-}"
 runtime_flake_ref=""
 system_package_attr="shadow-system"
+system_binary_path="${SHADOW_RUNTIME_SYSTEM_BINARY_PATH:-}"
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -17,6 +18,10 @@ parse_args() {
         ;;
       --system-package)
         system_package_attr="${2:-}"
+        shift 2
+        ;;
+      --system-binary-path)
+        system_binary_path="${2:-}"
         shift 2
         ;;
       *)
@@ -33,11 +38,20 @@ REPO_FLAKE_REF="${runtime_flake_ref:-${REPO_ROOT}}"
 cd "$REPO_ROOT"
 
 builder_args=(
-  --flake-ref "$REPO_FLAKE_REF"
-  --system-package "$system_package_attr"
   --profile single
   --app-id app
 )
+if [[ -n "$runtime_flake_ref" ]]; then
+  builder_args+=(--flake-ref "$REPO_FLAKE_REF")
+fi
+if [[ -n "$system_binary_path" ]]; then
+  if [[ -n "$system_package_attr" ]]; then
+    builder_args+=(--system-package "$system_package_attr")
+  fi
+  builder_args+=(--system-binary-path "$system_binary_path")
+elif [[ -n "$system_package_attr" ]]; then
+  builder_args+=(--system-package "$system_package_attr")
+fi
 if [[ -n "$INPUT_PATH" ]]; then
   builder_args+=(--input "$INPUT_PATH")
 fi

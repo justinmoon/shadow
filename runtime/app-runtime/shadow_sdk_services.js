@@ -1,5 +1,7 @@
 /** @typedef {import("./shadow_sdk_nostr.js").NostrAccountSummary} NostrAccountSummary */
 /** @typedef {import("./shadow_sdk_nostr.js").NostrEvent} NostrEvent */
+/** @typedef {import("./shadow_sdk_nostr.js").NostrPublishReceipt} NostrPublishReceipt */
+/** @typedef {import("./shadow_sdk_nostr.js").NostrPublishRequest} NostrPublishRequest */
 /** @typedef {import("./shadow_sdk_nostr.js").NostrQuery} NostrQuery */
 /** @typedef {import("./shadow_sdk_nostr.js").NostrReplaceableQuery} NostrReplaceableQuery */
 /** @typedef {import("./shadow_sdk_nostr.js").NostrSyncReceipt} NostrSyncReceipt */
@@ -89,12 +91,12 @@ export function syncNostr(request = {}) {
   return getNostrApi().sync(request);
 }
 
-export function publishKind1(request) {
-  return getNostrApi().publishKind1(request);
-}
-
-export function publishEphemeralKind1(request) {
-  return getNostrApi().publishEphemeralKind1(request);
+/**
+ * @param {NostrPublishRequest} request
+ * @returns {Promise<NostrPublishReceipt>}
+ */
+export function publishNostr(request) {
+  return getNostrApi().publish(request);
 }
 
 export function listCameras() {
@@ -228,8 +230,7 @@ export const nostr = Object.freeze({
   getReplaceable: getNostrReplaceable,
   importAccountNsec: importNostrAccountNsec,
   listKind1,
-  publishEphemeralKind1,
-  publishKind1,
+  publish: publishNostr,
   query: queryNostr,
   sync: syncNostr,
   syncKind1,

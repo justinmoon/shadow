@@ -35,8 +35,8 @@ PY
 extra_forbidden_markers="${PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS-}"
 for marker in \
   "nostr.syncKind1 could not connect to any relay" \
-  "nostr.publishEphemeralKind1 could not connect to any relay" \
-  "nostr.publishEphemeralKind1 was rejected by every relay"
+  "nostr.publish could not connect to any relay" \
+  "nostr.publish was rejected by every relay"
 do
   if [[ -n "$extra_forbidden_markers" ]]; then
     extra_forbidden_markers="${extra_forbidden_markers}"$'\n'"${marker}"

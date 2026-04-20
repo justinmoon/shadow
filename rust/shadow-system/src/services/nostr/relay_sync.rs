@@ -23,7 +23,7 @@ pub async fn sync_with_client(
     request: NostrSyncRequest,
 ) -> Result<FetchedEventBatch, String> {
     let filter = build_filter(&request.query)?;
-    let relay_urls = normalize_relay_urls(request.relay_urls)?;
+    let relay_urls = normalize_relay_urls(request.relay_urls, "nostr.sync")?;
     ensure_relays(client, relay_registry, &relay_urls).await?;
     let timeout = Duration::from_millis(
         request
@@ -56,25 +56,7 @@ pub async fn sync_with_client(
 
     let mut events = events
         .into_iter()
-        .map(|event| {
-            let npub = event
-                .pubkey
-                .to_bech32()
-                .map_err(|error| format!("nostr.sync encode npub: {error}"))?;
-            let references = extract_event_references(&event);
-            let (root_event_id, reply_to_event_id) = derive_thread_links(&references);
-            Ok(NostrEvent {
-                content: event.content,
-                created_at: event.created_at.as_secs(),
-                id: event.id.to_string(),
-                kind: event.kind.as_u16() as u32,
-                pubkey: npub,
-                identifier: event.tags.identifier().map(str::to_owned),
-                root_event_id,
-                reply_to_event_id,
-                references,
-            })
-        })
+        .map(|event| event_to_nostr_event(&event, "nostr.sync"))
         .collect::<Result<Vec<_>, String>>()?;
     events.sort_by(|left, right| {
         right
@@ -153,12 +135,13 @@ fn build_filter(query: &NostrQuery) -> Result<Filter, String> {
     Ok(filter)
 }
 
-fn normalize_relay_urls(relay_urls: Option<Vec<String>>) -> Result<Vec<String>, String> {
+pub(super) fn normalize_relay_urls(
+    relay_urls: Option<Vec<String>>,
+    op_name: &str,
+) -> Result<Vec<String>, String> {
     let relay_urls = relay_urls.unwrap_or_else(default_relay_urls);
     if relay_urls.is_empty() {
-        return Err(String::from(
-            "nostr.syncKind1 requires at least one relay URL",
-        ));
+        return Err(format!("{op_name} requires at least one relay URL"));
     }
 
     relay_urls
@@ -166,17 +149,17 @@ fn normalize_relay_urls(relay_urls: Option<Vec<String>>) -> Result<Vec<String>, 
         .map(|relay_url| {
             let relay_url = relay_url.trim().to_owned();
             if relay_url.is_empty() {
-                return Err(String::from("nostr.syncKind1 relay URL cannot be empty"));
+                return Err(format!("{op_name} relay URL cannot be empty"));
             }
 
             RelayUrl::parse(&relay_url)
-                .map_err(|error| format!("nostr.syncKind1 invalid relay URL {relay_url}: {error}"))
+                .map_err(|error| format!("{op_name} invalid relay URL {relay_url}: {error}"))
                 .map(|relay_url| relay_url.to_string())
         })
         .collect()
 }
 
-async fn ensure_relays(
+pub(super) async fn ensure_relays(
     client: &Client,
     relay_registry: &mut BTreeSet<String>,
     relay_urls: &[String],
@@ -201,6 +184,26 @@ fn default_relay_urls() -> Vec<String> {
         String::from("wss://relay.primal.net/"),
         String::from("wss://relay.damus.io/"),
     ]
+}
+
+pub(super) fn event_to_nostr_event(event: &Event, op_name: &str) -> Result<NostrEvent, String> {
+    let npub = event
+        .pubkey
+        .to_bech32()
+        .map_err(|error| format!("{op_name} encode npub: {error}"))?;
+    let references = extract_event_references(event);
+    let (root_event_id, reply_to_event_id) = derive_thread_links(&references);
+    Ok(NostrEvent {
+        content: event.content.clone(),
+        created_at: event.created_at.as_secs(),
+        id: event.id.to_string(),
+        kind: event.kind.as_u16() as u32,
+        pubkey: npub,
+        identifier: event.tags.identifier().map(str::to_owned),
+        root_event_id,
+        reply_to_event_id,
+        references,
+    })
 }
 
 fn extract_event_references(event: &Event) -> Vec<NostrEventReference> {

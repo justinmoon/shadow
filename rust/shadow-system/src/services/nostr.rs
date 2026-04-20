@@ -7,12 +7,10 @@ use std::path::PathBuf;
 use deno_core::{extension, op2, Extension};
 use deno_error::JsErrorBox;
 use shadow_sdk::services::nostr::{
-    self as sdk_nostr, Kind1Event, ListKind1Query, NostrAccountSummary, NostrEvent, NostrQuery,
-    NostrReplaceableQuery, NostrSyncReceipt, NostrSyncRequest, PublishKind1Request,
-    SqliteNostrService,
+    self as sdk_nostr, Kind1Event, ListKind1Query, NostrAccountSummary, NostrEvent,
+    NostrPublishReceipt, NostrPublishRequest, NostrQuery, NostrReplaceableQuery, NostrSyncReceipt,
+    NostrSyncRequest,
 };
-
-use self::relay_publish::{PublishEphemeralKind1Request, PublishedKind1Receipt};
 
 #[op2]
 #[serde]
@@ -78,15 +76,6 @@ fn op_runtime_nostr_list_kind1(
 
 #[op2]
 #[serde]
-fn op_runtime_nostr_publish_kind1(
-    #[serde] request: PublishKind1Request,
-) -> Result<Kind1Event, JsErrorBox> {
-    ensure_nostr_service_running()?;
-    sdk_nostr::publish_kind1(request).map_err(to_js_error)
-}
-
-#[op2]
-#[serde]
 async fn op_runtime_nostr_sync(
     #[serde] request: NostrSyncRequest,
 ) -> Result<NostrSyncReceipt, JsErrorBox> {
@@ -114,28 +103,15 @@ async fn sync_nostr_request(request: NostrSyncRequest) -> Result<NostrSyncReceip
 
 #[op2]
 #[serde]
-async fn op_runtime_nostr_publish_ephemeral_kind1(
-    #[serde] request: PublishEphemeralKind1Request,
-) -> Result<PublishedKind1Receipt, JsErrorBox> {
-    let published = relay_publish::publish_ephemeral_kind1(request)
-        .await
-        .map_err(JsErrorBox::generic)?;
-
-    if let Ok(service) = SqliteNostrService::from_env() {
-        let _ = service.store_event(&NostrEvent {
-            content: published.content.clone(),
-            created_at: published.created_at,
-            id: published.event_id_hex.clone(),
-            kind: 1,
-            pubkey: published.npub.clone(),
-            identifier: None,
-            root_event_id: None,
-            reply_to_event_id: None,
-            references: Vec::new(),
-        });
-    }
-
-    Ok(published)
+async fn op_runtime_nostr_publish(
+    #[serde] request: NostrPublishRequest,
+) -> Result<NostrPublishReceipt, JsErrorBox> {
+    tokio::task::spawn_blocking(move || {
+        ensure_nostr_service_running()?;
+        sdk_nostr::publish(request).map_err(to_js_error)
+    })
+    .await
+    .map_err(|error| JsErrorBox::generic(format!("nostr.publish join blocking task: {error}")))?
 }
 
 extension!(
@@ -149,10 +125,9 @@ extension!(
         op_runtime_nostr_get_event,
         op_runtime_nostr_get_replaceable,
         op_runtime_nostr_list_kind1,
-        op_runtime_nostr_publish_kind1,
+        op_runtime_nostr_publish,
         op_runtime_nostr_sync,
-        op_runtime_nostr_sync_kind1,
-        op_runtime_nostr_publish_ephemeral_kind1
+        op_runtime_nostr_sync_kind1
     ],
 );
 

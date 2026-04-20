@@ -34,13 +34,13 @@ typed convenience wrappers on top.
 - [ ] Share one relay pool and one websocket connection per relay within an
       account scope.
 - [ ] Share one verified event cache and local index across apps.
-- [ ] Define the first public `shadow_sdk::nostr` API for Rust and matching
+- [~] Define the first public `shadow_sdk::nostr` API for Rust and matching
       `@shadow/sdk` bindings for TypeScript.
 - [ ] Define the OS-owned signer flow with approval prompts and durable
       app-level policy.
-- [ ] Land the first read-first Rust Nostr app: account bootstrap, timeline,
+- [~] Land the first read-first Rust Nostr app: account bootstrap, timeline,
       thread, profile, refresh, warm restore.
-- [ ] Add compose and publish once the text-input seam is ready.
+- [~] Add compose and publish once the text-input seam is ready.
 
 ## Near-Term Steps
 
@@ -65,8 +65,8 @@ typed convenience wrappers on top.
       always allow.
 - [x] Choose the read-first app slice order: home timeline -> thread -> profile.
 - [x] Land the first generic read-side SDK slice with a single filter object
-      first, then keep the old kind1 helpers only as compatibility wrappers
-      until their callers migrate.
+      first, then keep only the kind1 read helpers as temporary compatibility
+      wrappers until their callers migrate.
 - [~] Land the first Rust UI framework seam in `shadow_sdk::ui`: app runner,
   window/env wiring, theme, and a tiny set of reusable primitives over
   Xilem/Masonry.
@@ -141,6 +141,17 @@ typed convenience wrappers on top.
   - TypeScript imports the same shapes from `@shadow/sdk/nostr`
   - runtime bundling now stages that module explicitly so TS apps can depend on
     the same contract without local alias drift
+- The first real write seam now exists:
+  - `shadow_sdk::services::nostr::publish` is the only write path exposed to
+    apps across Rust and TypeScript
+  - the shared daemon signs with the active shared account, publishes through
+    its long-lived relay client, and stores the resulting event back into the
+    shared cache
+  - the Rust timeline can now publish a real reply from its reply sheet
+  - the TypeScript GM smoke app now uses the same generic publish path instead
+    of the throwaway-key demo path
+  - the fake local `publishKind1` path and the throwaway-key
+    `publishEphemeralKind1` path are gone
 - The signer should be OS-owned, Amber-style. Apps request publication or
   signing work from the OS; the OS decides whether to prompt, deny, sign once,
   or sign automatically because the user already granted standing approval.
@@ -159,10 +170,10 @@ typed convenience wrappers on top.
   - `query` / `count` / `get_event` / `get_replaceable` read only from the local
     shared cache.
   - `sync` talks to relays and imports into that cache.
-  - `publish` should eventually mean signed relay publication through the
-    OS-owned signer.
-  - The current `publishKind1` local insert helper and `publishEphemeralKind1`
-    throwaway-key relay path are legacy/demo helpers, not the long-term model.
+  - `publish` now means signed relay publication through the shared active
+    account and daemon-owned relay client.
+  - the missing piece is OS-owned approval policy and prompt UI, not another
+    parallel write API.
 - Raw REQ/subscription escape hatches may still be useful, but they should not
   be the primary app-authoring story.
 - `window.nostrdb.js` is good prior art for the app-facing shape: the public

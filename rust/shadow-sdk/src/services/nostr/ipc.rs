@@ -9,9 +9,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Kind1Event, ListKind1Query, NostrAccountSummary, NostrEvent, NostrHostError, NostrQuery,
-    NostrReplaceableQuery, NostrSyncReceipt, NostrSyncRequest, PublishKind1Request,
-    NOSTR_DB_PATH_ENV,
+    Kind1Event, ListKind1Query, NostrAccountSummary, NostrEvent, NostrHostError,
+    NostrPublishReceipt, NostrPublishRequest, NostrQuery, NostrReplaceableQuery, NostrSyncReceipt,
+    NostrSyncRequest, NOSTR_DB_PATH_ENV,
 };
 
 pub const NOSTR_SERVICE_SOCKET_ENV: &str = "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET";
@@ -32,7 +32,7 @@ pub enum NostrIpcRequest {
     GetEvent { id: String },
     GetReplaceable { query: NostrReplaceableQuery },
     ListKind1 { query: ListKind1Query },
-    PublishKind1 { request: PublishKind1Request },
+    Publish { request: NostrPublishRequest },
     Sync { request: NostrSyncRequest },
 }
 
@@ -75,8 +75,8 @@ pub fn list_kind1(query: ListKind1Query) -> Result<Vec<Kind1Event>, NostrHostErr
     send_request(&NostrIpcRequest::ListKind1 { query })
 }
 
-pub fn publish_kind1(request: PublishKind1Request) -> Result<Kind1Event, NostrHostError> {
-    send_request(&NostrIpcRequest::PublishKind1 { request })
+pub fn publish(request: NostrPublishRequest) -> Result<NostrPublishReceipt, NostrHostError> {
+    send_request(&NostrIpcRequest::Publish { request })
 }
 
 pub fn sync(request: NostrSyncRequest) -> Result<NostrSyncReceipt, NostrHostError> {

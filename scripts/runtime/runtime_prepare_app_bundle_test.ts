@@ -1,6 +1,10 @@
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { NostrAccountSummary } from "@shadow/sdk/nostr";
+import type {
+  NostrAccountSummary,
+  NostrPublishReceipt,
+  NostrPublishRequest,
+} from "@shadow/sdk/nostr";
 
 import {
   prepareRuntimeAppBundle,
@@ -215,6 +219,63 @@ Deno.test("shadow sdk nostr account helpers delegate to the runtime host", async
       nostrCurrent.npub === "npub1testcurrent",
       "nostr.currentAccount should be exposed on the grouped api",
     );
+  } finally {
+    delete runtimeGlobal.Shadow;
+  }
+});
+
+Deno.test("shadow sdk nostr publish helper delegates to the runtime host", async () => {
+  const cwd = repoRoot();
+  const runtimeGlobal = globalThis as typeof globalThis & {
+    Shadow?: Record<string, unknown>;
+  };
+  const moduleUrl = `${
+    pathToFileURL(path.resolve(
+      cwd,
+      "runtime/app-runtime/shadow_sdk_services.js",
+    )).href
+  }?test=${crypto.randomUUID()}`;
+
+  const publishCalls: NostrPublishRequest[] = [];
+  const receiptFixture = (
+    content: string,
+  ): NostrPublishReceipt => ({
+    event: {
+      content,
+      created_at: 1_700_000_001,
+      id: "test-event-id",
+      kind: 1,
+      pubkey: "npub1testpublish",
+    },
+    relayUrls: ["wss://relay.test/"],
+    publishedRelays: ["wss://relay.test/"],
+    failedRelays: [],
+  });
+  runtimeGlobal.Shadow = {
+    os: {
+      nostr: {
+        publish: async (request: NostrPublishRequest) => {
+          publishCalls.push(request);
+          return receiptFixture(request.content);
+        },
+      },
+    },
+  };
+
+  try {
+    const services = await import(moduleUrl);
+    const receipt = await services.publishNostr({
+      kind: 1,
+      content: "gm",
+      replyToEventId: "reply-id",
+    });
+
+    assert(publishCalls.length === 1, "publish should be forwarded exactly once");
+    assert(
+      publishCalls[0].replyToEventId === "reply-id",
+      "reply target should round-trip",
+    );
+    assert(receipt.event.content === "gm", "publish receipt should round-trip");
   } finally {
     delete runtimeGlobal.Shadow;
   }

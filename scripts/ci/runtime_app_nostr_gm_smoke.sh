@@ -60,8 +60,14 @@ clicked_html = clicked_payload["html"]
 if "Tap to send GM" not in initial_html:
     raise SystemExit("runtime-app-nostr-gm-smoke: initial render missing GM call-to-action")
 
-if "Publishing GM" not in clicked_html:
-    raise SystemExit("runtime-app-nostr-gm-smoke: click did not surface publishing state")
+if (
+    "Publishing GM" not in clicked_html
+    and "GM sent" not in clicked_html
+    and "Publish failed" not in clicked_html
+):
+    raise SystemExit(
+        "runtime-app-nostr-gm-smoke: click did not surface publish progress or completion"
+    )
 
 final_html = None
 deadline = time.time() + 25
@@ -85,7 +91,7 @@ while time.time() < deadline:
 if final_html is None:
     raise SystemExit("runtime-app-nostr-gm-smoke: timed out waiting for publish completion")
 
-if "GM sent" not in final_html and "Relay publish failed" not in final_html:
+if "GM sent" not in final_html and "Publish failed" not in final_html:
     raise SystemExit("runtime-app-nostr-gm-smoke: publish completion missing success/error state")
 
 assert process.stdin is not None
@@ -99,6 +105,6 @@ print(json.dumps({
     "systemPackageAttr": session["systemPackageAttr"],
     "systemBinaryName": session["systemBinaryName"],
     "bundlePath": bundle_path,
-    "result": "GM sent" if "GM sent" in final_html else "Relay publish failed",
+    "result": "GM sent" if "GM sent" in final_html else "Publish failed",
 }, indent=2))
 PY

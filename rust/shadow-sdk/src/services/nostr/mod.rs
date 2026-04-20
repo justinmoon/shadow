@@ -7,12 +7,13 @@ pub mod types;
 
 pub use ipc::NOSTR_SERVICE_SOCKET_ENV;
 pub use store::{
-    Kind1Event, ListKind1Query, NostrHostError, PublishKind1Request, SqliteNostrService,
-    DEFAULT_PUBLISH_PUBKEY, NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,
+    Kind1Event, ListKind1Query, NostrHostError, SqliteNostrService, NOSTR_ACCOUNT_NSEC_ENV,
+    NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,
 };
 pub use types::{
-    NostrAccountSource, NostrAccountSummary, NostrEvent, NostrEventReference, NostrQuery,
-    NostrReplaceableQuery, NostrSyncReceipt, NostrSyncRequest,
+    NostrAccountSource, NostrAccountSummary, NostrEvent, NostrEventReference, NostrPublishReceipt,
+    NostrPublishRequest, NostrPublishedRelayFailure, NostrQuery, NostrReplaceableQuery,
+    NostrSyncReceipt, NostrSyncRequest,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,11 +106,8 @@ pub fn list_kind1(query: ListKind1Query) -> Result<Vec<Kind1Event>, NostrError> 
     store::list_kind1(query).map_err(NostrError::from)
 }
 
-pub fn publish_kind1(request: PublishKind1Request) -> Result<Kind1Event, NostrError> {
-    if ipc::service_socket_path().is_some() {
-        return ipc::publish_kind1(request).map_err(NostrError::from);
-    }
-    store::publish_kind1(request).map_err(NostrError::from)
+pub fn publish(request: NostrPublishRequest) -> Result<NostrPublishReceipt, NostrError> {
+    ipc::publish(request).map_err(NostrError::from)
 }
 
 pub fn sync(request: NostrSyncRequest) -> Result<NostrSyncReceipt, NostrError> {

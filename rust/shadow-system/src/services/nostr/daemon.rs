@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use shadow_sdk::services::nostr::ipc::{remove_service_socket_file, NostrIpcRequest};
 use shadow_sdk::services::nostr::{NostrHostError, NostrSyncReceipt, SqliteNostrService};
 
-use super::relay_sync;
+use super::{relay_publish, relay_sync};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -69,11 +69,14 @@ impl NostrDaemon {
             NostrIpcRequest::ListKind1 { query } => {
                 encode_ok(self.service.list_kind1(query).map_err(error_to_string)?)
             }
-            NostrIpcRequest::PublishKind1 { request } => encode_ok(
-                self.service
-                    .publish_kind1(request)
-                    .map_err(error_to_string)?,
-            ),
+            NostrIpcRequest::Publish { request } => {
+                encode_ok(runtime.block_on(relay_publish::publish_with_client(
+                    &self.client,
+                    &mut self.relay_registry,
+                    &self.service,
+                    request,
+                ))?)
+            }
             NostrIpcRequest::Sync { request } => {
                 let fetched = runtime.block_on(relay_sync::sync_with_client(
                     &self.client,

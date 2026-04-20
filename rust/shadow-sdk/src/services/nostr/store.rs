@@ -14,13 +14,11 @@ use super::types::{
     NostrReplaceableQuery,
 };
 
-pub const DEFAULT_PUBLISH_PUBKEY: &str = "npub-shadow-os";
 pub const NOSTR_ACCOUNT_NSEC_ENV: &str = "SHADOW_RUNTIME_NOSTR_ACCOUNT_NSEC";
 pub const NOSTR_ACCOUNT_PATH_ENV: &str = "SHADOW_RUNTIME_NOSTR_ACCOUNT_PATH";
 pub const NOSTR_DB_PATH_ENV: &str = "SHADOW_RUNTIME_NOSTR_DB_PATH";
 
 const IN_MEMORY_DB_PATH: &str = ":memory:";
-const INITIAL_CREATED_AT_BASE: u64 = 1_700_000_000;
 const LEGACY_KIND1_TABLE: &str = "nostr_kind1_events";
 const NOSTR_ACCOUNT_BASENAME: &str = "runtime-nostr-account.json";
 const LEGACY_DEMO_EVENT_IDS: [&str; 3] = ["shadow-note-1", "shadow-note-2", "shadow-note-3"];
@@ -77,12 +75,6 @@ pub struct ListKind1Query {
     pub since: Option<u64>,
     pub until: Option<u64>,
     pub limit: Option<usize>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub struct PublishKind1Request {
-    pub content: Option<String>,
-    pub pubkey: Option<String>,
 }
 
 #[derive(Debug)]
@@ -310,6 +302,23 @@ impl SqliteNostrService {
         self.persist_active_account(keys, NostrAccountSource::Imported)
     }
 
+    #[doc(hidden)]
+    pub fn active_account_keys(&self) -> Result<Keys, NostrHostError> {
+        if let Some(keys) = env_account_keys()? {
+            return Ok(keys);
+        }
+
+        let Some(account_path) = account_path() else {
+            return Err(NostrHostError::new(
+                "shadow nostr service: no active account is configured",
+            ));
+        };
+        let (keys, _source) = read_persisted_account_keys(&account_path)?.ok_or_else(|| {
+            NostrHostError::new("shadow nostr service: no active account is configured")
+        })?;
+        Ok(keys)
+    }
+
     fn persist_active_account(
         &self,
         keys: Keys,
@@ -528,69 +537,6 @@ impl SqliteNostrService {
         .map(|events| events.into_iter().map(Kind1Event::from).collect())
     }
 
-    pub fn publish_kind1(
-        &self,
-        request: PublishKind1Request,
-    ) -> Result<Kind1Event, NostrHostError> {
-        let content = request
-            .content
-            .as_deref()
-            .map(str::trim)
-            .filter(|content| !content.is_empty())
-            .ok_or_else(|| NostrHostError::new("nostr.publishKind1 requires non-empty content"))?
-            .to_owned();
-        let next_sequence: u64 = self
-            .connection
-            .query_row(
-                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM nostr_events",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|error| {
-                NostrHostError::new(format!(
-                    "nostr.publishKind1 load next sqlite sequence: {error}"
-                ))
-            })?;
-        let next_created_at: u64 = self
-            .connection
-            .query_row(
-                "SELECT COALESCE(MAX(created_at), ?1) + 1 FROM nostr_events",
-                params![INITIAL_CREATED_AT_BASE],
-                |row| row.get(0),
-            )
-            .map_err(|error| {
-                NostrHostError::new(format!(
-                    "nostr.publishKind1 load next sqlite timestamp: {error}"
-                ))
-            })?;
-        let pubkey = request
-            .pubkey
-            .as_deref()
-            .map(str::trim)
-            .filter(|pubkey| !pubkey.is_empty())
-            .unwrap_or(DEFAULT_PUBLISH_PUBKEY)
-            .to_owned();
-        let event = NostrEvent {
-            content,
-            created_at: next_created_at,
-            id: format!("shadow-note-{next_sequence}"),
-            kind: 1,
-            pubkey,
-            identifier: None,
-            root_event_id: None,
-            reply_to_event_id: None,
-            references: Vec::new(),
-        };
-        self.store_event(&event).map_err(|error| {
-            NostrHostError::new(format!(
-                "nostr.publishKind1 insert sqlite note {}: {error}",
-                event.id
-            ))
-        })?;
-
-        Ok(Kind1Event::from(event))
-    }
-
     pub fn store_event(&self, event: &NostrEvent) -> Result<bool, NostrHostError> {
         let inserted = self
             .connection
@@ -695,10 +641,6 @@ pub fn list_kind1(query: ListKind1Query) -> Result<Vec<Kind1Event>, NostrHostErr
     SqliteNostrService::from_env()?.list_kind1(query)
 }
 
-pub fn publish_kind1(request: PublishKind1Request) -> Result<Kind1Event, NostrHostError> {
-    SqliteNostrService::from_env()?.publish_kind1(request)
-}
-
 fn account_path() -> Option<PathBuf> {
     std::env::var(NOSTR_ACCOUNT_PATH_ENV)
         .ok()
@@ -743,6 +685,13 @@ fn ensure_parent_dir(path: &Path, label: &str) -> Result<(), NostrHostError> {
 }
 
 fn env_account_summary() -> Result<Option<NostrAccountSummary>, NostrHostError> {
+    let Some(keys) = env_account_keys()? else {
+        return Ok(None);
+    };
+    summarize_account(&keys, NostrAccountSource::Env).map(Some)
+}
+
+fn env_account_keys() -> Result<Option<Keys>, NostrHostError> {
     let Some(nsec) = std::env::var(NOSTR_ACCOUNT_NSEC_ENV)
         .ok()
         .map(|value| value.trim().to_owned())
@@ -756,12 +705,21 @@ fn env_account_summary() -> Result<Option<NostrAccountSummary>, NostrHostError> 
             "shadow nostr service: {NOSTR_ACCOUNT_NSEC_ENV} must be a valid nsec or hex secret key"
         ),
     )?;
-    summarize_account(&keys, NostrAccountSource::Env).map(Some)
+    Ok(Some(keys))
 }
 
 fn read_persisted_account(
     account_path: &Path,
 ) -> Result<Option<NostrAccountSummary>, NostrHostError> {
+    let Some((keys, source)) = read_persisted_account_keys(account_path)? else {
+        return Ok(None);
+    };
+    summarize_account(&keys, source).map(Some)
+}
+
+fn read_persisted_account_keys(
+    account_path: &Path,
+) -> Result<Option<(Keys, NostrAccountSource)>, NostrHostError> {
     if !account_path.exists() {
         return Ok(None);
     }
@@ -785,7 +743,7 @@ fn read_persisted_account(
             account_path.display()
         ),
     )?;
-    summarize_account(&keys, persisted.source).map(Some)
+    Ok(Some((keys, persisted.source)))
 }
 
 fn write_persisted_account(

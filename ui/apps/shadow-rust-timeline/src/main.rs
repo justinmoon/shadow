@@ -10,9 +10,10 @@ use shadow_sdk::{
     },
     services::clipboard::write_text as write_clipboard_text,
     services::nostr::{
-        current_account, generate_account, get_event, get_replaceable, import_account_nsec, query,
-        sync, NostrAccountSource, NostrAccountSummary, NostrEvent, NostrQuery,
-        NostrReplaceableQuery, NostrSyncReceipt, NostrSyncRequest, NOSTR_SERVICE_SOCKET_ENV,
+        current_account, generate_account, get_event, get_replaceable, import_account_nsec,
+        publish, query, sync, NostrAccountSource, NostrAccountSummary, NostrEvent,
+        NostrPublishReceipt, NostrPublishRequest, NostrQuery, NostrReplaceableQuery,
+        NostrSyncReceipt, NostrSyncRequest, NOSTR_SERVICE_SOCKET_ENV,
     },
     ui::{
         self, body_text, caption_text, column, eyebrow_text, headline_text, maybe,
@@ -85,6 +86,17 @@ struct PendingClipboardWrite {
     token: u64,
 }
 
+#[derive(Clone, Debug)]
+struct PendingPublish {
+    content: String,
+    limit: usize,
+    note_id: String,
+    relay_urls: Vec<String>,
+    reply_to_event_id: String,
+    root_event_id: Option<String>,
+    token: u64,
+}
+
 #[derive(Debug)]
 struct RefreshOutcome {
     receipt: NostrSyncReceipt,
@@ -95,6 +107,12 @@ struct RefreshOutcome {
 struct ThreadSyncOutcome {
     fetched_count: usize,
     imported_count: usize,
+}
+
+#[derive(Debug)]
+struct PublishOutcome {
+    receipt: NostrPublishReceipt,
+    notes: Vec<NostrEvent>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -193,6 +211,7 @@ struct TimelineApp {
     nsec_input: String,
     pending_account_action: Option<PendingAccountAction>,
     pending_clipboard_write: Option<PendingClipboardWrite>,
+    pending_publish: Option<PendingPublish>,
     notes: Vec<NostrEvent>,
     pending_refresh: Option<PendingRefresh>,
     pending_thread_sync: Option<PendingThreadSync>,
@@ -265,6 +284,7 @@ impl TimelineApp {
             nsec_input: String::new(),
             pending_account_action: None,
             pending_clipboard_write: None,
+            pending_publish: None,
             notes,
             pending_refresh: None,
             pending_thread_sync: None,
@@ -399,9 +419,7 @@ impl TimelineApp {
         });
         self.status = TimelineStatus {
             tone: Tone::Neutral,
-            message: String::from(
-                "Compose the reply draft here. Publish will use the OS signer once that seam lands.",
-            ),
+            message: String::from("Compose the reply, then publish through the shared account."),
         };
     }
 
@@ -413,6 +431,43 @@ impl TimelineApp {
         if let Some(draft) = self.reply_draft.as_mut() {
             draft.content = value;
         }
+    }
+
+    fn begin_reply_publish(&mut self) {
+        if self.pending_publish.is_some() {
+            return;
+        }
+        let Some(draft) = self.reply_draft.clone() else {
+            return;
+        };
+        let content = draft.content.trim();
+        if content.is_empty() {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("Write a reply before trying to publish."),
+            };
+            return;
+        }
+        let Some(note) = self.cached_note_by_id(&draft.note_id) else {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("That note is no longer available for replying."),
+            };
+            return;
+        };
+        self.pending_publish = Some(PendingPublish {
+            content: content.to_owned(),
+            limit: self.config.limit,
+            note_id: note.id.clone(),
+            relay_urls: self.config.relay_urls.clone(),
+            reply_to_event_id: note.id.clone(),
+            root_event_id: note.root_event_id.clone().or_else(|| Some(note.id)),
+            token: self.next_token(),
+        });
+        self.status = TimelineStatus {
+            tone: Tone::Accent,
+            message: String::from("Publishing reply through the shared Nostr account..."),
+        };
     }
 
     fn next_token(&mut self) -> u64 {
@@ -567,6 +622,47 @@ impl TimelineApp {
         };
     }
 
+    fn finish_publish(&mut self, token: u64, result: Result<PublishOutcome, String>) {
+        let Some(pending) = &self.pending_publish else {
+            return;
+        };
+        if pending.token != token {
+            return;
+        }
+        self.pending_publish = None;
+
+        match result {
+            Ok(outcome) => {
+                self.notes = outcome.notes;
+                self.sync_routes();
+                self.reply_draft = None;
+                let relay_count = outcome.receipt.published_relays.len();
+                let suffix = if outcome.receipt.failed_relays.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "; {} relay{} failed",
+                        outcome.receipt.failed_relays.len(),
+                        plural_suffix(outcome.receipt.failed_relays.len())
+                    )
+                };
+                self.status = TimelineStatus {
+                    tone: Tone::Success,
+                    message: format!(
+                        "Published reply to {relay_count} relay{}{suffix}.",
+                        plural_suffix(relay_count),
+                    ),
+                };
+            }
+            Err(message) => {
+                self.status = TimelineStatus {
+                    tone: Tone::Danger,
+                    message,
+                };
+            }
+        }
+    }
+
     fn current_route(&self) -> Route {
         self.route_stack.last().cloned().unwrap_or(Route::Timeline)
     }
@@ -717,6 +813,7 @@ fn main() -> Result<(), ui::EventLoopError> {
 fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
     let pending_account_action = app.pending_account_action.clone();
     let pending_clipboard_write = app.pending_clipboard_write.clone();
+    let pending_publish = app.pending_publish.clone();
     let pending_refresh = app.pending_refresh.clone();
     let pending_thread_sync = app.pending_thread_sync.clone();
     let theme = Theme::shadow_dark();
@@ -756,6 +853,9 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
             let thread_sync_pending = pending_thread_sync
                 .as_ref()
                 .is_some_and(|job| job.note_id == id);
+            let publish_pending = pending_publish
+                .as_ref()
+                .is_some_and(|job| job.note_id == id);
             note_screen(
                 theme,
                 note,
@@ -763,6 +863,7 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
                 thread,
                 app.reply_draft_for(&id),
                 app.status.clone(),
+                publish_pending,
                 socket_available(),
                 thread_sync_pending,
             )
@@ -805,6 +906,14 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
          job: PendingThreadSync,
          result: Result<ThreadSyncOutcome, String>| {
             app.finish_thread_sync(job.token, result);
+        },
+    );
+    let content = with_blocking_task(
+        content,
+        pending_publish,
+        run_reply_publish,
+        |app: &mut TimelineApp, job: PendingPublish, result: Result<PublishOutcome, String>| {
+            app.finish_publish(job.token, result);
         },
     );
 
@@ -995,7 +1104,10 @@ fn account_screen(
                             "Use the clipboard to move this device identity into another app.",
                             theme,
                         ),
-                        caption_text("This app does not offer publish controls yet.", theme),
+                        caption_text(
+                            "Replies publish through the shared account. Broader signer policy lands next.",
+                            theme,
+                        ),
                     ))
                     .gap(8.0.px()),
                 ))
@@ -1036,6 +1148,7 @@ fn note_screen(
     thread: ThreadContext,
     reply_draft: Option<ReplyDraft>,
     status: TimelineStatus,
+    publish_pending: bool,
     thread_sync_available: bool,
     thread_sync_pending: bool,
 ) -> impl WidgetView<TimelineApp> {
@@ -1048,7 +1161,7 @@ fn note_screen(
             let replies = thread.replies.clone();
             let composer = reply_draft
                 .as_ref()
-                .map(|draft| reply_sheet(theme, &note, draft.clone()));
+                .map(|draft| reply_sheet(theme, &note, draft.clone(), publish_pending));
             with_sheet(
                 column((
                 top_bar_with_back(
@@ -1199,7 +1312,12 @@ fn note_screen(
     body
 }
 
-fn reply_sheet(theme: Theme, note: &NostrEvent, draft: ReplyDraft) -> impl WidgetView<TimelineApp> {
+fn reply_sheet(
+    theme: Theme,
+    note: &NostrEvent,
+    draft: ReplyDraft,
+    publish_pending: bool,
+) -> impl WidgetView<TimelineApp> {
     let note_id = draft.note_id.clone();
     let note_preview = note.content.lines().next().unwrap_or("").trim();
     let note_preview = if note_preview.is_empty() {
@@ -1207,6 +1325,7 @@ fn reply_sheet(theme: Theme, note: &NostrEvent, draft: ReplyDraft) -> impl Widge
     } else {
         note_preview.to_owned()
     };
+    let can_publish = !publish_pending && !draft.content.trim().is_empty();
 
     column((
         eyebrow_text("Reply draft", theme),
@@ -1218,7 +1337,7 @@ fn reply_sheet(theme: Theme, note: &NostrEvent, draft: ReplyDraft) -> impl Widge
         body_text(note_preview, theme),
         multiline_editor(
             draft.content,
-            "Write a reply for the shared Nostr signer to publish later.",
+            "Write a reply for the shared account and relay engine.",
             148.0,
             theme,
             |app: &mut TimelineApp, value| {
@@ -1229,12 +1348,27 @@ fn reply_sheet(theme: Theme, note: &NostrEvent, draft: ReplyDraft) -> impl Widge
             secondary_button("Close", theme, |app: &mut TimelineApp| {
                 app.close_reply_composer();
             }),
-            primary_button_state("Post reply", theme, ActionButtonState::Disabled, |_| {}),
+            primary_button_state(
+                if publish_pending {
+                    "Posting..."
+                } else {
+                    "Post reply"
+                },
+                theme,
+                if can_publish {
+                    ActionButtonState::Enabled
+                } else {
+                    ActionButtonState::Disabled
+                },
+                |app: &mut TimelineApp| {
+                    app.begin_reply_publish();
+                },
+            ),
         ))
         .gap(10.0.px())
         .main_axis_alignment(MainAxisAlignment::Start),
         caption_text(
-            "This slice stops at drafting. The OS-owned signer and publish approval flow land next.",
+            "This uses the shared account today. The OS-owned approval policy is the next deeper seam.",
             theme,
         ),
     ))
@@ -1360,6 +1494,21 @@ fn run_account_action(job: PendingAccountAction) -> Result<ActiveAccount, String
 
 fn run_clipboard_write(job: PendingClipboardWrite) -> Result<(), String> {
     write_clipboard_text(job.text).map_err(|error| error.to_string())
+}
+
+fn run_reply_publish(job: PendingPublish) -> Result<PublishOutcome, String> {
+    let receipt = publish(NostrPublishRequest {
+        kind: 1,
+        content: job.content,
+        root_event_id: job.root_event_id,
+        reply_to_event_id: Some(job.reply_to_event_id),
+        relay_urls: (!job.relay_urls.is_empty()).then_some(job.relay_urls),
+        timeout_ms: Some(12_000),
+    })
+    .map_err(|error| error.to_string())?;
+    let notes = load_cached_notes(job.limit)?;
+
+    Ok(PublishOutcome { receipt, notes })
 }
 
 fn sync_notes(job: PendingRefresh) -> Result<RefreshOutcome, String> {

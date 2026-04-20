@@ -49,3 +49,24 @@ export type NostrSyncReceipt = {
   fetchedCount: number;
   importedCount: number;
 };
+
+export type NostrPublishRequest = {
+  kind: number;
+  content: string;
+  rootEventId?: string;
+  replyToEventId?: string;
+  relayUrls?: string[];
+  timeoutMs?: number;
+};
+
+export type NostrPublishedRelayFailure = {
+  relayUrl: string;
+  error: string;
+};
+
+export type NostrPublishReceipt = {
+  event: NostrEvent;
+  relayUrls: string[];
+  publishedRelays: string[];
+  failedRelays: NostrPublishedRelayFailure[];
+};

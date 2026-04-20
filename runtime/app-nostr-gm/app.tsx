@@ -1,37 +1,22 @@
 import {
   createSignal,
-  For,
+  currentNostrAccount,
+  generateNostrAccount,
   invalidateRuntimeApp,
-  publishEphemeralKind1,
+  publishNostr,
   Show,
 } from "@shadow/sdk";
+import type { NostrPublishReceipt } from "@shadow/sdk/nostr";
 
 const GM_CONTENT = "GM";
 const DEFAULT_RELAY_URLS = ["wss://relay.primal.net/", "wss://relay.damus.io/"];
 const DEFAULT_TIMEOUT_MS = 20_000;
 
-type PublishedRelayFailure = {
-  error: string;
-  relayUrl: string;
-};
-
-type PublishReceipt = {
-  createdAt: number;
-  failedRelays: PublishedRelayFailure[];
-  id: string;
-  noteId: string;
-  npub: string;
-  primalUrl: string;
-  publishedRelays: string[];
-  qrRows: string[];
-  relayUrls: string[];
-};
-
 type AppState =
   | { kind: "idle" }
   | { kind: "publishing" }
   | { kind: "error"; message: string }
-  | { kind: "success"; receipt: PublishReceipt };
+  | { kind: "success"; receipt: NostrPublishReceipt };
 
 export const runtimeDocumentCss = `
 :root {
@@ -302,16 +287,21 @@ export function renderApp() {
     }
 
     setState({ kind: "publishing" });
+    invalidateRuntimeApp();
     void publishGm();
   }
 
   async function publishGm() {
     try {
-      const receipt = await publishEphemeralKind1({
+      if (!currentNostrAccount()) {
+        generateNostrAccount();
+      }
+      const receipt = await publishNostr({
+        kind: 1,
         content: GM_CONTENT,
         relayUrls: DEFAULT_RELAY_URLS,
         timeoutMs: DEFAULT_TIMEOUT_MS,
-      }) as PublishReceipt;
+      });
       setState({ kind: "success", receipt });
     } catch (error) {
       setState({
@@ -353,7 +343,7 @@ function IdleOrErrorCard(props: IdleOrErrorCardProps) {
       <p class={`gm-eyebrow ${eyebrowVariantClass(state())}`}>Shadow GM</p>
       <h1 class={`gm-headline ${headlineVariantClass(state())}`}>
         {isError()
-          ? "Relay publish failed"
+          ? "Publish failed"
           : isPublishing()
           ? "Publishing GM"
           : "Tap to send GM"}
@@ -362,8 +352,8 @@ function IdleOrErrorCard(props: IdleOrErrorCardProps) {
         {isError()
           ? (state() as Extract<AppState, { kind: "error" }>).message
           : isPublishing()
-          ? "Generating a fresh nsec, signing one kind 1 note, and waiting for relay ack. This can take around 10 seconds."
-          : "One tap generates a fresh keypair, posts a kind 1 note with just GM, and turns the result into a scannable Primal link."}
+          ? "Using the active account, signing one kind 1 note, and waiting for relay ack. If no account exists yet, Shadow creates one first."
+          : "One tap posts a kind 1 note with the shared Shadow account and relay engine."}
       </p>
       <Show when={isPublishing()}>
         <section class="gm-progress">
@@ -391,7 +381,7 @@ function IdleOrErrorCard(props: IdleOrErrorCardProps) {
 
 type SuccessCardProps = {
   onSend: () => void;
-  receipt: PublishReceipt;
+  receipt: NostrPublishReceipt;
 };
 
 function SuccessCard(props: SuccessCardProps) {
@@ -400,19 +390,15 @@ function SuccessCard(props: SuccessCardProps) {
       <p class="gm-eyebrow gm-eyebrow-success">Shadow GM</p>
       <h1 class="gm-headline gm-headline-success">GM sent</h1>
       <p class="gm-body gm-body-success">
-        Fresh key, one note, Primal link ready to scan.
+        Posted through the shared account and relay engine.
       </p>
-      <section class="gm-success-grid">
-        <QrCode rows={props.receipt.qrRows} />
-        <section class="gm-meta">
-          <LabelValue label="Primal" value={props.receipt.primalUrl} />
-          <LabelValue label="Note" value={props.receipt.noteId} />
-          <LabelValue label="Pubkey" value={props.receipt.npub} />
-          <LabelValue
-            label="Relays"
-            value={`${props.receipt.publishedRelays.length}/${props.receipt.relayUrls.length} ok`}
-          />
-        </section>
+      <section class="gm-meta">
+        <LabelValue label="Event" value={props.receipt.event.id} />
+        <LabelValue label="Pubkey" value={props.receipt.event.pubkey} />
+        <LabelValue
+          label="Relays"
+          value={`${props.receipt.publishedRelays.length}/${props.receipt.relayUrls.length} ok`}
+        />
       </section>
       <button
         type="button"
@@ -423,31 +409,6 @@ function SuccessCard(props: SuccessCardProps) {
         Post another GM
       </button>
     </section>
-  );
-}
-
-function QrCode(props: { rows: string[] }) {
-  const size = () => props.rows[0]?.length ?? 0;
-
-  return (
-    <div class="gm-qr-frame">
-      <div
-        class="gm-qr-grid"
-        style={`grid-template-columns:repeat(${size()},1fr)`}
-      >
-        <For each={props.rows}>
-          {(row) => (
-            <For each={Array.from(row)}>
-              {(cell) => (
-                <span
-                  class={`gm-qr-cell${cell === "1" ? " gm-qr-cell-on" : ""}`}
-                />
-              )}
-            </For>
-          )}
-        </For>
-      </div>
-    </div>
   );
 }
 

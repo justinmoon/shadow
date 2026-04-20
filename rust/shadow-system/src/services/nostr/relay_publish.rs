@@ -1,111 +1,85 @@
+use std::collections::BTreeSet;
 use std::time::Duration;
 
-use nostr::prelude::{EventBuilder, Keys, RelayUrl, ToBech32};
+use nostr::nips::nip10::Marker;
+use nostr::prelude::{EventBuilder, EventId, Kind, Tag, TagStandard};
 use nostr_sdk::prelude::Client;
-use qrcodegen::{QrCode, QrCodeEcc};
-use serde::{Deserialize, Serialize};
+
+use shadow_sdk::services::nostr::{
+    NostrPublishReceipt, NostrPublishRequest, NostrPublishedRelayFailure, SqliteNostrService,
+};
+
+use super::relay_sync;
 
 const DEFAULT_PUBLISH_TIMEOUT_MS: u64 = 12_000;
-const DEFAULT_PRIMAL_URL_PREFIX: &str = "https://primal.net/e/";
 
-#[derive(Debug, Default, Deserialize)]
-pub struct PublishEphemeralKind1Request {
-    pub content: Option<String>,
-    #[serde(rename = "relayUrls")]
-    pub relay_urls: Option<Vec<String>>,
-    #[serde(rename = "timeoutMs")]
-    pub timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PublishedRelayFailure {
-    #[serde(rename = "relayUrl")]
-    pub relay_url: String,
-    pub error: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PublishedKind1Receipt {
-    pub content: String,
-    #[serde(rename = "id")]
-    pub event_id_hex: String,
-    #[serde(rename = "noteId")]
-    pub note_id: String,
-    #[serde(rename = "primalUrl")]
-    pub primal_url: String,
-    pub npub: String,
-    #[serde(rename = "relayUrls")]
-    pub relay_urls: Vec<String>,
-    #[serde(rename = "publishedRelays")]
-    pub published_relays: Vec<String>,
-    #[serde(rename = "failedRelays")]
-    pub failed_relays: Vec<PublishedRelayFailure>,
-    #[serde(rename = "createdAt")]
-    pub created_at: u64,
-    #[serde(rename = "qrRows")]
-    pub qr_rows: Vec<String>,
-}
-
-pub async fn publish_ephemeral_kind1(
-    request: PublishEphemeralKind1Request,
-) -> Result<PublishedKind1Receipt, String> {
-    let content = request
-        .content
-        .as_deref()
-        .map(str::trim)
-        .filter(|content| !content.is_empty())
-        .ok_or_else(|| String::from("nostr.publishEphemeralKind1 requires non-empty content"))?
-        .to_owned();
-    let relay_urls = normalize_relay_urls(request.relay_urls)?;
+pub async fn publish_with_client(
+    client: &Client,
+    relay_registry: &mut BTreeSet<String>,
+    service: &SqliteNostrService,
+    request: NostrPublishRequest,
+) -> Result<NostrPublishReceipt, String> {
+    let relay_urls = relay_sync::normalize_relay_urls(request.relay_urls.clone(), "nostr.publish")?;
     let timeout_ms = request
         .timeout_ms
         .filter(|timeout_ms| *timeout_ms > 0)
         .unwrap_or(DEFAULT_PUBLISH_TIMEOUT_MS);
 
-    tokio::time::timeout(Duration::from_millis(timeout_ms), async move {
-        publish_ephemeral_kind1_inner(content, relay_urls).await
-    })
+    tokio::time::timeout(
+        Duration::from_millis(timeout_ms),
+        publish_with_client_inner(client, relay_registry, service, request, relay_urls.clone()),
+    )
     .await
-    .map_err(|_| format!("nostr.publishEphemeralKind1 timed out after {timeout_ms}ms"))?
+    .map_err(|_| format!("nostr.publish timed out after {timeout_ms}ms"))?
+    .map(|mut receipt| {
+        receipt.relay_urls = relay_urls;
+        receipt
+    })
 }
 
-async fn publish_ephemeral_kind1_inner(
-    content: String,
+async fn publish_with_client_inner(
+    client: &Client,
+    relay_registry: &mut BTreeSet<String>,
+    service: &SqliteNostrService,
+    request: NostrPublishRequest,
     relay_urls: Vec<String>,
-) -> Result<PublishedKind1Receipt, String> {
-    let keys = Keys::generate();
-    let npub = keys
-        .public_key()
-        .to_bech32()
-        .map_err(|error| format!("nostr.publishEphemeralKind1 encode npub: {error}"))?;
-
-    let client = Client::new(keys.clone());
-    for relay_url in relay_urls.iter() {
-        client.add_relay(relay_url).await.map_err(|error| {
-            format!("nostr.publishEphemeralKind1 add relay {relay_url}: {error}")
-        })?;
+) -> Result<NostrPublishReceipt, String> {
+    let content = request.content.trim();
+    if content.is_empty() {
+        return Err(String::from("nostr.publish requires non-empty content"));
+    }
+    if request.kind != 1 {
+        return Err(format!(
+            "nostr.publish currently supports kind 1 only, got {}",
+            request.kind
+        ));
     }
 
+    relay_sync::ensure_relays(client, relay_registry, &relay_urls).await?;
     let connect_output = client.try_connect(Duration::from_secs(6)).await;
     if connect_output.success.is_empty() {
         let failed_relays = normalize_failed_relays(&connect_output.failed);
-        client.shutdown().await;
         return Err(format!(
-            "nostr.publishEphemeralKind1 could not connect to any relay: {}",
+            "nostr.publish could not connect to any relay: {}",
             format_failed_relays(&failed_relays)
         ));
     }
 
-    let event = EventBuilder::text_note(content.clone())
+    let keys = service
+        .active_account_keys()
+        .map_err(|error| error.to_string())?;
+    let event = EventBuilder::new(Kind::TextNote, content.to_owned())
+        .tags(build_reply_tags(
+            request.reply_to_event_id.as_deref(),
+            request.root_event_id.as_deref(),
+        )?)
         .sign_with_keys(&keys)
-        .map_err(|error| format!("nostr.publishEphemeralKind1 sign note: {error}"))?;
+        .map_err(|error| format!("nostr.publish sign event: {error}"))?;
 
     let output = client
         .send_event(&event)
         .await
-        .map_err(|error| format!("nostr.publishEphemeralKind1 send note: {error}"))?;
-    client.shutdown().await;
-
+        .map_err(|error| format!("nostr.publish send event: {error}"))?;
     let published_relays = output
         .success
         .iter()
@@ -114,65 +88,69 @@ async fn publish_ephemeral_kind1_inner(
     let failed_relays = normalize_failed_relays(&output.failed);
     if published_relays.is_empty() {
         return Err(format!(
-            "nostr.publishEphemeralKind1 was rejected by every relay: {}",
+            "nostr.publish was rejected by every relay: {}",
             format_failed_relays(&failed_relays)
         ));
     }
 
-    let note_id = event
-        .id
-        .to_bech32()
-        .map_err(|error| format!("nostr.publishEphemeralKind1 encode note id: {error}"))?;
-    let primal_url = format!("{DEFAULT_PRIMAL_URL_PREFIX}{note_id}");
-    let qr_rows = build_qr_rows(&primal_url)?;
+    let event = relay_sync::event_to_nostr_event(&event, "nostr.publish")?;
+    service
+        .store_event(&event)
+        .map_err(|error| format!("nostr.publish store event {}: {error}", event.id))?;
 
-    Ok(PublishedKind1Receipt {
-        content,
-        event_id_hex: event.id.to_string(),
-        note_id,
-        primal_url,
-        npub,
-        relay_urls,
+    Ok(NostrPublishReceipt {
+        event,
+        relay_urls: Vec::new(),
         published_relays,
         failed_relays,
-        created_at: event.created_at.as_secs(),
-        qr_rows,
     })
 }
 
-fn normalize_relay_urls(relay_urls: Option<Vec<String>>) -> Result<Vec<String>, String> {
-    let relay_urls = relay_urls.unwrap_or_else(default_relay_urls);
-    if relay_urls.is_empty() {
-        return Err(String::from(
-            "nostr.publishEphemeralKind1 requires at least one relay URL",
-        ));
+fn build_reply_tags(
+    reply_to_event_id: Option<&str>,
+    root_event_id: Option<&str>,
+) -> Result<Vec<Tag>, String> {
+    let Some(reply_to_event_id) = normalize_id(reply_to_event_id).transpose()? else {
+        return Ok(Vec::new());
+    };
+    let root_event_id = normalize_id(root_event_id).transpose()?;
+
+    let mut tags = Vec::new();
+    let root_id = root_event_id.unwrap_or(reply_to_event_id);
+    if root_id != reply_to_event_id {
+        tags.push(Tag::from_standardized_without_cell(TagStandard::Event {
+            event_id: root_id,
+            relay_url: None,
+            marker: Some(Marker::Root),
+            public_key: None,
+            uppercase: false,
+        }));
     }
+    tags.push(Tag::from_standardized_without_cell(TagStandard::Event {
+        event_id: reply_to_event_id,
+        relay_url: None,
+        marker: Some(Marker::Reply),
+        public_key: None,
+        uppercase: false,
+    }));
+    Ok(tags)
+}
 
-    relay_urls
-        .into_iter()
-        .map(|relay_url| {
-            let relay_url = relay_url.trim().to_owned();
-            if relay_url.is_empty() {
-                return Err(String::from(
-                    "nostr.publishEphemeralKind1 relay URL cannot be empty",
-                ));
-            }
-
-            RelayUrl::parse(&relay_url)
-                .map_err(|error| {
-                    format!("nostr.publishEphemeralKind1 invalid relay URL {relay_url}: {error}")
-                })
-                .map(|relay_url| relay_url.to_string())
+fn normalize_id(id: Option<&str>) -> Option<Result<EventId, String>> {
+    id.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            EventId::parse(value)
+                .map_err(|error| format!("nostr.publish invalid event id {value}: {error}"))
         })
-        .collect()
 }
 
 fn normalize_failed_relays(
-    failed_relays: &std::collections::HashMap<RelayUrl, String>,
-) -> Vec<PublishedRelayFailure> {
+    failed_relays: &std::collections::HashMap<nostr::prelude::RelayUrl, String>,
+) -> Vec<NostrPublishedRelayFailure> {
     let mut failed_relays = failed_relays
         .iter()
-        .map(|(relay_url, error)| PublishedRelayFailure {
+        .map(|(relay_url, error)| NostrPublishedRelayFailure {
             relay_url: relay_url.to_string(),
             error: error.clone(),
         })
@@ -181,7 +159,7 @@ fn normalize_failed_relays(
     failed_relays
 }
 
-fn format_failed_relays(failed_relays: &[PublishedRelayFailure]) -> String {
+fn format_failed_relays(failed_relays: &[NostrPublishedRelayFailure]) -> String {
     failed_relays
         .iter()
         .map(|failed| format!("{} ({})", failed.relay_url, failed.error))
@@ -189,26 +167,34 @@ fn format_failed_relays(failed_relays: &[PublishedRelayFailure]) -> String {
         .join(", ")
 }
 
-fn build_qr_rows(data: &str) -> Result<Vec<String>, String> {
-    let qr = QrCode::encode_text(data, QrCodeEcc::Medium)
-        .map_err(|error| format!("nostr.publishEphemeralKind1 generate QR: {error:?}"))?;
-    let size = qr.size();
-    let mut rows = Vec::with_capacity(size as usize);
+#[cfg(test)]
+mod tests {
+    use super::build_reply_tags;
+    use nostr::nips::nip10::Marker;
+    use nostr::prelude::TagStandard;
 
-    for y in 0..size {
-        let mut row = String::with_capacity(size as usize);
-        for x in 0..size {
-            row.push(if qr.get_module(x, y) { '1' } else { '0' });
-        }
-        rows.push(row);
+    #[test]
+    fn build_reply_tags_marks_root_and_reply() {
+        let tags = build_reply_tags(
+            Some("b3e392b11f5d4f28321cedd09303a748acfd0487aea5a7450b3481c60b6e4f87"),
+            Some("a3e392b11f5d4f28321cedd09303a748acfd0487aea5a7450b3481c60b6e4f87"),
+        )
+        .expect("build reply tags");
+
+        assert_eq!(tags.len(), 2);
+        assert!(tags.iter().any(|tag| matches!(
+            tag.as_standardized(),
+            Some(TagStandard::Event {
+                marker: Some(Marker::Root),
+                ..
+            })
+        )));
+        assert!(tags.iter().any(|tag| matches!(
+            tag.as_standardized(),
+            Some(TagStandard::Event {
+                marker: Some(Marker::Reply),
+                ..
+            })
+        )));
     }
-
-    Ok(rows)
-}
-
-fn default_relay_urls() -> Vec<String> {
-    vec![
-        String::from("wss://relay.primal.net/"),
-        String::from("wss://relay.damus.io/"),
-    ]
 }

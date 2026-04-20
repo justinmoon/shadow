@@ -112,11 +112,8 @@ function installShadowSystemOs() {
     syncKind1(request = {}) {
       return core.ops.op_runtime_nostr_sync_kind1(request);
     },
-    publishKind1(request = {}) {
-      return core.ops.op_runtime_nostr_publish_kind1(request);
-    },
-    async publishEphemeralKind1(request = {}) {
-      return await core.ops.op_runtime_nostr_publish_ephemeral_kind1(request);
+    async publish(request = {}) {
+      return await core.ops.op_runtime_nostr_publish(request);
     },
   };
 
