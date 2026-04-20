@@ -28,9 +28,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## Steps
 
-- [ ] Inventory the remaining `pixel_common.sh` clusters and label each one as low-level helper vs operator policy.
-- [ ] Extract the generic device/transport helper cluster into a dedicated sourced lib: serial resolution, `adb` / `fastboot` wrappers, wait helpers, device property/process capture, and status JSON helpers.
-- [ ] Move the next user-facing operator seam into `shadowctl` instead of adding more shell-wrapper logic. Likely candidates are shared Pixel state/doctor/frame flows or shared run/stage/stop delegation.
+- [x] Inventory the remaining `pixel_common.sh` clusters and label each one as low-level helper vs operator policy.
+- [x] Extract the generic device/transport helper cluster into a dedicated sourced lib: serial resolution, `adb` / `fastboot` wrappers, wait helpers, device property/process capture, and status JSON helpers.
+- [ ] Move the next user-facing operator seam into `shadowctl` instead of adding more shell-wrapper logic. Likely candidates are shared Pixel diagnostics/log capture flows or tighter `shadowctl debug` ownership.
 - [ ] Keep boot-lab and recovery flows private. If they need shared UX, hang them off `shadowctl debug` rather than new ad hoc shell entrypoints.
 - [ ] Reduce `pixel_common.sh` to compatibility sourcing plus genuinely shared low-level helpers, then stop growing it.
 - [ ] Re-run `scripts/ci/operator_cli_smoke.sh` and the narrow Pixel/boot smokes that cover the touched seam before landing.
@@ -38,11 +38,18 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 ## Implementation Notes
 
 - This plan replaces the old `pixel_common.sh` / `shadowctl` follow-up that no longer belongs in the completed compositor refactor notebook.
-- `pixel_common.sh` is still `1668` lines after the two landed extractions.
+- `pixel_common.sh` is now `1231` lines after the third landed extraction.
 - Landed helper splits so far:
+  - `pixel_device_transport_common.sh`
   - `pixel_runtime_session_common.sh`
   - `pixel_root_boot_common.sh`
 - `shadowctl` already owns the public VM/Pixel `run`, `stop`, `ci`, `stage`, and `debug` surface.
 - Many private Pixel scripts still source `pixel_common.sh` directly, so the remaining work is not “one more extraction”; it needs deliberate classification and migration.
-- The next useful seam is probably the generic device/transport cluster around serial resolution, `adb` / `fastboot`, wait helpers, process/property capture, and status JSON, not another path-only split.
+- Current cluster labels:
+  - root/boot asset helpers: low-level helper, already split into `pixel_root_boot_common.sh`
+  - runtime/session path and env helpers: low-level helper, already split into `pixel_runtime_session_common.sh`
+  - device transport, root-shell, wait, and status capture helpers: low-level helper, now split into `pixel_device_transport_common.sh`
+  - display-takeover/session orchestration and boot-lab recovery: operator/private policy, keep out of the public CLI unless a specific flow benefits from typed routing
+- `shadowctl` already owns the public `run`, `stop`, `status`, `doctor`, `state`, `frame`, `ci`, `stage`, and rooted setup/recovery entrypoints, so the next public migration seam is narrower than the first draft of this plan assumed.
+- The next useful operator-cli slice is likely shared Pixel diagnostics/log capture or a tighter `shadowctl debug` ownership seam, not another low-level path-only split.
 - Do not convert a low-level bash helper to Python just because `shadowctl` is Python. Migrate only when the behavior is user-facing or benefits from typed control flow.
