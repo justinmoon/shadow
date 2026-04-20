@@ -42,7 +42,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--output PATH] [--hold-secs N]
                                                     [--prelude none|orange-init]
                                                     [--prelude-hold-secs N]
-                                                    [--orange-gpu-mode gpu-render|bundle-smoke|vulkan-device-smoke|vulkan-offscreen]
+                                                    [--orange-gpu-mode gpu-render|bundle-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen]
                                                     [--reboot-target TARGET]
                                                     [--run-token TOKEN]
                                                     [--dev-mount devtmpfs|tmpfs]
@@ -56,9 +56,10 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
 
 Build a private stock-kernel sunfish boot.img whose real first-stage userspace is
 hello-init PID 1 at system/bin/init and whose ramdisk contains a boot-owned
-shadow-gpu-smoke bundle under /orange-gpu for one of four rungs: the real GPU
-render/present path, a strict Vulkan device/context smoke, a strict Vulkan
-offscreen render path, or the no-Vulkan bundle-exec smoke path.
+shadow-gpu-smoke bundle under /orange-gpu for one of five rungs: the real GPU
+render/present path, a strict Vulkan device-request smoke, a strict Vulkan
+device/buffer smoke, a strict Vulkan offscreen render path, or the no-Vulkan
+bundle-exec smoke path.
 EOF
 }
 
@@ -308,10 +309,10 @@ assert_orange_gpu_mode_word() {
   value="${1:?assert_orange_gpu_mode_word requires a value}"
 
   case "$value" in
-    gpu-render|bundle-smoke|vulkan-device-smoke|vulkan-offscreen)
+    gpu-render|bundle-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
       ;;
     *)
-      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, bundle-smoke, vulkan-device-smoke, or vulkan-offscreen: $value" >&2
+      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, bundle-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen: $value" >&2
       exit 1
       ;;
   esac
@@ -786,8 +787,10 @@ printf 'Root init path: preserve stock /init -> /system/bin/init symlink\n'
 printf 'System init mutation: replace system/bin/init with hello-init PID 1\n'
 if [[ "$ORANGE_GPU_MODE" == "bundle-smoke" ]]; then
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in bundle-smoke mode from %s\n' "$PAYLOAD_IMAGE_PATH"
+elif [[ "$ORANGE_GPU_MODE" == "vulkan-device-request-smoke" ]]; then
+  printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan device-request mode from %s\n' "$PAYLOAD_IMAGE_PATH"
 elif [[ "$ORANGE_GPU_MODE" == "vulkan-device-smoke" ]]; then
-  printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan device/context mode from %s\n' "$PAYLOAD_IMAGE_PATH"
+  printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan device/buffer mode from %s\n' "$PAYLOAD_IMAGE_PATH"
 elif [[ "$ORANGE_GPU_MODE" == "vulkan-offscreen" ]]; then
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan offscreen mode from %s\n' "$PAYLOAD_IMAGE_PATH"
 else
@@ -801,8 +804,10 @@ printf 'GPU loader path: %s/lib/ld-linux-aarch64.so.1\n' "$PAYLOAD_IMAGE_PATH"
 printf 'Orange GPU mode: %s\n' "$ORANGE_GPU_MODE"
 if [[ "$ORANGE_GPU_MODE" == "bundle-smoke" ]]; then
   printf 'Bundle exec mode: bundle-smoke\n'
+elif [[ "$ORANGE_GPU_MODE" == "vulkan-device-request-smoke" ]]; then
+  printf 'GPU proof: strict Vulkan device request\n'
 elif [[ "$ORANGE_GPU_MODE" == "vulkan-device-smoke" ]]; then
-  printf 'GPU proof: strict Vulkan device/context bring-up\n'
+  printf 'GPU proof: strict Vulkan buffer renderer bring-up\n'
 elif [[ "$ORANGE_GPU_MODE" == "vulkan-offscreen" ]]; then
   printf 'GPU proof: strict Vulkan offscreen render\n'
 else

@@ -130,13 +130,17 @@ impl WGPUContext {
         config: BufferRendererConfig,
     ) -> Result<BufferRenderer, WgpuContextError> {
         // Find or create a suitable device for rendering to the surface
-        let dev_id = self
-            .find_or_create_device(None)
-            .await
-            .or(Err(WgpuContextError::NoCompatibleDevice))?;
+        let dev_id = self.find_or_create_device(None).await?;
         let device_handle = self.device_pool[dev_id].clone();
 
         Ok(BufferRenderer::new(config, device_handle, dev_id))
+    }
+
+    /// Creates or reuses a headless device handle with the same adapter/device path used by
+    /// `create_buffer_renderer`, but preserves the underlying adapter/device error surface.
+    pub async fn create_headless_device_handle(&mut self) -> Result<DeviceHandle, WgpuContextError> {
+        let dev_id = self.find_or_create_device(None).await?;
+        Ok(self.device_pool[dev_id].clone())
     }
 
     /// Finds or creates a compatible device handle id.

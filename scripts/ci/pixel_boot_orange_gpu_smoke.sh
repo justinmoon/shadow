@@ -454,6 +454,36 @@ for needle in ['"--present-kms"', 'hold_seconds,']:
 PY
 }
 
+assert_orange_gpu_device_request_branch_shape() {
+  python3 - "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+marker = "} else if (orange_gpu_mode_is_vulkan_device_request_smoke(config)) {"
+start = source.find(marker)
+if start < 0:
+    raise SystemExit("missing device-request-smoke branch marker")
+start += len(marker)
+end = source.find("\n        } else if (orange_gpu_mode_is_vulkan_device_smoke(config)) {", start)
+if end < 0:
+    raise SystemExit("missing end of device-request-smoke branch")
+branch = source[start:end]
+required = [
+    'scene=device-request-smoke mode=vulkan-device-request-smoke',
+    '"--scene"',
+    '"device-request-smoke"',
+    '"--summary-path"',
+]
+for needle in required:
+    if needle not in branch:
+        raise SystemExit(f"missing device-request-smoke branch needle: {needle}")
+for needle in ['"--present-kms"', 'hold_seconds,']:
+    if needle in branch:
+        raise SystemExit(f"unexpected device-request-smoke branch needle: {needle}")
+PY
+}
+
 assert_orange_gpu_device_branch_shape() {
   python3 - "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" <<'PY'
 from pathlib import Path
@@ -529,25 +559,33 @@ program = """#include <ctype.h>
 int main(void) {{
     char buffer[32];
 
+    if (!parse_orange_gpu_mode_value("vulkan-device-request-smoke", buffer, sizeof(buffer))) {{
+        fprintf(stderr, "failed to parse valid device-request-smoke mode\\n");
+        return 1;
+    }}
+    if (strcmp(buffer, "vulkan-device-request-smoke") != 0) {{
+        fprintf(stderr, "unexpected parsed device-request-smoke mode: %s\\n", buffer);
+        return 2;
+    }}
     if (!parse_orange_gpu_mode_value("vulkan-device-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid device-smoke mode\\n");
-        return 1;
+        return 3;
     }}
     if (strcmp(buffer, "vulkan-device-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed device-smoke mode: %s\\n", buffer);
-        return 2;
+        return 4;
     }}
     if (!parse_orange_gpu_mode_value(" vulkan-offscreen ", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse trimmed offscreen mode\\n");
-        return 3;
+        return 5;
     }}
     if (strcmp(buffer, "vulkan-offscreen") != 0) {{
         fprintf(stderr, "unexpected parsed offscreen mode: %s\\n", buffer);
-        return 4;
+        return 6;
     }}
     if (parse_orange_gpu_mode_value("nope", buffer, sizeof(buffer))) {{
         fprintf(stderr, "unexpectedly accepted invalid mode\\n");
-        return 5;
+        return 7;
     }}
 
     return 0;
@@ -559,6 +597,58 @@ PY
 
   cc -std=c99 -Wall -Wextra -Werror "$smoke_c" -o "$smoke_bin"
   "$smoke_bin"
+}
+
+assert_shadow_gpu_request_device_helper_shape() {
+  python3 - "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+marker = "fn request_device_handle(config: &Config) -> Result<RequestedDevice, String> {"
+start = source.find(marker)
+if start < 0:
+    raise SystemExit("missing request_device_handle helper")
+start += len(marker)
+end = source.find("\n}\n\nfn validate_adapter(", start)
+if end < 0:
+    raise SystemExit("missing end of request_device_handle helper")
+body = source[start:end]
+required = [
+    "context.create_headless_device_handle()",
+    "validate_adapter(config, &adapter_info)?;",
+]
+for needle in required:
+    if needle not in body:
+        raise SystemExit(f"missing request_device_handle helper needle: {needle}")
+PY
+}
+
+assert_shadow_gpu_device_request_smoke_cli() {
+  local summary_path="$TMP_DIR/device-request-smoke-summary.json"
+  local output
+
+  output="$(
+    nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
+      --scene device-request-smoke \
+      --allow-non-vulkan \
+      --allow-software \
+      --summary-path "$summary_path"
+  )"
+
+  assert_contains "$output" '"mode": "device-request-smoke"'
+  assert_contains "$output" '"scene": "device-request-smoke"'
+  assert_json_field_equals "$summary_path" mode "device-request-smoke"
+  assert_json_field_equals "$summary_path" scene "device-request-smoke"
+}
+
+assert_shadow_gpu_device_request_smoke_rejects_hold_secs() {
+  assert_command_fails_contains "--scene device-request-smoke and device-smoke do not support --hold-secs" \
+    nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
+      --scene device-request-smoke \
+      --allow-non-vulkan \
+      --allow-software \
+      --hold-secs 1
 }
 
 assert_shadow_gpu_device_smoke_cli() {
@@ -604,24 +694,33 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'invalid oran
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO_INIT_ORANGE_GPU_CHECKPOINT_HOLD_SECONDS'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'checkpoint=validated'
 assert_hello_init_orange_gpu_mode_parser_smoke
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_vulkan_device_request_smoke'
+assert_orange_gpu_device_request_branch_shape
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_vulkan_device_smoke'
 assert_orange_gpu_device_branch_shape
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_vulkan_offscreen'
 assert_orange_gpu_offscreen_branch_shape
+assert_shadow_gpu_request_device_helper_shape
+assert_shadow_gpu_device_request_smoke_cli
+assert_shadow_gpu_device_request_smoke_rejects_hold_secs
 assert_shadow_gpu_device_smoke_cli
-assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" '[--scene smoke|flat-orange|bundle-smoke|device-smoke]'
+assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" '[--scene smoke|flat-orange|bundle-smoke|device-request-smoke|device-smoke]'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'BundleSmokeSummary'
+assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'DeviceRequestSmokeSummary'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'DeviceSmokeSummary'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'mode: "bundle-smoke",'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'Self::BundleSmoke => "bundle-smoke"'
+assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'Self::DeviceRequestSmoke => "device-request-smoke"'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'Self::DeviceSmoke => "device-smoke"'
+assert_file_contains "$REPO_ROOT/ui/third_party/wgpu_context/src/lib.rs" 'pub async fn create_headless_device_handle(&mut self) -> Result<DeviceHandle, WgpuContextError>'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'stage_gpu_bundle'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'assert_prelude_word'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'assert_orange_gpu_mode_word'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Prelude: %s\\n' \"\$PRELUDE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU mode: %s\\n' \"\$ORANGE_GPU_MODE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Bundle exec mode: bundle-smoke\\n'"
-assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict Vulkan device/context bring-up\\n'"
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict Vulkan device request\\n'"
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict Vulkan buffer renderer bring-up\\n'"
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict Vulkan offscreen render\\n'"
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Derived success postlude: %s\\n' \"\$(success_postlude_value)\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Visible checkpoint hold seconds: %s\\n' \"\$(checkpoint_hold_seconds_value)\""
@@ -735,6 +834,42 @@ assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" dri_bootstrap "sunfish-
 assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" success_postlude "orange-init"
 assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" checkpoint_hold_seconds "1"
 
+device_request_smoke_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-device-request-boot.img" \
+      --hold-secs 7 \
+      --prelude orange-init \
+      --prelude-hold-secs 2 \
+      --orange-gpu-mode vulkan-device-request-smoke \
+      --reboot-target bootloader \
+      --run-token orange-gpu-device-request-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false
+)"
+
+assert_contains "$device_request_smoke_boot_output" "Owned userspace mode: orange-gpu"
+assert_contains "$device_request_smoke_boot_output" "Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan device-request mode from /orange-gpu"
+assert_contains "$device_request_smoke_boot_output" "Orange GPU mode: vulkan-device-request-smoke"
+assert_contains "$device_request_smoke_boot_output" "GPU proof: strict Vulkan device request"
+assert_contains "$device_request_smoke_boot_output" "Prelude: orange-init"
+assert_contains "$device_request_smoke_boot_output" "Derived success postlude: orange-init"
+assert_contains "$device_request_smoke_boot_output" "Visible checkpoint hold seconds: 1"
+assert_contains "$device_request_smoke_boot_output" "DRI bootstrap: sunfish-card0-renderD128-kgsl3d0"
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-device-request-boot.img" shadow-init.cfg $'# Generated by pixel_boot_build_orange_gpu.sh\npayload=orange-gpu\norange_gpu_mode=vulkan-device-request-smoke\nhold_seconds=7\nreboot_target=bootloader\nrun_token=orange-gpu-device-request-run-token\nprelude=orange-init\nprelude_hold_seconds=2\ndev_mount=tmpfs\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\ndri_bootstrap=sunfish-card0-renderD128-kgsl3d0\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-device-request-boot.img.hello-init.json" orange_gpu_mode "vulkan-device-request-smoke"
+assert_json_field_equals "$TMP_DIR/orange-gpu-device-request-boot.img.hello-init.json" success_postlude "orange-init"
+assert_json_field_equals "$TMP_DIR/orange-gpu-device-request-boot.img.hello-init.json" checkpoint_hold_seconds "1"
+assert_json_field_equals "$TMP_DIR/orange-gpu-device-request-boot.img.hello-init.json" dri_bootstrap "sunfish-card0-renderD128-kgsl3d0"
+
 device_smoke_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
@@ -758,9 +893,9 @@ device_smoke_boot_output="$(
 )"
 
 assert_contains "$device_smoke_boot_output" "Owned userspace mode: orange-gpu"
-assert_contains "$device_smoke_boot_output" "Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan device/context mode from /orange-gpu"
+assert_contains "$device_smoke_boot_output" "Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan device/buffer mode from /orange-gpu"
 assert_contains "$device_smoke_boot_output" "Orange GPU mode: vulkan-device-smoke"
-assert_contains "$device_smoke_boot_output" "GPU proof: strict Vulkan device/context bring-up"
+assert_contains "$device_smoke_boot_output" "GPU proof: strict Vulkan buffer renderer bring-up"
 assert_contains "$device_smoke_boot_output" "Prelude: orange-init"
 assert_contains "$device_smoke_boot_output" "Derived success postlude: orange-init"
 assert_contains "$device_smoke_boot_output" "Visible checkpoint hold seconds: 1"
@@ -827,7 +962,7 @@ assert_command_fails_contains "expected an aarch64 ELF gpu binary" \
       --key "$AVB_KEY_PATH" \
       --output "$TMP_DIR/should-fail-bad-binary.img"
 
-assert_command_fails_contains "orange gpu mode must be gpu-render, bundle-smoke, vulkan-device-smoke, or vulkan-offscreen" \
+assert_command_fails_contains "orange gpu mode must be gpu-render, bundle-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen" \
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \

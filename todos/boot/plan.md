@@ -22,7 +22,7 @@ Related docs:
 - Use host-side `bootimg` tooling for the inner loop: unpack, patch, repack, inspect, sign.
 - Use Cuttlefish only for generic bring-up ideas, not as the primary model for `sunfish`.
 - Primary strategy: boot the stock Pixel kernel into a Shadow-owned ramdisk and custom PID 1. Do not treat `wrapper -> stock init -> later takeover` as the main path anymore.
-- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `gpu-kms-bridge` (the same GPU smoke presented through rooted display takeover so render/present can be debugged without boot ownership), then `boot-bundle-exec` (boot-owned dynamic bundle exec with visible prelude/checkpoint/postlude), then `boot-vulkan-device-smoke` (boot-owned strict Vulkan device/context bring-up plus return), then `boot-vulkan-offscreen` (boot-owned strict Vulkan offscreen render plus return), then `orange-gpu` (boot-owned GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
+- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `gpu-kms-bridge` (the same GPU smoke presented through rooted display takeover so render/present can be debugged without boot ownership), then `boot-bundle-exec` (boot-owned dynamic bundle exec with visible prelude/checkpoint/postlude), then `boot-vulkan-device-request-smoke` (boot-owned strict Vulkan adapter selection + device request plus return), then `boot-vulkan-device-smoke` (boot-owned strict Vulkan buffer-renderer allocation plus return), then `boot-vulkan-offscreen` (boot-owned strict Vulkan offscreen render plus return), then `orange-gpu` (boot-owned GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
 - Rust cutoff:
   - keep the C PID 1 seam only long enough to prove `boot-vulkan-offscreen` once on real hardware
   - immediately after the first successful `boot-vulkan-offscreen` proof, port `hello-init` / the boot-owned PID 1 bootstrap seam to Rust
@@ -71,10 +71,14 @@ Related docs:
   - `orange-init` prelude proves boot-owned KMS still works in the image
   - a second short checkpoint proves config validation passed before launching the bundle
   - a long postlude proves the staged `/orange-gpu` bundle returned successfully
-- [ ] Prove boot-owned strict Vulkan device/context bring-up and return (`boot-vulkan-device-smoke`):
+- [ ] Prove boot-owned strict Vulkan device request and return (`boot-vulkan-device-request-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs
-  - stop before Vello render-to-texture so failures narrow to device/context bring-up
+  - stop before buffer-renderer allocation so failures narrow to adapter selection or `request_device`
+- [ ] Prove boot-owned strict Vulkan buffer-renderer bring-up and return (`boot-vulkan-device-smoke`):
+  - reuse the staged `shadow-gpu-smoke` bundle
+  - require the same strict Vulkan env setup as later GPU rungs
+  - stop before Vello render-to-texture so failures narrow to buffer-renderer allocation
 - [ ] Prove boot-owned strict Vulkan offscreen render and return (`boot-vulkan-offscreen`):
   - reuse the staged `shadow-gpu-smoke` bundle
   - require strict Vulkan env setup in boot-owned userspace
@@ -149,8 +153,12 @@ Related docs:
   - export/import through the intended buffer path
   - present through KMS
   - keep it separate from app/session launch
-- [ ] Package the boot-owned strict Vulkan device/context payload (`boot-vulkan-device-smoke`):
-  - run the real `shadow-gpu-smoke` strict Vulkan env and device creation path in owned userspace
+- [ ] Package the boot-owned strict Vulkan device-request payload (`boot-vulkan-device-request-smoke`):
+  - run the real `shadow-gpu-smoke` strict Vulkan env, adapter selection, and `request_device` path in owned userspace
+  - stop before buffer-renderer allocation, Vello render-to-texture, and KMS present
+  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
+- [ ] Package the boot-owned strict Vulkan device/buffer payload (`boot-vulkan-device-smoke`):
+  - run the real `shadow-gpu-smoke` strict Vulkan env plus buffer-renderer allocation in owned userspace
   - stop before Vello render-to-texture and KMS present
   - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
 - [ ] Package the boot-owned strict Vulkan offscreen payload (`boot-vulkan-offscreen`):
@@ -436,6 +444,9 @@ Related docs:
 - New offscreen result on 2026-04-20:
   - `11151JEC200472` showed two visible orange pulses on the `shadow-boot-orange-gpu-vulkan-offscreen-prelude2-checkpoint1-restart7.img` one-shot lane
   - that means the visible prelude and validation checkpoint ran, then the strict Vulkan offscreen branch failed to return before the watchdog restart
-- Tightened inference after the bundle/offscreen proofs:
+- New device-smoke result on 2026-04-20:
+  - `11151JEC200472` showed two visible orange pulses on the `shadow-boot-orange-gpu-vulkan-device-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
+  - that means the visible prelude and validation checkpoint ran, then the strict Vulkan device/buffer branch failed to return before the watchdog restart
+- Tightened inference after the bundle/offscreen/device proofs:
   - the next missing seam is no longer dynamic bundle exec itself
-  - the next narrow rung is boot-owned strict Vulkan device/context bring-up and return, reusing the same visible prelude/checkpoint/postlude contract before retrying full offscreen render
+  - the next narrow rung is boot-owned strict Vulkan device request and return, reusing the same visible prelude/checkpoint/postlude contract before retrying buffer-renderer allocation
