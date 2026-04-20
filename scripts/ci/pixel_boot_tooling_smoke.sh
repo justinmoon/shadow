@@ -481,6 +481,7 @@ set -euo pipefail
 state_dir="${MOCK_DEVICE_STATE_DIR:?}"
 trace_mode="${MOCK_TRACE_MODE:-clean}"
 trace_run_token="${MOCK_TRACE_RUN_TOKEN:-}"
+trace_root_mode="${MOCK_TRACE_ROOT_MODE:-available}"
 serial="${PIXEL_SERIAL:-TESTSERIAL}"
 if [[ "${1:-}" == "-s" ]]; then
   serial="$2"
@@ -586,7 +587,21 @@ case "${1:-}" in
     ;;
   shell)
     shift
-    cmd="$*"
+    if [[ "$#" -eq 1 && ( "$1" == "/debug_ramdisk/su 0 sh -c id" || "$1" == "su 0 sh -c id" ) ]]; then
+      if [[ "$trace_root_mode" == "available" ]]; then
+        printf 'uid=0(root) gid=0(root) groups=0(root)\n'
+        exit 0
+      fi
+      exit 1
+    fi
+    if [[ "$#" -eq 3 && ( "$1" == "/debug_ramdisk/su" || "$1" == "su" ) && "$2" == "0" && "$3" == "sh" ]]; then
+      if [[ "$trace_root_mode" != "available" ]]; then
+        exit 1
+      fi
+      cmd="$(cat)"
+    else
+      cmd="$*"
+    fi
     case "$cmd" in
       "cat /proc/sys/kernel/random/boot_id 2>/dev/null")
         printf '%s\n' "${MOCK_BOOT_ID:-11111111-2222-3333-4444-555555555555}"
@@ -632,6 +647,13 @@ case "${1:-}" in
           printf 'shadow-owned-init-run-token:%s\nshadow-owned-init-role:hello-init\nshadow-owned-init-impl:c-static\n' "$trace_run_token"
         else
           printf 'audit: pmsg readable but empty of shadow tags\n'
+        fi
+        ;;
+      *"/sys/fs/pstore"*)
+        if [[ "$trace_mode" == "matched" ]]; then
+          printf '== /sys/fs/pstore/console-ramoops-0 ==\n<6>[shadow-hello-init] pstore breadcrumb run_token=%s\nshadow-owned-init-role:hello-init\n' "$trace_run_token"
+        else
+          printf 'no pstore entries\n'
         fi
         ;;
       *"ro.boot.bootreason"*)
@@ -1217,7 +1239,7 @@ assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" boot_completed
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_succeeded true
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_matched_any_shadow_tags true
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_matched_any_uncorrelated_shadow_tags true
-assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_previous_boot_channels_with_matches 3
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_previous_boot_channels_with_matches 4
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_uncorrelated_previous_boot_channels_with_matches 1
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_current_boot_channels_with_matches 3
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" failure_stage bootreason-failure

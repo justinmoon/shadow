@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/reboot.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -27,10 +28,31 @@
 #define SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH "/orange-init"
 #define SHADOW_HELLO_INIT_ORANGE_MODE_ENV "SHADOW_DRM_RECT_MODE"
 #define SHADOW_HELLO_INIT_ORANGE_HOLD_ENV "SHADOW_DRM_RECT_HOLD_SECS"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_ROOT "/orange-gpu"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH "/orange-gpu/shadow-gpu-smoke"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH "/orange-gpu/lib/ld-linux-aarch64.so.1"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_LIBRARY_PATH "/orange-gpu/lib"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_ICD_PATH "/orange-gpu/share/vulkan/icd.d/freedreno_icd.aarch64.json"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_HOME "/orange-gpu/home"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_CACHE_HOME "/orange-gpu/home/.cache"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_CONFIG_HOME "/orange-gpu/home/.config"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_MESA_CACHE_DIR "/orange-gpu/home/.cache/mesa"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH "/orange-gpu/summary.json"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_OUTPUT_PATH "/orange-gpu/output.log"
+#define SHADOW_HELLO_INIT_GPU_BACKEND_ENV "WGPU_BACKEND"
+#define SHADOW_HELLO_INIT_VK_ICD_FILENAMES_ENV "VK_ICD_FILENAMES"
+#define SHADOW_HELLO_INIT_MESA_DRIVER_OVERRIDE_ENV "MESA_LOADER_DRIVER_OVERRIDE"
+#define SHADOW_HELLO_INIT_TU_DEBUG_ENV "TU_DEBUG"
+#define SHADOW_HELLO_INIT_HOME_ENV "HOME"
+#define SHADOW_HELLO_INIT_XDG_CACHE_HOME_ENV "XDG_CACHE_HOME"
+#define SHADOW_HELLO_INIT_XDG_CONFIG_HOME_ENV "XDG_CONFIG_HOME"
+#define SHADOW_HELLO_INIT_MESA_SHADER_CACHE_ENV "MESA_SHADER_CACHE_DIR"
 
 #define SHADOW_HELLO_INIT_TAG "shadow-hello-init"
 #define SHADOW_HELLO_INIT_DEFAULT_HOLD_SECONDS 30U
 #define SHADOW_HELLO_INIT_MAX_HOLD_SECONDS 3600U
+#define SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS 30U
+#define SHADOW_HELLO_INIT_ORANGE_GPU_CHECKPOINT_HOLD_SECONDS 1U
 
 static const char kOwnedInitRoleSentinel[] = "shadow-owned-init-role:hello-init";
 static const char kOwnedInitImplSentinel[] = "shadow-owned-init-impl:c-static";
@@ -42,14 +64,21 @@ static const char kOwnedInitRunTokenSentinelPrefix[] =
     "shadow-owned-init-run-token:";
 static const char kOwnedInitOrangePayloadSentinel[] =
     "shadow-owned-init-payload-path:" SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH;
+static const char kOwnedInitOrangeGpuPayloadSentinel[] =
+    "shadow-owned-init-payload-path:" SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH;
 
 struct hello_init_config {
     char payload[32];
+    char prelude[32];
+    char orange_gpu_mode[32];
+    bool orange_gpu_mode_seen;
+    bool orange_gpu_mode_invalid;
     unsigned int hold_seconds;
+    unsigned int prelude_hold_seconds;
     char reboot_target[32];
     char run_token[64];
     char dev_mount[16];
-    char dri_bootstrap[32];
+    char dri_bootstrap[48];
     bool mount_dev;
     bool mount_proc;
     bool mount_sys;
@@ -107,7 +136,12 @@ static bool copy_string(char *dest, size_t dest_size, const char *src) {
 
 static void init_default_config(struct hello_init_config *config) {
     (void)copy_string(config->payload, sizeof(config->payload), "hello");
+    (void)copy_string(config->prelude, sizeof(config->prelude), "none");
+    (void)copy_string(config->orange_gpu_mode, sizeof(config->orange_gpu_mode), "gpu-render");
+    config->orange_gpu_mode_seen = false;
+    config->orange_gpu_mode_invalid = false;
     config->hold_seconds = SHADOW_HELLO_INIT_DEFAULT_HOLD_SECONDS;
+    config->prelude_hold_seconds = 0U;
     (void)copy_string(config->reboot_target, sizeof(config->reboot_target), "bootloader");
     config->run_token[0] = '\0';
     (void)copy_string(config->dev_mount, sizeof(config->dev_mount), "devtmpfs");
@@ -508,7 +542,10 @@ static int bootstrap_tmpfs_dri_runtime(const struct hello_init_config *config) {
         return 0;
     }
 
-    if (strcmp(config->dri_bootstrap, "sunfish-card0-renderD128") != 0) {
+    if (
+        strcmp(config->dri_bootstrap, "sunfish-card0-renderD128") != 0 &&
+        strcmp(config->dri_bootstrap, "sunfish-card0-renderD128-kgsl3d0") != 0
+    ) {
         log_boot("<3>", "unsupported dri_bootstrap value: %s", config->dri_bootstrap);
         return -1;
     }
@@ -524,13 +561,28 @@ static int bootstrap_tmpfs_dri_runtime(const struct hello_init_config *config) {
     if (ensure_char_device("/dev/dri/renderD128", 0600, 226U, 128U) != 0) {
         return -1;
     }
+    if (
+        strcmp(config->dri_bootstrap, "sunfish-card0-renderD128-kgsl3d0") == 0 &&
+        ensure_char_device("/dev/kgsl-3d0", 0666, 508U, 0U) != 0
+    ) {
+        return -1;
+    }
 
-    log_stage(
-        "<6>",
-        "tmpfs-coldboot-complete",
-        "mode=%s card0=226:0 renderD128=226:128",
-        config->dri_bootstrap
-    );
+    if (strcmp(config->dri_bootstrap, "sunfish-card0-renderD128-kgsl3d0") == 0) {
+        log_stage(
+            "<6>",
+            "tmpfs-coldboot-complete",
+            "mode=%s card0=226:0 renderD128=226:128 kgsl3d0=508:0",
+            config->dri_bootstrap
+        );
+    } else {
+        log_stage(
+            "<6>",
+            "tmpfs-coldboot-complete",
+            "mode=%s card0=226:0 renderD128=226:128",
+            config->dri_bootstrap
+        );
+    }
     return 0;
 }
 
@@ -639,7 +691,7 @@ static bool parse_dev_mount_value(const char *raw, char *dest, size_t dest_size)
 }
 
 static bool parse_dri_bootstrap_value(const char *raw, char *dest, size_t dest_size) {
-    char buffer[32];
+    char buffer[48];
     char *value;
 
     if (!copy_string(buffer, sizeof(buffer), raw)) {
@@ -649,7 +701,8 @@ static bool parse_dri_bootstrap_value(const char *raw, char *dest, size_t dest_s
     value = trim_whitespace(buffer);
     if (
         strcmp(value, "none") != 0 &&
-        strcmp(value, "sunfish-card0-renderD128") != 0
+        strcmp(value, "sunfish-card0-renderD128") != 0 &&
+        strcmp(value, "sunfish-card0-renderD128-kgsl3d0") != 0
     ) {
         return false;
     }
@@ -682,6 +735,42 @@ static bool parse_run_token_value(const char *raw, char *dest, size_t dest_size)
     return copy_string(dest, dest_size, value);
 }
 
+static bool parse_prelude_value(const char *raw, char *dest, size_t dest_size) {
+    char buffer[32];
+    char *value;
+
+    if (!copy_string(buffer, sizeof(buffer), raw)) {
+        return false;
+    }
+
+    value = trim_whitespace(buffer);
+    if (strcmp(value, "none") != 0 && strcmp(value, "orange-init") != 0) {
+        return false;
+    }
+
+    return copy_string(dest, dest_size, value);
+}
+
+static bool parse_orange_gpu_mode_value(const char *raw, char *dest, size_t dest_size) {
+    char buffer[32];
+    char *value;
+
+    if (!copy_string(buffer, sizeof(buffer), raw)) {
+        return false;
+    }
+
+    value = trim_whitespace(buffer);
+    if (
+        strcmp(value, "gpu-render") != 0 &&
+        strcmp(value, "bundle-smoke") != 0 &&
+        strcmp(value, "vulkan-offscreen") != 0
+    ) {
+        return false;
+    }
+
+    return copy_string(dest, dest_size, value);
+}
+
 static void apply_config_value(
     struct hello_init_config *config,
     const char *key,
@@ -697,12 +786,46 @@ static void apply_config_value(
         return;
     }
 
+    if (strcmp(key, "prelude") == 0) {
+        if (!parse_prelude_value(value, config->prelude, sizeof(config->prelude))) {
+            log_boot("<3>", "invalid prelude value: %s", value);
+            return;
+        }
+        return;
+    }
+
+    if (strcmp(key, "orange_gpu_mode") == 0 || strcmp(key, "orange-gpu-mode") == 0) {
+        if (
+            !parse_orange_gpu_mode_value(
+                value,
+                config->orange_gpu_mode,
+                sizeof(config->orange_gpu_mode)
+            )
+        ) {
+            config->orange_gpu_mode_invalid = true;
+            log_boot("<3>", "invalid orange_gpu_mode value: %s", value);
+            return;
+        }
+        config->orange_gpu_mode_seen = true;
+        config->orange_gpu_mode_invalid = false;
+        return;
+    }
+
     if (strcmp(key, "hold_seconds") == 0 || strcmp(key, "hold_secs") == 0) {
         if (!parse_unsigned_value(value, &parsed_hold_seconds)) {
             log_boot("<3>", "invalid hold_seconds value: %s", value);
             return;
         }
         config->hold_seconds = parsed_hold_seconds;
+        return;
+    }
+
+    if (strcmp(key, "prelude_hold_seconds") == 0 || strcmp(key, "prelude_hold_secs") == 0) {
+        if (!parse_unsigned_value(value, &parsed_hold_seconds)) {
+            log_boot("<3>", "invalid prelude_hold_seconds value: %s", value);
+            return;
+        }
+        config->prelude_hold_seconds = parsed_hold_seconds;
         return;
     }
 
@@ -888,6 +1011,106 @@ static bool payload_is_orange_init(const struct hello_init_config *config) {
     return strcmp(config->payload, "orange-init") == 0;
 }
 
+static bool payload_is_orange_gpu(const struct hello_init_config *config) {
+    return strcmp(config->payload, "orange-gpu") == 0;
+}
+
+static bool orange_gpu_mode_is_bundle_smoke(const struct hello_init_config *config) {
+    return strcmp(config->orange_gpu_mode, "bundle-smoke") == 0;
+}
+
+static bool orange_gpu_mode_is_vulkan_offscreen(const struct hello_init_config *config) {
+    return strcmp(config->orange_gpu_mode, "vulkan-offscreen") == 0;
+}
+
+static bool orange_gpu_mode_uses_success_postlude(const struct hello_init_config *config) {
+    return orange_gpu_mode_is_bundle_smoke(config) ||
+           orange_gpu_mode_is_vulkan_offscreen(config);
+}
+
+static bool validate_orange_gpu_config(const struct hello_init_config *config) {
+    if (!config->orange_gpu_mode_seen) {
+        log_stage("<3>", "orange-gpu-config-missing-mode", "payload=%s", config->payload);
+        log_boot("<3>", "missing required orange_gpu_mode config for payload=orange-gpu");
+        return false;
+    }
+    if (config->orange_gpu_mode_invalid) {
+        log_stage("<3>", "orange-gpu-config-invalid-mode", "payload=%s", config->payload);
+        log_boot("<3>", "invalid orange_gpu_mode config for payload=orange-gpu");
+        return false;
+    }
+    return true;
+}
+
+static bool prelude_is_orange_init(const struct hello_init_config *config) {
+    return strcmp(config->prelude, "orange-init") == 0;
+}
+
+static void unlink_best_effort(const char *path) {
+    if (unlink(path) == 0 || errno == ENOENT) {
+        return;
+    }
+
+    log_boot("<4>", "unlink(%s) failed: errno=%d", path, errno);
+}
+
+static void trim_line_endings(char *buffer) {
+    size_t length;
+
+    length = strlen(buffer);
+    while (length > 0 && (buffer[length - 1] == '\n' || buffer[length - 1] == '\r')) {
+        buffer[length - 1] = '\0';
+        length--;
+    }
+}
+
+static void log_file_best_effort(const char *label, const char *path) {
+    FILE *fp;
+    char line[512];
+    unsigned int line_count = 0;
+
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        log_stage("<4>", "payload-artifact-missing", "label=%s path=%s errno=%d", label, path, errno);
+        return;
+    }
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        trim_line_endings(line);
+        log_boot("<6>", "%s %s", label, line);
+        line_count++;
+        if (line_count >= 64U) {
+            log_boot("<4>", "%s output truncated after %u line(s)", label, line_count);
+            break;
+        }
+    }
+
+    fclose(fp);
+}
+
+static int redirect_child_output_to_path(const char *path) {
+    int output_fd;
+
+    output_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOCTTY, 0644);
+    if (output_fd < 0) {
+        return -1;
+    }
+
+    if (dup2(output_fd, STDOUT_FILENO) < 0 || dup2(output_fd, STDERR_FILENO) < 0) {
+        int saved_errno = errno;
+
+        close(output_fd);
+        errno = saved_errno;
+        return -1;
+    }
+
+    if (output_fd > STDERR_FILENO) {
+        close(output_fd);
+    }
+
+    return 0;
+}
+
 static int run_orange_init_payload(const struct hello_init_config *config) {
     pid_t child_pid;
     int status;
@@ -984,6 +1207,393 @@ static int run_orange_init_payload(const struct hello_init_config *config) {
     return 1;
 }
 
+static int ensure_orange_gpu_runtime_dirs(void) {
+    if (ensure_directory(SHADOW_HELLO_INIT_ORANGE_GPU_ROOT, 0755) != 0) {
+        return -1;
+    }
+    if (ensure_directory(SHADOW_HELLO_INIT_ORANGE_GPU_HOME, 0755) != 0) {
+        return -1;
+    }
+    if (ensure_directory(SHADOW_HELLO_INIT_ORANGE_GPU_CACHE_HOME, 0755) != 0) {
+        return -1;
+    }
+    if (ensure_directory(SHADOW_HELLO_INIT_ORANGE_GPU_CONFIG_HOME, 0755) != 0) {
+        return -1;
+    }
+    if (ensure_directory(SHADOW_HELLO_INIT_ORANGE_GPU_MESA_CACHE_DIR, 0755) != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int set_orange_gpu_child_env(void) {
+    if (setenv(SHADOW_HELLO_INIT_GPU_BACKEND_ENV, "vulkan", 1) != 0) {
+        log_stage("<3>", "orange-gpu-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_GPU_BACKEND_ENV, errno);
+        return -1;
+    }
+    if (setenv(SHADOW_HELLO_INIT_VK_ICD_FILENAMES_ENV, SHADOW_HELLO_INIT_ORANGE_GPU_ICD_PATH, 1) != 0) {
+        log_stage("<3>", "orange-gpu-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_VK_ICD_FILENAMES_ENV, errno);
+        return -1;
+    }
+    if (setenv(SHADOW_HELLO_INIT_MESA_DRIVER_OVERRIDE_ENV, "kgsl", 1) != 0) {
+        log_stage("<3>", "orange-gpu-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_MESA_DRIVER_OVERRIDE_ENV, errno);
+        return -1;
+    }
+    if (setenv(SHADOW_HELLO_INIT_TU_DEBUG_ENV, "noconform", 1) != 0) {
+        log_stage("<3>", "orange-gpu-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_TU_DEBUG_ENV, errno);
+        return -1;
+    }
+    if (setenv(SHADOW_HELLO_INIT_HOME_ENV, SHADOW_HELLO_INIT_ORANGE_GPU_HOME, 1) != 0) {
+        log_stage("<3>", "orange-gpu-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_HOME_ENV, errno);
+        return -1;
+    }
+    if (setenv(SHADOW_HELLO_INIT_XDG_CACHE_HOME_ENV, SHADOW_HELLO_INIT_ORANGE_GPU_CACHE_HOME, 1) != 0) {
+        log_stage("<3>", "orange-gpu-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_XDG_CACHE_HOME_ENV, errno);
+        return -1;
+    }
+    if (setenv(SHADOW_HELLO_INIT_XDG_CONFIG_HOME_ENV, SHADOW_HELLO_INIT_ORANGE_GPU_CONFIG_HOME, 1) != 0) {
+        log_stage("<3>", "orange-gpu-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_XDG_CONFIG_HOME_ENV, errno);
+        return -1;
+    }
+    if (setenv(SHADOW_HELLO_INIT_MESA_SHADER_CACHE_ENV, SHADOW_HELLO_INIT_ORANGE_GPU_MESA_CACHE_DIR, 1) != 0) {
+        log_stage("<3>", "orange-gpu-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_MESA_SHADER_CACHE_ENV, errno);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int run_orange_gpu_payload(const struct hello_init_config *config) {
+    pid_t child_pid;
+    int status;
+    char hold_seconds[16];
+    unsigned int waited_seconds = 0;
+    unsigned int watchdog_timeout =
+        orange_gpu_mode_uses_success_postlude(config)
+            ? SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS
+            : config->hold_seconds + SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS;
+
+    if (ensure_orange_gpu_runtime_dirs() != 0) {
+        return 1;
+    }
+
+    unlink_best_effort(SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH);
+    unlink_best_effort(SHADOW_HELLO_INIT_ORANGE_GPU_OUTPUT_PATH);
+
+    log_stage(
+        "<6>",
+        "orange-gpu-launch",
+        "loader=%s binary=%s mode=%s hold_seconds=%u",
+        SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+        SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+        config->orange_gpu_mode,
+        config->hold_seconds
+    );
+    log_boot("<6>", "%s", kOwnedInitOrangeGpuPayloadSentinel);
+    log_boot(
+        "<6>",
+        "launching payload %s via %s",
+        SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+        SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH
+    );
+
+    child_pid = fork();
+    if (child_pid < 0) {
+        log_stage("<3>", "orange-gpu-fork-failed", "errno=%d", errno);
+        log_boot("<3>", "fork for %s failed: errno=%d", SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH, errno);
+        return 1;
+    }
+    if (child_pid > 0) {
+        log_stage("<6>", "orange-gpu-forked", "pid=%d", child_pid);
+    }
+
+    if (child_pid == 0) {
+        if (redirect_child_output_to_path(SHADOW_HELLO_INIT_ORANGE_GPU_OUTPUT_PATH) != 0) {
+            log_stage("<3>", "orange-gpu-child-redirect-failed", "errno=%d", errno);
+            _exit(126);
+        }
+        if (orange_gpu_mode_is_bundle_smoke(config)) {
+            log_stage(
+                "<6>",
+                "orange-gpu-child-exec",
+                "argv0=%s binary=%s scene=bundle-smoke",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH
+            );
+            execl(
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                "--library-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LIBRARY_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+                "--scene",
+                "bundle-smoke",
+                "--hold-secs",
+                "0",
+                "--summary-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH,
+                (char *)NULL
+            );
+        } else if (orange_gpu_mode_is_vulkan_offscreen(config)) {
+            if (set_orange_gpu_child_env() != 0) {
+                _exit(126);
+            }
+            log_stage(
+                "<6>",
+                "orange-gpu-child-exec",
+                "argv0=%s binary=%s scene=smoke mode=vulkan-offscreen",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH
+            );
+            execl(
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                "--library-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LIBRARY_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+                "--scene",
+                "smoke",
+                "--summary-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH,
+                (char *)NULL
+            );
+        } else {
+            if (snprintf(hold_seconds, sizeof(hold_seconds), "%u", config->hold_seconds) <= 0) {
+                log_stage("<3>", "orange-gpu-child-hold-format-failed", "status=126");
+                _exit(126);
+            }
+            if (set_orange_gpu_child_env() != 0) {
+                _exit(126);
+            }
+            log_stage(
+                "<6>",
+                "orange-gpu-child-exec",
+                "argv0=%s binary=%s scene=flat-orange",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH
+            );
+            execl(
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                "--library-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LIBRARY_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+                "--scene",
+                "flat-orange",
+                "--present-kms",
+                "--hold-secs",
+                hold_seconds,
+                "--summary-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH,
+                (char *)NULL
+            );
+        }
+        log_stage("<3>", "orange-gpu-exec-failed", "errno=%d", errno);
+        log_boot(
+            "<3>",
+            "exec %s via %s failed: errno=%d",
+            SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+            SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+            errno
+        );
+        _exit(127);
+    }
+
+    for (;;) {
+        pid_t waited = waitpid(child_pid, &status, WNOHANG);
+
+        if (waited == child_pid) {
+            break;
+        }
+        if (waited == 0) {
+            sleep_seconds(5);
+            waited_seconds += 5;
+            log_stage("<6>", "orange-gpu-wait", "pid=%d seconds=%u", child_pid, waited_seconds);
+            if (waited_seconds >= watchdog_timeout) {
+                log_stage(
+                    "<4>",
+                    "orange-gpu-watchdog-timeout",
+                    "pid=%d waited_seconds=%u timeout_seconds=%u",
+                    child_pid,
+                    waited_seconds,
+                    watchdog_timeout
+                );
+                log_boot(
+                    "<4>",
+                    "orange-gpu payload exceeded watchdog timeout=%u second(s); sending SIGKILL",
+                    watchdog_timeout
+                );
+                if (kill(child_pid, SIGKILL) != 0 && errno != ESRCH) {
+                    log_stage("<3>", "orange-gpu-watchdog-kill-failed", "pid=%d errno=%d", child_pid, errno);
+                    log_boot("<3>", "kill(%d, SIGKILL) failed: errno=%d", child_pid, errno);
+                    return 1;
+                }
+                for (;;) {
+                    waited = waitpid(child_pid, &status, 0);
+                    if (waited == child_pid) {
+                        break;
+                    }
+                    if (waited < 0 && errno == EINTR) {
+                        continue;
+                    }
+
+                    log_stage("<3>", "orange-gpu-watchdog-reap-failed", "pid=%d errno=%d", child_pid, errno);
+                    log_boot("<3>", "watchdog waitpid(%d) failed: errno=%d", child_pid, errno);
+                    return 1;
+                }
+                break;
+            }
+            continue;
+        }
+        if (errno != EINTR) {
+            log_stage("<3>", "orange-gpu-waitpid-failed", "pid=%d errno=%d", child_pid, errno);
+            log_boot("<3>", "waitpid(%d) failed: errno=%d", child_pid, errno);
+            return 1;
+        }
+    }
+
+    log_file_best_effort("orange-gpu-output", SHADOW_HELLO_INIT_ORANGE_GPU_OUTPUT_PATH);
+    log_file_best_effort("orange-gpu-summary", SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH);
+
+    if (WIFEXITED(status)) {
+        log_stage("<6>", "orange-gpu-exit", "status=%d", WEXITSTATUS(status));
+        log_boot(
+            "<6>",
+            "payload %s exited with status=%d",
+            SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+            WEXITSTATUS(status)
+        );
+        return WEXITSTATUS(status) == 0 ? 0 : WEXITSTATUS(status);
+    }
+
+    if (WIFSIGNALED(status)) {
+        log_stage("<3>", "orange-gpu-signal", "signal=%d", WTERMSIG(status));
+        log_boot(
+            "<3>",
+            "payload %s died from signal=%d",
+            SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+            WTERMSIG(status)
+        );
+        return 128 + WTERMSIG(status);
+    }
+
+    log_stage("<4>", "orange-gpu-unknown-status", "status=%d", status);
+    log_boot(
+        "<4>",
+        "payload %s returned unknown wait status=%d",
+        SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+        status
+    );
+    return 1;
+}
+
+static int run_orange_gpu_prelude(const struct hello_init_config *config) {
+    struct hello_init_config prelude_config;
+
+    if (!prelude_is_orange_init(config) || config->prelude_hold_seconds == 0U) {
+        return 0;
+    }
+
+    prelude_config = *config;
+    (void)copy_string(
+        prelude_config.payload,
+        sizeof(prelude_config.payload),
+        "orange-init"
+    );
+    prelude_config.hold_seconds = config->prelude_hold_seconds;
+
+    log_stage(
+        "<6>",
+        "orange-gpu-prelude",
+        "prelude=%s hold_seconds=%u",
+        config->prelude,
+        config->prelude_hold_seconds
+    );
+    log_boot(
+        "<6>",
+        "orange-gpu prelude=%s hold_seconds=%u",
+        config->prelude,
+        config->prelude_hold_seconds
+    );
+
+    return run_orange_init_payload(&prelude_config);
+}
+
+static int run_orange_gpu_checkpoint(
+    const struct hello_init_config *config,
+    const char *checkpoint_name,
+    unsigned int hold_seconds
+) {
+    struct hello_init_config checkpoint_config;
+
+    if (
+        !orange_gpu_mode_uses_success_postlude(config) ||
+        !prelude_is_orange_init(config) ||
+        hold_seconds == 0U
+    ) {
+        return 0;
+    }
+
+    checkpoint_config = *config;
+    (void)copy_string(
+        checkpoint_config.payload,
+        sizeof(checkpoint_config.payload),
+        "orange-init"
+    );
+    checkpoint_config.hold_seconds = hold_seconds;
+
+    log_stage(
+        "<6>",
+        "orange-gpu-checkpoint",
+        "checkpoint=%s hold_seconds=%u",
+        checkpoint_name,
+        hold_seconds
+    );
+    log_boot(
+        "<6>",
+        "orange-gpu checkpoint=%s hold_seconds=%u",
+        checkpoint_name,
+        hold_seconds
+    );
+
+    return run_orange_init_payload(&checkpoint_config);
+}
+
+static int run_orange_gpu_postlude(const struct hello_init_config *config) {
+    struct hello_init_config postlude_config;
+
+    if (
+        !orange_gpu_mode_uses_success_postlude(config) ||
+        !prelude_is_orange_init(config) ||
+        config->hold_seconds == 0U
+    ) {
+        return 0;
+    }
+
+    postlude_config = *config;
+    (void)copy_string(
+        postlude_config.payload,
+        sizeof(postlude_config.payload),
+        "orange-init"
+    );
+    postlude_config.hold_seconds = config->hold_seconds;
+
+    log_stage(
+        "<6>",
+        "orange-gpu-postlude",
+        "postlude=orange-init hold_seconds=%u",
+        config->hold_seconds
+    );
+    log_boot(
+        "<6>",
+        "orange-gpu postlude=orange-init hold_seconds=%u",
+        config->hold_seconds
+    );
+
+    return run_orange_init_payload(&postlude_config);
+}
+
 static int raw_reboot(unsigned int cmd, const char *arg) {
     return (int)syscall(
         SYS_reboot,
@@ -1025,6 +1635,9 @@ static void reboot_from_config(const struct hello_init_config *config) {
 
 int main(void) {
     struct hello_init_config config;
+    int prelude_status = 0;
+    int checkpoint_status = 0;
+    int postlude_status = 0;
     int payload_status;
 
     shadow_boot_start_ms = monotonic_millis();
@@ -1111,9 +1724,12 @@ int main(void) {
     log_stage(
         "<6>",
         "config-loaded",
-        "payload=%s hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "payload=%s prelude=%s orange_gpu_mode=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
+        config.prelude,
+        config.orange_gpu_mode,
         config.hold_seconds,
+        config.prelude_hold_seconds,
         config.reboot_target,
         run_token_or_unset(),
         config.dev_mount,
@@ -1126,9 +1742,12 @@ int main(void) {
     );
     log_boot(
         "<6>",
-        "config payload=%s hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "config payload=%s prelude=%s orange_gpu_mode=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
+        config.prelude,
+        config.orange_gpu_mode,
         config.hold_seconds,
+        config.prelude_hold_seconds,
         config.reboot_target,
         run_token_or_unset(),
         config.dev_mount,
@@ -1153,6 +1772,94 @@ int main(void) {
             log_boot(
                 "<4>",
                 "orange-init payload failed with status=%d; holding for observation before reboot",
+                payload_status
+            );
+            hold_for_observation(config.hold_seconds);
+        }
+    } else if (payload_is_orange_gpu(&config)) {
+        log_stage("<6>", "payload-dispatch", "payload=orange-gpu");
+        prelude_status = run_orange_gpu_prelude(&config);
+        if (prelude_status != 0) {
+            log_stage(
+                "<4>",
+                "prelude-failed",
+                "prelude=%s status=%d hold_seconds=%u",
+                config.prelude,
+                prelude_status,
+                config.prelude_hold_seconds
+            );
+            log_boot(
+                "<4>",
+                "orange-gpu prelude=%s failed with status=%d; continuing to gpu payload",
+                config.prelude,
+                prelude_status
+            );
+        }
+        if (!validate_orange_gpu_config(&config)) {
+            payload_status = 1;
+            log_stage(
+                "<4>",
+                "payload-invalid-config",
+                "payload=orange-gpu hold_seconds=%u",
+                config.hold_seconds
+            );
+            log_boot(
+                "<4>",
+                "orange-gpu config invalid after prelude; holding for observation before reboot"
+            );
+            hold_for_observation(config.hold_seconds);
+            reboot_from_config(&config);
+        }
+        checkpoint_status = run_orange_gpu_checkpoint(
+            &config,
+            "validated",
+            SHADOW_HELLO_INIT_ORANGE_GPU_CHECKPOINT_HOLD_SECONDS
+        );
+        if (checkpoint_status != 0) {
+            log_stage(
+                "<4>",
+                "checkpoint-failed",
+                "checkpoint=validated status=%d hold_seconds=%u",
+                checkpoint_status,
+                SHADOW_HELLO_INIT_ORANGE_GPU_CHECKPOINT_HOLD_SECONDS
+            );
+            log_boot(
+                "<4>",
+                "orange-gpu checkpoint=validated failed with status=%d; continuing to gpu payload",
+                checkpoint_status
+            );
+        }
+        payload_status = run_orange_gpu_payload(&config);
+        if (payload_status == 0) {
+            postlude_status = run_orange_gpu_postlude(&config);
+            if (postlude_status != 0) {
+                log_stage(
+                    "<4>",
+                    "postlude-failed",
+                    "postlude=%s status=%d hold_seconds=%u",
+                    config.prelude,
+                    postlude_status,
+                    config.hold_seconds
+                );
+                log_boot(
+                    "<4>",
+                    "orange-gpu postlude=%s failed with status=%d; holding for observation before reboot",
+                    config.prelude,
+                    postlude_status
+                );
+                hold_for_observation(config.hold_seconds);
+            }
+        } else {
+            log_stage(
+                "<4>",
+                "payload-failed",
+                "payload=orange-gpu status=%d hold_seconds=%u",
+                payload_status,
+                config.hold_seconds
+            );
+            log_boot(
+                "<4>",
+                "orange-gpu payload failed with status=%d; holding for observation before reboot",
                 payload_status
             );
             hold_for_observation(config.hold_seconds);

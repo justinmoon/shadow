@@ -1,0 +1,673 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/shadow-pixel-boot-orange-gpu.XXXXXX")"
+MOCK_BIN="$TMP_DIR/bin"
+BOOT_BUILD_INPUT="$TMP_DIR/build-input.img"
+BOOT_BUILD_RAMDISK="$TMP_DIR/build-ramdisk.cpio"
+HELLO_INIT_OUTPUT="$TMP_DIR/hello-init"
+ORANGE_INIT_OUTPUT="$TMP_DIR/orange-init"
+GPU_BUNDLE_DIR="$TMP_DIR/gpu-bundle"
+BAD_LOADER_BUNDLE_DIR="$TMP_DIR/bad-loader-bundle"
+BAD_BINARY_BUNDLE_DIR="$TMP_DIR/bad-binary-bundle"
+OUTPUT_IMAGE="$TMP_DIR/orange-gpu-boot.img"
+DEFAULT_OUTPUT_IMAGE="$TMP_DIR/orange-gpu-default-boot.img"
+AVB_KEY_PATH="$TMP_DIR/avb-testkey.pem"
+
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+
+trap cleanup EXIT
+
+mkdir -p \
+  "$MOCK_BIN" \
+  "$GPU_BUNDLE_DIR/lib" \
+  "$GPU_BUNDLE_DIR/share/vulkan/icd.d" \
+  "$BAD_LOADER_BUNDLE_DIR/lib" \
+  "$BAD_LOADER_BUNDLE_DIR/share/vulkan/icd.d" \
+  "$BAD_BINARY_BUNDLE_DIR/lib" \
+  "$BAD_BINARY_BUNDLE_DIR/share/vulkan/icd.d"
+printf 'boot build input\n' >"$BOOT_BUILD_INPUT"
+printf 'mock avb key\n' >"$AVB_KEY_PATH"
+
+cat >"$HELLO_INIT_OUTPUT" <<'EOF'
+#!/system/bin/sh
+# shadow-owned-init-role:hello-init
+# shadow-owned-init-impl:c-static
+# shadow-owned-init-config:/shadow-init.cfg
+# shadow-owned-init-mounts:dev=true,proc=true,sys=true
+echo hello-init
+EOF
+chmod 0755 "$HELLO_INIT_OUTPUT"
+
+cat >"$ORANGE_INIT_OUTPUT" <<'EOF'
+#!/system/bin/sh
+# shadow-owned-init-role:orange-init
+# shadow-owned-init-impl:drm-rect-device
+# shadow-owned-init-path:/orange-init
+echo orange-init
+EOF
+chmod 0755 "$ORANGE_INIT_OUTPUT"
+
+printf 'ELF_BINARY_AARCH64\n' >"$GPU_BUNDLE_DIR/shadow-gpu-smoke"
+chmod 0755 "$GPU_BUNDLE_DIR/shadow-gpu-smoke"
+printf 'ELF_LOADER_AARCH64\n' >"$GPU_BUNDLE_DIR/lib/ld-linux-aarch64.so.1"
+chmod 0755 "$GPU_BUNDLE_DIR/lib/ld-linux-aarch64.so.1"
+printf 'ELF_VULKAN_LOADER_AARCH64\n' >"$GPU_BUNDLE_DIR/lib/libvulkan.so.1"
+printf 'ELF_TURNIP_AARCH64\n' >"$GPU_BUNDLE_DIR/lib/libvulkan_freedreno.so"
+cat >"$GPU_BUNDLE_DIR/share/vulkan/icd.d/freedreno_icd.aarch64.json" <<'EOF'
+{
+  "ICD": {
+    "api_version": "1.4.335",
+    "library_arch": "64",
+    "library_path": "/orange-gpu/lib/libvulkan_freedreno.so"
+  },
+  "file_format_version": "1.0.1"
+}
+EOF
+
+cp -R "$GPU_BUNDLE_DIR"/. "$BAD_LOADER_BUNDLE_DIR"/
+cp -R "$GPU_BUNDLE_DIR"/. "$BAD_BINARY_BUNDLE_DIR"/
+printf 'not-an-elf-loader\n' >"$BAD_LOADER_BUNDLE_DIR/lib/ld-linux-aarch64.so.1"
+chmod 0755 "$BAD_LOADER_BUNDLE_DIR/lib/ld-linux-aarch64.so.1"
+printf '#!/bin/sh\necho not-an-elf-binary\n' >"$BAD_BINARY_BUNDLE_DIR/shadow-gpu-smoke"
+chmod 0755 "$BAD_BINARY_BUNDLE_DIR/shadow-gpu-smoke"
+
+PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$BOOT_BUILD_RAMDISK" <<'PY'
+from pathlib import Path
+import os
+import sys
+
+from cpio_edit import CpioArchive, CpioEntry, build_entry_from_path, write_cpio
+
+ramdisk_path = Path(sys.argv[1])
+tmp_dir = ramdisk_path.parent
+
+root_init_path = tmp_dir / "root-init"
+try:
+    root_init_path.unlink()
+except FileNotFoundError:
+    pass
+os.symlink("/system/bin/init", root_init_path)
+
+system_init_path = tmp_dir / "system-bin-init"
+system_init_path.write_text("stock-system-init\n", encoding="utf-8")
+system_init_path.chmod(0o755)
+
+entries = [
+    build_entry_from_path("init", root_init_path, 1),
+    build_entry_from_path("system/bin/init", system_init_path, 2),
+]
+trailer = CpioEntry(
+    name="TRAILER!!!",
+    ino=0,
+    mode=0,
+    uid=0,
+    gid=0,
+    nlink=1,
+    mtime=0,
+    filesize=0,
+    devmajor=0,
+    devminor=0,
+    rdevmajor=0,
+    rdevminor=0,
+    check=0,
+    data=b"",
+)
+write_cpio(CpioArchive(entries + [trailer], b""), ramdisk_path)
+PY
+
+cat >"$MOCK_BIN/adb" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+cat >"$MOCK_BIN/just" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+cat >"$MOCK_BIN/payload-dumper-go" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+cat >"$MOCK_BIN/unpack_bootimg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --boot_img)
+      shift 2
+      ;;
+    --format=mkbootimg)
+      shift
+      ;;
+    *)
+      echo "mock unpack_bootimg: unexpected args: $*" >&2
+      exit 1
+      ;;
+  esac
+done
+
+mkdir -p out
+cp "$MOCK_BOOT_RAMDISK" out/ramdisk
+printf '%s\n' '--header_version 2 --pagesize 4096 --ramdisk /tmp/original-ramdisk --output /tmp/output.img'
+EOF
+
+cat >"$MOCK_BIN/mkbootimg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+ramdisk=""
+output=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --ramdisk)
+      ramdisk="${2:-}"
+      shift 2
+      ;;
+    --output)
+      output="${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+[[ -n "$ramdisk" && -n "$output" ]] || {
+  echo "mock mkbootimg: missing --ramdisk or --output" >&2
+  exit 1
+}
+
+cp "$ramdisk" "$output"
+EOF
+
+cat >"$MOCK_BIN/avbtool" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  info_image)
+    cat <<INFO
+Algorithm: SHA256_RSA4096
+Rollback Index: 0
+Rollback Index Location: 0
+Flags: 0
+  Hash Algorithm: sha256
+  Salt: 00
+INFO
+    ;;
+  add_hash_footer)
+    ;;
+  *)
+    echo "mock avbtool: unexpected args: $*" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+cat >"$MOCK_BIN/file" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+target="$1"
+contents="$(cat "$target" 2>/dev/null || true)"
+case "$contents" in
+  *ELF_LOADER_AARCH64*)
+    printf '%s: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), static-pie linked, not stripped\n' "$target"
+    ;;
+  *ELF_BINARY_AARCH64*)
+    printf '%s: ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), dynamically linked, interpreter /orange-gpu/lib/ld-linux-aarch64.so.1, not stripped\n' "$target"
+    ;;
+  *shadow-owned-init-role:orange-init*)
+    printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
+    ;;
+  *shadow-owned-init-role:hello-init*)
+    printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
+    ;;
+  *ELF_VULKAN_LOADER_AARCH64*|*ELF_TURNIP_AARCH64*)
+    printf '%s: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked, not stripped\n' "$target"
+    ;;
+  "#!"*)
+    printf '%s: POSIX shell script, ASCII text executable\n' "$target"
+    ;;
+  *)
+    printf '%s: ASCII text\n' "$target"
+    ;;
+esac
+EOF
+
+chmod 0755 \
+  "$MOCK_BIN/adb" \
+  "$MOCK_BIN/avbtool" \
+  "$MOCK_BIN/file" \
+  "$MOCK_BIN/just" \
+  "$MOCK_BIN/mkbootimg" \
+  "$MOCK_BIN/payload-dumper-go" \
+  "$MOCK_BIN/unpack_bootimg"
+
+assert_contains() {
+  local haystack needle
+  haystack="$1"
+  needle="$2"
+
+  if ! grep -Fq -- "$needle" <<<"$haystack"; then
+    echo "pixel_boot_orange_gpu_smoke: expected output to contain: $needle" >&2
+    echo "$haystack" >&2
+    exit 1
+  fi
+}
+
+assert_command_fails_contains() {
+  local expected="$1"
+  shift
+  local output_path="$TMP_DIR/command-failure.out"
+
+  if "$@" >"$output_path" 2>&1; then
+    echo "pixel_boot_orange_gpu_smoke: expected command to fail: $*" >&2
+    cat "$output_path" >&2
+    exit 1
+  fi
+
+  assert_contains "$(cat "$output_path")" "$expected"
+}
+
+assert_file_contains() {
+  local file_path needle
+  file_path="$1"
+  needle="$2"
+
+  if ! grep -Fq -- "$needle" "$file_path"; then
+    echo "pixel_boot_orange_gpu_smoke: expected $file_path to contain: $needle" >&2
+    exit 1
+  fi
+}
+
+assert_file_not_contains() {
+  local file_path needle
+  file_path="$1"
+  needle="$2"
+
+  if grep -Fq -- "$needle" "$file_path"; then
+    echo "pixel_boot_orange_gpu_smoke: expected $file_path to omit: $needle" >&2
+    exit 1
+  fi
+}
+
+assert_json_field_equals() {
+  local file_path key expected
+  file_path="$1"
+  key="$2"
+  expected="$3"
+
+  python3 - "$file_path" "$key" "$expected" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+file_path, key, expected = sys.argv[1:4]
+payload = json.loads(Path(file_path).read_text(encoding="utf-8"))
+actual = payload.get(key)
+if isinstance(actual, bool):
+    actual = "true" if actual else "false"
+elif actual is None:
+    actual = ""
+else:
+    actual = str(actual)
+
+if actual != expected:
+    raise SystemExit(f"unexpected json value for {key}: {actual!r} != {expected!r}")
+PY
+}
+
+assert_cpio_entry_equals() {
+  local archive_path entry_name expected_data
+  archive_path="$1"
+  entry_name="$2"
+  expected_data="$3"
+
+  PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$archive_path" "$entry_name" "$expected_data" <<'PY'
+from pathlib import Path
+import sys
+
+from cpio_edit import read_cpio
+
+archive_path, entry_name, expected_data = sys.argv[1:4]
+entries = {
+    entry.name: entry.data
+    for entry in read_cpio(Path(archive_path)).without_trailer()
+}
+
+if entry_name not in entries:
+    raise SystemExit(f"missing cpio entry: {entry_name}")
+if entries[entry_name] != expected_data.encode("utf-8"):
+    raise SystemExit(
+        f"unexpected cpio entry contents for {entry_name}: {entries[entry_name]!r}"
+    )
+PY
+}
+
+assert_cpio_entry_present() {
+  local archive_path entry_name
+  archive_path="$1"
+  entry_name="$2"
+
+  PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$archive_path" "$entry_name" <<'PY'
+from pathlib import Path
+import sys
+
+from cpio_edit import read_cpio
+
+archive_path, entry_name = sys.argv[1:3]
+entries = {entry.name for entry in read_cpio(Path(archive_path)).without_trailer()}
+if entry_name not in entries:
+    raise SystemExit(f"missing cpio entry: {entry_name}")
+PY
+}
+
+assert_cpio_entry_absent() {
+  local archive_path entry_name
+  archive_path="$1"
+  entry_name="$2"
+
+  PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$archive_path" "$entry_name" <<'PY'
+from pathlib import Path
+import sys
+
+from cpio_edit import read_cpio
+
+archive_path, entry_name = sys.argv[1:3]
+entries = {entry.name for entry in read_cpio(Path(archive_path)).without_trailer()}
+if entry_name in entries:
+    raise SystemExit(f"unexpected cpio entry present: {entry_name}")
+PY
+}
+
+assert_cpio_entry_symlink_target() {
+  local archive_path entry_name expected_target
+  archive_path="$1"
+  entry_name="$2"
+  expected_target="$3"
+
+  PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$archive_path" "$entry_name" "$expected_target" <<'PY'
+from pathlib import Path
+import stat
+import sys
+
+from cpio_edit import read_cpio
+
+archive_path, entry_name, expected_target = sys.argv[1:4]
+entries = {
+    entry.name: entry
+    for entry in read_cpio(Path(archive_path)).without_trailer()
+}
+
+if entry_name not in entries:
+    raise SystemExit(f"missing cpio entry: {entry_name}")
+
+entry = entries[entry_name]
+if not stat.S_ISLNK(entry.mode):
+    raise SystemExit(f"cpio entry is not a symlink: {entry_name} mode={entry.mode:o}")
+
+actual_target = entry.data.decode("utf-8")
+if actual_target != expected_target:
+    raise SystemExit(
+        f"unexpected symlink target for {entry_name}: {actual_target!r} != {expected_target!r}"
+    )
+PY
+}
+
+assert_orange_gpu_offscreen_branch_shape() {
+  python3 - "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+marker = "} else if (orange_gpu_mode_is_vulkan_offscreen(config)) {"
+start = source.find(marker)
+if start < 0:
+    raise SystemExit("missing offscreen branch marker")
+start += len(marker)
+end = source.find("\n        } else {", start)
+if end < 0:
+    raise SystemExit("missing end of offscreen branch")
+branch = source[start:end]
+required = [
+    'scene=smoke mode=vulkan-offscreen',
+    '"--scene"',
+    '"smoke"',
+    '"--summary-path"',
+]
+for needle in required:
+    if needle not in branch:
+        raise SystemExit(f"missing offscreen branch needle: {needle}")
+for needle in ['"--present-kms"', 'hold_seconds,']:
+    if needle in branch:
+        raise SystemExit(f"unexpected offscreen branch needle: {needle}")
+PY
+}
+
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'payload_is_orange_gpu'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'prelude_is_orange_init'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-prelude"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-postlude"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-checkpoint"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"bundle-smoke"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"vulkan-offscreen"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO_INIT_ORANGE_GPU_OUTPUT_PATH'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-watchdog-timeout"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'continuing to gpu payload'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"--present-kms"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"flat-orange"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'setenv(SHADOW_HELLO_INIT_GPU_BACKEND_ENV, "vulkan", 1)'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'setenv(SHADOW_HELLO_INIT_VK_ICD_FILENAMES_ENV, SHADOW_HELLO_INIT_ORANGE_GPU_ICD_PATH, 1)'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'setenv(SHADOW_HELLO_INIT_MESA_DRIVER_OVERRIDE_ENV, "kgsl", 1)'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_seen'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'validate_orange_gpu_config'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'missing required orange_gpu_mode config for payload=orange-gpu'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'invalid orange_gpu_mode config for payload=orange-gpu'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO_INIT_ORANGE_GPU_CHECKPOINT_HOLD_SECONDS'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'checkpoint=validated'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_vulkan_offscreen'
+assert_orange_gpu_offscreen_branch_shape
+assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" '[--scene smoke|flat-orange|bundle-smoke]'
+assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'BundleSmokeSummary'
+assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'mode: "bundle-smoke",'
+assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'Self::BundleSmoke => "bundle-smoke"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'stage_gpu_bundle'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'assert_prelude_word'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'assert_orange_gpu_mode_word'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Prelude: %s\\n' \"\$PRELUDE\""
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU mode: %s\\n' \"\$ORANGE_GPU_MODE\""
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Bundle exec mode: bundle-smoke\\n'"
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict Vulkan offscreen render\\n'"
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Derived success postlude: %s\\n' \"\$(success_postlude_value)\""
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Visible checkpoint hold seconds: %s\\n' \"\$(checkpoint_hold_seconds_value)\""
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_DRI_BOOTSTRAP:-'
+
+default_orange_gpu_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$DEFAULT_OUTPUT_IMAGE" \
+      --hold-secs 7 \
+      --reboot-target bootloader \
+      --run-token orange-gpu-default-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false
+)"
+
+assert_contains "$default_orange_gpu_boot_output" "Owned userspace mode: orange-gpu"
+assert_contains "$default_orange_gpu_boot_output" "Payload contract: hello-init executes the staged shadow-gpu-smoke bundle from /orange-gpu"
+assert_contains "$default_orange_gpu_boot_output" "Orange GPU mode: gpu-render"
+assert_contains "$default_orange_gpu_boot_output" "GPU scene: flat-orange"
+assert_contains "$default_orange_gpu_boot_output" "Prelude: none"
+assert_contains "$default_orange_gpu_boot_output" "Prelude hold seconds: 0"
+assert_contains "$default_orange_gpu_boot_output" "Derived success postlude: none"
+assert_cpio_entry_absent "$DEFAULT_OUTPUT_IMAGE" orange-init
+assert_cpio_entry_equals "$DEFAULT_OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_orange_gpu.sh\npayload=orange-gpu\norange_gpu_mode=gpu-render\nhold_seconds=7\nreboot_target=bootloader\nrun_token=orange-gpu-default-run-token\ndev_mount=tmpfs\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\ndri_bootstrap=sunfish-card0-renderD128-kgsl3d0\n'
+assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" prelude "none"
+assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" prelude_hold_seconds "0"
+assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_mode "gpu-render"
+assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" success_postlude "none"
+assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" checkpoint_hold_seconds "0"
+
+bundle_smoke_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$OUTPUT_IMAGE" \
+      --hold-secs 7 \
+      --prelude orange-init \
+      --prelude-hold-secs 2 \
+      --orange-gpu-mode bundle-smoke \
+      --reboot-target bootloader \
+      --run-token orange-gpu-smoke-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false
+)"
+
+assert_contains "$bundle_smoke_boot_output" "Build mode: stock-init"
+assert_contains "$bundle_smoke_boot_output" "Owned userspace mode: orange-gpu"
+assert_contains "$bundle_smoke_boot_output" "Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in bundle-smoke mode from /orange-gpu"
+assert_contains "$bundle_smoke_boot_output" "Payload root: /orange-gpu"
+assert_contains "$bundle_smoke_boot_output" "GPU bundle dir: $GPU_BUNDLE_DIR"
+assert_contains "$bundle_smoke_boot_output" "GPU bundle staged dir: "
+assert_contains "$bundle_smoke_boot_output" "GPU exec path: /orange-gpu/shadow-gpu-smoke"
+assert_contains "$bundle_smoke_boot_output" "GPU loader path: /orange-gpu/lib/ld-linux-aarch64.so.1"
+assert_contains "$bundle_smoke_boot_output" "Orange GPU mode: bundle-smoke"
+assert_contains "$bundle_smoke_boot_output" "Bundle exec mode: bundle-smoke"
+assert_contains "$bundle_smoke_boot_output" "Prelude: orange-init"
+assert_contains "$bundle_smoke_boot_output" "Prelude hold seconds: 2"
+assert_contains "$bundle_smoke_boot_output" "Prelude payload path: /orange-init"
+assert_contains "$bundle_smoke_boot_output" "Derived success postlude: orange-init"
+assert_contains "$bundle_smoke_boot_output" "Visible checkpoint hold seconds: 1"
+assert_contains "$bundle_smoke_boot_output" "Visible sequence: orange 2s -> orange 1s -> orange 7s on success"
+assert_contains "$bundle_smoke_boot_output" "Config path: /shadow-init.cfg"
+assert_contains "$bundle_smoke_boot_output" "Configured hold seconds: 7"
+assert_contains "$bundle_smoke_boot_output" "Reboot target: bootloader"
+assert_contains "$bundle_smoke_boot_output" "Run token: orange-gpu-smoke-run-token"
+assert_contains "$bundle_smoke_boot_output" "Dev mount style: tmpfs"
+assert_contains "$bundle_smoke_boot_output" "Mount sys: false"
+assert_contains "$bundle_smoke_boot_output" "Log kmsg: false"
+assert_contains "$bundle_smoke_boot_output" "Log pmsg: false"
+assert_contains "$bundle_smoke_boot_output" "DRI bootstrap: sunfish-card0-renderD128"
+assert_contains "$bundle_smoke_boot_output" "Metadata path: $OUTPUT_IMAGE.hello-init.json"
+assert_cpio_entry_symlink_target "$OUTPUT_IMAGE" init "/system/bin/init"
+assert_cpio_entry_equals "$OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:c-static\n# shadow-owned-init-config:/shadow-init.cfg\n# shadow-owned-init-mounts:dev=true,proc=true,sys=true\necho hello-init\n'
+assert_cpio_entry_equals "$OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_orange_gpu.sh\npayload=orange-gpu\norange_gpu_mode=bundle-smoke\nhold_seconds=7\nreboot_target=bootloader\nrun_token=orange-gpu-smoke-run-token\nprelude=orange-init\nprelude_hold_seconds=2\ndev_mount=tmpfs\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\ndri_bootstrap=sunfish-card0-renderD128\n'
+assert_cpio_entry_equals "$OUTPUT_IMAGE" orange-init $'#!/system/bin/sh\n# shadow-owned-init-role:orange-init\n# shadow-owned-init-impl:drm-rect-device\n# shadow-owned-init-path:/orange-init\necho orange-init\n'
+assert_cpio_entry_present "$OUTPUT_IMAGE" orange-gpu
+assert_cpio_entry_equals "$OUTPUT_IMAGE" orange-gpu/shadow-gpu-smoke $'ELF_BINARY_AARCH64\n'
+assert_cpio_entry_equals "$OUTPUT_IMAGE" orange-gpu/lib/ld-linux-aarch64.so.1 $'ELF_LOADER_AARCH64\n'
+assert_cpio_entry_equals "$OUTPUT_IMAGE" orange-gpu/share/vulkan/icd.d/freedreno_icd.aarch64.json $'{\n    "ICD": {\n        "api_version": "1.4.335",\n        "library_arch": "64",\n        "library_path": "/orange-gpu/lib/libvulkan_freedreno.so"\n    },\n    "file_format_version": "1.0.1"\n}\n'
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" kind "orange_gpu_build"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" payload "orange-gpu"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" orange_gpu_mode "bundle-smoke"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" gpu_bundle_dir "$GPU_BUNDLE_DIR"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" hold_seconds "7"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" prelude "orange-init"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" prelude_hold_seconds "2"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" reboot_target "bootloader"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" run_token "orange-gpu-smoke-run-token"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" dev_mount "tmpfs"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" mount_dev "true"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" mount_proc "true"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" mount_sys "false"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" log_kmsg "false"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" log_pmsg "false"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" dri_bootstrap "sunfish-card0-renderD128"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" success_postlude "orange-init"
+assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" checkpoint_hold_seconds "1"
+
+offscreen_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-offscreen-boot.img" \
+      --hold-secs 7 \
+      --prelude orange-init \
+      --prelude-hold-secs 2 \
+      --orange-gpu-mode vulkan-offscreen \
+      --reboot-target bootloader \
+      --run-token orange-gpu-offscreen-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false
+)"
+
+assert_contains "$offscreen_boot_output" "Owned userspace mode: orange-gpu"
+assert_contains "$offscreen_boot_output" "Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan offscreen mode from /orange-gpu"
+assert_contains "$offscreen_boot_output" "Orange GPU mode: vulkan-offscreen"
+assert_contains "$offscreen_boot_output" "GPU proof: strict Vulkan offscreen render"
+assert_contains "$offscreen_boot_output" "Prelude: orange-init"
+assert_contains "$offscreen_boot_output" "Derived success postlude: orange-init"
+assert_contains "$offscreen_boot_output" "Visible checkpoint hold seconds: 1"
+assert_contains "$offscreen_boot_output" "DRI bootstrap: sunfish-card0-renderD128-kgsl3d0"
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-offscreen-boot.img" shadow-init.cfg $'# Generated by pixel_boot_build_orange_gpu.sh\npayload=orange-gpu\norange_gpu_mode=vulkan-offscreen\nhold_seconds=7\nreboot_target=bootloader\nrun_token=orange-gpu-offscreen-run-token\nprelude=orange-init\nprelude_hold_seconds=2\ndev_mount=tmpfs\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\ndri_bootstrap=sunfish-card0-renderD128-kgsl3d0\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-offscreen-boot.img.hello-init.json" orange_gpu_mode "vulkan-offscreen"
+assert_json_field_equals "$TMP_DIR/orange-gpu-offscreen-boot.img.hello-init.json" success_postlude "orange-init"
+assert_json_field_equals "$TMP_DIR/orange-gpu-offscreen-boot.img.hello-init.json" checkpoint_hold_seconds "1"
+assert_json_field_equals "$TMP_DIR/orange-gpu-offscreen-boot.img.hello-init.json" dri_bootstrap "sunfish-card0-renderD128-kgsl3d0"
+
+assert_command_fails_contains "expected an aarch64 ELF loader" \
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --gpu-bundle "$BAD_LOADER_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-bad-loader.img"
+
+assert_command_fails_contains "expected an aarch64 ELF gpu binary" \
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --gpu-bundle "$BAD_BINARY_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-bad-binary.img"
+
+assert_command_fails_contains "orange gpu mode must be gpu-render, bundle-smoke, or vulkan-offscreen" \
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-invalid-mode.img" \
+      --orange-gpu-mode nope
+
+echo "pixel_boot_orange_gpu_smoke: ok"

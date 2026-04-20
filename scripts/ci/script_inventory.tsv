@@ -5,6 +5,7 @@ scripts/ci/cpio_edit_smoke.sh	ci	Fast smoke for Android ramdisk cpio extraction 
 scripts/ci/check_script_inventory.py	ci	Pre-commit taxonomy gate for every file under scripts/.
 scripts/ci/pixel_boot_hello_init_smoke.sh	ci	Hermetic smoke for the owned-userspace hello-init boot seam that preserves /init and replaces system/bin/init.
 scripts/ci/pixel_boot_demo_check.sh	ci	Dedicated host-side gate for private boot demo seams, including real demo cross-builds.
+scripts/ci/pixel_boot_orange_gpu_smoke.sh	ci	Hermetic smoke for the private orange-gpu boot seam that stages a boot-owned shadow-gpu-smoke bundle under /orange-gpu.
 scripts/ci/pixel_boot_orange_init_smoke.sh	ci	Hermetic smoke for the private orange-init boot seam that keeps hello-init as PID 1 and injects /orange-init into the ramdisk.
 scripts/ci/pixel_boot_tooling_smoke.sh	ci	Hermetic smoke for shared stock-boot resolution plus boot-lab oneshot and flash-run dry-run semantics.
 scripts/ci/pixel_boot_collect_logs_smoke.sh	ci	Hermetic smoke for boot-log collection success and wrapper-only fallback semantics.
@@ -69,6 +70,7 @@ scripts/pixel/pixel_boot_restore.sh	pixel	Private sunfish stock boot image rollb
 scripts/pixel/pixel_boot_unpack.sh	pixel	Private sunfish boot image unpack/inspection helper.
 scripts/pixel/pixel_boot_build_init_symlink_probe.sh	pixel	Private stock-init boot image builder that restores /init as a symlink to init.stock.
 scripts/pixel/pixel_boot_build_hello_init.sh	pixel	Private owned-userspace boot image builder that preserves /init and replaces system/bin/init with hello-init plus a tiny ramdisk config.
+scripts/pixel/pixel_boot_build_orange_gpu.sh	pixel	Private owned-userspace boot image builder that keeps hello-init as PID 1 and injects a boot-owned shadow-gpu-smoke bundle under /orange-gpu.
 scripts/pixel/pixel_boot_build_orange_init.sh	pixel	Private owned-userspace boot image builder that keeps hello-init as PID 1 and injects an /orange-init payload into the ramdisk.
 scripts/pixel/pixel_boot_build_system_init_symlink_probe.sh	pixel	Private stock-init boot image builder that preserves /init and restores system/bin/init as a symlink to init.stock.
 scripts/pixel/pixel_boot_build_system_init_wrapper_probe.sh	pixel	Private stock-init boot image builder that preserves /init and restores system/bin/init as an exact-path static wrapper.

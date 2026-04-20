@@ -22,7 +22,7 @@ Related docs:
 - Use host-side `bootimg` tooling for the inner loop: unpack, patch, repack, inspect, sign.
 - Use Cuttlefish only for generic bring-up ideas, not as the primary model for `sunfish`.
 - Primary strategy: boot the stock Pixel kernel into a Shadow-owned ramdisk and custom PID 1. Do not treat `wrapper -> stock init -> later takeover` as the main path anymore.
-- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `gpu-kms-bridge` (the same GPU smoke presented through rooted display takeover so render/present can be debugged without boot ownership), then `orange-gpu` (boot-owned GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
+- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `gpu-kms-bridge` (the same GPU smoke presented through rooted display takeover so render/present can be debugged without boot ownership), then `boot-bundle-exec` (boot-owned dynamic bundle exec with visible prelude/checkpoint/postlude), then `boot-vulkan-offscreen` (boot-owned strict Vulkan offscreen render plus return), then `orange-gpu` (boot-owned GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
 - Reuse the current rooted takeover/runtime path for DRM, input, audio, and packaging knowledge, but not as the boot graph we are trying to ship.
 - Land boot work in small seams that can merge to `master` independently; do not stack the whole project on one long-lived boot branch.
@@ -63,6 +63,14 @@ Related docs:
   - present the rendered pixels through KMS under explicit rooted display takeover
   - restore Android after the run so the lab device stays reusable
   - do not treat this as a substitute for boot-owned `orange-gpu`
+- [x] Prove boot-owned dynamic bundle exec with visible checkpoints (`boot-bundle-exec`):
+  - `orange-init` prelude proves boot-owned KMS still works in the image
+  - a second short checkpoint proves config validation passed before launching the bundle
+  - a long postlude proves the staged `/orange-gpu` bundle returned successfully
+- [ ] Prove boot-owned strict Vulkan offscreen render and return (`boot-vulkan-offscreen`):
+  - reuse the staged `shadow-gpu-smoke` bundle
+  - require strict Vulkan env setup in boot-owned userspace
+  - keep the same visible prelude/checkpoint/postlude contract so failure narrows cleanly
 - [ ] From that owned userspace, render one orange GPU frame and present it through dma-buf/KMS (`orange-gpu`).
 - [ ] Prove repeated GPU frame submission and synchronization for 2-3 seconds (`orange-gpu-loop`).
 - [ ] Prove one minimal input-driven redraw on the real GPU render/present path (`touch-counter-gpu`).
@@ -132,6 +140,10 @@ Related docs:
   - export/import through the intended buffer path
   - present through KMS
   - keep it separate from app/session launch
+- [ ] Package the boot-owned strict Vulkan offscreen payload (`boot-vulkan-offscreen`):
+  - run the real `shadow-gpu-smoke` Vulkan path in owned userspace
+  - do not present to KMS yet
+  - use visible `orange-init` prelude/checkpoint/postlude to encode success on hardware
 - [ ] Package one short repeated-frame proof (`orange-gpu-loop`):
   - animate color or a frame counter for 2-3 seconds
   - use it to prove repeated submission and sync, not just one lucky frame
@@ -402,3 +414,9 @@ Related docs:
 - Read-only review result on 2026-04-19:
   - the remaining blind spot is early stage classification around `/dev` bootstrap: negative recovery is now trustworthy, but a dark run can still fail before durable breadcrumbs or DRM ever execute
   - so the next discriminating experiments must either preserve a durable non-log marker such as `/metadata` or make the pre-`/dev` and post-`/dev` boundary observable before treating a dark run as evidence about later stages
+- New bundle-exec result on 2026-04-20:
+  - after fixing the `dri_bootstrap` regression for the orange prelude, `11151JEC200472` showed three visible orange pulses on the `shadow-boot-orange-gpu-bundle-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
+  - that proves boot-owned `hello-init`, config validation, staged `/orange-gpu` bundle exec, and successful bundle return, even though no durable Android-side breadcrumbs survived reboot
+- Tightened inference after the three-pulse proof:
+  - the next missing seam is no longer dynamic bundle exec itself
+  - the next narrow rung is boot-owned strict Vulkan offscreen render and return, reusing the same visible prelude/checkpoint/postlude contract before attempting on-screen GPU present again

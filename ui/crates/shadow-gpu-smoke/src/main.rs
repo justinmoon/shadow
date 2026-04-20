@@ -31,6 +31,7 @@ const DEFAULT_WIDTH: u32 = 128;
 const DEFAULT_HEIGHT: u32 = 128;
 const MAX_DISTINCT_COLOR_SAMPLES: usize = 8;
 const MAX_HOLD_SECS: u32 = 30;
+const FLAT_ORANGE_RGB: (u8, u8, u8) = (0xFF, 0x7A, 0x00);
 
 fn main() -> ExitCode {
     match run() {
@@ -44,7 +45,7 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let config = Config::parse(env::args().skip(1))?;
-    let summary = render_summary(&config)?;
+    let summary = build_summary(&config)?;
     let json = serde_json::to_string_pretty(&summary)
         .map_err(|error| format!("encode summary json: {error}"))?;
 
@@ -57,7 +58,30 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-fn render_summary(config: &Config) -> Result<GpuSmokeSummary, String> {
+fn build_summary(config: &Config) -> Result<SmokeSummary, String> {
+    if matches!(config.scene, RenderScene::BundleSmoke) {
+        if config.hold_secs > 0 {
+            thread::sleep(Duration::from_secs(u64::from(config.hold_secs)));
+        }
+
+        return Ok(SmokeSummary::Bundle(BundleSmokeSummary {
+            mode: "bundle-smoke",
+            scene: config.scene.as_str(),
+            hold_secs: config.hold_secs,
+            slept: config.hold_secs > 0,
+            summary_path: config.summary_path.as_ref().map(path_display_string),
+            env_wgpu_backend: env::var("WGPU_BACKEND").ok(),
+            env_wgpu_adapter_name: env::var("WGPU_ADAPTER_NAME").ok(),
+            env_vk_icd_filenames: env::var("VK_ICD_FILENAMES").ok(),
+            env_mesa_loader_driver_override: env::var("MESA_LOADER_DRIVER_OVERRIDE").ok(),
+            env_tu_debug: env::var("TU_DEBUG").ok(),
+        }));
+    }
+
+    Ok(SmokeSummary::Gpu(render_gpu_summary(config)?))
+}
+
+fn render_gpu_summary(config: &Config) -> Result<GpuSmokeSummary, String> {
     let mut context = WGPUContext::new();
     let buffer_renderer =
         pollster::block_on(context.create_buffer_renderer(BufferRendererConfig {
@@ -92,7 +116,7 @@ fn render_summary(config: &Config) -> Result<GpuSmokeSummary, String> {
     .map_err(|error| format!("create vello renderer: {error:?}"))?;
 
     let mut scene = Scene::new();
-    build_scene(&mut scene, config.width, config.height);
+    build_scene(&mut scene, config.width, config.height, config.scene);
 
     renderer
         .render_to_texture(
@@ -128,6 +152,7 @@ fn render_summary(config: &Config) -> Result<GpuSmokeSummary, String> {
         None
     };
     Ok(GpuSmokeSummary {
+        scene: config.scene.as_str(),
         width: config.width,
         height: config.height,
         byte_len: pixels.len(),
@@ -152,9 +177,20 @@ fn render_summary(config: &Config) -> Result<GpuSmokeSummary, String> {
     })
 }
 
-fn build_scene(scene: &mut Scene, width: u32, height: u32) {
+fn build_scene(scene: &mut Scene, width: u32, height: u32, render_scene: RenderScene) {
     let width = width as f64;
     let height = height as f64;
+
+    if matches!(render_scene, RenderScene::FlatOrange) {
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            Color::from_rgb8(FLAT_ORANGE_RGB.0, FLAT_ORANGE_RGB.1, FLAT_ORANGE_RGB.2),
+            None,
+            &Rect::new(0.0, 0.0, width, height),
+        );
+        return;
+    }
 
     // Keep the geometry pixel-aligned so the readback summary stays stable across backends.
     scene.fill(
@@ -464,6 +500,7 @@ fn path_display_string(path: &PathBuf) -> String {
 }
 
 struct Config {
+    scene: RenderScene,
     width: u32,
     height: u32,
     allow_non_vulkan: bool,
@@ -476,6 +513,7 @@ struct Config {
 
 impl Config {
     fn parse(args: impl Iterator<Item = String>) -> Result<Self, String> {
+        let mut scene = RenderScene::Smoke;
         let mut width = DEFAULT_WIDTH;
         let mut height = DEFAULT_HEIGHT;
         let mut allow_non_vulkan = false;
@@ -489,6 +527,9 @@ impl Config {
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                "--scene" => {
+                    scene = RenderScene::parse(require_value("--scene", args.next())?)?;
+                }
                 "--width" => {
                     width = parse_u32_flag("--width", args.next())?;
                 }
@@ -530,9 +571,12 @@ impl Config {
                 Self::usage()
             ));
         }
-        if hold_secs_specified && !present_kms {
+        if hold_secs_specified
+            && !present_kms
+            && !matches!(scene, RenderScene::BundleSmoke)
+        {
             return Err(format!(
-                "--hold-secs requires --present-kms\n\n{}",
+                "--hold-secs requires --present-kms unless --scene bundle-smoke is selected\n\n{}",
                 Self::usage()
             ));
         }
@@ -542,8 +586,24 @@ impl Config {
                 Self::usage()
             ));
         }
+        if matches!(scene, RenderScene::BundleSmoke) && present_kms {
+            return Err(format!(
+                "--scene bundle-smoke does not support --present-kms\n\n{}",
+                Self::usage()
+            ));
+        }
+        if matches!(scene, RenderScene::BundleSmoke) && ppm_path.is_some() {
+            return Err(format!(
+                "--scene bundle-smoke does not support --ppm-path\n\n{}",
+                Self::usage()
+            ));
+        }
+        if matches!(scene, RenderScene::BundleSmoke) && !hold_secs_specified {
+            hold_secs = 0;
+        }
 
         Ok(Self {
+            scene,
             width,
             height,
             allow_non_vulkan,
@@ -557,7 +617,7 @@ impl Config {
 
     fn usage() -> String {
         String::from(
-            "Usage: shadow-gpu-smoke [--width N] [--height N] [--allow-non-vulkan] [--allow-software] [--present-kms] [--hold-secs N] [--summary-path PATH] [--ppm-path PATH]",
+            "Usage: shadow-gpu-smoke [--scene smoke|flat-orange|bundle-smoke] [--width N] [--height N] [--allow-non-vulkan] [--allow-software] [--present-kms] [--hold-secs N] [--summary-path PATH] [--ppm-path PATH]",
         )
     }
 }
@@ -580,7 +640,29 @@ struct PixelStats {
 }
 
 #[derive(Serialize)]
+#[serde(untagged)]
+enum SmokeSummary {
+    Gpu(GpuSmokeSummary),
+    Bundle(BundleSmokeSummary),
+}
+
+#[derive(Serialize)]
+struct BundleSmokeSummary {
+    mode: &'static str,
+    scene: &'static str,
+    hold_secs: u32,
+    slept: bool,
+    summary_path: Option<String>,
+    env_wgpu_backend: Option<String>,
+    env_wgpu_adapter_name: Option<String>,
+    env_vk_icd_filenames: Option<String>,
+    env_mesa_loader_driver_override: Option<String>,
+    env_tu_debug: Option<String>,
+}
+
+#[derive(Serialize)]
 struct GpuSmokeSummary {
+    scene: &'static str,
     width: u32,
     height: u32,
     byte_len: usize,
@@ -643,5 +725,34 @@ impl AdapterSummary {
 impl fmt::Display for Config {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}x{}", self.width, self.height)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RenderScene {
+    Smoke,
+    FlatOrange,
+    BundleSmoke,
+}
+
+impl RenderScene {
+    fn parse(raw: String) -> Result<Self, String> {
+        match raw.as_str() {
+            "smoke" => Ok(Self::Smoke),
+            "flat-orange" => Ok(Self::FlatOrange),
+            "bundle-smoke" => Ok(Self::BundleSmoke),
+            _ => Err(format!(
+                "invalid value for --scene: {raw}; expected smoke, flat-orange, or bundle-smoke\n\n{}",
+                Config::usage()
+            )),
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Smoke => "smoke",
+            Self::FlatOrange => "flat-orange",
+            Self::BundleSmoke => "bundle-smoke",
+        }
     }
 }

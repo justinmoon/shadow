@@ -35,6 +35,7 @@ changed_boot_demo_files() {
 run_boot_demo_gate() {
   scripts/ci/pixel_boot_hello_init_smoke.sh
   scripts/ci/pixel_boot_orange_init_smoke.sh
+  scripts/ci/pixel_boot_orange_gpu_smoke.sh
 
   # Keep the real cross-builds here so the hermetic smokes cannot hide a broken
   # flake/package seam, but keep them out of the repo-wide fast gate.
@@ -48,6 +49,10 @@ run_boot_demo_gate() {
   scripts/pixel/pixel_build_orange_init.sh --output "$tmp_orange_init"
   rm -f "$tmp_orange_init" "$tmp_orange_init.build-id"
 
+  tmp_orange_gpu="$(mktemp "${TMPDIR:-/tmp}/shadow-orange-gpu.XXXXXX.img")"
+  rm -f "$tmp_orange_gpu"
+  scripts/pixel/pixel_boot_build_orange_gpu.sh --output "$tmp_orange_gpu" >/dev/null
+  rm -f "$tmp_orange_gpu" "$tmp_orange_gpu.hello-init.json"
   scripts/ci/pixel_boot_tooling_smoke.sh
   scripts/ci/pixel_boot_collect_logs_smoke.sh
   scripts/ci/pixel_boot_safety_smoke.sh
