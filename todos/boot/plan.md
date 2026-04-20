@@ -469,7 +469,11 @@ Related docs:
 - New adapter result on 2026-04-20:
   - `11151JEC200472` showed two visible orange pulses on the `shadow-boot-orange-gpu-vulkan-adapter-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
   - that means the visible prelude and validation checkpoint ran, then the strict Vulkan adapter-selection branch failed to return before the watchdog restart
-- Tightened inference after the bundle/offscreen/device-request/device/adapter proofs:
-  - bundle-exec is now the smallest returning boot-owned `/orange-gpu` rung: `11151JEC200472` showed three visible orange pulses there
+- New instance result on 2026-04-20:
+  - `11151JEC200472` showed three visible orange pulses on the `shadow-boot-orange-gpu-vulkan-instance-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
+  - that proves boot-owned strict Vulkan instance creation returns successfully under the owned `hello-init` environment
+- Tightened inference after the bundle/offscreen/device-request/device/adapter/instance proofs:
+  - bundle-exec and instance-smoke now both return successfully on `11151JEC200472`, each with three visible orange pulses
   - every stricter Vulkan rung tried so far (`boot-vulkan-adapter-smoke`, `boot-vulkan-device-request-smoke`, `boot-vulkan-device-smoke`, and `boot-vulkan-offscreen`) still stops after two visible orange pulses
-  - the next smallest missing rung is boot-owned strict Vulkan instance creation and return, reusing the same visible prelude/checkpoint/postlude contract before retrying adapter selection
+  - so the active failing seam has moved forward: boot-owned strict Vulkan instance creation works, but adapter selection still does not return
+  - the next truthful rung is a current-head retest of `boot-vulkan-adapter-smoke`, then a narrower split inside adapter enumeration/selection only if that still stops at two pulses
