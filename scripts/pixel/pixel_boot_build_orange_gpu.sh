@@ -42,7 +42,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--output PATH] [--hold-secs N]
                                                     [--prelude none|orange-init]
                                                     [--prelude-hold-secs N]
-                                                    [--orange-gpu-mode gpu-render|bundle-smoke|vulkan-instance-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen]
+                                                    [--orange-gpu-mode gpu-render|bundle-smoke|vulkan-instance-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen]
                                                     [--reboot-target TARGET]
                                                     [--run-token TOKEN]
                                                     [--dev-mount devtmpfs|tmpfs]
@@ -56,11 +56,11 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
 
 Build a private stock-kernel sunfish boot.img whose real first-stage userspace is
 hello-init PID 1 at system/bin/init and whose ramdisk contains a boot-owned
-shadow-gpu-smoke bundle under /orange-gpu for one of seven rungs: the real GPU
+shadow-gpu-smoke bundle under /orange-gpu for one of eight rungs: the real GPU
 render/present path, a strict Vulkan instance smoke, a strict Vulkan adapter
-smoke, a strict Vulkan device-request smoke, a strict Vulkan device/buffer
-smoke, a strict Vulkan offscreen render path, or the no-Vulkan bundle-exec
-smoke path.
+enumeration smoke, a strict Vulkan adapter smoke, a strict Vulkan
+device-request smoke, a strict Vulkan device/buffer smoke, a strict Vulkan
+offscreen render path, or the no-Vulkan bundle-exec smoke path.
 EOF
 }
 
@@ -310,10 +310,10 @@ assert_orange_gpu_mode_word() {
   value="${1:?assert_orange_gpu_mode_word requires a value}"
 
   case "$value" in
-    gpu-render|bundle-smoke|vulkan-instance-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
+    gpu-render|bundle-smoke|vulkan-instance-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
       ;;
     *)
-      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen: $value" >&2
+      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen: $value" >&2
       exit 1
       ;;
   esac
@@ -790,6 +790,8 @@ if [[ "$ORANGE_GPU_MODE" == "bundle-smoke" ]]; then
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in bundle-smoke mode from %s\n' "$PAYLOAD_IMAGE_PATH"
 elif [[ "$ORANGE_GPU_MODE" == "vulkan-instance-smoke" ]]; then
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan instance mode from %s\n' "$PAYLOAD_IMAGE_PATH"
+elif [[ "$ORANGE_GPU_MODE" == "vulkan-enumerate-adapters-smoke" ]]; then
+  printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan adapter-enumeration mode from %s\n' "$PAYLOAD_IMAGE_PATH"
 elif [[ "$ORANGE_GPU_MODE" == "vulkan-adapter-smoke" ]]; then
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan adapter mode from %s\n' "$PAYLOAD_IMAGE_PATH"
 elif [[ "$ORANGE_GPU_MODE" == "vulkan-device-request-smoke" ]]; then
@@ -811,6 +813,8 @@ if [[ "$ORANGE_GPU_MODE" == "bundle-smoke" ]]; then
   printf 'Bundle exec mode: bundle-smoke\n'
 elif [[ "$ORANGE_GPU_MODE" == "vulkan-instance-smoke" ]]; then
   printf 'GPU proof: strict Vulkan instance creation\n'
+elif [[ "$ORANGE_GPU_MODE" == "vulkan-enumerate-adapters-smoke" ]]; then
+  printf 'GPU proof: strict Vulkan adapter enumeration\n'
 elif [[ "$ORANGE_GPU_MODE" == "vulkan-adapter-smoke" ]]; then
   printf 'GPU proof: strict Vulkan adapter selection\n'
 elif [[ "$ORANGE_GPU_MODE" == "vulkan-device-request-smoke" ]]; then

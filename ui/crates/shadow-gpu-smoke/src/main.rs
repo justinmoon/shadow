@@ -82,6 +82,12 @@ fn build_summary(config: &Config) -> Result<SmokeSummary, String> {
         return Ok(SmokeSummary::Instance(build_instance_smoke_summary(config)));
     }
 
+    if matches!(config.scene, RenderScene::EnumerateAdaptersSmoke) {
+        return Ok(SmokeSummary::EnumerateAdapters(
+            build_enumerate_adapters_smoke_summary(config),
+        ));
+    }
+
     if matches!(config.scene, RenderScene::AdapterSmoke) {
         return Ok(SmokeSummary::Adapter(build_adapter_smoke_summary(config)?));
     }
@@ -113,6 +119,48 @@ fn build_instance_smoke_summary(config: &Config) -> InstanceSmokeSummary {
         device_requested: false,
         buffer_renderer_created: false,
         device_pool_len: context.device_pool.len(),
+        summary_path: config.summary_path.as_ref().map(path_display_string),
+        env_wgpu_backend: env::var("WGPU_BACKEND").ok(),
+        env_wgpu_adapter_name: env::var("WGPU_ADAPTER_NAME").ok(),
+        env_vk_icd_filenames: env::var("VK_ICD_FILENAMES").ok(),
+        env_mesa_loader_driver_override: env::var("MESA_LOADER_DRIVER_OVERRIDE").ok(),
+        env_tu_debug: env::var("TU_DEBUG").ok(),
+    }
+}
+
+fn build_enumerate_adapters_smoke_summary(
+    config: &Config,
+) -> EnumerateAdaptersSmokeSummary {
+    let context = WGPUContext::new();
+    let backends = wgpu::Backends::from_env().unwrap_or_default();
+    let device_pool_len = context.device_pool.len();
+    eprintln!(
+        "[shadow-gpu-smoke] enumerate-adapters-smoke: enumerate-adapters backends={backends:?}"
+    );
+    let adapters = pollster::block_on(context.instance.enumerate_adapters(backends));
+    eprintln!(
+        "[shadow-gpu-smoke] enumerate-adapters-smoke: enumerate-adapters-ok count={}",
+        adapters.len()
+    );
+    let adapters = adapters
+        .into_iter()
+        .map(|adapter| AdapterSummary::from_info(&adapter.get_info()))
+        .collect::<Vec<_>>();
+
+    EnumerateAdaptersSmokeSummary {
+        mode: "enumerate-adapters-smoke",
+        scene: config.scene.as_str(),
+        width: config.width,
+        height: config.height,
+        instance_created: true,
+        adapters_enumerated: true,
+        enumerated_adapter_count: adapters.len(),
+        adapter_selection_attempted: false,
+        adapter_selected: false,
+        device_requested: false,
+        buffer_renderer_created: false,
+        adapters,
+        device_pool_len,
         summary_path: config.summary_path.as_ref().map(path_display_string),
         env_wgpu_backend: env::var("WGPU_BACKEND").ok(),
         env_wgpu_adapter_name: env::var("WGPU_ADAPTER_NAME").ok(),
@@ -733,12 +781,13 @@ impl Config {
             } else if matches!(
                 scene,
                 RenderScene::InstanceSmoke
+                    | RenderScene::EnumerateAdaptersSmoke
                     | RenderScene::AdapterSmoke
                     | RenderScene::DeviceRequestSmoke
                     | RenderScene::DeviceSmoke
             ) {
                 return Err(format!(
-                    "--scene instance-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs\n\n{}",
+                    "--scene instance-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs\n\n{}",
                     Self::usage()
                 ));
             } else {
@@ -758,13 +807,14 @@ impl Config {
             scene,
             RenderScene::BundleSmoke
                 | RenderScene::InstanceSmoke
+                | RenderScene::EnumerateAdaptersSmoke
                 | RenderScene::AdapterSmoke
                 | RenderScene::DeviceRequestSmoke
                 | RenderScene::DeviceSmoke
         ) && present_kms
         {
             return Err(format!(
-                "--scene bundle-smoke, instance-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms\n\n{}",
+                "--scene bundle-smoke, instance-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms\n\n{}",
                 Self::usage()
             ));
         }
@@ -772,13 +822,14 @@ impl Config {
             scene,
             RenderScene::BundleSmoke
                 | RenderScene::InstanceSmoke
+                | RenderScene::EnumerateAdaptersSmoke
                 | RenderScene::AdapterSmoke
                 | RenderScene::DeviceRequestSmoke
                 | RenderScene::DeviceSmoke
         ) && ppm_path.is_some()
         {
             return Err(format!(
-                "--scene bundle-smoke, instance-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path\n\n{}",
+                "--scene bundle-smoke, instance-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path\n\n{}",
                 Self::usage()
             ));
         }
@@ -802,7 +853,7 @@ impl Config {
 
     fn usage() -> String {
         String::from(
-            "Usage: shadow-gpu-smoke [--scene smoke|flat-orange|bundle-smoke|instance-smoke|adapter-smoke|device-request-smoke|device-smoke] [--width N] [--height N] [--allow-non-vulkan] [--allow-software] [--present-kms] [--hold-secs N] [--summary-path PATH] [--ppm-path PATH]",
+            "Usage: shadow-gpu-smoke [--scene smoke|flat-orange|bundle-smoke|instance-smoke|enumerate-adapters-smoke|adapter-smoke|device-request-smoke|device-smoke] [--width N] [--height N] [--allow-non-vulkan] [--allow-software] [--present-kms] [--hold-secs N] [--summary-path PATH] [--ppm-path PATH]",
         )
     }
 }
@@ -830,6 +881,7 @@ enum SmokeSummary {
     Gpu(GpuSmokeSummary),
     Bundle(BundleSmokeSummary),
     Instance(InstanceSmokeSummary),
+    EnumerateAdapters(EnumerateAdaptersSmokeSummary),
     Adapter(AdapterSmokeSummary),
     DeviceRequest(DeviceRequestSmokeSummary),
     Device(DeviceSmokeSummary),
@@ -859,6 +911,29 @@ struct InstanceSmokeSummary {
     adapter_selected: bool,
     device_requested: bool,
     buffer_renderer_created: bool,
+    device_pool_len: usize,
+    summary_path: Option<String>,
+    env_wgpu_backend: Option<String>,
+    env_wgpu_adapter_name: Option<String>,
+    env_vk_icd_filenames: Option<String>,
+    env_mesa_loader_driver_override: Option<String>,
+    env_tu_debug: Option<String>,
+}
+
+#[derive(Serialize)]
+struct EnumerateAdaptersSmokeSummary {
+    mode: &'static str,
+    scene: &'static str,
+    width: u32,
+    height: u32,
+    instance_created: bool,
+    adapters_enumerated: bool,
+    enumerated_adapter_count: usize,
+    adapter_selection_attempted: bool,
+    adapter_selected: bool,
+    device_requested: bool,
+    buffer_renderer_created: bool,
+    adapters: Vec<AdapterSummary>,
     device_pool_len: usize,
     summary_path: Option<String>,
     env_wgpu_backend: Option<String>,
@@ -997,6 +1072,7 @@ enum RenderScene {
     FlatOrange,
     BundleSmoke,
     InstanceSmoke,
+    EnumerateAdaptersSmoke,
     AdapterSmoke,
     DeviceRequestSmoke,
     DeviceSmoke,
@@ -1009,11 +1085,12 @@ impl RenderScene {
             "flat-orange" => Ok(Self::FlatOrange),
             "bundle-smoke" => Ok(Self::BundleSmoke),
             "instance-smoke" => Ok(Self::InstanceSmoke),
+            "enumerate-adapters-smoke" => Ok(Self::EnumerateAdaptersSmoke),
             "adapter-smoke" => Ok(Self::AdapterSmoke),
             "device-request-smoke" => Ok(Self::DeviceRequestSmoke),
             "device-smoke" => Ok(Self::DeviceSmoke),
             _ => Err(format!(
-                "invalid value for --scene: {raw}; expected smoke, flat-orange, bundle-smoke, instance-smoke, adapter-smoke, device-request-smoke, or device-smoke\n\n{}",
+                "invalid value for --scene: {raw}; expected smoke, flat-orange, bundle-smoke, instance-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, or device-smoke\n\n{}",
                 Config::usage()
             )),
         }
@@ -1025,6 +1102,7 @@ impl RenderScene {
             Self::FlatOrange => "flat-orange",
             Self::BundleSmoke => "bundle-smoke",
             Self::InstanceSmoke => "instance-smoke",
+            Self::EnumerateAdaptersSmoke => "enumerate-adapters-smoke",
             Self::AdapterSmoke => "adapter-smoke",
             Self::DeviceRequestSmoke => "device-request-smoke",
             Self::DeviceSmoke => "device-smoke",
