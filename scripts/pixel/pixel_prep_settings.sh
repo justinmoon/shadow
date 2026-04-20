@@ -13,6 +13,7 @@ pixel_adb "$serial" shell settings put system screen_off_timeout 1800000
 pixel_adb "$serial" shell settings put secure screensaver_enabled 0
 pixel_adb "$serial" shell settings put secure screensaver_activate_on_dock 0
 pixel_adb "$serial" shell settings put secure screensaver_activate_on_sleep 0
+pixel_adb "$serial" shell locksettings set-disabled true
 pixel_adb "$serial" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
 pixel_adb "$serial" shell wm dismiss-keyguard >/dev/null 2>&1 || true
 

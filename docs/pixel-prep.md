@@ -15,60 +15,48 @@ Android 13 build:
 google/sunfish/sunfish:13/TQ3A.230805.001.S2/12655424:user/release-keys
 ```
 
-Use an explicit serial whenever more than one phone is plugged in:
+Steps marked **[human]** require physical interaction with the phone. Everything
+else is run by the agent from the host.
 
-```sh
-export PIXEL_SERIAL=<serial>
-adb devices -l
-```
+## 1. Pre-Unlock Setup
 
-## Android Setup
+**[human]** On a fresh or freshly wiped phone:
 
-These steps are manual on a fresh or freshly wiped phone:
-
-1. Boot Android and finish setup.
+1. Boot Android and finish initial setup.
 2. Join Wi-Fi with internet access.
-3. Open Settings > About phone, tap Build number seven times to enable
-   Developer options.
-4. Open Settings > System > Developer options.
-5. Enable USB debugging.
-6. Enable OEM unlocking. This is required before `fastboot flashing unlock`.
-7. When the host prompts for USB debugging authorization, allow it.
-8. For a dedicated test phone, set Security > Screen lock to None or Swipe.
-9. Disable Screen saver in Settings > Display > Screen saver.
-10. Set a long screen timeout, or use Developer options > Stay awake.
+3. Settings > About phone — tap Build number seven times.
+4. Settings > System > Developer options — enable USB debugging.
+5. Settings > System > Developer options — enable OEM unlocking.
+6. Authorize the USB debugging prompt when the host connects.
 
-After USB debugging is authorized, apply the non-root convenience settings from
-the host:
+Verify the device appears:
 
 ```sh
-PIXEL_SERIAL=<serial> just pixel-prep-settings
+adb devices -l   # new serial should be listed
 ```
 
-That keeps the display awake while plugged in, sets a 30-minute screen timeout,
-turns off Android screen saver activation, wakes the device, and dismisses the
-keyguard when Android allows it.
+## 2. Bootloader Unlock
 
-## Bootloader Unlock
-
-Unlocking the bootloader wipes the phone. Do this only after USB debugging is
-working and OEM unlocking is enabled:
+Unlocking wipes the phone. Run from host once the serial is visible:
 
 ```sh
 adb -s "$PIXEL_SERIAL" reboot bootloader
 fastboot -s "$PIXEL_SERIAL" flashing unlock
 ```
 
-Confirm the unlock on the phone with the volume and power buttons. After the
-wipe, boot Android again and repeat the Android setup section because USB
-debugging and the convenience settings are reset.
+**[human]** On the phone: volume buttons to select "Unlock the bootloader",
+power to confirm. After the wipe completes, the phone reboots to a red
+"fastboot mode" screen — select "Start" to boot Android.
 
-If fastboot reports that unlocking is not allowed, boot Android and enable OEM
-unlocking in Developer options.
+After the wipe, **[human]** repeat section 1 (initial setup, Wi-Fi, dev
+options, USB debugging, authorize host).
 
-## Root With Magisk
+If fastboot reports unlocking is not allowed, enable OEM unlocking in Developer
+options first.
 
-Once the bootloader is unlocked and Android USB debugging is authorized again:
+## 3. Root With Magisk
+
+Run from host once USB debugging is re-authorized after the wipe:
 
 ```sh
 sc root-prep
@@ -76,21 +64,16 @@ sc -t <serial> root-patch
 sc -t <serial> root-flash
 ```
 
-If `pixel-root-patch` fails, use the manual fallback:
+**[human]** If `root-patch` fails, patch manually: open Magisk app on the
+phone, patch the staged boot image, then run `sc -t <serial> root-flash` from
+host.
 
-```sh
-PIXEL_SERIAL=<serial> scripts/pixel/pixel_root_stage.sh
-```
+**[human]** After flash, open Magisk app once if root is not yet available.
+Accept "upgrade to full Magisk" and any additional environment fix prompts —
+the phone will reboot. After reboot, the first `su` call from the host triggers
+a Magisk superuser permission popup on the phone — grant it.
 
-Then patch the staged boot image in the Magisk app on the phone, and run:
-
-```sh
-sc -t <serial> root-flash
-```
-
-After the patched boot image is flashed, open the Magisk app once if root is not
-available yet. Accept any additional setup or environment fix, let the phone
-reboot, and verify:
+Verify from host:
 
 ```sh
 sc -t <serial> root-check
@@ -105,9 +88,20 @@ display_takeover_loop: maybe
 boot_image_loop: maybe
 ```
 
-## Smoke Test
+## 4. Convenience Settings
 
-After root is available:
+Run from host:
+
+```sh
+PIXEL_SERIAL=<serial> just pixel-prep-settings
+```
+
+This disables screen lock, screen saver, sets a 30-minute screen timeout, keeps
+the display awake while plugged in, and dismisses the keyguard.
+
+## 5. Smoke Test
+
+Run from host:
 
 ```sh
 PIXEL_SERIAL=<serial> just pixel-stage shell
