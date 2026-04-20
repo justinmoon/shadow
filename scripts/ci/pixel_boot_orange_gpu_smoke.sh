@@ -217,31 +217,52 @@ EOF
 cat >"$MOCK_BIN/file" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-target="$1"
-contents="$(cat "$target" 2>/dev/null || true)"
-case "$contents" in
-  *ELF_LOADER_AARCH64*)
-    printf '%s: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), static-pie linked, not stripped\n' "$target"
-    ;;
-  *ELF_BINARY_AARCH64*)
-    printf '%s: ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), dynamically linked, interpreter /orange-gpu/lib/ld-linux-aarch64.so.1, not stripped\n' "$target"
-    ;;
-  *shadow-owned-init-role:orange-init*)
-    printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
-    ;;
-  *shadow-owned-init-role:hello-init*)
-    printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
-    ;;
-  *ELF_VULKAN_LOADER_AARCH64*|*ELF_TURNIP_AARCH64*)
-    printf '%s: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked, not stripped\n' "$target"
-    ;;
-  "#!"*)
-    printf '%s: POSIX shell script, ASCII text executable\n' "$target"
-    ;;
-  *)
-    printf '%s: ASCII text\n' "$target"
-    ;;
-esac
+target=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -b|--brief)
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "mock file: unexpected option: $1" >&2
+      exit 1
+      ;;
+    *)
+      target="$1"
+      shift
+      break
+      ;;
+  esac
+done
+
+if [[ -z "$target" && $# -gt 0 ]]; then
+  target="$1"
+fi
+
+[[ -n "$target" ]] || {
+  echo "mock file: missing target" >&2
+  exit 1
+}
+
+if grep -aFq -- 'ELF_LOADER_AARCH64' "$target" 2>/dev/null; then
+  printf '%s: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), static-pie linked, not stripped\n' "$target"
+elif grep -aFq -- 'ELF_BINARY_AARCH64' "$target" 2>/dev/null; then
+  printf '%s: ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), dynamically linked, interpreter /orange-gpu/lib/ld-linux-aarch64.so.1, not stripped\n' "$target"
+elif grep -aFq -- 'shadow-owned-init-role:orange-init' "$target" 2>/dev/null; then
+  printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
+elif grep -aFq -- 'shadow-owned-init-role:hello-init' "$target" 2>/dev/null; then
+  printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
+elif grep -aFq -- 'ELF_VULKAN_LOADER_AARCH64' "$target" 2>/dev/null || grep -aFq -- 'ELF_TURNIP_AARCH64' "$target" 2>/dev/null; then
+  printf '%s: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked, not stripped\n' "$target"
+elif grep -aq '^#!' "$target" 2>/dev/null; then
+  printf '%s: POSIX shell script, ASCII text executable\n' "$target"
+else
+  printf '%s: ASCII text\n' "$target"
+fi
 EOF
 
 chmod 0755 \
