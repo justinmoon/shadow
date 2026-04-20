@@ -25,6 +25,7 @@ scripts/pixel/pixel_camera_rs_run.sh	pixel	Private Pixel camera-provider helper 
 scripts/lib/pixel_camera_runtime_common.sh	lib	Shared Pixel camera runtime helper library.
 scripts/ci/pixel_ci.sh	ci	Rooted-Pixel CI suite driver behind sc ci and just pixel-ci.
 scripts/lib/pixel_common.sh	lib	Shared rooted-Pixel shell/build/runtime helper library.
+scripts/lib/pixel_root_boot_common.sh	lib	Shared Pixel root/boot asset and slot helper library sourced by pixel_common.sh.
 scripts/lib/pixel_runtime_session_common.sh	lib	Shared Pixel runtime/session path and env helper library sourced by pixel_common.sh.
 scripts/pixel/pixel_guest_ui_drm.sh	pixel	Private rooted-Pixel compositor takeover/session driver.
 scripts/pixel/pixel_openlog_preload.c	data	C source for the Pixel openlog preload helper.

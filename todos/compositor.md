@@ -167,6 +167,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   stays the compatibility shim that existing Pixel scripts source. The next
   useful split is probably boot/root recovery helpers versus live device/service
   control helpers, not another runtime-path churn pass.
+- Pixel script seam note: the next narrow split is now real too.
+  `pixel_root_boot_common.sh` owns the stock-boot, OTA, Magisk, fingerprint,
+  slot, and boot-action-path helpers, while the generic wait/status/runtime
+  helpers still stay in `pixel_common.sh` because they are shared across both
+  boot-lab and live runtime/session scripts. That keeps the split honest
+  instead of pretending "everything late in the file" is one concern.
 - Shell polish note: home/chrome rendering and focused app interaction are now
   less architecturally distinct than before. The remaining useful split is
   product lane versus control lane, not "real shell path" versus "direct
