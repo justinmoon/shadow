@@ -71,7 +71,7 @@ Related docs:
   - `orange-init` prelude proves boot-owned KMS still works in the image
   - a second short checkpoint proves config validation passed before launching the bundle
   - a long postlude proves the staged `/orange-gpu` bundle returned successfully
-- [ ] Prove boot-owned strict Vulkan instance creation and return (`boot-vulkan-instance-smoke`):
+- [x] Prove boot-owned strict Vulkan instance creation and return (`boot-vulkan-instance-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs
   - stop before adapter selection so failures narrow to `WGPUContext::new()` / instance setup
@@ -79,7 +79,7 @@ Related docs:
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs
   - stop immediately after `enumerate_adapters(...)` returns so failures narrow to raw enumeration count only
-- [ ] Prove boot-owned raw Vulkan loader plus `vkCreateInstance` / `vkDestroyInstance` and return (`boot-raw-vulkan-instance-smoke`):
+- [x] Prove boot-owned raw Vulkan loader plus `vkCreateInstance` / `vkDestroyInstance` and return (`boot-raw-vulkan-instance-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle and the same strict env/bootstrap path
   - load Vulkan directly and create/destroy an instance without touching wgpu adapter enumeration
   - stop before Vulkan physical-device enumeration and all later wgpu adapter selection
@@ -174,7 +174,7 @@ Related docs:
   - export/import through the intended buffer path
   - present through KMS
   - keep it separate from app/session launch
-- [ ] Package the boot-owned strict Vulkan instance payload (`boot-vulkan-instance-smoke`):
+- [x] Package the boot-owned strict Vulkan instance payload (`boot-vulkan-instance-smoke`):
   - run the real `shadow-gpu-smoke` strict Vulkan env plus instance-creation path in owned userspace
   - stop before adapter selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
   - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
@@ -182,7 +182,7 @@ Related docs:
   - run the real `shadow-gpu-smoke` strict Vulkan env plus raw `enumerate_adapters(...)` count in owned userspace
   - stop before per-adapter `get_info()`, default adapter request/selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
   - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
-- [ ] Package the boot-owned raw Vulkan instance payload (`boot-raw-vulkan-instance-smoke`):
+- [x] Package the boot-owned raw Vulkan instance payload (`boot-raw-vulkan-instance-smoke`):
   - run the real `shadow-gpu-smoke` bundle in the same strict env but use direct Vulkan loader plus `vkCreateInstance` / `vkDestroyInstance`
   - stop before Vulkan physical-device enumeration, all wgpu adapter enumeration/selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
   - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
@@ -501,8 +501,12 @@ Related docs:
 - New enumerate-count result on 2026-04-20:
   - `11151JEC200472` showed two visible orange pulses on the `shadow-boot-orange-gpu-vulkan-enumerate-adapters-count-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
   - that means the visible prelude and validation checkpoint ran, then the raw wgpu adapter-enumeration-count branch failed to return before the watchdog restart
-- Tightened inference after the bundle/offscreen/device-request/device/adapter/instance proofs:
+- New raw-Vulkan-instance result on 2026-04-20:
+  - `11151JEC200472` showed three visible orange pulses on the `shadow-boot-orange-gpu-raw-vulkan-instance-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
+  - that proves the strict boot-owned raw Vulkan instance lifecycle returns successfully under the owned `hello-init` environment
+- Tightened inference after the bundle/offscreen/device-request/device/adapter/instance/raw-Vulkan proofs:
   - bundle-exec and instance-smoke now both return successfully on `11151JEC200472`, each with three visible orange pulses
-  - raw wgpu enumeration-count still stops after two visible orange pulses, so further wgpu-only micro-splits are currently low-yield
-  - the active question has shifted from “which wgpu enumeration step?” to “does the strict boot-owned raw Vulkan instance lifecycle return at all under this env?”
-  - the next discriminator is `boot-raw-vulkan-instance-smoke`, reusing the same bundle and visible contract but bypassing wgpu adapter enumeration entirely
+  - raw Vulkan instance-lifecycle also returns successfully on `11151JEC200472`, so the failure is later than loader load plus `vkCreateInstance` / `vkDestroyInstance`
+  - raw wgpu enumeration-count still stops after two visible orange pulses, so further wgpu-only micro-splits remain low-yield as the main discriminator
+  - the active question has shifted again: does raw Vulkan physical-device enumeration return under this env, or is the problem specific to wgpu-backed enumeration/wrapping above a working raw instance lifecycle?
+  - the next discriminator should be a raw Vulkan physical-device-count rung, reusing the same bundle and visible contract but stopping before any wgpu adapter enumeration
