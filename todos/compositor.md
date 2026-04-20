@@ -51,7 +51,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [ ] Continue aligning guest session semantics with the host compositor while extracting only already-matched shared helpers.
 - [x] Add focused tests for foreground/background/shelved transitions before touching input or DRM/KMS code.
 - [ ] Avoid broad rewrites until VM smoke and Pixel shell startup behavior are covered by stable tests.
-- [ ] Split Smithay handler glue out of guest `main.rs` once the render/present seam is stable.
+- [x] Split Smithay handler glue out of guest `main.rs` once the render/present seam is stable.
 - [ ] Treat `scripts/lib/pixel_common.sh` the same way: stop growing one giant sourced shell library, and carve out target/session/operator behavior that should live in `shadowctl`.
 
 ## Responsibility Map
@@ -70,9 +70,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   `kms.rs` owns scanout primitives, while the compositor still owns the policy
   for hosted render, shell composition, dmabuf/shm capture, and present timing.
 - Smithay handlers:
-  Wayland commit, dmabuf import, and xdg-shell callbacks are still in
-  `main.rs`; these can eventually move into guest-side handler modules once the
-  session and frame paths are smaller.
+  guest-side Wayland commit, dmabuf import, xdg-shell callbacks, client state,
+  and seat wiring now live in `src/handlers/`, mirroring the host compositor's
+  structure more closely. `main.rs` should stay focused on startup, transport,
+  process lifetime, and cross-module state ownership.
 
 ## Implementation Notes
 
@@ -129,6 +130,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   `render.rs`, while `kms.rs` remains the low-level scanout/capture primitive
   layer. `main.rs` is down to roughly `1.3k` lines, and the next obvious guest
   seam is Smithay handler glue rather than more frame-path churn.
+- Handler seam note: guest Smithay handler implementations now live under
+  `src/handlers/` with a structure closer to the host compositor: compositor,
+  dmabuf, and xdg-shell callbacks are split from `main.rs`, and guest client
+  state / seat glue lives alongside those delegates instead of in the startup
+  entrypoint. The next cleanup should be smaller follow-on test coverage or
+  config cleanup, not another large structural move.
 - Test coverage note: the host compositor now has focused session tests for the
   same launch/home resident-process behavior we already covered on the guest
   side, and `flake.nix` now exposes a Linux `uiShadowCompositorTests` check so

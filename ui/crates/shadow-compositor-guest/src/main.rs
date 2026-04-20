@@ -1,6 +1,7 @@
 mod config;
 mod control;
 mod gpu_scanout;
+mod handlers;
 mod hosted;
 mod input;
 mod kms;
@@ -30,7 +31,7 @@ use config::{
     DmabufFormatProfile, GuestClientConfig, GuestStartupConfig, StartupAction, TransportRequest,
 };
 use shadow_ui_core::{
-    app::{self, AppId},
+    app::AppId,
     scene::{
         APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX, APP_VIEWPORT_X, APP_VIEWPORT_Y, HEIGHT,
         WIDTH,
@@ -39,30 +40,20 @@ use shadow_ui_core::{
 };
 use shell::GuestShellSurface;
 use smithay::{
-    backend::allocator::{dmabuf::Dmabuf, Buffer as AllocatorBuffer, Format, Fourcc, Modifier},
-    backend::renderer::utils::on_commit_buffer_handler,
-    delegate_compositor, delegate_dmabuf, delegate_presentation, delegate_seat, delegate_shm,
-    delegate_xdg_shell,
+    backend::allocator::{Format, Fourcc, Modifier},
     desktop::{Space, Window, WindowSurfaceType},
-    input::{Seat, SeatHandler, SeatState},
+    input::{Seat, SeatState},
     reexports::{
         calloop::{channel, generic::Generic, EventLoop, Interest, LoopSignal, Mode, PostAction},
-        wayland_server::{
-            backend::{ClientData, ClientId, DisconnectReason},
-            protocol::{wl_buffer, wl_seat, wl_surface::WlSurface},
-            BindError, Client, Display, DisplayHandle,
-        },
+        wayland_server::{protocol::wl_surface::WlSurface, BindError, Display, DisplayHandle},
     },
-    utils::{Logical, Point, Serial},
+    utils::{Logical, Point},
     wayland::{
-        compositor::{
-            get_parent, is_sync_subsurface, with_states, CompositorClientState, CompositorHandler,
-            CompositorState,
-        },
-        dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
+        compositor::{get_parent, CompositorState},
+        dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufState},
         presentation::PresentationState,
-        shell::xdg::{ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData},
-        shm::{ShmHandler, ShmState},
+        shell::xdg::XdgShellState,
+        shm::ShmState,
         socket::ListeningSocketSource,
     },
 };
@@ -615,7 +606,7 @@ impl ShadowGuestCompositor {
                     .display_handle
                     .insert_client(
                         client_stream,
-                        Arc::new(ClientState::new(disconnect_signal.clone())),
+                        Arc::new(handlers::ClientState::new(disconnect_signal.clone())),
                     )
                     .expect("insert wayland client");
             })
@@ -821,7 +812,7 @@ impl ShadowGuestCompositor {
                 self.display_handle
                     .insert_client(
                         server_stream,
-                        Arc::new(ClientState::new(
+                        Arc::new(handlers::ClientState::new(
                             self.exit_on_client_disconnect
                                 .then_some(self.loop_signal.clone()),
                         )),
@@ -972,33 +963,6 @@ impl ShadowGuestCompositor {
         self.toplevel_size
     }
 
-    fn configure_toplevel(&self, surface: &ToplevelSurface) {
-        let size = self.app_window_size();
-        surface.with_pending_state(|state| {
-            state.size = Some(size);
-            state.bounds = Some(size);
-        });
-        tracing::info!(
-            "[shadow-guest-compositor] configure-toplevel size={}x{}",
-            size.w,
-            size.h
-        );
-    }
-
-    fn refresh_toplevel_app_id(&mut self, surface: &WlSurface) {
-        let app_id = with_states(surface, |states| {
-            states
-                .data_map
-                .get::<XdgToplevelSurfaceData>()
-                .and_then(|data| data.lock().ok().and_then(|attrs| attrs.app_id.clone()))
-        });
-        let Some(app_id) = app_id.as_deref().and_then(app::app_id_from_wayland_app_id) else {
-            return;
-        };
-
-        self.remember_surface_app(surface, app_id);
-    }
-
     fn log_window_state(&self, reason: &str) {
         for (index, window) in self.space.elements().enumerate() {
             let location = self.space.element_location(window);
@@ -1029,198 +993,6 @@ fn clear_cloexec(stream: &UnixStream) -> std::io::Result<()> {
     }
     Ok(())
 }
-
-struct ClientState {
-    compositor_state: CompositorClientState,
-    disconnect_signal: Option<LoopSignal>,
-}
-
-impl ClientState {
-    fn new(disconnect_signal: Option<LoopSignal>) -> Self {
-        Self {
-            compositor_state: CompositorClientState::default(),
-            disconnect_signal,
-        }
-    }
-}
-
-impl ClientData for ClientState {
-    fn initialized(&self, _client_id: ClientId) {}
-
-    fn disconnected(&self, _client_id: ClientId, reason: DisconnectReason) {
-        if let Some(loop_signal) = &self.disconnect_signal {
-            tracing::info!("[shadow-guest-compositor] client-disconnected reason={reason:?}");
-            loop_signal.stop();
-        }
-    }
-}
-
-impl SeatHandler for ShadowGuestCompositor {
-    type KeyboardFocus = WlSurface;
-    type PointerFocus = WlSurface;
-    type TouchFocus = WlSurface;
-
-    fn seat_state(&mut self) -> &mut SeatState<Self> {
-        &mut self.seat_state
-    }
-
-    fn cursor_image(
-        &mut self,
-        _seat: &Seat<Self>,
-        _image: smithay::input::pointer::CursorImageStatus,
-    ) {
-    }
-}
-
-impl CompositorHandler for ShadowGuestCompositor {
-    fn compositor_state(&mut self) -> &mut CompositorState {
-        &mut self.compositor_state
-    }
-
-    fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        &client.get_data::<ClientState>().unwrap().compositor_state
-    }
-
-    fn commit(&mut self, surface: &WlSurface) {
-        on_commit_buffer_handler::<Self>(surface);
-
-        let mut root_surface = surface.clone();
-        let mut maybe_window = None;
-
-        if !is_sync_subsurface(surface) {
-            while let Some(parent) = get_parent(&root_surface) {
-                root_surface = parent;
-            }
-
-            maybe_window = self
-                .space
-                .elements()
-                .find(|window| window.toplevel().unwrap().wl_surface() == &root_surface)
-                .cloned();
-
-            if let Some(window) = maybe_window.as_ref() {
-                window.on_commit();
-            }
-        }
-
-        if let Some(window) = maybe_window {
-            self.present_surface(&root_surface);
-            let initial_configure_sent = with_states(&root_surface, |states| {
-                states
-                    .data_map
-                    .get::<XdgToplevelSurfaceData>()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .initial_configure_sent
-            });
-            if !initial_configure_sent {
-                self.configure_toplevel(window.toplevel().unwrap());
-                let _ = window.toplevel().unwrap().send_pending_configure();
-            }
-            tracing::info!("[shadow-guest-compositor] committed-window");
-        }
-    }
-}
-
-impl smithay::wayland::buffer::BufferHandler for ShadowGuestCompositor {
-    fn buffer_destroyed(&mut self, _buffer: &wl_buffer::WlBuffer) {}
-}
-
-impl ShmHandler for ShadowGuestCompositor {
-    fn shm_state(&self) -> &ShmState {
-        &self.shm_state
-    }
-}
-
-impl DmabufHandler for ShadowGuestCompositor {
-    fn dmabuf_state(&mut self) -> &mut DmabufState {
-        &mut self.dmabuf_state
-    }
-
-    fn dmabuf_imported(
-        &mut self,
-        _global: &DmabufGlobal,
-        dmabuf: Dmabuf,
-        notifier: ImportNotifier,
-    ) {
-        let size = dmabuf.size();
-        let format = dmabuf.format();
-        tracing::info!(
-            "[shadow-guest-compositor] dmabuf-imported size={}x{} fourcc={:?} modifier={:?} planes={} y_inverted={}",
-            size.w,
-            size.h,
-            format.code,
-            format.modifier,
-            dmabuf.num_planes(),
-            dmabuf.y_inverted()
-        );
-        let _ = notifier.successful::<Self>();
-    }
-}
-
-impl XdgShellHandler for ShadowGuestCompositor {
-    fn xdg_shell_state(&mut self) -> &mut XdgShellState {
-        &mut self.xdg_shell_state
-    }
-
-    fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        self.configure_toplevel(&surface);
-        let _ = surface.send_pending_configure();
-        let wl_surface = surface.wl_surface().clone();
-        let window = Window::new_wayland_window(surface);
-        self.handle_window_mapped(window);
-        self.refresh_toplevel_app_id(&wl_surface);
-    }
-
-    fn new_popup(
-        &mut self,
-        _surface: smithay::wayland::shell::xdg::PopupSurface,
-        _positioner: smithay::wayland::shell::xdg::PositionerState,
-    ) {
-    }
-
-    fn reposition_request(
-        &mut self,
-        _surface: smithay::wayland::shell::xdg::PopupSurface,
-        _positioner: smithay::wayland::shell::xdg::PositionerState,
-        _token: u32,
-    ) {
-    }
-
-    fn grab(
-        &mut self,
-        _surface: smithay::wayland::shell::xdg::PopupSurface,
-        _seat: wl_seat::WlSeat,
-        _serial: Serial,
-    ) {
-    }
-
-    fn app_id_changed(&mut self, surface: ToplevelSurface) {
-        self.refresh_toplevel_app_id(surface.wl_surface());
-    }
-
-    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        let wl_surface = surface.wl_surface().clone();
-        if let Some(window) = self.window_for_surface(&wl_surface) {
-            self.space.unmap_elem(&window);
-        }
-        if let Some(app_id) = self.forget_surface(&wl_surface) {
-            self.shelved_windows.remove(&app_id);
-        }
-        self.focus_top_window();
-        if self.shell_enabled {
-            self.publish_visible_shell_frame("shell-toplevel-destroyed-frame");
-        }
-    }
-}
-
-delegate_compositor!(ShadowGuestCompositor);
-delegate_dmabuf!(ShadowGuestCompositor);
-delegate_presentation!(ShadowGuestCompositor);
-delegate_seat!(ShadowGuestCompositor);
-delegate_shm!(ShadowGuestCompositor);
-delegate_xdg_shell!(ShadowGuestCompositor);
 
 impl Drop for ShadowGuestCompositor {
     fn drop(&mut self) {
