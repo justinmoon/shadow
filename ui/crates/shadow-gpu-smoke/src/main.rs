@@ -78,6 +78,10 @@ fn build_summary(config: &Config) -> Result<SmokeSummary, String> {
         }));
     }
 
+    if matches!(config.scene, RenderScene::AdapterSmoke) {
+        return Ok(SmokeSummary::Adapter(build_adapter_smoke_summary(config)?));
+    }
+
     if matches!(config.scene, RenderScene::DeviceRequestSmoke) {
         return Ok(SmokeSummary::DeviceRequest(
             build_device_request_smoke_summary(config)?,
@@ -89,6 +93,27 @@ fn build_summary(config: &Config) -> Result<SmokeSummary, String> {
     }
 
     Ok(SmokeSummary::Gpu(render_gpu_summary(config)?))
+}
+
+fn build_adapter_smoke_summary(config: &Config) -> Result<AdapterSmokeSummary, String> {
+    let adapter_info = select_adapter_info(config)?;
+
+    Ok(AdapterSmokeSummary {
+        mode: "adapter-smoke",
+        scene: config.scene.as_str(),
+        width: config.width,
+        height: config.height,
+        adapter: AdapterSummary::from_info(&adapter_info),
+        software_backed: adapter_is_software(&adapter_info),
+        require_vulkan: !config.allow_non_vulkan,
+        allow_software: config.allow_software,
+        summary_path: config.summary_path.as_ref().map(path_display_string),
+        env_wgpu_backend: env::var("WGPU_BACKEND").ok(),
+        env_wgpu_adapter_name: env::var("WGPU_ADAPTER_NAME").ok(),
+        env_vk_icd_filenames: env::var("VK_ICD_FILENAMES").ok(),
+        env_mesa_loader_driver_override: env::var("MESA_LOADER_DRIVER_OVERRIDE").ok(),
+        env_tu_debug: env::var("TU_DEBUG").ok(),
+    })
 }
 
 fn build_device_request_smoke_summary(config: &Config) -> Result<DeviceRequestSmokeSummary, String> {
@@ -151,6 +176,16 @@ fn build_device_smoke_summary(config: &Config) -> Result<DeviceSmokeSummary, Str
 struct RequestedDevice {
     device_handle: DeviceHandle,
     adapter_info: AdapterInfo,
+}
+
+fn select_adapter_info(config: &Config) -> Result<AdapterInfo, String> {
+    let context = WGPUContext::new();
+    eprintln!("[shadow-gpu-smoke] adapter-smoke: request-adapter-info");
+    let adapter_info = pollster::block_on(context.create_headless_adapter_info())
+        .map_err(|error| format!("request adapter info: {error:#}"))?;
+    validate_adapter(config, &adapter_info)?;
+    eprintln!("[shadow-gpu-smoke] adapter-smoke: request-adapter-info-ok");
+    Ok(adapter_info)
 }
 
 fn request_device_handle(config: &Config) -> Result<RequestedDevice, String> {
@@ -668,9 +703,14 @@ impl Config {
         if hold_secs_specified && !present_kms {
             if matches!(scene, RenderScene::BundleSmoke) {
                 // bundle-smoke is the only headless scene that intentionally uses --hold-secs
-            } else if matches!(scene, RenderScene::DeviceRequestSmoke | RenderScene::DeviceSmoke) {
+            } else if matches!(
+                scene,
+                RenderScene::AdapterSmoke
+                    | RenderScene::DeviceRequestSmoke
+                    | RenderScene::DeviceSmoke
+            ) {
                 return Err(format!(
-                    "--scene device-request-smoke and device-smoke do not support --hold-secs\n\n{}",
+                    "--scene adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs\n\n{}",
                     Self::usage()
                 ));
             } else {
@@ -688,21 +728,27 @@ impl Config {
         }
         if matches!(
             scene,
-            RenderScene::BundleSmoke | RenderScene::DeviceRequestSmoke | RenderScene::DeviceSmoke
+            RenderScene::BundleSmoke
+                | RenderScene::AdapterSmoke
+                | RenderScene::DeviceRequestSmoke
+                | RenderScene::DeviceSmoke
         ) && present_kms
         {
             return Err(format!(
-                "--scene bundle-smoke, device-request-smoke, and device-smoke do not support --present-kms\n\n{}",
+                "--scene bundle-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms\n\n{}",
                 Self::usage()
             ));
         }
         if matches!(
             scene,
-            RenderScene::BundleSmoke | RenderScene::DeviceRequestSmoke | RenderScene::DeviceSmoke
+            RenderScene::BundleSmoke
+                | RenderScene::AdapterSmoke
+                | RenderScene::DeviceRequestSmoke
+                | RenderScene::DeviceSmoke
         ) && ppm_path.is_some()
         {
             return Err(format!(
-                "--scene bundle-smoke, device-request-smoke, and device-smoke do not support --ppm-path\n\n{}",
+                "--scene bundle-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path\n\n{}",
                 Self::usage()
             ));
         }
@@ -726,7 +772,7 @@ impl Config {
 
     fn usage() -> String {
         String::from(
-            "Usage: shadow-gpu-smoke [--scene smoke|flat-orange|bundle-smoke|device-request-smoke|device-smoke] [--width N] [--height N] [--allow-non-vulkan] [--allow-software] [--present-kms] [--hold-secs N] [--summary-path PATH] [--ppm-path PATH]",
+            "Usage: shadow-gpu-smoke [--scene smoke|flat-orange|bundle-smoke|adapter-smoke|device-request-smoke|device-smoke] [--width N] [--height N] [--allow-non-vulkan] [--allow-software] [--present-kms] [--hold-secs N] [--summary-path PATH] [--ppm-path PATH]",
         )
     }
 }
@@ -753,6 +799,7 @@ struct PixelStats {
 enum SmokeSummary {
     Gpu(GpuSmokeSummary),
     Bundle(BundleSmokeSummary),
+    Adapter(AdapterSmokeSummary),
     DeviceRequest(DeviceRequestSmokeSummary),
     Device(DeviceSmokeSummary),
 }
@@ -763,6 +810,24 @@ struct BundleSmokeSummary {
     scene: &'static str,
     hold_secs: u32,
     slept: bool,
+    summary_path: Option<String>,
+    env_wgpu_backend: Option<String>,
+    env_wgpu_adapter_name: Option<String>,
+    env_vk_icd_filenames: Option<String>,
+    env_mesa_loader_driver_override: Option<String>,
+    env_tu_debug: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AdapterSmokeSummary {
+    mode: &'static str,
+    scene: &'static str,
+    width: u32,
+    height: u32,
+    adapter: AdapterSummary,
+    software_backed: bool,
+    require_vulkan: bool,
+    allow_software: bool,
     summary_path: Option<String>,
     env_wgpu_backend: Option<String>,
     env_wgpu_adapter_name: Option<String>,
@@ -881,6 +946,7 @@ enum RenderScene {
     Smoke,
     FlatOrange,
     BundleSmoke,
+    AdapterSmoke,
     DeviceRequestSmoke,
     DeviceSmoke,
 }
@@ -891,10 +957,11 @@ impl RenderScene {
             "smoke" => Ok(Self::Smoke),
             "flat-orange" => Ok(Self::FlatOrange),
             "bundle-smoke" => Ok(Self::BundleSmoke),
+            "adapter-smoke" => Ok(Self::AdapterSmoke),
             "device-request-smoke" => Ok(Self::DeviceRequestSmoke),
             "device-smoke" => Ok(Self::DeviceSmoke),
             _ => Err(format!(
-                "invalid value for --scene: {raw}; expected smoke, flat-orange, bundle-smoke, device-request-smoke, or device-smoke\n\n{}",
+                "invalid value for --scene: {raw}; expected smoke, flat-orange, bundle-smoke, adapter-smoke, device-request-smoke, or device-smoke\n\n{}",
                 Config::usage()
             )),
         }
@@ -905,6 +972,7 @@ impl RenderScene {
             Self::Smoke => "smoke",
             Self::FlatOrange => "flat-orange",
             Self::BundleSmoke => "bundle-smoke",
+            Self::AdapterSmoke => "adapter-smoke",
             Self::DeviceRequestSmoke => "device-request-smoke",
             Self::DeviceSmoke => "device-smoke",
         }

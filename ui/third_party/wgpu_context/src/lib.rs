@@ -6,7 +6,8 @@
 use std::{env, ffi::CStr};
 
 use wgpu::{
-    Adapter, Device, Features, Instance, Limits, MemoryHints, Queue, Surface, SurfaceTarget,
+    Adapter, AdapterInfo, Device, Features, Instance, Limits, MemoryHints, Queue, Surface,
+    SurfaceTarget,
 };
 
 mod buffer_renderer;
@@ -143,6 +144,13 @@ impl WGPUContext {
         Ok(self.device_pool[dev_id].clone())
     }
 
+    /// Selects a headless adapter and returns its info using the same adapter-selection path
+    /// later headless device creation will use.
+    pub async fn create_headless_adapter_info(&self) -> Result<AdapterInfo, WgpuContextError> {
+        let adapter = self.select_adapter(None).await?;
+        Ok(adapter.get_info())
+    }
+
     /// Finds or creates a compatible device handle id.
     pub async fn find_or_create_device(
         &mut self,
@@ -173,38 +181,7 @@ impl WGPUContext {
         compatible_surface: Option<&Surface<'_>>,
     ) -> Result<usize, WgpuContextError> {
         let instance = self.instance.clone();
-        let adapter =
-            match wgpu::util::initialize_adapter_from_env_or_default(&instance, compatible_surface)
-                .await
-            {
-                Ok(adapter) => adapter,
-                Err(error) => {
-                    eprintln!("[shadow-wgpu-context] request-adapter-error error={error:#}");
-                    if let Some(surface) = compatible_surface {
-                        log_surface_diagnostics(&instance, surface, "request-adapter-error");
-                    }
-                    return Err(error.into());
-                }
-            };
-        let info = adapter.get_info();
-        eprintln!(
-            "[shadow-wgpu-context] selected-adapter backend={:?} device_type={:?} name={:?} driver={:?} driver_info={:?}",
-            info.backend,
-            info.device_type,
-            info.name,
-            info.driver,
-            info.driver_info
-        );
-        if let Some(surface) = compatible_surface {
-            let caps = surface.get_capabilities(&adapter);
-            eprintln!(
-                "[shadow-wgpu-context] selected-adapter-surface supported={} formats={:?} present_modes={:?} alpha_modes={:?}",
-                adapter.is_surface_supported(surface),
-                caps.formats,
-                caps.present_modes,
-                caps.alpha_modes
-            );
-        }
+        let adapter = self.select_adapter(compatible_surface).await?;
 
         // Determine features to request
         // The user may request additional features
@@ -304,6 +281,46 @@ impl WGPUContext {
 
         // Return the ID
         Ok(self.device_pool.len() - 1)
+    }
+
+    async fn select_adapter(
+        &self,
+        compatible_surface: Option<&Surface<'_>>,
+    ) -> Result<Adapter, WgpuContextError> {
+        let instance = self.instance.clone();
+        let adapter =
+            match wgpu::util::initialize_adapter_from_env_or_default(&instance, compatible_surface)
+                .await
+            {
+                Ok(adapter) => adapter,
+                Err(error) => {
+                    eprintln!("[shadow-wgpu-context] request-adapter-error error={error:#}");
+                    if let Some(surface) = compatible_surface {
+                        log_surface_diagnostics(&instance, surface, "request-adapter-error");
+                    }
+                    return Err(error.into());
+                }
+            };
+        let info = adapter.get_info();
+        eprintln!(
+            "[shadow-wgpu-context] selected-adapter backend={:?} device_type={:?} name={:?} driver={:?} driver_info={:?}",
+            info.backend,
+            info.device_type,
+            info.name,
+            info.driver,
+            info.driver_info
+        );
+        if let Some(surface) = compatible_surface {
+            let caps = surface.get_capabilities(&adapter);
+            eprintln!(
+                "[shadow-wgpu-context] selected-adapter-surface supported={} formats={:?} present_modes={:?} alpha_modes={:?}",
+                adapter.is_surface_supported(surface),
+                caps.formats,
+                caps.present_modes,
+                caps.alpha_modes
+            );
+        }
+        Ok(adapter)
     }
 }
 
