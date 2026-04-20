@@ -97,6 +97,15 @@ fn build_summary(config: &Config) -> Result<SmokeSummary, String> {
         ));
     }
 
+    if matches!(
+        config.scene,
+        RenderScene::RawVulkanPhysicalDeviceCountQuerySmoke
+    ) {
+        return Ok(SmokeSummary::RawVulkanPhysicalDeviceCountQuery(
+            build_raw_vulkan_physical_device_count_query_smoke_summary(config)?,
+        ));
+    }
+
     if matches!(config.scene, RenderScene::EnumerateAdaptersCountSmoke) {
         return Ok(SmokeSummary::EnumerateAdaptersCount(
             build_enumerate_adapters_count_smoke_summary(config),
@@ -249,6 +258,85 @@ fn build_raw_vulkan_physical_device_count_smoke_summary(
         instance_destroyed: true,
         physical_devices_enumerated: true,
         enumerated_physical_device_count: physical_devices.len(),
+        physical_device_properties_read: false,
+        wgpu_adapter_enumeration_attempted: false,
+        adapter_selection_attempted: false,
+        device_requested: false,
+        summary_path: config.summary_path.as_ref().map(path_display_string),
+        env_wgpu_backend: env::var("WGPU_BACKEND").ok(),
+        env_wgpu_adapter_name: env::var("WGPU_ADAPTER_NAME").ok(),
+        env_vk_icd_filenames: env::var("VK_ICD_FILENAMES").ok(),
+        env_mesa_loader_driver_override: env::var("MESA_LOADER_DRIVER_OVERRIDE").ok(),
+        env_tu_debug: env::var("TU_DEBUG").ok(),
+    })
+}
+
+fn build_raw_vulkan_physical_device_count_query_smoke_summary(
+    config: &Config,
+) -> Result<RawVulkanPhysicalDeviceCountQuerySmokeSummary, String> {
+    eprintln!("[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-smoke: load-entry");
+    let entry =
+        unsafe { ash::Entry::load() }.map_err(|error| format!("load vulkan entry: {error}"))?;
+    eprintln!("[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-smoke: load-entry-ok");
+
+    let application_name =
+        CString::new("shadow-gpu-smoke").map_err(|error| format!("app name cstring: {error}"))?;
+    let engine_name =
+        CString::new("shadow-gpu-smoke").map_err(|error| format!("engine name cstring: {error}"))?;
+    let app_info = vk::ApplicationInfo::default()
+        .application_name(application_name.as_c_str())
+        .application_version(0)
+        .engine_name(engine_name.as_c_str())
+        .engine_version(0)
+        .api_version(vk::make_api_version(0, 1, 0, 0));
+    let create_info = vk::InstanceCreateInfo::default().application_info(&app_info);
+
+    eprintln!("[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-smoke: vkCreateInstance");
+    let instance = unsafe { entry.create_instance(&create_info, None) }
+        .map_err(|error| format!("vkCreateInstance: {error:?}"))?;
+    eprintln!(
+        "[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-smoke: vkCreateInstance-ok"
+    );
+
+    let mut physical_device_count = 0u32;
+    eprintln!(
+        "[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-smoke: vkEnumeratePhysicalDevices-count-query"
+    );
+    let enumerate_result = unsafe {
+        (instance.fp_v1_0().enumerate_physical_devices)(
+            instance.handle(),
+            &mut physical_device_count,
+            std::ptr::null_mut::<vk::PhysicalDevice>(),
+        )
+    };
+    if enumerate_result != vk::Result::SUCCESS {
+        unsafe {
+            instance.destroy_instance(None);
+        }
+        return Err(format!(
+            "vkEnumeratePhysicalDevices(count query): {enumerate_result:?}"
+        ));
+    }
+    eprintln!(
+        "[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-smoke: vkEnumeratePhysicalDevices-count-query-ok count={physical_device_count}"
+    );
+
+    unsafe {
+        instance.destroy_instance(None);
+    }
+    eprintln!("[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-smoke: destroy-instance-ok");
+
+    Ok(RawVulkanPhysicalDeviceCountQuerySmokeSummary {
+        mode: "raw-vulkan-physical-device-count-query-smoke",
+        scene: config.scene.as_str(),
+        width: config.width,
+        height: config.height,
+        vulkan_loader_loaded: true,
+        instance_created: true,
+        instance_destroyed: true,
+        physical_device_count_queried: true,
+        queried_physical_device_count: physical_device_count,
+        physical_device_handles_fetched: false,
         physical_device_properties_read: false,
         wgpu_adapter_enumeration_attempted: false,
         adapter_selection_attempted: false,
@@ -955,6 +1043,7 @@ impl Config {
                 scene,
                 RenderScene::InstanceSmoke
                     | RenderScene::RawVulkanInstanceSmoke
+                    | RenderScene::RawVulkanPhysicalDeviceCountQuerySmoke
                     | RenderScene::RawVulkanPhysicalDeviceCountSmoke
                     | RenderScene::EnumerateAdaptersCountSmoke
                     | RenderScene::EnumerateAdaptersSmoke
@@ -963,7 +1052,7 @@ impl Config {
                     | RenderScene::DeviceSmoke
             ) {
                 return Err(format!(
-                    "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs\n\n{}",
+                    "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs\n\n{}",
                     Self::usage()
                 ));
             } else {
@@ -984,6 +1073,7 @@ impl Config {
             RenderScene::BundleSmoke
                 | RenderScene::InstanceSmoke
                 | RenderScene::RawVulkanInstanceSmoke
+                | RenderScene::RawVulkanPhysicalDeviceCountQuerySmoke
                 | RenderScene::RawVulkanPhysicalDeviceCountSmoke
                 | RenderScene::EnumerateAdaptersCountSmoke
                 | RenderScene::EnumerateAdaptersSmoke
@@ -993,7 +1083,7 @@ impl Config {
         ) && present_kms
         {
             return Err(format!(
-                "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms\n\n{}",
+                "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms\n\n{}",
                 Self::usage()
             ));
         }
@@ -1002,6 +1092,7 @@ impl Config {
             RenderScene::BundleSmoke
                 | RenderScene::InstanceSmoke
                 | RenderScene::RawVulkanInstanceSmoke
+                | RenderScene::RawVulkanPhysicalDeviceCountQuerySmoke
                 | RenderScene::RawVulkanPhysicalDeviceCountSmoke
                 | RenderScene::EnumerateAdaptersCountSmoke
                 | RenderScene::EnumerateAdaptersSmoke
@@ -1011,7 +1102,7 @@ impl Config {
         ) && ppm_path.is_some()
         {
             return Err(format!(
-                "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path\n\n{}",
+                "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path\n\n{}",
                 Self::usage()
             ));
         }
@@ -1036,7 +1127,7 @@ impl Config {
 
     fn usage() -> String {
         String::from(
-            "Usage: shadow-gpu-smoke [--scene smoke|flat-orange|bundle-smoke|instance-smoke|raw-vulkan-instance-smoke|raw-vulkan-physical-device-count-smoke|enumerate-adapters-count-smoke|enumerate-adapters-smoke|adapter-smoke|device-request-smoke|device-smoke] [--width N] [--height N] [--allow-non-vulkan] [--allow-software] [--present-kms] [--hold-secs N] [--summary-path PATH] [--ppm-path PATH]",
+            "Usage: shadow-gpu-smoke [--scene smoke|flat-orange|bundle-smoke|instance-smoke|raw-vulkan-instance-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|enumerate-adapters-count-smoke|enumerate-adapters-smoke|adapter-smoke|device-request-smoke|device-smoke] [--width N] [--height N] [--allow-non-vulkan] [--allow-software] [--present-kms] [--hold-secs N] [--summary-path PATH] [--ppm-path PATH]",
         )
     }
 }
@@ -1065,6 +1156,7 @@ enum SmokeSummary {
     Bundle(BundleSmokeSummary),
     Instance(InstanceSmokeSummary),
     RawVulkanInstance(RawVulkanInstanceSmokeSummary),
+    RawVulkanPhysicalDeviceCountQuery(RawVulkanPhysicalDeviceCountQuerySmokeSummary),
     RawVulkanPhysicalDeviceCount(RawVulkanPhysicalDeviceCountSmokeSummary),
     EnumerateAdaptersCount(EnumerateAdaptersCountSmokeSummary),
     EnumerateAdapters(EnumerateAdaptersSmokeSummary),
@@ -1116,6 +1208,30 @@ struct RawVulkanInstanceSmokeSummary {
     instance_created: bool,
     instance_destroyed: bool,
     physical_devices_enumerated: bool,
+    wgpu_adapter_enumeration_attempted: bool,
+    adapter_selection_attempted: bool,
+    device_requested: bool,
+    summary_path: Option<String>,
+    env_wgpu_backend: Option<String>,
+    env_wgpu_adapter_name: Option<String>,
+    env_vk_icd_filenames: Option<String>,
+    env_mesa_loader_driver_override: Option<String>,
+    env_tu_debug: Option<String>,
+}
+
+#[derive(Serialize)]
+struct RawVulkanPhysicalDeviceCountQuerySmokeSummary {
+    mode: &'static str,
+    scene: &'static str,
+    width: u32,
+    height: u32,
+    vulkan_loader_loaded: bool,
+    instance_created: bool,
+    instance_destroyed: bool,
+    physical_device_count_queried: bool,
+    queried_physical_device_count: u32,
+    physical_device_handles_fetched: bool,
+    physical_device_properties_read: bool,
     wgpu_adapter_enumeration_attempted: bool,
     adapter_selection_attempted: bool,
     device_requested: bool,
@@ -1327,6 +1443,7 @@ enum RenderScene {
     BundleSmoke,
     InstanceSmoke,
     RawVulkanInstanceSmoke,
+    RawVulkanPhysicalDeviceCountQuerySmoke,
     RawVulkanPhysicalDeviceCountSmoke,
     EnumerateAdaptersCountSmoke,
     EnumerateAdaptersSmoke,
@@ -1343,6 +1460,9 @@ impl RenderScene {
             "bundle-smoke" => Ok(Self::BundleSmoke),
             "instance-smoke" => Ok(Self::InstanceSmoke),
             "raw-vulkan-instance-smoke" => Ok(Self::RawVulkanInstanceSmoke),
+            "raw-vulkan-physical-device-count-query-smoke" => {
+                Ok(Self::RawVulkanPhysicalDeviceCountQuerySmoke)
+            }
             "raw-vulkan-physical-device-count-smoke" => {
                 Ok(Self::RawVulkanPhysicalDeviceCountSmoke)
             }
@@ -1352,7 +1472,7 @@ impl RenderScene {
             "device-request-smoke" => Ok(Self::DeviceRequestSmoke),
             "device-smoke" => Ok(Self::DeviceSmoke),
             _ => Err(format!(
-                "invalid value for --scene: {raw}; expected smoke, flat-orange, bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, or device-smoke\n\n{}",
+                "invalid value for --scene: {raw}; expected smoke, flat-orange, bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, or device-smoke\n\n{}",
                 Config::usage()
             )),
         }
@@ -1365,6 +1485,9 @@ impl RenderScene {
             Self::BundleSmoke => "bundle-smoke",
             Self::InstanceSmoke => "instance-smoke",
             Self::RawVulkanInstanceSmoke => "raw-vulkan-instance-smoke",
+            Self::RawVulkanPhysicalDeviceCountQuerySmoke => {
+                "raw-vulkan-physical-device-count-query-smoke"
+            }
             Self::RawVulkanPhysicalDeviceCountSmoke => "raw-vulkan-physical-device-count-smoke",
             Self::EnumerateAdaptersCountSmoke => "enumerate-adapters-count-smoke",
             Self::EnumerateAdaptersSmoke => "enumerate-adapters-smoke",
