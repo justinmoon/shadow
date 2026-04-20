@@ -39,7 +39,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Split guest launch/session policy out of `main.rs`.
 - [x] Replace unconditional guest "terminate other apps" behavior with bounded background-app residency closer to Android and current host compositor behavior.
 - [x] Split touch/input handling out of `main.rs`.
-- [ ] Split DRM/KMS present and scanout handling behind a narrow module boundary.
+- [x] Split DRM/KMS present and scanout handling behind a narrow module boundary.
 - [ ] Replace remaining stringly env blobs with structured config where practical.
 - [ ] Add focused unit tests around each extracted seam.
 - [ ] Split `scripts/lib/pixel_common.sh` into smaller helper modules and move shared operator behavior up into `scripts/shadowctl` or typed helpers where it actually belongs.
@@ -51,6 +51,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [ ] Continue aligning guest session semantics with the host compositor while extracting only already-matched shared helpers.
 - [x] Add focused tests for foreground/background/shelved transitions before touching input or DRM/KMS code.
 - [ ] Avoid broad rewrites until VM smoke and Pixel shell startup behavior are covered by stable tests.
+- [ ] Split Smithay handler glue out of guest `main.rs` once the render/present seam is stable.
 - [ ] Treat `scripts/lib/pixel_common.sh` the same way: stop growing one giant sourced shell library, and carve out target/session/operator behavior that should live in `shadowctl`.
 
 ## Responsibility Map
@@ -123,6 +124,11 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   in the extracted guest input module for scroll-threshold detection. The larger
   touch routing behavior still needs deeper seam tests later, but it no longer
   has to stay trapped in `main.rs` to be testable.
+- Render seam note: guest shell composition, frame publication, boot splash,
+  dmabuf/shm surface capture, and frame-callback flushing now live in
+  `render.rs`, while `kms.rs` remains the low-level scanout/capture primitive
+  layer. `main.rs` is down to roughly `1.3k` lines, and the next obvious guest
+  seam is Smithay handler glue rather than more frame-path churn.
 - Test coverage note: the host compositor now has focused session tests for the
   same launch/home resident-process behavior we already covered on the guest
   side, and `flake.nix` now exposes a Linux `uiShadowCompositorTests` check so
