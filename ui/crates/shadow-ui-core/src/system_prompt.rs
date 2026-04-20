@@ -1,7 +1,10 @@
 use shadow_runtime_protocol::{SystemPromptActionStyle, SystemPromptRequest};
 
 use crate::{
-    color::{Color, BACKGROUND, ICON_BLUE, ICON_RED, SURFACE, SURFACE_GLASS, SURFACE_RAISED, TEXT_MUTED, TEXT_PRIMARY},
+    color::{
+        Color, BACKGROUND, ICON_BLUE, ICON_RED, SURFACE, SURFACE_GLASS, SURFACE_RAISED, TEXT_MUTED,
+        TEXT_PRIMARY,
+    },
     scene::{RoundedRect, Scene, TextAlign, TextBlock, TextWeight, HEIGHT, WIDTH},
 };
 
@@ -45,7 +48,9 @@ pub fn system_prompt_action_frame(index: usize, count: usize) -> PromptFrame {
         / count as f32)
         .max(1.0);
     PromptFrame {
-        x: SYSTEM_PROMPT_CARD_X + SYSTEM_PROMPT_INSET_X + index as f32 * (width + SYSTEM_PROMPT_ACTION_GAP),
+        x: SYSTEM_PROMPT_CARD_X
+            + SYSTEM_PROMPT_INSET_X
+            + index as f32 * (width + SYSTEM_PROMPT_ACTION_GAP),
         y: SYSTEM_PROMPT_CARD_Y + SYSTEM_PROMPT_ACTION_TOP,
         w: width,
         h: SYSTEM_PROMPT_ACTION_HEIGHT,
@@ -193,22 +198,36 @@ pub fn system_prompt_scene(
     }
 }
 
-fn action_colors(
-    style: SystemPromptActionStyle,
-    selected: bool,
-    active: bool,
-) -> (Color, Color) {
+fn action_colors(style: SystemPromptActionStyle, selected: bool, active: bool) -> (Color, Color) {
     match style {
         SystemPromptActionStyle::Default => (
-            ICON_BLUE.with_alpha(if active { 0.86 } else if selected { 0.78 } else { 0.68 }),
+            ICON_BLUE.with_alpha(if active {
+                0.86
+            } else if selected {
+                0.78
+            } else {
+                0.68
+            }),
             BACKGROUND,
         ),
         SystemPromptActionStyle::Danger => (
-            ICON_RED.with_alpha(if active { 0.78 } else if selected { 0.68 } else { 0.58 }),
+            ICON_RED.with_alpha(if active {
+                0.78
+            } else if selected {
+                0.68
+            } else {
+                0.58
+            }),
             TEXT_PRIMARY,
         ),
         SystemPromptActionStyle::Normal => (
-            SURFACE_GLASS.with_alpha(if active { 0.98 } else if selected { 0.92 } else { 0.86 }),
+            SURFACE_GLASS.with_alpha(if active {
+                0.98
+            } else if selected {
+                0.92
+            } else {
+                0.86
+            }),
             TEXT_PRIMARY,
         ),
     }
@@ -269,7 +288,10 @@ mod tests {
 
         assert_eq!(scene.clear_color.rgba8(), [0, 0, 0, 0]);
         assert!(!scene.rects.is_empty());
-        assert!(scene.texts.iter().any(|text| text.content == "Allow publish?"));
+        assert!(scene
+            .texts
+            .iter()
+            .any(|text| text.content == "Allow publish?"));
         assert!(scene.texts.iter().any(|text| text.content == "Allow Once"));
     }
 }

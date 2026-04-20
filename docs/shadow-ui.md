@@ -271,6 +271,11 @@ Examples:
 The host implementation can still have internal layers, but the app-facing model
 should be unified.
 
+The operator/testing surface should also stay shared. If Shadow owns a system
+surface like a signer approval prompt, that surface should be visible through
+the same operator state/command path used for app lifecycle smoke tests instead
+of requiring ad hoc test-only hooks.
+
 Stable service contracts should also be mirrored across both SDK faces. When a
 service defines public nouns like request/response shapes, account summaries, or
 event records, Rust should expose them from
@@ -602,8 +607,11 @@ build real apps.
 Current implementation note: the first Rust-side compose seam now exists in
 `shadow_sdk::ui` as a multiline editor wrapper, bottom-sheet presentation
 helper, and explicit action-button state helper. It is enough to build a
-truthful draft-first reply flow in the Rust timeline app, but it is not yet the
-full signer/publish product surface.
+truthful reply flow in the Rust timeline app: draft sheet, OS-owned signer
+approval prompt, real publish through the shared Nostr daemon, and cached
+`always allow` policy on the next publish. It is still not the full write-side
+product surface for timeline creation, editing, richer composer UX, or the rest
+of Shadow's mobile primitives.
 
 ### Nice-to-have but not mandatory in the first drop
 

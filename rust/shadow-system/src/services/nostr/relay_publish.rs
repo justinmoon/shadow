@@ -9,7 +9,7 @@ use shadow_sdk::services::nostr::{
     NostrPublishReceipt, NostrPublishRequest, NostrPublishedRelayFailure, SqliteNostrService,
 };
 
-use super::relay_sync;
+use super::{relay_sync, signer};
 
 const DEFAULT_PUBLISH_TIMEOUT_MS: u64 = 12_000;
 
@@ -17,6 +17,8 @@ pub async fn publish_with_client(
     client: &Client,
     relay_registry: &mut BTreeSet<String>,
     service: &SqliteNostrService,
+    caller_app_id: Option<String>,
+    caller_app_title: Option<String>,
     request: NostrPublishRequest,
 ) -> Result<NostrPublishReceipt, String> {
     let relay_urls = relay_sync::normalize_relay_urls(request.relay_urls.clone(), "nostr.publish")?;
@@ -27,7 +29,15 @@ pub async fn publish_with_client(
 
     tokio::time::timeout(
         Duration::from_millis(timeout_ms),
-        publish_with_client_inner(client, relay_registry, service, request, relay_urls.clone()),
+        publish_with_client_inner(
+            client,
+            relay_registry,
+            service,
+            caller_app_id,
+            caller_app_title,
+            request,
+            relay_urls.clone(),
+        ),
     )
     .await
     .map_err(|_| format!("nostr.publish timed out after {timeout_ms}ms"))?
@@ -41,6 +51,8 @@ async fn publish_with_client_inner(
     client: &Client,
     relay_registry: &mut BTreeSet<String>,
     service: &SqliteNostrService,
+    caller_app_id: Option<String>,
+    caller_app_title: Option<String>,
     request: NostrPublishRequest,
     relay_urls: Vec<String>,
 ) -> Result<NostrPublishReceipt, String> {
@@ -54,11 +66,35 @@ async fn publish_with_client_inner(
             request.kind
         ));
     }
+    let caller_app_id = caller_app_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            String::from("nostr.publish requires caller app identity for signer approval")
+        })?;
+    signer::ensure_publish_approved(
+        service,
+        caller_app_id,
+        caller_app_title.as_deref(),
+        &request,
+    )?;
 
     relay_sync::ensure_relays(client, relay_registry, &relay_urls).await?;
     let connect_output = client.try_connect(Duration::from_secs(6)).await;
-    if connect_output.success.is_empty() {
+    let connected_relays = relay_sync::connected_requested_relays(client, &relay_urls).await;
+    if connect_output.success.is_empty() && connected_relays.is_empty() {
         let failed_relays = normalize_failed_relays(&connect_output.failed);
+        if failed_relays.is_empty() {
+            let statuses = relay_sync::requested_relay_statuses(client, &relay_urls).await;
+            if statuses.is_empty() {
+                return Err(String::from("nostr.publish could not connect to any relay"));
+            }
+            return Err(format!(
+                "nostr.publish could not connect to any relay: {}",
+                statuses.join(", ")
+            ));
+        }
         return Err(format!(
             "nostr.publish could not connect to any relay: {}",
             format_failed_relays(&failed_relays)

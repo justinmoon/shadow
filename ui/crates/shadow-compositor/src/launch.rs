@@ -5,7 +5,9 @@ use std::{
     process::{Child, Command},
 };
 
-use shadow_compositor_common::launch::{first_env_value, sibling_binary_path, workspace_manifest};
+use shadow_compositor_common::launch::{
+    app_launch_env_value, first_env_value, sibling_binary_path, workspace_manifest,
+};
 use shadow_ui_core::{
     app::{launch_spec, AppId},
     control,
@@ -82,7 +84,7 @@ pub fn launch_app(
     };
 
     for (key, value) in app.launch_env {
-        command.env(key, value);
+        command.env(key, app_launch_env_value(key, value));
     }
 
     command

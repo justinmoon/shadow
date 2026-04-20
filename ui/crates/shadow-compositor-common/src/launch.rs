@@ -15,6 +15,12 @@ pub fn first_env_value(keys: &[&str]) -> Option<String> {
     })
 }
 
+pub fn app_launch_env_value(key: &str, default: &str) -> String {
+    env::var_os(key)
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| default.to_owned())
+}
+
 pub fn runtime_dir_from_env_or<F>(fallback: F) -> PathBuf
 where
     F: FnOnce() -> PathBuf,
@@ -134,7 +140,9 @@ mod tests {
         sync::{Mutex, OnceLock},
     };
 
-    use super::{apply_env_assignments, parse_env_assignments, runtime_dir_from_env_or};
+    use super::{
+        app_launch_env_value, apply_env_assignments, parse_env_assignments, runtime_dir_from_env_or,
+    };
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -199,5 +207,29 @@ mod tests {
         }
         let runtime_dir = runtime_dir_from_env_or(|| PathBuf::from("/fallback"));
         assert_eq!(runtime_dir, PathBuf::from("/fallback"));
+    }
+
+    #[test]
+    fn app_launch_env_value_prefers_non_empty_env_override() {
+        let _guard = env_lock().lock().expect("lock env");
+        unsafe {
+            std::env::set_var("SHADOW_TEST_APP_ENV", "override");
+        }
+        assert_eq!(app_launch_env_value("SHADOW_TEST_APP_ENV", "default"), "override");
+        unsafe {
+            std::env::remove_var("SHADOW_TEST_APP_ENV");
+        }
+    }
+
+    #[test]
+    fn app_launch_env_value_preserves_empty_string_override() {
+        let _guard = env_lock().lock().expect("lock env");
+        unsafe {
+            std::env::set_var("SHADOW_TEST_APP_ENV", "");
+        }
+        assert_eq!(app_launch_env_value("SHADOW_TEST_APP_ENV", "default"), "");
+        unsafe {
+            std::env::remove_var("SHADOW_TEST_APP_ENV");
+        }
     }
 }

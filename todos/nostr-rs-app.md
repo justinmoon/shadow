@@ -36,7 +36,7 @@ typed convenience wrappers on top.
 - [ ] Share one verified event cache and local index across apps.
 - [~] Define the first public `shadow_sdk::nostr` API for Rust and matching
       `@shadow/sdk` bindings for TypeScript.
-- [ ] Define the OS-owned signer flow with approval prompts and durable
+- [x] Define the OS-owned signer flow with approval prompts and durable
       app-level policy.
 - [~] Land the first read-first Rust Nostr app: account bootstrap, timeline,
       thread, profile, refresh, warm restore.
@@ -61,7 +61,7 @@ typed convenience wrappers on top.
       keep a thinner Shadow-owned storage layer over SQLite first.
 - [x] Sketch the first Rust and TypeScript SDK calls and the event/filter types
       they share.
-- [ ] Define the first signer prompt and permission states: deny, allow once,
+- [x] Define the first signer prompt and permission states: deny, allow once,
       always allow.
 - [x] Choose the read-first app slice order: home timeline -> thread -> profile.
 - [x] Land the first generic read-side SDK slice with a single filter object
@@ -155,6 +155,23 @@ typed convenience wrappers on top.
 - The signer should be OS-owned, Amber-style. Apps request publication or
   signing work from the OS; the OS decides whether to prompt, deny, sign once,
   or sign automatically because the user already granted standing approval.
+- The first signer approval slice now exists:
+  - `nostr.publish(...)` carries caller app identity into `shadow-system`
+  - `shadow-system` checks durable per-app approval policy for the active
+    account before signing
+  - when no stored allow policy exists, the OS requests a generic system prompt
+    from the compositor and waits for `deny`, `allow once`, or `always allow`
+  - the compositor owns prompt rendering and interaction; apps do not draw or
+    control the approval UI themselves
+  - Rust timeline reply publish now goes through that OS-owned approval path
+  - headless host lanes can now force a deterministic prompt action with
+    `SHADOW_SYSTEM_PROMPT_RESPONSE_ACTION_ID` so noninteractive validation does
+    not depend on compositor UI
+  - `shadowctl state` now exposes prompt visibility/source/actions, and
+    `shadowctl prompt <action-id>` can resolve the active prompt in VM/Pixel
+    operator flows
+  - the VM smoke now opens a synthetic prompt over the real prompt socket and
+    resolves it through the control surface
 - The first public SDK should likely expose:
   - protocol types like `Event`, `EventId`, `Filter`, `Kind`, `PublicKey`,
     `RelayUrl`, `Timestamp`
@@ -241,6 +258,9 @@ typed convenience wrappers on top.
     the top-level timeline feed
   - startup and lifecycle log markers for smoke coverage
   - VM launcher metadata/tests and VM smoke coverage
+  - real reply publication through the shared account and shared relay client
+  - VM smoke coverage for signer prompt approval plus the cached `always allow`
+    follow-up publish without a second prompt
 - The shared Nostr store no longer seeds fake `shadow-note-*` rows into empty
   caches, and initialization now scrubs those old demo ids from existing sqlite
   state so upgraded VMs do not keep surfacing placeholder notes.
@@ -265,10 +285,12 @@ typed convenience wrappers on top.
     presentation helper, and explicit action-button state helper
   - the Rust timeline note screen now opens a reply draft sheet over the
     selected note instead of pushing compose concerns into ad hoc route hacks
-  - this slice is intentionally draft-only; it does not publish and it does not
-    pretend the signer/approval flow exists yet
-- The next deeper seam after this contract slice should be signer approval plus
-  reply publication:
-  - keep the stable read/account nouns as the base contract
-  - add OS-owned signer approval policy on top of those shared types
-  - wire the Rust reply sheet to real publish once the signer/write path exists
+  - that draft flow is now wired to the real shared publish path and OS-owned
+    signer approval flow
+- The next deeper seam after this publish/signature slice should be polish, not
+  another parallel write path:
+  - strengthen app-owned publish diagnostics in VM and Pixel operator flows
+  - extend timeline compose beyond reply-only into note creation, editing, and
+    richer write-side UX
+  - keep converging TypeScript and Rust app automation/test hooks on the same
+    platform seams

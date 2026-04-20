@@ -1,12 +1,17 @@
 use std::collections::BTreeMap;
 use std::env;
+use std::future;
+use std::io::{Read, Write};
+use std::os::unix::net::UnixListener;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
+use shadow_runtime_protocol::AppPlatformRequest;
 use shadow_sdk::{
     app::{
-        current_lifecycle_state, spawn_lifecycle_listener, AppWindowDefaults, AppWindowEnvironment,
-        AppWindowMetrics,
+        current_lifecycle_state, platform_control_socket_path, AppWindowDefaults,
+        AppWindowEnvironment, AppWindowMetrics, LifecycleState,
     },
     services::clipboard::write_text as write_clipboard_text,
     services::nostr::{
@@ -16,11 +21,11 @@ use shadow_sdk::{
         NostrSyncReceipt, NostrSyncRequest, NOSTR_SERVICE_SOCKET_ENV,
     },
     ui::{
-        self, body_text, caption_text, column, eyebrow_text, headline_text, maybe,
+        self, body_text, caption_text, column, eyebrow_text, fork, headline_text, maybe,
         multiline_editor, panel, primary_button, primary_button_state, prose_text, row, screen,
         secondary_button, secondary_button_state, selectable_card, status_chip, text_field,
         top_bar, top_bar_with_back, with_blocking_task, with_sheet, ActionButtonState, AsUnit,
-        FlexExt, MainAxisAlignment, Theme, Tone, WidgetView,
+        tokio, worker_raw, FlexExt, MainAxisAlignment, MessageProxy, Theme, Tone, WidgetView,
     },
 };
 
@@ -122,6 +127,14 @@ enum Route {
     Timeline,
     Note { id: String },
     Profile { pubkey: String },
+}
+
+#[derive(Debug)]
+enum PlatformMessage {
+    Lifecycle(LifecycleState),
+    OpenReply,
+    PublishReply,
+    SetReplyContent(String),
 }
 
 #[derive(Clone, Debug)]
@@ -737,6 +750,25 @@ impl TimelineApp {
         }
     }
 
+    fn platform_open_reply(&mut self) {
+        match self.current_route() {
+            Route::Note { id } => self.open_reply_composer(id),
+            _ => {
+                self.status = TimelineStatus {
+                    tone: Tone::Danger,
+                    message: String::from("Open a note before opening the reply draft."),
+                };
+            }
+        }
+    }
+
+    fn platform_set_reply_content(&mut self, value: String) {
+        if self.reply_draft.is_none() {
+            self.platform_open_reply();
+        }
+        self.set_reply_draft_content(value);
+    }
+
     fn ensure_profile_loaded(&mut self, pubkey: &str) {
         if self.profiles.contains_key(pubkey) {
             return;
@@ -803,9 +835,6 @@ fn main() -> Result<(), ui::EventLoopError> {
     let window_env = AppWindowEnvironment::from_env(WINDOW_DEFAULTS);
     log_window_metrics(window_env.metrics());
     log_lifecycle_state(current_lifecycle_state().as_str());
-    let _lifecycle_listener = spawn_lifecycle_listener(|state| {
-        log_lifecycle_state(state.as_str());
-    });
     let app = TimelineApp::new(window_env.clone(), TimelineConfig::from_env());
     ui::run_with_env(app, app_logic, window_env)
 }
@@ -917,13 +946,33 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
         },
     );
 
-    with_blocking_task(
+    let content = with_blocking_task(
         content,
         pending_refresh,
         sync_notes,
         |app: &mut TimelineApp, job: PendingRefresh, result: Result<RefreshOutcome, String>| {
             app.finish_refresh(job.token, result);
         },
+    );
+
+    fork(
+        content,
+        worker_raw(
+            |proxy, _rx: tokio::sync::mpsc::UnboundedReceiver<()>| async move {
+                let Some(socket_path) = platform_control_socket_path() else {
+                    return;
+                };
+                std::thread::spawn(move || run_platform_listener(socket_path, proxy));
+                future::pending::<()>().await;
+            },
+            |_state: &mut TimelineApp, _sender: tokio::sync::mpsc::UnboundedSender<()>| {},
+            |app: &mut TimelineApp, message: PlatformMessage| match message {
+                PlatformMessage::Lifecycle(state) => log_lifecycle_state(state.as_str()),
+                PlatformMessage::OpenReply => app.platform_open_reply(),
+                PlatformMessage::PublishReply => app.begin_reply_publish(),
+                PlatformMessage::SetReplyContent(value) => app.platform_set_reply_content(value),
+            },
+        ),
     )
 }
 
@@ -1105,7 +1154,7 @@ fn account_screen(
                             theme,
                         ),
                         caption_text(
-                            "Replies publish through the shared account. Broader signer policy lands next.",
+                            "Replies publish through the shared account and OS-owned signer approval.",
                             theme,
                         ),
                     ))
@@ -1331,7 +1380,11 @@ fn reply_sheet(
         eyebrow_text("Reply draft", theme),
         headline_text("Compose reply", theme),
         caption_text(
-            format!("Replying to {}  •  {}", short_id(&note.pubkey), short_id(&note_id)),
+            format!(
+                "Replying to {}  •  {}",
+                short_id(&note.pubkey),
+                short_id(&note_id)
+            ),
             theme,
         ),
         body_text(note_preview, theme),
@@ -1368,7 +1421,7 @@ fn reply_sheet(
         .gap(10.0.px())
         .main_axis_alignment(MainAxisAlignment::Start),
         caption_text(
-            "This uses the shared account today. The OS-owned approval policy is the next deeper seam.",
+            "This uses the shared account and the OS-owned signer approval prompt.",
             theme,
         ),
     ))
@@ -1668,6 +1721,80 @@ fn socket_available() -> bool {
         .ok()
         .map(|value| value.trim().to_owned())
         .is_some_and(|value| !value.is_empty())
+}
+
+fn run_platform_listener(
+    socket_path: PathBuf,
+    proxy: MessageProxy<PlatformMessage>,
+) {
+    let _ = std::fs::remove_file(&socket_path);
+    let listener = match UnixListener::bind(&socket_path) {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!(
+                "{APP_LOG_PREFIX}: platform_listener_bind_failed path={} error={error}",
+                socket_path.display()
+            );
+            return;
+        }
+    };
+
+    for stream in listener.incoming() {
+        let mut stream = match stream {
+            Ok(stream) => stream,
+            Err(error) => {
+                eprintln!("{APP_LOG_PREFIX}: platform_listener_accept_failed error={error}");
+                continue;
+            }
+        };
+
+        let mut request = String::new();
+        if let Err(error) = stream.read_to_string(&mut request) {
+            let _ = stream.write_all(format!("error=read-failed {error}\n").as_bytes());
+            continue;
+        }
+
+        let response = match AppPlatformRequest::parse_line(&request) {
+            Some(AppPlatformRequest::Lifecycle { state }) => {
+                let handled = proxy.message(PlatformMessage::Lifecycle(state)).is_ok();
+                format!(
+                    "ok\nhandled={}\nstate={}\n",
+                    if handled { 1 } else { 0 },
+                    state.as_str()
+                )
+            }
+            Some(AppPlatformRequest::Media { action }) => format!(
+                "ok\nhandled=0\nreason=unsupported-request\nrequest={}\n",
+                action.as_str()
+            ),
+            Some(AppPlatformRequest::Automation { action, argument }) => {
+                let message = match (action.as_str(), argument) {
+                    ("open_reply", None) => Some(PlatformMessage::OpenReply),
+                    ("publish_reply", None) => Some(PlatformMessage::PublishReply),
+                    ("set_reply_content", Some(value)) => {
+                        Some(PlatformMessage::SetReplyContent(value))
+                    }
+                    _ => None,
+                };
+                match message {
+                    Some(message) => {
+                        let handled = proxy.message(message).is_ok();
+                        format!(
+                            "ok\nhandled={}\naction={action}\n",
+                            if handled { 1 } else { 0 }
+                        )
+                    }
+                    None => format!(
+                        "ok\nhandled=0\nreason=invalid-action\nrequest=automation:{action}\n"
+                    ),
+                }
+            }
+            None => String::from("ok\nhandled=0\nreason=invalid-action\n"),
+        };
+        let _ = stream.write_all(response.as_bytes());
+    }
+
+    let _ = std::fs::remove_file(socket_path);
 }
 
 impl TimelineConfig {

@@ -1,16 +1,21 @@
 use std::{
     collections::HashMap,
     ffi::OsString,
+    io::Write,
+    os::unix::net::UnixStream,
     path::{Path, PathBuf},
     process::Child,
     sync::Arc,
+    time::Duration,
 };
 
 use shadow_compositor_common::app_control::{
     dispatch_media_action_to_app, notify_lifecycle_state_to_app,
 };
 use shadow_compositor_common::state_report::{render_control_state, sorted_unique_app_ids_csv};
-use shadow_runtime_protocol::AppLifecycleState;
+use shadow_runtime_protocol::{
+    AppLifecycleState, SystemPromptRequest, SystemPromptResponse, SystemPromptSocketResponse,
+};
 use shadow_ui_core::{
     app::AppId,
     control::{ControlRequest, MediaAction},
@@ -57,6 +62,10 @@ use crate::{
 
 const BTN_LEFT: u32 = 0x110;
 
+struct PendingSystemPrompt {
+    stream: UnixStream,
+}
+
 pub struct ShadowCompositor {
     pub start_time: std::time::Instant,
     pub socket_name: OsString,
@@ -80,6 +89,7 @@ pub struct ShadowCompositor {
     pub(crate) shelved_windows: HashMap<AppId, Window>,
     focused_app: Option<AppId>,
     exit_on_first_window: bool,
+    pending_system_prompt: Option<PendingSystemPrompt>,
 }
 
 impl ShadowCompositor {
@@ -101,6 +111,8 @@ impl ShadowCompositor {
 
         let control_socket_path =
             crate::control::init_listener(event_loop).expect("create compositor control socket");
+        crate::prompt::init_listener(event_loop, &control_socket_path)
+            .expect("create compositor system prompt socket");
         let socket_name = Self::init_wayland_listener(display, event_loop);
         let loop_signal = event_loop.get_signal();
 
@@ -128,6 +140,7 @@ impl ShadowCompositor {
             focused_app: None,
             exit_on_first_window: std::env::var_os("SHADOW_COMPOSITOR_EXIT_ON_FIRST_WINDOW")
                 .is_some(),
+            pending_system_prompt: None,
         }
     }
 
@@ -199,6 +212,13 @@ impl ShadowCompositor {
                 BOTTOM_NAVIGATION_PILL_HEIGHT.round() as u32,
             ),
         );
+        if let Some(prompt_scene) = self.shell.system_prompt_scene() {
+            plan.push_overlay(
+                prompt_scene,
+                self.shell_location(),
+                (WIDTH.round() as u32, HEIGHT.round() as u32),
+            );
+        }
         plan
     }
 
@@ -355,6 +375,9 @@ impl ShadowCompositor {
                 Ok("ok\n".to_string())
             }
             ControlRequest::Switcher => Ok("ok\n".to_string()),
+            ControlRequest::Prompt { action_id } => {
+                self.resolve_system_prompt_via_control(action_id)
+            }
             ControlRequest::Media { action } => Ok(self.handle_control_media(action)),
             ControlRequest::Snapshot { .. } => Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
@@ -408,34 +431,44 @@ impl ShadowCompositor {
             ));
         };
 
-        let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.seat.get_pointer().expect("seat pointer");
-        self.raise_window_for_pointer_focus(Some(&under.0), serial);
+        let motion_serial = SERIAL_COUNTER.next_serial();
+        self.raise_window_for_pointer_focus(Some(&under.0), motion_serial);
         pointer.motion(
             self,
             Some(under.clone()),
             &MotionEvent {
                 location: position,
-                serial,
+                serial: motion_serial,
                 time,
             },
         );
+        pointer.frame(self);
+        self.flush_wayland_clients();
+        std::thread::sleep(Duration::from_millis(12));
+
+        let press_serial = SERIAL_COUNTER.next_serial();
         pointer.button(
             self,
             &ButtonEvent {
                 button: BTN_LEFT,
                 state: ButtonState::Pressed,
-                serial,
-                time,
+                serial: press_serial,
+                time: time.saturating_add(1),
             },
         );
+        pointer.frame(self);
+        self.flush_wayland_clients();
+        std::thread::sleep(Duration::from_millis(12));
+
+        let release_serial = SERIAL_COUNTER.next_serial();
         pointer.button(
             self,
             &ButtonEvent {
                 button: BTN_LEFT,
                 state: ButtonState::Released,
-                serial,
-                time,
+                serial: release_serial,
+                time: time.saturating_add(2),
             },
         );
         pointer.frame(self);
@@ -457,7 +490,54 @@ impl ShadowCompositor {
                 }
             }
             ShellAction::Home => self.go_home(),
+            ShellAction::SystemPromptResponse { action_id } => {
+                if let Err(error) = self.resolve_system_prompt(action_id) {
+                    tracing::warn!("failed to resolve system prompt: {error}");
+                }
+            }
         }
+    }
+
+    pub fn handle_system_prompt_request(
+        &mut self,
+        request: SystemPromptRequest,
+        stream: &mut UnixStream,
+    ) -> std::io::Result<shadow_compositor_common::control::SystemPromptRequestDisposition> {
+        if self.pending_system_prompt.is_some() {
+            write_system_prompt_error(stream, String::from("system prompt is already active"))?;
+            return Ok(
+                shadow_compositor_common::control::SystemPromptRequestDisposition::Responded,
+            );
+        }
+
+        self.pending_system_prompt = Some(PendingSystemPrompt {
+            stream: stream.try_clone()?,
+        });
+        self.shell.set_system_prompt(Some(request));
+        self.flush_wayland_clients();
+        Ok(shadow_compositor_common::control::SystemPromptRequestDisposition::Deferred)
+    }
+
+    fn resolve_system_prompt(&mut self, action_id: String) -> std::io::Result<()> {
+        let Some(pending) = self.pending_system_prompt.take() else {
+            return Ok(());
+        };
+        let mut stream = pending.stream;
+        self.shell.set_system_prompt(None);
+        let result = write_system_prompt_ok(&mut stream, SystemPromptResponse { action_id });
+        self.flush_wayland_clients();
+        result
+    }
+
+    fn resolve_system_prompt_via_control(&mut self, action_id: String) -> std::io::Result<String> {
+        if self.pending_system_prompt.is_none() {
+            return Ok(String::from(
+                "ok\nhandled=0\nreason=no-active-system-prompt\naction_id=\n",
+            ));
+        }
+
+        self.resolve_system_prompt(action_id.clone())?;
+        Ok(format!("ok\nhandled=1\naction_id={action_id}\n"))
     }
 
     pub fn go_home(&mut self) {
@@ -562,6 +642,31 @@ impl ShadowCompositor {
             ("shell_y", shell_y.to_string()),
             ("shell_width", (WIDTH.round() as i32).to_string()),
             ("shell_height", (HEIGHT.round() as i32).to_string()),
+            (
+                "prompt_active",
+                usize::from(self.shell.system_prompt_request().is_some()).to_string(),
+            ),
+            (
+                "prompt_source_app_id",
+                self.shell
+                    .system_prompt_request()
+                    .map(|request| request.source_app_id.as_str().to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "prompt_actions",
+                self.shell
+                    .system_prompt_request()
+                    .map(|request| {
+                        request
+                            .actions
+                            .iter()
+                            .map(|action| action.id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default(),
+            ),
         ];
         render_control_state(
             self.focused_app,
@@ -638,6 +743,24 @@ impl ShadowCompositor {
     }
 }
 
+fn write_system_prompt_ok(
+    stream: &mut UnixStream,
+    response: SystemPromptResponse,
+) -> std::io::Result<()> {
+    let encoded = serde_json::to_string(&SystemPromptSocketResponse::Ok { payload: response })
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    stream.write_all(encoded.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.flush()
+}
+
+fn write_system_prompt_error(stream: &mut UnixStream, message: String) -> std::io::Result<()> {
+    let encoded = serde_json::to_string(&SystemPromptSocketResponse::Error { message })
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    stream.write_all(encoded.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.flush()
+}
 fn auto_launch_app_id() -> AppId {
     std::env::var("SHADOW_COMPOSITOR_START_APP_ID")
         .ok()
@@ -656,6 +779,12 @@ impl Drop for ShadowCompositor {
         }
 
         let _ = std::fs::remove_file(&self.control_socket_path);
+        let prompt_socket_path = shadow_runtime_protocol::system_prompt_socket_path(
+            self.control_socket_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+        );
+        let _ = std::fs::remove_file(prompt_socket_path);
     }
 }
 

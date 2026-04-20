@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 chrono.workspace = true
+serde_json = "1.0.145"
 shadow-compositor-common = { path = "../shadow-compositor-common" }
 shadow-runtime-protocol = { path = "../../../rust/shadow-runtime-protocol" }
 shadow-ui-core = { path = "../shadow-ui-core" }

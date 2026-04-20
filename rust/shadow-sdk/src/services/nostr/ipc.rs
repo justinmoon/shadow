@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::app::{APP_TITLE_ENV, WAYLAND_INSTANCE_NAME_ENV};
+
 use super::{
     Kind1Event, ListKind1Query, NostrAccountSummary, NostrEvent, NostrHostError,
     NostrPublishReceipt, NostrPublishRequest, NostrQuery, NostrReplaceableQuery, NostrSyncReceipt,
@@ -26,14 +28,32 @@ const SYSTEM_BINARY_PATH_ENV: &str = "SHADOW_SYSTEM_BINARY_PATH";
 pub enum NostrIpcRequest {
     CurrentAccount,
     GenerateAccount,
-    ImportAccountNsec { nsec: String },
-    Query { query: NostrQuery },
-    Count { query: NostrQuery },
-    GetEvent { id: String },
-    GetReplaceable { query: NostrReplaceableQuery },
-    ListKind1 { query: ListKind1Query },
-    Publish { request: NostrPublishRequest },
-    Sync { request: NostrSyncRequest },
+    ImportAccountNsec {
+        nsec: String,
+    },
+    Query {
+        query: NostrQuery,
+    },
+    Count {
+        query: NostrQuery,
+    },
+    GetEvent {
+        id: String,
+    },
+    GetReplaceable {
+        query: NostrReplaceableQuery,
+    },
+    ListKind1 {
+        query: ListKind1Query,
+    },
+    Publish {
+        request: NostrPublishRequest,
+        caller_app_id: Option<String>,
+        caller_app_title: Option<String>,
+    },
+    Sync {
+        request: NostrSyncRequest,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,7 +96,12 @@ pub fn list_kind1(query: ListKind1Query) -> Result<Vec<Kind1Event>, NostrHostErr
 }
 
 pub fn publish(request: NostrPublishRequest) -> Result<NostrPublishReceipt, NostrHostError> {
-    send_request(&NostrIpcRequest::Publish { request })
+    let (caller_app_id, caller_app_title) = current_app_context();
+    send_request(&NostrIpcRequest::Publish {
+        request,
+        caller_app_id,
+        caller_app_title,
+    })
 }
 
 pub fn sync(request: NostrSyncRequest) -> Result<NostrSyncReceipt, NostrHostError> {
@@ -191,6 +216,18 @@ fn ensure_service_socket_path() -> Result<Option<PathBuf>, NostrHostError> {
     };
     std::env::set_var(NOSTR_SERVICE_SOCKET_ENV, &socket_path);
     Ok(Some(socket_path))
+}
+
+fn current_app_context() -> (Option<String>, Option<String>) {
+    let caller_app_id = std::env::var(WAYLAND_INSTANCE_NAME_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let caller_app_title = std::env::var(APP_TITLE_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    (caller_app_id, caller_app_title)
 }
 
 fn spawn_nostr_service(socket_path: &Path) -> Result<(), NostrHostError> {

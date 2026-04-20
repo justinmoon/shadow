@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 shadow-runtime-protocol = { path = "../../../rust/shadow-runtime-protocol" }
 shadow-ui-core = { path = "../shadow-ui-core" }
+serde_json = "1.0.145"
 smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend"] }
 tracing.workspace = true
 

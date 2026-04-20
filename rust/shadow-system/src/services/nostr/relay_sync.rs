@@ -4,7 +4,7 @@ use std::time::Duration;
 use nostr::prelude::{
     Event, EventId, Filter, Kind, PublicKey, RelayUrl, TagStandard, Timestamp, ToBech32,
 };
-use nostr_sdk::prelude::Client;
+use nostr_sdk::prelude::{Client, RelayStatus};
 
 use shadow_sdk::services::nostr::{NostrEvent, NostrEventReference, NostrQuery, NostrSyncRequest};
 
@@ -33,7 +33,8 @@ pub async fn sync_with_client(
     );
 
     let connect_output = client.try_connect(Duration::from_secs(4)).await;
-    if connect_output.success.is_empty() {
+    let connected_relays = connected_requested_relays(client, &relay_urls).await;
+    if connect_output.success.is_empty() && connected_relays.is_empty() {
         let mut failed_relays = connect_output
             .failed
             .iter()
@@ -41,7 +42,14 @@ pub async fn sync_with_client(
             .collect::<Vec<_>>();
         failed_relays.sort();
         if failed_relays.is_empty() {
-            return Err(String::from("nostr.sync could not connect to any relay"));
+            let statuses = requested_relay_statuses(client, &relay_urls).await;
+            if statuses.is_empty() {
+                return Err(String::from("nostr.sync could not connect to any relay"));
+            }
+            return Err(format!(
+                "nostr.sync could not connect to any relay: {}",
+                statuses.join(", ")
+            ));
         }
         return Err(format!(
             "nostr.sync could not connect to any relay: {}",
@@ -177,6 +185,40 @@ pub(super) async fn ensure_relays(
     }
 
     Ok(())
+}
+
+pub(super) async fn connected_requested_relays(
+    client: &Client,
+    relay_urls: &[String],
+) -> Vec<String> {
+    let relays = client.relays().await;
+    let mut connected = relays
+        .into_iter()
+        .filter_map(|(relay_url, relay)| {
+            let relay_url = relay_url.to_string();
+            (relay_urls.iter().any(|requested| requested == &relay_url)
+                && matches!(relay.status(), RelayStatus::Connected))
+            .then_some(relay_url)
+        })
+        .collect::<Vec<_>>();
+    connected.sort();
+    connected
+}
+
+pub(super) async fn requested_relay_statuses(client: &Client, relay_urls: &[String]) -> Vec<String> {
+    let relays = client.relays().await;
+    let mut statuses = relays
+        .into_iter()
+        .filter_map(|(relay_url, relay)| {
+            let relay_url = relay_url.to_string();
+            relay_urls
+                .iter()
+                .any(|requested| requested == &relay_url)
+                .then_some(format!("{relay_url} ({})", relay.status()))
+        })
+        .collect::<Vec<_>>();
+    statuses.sort();
+    statuses
 }
 
 fn default_relay_urls() -> Vec<String> {

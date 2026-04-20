@@ -382,6 +382,7 @@ impl ShadowGuestCompositor {
                 Ok("ok\n".to_string())
             }
             ControlRequest::Switcher => Ok("ok\n".to_string()),
+            ControlRequest::Prompt { action_id } => self.resolve_system_prompt_via_control(action_id),
             ControlRequest::Media { action } => Ok(self.handle_control_media(action)),
             ControlRequest::Snapshot { path } => self.write_frame_snapshot(path),
             ControlRequest::State => Ok(self.control_state_response()),
@@ -442,11 +443,35 @@ impl ShadowGuestCompositor {
             }
             WaylandTransport::DirectClientFd => "direct-client-fd".to_string(),
         };
+        let prompt_request = self.shell.system_prompt_request();
         let extra_fields = vec![
             ("transport", transport),
             (
                 "control_socket",
                 self.control_socket_path.display().to_string(),
+            ),
+            (
+                "prompt_active",
+                usize::from(prompt_request.is_some()).to_string(),
+            ),
+            (
+                "prompt_source_app_id",
+                prompt_request
+                    .map(|request| request.source_app_id.as_str().to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "prompt_actions",
+                prompt_request
+                    .map(|request| {
+                        request
+                            .actions
+                            .iter()
+                            .map(|action| action.id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default(),
             ),
         ];
         render_control_state(

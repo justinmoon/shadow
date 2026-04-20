@@ -88,14 +88,16 @@ fn build_publish_prompt(
     account: &NostrAccountSummary,
     request: &NostrPublishRequest,
 ) -> SystemPromptRequest {
-    let app_title = normalize_optional_string(caller_app_title)
-        .unwrap_or_else(|| caller_app_id.to_owned());
+    let app_title =
+        normalize_optional_string(caller_app_title).unwrap_or_else(|| caller_app_id.to_owned());
     let mut detail_lines = vec![
         format!("Account: {}", account.npub),
         format!("Kind: {}", request.kind),
     ];
     if request.reply_to_event_id.is_some() {
-        detail_lines.push(String::from("Reply: this note references an existing thread."));
+        detail_lines.push(String::from(
+            "Reply: this note references an existing thread.",
+        ));
     }
     detail_lines.push(format!("Preview: {}", preview_text(&request.content)));
 
@@ -207,15 +209,22 @@ fn read_persisted_policies(path: &Path) -> Result<PersistedSignerPolicies, Strin
 }
 
 fn write_persisted_policies(path: &Path, policies: &PersistedSignerPolicies) -> Result<(), String> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent)
             .map_err(|error| format!("create signer policy dir {}: {error}", parent.display()))?;
     }
     let encoded = serde_json::to_string(policies)
         .map_err(|error| format!("encode signer policy file {}: {error}", path.display()))?;
     let temp_path = path.with_extension("tmp");
-    fs::write(&temp_path, encoded.as_bytes())
-        .map_err(|error| format!("write signer policy temp file {}: {error}", temp_path.display()))?;
+    fs::write(&temp_path, encoded.as_bytes()).map_err(|error| {
+        format!(
+            "write signer policy temp file {}: {error}",
+            temp_path.display()
+        )
+    })?;
     fs::rename(&temp_path, path).map_err(|error| {
         format!(
             "rename signer policy temp file {} -> {}: {error}",
@@ -253,7 +262,9 @@ mod tests {
         build_publish_prompt, load_policy, preview_text, signer_policy_path, store_policy,
         test_env_lock, PersistedSignerPolicy, SIGNER_POLICY_PATH_ENV,
     };
-    use shadow_sdk::services::nostr::{NostrAccountSource, NostrAccountSummary, NostrPublishRequest};
+    use shadow_sdk::services::nostr::{
+        NostrAccountSource, NostrAccountSummary, NostrPublishRequest,
+    };
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -281,8 +292,12 @@ mod tests {
             npub: String::from("npub1example"),
             source: NostrAccountSource::Generated,
         };
-        store_policy(&account, "rust-timeline", PersistedSignerPolicy::AllowAlways)
-            .expect("store policy");
+        store_policy(
+            &account,
+            "rust-timeline",
+            PersistedSignerPolicy::AllowAlways,
+        )
+        .expect("store policy");
 
         assert_eq!(
             load_policy(&account, "rust-timeline").expect("load policy"),
@@ -316,7 +331,10 @@ mod tests {
         assert_eq!(request.title, "Allow Nostr publish?");
         assert_eq!(request.source_app_id, "rust-timeline");
         assert_eq!(request.actions.len(), 3);
-        assert!(request.detail_lines.iter().any(|line| line.contains("npub1test")));
+        assert!(request
+            .detail_lines
+            .iter()
+            .any(|line| line.contains("npub1test")));
         assert!(request
             .detail_lines
             .iter()

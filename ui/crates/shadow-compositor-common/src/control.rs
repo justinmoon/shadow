@@ -2,10 +2,11 @@ use std::{
     env,
     io::{self, Read, Write},
     os::unix::fs::PermissionsExt,
-    os::unix::net::UnixListener,
+    os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
 };
 
+use shadow_runtime_protocol::{SystemPromptRequest, SystemPromptSocketResponse};
 use shadow_ui_core::control::{ControlRequest, COMPOSITOR_CONTROL_SOCKET};
 use smithay::reexports::calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction};
 
@@ -16,6 +17,21 @@ pub struct ControlLogMessages {
     pub response_failed: &'static str,
     pub request_failed: &'static str,
     pub read_failed: &'static str,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SystemPromptLogMessages {
+    pub accept_failed: &'static str,
+    pub decode_failed: &'static str,
+    pub response_failed: &'static str,
+    pub request_failed: &'static str,
+    pub read_failed: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SystemPromptRequestDisposition {
+    Responded,
+    Deferred,
 }
 
 fn parse_octal_mode_from_env(var: &str) -> io::Result<Option<u32>> {
@@ -115,4 +131,96 @@ where
 
 pub fn control_socket_path(runtime_dir: PathBuf) -> PathBuf {
     runtime_dir.join(COMPOSITOR_CONTROL_SOCKET)
+}
+
+pub fn init_system_prompt_listener<State, F>(
+    event_loop: &mut EventLoop<State>,
+    path: PathBuf,
+    log: SystemPromptLogMessages,
+    mut handle_request: F,
+) -> io::Result<PathBuf>
+where
+    F: FnMut(
+            &mut State,
+            SystemPromptRequest,
+            &mut UnixStream,
+        ) -> io::Result<SystemPromptRequestDisposition>
+        + 'static,
+{
+    if path.exists() {
+        let _ = std::fs::remove_file(&path);
+    }
+
+    let listener = UnixListener::bind(&path)?;
+    if let Some(mode) = parse_octal_mode_from_env("SHADOW_COMPOSITOR_CONTROL_SOCKET_MODE")? {
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))?;
+    }
+    listener.set_nonblocking(true)?;
+
+    event_loop
+        .handle()
+        .insert_source(
+            Generic::new(listener, Interest::READ, Mode::Level),
+            move |_, listener, state| {
+                loop {
+                    let mut stream = match unsafe { listener.get_mut() }.accept() {
+                        Ok((stream, _)) => stream,
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                        Err(error) => {
+                            tracing::warn!("{}: {error}", log.accept_failed);
+                            break;
+                        }
+                    };
+
+                    let mut request = String::new();
+                    match stream.read_to_string(&mut request) {
+                        Ok(_) => {
+                            let parsed =
+                                serde_json::from_str::<SystemPromptRequest>(request.trim_end())
+                                    .map_err(|error| {
+                                        io::Error::new(
+                                            io::ErrorKind::InvalidData,
+                                            format!("decode request: {error}"),
+                                        )
+                                    });
+                            match parsed {
+                                Ok(request) => match handle_request(state, request, &mut stream) {
+                                    Ok(SystemPromptRequestDisposition::Responded)
+                                    | Ok(SystemPromptRequestDisposition::Deferred) => {}
+                                    Err(error) => {
+                                        let _ = write_system_prompt_error(
+                                            &mut stream,
+                                            error.to_string(),
+                                        );
+                                        tracing::warn!("{}: {error}", log.request_failed);
+                                    }
+                                },
+                                Err(error) => {
+                                    let _ =
+                                        write_system_prompt_error(&mut stream, error.to_string());
+                                    tracing::warn!("{}: {error}", log.decode_failed);
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            let _ = write_system_prompt_error(&mut stream, error.to_string());
+                            tracing::warn!("{}: {error}", log.read_failed);
+                        }
+                    }
+                }
+
+                Ok(PostAction::Continue)
+            },
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?;
+
+    Ok(path)
+}
+
+fn write_system_prompt_error(stream: &mut UnixStream, message: String) -> io::Result<()> {
+    let encoded = serde_json::to_string(&SystemPromptSocketResponse::Error { message })
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    stream.write_all(encoded.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.flush()
 }

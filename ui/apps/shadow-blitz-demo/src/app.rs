@@ -856,36 +856,43 @@ fn run_platform_control_thread(proxy: BlitzShellProxy, path: PathBuf) {
                 std::io::Write::write_all(&mut stream, b"ok\nhandled=0\nreason=invalid-action\n");
             continue;
         };
-        let event = match request {
-            AppPlatformRequest::Media { action } => RuntimeEmbedderEvent::PlatformAudioControl {
-                action,
-                response: response.clone(),
-            },
-            AppPlatformRequest::Lifecycle { state } => {
-                RuntimeEmbedderEvent::PlatformLifecycleChange {
-                    state,
+        let event = match &request {
+            AppPlatformRequest::Media { action } => (
+                Some(RuntimeEmbedderEvent::PlatformAudioControl {
+                    action: *action,
                     response: response.clone(),
-                }
-            }
+                })
+            ),
+            AppPlatformRequest::Lifecycle { state } => (
+                Some(RuntimeEmbedderEvent::PlatformLifecycleChange {
+                    state: *state,
+                    response: response.clone(),
+                })
+            ),
+            AppPlatformRequest::Automation { .. } => None,
         };
-        proxy.send_event(BlitzShellEvent::embedder_event(event));
-        let handled = response.wait(Duration::from_secs(5)).unwrap_or(false);
-        let _ = std::io::Write::write_all(
-            &mut stream,
-            match request {
-                AppPlatformRequest::Media { action } => format!(
-                    "ok\nhandled={}\naction={}\n",
-                    if handled { 1 } else { 0 },
-                    action.as_str()
-                ),
-                AppPlatformRequest::Lifecycle { state } => format!(
-                    "ok\nhandled={}\nstate={}\n",
-                    if handled { 1 } else { 0 },
-                    state.as_str()
-                ),
-            }
-            .as_bytes(),
-        );
+        let handled = if let Some(event) = event {
+            proxy.send_event(BlitzShellEvent::embedder_event(event));
+            response.wait(Duration::from_secs(5)).unwrap_or(false)
+        } else {
+            false
+        };
+        let response_body = match request {
+            AppPlatformRequest::Media { action } => format!(
+                "ok\nhandled={}\naction={}\n",
+                if handled { 1 } else { 0 },
+                action.as_str()
+            ),
+            AppPlatformRequest::Lifecycle { state } => format!(
+                "ok\nhandled={}\nstate={}\n",
+                if handled { 1 } else { 0 },
+                state.as_str()
+            ),
+            AppPlatformRequest::Automation { action, .. } => format!(
+                "ok\nhandled=0\nreason=unsupported-request\nrequest=automation:{action}\n"
+            ),
+        };
+        let _ = std::io::Write::write_all(&mut stream, response_body.as_bytes());
     }
 }
 

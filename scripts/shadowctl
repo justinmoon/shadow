@@ -49,6 +49,8 @@ SUPPORTED_MEDIA_ACTIONS = (
 )
 FRAME_CAPTURE_WAIT_TIMEOUT_SECS = 5.0
 FRAME_CAPTURE_WAIT_INTERVAL_SECS = 0.2
+TEXT_SEND_KEY_HOLD_TIME_MS = 25
+TEXT_SEND_KEY_INTERVAL_SECS = 0.03
 
 
 @dataclass(frozen=True)
@@ -435,6 +437,76 @@ def qmp_available() -> bool:
         return False
 
 
+def qmp_send_key(keys: list[str], *, hold_time_ms: int = TEXT_SEND_KEY_HOLD_TIME_MS) -> None:
+    if not keys:
+        raise RuntimeError("shadowctl: send-key requires at least one qcode")
+    qmp_request(
+        "send-key",
+        {
+            "keys": [{"type": "qcode", "data": key} for key in keys],
+            "hold-time": hold_time_ms,
+        },
+    )
+
+
+def qmp_input_send_key(keys: list[str]) -> None:
+    if not keys:
+        raise RuntimeError("shadowctl: input-send-event requires at least one qcode")
+    events: list[dict[str, Any]] = []
+    for key in keys:
+        events.append(
+            {
+                "type": "key",
+                "data": {
+                    "down": True,
+                    "key": {"type": "qcode", "data": key},
+                },
+            }
+        )
+    for key in reversed(keys):
+        events.append(
+            {
+                "type": "key",
+                "data": {
+                    "down": False,
+                    "key": {"type": "qcode", "data": key},
+                },
+            }
+        )
+    qmp_request("input-send-event", {"events": events})
+
+
+def qcodes_for_text_char(char: str) -> list[str]:
+    if len(char) != 1:
+        raise ValueError(f"shadowctl: expected a single character, got {char!r}")
+    if "a" <= char <= "z":
+        return [char]
+    if "0" <= char <= "9":
+        return [char]
+    if "A" <= char <= "Z":
+        return ["shift", char.lower()]
+
+    mapping = {
+        " ": ["spc"],
+        "\n": ["ret"],
+        "\t": ["tab"],
+        "-": ["minus"],
+        "_": ["shift", "minus"],
+        ".": ["dot"],
+        ",": ["comma"],
+        "/": ["slash"],
+        ":": ["shift", "semicolon"],
+        ";": ["semicolon"],
+    }
+    if char in mapping:
+        return mapping[char]
+    raise ValueError(
+        "shadowctl: unsupported text character "
+        f"{char!r}; supported characters are ASCII letters, digits, space, newline, tab, "
+        "and . , - _ / : ;"
+    )
+
+
 def _qmp_send_message(client: socket.socket, payload: dict[str, Any]) -> None:
     client.sendall(json.dumps(payload).encode("utf-8") + b"\n")
 
@@ -659,7 +731,47 @@ def parse_control_state(response: str) -> dict[str, Any]:
         "shell_y": int(state["shell_y"]) if "shell_y" in state else None,
         "shell_width": int(state["shell_width"]) if "shell_width" in state else None,
         "shell_height": int(state["shell_height"]) if "shell_height" in state else None,
+        "prompt_active": state.get("prompt_active") == "1",
+        "prompt_source_app_id": state.get("prompt_source_app_id") or None,
+        "prompt_actions": [item for item in state.get("prompt_actions", "").split(",") if item],
     }
+
+
+def control_state_for(target: TargetRef) -> dict[str, Any]:
+    if target.kind == "vm":
+        payload = vm_status_payload()
+        if payload["remote"].get("control_socket_exists"):
+            result = vm_control_request("state")
+            if result.returncode != 0:
+                message = (result.stderr or result.stdout or "vm state request failed").strip()
+                raise RuntimeError(message)
+            state = parse_control_state(result.stdout)
+        else:
+            state = {
+                "focused": None,
+                "mapped": payload["remote"].get("running_apps", []),
+                "launched": payload["remote"].get("running_apps", []),
+                "shelved": [],
+                "windows": 0,
+                "transport": None,
+                "control_socket": None,
+                "socket": None,
+                "ui_ready": payload["remote"].get("ui_ready"),
+                "remote_reachable": payload["remote"].get("reachable"),
+                "prompt_active": False,
+                "prompt_source_app_id": None,
+                "prompt_actions": [],
+            }
+    else:
+        result = pixel_control_request(target.serial or target.id, "state")
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout or "pixel state request failed").strip()
+            raise RuntimeError(message)
+        state = parse_control_state(result.stdout)
+
+    state["kind"] = target.kind
+    state["target"] = target.id
+    return state
 
 
 def print_control_state(state: dict[str, Any]) -> None:
@@ -671,6 +783,9 @@ def print_control_state(state: dict[str, Any]) -> None:
     print(f"transport={state.get('transport') or ''}")
     print(f"control_socket={state.get('control_socket') or ''}")
     print(f"socket={state.get('socket') or ''}")
+    print(f"prompt_active={'1' if state.get('prompt_active') else '0'}")
+    print(f"prompt_source_app_id={state.get('prompt_source_app_id') or ''}")
+    print(f"prompt_actions={','.join(state.get('prompt_actions', []))}")
     if state.get("shell_x") is not None and state.get("shell_y") is not None:
         print(f"shell_x={state['shell_x']}")
         print(f"shell_y={state['shell_y']}")
@@ -1231,39 +1346,11 @@ def cmd_frame(args: argparse.Namespace) -> int:
 
 
 def cmd_state(args: argparse.Namespace) -> int:
-    target = args.target_ref
-    if target.kind == "vm":
-        payload = vm_status_payload()
-        if payload["remote"].get("control_socket_exists"):
-            result = vm_control_request("state")
-            if result.returncode != 0:
-                if result.stderr:
-                    print(result.stderr, end="", file=sys.stderr)
-                return result.returncode
-            state = parse_control_state(result.stdout)
-        else:
-            state = {
-                "focused": None,
-                "mapped": payload["remote"].get("running_apps", []),
-                "launched": payload["remote"].get("running_apps", []),
-                "shelved": [],
-                "windows": 0,
-                "transport": None,
-                "control_socket": None,
-                "socket": None,
-                "ui_ready": payload["remote"].get("ui_ready"),
-                "remote_reachable": payload["remote"].get("reachable"),
-            }
-    else:
-        result = pixel_control_request(target.serial or target.id, "state")
-        if result.returncode != 0:
-            if result.stderr:
-                print(result.stderr, end="", file=sys.stderr)
-            return result.returncode
-        state = parse_control_state(result.stdout)
-
-    state["kind"] = target.kind
-    state["target"] = target.id
+    try:
+        state = control_state_for(args.target_ref)
+    except RuntimeError as error:
+        print(str(error), file=sys.stderr)
+        return 1
     if args.json:
         print(json.dumps(state, indent=2, sort_keys=True))
     else:
@@ -1309,6 +1396,26 @@ def cmd_tap(args: argparse.Namespace) -> int:
     return _print_control_result(control_request_for(args.target_ref, f"tap {args.x} {args.y}"))
 
 
+def cmd_text(args: argparse.Namespace) -> int:
+    try:
+        state = control_state_for(args.target_ref)
+        if state.get("prompt_active") and not args.allow_prompt:
+            raise RuntimeError(
+                "shadowctl: refusing to type while a system prompt is active; pass --allow-prompt to override"
+            )
+        if not state.get("focused") and not args.allow_unfocused:
+            raise RuntimeError(
+                "shadowctl: refusing to type without a focused app; pass --allow-unfocused to override"
+            )
+        for char in args.text:
+            qmp_input_send_key(qcodes_for_text_char(char))
+            time.sleep(args.interval_ms / 1000.0)
+    except (RuntimeError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_media(args: argparse.Namespace) -> int:
     result = control_request_for(args.target_ref, f"media {args.action}")
     status = _print_control_result(result)
@@ -1318,6 +1425,20 @@ def cmd_media(args: argparse.Namespace) -> int:
     handled = _response_fields(result.stdout or "").get("handled")
     if handled == "0":
         print("shadowctl: media action was not handled", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_prompt(args: argparse.Namespace) -> int:
+    result = control_request_for(args.target_ref, f"prompt {args.action_id}")
+    status = _print_control_result(result)
+    if status != 0:
+        return status
+
+    fields = _response_fields(result.stdout or "")
+    if fields.get("handled") == "0":
+        reason = fields.get("reason") or "prompt action was not handled"
+        print(f"shadowctl: {reason}", file=sys.stderr)
         return 1
     return 0
 
@@ -1750,6 +1871,28 @@ def build_parser() -> argparse.ArgumentParser:
     tap.add_argument("x", type=int)
     tap.add_argument("y", type=int)
 
+    text = add_command(
+        subparsers,
+        "text",
+        "Type text into the focused VM app through QMP send-key.",
+        cmd_text,
+        supported_target_kinds=("vm",),
+        parents=(target_parser,),
+    )
+    text.add_argument("text")
+    text.add_argument("--hold-time-ms", type=int, default=TEXT_SEND_KEY_HOLD_TIME_MS)
+    text.add_argument("--interval-ms", type=float, default=TEXT_SEND_KEY_INTERVAL_SECS * 1000.0)
+    text.add_argument(
+        "--allow-prompt",
+        action="store_true",
+        help="Allow typing even when a system prompt is active.",
+    )
+    text.add_argument(
+        "--allow-unfocused",
+        action="store_true",
+        help="Allow typing even when no app is focused.",
+    )
+
     media = add_command(
         subparsers,
         "media",
@@ -1759,6 +1902,16 @@ def build_parser() -> argparse.ArgumentParser:
         parents=(target_parser,),
     )
     media.add_argument("action", choices=SUPPORTED_MEDIA_ACTIONS)
+
+    prompt = add_command(
+        subparsers,
+        "prompt",
+        "Resolve the active system prompt with an action id.",
+        cmd_prompt,
+        supported_target_kinds=("vm", "pixel"),
+        parents=(target_parser,),
+    )
+    prompt.add_argument("action_id")
 
     wait_ready = add_command(
         subparsers,

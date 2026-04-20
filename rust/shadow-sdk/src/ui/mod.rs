@@ -12,7 +12,9 @@ pub use widgets::{
     secondary_button_state, selectable_card, sheet, status_chip, text_field, top_bar,
     top_bar_with_back, with_blocking_task, with_sheet, ActionButtonState, Tone,
 };
+pub use xilem::core::{fork, MessageProxy};
+pub use xilem::tokio;
 pub type EventLoopError = xilem::winit::error::EventLoopError;
 pub use xilem::masonry::properties::types::AsUnit;
-pub use xilem::view::{FlexExt, MainAxisAlignment};
+pub use xilem::view::{worker_raw, FlexExt, MainAxisAlignment};
 pub use xilem::WidgetView;

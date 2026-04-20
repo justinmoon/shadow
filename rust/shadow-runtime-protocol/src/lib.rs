@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -76,6 +78,55 @@ pub struct RuntimeKeyboardEvent {
     pub shift_key: Option<bool>,
 }
 
+pub const SYSTEM_PROMPT_SOCKET_BASENAME: &str = "shadow-system-prompt.sock";
+
+pub fn system_prompt_socket_path(runtime_dir: &Path) -> PathBuf {
+    runtime_dir.join(SYSTEM_PROMPT_SOCKET_BASENAME)
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemPromptActionStyle {
+    #[default]
+    Normal,
+    Default,
+    Danger,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct SystemPromptAction {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub style: SystemPromptActionStyle,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct SystemPromptRequest {
+    #[serde(rename = "sourceAppId")]
+    pub source_app_id: String,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "sourceAppTitle")]
+    pub source_app_title: Option<String>,
+    pub title: String,
+    pub message: String,
+    #[serde(default, rename = "detailLines", skip_serializing_if = "Vec::is_empty")]
+    pub detail_lines: Vec<String>,
+    pub actions: Vec<SystemPromptAction>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct SystemPromptResponse {
+    #[serde(rename = "actionId")]
+    pub action_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum SystemPromptSocketResponse {
+    Ok { payload: SystemPromptResponse },
+    Error { message: String },
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeAudioControlAction {
@@ -139,11 +190,16 @@ impl AppLifecycleState {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AppPlatformRequest {
     Lifecycle { state: AppLifecycleState },
     Media { action: RuntimeAudioControlAction },
+    Automation {
+        action: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        argument: Option<String>,
+    },
 }
 
 impl AppPlatformRequest {
@@ -151,6 +207,14 @@ impl AppPlatformRequest {
         match self {
             Self::Lifecycle { state } => format!("lifecycle {}\n", state.as_str()),
             Self::Media { action } => format!("media {}\n", action.as_str()),
+            Self::Automation {
+                action,
+                argument: Some(argument),
+            } => format!("automation {action} {argument}\n"),
+            Self::Automation {
+                action,
+                argument: None,
+            } => format!("automation {action}\n"),
         }
     }
 
@@ -171,6 +235,29 @@ impl AppPlatformRequest {
                 .unwrap_or(trimmed),
         ) {
             return Some(Self::Media { action });
+        }
+        if let Some(automation) = trimmed
+            .strip_prefix("automation ")
+            .or_else(|| trimmed.strip_prefix("automation\t"))
+        {
+            let automation = automation.trim_start();
+            if automation.is_empty() {
+                return None;
+            }
+            let mut parts = automation.splitn(2, char::is_whitespace);
+            let action = parts.next()?.trim();
+            if action.is_empty() {
+                return None;
+            }
+            let argument = parts
+                .next()
+                .map(str::trim_start)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned);
+            return Some(Self::Automation {
+                action: action.to_owned(),
+                argument,
+            });
         }
         None
     }
@@ -197,8 +284,12 @@ pub enum SessionResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppLifecycleState, AppPlatformRequest, RuntimeAudioControlAction, RuntimeDocumentPayload,
+        system_prompt_socket_path, AppLifecycleState, AppPlatformRequest,
+        RuntimeAudioControlAction, RuntimeDocumentPayload, SystemPromptAction,
+        SystemPromptActionStyle, SystemPromptRequest, SystemPromptResponse,
+        SystemPromptSocketResponse, SYSTEM_PROMPT_SOCKET_BASENAME,
     };
+    use std::path::Path;
 
     #[test]
     fn runtime_document_payload_preserves_text_input() {
@@ -254,6 +345,85 @@ mod tests {
             Some(AppPlatformRequest::Media {
                 action: RuntimeAudioControlAction::VolumeUp,
             })
+        );
+    }
+
+    #[test]
+    fn app_platform_request_round_trips_automation_lines() {
+        assert_eq!(
+            AppPlatformRequest::parse_line("automation open_reply"),
+            Some(AppPlatformRequest::Automation {
+                action: String::from("open_reply"),
+                argument: None,
+            })
+        );
+        assert_eq!(
+            AppPlatformRequest::parse_line("automation set_reply_content vm smoke reply"),
+            Some(AppPlatformRequest::Automation {
+                action: String::from("set_reply_content"),
+                argument: Some(String::from("vm smoke reply")),
+            })
+        );
+        assert_eq!(
+            AppPlatformRequest::Automation {
+                action: String::from("publish_reply"),
+                argument: None,
+            }
+            .encode_line(),
+            "automation publish_reply\n"
+        );
+    }
+
+    #[test]
+    fn system_prompt_request_round_trips() {
+        let request = SystemPromptRequest {
+            source_app_id: String::from("rust-timeline"),
+            source_app_title: Some(String::from("Rust Timeline")),
+            title: String::from("Allow publish?"),
+            message: String::from("A shared signer request is waiting."),
+            detail_lines: vec![String::from("Account: npub1test")],
+            actions: vec![
+                SystemPromptAction {
+                    id: String::from("deny"),
+                    label: String::from("Deny"),
+                    style: SystemPromptActionStyle::Danger,
+                },
+                SystemPromptAction {
+                    id: String::from("allow_once"),
+                    label: String::from("Allow Once"),
+                    style: SystemPromptActionStyle::Default,
+                },
+            ],
+        };
+
+        let encoded = serde_json::to_string(&request).expect("encode request");
+        let decoded: SystemPromptRequest = serde_json::from_str(&encoded).expect("decode request");
+
+        assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn system_prompt_socket_response_round_trips() {
+        let response = SystemPromptSocketResponse::Ok {
+            payload: SystemPromptResponse {
+                action_id: String::from("allow_once"),
+            },
+        };
+
+        let encoded = serde_json::to_string(&response).expect("encode response");
+        let decoded: SystemPromptSocketResponse =
+            serde_json::from_str(&encoded).expect("decode response");
+
+        assert_eq!(decoded, response);
+    }
+
+    #[test]
+    fn system_prompt_socket_path_is_runtime_dir_relative() {
+        let path = system_prompt_socket_path(Path::new("/tmp/shadow-runtime"));
+
+        assert_eq!(
+            path,
+            Path::new("/tmp/shadow-runtime").join(SYSTEM_PROMPT_SOCKET_BASENAME)
         );
     }
 }

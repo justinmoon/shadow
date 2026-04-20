@@ -69,14 +69,18 @@ impl NostrDaemon {
             NostrIpcRequest::ListKind1 { query } => {
                 encode_ok(self.service.list_kind1(query).map_err(error_to_string)?)
             }
-            NostrIpcRequest::Publish { request } => {
-                encode_ok(runtime.block_on(relay_publish::publish_with_client(
-                    &self.client,
-                    &mut self.relay_registry,
-                    &self.service,
-                    request,
-                ))?)
-            }
+            NostrIpcRequest::Publish {
+                request,
+                caller_app_id,
+                caller_app_title,
+            } => encode_ok(runtime.block_on(relay_publish::publish_with_client(
+                &self.client,
+                &mut self.relay_registry,
+                &self.service,
+                caller_app_id,
+                caller_app_title,
+                request,
+            ))?),
             NostrIpcRequest::Sync { request } => {
                 let fetched = runtime.block_on(relay_sync::sync_with_client(
                     &self.client,

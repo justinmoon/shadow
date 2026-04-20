@@ -45,3 +45,4 @@ v8 = "=146.8.0"
 
 [patch.crates-io]
 temporal_rs = { path = "vendor/temporal_rs" }
+xilem = { path = "vendor/xilem" }

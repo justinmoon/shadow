@@ -4,3 +4,4 @@ pub mod camera;
 pub mod cashu;
 pub mod clipboard;
 pub mod nostr;
+pub mod system_prompt;

@@ -24,6 +24,10 @@ process = subprocess.Popen(
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
     text=True,
+    env={
+        **os.environ,
+        "SHADOW_SYSTEM_PROMPT_RESPONSE_ACTION_ID": "allow_once",
+    },
 )
 
 requests = [
@@ -32,16 +36,24 @@ requests = [
 ]
 
 responses = []
+
+def read_response_line() -> dict:
+    assert process.stdout is not None
+    while True:
+        line = process.stdout.readline()
+        if not line:
+            stderr = process.stderr.read() if process.stderr is not None else ""
+            raise SystemExit(f"runtime-app-nostr-gm-smoke: runtime host closed stdout\n{stderr}")
+        stripped = line.lstrip()
+        if not stripped.startswith("{"):
+            continue
+        return json.loads(stripped)
+
 for request in requests:
     assert process.stdin is not None
     process.stdin.write(json.dumps(request) + "\n")
     process.stdin.flush()
-    assert process.stdout is not None
-    line = process.stdout.readline()
-    if not line:
-        stderr = process.stderr.read() if process.stderr is not None else ""
-        raise SystemExit(f"runtime-app-nostr-gm-smoke: runtime host closed stdout\n{stderr}")
-    responses.append(json.loads(line))
+    responses.append(read_response_line())
 
 initial = responses[0]
 clicked = responses[1]
@@ -75,12 +87,7 @@ while time.time() < deadline:
     assert process.stdin is not None
     process.stdin.write(json.dumps({"op": "render_if_dirty"}) + "\n")
     process.stdin.flush()
-    assert process.stdout is not None
-    line = process.stdout.readline()
-    if not line:
-        stderr = process.stderr.read() if process.stderr is not None else ""
-        raise SystemExit(f"runtime-app-nostr-gm-smoke: runtime host closed stdout\n{stderr}")
-    response = json.loads(line)
+    response = read_response_line()
     if response.get("status") == "no_update":
         time.sleep(0.25)
         continue
@@ -93,6 +100,9 @@ if final_html is None:
 
 if "GM sent" not in final_html and "Publish failed" not in final_html:
     raise SystemExit("runtime-app-nostr-gm-smoke: publish completion missing success/error state")
+
+if "system prompt is unavailable" in final_html:
+    raise SystemExit("runtime-app-nostr-gm-smoke: publish still depended on compositor prompt UI")
 
 assert process.stdin is not None
 process.stdin.close()

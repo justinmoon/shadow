@@ -4369,6 +4369,7 @@ name = "shadow-compositor"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "serde_json",
  "shadow-compositor-common",
  "shadow-runtime-protocol",
  "shadow-ui-core",
@@ -4383,6 +4384,7 @@ dependencies = [
 name = "shadow-compositor-common"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "shadow-runtime-protocol",
  "shadow-ui-core",
  "smithay",
@@ -4406,6 +4408,7 @@ dependencies = [
  "kurbo 0.13.0",
  "libc",
  "peniko 0.6.0",
+ "serde_json",
  "shadow-blitz-demo",
  "shadow-compositor-common",
  "shadow-runtime-protocol",
@@ -4442,6 +4445,7 @@ name = "shadow-rust-timeline"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "shadow-runtime-protocol",
  "shadow-sdk",
 ]
 
@@ -7094,8 +7098,6 @@ checksum = "bec9e4a500ca8864c5b47b8b482a73d62e4237670e5b5f1d6b9e3cae50f28f2b"
 [[package]]
 name = "xilem"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9cd3c0723962c446e29ec17027837fb60c784219869fdfff68616919fcd5865"
 dependencies = [
  "masonry",
  "masonry_winit",

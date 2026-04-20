@@ -1,6 +1,7 @@
 mod daemon;
 mod relay_publish;
 mod relay_sync;
+mod signer;
 
 use std::path::PathBuf;
 

@@ -6,3 +6,4 @@ edition.workspace = true
 [dependencies]
 serde_json = "1.0.145"
 shadow-sdk = { path = "../../../rust/shadow-sdk", features = ["nostr", "ui"] }
+shadow-runtime-protocol = { path = "../../../rust/shadow-runtime-protocol" }

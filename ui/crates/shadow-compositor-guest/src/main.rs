@@ -7,6 +7,7 @@ mod input;
 mod kms;
 mod launch;
 mod media_keys;
+mod prompt;
 mod render;
 mod session;
 mod shell;
@@ -17,6 +18,7 @@ use std::{
     collections::{HashMap, VecDeque},
     ffi::OsString,
     fs,
+    io::Write,
     os::{
         fd::AsRawFd,
         unix::{fs::MetadataExt, net::UnixStream},
@@ -30,6 +32,7 @@ use std::{
 use config::{
     DmabufFormatProfile, GuestClientConfig, GuestStartupConfig, StartupAction, TransportRequest,
 };
+use shadow_runtime_protocol::{SystemPromptRequest, SystemPromptResponse, SystemPromptSocketResponse};
 use shadow_ui_core::{
     app::AppId,
     scene::{
@@ -111,6 +114,10 @@ struct PendingScrollFrameTrace {
     coalesced_moves: u64,
 }
 
+struct PendingSystemPrompt {
+    stream: UnixStream,
+}
+
 fn init_logging() {
     if let Ok(filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
         tracing_subscriber::fmt().with_env_filter(filter).init();
@@ -162,6 +169,7 @@ struct ShadowGuestCompositor {
     shell_touch_active: bool,
     app_touch_gesture: Option<AppTouchGesture>,
     pub(crate) control_socket_path: PathBuf,
+    pending_system_prompt: Option<PendingSystemPrompt>,
     exit_on_first_frame: bool,
     exit_on_client_disconnect: bool,
     exit_on_first_dma_buffer: bool,
@@ -244,6 +252,8 @@ impl ShadowGuestCompositor {
         seat.add_pointer();
         let control_socket_path =
             control::init_listener(event_loop).expect("create guest compositor control socket");
+        prompt::init_listener(event_loop, &control_socket_path)
+            .expect("create guest compositor system prompt socket");
 
         let mut state = Self {
             start_time: Instant::now(),
@@ -284,6 +294,7 @@ impl ShadowGuestCompositor {
             shell_touch_active: false,
             app_touch_gesture: None,
             control_socket_path,
+            pending_system_prompt: None,
             exit_on_first_frame: config.exit_on_first_frame,
             exit_on_client_disconnect,
             exit_on_first_dma_buffer: config.exit_on_first_dma_buffer,
@@ -880,7 +891,59 @@ impl ShadowGuestCompositor {
                 }
             }
             ShellAction::Home => self.go_home(),
+            ShellAction::SystemPromptResponse { action_id } => {
+                if let Err(error) = self.resolve_system_prompt(action_id) {
+                    tracing::warn!(
+                        "[shadow-guest-compositor] failed to resolve system prompt: {error}"
+                    );
+                }
+            }
         }
+    }
+
+    fn handle_system_prompt_request(
+        &mut self,
+        request: SystemPromptRequest,
+        stream: &mut UnixStream,
+    ) -> std::io::Result<shadow_compositor_common::control::SystemPromptRequestDisposition> {
+        if self.pending_system_prompt.is_some() {
+            write_system_prompt_error(stream, String::from("system prompt is already active"))?;
+            return Ok(
+                shadow_compositor_common::control::SystemPromptRequestDisposition::Responded,
+            );
+        }
+
+        self.pending_system_prompt = Some(PendingSystemPrompt {
+            stream: stream.try_clone()?,
+        });
+        self.shell.set_system_prompt(Some(request));
+        self.publish_visible_shell_frame("system-prompt-open");
+        Ok(shadow_compositor_common::control::SystemPromptRequestDisposition::Deferred)
+    }
+
+    fn resolve_system_prompt(&mut self, action_id: String) -> std::io::Result<()> {
+        let Some(pending) = self.pending_system_prompt.take() else {
+            return Ok(());
+        };
+        let mut stream = pending.stream;
+        self.shell.set_system_prompt(None);
+        let result = write_system_prompt_ok(&mut stream, SystemPromptResponse { action_id });
+        self.publish_visible_shell_frame("system-prompt-resolve");
+        result
+    }
+
+    pub(crate) fn resolve_system_prompt_via_control(
+        &mut self,
+        action_id: String,
+    ) -> std::io::Result<String> {
+        if self.pending_system_prompt.is_none() {
+            return Ok(String::from(
+                "ok\nhandled=0\nreason=no-active-system-prompt\naction_id=\n",
+            ));
+        }
+
+        self.resolve_system_prompt(action_id.clone())?;
+        Ok(format!("ok\nhandled=1\naction_id={action_id}\n"))
     }
 
     fn insert_media_key_source(&mut self, event_loop: &mut EventLoop<Self>) {
@@ -1006,7 +1069,32 @@ impl Drop for ShadowGuestCompositor {
             let _ = child.kill();
             let _ = child.wait();
         }
+        let prompt_socket_path = shadow_runtime_protocol::system_prompt_socket_path(
+            self.control_socket_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+        );
+        let _ = std::fs::remove_file(prompt_socket_path);
     }
+}
+
+fn write_system_prompt_ok(
+    stream: &mut UnixStream,
+    response: SystemPromptResponse,
+) -> std::io::Result<()> {
+    let encoded = serde_json::to_string(&SystemPromptSocketResponse::Ok { payload: response })
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    stream.write_all(encoded.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.flush()
+}
+
+fn write_system_prompt_error(stream: &mut UnixStream, message: String) -> std::io::Result<()> {
+    let encoded = serde_json::to_string(&SystemPromptSocketResponse::Error { message })
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    stream.write_all(encoded.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.flush()
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

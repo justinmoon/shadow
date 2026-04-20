@@ -37,3 +37,4 @@ debug_timer = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e
 softbuffer_window_renderer = { path = "third_party/softbuffer_window_renderer" }
 wgpu_context = { path = "third_party/wgpu_context" }
 winit = { path = "third_party/winit" }
+xilem = { path = "../rust/vendor/xilem" }

@@ -229,6 +229,9 @@ where
                     "ok\nhandled=0\nreason=unsupported-request\nrequest={}\n",
                     action.as_str()
                 ),
+                Some(AppPlatformRequest::Automation { action, .. }) => format!(
+                    "ok\nhandled=0\nreason=unsupported-request\nrequest=automation:{action}\n"
+                ),
                 None => String::from("ok\nhandled=0\nreason=invalid-action\n"),
             };
             let _ = stream.write_all(response.as_bytes());

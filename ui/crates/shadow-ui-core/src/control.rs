@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::{
     io::{self, Read, Write},
     os::unix::net::UnixStream,
+    time::Duration,
 };
 
 pub const COMPOSITOR_CONTROL_ENV: &str = "SHADOW_COMPOSITOR_CONTROL";
@@ -71,6 +72,7 @@ pub enum ControlRequest {
     Tap { x: i32, y: i32 },
     Home,
     Switcher,
+    Prompt { action_id: String },
     Media { action: MediaAction },
     Snapshot { path: Option<String> },
     State,
@@ -83,6 +85,7 @@ impl ControlRequest {
             Self::Tap { x, y } => format!("tap {x} {y}\n"),
             Self::Home => "home\n".to_string(),
             Self::Switcher => "switcher\n".to_string(),
+            Self::Prompt { action_id } => format!("prompt {action_id}\n"),
             Self::Media { action } => format!("media {}\n", action.as_token()),
             Self::Snapshot { path: Some(path) } => format!("snapshot {path}\n"),
             Self::Snapshot { path: None } => "snapshot\n".to_string(),
@@ -102,6 +105,11 @@ impl ControlRequest {
             }),
             (Some("home"), None, None, None) => Some(Self::Home),
             (Some("switcher"), None, None, None) => Some(Self::Switcher),
+            (Some("prompt"), Some(action_id), None, None) if !action_id.trim().is_empty() => {
+                Some(Self::Prompt {
+                    action_id: action_id.to_string(),
+                })
+            }
             (Some("media"), Some(action), None, None) => Some(Self::Media {
                 action: MediaAction::parse(action)?,
             }),
@@ -152,8 +160,25 @@ pub fn app_platform_request_response(
     app_id: AppId,
     request: AppPlatformRequest,
 ) -> io::Result<String> {
+    app_platform_request_response_with_timeout(
+        runtime_dir,
+        app_id,
+        request,
+        Duration::from_secs(3),
+    )
+}
+
+#[cfg(unix)]
+fn app_platform_request_response_with_timeout(
+    runtime_dir: &Path,
+    app_id: AppId,
+    request: AppPlatformRequest,
+    timeout: Duration,
+) -> io::Result<String> {
     let socket_path = platform_control_socket_path(runtime_dir, app_id);
     let mut stream = UnixStream::connect(socket_path)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
     stream.write_all(request.encode_line().as_bytes())?;
     stream.shutdown(std::net::Shutdown::Write)?;
 
@@ -211,6 +236,12 @@ mod tests {
         assert_eq!(
             ControlRequest::parse("switcher"),
             Some(ControlRequest::Switcher)
+        );
+        assert_eq!(
+            ControlRequest::parse("prompt allow_once"),
+            Some(ControlRequest::Prompt {
+                action_id: String::from("allow_once")
+            })
         );
         assert_eq!(
             ControlRequest::parse("media play-pause"),
@@ -298,6 +329,51 @@ mod tests {
         )
         .expect("request response");
         assert_eq!(response, "ok\nhandled=1\nstate=background\n");
+
+        server.join().expect("join server thread");
+        let _ = std::fs::remove_file(socket_path);
+        let _ = std::fs::remove_dir_all(runtime_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn app_platform_request_response_times_out_when_peer_stalls() {
+        let runtime_dir = std::path::PathBuf::from(format!(
+            "/tmp/sui-timeout-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("unix epoch")
+                .as_micros()
+        ));
+        std::fs::create_dir_all(&runtime_dir).expect("create runtime dir");
+        let socket_path = super::platform_control_socket_path(&runtime_dir, COUNTER_APP_ID);
+        let listener = UnixListener::bind(&socket_path).expect("bind platform socket");
+
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept stream");
+            let mut request = String::new();
+            stream.read_to_string(&mut request).expect("read request");
+            assert_eq!(request, "lifecycle background\n");
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        });
+
+        let error = super::app_platform_request_response_with_timeout(
+            &runtime_dir,
+            COUNTER_APP_ID,
+            AppPlatformRequest::Lifecycle {
+                state: AppLifecycleState::Background,
+            },
+            std::time::Duration::from_millis(50),
+        )
+        .expect_err("stalled peer should time out");
+        assert!(
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "unexpected error kind: {error:?}"
+        );
 
         server.join().expect("join server thread");
         let _ = std::fs::remove_file(socket_path);

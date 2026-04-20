@@ -1,9 +1,10 @@
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local};
+use shadow_runtime_protocol::SystemPromptRequest;
 
 use crate::{
-    app::{find_app, home_apps, AppId},
+    app::{find_app, find_app_by_str, home_apps, AppId},
     color::{
         BACKGROUND, SURFACE, SURFACE_ACCENT, SURFACE_GLASS, SURFACE_RAISED, TEXT_MUTED,
         TEXT_PRIMARY,
@@ -18,6 +19,7 @@ use crate::{
         BOTTOM_NAVIGATION_PILL_X, BOTTOM_NAVIGATION_PILL_Y, TOP_CHROME_STRIP_HEIGHT,
         TOP_CHROME_STRIP_WIDTH, TOP_CHROME_STRIP_X, TOP_CHROME_STRIP_Y,
     },
+    system_prompt::{system_prompt_action_frame, system_prompt_scene},
 };
 
 const PRESS_FLASH: Duration = Duration::from_millis(160);
@@ -59,10 +61,11 @@ pub enum ShellEvent {
     Navigate(NavAction),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShellAction {
     Launch { app_id: AppId },
     Home,
+    SystemPromptResponse { action_id: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,6 +114,13 @@ impl Frame {
 enum Target {
     App(usize),
     HomeIndicator,
+    PromptAction(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SystemPromptUiState {
+    request: SystemPromptRequest,
+    focused_action: usize,
 }
 
 pub struct ShellModel {
@@ -122,6 +132,7 @@ pub struct ShellModel {
     running_apps: Vec<AppId>,
     recent_apps: Vec<AppId>,
     foreground_app: Option<AppId>,
+    system_prompt: Option<SystemPromptUiState>,
 }
 
 impl Default for ShellModel {
@@ -135,6 +146,7 @@ impl Default for ShellModel {
             running_apps: Vec::new(),
             recent_apps: Vec::new(),
             foreground_app: None,
+            system_prompt: None,
         }
     }
 }
@@ -166,8 +178,21 @@ impl ShellModel {
 
     pub fn scene(&mut self, status: &ShellStatus) -> Scene {
         self.trim_expired_flash();
-
-        self.current_scene(status, true)
+        let mut scene = self.current_scene(status, true);
+        if let Some(prompt_state) = self.system_prompt.as_ref() {
+            append_scene(
+                &mut scene,
+                system_prompt_scene(
+                    &prompt_state.request,
+                    &self.system_prompt_app_label(prompt_state.request.source_app_id.as_str()),
+                    prompt_state.focused_action,
+                    self.hovered_prompt_action(),
+                    self.pressed_prompt_action(),
+                    self.last_activated_prompt_action(),
+                ),
+            );
+        }
+        scene
     }
 
     pub fn scene_without_compositor_chrome(&mut self, status: &ShellStatus) -> Scene {
@@ -226,6 +251,10 @@ impl ShellModel {
 
     pub fn captures_point(&self, x: f32, y: f32) -> bool {
         let point = Point { x, y };
+
+        if self.system_prompt.is_some() {
+            return shell_frame().contains(point);
+        }
 
         if self.foreground_app.is_some() {
             !app_viewport_frame().contains(point)
@@ -317,6 +346,44 @@ impl ShellModel {
         self.foreground_app
     }
 
+    pub fn set_system_prompt(&mut self, request: Option<SystemPromptRequest>) {
+        self.system_prompt = request.map(|request| {
+            let focused_action = request
+                .actions
+                .iter()
+                .position(|action| {
+                    matches!(
+                        action.style,
+                        shadow_runtime_protocol::SystemPromptActionStyle::Default
+                    )
+                })
+                .unwrap_or(0);
+            SystemPromptUiState {
+                request,
+                focused_action,
+            }
+        });
+        self.hovered_target = None;
+        self.pressed_target = None;
+        self.cursor = None;
+    }
+
+    pub fn system_prompt_request(&self) -> Option<&SystemPromptRequest> {
+        self.system_prompt.as_ref().map(|prompt| &prompt.request)
+    }
+
+    pub fn system_prompt_scene(&self) -> Option<Scene> {
+        let prompt_state = self.system_prompt.as_ref()?;
+        Some(system_prompt_scene(
+            &prompt_state.request,
+            &self.system_prompt_app_label(prompt_state.request.source_app_id.as_str()),
+            prompt_state.focused_action,
+            self.hovered_prompt_action(),
+            self.pressed_prompt_action(),
+            self.last_activated_prompt_action(),
+        ))
+    }
+
     pub fn running_apps(&self) -> &[AppId] {
         &self.running_apps
     }
@@ -344,8 +411,14 @@ impl ShellModel {
         match state {
             PointerButtonState::Pressed => {
                 self.pressed_target = self.cursor.and_then(|point| self.hit_test(point));
-                if let Some(Target::App(index)) = self.pressed_target {
-                    self.focused_tile = index;
+                match self.pressed_target {
+                    Some(Target::App(index)) => self.focused_tile = index,
+                    Some(Target::PromptAction(index)) => {
+                        if let Some(prompt) = self.system_prompt.as_mut() {
+                            prompt.focused_action = index;
+                        }
+                    }
+                    _ => {}
                 }
                 None
             }
@@ -368,14 +441,44 @@ impl ShellModel {
         self.pressed_target = None;
 
         let target = self.hit_test(point);
-        if let Some(Target::App(index)) = target {
-            self.focused_tile = index;
+        match target {
+            Some(Target::App(index)) => self.focused_tile = index,
+            Some(Target::PromptAction(index)) => {
+                if let Some(prompt) = self.system_prompt.as_mut() {
+                    prompt.focused_action = index;
+                }
+            }
+            _ => {}
         }
 
         target.and_then(|target| self.activate_target(target))
     }
 
     fn navigate(&mut self, action: NavAction) -> Option<ShellAction> {
+        if let Some(prompt) = self.system_prompt.as_mut() {
+            let count = prompt.request.actions.len();
+            if count == 0 {
+                return None;
+            }
+            let mut activate_action = None;
+            match action {
+                NavAction::Left | NavAction::Previous => {
+                    prompt.focused_action = wrap_prompt_index(prompt.focused_action, count, -1)
+                }
+                NavAction::Right | NavAction::Next => {
+                    prompt.focused_action = wrap_prompt_index(prompt.focused_action, count, 1)
+                }
+                NavAction::Up => prompt.focused_action = 0,
+                NavAction::Down => prompt.focused_action = count.saturating_sub(1),
+                NavAction::Activate => activate_action = Some(prompt.focused_action),
+                NavAction::Home => return None,
+            }
+            if let Some(index) = activate_action {
+                return self.activate_target(Target::PromptAction(index));
+            }
+            return None;
+        }
+
         match action {
             NavAction::Left => self.focused_tile = move_focus(self.focused_tile, -1, 0),
             NavAction::Right => self.focused_tile = move_focus(self.focused_tile, 1, 0),
@@ -399,6 +502,13 @@ impl ShellModel {
                 ShellAction::Launch { app_id }
             }),
             Target::HomeIndicator => self.foreground_app.is_some().then_some(ShellAction::Home),
+            Target::PromptAction(index) => self
+                .system_prompt
+                .as_ref()
+                .and_then(|prompt| prompt.request.actions.get(index))
+                .map(|action| ShellAction::SystemPromptResponse {
+                    action_id: action.id.clone(),
+                }),
         }
     }
 
@@ -409,6 +519,20 @@ impl ShellModel {
     }
 
     fn hit_test(&self, point: Point) -> Option<Target> {
+        if let Some(prompt) = self.system_prompt.as_ref() {
+            return prompt
+                .request
+                .actions
+                .iter()
+                .enumerate()
+                .find_map(|(index, _)| {
+                    let frame = system_prompt_action_frame(index, prompt.request.actions.len());
+                    frame
+                        .contains(point.x, point.y)
+                        .then_some(Target::PromptAction(index))
+                });
+        }
+
         if self.foreground_app.is_some() {
             return home_indicator_frame()
                 .contains(point)
@@ -447,6 +571,43 @@ impl ShellModel {
             }
         }
     }
+
+    fn hovered_prompt_action(&self) -> Option<usize> {
+        match self.hovered_target {
+            Some(Target::PromptAction(index)) => Some(index),
+            _ => None,
+        }
+    }
+
+    fn pressed_prompt_action(&self) -> Option<usize> {
+        match self.pressed_target {
+            Some(Target::PromptAction(index)) => Some(index),
+            _ => None,
+        }
+    }
+
+    fn last_activated_prompt_action(&self) -> Option<usize> {
+        match self.last_activated {
+            Some((Target::PromptAction(index), _)) => Some(index),
+            _ => None,
+        }
+    }
+
+    fn system_prompt_app_label(&self, source_app_id: &str) -> String {
+        self.system_prompt
+            .as_ref()
+            .and_then(|prompt| {
+                prompt
+                    .request
+                    .source_app_title
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+            })
+            .or_else(|| find_app_by_str(source_app_id).map(|app| app.title.to_owned()))
+            .unwrap_or_else(|| source_app_id.to_owned())
+    }
 }
 
 fn first_launchable_tile() -> usize {
@@ -481,6 +642,19 @@ fn wrap_index(current: usize, delta: isize) -> usize {
         return 0;
     }
     ((current as isize + delta).rem_euclid(len)) as usize
+}
+
+fn wrap_prompt_index(current: usize, len: usize, delta: isize) -> usize {
+    let len = len as isize;
+    if len <= 1 {
+        return 0;
+    }
+    ((current as isize + delta).rem_euclid(len)) as usize
+}
+
+fn append_scene(scene: &mut Scene, overlay: Scene) {
+    scene.rects.extend(overlay.rects);
+    scene.texts.extend(overlay.texts);
 }
 
 fn build_clock(
@@ -843,6 +1017,36 @@ fn bottom_navigation_pill_frame() -> Frame {
 mod tests {
     use super::*;
     use crate::app::{CAMERA_APP_ID, COUNTER_APP_ID, TIMELINE_APP_ID};
+    use shadow_runtime_protocol::{
+        SystemPromptAction, SystemPromptActionStyle, SystemPromptRequest,
+    };
+
+    fn demo_prompt_request() -> SystemPromptRequest {
+        SystemPromptRequest {
+            source_app_id: String::from("rust-timeline"),
+            source_app_title: Some(String::from("Rust Timeline")),
+            title: String::from("Allow Nostr publish?"),
+            message: String::from("A shared signer request is waiting."),
+            detail_lines: vec![String::from("Account: npub1test")],
+            actions: vec![
+                SystemPromptAction {
+                    id: String::from("deny"),
+                    label: String::from("Deny"),
+                    style: SystemPromptActionStyle::Danger,
+                },
+                SystemPromptAction {
+                    id: String::from("allow_once"),
+                    label: String::from("Allow Once"),
+                    style: SystemPromptActionStyle::Default,
+                },
+                SystemPromptAction {
+                    id: String::from("allow_always"),
+                    label: String::from("Always Allow"),
+                    style: SystemPromptActionStyle::Normal,
+                },
+            ],
+        }
+    }
 
     #[test]
     fn launch_tile_returns_launch_action() {
@@ -1068,5 +1272,34 @@ mod tests {
 
         shell.set_foreground_app(Some(COUNTER_APP_ID));
         assert!(shell.home_launcher_scene(&status).is_none());
+    }
+
+    #[test]
+    fn system_prompt_captures_the_full_shell_surface() {
+        let mut shell = ShellModel::new();
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+        shell.set_system_prompt(Some(demo_prompt_request()));
+
+        assert!(shell.captures_point(WIDTH * 0.5, HEIGHT * 0.5));
+        assert!(shell.captures_point(APP_VIEWPORT_WIDTH * 0.5, APP_VIEWPORT_Y + 120.0));
+        assert_eq!(shell.handle(ShellEvent::Navigate(NavAction::Home)), None);
+    }
+
+    #[test]
+    fn system_prompt_activate_returns_selected_action_id() {
+        let mut shell = ShellModel::new();
+        let prompt = demo_prompt_request();
+        let action_frame = system_prompt_action_frame(1, prompt.actions.len());
+        shell.set_system_prompt(Some(prompt));
+
+        assert_eq!(
+            shell.handle(ShellEvent::TouchTap {
+                x: action_frame.x + action_frame.w * 0.5,
+                y: action_frame.y + action_frame.h * 0.5,
+            }),
+            Some(ShellAction::SystemPromptResponse {
+                action_id: String::from("allow_once"),
+            })
+        );
     }
 }

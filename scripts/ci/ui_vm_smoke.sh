@@ -24,12 +24,24 @@ UI_VM_READY_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_READY_TIMEOUT:-1200}"
 UI_VM_APP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_APP_TIMEOUT:-90}"
 UI_VM_CONTROL_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_CONTROL_TIMEOUT:-20}"
 UI_VM_STOP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_STOP_TIMEOUT:-20}"
+UI_VM_PROMPT_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_PROMPT_TIMEOUT:-30}"
+UI_VM_RELAY_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_RELAY_TIMEOUT:-30}"
 # Counter is the first launcher tile in the current shell-local home grid.
 COUNTER_TILE_LOCAL_CENTER_X=104
 COUNTER_TILE_LOCAL_CENTER_Y=617
+RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_X=270
+RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_Y=363
 ui_vm_run_pid=""
 prepared_inputs_path="${SHADOW_UI_VM_PREPARED_INPUTS:-}"
 vm_smoke_succeeded=0
+prompt_request_pid=""
+prompt_request_response_path=""
+relay_pid=""
+relay_temp_dir=""
+vm_extra_env_path=""
+relay_host_port=""
+relay_guest_url=""
+relay_publish_secret=""
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -86,6 +98,16 @@ run_vm_stop() {
   run_with_timeout "$UI_VM_STOP_TIMEOUT_SECS" "$SCRIPT_DIR/vm/ui_vm_stop.sh"
 }
 
+reserve_local_port() {
+  python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+}
+
 wait_for_open_state() {
   local app_id="$1"
   local label="$2"
@@ -94,8 +116,9 @@ wait_for_open_state() {
   local probe_status=0
 
   while true; do
-    if ! state_json="$(run_shadowctl state -t vm --json)"; then
-      probe_status=$?
+    probe_status=0
+    state_json="$(run_shadowctl state -t vm --json)" || probe_status=$?
+    if (( probe_status != 0 )); then
       if (( SECONDS >= deadline )); then
         echo "vm-smoke: timed out waiting for ${label}" >&2
         echo "vm-smoke: state probe failed with status ${probe_status}" >&2
@@ -142,8 +165,9 @@ wait_for_home_state() {
   local probe_status=0
 
   while true; do
-    if ! state_json="$(run_shadowctl state -t vm --json)"; then
-      probe_status=$?
+    probe_status=0
+    state_json="$(run_shadowctl state -t vm --json)" || probe_status=$?
+    if (( probe_status != 0 )); then
       if (( SECONDS >= deadline )); then
         echo "vm-smoke: timed out waiting for ${label}" >&2
         echo "vm-smoke: state probe failed with status ${probe_status}" >&2
@@ -213,6 +237,306 @@ wait_for_log_marker() {
   done
 }
 
+wait_for_prompt_state() {
+  local expected_active="$1"
+  local label="$2"
+  local deadline=$((SECONDS + UI_VM_PROMPT_TIMEOUT_SECS))
+  local state_json=""
+  local probe_status=0
+
+  while true; do
+    probe_status=0
+    state_json="$(run_shadowctl state -t vm --json)" || probe_status=$?
+    if (( probe_status != 0 )); then
+      if (( SECONDS >= deadline )); then
+        echo "vm-smoke: timed out waiting for ${label}" >&2
+        echo "vm-smoke: state probe failed with status ${probe_status}" >&2
+        return 1
+      fi
+      sleep 1
+      continue
+    fi
+    if STATE_JSON="$state_json" EXPECTED_ACTIVE="$expected_active" python3 - <<'PY'
+import json
+import os
+import sys
+
+state = json.loads(os.environ["STATE_JSON"])
+expected = os.environ["EXPECTED_ACTIVE"] == "1"
+sys.exit(0 if state.get("prompt_active") is expected else 1)
+PY
+    then
+      printf '%s\n' "$state_json"
+      return 0
+    fi
+
+    if (( SECONDS >= deadline )); then
+      echo "vm-smoke: timed out waiting for ${label}" >&2
+      printf '%s\n' "$state_json" >&2
+      return 1
+    fi
+
+    sleep 1
+  done
+}
+
+wait_for_relay_ready() {
+  local stderr_path="$1"
+  local label="$2"
+  local deadline=$((SECONDS + UI_VM_RELAY_TIMEOUT_SECS))
+
+  while true; do
+    if [[ -f "$stderr_path" ]] && grep -Fq "relay running at" "$stderr_path"; then
+      return 0
+    fi
+
+    if (( SECONDS >= deadline )); then
+      echo "vm-smoke: timed out waiting for ${label}" >&2
+      if [[ -f "$stderr_path" ]]; then
+        sed -n '1,120p' "$stderr_path" >&2 || true
+      fi
+      return 1
+    fi
+
+    sleep 1
+  done
+}
+
+relay_query_dump() {
+  local relay_url="$1"
+
+  RELAY_URL="$relay_url" node - <<'JS'
+const relayUrl = process.env.RELAY_URL;
+if (!relayUrl) {
+  throw new Error("missing RELAY_URL");
+}
+const ws = new WebSocket(relayUrl);
+const messages = [];
+ws.onopen = () => ws.send(JSON.stringify(["REQ", "sub1", { kinds: [1], limit: 50 }]));
+ws.onmessage = (event) => {
+  messages.push(String(event.data));
+  if (String(event.data).includes('"EOSE"')) {
+    console.log(JSON.stringify(messages));
+    ws.close();
+  }
+};
+ws.onclose = () => process.exit(0);
+setTimeout(() => {
+  console.log(JSON.stringify(messages));
+  ws.close();
+}, 2500);
+JS
+}
+
+wait_for_relay_note() {
+  local relay_url="$1"
+  local needle="$2"
+  local label="$3"
+  local deadline=$((SECONDS + UI_VM_RELAY_TIMEOUT_SECS))
+  local dump=""
+
+  while true; do
+    dump="$(relay_query_dump "$relay_url" 2>/dev/null || true)"
+    if [[ "$dump" == *"$needle"* ]]; then
+      return 0
+    fi
+
+    if (( SECONDS >= deadline )); then
+      echo "vm-smoke: timed out waiting for ${label}" >&2
+      if [[ -n "$dump" ]]; then
+        printf '%s\n' "$dump" >&2
+      fi
+      return 1
+    fi
+
+    sleep 1
+  done
+}
+
+start_seeded_local_relay() {
+  relay_temp_dir="$(mktemp -d "$LOG_DIR/vm-smoke-nostr.XXXXXX")"
+  relay_host_port="$(reserve_local_port)"
+  relay_guest_url="ws://10.0.2.2:${relay_host_port}"
+  relay_publish_secret="$(nak key generate)"
+  local key_a key_b seed_port seed_url seed_err seed_out relay_err relay_out events_path
+  local event_a event_b
+
+  key_a="$(nak key generate)"
+  key_b="$(nak key generate)"
+  seed_port="$(reserve_local_port)"
+  seed_url="ws://127.0.0.1:${seed_port}"
+  seed_err="$relay_temp_dir/seed-relay.err"
+  seed_out="$relay_temp_dir/seed-relay.out"
+  relay_err="$relay_temp_dir/relay.err"
+  relay_out="$relay_temp_dir/relay.out"
+  events_path="$relay_temp_dir/relay-events.jsonl"
+
+  nak serve --hostname 127.0.0.1 --port "$seed_port" >"$seed_out" 2>"$seed_err" &
+  local seed_pid=$!
+  wait_for_relay_ready "$seed_err" "seed relay"
+
+  event_a="$(printf 'vm smoke seed alpha\n' | nak publish --sec "$key_a" "$seed_url")"
+  event_b="$(printf 'vm smoke seed beta\n' | nak publish --sec "$key_b" "$seed_url")"
+  relay_query_dump "$seed_url" >/dev/null
+  printf '%s\n%s\n' "$event_a" "$event_b" >"$events_path"
+
+  kill "$seed_pid" >/dev/null 2>&1 || true
+  wait "$seed_pid" 2>/dev/null || true
+
+  nak serve --hostname 0.0.0.0 --port "$relay_host_port" --events "$events_path" >"$relay_out" 2>"$relay_err" &
+  relay_pid=$!
+  wait_for_relay_ready "$relay_err" "vm relay"
+  wait_for_relay_note "ws://127.0.0.1:${relay_host_port}" "vm smoke seed alpha" "seed note alpha on vm relay"
+  wait_for_relay_note "ws://127.0.0.1:${relay_host_port}" "vm smoke seed beta" "seed note beta on vm relay"
+}
+
+prepare_vm_extra_env() {
+  vm_extra_env_path="$(mktemp "$LOG_DIR/vm-extra-env.XXXXXX.sh")"
+  {
+    printf 'export SHADOW_RUNTIME_NOSTR_ACCOUNT_NSEC=%q\n' "$relay_publish_secret"
+    printf 'export SHADOW_RUST_TIMELINE_RELAY_URLS=%q\n' "$relay_guest_url"
+    printf 'export SHADOW_RUST_TIMELINE_SYNC_ON_START=%q\n' "1"
+    printf 'export SHADOW_RUST_TIMELINE_LIMIT=%q\n' "8"
+  } >"$vm_extra_env_path"
+}
+
+assert_guest_tcp_connectivity() {
+  local host="$1"
+  local port="$2"
+
+  ui_vm_ssh python3 - "$host" "$port" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+with socket.create_connection((host, port), timeout=5):
+    pass
+PY
+}
+
+start_synthetic_system_prompt() {
+  prompt_request_response_path="$(mktemp "$LOG_DIR/system-prompt-response.XXXXXX")"
+  ui_vm_ssh python3 - >"$prompt_request_response_path" 2>>"$RUN_LOG" <<'PY' &
+import json
+import os
+import socket
+from pathlib import Path
+
+runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+socket_path = runtime_dir / "shadow-system-prompt.sock"
+payload = {
+    "sourceAppId": "vm-smoke",
+    "sourceAppTitle": "VM Smoke",
+    "title": "Allow publish?",
+    "message": "Synthetic system prompt request for VM smoke.",
+    "detailLines": ["Account: npub1vmtest", "Preview: smoke prompt"],
+    "actions": [
+        {"id": "deny", "label": "Deny", "style": "danger"},
+        {"id": "allow_once", "label": "Allow Once", "style": "default"},
+        {"id": "allow_always", "label": "Always Allow", "style": "normal"},
+    ],
+}
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+    client.connect(str(socket_path))
+    client.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+    client.shutdown(socket.SHUT_WR)
+    chunks = []
+    while True:
+        chunk = client.recv(4096)
+        if not chunk:
+            break
+        chunks.append(chunk)
+print(b"".join(chunks).decode("utf-8"), end="")
+PY
+  prompt_request_pid=$!
+}
+
+finish_synthetic_system_prompt() {
+  if [[ -z "$prompt_request_pid" || -z "$prompt_request_response_path" ]]; then
+    return 0
+  fi
+
+  wait "$prompt_request_pid"
+  RESPONSE_PATH="$prompt_request_response_path" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+response = Path(os.environ["RESPONSE_PATH"]).read_text(encoding="utf-8").strip()
+if not response:
+    raise SystemExit("vm-smoke: synthetic system prompt request returned an empty response")
+payload = json.loads(response)
+if payload.get("status") != "ok":
+    raise SystemExit(f"vm-smoke: synthetic system prompt returned {payload!r}")
+action_id = payload.get("payload", {}).get("actionId")
+if action_id != "allow_once":
+    raise SystemExit(
+        f"vm-smoke: synthetic system prompt resolved unexpected action {action_id!r}"
+    )
+PY
+  rm -f "$prompt_request_response_path"
+  prompt_request_pid=""
+  prompt_request_response_path=""
+}
+
+run_app_platform_request_checked() {
+  local app_id="$1"
+  shift
+  local request="$*"
+  local request_b64=""
+  local response=""
+
+  request_b64="$(printf '%s' "$request" | base64 | tr -d '\n')"
+
+  response="$(
+    ui_vm_ssh python3 - "$app_id" "$request_b64" <<'PY'
+import base64
+import os
+import sys
+import socket
+from pathlib import Path
+
+app_id = sys.argv[1]
+request_line = base64.b64decode(sys.argv[2]).decode("utf-8")
+runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+socket_path = runtime_dir / f"shadow-{app_id}-platform.sock"
+payload = request_line.encode("utf-8") + b"\n"
+
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+    client.connect(str(socket_path))
+    client.sendall(payload)
+    client.shutdown(socket.SHUT_WR)
+    chunks = []
+    while True:
+        chunk = client.recv(4096)
+        if not chunk:
+            break
+        chunks.append(chunk)
+
+print(b"".join(chunks).decode("utf-8"), end="")
+PY
+  )"
+
+  RESPONSE_TEXT="$response" REQUEST_LINE="$request" python3 - <<'PY'
+import os
+
+fields = {}
+for line in os.environ["RESPONSE_TEXT"].splitlines():
+    if "=" in line:
+        key, value = line.split("=", 1)
+        fields[key] = value
+
+if fields.get("handled") != "1":
+    raise SystemExit(
+        "vm-smoke: app platform request was not handled "
+        f"for {os.environ['REQUEST_LINE']!r}: {os.environ['RESPONSE_TEXT']!r}"
+    )
+PY
+
+  printf '%s\n' "$response"
+}
+
 counter_launcher_tap() {
   local shell_state
   local tap_coords
@@ -234,6 +558,36 @@ if shell_x is None or shell_y is None:
 counter_tile_local_center_x = int(os.environ["COUNTER_TILE_LOCAL_CENTER_X"])
 counter_tile_local_center_y = int(os.environ["COUNTER_TILE_LOCAL_CENTER_Y"])
 print(f"{shell_x + counter_tile_local_center_x} {shell_y + counter_tile_local_center_y}")
+      ' <<<"$shell_state"
+  )"
+
+  local tap_x
+  local tap_y
+  read -r tap_x tap_y <<<"$tap_coords"
+  run_shadowctl tap -t vm "$tap_x" "$tap_y" >/dev/null
+}
+
+rust_timeline_top_note_tap() {
+  local shell_state
+  local tap_coords
+
+  shell_state="$(run_shadowctl state -t vm --json)"
+  tap_coords="$(
+    RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_X="$RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_X" \
+      RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_Y="$RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_Y" \
+      python3 -c '
+import json
+import os
+import sys
+
+state = json.load(sys.stdin)
+shell_x = state.get("shell_x")
+shell_y = state.get("shell_y")
+if shell_x is None or shell_y is None:
+    raise SystemExit("vm-smoke: missing shell geometry in shadowctl state -t vm --json")
+note_local_x = int(os.environ["RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_X"])
+note_local_y = int(os.environ["RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_Y"])
+print(f"{shell_x + note_local_x} {shell_y + note_local_y}")
       ' <<<"$shell_state"
   )"
 
@@ -326,6 +680,17 @@ finish() {
   fi
 
   run_vm_stop >/dev/null 2>&1 || true
+  if [[ -n "$relay_pid" ]] && kill -0 "$relay_pid" >/dev/null 2>&1; then
+    kill "$relay_pid" >/dev/null 2>&1 || true
+    wait "$relay_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$prompt_request_pid" ]] && kill -0 "$prompt_request_pid" >/dev/null 2>&1; then
+    kill "$prompt_request_pid" >/dev/null 2>&1 || true
+    wait "$prompt_request_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$prompt_request_response_path" ]]; then
+    rm -f "$prompt_request_response_path" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$ui_vm_run_pid" ]]; then
     if kill -0 "$ui_vm_run_pid" >/dev/null 2>&1; then
       local deadline=$((SECONDS + UI_VM_STOP_TIMEOUT_SECS))
@@ -340,6 +705,12 @@ finish() {
     fi
     wait "$ui_vm_run_pid" 2>/dev/null || true
   fi
+  if [[ -n "$vm_extra_env_path" ]]; then
+    rm -f "$vm_extra_env_path" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$relay_temp_dir" ]]; then
+    rm -rf "$relay_temp_dir" >/dev/null 2>&1 || true
+  fi
 
   if (( status == 0 && vm_smoke_succeeded == 1 )); then
     vm_smoke_record_success "$prepared_inputs_path" "$REPO_ROOT"
@@ -350,6 +721,8 @@ trap 'status=$?; finish "$status"; exit "$status"' EXIT
 
 mkdir -p "$LOG_DIR"
 : >"$RUN_LOG"
+start_seeded_local_relay
+prepare_vm_extra_env
 run_vm_stop >/dev/null 2>&1 || true
 # The branch gate should prove a clean boot/session lifecycle, not inherit
 # whichever apps happened to be warm in the previous VM run.
@@ -358,6 +731,7 @@ rm -f "$VM_STATE_IMAGE_PATH"
 (
   cd "$REPO_ROOT"
   SHADOW_RUNTIME_AUDIO_BACKEND=memory \
+    SHADOW_UI_VM_EXTRA_ENV_PATH="$vm_extra_env_path" \
     "$SCRIPT_DIR/vm/ui_vm_run.sh" --prepared-inputs "$prepared_inputs_path"
 ) >"$RUN_LOG" 2>&1 &
 ui_vm_run_pid=$!
@@ -384,6 +758,7 @@ while true; do
 done
 
 "$SCRIPT_DIR/shadowctl" wait-ready -t vm --timeout "$UI_VM_READY_TIMEOUT_SECS"
+assert_guest_tcp_connectivity "10.0.2.2" "$relay_host_port"
 
 doctor_json="$("$SCRIPT_DIR/shadowctl" doctor -t vm --json)"
 shadow_load_typescript_runtime_apps "vm-shell"
@@ -606,9 +981,89 @@ wait_for_log_marker \
   "shadow-rust-timeline: lifecycle_state=foreground" \
   "rust-timeline lifecycle foreground again"
 
+echo "vm-smoke: open rust-timeline seeded note"
+rust_timeline_top_note_tap
+
+echo "vm-smoke: rust-timeline publish with allow_always"
+run_app_platform_request_checked rust-timeline automation open_reply >/dev/null
+run_app_platform_request_checked \
+  rust-timeline \
+  automation set_reply_content "vm smoke reply allow always" >/dev/null
+run_app_platform_request_checked rust-timeline automation publish_reply >/dev/null
+rust_timeline_prompt_open_state="$(wait_for_prompt_state 1 "rust-timeline signer prompt open")"
+PROMPT_OPEN_STATE="$rust_timeline_prompt_open_state" python3 - <<'PY'
+import json
+import os
+
+state = json.loads(os.environ["PROMPT_OPEN_STATE"])
+if state.get("prompt_source_app_id") != "rust-timeline":
+    raise SystemExit(
+        "vm-smoke: expected rust-timeline signer prompt source app id, "
+        f"got {state.get('prompt_source_app_id')!r}"
+    )
+actions = state.get("prompt_actions") or []
+if actions != ["deny", "allow_once", "allow_always"]:
+    raise SystemExit(f"vm-smoke: unexpected rust-timeline prompt actions {actions!r}")
+PY
+run_shadowctl prompt -t vm allow_always >/dev/null
+wait_for_prompt_state 0 "rust-timeline signer prompt close" >/dev/null
+wait_for_relay_note \
+  "ws://127.0.0.1:${relay_host_port}" \
+  "vm smoke reply allow always" \
+  "rust-timeline published reply after allow_always"
+
+echo "vm-smoke: rust-timeline publish with cached signer policy"
+run_app_platform_request_checked rust-timeline automation open_reply >/dev/null
+run_app_platform_request_checked \
+  rust-timeline \
+  automation set_reply_content "vm smoke reply cached policy" >/dev/null
+run_app_platform_request_checked rust-timeline automation publish_reply >/dev/null
+sleep 2
+prompt_after_cached_publish="$(run_shadowctl state -t vm --json)"
+PROMPT_CLOSED_STATE="$prompt_after_cached_publish" python3 - <<'PY'
+import json
+import os
+
+state = json.loads(os.environ["PROMPT_CLOSED_STATE"])
+if state.get("prompt_active"):
+    raise SystemExit("vm-smoke: signer prompt should stay inactive after allow_always policy")
+PY
+wait_for_relay_note \
+  "ws://127.0.0.1:${relay_host_port}" \
+  "vm smoke reply cached policy" \
+  "rust-timeline published cached-policy reply"
+
 echo "vm-smoke: home rust-timeline again"
 "$SCRIPT_DIR/shadowctl" home -t vm >/dev/null
 wait_for_home_state rust-timeline "rust-timeline second home" >/dev/null
+
+echo "vm-smoke: synthetic system prompt"
+start_synthetic_system_prompt
+prompt_open_state="$(wait_for_prompt_state 1 "system prompt open")"
+PROMPT_OPEN_STATE="$prompt_open_state" python3 - <<'PY'
+import json
+import os
+
+state = json.loads(os.environ["PROMPT_OPEN_STATE"])
+if state.get("prompt_source_app_id") != "vm-smoke":
+    raise SystemExit(
+        f"vm-smoke: expected prompt source app id 'vm-smoke', got {state.get('prompt_source_app_id')!r}"
+    )
+actions = state.get("prompt_actions") or []
+if actions != ["deny", "allow_once", "allow_always"]:
+    raise SystemExit(f"vm-smoke: unexpected prompt actions {actions!r}")
+PY
+run_shadowctl prompt -t vm allow_once >/dev/null
+prompt_closed_state="$(wait_for_prompt_state 0 "system prompt close")"
+finish_synthetic_system_prompt
+PROMPT_CLOSED_STATE="$prompt_closed_state" python3 - <<'PY'
+import json
+import os
+
+state = json.loads(os.environ["PROMPT_CLOSED_STATE"])
+if state.get("prompt_active"):
+    raise SystemExit("vm-smoke: prompt should be inactive after resolution")
+PY
 
 echo "vm-smoke: open podcast"
 run_shadowctl open podcast -t vm >/dev/null

@@ -47,6 +47,20 @@ ui_vm_state_dir="/var/lib/shadow-ui"
 ui_vm_ssh_port_value="${SHADOW_UI_VM_SSH_PORT:-$(ui_vm_ssh_port)}"
 runtime_audio_backend="${SHADOW_RUNTIME_AUDIO_BACKEND:-}"
 podcast_fixture_dir="$REPO_ROOT/runtime/app-podcast-player/fixture"
+extra_env_path="${SHADOW_UI_VM_EXTRA_ENV_PATH:-}"
+
+ensure_trailing_newline() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+data = path.read_bytes()
+if data and not data.endswith(b"\n"):
+    path.write_bytes(data + b"\n")
+PY
+}
 
 cleanup_runtime_env_tmp() {
   if [[ -n "${runtime_env_tmp:-}" ]]; then
@@ -128,6 +142,14 @@ scripts/runtime/runtime_prepare_host_session_env.sh \
   --artifact-guest-root "$RUNTIME_GUEST_DIR" \
   --audio-backend "$runtime_audio_backend" \
   --state-dir "$ui_vm_state_dir" >"$runtime_env_tmp"
+if [[ -n "$extra_env_path" ]]; then
+  if [[ ! -f "$extra_env_path" ]]; then
+    echo "vm: missing extra env file $extra_env_path" >&2
+    exit 1
+  fi
+  cat "$extra_env_path" >>"$runtime_env_tmp"
+  ensure_trailing_newline "$runtime_env_tmp"
+fi
 if shadow_session_app_is_shell "$ui_vm_start_app_id"; then
   :
 elif shadow_session_app_supports_auto_open "$ui_vm_start_app_id" "vm-shell"; then

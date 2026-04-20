@@ -111,6 +111,7 @@
         "rust/shadow-system"
         "rust/shadow-runtime-protocol"
         "rust/vendor/temporal_rs"
+        "rust/vendor/xilem"
       ];
       shadowInitWrapperSrc = repoSourceFromPrefixes [
         "rust/init-wrapper"
@@ -219,6 +220,7 @@
         "rust/shadow-system"
         "rust/shadow-runtime-protocol"
         "rust/vendor/temporal_rs"
+        "rust/vendor/xilem"
       ];
       shadowUiWorkspaceMemberCargoTomlPrefixes = [
         "ui/apps/shadow-blitz-demo/Cargo.toml"
@@ -259,6 +261,7 @@
         ++ [
           "ui/crates/shadow-ui-core"
           "ui/third_party"
+          "rust/vendor/xilem"
           "rust/shadow-runtime-protocol"
         ]
       );
@@ -277,6 +280,7 @@
           "ui/crates/shadow-compositor-common"
           "ui/crates/shadow-compositor"
           "ui/third_party"
+          "rust/vendor/xilem"
           "rust/shadow-runtime-protocol"
         ]
       );
@@ -296,6 +300,7 @@
           "ui/crates/shadow-compositor-common"
           "ui/crates/shadow-compositor-guest"
           "ui/third_party"
+          "rust/vendor/xilem"
           "rust/shadow-runtime-protocol"
         ]
       );
@@ -328,6 +333,7 @@
           "ui/apps/shadow-blitz-demo"
           "ui/crates/shadow-ui-core"
           "ui/third_party"
+          "rust/vendor/xilem"
           "rust/shadow-runtime-protocol"
         ]
       );
@@ -377,19 +383,23 @@
         "deno.lock"
         "flake.nix"
         "flake.lock"
-        "runtime/app-camera"
-        "runtime/app-cashu-wallet"
-        "runtime/app-counter"
-        "runtime/app-nostr-timeline"
-        "runtime/app-podcast-player"
-        "runtime/app-runtime"
-        "runtime/apps.json"
-        "scripts/runtime/prepare_podcast_player_demo_assets.sh"
-        "scripts/runtime/runtime_build_artifacts.ts"
-        "scripts/runtime/runtime_compile_solid.ts"
-        "scripts/runtime/runtime_prepare_app_bundle.ts"
-        "scripts/runtime/runtime_prepare_host_session_env.sh"
-        "scripts/runtime_build_artifacts.sh"
+        "justfile"
+        "patches"
+        "runtime"
+        "scripts"
+        "vm"
+        "rust/Cargo.toml"
+        "rust/Cargo.lock"
+        "rust/shadow-sdk"
+        "rust/shadow-system"
+        "rust/shadow-runtime-protocol"
+        "rust/vendor/temporal_rs"
+        "rust/vendor/xilem"
+        "ui/Cargo.toml"
+        "ui/Cargo.lock"
+        "ui/apps"
+        "ui/crates"
+        "ui/third_party"
       ];
       shadowVmSmokeSrc = repoSourceFromPrefixes (
         shadowVmSmokeControllerPrefixes

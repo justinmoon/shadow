@@ -5,6 +5,7 @@ use std::{
     process::{Child, Command},
 };
 
+use shadow_compositor_common::launch::{app_launch_env_value, first_env_value};
 use shadow_ui_core::{
     app::{launch_spec, AppId},
     control,
@@ -28,10 +29,11 @@ pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Resul
         })
         .transpose()?;
 
-    let client_path = state.client_config.app_client_path.clone();
+    let client_path = first_env_value(&["SHADOW_APP_CLIENT", "SHADOW_GUEST_CLIENT"])
+        .unwrap_or_else(|| state.client_config.app_client_path.clone());
     let mut command = Command::new(&client_path);
     for (key, value) in app.launch_env {
-        command.env(key, value);
+        command.env(key, app_launch_env_value(key, value));
     }
     configure_guest_client_command(
         &mut command,
