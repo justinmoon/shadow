@@ -22,7 +22,7 @@ Related docs:
 - Use host-side `bootimg` tooling for the inner loop: unpack, patch, repack, inspect, sign.
 - Use Cuttlefish only for generic bring-up ideas, not as the primary model for `sunfish`.
 - Primary strategy: boot the stock Pixel kernel into a Shadow-owned ramdisk and custom PID 1. Do not treat `wrapper -> stock init -> later takeover` as the main path anymore.
-- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `gpu-kms-bridge` (the same GPU smoke presented through rooted display takeover so render/present can be debugged without boot ownership), then `boot-bundle-exec` (boot-owned dynamic bundle exec with visible prelude/checkpoint/postlude), then `boot-vulkan-adapter-smoke` (boot-owned strict Vulkan adapter selection plus return), then `boot-vulkan-device-request-smoke` (boot-owned strict Vulkan device request plus return), then `boot-vulkan-device-smoke` (boot-owned strict Vulkan buffer-renderer allocation plus return), then `boot-vulkan-offscreen` (boot-owned strict Vulkan offscreen render plus return), then `orange-gpu` (boot-owned GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
+- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `gpu-kms-bridge` (the same GPU smoke presented through rooted display takeover so render/present can be debugged without boot ownership), then `boot-bundle-exec` (boot-owned dynamic bundle exec with visible prelude/checkpoint/postlude), then `boot-vulkan-instance-smoke` (boot-owned strict Vulkan instance creation plus return), then `boot-vulkan-adapter-smoke` (boot-owned strict Vulkan adapter selection plus return), then `boot-vulkan-device-request-smoke` (boot-owned strict Vulkan device request plus return), then `boot-vulkan-device-smoke` (boot-owned strict Vulkan buffer-renderer allocation plus return), then `boot-vulkan-offscreen` (boot-owned strict Vulkan offscreen render plus return), then `orange-gpu` (boot-owned GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
 - Rust cutoff:
   - keep the C PID 1 seam only long enough to prove `boot-vulkan-offscreen` once on real hardware
   - immediately after the first successful `boot-vulkan-offscreen` proof, port `hello-init` / the boot-owned PID 1 bootstrap seam to Rust
@@ -71,6 +71,10 @@ Related docs:
   - `orange-init` prelude proves boot-owned KMS still works in the image
   - a second short checkpoint proves config validation passed before launching the bundle
   - a long postlude proves the staged `/orange-gpu` bundle returned successfully
+- [ ] Prove boot-owned strict Vulkan instance creation and return (`boot-vulkan-instance-smoke`):
+  - reuse the staged `shadow-gpu-smoke` bundle
+  - require the same strict Vulkan env setup as later GPU rungs
+  - stop before adapter selection so failures narrow to `WGPUContext::new()` / instance setup
 - [ ] Prove boot-owned strict Vulkan adapter selection and return (`boot-vulkan-adapter-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs
@@ -157,6 +161,10 @@ Related docs:
   - export/import through the intended buffer path
   - present through KMS
   - keep it separate from app/session launch
+- [ ] Package the boot-owned strict Vulkan instance payload (`boot-vulkan-instance-smoke`):
+  - run the real `shadow-gpu-smoke` strict Vulkan env plus instance-creation path in owned userspace
+  - stop before adapter selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
+  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
 - [ ] Package the boot-owned strict Vulkan adapter payload (`boot-vulkan-adapter-smoke`):
   - run the real `shadow-gpu-smoke` strict Vulkan env plus adapter-selection path in owned userspace
   - stop before `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
@@ -458,6 +466,10 @@ Related docs:
 - New device-request result on 2026-04-20:
   - `11151JEC200472` showed two visible orange pulses on the `shadow-boot-orange-gpu-vulkan-device-request-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
   - that means the visible prelude and validation checkpoint ran, then the strict Vulkan `request_device` branch failed to return before the watchdog restart
-- Tightened inference after the bundle/offscreen/device-request/device proofs:
-  - the next missing seam is no longer dynamic bundle exec itself
-  - the next narrow rung is boot-owned strict Vulkan adapter selection and return, reusing the same visible prelude/checkpoint/postlude contract before retrying `request_device`
+- New adapter result on 2026-04-20:
+  - `11151JEC200472` showed two visible orange pulses on the `shadow-boot-orange-gpu-vulkan-adapter-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
+  - that means the visible prelude and validation checkpoint ran, then the strict Vulkan adapter-selection branch failed to return before the watchdog restart
+- Tightened inference after the bundle/offscreen/device-request/device/adapter proofs:
+  - bundle-exec is now the smallest returning boot-owned `/orange-gpu` rung: `11151JEC200472` showed three visible orange pulses there
+  - every stricter Vulkan rung tried so far (`boot-vulkan-adapter-smoke`, `boot-vulkan-device-request-smoke`, `boot-vulkan-device-smoke`, and `boot-vulkan-offscreen`) still stops after two visible orange pulses
+  - the next smallest missing rung is boot-owned strict Vulkan instance creation and return, reusing the same visible prelude/checkpoint/postlude contract before retrying adapter selection

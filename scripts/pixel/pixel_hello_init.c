@@ -763,6 +763,7 @@ static bool parse_orange_gpu_mode_value(const char *raw, char *dest, size_t dest
     if (
         strcmp(value, "gpu-render") != 0 &&
         strcmp(value, "bundle-smoke") != 0 &&
+        strcmp(value, "vulkan-instance-smoke") != 0 &&
         strcmp(value, "vulkan-adapter-smoke") != 0 &&
         strcmp(value, "vulkan-device-request-smoke") != 0 &&
         strcmp(value, "vulkan-device-smoke") != 0 &&
@@ -1026,6 +1027,10 @@ static bool orange_gpu_mode_is_vulkan_offscreen(const struct hello_init_config *
     return strcmp(config->orange_gpu_mode, "vulkan-offscreen") == 0;
 }
 
+static bool orange_gpu_mode_is_vulkan_instance_smoke(const struct hello_init_config *config) {
+    return strcmp(config->orange_gpu_mode, "vulkan-instance-smoke") == 0;
+}
+
 static bool orange_gpu_mode_is_vulkan_adapter_smoke(const struct hello_init_config *config) {
     return strcmp(config->orange_gpu_mode, "vulkan-adapter-smoke") == 0;
 }
@@ -1040,6 +1045,7 @@ static bool orange_gpu_mode_is_vulkan_device_smoke(const struct hello_init_confi
 
 static bool orange_gpu_mode_uses_success_postlude(const struct hello_init_config *config) {
     return orange_gpu_mode_is_bundle_smoke(config) ||
+           orange_gpu_mode_is_vulkan_instance_smoke(config) ||
            orange_gpu_mode_is_vulkan_adapter_smoke(config) ||
            orange_gpu_mode_is_vulkan_device_request_smoke(config) ||
            orange_gpu_mode_is_vulkan_device_smoke(config) ||
@@ -1372,6 +1378,29 @@ static int run_orange_gpu_payload(const struct hello_init_config *config) {
                 SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
                 "--scene",
                 "smoke",
+                "--summary-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH,
+                (char *)NULL
+            );
+        } else if (orange_gpu_mode_is_vulkan_instance_smoke(config)) {
+            if (set_orange_gpu_child_env() != 0) {
+                _exit(126);
+            }
+            log_stage(
+                "<6>",
+                "orange-gpu-child-exec",
+                "argv0=%s binary=%s scene=instance-smoke mode=vulkan-instance-smoke",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH
+            );
+            execl(
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                "--library-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LIBRARY_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+                "--scene",
+                "instance-smoke",
                 "--summary-path",
                 SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH,
                 (char *)NULL
