@@ -1,3 +1,11 @@
+/** @typedef {import("./shadow_sdk_nostr.js").NostrAccountSummary} NostrAccountSummary */
+/** @typedef {import("./shadow_sdk_nostr.js").NostrEvent} NostrEvent */
+/** @typedef {import("./shadow_sdk_nostr.js").NostrQuery} NostrQuery */
+/** @typedef {import("./shadow_sdk_nostr.js").NostrReplaceableQuery} NostrReplaceableQuery */
+/** @typedef {import("./shadow_sdk_nostr.js").NostrSyncReceipt} NostrSyncReceipt */
+/** @typedef {import("./shadow_sdk_nostr.js").NostrSyncRequest} NostrSyncRequest */
+/** @typedef {NostrQuery | NostrQuery[] | null | undefined} NostrQueryInput */
+
 export function ensureShadowRuntimeOs() {
   return requireShadowOs();
 }
@@ -10,33 +18,60 @@ export function listKind1(query = {}) {
   return getNostrApi().listKind1(query);
 }
 
+/** @returns {NostrAccountSummary | null} */
 export function currentNostrAccount() {
   return getNostrApi().currentAccount();
 }
 
+/** @returns {NostrAccountSummary} */
 export function generateNostrAccount() {
   return getNostrApi().generateAccount();
 }
 
+/**
+ * @param {string} nsec
+ * @returns {NostrAccountSummary}
+ */
 export function importNostrAccountNsec(nsec) {
   return getNostrApi().importAccountNsec(String(nsec));
 }
 
+/**
+ * @param {NostrQueryInput} [query={}]
+ * @returns {NostrEvent[]}
+ */
 export function queryNostr(query = {}) {
   return getNostrApi().query(normalizeNostrQuery(query));
 }
 
+/**
+ * @param {NostrQueryInput} [query={}]
+ * @returns {number}
+ */
 export function countNostr(query = {}) {
   return getNostrApi().count(normalizeNostrQuery(query));
 }
 
+/**
+ * @param {string} id
+ * @returns {NostrEvent | null}
+ */
 export function getNostrEvent(id) {
   return getNostrApi().getEvent(id);
 }
 
-export function getNostrReplaceable(kind, pubkey, identifier) {
+/**
+ * @param {NostrReplaceableQuery | number} queryOrKind
+ * @param {string} [pubkey]
+ * @param {string | undefined} [identifier]
+ * @returns {NostrEvent | null}
+ */
+export function getNostrReplaceable(queryOrKind, pubkey, identifier) {
+  if (typeof queryOrKind === "object" && queryOrKind != null) {
+    return getNostrApi().getReplaceable(queryOrKind);
+  }
   return getNostrApi().getReplaceable({
-    kind,
+    kind: Number(queryOrKind),
     pubkey,
     identifier,
   });
@@ -46,6 +81,10 @@ export function syncKind1(request = {}) {
   return getNostrApi().syncKind1(request);
 }
 
+/**
+ * @param {NostrSyncRequest} [request={}]
+ * @returns {Promise<NostrSyncReceipt>}
+ */
 export function syncNostr(request = {}) {
   return getNostrApi().sync(request);
 }
@@ -232,6 +271,8 @@ function getNostrApi() {
   return nostr;
 }
 
+/** @param {NostrQueryInput} query */
+/** @returns {NostrQuery} */
 function normalizeNostrQuery(query) {
   if (Array.isArray(query)) {
     if (query.length === 0) {

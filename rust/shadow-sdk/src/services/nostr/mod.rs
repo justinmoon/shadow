@@ -3,13 +3,16 @@ use std::fmt;
 #[doc(hidden)]
 pub mod ipc;
 mod store;
+pub mod types;
 
 pub use ipc::NOSTR_SERVICE_SOCKET_ENV;
 pub use store::{
-    Kind1Event, ListKind1Query, NostrAccountSource, NostrAccountSummary, NostrEvent,
-    NostrEventReference, NostrHostError, NostrQuery, NostrReplaceableQuery, NostrSyncReceipt,
-    NostrSyncRequest, PublishKind1Request, SqliteNostrService, DEFAULT_PUBLISH_PUBKEY,
-    NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,
+    Kind1Event, ListKind1Query, NostrHostError, PublishKind1Request, SqliteNostrService,
+    DEFAULT_PUBLISH_PUBKEY, NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,
+};
+pub use types::{
+    NostrAccountSource, NostrAccountSummary, NostrEvent, NostrEventReference, NostrQuery,
+    NostrReplaceableQuery, NostrSyncReceipt, NostrSyncRequest,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

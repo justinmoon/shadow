@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { NostrAccountSummary } from "@shadow/sdk/nostr";
 
 import {
   prepareRuntimeAppBundle,
@@ -33,6 +34,7 @@ function repoRoot() {
 Deno.test("rewriteRuntimeImportAliases rewrites sdk and legacy runtime imports", () => {
   const source = [
     'import { createSignal } from "@shadow/sdk";',
+    'import type { NostrEvent } from "@shadow/sdk/nostr";',
     'import { listKind1 } from "@shadow/app-runtime-os";',
     'import { For } from "@shadow/app-runtime-solid";',
     'import "@shadow/sdk";',
@@ -41,6 +43,11 @@ Deno.test("rewriteRuntimeImportAliases rewrites sdk and legacy runtime imports",
   const rewritten = rewriteRuntimeImportAliases(source);
 
   assertIncludes(rewritten, 'from "./shadow_sdk.js"', "rewritten source");
+  assertIncludes(
+    rewritten,
+    'from "./shadow_sdk_nostr.js"',
+    "rewritten source",
+  );
   assertIncludes(
     rewritten,
     'from "./shadow_runtime_os.js"',
@@ -53,6 +60,7 @@ Deno.test("rewriteRuntimeImportAliases rewrites sdk and legacy runtime imports",
   );
   assertIncludes(rewritten, 'import "./shadow_sdk.js"', "rewritten source");
   assertNotIncludes(rewritten, "@shadow/sdk", "rewritten source");
+  assertNotIncludes(rewritten, "@shadow/sdk/nostr", "rewritten source");
   assertNotIncludes(rewritten, "@shadow/app-runtime-os", "rewritten source");
   assertNotIncludes(
     rewritten,
@@ -92,6 +100,10 @@ Deno.test("prepareRuntimeAppBundle stages sdk entrypoint files", async () => {
     assert(
       await fileExists(path.join(bundleDir, "shadow_sdk.js")),
       "missing shadow_sdk.js",
+    );
+    assert(
+      await fileExists(path.join(bundleDir, "shadow_sdk_nostr.js")),
+      "missing shadow_sdk_nostr.js",
     );
     assert(
       await fileExists(path.join(bundleDir, "shadow_sdk_services.js")),
@@ -156,26 +168,20 @@ Deno.test("shadow sdk nostr account helpers delegate to the runtime host", async
   }?test=${crypto.randomUUID()}`;
 
   const importedCalls: string[] = [];
+  const accountFixture = (
+    npub: string,
+    source: NostrAccountSummary["source"],
+  ): NostrAccountSummary => ({ npub, source });
   runtimeGlobal.Shadow = {
     os: {
       nostr: {
-        currentAccount: async () => ({
-          npub: "npub1testcurrent",
-          pubkey: "pubkey-current",
-          source: "generated",
-        }),
-        generateAccount: async () => ({
-          npub: "npub1testgenerated",
-          pubkey: "pubkey-generated",
-          source: "generated",
-        }),
+        currentAccount: async () =>
+          accountFixture("npub1testcurrent", "generated"),
+        generateAccount: async () =>
+          accountFixture("npub1testgenerated", "generated"),
         importAccountNsec: async (nsec: string) => {
           importedCalls.push(nsec);
-          return {
-            npub: "npub1testimported",
-            pubkey: "pubkey-imported",
-            source: "imported",
-          };
+          return accountFixture("npub1testimported", "imported");
         },
       },
     },
@@ -187,7 +193,10 @@ Deno.test("shadow sdk nostr account helpers delegate to the runtime host", async
     const generated = await services.generateNostrAccount();
     const imported = await services.importNostrAccountNsec("nsec1test");
 
-    assert(current.npub === "npub1testcurrent", "current account should round-trip");
+    assert(
+      current.npub === "npub1testcurrent",
+      "current account should round-trip",
+    );
     assert(
       generated.npub === "npub1testgenerated",
       "generated account should round-trip",
@@ -205,6 +214,51 @@ Deno.test("shadow sdk nostr account helpers delegate to the runtime host", async
     assert(
       nostrCurrent.npub === "npub1testcurrent",
       "nostr.currentAccount should be exposed on the grouped api",
+    );
+  } finally {
+    delete runtimeGlobal.Shadow;
+  }
+});
+
+Deno.test("shadow sdk getNostrReplaceable accepts object and legacy positional forms", async () => {
+  const cwd = repoRoot();
+  const runtimeGlobal = globalThis as typeof globalThis & {
+    Shadow?: Record<string, unknown>;
+  };
+  const moduleUrl = `${
+    pathToFileURL(path.resolve(
+      cwd,
+      "runtime/app-runtime/shadow_sdk_services.js",
+    )).href
+  }?test=${crypto.randomUUID()}`;
+
+  const calls: unknown[] = [];
+  runtimeGlobal.Shadow = {
+    os: {
+      nostr: {
+        getReplaceable: async (query: unknown) => {
+          calls.push(query);
+          return null;
+        },
+      },
+    },
+  };
+
+  try {
+    const services = await import(moduleUrl);
+    await services.getNostrReplaceable({
+      kind: 0,
+      pubkey: "npub1testobject",
+      identifier: "profile",
+    });
+    await services.getNostrReplaceable(30023, "npub1testlegacy", "note");
+
+    assert(
+      JSON.stringify(calls) === JSON.stringify([
+        { kind: 0, pubkey: "npub1testobject", identifier: "profile" },
+        { kind: 30023, pubkey: "npub1testlegacy", identifier: "note" },
+      ]),
+      "getNostrReplaceable should normalize both public call forms",
     );
   } finally {
     delete runtimeGlobal.Shadow;

@@ -7,20 +7,7 @@ import {
   Show,
   syncNostr,
 } from "@shadow/sdk";
-
-type Kind1Event = {
-  content: string;
-  created_at: number;
-  id: string;
-  kind: number;
-  pubkey: string;
-};
-
-type SyncReceipt = {
-  fetchedCount: number;
-  importedCount: number;
-  relayUrls: string[];
-};
+import type { NostrEvent, NostrSyncReceipt } from "@shadow/sdk/nostr";
 
 type TimelineConfig = {
   limit?: number;
@@ -269,7 +256,7 @@ function statusStyle(kind: StatusState["kind"]) {
 export function renderApp() {
   const config = readTimelineConfig();
   const initialFeed = loadInitialFeed(config);
-  const [notes, setNotes] = createSignal<Kind1Event[]>(initialFeed.notes);
+  const [notes, setNotes] = createSignal<NostrEvent[]>(initialFeed.notes);
   const [status, setStatus] = createSignal<StatusState>({
     kind: "idle",
     message: initialStatusMessage(initialFeed.source, initialFeed.notes.length),
@@ -295,7 +282,7 @@ export function renderApp() {
         kinds: [1],
         limit: config.limit,
         relayUrls: config.relayUrls,
-      }) as SyncReceipt;
+      }) as NostrSyncReceipt;
       const nextNotes = loadCachedNotes(config.limit);
       if (nextNotes.length > 0) {
         setNotes(nextNotes);
@@ -395,12 +382,12 @@ export function renderApp() {
   );
 }
 
-function loadCachedNotes(limit: number): Kind1Event[] {
-  return queryNostr({ kinds: [1], limit }) as Kind1Event[];
+function loadCachedNotes(limit: number): NostrEvent[] {
+  return queryNostr({ kinds: [1], limit }) as NostrEvent[];
 }
 
 function loadInitialFeed(config: Required<TimelineConfig>): {
-  notes: Kind1Event[];
+  notes: NostrEvent[];
   source: FeedSource;
 } {
   const cachedNotes = loadCachedNotes(config.limit);

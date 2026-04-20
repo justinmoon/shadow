@@ -10,8 +10,11 @@ import {
 const DEFAULT_CACHE_DIR = "build/runtime/app-counter";
 const DEFAULT_INPUT_PATH = "runtime/app-counter/app.tsx";
 const ASSET_DIR_NAME = "assets";
+const SDK_NOSTR_MODULE_ALIAS = "@shadow/sdk/nostr";
+const SDK_NOSTR_MODULE_NAME = "./shadow_sdk_nostr.js";
 const SDK_MODULE_ALIAS = "@shadow/sdk";
 const SDK_MODULE_NAME = "./shadow_sdk.js";
+const SDK_NOSTR_SOURCE_PATH = "runtime/app-runtime/shadow_sdk_nostr.js";
 const SDK_SOURCE_PATH = "runtime/app-runtime/shadow_sdk.js";
 const SDK_SERVICES_SOURCE_PATH = "runtime/app-runtime/shadow_sdk_services.js";
 const OS_MODULE_ALIAS = "@shadow/app-runtime-os";
@@ -61,10 +64,12 @@ export async function prepareRuntimeAppBundle(
   };
   const compiled = await compileSolidModule(compileOptions);
   const rendererSourcePath = path.resolve(cwd, RENDERER_SOURCE_PATH);
+  const sdkNostrSourcePath = path.resolve(cwd, SDK_NOSTR_SOURCE_PATH);
   const sdkSourcePath = path.resolve(cwd, SDK_SOURCE_PATH);
   const sdkServicesSourcePath = path.resolve(cwd, SDK_SERVICES_SOURCE_PATH);
   const osSourcePath = path.resolve(cwd, OS_SOURCE_PATH);
   const rendererPath = path.join(compiled.cacheDir, "shadow_runtime_solid.js");
+  const sdkNostrPath = path.join(compiled.cacheDir, "shadow_sdk_nostr.js");
   const sdkPath = path.join(compiled.cacheDir, "shadow_sdk.js");
   const sdkServicesPath = path.join(
     compiled.cacheDir,
@@ -80,6 +85,7 @@ export async function prepareRuntimeAppBundle(
   const bundleAssetDir = path.join(compiled.cacheDir, ASSET_DIR_NAME);
 
   await Deno.copyFile(rendererSourcePath, rendererPath);
+  await Deno.copyFile(sdkNostrSourcePath, sdkNostrPath);
   await Deno.copyFile(sdkSourcePath, sdkPath);
   await Deno.copyFile(sdkServicesSourcePath, sdkServicesPath);
   await Deno.copyFile(osSourcePath, osPath);
@@ -262,6 +268,7 @@ async function rewriteRuntimeAliasImports(outputPath: string) {
 
 export function rewriteRuntimeImportAliases(source: string): string {
   return [
+    [SDK_NOSTR_MODULE_ALIAS, SDK_NOSTR_MODULE_NAME],
     [SDK_MODULE_ALIAS, SDK_MODULE_NAME],
     [DEFAULT_MODULE_NAME, RENDERER_MODULE_NAME],
     [OS_MODULE_ALIAS, OS_MODULE_NAME],

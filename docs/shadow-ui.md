@@ -9,11 +9,12 @@ read_when:
 
 # Shadow UI
 
-This document specifies the intended v1 shape of the Shadow app platform.
-It is a contract document, not a marketing doc and not a changelog.
+This document specifies the intended v1 shape of the Shadow app platform. It is
+a contract document, not a marketing doc and not a changelog.
 
-Today, the shipped app-authoring surface in this repo is still heavily centered on the TypeScript/Deno/Solid path.
-This doc is about converging both app models onto a shared platform contract while adding the new Rust UI path.
+Today, the shipped app-authoring surface in this repo is still heavily centered
+on the TypeScript/Deno/Solid path. This doc is about converging both app models
+onto a shared platform contract while adding the new Rust UI path.
 
 This spec covers two things at once:
 
@@ -34,28 +35,41 @@ The following are current implementation bets and may change:
 
 - Masonry/Xilem as the leading Rust UI foundation
 - exact module names inside `shadow_sdk`
-- whether internal implementation ends up as one crate or several non-public crates/packages beyond the current `shadow-system` boundary
+- whether internal implementation ends up as one crate or several non-public
+  crates/packages beyond the current `shadow-system` boundary
 
 The target model is:
 
 - TypeScript apps and Rust apps are both first-class supported app models.
 - Apps are separate processes by default.
 - Apps render their own surfaces by default.
-- Both app models should consume one shared Shadow SDK and one shared lifecycle/capability model.
-- App authors should target Shadow-owned APIs, not upstream Xilem/Masonry internals and not scattered one-off Deno extensions.
-- Masonry/Xilem is the leading candidate foundation for the Rust UI implementation layer, not the public product API.
-- Shadow's own shell and system chrome should migrate onto the same foundation instead of staying on the current homegrown shell UI indefinitely.
-- some system surfaces may render directly into compositor-owned textures, but that is not the default for normal apps.
+- Both app models should consume one shared Shadow SDK and one shared
+  lifecycle/capability model.
+- App authors should target Shadow-owned APIs, not upstream Xilem/Masonry
+  internals and not scattered one-off Deno extensions.
+- Masonry/Xilem is the leading candidate foundation for the Rust UI
+  implementation layer, not the public product API.
+- Shadow's own shell and system chrome should migrate onto the same foundation
+  instead of staying on the current homegrown shell UI indefinitely.
+- some system surfaces may render directly into compositor-owned textures, but
+  that is not the default for normal apps.
 
 ## Goals
 
 1. Support both TypeScript apps and Rust apps as first-class app models.
-2. Define one shared Shadow SDK surface for platform capabilities like storage, camera, audio, nostr, cashu, notifications, lifecycle, and background work.
-3. Make that shared SDK importable directly from Rust apps and bound once into the Deno/TypeScript environment in one place instead of being scattered across service-specific hooks.
-4. Keep the OS-like properties that matter: process isolation, lifecycle control, explicit app metadata, packaging, testing, and service boundaries.
-5. Build a declarative Rust UI model that can support serious phone-style product work, not just desktop widgets or debug panels.
-6. Reuse one UI foundation across app surfaces and Shadow's own shell/system chrome where practical.
-7. Create a stable Shadow-owned app API so upstream Masonry/Xilem churn does not become app-author-facing churn.
+2. Define one shared Shadow SDK surface for platform capabilities like storage,
+   camera, audio, nostr, cashu, notifications, lifecycle, and background work.
+3. Make that shared SDK importable directly from Rust apps and bound once into
+   the Deno/TypeScript environment in one place instead of being scattered
+   across service-specific hooks.
+4. Keep the OS-like properties that matter: process isolation, lifecycle
+   control, explicit app metadata, packaging, testing, and service boundaries.
+5. Build a declarative Rust UI model that can support serious phone-style
+   product work, not just desktop widgets or debug panels.
+6. Reuse one UI foundation across app surfaces and Shadow's own shell/system
+   chrome where practical.
+7. Create a stable Shadow-owned app API so upstream Masonry/Xilem churn does not
+   become app-author-facing churn.
 
 ## Non-Goals
 
@@ -72,9 +86,13 @@ Shadow should support two app models equally at the metadata and launcher layer:
 - `typescript`: apps authored in TypeScript
 - `rust`: apps authored in Rust
 
-Those names describe the app-authoring model, not a forever commitment to one exact implementation underneath. Today the TypeScript path is implemented with Deno and Solid. That may evolve. The app model name should stay stable.
+Those names describe the app-authoring model, not a forever commitment to one
+exact implementation underneath. Today the TypeScript path is implemented with
+Deno and Solid. That may evolve. The app model name should stay stable.
 
-This document spends more time on the Rust path because that is where the new UI foundation work is concentrated. That does not imply TypeScript apps are a temporary compatibility lane or scheduled for removal.
+This document spends more time on the Rust path because that is where the new UI
+foundation work is concentrated. That does not imply TypeScript apps are a
+temporary compatibility lane or scheduled for removal.
 
 ### Shared expectations across both app models
 
@@ -94,7 +112,8 @@ For both TypeScript and Rust apps, the default execution shape is:
 - one app launch contract
 - one shared Shadow SDK surface
 
-This is closer to Android's app/process model than to a single-process "all apps are widgets inside the shell" architecture.
+This is closer to Android's app/process model than to a single-process "all apps
+are widgets inside the shell" architecture.
 
 ## Architecture Overview
 
@@ -150,7 +169,9 @@ shell input
   -> compositor blends shell/system surfaces with app surfaces
 ```
 
-The same UI foundation should support both app-owned surfaces and embedded system UI surfaces, but app-owned surfaces remain the default path for normal apps.
+The same UI foundation should support both app-owned surfaces and embedded
+system UI surfaces, but app-owned surfaces remain the default path for normal
+apps.
 
 ## Ownership Boundaries
 
@@ -176,14 +197,18 @@ The same UI foundation should support both app-owned surfaces and embedded syste
 
 ### Important Rule
 
-App code should depend on Shadow-owned APIs, not directly on `xilem`, `masonry`, or scattered service-specific runtime hosts.
+App code should depend on Shadow-owned APIs, not directly on `xilem`, `masonry`,
+or scattered service-specific runtime hosts.
 
 The public split is:
 
 - `shadow_sdk`: app-facing APIs, types, lifecycle, services, and UI surface
-- `shadow-system`: privileged system-side implementation that binds those services into the TypeScript runtime and owns host-side policy/wiring
+- `shadow-system`: privileged system-side implementation that binds those
+  services into the TypeScript runtime and owns host-side policy/wiring
 
-The remaining `runtime-<something>-host` crates are transitional internal implementation crates. They should shrink or disappear over time behind `shadow-system`, not leak into app authoring.
+The remaining `runtime-<something>-host` crates are transitional internal
+implementation crates. They should shrink or disappear over time behind
+`shadow-system`, not leak into app authoring.
 
 ## Public SDK Shape
 
@@ -192,7 +217,8 @@ The public app-authoring surface should look like one SDK:
 - Rust apps import `shadow_sdk`
 - TypeScript apps import `@shadow/sdk`
 
-The public mental model should be one SDK, even if internal implementation later splits for build, ownership, or tooling reasons.
+The public mental model should be one SDK, even if internal implementation later
+splits for build, ownership, or tooling reasons.
 
 ### `shadow_sdk`
 
@@ -232,25 +258,40 @@ The exact module names can move, but the public shape should stay coherent.
 
 ### Shared service rule
 
-Reusable platform/service logic should be shared once and surfaced through the SDK for both app models.
+Reusable platform/service logic should be shared once and surfaced through the
+SDK for both app models.
 
 Examples:
 
 - a Nostr client app should use shared SDK/service code for Nostr access
 - a Cashu wallet app should use shared SDK/service code for Cashu access
-- TypeScript apps and Rust apps should not have separate conceptual platform APIs for the same service
+- TypeScript apps and Rust apps should not have separate conceptual platform
+  APIs for the same service
 
-The host implementation can still have internal layers, but the app-facing model should be unified.
+The host implementation can still have internal layers, but the app-facing model
+should be unified.
+
+Stable service contracts should also be mirrored across both SDK faces. When a
+service defines public nouns like request/response shapes, account summaries, or
+event records, Rust should expose them from
+`shadow_sdk::services::<service>::types` and TypeScript should import the
+serialized contract from a matching `@shadow/sdk/<service>` type entrypoint
+instead of re-inventing app-local aliases.
 
 ### What "services" means
 
-`shadow_sdk::services` is the app-visible capability surface. A service is a product capability family such as camera, audio, storage, nostr, or cashu: the types, requests, subscriptions, and convenience helpers app code uses.
+`shadow_sdk::services` is the app-visible capability surface. A service is a
+product capability family such as camera, audio, storage, nostr, or cashu: the
+types, requests, subscriptions, and convenience helpers app code uses.
 
-It does not mean "every privileged daemon or helper gets its own public crate." Internal system implementation can use modules or private crates where needed, but app authors should see coherent platform capabilities, not transport seams.
+It does not mean "every privileged daemon or helper gets its own public crate."
+Internal system implementation can use modules or private crates where needed,
+but app authors should see coherent platform capabilities, not transport seams.
 
 ### Internal boundaries
 
-The public SDK may still be backed by narrower internal crates or packages. That is an implementation detail, not the product surface.
+The public SDK may still be backed by narrower internal crates or packages. That
+is an implementation detail, not the product surface.
 
 Likely internal boundaries:
 
@@ -260,19 +301,24 @@ Likely internal boundaries:
 - Deno binding layer for the shared SDK
 - service host internals
 
-If internal crates exist, they should exist to keep ownership and build boundaries clean, not to create a many-crate public app-authoring experience.
+If internal crates exist, they should exist to keep ownership and build
+boundaries clean, not to create a many-crate public app-authoring experience.
 
 ## App Metadata and Launch Model
 
 The repo already has the first step of the app-metadata cleanup:
 
 - [runtime/apps.json](../runtime/apps.json) is the checked-in app manifest
-- [scripts/runtime/generate_app_metadata.py](../scripts/runtime/generate_app_metadata.py) generates Rust metadata from that manifest
-- [ui/crates/shadow-ui-core/src/generated_apps.rs](../ui/crates/shadow-ui-core/src/generated_apps.rs) is the generated Rust output
+- [scripts/runtime/generate_app_metadata.py](../scripts/runtime/generate_app_metadata.py)
+  generates Rust metadata from that manifest
+- [ui/crates/shadow-ui-core/src/generated_apps.rs](../ui/crates/shadow-ui-core/src/generated_apps.rs)
+  is the generated Rust output
 
-That baseline should now evolve from a runtime-only schema into a schema that can describe both app models cleanly.
+That baseline should now evolve from a runtime-only schema into a schema that
+can describe both app models cleanly.
 
-The manifest needs to evolve from "every app has runtime bundle metadata" into a discriminated app model.
+The manifest needs to evolve from "every app has runtime bundle metadata" into a
+discriminated app model.
 
 Target shape:
 
@@ -310,7 +356,8 @@ The launcher must not assume every app needs `SHADOW_RUNTIME_APP_BUNDLE_PATH`.
 
 ## Lifecycle Model
 
-Shadow apps should have one lifecycle model shared across TypeScript and Rust apps.
+Shadow apps should have one lifecycle model shared across TypeScript and Rust
+apps.
 
 ### Required States
 
@@ -335,16 +382,25 @@ Shadow apps should have one lifecycle model shared across TypeScript and Rust ap
 
 ### Lifecycle Rules
 
-1. A backgrounded app remains a separate process unless Shadow explicitly suspends or kills it.
+1. A backgrounded app remains a separate process unless Shadow explicitly
+   suspends or kills it.
 2. Suspension is platform-controlled, not app-controlled.
-3. Apps may request durable state flushes, but the platform decides when termination happens.
-4. Media and background-task behavior must be explicit capability-mediated exceptions, not accidental "still running" behavior.
+3. Apps may request durable state flushes, but the platform decides when
+   termination happens.
+4. Media and background-task behavior must be explicit capability-mediated
+   exceptions, not accidental "still running" behavior.
 
 ### Rollout note
 
-The shared lifecycle contract may land in the Rust path first, because that is where the new framework work is concentrated. Once the model settles, the same lifecycle should be surfaced to TypeScript apps through the shared SDK binding layer.
+The shared lifecycle contract may land in the Rust path first, because that is
+where the new framework work is concentrated. Once the model settles, the same
+lifecycle should be surfaced to TypeScript apps through the shared SDK binding
+layer.
 
-Current implementation note: the first shipped lifecycle subset is smaller than the full target model. Today the truthful shared contract is `foreground` / `background` state, delivered over the existing per-app platform-control socket and exposed through both Rust and TypeScript SDK surfaces.
+Current implementation note: the first shipped lifecycle subset is smaller than
+the full target model. Today the truthful shared contract is `foreground` /
+`background` state, delivered over the existing per-app platform-control socket
+and exposed through both Rust and TypeScript SDK surfaces.
 
 ## Rendering Model
 
@@ -359,7 +415,8 @@ Properties:
 - app-owned surface
 - platform-owned lifecycle and composition
 
-This remains the default because it gives the right isolation, debugging, crash containment, and OS-like structure.
+This remains the default because it gives the right isolation, debugging, crash
+containment, and OS-like structure.
 
 ### Embedded Mode: Shadow-Owned Texture
 
@@ -400,7 +457,8 @@ What should not be assumed shared:
 
 ## Programming Model
 
-For Rust apps, the public programming model should resemble SwiftUI or Jetpack Compose more than raw Xilem or desktop widget APIs.
+For Rust apps, the public programming model should resemble SwiftUI or Jetpack
+Compose more than raw Xilem or desktop widget APIs.
 
 ### Core concepts
 
@@ -431,12 +489,14 @@ The public Rust UI API should be:
 - opinionated about mobile navigation and state
 - explicit about side effects
 
-The public Rust API should avoid exposing raw Masonry/Xilem internals as the default pattern.
+The public Rust API should avoid exposing raw Masonry/Xilem internals as the
+default pattern.
 
 ### TypeScript note
 
-This spec does not require a new TypeScript UI framework in v1.
-TypeScript apps may keep their current UI implementation path while still converging on the same lifecycle, service, capability, and testing model.
+This spec does not require a new TypeScript UI framework in v1. TypeScript apps
+may keep their current UI implementation path while still converging on the same
+lifecycle, service, capability, and testing model.
 
 ## State, Effects, and Concurrency
 
@@ -452,7 +512,8 @@ V1 should not require apps to invent their own effect system.
 
 Required invariants:
 
-1. UI updates happen on the UI thread or equivalent serialized app state boundary.
+1. UI updates happen on the UI thread or equivalent serialized app state
+   boundary.
 2. Long-running work is offloaded through an explicit task/effect mechanism.
 3. Effects can be canceled or ignored safely when screens or apps leave scope.
 4. Background behavior is capability-bound and lifecycle-aware.
@@ -475,11 +536,15 @@ Services must be explicit, typed, and permission-gated.
 
 ### Service design rules
 
-1. TypeScript apps and Rust apps should share the same conceptual service contracts.
-2. The Deno/TypeScript environment should bind the shared SDK once, not through scattered service-specific hooks.
-3. App code should consume typed APIs whenever practical, not raw sockets or ad hoc JSON.
+1. TypeScript apps and Rust apps should share the same conceptual service
+   contracts.
+2. The Deno/TypeScript environment should bind the shared SDK once, not through
+   scattered service-specific hooks.
+3. App code should consume typed APIs whenever practical, not raw sockets or ad
+   hoc JSON.
 4. Permission checks must be explicit and testable.
-5. Service clients must behave sensibly across foreground, background, and suspended states.
+5. Service clients must behave sensibly across foreground, background, and
+   suspended states.
 
 ## Input, Text, and Accessibility
 
@@ -506,11 +571,13 @@ This is a major risk area and must be first-class in v1 design.
 
 ### Important constraint
 
-Input behavior must be defined by Shadow's public contract, not left as accidental toolkit behavior.
+Input behavior must be defined by Shadow's public contract, not left as
+accidental toolkit behavior.
 
 ## Mobile Primitive Set for V1
 
-The v1 public UI surface should be intentionally small but serious enough to build real apps.
+The v1 public UI surface should be intentionally small but serious enough to
+build real apps.
 
 ### Required primitives
 
@@ -532,7 +599,11 @@ The v1 public UI surface should be intentionally small but serious enough to bui
 - async image/media placeholders
 - loading/empty/error states
 
-Current implementation note: the first Rust-side compose seam now exists in `shadow_sdk::ui` as a multiline editor wrapper, bottom-sheet presentation helper, and explicit action-button state helper. It is enough to build a truthful draft-first reply flow in the Rust timeline app, but it is not yet the full signer/publish product surface.
+Current implementation note: the first Rust-side compose seam now exists in
+`shadow_sdk::ui` as a multiline editor wrapper, bottom-sheet presentation
+helper, and explicit action-button state helper. It is enough to build a
+truthful draft-first reply flow in the Rust timeline app, but it is not yet the
+full signer/publish product surface.
 
 ### Nice-to-have but not mandatory in the first drop
 
@@ -545,9 +616,11 @@ Current implementation note: the first Rust-side compose seam now exists in `sha
 
 Shadow should use this same UI foundation for its own shell and system chrome.
 
-The current shell/home UI is useful as bring-up code, but it should not be treated as the long-term product architecture.
+The current shell/home UI is useful as bring-up code, but it should not be
+treated as the long-term product architecture.
 
-The intended direction is to replace homegrown shell UI over time with Shadow UI surfaces built on the same underlying foundation.
+The intended direction is to replace homegrown shell UI over time with Shadow UI
+surfaces built on the same underlying foundation.
 
 Priority surfaces:
 
@@ -562,7 +635,8 @@ Priority surfaces:
 This is important for two reasons:
 
 1. Shadow should dogfood its own framework on real product surfaces.
-2. These surfaces exercise the exact hard problems the framework must solve: focus, text, gestures, animations, accessibility, and embedded rendering.
+2. These surfaces exercise the exact hard problems the framework must solve:
+   focus, text, gestures, animations, accessibility, and embedded rendering.
 
 ## Testing Model
 
@@ -591,15 +665,20 @@ V1 must ship with testing hooks built in, not bolted on later.
 
 ## Migration and Coexistence
 
-TypeScript apps and Rust apps should coexist as first-class supported app models.
+TypeScript apps and Rust apps should coexist as first-class supported app
+models.
 
 ### Transition rules
 
 - The metadata system must support both app models simultaneously.
-- New shared lifecycle and service capabilities should be defined once and exposed to both app models where practical.
-- The Rust framework path will likely move faster at first because that is where the new UI foundation work is happening.
-- TypeScript apps should not be treated as deprecated; they should converge on the shared SDK and lifecycle model as those contracts harden.
-- First serious Rust apps should begin as narrow proofs, not immediate rewrites of every current app.
+- New shared lifecycle and service capabilities should be defined once and
+  exposed to both app models where practical.
+- The Rust framework path will likely move faster at first because that is where
+  the new UI foundation work is happening.
+- TypeScript apps should not be treated as deprecated; they should converge on
+  the shared SDK and lifecycle model as those contracts harden.
+- First serious Rust apps should begin as narrow proofs, not immediate rewrites
+  of every current app.
 
 Good early targets:
 
@@ -610,37 +689,48 @@ Good early targets:
 
 ## Upstream Strategy
 
-Shadow should begin by wrapping upstream Masonry/Xilem rather than immediately forking it.
+Shadow should begin by wrapping upstream Masonry/Xilem rather than immediately
+forking it.
 
 Fork criteria:
 
 - recurring need for mobile-specific behavior upstream does not provide
 - instability in APIs Shadow must expose indirectly
-- renderer/input hooks that Shadow must rely on but cannot keep patching externally
+- renderer/input hooks that Shadow must rely on but cannot keep patching
+  externally
 - performance or correctness work that becomes core to the platform
 
-The public Shadow SDK should remain stable even if the internal implementation transitions from wrapper-heavy to fork-heavy.
+The public Shadow SDK should remain stable even if the internal implementation
+transitions from wrapper-heavy to fork-heavy.
 
 ## Open Questions
 
-These are real questions, but they should be answered by targeted spikes instead of indefinite abstract discussion.
+These are real questions, but they should be answered by targeted spikes instead
+of indefinite abstract discussion.
 
 1. What is the cleanest public effect/task model for apps?
-2. How much of text editing and IME can be inherited from Masonry/Xilem versus redefined in Shadow wrappers?
-3. Which service categories need host-side IPC from day one versus direct Rust linking?
-4. What is the minimum virtualized list primitive needed for product-scale feeds and message views?
-5. Which shell/system surface should be the first one rendered directly into a compositor-owned texture?
-6. What is the cleanest single binding story for exposing `shadow_sdk` into the TypeScript runtime?
+2. How much of text editing and IME can be inherited from Masonry/Xilem versus
+   redefined in Shadow wrappers?
+3. Which service categories need host-side IPC from day one versus direct Rust
+   linking?
+4. What is the minimum virtualized list primitive needed for product-scale feeds
+   and message views?
+5. Which shell/system surface should be the first one rendered directly into a
+   compositor-owned texture?
+6. What is the cleanest single binding story for exposing `shadow_sdk` into the
+   TypeScript runtime?
 
 ## First Implementation Spikes
 
 1. Rust runner spike
    - launch one minimal Rust Shadow UI app as a real app process
 2. Shared SDK binding spike
-   - prove one capability end-to-end through both Rust and TypeScript app surfaces using one shared SDK contract
+   - prove one capability end-to-end through both Rust and TypeScript app
+     surfaces using one shared SDK contract
 3. Text and IME spike
    - prove focus, text entry, and IME geometry reporting
 4. Embedded rendering spike
-   - prove the same foundation can render one shell/system surface into a Shadow-owned texture
+   - prove the same foundation can render one shell/system surface into a
+     Shadow-owned texture
 
 Those spikes should tighten this spec rather than replace it.
