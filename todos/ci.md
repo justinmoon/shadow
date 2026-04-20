@@ -30,7 +30,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [~] Convert any remaining hermetic boot or tooling smokes that can honestly be pure into derivation-backed checks.
 - [x] Narrow VM smoke logical inputs so unrelated changes do not invalidate its prepared-input derivation.
 - [x] Decide which current boot and tooling smokes remain required in `pre-merge` and which belong in `nightly`.
-- [~] Re-measure the branch gate after the derivation-first pass before deciding whether Jericho-style remote fanout or any selector is still worth doing.
+- [x] Re-measure the branch gate after the derivation-first pass before deciding whether Jericho-style remote fanout or any selector is still worth doing.
 
 ## Near-Term Steps
 
@@ -41,7 +41,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Make `scripts/pre_merge.sh` consume those checks through `nix build` instead of `nix develop -c ...`.
 - [x] Replace the broad `nix flake check --no-build` step with an explicit current-host `checks.<system>.preMergeSurfaceCheck` for the public devShells plus the VM/runtime attrs `pre-merge` actually depends on, and aggregate that with `runtimeCheck` as `checks.<system>.preMergeCheck`.
 - [x] Split `scripts/ui_check.sh` into named suites backed by existing check attrs.
-- [~] Add narrower `src` definitions for the current UI sub-suites so unrelated app or crate edits do not invalidate every UI derivation. A first truthful pass is green for `core`, `blitz-demo`, and `compositor`; `fmt` and `apps` still use the broader workspace source.
+- [~] Add narrower `src` definitions for the current UI sub-suites so unrelated app or crate edits do not invalidate every UI derivation. Truthful narrowed passes are green for `core`, `apps`, `blitz-demo`, `compositor`, and `fmt`; the remaining work here is finer-grained splitting inside the shared Rust-app `apps` family if that can be kept truthful.
 - [~] Audit the current boot and tooling smokes one by one:
 - if the smoke is hermetic and only depends on declared files, move it into a check derivation
 - if it depends on live host state, keep it out of Nix and make that impurity explicit
@@ -66,7 +66,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The new Pixel boot/tooling check set now uses per-smoke filtered source snapshots, with only the shared shell or bootimg helpers carried across smokes and adjacent files like `flake.nix` or `rust/drm-rect` included only where those smokes actually read or assert on them.
 - `scripts/ui_check.sh` and `just ui-check [suite...]` now expose `fmt`, `core`, `apps`, `blitz-demo`, and `compositor` suites while keeping the aggregate default.
 - `flake.nix` now groups the UI derivations into family-scoped check builders so `uiCheckCore`, `uiCheckBlitzDemo`, and `uiCheckCompositor` can build against narrower truthful source snapshots with workspace-member patching applied consistently through vendoring, deps, and leaf checks.
-- `uiCheckFmt` and `uiCheckApps` still intentionally use the broader UI workspace source. The next gain is to narrow those remaining broad families without lying to Cargo about workspace shape.
+- `uiCheckCore`, `uiCheckApps`, `uiCheckBlitzDemo`, `uiCheckCompositor`, and `uiCheckFmt` now use family-scoped or suite-scoped filtered sources that keep Cargo's workspace and local path-dependency expectations truthful while avoiding unrelated invalidation. The next gain, if it is worth the complexity, is a finer-grained split inside the shared Rust-app `apps` family without lying to Cargo about workspace shape.
 - The abandoned `ci` branch selector was solving the problem at the wrong layer. It encoded path-to-lane dependency knowledge outside Nix instead of letting derivation inputs define invalidation.
 - A good Nix-first rule: if a passing result should be trusted across machines of the same target system, make it a derivation. If it should only be trusted as a statement about this host, this device, or this moment, keep only the prepared inputs in Nix and treat the final pass as an external attestation.
 - `scripts/ci/required_vm_smoke.sh` already reuses a passing result when the logical inputs match clean root `master` or a cached success record.
@@ -76,6 +76,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Measurement note from this worktree after the explicit `preMergeCheck` seam:
   hot `checks.<system>.preMergeSurfaceCheck` builds are now about 0.1s once the flake eval cache is warm, and a hot outer `just pre-merge` run with a reused VM-smoke success record landed around 4-5s instead of the previous ~15-16s floor.
   Cold first-run flake evaluation or shell bootstrap can still spike higher, but the steady-state branch gate is now mostly the parallelized `pre-commit` lane plus the lightweight VM-smoke reuse path instead of a broad `nix flake check --no-build`.
+- Full public `just nightly` runs on this machine are still on the order of 5-6 minutes, and that remaining cost is dominated by `just ui-check` plus the nightly-only init builds rather than the required branch gate.
+- Current conclusion after the derivation-first pass: Jericho-style remote Linux fanout is not the next move for the required local gate. Revisit it only if hosted nightly automation starts mattering enough that the Linux-clean UI and boot/init subsets need their own remote concurrency story.
 - `../boot/scripts/ci/pixel_boot_demo_check.sh` is a useful reference for a path-gated boot-owned lane, but it should stay outside Shadow's main CI plan for now.
 - Reason: it is tied to the temporary boot-labs owned-userspace effort, and Shadow already has a clear home for slow boot cross-builds in `just nightly`.
 - If `../boot` is folded back here before it sunsets, import that lane into Shadow as a nightly or path-gated adjunct first, not as unconditional `pre-merge`.

@@ -331,6 +331,36 @@
           "rust/shadow-runtime-protocol"
         ]
       );
+      shadowUiAppsSrc = repoSourceFromPrefixes (
+        [
+          "ui/Cargo.toml"
+          "ui/Cargo.lock"
+        ]
+        ++ shadowUiWorkspaceMemberCargoTomlPrefixes
+        ++ shadowUiWorkspaceMemberTargetPrefixes
+        ++ shadowUiRustWorkspaceManifestPrefixes
+        ++ shadowUiRustWorkspaceTargetPrefixes
+        ++ [
+          "ui/apps/shadow-rust-demo"
+          "ui/apps/shadow-rust-timeline"
+          "ui/crates/shadow-ui-core"
+          "ui/third_party"
+          "rust/shadow-sdk"
+          "rust/shadow-runtime-protocol"
+          "rust/vendor/temporal_rs"
+        ]
+      );
+      shadowUiFmtSrc = repoSourceFromPrefixes [
+        "ui/Cargo.toml"
+        "ui/apps"
+        "ui/crates"
+        "ui/third_party"
+        "rust/Cargo.toml"
+        "rust/shadow-sdk"
+        "rust/shadow-system"
+        "rust/shadow-runtime-protocol"
+        "rust/vendor/temporal_rs"
+      ];
       shadowVmSmokeControllerPrefixes = [
         "scripts/ci/required_vm_smoke.sh"
         "scripts/ci/ui_vm_smoke.sh"
@@ -1340,12 +1370,22 @@
             artifactCargoExtraArgs = "-p shadow-compositor-guest";
             useDummySrc = false;
           };
+          shadowAppsCheckFamily = mkUiCheckFamily {
+            pname = "shadow-ui-apps-workspace";
+            src = shadowUiAppsSrc;
+            workspaceMembers = [
+              "crates/shadow-ui-core"
+              "apps/shadow-rust-demo"
+              "apps/shadow-rust-timeline"
+            ];
+            useDummySrc = false;
+          };
           leafChecks =
             {
               uiFmt = craneLib.cargoFmt {
                 pname = "shadow-ui-workspace";
                 version = "0.1.0";
-                src = shadowUiSrc;
+                src = shadowUiFmtSrc;
                 cargoToml = ./ui/Cargo.toml;
                 cargoExtraArgs = "--all";
                 postUnpack = ''
@@ -1375,11 +1415,11 @@
               } // {
                 cargoTestExtraArgs = "-p shadow-compositor-guest";
               });
-              uiShadowRustDemoCheck = broadUiCheckFamily.mkUiCargoCheck {
+              uiShadowRustDemoCheck = shadowAppsCheckFamily.mkUiCargoCheck {
                 pname = "shadow-rust-demo-check";
                 cargoCheckExtraArgs = "-p shadow-rust-demo";
               };
-              uiShadowRustTimelineCheck = broadUiCheckFamily.mkUiCargoCheck {
+              uiShadowRustTimelineCheck = shadowAppsCheckFamily.mkUiCargoCheck {
                 pname = "shadow-rust-timeline-check";
                 cargoCheckExtraArgs = "-p shadow-rust-timeline";
               };
