@@ -462,7 +462,7 @@
             if builtins.isList membersOrSpec then
               {
                 members = membersOrSpec;
-                defaultMembers = null;
+                defaultMembers = membersOrSpec;
               }
             else
               membersOrSpec;

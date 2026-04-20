@@ -182,6 +182,8 @@ impl WGPUContext {
     ) -> Result<usize, WgpuContextError> {
         let instance = self.instance.clone();
         let adapter = self.select_adapter(compatible_surface).await?;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let info = adapter.get_info();
 
         // Determine features to request
         // The user may request additional features
