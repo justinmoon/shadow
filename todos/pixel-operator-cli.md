@@ -30,10 +30,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 - [x] Inventory the remaining `pixel_common.sh` clusters and label each one as low-level helper vs operator policy.
 - [x] Extract the generic device/transport helper cluster into a dedicated sourced lib: serial resolution, `adb` / `fastboot` wrappers, wait helpers, device property/process capture, and status JSON helpers.
-- [ ] Move the next user-facing operator seam into `shadowctl` instead of adding more shell-wrapper logic. Likely candidates are shared Pixel diagnostics/log capture flows or tighter `shadowctl debug` ownership.
+- [x] Move the next user-facing operator seam into `shadowctl` instead of adding more shell-wrapper logic. `prep-settings` now lives in `shadowctl`, and the public `just` wrappers for prep/restore route through it.
 - [ ] Keep boot-lab and recovery flows private. If they need shared UX, hang them off `shadowctl debug` rather than new ad hoc shell entrypoints.
 - [ ] Reduce `pixel_common.sh` to compatibility sourcing plus genuinely shared low-level helpers, then stop growing it.
-- [ ] Re-run `scripts/ci/operator_cli_smoke.sh` and the narrow Pixel/boot smokes that cover the touched seam before landing.
+- [x] Re-run `scripts/ci/operator_cli_smoke.sh` and the narrow Pixel/boot smokes that cover the touched seam before landing.
 
 ## Implementation Notes
 
@@ -51,5 +51,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - device transport, root-shell, wait, and status capture helpers: low-level helper, now split into `pixel_device_transport_common.sh`
   - display-takeover/session orchestration and boot-lab recovery: operator/private policy, keep out of the public CLI unless a specific flow benefits from typed routing
 - `shadowctl` already owns the public `run`, `stop`, `status`, `doctor`, `state`, `frame`, `ci`, `stage`, and rooted setup/recovery entrypoints, so the next public migration seam is narrower than the first draft of this plan assumed.
-- The next useful operator-cli slice is likely shared Pixel diagnostics/log capture or a tighter `shadowctl debug` ownership seam, not another low-level path-only split.
+- Pixel diagnostics/log capture (`logs`, `status`, `doctor`, `frame`) were already in `shadowctl`; the actual missing public seam was `prep-settings`.
+- `just pixel-prep-settings` and `just pixel-restore-android` now behave like the rest of the thin public wrappers and route through `shadowctl`.
+- This seam only touched public routing plus a non-root settings helper, so `operator_cli_smoke` plus `pre-commit` were the right pre-land gates; no extra Pixel hardware smoke was needed.
+- The next useful operator-cli slice is likely tighter `shadowctl debug` ownership or retiring more compatibility shell wrappers, not another low-level path-only split.
 - Do not convert a low-level bash helper to Python just because `shadowctl` is Python. Migrate only when the behavior is user-facing or benefits from typed control flow.

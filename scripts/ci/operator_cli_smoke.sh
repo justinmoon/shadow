@@ -188,6 +188,35 @@ check_output_case \
   "" \
   env SHADOWCTL_JUST_DRY_RUN=1 just pixel-run --target TESTSERIAL podcast
 
+check_stdout_contains \
+  just_pixel_prep_settings_routes_through_shadowctl \
+  0 \
+  'exec scripts/shadowctl prep-settings --dry-run -t "$target_arg"' \
+  just --dry-run pixel-prep-settings
+
+check_output_case \
+  just_pixel_prep_settings_named_serial \
+  0 \
+  "$(cat <<'EOF'
+command=adb -s TESTSERIAL shell settings put global stay_on_while_plugged_in 15
+command=adb -s TESTSERIAL shell settings put system screen_off_timeout 1800000
+command=adb -s TESTSERIAL shell settings put secure screensaver_enabled 0
+command=adb -s TESTSERIAL shell settings put secure screensaver_activate_on_dock 0
+command=adb -s TESTSERIAL shell settings put secure screensaver_activate_on_sleep 0
+command=adb -s TESTSERIAL shell locksettings set-disabled true
+command=adb -s TESTSERIAL shell input keyevent KEYCODE_WAKEUP
+command=adb -s TESTSERIAL shell wm dismiss-keyguard
+EOF
+)" \
+  "" \
+  env SHADOWCTL_JUST_DRY_RUN=1 PIXEL_SERIAL=TESTSERIAL just pixel-prep-settings
+
+check_stdout_contains \
+  just_pixel_restore_android_routes_through_shadowctl \
+  0 \
+  'exec scripts/shadowctl restore-android --dry-run -t "$target_arg"' \
+  just --dry-run pixel-restore-android
+
 check_output_case \
   shadowctl_run_vm_default_podcast \
   0 \
@@ -448,6 +477,23 @@ check_output_case \
   "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_restore_android.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" restore-android --dry-run -t TESTSERIAL
+
+check_output_case \
+  shadowctl_prep_settings_dry_run \
+  0 \
+  "$(cat <<'EOF'
+command=adb -s TESTSERIAL shell settings put global stay_on_while_plugged_in 15
+command=adb -s TESTSERIAL shell settings put system screen_off_timeout 1800000
+command=adb -s TESTSERIAL shell settings put secure screensaver_enabled 0
+command=adb -s TESTSERIAL shell settings put secure screensaver_activate_on_dock 0
+command=adb -s TESTSERIAL shell settings put secure screensaver_activate_on_sleep 0
+command=adb -s TESTSERIAL shell locksettings set-disabled true
+command=adb -s TESTSERIAL shell input keyevent KEYCODE_WAKEUP
+command=adb -s TESTSERIAL shell wm dismiss-keyguard
+EOF
+)" \
+  "" \
+  "$SHADOWCTL_SCRIPT" prep-settings --dry-run -t TESTSERIAL
 
 check_output_case \
   desktop_target_rejected \

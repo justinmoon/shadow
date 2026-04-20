@@ -28,11 +28,12 @@ help:
 	'  sc -t pixel state' \
 	'  sc -t pixel open camera' \
 	'  sc -t pixel media next' \
+	'  sc -t pixel prep-settings' \
 	'  sc -t pixel debug latency' \
 	'  just shadowctl ...    # same CLI without relying on devshell PATH' \
 	'' \
 	'Pixel CI and setup:' \
-	'  just pixel-prep-settings' \
+	'  just pixel-prep-settings   # convenience wrapper around sc prep-settings' \
 	'  sc -t pixel ci [quick|shell|timeline|camera|cashu|nostr|sound|audio|podcast|runtime|full]' \
 	'  sc -t pixel stage <suite>' \
 	'  sc root-prep' \
@@ -97,7 +98,17 @@ pixel-run *args='':
 
 # Apply non-root Android convenience settings for a dedicated Pixel test device
 pixel-prep-settings:
-	@scripts/pixel/pixel_prep_settings.sh
+	@target_arg="${PIXEL_SERIAL:-}"; \
+	if [ -n "${SHADOWCTL_JUST_DRY_RUN:-}" ]; then \
+		if [ -n "$target_arg" ]; then \
+			exec scripts/shadowctl prep-settings --dry-run -t "$target_arg"; \
+		fi; \
+		exec scripts/shadowctl prep-settings --dry-run; \
+	fi; \
+	if [ -n "$target_arg" ]; then \
+		exec scripts/shadowctl prep-settings -t "$target_arg"; \
+	fi; \
+	exec scripts/shadowctl prep-settings
 
 # Rebase this worktree branch onto root master, run pre-merge, and fast-forward root master if green
 land:
@@ -187,7 +198,17 @@ pixel-runtime-app-drm:
 
 # Restore the Android display stack after a hold-mode rooted takeover run
 pixel-restore-android:
-	@scripts/pixel/pixel_restore_android.sh
+	@target_arg="${PIXEL_SERIAL:-}"; \
+	if [ -n "${SHADOWCTL_JUST_DRY_RUN:-}" ]; then \
+		if [ -n "$target_arg" ]; then \
+			exec scripts/shadowctl restore-android --dry-run -t "$target_arg"; \
+		fi; \
+		exec scripts/shadowctl restore-android --dry-run; \
+	fi; \
+	if [ -n "$target_arg" ]; then \
+		exec scripts/shadowctl restore-android -t "$target_arg"; \
+	fi; \
+	exec scripts/shadowctl restore-android
 
 # Run one rooted-Pixel runtime direct-gpu probe case with the selected backend profile
 pixel-runtime-app-drm-gpu-probe profile="vulkan_kgsl_first":

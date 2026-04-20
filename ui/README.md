@@ -22,7 +22,7 @@ just smoke target=vm
 For the rooted Pixel path:
 
 ```sh
-just pixel-prep-settings
+sc -t pixel prep-settings
 sc -t pixel doctor
 sc -t pixel stage shell
 just run target=pixel app=shell
@@ -30,7 +30,7 @@ just stop target=pixel
 sc -t pixel ci timeline
 ```
 
-Rooting/setup commands also live under `sc`: use `sc root-prep` for host-side OTA/Magisk assets and `sc -t pixel root-check`, `root-patch`, `root-flash`, or `ota-sideload` for device-specific setup/recovery.
+`just pixel-prep-settings` remains as a convenience wrapper. Rooting/setup commands also live under `sc`: use `sc root-prep` for host-side OTA/Magisk assets and `sc -t pixel root-check`, `root-patch`, `root-flash`, or `ota-sideload` for device-specific setup/recovery.
 
 VM control uses `sc -t vm <subcommand>` in the devshell, or `just shadowctl ...` when `sc` is not on `PATH`. Old `ui-vm-*` / `vm-*` compatibility wrappers have been removed.
 

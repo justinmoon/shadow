@@ -57,6 +57,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 - `just pixel-ci`, `just pixel-stage`, and `just pixel-run` are thin convenience wrappers around `shadowctl` Pixel CI commands.
 - Setup and recovery still matter for the real-device lane:
   - [Pixel prep](pixel-prep.md)
+  - `sc -t pixel prep-settings`
   - `sc root-prep`
   - `sc -t pixel root-check`
   - `sc -t pixel root-patch`

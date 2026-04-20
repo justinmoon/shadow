@@ -51,6 +51,24 @@ FRAME_CAPTURE_WAIT_TIMEOUT_SECS = 5.0
 FRAME_CAPTURE_WAIT_INTERVAL_SECS = 0.2
 TEXT_SEND_KEY_HOLD_TIME_MS = 25
 TEXT_SEND_KEY_INTERVAL_SECS = 0.03
+PIXEL_PREP_SETTINGS = (
+    ("global", "stay_on_while_plugged_in", "15"),
+    ("system", "screen_off_timeout", "1800000"),
+    ("secure", "screensaver_enabled", "0"),
+    ("secure", "screensaver_activate_on_dock", "0"),
+    ("secure", "screensaver_activate_on_sleep", "0"),
+)
+PIXEL_PREP_READBACK_SETTINGS = (
+    ("global", "stay_on_while_plugged_in"),
+    ("system", "screen_off_timeout"),
+    ("secure", "screensaver_enabled"),
+    ("secure", "screensaver_activate_on_dock"),
+    ("secure", "screensaver_activate_on_sleep"),
+)
+PIXEL_PREP_BEST_EFFORT_COMMANDS = (
+    ("shell", "input", "keyevent", "KEYCODE_WAKEUP"),
+    ("shell", "wm", "dismiss-keyguard"),
+)
 
 
 @dataclass(frozen=True)
@@ -881,6 +899,7 @@ def synthetic_target_for_dry_run(
         "ci",
         "debug",
         "ota-sideload",
+        "prep-settings",
         "restore-android",
         "root-flash",
         "root-check",
@@ -975,6 +994,32 @@ def pixel_root_id(serial: str) -> str | None:
 
 def pixel_root_test(serial: str, command: str) -> bool:
     return pixel_root_command(serial, command, capture_output=True).returncode == 0
+
+
+def pixel_adb_checked(
+    serial: str,
+    *argv: str,
+    text: bool = True,
+    capture_output: bool = True,
+) -> subprocess.CompletedProcess[Any]:
+    result = pixel_adb(
+        serial,
+        *argv,
+        text=text,
+        capture_output=capture_output,
+        check=False,
+    )
+    if result.returncode == 0:
+        return result
+    stderr = str(result.stderr or "").strip()
+    stdout = str(result.stdout or "").strip()
+    message = stderr or stdout or f"adb {' '.join(argv)} failed"
+    raise RuntimeError(f"shadowctl: {message}")
+
+
+def pixel_settings_get(serial: str, namespace: str, key: str) -> str:
+    result = pixel_adb_checked(serial, "shell", "settings", "get", namespace, key)
+    return str(result.stdout).replace("\r", "").strip()
 
 
 def pixel_control_request(serial: str, command: str) -> subprocess.CompletedProcess[str]:
@@ -1649,6 +1694,33 @@ def cmd_restore_android(args: argparse.Namespace) -> int:
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 
+def cmd_prep_settings(args: argparse.Namespace) -> int:
+    serial = args.target_ref.serial or args.target_ref.id
+    prep_commands = [
+        ["adb", "-s", serial, "shell", "settings", "put", namespace, key, value]
+        for namespace, key, value in PIXEL_PREP_SETTINGS
+    ]
+    prep_commands.append(["adb", "-s", serial, "shell", "locksettings", "set-disabled", "true"])
+    prep_commands.extend(
+        [["adb", "-s", serial, *command_parts] for command_parts in PIXEL_PREP_BEST_EFFORT_COMMANDS]
+    )
+
+    if args.dry_run:
+        print("\n".join(f"command={shlex.join(command)}" for command in prep_commands))
+        return 0
+
+    for namespace, key, value in PIXEL_PREP_SETTINGS:
+        pixel_adb_checked(serial, "shell", "settings", "put", namespace, key, value)
+    pixel_adb_checked(serial, "shell", "locksettings", "set-disabled", "true")
+    for command_parts in PIXEL_PREP_BEST_EFFORT_COMMANDS:
+        pixel_adb(serial, *command_parts, capture_output=True, check=False)
+
+    print(f"Pixel prep settings applied on {serial}")
+    for namespace, key in PIXEL_PREP_READBACK_SETTINGS:
+        print(f"{key}={pixel_settings_get(serial, namespace, key)}")
+    return 0
+
+
 def add_command(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
     name: str,
@@ -1739,6 +1811,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  sc -t vm status\n"
             "  sc -t vm open timeline\n"
             "  sc -t pixel open camera\n"
+            "  sc -t pixel prep-settings\n"
             "  sc -t pixel ci camera\n"
             "  sc -t pixel debug latency\n"
             "  sc -t pixel debug scroll-latency"
@@ -2159,6 +2232,16 @@ def build_parser() -> argparse.ArgumentParser:
         parents=(target_parser,),
     )
     restore_android.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
+
+    prep_settings = add_command(
+        subparsers,
+        "prep-settings",
+        "Apply non-root convenience settings to a dedicated Pixel test device.",
+        cmd_prep_settings,
+        supported_target_kinds=("pixel",),
+        parents=(target_parser,),
+    )
+    prep_settings.add_argument("--dry-run", action="store_true", help="Print the adb commands without running them.")
 
     return parser
 

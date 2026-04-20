@@ -93,11 +93,14 @@ boot_image_loop: maybe
 Run from host:
 
 ```sh
-PIXEL_SERIAL=<serial> just pixel-prep-settings
+sc -t <serial> prep-settings
 ```
 
 This disables screen lock, screen saver, sets a 30-minute screen timeout, keeps
 the display awake while plugged in, and dismisses the keyguard.
+
+`just pixel-prep-settings` remains as a convenience wrapper around the same
+`shadowctl` command.
 
 ## 5. Smoke Test
 
