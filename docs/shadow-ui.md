@@ -532,6 +532,8 @@ The v1 public UI surface should be intentionally small but serious enough to bui
 - async image/media placeholders
 - loading/empty/error states
 
+Current implementation note: the first Rust-side compose seam now exists in `shadow_sdk::ui` as a multiline editor wrapper, bottom-sheet presentation helper, and explicit action-button state helper. It is enough to build a truthful draft-first reply flow in the Rust timeline app, but it is not yet the full signer/publish product surface.
+
 ### Nice-to-have but not mandatory in the first drop
 
 - rich animation choreography

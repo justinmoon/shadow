@@ -15,10 +15,11 @@ use shadow_sdk::{
         NostrReplaceableQuery, NostrSyncReceipt, NostrSyncRequest, NOSTR_SERVICE_SOCKET_ENV,
     },
     ui::{
-        self, body_text, caption_text, column, eyebrow_text, headline_text, maybe, panel,
-        primary_button, prose_text, row, screen, secondary_button, selectable_card, status_chip,
-        text_field, top_bar, top_bar_with_back, with_blocking_task, AsUnit, FlexExt,
-        MainAxisAlignment, Theme, Tone, WidgetView,
+        self, body_text, caption_text, column, eyebrow_text, headline_text, maybe,
+        multiline_editor, panel, primary_button, primary_button_state, prose_text, row, screen,
+        secondary_button, secondary_button_state, selectable_card, status_chip, text_field,
+        top_bar, top_bar_with_back, with_blocking_task, with_sheet, ActionButtonState, AsUnit,
+        FlexExt, MainAxisAlignment, Theme, Tone, WidgetView,
     },
 };
 
@@ -178,6 +179,12 @@ struct ThreadContext {
 }
 
 #[derive(Clone, Debug)]
+struct ReplyDraft {
+    note_id: String,
+    content: String,
+}
+
+#[derive(Clone, Debug)]
 struct TimelineApp {
     account: Option<ActiveAccount>,
     config: TimelineConfig,
@@ -190,6 +197,7 @@ struct TimelineApp {
     pending_refresh: Option<PendingRefresh>,
     pending_thread_sync: Option<PendingThreadSync>,
     profiles: BTreeMap<String, ProfileSummary>,
+    reply_draft: Option<ReplyDraft>,
     route_stack: Vec<Route>,
     status: TimelineStatus,
     next_refresh_token: u64,
@@ -261,6 +269,7 @@ impl TimelineApp {
             pending_refresh: None,
             pending_thread_sync: None,
             profiles: BTreeMap::new(),
+            reply_draft: None,
             route_stack,
             status,
             next_refresh_token: 1,
@@ -374,6 +383,36 @@ impl TimelineApp {
             tone: Tone::Accent,
             message: String::from("Copying the active npub to the clipboard..."),
         };
+    }
+
+    fn open_reply_composer(&mut self, note_id: String) {
+        let Some(note) = self.cached_note_by_id(&note_id) else {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("That note is no longer available for drafting a reply."),
+            };
+            return;
+        };
+        self.reply_draft = Some(ReplyDraft {
+            note_id: note.id,
+            content: String::new(),
+        });
+        self.status = TimelineStatus {
+            tone: Tone::Neutral,
+            message: String::from(
+                "Compose the reply draft here. Publish will use the OS signer once that seam lands.",
+            ),
+        };
+    }
+
+    fn close_reply_composer(&mut self) {
+        self.reply_draft = None;
+    }
+
+    fn set_reply_draft_content(&mut self, value: String) {
+        if let Some(draft) = self.reply_draft.as_mut() {
+            draft.content = value;
+        }
     }
 
     fn next_token(&mut self) -> u64 {
@@ -536,10 +575,12 @@ impl TimelineApp {
         if self.route_stack.last() == Some(&route) {
             return;
         }
+        self.reply_draft = None;
         self.route_stack.push(route);
     }
 
     fn pop_route(&mut self) {
+        self.reply_draft = None;
         if self.route_stack.len() > 1 {
             self.route_stack.pop();
         }
@@ -578,6 +619,14 @@ impl TimelineApp {
 
         let route = self.current_route();
         self.prepare_route(&route);
+        if self.reply_draft.as_ref().is_some_and(|draft| match route {
+            Route::Note { ref id } => {
+                draft.note_id != *id || self.cached_note_by_id(&draft.note_id).is_none()
+            }
+            _ => true,
+        }) {
+            self.reply_draft = None;
+        }
     }
 
     fn prepare_route(&mut self, route: &Route) {
@@ -645,6 +694,13 @@ impl TimelineApp {
     fn profile_summary(&self, pubkey: &str) -> ProfileSummary {
         self.profiles.get(pubkey).cloned().unwrap_or_default()
     }
+
+    fn reply_draft_for(&self, note_id: &str) -> Option<ReplyDraft> {
+        self.reply_draft
+            .as_ref()
+            .filter(|draft| draft.note_id == note_id)
+            .cloned()
+    }
 }
 
 fn main() -> Result<(), ui::EventLoopError> {
@@ -705,6 +761,7 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
                 note,
                 profile,
                 thread,
+                app.reply_draft_for(&id),
                 app.status.clone(),
                 socket_available(),
                 thread_sync_pending,
@@ -977,6 +1034,7 @@ fn note_screen(
     note: Option<NostrEvent>,
     profile: ProfileSummary,
     thread: ThreadContext,
+    reply_draft: Option<ReplyDraft>,
     status: TimelineStatus,
     thread_sync_available: bool,
     thread_sync_pending: bool,
@@ -985,9 +1043,14 @@ fn note_screen(
         Some(note) => {
             let note_id = note.id.clone();
             let pubkey = note.pubkey.clone();
+            let reply_note_id = note.id.clone();
             let parent = thread.parent.clone();
             let replies = thread.replies.clone();
-            column((
+            let composer = reply_draft
+                .as_ref()
+                .map(|draft| reply_sheet(theme, &note, draft.clone()));
+            with_sheet(
+                column((
                 top_bar_with_back(
                     theme,
                     "Shadow Nostr",
@@ -1080,6 +1143,22 @@ fn note_screen(
                             }),
                         ))
                         .gap(8.0.px()),
+                        secondary_button_state(
+                            if reply_draft.is_some() {
+                                "Reply draft open"
+                            } else {
+                                "Reply"
+                            },
+                            theme,
+                            if reply_draft.is_some() {
+                                ActionButtonState::Disabled
+                            } else {
+                                ActionButtonState::Enabled
+                            },
+                            move |app: &mut TimelineApp| {
+                                app.open_reply_composer(reply_note_id.clone());
+                            },
+                        ),
                         secondary_button("Open profile", theme, move |app: &mut TimelineApp| {
                             app.open_profile(pubkey.clone());
                         }),
@@ -1087,9 +1166,11 @@ fn note_screen(
                     .gap(10.0.px()),
                 ),
                 feed_section(theme, "Replies", "No cached direct replies yet.", replies),
-            ))
-            .gap(12.0.px())
-            .boxed()
+                ))
+                .gap(12.0.px()),
+                theme,
+                composer.map(|view| view.boxed()),
+            )
         }
         None => column((
             top_bar_with_back(
@@ -1116,6 +1197,48 @@ fn note_screen(
     };
 
     body
+}
+
+fn reply_sheet(theme: Theme, note: &NostrEvent, draft: ReplyDraft) -> impl WidgetView<TimelineApp> {
+    let note_id = draft.note_id.clone();
+    let note_preview = note.content.lines().next().unwrap_or("").trim();
+    let note_preview = if note_preview.is_empty() {
+        String::from("Write the first reply to this note.")
+    } else {
+        note_preview.to_owned()
+    };
+
+    column((
+        eyebrow_text("Reply draft", theme),
+        headline_text("Compose reply", theme),
+        caption_text(
+            format!("Replying to {}  •  {}", short_id(&note.pubkey), short_id(&note_id)),
+            theme,
+        ),
+        body_text(note_preview, theme),
+        multiline_editor(
+            draft.content,
+            "Write a reply for the shared Nostr signer to publish later.",
+            148.0,
+            theme,
+            |app: &mut TimelineApp, value| {
+                app.set_reply_draft_content(value);
+            },
+        ),
+        row((
+            secondary_button("Close", theme, |app: &mut TimelineApp| {
+                app.close_reply_composer();
+            }),
+            primary_button_state("Post reply", theme, ActionButtonState::Disabled, |_| {}),
+        ))
+        .gap(10.0.px())
+        .main_axis_alignment(MainAxisAlignment::Start),
+        caption_text(
+            "This slice stops at drafting. The OS-owned signer and publish approval flow land next.",
+            theme,
+        ),
+    ))
+    .gap(10.0.px())
 }
 
 fn profile_screen(

@@ -150,3 +150,11 @@ Do not hard-code event kinds into top-level SDK function names. The core API sho
 - The next Nostr product blocker is now clear:
   - the shared cache now stores reply/root relationships, exact references, and cache-side reply/reference queries
   - the next deeper app seam is the first real write path: a reply composer that forces multiline editing, sheet/dialog presentation, and a less ad hoc async/navigation model in `shadow_sdk::ui`
+- The first framework-first compose seam now exists:
+  - `shadow_sdk::ui` has a reusable multiline editor wrapper, bottom-sheet presentation helper, and explicit action-button state helper
+  - the Rust timeline note screen now opens a reply draft sheet over the selected note instead of pushing compose concerns into ad hoc route hacks
+  - this slice is intentionally draft-only; it does not publish and it does not pretend the signer/approval flow exists yet
+- The next deeper seam after this UI slice should be shared TS/Rust Nostr contract parity:
+  - move the stable read/account nouns behind one explicit `shadow_sdk::services::nostr::types` surface
+  - mirror those exact shapes into the TypeScript SDK so TS apps stop inventing local aliases
+  - only then add signer approval and reply publication on top of the stabilized contract

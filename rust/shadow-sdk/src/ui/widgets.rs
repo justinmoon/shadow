@@ -2,14 +2,16 @@ use std::fmt::Debug;
 
 use xilem::core::fork;
 use xilem::masonry::properties::types::AsUnit;
+use xilem::masonry::properties::types::CrossAxisAlignment;
+use xilem::masonry::properties::types::UnitPoint;
 use xilem::masonry::properties::Padding;
 use xilem::style::Style as _;
 use xilem::tokio;
 use xilem::view::{
-    button, flex_col, flex_row, label, portal, prose, sized_box, task_raw, text_input, Flex,
-    FlexExt, FlexSequence,
+    button, flex_col, flex_row, label, portal, prose, sized_box, task_raw, text_input, zstack,
+    Flex, FlexExt, FlexSequence, FlexSpacer, ZStackExt,
 };
-use xilem::{AnyWidgetView, Color, FontWeight, WidgetView};
+use xilem::{AnyWidgetView, Color, FontWeight, InsertNewline, WidgetView};
 
 use crate::app::AppWindowMetrics;
 
@@ -21,6 +23,13 @@ pub enum Tone {
     Accent,
     Success,
     Danger,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionButtonState {
+    Enabled,
+    Disabled,
+    Pending,
 }
 
 pub fn column<State, Action, Seq>(children: Seq) -> Flex<Seq, State, Action>
@@ -168,14 +177,36 @@ pub fn primary_button<State: 'static>(
     theme: Theme,
     on_press: impl Fn(&mut State) + Send + Sync + 'static,
 ) -> impl WidgetView<State> {
+    primary_button_state(label_text, theme, ActionButtonState::Enabled, on_press)
+}
+
+pub fn primary_button_state<State: 'static>(
+    label_text: impl Into<String>,
+    theme: Theme,
+    state: ActionButtonState,
+    on_press: impl Fn(&mut State) + Send + Sync + 'static,
+) -> impl WidgetView<State> {
+    let disabled = state != ActionButtonState::Enabled;
+    let foreground = if disabled {
+        theme.text_muted
+    } else {
+        theme.background
+    };
+    let background = if disabled {
+        theme.surface_raised
+    } else {
+        theme.accent
+    };
+
     button(
         label(label_text.into())
             .text_size(14.0)
             .weight(FontWeight::SEMI_BOLD)
-            .color(theme.background),
+            .color(foreground),
         on_press,
     )
-    .background_color(theme.accent)
+    .disabled(disabled)
+    .background_color(background)
     .padding(Padding::horizontal(14.0))
     .corner_radius(6.0)
 }
@@ -185,15 +216,42 @@ pub fn secondary_button<State: 'static>(
     theme: Theme,
     on_press: impl Fn(&mut State) + Send + Sync + 'static,
 ) -> impl WidgetView<State> {
+    secondary_button_state(label_text, theme, ActionButtonState::Enabled, on_press)
+}
+
+pub fn secondary_button_state<State: 'static>(
+    label_text: impl Into<String>,
+    theme: Theme,
+    state: ActionButtonState,
+    on_press: impl Fn(&mut State) + Send + Sync + 'static,
+) -> impl WidgetView<State> {
+    let disabled = state != ActionButtonState::Enabled;
+    let foreground = if disabled {
+        theme.text_muted
+    } else {
+        theme.text_primary
+    };
+    let background = if disabled {
+        theme.surface
+    } else {
+        theme.surface_raised
+    };
+    let border = if disabled {
+        theme.surface_raised
+    } else {
+        theme.border
+    };
+
     button(
         label(label_text.into())
             .text_size(14.0)
             .weight(FontWeight::SEMI_BOLD)
-            .color(theme.text_primary),
+            .color(foreground),
         on_press,
     )
-    .background_color(theme.surface_raised)
-    .border(theme.border, 1.0)
+    .disabled(disabled)
+    .background_color(background)
+    .border(border, 1.0)
     .padding(Padding::horizontal(14.0))
     .corner_radius(6.0)
 }
@@ -233,6 +291,28 @@ pub fn text_field<State: 'static>(
     .corner_radius(6.0)
 }
 
+pub fn multiline_editor<State: 'static>(
+    value: impl Into<String>,
+    placeholder: impl Into<String>,
+    min_height: f64,
+    theme: Theme,
+    on_change: impl Fn(&mut State, String) + Send + Sync + 'static,
+) -> impl WidgetView<State> {
+    sized_box(
+        text_input(value.into(), on_change)
+            .insert_newline(InsertNewline::OnEnter)
+            .clip(false)
+            .placeholder(placeholder.into())
+            .text_color(theme.text_primary)
+            .placeholder_color(theme.text_muted),
+    )
+    .height(min_height.px())
+    .background_color(theme.surface_raised)
+    .border(theme.border, 1.0)
+    .padding(12.0)
+    .corner_radius(6.0)
+}
+
 pub fn selectable_card<State: 'static>(
     theme: Theme,
     is_selected: bool,
@@ -255,6 +335,43 @@ pub fn selectable_card<State: 'static>(
         .border(border, 1.0)
         .padding(14.0)
         .corner_radius(6.0)
+}
+
+pub fn sheet<State: 'static, Action: 'static>(
+    theme: Theme,
+    body: impl WidgetView<State, Action>,
+) -> impl WidgetView<State, Action> {
+    sized_box(body)
+        .padding(18.0)
+        .background_color(theme.surface_raised)
+        .border(theme.border, 1.0)
+        .corner_radius(14.0)
+}
+
+pub fn with_sheet<State: 'static, Action: 'static>(
+    body: impl WidgetView<State, Action>,
+    theme: Theme,
+    sheet_content: Option<Box<AnyWidgetView<State, Action>>>,
+) -> Box<AnyWidgetView<State, Action>> {
+    match sheet_content {
+        Some(sheet_content) => zstack((
+            body.boxed(),
+            sized_box(
+                column((
+                    FlexSpacer::Flex(1.0),
+                    sized_box(sheet(theme, sheet_content))
+                        .padding(Padding::horizontal(6.0))
+                        .padding(Padding::bottom(6.0)),
+                ))
+                .cross_axis_alignment(CrossAxisAlignment::Fill),
+            )
+            .expand()
+            .background_color(theme.background.multiply_alpha(0.78))
+            .alignment(UnitPoint::BOTTOM),
+        ))
+        .boxed(),
+        None => body.boxed(),
+    }
 }
 
 pub fn with_blocking_task<State, Job, Output>(
