@@ -127,6 +127,8 @@
       ];
       shadowPixelBootShellCommonPrefixes = [
         "scripts/lib/pixel_common.sh"
+        "scripts/lib/pixel_root_boot_common.sh"
+        "scripts/lib/pixel_runtime_session_common.sh"
         "scripts/lib/shadow_common.sh"
       ];
       shadowPixelBootBootimgCommonPrefixes = shadowPixelBootShellCommonPrefixes ++ [
@@ -354,6 +356,7 @@
           "rust/shadow-sdk"
           "rust/shadow-runtime-protocol"
           "rust/vendor/temporal_rs"
+          "rust/vendor/xilem"
         ]
       );
       shadowUiFmtSrc = repoSourceFromPrefixes [
@@ -366,6 +369,7 @@
         "rust/shadow-system"
         "rust/shadow-runtime-protocol"
         "rust/vendor/temporal_rs"
+        "rust/vendor/xilem"
       ];
       shadowVmSmokeControllerPrefixes = [
         "scripts/ci/required_vm_smoke.sh"

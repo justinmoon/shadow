@@ -193,8 +193,12 @@ impl AppLifecycleState {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AppPlatformRequest {
-    Lifecycle { state: AppLifecycleState },
-    Media { action: RuntimeAudioControlAction },
+    Lifecycle {
+        state: AppLifecycleState,
+    },
+    Media {
+        action: RuntimeAudioControlAction,
+    },
     Automation {
         action: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

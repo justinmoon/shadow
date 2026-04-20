@@ -23,9 +23,9 @@ use shadow_sdk::{
     ui::{
         self, body_text, caption_text, column, eyebrow_text, fork, headline_text, maybe,
         multiline_editor, panel, primary_button, primary_button_state, prose_text, row, screen,
-        secondary_button, secondary_button_state, selectable_card, status_chip, text_field,
-        top_bar, top_bar_with_back, with_blocking_task, with_sheet, ActionButtonState, AsUnit,
-        tokio, worker_raw, FlexExt, MainAxisAlignment, MessageProxy, Theme, Tone, WidgetView,
+        secondary_button, secondary_button_state, selectable_card, status_chip, text_field, tokio,
+        top_bar, top_bar_with_back, with_blocking_task, with_sheet, worker_raw, ActionButtonState,
+        AsUnit, FlexExt, MainAxisAlignment, MessageProxy, Theme, Tone, WidgetView,
     },
 };
 
@@ -1723,10 +1723,7 @@ fn socket_available() -> bool {
         .is_some_and(|value| !value.is_empty())
 }
 
-fn run_platform_listener(
-    socket_path: PathBuf,
-    proxy: MessageProxy<PlatformMessage>,
-) {
+fn run_platform_listener(socket_path: PathBuf, proxy: MessageProxy<PlatformMessage>) {
     let _ = std::fs::remove_file(&socket_path);
     let listener = match UnixListener::bind(&socket_path) {
         Ok(listener) => listener,

@@ -382,7 +382,9 @@ impl ShadowGuestCompositor {
                 Ok("ok\n".to_string())
             }
             ControlRequest::Switcher => Ok("ok\n".to_string()),
-            ControlRequest::Prompt { action_id } => self.resolve_system_prompt_via_control(action_id),
+            ControlRequest::Prompt { action_id } => {
+                self.resolve_system_prompt_via_control(action_id)
+            }
             ControlRequest::Media { action } => Ok(self.handle_control_media(action)),
             ControlRequest::Snapshot { path } => self.write_frame_snapshot(path),
             ControlRequest::State => Ok(self.control_state_response()),

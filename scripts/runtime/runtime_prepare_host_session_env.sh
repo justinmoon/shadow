@@ -16,6 +16,8 @@ artifact_root=""
 artifact_guest_root=""
 audio_backend=""
 state_dir_override=""
+session_config_out=""
+startup_app_id=""
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -64,6 +66,14 @@ parse_args() {
         state_dir_override="${2:-}"
         shift 2
         ;;
+      --session-config-out)
+        session_config_out="${2:-}"
+        shift 2
+        ;;
+      --startup-app-id)
+        startup_app_id="${2:-}"
+        shift 2
+        ;;
       *)
         echo "runtime_prepare_host_session_env.sh: unsupported argument $1" >&2
         exit 1
@@ -86,6 +96,10 @@ if [[ -n "$bundle_rewrite_from" || -n "$bundle_rewrite_to" ]]; then
     echo "runtime_prepare_host_session_env.sh: --bundle-rewrite-from and --bundle-rewrite-to must be provided together" >&2
     exit 1
   fi
+fi
+if [[ -n "$startup_app_id" && -z "$session_config_out" ]]; then
+  echo "runtime_prepare_host_session_env.sh: --startup-app-id requires --session-config-out" >&2
+  exit 1
 fi
 
 cd "$runtime_repo_root"
@@ -121,6 +135,12 @@ if [[ -n "$audio_backend" ]]; then
 fi
 if [[ -n "$state_dir_override" ]]; then
   builder_args+=(--state-dir "$state_dir_override")
+fi
+if [[ -n "$session_config_out" ]]; then
+  builder_args+=(--write-session-config "$session_config_out")
+fi
+if [[ -n "$startup_app_id" ]]; then
+  builder_args+=(--startup-app-id "$startup_app_id")
 fi
 "$SCRIPT_DIR/runtime_build_artifacts.sh" "${builder_args[@]}" >/dev/null
 

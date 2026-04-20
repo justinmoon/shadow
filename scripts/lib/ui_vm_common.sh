@@ -20,6 +20,10 @@ ui_vm_runtime_env_path() {
   printf '%s/runtime-system-session-env.sh\n' "$(ui_vm_runtime_artifact_dir)"
 }
 
+ui_vm_runtime_config_path() {
+  printf '%s/session-config.json\n' "$(ui_vm_runtime_artifact_dir)"
+}
+
 ui_vm_runtime_guest_dir() {
   printf '/opt/shadow-runtime\n'
 }

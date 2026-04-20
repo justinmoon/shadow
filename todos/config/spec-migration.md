@@ -1,0 +1,154 @@
+# Config Migration
+
+Status: in progress
+
+This document stages the move from the current env-heavy system to the target config model.
+
+## Phase 0: Inventory And Freeze
+
+Goals:
+
+- finish the taxonomy
+- stop digging the hole deeper
+
+Deliverables:
+
+- one documented policy for new config fields
+- one inventory of env families and their intended classification
+- no new supported-surface config added as free-form shell text blobs
+
+Exit criteria:
+
+- the supported VM and Pixel session paths have an agreed target schema and owner map
+
+## Phase 1: Canonical Session Config Generation
+
+Goals:
+
+- generate one canonical target/session config artifact for VM
+- reuse the same generation model for Pixel
+
+Deliverables:
+
+- session config schema and validator
+- config generation in host prep / `shadowctl`
+- artifact manifest and session config clearly separated by purpose
+
+Exit criteria:
+
+- VM launch can be explained in terms of one generated config artifact plus a small env projection
+
+Current checkpoint:
+
+- VM host prep now generates `session-config.json` next to `artifact-manifest.json`.
+- The generated config already carries startup app selection, runtime bundle mapping, service paths, and system binary wiring for the supported VM lane.
+
+## Phase 2: VM Consumption Cleanup
+
+Goals:
+
+- stop reassembling VM session state through multiple export files
+
+Deliverables:
+
+- `shadow-compositor` reads typed launch/session config
+- VM guest/session startup uses generated config instead of shell-derived duplication
+- launcher-managed app/window fields come from one canonical source
+
+Exit criteria:
+
+- VM no longer depends on duplicated launch-time env assembly as the primary model
+
+Current checkpoint:
+
+- The VM guest now validates and consumes `session-config.json` as the primary startup source.
+- The legacy VM env export file is still staged, but only as a compatibility/debug overlay while compositor/runtime internals are still env-based.
+
+## Phase 3: Pixel Supported-Surface Cleanup
+
+Goals:
+
+- remove shell text as the structured transport for guest startup
+
+Current pain point:
+
+- `pixel_shell_drm.sh` and `pixel_runtime_app_drm.sh` build multiline env payloads
+- `pixel_guest_ui_drm.sh` mutates them further
+- `shadow-session` and `shadow-compositor-guest` reconstruct typed state only after the string transport
+
+Deliverables:
+
+- generated Pixel session config artifact
+- `shadow-session` loads config directly
+- `shadow-compositor-guest` loads typed guest startup config from that artifact
+- `PIXEL_GUEST_CLIENT_ENV` / `PIXEL_GUEST_SESSION_ENV` reduced or removed from the supported path
+
+Exit criteria:
+
+- Pixel shell and runtime-app launch no longer require multiline env blobs to cross layers
+
+## Phase 4: Service Config Consolidation
+
+Goals:
+
+- make service config an explicit sub-tree of session config
+
+Deliverables:
+
+- camera config projection
+- nostr config projection
+- cashu config projection
+- audio config projection
+- migration shims for current env readers where needed
+
+Exit criteria:
+
+- service paths and policies are visible in one config artifact instead of spread across independent env lookups
+
+## Phase 5: Namespace And Compatibility Cleanup
+
+Goals:
+
+- collapse legacy duplication carefully
+
+Deliverables:
+
+- no new canonical `SHADOW_BLITZ_*` fields
+- staged removal schedule for compatibility reads
+- one canonical app/window namespace
+
+Exit criteria:
+
+- supported app/window/session fields exist in one namespace with compatibility only where still justified
+
+## Phase 6: Long-Tail `PIXEL_*` Rationalization
+
+Goals:
+
+- reduce uncontrolled growth in Pixel/private/debug config
+
+Deliverables:
+
+- supported Pixel operator inputs separated from private boot/debug/test inputs
+- `shadowctl` owns more operator-grade config explicitly
+- `scripts/lib/pixel_common.sh` stops being the default place new config grows
+
+Exit criteria:
+
+- `PIXEL_*` still exists, but it is clearly segmented into supported operator config and private/debug/test config
+
+## Non-Blocking Long Tail
+
+These should follow the supported-surface cleanup, not block it:
+
+- boot-lab `PIXEL_BOOT_*` normalization
+- CI-only timing knobs
+- test-only mock env cleanup
+- Cuttlefish legacy cleanup
+
+## Migration Rules
+
+- Keep schema versioning from the first generated config artifact.
+- Prefer additive compatibility shims first, then removal after the supported path is green.
+- Do not require a repo-wide big bang.
+- Every migration seam should leave the current supported VM and Pixel lanes runnable.

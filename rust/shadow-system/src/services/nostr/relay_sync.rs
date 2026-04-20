@@ -205,7 +205,10 @@ pub(super) async fn connected_requested_relays(
     connected
 }
 
-pub(super) async fn requested_relay_statuses(client: &Client, relay_urls: &[String]) -> Vec<String> {
+pub(super) async fn requested_relay_statuses(
+    client: &Client,
+    relay_urls: &[String],
+) -> Vec<String> {
     let relays = client.relays().await;
     let mut statuses = relays
         .into_iter()

@@ -10,6 +10,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNNER_LINK="$REPO_ROOT/.shadow-vm/ui-vm-runner"
 SOCKET_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-vm.sock"
 RUNTIME_ARTIFACT_DIR="$(ui_vm_runtime_artifact_dir)"
+RUNTIME_CONFIG_PATH="$(ui_vm_runtime_config_path)"
 RUNTIME_ENV_PATH="$(ui_vm_runtime_env_path)"
 RUNTIME_GUEST_DIR="$(ui_vm_runtime_guest_dir)"
 # shellcheck source=./session_apps.sh
@@ -43,6 +44,7 @@ parse_args "$@"
 cd "$REPO_ROOT"
 mkdir -p .shadow-vm "$RUNTIME_ARTIFACT_DIR"
 runtime_env_tmp=""
+runtime_config_tmp=""
 ui_vm_state_dir="/var/lib/shadow-ui"
 ui_vm_ssh_port_value="${SHADOW_UI_VM_SSH_PORT:-$(ui_vm_ssh_port)}"
 runtime_audio_backend="${SHADOW_RUNTIME_AUDIO_BACKEND:-}"
@@ -65,6 +67,9 @@ PY
 cleanup_runtime_env_tmp() {
   if [[ -n "${runtime_env_tmp:-}" ]]; then
     rm -f "$runtime_env_tmp"
+  fi
+  if [[ -n "${runtime_config_tmp:-}" ]]; then
+    rm -f "$runtime_config_tmp"
   fi
 }
 
@@ -131,6 +136,16 @@ fi
 
 rm -f .shadow-vm/nix-store-overlay.img
 runtime_env_tmp="$(mktemp "$RUNTIME_ARTIFACT_DIR/runtime-system-session-env.XXXXXX")"
+runtime_config_tmp="$(mktemp "$RUNTIME_ARTIFACT_DIR/session-config.XXXXXX")"
+startup_app_id=""
+if shadow_session_app_is_shell "$ui_vm_start_app_id"; then
+  startup_app_id="$(shadow_session_shell_app_id)"
+elif shadow_session_app_supports_auto_open "$ui_vm_start_app_id" "vm-shell"; then
+  startup_app_id="$ui_vm_start_app_id"
+else
+  echo "vm: unsupported --app $ui_vm_start_app_id; expected $(shadow_session_apps_usage "vm-shell")" >&2
+  exit 1
+fi
 SHADOW_PODCAST_PLAYER_ASSET_DIR="$podcast_fixture_dir" \
 SHADOW_PODCAST_PLAYER_EPISODE_IDS=00 \
 scripts/runtime/runtime_prepare_host_session_env.sh \
@@ -141,7 +156,9 @@ scripts/runtime/runtime_prepare_host_session_env.sh \
   --artifact-root "$RUNTIME_ARTIFACT_DIR" \
   --artifact-guest-root "$RUNTIME_GUEST_DIR" \
   --audio-backend "$runtime_audio_backend" \
-  --state-dir "$ui_vm_state_dir" >"$runtime_env_tmp"
+  --state-dir "$ui_vm_state_dir" \
+  --session-config-out "$runtime_config_tmp" \
+  --startup-app-id "$startup_app_id" >"$runtime_env_tmp"
 if [[ -n "$extra_env_path" ]]; then
   if [[ ! -f "$extra_env_path" ]]; then
     echo "vm: missing extra env file $extra_env_path" >&2
@@ -150,20 +167,12 @@ if [[ -n "$extra_env_path" ]]; then
   cat "$extra_env_path" >>"$runtime_env_tmp"
   ensure_trailing_newline "$runtime_env_tmp"
 fi
-if shadow_session_app_is_shell "$ui_vm_start_app_id"; then
-  :
-elif shadow_session_app_supports_auto_open "$ui_vm_start_app_id" "vm-shell"; then
-  {
-    printf 'export SHADOW_COMPOSITOR_AUTO_LAUNCH=1\n'
-    printf 'export SHADOW_COMPOSITOR_START_APP_ID=%q\n' "$ui_vm_start_app_id"
-  } >>"$runtime_env_tmp"
-else
-  echo "vm: unsupported --app $ui_vm_start_app_id; expected $(shadow_session_apps_usage "vm-shell")" >&2
-  exit 1
-fi
 mv "$runtime_env_tmp" "$RUNTIME_ENV_PATH"
 chmod 0644 "$RUNTIME_ENV_PATH"
 runtime_env_tmp=""
+mv "$runtime_config_tmp" "$RUNTIME_CONFIG_PATH"
+chmod 0644 "$RUNTIME_CONFIG_PATH"
+runtime_config_tmp=""
 
 [[ -d "$ui_vm_runner_package_path" ]] || {
   echo "vm: prepared runner package not found: $ui_vm_runner_package_path" >&2

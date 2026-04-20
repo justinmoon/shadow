@@ -160,12 +160,7 @@ pub fn app_platform_request_response(
     app_id: AppId,
     request: AppPlatformRequest,
 ) -> io::Result<String> {
-    app_platform_request_response_with_timeout(
-        runtime_dir,
-        app_id,
-        request,
-        Duration::from_secs(3),
-    )
+    app_platform_request_response_with_timeout(runtime_dir, app_id, request, Duration::from_secs(3))
 }
 
 #[cfg(unix)]

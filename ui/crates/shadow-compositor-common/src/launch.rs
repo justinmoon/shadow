@@ -215,7 +215,10 @@ mod tests {
         unsafe {
             std::env::set_var("SHADOW_TEST_APP_ENV", "override");
         }
-        assert_eq!(app_launch_env_value("SHADOW_TEST_APP_ENV", "default"), "override");
+        assert_eq!(
+            app_launch_env_value("SHADOW_TEST_APP_ENV", "default"),
+            "override"
+        );
         unsafe {
             std::env::remove_var("SHADOW_TEST_APP_ENV");
         }

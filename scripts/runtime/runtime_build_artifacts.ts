@@ -26,10 +26,12 @@ type CliOptions = {
   inputPath: string;
   manifestOut: string;
   profile: Profile;
+  startupAppId: string;
   systemBinaryPath: string;
   systemPackageAttr: string;
   stateDir: string;
   writeEnv: string;
+  writeSessionConfig: string;
 };
 
 type AppSpec = {
@@ -91,6 +93,41 @@ type ArtifactManifest = {
   stateDir: string;
 };
 
+type RuntimeSessionAppConfig = {
+  bundleEnv: string | null;
+  bundlePath: string;
+  config: unknown;
+};
+
+type SessionConfig = {
+  artifacts: {
+    guestRoot: string | null;
+    root: string | null;
+  };
+  generatedAt: string;
+  profile: Profile;
+  runtime: {
+    apps: Record<string, RuntimeSessionAppConfig>;
+    defaultAppId: string | null;
+    defaultBundlePath: string | null;
+  };
+  schemaVersion: 1;
+  services: {
+    audioBackend: string | null;
+    cashuDataDir: string;
+    nostrDbPath: string;
+    nostrServiceSocket: string;
+  };
+  startup: {
+    appId: string | null;
+  };
+  stateDir: string;
+  system: {
+    binaryPath: string | null;
+    packageAttr: string | null;
+  };
+};
+
 async function main() {
   const options = parseArgs(Deno.args);
   const cwd = Deno.cwd();
@@ -122,6 +159,9 @@ async function main() {
     schemaVersion: 1,
     stateDir: await resolveStateDir(options.stateDir),
   };
+  const sessionConfig = buildSessionConfig(manifest, {
+    startupAppId: options.startupAppId || null,
+  });
 
   const manifestJson = `${JSON.stringify(manifest, null, 2)}\n`;
   const manifestOut = options.manifestOut ||
@@ -133,13 +173,23 @@ async function main() {
     await Deno.writeTextFile(path.resolve(cwd, manifestOut), manifestJson);
   }
 
+  if (options.writeSessionConfig) {
+    await Deno.mkdir(path.dirname(path.resolve(cwd, options.writeSessionConfig)), {
+      recursive: true,
+    });
+    await Deno.writeTextFile(
+      path.resolve(cwd, options.writeSessionConfig),
+      `${JSON.stringify(sessionConfig, null, 2)}\n`,
+    );
+  }
+
   if (options.writeEnv) {
     await Deno.mkdir(path.dirname(path.resolve(cwd, options.writeEnv)), {
       recursive: true,
     });
     await Deno.writeTextFile(
       path.resolve(cwd, options.writeEnv),
-      buildEnvScript(manifest, {
+      buildEnvScript(sessionConfig, {
         from: options.bundleRewriteFrom,
         to: options.bundleRewriteTo,
       }),
@@ -518,50 +568,95 @@ async function resolveStateDir(override: string): Promise<string> {
   return path.join(xdg, "shadow-ui");
 }
 
-function buildEnvScript(
+function buildSessionConfig(
   manifest: ArtifactManifest,
+  options: { startupAppId: string | null },
+): SessionConfig {
+  const defaultApp = defaultRuntimeAppEntry(manifest.apps);
+  return {
+    artifacts: {
+      guestRoot: manifest.artifactGuestRoot,
+      root: manifest.artifactRoot,
+    },
+    generatedAt: manifest.generatedAt,
+    profile: manifest.profile,
+    runtime: {
+      apps: Object.fromEntries(
+        Object.entries(manifest.apps).map(([appId, app]) => [
+          appId,
+          {
+            bundleEnv: app.bundleEnv,
+            bundlePath: app.guestBundlePath,
+            config: app.runtimeAppConfig ?? null,
+          },
+        ]),
+      ),
+      defaultAppId: defaultApp?.[0] ?? null,
+      defaultBundlePath: defaultApp?.[1].guestBundlePath ?? null,
+    },
+    schemaVersion: 1,
+    services: {
+      audioBackend: manifest.audioBackend,
+      cashuDataDir: path.join(manifest.stateDir, "runtime-cashu"),
+      nostrDbPath: path.join(manifest.stateDir, "runtime-nostr.sqlite3"),
+      nostrServiceSocket: path.join(manifest.stateDir, "runtime-nostr.sock"),
+    },
+    startup: {
+      appId: options.startupAppId,
+    },
+    stateDir: manifest.stateDir,
+    system: {
+      binaryPath: manifest.systemBinaryPath,
+      packageAttr: manifest.systemPackageAttr,
+    },
+  };
+}
+
+function defaultRuntimeAppEntry(
+  apps: Record<string, BuiltApp>,
+): [string, BuiltApp] | null {
+  const entries = Object.entries(apps);
+  if (entries.length === 0) {
+    return null;
+  }
+  return entries.find(([appId]) => appId === "counter") ?? entries[0];
+}
+
+function buildEnvScript(
+  sessionConfig: SessionConfig,
   bundleRewrite: { from: string; to: string },
 ): string {
-  const apps = manifest.apps;
-  const defaultApp = apps.counter ?? Object.values(apps)[0];
   const exports: Record<string, string> = {
-    SHADOW_RUNTIME_CASHU_DATA_DIR: path.join(
-      manifest.stateDir,
-      "runtime-cashu",
-    ),
-    SHADOW_RUNTIME_NOSTR_DB_PATH: path.join(
-      manifest.stateDir,
-      "runtime-nostr.sqlite3",
-    ),
-    SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET: path.join(
-      manifest.stateDir,
-      "runtime-nostr.sock",
-    ),
+    SHADOW_RUNTIME_CASHU_DATA_DIR: sessionConfig.services.cashuDataDir,
+    SHADOW_RUNTIME_NOSTR_DB_PATH: sessionConfig.services.nostrDbPath,
+    SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET: sessionConfig.services.nostrServiceSocket,
   };
-  if (defaultApp) {
+  if (sessionConfig.runtime.defaultBundlePath) {
     exports.SHADOW_RUNTIME_APP_BUNDLE_PATH = rewriteBundlePath(
-      defaultApp.guestBundlePath,
+      sessionConfig.runtime.defaultBundlePath,
       bundleRewrite,
     );
   }
-  if (manifest.profile === "vm-shell" || manifest.profile === "pixel-shell") {
-    exports.SHADOW_SESSION_APP_PROFILE = manifest.profile;
+  if (
+    sessionConfig.profile === "vm-shell" || sessionConfig.profile === "pixel-shell"
+  ) {
+    exports.SHADOW_SESSION_APP_PROFILE = sessionConfig.profile;
   }
 
-  if (manifest.systemBinaryPath) {
-    exports.SHADOW_SYSTEM_BINARY_PATH = manifest.systemBinaryPath;
+  if (sessionConfig.system.binaryPath) {
+    exports.SHADOW_SYSTEM_BINARY_PATH = sessionConfig.system.binaryPath;
   }
-  for (const app of Object.values(apps)) {
+  for (const app of Object.values(sessionConfig.runtime.apps)) {
     if (!app.bundleEnv) {
       continue;
     }
     exports[app.bundleEnv] = rewriteBundlePath(
-      app.guestBundlePath,
+      app.bundlePath,
       bundleRewrite,
     );
   }
-  if (manifest.audioBackend) {
-    exports.SHADOW_RUNTIME_AUDIO_BACKEND = manifest.audioBackend;
+  if (sessionConfig.services.audioBackend) {
+    exports.SHADOW_RUNTIME_AUDIO_BACKEND = sessionConfig.services.audioBackend;
   }
 
   return Object.entries(exports)
@@ -671,10 +766,12 @@ function parseArgs(args: string[]): CliOptions {
     inputPath: Deno.env.get("SHADOW_RUNTIME_APP_INPUT_PATH") ?? "",
     manifestOut: "",
     profile: "single",
+    startupAppId: "",
     systemBinaryPath: "",
     systemPackageAttr: "",
     stateDir: "",
     writeEnv: "",
+    writeSessionConfig: "",
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -724,6 +821,10 @@ function parseArgs(args: string[]): CliOptions {
         options.writeEnv = requireValue(arg, args[index + 1]);
         index += 1;
         break;
+      case "--write-session-config":
+        options.writeSessionConfig = requireValue(arg, args[index + 1]);
+        index += 1;
+        break;
       case "--system-binary-path":
         options.systemBinaryPath = requireValue(arg, args[index + 1]);
         index += 1;
@@ -746,6 +847,10 @@ function parseArgs(args: string[]): CliOptions {
         break;
       case "--state-dir":
         options.stateDir = requireValue(arg, args[index + 1]);
+        index += 1;
+        break;
+      case "--startup-app-id":
+        options.startupAppId = requireValue(arg, args[index + 1]);
         index += 1;
         break;
       case "--include-podcast":
@@ -772,6 +877,9 @@ function parseArgs(args: string[]): CliOptions {
     throw new Error(
       "--bundle-rewrite-from and --bundle-rewrite-to must be paired",
     );
+  }
+  if (options.startupAppId && !options.writeSessionConfig) {
+    throw new Error("--startup-app-id requires --write-session-config");
   }
 
   return options;

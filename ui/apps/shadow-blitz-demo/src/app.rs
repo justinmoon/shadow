@@ -857,18 +857,18 @@ fn run_platform_control_thread(proxy: BlitzShellProxy, path: PathBuf) {
             continue;
         };
         let event = match &request {
-            AppPlatformRequest::Media { action } => (
-                Some(RuntimeEmbedderEvent::PlatformAudioControl {
+            AppPlatformRequest::Media { action } => {
+                (Some(RuntimeEmbedderEvent::PlatformAudioControl {
                     action: *action,
                     response: response.clone(),
-                })
-            ),
-            AppPlatformRequest::Lifecycle { state } => (
-                Some(RuntimeEmbedderEvent::PlatformLifecycleChange {
+                }))
+            }
+            AppPlatformRequest::Lifecycle { state } => {
+                (Some(RuntimeEmbedderEvent::PlatformLifecycleChange {
                     state: *state,
                     response: response.clone(),
-                })
-            ),
+                }))
+            }
             AppPlatformRequest::Automation { .. } => None,
         };
         let handled = if let Some(event) = event {
@@ -888,9 +888,9 @@ fn run_platform_control_thread(proxy: BlitzShellProxy, path: PathBuf) {
                 if handled { 1 } else { 0 },
                 state.as_str()
             ),
-            AppPlatformRequest::Automation { action, .. } => format!(
-                "ok\nhandled=0\nreason=unsupported-request\nrequest=automation:{action}\n"
-            ),
+            AppPlatformRequest::Automation { action, .. } => {
+                format!("ok\nhandled=0\nreason=unsupported-request\nrequest=automation:{action}\n")
+            }
         };
         let _ = std::io::Write::write_all(&mut stream, response_body.as_bytes());
     }

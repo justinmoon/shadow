@@ -86,6 +86,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
    The guest should stay runtime-only.
    The guest no longer mounts the repo. It mounts `/nix/store` plus a narrow `.shadow-vm/runtime-artifacts` share staged on the host.
    Runtime app bundles are built by the shared host-side artifact builder (`scripts/runtime_build_artifacts.sh`) and staged under that artifact share.
+   The staged VM runtime share now carries both `artifact-manifest.json` and `session-config.json`; the guest validates both and treats the typed session config as the primary startup source, with the legacy env export script retained only as a narrow overlay seam.
    The VM podcast sample defaults to a checked-in local fixture so the branch gate does not need a live RSS/media fetch just to open that app.
 2. `justfile` is the human entrypoint and should stay curated around orchestration shortcuts. `just` should show the small public API, not every historical probe script.
 3. `scripts/shadowctl` owns shared target/session/control behavior.
@@ -101,7 +102,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 - Keep `just` thin. If a capability is reused across targets, it belongs in `shadowctl`.
 - Delete or hide historical probe lanes instead of continuing to advertise them as normal operator commands.
 - Keep runtime app bundling as an explicit host-side artifact-builder seam. Nix owns stable deps and Linux binaries; Deno/npm app bundling remains dynamic because the same machinery is useful for runtime-created apps.
-- Replace ad hoc launch-time env assembly with a small typed config loaded once at startup.
+- Replace ad hoc launch-time env assembly with a small typed config loaded once at startup. The VM lane now does this through a generated `session-config.json`; rooted Pixel still needs the same cleanup.
 - Make app/runtime metadata single-source so staging, shell launch, and runtime host code stop carrying parallel tables.
 - Decompose `shadow-compositor-guest` only after shared helpers and typed startup config seams are in place.
 

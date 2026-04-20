@@ -32,7 +32,9 @@ use std::{
 use config::{
     DmabufFormatProfile, GuestClientConfig, GuestStartupConfig, StartupAction, TransportRequest,
 };
-use shadow_runtime_protocol::{SystemPromptRequest, SystemPromptResponse, SystemPromptSocketResponse};
+use shadow_runtime_protocol::{
+    SystemPromptRequest, SystemPromptResponse, SystemPromptSocketResponse,
+};
 use shadow_ui_core::{
     app::AppId,
     scene::{

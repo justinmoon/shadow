@@ -21,6 +21,7 @@ nixpkgs.lib.nixosSystem {
         sessionLog = "${logDir}/shadow-ui-session.log";
         sessionEnv = "${stateDir}/shadow-ui-session-env.sh";
         runtimeArtifactManifest = "${runtimeArtifactDir}/artifact-manifest.json";
+        runtimeSessionConfig = "${runtimeArtifactDir}/session-config.json";
         systemEnvScript = "${runtimeArtifactDir}/runtime-system-session-env.sh";
         guestSystemPkgs = with pkgs; [
           bash
@@ -91,25 +92,31 @@ nixpkgs.lib.nixosSystem {
             echo "runtime artifact dir=${runtimeArtifactDir}"
 
             echo "preparing runtime app session"
-            if [[ ! -f ${systemEnvScript} ]]; then
-              echo "shadow-ui-session: missing host-prepared runtime env ${systemEnvScript}" >&2
-              exit 1
-            fi
             if [[ ! -f ${runtimeArtifactManifest} ]]; then
               echo "shadow-ui-session: missing host-prepared runtime manifest ${runtimeArtifactManifest}" >&2
               exit 1
             fi
+            if [[ ! -f ${runtimeSessionConfig} ]]; then
+              echo "shadow-ui-session: missing host-prepared session config ${runtimeSessionConfig}" >&2
+              exit 1
+            fi
             RUNTIME_ARTIFACT_MANIFEST=${runtimeArtifactManifest} \
+            RUNTIME_SESSION_CONFIG=${runtimeSessionConfig} \
             RUNTIME_ARTIFACT_DIR=${runtimeArtifactDir} \
+            RUNTIME_STATE_DIR=${stateDir} \
             python3 - <<'PY'
 import json
 import os
 from pathlib import Path
 
 manifest_path = Path(os.environ["RUNTIME_ARTIFACT_MANIFEST"])
+config_path = Path(os.environ["RUNTIME_SESSION_CONFIG"])
 artifact_dir = Path(os.environ["RUNTIME_ARTIFACT_DIR"])
+state_dir = Path(os.environ["RUNTIME_STATE_DIR"])
 with manifest_path.open("r", encoding="utf-8") as handle:
     manifest = json.load(handle)
+with config_path.open("r", encoding="utf-8") as handle:
+    config = json.load(handle)
 
 if manifest.get("schemaVersion") != 1:
     raise SystemExit("shadow-ui-session: runtime manifest schemaVersion must be 1")
@@ -143,7 +150,112 @@ for app_id in sorted(apps):
             f"shadow-ui-session: app {app_id} bundle does not exist: {guest_bundle}",
         )
 
-print("runtime manifest validated")
+if config.get("schemaVersion") != 1:
+    raise SystemExit("shadow-ui-session: session config schemaVersion must be 1")
+if config.get("profile") != "vm-shell":
+    raise SystemExit(
+        f"shadow-ui-session: session config profile must be vm-shell, got {config.get('profile')!r}",
+    )
+if config.get("stateDir") != str(state_dir):
+    raise SystemExit(
+        f"shadow-ui-session: session config stateDir must be {state_dir!s}, got {config.get('stateDir')!r}",
+    )
+
+artifacts = config.get("artifacts")
+if not isinstance(artifacts, dict):
+    raise SystemExit("shadow-ui-session: session config artifacts must be an object")
+if artifacts.get("guestRoot") != str(artifact_dir):
+    raise SystemExit(
+        f"shadow-ui-session: session config guest root must be {artifact_dir!s}, got {artifacts.get('guestRoot')!r}",
+    )
+if artifacts.get("root") != manifest.get("artifactRoot"):
+    raise SystemExit(
+        "shadow-ui-session: session config artifact root does not match runtime manifest",
+    )
+
+system = config.get("system")
+if not isinstance(system, dict):
+    raise SystemExit("shadow-ui-session: session config system must be an object")
+if system.get("binaryPath") != manifest.get("systemBinaryPath"):
+    raise SystemExit(
+        "shadow-ui-session: session config system binary path does not match runtime manifest",
+    )
+if system.get("packageAttr") != manifest.get("systemPackageAttr"):
+    raise SystemExit(
+        "shadow-ui-session: session config system package attr does not match runtime manifest",
+    )
+
+startup = config.get("startup")
+if not isinstance(startup, dict):
+    raise SystemExit("shadow-ui-session: session config startup must be an object")
+startup_app_id = startup.get("appId")
+if startup_app_id is not None and (
+    not isinstance(startup_app_id, str) or not startup_app_id
+):
+    raise SystemExit("shadow-ui-session: session config startup.appId must be null or a non-empty string")
+
+services = config.get("services")
+if not isinstance(services, dict):
+    raise SystemExit("shadow-ui-session: session config services must be an object")
+expected_cashu_dir = str(state_dir / "runtime-cashu")
+expected_nostr_db_path = str(state_dir / "runtime-nostr.sqlite3")
+expected_nostr_socket = str(state_dir / "runtime-nostr.sock")
+if services.get("cashuDataDir") != expected_cashu_dir:
+    raise SystemExit(
+        "shadow-ui-session: session config cashu dir does not match expected VM state path",
+    )
+if services.get("nostrDbPath") != expected_nostr_db_path:
+    raise SystemExit(
+        "shadow-ui-session: session config nostr db path does not match expected VM state path",
+    )
+if services.get("nostrServiceSocket") != expected_nostr_socket:
+    raise SystemExit(
+        "shadow-ui-session: session config nostr socket does not match expected VM state path",
+    )
+
+runtime = config.get("runtime")
+if not isinstance(runtime, dict):
+    raise SystemExit("shadow-ui-session: session config runtime must be an object")
+runtime_apps = runtime.get("apps")
+if not isinstance(runtime_apps, dict):
+    raise SystemExit("shadow-ui-session: session config runtime.apps must be an object")
+if set(runtime_apps) != set(apps):
+    raise SystemExit("shadow-ui-session: session config runtime.apps set does not match runtime manifest")
+
+expected_default_app_id = "counter" if "counter" in apps else next(iter(apps), None)
+expected_default_bundle_path = (
+    apps[expected_default_app_id]["guestBundlePath"]
+    if expected_default_app_id is not None
+    else None
+)
+if runtime.get("defaultAppId") != expected_default_app_id:
+    raise SystemExit(
+        "shadow-ui-session: session config default runtime app does not match runtime manifest",
+    )
+if runtime.get("defaultBundlePath") != expected_default_bundle_path:
+    raise SystemExit(
+        "shadow-ui-session: session config default runtime bundle does not match runtime manifest",
+    )
+
+for app_id in sorted(apps):
+    runtime_app = runtime_apps.get(app_id)
+    if not isinstance(runtime_app, dict):
+        raise SystemExit(f"shadow-ui-session: session config runtime app {app_id} must be an object")
+    manifest_app = apps[app_id]
+    if runtime_app.get("bundleEnv") != manifest_app.get("bundleEnv"):
+        raise SystemExit(
+            f"shadow-ui-session: session config bundle env mismatch for app {app_id}",
+        )
+    if runtime_app.get("bundlePath") != manifest_app.get("guestBundlePath"):
+        raise SystemExit(
+            f"shadow-ui-session: session config bundle path mismatch for app {app_id}",
+        )
+    if runtime_app.get("config") != manifest_app.get("runtimeAppConfig"):
+        raise SystemExit(
+            f"shadow-ui-session: session config runtime config mismatch for app {app_id}",
+        )
+
+print("runtime manifest and session config validated")
 PY
             for binary in ${requiredSessionBinaryArgs}; do
               if [[ ! -x ${shadowUiVmSessionPackage}/bin/$binary ]]; then
@@ -152,20 +264,79 @@ PY
               fi
             done
             echo "session binaries validated"
+            runtime_config_env="$(mktemp ${stateDir}/runtime-config-env.XXXXXX)"
+            RUNTIME_SESSION_CONFIG=${runtimeSessionConfig} \
+            python3 - <<'PY' >"$runtime_config_env"
+import json
+import os
+import shlex
+from pathlib import Path
+
+config_path = Path(os.environ["RUNTIME_SESSION_CONFIG"])
+with config_path.open("r", encoding="utf-8") as handle:
+    config = json.load(handle)
+
+def emit(name: str, value: str) -> None:
+    print(f"export {name}={shlex.quote(value)}")
+
+emit("SHADOW_SESSION_APP_PROFILE", config["profile"])
+
+system = config["system"]
+binary_path = system.get("binaryPath")
+if isinstance(binary_path, str) and binary_path:
+    emit("SHADOW_SYSTEM_BINARY_PATH", binary_path)
+
+services = config["services"]
+emit("SHADOW_RUNTIME_CASHU_DATA_DIR", services["cashuDataDir"])
+emit("SHADOW_RUNTIME_NOSTR_DB_PATH", services["nostrDbPath"])
+emit("SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET", services["nostrServiceSocket"])
+audio_backend = services.get("audioBackend")
+if isinstance(audio_backend, str) and audio_backend:
+    emit("SHADOW_RUNTIME_AUDIO_BACKEND", audio_backend)
+
+runtime = config["runtime"]
+default_bundle_path = runtime.get("defaultBundlePath")
+if isinstance(default_bundle_path, str) and default_bundle_path:
+    emit("SHADOW_RUNTIME_APP_BUNDLE_PATH", default_bundle_path)
+for app_id in sorted(runtime["apps"]):
+    app = runtime["apps"][app_id]
+    bundle_env = app.get("bundleEnv")
+    bundle_path = app.get("bundlePath")
+    if isinstance(bundle_env, str) and bundle_env and isinstance(bundle_path, str) and bundle_path:
+        emit(bundle_env, bundle_path)
+
+startup = config["startup"]
+startup_app_id = startup.get("appId")
+if (
+    isinstance(startup_app_id, str)
+    and startup_app_id
+    and startup_app_id != "shell"
+):
+    emit("SHADOW_COMPOSITOR_AUTO_LAUNCH", "1")
+    emit("SHADOW_COMPOSITOR_START_APP_ID", startup_app_id)
+PY
             # shellcheck source=/dev/null
-            source ${systemEnvScript}
+            source "$runtime_config_env"
+            rm -f "$runtime_config_env"
+            echo "runtime config source=session-config"
+            if [[ -f ${systemEnvScript} ]]; then
+              # shellcheck source=/dev/null
+              source ${systemEnvScript}
+              echo "runtime env overlay=host-cache"
+            else
+              echo "runtime env overlay=none"
+            fi
             runtime_bundle_path="''${SHADOW_RUNTIME_APP_BUNDLE_PATH:-}"
             system_path="''${SHADOW_SYSTEM_BINARY_PATH:-}"
-            echo "runtime env source=host-cache"
-            export SHADOW_RUNTIME_CASHU_DATA_DIR=${stateDir}/runtime-cashu
-            export SHADOW_RUNTIME_NOSTR_DB_PATH=${stateDir}/runtime-nostr.sqlite3
-            export SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=${stateDir}/runtime-nostr.sock
+            startup_app="''${SHADOW_COMPOSITOR_START_APP_ID:-shell}"
             echo "runtime bundle=''${runtime_bundle_path:-unset}"
             echo "system binary=''${system_path:-unset}"
+            echo "startup app=$startup_app"
             echo "app launch mode=metadata"
             echo "runtime nostr db=$SHADOW_RUNTIME_NOSTR_DB_PATH"
             echo "runtime nostr socket=$SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET"
             echo "runtime cashu dir=$SHADOW_RUNTIME_CASHU_DATA_DIR"
+            echo "runtime audio backend=''${SHADOW_RUNTIME_AUDIO_BACKEND:-unset}"
 
             ${shadowUiVmSessionPackage}/bin/shadow-compositor &
             compositor_pid=$!
@@ -247,7 +418,12 @@ PY
               "export LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH\"" \
               "export LIBGL_DRIVERS_PATH=\"$LIBGL_DRIVERS_PATH\"" \
               "export XDG_RUNTIME_DIR=\"$XDG_RUNTIME_DIR\"" \
+              "export SHADOW_SESSION_APP_PROFILE=\"$SHADOW_SESSION_APP_PROFILE\"" \
               "export SHADOW_RUNTIME_APP_BUNDLE_PATH=\"$runtime_bundle_path\"" \
+              "export SHADOW_RUNTIME_CASHU_DATA_DIR=\"$SHADOW_RUNTIME_CASHU_DATA_DIR\"" \
+              "export SHADOW_RUNTIME_NOSTR_DB_PATH=\"$SHADOW_RUNTIME_NOSTR_DB_PATH\"" \
+              "export SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=\"$SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET\"" \
+              "export SHADOW_RUNTIME_AUDIO_BACKEND=\"''${SHADOW_RUNTIME_AUDIO_BACKEND:-}\"" \
               "export SHADOW_SYSTEM_BINARY_PATH=\"$system_path\"" \
               "export WAYLAND_DISPLAY=\"$nested_wayland\"" \
               "export SHADOW_COMPOSITOR_CONTROL=\"$control_socket\"" \

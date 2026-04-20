@@ -280,10 +280,11 @@ check_runtime_session_env_case() {
   local name="$1"
   local manifest_path="$2"
   local expected_apps_csv="$3"
-  local artifact_root env_output_path
+  local artifact_root env_output_path session_config_path
   artifact_root="$(mktemp -d "${TMPDIR:-/tmp}/app-metadata-runtime-artifacts.XXXXXX")"
   TMP_FILES+=("$artifact_root")
   env_output_path="$(mktemp_tracked)"
+  session_config_path="$artifact_root/session-config.json"
 
   (
     cd "$REPO_ROOT"
@@ -292,24 +293,30 @@ check_runtime_session_env_case() {
         --system-binary-path /tmp/shadow-system \
         --artifact-root "$artifact_root" \
         --artifact-guest-root /opt/shadow-runtime \
+        --session-config-out "$session_config_path" \
         >"$env_output_path"
   )
 
-  python3 - "$artifact_root" "$env_output_path" "$expected_apps_csv" <<'PY'
+  python3 - "$artifact_root" "$env_output_path" "$session_config_path" "$expected_apps_csv" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 artifact_root = Path(sys.argv[1])
 env_output_path = Path(sys.argv[2])
-expected_apps = {app_id for app_id in sys.argv[3].split(",") if app_id}
+session_config_path = Path(sys.argv[3])
+expected_apps = {app_id for app_id in sys.argv[4].split(",") if app_id}
 
 manifest_path = artifact_root / "artifact-manifest.json"
 if not manifest_path.is_file():
     raise SystemExit(f"missing runtime artifact manifest {manifest_path}")
+if not session_config_path.is_file():
+    raise SystemExit(f"missing runtime session config {session_config_path}")
 
 with manifest_path.open("r", encoding="utf-8") as handle:
     manifest = json.load(handle)
+with session_config_path.open("r", encoding="utf-8") as handle:
+    config = json.load(handle)
 
 if manifest.get("schemaVersion") != 1:
     raise SystemExit("runtime artifact manifest schemaVersion must be 1")
@@ -326,6 +333,68 @@ if actual_apps != expected_apps:
     raise SystemExit(
         f"runtime artifact manifest app set mismatch: expected {sorted(expected_apps)!r}, got {sorted(actual_apps)!r}"
     )
+
+if config.get("schemaVersion") != 1:
+    raise SystemExit("runtime session config schemaVersion must be 1")
+if config.get("profile") != "vm-shell":
+    raise SystemExit("runtime session config profile must be vm-shell")
+if config.get("stateDir") != manifest.get("stateDir"):
+    raise SystemExit("runtime session config stateDir mismatch")
+
+artifacts = config.get("artifacts")
+if not isinstance(artifacts, dict):
+    raise SystemExit("runtime session config artifacts must be an object")
+if artifacts.get("guestRoot") != "/opt/shadow-runtime":
+    raise SystemExit("runtime session config guest root mismatch")
+if artifacts.get("root") != str(artifact_root):
+    raise SystemExit("runtime session config artifact root mismatch")
+
+system = config.get("system")
+if not isinstance(system, dict):
+    raise SystemExit("runtime session config system must be an object")
+if system.get("binaryPath") != "/tmp/shadow-system":
+    raise SystemExit("runtime session config system binary path mismatch")
+
+services = config.get("services")
+if not isinstance(services, dict):
+    raise SystemExit("runtime session config services must be an object")
+state_dir = Path(config["stateDir"])
+if services.get("cashuDataDir") != str(state_dir / "runtime-cashu"):
+    raise SystemExit("runtime session config cashu dir mismatch")
+if services.get("nostrDbPath") != str(state_dir / "runtime-nostr.sqlite3"):
+    raise SystemExit("runtime session config nostr db path mismatch")
+if services.get("nostrServiceSocket") != str(state_dir / "runtime-nostr.sock"):
+    raise SystemExit("runtime session config nostr socket mismatch")
+
+runtime = config.get("runtime")
+if not isinstance(runtime, dict):
+    raise SystemExit("runtime session config runtime must be an object")
+runtime_apps = runtime.get("apps")
+if not isinstance(runtime_apps, dict):
+    raise SystemExit("runtime session config runtime.apps must be an object")
+if set(runtime_apps) != expected_apps:
+    raise SystemExit(
+        f"runtime session config app set mismatch: expected {sorted(expected_apps)!r}, got {sorted(runtime_apps)!r}"
+    )
+expected_default_app_id = "counter" if "counter" in expected_apps else next(iter(apps), None)
+expected_default_bundle_path = (
+    apps[expected_default_app_id]["guestBundlePath"]
+    if expected_default_app_id is not None
+    else None
+)
+if runtime.get("defaultAppId") != expected_default_app_id:
+    raise SystemExit("runtime session config default app mismatch")
+if runtime.get("defaultBundlePath") != expected_default_bundle_path:
+    raise SystemExit("runtime session config default bundle mismatch")
+for app_id in sorted(expected_apps):
+    runtime_app = runtime_apps[app_id]
+    manifest_app = apps[app_id]
+    if runtime_app.get("bundleEnv") != manifest_app.get("bundleEnv"):
+        raise SystemExit(f"runtime session config bundle env mismatch for {app_id}")
+    if runtime_app.get("bundlePath") != manifest_app.get("guestBundlePath"):
+        raise SystemExit(f"runtime session config bundle path mismatch for {app_id}")
+    if runtime_app.get("config") != manifest_app.get("runtimeAppConfig"):
+        raise SystemExit(f"runtime session config runtime config mismatch for {app_id}")
 
 env_text = env_output_path.read_text(encoding="utf-8")
 if "export SHADOW_SESSION_APP_PROFILE='vm-shell'" not in env_text:
