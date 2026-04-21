@@ -433,6 +433,19 @@ assert_eq() {
   fi
 }
 
+assert_ne() {
+  local left right message
+  left="$1"
+  right="$2"
+  message="$3"
+  if [[ "$left" == "$right" ]]; then
+    echo "pixel_boot_tooling_smoke: $message" >&2
+    echo "  left:  $left" >&2
+    echo "  right: $right" >&2
+    exit 1
+  fi
+}
+
 assert_contains() {
   local haystack needle
   haystack="$1"
@@ -986,6 +999,49 @@ assert_eq \
   "$resolved_shared" \
   "$SHARED_BOOT" \
   "shared stock boot image should be used when the worktree-local copy is missing"
+
+named_run_root="$TMP_DIR/named-run-collision"
+named_run_dir_a="$(
+  bash -lc '
+    cd "$0"
+    source scripts/lib/pixel_common.sh
+    source scripts/lib/pixel_runtime_session_common.sh
+    pixel_timestamp() { printf "%s\n" "20260421T000000Z"; }
+    export PIXEL_SERIAL=SERIALA
+    pixel_prepare_named_run_dir "$1"
+  ' "$REPO_ROOT" "$named_run_root"
+)"
+named_run_dir_b="$(
+  bash -lc '
+    cd "$0"
+    source scripts/lib/pixel_common.sh
+    source scripts/lib/pixel_runtime_session_common.sh
+    pixel_timestamp() { printf "%s\n" "20260421T000000Z"; }
+    export PIXEL_SERIAL=SERIALA
+    pixel_prepare_named_run_dir "$1"
+  ' "$REPO_ROOT" "$named_run_root"
+)"
+named_run_dir_c="$(
+  bash -lc '
+    cd "$0"
+    source scripts/lib/pixel_common.sh
+    source scripts/lib/pixel_runtime_session_common.sh
+    pixel_timestamp() { printf "%s\n" "20260421T000000Z"; }
+    export PIXEL_SERIAL=SERIALB
+    pixel_prepare_named_run_dir "$1"
+  ' "$REPO_ROOT" "$named_run_root"
+)"
+assert_ne \
+  "$named_run_dir_a" \
+  "$named_run_dir_b" \
+  "same-second same-serial run dirs must not collide"
+assert_ne \
+  "$named_run_dir_a" \
+  "$named_run_dir_c" \
+  "same-second different-serial run dirs must not collide"
+test -d "$named_run_dir_a"
+test -d "$named_run_dir_b"
+test -d "$named_run_dir_c"
 
 oneshot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 PIXEL_SERIAL=TESTSERIAL \

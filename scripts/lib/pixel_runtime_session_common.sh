@@ -39,11 +39,23 @@ pixel_ensure_pinned_turnip_lib() {
 }
 
 pixel_prepare_named_run_dir() {
-  local base_dir run_dir
+  local base_dir run_dir run_stamp run_suffix serial_suffix
   base_dir="$1"
   mkdir -p "$base_dir"
-  run_dir="${base_dir}/$(pixel_timestamp)"
-  mkdir -p "$run_dir"
+
+  run_stamp="$(pixel_timestamp)"
+  serial_suffix=""
+  if [[ -n "${PIXEL_SERIAL:-}" ]]; then
+    serial_suffix="-$(pixel_serial_lock_key "$PIXEL_SERIAL")"
+  fi
+
+  run_dir="${base_dir}/${run_stamp}${serial_suffix}"
+  run_suffix=0
+  while ! mkdir "$run_dir" 2>/dev/null; do
+    run_suffix=$((run_suffix + 1))
+    run_dir="${base_dir}/${run_stamp}${serial_suffix}-${run_suffix}"
+  done
+
   printf '%s\n' "$run_dir"
 }
 
