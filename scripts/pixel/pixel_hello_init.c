@@ -2477,25 +2477,25 @@ static const char *orange_gpu_checkpoint_visual(const char *checkpoint_name) {
     }
 
     if (strcmp(checkpoint_name, "firmware-probe-ok") == 0) {
-        return "code-orange-5";
+        return "checker-orange";
     }
     if (
         strcmp(checkpoint_name, "firmware-probe-a630-sqe-open-failed") == 0 ||
         strcmp(checkpoint_name, "firmware-probe-a630-sqe-read-failed") == 0
     ) {
-        return "code-orange-6";
+        return "bands-orange";
     }
     if (
         strcmp(checkpoint_name, "firmware-probe-a618-gmu-open-failed") == 0 ||
         strcmp(checkpoint_name, "firmware-probe-a618-gmu-read-failed") == 0
     ) {
-        return "code-orange-7";
+        return "orange-vertical-band";
     }
     if (
         strcmp(checkpoint_name, "firmware-probe-a615-zap-mdt-open-failed") == 0 ||
         strcmp(checkpoint_name, "firmware-probe-a615-zap-mdt-read-failed") == 0
     ) {
-        return "code-orange-8";
+        return "frame-orange";
     }
     if (strcmp(checkpoint_name, "validated") == 0) {
         return "code-orange-2";
@@ -2519,7 +2519,7 @@ static const char *orange_gpu_checkpoint_visual(const char *checkpoint_name) {
         strcmp(checkpoint_name, "firmware-probe-a615-zap-b02-open-failed") == 0 ||
         strcmp(checkpoint_name, "firmware-probe-a615-zap-b02-read-failed") == 0
     ) {
-        return "code-orange-12";
+        return "frame-orange";
     }
 
     return "solid-orange";
