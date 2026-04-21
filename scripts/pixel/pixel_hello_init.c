@@ -1693,6 +1693,7 @@ static bool parse_orange_gpu_mode_value(const char *raw, char *dest, size_t dest
         strcmp(value, "vulkan-instance-smoke") != 0 &&
         strcmp(value, "raw-vulkan-instance-smoke") != 0 &&
         strcmp(value, "c-kgsl-open-readonly-smoke") != 0 &&
+        strcmp(value, "c-kgsl-open-readonly-pid1-smoke") != 0 &&
         strcmp(value, "raw-kgsl-open-readonly-smoke") != 0 &&
         strcmp(value, "raw-kgsl-getproperties-smoke") != 0 &&
         strcmp(value, "raw-vulkan-physical-device-count-query-exit-smoke") != 0 &&
@@ -2022,6 +2023,10 @@ static bool orange_gpu_mode_is_raw_vulkan_instance_smoke(const struct hello_init
 
 static bool orange_gpu_mode_is_c_kgsl_open_readonly_smoke(const struct hello_init_config *config) {
     return strcmp(config->orange_gpu_mode, "c-kgsl-open-readonly-smoke") == 0;
+}
+
+static bool orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(const struct hello_init_config *config) {
+    return strcmp(config->orange_gpu_mode, "c-kgsl-open-readonly-pid1-smoke") == 0;
 }
 
 static bool orange_gpu_mode_is_raw_kgsl_open_readonly_smoke(const struct hello_init_config *config) {
@@ -2923,6 +2928,18 @@ static int run_orange_gpu_payload(
         SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
         SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH
     );
+
+    if (orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(config)) {
+        log_stage(
+            "<6>",
+            "orange-gpu-pid1-c-probe",
+            "mode=c-kgsl-open-readonly-pid1-smoke"
+        );
+        return run_c_kgsl_open_readonly_smoke(
+            payload_probe_stage_path,
+            payload_probe_stage_prefix
+        );
+    }
 
     child_pid = fork();
     if (child_pid < 0) {
