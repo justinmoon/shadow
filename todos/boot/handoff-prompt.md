@@ -26,6 +26,11 @@ Continue the Pixel 4a boot-owned bring-up from the current KGSL seam without bro
 - Rooted tmpfs-`/dev` controls still succeed for:
   - `raw-kgsl-getproperties-smoke`
   - `raw-kgsl-open-readonly-smoke`
+- Rooted cold control on `11151JEC200472` now succeeds at `cold-root-ready`:
+  - [`build/pixel/runs/kgsl-cold-matrix/20260421T212908Z`](../../build/pixel/runs/kgsl-cold-matrix/20260421T212908Z)
+  - `device-run/status.json.run_succeeded=true`
+  - `device-run/status.json.summary.kgsl_device_opened=true`
+  - the matching `props.tsv` still had `sys.boot_completed`, `dev.bootcomplete`, `pd_mapper`, `qseecom-service`, `gpu`, and display-service props all blank
 
 ## Current Critical Truth
 
@@ -47,16 +52,17 @@ Continue the Pixel 4a boot-owned bring-up from the current KGSL seam without bro
 - generic `/dev` topology mismatch
 - write access being the issue
 - SurfaceFlinger / composer / allocator being obvious prerequisites for readonly KGSL open under rooted Android
+- late vendor-init / Android milestones (`pd_mapper`, `qseecom-service`, `gpu`, `boot_completed`) being required prerequisites for rooted readonly KGSL open
 
 ## Strongest Hypothesis
 
-KGSL cold first-open or missing stock-init/vendor-init side effects.
+The remaining difference is execution context, not “wait later in Android.”
 
 The best next discriminators are:
 
-1. Stock-init trigger ladder for the readonly KGSL-open helper.
-2. Rooted warm-vs-cold KGSL holder experiment.
-3. Boot-owned blocked-task stack capture around the direct C KGSL-open probe.
+1. Run the readonly KGSL-open helper from stock init (`post-fs-data` / imported rc service) to separate stock-init context from Magisk/root-shell context.
+2. Extend boot-owned breadcrumbs with execution-context facts (`id`, SELinux context, mount/cgroup markers) and compare them directly against the rooted cold control.
+3. Keep `kgsl-holder-scan` best-effort only; do not block the next seam on making holder counting perfect.
 
 Do not jump back out to `orange-gpu`, compositor, or app launch work until one of those moves the seam.
 
@@ -85,6 +91,9 @@ Do not jump back out to `orange-gpu`, compositor, or app launch work until one o
 - `scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh`
   - `kgsl-holder-scan.tsv`
   - parsed holder metadata in `status.json`
+- `scripts/pixel/pixel_kgsl_cold_matrix.sh`
+  - manifest-driven rooted cold KGSL ladder
+  - the decisive current result is `cold-root-ready`, not any later service milestone
 - `scripts/pixel/pixel_kgsl_matrix.sh`
   - manifest-driven rooted KGSL falsification batches
   - one `matrix-summary.json` plus `matrix.tsv`
@@ -95,6 +104,7 @@ The smokes covering this are:
 
 - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
 - `scripts/ci/pixel_boot_tooling_smoke.sh`
+- `scripts/ci/pixel_kgsl_cold_matrix_smoke.sh`
 - `scripts/ci/pixel_kgsl_matrix_smoke.sh`
 
 ## Files Most Likely To Matter Next
@@ -102,6 +112,7 @@ The smokes covering this are:
 - `scripts/pixel/pixel_hello_init.c`
 - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
 - `scripts/pixel/pixel_boot_recover_traces.sh`
+- `scripts/pixel/pixel_kgsl_cold_matrix.sh`
 - `scripts/pixel/pixel_kgsl_matrix.sh`
 - `scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh`
 - `rust/drm-rect/src/lib.rs`

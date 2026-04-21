@@ -477,10 +477,16 @@ else
   printf 'missing: %s\n' "$device_profile_path" >"$pull_profile_log_path"
 fi
 
+kgsl_holder_scan_timeout_secs="${PIXEL_KGSL_HOLDER_SCAN_TIMEOUT_SECS:-20}"
 set +e
-pixel_root_shell "$serial" "$(pixel_kgsl_holder_scan_command)" >"$kgsl_holder_scan_path" 2>"$kgsl_holder_scan_stderr_path"
+pixel_root_shell_timeout "$kgsl_holder_scan_timeout_secs" "$serial" "$(pixel_kgsl_holder_scan_command)" \
+  >"$kgsl_holder_scan_path" 2>"$kgsl_holder_scan_stderr_path"
 kgsl_holder_scan_exit_code="$?"
 set -e
+if [[ "$kgsl_holder_scan_exit_code" -eq 124 ]]; then
+  printf 'pixel_tmpfs_dev_gpu_smoke: holder scan timed out after %ss\n' "$kgsl_holder_scan_timeout_secs" \
+    >>"$kgsl_holder_scan_stderr_path"
+fi
 
 python3 - "$status_path" "$serial" "$primary_control_serial" "$profile" "$scene" "$device_dir" "$run_status" "$summary_expected" "$summary_pulled" "$profile_pulled" "$profile_includes_ion" "$device_output_path" "$summary_path" "$profile_path" "$prepare_output_path" "$preload_build_output_path" "$baseline_nodes_csv" "$profile_nodes_csv" "$kgsl_holder_scan_path" "$kgsl_holder_scan_stderr_path" "$kgsl_holder_scan_exit_code" <<'PY'
 import json

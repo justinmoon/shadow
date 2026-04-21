@@ -8,7 +8,7 @@ ensure_bootimg_shell "$@"
 
 cd "$(repo_root)"
 
-boot_demo_regex='^(scripts/ci/pixel_boot_|scripts/ci/pixel_kgsl_matrix_smoke\.sh|scripts/pixel/pixel_boot_|scripts/pixel/pixel_build_hello_init\.sh|scripts/pixel/pixel_build_orange_init\.sh|scripts/pixel/pixel_gpu_smoke\.sh|scripts/pixel/pixel_kgsl_matrix\.sh|scripts/pixel/pixel_prepare_gpu_smoke_bundle\.sh|scripts/pixel/pixel_hello_init\.c|rust/drm-rect/|ui/crates/shadow-gpu-smoke/)'
+boot_demo_regex='^(scripts/ci/pixel_boot_|scripts/ci/pixel_kgsl_(cold_)?matrix_smoke\.sh|scripts/lib/pixel_common\.sh|scripts/pixel/pixel_boot_|scripts/pixel/pixel_build_hello_init\.sh|scripts/pixel/pixel_build_orange_init\.sh|scripts/pixel/pixel_gpu_smoke\.sh|scripts/pixel/pixel_kgsl_(cold_)?matrix\.sh|scripts/pixel/pixel_prepare_gpu_smoke_bundle\.sh|scripts/pixel/pixel_tmpfs_dev_gpu_smoke\.sh|scripts/pixel/pixel_hello_init\.c|rust/drm-rect/|ui/crates/shadow-gpu-smoke/)'
 
 usage() {
   cat <<'EOF'
@@ -54,6 +54,7 @@ run_boot_demo_gate() {
   scripts/pixel/pixel_boot_build_orange_gpu.sh --output "$tmp_orange_gpu" >/dev/null
   rm -f "$tmp_orange_gpu" "$tmp_orange_gpu.hello-init.json"
   scripts/ci/pixel_boot_tooling_smoke.sh
+  scripts/ci/pixel_kgsl_cold_matrix_smoke.sh
   scripts/ci/pixel_kgsl_matrix_smoke.sh
   scripts/ci/pixel_boot_collect_logs_smoke.sh
   scripts/ci/pixel_boot_safety_smoke.sh

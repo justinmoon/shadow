@@ -129,10 +129,11 @@ else
 fi
 
 capture_holder_scan() {
-  local serial output_path stderr_path
+  local serial output_path stderr_path timeout_secs
   serial="${1:?capture_holder_scan requires a serial}"
   output_path="${2:?capture_holder_scan requires an output path}"
   stderr_path="${3:?capture_holder_scan requires a stderr path}"
+  timeout_secs="${PIXEL_KGSL_HOLDER_SCAN_TIMEOUT_SECS:-20}"
 
   if [[ "$dry_run" == "1" ]]; then
     cat >"$output_path" <<'EOF'
@@ -146,9 +147,13 @@ EOF
   fi
 
   set +e
-  pixel_root_shell "$serial" "$(pixel_kgsl_holder_scan_command)" >"$output_path" 2>"$stderr_path"
+  pixel_root_shell_timeout "$timeout_secs" "$serial" "$(pixel_kgsl_holder_scan_command)" \
+    >"$output_path" 2>"$stderr_path"
   local status=$?
   set -e
+  if [[ "$status" -eq 124 ]]; then
+    printf 'pixel_kgsl_matrix: holder scan timed out after %ss\n' "$timeout_secs" >>"$stderr_path"
+  fi
   return "$status"
 }
 

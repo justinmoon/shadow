@@ -706,6 +706,12 @@ Related docs:
     - a stock-init trigger ladder for the readonly KGSL-open helper (`post-fs-data`, `init.svc.pd_mapper=running`, `init.svc.qseecom-service=running`, `init.svc.gpu=running`, `sys.boot_completed=1`)
     - a rooted warm-vs-cold holder experiment to see whether readonly KGSL open only succeeds once Android already has live KGSL holders
     - a boot-owned blocked-task stack capture around the direct C KGSL-open seam if the above are still ambiguous
+- Rooted cold KGSL ladder result on 2026-04-21:
+  - `scripts/pixel/pixel_kgsl_cold_matrix.sh` now exists as the rooted cold-boot falsification lane, with a single-serial manifest contract, warm-baseline preflight, and readiness rungs for `root-ready`, `pd-mapper`, `qseecom-service`, `gpu-service`, `boot-complete`, and `display-restored`
+  - after fixing the cold-runner readiness / reboot bookkeeping, the rerun on `11151JEC200472` ([`build/pixel/runs/kgsl-cold-matrix/20260421T212908Z`](../../build/pixel/runs/kgsl-cold-matrix/20260421T212908Z)) still succeeded at `cold-root-ready`, with `device-run/status.json.run_succeeded=true` and `device-run/status.json.summary.kgsl_device_opened=true`
+  - the matching [`cold-root-ready/props.tsv`](../../build/pixel/runs/kgsl-cold-matrix/20260421T212908Z/cold-root-ready/props.tsv) still had `sys.boot_completed`, `dev.bootcomplete`, `init.svc.pd_mapper`, `init.svc.qseecom-service`, `init.svc.gpu`, `surfaceflinger`, and display allocator/composer props all blank
+  - that burns down the “wait for later vendor-init / Android milestones” hypothesis for readonly KGSL open in the rooted control lane; the critical difference is now execution context, not those service milestones
+  - both the matrix pre-scan and the tmpfs runner post-scan can still time out on live systems, so `kgsl-holder-scan` is now explicitly best-effort observability rather than a success criterion
 - Display-stack sidecar result on 2026-04-21:
   - rooted `raw-kgsl-open-readonly-smoke` on `0B191JEC203253` succeeded at baseline, with `surfaceflinger` stopped, with the repo helper stop preserving allocator, and with the repo helper full display-stack stop (`surfaceflinger`, hwcomposer, allocator) before restore
   - that makes the active boot-owned blocker much less likely to be “SurfaceFlinger / composer / allocator must already be alive” and pushes suspicion toward earlier boot context, warm-holder state, SELinux/domain differences, or vendor-init timing
@@ -713,6 +719,7 @@ Related docs:
   - `pixel_boot_recover_traces.sh` now records a rooted `kgsl-holder-scan` current-boot channel and a `kernel-current-best-effort` channel that prefers rooted `dmesg` over `logcat -b kernel`
   - `pixel_tmpfs_dev_gpu_smoke.sh` now emits `kgsl-holder-scan.tsv` and parsed holder metadata in `status.json`, so rooted controls can prove whether KGSL was already warm/open under Android
   - both smoke lanes (`pixel_boot_recover_traces_smoke.sh` and `pixel_boot_tooling_smoke.sh`) now cover those observability additions
+  - `pixel_root_shell_timeout()` now exists in `scripts/lib/pixel_common.sh`, and the KGSL matrix / cold-matrix / tmpfs-dev runners all use it so holder-scan hangs degrade into recorded timeout artifacts instead of silently wedging the entire lane
 - Boot-lab sidecar status on 2026-04-21:
   - rooted `sound` passed end-to-end on `0B191JEC203253` again, and the device returned to stable rooted Android
   - rooted `camera` on `06241JEC200520` succeeded at the direct helper layer (`list` + live JPEG capture), while the shell-app smoke still failed later in automation waiting for the preview-toggle click

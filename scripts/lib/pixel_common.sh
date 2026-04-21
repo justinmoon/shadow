@@ -483,6 +483,36 @@ pixel_root_shell() {
   return 1
 }
 
+pixel_root_shell_timeout() {
+  local timeout_secs serial command su_bin status had_errexit
+  timeout_secs="${1:?pixel_root_shell_timeout requires timeout_secs}"
+  serial="${2:?pixel_root_shell_timeout requires a serial}"
+  shift 2
+  command="${1:?pixel_root_shell_timeout requires a command}"
+  had_errexit=0
+  [[ $- == *e* ]] && had_errexit=1
+
+  while IFS= read -r su_bin; do
+    [[ -n "$su_bin" ]] || continue
+    set +e
+    printf '%s\n' "$command" | timeout "$timeout_secs" adb -s "$serial" shell "$su_bin" 0 sh
+    status="$?"
+    if [[ "$had_errexit" == "1" ]]; then
+      set -e
+    else
+      set +e
+    fi
+    if [[ "$status" -eq 0 ]]; then
+      return 0
+    fi
+    if [[ "$status" -eq 124 ]]; then
+      return 124
+    fi
+  done < <(pixel_su_candidates)
+
+  return 1
+}
+
 pixel_restore_android_best_effort() {
   local serial timeout_secs reboot_timeout_secs pid
   serial="$1"

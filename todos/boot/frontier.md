@@ -12,12 +12,17 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - Vulkan instance creation
   - generic `/dev` topology
   - Android display services as the obvious prerequisite
+  - late vendor-init / Android milestones like `pd_mapper`, `qseecom-service`, `gpu`, or `boot_completed`
 
 ## Current Truth
 
 - Rooted tmpfs-`/dev` controls still succeed for:
   - `raw-kgsl-getproperties-smoke`
   - `raw-kgsl-open-readonly-smoke`
+- Rooted cold control now succeeds at the earliest measured rung:
+  - [`build/pixel/runs/kgsl-cold-matrix/20260421T212908Z`](../../build/pixel/runs/kgsl-cold-matrix/20260421T212908Z)
+  - `cold-root-ready` on `11151JEC200472` returned `run_succeeded=true` and `summary.kgsl_device_opened=true`
+  - the matching [`props.tsv`](../../build/pixel/runs/kgsl-cold-matrix/20260421T212908Z/cold-root-ready/props.tsv) still had `sys.boot_completed`, `dev.bootcomplete`, `init.svc.pd_mapper`, `init.svc.qseecom-service`, `init.svc.gpu`, and display-service props all blank
 - Boot-owned runs still stop before `...:kgsl-open-readonly-ok`.
 - The same failure shape reproduces for:
   - direct C child probe
@@ -37,6 +42,10 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 - Rooted falsification lane:
   - [`scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh`](../../scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh)
   - [`scripts/pixel/pixel_kgsl_matrix.sh`](../../scripts/pixel/pixel_kgsl_matrix.sh)
+  - [`scripts/pixel/pixel_kgsl_cold_matrix.sh`](../../scripts/pixel/pixel_kgsl_cold_matrix.sh)
+- Holder scans are now timeout-bounded and best-effort:
+  - pre-run and post-run `kgsl-holder-scan` timeouts should not invalidate a positive readonly-open result
+  - treat holder counts as helpful context, not as a gating success signal for the cold ladder
 
 ## On-Screen Contract
 
@@ -52,9 +61,9 @@ Use the panel as a stage channel, not just “something orange happened.”
 
 ## Highest-Leverage Next Experiments
 
-1. Stock-init trigger ladder for the readonly KGSL-open helper.
-2. Warm-vs-cold rooted KGSL holder matrix on sidecar devices.
-3. Read the new `probe-report.txt` from a boot-owned timeout and classify the blocked task by `observed_probe_stage` and `wchan`.
+1. Run the readonly KGSL-open helper from stock init (`post-fs-data` / imported rc service) to separate execution context from “boot-owned custom PID 1”.
+2. Extend boot-owned `probe-report.txt` / breadcrumbs with execution-context facts (`id`, SELinux context, mount/cgroup markers) so the failing boot-owned lane can be compared directly against the rooted `root-ready` control.
+3. Keep `kgsl-holder-scan` as best-effort only; do not block the next seam on making that scan perfect.
 
 ## Fast Commands
 
@@ -62,6 +71,12 @@ Rooted KGSL matrix:
 
 ```sh
 PIXEL_SERIAL=0B191JEC203253 scripts/pixel/pixel_kgsl_matrix.sh
+```
+
+Rooted cold KGSL ladder:
+
+```sh
+PIXEL_SERIAL=11151JEC200472 scripts/pixel/pixel_kgsl_cold_matrix.sh
 ```
 
 Dry-run the matrix runner contract:
