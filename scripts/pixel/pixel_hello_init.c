@@ -2063,12 +2063,24 @@ static int set_orange_gpu_child_env(void) {
     return 0;
 }
 
-static int run_orange_gpu_parent_probe(const struct hello_init_config *config) {
+static int run_orange_gpu_parent_probe(
+    const struct hello_init_config *config,
+    char *result_stage,
+    size_t result_stage_size
+) {
     bool any_succeeded = false;
     unsigned int attempt;
+    bool watchdog_killed = false;
+
+    if (result_stage != NULL && result_stage_size > 0U) {
+        (void)copy_string(result_stage, result_stage_size, "parent-probe-result=not-run");
+    }
 
     if (config->orange_gpu_parent_probe_attempts == 0U) {
         log_stage("<6>", "orange-gpu-parent-probe-skip", "attempts=0");
+        if (result_stage != NULL && result_stage_size > 0U) {
+            (void)copy_string(result_stage, result_stage_size, "parent-probe-result=skipped");
+        }
         return 0;
     }
 
@@ -2193,6 +2205,7 @@ static int run_orange_gpu_parent_probe(const struct hello_init_config *config) {
                         config->orange_gpu_parent_probe_attempts,
                         watchdog_timeout
                     );
+                    watchdog_killed = true;
                     if (kill(child_pid, SIGKILL) != 0 && errno != ESRCH) {
                         log_stage(
                             "<3>",
@@ -2270,6 +2283,17 @@ static int run_orange_gpu_parent_probe(const struct hello_init_config *config) {
         log_file_best_effort("orange-gpu-parent-probe-output", SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_OUTPUT_PATH);
 
         if (WIFEXITED(status)) {
+            if (result_stage != NULL && result_stage_size > 0U) {
+                char stage_value[64];
+
+                snprintf(
+                    stage_value,
+                    sizeof(stage_value),
+                    "parent-probe-result=exit-%d",
+                    WEXITSTATUS(status)
+                );
+                (void)copy_string(result_stage, result_stage_size, stage_value);
+            }
             if (WEXITSTATUS(status) == 0) {
                 any_succeeded = true;
                 log_stage(
@@ -2304,6 +2328,18 @@ static int run_orange_gpu_parent_probe(const struct hello_init_config *config) {
                 );
             }
         } else if (WIFSIGNALED(status)) {
+            if (result_stage != NULL && result_stage_size > 0U) {
+                char stage_value[64];
+
+                snprintf(
+                    stage_value,
+                    sizeof(stage_value),
+                    "parent-probe-result=%s-%d",
+                    watchdog_killed ? "watchdog-signal" : "signal",
+                    WTERMSIG(status)
+                );
+                (void)copy_string(result_stage, result_stage_size, stage_value);
+            }
             log_stage(
                 "<4>",
                 "orange-gpu-parent-probe-attempt-signal",
@@ -2320,6 +2356,17 @@ static int run_orange_gpu_parent_probe(const struct hello_init_config *config) {
                 WTERMSIG(status)
             );
         } else {
+            if (result_stage != NULL && result_stage_size > 0U) {
+                char stage_value[64];
+
+                snprintf(
+                    stage_value,
+                    sizeof(stage_value),
+                    "parent-probe-result=unknown-status-%d",
+                    status
+                );
+                (void)copy_string(result_stage, result_stage_size, stage_value);
+            }
             log_stage(
                 "<4>",
                 "orange-gpu-parent-probe-attempt-unknown-status",
@@ -2373,6 +2420,7 @@ static int run_orange_gpu_payload(
     int status;
     int probe_status;
     int probe_checkpoint_status = 0;
+    char probe_result_stage[64];
     char hold_seconds[16];
     unsigned int waited_seconds = 0;
     unsigned int watchdog_timeout =
@@ -2416,11 +2464,15 @@ static int run_orange_gpu_payload(
             "parent-probe-start"
         );
     }
-    probe_status = run_orange_gpu_parent_probe(config);
+    probe_status = run_orange_gpu_parent_probe(
+        config,
+        probe_result_stage,
+        sizeof(probe_result_stage)
+    );
     if (metadata_stage != NULL) {
         (void)write_metadata_stage_best_effort(
             metadata_stage,
-            probe_status == 0 ? "parent-probe-result=success" : "parent-probe-result=failure"
+            probe_result_stage
         );
     }
     if (probe_status != 0) {

@@ -126,7 +126,7 @@ PROP
       ;;
     *"/metadata/shadow-hello-init/by-token/"*"/stage.txt"* )
       if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" ]]; then
-        printf 'parent-probe-result=success\n'
+        printf 'parent-probe-result=exit-0\n'
         exit 0
       fi
       exit 3
@@ -268,7 +268,7 @@ assert_json_field "$MATCHED_OUTPUT/status.json" expected_durable_logging_summary
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_stage_breadcrumb true
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_stage_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/stage.txt"
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_present true
-assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_value "parent-probe-result=success"
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_value "parent-probe-result=exit-0"
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_actual_access_mode root
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_exit_code "0"
 assert_json_field "$MATCHED_OUTPUT/status.json" absence_reason_summary ""
@@ -356,7 +356,7 @@ assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" recovered_previous_boot_trace
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" expected_durable_logging_summary "kmsg=true,pmsg=true"
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" expected_metadata_stage_breadcrumb true
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_stage_present true
-assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_stage_value "parent-probe-result=success"
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_stage_value "parent-probe-result=exit-0"
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_stage_actual_access_mode root
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" previous_boot_channels_with_matches 0
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlation_state token-only

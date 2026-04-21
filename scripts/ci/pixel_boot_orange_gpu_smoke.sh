@@ -844,7 +844,7 @@ for needle in [
         raise SystemExit(f"missing parent-probe seam needle: {needle}")
 
 payload_body = extract("static int run_orange_gpu_payload(")
-probe_call = 'probe_status = run_orange_gpu_parent_probe(config);'
+probe_call = 'probe_status = run_orange_gpu_parent_probe('
 probe_ready_call = 'run_orange_gpu_checkpoint(config, "probe-ready", 1U);'
 launch_stage = '"orange-gpu-launch"'
 continue_stage = '"orange-gpu-parent-probe-continue"'
@@ -956,8 +956,8 @@ if not (validated_idx < prepare_idx < write_idx < payload_idx):
 
 payload_body = extract("static int run_orange_gpu_payload(")
 start_idx = payload_body.find('"parent-probe-start"')
-probe_idx = payload_body.find('probe_status = run_orange_gpu_parent_probe(config);')
-result_idx = payload_body.find('probe_status == 0 ? "parent-probe-result=success" : "parent-probe-result=failure"')
+probe_idx = payload_body.find('sizeof(probe_result_stage)')
+result_idx = payload_body.find('write_metadata_stage_best_effort(\n            metadata_stage,\n            probe_result_stage')
 if min(start_idx, probe_idx, result_idx) < 0:
     raise SystemExit("missing metadata parent-probe markers")
 if not (start_idx < probe_idx < result_idx):
@@ -2028,7 +2028,9 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'prepare_meta
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'write_metadata_stage_best_effort'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"metadata-stage-write"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"parent-probe-start"'
-assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"parent-probe-result=success"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"parent-probe-result=exit-%d"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"parent-probe-result=%s-%d"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'watchdog_killed ? "watchdog-signal" : "signal"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-launch-delay"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-launch-delay-complete"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-parent-probe-start"'
