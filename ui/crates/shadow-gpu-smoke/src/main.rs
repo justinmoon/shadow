@@ -35,6 +35,8 @@ const DEFAULT_HEIGHT: u32 = 128;
 const MAX_DISTINCT_COLOR_SAMPLES: usize = 8;
 const MAX_HOLD_SECS: u32 = 30;
 const FLAT_ORANGE_RGB: (u8, u8, u8) = (0xFF, 0x7A, 0x00);
+const GPU_SMOKE_STAGE_PATH_ENV: &str = "SHADOW_GPU_SMOKE_STAGE_PATH";
+const GPU_SMOKE_STAGE_PREFIX_ENV: &str = "SHADOW_GPU_SMOKE_STAGE_PREFIX";
 
 fn main() -> ExitCode {
     match run() {
@@ -68,9 +70,11 @@ fn run() -> Result<(), String> {
 }
 
 fn run_raw_vulkan_physical_device_count_query_exit_smoke() -> Result<(), String> {
+    write_gpu_smoke_stage_best_effort("load-entry");
     eprintln!("[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-exit-smoke: load-entry");
     let entry =
         unsafe { ash::Entry::load() }.map_err(|error| format!("load vulkan entry: {error}"))?;
+    write_gpu_smoke_stage_best_effort("load-entry-ok");
     eprintln!(
         "[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-exit-smoke: load-entry-ok"
     );
@@ -92,11 +96,13 @@ fn run_raw_vulkan_physical_device_count_query_exit_smoke() -> Result<(), String>
     );
     let instance = unsafe { entry.create_instance(&create_info, None) }
         .map_err(|error| format!("vkCreateInstance: {error:?}"))?;
+    write_gpu_smoke_stage_best_effort("vkCreateInstance-ok");
     eprintln!(
         "[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-exit-smoke: vkCreateInstance-ok"
     );
 
     let mut physical_device_count = 0u32;
+    write_gpu_smoke_stage_best_effort("vkEnumeratePhysicalDevices-count-query");
     eprintln!(
         "[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-exit-smoke: vkEnumeratePhysicalDevices-count-query"
     );
@@ -112,13 +118,65 @@ fn run_raw_vulkan_physical_device_count_query_exit_smoke() -> Result<(), String>
             "vkEnumeratePhysicalDevices(count query): {enumerate_result:?}"
         ));
     }
+    write_gpu_smoke_stage_best_effort("vkEnumeratePhysicalDevices-count-query-ok");
     eprintln!(
         "[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-exit-smoke: vkEnumeratePhysicalDevices-count-query-ok count={physical_device_count}"
     );
+    write_gpu_smoke_stage_best_effort("exit-status=0-before-summary");
     eprintln!(
         "[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-exit-smoke: exit-status=0-before-summary"
     );
     unsafe { libc::_exit(0) }
+}
+
+fn write_gpu_smoke_stage_best_effort(stage: &str) {
+    let Some(raw_path) = env::var_os(GPU_SMOKE_STAGE_PATH_ENV) else {
+        return;
+    };
+    if raw_path.is_empty() {
+        return;
+    }
+
+    let stage_value = match env::var(GPU_SMOKE_STAGE_PREFIX_ENV) {
+        Ok(prefix) if !prefix.is_empty() => format!("{prefix}:{stage}"),
+        _ => stage.to_owned(),
+    };
+    let path = PathBuf::from(raw_path);
+    let Some(parent) = path.parent() else {
+        eprintln!(
+            "[shadow-gpu-smoke] stage-write-skip missing-parent path={}",
+            path.display()
+        );
+        return;
+    };
+    if let Err(error) = fs::create_dir_all(parent) {
+        eprintln!(
+            "[shadow-gpu-smoke] stage-write-skip mkdir path={} error={error}",
+            parent.display()
+        );
+        return;
+    }
+
+    let tmp_path = parent.join(
+        path.file_name()
+            .map(|name| format!(".{}.tmp", name.to_string_lossy()))
+            .unwrap_or_else(|| ".probe-stage.tmp".to_owned()),
+    );
+    let contents = format!("{stage_value}\n");
+    if let Err(error) = fs::write(&tmp_path, contents) {
+        eprintln!(
+            "[shadow-gpu-smoke] stage-write-skip temp={} error={error}",
+            tmp_path.display()
+        );
+        return;
+    }
+    if let Err(error) = fs::rename(&tmp_path, &path) {
+        let _ = fs::remove_file(&tmp_path);
+        eprintln!(
+            "[shadow-gpu-smoke] stage-write-skip rename={} error={error}",
+            path.display()
+        );
+    }
 }
 
 fn build_summary(config: &Config) -> Result<SmokeSummary, String> {

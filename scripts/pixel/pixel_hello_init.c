@@ -59,6 +59,8 @@
 #define SHADOW_HELLO_INIT_XDG_CACHE_HOME_ENV "XDG_CACHE_HOME"
 #define SHADOW_HELLO_INIT_XDG_CONFIG_HOME_ENV "XDG_CONFIG_HOME"
 #define SHADOW_HELLO_INIT_MESA_SHADER_CACHE_ENV "MESA_SHADER_CACHE_DIR"
+#define SHADOW_HELLO_INIT_GPU_SMOKE_STAGE_PATH_ENV "SHADOW_GPU_SMOKE_STAGE_PATH"
+#define SHADOW_HELLO_INIT_GPU_SMOKE_STAGE_PREFIX_ENV "SHADOW_GPU_SMOKE_STAGE_PREFIX"
 
 #define SHADOW_HELLO_INIT_TAG "shadow-hello-init"
 #define SHADOW_HELLO_INIT_DEFAULT_HOLD_SECONDS 30U
@@ -116,6 +118,8 @@ struct metadata_stage_runtime {
     char stage_dir[192];
     char stage_path[224];
     char temp_stage_path[224];
+    char probe_stage_path[224];
+    char temp_probe_stage_path[224];
 };
 
 static int shadow_kmsg_fd = -1;
@@ -567,6 +571,8 @@ static void init_metadata_stage_runtime(
     int dir_len;
     int stage_len;
     int temp_len;
+    int probe_stage_len;
+    int probe_temp_len;
 
     memset(runtime, 0, sizeof(*runtime));
     runtime->enabled = config->orange_gpu_metadata_stage_breadcrumb;
@@ -604,10 +610,24 @@ static void init_metadata_stage_runtime(
         "%s/.stage.txt.tmp",
         runtime->stage_dir
     );
+    probe_stage_len = snprintf(
+        runtime->probe_stage_path,
+        sizeof(runtime->probe_stage_path),
+        "%s/probe-stage.txt",
+        runtime->stage_dir
+    );
+    probe_temp_len = snprintf(
+        runtime->temp_probe_stage_path,
+        sizeof(runtime->temp_probe_stage_path),
+        "%s/.probe-stage.txt.tmp",
+        runtime->stage_dir
+    );
     if (
         dir_len < 0 || (size_t)dir_len >= sizeof(runtime->stage_dir) ||
         stage_len < 0 || (size_t)stage_len >= sizeof(runtime->stage_path) ||
-        temp_len < 0 || (size_t)temp_len >= sizeof(runtime->temp_stage_path)
+        temp_len < 0 || (size_t)temp_len >= sizeof(runtime->temp_stage_path) ||
+        probe_stage_len < 0 || (size_t)probe_stage_len >= sizeof(runtime->probe_stage_path) ||
+        probe_temp_len < 0 || (size_t)probe_temp_len >= sizeof(runtime->temp_probe_stage_path)
     ) {
         runtime->enabled = false;
         log_stage("<4>", "metadata-stage-disabled", "reason=path_too_long");
@@ -2026,7 +2046,10 @@ static int ensure_orange_gpu_runtime_dirs(void) {
     return 0;
 }
 
-static int set_orange_gpu_child_env(void) {
+static int set_orange_gpu_child_env(
+    const char *gpu_smoke_stage_path,
+    const char *gpu_smoke_stage_prefix
+) {
     if (setenv(SHADOW_HELLO_INIT_GPU_BACKEND_ENV, "vulkan", 1) != 0) {
         log_stage("<3>", "orange-gpu-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_GPU_BACKEND_ENV, errno);
         return -1;
@@ -2059,12 +2082,31 @@ static int set_orange_gpu_child_env(void) {
         log_stage("<3>", "orange-gpu-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_MESA_SHADER_CACHE_ENV, errno);
         return -1;
     }
+    if (gpu_smoke_stage_path != NULL && gpu_smoke_stage_path[0] != '\0') {
+        if (setenv(SHADOW_HELLO_INIT_GPU_SMOKE_STAGE_PATH_ENV, gpu_smoke_stage_path, 1) != 0) {
+            log_stage("<3>", "orange-gpu-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_GPU_SMOKE_STAGE_PATH_ENV, errno);
+            return -1;
+        }
+    } else if (unsetenv(SHADOW_HELLO_INIT_GPU_SMOKE_STAGE_PATH_ENV) != 0) {
+        log_stage("<3>", "orange-gpu-child-unsetenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_GPU_SMOKE_STAGE_PATH_ENV, errno);
+        return -1;
+    }
+    if (gpu_smoke_stage_prefix != NULL && gpu_smoke_stage_prefix[0] != '\0') {
+        if (setenv(SHADOW_HELLO_INIT_GPU_SMOKE_STAGE_PREFIX_ENV, gpu_smoke_stage_prefix, 1) != 0) {
+            log_stage("<3>", "orange-gpu-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_GPU_SMOKE_STAGE_PREFIX_ENV, errno);
+            return -1;
+        }
+    } else if (unsetenv(SHADOW_HELLO_INIT_GPU_SMOKE_STAGE_PREFIX_ENV) != 0) {
+        log_stage("<3>", "orange-gpu-child-unsetenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_GPU_SMOKE_STAGE_PREFIX_ENV, errno);
+        return -1;
+    }
 
     return 0;
 }
 
 static int run_orange_gpu_parent_probe(
     const struct hello_init_config *config,
+    const struct metadata_stage_runtime *metadata_stage,
     char *result_stage,
     size_t result_stage_size
 ) {
@@ -2103,6 +2145,8 @@ static int run_orange_gpu_parent_probe(
         int status;
         unsigned int waited_seconds = 0;
         unsigned int watchdog_timeout = SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS;
+        char probe_stage_prefix[64];
+        const char *probe_stage_path = NULL;
 
         unlink_best_effort(SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_SUMMARY_PATH);
         unlink_best_effort(SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_OUTPUT_PATH);
@@ -2126,7 +2170,21 @@ static int run_orange_gpu_parent_probe(
                 log_stage("<3>", "orange-gpu-parent-probe-child-redirect-failed", "errno=%d", errno);
                 _exit(126);
             }
-            if (set_orange_gpu_child_env() != 0) {
+            if (
+                metadata_stage != NULL &&
+                metadata_stage->enabled &&
+                metadata_stage->prepared &&
+                !metadata_stage->write_failed
+            ) {
+                probe_stage_path = metadata_stage->probe_stage_path;
+            }
+            snprintf(
+                probe_stage_prefix,
+                sizeof(probe_stage_prefix),
+                "parent-probe-attempt-%u",
+                attempt
+            );
+            if (set_orange_gpu_child_env(probe_stage_path, probe_stage_prefix) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2466,6 +2524,7 @@ static int run_orange_gpu_payload(
     }
     probe_status = run_orange_gpu_parent_probe(
         config,
+        metadata_stage,
         probe_result_stage,
         sizeof(probe_result_stage)
     );
@@ -2565,7 +2624,7 @@ static int run_orange_gpu_payload(
                 (char *)NULL
             );
         } else if (orange_gpu_mode_is_vulkan_offscreen(config)) {
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2588,7 +2647,7 @@ static int run_orange_gpu_payload(
                 (char *)NULL
             );
         } else if (orange_gpu_mode_is_vulkan_instance_smoke(config)) {
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2611,7 +2670,7 @@ static int run_orange_gpu_payload(
                 (char *)NULL
             );
         } else if (orange_gpu_mode_is_raw_vulkan_instance_smoke(config)) {
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2634,7 +2693,7 @@ static int run_orange_gpu_payload(
                 (char *)NULL
             );
         } else if (orange_gpu_mode_is_raw_vulkan_physical_device_count_smoke(config)) {
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2657,7 +2716,7 @@ static int run_orange_gpu_payload(
                 (char *)NULL
             );
         } else if (orange_gpu_mode_is_raw_vulkan_physical_device_count_query_no_destroy_smoke(config)) {
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2680,7 +2739,7 @@ static int run_orange_gpu_payload(
                 (char *)NULL
             );
         } else if (orange_gpu_mode_is_raw_vulkan_physical_device_count_query_exit_smoke(config)) {
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2703,7 +2762,7 @@ static int run_orange_gpu_payload(
                 (char *)NULL
             );
         } else if (orange_gpu_mode_is_raw_vulkan_physical_device_count_query_smoke(config)) {
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2726,7 +2785,7 @@ static int run_orange_gpu_payload(
                 (char *)NULL
             );
         } else if (orange_gpu_mode_is_vulkan_enumerate_adapters_count_smoke(config)) {
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2749,7 +2808,7 @@ static int run_orange_gpu_payload(
                 (char *)NULL
             );
         } else if (orange_gpu_mode_is_vulkan_enumerate_adapters_smoke(config)) {
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2772,7 +2831,7 @@ static int run_orange_gpu_payload(
                 (char *)NULL
             );
         } else if (orange_gpu_mode_is_vulkan_adapter_smoke(config)) {
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2795,7 +2854,7 @@ static int run_orange_gpu_payload(
                 (char *)NULL
             );
         } else if (orange_gpu_mode_is_vulkan_device_request_smoke(config)) {
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2818,7 +2877,7 @@ static int run_orange_gpu_payload(
                 (char *)NULL
             );
         } else if (orange_gpu_mode_is_vulkan_device_smoke(config)) {
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
@@ -2845,7 +2904,7 @@ static int run_orange_gpu_payload(
                 log_stage("<3>", "orange-gpu-child-hold-format-failed", "status=126");
                 _exit(126);
             }
-            if (set_orange_gpu_child_env() != 0) {
+            if (set_orange_gpu_child_env(NULL, NULL) != 0) {
                 _exit(126);
             }
             log_stage(
