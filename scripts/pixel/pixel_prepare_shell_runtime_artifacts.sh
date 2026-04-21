@@ -339,8 +339,8 @@ EOF
   cat >"$host_launcher_artifact" <<EOF
 #!/system/bin/sh
 DIR=\$(cd "\$(dirname "\$0")" && pwd)
-if [ "\$#" -ne 2 ] || [ "\$1" != "--session" ]; then
-  echo "usage: $host_binary_name --session <bundle-path>" >&2
+if [ "\$#" -lt 1 ]; then
+  echo "usage: $host_binary_name <args>" >&2
   exit 64
 fi
 EOF
@@ -360,10 +360,50 @@ exec "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$
 EOF
   else
     cat >>"$host_launcher_artifact" <<EOF
-if command -v chroot >/dev/null 2>&1; then
-  case "\$2" in
-    "\$DIR"/*) set -- "\$1" "/\${2#\$DIR/}" ;;
-  esac
+if command -v chroot >/dev/null 2>&1 && [ "\$(id -u)" = 0 ]; then
+  rewrite_dir_env_path() {
+    var_name="\$1"
+    case "\$var_name" in
+      HOME) value="\${HOME-}" ;;
+      XDG_CACHE_HOME) value="\${XDG_CACHE_HOME-}" ;;
+      XDG_CONFIG_HOME) value="\${XDG_CONFIG_HOME-}" ;;
+      XKB_CONFIG_ROOT) value="\${XKB_CONFIG_ROOT-}" ;;
+      MESA_SHADER_CACHE_DIR) value="\${MESA_SHADER_CACHE_DIR-}" ;;
+      VK_ICD_FILENAMES) value="\${VK_ICD_FILENAMES-}" ;;
+      SHADOW_LINUX_LD_PRELOAD) value="\${SHADOW_LINUX_LD_PRELOAD-}" ;;
+      SHADOW_RUNTIME_APP_BUNDLE_PATH) value="\${SHADOW_RUNTIME_APP_BUNDLE_PATH-}" ;;
+      SHADOW_SYSTEM_BINARY_PATH) value="\${SHADOW_SYSTEM_BINARY_PATH-}" ;;
+      SHADOW_SYSTEM_STAGE_LOADER_PATH) value="\${SHADOW_SYSTEM_STAGE_LOADER_PATH-}" ;;
+      SHADOW_SYSTEM_STAGE_LIBRARY_PATH) value="\${SHADOW_SYSTEM_STAGE_LIBRARY_PATH-}" ;;
+      *) value="" ;;
+    esac
+    case "\$value" in
+      "\$DIR"/*)
+        value="/\${value#\$DIR/}"
+        export "\$var_name=\$value"
+        ;;
+    esac
+  }
+  for var_name in \
+    HOME \
+    XDG_CACHE_HOME \
+    XDG_CONFIG_HOME \
+    XKB_CONFIG_ROOT \
+    MESA_SHADER_CACHE_DIR \
+    VK_ICD_FILENAMES \
+    SHADOW_LINUX_LD_PRELOAD \
+    SHADOW_RUNTIME_APP_BUNDLE_PATH \
+    SHADOW_SYSTEM_BINARY_PATH \
+    SHADOW_SYSTEM_STAGE_LOADER_PATH \
+    SHADOW_SYSTEM_STAGE_LIBRARY_PATH
+  do
+    rewrite_dir_env_path "\$var_name"
+  done
+  if [ "\$#" -eq 2 ] && [ "\$1" = "--session" ]; then
+    case "\$2" in
+      "\$DIR"/*) set -- "\$1" "/\${2#\$DIR/}" ;;
+    esac
+  fi
   exec chroot "\$DIR" "/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path /lib "/$host_binary_name" "\$@"
 fi
 exec "\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME" --library-path "\$DIR/lib" "\$DIR/$host_binary_name" "\$@"

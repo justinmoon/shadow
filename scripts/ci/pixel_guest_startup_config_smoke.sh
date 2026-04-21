@@ -24,14 +24,25 @@ legacy_run_config_path="$tmp_dir/legacy-guest-run-config.json"
 legacy_materialized_path="$tmp_dir/legacy-guest-run-config.env"
 launch_env_path="$tmp_dir/launch-env.txt"
 overlay_launch_env_path="$tmp_dir/overlay-launch-env.txt"
-services_json='{"camera":{"endpoint":"127.0.0.1:37656","allowMock":true,"timeoutMs":45000}}'
+runtime_app_services_json="$(pixel_runtime_app_services_json)"
+shell_services_json="$(pixel_runtime_shell_services_json)"
+services_json="$(
+  pixel_merge_services_json \
+    "$shell_services_json" \
+    '{"camera":{"endpoint":"127.0.0.1:37656","allowMock":true,"timeoutMs":45000}}'
+)"
 base_session_env=$'SHADOW_GUEST_START_APP_ID=shell\nSHADOW_GUEST_SHELL_START_APP_ID=timeline\nSHADOW_GUEST_CLIENT=/runtime/alt-client\nSHADOW_GUEST_COMPOSITOR_BIN=/runtime/alt-compositor\nSHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM=1\nSHADOW_GUEST_COMPOSITOR_TOPLEVEL_WIDTH=1080\nSHADOW_GUEST_COMPOSITOR_TOPLEVEL_HEIGHT=2280\nSHADOW_SYSTEM_BINARY_PATH=/runtime/shadow-system\nSHADOW_SESSION_APP_PROFILE=pixel-shell\nSHADOW_RUNTIME_DIR_MODE=0711\nSHADOW_COMPOSITOR_CONTROL_SOCKET_MODE=0666\nSHADOW_TIMELINE_APP_BUNDLE_PATH=/runtime/timeline.js'
-overlay_session_env=$'SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT=2\nSHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE=1\nSHADOW_GUEST_SESSION_CONFIG=/override/guest.json\nSHADOW_RUNTIME_SESSION_CONFIG=/override/runtime.json'
+overlay_session_env=$'SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT=2\nSHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE=1\nSHADOW_GUEST_SESSION_CONFIG=/override/guest.json\nSHADOW_RUNTIME_SESSION_CONFIG=/override/runtime.json\nSHADOW_RUNTIME_NOSTR_DB_PATH=/override/runtime-nostr.sqlite3\nSHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=/override/runtime-nostr.sock\nSHADOW_RUNTIME_CASHU_DATA_DIR=/override/runtime-cashu'
 session_env_for_config="$base_session_env"
 while IFS= read -r env_line; do
   [[ -n "$env_line" ]] || continue
   session_env_for_config="${session_env_for_config}"$'\n'"$env_line"
 done < <(pixel_guest_session_overlay_config_env_lines "$overlay_session_env")
+stage_loader_path="$(pixel_system_stage_loader_dst)"
+stage_library_path="$(pixel_system_stage_library_dir)"
+base_client_env=$'BASE_CLIENT=alpha\nSHADOW_RUNTIME_APP_BUNDLE_PATH=/runtime/base.js\nSHADOW_BLITZ_SOFTWARE_KEYBOARD=0\nSHADOW_RUNTIME_NOSTR_DB_PATH=/runtime/ignored.sqlite3\nSHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=/runtime/ignored.sock\nSHADOW_RUNTIME_CASHU_DATA_DIR=/runtime/ignored-cashu\nSHADOW_RUNTIME_CAMERA_ENDPOINT=127.0.0.1:9\nSHADOW_RUNTIME_CAMERA_ALLOW_MOCK=0\nSHADOW_RUNTIME_CAMERA_TIMEOUT_MS=1'
+base_client_env="${base_client_env}"$'\n'"SHADOW_SYSTEM_STAGE_LOADER_PATH=$stage_loader_path"
+base_client_env="${base_client_env}"$'\n'"SHADOW_SYSTEM_STAGE_LIBRARY_PATH=$stage_library_path"
 
 if [[ "$(pixel_camera_runtime_service_json "127.0.0.1:37656")" != '{"camera":{"endpoint":"127.0.0.1:37656"}}' ]]; then
   echo "pixel_guest_startup_config_smoke: endpoint-only camera service json mismatch" >&2
@@ -54,6 +65,26 @@ if [[ "$(pixel_guest_startup_config_dst run-token)" != "/data/local/tmp/shadow-g
   echo "pixel_guest_startup_config_smoke: tokenized startup config path mismatch" >&2
   exit 1
 fi
+if [[ "$(pixel_runtime_session_config_path)" != "/data/local/tmp/shadow-runtime/session-config.json" ]]; then
+  echo "pixel_guest_startup_config_smoke: runtime session config path mismatch" >&2
+  exit 1
+fi
+if [[ "$(pixel_runtime_session_config_staging_dst run-token)" != "/data/local/tmp/shadow-runtime-session-config-run-token.json" ]]; then
+  echo "pixel_guest_startup_config_smoke: tokenized runtime session config path mismatch" >&2
+  exit 1
+fi
+if [[ "$(pixel_runtime_chroot_device_path "$(pixel_runtime_session_config_path)")" != "/data/local/tmp/shadow-runtime-gnu/data/local/tmp/shadow-runtime/session-config.json" ]]; then
+  echo "pixel_guest_startup_config_smoke: chroot runtime session config path mismatch" >&2
+  exit 1
+fi
+if [[ "$runtime_app_services_json" != '{"nostrDbPath":"/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3","nostrServiceSocket":"/data/local/tmp/shadow-runtime/runtime-nostr.sock"}' ]]; then
+  echo "pixel_guest_startup_config_smoke: runtime-app services json mismatch" >&2
+  exit 1
+fi
+if [[ "$shell_services_json" != '{"cashuDataDir":"/data/local/tmp/shadow-runtime/cashu","nostrDbPath":"/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3","nostrServiceSocket":"/data/local/tmp/shadow-runtime/runtime-nostr.sock"}' ]]; then
+  echo "pixel_guest_startup_config_smoke: shell services json mismatch" >&2
+  exit 1
+fi
 
 pixel_write_guest_ui_startup_config \
   "$config_path" \
@@ -62,7 +93,7 @@ pixel_write_guest_ui_startup_config \
   "1" \
   "" \
   "" \
-  $'BASE_CLIENT=alpha\nSHADOW_RUNTIME_APP_BUNDLE_PATH=/runtime/base.js\nSHADOW_BLITZ_SOFTWARE_KEYBOARD=0\nSHADOW_RUNTIME_CAMERA_ENDPOINT=127.0.0.1:9\nSHADOW_RUNTIME_CAMERA_ALLOW_MOCK=0\nSHADOW_RUNTIME_CAMERA_TIMEOUT_MS=1' \
+  "$base_client_env" \
   "$session_env_for_config" \
   "/tmp/shadow-frame-test.ppm" \
   "publish" \
@@ -195,8 +226,11 @@ cat >"$legacy_run_config_path" <<'EOF'
 EOF
 pixel_materialize_guest_run_config "$legacy_run_config_path" "$legacy_materialized_path"
 
+STAGE_LOADER_PATH="$stage_loader_path" \
+STAGE_LIBRARY_PATH="$stage_library_path" \
 python3 - "$config_path" "$run_config_path" "$launch_env_path" "$overlay_launch_env_path" <<'PY'
 import json
+import os
 import sys
 
 config_path, run_config_path, launch_env_path, overlay_launch_env_path = sys.argv[1:5]
@@ -219,6 +253,26 @@ assert data["client"]["envAssignments"] == [
     {"key": "BASE_CLIENT", "value": "alpha"},
     {"key": "SHADOW_RUNTIME_APP_BUNDLE_PATH", "value": "/runtime/base.js"},
     {"key": "SHADOW_BLITZ_SOFTWARE_KEYBOARD", "value": "0"},
+    {
+        "key": "SHADOW_SYSTEM_STAGE_LOADER_PATH",
+        "value": os.environ["STAGE_LOADER_PATH"],
+    },
+    {
+        "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",
+        "value": os.environ["STAGE_LIBRARY_PATH"],
+    },
+    {
+        "key": "SHADOW_RUNTIME_NOSTR_DB_PATH",
+        "value": "/override/runtime-nostr.sqlite3",
+    },
+    {
+        "key": "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET",
+        "value": "/override/runtime-nostr.sock",
+    },
+    {
+        "key": "SHADOW_RUNTIME_CASHU_DATA_DIR",
+        "value": "/override/runtime-cashu",
+    },
     {"key": "SHADOW_RUNTIME_CAMERA_ENDPOINT", "value": "127.0.0.1:37656"},
     {"key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "value": "1"},
     {"key": "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS", "value": "45000"},
@@ -228,7 +282,10 @@ assert data["services"] == {
         "endpoint": "127.0.0.1:37656",
         "allowMock": True,
         "timeoutMs": 45000,
-    }
+    },
+    "cashuDataDir": "/override/runtime-cashu",
+    "nostrDbPath": "/override/runtime-nostr.sqlite3",
+    "nostrServiceSocket": "/override/runtime-nostr.sock",
 }, data
 assert data["compositor"]["transport"] == "direct", data
 assert data["compositor"]["enableDrm"] is True, data
@@ -261,7 +318,10 @@ assert run_config["services"] == {
         "endpoint": "127.0.0.1:37656",
         "allowMock": True,
         "timeoutMs": 45000,
-    }
+    },
+    "cashuDataDir": "/override/runtime-cashu",
+    "nostrDbPath": "/override/runtime-nostr.sqlite3",
+    "nostrServiceSocket": "/override/runtime-nostr.sock",
 }, run_config
 assert run_config["compositor"]["frameCapture"] == {
     "mode": "first-frame",

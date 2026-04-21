@@ -28,6 +28,7 @@ client_dst="$(pixel_guest_client_dst)"
 compositor_name="$(basename "$compositor_dst")"
 client_name="$(basename "$client_dst")"
 startup_config_host_path=""
+runtime_session_config_source_host_path=""
 guest_client_launch_dst="$client_dst"
 guest_session_launch_env_lines=""
 compositor_exit_on_first_frame="${PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME-1}"
@@ -97,6 +98,7 @@ if [[ -n "$guest_run_config_path" ]]; then
   source "$guest_run_materialized_path"
 
   startup_config_host_path="$pixel_guest_run_config_startup_config_path"
+  runtime_session_config_source_host_path="$guest_run_config_path"
   runtime_dir="$pixel_guest_run_config_runtime_dir"
   guest_client_launch_dst="$pixel_guest_run_config_client_launch_path"
   guest_session_launch_env_lines="$pixel_guest_run_config_session_launch_env"
@@ -430,6 +432,10 @@ if [[ -z "$skip_push" ]]; then
 fi
 
 startup_config_dst="$(pixel_guest_startup_config_dst "$(basename "$run_dir")-$$")"
+runtime_session_config_dst="$(pixel_runtime_session_config_path)"
+runtime_session_config_chroot_dst="$(pixel_runtime_chroot_device_path "$runtime_session_config_dst")"
+runtime_session_config_chroot_parent="$(dirname "$runtime_session_config_chroot_dst")"
+runtime_session_config_staging_dst="$(pixel_runtime_session_config_staging_dst "$(basename "$run_dir")-$$")"
 if [[ -z "$guest_run_config_path" ]]; then
   startup_config_host_path="$(pixel_guest_startup_config_host_path "$run_dir")"
   guest_config_session_env_for_config="$guest_config_session_env"
@@ -468,10 +474,16 @@ if [[ -z "$guest_run_config_path" ]]; then
       guest_session_launch_env_lines="$env_line"
     fi
   done < <(printf '%s\n' "$guest_session_env_passthrough")
+  runtime_session_config_source_host_path="$startup_config_host_path"
 fi
 pixel_validate_env_assignment_lines "guest client overlay env" "$guest_client_env_overlay"
 pixel_validate_env_assignment_lines "guest session launch env" "$guest_session_launch_env_lines"
 pixel_push_device_file_verified "$serial" "$startup_config_host_path" "$startup_config_dst" 0644
+pixel_push_device_file_verified \
+  "$serial" \
+  "$runtime_session_config_source_host_path" \
+  "$runtime_session_config_staging_dst" \
+  0644
 
 guest_session_launch_env_args=(
   "XKB_CONFIG_ROOT=$(pixel_runtime_xkb_config_root)"
@@ -489,7 +501,7 @@ while IFS= read -r env_line; do
   [[ -n "$env_line" ]] || continue
   guest_session_launch_env_args+=("$env_line")
 done < <(printf '%s\n' "$guest_session_launch_env_lines")
-guest_session_launch_env_args+=("SHADOW_RUNTIME_SESSION_CONFIG=$startup_config_dst")
+guest_session_launch_env_args+=("SHADOW_RUNTIME_SESSION_CONFIG=$runtime_session_config_dst")
 guest_session_launch_env="$(pixel_shell_words_quoted "${guest_session_launch_env_args[@]}")"
 guest_precreate_dir_words="$(pixel_lines_quoted "$guest_precreate_dirs")"
 session_command_word="$(pixel_shell_words_quoted "$session_dst")"
@@ -502,13 +514,18 @@ logcat_pid="$!"
 
 phone_script="$(
   cat <<EOF
+set -e
 $(pixel_takeover_stop_services_script "$stop_allocator")
 rm -rf $runtime_dir && mkdir -p $runtime_dir && chmod 700 $runtime_dir && rm -f $frame_path
+cp '$runtime_session_config_staging_dst' '$runtime_session_config_dst' && chmod 644 '$runtime_session_config_dst'
+mkdir -p '$runtime_session_config_chroot_parent' && cp '$runtime_session_config_staging_dst' '$runtime_session_config_chroot_dst' && chmod 644 '$runtime_session_config_chroot_dst'
 ${guest_precreate_dir_words:+for prep_dir in ${guest_precreate_dir_words}; do mkdir -p "\$prep_dir"; done}
 ${guest_pre_session_device_script:+$guest_pre_session_device_script}
+set +e
 ${session_timeout_secs:+timeout $session_timeout_secs }env ${guest_session_launch_env}${session_command_word}
 status=\$?
-rm -f '$startup_config_dst'
+set -e
+rm -f '$startup_config_dst' '$runtime_session_config_staging_dst'
 $(if [[ -n "$restore_android" && "$restore_in_session" != "0" ]]; then pixel_takeover_start_services_script; fi)
 exit \$status
 EOF

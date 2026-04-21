@@ -23,6 +23,8 @@ const IN_MEMORY_DB_PATH: &str = ":memory:";
 const SERVICE_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 const SERVICE_WAIT_INTERVAL: Duration = Duration::from_millis(50);
 const SYSTEM_BINARY_PATH_ENV: &str = "SHADOW_SYSTEM_BINARY_PATH";
+const SYSTEM_STAGE_LOADER_PATH_ENV: &str = "SHADOW_SYSTEM_STAGE_LOADER_PATH";
+const SYSTEM_STAGE_LIBRARY_PATH_ENV: &str = "SHADOW_SYSTEM_STAGE_LIBRARY_PATH";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -240,6 +242,8 @@ fn current_app_context() -> (Option<String>, Option<String>) {
 
 fn spawn_nostr_service(socket_path: &Path) -> Result<(), NostrHostError> {
     let system_binary = system_binary_path()?;
+    let stage_loader_path = trimmed_env_var(SYSTEM_STAGE_LOADER_PATH_ENV);
+    let stage_library_path = trimmed_env_var(SYSTEM_STAGE_LIBRARY_PATH_ENV);
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -257,7 +261,18 @@ fn spawn_nostr_service(socket_path: &Path) -> Result<(), NostrHostError> {
         ))
     })?;
 
-    Command::new(system_binary)
+    let mut command = match stage_loader_path {
+        Some(loader_path) => {
+            let mut command = Command::new(loader_path);
+            if let Some(library_path) = stage_library_path.as_deref() {
+                command.arg("--library-path").arg(library_path);
+            }
+            command.arg(&system_binary);
+            command
+        }
+        None => Command::new(&system_binary),
+    };
+    command
         .arg("--nostr-service")
         .arg(socket_path)
         .stdin(Stdio::null())
@@ -272,6 +287,13 @@ fn spawn_nostr_service(socket_path: &Path) -> Result<(), NostrHostError> {
         })?;
 
     Ok(())
+}
+
+fn trimmed_env_var(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn wait_for_nostr_service(socket_path: &Path) -> Result<(), NostrHostError> {
@@ -322,8 +344,8 @@ fn service_log_path(socket_path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_service_socket_path, service_socket_path, NOSTR_SERVICE_SOCKET_BASENAME,
-        NOSTR_SERVICE_SOCKET_ENV,
+        default_service_socket_path, service_socket_path, trimmed_env_var,
+        NOSTR_SERVICE_SOCKET_BASENAME, NOSTR_SERVICE_SOCKET_ENV,
     };
     use crate::services::nostr::NOSTR_DB_PATH_ENV;
     use crate::services::session_config::RUNTIME_SESSION_CONFIG_ENV;
@@ -393,5 +415,23 @@ mod tests {
                 );
             },
         );
+    }
+
+    #[test]
+    fn trimmed_env_var_discards_blank_values() {
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        std::env::set_var("SHADOW_TEST_TRIMMED_ENV_VAR", "   ");
+
+        assert_eq!(trimmed_env_var("SHADOW_TEST_TRIMMED_ENV_VAR"), None);
+
+        std::env::set_var("SHADOW_TEST_TRIMMED_ENV_VAR", "  /tmp/value  ");
+        assert_eq!(
+            trimmed_env_var("SHADOW_TEST_TRIMMED_ENV_VAR").as_deref(),
+            Some("/tmp/value")
+        );
+
+        std::env::remove_var("SHADOW_TEST_TRIMMED_ENV_VAR");
     }
 }

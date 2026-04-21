@@ -28,8 +28,6 @@ const SYSTEM_CLEAN_ENV: &[&str] = &[
     "MESA_SHADER_CACHE_DIR",
     "SHADOW_LINUX_LD_PRELOAD",
     "SHADOW_OPENLOG_DENY_DRI",
-    SYSTEM_STAGE_LOADER_PATH_ENV,
-    SYSTEM_STAGE_LIBRARY_PATH_ENV,
     "TU_DEBUG",
 ];
 
@@ -224,5 +222,22 @@ impl Drop for RuntimeSession {
             let _ = self.child.kill();
         }
         let _ = self.child.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SYSTEM_CLEAN_ENV, SYSTEM_STAGE_LIBRARY_PATH_ENV, SYSTEM_STAGE_LOADER_PATH_ENV};
+
+    #[test]
+    fn system_clean_env_keeps_stage_loader_settings_for_nested_services() {
+        assert!(
+            !SYSTEM_CLEAN_ENV.contains(&SYSTEM_STAGE_LOADER_PATH_ENV),
+            "runtime host must inherit the stage loader path for nested shadow-system spawns",
+        );
+        assert!(
+            !SYSTEM_CLEAN_ENV.contains(&SYSTEM_STAGE_LIBRARY_PATH_ENV),
+            "runtime host must inherit the stage library path for nested shadow-system spawns",
+        );
     }
 }

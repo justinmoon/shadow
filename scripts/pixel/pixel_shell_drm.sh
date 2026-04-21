@@ -88,6 +88,11 @@ if (( camera_runtime_enabled == 1 )); then
     camera_cleanup_command="$(pixel_camera_runtime_cleanup_command)"
   fi
 fi
+shell_services_json="$(
+  pixel_merge_services_json \
+    "$(pixel_runtime_shell_services_json)" \
+    "$camera_service_json"
+)"
 
 if [[ -z "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" && -z "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
   PIXEL_VENDOR_TURNIP_LIB_PATH="$(pixel_ensure_pinned_turnip_lib)"
@@ -265,7 +270,7 @@ pixel_write_guest_ui_startup_config \
   "$shell_session_env_for_config" \
   "$(pixel_frame_path)" \
   "$PIXEL_GUEST_FRAME_CAPTURE_MODE" \
-  "$camera_service_json"
+  "$shell_services_json"
 
 pixel_write_guest_run_config \
   "$run_config_path" \

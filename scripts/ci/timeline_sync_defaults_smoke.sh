@@ -44,20 +44,47 @@ expect_fixed \
   "runtime_app_config_json='{\"limit\":12,\"relayUrls\":[\"wss://relay.primal.net/\",\"wss://relay.damus.io/\"],\"syncOnStart\":true}'" \
   "pixel direct timeline relay sync default"
 
+if ! bash -lc 'cd "$0" && source scripts/lib/pixel_common.sh && pixel_runtime_app_services_json' "$REPO_ROOT" \
+  | grep -Fq -- '"nostrDbPath":"/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3"'; then
+  fail "pixel runtime services nostr sqlite path missing from sourced pixel_runtime_app_services_json output"
+fi
+if ! bash -lc 'cd "$0" && source scripts/lib/pixel_common.sh && pixel_runtime_session_config_path' "$REPO_ROOT" \
+  | grep -Fq -- '/data/local/tmp/shadow-runtime/session-config.json'; then
+  fail "pixel runtime session config path missing from sourced pixel_runtime_session_config_path output"
+fi
 if ! bash -lc 'cd "$0" && source scripts/lib/pixel_common.sh && pixel_system_env_lines' "$REPO_ROOT" \
-  | grep -Fq -- 'SHADOW_RUNTIME_NOSTR_DB_PATH=/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3'; then
-  fail "pixel runtime host env nostr sqlite path missing from sourced pixel_system_env_lines output"
+  | grep -Fq -- 'SHADOW_SYSTEM_STAGE_LOADER_PATH=/data/local/tmp/shadow-runtime-gnu/lib/ld-linux-aarch64.so.1'; then
+  fail "pixel system env lines missing stage loader path"
+fi
+if ! bash -lc 'cd "$0" && source scripts/lib/pixel_common.sh && pixel_system_env_lines' "$REPO_ROOT" \
+  | grep -Fq -- 'SHADOW_SYSTEM_STAGE_LIBRARY_PATH=/data/local/tmp/shadow-runtime-gnu/lib'; then
+  fail "pixel system env lines missing stage library path"
 fi
 
 expect_fixed \
   "$REPO_ROOT/scripts/pixel/pixel_shell_drm.sh" \
   '$(pixel_system_env_lines)' \
-  "pixel shell system env nostr sqlite path"
+  "pixel shell system env projection call"
 
 expect_fixed \
   "$REPO_ROOT/scripts/pixel/pixel_runtime_app_drm.sh" \
   '$(pixel_system_env_lines)' \
-  "pixel runtime system env nostr sqlite path"
+  "pixel runtime system env projection call"
+
+expect_fixed \
+  "$REPO_ROOT/scripts/pixel/pixel_guest_ui_drm.sh" \
+  'SHADOW_RUNTIME_SESSION_CONFIG=$runtime_session_config_dst' \
+  "pixel guest runtime session config export"
+
+expect_fixed \
+  "$REPO_ROOT/scripts/pixel/pixel_guest_ui_drm.sh" \
+  "cp '\$runtime_session_config_staging_dst' '\$runtime_session_config_dst'" \
+  "pixel guest runtime session config staging copy"
+
+expect_fixed \
+  "$REPO_ROOT/scripts/pixel/pixel_guest_ui_drm.sh" \
+  "cp '\$runtime_session_config_staging_dst' '\$runtime_session_config_chroot_dst'" \
+  "pixel guest runtime session config chroot staging copy"
 
 expect_fixed \
   "$REPO_ROOT/runtime/app-nostr-timeline/app.tsx" \

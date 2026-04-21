@@ -230,6 +230,24 @@ pixel_runtime_dir() {
   printf '%s\n' "${PIXEL_RUNTIME_DIR:-/data/local/tmp/shadow-runtime}"
 }
 
+pixel_runtime_session_config_path() {
+  printf '%s/session-config.json\n' "$(pixel_runtime_dir)"
+}
+
+pixel_runtime_session_config_staging_dst() {
+  local token="${1:-}"
+
+  if [[ -n "${PIXEL_RUNTIME_SESSION_CONFIG_STAGING_DST:-}" ]]; then
+    printf '%s\n' "$PIXEL_RUNTIME_SESSION_CONFIG_STAGING_DST"
+    return 0
+  fi
+  if [[ -n "$token" ]]; then
+    printf '/data/local/tmp/shadow-runtime-session-config-%s.json\n' "$token"
+    return 0
+  fi
+  printf '%s\n' '/data/local/tmp/shadow-runtime-session-config.json'
+}
+
 pixel_runtime_touch_signal_path() {
   printf '%s/touch-signal\n' "$(pixel_runtime_dir)"
 }
@@ -240,6 +258,85 @@ pixel_runtime_cashu_data_dir() {
 
 pixel_runtime_nostr_db_path() {
   printf '%s/runtime-nostr.sqlite3\n' "$(pixel_runtime_dir)"
+}
+
+pixel_runtime_nostr_service_socket_path() {
+  printf '%s/runtime-nostr.sock\n' "$(pixel_runtime_dir)"
+}
+
+pixel_runtime_default_services_json() {
+  local include_cashu="${1:-0}"
+
+  PIXEL_RUNTIME_DEFAULT_SERVICES_INCLUDE_CASHU="$include_cashu" \
+  PIXEL_RUNTIME_DEFAULT_SERVICES_NOSTR_DB_PATH="$(pixel_runtime_nostr_db_path)" \
+  PIXEL_RUNTIME_DEFAULT_SERVICES_NOSTR_SERVICE_SOCKET="$(pixel_runtime_nostr_service_socket_path)" \
+  PIXEL_RUNTIME_DEFAULT_SERVICES_CASHU_DATA_DIR="$(pixel_runtime_cashu_data_dir)" \
+    python3 - <<'PY'
+import json
+import os
+
+
+services = {
+    "nostrDbPath": os.environ["PIXEL_RUNTIME_DEFAULT_SERVICES_NOSTR_DB_PATH"],
+    "nostrServiceSocket": os.environ["PIXEL_RUNTIME_DEFAULT_SERVICES_NOSTR_SERVICE_SOCKET"],
+}
+if os.environ.get("PIXEL_RUNTIME_DEFAULT_SERVICES_INCLUDE_CASHU") == "1":
+    services["cashuDataDir"] = os.environ["PIXEL_RUNTIME_DEFAULT_SERVICES_CASHU_DATA_DIR"]
+
+print(json.dumps(services, separators=(",", ":"), sort_keys=True))
+PY
+}
+
+pixel_runtime_app_services_json() {
+  pixel_runtime_default_services_json 0
+}
+
+pixel_runtime_shell_services_json() {
+  pixel_runtime_default_services_json 1
+}
+
+pixel_merge_services_json() {
+  local base_services_json="${1:-}"
+  local extra_services_json="${2:-}"
+
+  PIXEL_BASE_SERVICES_JSON="$base_services_json" \
+  PIXEL_EXTRA_SERVICES_JSON="$extra_services_json" \
+    python3 - <<'PY'
+import json
+import os
+
+
+def parse_services(label, raw_value):
+    value = raw_value.strip()
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"pixel: invalid {label} services json: {error}") from error
+    if parsed is None:
+        return {}
+    if not isinstance(parsed, dict):
+        raise SystemExit(f"pixel: {label} services json must decode to an object")
+    return parsed
+
+
+def merge_dicts(base, extra):
+    merged = dict(base)
+    for key, value in extra.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+base = parse_services("base", os.environ.get("PIXEL_BASE_SERVICES_JSON", ""))
+extra = parse_services("extra", os.environ.get("PIXEL_EXTRA_SERVICES_JSON", ""))
+merged = merge_dicts(base, extra)
+if merged:
+    print(json.dumps(merged, separators=(",", ":"), sort_keys=True))
+PY
 }
 
 pixel_shell_control_socket_path() {
@@ -297,6 +394,14 @@ pixel_system_binary_dst() {
   printf '%s/shadow-system\n' "$(pixel_runtime_linux_dir)"
 }
 
+pixel_system_stage_loader_dst() {
+  printf '%s/lib/%s\n' "$(pixel_runtime_linux_dir)" 'ld-linux-aarch64.so.1'
+}
+
+pixel_system_stage_library_dir() {
+  printf '%s/lib\n' "$(pixel_runtime_linux_dir)"
+}
+
 pixel_system_launcher_dst() {
   printf '%s/run-shadow-system\n' "$(pixel_runtime_linux_dir)"
 }
@@ -315,9 +420,9 @@ pixel_runtime_openlog_preload_dst() {
 
 pixel_system_env_lines() {
   cat <<EOF
-SHADOW_SYSTEM_BINARY_PATH=$(pixel_system_launcher_dst)
-SHADOW_RUNTIME_NOSTR_DB_PATH=$(pixel_runtime_nostr_db_path)
-SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=$(pixel_runtime_dir)/runtime-nostr.sock
+SHADOW_SYSTEM_BINARY_PATH=$(pixel_system_binary_dst)
+SHADOW_SYSTEM_STAGE_LOADER_PATH=$(pixel_system_stage_loader_dst)
+SHADOW_SYSTEM_STAGE_LIBRARY_PATH=$(pixel_system_stage_library_dir)
 EOF
 }
 
@@ -399,7 +504,6 @@ pixel_runtime_shell_bundle_env_lines() {
       "$(pixel_runtime_app_bundle_env "$app_id")" \
       "$(pixel_runtime_app_bundle_dst_for "$app_id")"
   done < <(pixel_runtime_shell_app_ids)
-  printf 'SHADOW_RUNTIME_CASHU_DATA_DIR=%s\n' "$(pixel_runtime_cashu_data_dir)"
 }
 
 pixel_shell_words_quoted() {
@@ -481,6 +585,9 @@ pixel_guest_session_env_assignment_is_config_owned() {
   local key="${1:?pixel_guest_session_env_assignment_is_config_owned requires a key}"
 
   case "$key" in
+    SHADOW_RUNTIME_CASHU_DATA_DIR | \
+    SHADOW_RUNTIME_NOSTR_DB_PATH | \
+    SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET | \
     SHADOW_GUEST_CLIENT | \
     SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE | \
     SHADOW_GUEST_CLIENT_LINGER_MS | \
@@ -657,6 +764,89 @@ def append_env_assignment(assignments, key, value):
     assignments.append({"key": key, "value": value})
 
 
+def merge_service_env_overrides(services, session_env):
+    merged = dict(services or {})
+    for env_key, service_key in (
+        ("SHADOW_RUNTIME_NOSTR_DB_PATH", "nostrDbPath"),
+        ("SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET", "nostrServiceSocket"),
+        ("SHADOW_RUNTIME_CASHU_DATA_DIR", "cashuDataDir"),
+    ):
+        value = session_env.get(env_key)
+        if value is None:
+            continue
+        if value.strip():
+            merged[service_key] = value
+    return merged or None
+
+
+def filter_env_assignments(client_env_assignments, removed_keys):
+    client_env_assignments[:] = [
+        assignment
+        for assignment in client_env_assignments
+        if assignment["key"] not in removed_keys
+    ]
+
+
+def project_nostr_service_env(client_env_assignments, services):
+    if (
+        "nostrDbPath" not in services
+        and "nostrServiceSocket" not in services
+    ):
+        return
+
+    filter_env_assignments(
+        client_env_assignments,
+        {
+            "SHADOW_RUNTIME_NOSTR_DB_PATH",
+            "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET",
+        },
+    )
+
+    db_path = services.get("nostrDbPath")
+    if db_path is not None:
+        if not isinstance(db_path, str):
+            raise SystemExit("pixel: services.nostrDbPath must be a string")
+        if db_path.strip():
+            append_env_assignment(
+                client_env_assignments,
+                "SHADOW_RUNTIME_NOSTR_DB_PATH",
+                db_path,
+            )
+
+    service_socket = services.get("nostrServiceSocket")
+    if service_socket is not None:
+        if not isinstance(service_socket, str):
+            raise SystemExit("pixel: services.nostrServiceSocket must be a string")
+        if service_socket.strip():
+            append_env_assignment(
+                client_env_assignments,
+                "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET",
+                service_socket,
+            )
+
+
+def project_cashu_service_env(client_env_assignments, services):
+    if "cashuDataDir" not in services:
+        return
+
+    filter_env_assignments(
+        client_env_assignments,
+        {"SHADOW_RUNTIME_CASHU_DATA_DIR"},
+    )
+
+    cashu_data_dir = services.get("cashuDataDir")
+    if cashu_data_dir is None:
+        return
+    if not isinstance(cashu_data_dir, str):
+        raise SystemExit("pixel: services.cashuDataDir must be a string")
+    if cashu_data_dir.strip():
+        append_env_assignment(
+            client_env_assignments,
+            "SHADOW_RUNTIME_CASHU_DATA_DIR",
+            cashu_data_dir,
+        )
+
+
 def project_camera_service_env(client_env_assignments, services):
     camera = services.get("camera")
     if camera is None:
@@ -664,17 +854,14 @@ def project_camera_service_env(client_env_assignments, services):
     if not isinstance(camera, dict):
         raise SystemExit("pixel: services.camera must be an object")
 
-    filtered_assignments = [
-        assignment
-        for assignment in client_env_assignments
-        if assignment["key"]
-        not in {
+    filter_env_assignments(
+        client_env_assignments,
+        {
             "SHADOW_RUNTIME_CAMERA_ENDPOINT",
             "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",
             "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS",
-        }
-    ]
-    client_env_assignments[:] = filtered_assignments
+        },
+    )
 
     endpoint = camera.get("endpoint")
     if endpoint is not None:
@@ -722,7 +909,10 @@ session_env_lines = parse_env_lines(
 session_env = {key: value for key, value in session_env_lines}
 frame_capture_mode = os.environ.get("PIXEL_GUEST_STARTUP_FRAME_CAPTURE_MODE", "off").strip()
 frame_artifact_path = os.environ.get("PIXEL_GUEST_STARTUP_FRAME_ARTIFACT_PATH", "").strip()
-services = parse_services_json(os.environ.get("PIXEL_GUEST_STARTUP_SERVICES_JSON", ""))
+services = merge_service_env_overrides(
+    parse_services_json(os.environ.get("PIXEL_GUEST_STARTUP_SERVICES_JSON", "")),
+    session_env,
+)
 
 if frame_capture_mode not in {"publish", "request", "off"}:
     raise SystemExit(
@@ -745,6 +935,8 @@ for key, value in client_env_lines:
     append_env_assignment(client_env_assignments, key, value)
 
 if services:
+    project_nostr_service_env(client_env_assignments, services)
+    project_cashu_service_env(client_env_assignments, services)
     project_camera_service_env(client_env_assignments, services)
 
 if system_binary_path is None:

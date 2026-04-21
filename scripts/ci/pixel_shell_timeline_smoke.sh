@@ -41,6 +41,7 @@ parse_args "$@"
 
 run_dir="$(pixel_prepare_named_run_dir "$(pixel_shell_runs_dir)")"
 run_log="$run_dir/pixel-shell-${app_id}-smoke.log"
+session_run_dir="$run_dir/session"
 state_after_open_path="$run_dir/state-after-${app_id}-open.json"
 state_after_home_path="$run_dir/state-after-${app_id}-home.json"
 state_after_reopen_path="$run_dir/state-after-${app_id}-reopen.json"
@@ -249,6 +250,7 @@ pixel_restore_android_best_effort "$serial" "$restore_timeout_secs"
 (
   cd "$REPO_ROOT"
   PIXEL_SERIAL="$serial" \
+  PIXEL_GUEST_RUN_DIR="$session_run_dir" \
   PIXEL_GUEST_UI_HOST_PID_PATH="$session_host_pid_path" \
   PIXEL_GUEST_FRAME_CAPTURE_MODE=off \
     "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh" "${launcher_args[@]}"
@@ -275,22 +277,75 @@ STATE_AFTER_OPEN="$(cat "$state_after_open_path")" \
 STATE_AFTER_HOME="$(cat "$state_after_home_path")" \
 STATE_AFTER_REOPEN="$(cat "$state_after_reopen_path")" \
 RUN_LOG="$run_log" \
+SESSION_RUN_DIR="$session_run_dir" \
+RUNTIME_LINUX_DIR="$(pixel_runtime_linux_dir)" \
 SERIAL="$serial" \
 APP_ID="$app_id" \
 python3 - <<'PY'
 import json
 import os
+import shlex
+import subprocess
+import time
+from pathlib import Path
 
 open_state = json.loads(os.environ["STATE_AFTER_OPEN"])
 home_state = json.loads(os.environ["STATE_AFTER_HOME"])
 reopen_state = json.loads(os.environ["STATE_AFTER_REOPEN"])
 app_id = os.environ["APP_ID"]
 prefix = f"pixel-shell-{app_id}-smoke"
+session_run_dir = Path(os.environ["SESSION_RUN_DIR"])
+runtime_linux_dir = os.environ["RUNTIME_LINUX_DIR"]
+serial = os.environ["SERIAL"]
 
 
 def expect(condition: bool, message: str) -> None:
     if not condition:
         raise SystemExit(f"{prefix}: {message}")
+
+
+def wait_for_cashu_paths() -> dict[str, str]:
+    config_path = session_run_dir / "guest-run-config.json"
+    with config_path.open("r", encoding="utf-8") as handle:
+        config = json.load(handle)
+    services = config.get("services")
+    expect(isinstance(services, dict), "guest run config missing services object")
+    cashu_dir = services.get("cashuDataDir")
+    expect(isinstance(cashu_dir, str) and cashu_dir, "guest run config missing services.cashuDataDir")
+
+    candidate_dirs = [cashu_dir]
+    if cashu_dir.startswith("/"):
+        candidate_dirs.insert(0, f"{runtime_linux_dir}{cashu_dir}")
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        for device_cashu_dir in candidate_dirs:
+            wallet_path = f"{device_cashu_dir}/wallet.redb"
+            mnemonic_path = f"{device_cashu_dir}/mnemonic.txt"
+            result = subprocess.run(
+                [
+                    "adb",
+                    "-s",
+                    serial,
+                    "shell",
+                    "su",
+                    "0",
+                    "sh",
+                    "-lc",
+                    f"test -f {shlex.quote(wallet_path)} && test -f {shlex.quote(mnemonic_path)}",
+                ],
+                text=True,
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                return {
+                    "cashuDataDir": device_cashu_dir,
+                    "walletPath": wallet_path,
+                    "mnemonicPath": mnemonic_path,
+                }
+        time.sleep(1)
+    raise SystemExit(
+        f"{prefix}: timed out waiting for Cashu files under configured services.cashuDataDir={cashu_dir!r}"
+    )
 
 
 expect(open_state.get("focused") == app_id, f"open focused={open_state.get('focused')!r}")
@@ -308,15 +363,16 @@ expect(app_id in reopen_state.get("launched", []), f"reopen launched={reopen_sta
 expect(app_id in reopen_state.get("mapped", []), f"reopen mapped={reopen_state.get('mapped')!r}")
 expect(app_id not in reopen_state.get("shelved", []), f"reopen shelved={reopen_state.get('shelved')!r}")
 
+summary = {
+    "app": app_id,
+    "serial": serial,
+    "log": os.environ["RUN_LOG"],
+    "result": f"pixel-shell-{app_id}-ok",
+}
+if app_id == "cashu":
+    summary["cashu"] = wait_for_cashu_paths()
+
 print(
-    json.dumps(
-        {
-            "app": app_id,
-            "serial": os.environ["SERIAL"],
-            "log": os.environ["RUN_LOG"],
-            "result": f"pixel-shell-{app_id}-ok",
-        },
-        indent=2,
-    )
+    json.dumps(summary, indent=2)
 )
 PY

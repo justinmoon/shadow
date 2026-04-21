@@ -80,7 +80,11 @@ extra_guest_env="${PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV-}"
 extra_session_env="${PIXEL_RUNTIME_APP_EXTRA_SESSION_ENV-}"
 extra_required_markers="${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS-}"
 extra_forbidden_markers="${PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS-}"
-runtime_services_json="${PIXEL_RUNTIME_APP_SERVICES_JSON-}"
+runtime_services_json="$(
+  pixel_merge_services_json \
+    "$(pixel_runtime_app_services_json)" \
+    "${PIXEL_RUNTIME_APP_SERVICES_JSON-}"
+)"
 touch_signal_path="$(pixel_runtime_touch_signal_path)"
 runtime_mesa_cache_dir="$(pixel_runtime_mesa_cache_dir)"
 runtime_viewport_mode="${PIXEL_RUNTIME_APP_VIEWPORT_MODE-}"

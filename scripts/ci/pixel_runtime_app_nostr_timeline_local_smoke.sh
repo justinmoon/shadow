@@ -12,7 +12,7 @@ relay_port="$(pixel_nostr_local_relay_port)"
 relay_url="ws://127.0.0.1:${relay_port}"
 run_dir="${PIXEL_RUNTIME_APP_RUN_DIR:-$(pixel_prepare_named_run_dir "$(pixel_runs_dir)/runtime-app-nostr-timeline-local")}"
 session_run_dir="${PIXEL_GUEST_RUN_DIR:-$run_dir/pixel-drm}"
-runtime_nostr_db_device_path="$(pixel_runtime_chroot_device_path "$(pixel_runtime_nostr_db_path)")"
+guest_run_config_host_path="$(pixel_guest_run_config_host_path "$session_run_dir")"
 mkdir -p "$run_dir"
 
 runtime_app_config_json="$(
@@ -63,12 +63,14 @@ RELAY_PORT="$relay_port" \
 RELAY_URL="$relay_url" \
 RUNTIME_APP_CONFIG_JSON="$runtime_app_config_json" \
 PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS="$extra_forbidden_markers" \
-RUNTIME_NOSTR_DB_DEVICE_PATH="$runtime_nostr_db_device_path" \
+GUEST_RUN_CONFIG_HOST_PATH="$guest_run_config_host_path" \
+RUNTIME_LINUX_DIR="$(pixel_runtime_linux_dir)" \
 REPO_ROOT="$REPO_ROOT" \
 SCRIPT_DIR="$SCRIPT_DIR" \
 python3 - <<'PY'
 import json
 import os
+import shlex
 import socket
 import sqlite3
 import subprocess
@@ -85,7 +87,8 @@ RELAY_PORT = int(os.environ["RELAY_PORT"])
 RELAY_URL = os.environ["RELAY_URL"]
 RUNTIME_APP_CONFIG_JSON = os.environ["RUNTIME_APP_CONFIG_JSON"]
 EXTRA_FORBIDDEN_MARKERS = os.environ["PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS"]
-RUNTIME_NOSTR_DB_DEVICE_PATH = os.environ["RUNTIME_NOSTR_DB_DEVICE_PATH"]
+GUEST_RUN_CONFIG_HOST_PATH = Path(os.environ["GUEST_RUN_CONFIG_HOST_PATH"])
+RUNTIME_LINUX_DIR = os.environ["RUNTIME_LINUX_DIR"]
 SESSION_TIMEOUT = os.environ.get("PIXEL_GUEST_SESSION_TIMEOUT_SECS", "45")
 EXIT_DELAY_MS = os.environ.get("PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS", "12000")
 RUN_ONLY = bool(os.environ.get("PIXEL_RUNTIME_APP_RUN_ONLY"))
@@ -176,6 +179,80 @@ def query_db_contents(db_path: Path) -> list[str]:
     finally:
         connection.close()
     return [row[0] for row in rows]
+
+
+def runtime_nostr_db_device_path() -> str:
+    with GUEST_RUN_CONFIG_HOST_PATH.open("r", encoding="utf-8") as handle:
+        config = json.load(handle)
+    services = config.get("services")
+    if not isinstance(services, dict):
+        raise SystemExit(
+            "pixel-runtime-app-nostr-timeline-local-smoke: guest run config missing services object"
+        )
+    db_path = services.get("nostrDbPath")
+    if not isinstance(db_path, str) or not db_path.strip():
+        raise SystemExit(
+            "pixel-runtime-app-nostr-timeline-local-smoke: guest run config missing services.nostrDbPath"
+        )
+    if db_path.startswith("/"):
+        candidates = [f"{RUNTIME_LINUX_DIR}{db_path}", db_path]
+    else:
+        candidates = [db_path]
+
+    for candidate in candidates:
+        result = subprocess.run(
+            [
+                "adb",
+                "-s",
+                SERIAL,
+                "shell",
+                "su",
+                "0",
+                "sh",
+                "-lc",
+                f"test -e {shlex.quote(candidate)}",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode == 0:
+            return candidate
+
+    raise SystemExit(
+        "pixel-runtime-app-nostr-timeline-local-smoke: runtime db path not root-visible "
+        f"for configured services.nostrDbPath={db_path!r}"
+    )
+
+
+def adb_root_copy_file(src: str, dst: Path) -> None:
+    with dst.open("wb") as handle:
+        result = subprocess.run(
+            [
+                "adb",
+                "-s",
+                SERIAL,
+                "exec-out",
+                "su",
+                "0",
+                "sh",
+                "-lc",
+                f"cat {shlex.quote(src)}",
+            ],
+            cwd=REPO_ROOT,
+            stdout=handle,
+            stderr=subprocess.PIPE,
+            timeout=20,
+            check=False,
+        )
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise SystemExit(
+            "pixel-runtime-app-nostr-timeline-local-smoke: failed to copy runtime db via root "
+            f"from {src!r}: {stderr or f'exit {result.returncode}'}"
+        )
 
 
 key_a = run(["nak", "key", "generate"], timeout=10).stdout.strip()
@@ -277,7 +354,8 @@ try:
             check=False,
         )
 
-    adb("pull", RUNTIME_NOSTR_DB_DEVICE_PATH, str(DB_COPY_PATH), timeout=20)
+    device_db_path = runtime_nostr_db_device_path()
+    adb_root_copy_file(device_db_path, DB_COPY_PATH)
     db_contents = query_db_contents(DB_COPY_PATH)
     for fragment in ("relay smoke alpha", "relay smoke beta"):
         if fragment not in db_contents:
@@ -294,7 +372,7 @@ try:
         "runDir": str(RUN_DIR),
         "serial": SERIAL,
         "sessionRunDir": str(SESSION_RUN_DIR),
-        "deviceDbPath": RUNTIME_NOSTR_DB_DEVICE_PATH,
+        "deviceDbPath": device_db_path,
     }
     SUMMARY_PATH.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2))
