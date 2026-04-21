@@ -945,6 +945,7 @@ fi
 
 assert_gpu_bundle_variant "$GPU_BUNDLE_DIR"
 STAGED_GPU_BUNDLE_DIR="$WORK_DIR/orange-gpu-bundle"
+STAGED_GPU_FIRMWARE_PARENT_DIR=""
 stage_gpu_bundle "$GPU_BUNDLE_DIR" "$STAGED_GPU_BUNDLE_DIR"
 assert_gpu_bundle_variant "$STAGED_GPU_BUNDLE_DIR"
 
@@ -958,7 +959,9 @@ if [[ "$FIRMWARE_BOOTSTRAP" == "ramdisk-lib-firmware" ]]; then
     echo "pixel_boot_build_orange_gpu: firmware dir is empty: $GPU_FIRMWARE_DIR" >&2
     exit 1
   fi
+  STAGED_GPU_FIRMWARE_PARENT_DIR="$WORK_DIR/lib-dir"
   STAGED_GPU_FIRMWARE_DIR="$WORK_DIR/lib-firmware"
+  mkdir -p "$STAGED_GPU_FIRMWARE_PARENT_DIR"
   stage_gpu_firmware_tree "$GPU_FIRMWARE_DIR" "$STAGED_GPU_FIRMWARE_DIR"
 fi
 
@@ -980,6 +983,7 @@ fi
 
 append_tree_add_specs "$STAGED_GPU_BUNDLE_DIR" "$PAYLOAD_ROOT" build_args
 if [[ "$FIRMWARE_BOOTSTRAP" == "ramdisk-lib-firmware" ]]; then
+  build_args+=(--add "lib=$STAGED_GPU_FIRMWARE_PARENT_DIR")
   append_tree_add_specs "$STAGED_GPU_FIRMWARE_DIR" "lib/firmware" build_args
 fi
 
