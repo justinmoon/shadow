@@ -3385,13 +3385,105 @@ static int run_orange_gpu_parent_probe(
     return any_succeeded ? 0 : 1;
 }
 
+static int probe_bootstrap_gpu_firmware(
+    const struct hello_init_config *config,
+    const char *payload_probe_stage_path,
+    const char *payload_probe_stage_prefix
+) {
+    static const char *kSunfishGpuFirmwarePaths[] = {
+        "/lib/firmware/a630_sqe.fw",
+        "/lib/firmware/a618_gmu.bin",
+        "/lib/firmware/a615_zap.mdt",
+        "/lib/firmware/a615_zap.b02",
+    };
+    size_t index;
+
+    if (strcmp(config->firmware_bootstrap, "ramdisk-lib-firmware") != 0) {
+        return 0;
+    }
+
+    write_payload_probe_stage_best_effort(
+        payload_probe_stage_path,
+        payload_probe_stage_prefix,
+        "firmware-probe-start"
+    );
+    for (index = 0; index < sizeof(kSunfishGpuFirmwarePaths) / sizeof(kSunfishGpuFirmwarePaths[0]); index++) {
+        int firmware_fd;
+        char probe_byte = '\0';
+
+        firmware_fd = open(
+            kSunfishGpuFirmwarePaths[index],
+            O_RDONLY | O_CLOEXEC | O_NOCTTY
+        );
+        if (firmware_fd < 0) {
+            log_stage(
+                "<3>",
+                "orange-gpu-firmware-probe-open-failed",
+                "path=%s errno=%d",
+                kSunfishGpuFirmwarePaths[index],
+                errno
+            );
+            write_payload_probe_stage_best_effort(
+                payload_probe_stage_path,
+                payload_probe_stage_prefix,
+                "firmware-probe-failed"
+            );
+            return 1;
+        }
+        if (read(firmware_fd, &probe_byte, 1) < 0) {
+            int saved_errno = errno;
+
+            close(firmware_fd);
+            errno = saved_errno;
+            log_stage(
+                "<3>",
+                "orange-gpu-firmware-probe-read-failed",
+                "path=%s errno=%d",
+                kSunfishGpuFirmwarePaths[index],
+                errno
+            );
+            write_payload_probe_stage_best_effort(
+                payload_probe_stage_path,
+                payload_probe_stage_prefix,
+                "firmware-probe-failed"
+            );
+            return 1;
+        }
+        close(firmware_fd);
+        log_stage(
+            "<6>",
+            "orange-gpu-firmware-probe-ok",
+            "path=%s",
+            kSunfishGpuFirmwarePaths[index]
+        );
+    }
+
+    write_payload_probe_stage_best_effort(
+        payload_probe_stage_path,
+        payload_probe_stage_prefix,
+        "firmware-probe-ok"
+    );
+    return 0;
+}
+
 static int run_c_kgsl_open_readonly_smoke(
+    const struct hello_init_config *config,
     const char *payload_probe_stage_path,
     const char *payload_probe_stage_prefix
 ) {
     int kgsl_fd;
     int saved_errno = 0;
     bool trace_enabled = false;
+
+    if (
+        probe_bootstrap_gpu_firmware(
+            config,
+            payload_probe_stage_path,
+            payload_probe_stage_prefix
+        ) != 0
+    ) {
+        return 1;
+    }
 
     write_payload_probe_stage_best_effort(
         payload_probe_stage_path,
@@ -3572,6 +3664,7 @@ static int run_orange_gpu_payload(
             "mode=c-kgsl-open-readonly-pid1-smoke"
         );
         return run_c_kgsl_open_readonly_smoke(
+            config,
             payload_probe_stage_path,
             payload_probe_stage_prefix
         );
@@ -3684,6 +3777,7 @@ static int run_orange_gpu_payload(
                 "mode=c-kgsl-open-readonly-smoke"
             );
             _exit(run_c_kgsl_open_readonly_smoke(
+                config,
                 payload_probe_stage_path,
                 payload_probe_stage_prefix
             ));
