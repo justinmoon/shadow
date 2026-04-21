@@ -1792,168 +1792,168 @@ PY
 }
 
 assert_shadow_gpu_instance_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene instance-smoke \
       --hold-secs 1
 }
 
 assert_shadow_gpu_raw_vulkan_instance_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-instance-smoke \
       --hold-secs 1
 }
 
 assert_shadow_gpu_raw_vulkan_physical_device_count_query_exit_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-physical-device-count-query-exit-smoke \
       --hold-secs 1
 }
 
 assert_shadow_gpu_raw_vulkan_physical_device_count_query_no_destroy_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-physical-device-count-query-no-destroy-smoke \
       --hold-secs 1
 }
 
 assert_shadow_gpu_raw_vulkan_physical_device_count_query_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-physical-device-count-query-smoke \
       --hold-secs 1
 }
 
 assert_shadow_gpu_raw_vulkan_physical_device_count_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-physical-device-count-smoke \
       --hold-secs 1
 }
 
 assert_shadow_gpu_enumerate_adapters_count_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene enumerate-adapters-count-smoke \
       --hold-secs 1
 }
 
 assert_shadow_gpu_enumerate_adapters_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene enumerate-adapters-smoke \
       --hold-secs 1
 }
 
 assert_shadow_gpu_instance_smoke_rejects_present_kms() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene instance-smoke \
       --present-kms
 }
 
 assert_shadow_gpu_raw_vulkan_instance_smoke_rejects_present_kms() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-instance-smoke \
       --present-kms
 }
 
 assert_shadow_gpu_raw_vulkan_physical_device_count_query_exit_smoke_rejects_present_kms() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-physical-device-count-query-exit-smoke \
       --present-kms
 }
 
 assert_shadow_gpu_raw_vulkan_physical_device_count_query_no_destroy_smoke_rejects_present_kms() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-physical-device-count-query-no-destroy-smoke \
       --present-kms
 }
 
 assert_shadow_gpu_raw_vulkan_physical_device_count_query_smoke_rejects_present_kms() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-physical-device-count-query-smoke \
       --present-kms
 }
 
 assert_shadow_gpu_raw_vulkan_physical_device_count_smoke_rejects_present_kms() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-physical-device-count-smoke \
       --present-kms
 }
 
 assert_shadow_gpu_enumerate_adapters_count_smoke_rejects_present_kms() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene enumerate-adapters-count-smoke \
       --present-kms
 }
 
 assert_shadow_gpu_enumerate_adapters_smoke_rejects_present_kms() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene enumerate-adapters-smoke \
       --present-kms
 }
 
 assert_shadow_gpu_instance_smoke_rejects_ppm_path() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene instance-smoke \
       --ppm-path "$TMP_DIR/instance-smoke.ppm"
 }
 
 assert_shadow_gpu_raw_vulkan_instance_smoke_rejects_ppm_path() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-instance-smoke \
       --ppm-path "$TMP_DIR/raw-vulkan-instance-smoke.ppm"
 }
 
 assert_shadow_gpu_raw_vulkan_physical_device_count_query_exit_smoke_rejects_ppm_path() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-physical-device-count-query-exit-smoke \
       --ppm-path "$TMP_DIR/raw-vulkan-physical-device-count-query-exit-smoke.ppm"
 }
 
 assert_shadow_gpu_raw_vulkan_physical_device_count_query_no_destroy_smoke_rejects_ppm_path() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-physical-device-count-query-no-destroy-smoke \
       --ppm-path "$TMP_DIR/raw-vulkan-physical-device-count-query-no-destroy-smoke.ppm"
 }
 
 assert_shadow_gpu_raw_vulkan_physical_device_count_query_smoke_rejects_ppm_path() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-physical-device-count-query-smoke \
       --ppm-path "$TMP_DIR/raw-vulkan-physical-device-count-query-smoke.ppm"
 }
 
 assert_shadow_gpu_raw_vulkan_physical_device_count_smoke_rejects_ppm_path() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene raw-vulkan-physical-device-count-smoke \
       --ppm-path "$TMP_DIR/raw-vulkan-physical-device-count-smoke.ppm"
 }
 
 assert_shadow_gpu_enumerate_adapters_count_smoke_rejects_ppm_path() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene enumerate-adapters-count-smoke \
       --ppm-path "$TMP_DIR/enumerate-adapters-count-smoke.ppm"
 }
 
 assert_shadow_gpu_enumerate_adapters_smoke_rejects_ppm_path() {
-  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
+  assert_command_fails_contains "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene enumerate-adapters-smoke \
       --ppm-path "$TMP_DIR/enumerate-adapters-smoke.ppm"
@@ -1978,7 +1978,7 @@ assert_shadow_gpu_adapter_smoke_cli() {
 }
 
 assert_shadow_gpu_adapter_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene adapter-smoke \
       --allow-non-vulkan \
@@ -2005,7 +2005,7 @@ assert_shadow_gpu_device_request_smoke_cli() {
 }
 
 assert_shadow_gpu_device_request_smoke_rejects_hold_secs() {
-  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
+  assert_command_fails_contains "--scene instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs" \
     nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
       --scene device-request-smoke \
       --allow-non-vulkan \
@@ -2154,7 +2154,7 @@ assert_shadow_gpu_adapter_smoke_rejects_hold_secs
 assert_shadow_gpu_device_request_smoke_cli
 assert_shadow_gpu_device_request_smoke_rejects_hold_secs
 assert_shadow_gpu_device_smoke_cli
-assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" '[--scene smoke|flat-orange|bundle-smoke|instance-smoke|raw-vulkan-instance-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|enumerate-adapters-count-smoke|enumerate-adapters-smoke|adapter-smoke|device-request-smoke|device-smoke]'
+assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" '[--scene smoke|flat-orange|bundle-smoke|instance-smoke|raw-vulkan-instance-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|enumerate-adapters-count-smoke|enumerate-adapters-smoke|adapter-smoke|device-request-smoke|device-smoke]'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'BundleSmokeSummary'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'InstanceSmokeSummary'
 assert_file_contains "$REPO_ROOT/ui/crates/shadow-gpu-smoke/src/main.rs" 'RawVulkanInstanceSmokeSummary'
@@ -2355,8 +2355,7 @@ assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-metadata-boot.img.hel
 assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-metadata-boot.img.hello-init.json" metadata_probe_stage_path "/metadata/shadow-hello-init/by-token/orange-gpu-parent-probe-metadata-run-token/probe-stage.txt"
 assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-metadata-boot.img.hello-init.json" metadata_probe_fingerprint_path "/metadata/shadow-hello-init/by-token/orange-gpu-parent-probe-metadata-run-token/probe-fingerprint.txt"
 
-assert_command_fails_contains \
-  "orange gpu metadata stage breadcrumb requires parent probe attempts > 0" \
+parent_probe_metadata_no_probe_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
@@ -2364,16 +2363,28 @@ assert_command_fails_contains \
       --init "$HELLO_INIT_OUTPUT" \
       --gpu-bundle "$GPU_BUNDLE_DIR" \
       --key "$AVB_KEY_PATH" \
-      --output "$TMP_DIR/orange-gpu-parent-probe-metadata-invalid-boot.img" \
+      --output "$TMP_DIR/orange-gpu-parent-probe-metadata-no-probe-boot.img" \
       --hold-secs 7 \
       --orange-gpu-mode raw-vulkan-physical-device-count-query-exit-smoke \
       --orange-gpu-metadata-stage-breadcrumb true \
       --reboot-target bootloader \
-      --run-token orange-gpu-parent-probe-metadata-invalid-run-token \
+      --run-token orange-gpu-parent-probe-metadata-no-probe-run-token \
       --dev-mount tmpfs \
       --mount-sys false \
       --log-kmsg false \
       --log-pmsg false
+)"
+
+assert_contains "$parent_probe_metadata_no_probe_boot_output" "Orange GPU metadata stage breadcrumb: true"
+assert_contains "$parent_probe_metadata_no_probe_boot_output" "Orange GPU parent probe attempts: 0"
+assert_contains "$parent_probe_metadata_no_probe_boot_output" "Metadata stage path: /metadata/shadow-hello-init/by-token/orange-gpu-parent-probe-metadata-no-probe-run-token/stage.txt"
+assert_contains "$parent_probe_metadata_no_probe_boot_output" "Metadata probe stage path: /metadata/shadow-hello-init/by-token/orange-gpu-parent-probe-metadata-no-probe-run-token/probe-stage.txt"
+assert_contains "$parent_probe_metadata_no_probe_boot_output" "Metadata probe fingerprint path: /metadata/shadow-hello-init/by-token/orange-gpu-parent-probe-metadata-no-probe-run-token/probe-fingerprint.txt"
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-parent-probe-metadata-no-probe-boot.img" shadow-init.cfg $'# Generated by pixel_boot_build_orange_gpu.sh\npayload=orange-gpu\norange_gpu_mode=raw-vulkan-physical-device-count-query-exit-smoke\nhold_seconds=7\nreboot_target=bootloader\nrun_token=orange-gpu-parent-probe-metadata-no-probe-run-token\norange_gpu_metadata_stage_breadcrumb=true\ndev_mount=tmpfs\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\ndri_bootstrap=sunfish-card0-renderD128-kgsl3d0\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-metadata-no-probe-boot.img.hello-init.json" orange_gpu_metadata_stage_breadcrumb "true"
+assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-metadata-no-probe-boot.img.hello-init.json" metadata_stage_path "/metadata/shadow-hello-init/by-token/orange-gpu-parent-probe-metadata-no-probe-run-token/stage.txt"
+assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-metadata-no-probe-boot.img.hello-init.json" metadata_probe_stage_path "/metadata/shadow-hello-init/by-token/orange-gpu-parent-probe-metadata-no-probe-run-token/probe-stage.txt"
+assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-metadata-no-probe-boot.img.hello-init.json" metadata_probe_fingerprint_path "/metadata/shadow-hello-init/by-token/orange-gpu-parent-probe-metadata-no-probe-run-token/probe-fingerprint.txt"
 
 bundle_smoke_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -2902,7 +2913,7 @@ assert_command_fails_contains "expected an aarch64 ELF gpu binary" \
       --key "$AVB_KEY_PATH" \
       --output "$TMP_DIR/should-fail-bad-binary.img"
 
-assert_command_fails_contains "orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen" \
+assert_command_fails_contains "orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen" \
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
