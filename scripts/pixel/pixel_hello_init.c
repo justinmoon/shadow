@@ -28,6 +28,7 @@
 #define SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH "/orange-init"
 #define SHADOW_HELLO_INIT_ORANGE_MODE_ENV "SHADOW_DRM_RECT_MODE"
 #define SHADOW_HELLO_INIT_ORANGE_HOLD_ENV "SHADOW_DRM_RECT_HOLD_SECS"
+#define SHADOW_HELLO_INIT_ORANGE_VISUAL_ENV "SHADOW_DRM_RECT_VISUAL"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_ROOT "/orange-gpu"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH "/orange-gpu/shadow-gpu-smoke"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH "/orange-gpu/lib/ld-linux-aarch64.so.1"
@@ -1221,7 +1222,22 @@ static int redirect_child_output_to_path(const char *path) {
     return 0;
 }
 
-static int run_orange_init_payload(const struct hello_init_config *config) {
+static const char *orange_gpu_checkpoint_visual(const char *checkpoint_name) {
+    if (checkpoint_name == NULL) {
+        return NULL;
+    }
+
+    if (strcmp(checkpoint_name, "validated") == 0) {
+        return "orange-horizontal-band";
+    }
+    if (strcmp(checkpoint_name, "probe-ready") == 0) {
+        return "orange-vertical-band";
+    }
+
+    return "orange-checker";
+}
+
+static int run_orange_init_payload(const struct hello_init_config *config, const char *visual_preset) {
     pid_t child_pid;
     int status;
     char hold_seconds[16];
@@ -1230,12 +1246,18 @@ static int run_orange_init_payload(const struct hello_init_config *config) {
     log_stage(
         "<6>",
         "orange-launch",
-        "path=%s hold_seconds=%u",
+        "path=%s hold_seconds=%u visual=%s",
         SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH,
-        config->hold_seconds
+        config->hold_seconds,
+        visual_preset != NULL ? visual_preset : "default"
     );
     log_boot("<6>", "%s", kOwnedInitOrangePayloadSentinel);
-    log_boot("<6>", "launching payload %s", SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH);
+    log_boot(
+        "<6>",
+        "launching payload %s visual=%s",
+        SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH,
+        visual_preset != NULL ? visual_preset : "default"
+    );
 
     child_pid = fork();
     if (child_pid < 0) {
@@ -1258,6 +1280,15 @@ static int run_orange_init_payload(const struct hello_init_config *config) {
         }
         if (setenv(SHADOW_HELLO_INIT_ORANGE_HOLD_ENV, hold_seconds, 1) != 0) {
             log_stage("<3>", "orange-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_ORANGE_HOLD_ENV, errno);
+            _exit(126);
+        }
+        if (visual_preset != NULL && visual_preset[0] != '\0') {
+            if (setenv(SHADOW_HELLO_INIT_ORANGE_VISUAL_ENV, visual_preset, 1) != 0) {
+                log_stage("<3>", "orange-child-setenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_ORANGE_VISUAL_ENV, errno);
+                _exit(126);
+            }
+        } else if (unsetenv(SHADOW_HELLO_INIT_ORANGE_VISUAL_ENV) != 0) {
+            log_stage("<3>", "orange-child-unsetenv-failed", "name=%s errno=%d", SHADOW_HELLO_INIT_ORANGE_VISUAL_ENV, errno);
             _exit(126);
         }
         log_stage("<6>", "orange-child-exec", "argv0=%s", SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH);
@@ -2243,7 +2274,7 @@ static int run_orange_gpu_prelude(const struct hello_init_config *config) {
         config->prelude_hold_seconds
     );
 
-    return run_orange_init_payload(&prelude_config);
+    return run_orange_init_payload(&prelude_config, "orange-solid");
 }
 
 static int run_orange_gpu_checkpoint(
@@ -2283,7 +2314,10 @@ static int run_orange_gpu_checkpoint(
         hold_seconds
     );
 
-    return run_orange_init_payload(&checkpoint_config);
+    return run_orange_init_payload(
+        &checkpoint_config,
+        orange_gpu_checkpoint_visual(checkpoint_name)
+    );
 }
 
 static int run_orange_gpu_postlude(const struct hello_init_config *config) {
@@ -2317,7 +2351,7 @@ static int run_orange_gpu_postlude(const struct hello_init_config *config) {
         config->hold_seconds
     );
 
-    return run_orange_init_payload(&postlude_config);
+    return run_orange_init_payload(&postlude_config, "success-solid");
 }
 
 static int raw_reboot(unsigned int cmd, const char *arg) {
@@ -2492,7 +2526,7 @@ int main(void) {
     );
     if (payload_is_orange_init(&config)) {
         log_stage("<6>", "payload-dispatch", "payload=orange-init");
-        payload_status = run_orange_init_payload(&config);
+        payload_status = run_orange_init_payload(&config, "orange-solid");
         if (payload_status != 0) {
             log_stage(
                 "<4>",

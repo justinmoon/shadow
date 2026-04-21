@@ -1,7 +1,7 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 use anyhow::{anyhow, Context, Result};
-use drm::buffer::DrmFourcc;
+use drm::buffer::{Buffer, DrmFourcc};
 use drm::control::dumbbuffer::DumbBuffer;
 use drm::control::{connector, Device as ControlDevice};
 use drm::Device as BasicDevice;
@@ -14,13 +14,65 @@ use std::path::Path;
 use std::time::Duration;
 
 const SHADOW_INIT_CONFIG_PATH: &str = "/shadow-init.cfg";
+const DEFAULT_SOLID_COLOR: (u8, u8, u8) = (0x2a, 0xd0, 0xc9);
+const ORANGE_SOLID_COLOR: (u8, u8, u8) = (0xff, 0x7a, 0x00);
+const SUCCESS_SOLID_COLOR: (u8, u8, u8) = (0x00, 0xb8, 0x5c);
+const ACCENT_DARK_COLOR: (u8, u8, u8) = (0x08, 0x08, 0x08);
+
+#[derive(Clone, Copy)]
+enum DisplayVisual {
+    Solid((u8, u8, u8)),
+    HorizontalBand {
+        primary: (u8, u8, u8),
+        accent: (u8, u8, u8),
+    },
+    VerticalBand {
+        primary: (u8, u8, u8),
+        accent: (u8, u8, u8),
+    },
+    Checker {
+        primary: (u8, u8, u8),
+        accent: (u8, u8, u8),
+        cell_px: usize,
+    },
+}
 
 pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
+    fill_display_visual_with_pattern(DisplayVisual::Solid(color), duration)
+}
+
+pub fn fill_display_visual(visual_name: &str, duration: Duration) -> Result<()> {
+    let visual = parse_display_visual(visual_name)?;
+    fill_display_visual_with_pattern(visual, duration)
+}
+
+fn parse_display_visual(visual_name: &str) -> Result<DisplayVisual> {
+    match visual_name {
+        "default-solid" => Ok(DisplayVisual::Solid(DEFAULT_SOLID_COLOR)),
+        "orange-solid" => Ok(DisplayVisual::Solid(ORANGE_SOLID_COLOR)),
+        "success-solid" => Ok(DisplayVisual::Solid(SUCCESS_SOLID_COLOR)),
+        "orange-horizontal-band" => Ok(DisplayVisual::HorizontalBand {
+            primary: ORANGE_SOLID_COLOR,
+            accent: ACCENT_DARK_COLOR,
+        }),
+        "orange-vertical-band" => Ok(DisplayVisual::VerticalBand {
+            primary: ORANGE_SOLID_COLOR,
+            accent: ACCENT_DARK_COLOR,
+        }),
+        "orange-checker" => Ok(DisplayVisual::Checker {
+            primary: ORANGE_SOLID_COLOR,
+            accent: ACCENT_DARK_COLOR,
+            cell_px: 96,
+        }),
+        other => Err(anyhow!("unsupported display visual: {other}")),
+    }
+}
+
+fn fill_display_visual_with_pattern(visual: DisplayVisual, duration: Duration) -> Result<()> {
+    let visual_label = describe_display_visual(visual);
     log_line(&format!(
-        "trace stage=fill-start color=#{:02x}{:02x}{:02x} hold_secs={}",
-        color.0,
-        color.1,
-        color.2,
+        "trace stage=fill-start visual={} hold_secs={}",
+        visual_label,
         duration.as_secs()
     ));
     log_mount_state("/dev");
@@ -80,7 +132,8 @@ pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
         .add_framebuffer(&dumb, 24, 32)
         .context("failed to create framebuffer")?;
 
-    fill_buffer_with_color(&mut card, &mut dumb, color).context("failed to fill dumb buffer")?;
+    fill_buffer_with_visual(&mut card, &mut dumb, visual)
+        .context("failed to fill dumb buffer")?;
 
     card.set_crtc(
         crtc_handle,
@@ -114,6 +167,18 @@ pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
         .context("failed to destroy dumb buffer")?;
 
     Ok(())
+}
+
+fn describe_display_visual(visual: DisplayVisual) -> &'static str {
+    match visual {
+        DisplayVisual::Solid(DEFAULT_SOLID_COLOR) => "default-solid",
+        DisplayVisual::Solid(ORANGE_SOLID_COLOR) => "orange-solid",
+        DisplayVisual::Solid(SUCCESS_SOLID_COLOR) => "success-solid",
+        DisplayVisual::Solid(_) => "solid-custom",
+        DisplayVisual::HorizontalBand { .. } => "orange-horizontal-band",
+        DisplayVisual::VerticalBand { .. } => "orange-vertical-band",
+        DisplayVisual::Checker { .. } => "orange-checker",
+    }
 }
 
 pub fn probe_nodes(paths: &[&str]) -> Result<()> {
@@ -442,18 +507,73 @@ fn select_crtc_handle(
         })
 }
 
-fn fill_buffer_with_color(card: &mut Card, dumb: &mut DumbBuffer, rgb: (u8, u8, u8)) -> Result<()> {
-    let (r, g, b) = rgb;
+fn fill_buffer_with_visual(
+    card: &mut Card,
+    dumb: &mut DumbBuffer,
+    visual: DisplayVisual,
+) -> Result<()> {
+    let (width, height) = dumb.size();
+    let width = usize::try_from(width).context("display width does not fit in usize")?;
+    let height = usize::try_from(height).context("display height does not fit in usize")?;
+    let pitch = usize::try_from(dumb.pitch()).context("display pitch does not fit in usize")?;
     let mut mapping = card
         .map_dumb_buffer(dumb)
         .context("failed to map dumb buffer")?;
 
-    for pixel in mapping.as_mut().chunks_exact_mut(4) {
-        pixel[0] = b;
-        pixel[1] = g;
-        pixel[2] = r;
-        pixel[3] = 0xFF;
+    for y in 0..height {
+        let row = &mut mapping.as_mut()[y * pitch..(y + 1) * pitch];
+        for x in 0..width {
+            let offset = x * 4;
+            let (r, g, b) = color_for_visual(visual, x, y, width, height);
+            row[offset] = b;
+            row[offset + 1] = g;
+            row[offset + 2] = r;
+            row[offset + 3] = 0xFF;
+        }
     }
 
     Ok(())
+}
+
+fn color_for_visual(
+    visual: DisplayVisual,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> (u8, u8, u8) {
+    match visual {
+        DisplayVisual::Solid(color) => color,
+        DisplayVisual::HorizontalBand { primary, accent } => {
+            let band_start = height / 3;
+            let band_end = height - band_start;
+            if y >= band_start && y < band_end {
+                accent
+            } else {
+                primary
+            }
+        }
+        DisplayVisual::VerticalBand { primary, accent } => {
+            let band_start = width / 3;
+            let band_end = width - band_start;
+            if x >= band_start && x < band_end {
+                accent
+            } else {
+                primary
+            }
+        }
+        DisplayVisual::Checker {
+            primary,
+            accent,
+            cell_px,
+        } => {
+            let x_cell = x / cell_px.max(1);
+            let y_cell = y / cell_px.max(1);
+            if (x_cell + y_cell) % 2 == 0 {
+                primary
+            } else {
+                accent
+            }
+        }
+    }
 }
