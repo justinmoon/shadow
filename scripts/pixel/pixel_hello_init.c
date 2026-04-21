@@ -1121,6 +1121,61 @@ static bool write_metadata_stage_best_effort(
     return true;
 }
 
+static void write_payload_probe_stage_best_effort(
+    const char *stage_path,
+    const char *stage_prefix,
+    const char *stage_value
+) {
+    char directory_path[PATH_MAX];
+    char temp_path[PATH_MAX];
+    char contents[256];
+    char *last_slash;
+    int contents_len;
+    int temp_len;
+
+    if (stage_path == NULL || stage_prefix == NULL || stage_value == NULL) {
+        return;
+    }
+    contents_len = snprintf(contents, sizeof(contents), "%s:%s\n", stage_prefix, stage_value);
+    if (contents_len < 0 || (size_t)contents_len >= sizeof(contents)) {
+        log_stage("<4>", "payload-probe-stage-write-skipped", "reason=stage_too_long");
+        return;
+    }
+    if (!copy_string(directory_path, sizeof(directory_path), stage_path)) {
+        log_stage("<4>", "payload-probe-stage-write-skipped", "reason=path_too_long");
+        return;
+    }
+    last_slash = strrchr(directory_path, '/');
+    if (last_slash == NULL || last_slash == directory_path) {
+        log_stage("<4>", "payload-probe-stage-write-skipped", "reason=missing_parent_dir");
+        return;
+    }
+    *last_slash = '\0';
+    temp_len = snprintf(temp_path, sizeof(temp_path), "%s.tmp", stage_path);
+    if (temp_len < 0 || (size_t)temp_len >= sizeof(temp_path)) {
+        log_stage("<4>", "payload-probe-stage-write-skipped", "reason=temp_path_too_long");
+        return;
+    }
+    if (write_atomic_text_file(directory_path, temp_path, stage_path, contents) != 0) {
+        log_stage(
+            "<4>",
+            "payload-probe-stage-write-failed",
+            "stage=%s path=%s errno=%d",
+            stage_value,
+            stage_path,
+            errno
+        );
+        return;
+    }
+    log_stage(
+        "<6>",
+        "payload-probe-stage-write",
+        "stage=%s path=%s",
+        stage_value,
+        stage_path
+    );
+}
+
 static bool append_fingerprintf(
     char *buffer,
     size_t buffer_size,
@@ -1637,6 +1692,7 @@ static bool parse_orange_gpu_mode_value(const char *raw, char *dest, size_t dest
         strcmp(value, "bundle-smoke") != 0 &&
         strcmp(value, "vulkan-instance-smoke") != 0 &&
         strcmp(value, "raw-vulkan-instance-smoke") != 0 &&
+        strcmp(value, "c-kgsl-open-readonly-smoke") != 0 &&
         strcmp(value, "raw-kgsl-open-readonly-smoke") != 0 &&
         strcmp(value, "raw-kgsl-getproperties-smoke") != 0 &&
         strcmp(value, "raw-vulkan-physical-device-count-query-exit-smoke") != 0 &&
@@ -1962,6 +2018,10 @@ static bool orange_gpu_mode_is_vulkan_instance_smoke(const struct hello_init_con
 
 static bool orange_gpu_mode_is_raw_vulkan_instance_smoke(const struct hello_init_config *config) {
     return strcmp(config->orange_gpu_mode, "raw-vulkan-instance-smoke") == 0;
+}
+
+static bool orange_gpu_mode_is_c_kgsl_open_readonly_smoke(const struct hello_init_config *config) {
+    return strcmp(config->orange_gpu_mode, "c-kgsl-open-readonly-smoke") == 0;
 }
 
 static bool orange_gpu_mode_is_raw_kgsl_open_readonly_smoke(const struct hello_init_config *config) {
@@ -2706,6 +2766,37 @@ static int run_orange_gpu_parent_probe(
     return any_succeeded ? 0 : 1;
 }
 
+static int run_c_kgsl_open_readonly_smoke(
+    const char *payload_probe_stage_path,
+    const char *payload_probe_stage_prefix
+) {
+    int kgsl_fd;
+
+    write_payload_probe_stage_best_effort(
+        payload_probe_stage_path,
+        payload_probe_stage_prefix,
+        "kgsl-open-readonly"
+    );
+    log_stage(
+        "<6>",
+        "orange-gpu-c-kgsl-open-readonly",
+        "path=/dev/kgsl-3d0 flags=O_RDONLY|O_CLOEXEC|O_NOCTTY"
+    );
+    kgsl_fd = open("/dev/kgsl-3d0", O_RDONLY | O_CLOEXEC | O_NOCTTY);
+    if (kgsl_fd < 0) {
+        log_stage("<3>", "orange-gpu-c-kgsl-open-readonly-failed", "errno=%d", errno);
+        return 1;
+    }
+    close(kgsl_fd);
+    write_payload_probe_stage_best_effort(
+        payload_probe_stage_path,
+        payload_probe_stage_prefix,
+        "kgsl-open-readonly-ok"
+    );
+    log_stage("<6>", "orange-gpu-c-kgsl-open-readonly-ok", "path=/dev/kgsl-3d0");
+    return 0;
+}
+
 static int run_orange_gpu_payload(
     const struct hello_init_config *config,
     struct metadata_stage_runtime *metadata_stage
@@ -2933,6 +3024,16 @@ static int run_orange_gpu_payload(
                 SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH,
                 (char *)NULL
             );
+        } else if (orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config)) {
+            log_stage(
+                "<6>",
+                "orange-gpu-child-c-probe",
+                "mode=c-kgsl-open-readonly-smoke"
+            );
+            _exit(run_c_kgsl_open_readonly_smoke(
+                payload_probe_stage_path,
+                payload_probe_stage_prefix
+            ));
         } else if (orange_gpu_mode_is_raw_kgsl_open_readonly_smoke(config)) {
             log_stage(
                 "<6>",
