@@ -123,7 +123,7 @@ fn prompt_response_from_env(
 #[cfg(test)]
 mod tests {
     use super::{prompt_response_from_env, validate_request, PROMPT_RESPONSE_ACTION_ID_ENV};
-    use crate::services::test_env_lock;
+    use crate::test_env_lock;
     use shadow_runtime_protocol::{
         SystemPromptAction, SystemPromptActionStyle, SystemPromptRequest,
     };
