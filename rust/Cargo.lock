@@ -4917,6 +4917,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "shadow-nostr-host"
+version = "0.1.0"
+dependencies = [
+ "deno_core",
+ "deno_error",
+ "nostr",
+ "nostr-sdk",
+ "serde",
+ "serde_json",
+ "shadow-runtime-protocol",
+ "shadow-sdk",
+ "tokio",
+]
+
+[[package]]
 name = "shadow-runtime-protocol"
 version = "0.1.0"
 dependencies = [
@@ -4949,11 +4964,10 @@ dependencies = [
  "deno_core",
  "deno_error",
  "libc",
- "nostr",
- "nostr-sdk",
  "serde",
  "serde_json",
  "shadow-cashu-host",
+ "shadow-nostr-host",
  "shadow-runtime-protocol",
  "shadow-sdk",
  "tokio",

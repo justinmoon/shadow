@@ -1,17 +1,15 @@
 [package]
-name = "shadow-system"
+name = "shadow-nostr-host"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 deno_core = { workspace = true, features = ["include_icu_data", "reactor-tokio"] }
 deno_error.workspace = true
-libc.workspace = true
-shadow-cashu-host.workspace = true
-shadow-nostr-host.workspace = true
-shadow-sdk = { workspace = true, features = ["camera", "clipboard", "nostr"] }
-shadow-runtime-protocol.workspace = true
+nostr.workspace = true
+nostr-sdk.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+shadow-runtime-protocol.workspace = true
+shadow-sdk = { workspace = true, features = ["nostr"] }
 tokio = { workspace = true, features = ["rt", "time"] }
-v8.workspace = true

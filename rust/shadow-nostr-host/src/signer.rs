@@ -12,7 +12,7 @@ use shadow_sdk::services::nostr::{
 };
 use shadow_sdk::services::session_config::{self, RUNTIME_SESSION_CONFIG_ENV};
 
-use crate::services::system_prompt;
+use crate::system_prompt;
 
 const SIGNER_POLICY_PATH_ENV: &str = "SHADOW_RUNTIME_NOSTR_SIGNER_POLICY_PATH";
 const SIGNER_POLICY_BASENAME: &str = "runtime-nostr-signer-policy.json";
@@ -265,7 +265,7 @@ mod tests {
         build_publish_prompt, load_policy, preview_text, signer_policy_path, store_policy,
         PersistedSignerPolicy, SIGNER_POLICY_BASENAME, SIGNER_POLICY_PATH_ENV,
     };
-    use crate::services::test_env_lock;
+    use crate::test_env_lock;
     use shadow_sdk::services::nostr::{
         NostrAccountSource, NostrAccountSummary, NostrPublishRequest, NOSTR_DB_PATH_ENV,
     };

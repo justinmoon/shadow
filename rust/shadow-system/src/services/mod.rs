@@ -4,7 +4,6 @@ pub mod camera;
 pub mod cashu;
 pub mod clipboard;
 pub mod nostr;
-pub mod system_prompt;
 
 #[cfg(test)]
 pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {

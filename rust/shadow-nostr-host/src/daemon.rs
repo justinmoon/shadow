@@ -217,7 +217,7 @@ fn error_to_string(error: NostrHostError) -> String {
 #[cfg(test)]
 mod tests {
     use super::{NostrDaemon, NostrIpcRequest, NostrIpcResponse};
-    use crate::services::test_env_lock;
+    use crate::test_env_lock;
     use serde::Deserialize;
     use shadow_sdk::services::nostr::{
         NostrAccountSummary, NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,

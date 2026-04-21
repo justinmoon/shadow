@@ -118,3 +118,11 @@ Make the OCI ARM builder fast, well-utilized, and cheap to operate.
   the deps derivation still does the heavy work up front, but the final package phase now compiles only `shadow-system` and finished its compile step in about `15.59s`.
 - Follow-on coverage fix:
   splitting Cashu out of `shadow-system` removed two Cashu path tests from `runtimeShadowSystemTests`, so the runtime gate now needs a dedicated `runtimeShadowCashuHostTests` leaf check to keep those tests inside `runtimeCheck` / `preMergeCheck`.
+- April 21, 2026 Nostr follow-on: the same pattern also works for the Nostr host.
+  `shadow-system` still carried about 1k lines of Nostr host code (`nostr.rs`, daemon, relay publish/sync, signer) plus the system-prompt helper that only signer used.
+  Moving that logic into a new `shadow-nostr-host` workspace crate, then teaching both `shadow-system` deps derivations to replace the dummy `shadow-nostr-host` with the real filtered source, shrank the final derivations again without changing runtime behavior.
+- Measured result for `checks.aarch64-darwin.runtimeShadowSystemTests` after the Nostr split:
+  the final test derivation now compiles only `shadow-system` and finished its `release` compile step in about `10.52s`, down from about `17.98s` after the earlier Cashu split and dummy-src override.
+  The moved Nostr + system-prompt tests now live in a dedicated `runtimeShadowNostrHostTests` leaf check, which compiled `shadow-nostr-host` itself and ran `11` tests in about `1m06s`.
+- Measured result for `packages.aarch64-linux.shadow-system` on `oci-builder` after the Nostr split:
+  the deps derivation still does the heavy compile up front, but the final package derivation compiled only `shadow-system` and finished its compile step in about `8.36s`, down from about `15.59s` after the Cashu split.
