@@ -618,3 +618,14 @@ Related docs:
   - after adding the late sysfs `PARTNAME=metadata` fallback, both `11151JEC200472` and `09051JEC202061` recovered `metadata_stage_value=parent-probe-result=failure`
   - that is the first durable unattended classification of the active seam: the boot-owned metadata writer survives, the parent probe runs and returns, and the exact raw count-query-exit probe is failing with a normal failure path rather than disappearing without a durable breadcrumb
   - next discriminator: tighten `parent-probe-result=failure` into an exact durable result such as exit code vs signal vs watchdog, or preserve a tiny correlated probe-output summary, before splitting the raw Vulkan query path further again
+- Follow-up observability result on 2026-04-21:
+  - concurrent oneshots initially collided on the same timestamp-only run dir (`build/pixel/boot/oneshot/20260421T040612Z`), so serial-scoped unique run-dir allocation landed before trusting more parallel boot-lab evidence
+  - with isolated run bundles, both `11151JEC200472` and `09051JEC202061` independently recovered `metadata_stage_value=parent-probe-result=watchdog-signal-9` on the exact same raw count-query-exit parent-probe image
+  - that proved the child was not returning with a normal exit code; the parent watchdog was killing it after the probe timeout on both devices
+  - a second follow-up then added a separate durable child checkpoint file (`probe-stage.txt`) under the same `/metadata/.../by-token/<run_token>/` directory so the Rust probe could report its last internal checkpoint without losing the parent's final result
+  - with that child checkpoint seam enabled, both `11151JEC200472` and `09051JEC202061` independently recovered `metadata_probe_stage_value=parent-probe-attempt-3:vkEnumeratePhysicalDevices-count-query` together with `metadata_stage_value=parent-probe-result=watchdog-signal-9`
+  - that is the clearest current truth: boot-owned raw Vulkan instance creation returns, the child reaches the physical-device count query call itself, and the hang is inside or beneath `vkEnumeratePhysicalDevices(..., NULL)` rather than earlier setup or later cleanup/summary code
+  - next discriminator should compare that boot-owned hang against a fresh rooted tmpfs-`/dev` control on a healthy spare phone and then target the minimal missing readiness/vendor-init prerequisite, not more generic `/dev` speculation
+- Sidecar rooted-device result on 2026-04-21:
+  - rooted `sound` passed end-to-end on `0B191JEC203253` (`build/pixel/runs/ci/20260421T032341Z/summary.json`), so the spare rooted control lane stayed healthy while boot-lab work continued
+  - `06241JEC200520` was not a useful tmpfs-`/dev` control immediately afterward because `/dev/dri` was missing after the failed `podcast` preflight path, so treat that phone as a recovery/spare lane until its display stack is clean again
