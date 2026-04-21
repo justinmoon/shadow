@@ -1749,7 +1749,7 @@
             phases = [ "buildPhase" ];
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-iXh8mICg/xokpFNQQCgRC0DNUNf8AAFqnlSTNckJ0E8=";
+            outputHash = "sha256-PPpWbgFfrI0oVKkgGKQ2ehUNpNnFa/EsM/miJz1SxP4=";
             buildPhase = ''
               export HOME="$TMPDIR/home"
               export DENO_DIR="$TMPDIR/deno-dir"
