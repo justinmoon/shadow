@@ -182,7 +182,13 @@ def ssh_base() -> list[str]:
         "-p",
         ssh_port(),
         "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
         "LogLevel=ERROR",
+        "-o",
+        "ConnectionAttempts=1",
         "-o",
         "StrictHostKeyChecking=no",
         "-o",
@@ -769,25 +775,23 @@ def parse_control_state(response: str) -> dict[str, Any]:
 
 def control_state_for(target: TargetRef) -> dict[str, Any]:
     if target.kind == "vm":
-        payload = vm_status_payload()
-        if payload["remote"].get("control_socket_exists"):
-            result = vm_control_request("state")
-            if result.returncode != 0:
-                message = (result.stderr or result.stdout or "vm state request failed").strip()
-                raise RuntimeError(message)
+        result = vm_control_request("state")
+        if result.returncode == 0:
             state = parse_control_state(result.stdout)
+            state["ui_ready"] = True
+            state["remote_reachable"] = True
         else:
             state = {
                 "focused": None,
-                "mapped": payload["remote"].get("running_apps", []),
-                "launched": payload["remote"].get("running_apps", []),
+                "mapped": [],
+                "launched": [],
                 "shelved": [],
                 "windows": 0,
                 "transport": None,
                 "control_socket": None,
                 "socket": None,
-                "ui_ready": payload["remote"].get("ui_ready"),
-                "remote_reachable": payload["remote"].get("reachable"),
+                "ui_ready": False,
+                "remote_reachable": False,
                 "prompt_active": False,
                 "prompt_source_app_id": None,
                 "prompt_actions": [],
@@ -1506,10 +1510,10 @@ def cmd_wait_ready(args: argparse.Namespace) -> int:
 
     if target.kind == "vm":
         while time.time() < deadline:
-            payload = vm_status_payload()
-            if payload["remote"].get("ui_ready"):
+            result = vm_control_request("state")
+            if result.returncode == 0:
                 if args.json:
-                    print(json.dumps(payload, indent=2, sort_keys=True))
+                    print(json.dumps(control_state_for(target), indent=2, sort_keys=True))
                 else:
                     print("ui ready")
                 return 0
