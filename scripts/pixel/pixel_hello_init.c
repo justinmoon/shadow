@@ -2476,6 +2476,27 @@ static const char *orange_gpu_checkpoint_visual(const char *checkpoint_name) {
         return NULL;
     }
 
+    if (strcmp(checkpoint_name, "firmware-probe-ok") == 0) {
+        return "code-orange-5";
+    }
+    if (
+        strcmp(checkpoint_name, "firmware-probe-a630-sqe-open-failed") == 0 ||
+        strcmp(checkpoint_name, "firmware-probe-a630-sqe-read-failed") == 0
+    ) {
+        return "code-orange-6";
+    }
+    if (
+        strcmp(checkpoint_name, "firmware-probe-a618-gmu-open-failed") == 0 ||
+        strcmp(checkpoint_name, "firmware-probe-a618-gmu-read-failed") == 0
+    ) {
+        return "code-orange-7";
+    }
+    if (
+        strcmp(checkpoint_name, "firmware-probe-a615-zap-mdt-open-failed") == 0 ||
+        strcmp(checkpoint_name, "firmware-probe-a615-zap-mdt-read-failed") == 0
+    ) {
+        return "code-orange-8";
+    }
     if (strcmp(checkpoint_name, "validated") == 0) {
         return "code-orange-2";
     }
@@ -2493,6 +2514,12 @@ static const char *orange_gpu_checkpoint_visual(const char *checkpoint_name) {
     }
     if (strcmp(checkpoint_name, "child-exit-nonzero") == 0) {
         return "code-orange-11";
+    }
+    if (
+        strcmp(checkpoint_name, "firmware-probe-a615-zap-b02-open-failed") == 0 ||
+        strcmp(checkpoint_name, "firmware-probe-a615-zap-b02-read-failed") == 0
+    ) {
+        return "code-orange-12";
     }
 
     return "solid-orange";
@@ -3438,6 +3465,7 @@ static int probe_bootstrap_gpu_firmware(
                 payload_probe_stage_prefix,
                 stage_value
             );
+            (void)run_orange_gpu_checkpoint(config, stage_value, 1U);
             return 1;
         }
         if (read(firmware_fd, &probe_byte, 1) < 0) {
@@ -3463,6 +3491,7 @@ static int probe_bootstrap_gpu_firmware(
                 payload_probe_stage_prefix,
                 stage_value
             );
+            (void)run_orange_gpu_checkpoint(config, stage_value, 1U);
             return 1;
         }
         close(firmware_fd);
@@ -3490,6 +3519,7 @@ static int probe_bootstrap_gpu_firmware(
         payload_probe_stage_prefix,
         "firmware-probe-ok"
     );
+    (void)run_orange_gpu_checkpoint(config, "firmware-probe-ok", 1U);
     return 0;
 }
 
