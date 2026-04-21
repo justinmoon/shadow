@@ -1637,6 +1637,7 @@ static bool parse_orange_gpu_mode_value(const char *raw, char *dest, size_t dest
         strcmp(value, "bundle-smoke") != 0 &&
         strcmp(value, "vulkan-instance-smoke") != 0 &&
         strcmp(value, "raw-vulkan-instance-smoke") != 0 &&
+        strcmp(value, "raw-kgsl-open-readonly-smoke") != 0 &&
         strcmp(value, "raw-kgsl-getproperties-smoke") != 0 &&
         strcmp(value, "raw-vulkan-physical-device-count-query-exit-smoke") != 0 &&
         strcmp(value, "raw-vulkan-physical-device-count-query-no-destroy-smoke") != 0 &&
@@ -1961,6 +1962,10 @@ static bool orange_gpu_mode_is_vulkan_instance_smoke(const struct hello_init_con
 
 static bool orange_gpu_mode_is_raw_vulkan_instance_smoke(const struct hello_init_config *config) {
     return strcmp(config->orange_gpu_mode, "raw-vulkan-instance-smoke") == 0;
+}
+
+static bool orange_gpu_mode_is_raw_kgsl_open_readonly_smoke(const struct hello_init_config *config) {
+    return strcmp(config->orange_gpu_mode, "raw-kgsl-open-readonly-smoke") == 0;
 }
 
 static bool orange_gpu_mode_is_raw_kgsl_getproperties_smoke(const struct hello_init_config *config) {
@@ -2924,6 +2929,26 @@ static int run_orange_gpu_payload(
                 SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
                 "--scene",
                 "raw-vulkan-instance-smoke",
+                "--summary-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH,
+                (char *)NULL
+            );
+        } else if (orange_gpu_mode_is_raw_kgsl_open_readonly_smoke(config)) {
+            log_stage(
+                "<6>",
+                "orange-gpu-child-exec",
+                "argv0=%s binary=%s scene=raw-kgsl-open-readonly-smoke mode=raw-kgsl-open-readonly-smoke",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH
+            );
+            execl(
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                "--library-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LIBRARY_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+                "--scene",
+                "raw-kgsl-open-readonly-smoke",
                 "--summary-path",
                 SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH,
                 (char *)NULL
