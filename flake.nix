@@ -1663,6 +1663,9 @@
           };
           runtimeRustCargoArtifacts = craneLib.buildDepsOnly ((builtins.removeAttrs runtimeRustCargoArgs [ "src" ]) // {
             pname = "shadow-runtime-workspace-deps";
+            buildPhaseCargoCommand = ''
+              cargoWithProfile build ${runtimeRustCommonArgs.cargoExtraArgs}
+            '';
             dummySrc = craneLib.mkDummySrc (runtimeRustCommonArgs // {
               extraDummyScript = ''
                 rm -rf "$out/rust/vendor/temporal_rs"

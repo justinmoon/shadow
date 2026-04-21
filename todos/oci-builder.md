@@ -52,6 +52,10 @@ Make the OCI ARM builder fast, well-utilized, and cheap to operate.
 - A naive `-fuse-ld=lld` experiment on the final `shadow-system` derivation also did not help: Cargo recompiled a wide set of crates, GNU `ld` still showed up in the process tree, and the final derivation ballooned from about 40s to about 156s.
 - `shadow-system`'s default `buildDepsOnly` shape was doing both `cargo check` and `cargo build` for the package lane even though the final derivation only needs build artifacts.
   An April 21, 2026 builder A/B that replaced the deps build phase with just `cargoWithProfile build ${commonArgs.cargoExtraArgs}` cut the whole `shadow-system` package build from about `276s` to about `224s` and cut the deps derivation build phase from about `3m16s` to about `2m07s`.
+- April 21, 2026 runtime-check follow-on: `runtimeRustCargoArtifacts` had the same default Crane double-work pattern (`cargo check --release --locked` then `cargo build --release --locked`).
+  On `aarch64-darwin`, a fresh rebuild of `shadow-runtime-workspace-deps` took about `279.94s`, with the build phase itself taking `4m38s` and archiving about `1.41 GiB` down to about `401 MiB`.
+  Overriding that deps derivation to run only `cargoWithProfile build ${runtimeRustCommonArgs.cargoExtraArgs}` cut the same derivation to about `144.34s`, with the build phase dropping to `2m22s` and the archived target shrinking to about `1.21 GiB / 343 MiB`.
+  The dependent `runtimeShadowSdkNostrTests` and `runtimeShadowSystemTests` still passed, though each test derivation spent a few more seconds compiling after unpacking the slimmer artifacts.
 - Next seam: either integrate an actually effective linker path that does not invalidate most of the final derivation, or do structural compile-surface work such as splitting heavy `shadow-system` domains behind optional features or separate binaries.
 - The builder was still up on April 20, 2026 after starting on April 18, 2026, with multi-hour idle windows that exceed the configured 20 minute threshold.
 - `shadow-system` currently follows a coarse Crane split: vendoring, one `buildDepsOnly`, one `buildPackage`.
