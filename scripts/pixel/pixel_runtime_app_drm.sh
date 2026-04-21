@@ -194,28 +194,81 @@ fi
 # runs; opt back in explicitly when a debug session needs it.
 : "${PIXEL_GUEST_FRAME_CAPTURE_MODE:=off}"
 
+run_dir="${PIXEL_GUEST_RUN_DIR-}"
+if [[ -z "$run_dir" ]]; then
+  run_dir="$(pixel_prepare_named_run_dir "$(pixel_drm_guest_runs_dir)")"
+else
+  mkdir -p "$run_dir"
+fi
+startup_config_host_path="$(pixel_guest_startup_config_host_path "$run_dir")"
+run_config_path="$(pixel_guest_run_config_host_path "$run_dir")"
+
+runtime_session_env_for_config="$runtime_session_env"
+while IFS= read -r env_line; do
+  [[ -n "$env_line" ]] || continue
+  runtime_session_env_for_config="${runtime_session_env_for_config}"$'\n'"$env_line"
+done < <(pixel_guest_session_overlay_config_env_lines "$extra_session_env")
+
+runtime_session_launch_env="$(pixel_guest_session_launch_env_lines "$runtime_session_env")"
+overlay_session_launch_env="$(pixel_guest_session_overlay_passthrough_env_lines "$extra_session_env")"
+if [[ -n "$overlay_session_launch_env" ]]; then
+  if [[ -n "$runtime_session_launch_env" ]]; then
+    runtime_session_launch_env="${runtime_session_launch_env}"$'\n'"$overlay_session_launch_env"
+  else
+    runtime_session_launch_env="$overlay_session_launch_env"
+  fi
+fi
+
+pixel_write_guest_ui_startup_config \
+  "$startup_config_host_path" \
+  "$(pixel_runtime_dir)" \
+  "$(pixel_guest_client_dst)" \
+  "" \
+  "1" \
+  "" \
+  "$runtime_guest_env" \
+  "$runtime_session_env_for_config" \
+  "$(pixel_frame_path)" \
+  "$PIXEL_GUEST_FRAME_CAPTURE_MODE"
+
+pixel_write_guest_run_config \
+  "$run_config_path" \
+  "$startup_config_host_path" \
+  "$(pixel_system_bundle_artifact_dir)" \
+  "$(pixel_runtime_app_asset_artifact_dir)" \
+  "$(pixel_runtime_app_bundle_artifact)" \
+  "$runtime_session_launch_env" \
+  "$extra_guest_env" \
+  "$required_markers" \
+  "$forbidden_markers" \
+  "$(pixel_runtime_precreate_dirs_lines)" \
+  "" \
+  "" \
+  '[shadow-guest-compositor] presented-frame' \
+  'runtime-document-ready' \
+  "1" \
+  "1" \
+  "1" \
+  "1" \
+  "$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
+  "$runtime_session_exit_timeout_secs" \
+  "$PIXEL_GUEST_COMPOSITOR_MARKER_TIMEOUT_SECS" \
+  "${PIXEL_GUEST_REQUIRED_MARKER_TIMEOUT_SECS-}" \
+  "$PIXEL_GUEST_FRAME_CHECKPOINT_TIMEOUT_SECS" \
+  "${PIXEL_TAKEOVER_RESTORE_CHECKPOINT_TIMEOUT_SECS-}" \
+  "${PIXEL_TAKEOVER_RESTORE_REBOOT_TIMEOUT_SECS-}" \
+  "${PIXEL_TAKEOVER_RESTORE_ANDROID-1}" \
+  "$takeover_restore_in_session" \
+  "$takeover_reboot_on_restore_failure" \
+  "${PIXEL_TAKEOVER_STOP_ALLOCATOR:-1}" \
+  "$([[ "$runtime_run_only" == 1 ]] && printf 1 || true)" \
+  "gpu"
+
 PIXEL_SYSTEM_BUNDLE_ARTIFACT_DIR="$(pixel_system_bundle_artifact_dir)" \
 PIXEL_RUNTIME_APP_ASSET_ARTIFACT_DIR="$(pixel_runtime_app_asset_artifact_dir)" \
 PIXEL_RUNTIME_APP_BUNDLE_ARTIFACT="$(pixel_runtime_app_bundle_artifact)" \
-PIXEL_COMPOSITOR_MARKER='[shadow-guest-compositor] presented-frame' \
-PIXEL_CLIENT_MARKER='runtime-document-ready' \
-PIXEL_GUEST_REQUIRED_MARKERS="$required_markers" \
-PIXEL_GUEST_COMPOSITOR_MARKER_TIMEOUT_SECS="$PIXEL_GUEST_COMPOSITOR_MARKER_TIMEOUT_SECS" \
-PIXEL_GUEST_FRAME_CHECKPOINT_TIMEOUT_SECS="$PIXEL_GUEST_FRAME_CHECKPOINT_TIMEOUT_SECS" \
-PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME='' \
-PIXEL_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT=1 \
-PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
-PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
-PIXEL_GUEST_SESSION_EXIT_TIMEOUT_SECS="$runtime_session_exit_timeout_secs" \
-PIXEL_GUEST_CONFIG_CLIENT_ENV="$runtime_guest_env" \
-PIXEL_GUEST_CONFIG_SESSION_ENV="$runtime_session_env" \
-PIXEL_GUEST_CLIENT_ENV_OVERLAY="$extra_guest_env" \
-PIXEL_GUEST_SESSION_ENV_OVERLAY="$extra_session_env" \
-PIXEL_GUEST_PRECREATE_DIRS="$(pixel_runtime_precreate_dirs_lines)" \
-PIXEL_GUEST_FRAME_CAPTURE_MODE="$PIXEL_GUEST_FRAME_CAPTURE_MODE" \
-PIXEL_VERIFY_FORBIDDEN_MARKERS="$forbidden_markers" \
+PIXEL_GUEST_RUN_DIR="$run_dir" \
+PIXEL_GUEST_RUN_CONFIG="$run_config_path" \
   PIXEL_RUNTIME_SUMMARY_RENDERER="gpu" \
 PIXEL_GUEST_SKIP_PUSH="$([[ "$runtime_run_only" == 1 ]] && printf 1 || true)" \
-PIXEL_TAKEOVER_RESTORE_IN_SESSION="$takeover_restore_in_session" \
-PIXEL_TAKEOVER_REBOOT_ON_RESTORE_FAILURE="$takeover_reboot_on_restore_failure" \
   "$SCRIPT_DIR/pixel/pixel_guest_ui_drm.sh"

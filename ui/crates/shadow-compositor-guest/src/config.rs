@@ -1347,6 +1347,65 @@ mod tests {
     }
 
     #[test]
+    fn config_can_ignore_host_only_sections_in_session_config_file() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let session_config_path = temp_dir.path().join("session-config.json");
+        fs::write(
+            &session_config_path,
+            r#"{
+  "schemaVersion": 1,
+  "startup": {
+    "mode": "app",
+    "startAppId": "camera"
+  },
+  "client": {
+    "appClientPath": "/vendor/bin/shadow-client"
+  },
+  "runtime": {
+    "runtimeDir": "/data/local/tmp/pixel-runtime"
+  },
+  "session": {
+    "timeoutSecs": 20,
+    "launchEnvAssignments": [
+      { "key": "SHADOW_SESSION_APP_PROFILE", "value": "pixel-shell" }
+    ]
+  },
+  "verify": {
+    "requiredMarkers": ["runtime-document-ready"],
+    "expectClientProcess": true
+  },
+  "takeover": {
+    "restoreInSession": false,
+    "stopAllocator": false
+  }
+}"#,
+        )
+        .expect("write session config");
+        let session_config_path = session_config_path.to_string_lossy().into_owned();
+
+        with_env(
+            vec![(
+                "SHADOW_GUEST_SESSION_CONFIG",
+                Some(session_config_path.as_str()),
+            )],
+            || {
+                let config = GuestStartupConfig::from_env().expect("session config");
+                assert_eq!(
+                    config.startup_action,
+                    StartupAction::App {
+                        app_id: CAMERA_APP_ID,
+                    }
+                );
+                assert_eq!(config.client.app_client_path, "/vendor/bin/shadow-client");
+                assert_eq!(
+                    config.client.runtime_dir,
+                    PathBuf::from("/data/local/tmp/pixel-runtime")
+                );
+            },
+        );
+    }
+
+    #[test]
     fn env_overlay_overrides_session_config_file() {
         let temp_dir = TempDir::new().expect("temp dir");
         let session_config_path = temp_dir.path().join("session-config.json");

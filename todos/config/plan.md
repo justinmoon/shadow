@@ -92,14 +92,16 @@ Related docs:
 - 2026-04-20: `shadow-compositor-guest` now requires `schemaVersion` in the typed guest config and treats direct env as a compatibility/debug overlay that merges onto file-provided client env.
 - 2026-04-20: the supported rooted-Pixel path now keeps env projection only for process-boundary values and compatibility holdouts such as app bundle envs, profile selection, socket modes, and explicit debug overrides.
 - 2026-04-20: `scripts/ci/pixel_guest_startup_config_smoke.sh` and `just pre-commit` now cover rooted-Pixel startup-config generation plus env projection filtering.
+- 2026-04-20: rooted Pixel shell/runtime launch now compiles a typed host-side `guest-run-config.json` superset and passes that artifact into `pixel_guest_ui_drm.sh` instead of multiline `PIXEL_GUEST_CONFIG_*` payloads.
+- 2026-04-20: the same rooted-Pixel `guest-run-config.json` now serves as both the host takeover/verification session description and the on-device `SHADOW_GUEST_SESSION_CONFIG`, with host-driver staging controls intentionally left outside the file.
 
 ## Implementation Notes
 
 - Current repo reality:
   - `runtime/apps.json` is already the strongest config seam in the repo.
   - VM is now artifact-driven through a generated session config, but still retains an env projection layer for compositor/runtime compatibility.
-  - rooted Pixel guest startup is now typed and artifact-driven, but shell app runtime bundle wiring and a few launcher/runtime compatibility vars still project through env.
-  - guest startup config parsing is now file-first in Rust with explicit schema/version checks; env remains an overlay seam rather than the primary transport.
+  - rooted Pixel guest startup is now typed and artifact-driven, and the supported shell/runtime-app host lane now compiles a single `guest-run-config.json` artifact instead of cross-script multiline env payloads.
+  - guest startup config parsing is now file-first in Rust with explicit schema/version checks; env remains an overlay seam rather than the primary transport, and host-driver-only concerns still stay env-based for now.
 - Working migration rule:
   - do not start by normalizing every `PIXEL_*` boot/debug/test knob.
   - first fix the supported session surface where config crosses multiple layers and multiple languages.

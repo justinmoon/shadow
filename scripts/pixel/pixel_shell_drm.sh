@@ -217,25 +217,79 @@ if (( shell_stage_only == 1 )); then
   exit 0
 fi
 
+run_dir="${PIXEL_GUEST_RUN_DIR-}"
+if [[ -z "$run_dir" ]]; then
+  run_dir="$(pixel_prepare_named_run_dir "$(pixel_drm_guest_runs_dir)")"
+else
+  mkdir -p "$run_dir"
+fi
+startup_config_host_path="$(pixel_guest_startup_config_host_path "$run_dir")"
+run_config_path="$(pixel_guest_run_config_host_path "$run_dir")"
+
+shell_session_env_for_config="$shell_session_env"
+while IFS= read -r env_line; do
+  [[ -n "$env_line" ]] || continue
+  shell_session_env_for_config="${shell_session_env_for_config}"$'\n'"$env_line"
+done < <(pixel_guest_session_overlay_config_env_lines "$extra_session_env")
+
+shell_session_launch_env="$(pixel_guest_session_launch_env_lines "$shell_session_env")"
+overlay_session_launch_env="$(pixel_guest_session_overlay_passthrough_env_lines "$extra_session_env")"
+if [[ -n "$overlay_session_launch_env" ]]; then
+  if [[ -n "$shell_session_launch_env" ]]; then
+    shell_session_launch_env="${shell_session_launch_env}"$'\n'"$overlay_session_launch_env"
+  else
+    shell_session_launch_env="$overlay_session_launch_env"
+  fi
+fi
+
+pixel_write_guest_ui_startup_config \
+  "$startup_config_host_path" \
+  "$(pixel_runtime_dir)" \
+  "$(pixel_guest_client_dst)" \
+  "" \
+  "" \
+  "" \
+  "$shell_guest_env" \
+  "$shell_session_env_for_config" \
+  "$(pixel_frame_path)" \
+  "$PIXEL_GUEST_FRAME_CAPTURE_MODE"
+
+pixel_write_guest_run_config \
+  "$run_config_path" \
+  "$startup_config_host_path" \
+  "$(pixel_shell_system_bundle_artifact_dir)" \
+  "" \
+  "" \
+  "$shell_session_launch_env" \
+  "$extra_guest_env" \
+  "$required_markers" \
+  "" \
+  "$(pixel_runtime_precreate_dirs_lines)" \
+  "$camera_start_command" \
+  "$camera_cleanup_command" \
+  '[shadow-guest-compositor] presented-frame' \
+  "" \
+  "" \
+  "$expect_client_process" \
+  "" \
+  "" \
+  "$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
+  "${PIXEL_GUEST_SESSION_EXIT_TIMEOUT_SECS-}" \
+  "${PIXEL_GUEST_COMPOSITOR_MARKER_TIMEOUT_SECS-}" \
+  "${PIXEL_GUEST_REQUIRED_MARKER_TIMEOUT_SECS-}" \
+  "${PIXEL_GUEST_FRAME_CHECKPOINT_TIMEOUT_SECS-}" \
+  "${PIXEL_TAKEOVER_RESTORE_CHECKPOINT_TIMEOUT_SECS-}" \
+  "${PIXEL_TAKEOVER_RESTORE_REBOOT_TIMEOUT_SECS-}" \
+  "${PIXEL_TAKEOVER_RESTORE_ANDROID-1}" \
+  "${PIXEL_TAKEOVER_RESTORE_IN_SESSION-1}" \
+  "${PIXEL_TAKEOVER_REBOOT_ON_RESTORE_FAILURE-0}" \
+  "${PIXEL_TAKEOVER_STOP_ALLOCATOR:-0}" \
+  "$([[ "$shell_run_only" == 1 ]] && printf 1 || true)" \
+  ""
+
 exec env \
+  PIXEL_GUEST_RUN_DIR="$run_dir" \
+  PIXEL_GUEST_RUN_CONFIG="$run_config_path" \
   PIXEL_SYSTEM_BUNDLE_ARTIFACT_DIR="$(pixel_shell_system_bundle_artifact_dir)" \
-  PIXEL_COMPOSITOR_MARKER='[shadow-guest-compositor] presented-frame' \
-  PIXEL_GUEST_REQUIRED_MARKERS="$required_markers" \
-  PIXEL_GUEST_EXPECT_COMPOSITOR_PROCESS='' \
-  PIXEL_GUEST_EXPECT_CLIENT_PROCESS="$expect_client_process" \
-  PIXEL_GUEST_EXPECT_CLIENT_MARKER='' \
-  PIXEL_VERIFY_REQUIRE_CLIENT_MARKER='' \
-  PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME='' \
-  PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
-  PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
-  PIXEL_GUEST_CONFIG_CLIENT_ENV="$shell_guest_env" \
-  PIXEL_GUEST_CONFIG_SESSION_ENV="$shell_session_env" \
-  PIXEL_GUEST_CLIENT_ENV_OVERLAY="$extra_guest_env" \
-  PIXEL_GUEST_SESSION_ENV_OVERLAY="$extra_session_env" \
-  PIXEL_GUEST_PRECREATE_DIRS="$(pixel_runtime_precreate_dirs_lines)" \
-  PIXEL_GUEST_FRAME_CAPTURE_MODE="$PIXEL_GUEST_FRAME_CAPTURE_MODE" \
-  PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT="$camera_start_command" \
-  PIXEL_GUEST_POST_SESSION_DEVICE_SCRIPT="$camera_cleanup_command" \
-  PIXEL_TAKEOVER_STOP_ALLOCATOR="${PIXEL_TAKEOVER_STOP_ALLOCATOR:-0}" \
   PIXEL_GUEST_SKIP_PUSH="$([[ "$shell_run_only" == 1 ]] && printf 1 || true)" \
   "$SCRIPT_DIR/pixel/pixel_guest_ui_drm.sh"

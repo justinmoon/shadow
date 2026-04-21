@@ -204,6 +204,16 @@ pixel_guest_startup_config_dst() {
   printf '%s\n' '/data/local/tmp/shadow-guest-startup.json'
 }
 
+pixel_guest_startup_config_host_path() {
+  local run_dir="${1:?pixel_guest_startup_config_host_path requires a run dir}"
+  printf '%s/guest-startup.json\n' "$run_dir"
+}
+
+pixel_guest_run_config_host_path() {
+  local run_dir="${1:?pixel_guest_run_config_host_path requires a run dir}"
+  printf '%s/guest-run-config.json\n' "$run_dir"
+}
+
 pixel_runtime_dir() {
   printf '%s\n' "${PIXEL_RUNTIME_DIR:-/data/local/tmp/shadow-runtime}"
 }
@@ -788,6 +798,437 @@ if window:
 with open(output_path, "w", encoding="utf-8") as handle:
     json.dump(config, handle, indent=2)
     handle.write("\n")
+PY
+}
+
+pixel_write_guest_run_config() {
+  local output_path="$1"
+  local startup_config_path="$2"
+  local system_bundle_artifact_dir="${3:-}"
+  local runtime_app_asset_artifact_dir="${4:-}"
+  local runtime_app_bundle_artifact="${5:-}"
+  local session_launch_env="${6:-}"
+  local client_env_overlay="${7:-}"
+  local required_markers="${8:-}"
+  local forbidden_markers="${9:-}"
+  local precreate_dirs="${10:-}"
+  local pre_session_device_script="${11:-}"
+  local post_session_device_script="${12:-}"
+  local compositor_marker="${13:-}"
+  local client_marker="${14:-}"
+  local expect_compositor_process="${15:-}"
+  local expect_client_process="${16:-}"
+  local expect_client_marker="${17:-}"
+  local verify_require_client_marker="${18:-}"
+  local session_timeout_secs="${19:-}"
+  local session_exit_timeout_secs="${20:-}"
+  local compositor_marker_timeout_secs="${21:-}"
+  local required_marker_timeout_secs="${22:-}"
+  local frame_checkpoint_timeout_secs="${23:-}"
+  local restore_checkpoint_timeout_secs="${24:-}"
+  local restore_reboot_timeout_secs="${25:-}"
+  local restore_android="${26:-}"
+  local restore_in_session="${27:-}"
+  local reboot_on_restore_failure="${28:-}"
+  local stop_allocator="${29:-}"
+  local skip_push="${30:-}"
+  local runtime_summary_renderer="${31:-}"
+
+  pixel_validate_env_assignment_lines "guest session launch env" "$session_launch_env" || return 1
+  pixel_validate_env_assignment_lines "guest client overlay env" "$client_env_overlay" || return 1
+
+  PIXEL_GUEST_RUN_CONFIG_OUTPUT_PATH="$output_path" \
+  PIXEL_GUEST_RUN_CONFIG_STARTUP_CONFIG_PATH="$startup_config_path" \
+  PIXEL_GUEST_RUN_CONFIG_SESSION_LAUNCH_ENV="$session_launch_env" \
+  PIXEL_GUEST_RUN_CONFIG_CLIENT_ENV_OVERLAY="$client_env_overlay" \
+  PIXEL_GUEST_RUN_CONFIG_REQUIRED_MARKERS="$required_markers" \
+  PIXEL_GUEST_RUN_CONFIG_FORBIDDEN_MARKERS="$forbidden_markers" \
+  PIXEL_GUEST_RUN_CONFIG_PRECREATE_DIRS="$precreate_dirs" \
+  PIXEL_GUEST_RUN_CONFIG_PRE_SESSION_DEVICE_SCRIPT="$pre_session_device_script" \
+  PIXEL_GUEST_RUN_CONFIG_POST_SESSION_DEVICE_SCRIPT="$post_session_device_script" \
+  PIXEL_GUEST_RUN_CONFIG_COMPOSITOR_MARKER="$compositor_marker" \
+  PIXEL_GUEST_RUN_CONFIG_CLIENT_MARKER="$client_marker" \
+  PIXEL_GUEST_RUN_CONFIG_EXPECT_COMPOSITOR_PROCESS="$expect_compositor_process" \
+  PIXEL_GUEST_RUN_CONFIG_EXPECT_CLIENT_PROCESS="$expect_client_process" \
+  PIXEL_GUEST_RUN_CONFIG_EXPECT_CLIENT_MARKER="$expect_client_marker" \
+  PIXEL_GUEST_RUN_CONFIG_VERIFY_REQUIRE_CLIENT_MARKER="$verify_require_client_marker" \
+  PIXEL_GUEST_RUN_CONFIG_SESSION_TIMEOUT_SECS="$session_timeout_secs" \
+  PIXEL_GUEST_RUN_CONFIG_SESSION_EXIT_TIMEOUT_SECS="$session_exit_timeout_secs" \
+  PIXEL_GUEST_RUN_CONFIG_COMPOSITOR_MARKER_TIMEOUT_SECS="$compositor_marker_timeout_secs" \
+  PIXEL_GUEST_RUN_CONFIG_REQUIRED_MARKER_TIMEOUT_SECS="$required_marker_timeout_secs" \
+  PIXEL_GUEST_RUN_CONFIG_FRAME_CHECKPOINT_TIMEOUT_SECS="$frame_checkpoint_timeout_secs" \
+  PIXEL_GUEST_RUN_CONFIG_RESTORE_CHECKPOINT_TIMEOUT_SECS="$restore_checkpoint_timeout_secs" \
+  PIXEL_GUEST_RUN_CONFIG_RESTORE_REBOOT_TIMEOUT_SECS="$restore_reboot_timeout_secs" \
+  PIXEL_GUEST_RUN_CONFIG_RESTORE_ANDROID="$restore_android" \
+  PIXEL_GUEST_RUN_CONFIG_RESTORE_IN_SESSION="$restore_in_session" \
+  PIXEL_GUEST_RUN_CONFIG_REBOOT_ON_RESTORE_FAILURE="$reboot_on_restore_failure" \
+  PIXEL_GUEST_RUN_CONFIG_STOP_ALLOCATOR="$stop_allocator" \
+    python3 - <<'PY'
+import json
+import os
+import sys
+
+
+def parse_env_lines(label, raw_lines):
+    lines = []
+    for raw_line in raw_lines.splitlines():
+        if not raw_line:
+            continue
+        if "=" not in raw_line:
+            raise SystemExit(f"pixel: invalid {label} assignment (missing '='): {raw_line}")
+        key, value = raw_line.split("=", 1)
+        if not key or key[0].isdigit() or any(
+            ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
+            for ch in key
+        ):
+            raise SystemExit(f"pixel: invalid {label} key: {key}")
+        lines.append({"key": key, "value": value})
+    return lines
+
+
+def parse_list(raw_lines):
+    return [line for line in raw_lines.splitlines() if line]
+
+
+def parse_optional_int(label, raw_value):
+    value = raw_value.strip()
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError as error:
+        raise SystemExit(f"pixel: invalid {label}: {raw_value!r}: {error}") from error
+
+
+def parse_flag(raw_value):
+    value = raw_value.strip()
+    if not value:
+        return False
+    return value not in {"0", "false", "off"}
+
+
+output_path = os.environ["PIXEL_GUEST_RUN_CONFIG_OUTPUT_PATH"]
+startup_config_path = os.environ["PIXEL_GUEST_RUN_CONFIG_STARTUP_CONFIG_PATH"]
+if not startup_config_path:
+    raise SystemExit("pixel: guest run config requires a startup config path")
+with open(startup_config_path, encoding="utf-8") as handle:
+    config = json.load(handle)
+if config.get("schemaVersion") != 1:
+    raise SystemExit(
+        "pixel: unsupported guest startup config schema version: "
+        f"{config.get('schemaVersion')!r}"
+    )
+
+session = {}
+verify = {}
+takeover = {}
+
+session_launch_env = parse_env_lines(
+    "guest session launch env",
+    os.environ.get("PIXEL_GUEST_RUN_CONFIG_SESSION_LAUNCH_ENV", ""),
+)
+if session_launch_env:
+    session["launchEnvAssignments"] = session_launch_env
+
+client_env_overlay = parse_env_lines(
+    "guest client overlay env",
+    os.environ.get("PIXEL_GUEST_RUN_CONFIG_CLIENT_ENV_OVERLAY", ""),
+)
+if client_env_overlay:
+    session["clientEnvOverlayAssignments"] = client_env_overlay
+
+precreate_dirs = parse_list(os.environ.get("PIXEL_GUEST_RUN_CONFIG_PRECREATE_DIRS", ""))
+if precreate_dirs:
+    session["precreateDirs"] = precreate_dirs
+
+pre_session_device_script = os.environ.get(
+    "PIXEL_GUEST_RUN_CONFIG_PRE_SESSION_DEVICE_SCRIPT", ""
+)
+if pre_session_device_script:
+    session["preSessionDeviceScript"] = pre_session_device_script
+
+post_session_device_script = os.environ.get(
+    "PIXEL_GUEST_RUN_CONFIG_POST_SESSION_DEVICE_SCRIPT", ""
+)
+if post_session_device_script:
+    session["postSessionDeviceScript"] = post_session_device_script
+
+session_timeout_secs = parse_optional_int(
+    "PIXEL_GUEST_RUN_CONFIG_SESSION_TIMEOUT_SECS",
+    os.environ.get("PIXEL_GUEST_RUN_CONFIG_SESSION_TIMEOUT_SECS", ""),
+)
+if session_timeout_secs is not None:
+    session["timeoutSecs"] = session_timeout_secs
+
+session_exit_timeout_secs = parse_optional_int(
+    "PIXEL_GUEST_RUN_CONFIG_SESSION_EXIT_TIMEOUT_SECS",
+    os.environ.get("PIXEL_GUEST_RUN_CONFIG_SESSION_EXIT_TIMEOUT_SECS", ""),
+)
+if session_exit_timeout_secs is not None:
+    session["exitTimeoutSecs"] = session_exit_timeout_secs
+
+compositor_marker = os.environ.get("PIXEL_GUEST_RUN_CONFIG_COMPOSITOR_MARKER", "")
+if compositor_marker:
+    verify["compositorMarker"] = compositor_marker
+
+client_marker = os.environ.get("PIXEL_GUEST_RUN_CONFIG_CLIENT_MARKER", "")
+if client_marker:
+    verify["clientMarker"] = client_marker
+
+required_markers = parse_list(os.environ.get("PIXEL_GUEST_RUN_CONFIG_REQUIRED_MARKERS", ""))
+if required_markers:
+    verify["requiredMarkers"] = required_markers
+
+forbidden_markers = parse_list(os.environ.get("PIXEL_GUEST_RUN_CONFIG_FORBIDDEN_MARKERS", ""))
+if forbidden_markers:
+    verify["forbiddenMarkers"] = forbidden_markers
+
+verify["expectCompositorProcess"] = parse_flag(
+    os.environ.get("PIXEL_GUEST_RUN_CONFIG_EXPECT_COMPOSITOR_PROCESS", "1")
+)
+verify["expectClientProcess"] = parse_flag(
+    os.environ.get("PIXEL_GUEST_RUN_CONFIG_EXPECT_CLIENT_PROCESS", "1")
+)
+verify["expectClientMarker"] = parse_flag(
+    os.environ.get("PIXEL_GUEST_RUN_CONFIG_EXPECT_CLIENT_MARKER", "1")
+)
+verify["requireClientMarker"] = parse_flag(
+    os.environ.get("PIXEL_GUEST_RUN_CONFIG_VERIFY_REQUIRE_CLIENT_MARKER", "1")
+)
+
+for env_name, field_name in [
+    ("PIXEL_GUEST_RUN_CONFIG_COMPOSITOR_MARKER_TIMEOUT_SECS", "compositorMarkerTimeoutSecs"),
+    ("PIXEL_GUEST_RUN_CONFIG_REQUIRED_MARKER_TIMEOUT_SECS", "requiredMarkerTimeoutSecs"),
+    ("PIXEL_GUEST_RUN_CONFIG_FRAME_CHECKPOINT_TIMEOUT_SECS", "frameCheckpointTimeoutSecs"),
+]:
+    value = parse_optional_int(field_name, os.environ.get(env_name, ""))
+    if value is not None:
+        verify[field_name] = value
+
+takeover["restoreAndroid"] = parse_flag(
+    os.environ.get("PIXEL_GUEST_RUN_CONFIG_RESTORE_ANDROID", "1")
+)
+takeover["restoreInSession"] = parse_flag(
+    os.environ.get("PIXEL_GUEST_RUN_CONFIG_RESTORE_IN_SESSION", "1")
+)
+takeover["rebootOnRestoreFailure"] = parse_flag(
+    os.environ.get("PIXEL_GUEST_RUN_CONFIG_REBOOT_ON_RESTORE_FAILURE", "0")
+)
+takeover["stopAllocator"] = parse_flag(
+    os.environ.get("PIXEL_GUEST_RUN_CONFIG_STOP_ALLOCATOR", "1")
+)
+for env_name, field_name in [
+    ("PIXEL_GUEST_RUN_CONFIG_RESTORE_CHECKPOINT_TIMEOUT_SECS", "restoreCheckpointTimeoutSecs"),
+    ("PIXEL_GUEST_RUN_CONFIG_RESTORE_REBOOT_TIMEOUT_SECS", "restoreRebootTimeoutSecs"),
+]:
+    value = parse_optional_int(field_name, os.environ.get(env_name, ""))
+    if value is not None:
+        takeover[field_name] = value
+
+if session:
+    config["session"] = session
+if verify:
+    config["verify"] = verify
+if takeover:
+    config["takeover"] = takeover
+
+with open(output_path, "w", encoding="utf-8") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+PY
+}
+
+pixel_materialize_guest_run_config() {
+  local config_path="$1"
+  local output_path="$2"
+
+  python3 - "$config_path" "$output_path" <<'PY'
+import json
+import shlex
+import sys
+
+
+def read_json(path):
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def assignment(name, value):
+    if value is None:
+        value = ""
+    print(f"{name}={shlex.quote(str(value))}")
+
+
+def assignment_lines(name, items):
+    assignment(name, "\n".join(items))
+
+
+def startup_projection(startup):
+    if startup.get("schemaVersion") != 1:
+        raise SystemExit(
+            "pixel: unsupported guest startup config schema version: "
+            f"{startup.get('schemaVersion')!r}"
+        )
+
+    client = startup.get("client") or {}
+    runtime = startup.get("runtime") or {}
+    compositor = startup.get("compositor") or {}
+    runtime_dir = (client.get("runtimeDir") or runtime.get("runtimeDir") or "").strip()
+    client_path = (client.get("appClientPath") or "").strip()
+    if not runtime_dir:
+        raise SystemExit(
+            "pixel: guest startup config missing client.runtimeDir/runtime.runtimeDir"
+        )
+    if not client_path:
+        raise SystemExit("pixel: guest startup config missing client.appClientPath")
+
+    frame_capture = compositor.get("frameCapture") or {}
+    frame_mode = "off"
+    raw_frame_mode = (frame_capture.get("mode") or "").strip().replace("_", "-")
+    legacy_artifacts_enabled = frame_capture.get("artifactsEnabled")
+    if legacy_artifacts_enabled is None:
+        legacy_artifacts_enabled = frame_capture.get("enabled")
+    legacy_write_every_frame = frame_capture.get("writeEveryFrame")
+    if legacy_write_every_frame is None:
+        legacy_write_every_frame = frame_capture.get("write_every_frame")
+    if frame_capture.get("snapshotCache"):
+        frame_mode = "request"
+    elif raw_frame_mode in {"first-frame", "every-frame"}:
+        frame_mode = "publish"
+    elif legacy_artifacts_enabled or legacy_write_every_frame:
+        frame_mode = "publish"
+    elif raw_frame_mode in {"", "off"}:
+        frame_mode = "off"
+    else:
+        raise SystemExit(
+            "pixel: unsupported guest run frame capture mode: "
+            f"{raw_frame_mode!r}"
+        )
+    frame_artifact_path = frame_capture.get("artifactPath") or ""
+
+    return runtime_dir, client_path, frame_mode, frame_artifact_path
+
+
+config_path_raw, output_path_raw = sys.argv[1:3]
+config = read_json(config_path_raw)
+if config.get("schemaVersion") != 1:
+    raise SystemExit(
+        "pixel: unsupported guest run config schema version: "
+        f"{config.get('schemaVersion')!r}"
+)
+
+runtime_dir, client_path, frame_capture_mode, frame_artifact_path = startup_projection(config)
+
+session = config.get("session") or {}
+verify = config.get("verify") or {}
+takeover = config.get("takeover") or {}
+
+session_launch_env = [
+    f"{item['key']}={item['value']}"
+    for item in session.get("launchEnvAssignments", [])
+]
+client_env_overlay = [
+    f"{item['key']}={item['value']}"
+    for item in session.get("clientEnvOverlayAssignments", [])
+]
+
+with open(output_path_raw, "w", encoding="utf-8") as handle:
+    sys.stdout = handle
+    assignment("pixel_guest_run_config_startup_config_path", config_path_raw)
+    assignment("pixel_guest_run_config_runtime_dir", runtime_dir)
+    assignment("pixel_guest_run_config_client_launch_path", client_path)
+    assignment("pixel_guest_run_config_frame_capture_mode", frame_capture_mode)
+    assignment("pixel_guest_run_config_frame_artifact_path", frame_artifact_path)
+    assignment(
+        "pixel_guest_run_config_session_timeout_secs",
+        session.get("timeoutSecs", ""),
+    )
+    assignment(
+        "pixel_guest_run_config_session_exit_timeout_secs",
+        session.get("exitTimeoutSecs", ""),
+    )
+    assignment_lines(
+        "pixel_guest_run_config_session_launch_env",
+        session_launch_env,
+    )
+    assignment_lines(
+        "pixel_guest_run_config_client_env_overlay",
+        client_env_overlay,
+    )
+    assignment_lines(
+        "pixel_guest_run_config_precreate_dirs",
+        session.get("precreateDirs", []),
+    )
+    assignment(
+        "pixel_guest_run_config_pre_session_device_script",
+        session.get("preSessionDeviceScript", ""),
+    )
+    assignment(
+        "pixel_guest_run_config_post_session_device_script",
+        session.get("postSessionDeviceScript", ""),
+    )
+    assignment("pixel_guest_run_config_compositor_marker", verify.get("compositorMarker", ""))
+    assignment("pixel_guest_run_config_client_marker", verify.get("clientMarker", ""))
+    assignment_lines(
+        "pixel_guest_run_config_required_markers",
+        verify.get("requiredMarkers", []),
+    )
+    assignment_lines(
+        "pixel_guest_run_config_forbidden_markers",
+        verify.get("forbiddenMarkers", []),
+    )
+    assignment(
+        "pixel_guest_run_config_expect_compositor_process",
+        "1" if verify.get("expectCompositorProcess", True) else "",
+    )
+    assignment(
+        "pixel_guest_run_config_expect_client_process",
+        "1" if verify.get("expectClientProcess", True) else "",
+    )
+    assignment(
+        "pixel_guest_run_config_expect_client_marker",
+        "1" if verify.get("expectClientMarker", True) else "",
+    )
+    assignment(
+        "pixel_guest_run_config_verify_require_client_marker",
+        "1" if verify.get("requireClientMarker", True) else "",
+    )
+    assignment(
+        "pixel_guest_run_config_compositor_marker_timeout_secs",
+        verify.get("compositorMarkerTimeoutSecs", ""),
+    )
+    assignment(
+        "pixel_guest_run_config_required_marker_timeout_secs",
+        verify.get("requiredMarkerTimeoutSecs", ""),
+    )
+    assignment(
+        "pixel_guest_run_config_frame_checkpoint_timeout_secs",
+        verify.get("frameCheckpointTimeoutSecs", ""),
+    )
+    assignment(
+        "pixel_guest_run_config_restore_checkpoint_timeout_secs",
+        takeover.get("restoreCheckpointTimeoutSecs", ""),
+    )
+    assignment(
+        "pixel_guest_run_config_restore_reboot_timeout_secs",
+        takeover.get("restoreRebootTimeoutSecs", ""),
+    )
+    assignment(
+        "pixel_guest_run_config_restore_android",
+        "1" if takeover.get("restoreAndroid", True) else "",
+    )
+    assignment(
+        "pixel_guest_run_config_restore_in_session",
+        "1" if takeover.get("restoreInSession", True) else "",
+    )
+    assignment(
+        "pixel_guest_run_config_reboot_on_restore_failure",
+        "1" if takeover.get("rebootOnRestoreFailure", False) else "",
+    )
+    assignment(
+        "pixel_guest_run_config_stop_allocator",
+        "1" if takeover.get("stopAllocator", True) else "",
+    )
 PY
 }
 
