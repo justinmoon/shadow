@@ -139,7 +139,9 @@
       shadowPixelBootShellCommonPrefixes = [
         "scripts/lib/pixel_common.sh"
         "scripts/lib/pixel_device_transport_common.sh"
+        "scripts/lib/pixel_display_session_common.sh"
         "scripts/lib/pixel_root_boot_common.sh"
+        "scripts/lib/pixel_runtime_linux_bundle_common.sh"
         "scripts/lib/pixel_runtime_session_common.sh"
         "scripts/lib/shadow_common.sh"
       ];
@@ -197,6 +199,10 @@
           "scripts/pixel/pixel_boot_recover_traces.sh"
           "scripts/pixel/pixel_build_init_wrapper.sh"
           "scripts/pixel/pixel_build_init_wrapper_c.sh"
+          "scripts/pixel/pixel_build_openlog_preload.sh"
+          "scripts/pixel/pixel_openlog_preload.c"
+          "scripts/pixel/pixel_prepare_gpu_smoke_bundle.sh"
+          "scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh"
         ]
       );
       shadowPixelBootRecoverTracesSmokeSrc = repoSourceFromPrefixes (
@@ -1879,6 +1885,7 @@
             gnused
             gzip
             lz4
+            nix
             perl
             python3
           ];

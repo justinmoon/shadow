@@ -11,14 +11,12 @@ repo="$(repo_root)"
 artifact="$(pixel_artifact_path shadow-openlog-preload.so)"
 source_path="$repo/scripts/pixel/pixel_openlog_preload.c"
 
-nix shell --accept-flake-config 'nixpkgs#pkgsCross.aarch64-multiplatform.stdenv.cc' -c bash -lc "
-set -euo pipefail
-aarch64-unknown-linux-gnu-gcc \
+nix shell --accept-flake-config 'nixpkgs#pkgsCross.aarch64-multiplatform.stdenv.cc' \
+  -c aarch64-unknown-linux-gnu-gcc \
   -shared -fPIC -O2 -Wall -Wextra \
-  -o $(printf '%q' "$artifact") \
-  $(printf '%q' "$source_path") \
+  -o "$artifact" \
+  "$source_path" \
   -ldl
-"
 
 chmod 0755 "$artifact"
 file "$artifact"
