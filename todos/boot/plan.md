@@ -649,3 +649,19 @@ Related docs:
   - a spare rooted control on `0B191JEC203253` still succeeded on `raw-kgsl-getproperties-smoke` even after a display-stack stop attempt using the repo’s existing service helpers, so the obvious `surfaceflinger` / composer / allocator Android services are not required just to open KGSL and read the early properties under the rooted tmpfs-`/dev` control lane
   - the boot-lab slot preflight now falls back from blank `ro.boot.slot_suffix` / `ro.boot.slot` properties to rooted `/proc/cmdline` parsing, because `11151JEC200472` and `06241JEC200520` currently expose the kernel-truthful `androidboot.slot_suffix=_a` only through `su -c cat /proc/cmdline`
   - a boot-owned `devtmpfs` variant on `09051JEC202061` regressed to a `kernel_panic` lane with no recovered metadata fingerprint or stage file at all, so `devtmpfs` is currently worse than the informative `tmpfs` path and should not replace it as the main experiment surface
+- Read-only KGSL open result on 2026-04-21:
+  - `shadow-gpu-smoke` now has a dedicated `raw-kgsl-open-readonly-smoke` rung
+  - rooted tmpfs-`/dev` controls on both `11151JEC200472` and `09051JEC202061` returned `run_status=0`, `run_succeeded=true`, and `summary.kgsl_device_opened=true` with `access_mode=read-only`
+  - the matching boot-owned run on `09051JEC202061` recovered `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly`, not `...:kgsl-open-readonly-ok`, and returned to fastboot in the same `69s` window as the earlier read-write KGSL seam
+  - that same-phone contrast proves the blocker is not specific to write access, ioctl setup, or a special-case `09051` rooted environment; boot-owned userspace cannot complete even a read-only open of `/dev/kgsl-3d0`
+- Direct C-owned KGSL open result on 2026-04-21:
+  - `hello-init` now has a private `c-kgsl-open-readonly-smoke` mode that opens `/dev/kgsl-3d0` read-only directly in the owned child process before any staged Rust bundle exec
+  - the owned run on `09051JEC202061` recovered the exact same durable stage value, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly`, with no `...-ok` marker and the same fastboot auto-reboot timing
+  - that rules out the staged Rust bundle, dynamic loader, and Turnip/Vulkan userspace as the active blocker; the seam is now “any boot-owned child process open of `/dev/kgsl-3d0`”
+- Boot-lab sidecar status on 2026-04-21:
+  - rooted `sound` passed end-to-end on `0B191JEC203253` again, and the device returned to stable rooted Android
+  - rooted `camera` on `06241JEC200520` succeeded at the direct helper layer (`list` + live JPEG capture), while the shell-app smoke still failed later in automation waiting for the preview-toggle click
+  - the camera sidecar produced a narrow tooling fix in `/Users/justin/code/shadow/worktrees/boot-camera-sidecar` commit `cf12fe0` (`fix: allow prebuilt pixel camera helper reuse`)
+- Bootloader transport note on 2026-04-21:
+  - `adb reboot bootloader` now cleanly reaches fastboot on `09051JEC202061`, but `11151JEC200472` emits `failed to create pty master: No such file or directory` and never leaves Android on the same guarded transport probe
+  - because the owned boot seam now reproduces on `09051JEC202061`, treat `11151JEC200472` as transport-confounded until the reboot-to-bootloader path is fixed or bypassed
