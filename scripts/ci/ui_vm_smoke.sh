@@ -29,8 +29,6 @@ UI_VM_RELAY_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_RELAY_TIMEOUT:-30}"
 # Counter is the first launcher tile in the current shell-local home grid.
 COUNTER_TILE_LOCAL_CENTER_X=104
 COUNTER_TILE_LOCAL_CENTER_Y=617
-RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_X=270
-RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_Y=363
 ui_vm_run_pid=""
 prepared_inputs_path="${SHADOW_UI_VM_PREPARED_INPUTS:-}"
 vm_smoke_succeeded=0
@@ -369,11 +367,13 @@ start_seeded_local_relay() {
   relay_host_port="$(reserve_local_port)"
   relay_guest_url="ws://10.0.2.2:${relay_host_port}"
   relay_publish_secret="$(nak key generate)"
-  local key_a key_b seed_port seed_url seed_err seed_out relay_err relay_out events_path
-  local event_a event_b
+  local key_a key_b pub_a pub_b seed_port seed_url seed_err seed_out relay_err relay_out events_path
+  local event_a event_b event_follow_list
 
   key_a="$(nak key generate)"
   key_b="$(nak key generate)"
+  pub_a="$(nak key public "$key_a")"
+  pub_b="$(nak key public "$key_b")"
   seed_port="$(reserve_local_port)"
   seed_url="ws://127.0.0.1:${seed_port}"
   seed_err="$relay_temp_dir/seed-relay.err"
@@ -388,8 +388,16 @@ start_seeded_local_relay() {
 
   event_a="$(printf 'vm smoke seed alpha\n' | nak publish --sec "$key_a" "$seed_url")"
   event_b="$(printf 'vm smoke seed beta\n' | nak publish --sec "$key_b" "$seed_url")"
+  event_follow_list="$(
+    nak event \
+      -k 3 \
+      --sec "$relay_publish_secret" \
+      -p "$pub_a" \
+      -p "$pub_b" \
+      "$seed_url"
+  )"
   relay_query_dump "$seed_url" >/dev/null
-  printf '%s\n%s\n' "$event_a" "$event_b" >"$events_path"
+  printf '%s\n%s\n%s\n' "$event_a" "$event_b" "$event_follow_list" >"$events_path"
 
   kill "$seed_pid" >/dev/null 2>&1 || true
   wait "$seed_pid" 2>/dev/null || true
@@ -581,36 +589,6 @@ print(f"{shell_x + counter_tile_local_center_x} {shell_y + counter_tile_local_ce
   run_shadowctl tap -t vm "$tap_x" "$tap_y" >/dev/null
 }
 
-rust_timeline_top_note_tap() {
-  local shell_state
-  local tap_coords
-
-  shell_state="$(run_shadowctl state -t vm --json)"
-  tap_coords="$(
-    RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_X="$RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_X" \
-      RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_Y="$RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_Y" \
-      python3 -c '
-import json
-import os
-import sys
-
-state = json.load(sys.stdin)
-shell_x = state.get("shell_x")
-shell_y = state.get("shell_y")
-if shell_x is None or shell_y is None:
-    raise SystemExit("vm-smoke: missing shell geometry in shadowctl state -t vm --json")
-note_local_x = int(os.environ["RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_X"])
-note_local_y = int(os.environ["RUST_TIMELINE_TOP_NOTE_LOCAL_CENTER_Y"])
-print(f"{shell_x + note_local_x} {shell_y + note_local_y}")
-      ' <<<"$shell_state"
-  )"
-
-  local tap_x
-  local tap_y
-  read -r tap_x tap_y <<<"$tap_coords"
-  run_shadowctl tap -t vm "$tap_x" "$tap_y" >/dev/null
-}
-
 assert_home_surface_visible() {
   local shell_state
 
@@ -675,11 +653,24 @@ dump_failure_context() {
     sed -n '1,240p' "$RUN_LOG" >&2 || true
   fi
 
+  if [[ -n "$relay_temp_dir" && -d "$relay_temp_dir" ]]; then
+    printf '\n== vm relay temp dir ==\n%s\n' "$relay_temp_dir" >&2
+    for relay_file in "$relay_temp_dir"/relay.err "$relay_temp_dir"/relay.out "$relay_temp_dir"/seed-relay.err "$relay_temp_dir"/seed-relay.out "$relay_temp_dir"/relay-events.jsonl; do
+      if [[ -f "$relay_file" ]]; then
+        printf '\n== %s ==\n' "$(basename "$relay_file")" >&2
+        sed -n '1,240p' "$relay_file" >&2 || true
+      fi
+    done
+  fi
+
   printf '\n== vm doctor ==\n' >&2
   run_shadowctl doctor -t vm >&2 || true
 
   printf '\n== vm logs ==\n' >&2
   run_shadowctl logs -t vm --lines 200 >&2 || true
+
+  printf '\n== vm runtime nostr log ==\n' >&2
+  run_shadowctl ssh -t vm 'cat /var/lib/shadow-ui/runtime-nostr.log 2>/dev/null || true' >&2 || true
 
   printf '\n== vm journal ==\n' >&2
   run_shadowctl journal -t vm --lines 120 >&2 || true
@@ -722,7 +713,7 @@ finish() {
   if [[ -n "$vm_extra_env_path" ]]; then
     rm -f "$vm_extra_env_path" >/dev/null 2>&1 || true
   fi
-  if [[ -n "$relay_temp_dir" ]]; then
+  if [[ -n "$relay_temp_dir" && -d "$relay_temp_dir" && "$status" -eq 0 ]]; then
     rm -rf "$relay_temp_dir" >/dev/null 2>&1 || true
   fi
 
@@ -1085,14 +1076,25 @@ wait_for_log_marker \
   "rust-timeline lifecycle foreground again"
 
 echo "vm-smoke: open rust-timeline seeded note"
-rust_timeline_top_note_tap
+run_app_platform_request_checked rust-timeline automation open_first_visible_note >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_open_first_visible_note_success" \
+  "rust-timeline seeded note open" \
+  "shadow-rust-timeline: automation_open_first_visible_note_failed"
 
 echo "vm-smoke: rust-timeline publish with allow_always"
 run_app_platform_request_checked rust-timeline automation open_reply >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_open_reply_success" \
+  "rust-timeline reply sheet open" \
+  "shadow-rust-timeline: automation_open_reply_failed"
 run_app_platform_request_checked \
   rust-timeline \
-  automation set_reply_content "vm smoke reply allow always" >/dev/null
-run_app_platform_request_checked rust-timeline automation publish_reply >/dev/null
+  automation publish_reply_content "vm smoke reply allow always" >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_publish_reply_success" \
+  "rust-timeline publish request queued" \
+  "shadow-rust-timeline: automation_publish_reply_failed"
 rust_timeline_prompt_open_state="$(wait_for_prompt_state 1 "rust-timeline signer prompt open")"
 PROMPT_OPEN_STATE="$rust_timeline_prompt_open_state" python3 - <<'PY'
 import json
@@ -1120,10 +1122,17 @@ wait_for_relay_note \
 
 echo "vm-smoke: rust-timeline publish with cached signer policy"
 run_app_platform_request_checked rust-timeline automation open_reply >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_open_reply_success" \
+  "rust-timeline cached-policy reply sheet open" \
+  "shadow-rust-timeline: automation_open_reply_failed"
 run_app_platform_request_checked \
   rust-timeline \
-  automation set_reply_content "vm smoke reply cached policy" >/dev/null
-run_app_platform_request_checked rust-timeline automation publish_reply >/dev/null
+  automation publish_reply_content "vm smoke reply cached policy" >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_publish_reply_success" \
+  "rust-timeline cached-policy publish request queued" \
+  "shadow-rust-timeline: automation_publish_reply_failed"
 sleep 2
 prompt_after_cached_publish="$(run_shadowctl state -t vm --json)"
 PROMPT_CLOSED_STATE="$prompt_after_cached_publish" python3 - <<'PY'

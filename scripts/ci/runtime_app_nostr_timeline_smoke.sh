@@ -9,8 +9,8 @@ cd "$REPO_ROOT"
 python3 - <<'PY'
 import json
 import os
-import socket
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -20,24 +20,8 @@ REPO_ROOT = Path.cwd()
 SCRIPT_DIR = REPO_ROOT / "scripts"
 PREPARE_TIMEOUT_SECONDS = 600
 
-
-def reserve_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
-def run(command, *, env=None, input_text=None, timeout=20):
-    return subprocess.run(
-        command,
-        cwd=REPO_ROOT,
-        env=env,
-        input=input_text,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=True,
-    )
+sys.path.insert(0, str(SCRIPT_DIR / "ci" / "lib"))
+from nostr_test_harness import build_text_note_events, run, running_relay
 
 def send(process, request):
     assert process.stdin is not None
@@ -59,124 +43,21 @@ def send(process, request):
     return response
 
 
-def query_relay_via_websocket(relay_url: str, *, timeout=5):
-    script = f"""
-const ws = new WebSocket({json.dumps(relay_url)});
-const messages = [];
-ws.onopen = () => ws.send(JSON.stringify(["REQ", "sub1", {{"kinds": [1], "limit": 10}}]));
-ws.onmessage = (event) => {{
-  messages.push(String(event.data));
-  if (String(event.data).includes('"EOSE"')) {{
-    console.log(JSON.stringify(messages));
-    ws.close();
-  }}
-}};
-ws.onclose = () => process.exit(0);
-setTimeout(() => {{
-  console.log(JSON.stringify(messages));
-  ws.close();
-}}, 2000);
-"""
-    result = run(["node", "-e", script], timeout=timeout)
-    return result.stdout.strip()
-
-
 with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
     temp_path = Path(temp_dir)
     db_path = temp_path / "nostr.sqlite3"
-    events_path = temp_path / "relay-events.jsonl"
-    key_a = run(["nak", "key", "generate"], timeout=10).stdout.strip()
-    key_b = run(["nak", "key", "generate"], timeout=10).stdout.strip()
-    seed_relay_port = reserve_port()
-    seed_relay_url = f"ws://127.0.0.1:{seed_relay_port}"
-    seed_relay = subprocess.Popen(
-        [
-            "nak",
-            "serve",
-            "--hostname",
-            "127.0.0.1",
-            "--port",
-            str(seed_relay_port),
-        ],
-        cwd=REPO_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+    event_lines = build_text_note_events(
+        REPO_ROOT,
+        ["relay smoke alpha", "relay smoke beta"],
     )
-    try:
-        assert seed_relay.stderr is not None
-        relay_ready = False
-        deadline = time.time() + 10
-        while time.time() < deadline:
-            line = seed_relay.stderr.readline()
-            if not line:
-                time.sleep(0.1)
-                continue
-            if "relay running at" in line:
-                relay_ready = True
-                break
-        if not relay_ready:
-            raise SystemExit(
-                "runtime-app-nostr-timeline-smoke: timed out waiting for local nak relay",
-            )
 
-        event_lines = [
-            run(
-                ["nak", "publish", "--sec", key_a, seed_relay_url],
-                input_text="relay smoke alpha\n",
-                timeout=20,
-            ).stdout.strip(),
-            run(
-                ["nak", "publish", "--sec", key_b, seed_relay_url],
-                input_text="relay smoke beta\n",
-                timeout=20,
-            ).stdout.strip(),
-        ]
-        events_path.write_text("\n".join(event_lines) + "\n", encoding="utf-8")
-    finally:
-        seed_relay.terminate()
-        try:
-            seed_relay.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            seed_relay.kill()
-            seed_relay.wait(timeout=3)
-
-    relay_port = reserve_port()
-    relay_url = f"ws://127.0.0.1:{relay_port}"
-    relay = subprocess.Popen(
-        [
-            "nak",
-            "serve",
-            "--hostname",
-            "127.0.0.1",
-            "--port",
-            str(relay_port),
-            "--events",
-            str(events_path),
-        ],
-        cwd=REPO_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        assert relay.stderr is not None
-        relay_ready = False
-        deadline = time.time() + 10
-        while time.time() < deadline:
-            line = relay.stderr.readline()
-            if not line:
-                time.sleep(0.1)
-                continue
-            if "relay running at" in line:
-                relay_ready = True
-                break
-        if not relay_ready:
-            raise SystemExit(
-                "runtime-app-nostr-timeline-smoke: timed out waiting for seeded nak relay",
-            )
-
-        relay_dump = query_relay_via_websocket(relay_url, timeout=10)
+    with running_relay(
+        REPO_ROOT,
+        event_lines=event_lines,
+        prefix="shadow-nostr-timeline-relay-",
+    ) as relay:
+        relay_url = relay.url
+        relay_dump = relay.query_kind1(limit=10, timeout=10)
         if "relay smoke alpha" not in relay_dump or "relay smoke beta" not in relay_dump:
             raise SystemExit(
                 "runtime-app-nostr-timeline-smoke: seeded relay websocket query missing notes",
@@ -193,6 +74,7 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
             }),
         })
         session_json = run(
+            REPO_ROOT,
             [str(SCRIPT_DIR / "runtime" / "runtime_prepare_host_session.sh")],
             env=prepare_env,
             timeout=PREPARE_TIMEOUT_SECONDS,
@@ -273,13 +155,6 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
                 raise SystemExit(
                     f"runtime-app-nostr-timeline-smoke: runtime host exited {return_code}\n{stderr}",
                 )
-    finally:
-        relay.terminate()
-        try:
-            relay.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            relay.kill()
-            relay.wait(timeout=3)
 
 print(
     json.dumps(

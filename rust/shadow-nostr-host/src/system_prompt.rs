@@ -1,8 +1,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-#[cfg(test)]
-use std::sync::{Mutex, OnceLock};
 
 use shadow_runtime_protocol::{
     system_prompt_socket_path, SystemPromptRequest, SystemPromptResponse,
@@ -123,16 +121,9 @@ fn prompt_response_from_env(
 }
 
 #[cfg(test)]
-fn test_env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-#[cfg(test)]
 mod tests {
-    use super::{
-        prompt_response_from_env, test_env_lock, validate_request, PROMPT_RESPONSE_ACTION_ID_ENV,
-    };
+    use super::{prompt_response_from_env, validate_request, PROMPT_RESPONSE_ACTION_ID_ENV};
+    use crate::services::test_env_lock;
     use shadow_runtime_protocol::{
         SystemPromptAction, SystemPromptActionStyle, SystemPromptRequest,
     };

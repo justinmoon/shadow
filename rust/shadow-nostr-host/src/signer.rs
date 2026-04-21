@@ -1,7 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use nostr::prelude::PublicKey;
 use serde::{Deserialize, Serialize};
 use shadow_runtime_protocol::{
     SystemPromptAction, SystemPromptActionStyle, SystemPromptRequest, SystemPromptResponse,
@@ -27,10 +28,20 @@ enum PersistedSignerPolicy {
     AllowAlways,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+enum PersistedAppPolicies {
+    Legacy(PersistedSignerPolicy),
+    ByOperation {
+        #[serde(default, rename = "byOperation")]
+        by_operation: BTreeMap<String, PersistedSignerPolicy>,
+    },
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 struct PersistedSignerPolicies {
     #[serde(default, rename = "byAccount")]
-    by_account: BTreeMap<String, BTreeMap<String, PersistedSignerPolicy>>,
+    by_account: BTreeMap<String, BTreeMap<String, PersistedAppPolicies>>,
 }
 
 pub fn ensure_publish_approved(
@@ -50,7 +61,9 @@ pub fn ensure_publish_approved(
         .current_account()
         .map_err(|error| error.to_string())?
         .ok_or_else(|| String::from("nostr.publish requires an active shared Nostr account"))?;
-    if load_policy(&account, caller_app_id)? == Some(PersistedSignerPolicy::AllowAlways) {
+    let operation = approval_scope(request);
+    if load_policy(&account, caller_app_id, &operation)? == Some(PersistedSignerPolicy::AllowAlways)
+    {
         return Ok(());
     }
 
@@ -59,19 +72,25 @@ pub fn ensure_publish_approved(
         caller_app_title,
         &account,
         request,
-    ))?;
-    handle_prompt_response(&account, caller_app_id, response)
+    )?)?;
+    handle_prompt_response(&account, caller_app_id, &operation, response)
 }
 
 fn handle_prompt_response(
     account: &NostrAccountSummary,
     caller_app_id: &str,
+    operation: &str,
     response: SystemPromptResponse,
 ) -> Result<(), String> {
     match response.action_id.as_str() {
         ALLOW_ONCE_ACTION_ID => Ok(()),
         ALLOW_ALWAYS_ACTION_ID => {
-            store_policy(account, caller_app_id, PersistedSignerPolicy::AllowAlways)?;
+            store_policy(
+                account,
+                caller_app_id,
+                operation,
+                PersistedSignerPolicy::AllowAlways,
+            )?;
             Ok(())
         }
         DENY_ACTION_ID => Err(String::from("nostr.publish denied by the system signer")),
@@ -81,32 +100,63 @@ fn handle_prompt_response(
     }
 }
 
+fn approval_scope(request: &NostrPublishRequest) -> String {
+    match request {
+        NostrPublishRequest::TextNote { .. } => String::from("text_note"),
+        NostrPublishRequest::ContactList { .. } => String::from("contact_update"),
+    }
+}
+
 fn build_publish_prompt(
     caller_app_id: &str,
     caller_app_title: Option<&str>,
     account: &NostrAccountSummary,
     request: &NostrPublishRequest,
-) -> SystemPromptRequest {
+) -> Result<SystemPromptRequest, String> {
     let app_title =
         normalize_optional_string(caller_app_title).unwrap_or_else(|| caller_app_id.to_owned());
     let mut detail_lines = vec![
         format!("Account: {}", account.npub),
-        format!("Kind: {}", request.kind),
+        format!("Kind: {}", request.kind()),
     ];
-    if request.reply_to_event_id.is_some() {
-        detail_lines.push(String::from(
-            "Reply: this note references an existing thread.",
-        ));
-    }
-    detail_lines.push(format!("Preview: {}", preview_text(&request.content)));
+    let (title, message) = match request {
+        NostrPublishRequest::ContactList { public_keys, .. } => {
+            let follow_count = normalized_contact_count(public_keys)?;
+            detail_lines.push(format!(
+                "Follows: {} account{}",
+                follow_count,
+                if follow_count == 1 { "" } else { "s" }
+            ));
+            (
+                String::from("Allow Nostr contact update?"),
+                format!("{app_title} wants to replace the shared account contact list."),
+            )
+        }
+        NostrPublishRequest::TextNote {
+            content,
+            reply_to_event_id,
+            ..
+        } => {
+            if reply_to_event_id.is_some() {
+                detail_lines.push(String::from(
+                    "Reply: this note references an existing thread.",
+                ));
+            }
+            detail_lines.push(format!("Preview: {}", preview_text(content)));
+            (
+                String::from("Allow Nostr publish?"),
+                format!(
+                    "{app_title} wants to sign and publish a Nostr event with the shared account."
+                ),
+            )
+        }
+    };
 
-    SystemPromptRequest {
+    Ok(SystemPromptRequest {
         source_app_id: caller_app_id.to_owned(),
         source_app_title: (app_title != caller_app_id).then_some(app_title.clone()),
-        title: String::from("Allow Nostr publish?"),
-        message: format!(
-            "{app_title} wants to sign and publish a Nostr event with the shared account."
-        ),
+        title,
+        message,
         detail_lines,
         actions: vec![
             SystemPromptAction {
@@ -125,12 +175,29 @@ fn build_publish_prompt(
                 style: SystemPromptActionStyle::Normal,
             },
         ],
+    })
+}
+
+fn normalized_contact_count(
+    public_keys: &[shadow_sdk::services::nostr::NostrPublicKeyReference],
+) -> Result<usize, String> {
+    let mut unique = BTreeSet::new();
+    for reference in public_keys {
+        let normalized = reference.public_key.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+        let public_key = PublicKey::parse(normalized)
+            .map_err(|error| format!("nostr.publish invalid public key {normalized}: {error}"))?;
+        unique.insert(public_key);
     }
+    Ok(unique.len())
 }
 
 fn load_policy(
     account: &NostrAccountSummary,
     caller_app_id: &str,
+    operation: &str,
 ) -> Result<Option<PersistedSignerPolicy>, String> {
     let Some(path) = signer_policy_path() else {
         return Ok(None);
@@ -140,12 +207,18 @@ fn load_policy(
         .by_account
         .get(&account.npub)
         .and_then(|apps| apps.get(caller_app_id))
-        .copied())
+        .and_then(|policies| match policies {
+            PersistedAppPolicies::Legacy(policy) => (operation == "text_note").then_some(*policy),
+            PersistedAppPolicies::ByOperation { by_operation } => {
+                by_operation.get(operation).copied()
+            }
+        }))
 }
 
 fn store_policy(
     account: &NostrAccountSummary,
     caller_app_id: &str,
+    operation: &str,
     policy: PersistedSignerPolicy,
 ) -> Result<(), String> {
     let path = signer_policy_path().ok_or_else(|| {
@@ -154,11 +227,27 @@ fn store_policy(
         )
     })?;
     let mut policies = read_persisted_policies(&path)?;
-    policies
+    let app_policies = policies
         .by_account
         .entry(account.npub.clone())
         .or_default()
-        .insert(caller_app_id.to_owned(), policy);
+        .entry(caller_app_id.to_owned())
+        .or_insert_with(|| PersistedAppPolicies::ByOperation {
+            by_operation: BTreeMap::new(),
+        });
+    let by_operation = match app_policies {
+        PersistedAppPolicies::Legacy(existing) => {
+            let mut by_operation = BTreeMap::new();
+            by_operation.insert(String::from("text_note"), *existing);
+            *app_policies = PersistedAppPolicies::ByOperation { by_operation };
+            match app_policies {
+                PersistedAppPolicies::ByOperation { by_operation } => by_operation,
+                PersistedAppPolicies::Legacy(_) => unreachable!(),
+            }
+        }
+        PersistedAppPolicies::ByOperation { by_operation } => by_operation,
+    };
+    by_operation.insert(operation.to_owned(), policy);
     write_persisted_policies(&path, &policies)
 }
 
@@ -266,6 +355,7 @@ mod tests {
         PersistedSignerPolicy, SIGNER_POLICY_BASENAME, SIGNER_POLICY_PATH_ENV,
     };
     use crate::test_env_lock;
+    use nostr::prelude::{Keys, ToBech32};
     use shadow_sdk::services::nostr::{
         NostrAccountSource, NostrAccountSummary, NostrPublishRequest, NOSTR_DB_PATH_ENV,
     };
@@ -304,13 +394,18 @@ mod tests {
         store_policy(
             &account,
             "rust-timeline",
+            "text_note",
             PersistedSignerPolicy::AllowAlways,
         )
         .expect("store policy");
 
         assert_eq!(
-            load_policy(&account, "rust-timeline").expect("load policy"),
+            load_policy(&account, "rust-timeline", "text_note").expect("load policy"),
             Some(PersistedSignerPolicy::AllowAlways)
+        );
+        assert_eq!(
+            load_policy(&account, "rust-timeline", "contact_update").expect("load policy"),
+            None
         );
         assert_eq!(signer_policy_path().as_deref(), Some(policy_path.as_path()));
 
@@ -370,15 +465,15 @@ mod tests {
                 npub: String::from("npub1test"),
                 source: NostrAccountSource::Generated,
             },
-            &NostrPublishRequest {
-                kind: 1,
+            &NostrPublishRequest::TextNote {
                 content: String::from("Hello from Shadow"),
                 root_event_id: None,
                 reply_to_event_id: Some(String::from("abc123")),
                 relay_urls: None,
                 timeout_ms: None,
             },
-        );
+        )
+        .expect("build text note prompt");
 
         assert_eq!(request.title, "Allow Nostr publish?");
         assert_eq!(request.source_app_id, "rust-timeline");
@@ -391,5 +486,48 @@ mod tests {
             .detail_lines
             .iter()
             .any(|line| line.contains("Hello from Shadow")));
+    }
+
+    #[test]
+    fn contact_list_prompt_mentions_follow_count() {
+        let follow_a = Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("encode follow_a");
+        let follow_b = Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("encode follow_b");
+        let request = build_publish_prompt(
+            "rust-timeline",
+            Some("Rust Timeline"),
+            &NostrAccountSummary {
+                npub: String::from("npub1test"),
+                source: NostrAccountSource::Generated,
+            },
+            &NostrPublishRequest::ContactList {
+                public_keys: vec![
+                    shadow_sdk::services::nostr::NostrPublicKeyReference {
+                        public_key: follow_a,
+                        relay_url: None,
+                        alias: None,
+                    },
+                    shadow_sdk::services::nostr::NostrPublicKeyReference {
+                        public_key: follow_b,
+                        relay_url: None,
+                        alias: None,
+                    },
+                ],
+                relay_urls: None,
+                timeout_ms: None,
+            },
+        )
+        .expect("build contact list prompt");
+
+        assert_eq!(request.title, "Allow Nostr contact update?");
+        assert!(request
+            .detail_lines
+            .iter()
+            .any(|line| line.contains("Follows: 2 accounts")));
     }
 }

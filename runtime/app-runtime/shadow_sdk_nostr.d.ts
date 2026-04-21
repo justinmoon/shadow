@@ -10,6 +10,12 @@ export type NostrEventReference = {
   marker?: string;
 };
 
+export type NostrPublicKeyReference = {
+  publicKey: string;
+  relayUrl?: string;
+  alias?: string;
+};
+
 export type NostrEvent = {
   content: string;
   created_at: number;
@@ -20,6 +26,7 @@ export type NostrEvent = {
   rootEventId?: string;
   replyToEventId?: string;
   references?: NostrEventReference[];
+  publicKeys?: NostrPublicKeyReference[];
 };
 
 export type NostrQuery = {
@@ -50,14 +57,25 @@ export type NostrSyncReceipt = {
   importedCount: number;
 };
 
-export type NostrPublishRequest = {
-  kind: number;
+export type NostrTextNotePublishRequest = {
+  type: "text_note";
   content: string;
   rootEventId?: string;
   replyToEventId?: string;
   relayUrls?: string[];
   timeoutMs?: number;
 };
+
+export type NostrContactListPublishRequest = {
+  type: "contact_list";
+  publicKeys: NostrPublicKeyReference[];
+  relayUrls?: string[];
+  timeoutMs?: number;
+};
+
+export type NostrPublishRequest =
+  | NostrTextNotePublishRequest
+  | NostrContactListPublishRequest;
 
 export type NostrPublishedRelayFailure = {
   relayUrl: string;

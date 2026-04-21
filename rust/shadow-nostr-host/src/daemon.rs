@@ -218,14 +218,22 @@ fn error_to_string(error: NostrHostError) -> String {
 mod tests {
     use super::{NostrDaemon, NostrIpcRequest, NostrIpcResponse};
     use crate::test_env_lock;
+    use nostr::prelude::{Keys, ToBech32};
     use serde::Deserialize;
     use shadow_sdk::services::nostr::{
-        NostrAccountSummary, NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,
+        NostrAccountSummary, NostrPublishReceipt, NostrPublishRequest, NostrQuery,
+        NostrReplaceableQuery, NostrSyncReceipt, NostrSyncRequest, NOSTR_ACCOUNT_NSEC_ENV,
+        NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,
     };
     use shadow_sdk::services::session_config::RUNTIME_SESSION_CONFIG_ENV;
     use std::fs;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
     use std::path::PathBuf;
+    use std::process::{Child, Command, Stdio};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    const PROMPT_RESPONSE_ACTION_ID_ENV: &str = "SHADOW_SYSTEM_PROMPT_RESPONSE_ACTION_ID";
 
     fn with_temp_env<T>(f: impl FnOnce() -> T) -> T {
         let _guard = test_env_lock()
@@ -304,6 +312,114 @@ mod tests {
         }
     }
 
+    fn reserve_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test port");
+        listener.local_addr().expect("test port addr").port()
+    }
+
+    fn wait_for_relay(child: &mut Child, name: &str) {
+        let stderr = child.stderr.take().expect("relay stderr");
+        let mut reader = BufReader::new(stderr);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut line = String::new();
+        let mut stderr_output = String::new();
+        while std::time::Instant::now() < deadline {
+            line.clear();
+            let bytes = reader.read_line(&mut line).expect("read relay stderr line");
+            if bytes == 0 {
+                if child.try_wait().expect("poll relay").is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                continue;
+            }
+            stderr_output.push_str(&line);
+            if line.contains("relay running at") {
+                child.stderr = Some(reader.into_inner());
+                return;
+            }
+        }
+        if let Some(mut stderr) = child.stderr.take() {
+            let _ = std::io::Read::read_to_string(&mut stderr, &mut stderr_output);
+        }
+        panic!("timed out waiting for {name}\n{stderr_output}");
+    }
+
+    fn spawn_relay(port: u16) -> Child {
+        let mut relay = Command::new("nak")
+            .args([
+                "serve",
+                "--hostname",
+                "127.0.0.1",
+                "--port",
+                &port.to_string(),
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn relay");
+        wait_for_relay(&mut relay, "test relay");
+        relay
+    }
+
+    fn restart_relay(mut relay: Child, port: u16) -> Child {
+        relay.kill().expect("kill relay");
+        let _ = relay.wait();
+        spawn_relay(port)
+    }
+
+    fn generate_secret_key() -> String {
+        let output = Command::new("nak")
+            .args(["key", "generate"])
+            .output()
+            .expect("generate secret key");
+        assert!(
+            output.status.success(),
+            "nak key generate failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .expect("nak key output utf8")
+            .trim()
+            .to_owned()
+    }
+
+    fn publish_text_note(relay_url: &str, content: &str) {
+        let secret = generate_secret_key();
+        let mut child = Command::new("nak")
+            .args(["publish", "--sec", &secret, relay_url])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn nak publish");
+        child
+            .stdin
+            .as_mut()
+            .expect("nak publish stdin")
+            .write_all(content.as_bytes())
+            .expect("write publish content");
+        let output = child.wait_with_output().expect("wait for publish");
+        assert!(
+            output.status.success(),
+            "nak publish failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn query_relay(relay_url: &str) -> String {
+        let output = Command::new("nak")
+            .args(["req", "-k", "1", "-l", "50", relay_url])
+            .output()
+            .expect("query relay");
+        assert!(
+            output.status.success(),
+            "nak req failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).expect("relay stdout utf8")
+    }
+
     #[test]
     fn handle_request_generates_and_reads_current_account() {
         with_temp_env(|| {
@@ -345,6 +461,413 @@ mod tests {
 
             assert!(db_path.exists());
             assert!(account_path.exists());
+        });
+    }
+
+    #[test]
+    fn handle_request_publish_writes_to_requested_relay() {
+        with_temp_env(|| {
+            std::env::set_var(PROMPT_RESPONSE_ACTION_ID_ENV, "allow_once");
+            let port = reserve_port();
+            let relay_url = format!("ws://127.0.0.1:{port}");
+            let mut relay = spawn_relay(port);
+
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build tokio runtime");
+            let mut daemon = NostrDaemon::from_env().expect("build daemon");
+            let _: NostrAccountSummary = decode_ok(
+                &daemon
+                    .handle_request(&runtime, NostrIpcRequest::GenerateAccount)
+                    .expect("generate via daemon"),
+            );
+
+            let receipt: NostrPublishReceipt = decode_ok(
+                &daemon
+                    .handle_request(
+                        &runtime,
+                        NostrIpcRequest::Publish {
+                            request: NostrPublishRequest::TextNote {
+                                content: String::from("daemon test publish"),
+                                root_event_id: None,
+                                reply_to_event_id: None,
+                                relay_urls: Some(vec![relay_url.clone()]),
+                                timeout_ms: Some(12_000),
+                            },
+                            caller_app_id: Some(String::from("daemon-test")),
+                            caller_app_title: Some(String::from("Daemon Test")),
+                        },
+                    )
+                    .expect("publish via daemon"),
+            );
+
+            assert_eq!(
+                receipt.published_relays.len(),
+                1,
+                "expected publish receipt to stay scoped to one relay: {:?}",
+                receipt.published_relays
+            );
+            assert!(
+                receipt.published_relays.iter().any(|published| {
+                    published == &relay_url || published == &(relay_url.clone() + "/")
+                }),
+                "expected relay {relay_url} in publish receipt {:?}",
+                receipt.published_relays
+            );
+
+            let relay_dump = query_relay(&relay_url);
+            assert!(
+                relay_dump.contains("daemon test publish"),
+                "expected relay dump to include published note, got {relay_dump}"
+            );
+
+            std::env::remove_var(PROMPT_RESPONSE_ACTION_ID_ENV);
+            relay.kill().expect("kill relay");
+            let _ = relay.wait();
+        });
+    }
+
+    #[test]
+    fn handle_request_publish_writes_contact_list_to_store_and_relay() {
+        with_temp_env(|| {
+            std::env::set_var(PROMPT_RESPONSE_ACTION_ID_ENV, "allow_once");
+            let port = reserve_port();
+            let relay_url = format!("ws://127.0.0.1:{port}");
+            let mut relay = spawn_relay(port);
+
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build tokio runtime");
+            let mut daemon = NostrDaemon::from_env().expect("build daemon");
+            let account: NostrAccountSummary = decode_ok(
+                &daemon
+                    .handle_request(&runtime, NostrIpcRequest::GenerateAccount)
+                    .expect("generate via daemon"),
+            );
+            let followed_npub = Keys::generate()
+                .public_key()
+                .to_bech32()
+                .expect("encode followed npub");
+
+            let receipt: NostrPublishReceipt = decode_ok(
+                &daemon
+                    .handle_request(
+                        &runtime,
+                        NostrIpcRequest::Publish {
+                            request: NostrPublishRequest::ContactList {
+                                public_keys: vec![
+                                    shadow_sdk::services::nostr::NostrPublicKeyReference {
+                                        public_key: followed_npub.clone(),
+                                        relay_url: None,
+                                        alias: None,
+                                    },
+                                ],
+                                relay_urls: Some(vec![relay_url.clone()]),
+                                timeout_ms: Some(12_000),
+                            },
+                            caller_app_id: Some(String::from("daemon-test")),
+                            caller_app_title: Some(String::from("Daemon Test")),
+                        },
+                    )
+                    .expect("publish contact list via daemon"),
+            );
+
+            assert_eq!(receipt.event.kind, 3);
+            assert_eq!(receipt.event.public_keys.len(), 1);
+            assert_eq!(receipt.event.public_keys[0].public_key, followed_npub);
+
+            let stored = decode_ok::<Option<shadow_sdk::services::nostr::NostrEvent>>(
+                &daemon
+                    .handle_request(
+                        &runtime,
+                        NostrIpcRequest::GetReplaceable {
+                            query: NostrReplaceableQuery {
+                                kind: 3,
+                                pubkey: account.npub,
+                                identifier: None,
+                            },
+                        },
+                    )
+                    .expect("load stored contact list"),
+            )
+            .expect("stored contact list");
+            assert_eq!(stored.id, receipt.event.id);
+            assert_eq!(stored.public_keys.len(), 1);
+
+            let relay_dump = String::from_utf8(
+                Command::new("nak")
+                    .args(["req", "-k", "3", "-l", "10", &relay_url])
+                    .output()
+                    .expect("query contact list relay")
+                    .stdout,
+            )
+            .expect("relay stdout utf8");
+            assert!(
+                relay_dump.contains("\"kind\":3"),
+                "expected relay dump to include contact list event, got {relay_dump}"
+            );
+
+            std::env::remove_var(PROMPT_RESPONSE_ACTION_ID_ENV);
+            relay.kill().expect("kill relay");
+            let _ = relay.wait();
+        });
+    }
+
+    #[test]
+    fn handle_request_publish_does_not_leak_to_other_registered_relays() {
+        with_temp_env(|| {
+            std::env::set_var(PROMPT_RESPONSE_ACTION_ID_ENV, "allow_once");
+            let port_a = reserve_port();
+            let port_b = reserve_port();
+            let relay_a = format!("ws://127.0.0.1:{port_a}");
+            let relay_b = format!("ws://127.0.0.1:{port_b}");
+            let mut relay_a_child = spawn_relay(port_a);
+            let mut relay_b_child = spawn_relay(port_b);
+
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build tokio runtime");
+            let mut daemon = NostrDaemon::from_env().expect("build daemon");
+            let _: NostrAccountSummary = decode_ok(
+                &daemon
+                    .handle_request(&runtime, NostrIpcRequest::GenerateAccount)
+                    .expect("generate via daemon"),
+            );
+
+            let _: NostrSyncReceipt = decode_ok(
+                &daemon
+                    .handle_request(
+                        &runtime,
+                        NostrIpcRequest::Sync {
+                            request: NostrSyncRequest {
+                                query: NostrQuery {
+                                    ids: None,
+                                    authors: None,
+                                    kinds: Some(vec![1]),
+                                    referenced_ids: None,
+                                    reply_to_ids: None,
+                                    since: None,
+                                    until: None,
+                                    limit: Some(4),
+                                },
+                                relay_urls: Some(vec![relay_b.clone()]),
+                                timeout_ms: Some(4_000),
+                            },
+                        },
+                    )
+                    .expect("sync relay b"),
+            );
+
+            let receipt: NostrPublishReceipt = decode_ok(
+                &daemon
+                    .handle_request(
+                        &runtime,
+                        NostrIpcRequest::Publish {
+                            request: NostrPublishRequest::TextNote {
+                                content: String::from("scoped publish only to relay a"),
+                                root_event_id: None,
+                                reply_to_event_id: None,
+                                relay_urls: Some(vec![relay_a.clone()]),
+                                timeout_ms: Some(12_000),
+                            },
+                            caller_app_id: Some(String::from("daemon-test")),
+                            caller_app_title: Some(String::from("Daemon Test")),
+                        },
+                    )
+                    .expect("publish via daemon"),
+            );
+
+            assert_eq!(
+                receipt.published_relays.len(),
+                1,
+                "expected one published relay: {:?}",
+                receipt.published_relays
+            );
+            assert!(
+                receipt.published_relays.iter().any(|published| {
+                    published == &relay_a || published == &(relay_a.clone() + "/")
+                }),
+                "expected relay a in publish receipt {:?}",
+                receipt.published_relays
+            );
+
+            let relay_a_dump = query_relay(&relay_a);
+            assert!(
+                relay_a_dump.contains("scoped publish only to relay a"),
+                "expected relay a dump to include the note, got {relay_a_dump}"
+            );
+            let relay_b_dump = query_relay(&relay_b);
+            assert!(
+                !relay_b_dump.contains("scoped publish only to relay a"),
+                "expected relay b to stay untouched, got {relay_b_dump}"
+            );
+
+            std::env::remove_var(PROMPT_RESPONSE_ACTION_ID_ENV);
+            relay_a_child.kill().expect("kill relay a");
+            relay_b_child.kill().expect("kill relay b");
+            let _ = relay_a_child.wait();
+            let _ = relay_b_child.wait();
+        });
+    }
+
+    #[test]
+    fn handle_request_sync_fetches_from_requested_relay_only() {
+        with_temp_env(|| {
+            let port_a = reserve_port();
+            let port_b = reserve_port();
+            let relay_a = format!("ws://127.0.0.1:{port_a}");
+            let relay_b = format!("ws://127.0.0.1:{port_b}");
+            let mut relay_a_child = spawn_relay(port_a);
+            let mut relay_b_child = spawn_relay(port_b);
+            publish_text_note(&relay_a, "sync scoped relay a");
+            publish_text_note(&relay_b, "sync scoped relay b");
+
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build tokio runtime");
+            let mut daemon = NostrDaemon::from_env().expect("build daemon");
+
+            let relay_b_receipt: NostrSyncReceipt = decode_ok(
+                &daemon
+                    .handle_request(
+                        &runtime,
+                        NostrIpcRequest::Sync {
+                            request: NostrSyncRequest {
+                                query: NostrQuery {
+                                    ids: None,
+                                    authors: None,
+                                    kinds: Some(vec![1]),
+                                    referenced_ids: None,
+                                    reply_to_ids: None,
+                                    since: None,
+                                    until: None,
+                                    limit: Some(8),
+                                },
+                                relay_urls: Some(vec![relay_b.clone()]),
+                                timeout_ms: Some(8_000),
+                            },
+                        },
+                    )
+                    .expect("sync relay b"),
+            );
+            assert_eq!(relay_b_receipt.fetched_count, 1);
+            assert_eq!(relay_b_receipt.imported_count, 1);
+
+            let relay_a_receipt: NostrSyncReceipt = decode_ok(
+                &daemon
+                    .handle_request(
+                        &runtime,
+                        NostrIpcRequest::Sync {
+                            request: NostrSyncRequest {
+                                query: NostrQuery {
+                                    ids: None,
+                                    authors: None,
+                                    kinds: Some(vec![1]),
+                                    referenced_ids: None,
+                                    reply_to_ids: None,
+                                    since: None,
+                                    until: None,
+                                    limit: Some(8),
+                                },
+                                relay_urls: Some(vec![relay_a.clone()]),
+                                timeout_ms: Some(8_000),
+                            },
+                        },
+                    )
+                    .expect("sync relay a"),
+            );
+            assert_eq!(
+                relay_a_receipt.fetched_count, 1,
+                "expected relay a fetch to stay scoped to one relay"
+            );
+            assert_eq!(relay_a_receipt.imported_count, 1);
+
+            relay_a_child.kill().expect("kill relay a");
+            relay_b_child.kill().expect("kill relay b");
+            let _ = relay_a_child.wait();
+            let _ = relay_b_child.wait();
+        });
+    }
+
+    #[test]
+    fn handle_request_publish_reconnects_after_relay_restart() {
+        with_temp_env(|| {
+            std::env::set_var(PROMPT_RESPONSE_ACTION_ID_ENV, "allow_once");
+            let port = reserve_port();
+            let relay_url = format!("ws://127.0.0.1:{port}");
+            let mut relay = spawn_relay(port);
+            publish_text_note(&relay_url, "seed before restart");
+
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build tokio runtime");
+            let mut daemon = NostrDaemon::from_env().expect("build daemon");
+            let _: NostrAccountSummary = decode_ok(
+                &daemon
+                    .handle_request(&runtime, NostrIpcRequest::GenerateAccount)
+                    .expect("generate via daemon"),
+            );
+
+            let _: NostrSyncReceipt = decode_ok(
+                &daemon
+                    .handle_request(
+                        &runtime,
+                        NostrIpcRequest::Sync {
+                            request: NostrSyncRequest {
+                                query: NostrQuery {
+                                    ids: None,
+                                    authors: None,
+                                    kinds: Some(vec![1]),
+                                    referenced_ids: None,
+                                    reply_to_ids: None,
+                                    since: None,
+                                    until: None,
+                                    limit: Some(8),
+                                },
+                                relay_urls: Some(vec![relay_url.clone()]),
+                                timeout_ms: Some(8_000),
+                            },
+                        },
+                    )
+                    .expect("initial sync"),
+            );
+
+            relay = restart_relay(relay, port);
+
+            let receipt: NostrPublishReceipt = decode_ok(
+                &daemon
+                    .handle_request(
+                        &runtime,
+                        NostrIpcRequest::Publish {
+                            request: NostrPublishRequest::TextNote {
+                                content: String::from("publish after relay restart"),
+                                root_event_id: None,
+                                reply_to_event_id: None,
+                                relay_urls: Some(vec![relay_url.clone()]),
+                                timeout_ms: Some(12_000),
+                            },
+                            caller_app_id: Some(String::from("daemon-test")),
+                            caller_app_title: Some(String::from("Daemon Test")),
+                        },
+                    )
+                    .expect("publish after relay restart"),
+            );
+
+            assert_eq!(receipt.published_relays.len(), 1);
+            let relay_dump = query_relay(&relay_url);
+            assert!(
+                relay_dump.contains("publish after relay restart"),
+                "expected relay dump to include restarted publish, got {relay_dump}"
+            );
+
+            std::env::remove_var(PROMPT_RESPONSE_ACTION_ID_ENV);
+            relay.kill().expect("kill relay");
+            let _ = relay.wait();
         });
     }
 }

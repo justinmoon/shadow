@@ -256,7 +256,9 @@ Deno.test("shadow sdk nostr publish helper delegates to the runtime host", async
       nostr: {
         publish: async (request: NostrPublishRequest) => {
           publishCalls.push(request);
-          return receiptFixture(request.content);
+          return receiptFixture(
+            request.type === "text_note" ? request.content : "contact_list",
+          );
         },
       },
     },
@@ -265,14 +267,18 @@ Deno.test("shadow sdk nostr publish helper delegates to the runtime host", async
   try {
     const services = await import(moduleUrl);
     const receipt = await services.publishNostr({
-      kind: 1,
+      type: "text_note",
       content: "gm",
       replyToEventId: "reply-id",
     });
 
-    assert(publishCalls.length === 1, "publish should be forwarded exactly once");
     assert(
-      publishCalls[0].replyToEventId === "reply-id",
+      publishCalls.length === 1,
+      "publish should be forwarded exactly once",
+    );
+    assert(
+      publishCalls[0].type === "text_note" &&
+        publishCalls[0].replyToEventId === "reply-id",
       "reply target should round-trip",
     );
     assert(receipt.event.content === "gm", "publish receipt should round-trip");

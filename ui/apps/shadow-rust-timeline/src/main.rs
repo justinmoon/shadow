@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::future;
 use std::io::{Read, Write};
@@ -17,8 +17,8 @@ use shadow_sdk::{
     services::nostr::{
         current_account, generate_account, get_event, get_replaceable, import_account_nsec,
         publish, query, sync, NostrAccountSource, NostrAccountSummary, NostrEvent,
-        NostrPublishReceipt, NostrPublishRequest, NostrQuery, NostrReplaceableQuery,
-        NostrSyncReceipt, NostrSyncRequest, NOSTR_SERVICE_SOCKET_ENV,
+        NostrPublicKeyReference, NostrPublishReceipt, NostrPublishRequest, NostrQuery,
+        NostrReplaceableQuery, NostrSyncRequest, NOSTR_SERVICE_SOCKET_ENV,
     },
     ui::{
         self, body_text, caption_text, column, eyebrow_text, fork, headline_text, maybe,
@@ -52,14 +52,84 @@ struct TimelineStatus {
     message: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FeedScope {
+    authors: Option<Vec<String>>,
+    source: FeedSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FeedSource {
+    Following { count: usize },
+    NoContacts,
+    Unavailable,
+}
+
+impl FeedScope {
+    fn unavailable() -> Self {
+        Self {
+            authors: None,
+            source: FeedSource::Unavailable,
+        }
+    }
+
+    fn following(mut authors: Vec<String>, count: usize) -> Self {
+        authors.sort();
+        authors.dedup();
+        Self {
+            authors: Some(authors),
+            source: FeedSource::Following { count },
+        }
+    }
+
+    fn no_contacts() -> Self {
+        Self {
+            authors: None,
+            source: FeedSource::NoContacts,
+        }
+    }
+
+    fn chip_label(&self) -> String {
+        match self.source {
+            FeedSource::Following { count } => {
+                format!("following {count} account{}", plural_suffix(count))
+            }
+            FeedSource::NoContacts => String::from("no follows"),
+            FeedSource::Unavailable => String::from("feed unavailable"),
+        }
+    }
+
+    fn detail_text(&self) -> String {
+        match self.source {
+            FeedSource::Following { count } => format!(
+                "Home feed uses the cached contact list from the shared account and follows {count} account{}.",
+                plural_suffix(count)
+            ),
+            FeedSource::NoContacts => {
+                String::from("Home is empty until this account follows someone.")
+            }
+            FeedSource::Unavailable => String::from("No active account is available."),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum RefreshSource {
     Startup,
     Manual,
+    FollowUpdate,
 }
 
 #[derive(Clone, Debug)]
 struct PendingRefresh {
+    token: u64,
+    account_npub: String,
+    limit: usize,
+    relay_urls: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingExploreSync {
     token: u64,
     limit: usize,
     relay_urls: Vec<String>,
@@ -92,9 +162,22 @@ struct PendingClipboardWrite {
 }
 
 #[derive(Clone, Debug)]
+enum FollowActionKind {
+    Add { npub: String },
+    Remove { npub: String },
+}
+
+#[derive(Clone, Debug)]
+struct PendingFollowUpdate {
+    account_npub: String,
+    action: FollowActionKind,
+    relay_urls: Vec<String>,
+    token: u64,
+}
+
+#[derive(Clone, Debug)]
 struct PendingPublish {
     content: String,
-    limit: usize,
     note_id: String,
     relay_urls: Vec<String>,
     reply_to_event_id: String,
@@ -104,8 +187,16 @@ struct PendingPublish {
 
 #[derive(Debug)]
 struct RefreshOutcome {
-    receipt: NostrSyncReceipt,
+    feed_scope: FeedScope,
+    fetched_count: usize,
+    imported_count: usize,
     notes: Vec<NostrEvent>,
+}
+
+#[derive(Debug)]
+struct ExploreSyncOutcome {
+    fetched_count: usize,
+    imported_count: usize,
 }
 
 #[derive(Debug)]
@@ -117,12 +208,17 @@ struct ThreadSyncOutcome {
 #[derive(Debug)]
 struct PublishOutcome {
     receipt: NostrPublishReceipt,
-    notes: Vec<NostrEvent>,
+}
+
+#[derive(Debug)]
+struct FollowUpdateOutcome {
+    receipt: NostrPublishReceipt,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Route {
     Account,
+    Explore,
     Onboarding,
     Timeline,
     Note { id: String },
@@ -132,9 +228,11 @@ enum Route {
 #[derive(Debug)]
 enum PlatformMessage {
     Lifecycle(LifecycleState),
+    OpenFirstVisibleNote,
     OpenReply,
     PublishReply,
     SetReplyContent(String),
+    PublishReplyContent(String),
 }
 
 #[derive(Clone, Debug)]
@@ -203,6 +301,15 @@ impl ProfileSummary {
     }
 }
 
+#[derive(Clone, Debug)]
+struct ExploreProfileEntry {
+    latest_note_preview: String,
+    note_count: usize,
+    profile: ProfileSummary,
+    pubkey: String,
+    updated_at: u64,
+}
+
 #[derive(Clone, Debug, Default)]
 struct ThreadContext {
     parent: Option<NostrEvent>,
@@ -219,13 +326,17 @@ struct ReplyDraft {
 struct TimelineApp {
     account: Option<ActiveAccount>,
     config: TimelineConfig,
+    feed_scope: FeedScope,
     filter_text: String,
+    follow_input: String,
     metrics: AppWindowMetrics,
     nsec_input: String,
     pending_account_action: Option<PendingAccountAction>,
     pending_clipboard_write: Option<PendingClipboardWrite>,
+    pending_follow_update: Option<PendingFollowUpdate>,
     pending_publish: Option<PendingPublish>,
     notes: Vec<NostrEvent>,
+    pending_explore_sync: Option<PendingExploreSync>,
     pending_refresh: Option<PendingRefresh>,
     pending_thread_sync: Option<PendingThreadSync>,
     profiles: BTreeMap<String, ProfileSummary>,
@@ -239,40 +350,53 @@ impl TimelineApp {
     fn new(window_env: AppWindowEnvironment, config: TimelineConfig) -> Self {
         let account_result = current_account().map(|account| account.map(ActiveAccount::from));
         let metrics = window_env.metrics();
-        let (notes, status) = match load_cached_notes(config.limit) {
-            Ok(notes) if notes.is_empty() => (
-                Vec::new(),
-                TimelineStatus {
-                    tone: Tone::Neutral,
-                    message: String::from("No cached notes yet. Refresh to pull from relays."),
-                },
-            ),
-            Ok(notes) => {
-                let count = notes.len();
-                (
-                    notes,
-                    TimelineStatus {
-                        tone: Tone::Success,
-                        message: format!(
-                            "Loaded {count} cached note{} from the shared store.",
-                            plural_suffix(count)
-                        ),
-                    },
-                )
+        let (account, route_stack, feed_scope, notes, status) = match account_result {
+            Ok(Some(account)) => {
+                let feed_scope = load_feed_scope(Some(&account));
+                match load_cached_notes(config.limit, &feed_scope) {
+                    Ok(notes) if notes.is_empty() => {
+                        let status = empty_feed_status(&feed_scope);
+                        (
+                            Some(account),
+                            vec![Route::Timeline],
+                            feed_scope,
+                            Vec::new(),
+                            status,
+                        )
+                    }
+                    Ok(notes) => {
+                        let count = notes.len();
+                        (
+                            Some(account),
+                            vec![Route::Timeline],
+                            feed_scope,
+                            notes,
+                            TimelineStatus {
+                                tone: Tone::Success,
+                                message: format!(
+                                    "Loaded {count} cached note{} from the shared store.",
+                                    plural_suffix(count)
+                                ),
+                            },
+                        )
+                    }
+                    Err(error) => (
+                        Some(account),
+                        vec![Route::Timeline],
+                        feed_scope,
+                        Vec::new(),
+                        TimelineStatus {
+                            tone: Tone::Danger,
+                            message: error,
+                        },
+                    ),
+                }
             }
-            Err(error) => (
-                Vec::new(),
-                TimelineStatus {
-                    tone: Tone::Danger,
-                    message: error,
-                },
-            ),
-        };
-        let (account, route_stack, status) = match account_result {
-            Ok(Some(account)) => (Some(account), vec![Route::Timeline], status),
             Ok(None) => (
                 None,
                 vec![Route::Onboarding],
+                FeedScope::unavailable(),
+                Vec::new(),
                 TimelineStatus {
                     tone: Tone::Neutral,
                     message: String::from(
@@ -283,6 +407,8 @@ impl TimelineApp {
             Err(error) => (
                 None,
                 vec![Route::Onboarding],
+                FeedScope::unavailable(),
+                Vec::new(),
                 TimelineStatus {
                     tone: Tone::Danger,
                     message: format!("Could not load the active account: {error}"),
@@ -292,13 +418,17 @@ impl TimelineApp {
         let mut app = Self {
             account,
             config,
+            feed_scope,
             filter_text: String::new(),
+            follow_input: String::new(),
             metrics,
             nsec_input: String::new(),
             pending_account_action: None,
             pending_clipboard_write: None,
+            pending_follow_update: None,
             pending_publish: None,
             notes,
+            pending_explore_sync: None,
             pending_refresh: None,
             pending_thread_sync: None,
             profiles: BTreeMap::new(),
@@ -314,19 +444,21 @@ impl TimelineApp {
     }
 
     fn begin_refresh(&mut self, source: RefreshSource) {
-        if self.account.is_none() {
+        let Some(account) = self.account.as_ref() else {
             self.status = TimelineStatus {
                 tone: Tone::Danger,
                 message: String::from("Set up an account before refreshing the timeline."),
             };
             return;
-        }
+        };
         if self.pending_refresh.is_some() {
             return;
         }
+        let account_npub = account.npub.clone();
         let token = self.next_token();
         self.pending_refresh = Some(PendingRefresh {
             token,
+            account_npub,
             limit: self.config.limit,
             relay_urls: self.config.relay_urls.clone(),
         });
@@ -335,7 +467,25 @@ impl TimelineApp {
             message: match source {
                 RefreshSource::Startup => String::from("Refreshing timeline from relays..."),
                 RefreshSource::Manual => String::from("Talking to relays for fresh notes..."),
+                RefreshSource::FollowUpdate => {
+                    String::from("Updating Home from the new contact list...")
+                }
             },
+        };
+    }
+
+    fn begin_explore_sync(&mut self) {
+        if self.pending_explore_sync.is_some() {
+            return;
+        }
+        self.pending_explore_sync = Some(PendingExploreSync {
+            token: self.next_token(),
+            limit: self.config.limit.max(24),
+            relay_urls: self.config.relay_urls.clone(),
+        });
+        self.status = TimelineStatus {
+            tone: Tone::Accent,
+            message: String::from("Fetching recent relay notes for Explore..."),
         };
     }
 
@@ -418,6 +568,102 @@ impl TimelineApp {
         };
     }
 
+    fn begin_follow_add(&mut self) {
+        let npub = self.follow_input.trim().to_owned();
+        self.begin_follow_add_for(npub);
+    }
+
+    fn begin_follow_add_for(&mut self, npub: String) {
+        if self.pending_follow_update.is_some() {
+            return;
+        }
+        if !socket_available() {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from(
+                    "Follow updates need the shared relay engine. Start a session with Nostr services enabled.",
+                ),
+            };
+            return;
+        }
+        let Some(account) = self.account.as_ref() else {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("Set up an account before following anyone."),
+            };
+            return;
+        };
+        let npub = npub.trim().to_owned();
+        if npub.is_empty() {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("Paste an npub before trying to follow it."),
+            };
+            return;
+        }
+        if npub == account.npub {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("This account is already your own identity."),
+            };
+            return;
+        }
+
+        if self
+            .current_followed_pubkeys()
+            .iter()
+            .any(|existing| existing == &npub)
+        {
+            self.status = TimelineStatus {
+                tone: Tone::Neutral,
+                message: String::from("That account is already in the contact list."),
+            };
+            return;
+        }
+        self.pending_follow_update = Some(PendingFollowUpdate {
+            account_npub: account.npub.clone(),
+            action: FollowActionKind::Add { npub },
+            relay_urls: self.config.relay_urls.clone(),
+            token: self.next_token(),
+        });
+        self.status = TimelineStatus {
+            tone: Tone::Accent,
+            message: String::from("Updating the shared contact list..."),
+        };
+    }
+
+    fn begin_follow_remove(&mut self, npub: String) {
+        if self.pending_follow_update.is_some() {
+            return;
+        }
+        if !socket_available() {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from(
+                    "Follow updates need the shared relay engine. Start a session with Nostr services enabled.",
+                ),
+            };
+            return;
+        }
+        let Some(account) = self.account.as_ref() else {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("Set up an account before changing follows."),
+            };
+            return;
+        };
+        self.pending_follow_update = Some(PendingFollowUpdate {
+            account_npub: account.npub.clone(),
+            action: FollowActionKind::Remove { npub },
+            relay_urls: self.config.relay_urls.clone(),
+            token: self.next_token(),
+        });
+        self.status = TimelineStatus {
+            tone: Tone::Accent,
+            message: String::from("Updating the shared contact list..."),
+        };
+    }
+
     fn open_reply_composer(&mut self, note_id: String) {
         let Some(note) = self.cached_note_by_id(&note_id) else {
             self.status = TimelineStatus {
@@ -470,7 +716,6 @@ impl TimelineApp {
         };
         self.pending_publish = Some(PendingPublish {
             content: content.to_owned(),
-            limit: self.config.limit,
             note_id: note.id.clone(),
             relay_urls: self.config.relay_urls.clone(),
             reply_to_event_id: note.id.clone(),
@@ -489,6 +734,27 @@ impl TimelineApp {
         token
     }
 
+    fn current_followed_pubkeys(&self) -> Vec<String> {
+        self.feed_scope.authors.clone().unwrap_or_default()
+    }
+
+    fn is_following(&self, pubkey: &str) -> bool {
+        self.feed_scope
+            .authors
+            .as_ref()
+            .is_some_and(|authors| authors.iter().any(|author| author == pubkey))
+    }
+
+    fn follow_update_pending_for(&self, pubkey: &str) -> bool {
+        self.pending_follow_update
+            .as_ref()
+            .is_some_and(|pending| match &pending.action {
+                FollowActionKind::Add { npub } | FollowActionKind::Remove { npub } => {
+                    npub == pubkey
+                }
+            })
+    }
+
     fn finish_refresh(&mut self, token: u64, result: Result<RefreshOutcome, String>) {
         let Some(pending) = &self.pending_refresh else {
             return;
@@ -500,24 +766,20 @@ impl TimelineApp {
 
         match result {
             Ok(outcome) => {
+                self.feed_scope = outcome.feed_scope;
                 self.notes = outcome.notes;
                 self.profiles.clear();
                 self.sync_routes();
                 self.status = if self.notes.is_empty() {
-                    TimelineStatus {
-                        tone: Tone::Neutral,
-                        message: String::from(
-                            "No relay notes yet. The shared cache is still empty.",
-                        ),
-                    }
+                    empty_feed_status(&self.feed_scope)
                 } else {
                     TimelineStatus {
                         tone: Tone::Success,
                         message: format!(
                             "Fetched {} note{}, imported {}.",
-                            outcome.receipt.fetched_count,
-                            plural_suffix(outcome.receipt.fetched_count),
-                            outcome.receipt.imported_count,
+                            outcome.fetched_count,
+                            plural_suffix(outcome.fetched_count),
+                            outcome.imported_count,
                         ),
                     }
                 };
@@ -541,6 +803,32 @@ impl TimelineApp {
                 };
             }
         }
+    }
+
+    fn finish_explore_sync(&mut self, token: u64, result: Result<ExploreSyncOutcome, String>) {
+        let Some(pending) = &self.pending_explore_sync else {
+            return;
+        };
+        if pending.token != token {
+            return;
+        }
+        self.pending_explore_sync = None;
+
+        self.status = match result {
+            Ok(outcome) => TimelineStatus {
+                tone: Tone::Success,
+                message: format!(
+                    "Explore fetched {} note{}, imported {}.",
+                    outcome.fetched_count,
+                    plural_suffix(outcome.fetched_count),
+                    outcome.imported_count,
+                ),
+            },
+            Err(message) => TimelineStatus {
+                tone: Tone::Danger,
+                message,
+            },
+        };
     }
 
     fn finish_thread_sync(&mut self, token: u64, result: Result<ThreadSyncOutcome, String>) {
@@ -570,6 +858,7 @@ impl TimelineApp {
                 };
             }
             Err(message) => {
+                eprintln!("{APP_LOG_PREFIX}: publish_error={message}");
                 self.status = TimelineStatus {
                     tone: Tone::Danger,
                     message,
@@ -595,14 +884,41 @@ impl TimelineApp {
                     account.source.label()
                 );
                 self.account = Some(account);
+                if let Err(error) = self.reload_feed_from_cache() {
+                    self.notes.clear();
+                    self.feed_scope = FeedScope::unavailable();
+                    self.status = TimelineStatus {
+                        tone: Tone::Danger,
+                        message: error,
+                    };
+                    return;
+                }
                 self.nsec_input.clear();
-                self.route_stack = vec![Route::Timeline];
-                self.status = TimelineStatus {
-                    tone: Tone::Success,
-                    message,
+                let has_follows = matches!(self.feed_scope.source, FeedSource::Following { .. });
+                self.route_stack = vec![if has_follows {
+                    Route::Timeline
+                } else {
+                    Route::Explore
+                }];
+                self.status = if has_follows {
+                    TimelineStatus {
+                        tone: Tone::Success,
+                        message,
+                    }
+                } else {
+                    TimelineStatus {
+                        tone: Tone::Success,
+                        message: String::from(
+                            "Account ready. Explore recent relay notes and follow people to populate Home.",
+                        ),
+                    }
                 };
                 if self.config.sync_on_start && socket_available() {
-                    self.begin_refresh(RefreshSource::Startup);
+                    if has_follows {
+                        self.begin_refresh(RefreshSource::Startup);
+                    } else {
+                        self.begin_explore_sync();
+                    }
                 }
             }
             Err(message) => {
@@ -635,6 +951,69 @@ impl TimelineApp {
         };
     }
 
+    fn finish_follow_update(&mut self, token: u64, result: Result<FollowUpdateOutcome, String>) {
+        let Some(pending) = &self.pending_follow_update else {
+            return;
+        };
+        if pending.token != token {
+            return;
+        }
+        let action = pending.action.clone();
+        self.pending_follow_update = None;
+
+        match result {
+            Ok(outcome) => {
+                if let Err(error) = self.reload_feed_from_cache() {
+                    self.status = TimelineStatus {
+                        tone: Tone::Danger,
+                        message: error,
+                    };
+                    return;
+                }
+                match action {
+                    FollowActionKind::Add { npub } => {
+                        self.follow_input.clear();
+                        if socket_available() {
+                            self.status = TimelineStatus {
+                                tone: Tone::Success,
+                                message: format!(
+                                    "Updated follows for {}. Refreshing Home from relays...",
+                                    short_id(&npub)
+                                ),
+                            };
+                            self.begin_refresh(RefreshSource::FollowUpdate);
+                        } else {
+                            self.status = TimelineStatus {
+                                tone: Tone::Success,
+                                message: format!(
+                                    "Followed {}. Refresh when the shared relay engine is available.",
+                                    short_id(&npub)
+                                ),
+                            };
+                        }
+                    }
+                    FollowActionKind::Remove { npub } => {
+                        self.status = TimelineStatus {
+                            tone: Tone::Success,
+                            message: format!(
+                                "Removed {} from Home. Contact list published to {} relay{}.",
+                                short_id(&npub),
+                                outcome.receipt.published_relays.len(),
+                                plural_suffix(outcome.receipt.published_relays.len()),
+                            ),
+                        };
+                    }
+                }
+            }
+            Err(message) => {
+                self.status = TimelineStatus {
+                    tone: Tone::Danger,
+                    message,
+                };
+            }
+        }
+    }
+
     fn finish_publish(&mut self, token: u64, result: Result<PublishOutcome, String>) {
         let Some(pending) = &self.pending_publish else {
             return;
@@ -647,7 +1026,13 @@ impl TimelineApp {
 
         match result {
             Ok(outcome) => {
-                self.notes = outcome.notes;
+                if let Err(error) = self.reload_feed_from_cache() {
+                    self.status = TimelineStatus {
+                        tone: Tone::Danger,
+                        message: error,
+                    };
+                    return;
+                }
                 self.sync_routes();
                 self.reply_draft = None;
                 let relay_count = outcome.receipt.published_relays.len();
@@ -718,6 +1103,12 @@ impl TimelineApp {
         }
     }
 
+    fn open_explore(&mut self) {
+        if self.account.is_some() {
+            self.push_route(Route::Explore);
+        }
+    }
+
     fn sync_routes(&mut self) {
         if self.account.is_none() {
             self.route_stack = vec![Route::Onboarding];
@@ -748,7 +1139,7 @@ impl TimelineApp {
 
     fn prepare_route(&mut self, route: &Route) {
         match route {
-            Route::Account | Route::Onboarding | Route::Timeline => {}
+            Route::Account | Route::Explore | Route::Onboarding | Route::Timeline => {}
             Route::Note { id } => {
                 if let Some(note) = self.cached_note_by_id(id) {
                     self.ensure_profile_loaded(&note.pubkey);
@@ -760,8 +1151,16 @@ impl TimelineApp {
 
     fn platform_open_reply(&mut self) {
         match self.current_route() {
-            Route::Note { id } => self.open_reply_composer(id),
+            Route::Note { id } => {
+                self.open_reply_composer(id);
+                if self.reply_draft.is_some() {
+                    eprintln!("{APP_LOG_PREFIX}: automation_open_reply_success");
+                } else {
+                    eprintln!("{APP_LOG_PREFIX}: automation_open_reply_failed");
+                }
+            }
             _ => {
+                eprintln!("{APP_LOG_PREFIX}: automation_open_reply_failed");
                 self.status = TimelineStatus {
                     tone: Tone::Danger,
                     message: String::from("Open a note before opening the reply draft."),
@@ -770,11 +1169,51 @@ impl TimelineApp {
         }
     }
 
+    fn first_visible_note_id_for_route(&self) -> Option<String> {
+        match self.current_route() {
+            Route::Timeline => self.visible_notes().into_iter().next().map(|note| note.id),
+            Route::Explore => self.explore_notes().into_iter().next().map(|note| note.id),
+            Route::Profile { pubkey } => self
+                .profile_notes(&pubkey)
+                .into_iter()
+                .next()
+                .map(|note| note.id),
+            Route::Note { id } => Some(id),
+            Route::Account | Route::Onboarding => None,
+        }
+    }
+
+    fn platform_open_first_visible_note(&mut self) {
+        let Some(note_id) = self.first_visible_note_id_for_route() else {
+            eprintln!("{APP_LOG_PREFIX}: automation_open_first_visible_note_failed");
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("No visible note is available to open."),
+            };
+            return;
+        };
+        eprintln!("{APP_LOG_PREFIX}: automation_open_first_visible_note_success note_id={note_id}");
+        self.push_route(Route::Note { id: note_id });
+    }
+
     fn platform_set_reply_content(&mut self, value: String) {
         if self.reply_draft.is_none() {
             self.platform_open_reply();
         }
         self.set_reply_draft_content(value);
+    }
+
+    fn platform_publish_reply_content(&mut self, value: String) {
+        if self.reply_draft.is_none() {
+            self.platform_open_reply();
+        }
+        self.set_reply_draft_content(value);
+        self.begin_reply_publish();
+        if self.pending_publish.is_some() {
+            eprintln!("{APP_LOG_PREFIX}: automation_publish_reply_success");
+        } else {
+            eprintln!("{APP_LOG_PREFIX}: automation_publish_reply_failed");
+        }
     }
 
     fn ensure_profile_loaded(&mut self, pubkey: &str) {
@@ -831,11 +1270,44 @@ impl TimelineApp {
         self.profiles.get(pubkey).cloned().unwrap_or_default()
     }
 
+    fn explore_notes(&self) -> Vec<NostrEvent> {
+        load_explore_notes(self.config.limit.max(24)).unwrap_or_default()
+    }
+
+    fn explore_profiles_for_notes(&self, notes: &[NostrEvent]) -> Vec<ExploreProfileEntry> {
+        let mut note_counts = BTreeMap::new();
+        for note in notes {
+            *note_counts.entry(note.pubkey.clone()).or_insert(0_usize) += 1;
+        }
+
+        let mut seen = BTreeSet::new();
+        let mut profiles = Vec::new();
+        for note in notes {
+            if !seen.insert(note.pubkey.clone()) {
+                continue;
+            }
+            profiles.push(ExploreProfileEntry {
+                latest_note_preview: note_preview(&note.content),
+                note_count: *note_counts.get(&note.pubkey).unwrap_or(&1),
+                profile: load_profile_summary(&note.pubkey),
+                pubkey: note.pubkey.clone(),
+                updated_at: note.created_at,
+            });
+        }
+        profiles
+    }
+
     fn reply_draft_for(&self, note_id: &str) -> Option<ReplyDraft> {
         self.reply_draft
             .as_ref()
             .filter(|draft| draft.note_id == note_id)
             .cloned()
+    }
+
+    fn reload_feed_from_cache(&mut self) -> Result<(), String> {
+        self.feed_scope = load_feed_scope(self.account.as_ref());
+        self.notes = load_cached_notes(self.config.limit, &self.feed_scope)?;
+        Ok(())
     }
 }
 
@@ -850,6 +1322,8 @@ fn main() -> Result<(), ui::EventLoopError> {
 fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
     let pending_account_action = app.pending_account_action.clone();
     let pending_clipboard_write = app.pending_clipboard_write.clone();
+    let pending_explore_sync = app.pending_explore_sync.clone();
+    let pending_follow_update = app.pending_follow_update.clone();
     let pending_publish = app.pending_publish.clone();
     let pending_refresh = app.pending_refresh.clone();
     let pending_thread_sync = app.pending_thread_sync.clone();
@@ -861,10 +1335,30 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
         Route::Account => account_screen(
             theme,
             app.account.clone(),
+            app.feed_scope.clone(),
+            app.follow_input.clone(),
             app.status.clone(),
             pending_clipboard_write.is_some(),
+            pending_follow_update.is_some(),
+            socket_available(),
         )
         .boxed(),
+        Route::Explore => {
+            let notes = app.explore_notes();
+            let profiles = app.explore_profiles_for_notes(&notes);
+            explore_screen(
+                theme,
+                app.account.clone(),
+                app.current_followed_pubkeys(),
+                app.status.clone(),
+                notes,
+                profiles,
+                socket_available(),
+                pending_explore_sync.is_some(),
+                pending_follow_update.is_some(),
+            )
+            .boxed()
+        }
         Route::Onboarding => onboarding_screen(
             theme,
             app.nsec_input.clone(),
@@ -875,6 +1369,7 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
         Route::Timeline => timeline_screen(
             theme,
             app.account.clone(),
+            app.feed_scope.clone(),
             app.status.clone(),
             app.visible_notes(),
             app.filter_text.clone(),
@@ -908,10 +1403,14 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
         }
         Route::Profile { pubkey } => profile_screen(
             theme,
+            app.account.clone(),
             pubkey.clone(),
             app.profile_summary(&pubkey),
             app.profile_notes(&pubkey),
             app.status.clone(),
+            app.is_following(&pubkey),
+            app.follow_update_pending_for(&pubkey),
+            socket_available(),
         )
         .boxed(),
     };
@@ -933,6 +1432,26 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
         run_clipboard_write,
         |app: &mut TimelineApp, job: PendingClipboardWrite, result: Result<(), String>| {
             app.finish_clipboard_write(job.token, result);
+        },
+    );
+    let content = with_blocking_task(
+        content,
+        pending_explore_sync,
+        sync_explore_notes,
+        |app: &mut TimelineApp,
+         job: PendingExploreSync,
+         result: Result<ExploreSyncOutcome, String>| {
+            app.finish_explore_sync(job.token, result);
+        },
+    );
+    let content = with_blocking_task(
+        content,
+        pending_follow_update,
+        run_follow_update,
+        |app: &mut TimelineApp,
+         job: PendingFollowUpdate,
+         result: Result<FollowUpdateOutcome, String>| {
+            app.finish_follow_update(job.token, result);
         },
     );
     let content = with_blocking_task(
@@ -976,9 +1495,13 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
             |_state: &mut TimelineApp, _sender: tokio::sync::mpsc::UnboundedSender<()>| {},
             |app: &mut TimelineApp, message: PlatformMessage| match message {
                 PlatformMessage::Lifecycle(state) => log_lifecycle_state(state.as_str()),
+                PlatformMessage::OpenFirstVisibleNote => app.platform_open_first_visible_note(),
                 PlatformMessage::OpenReply => app.platform_open_reply(),
                 PlatformMessage::PublishReply => app.begin_reply_publish(),
                 PlatformMessage::SetReplyContent(value) => app.platform_set_reply_content(value),
+                PlatformMessage::PublishReplyContent(value) => {
+                    app.platform_publish_reply_content(value)
+                }
             },
         ),
     )
@@ -987,6 +1510,7 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
 fn timeline_screen(
     theme: Theme,
     account: Option<ActiveAccount>,
+    feed_scope: FeedScope,
     status: TimelineStatus,
     notes: Vec<NostrEvent>,
     filter_text: String,
@@ -998,17 +1522,17 @@ fn timeline_screen(
             theme,
             "Shadow Nostr",
             "Timeline",
-            Some(String::from(
-                "Read-first native client over the shared cache and relay engine.",
-            )),
+            Some(feed_scope.detail_text()),
         ),
-        controls_section(theme, account, &status, note_count, filter_text),
-        feed_section(
+        controls_section(
             theme,
-            "Feed",
-            "Nothing matches the current filter or cache state.",
-            notes,
+            account,
+            &feed_scope,
+            &status,
+            note_count,
+            filter_text,
         ),
+        feed_section(theme, "Feed", home_feed_empty_message(&feed_scope), notes),
     ))
     .gap(12.0.px())
 }
@@ -1016,6 +1540,7 @@ fn timeline_screen(
 fn controls_section(
     theme: Theme,
     account: Option<ActiveAccount>,
+    feed_scope: &FeedScope,
     status: &TimelineStatus,
     note_count: usize,
     filter_text: String,
@@ -1033,17 +1558,6 @@ fn controls_section(
                     },
                 )
                 .flex(1.0),
-                primary_button("Refresh", theme, |app: &mut TimelineApp| {
-                    app.begin_refresh(RefreshSource::Manual);
-                }),
-                maybe(
-                    account.map(|_| {
-                        secondary_button("Account", theme, |app: &mut TimelineApp| {
-                            app.open_account();
-                        })
-                    }),
-                    column(()),
-                ),
                 secondary_button("Clear", theme, |app: &mut TimelineApp| {
                     app.filter_text.clear();
                 }),
@@ -1051,6 +1565,30 @@ fn controls_section(
             .gap(10.0.px())
             .main_axis_alignment(MainAxisAlignment::Start),
             row((
+                primary_button("Refresh", theme, |app: &mut TimelineApp| {
+                    app.begin_refresh(RefreshSource::Manual);
+                }),
+                maybe(
+                    account.as_ref().map(|_| {
+                        secondary_button("Account", theme, |app: &mut TimelineApp| {
+                            app.open_account();
+                        })
+                    }),
+                    column(()),
+                ),
+                maybe(
+                    account.as_ref().map(|_| {
+                        secondary_button("Explore", theme, |app: &mut TimelineApp| {
+                            app.open_explore();
+                        })
+                    }),
+                    column(()),
+                ),
+            ))
+            .gap(10.0.px())
+            .main_axis_alignment(MainAxisAlignment::Start),
+            row((
+                status_chip(feed_scope.chip_label(), Tone::Neutral, theme),
                 status_chip(status.message.clone(), status.tone, theme),
                 caption_text(
                     format!("{note_count} note{} visible", plural_suffix(note_count)),
@@ -1124,8 +1662,12 @@ fn onboarding_screen(
 fn account_screen(
     theme: Theme,
     account: Option<ActiveAccount>,
+    feed_scope: FeedScope,
+    follow_input: String,
     status: TimelineStatus,
     clipboard_pending: bool,
+    follow_pending: bool,
+    socket_ready: bool,
 ) -> impl WidgetView<TimelineApp> {
     match account {
         Some(account) => column((
@@ -1143,7 +1685,7 @@ fn account_screen(
                     headline_text("Active account", theme),
                     status_chip(account.source.label(), Tone::Neutral, theme),
                     caption_text("npub", theme),
-                    prose_text(account.npub, 15.0, theme),
+                    prose_text(account.npub.clone(), 15.0, theme),
                     secondary_button(
                         if clipboard_pending {
                             "Copying npub..."
@@ -1155,14 +1697,24 @@ fn account_screen(
                             app.begin_copy_account_npub();
                         },
                     ),
+                    follow_manager(
+                        theme,
+                        &account,
+                        &feed_scope,
+                        follow_input,
+                        follow_pending,
+                        socket_ready,
+                    ),
                     column((
+                        status_chip(feed_scope.chip_label(), Tone::Neutral, theme),
                         status_chip(status.message, status.tone, theme),
+                        caption_text(feed_scope.detail_text(), theme),
                         caption_text(
                             "Use the clipboard to move this device identity into another app.",
                             theme,
                         ),
                         caption_text(
-                            "Replies publish through the shared account and OS-owned signer approval.",
+                            "Replies and follow updates publish through the shared account and OS-owned signer approval.",
                             theme,
                         ),
                     ))
@@ -1196,6 +1748,338 @@ fn account_screen(
         .gap(12.0.px())
         .boxed(),
     }
+}
+
+fn explore_screen(
+    theme: Theme,
+    account: Option<ActiveAccount>,
+    followed_pubkeys: Vec<String>,
+    status: TimelineStatus,
+    notes: Vec<NostrEvent>,
+    profiles: Vec<ExploreProfileEntry>,
+    socket_ready: bool,
+    sync_pending: bool,
+    follow_pending: bool,
+) -> impl WidgetView<TimelineApp> {
+    let note_count = notes.len();
+    column((
+        top_bar_with_back(
+            theme,
+            "Shadow Nostr",
+            "Explore",
+            Some(String::from("Real relay notes outside Home.")),
+            TimelineApp::pop_route,
+        ),
+        panel(
+            theme,
+            column((
+                eyebrow_text("Discovery", theme),
+                body_text(
+                    "Explore is where Shadow can show recent relay notes. Following from here updates Home, but Home itself stays follow-only.",
+                    theme,
+                ),
+                row((
+                    primary_button_state(
+                        if sync_pending {
+                            "Fetching..."
+                        } else {
+                            "Fetch relay notes"
+                        },
+                        theme,
+                        if sync_pending || !socket_ready {
+                            ActionButtonState::Disabled
+                        } else {
+                            ActionButtonState::Enabled
+                        },
+                        |app: &mut TimelineApp| {
+                            app.begin_explore_sync();
+                        },
+                    ),
+                    status_chip(
+                        format!("{note_count} note{}", plural_suffix(note_count)),
+                        Tone::Neutral,
+                        theme,
+                    ),
+                    status_chip(status.message, status.tone, theme),
+                ))
+                .gap(10.0.px())
+                .main_axis_alignment(MainAxisAlignment::Start),
+                caption_text(
+                    if socket_ready {
+                        "Refresh pulls recent notes from the configured relays into the shared cache."
+                    } else {
+                        "The shared relay engine is unavailable in this session, so Explore can only show cached notes."
+                    },
+                    theme,
+                ),
+            ))
+            .gap(10.0.px()),
+        ),
+        explore_profiles_section(
+            theme,
+            account,
+            followed_pubkeys,
+            profiles,
+            follow_pending,
+            socket_ready,
+        ),
+        feed_section(
+            theme,
+            "Recent relay notes",
+            "No cached relay notes yet. Fetch relay notes to discover profiles to follow.",
+            notes,
+        ),
+    ))
+    .gap(12.0.px())
+}
+
+fn explore_profiles_section(
+    theme: Theme,
+    account: Option<ActiveAccount>,
+    followed_pubkeys: Vec<String>,
+    profiles: Vec<ExploreProfileEntry>,
+    follow_pending: bool,
+    socket_ready: bool,
+) -> impl WidgetView<TimelineApp> {
+    let followed = followed_pubkeys.into_iter().collect::<BTreeSet<_>>();
+    let body = maybe(
+        (!profiles.is_empty()).then_some(
+            column(
+                profiles
+                    .into_iter()
+                    .map(|profile| {
+                        explore_profile_card(
+                            theme,
+                            account.clone(),
+                            followed.contains(&profile.pubkey),
+                            profile,
+                            follow_pending,
+                            socket_ready,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .gap(10.0.px()),
+        ),
+        panel(
+            theme,
+            column((
+                eyebrow_text("Profiles", theme),
+                caption_text(
+                    "Fetch relay notes to discover accounts you can follow from Explore.",
+                    theme,
+                ),
+            ))
+            .gap(6.0.px()),
+        ),
+    );
+
+    column((eyebrow_text("Profiles", theme), body)).gap(8.0.px())
+}
+
+fn explore_profile_card(
+    theme: Theme,
+    account: Option<ActiveAccount>,
+    is_following: bool,
+    profile: ExploreProfileEntry,
+    follow_pending: bool,
+    socket_ready: bool,
+) -> impl WidgetView<TimelineApp> {
+    let open_pubkey = profile.pubkey.clone();
+    let follow_pubkey = profile.pubkey.clone();
+    let is_active_account = account
+        .as_ref()
+        .is_some_and(|account| account.npub == profile.pubkey);
+    let follow_control = if is_active_account {
+        status_chip("active account", Tone::Neutral, theme).boxed()
+    } else if !socket_ready {
+        status_chip("relay engine unavailable", Tone::Neutral, theme).boxed()
+    } else if is_following {
+        secondary_button_state(
+            "Following",
+            theme,
+            ActionButtonState::Disabled,
+            |_app: &mut TimelineApp| {},
+        )
+        .boxed()
+    } else {
+        primary_button_state(
+            if follow_pending {
+                "Updating..."
+            } else {
+                "Follow"
+            },
+            theme,
+            if follow_pending {
+                ActionButtonState::Disabled
+            } else {
+                ActionButtonState::Enabled
+            },
+            move |app: &mut TimelineApp| {
+                app.begin_follow_add_for(follow_pubkey.clone());
+            },
+        )
+        .boxed()
+    };
+
+    panel(
+        theme,
+        column((
+            row((
+                column((
+                    headline_text(profile.profile.title(&profile.pubkey), theme),
+                    caption_text(short_id(&profile.pubkey), theme),
+                    profile
+                        .profile
+                        .nip05
+                        .clone()
+                        .map(|nip05| caption_text(nip05, theme)),
+                ))
+                .gap(4.0.px())
+                .flex(1.0),
+                status_chip(relative_time(profile.updated_at), Tone::Neutral, theme),
+            ))
+            .gap(10.0.px())
+            .main_axis_alignment(MainAxisAlignment::Start),
+            caption_text(
+                format!(
+                    "{} recent note{} cached from this author.",
+                    profile.note_count,
+                    plural_suffix(profile.note_count)
+                ),
+                theme,
+            ),
+            body_text(profile.latest_note_preview, theme),
+            row((
+                secondary_button("Open profile", theme, move |app: &mut TimelineApp| {
+                    app.open_profile(open_pubkey.clone());
+                }),
+                follow_control,
+            ))
+            .gap(10.0.px())
+            .main_axis_alignment(MainAxisAlignment::Start),
+        ))
+        .gap(10.0.px()),
+    )
+}
+
+fn follow_manager(
+    theme: Theme,
+    account: &ActiveAccount,
+    feed_scope: &FeedScope,
+    follow_input: String,
+    follow_pending: bool,
+    socket_ready: bool,
+) -> impl WidgetView<TimelineApp> {
+    let follows = feed_scope.authors.clone().unwrap_or_default();
+    panel(
+        theme,
+        column((
+            eyebrow_text("Home feed", theme),
+            headline_text("Follow accounts", theme),
+            caption_text(
+                "Paste an npub or use Explore to add accounts to Home. This publishes a real contact-list event for the shared account.",
+                theme,
+            ),
+            row((
+                text_field(
+                    follow_input,
+                    "Paste npub to follow",
+                    theme,
+                    |app: &mut TimelineApp, value| {
+                        app.follow_input = value;
+                    },
+                )
+                .flex(1.0),
+                primary_button_state(
+                    if follow_pending {
+                        "Updating..."
+                    } else {
+                        "Follow"
+                    },
+                    theme,
+                    if follow_pending || !socket_ready {
+                        ActionButtonState::Disabled
+                    } else {
+                        ActionButtonState::Enabled
+                    },
+                    |app: &mut TimelineApp| {
+                        app.begin_follow_add();
+                    },
+                ),
+            ))
+            .gap(10.0.px())
+            .main_axis_alignment(MainAxisAlignment::Start),
+            maybe(
+                (!follows.is_empty()).then_some(
+                    column(
+                        follows
+                            .into_iter()
+                            .map(|npub| {
+                                follow_row(theme, account, npub, follow_pending, socket_ready)
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .gap(8.0.px()),
+                ),
+                caption_text(
+                    if socket_ready {
+                        "Home is empty until this account follows someone."
+                    } else {
+                        "Home is empty. Follow updates need the shared relay engine."
+                    },
+                    theme,
+                ),
+            ),
+        ))
+        .gap(10.0.px()),
+    )
+}
+
+fn follow_row(
+    theme: Theme,
+    account: &ActiveAccount,
+    npub: String,
+    follow_pending: bool,
+    socket_ready: bool,
+) -> impl WidgetView<TimelineApp> {
+    let open_npub = npub.clone();
+    let remove_npub = npub.clone();
+    panel(
+        theme,
+        row((
+            column((
+                caption_text(short_id(&npub), theme),
+                maybe(
+                    (npub == account.npub).then_some(caption_text("active account", theme)),
+                    caption_text("followed account", theme),
+                ),
+            ))
+            .gap(4.0.px())
+            .flex(1.0),
+            secondary_button("Open", theme, move |app: &mut TimelineApp| {
+                app.open_profile(open_npub.clone());
+            }),
+            secondary_button_state(
+                if follow_pending {
+                    "Updating..."
+                } else {
+                    "Unfollow"
+                },
+                theme,
+                if follow_pending || !socket_ready {
+                    ActionButtonState::Disabled
+                } else {
+                    ActionButtonState::Enabled
+                },
+                move |app: &mut TimelineApp| {
+                    app.begin_follow_remove(remove_npub.clone());
+                },
+            ),
+        ))
+        .gap(10.0.px())
+        .main_axis_alignment(MainAxisAlignment::Start),
+    )
 }
 
 fn note_screen(
@@ -1438,13 +2322,59 @@ fn reply_sheet(
 
 fn profile_screen(
     theme: Theme,
+    account: Option<ActiveAccount>,
     pubkey: String,
     profile: ProfileSummary,
     notes: Vec<NostrEvent>,
     status: TimelineStatus,
+    is_following: bool,
+    follow_pending: bool,
+    socket_ready: bool,
 ) -> impl WidgetView<TimelineApp> {
     let metadata_status = profile.metadata_status();
     let note_count = notes.len();
+    let follow_button = account.filter(|account| account.npub != pubkey).map(|_| {
+        if is_following {
+            let unfollow_pubkey = pubkey.clone();
+            secondary_button_state(
+                if follow_pending {
+                    "Updating follows..."
+                } else {
+                    "Unfollow"
+                },
+                theme,
+                if follow_pending || !socket_ready {
+                    ActionButtonState::Disabled
+                } else {
+                    ActionButtonState::Enabled
+                },
+                move |app: &mut TimelineApp| {
+                    app.begin_follow_remove(unfollow_pubkey.clone());
+                },
+            )
+            .boxed()
+        } else {
+            let follow_pubkey = pubkey.clone();
+            primary_button_state(
+                if follow_pending {
+                    "Updating follows..."
+                } else {
+                    "Follow"
+                },
+                theme,
+                if follow_pending || !socket_ready {
+                    ActionButtonState::Disabled
+                } else {
+                    ActionButtonState::Enabled
+                },
+                move |app: &mut TimelineApp| {
+                    app.follow_input = follow_pubkey.clone();
+                    app.begin_follow_add();
+                },
+            )
+            .boxed()
+        }
+    });
 
     column((
         top_bar_with_back(
@@ -1477,6 +2407,7 @@ fn profile_screen(
                 primary_button("Refresh", theme, |app: &mut TimelineApp| {
                     app.begin_refresh(RefreshSource::Manual);
                 }),
+                maybe(follow_button, column(())),
             ))
             .gap(10.0.px()),
         ),
@@ -1557,9 +2488,53 @@ fn run_clipboard_write(job: PendingClipboardWrite) -> Result<(), String> {
     write_clipboard_text(job.text).map_err(|error| error.to_string())
 }
 
+fn run_follow_update(job: PendingFollowUpdate) -> Result<FollowUpdateOutcome, String> {
+    let relay_urls = (!job.relay_urls.is_empty()).then_some(job.relay_urls.clone());
+    let _ = sync(NostrSyncRequest {
+        query: NostrQuery {
+            ids: None,
+            authors: Some(vec![job.account_npub.clone()]),
+            kinds: Some(vec![3]),
+            referenced_ids: None,
+            reply_to_ids: None,
+            since: None,
+            until: None,
+            limit: Some(1),
+        },
+        relay_urls: relay_urls.clone(),
+        timeout_ms: Some(8_000),
+    })
+    .map_err(|error| format!("Could not refresh the latest contact list: {error}"))?;
+    let mut public_keys = load_contact_references_for_npub(&job.account_npub);
+    match job.action {
+        FollowActionKind::Add { npub } => {
+            if public_keys
+                .iter()
+                .all(|reference| reference.public_key != npub)
+            {
+                public_keys.push(NostrPublicKeyReference {
+                    public_key: npub,
+                    relay_url: None,
+                    alias: None,
+                });
+            }
+        }
+        FollowActionKind::Remove { npub } => {
+            public_keys.retain(|reference| reference.public_key != npub);
+        }
+    }
+    let receipt = publish(NostrPublishRequest::ContactList {
+        public_keys,
+        relay_urls,
+        timeout_ms: Some(12_000),
+    })
+    .map_err(|error| error.to_string())?;
+
+    Ok(FollowUpdateOutcome { receipt })
+}
+
 fn run_reply_publish(job: PendingPublish) -> Result<PublishOutcome, String> {
-    let receipt = publish(NostrPublishRequest {
-        kind: 1,
+    let receipt = publish(NostrPublishRequest::TextNote {
         content: job.content,
         root_event_id: job.root_event_id,
         reply_to_event_id: Some(job.reply_to_event_id),
@@ -1567,33 +2542,150 @@ fn run_reply_publish(job: PendingPublish) -> Result<PublishOutcome, String> {
         timeout_ms: Some(12_000),
     })
     .map_err(|error| error.to_string())?;
-    let notes = load_cached_notes(job.limit)?;
 
-    Ok(PublishOutcome { receipt, notes })
+    Ok(PublishOutcome { receipt })
 }
 
 fn sync_notes(job: PendingRefresh) -> Result<RefreshOutcome, String> {
-    let receipt = sync(NostrSyncRequest {
+    let relay_urls = (!job.relay_urls.is_empty()).then_some(job.relay_urls.clone());
+    let mut fetched_count = 0_usize;
+    let mut imported_count = 0_usize;
+
+    let account_receipt = sync(NostrSyncRequest {
+        query: NostrQuery {
+            ids: None,
+            authors: Some(vec![job.account_npub.clone()]),
+            kinds: Some(vec![0, 3]),
+            referenced_ids: None,
+            reply_to_ids: None,
+            since: None,
+            until: None,
+            limit: Some(4),
+        },
+        relay_urls: relay_urls.clone(),
+        timeout_ms: Some(8_000),
+    })
+    .map_err(|error| error.to_string())?;
+    fetched_count += account_receipt.fetched_count;
+    imported_count += account_receipt.imported_count;
+
+    let feed_scope = load_feed_scope_for_npub(&job.account_npub);
+    if let Some(authors) = feed_scope.authors.clone() {
+        let profile_receipt = sync(NostrSyncRequest {
+            query: NostrQuery {
+                ids: None,
+                authors: Some(authors.clone()),
+                kinds: Some(vec![0]),
+                referenced_ids: None,
+                reply_to_ids: None,
+                since: None,
+                until: None,
+                limit: Some(authors.len().max(1)),
+            },
+            relay_urls: relay_urls.clone(),
+            timeout_ms: Some(8_000),
+        })
+        .map_err(|error| error.to_string())?;
+        fetched_count += profile_receipt.fetched_count;
+        imported_count += profile_receipt.imported_count;
+
+        let note_receipt = sync(NostrSyncRequest {
+            query: NostrQuery {
+                ids: None,
+                authors: Some(authors),
+                kinds: Some(vec![1]),
+                referenced_ids: None,
+                reply_to_ids: None,
+                since: None,
+                until: None,
+                limit: Some(job.limit),
+            },
+            relay_urls,
+            timeout_ms: Some(8_000),
+        })
+        .map_err(|error| error.to_string())?;
+        fetched_count += note_receipt.fetched_count;
+        imported_count += note_receipt.imported_count;
+    }
+
+    let notes = load_cached_notes(job.limit, &feed_scope)?;
+
+    Ok(RefreshOutcome {
+        feed_scope,
+        fetched_count,
+        imported_count,
+        notes,
+    })
+}
+
+fn sync_explore_notes(job: PendingExploreSync) -> Result<ExploreSyncOutcome, String> {
+    let relay_urls = (!job.relay_urls.is_empty()).then_some(job.relay_urls.clone());
+    let note_receipt = sync(NostrSyncRequest {
         query: NostrQuery {
             ids: None,
             authors: None,
-            kinds: Some(vec![0, 1]),
+            kinds: Some(vec![1]),
             referenced_ids: None,
             reply_to_ids: None,
             since: None,
             until: None,
             limit: Some(job.limit),
         },
-        relay_urls: (!job.relay_urls.is_empty()).then_some(job.relay_urls.clone()),
+        relay_urls: relay_urls.clone(),
         timeout_ms: Some(8_000),
     })
     .map_err(|error| error.to_string())?;
-    let notes = load_cached_notes(job.limit)?;
+    let notes = load_explore_notes(job.limit)?;
+    let authors = notes
+        .iter()
+        .map(|note| note.pubkey.clone())
+        .collect::<Vec<_>>();
+    let mut fetched_count = note_receipt.fetched_count;
+    let mut imported_count = note_receipt.imported_count;
+    if !authors.is_empty() {
+        let profile_receipt = sync(NostrSyncRequest {
+            query: NostrQuery {
+                ids: None,
+                authors: Some(authors),
+                kinds: Some(vec![0]),
+                referenced_ids: None,
+                reply_to_ids: None,
+                since: None,
+                until: None,
+                limit: Some(job.limit),
+            },
+            relay_urls,
+            timeout_ms: Some(8_000),
+        })
+        .map_err(|error| error.to_string())?;
+        fetched_count += profile_receipt.fetched_count;
+        imported_count += profile_receipt.imported_count;
+    }
 
-    Ok(RefreshOutcome { receipt, notes })
+    Ok(ExploreSyncOutcome {
+        fetched_count,
+        imported_count,
+    })
 }
 
-fn load_cached_notes(limit: usize) -> Result<Vec<NostrEvent>, String> {
+fn load_cached_notes(limit: usize, feed_scope: &FeedScope) -> Result<Vec<NostrEvent>, String> {
+    let Some(authors) = feed_scope.authors.clone() else {
+        return Ok(Vec::new());
+    };
+    query(NostrQuery {
+        ids: None,
+        authors: Some(authors),
+        kinds: Some(vec![1]),
+        referenced_ids: None,
+        reply_to_ids: None,
+        since: None,
+        until: None,
+        limit: Some(limit),
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn load_explore_notes(limit: usize) -> Result<Vec<NostrEvent>, String> {
     query(NostrQuery {
         ids: None,
         authors: None,
@@ -1605,6 +2697,78 @@ fn load_cached_notes(limit: usize) -> Result<Vec<NostrEvent>, String> {
         limit: Some(limit),
     })
     .map_err(|error| error.to_string())
+}
+
+fn load_feed_scope(account: Option<&ActiveAccount>) -> FeedScope {
+    account
+        .map(|account| load_feed_scope_for_npub(&account.npub))
+        .unwrap_or_else(FeedScope::unavailable)
+}
+
+fn empty_feed_status(feed_scope: &FeedScope) -> TimelineStatus {
+    match feed_scope.source {
+        FeedSource::Following { .. } => TimelineStatus {
+            tone: Tone::Neutral,
+            message: String::from("No cached notes yet for followed accounts."),
+        },
+        FeedSource::NoContacts => TimelineStatus {
+            tone: Tone::Neutral,
+            message: String::from("Home is empty until you follow accounts."),
+        },
+        FeedSource::Unavailable => TimelineStatus {
+            tone: Tone::Danger,
+            message: String::from("No active account is available."),
+        },
+    }
+}
+
+fn home_feed_empty_message(feed_scope: &FeedScope) -> &'static str {
+    match feed_scope.source {
+        FeedSource::Following { .. } => "No followed-account notes match the current filter or cache state.",
+        FeedSource::NoContacts => {
+            "Home is empty until this account follows someone. Use Explore or Account to add follows."
+        }
+        FeedSource::Unavailable => "No active account is available.",
+    }
+}
+
+fn load_feed_scope_for_npub(npub: &str) -> FeedScope {
+    feed_scope_from_contact_list(load_contact_list_event_for_npub(npub))
+}
+
+fn feed_scope_from_contact_list(contact_list: Option<NostrEvent>) -> FeedScope {
+    let Some(contact_list) = contact_list else {
+        return FeedScope::no_contacts();
+    };
+    let mut authors = Vec::new();
+    for reference in contact_list.public_keys {
+        if authors.iter().all(|author| author != &reference.public_key) {
+            authors.push(reference.public_key);
+        }
+    }
+
+    if authors.is_empty() {
+        FeedScope::no_contacts()
+    } else {
+        let follow_count = authors.len();
+        FeedScope::following(authors, follow_count)
+    }
+}
+
+fn load_contact_list_event_for_npub(npub: &str) -> Option<NostrEvent> {
+    get_replaceable(NostrReplaceableQuery {
+        kind: 3,
+        pubkey: npub.to_owned(),
+        identifier: None,
+    })
+    .ok()
+    .flatten()
+}
+
+fn load_contact_references_for_npub(npub: &str) -> Vec<NostrPublicKeyReference> {
+    load_contact_list_event_for_npub(npub)
+        .map(|event| event.public_keys)
+        .unwrap_or_default()
 }
 
 fn load_profile_summary(pubkey: &str) -> ProfileSummary {
@@ -1774,8 +2938,14 @@ fn run_platform_listener(socket_path: PathBuf, proxy: MessageProxy<PlatformMessa
             ),
             Some(AppPlatformRequest::Automation { action, argument }) => {
                 let message = match (action.as_str(), argument) {
+                    ("open_first_visible_note", None) => {
+                        Some(PlatformMessage::OpenFirstVisibleNote)
+                    }
                     ("open_reply", None) => Some(PlatformMessage::OpenReply),
                     ("publish_reply", None) => Some(PlatformMessage::PublishReply),
+                    ("publish_reply_content", Some(value)) => {
+                        Some(PlatformMessage::PublishReplyContent(value))
+                    }
                     ("set_reply_content", Some(value)) => {
                         Some(PlatformMessage::SetReplyContent(value))
                     }
@@ -1842,6 +3012,15 @@ fn short_id(value: &str) -> String {
     format!("{}…{}", &value[..8], &value[value.len() - 8..])
 }
 
+fn note_preview(content: &str) -> String {
+    let preview = content.lines().next().unwrap_or("").trim();
+    if preview.is_empty() {
+        String::from("No visible text in the latest cached note.")
+    } else {
+        preview.to_owned()
+    }
+}
+
 fn relative_time(created_at: u64) -> String {
     let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
         return created_at.to_string();
@@ -1885,4 +3064,63 @@ fn log_window_metrics(metrics: AppWindowMetrics) {
 
 fn log_lifecycle_state(state: &str) {
     eprintln!("{APP_LOG_PREFIX}: lifecycle_state={state}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{feed_scope_from_contact_list, FeedScope, FeedSource};
+    use shadow_sdk::services::nostr::{NostrEvent, NostrPublicKeyReference};
+
+    fn contact_list_event(public_keys: &[&str]) -> NostrEvent {
+        NostrEvent {
+            content: String::new(),
+            created_at: 1_700_000_000,
+            id: String::from("contact-list"),
+            kind: 3,
+            pubkey: String::from("npub-owner"),
+            identifier: None,
+            root_event_id: None,
+            reply_to_event_id: None,
+            references: Vec::new(),
+            public_keys: public_keys
+                .iter()
+                .map(|public_key| NostrPublicKeyReference {
+                    public_key: (*public_key).to_owned(),
+                    relay_url: None,
+                    alias: None,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn missing_contact_list_keeps_home_empty() {
+        assert_eq!(feed_scope_from_contact_list(None), FeedScope::no_contacts());
+    }
+
+    #[test]
+    fn contact_list_without_follows_keeps_home_empty() {
+        assert_eq!(
+            feed_scope_from_contact_list(Some(contact_list_event(&[]))),
+            FeedScope::no_contacts()
+        );
+    }
+
+    #[test]
+    fn contact_list_builds_following_scope_from_unique_public_keys() {
+        let scope = feed_scope_from_contact_list(Some(contact_list_event(&[
+            "npub-follow-a",
+            "npub-follow-b",
+            "npub-follow-a",
+        ])));
+
+        assert_eq!(scope.source, FeedSource::Following { count: 2 });
+        assert_eq!(
+            scope.authors,
+            Some(vec![
+                String::from("npub-follow-a"),
+                String::from("npub-follow-b"),
+            ])
+        );
+    }
 }

@@ -133,6 +133,26 @@ import shlex
 import sys
 
 bundle_path, bundle_dir, system_binary_path, input_path, cache_dir, package_attr, viewport_width, viewport_height = sys.argv[1:9]
+
+def derive_host_app_id(input_path: str) -> str:
+    parent = os.path.basename(os.path.dirname(input_path.rstrip("/")))
+    if parent.startswith("app-") and len(parent) > 4:
+        return parent[4:]
+    stem, _ = os.path.splitext(os.path.basename(input_path))
+    return stem or "app"
+
+
+def derive_host_app_title(app_id: str) -> str:
+    words = [word for word in app_id.replace("_", "-").split("-") if word]
+    if not words:
+        return "Shadow App"
+    return " ".join(
+        word.upper() if len(word) <= 3 else word.capitalize()
+        for word in words
+    )
+
+host_app_id = os.environ.get("SHADOW_RUNTIME_HOST_APP_ID") or derive_host_app_id(input_path)
+host_app_title = os.environ.get("SHADOW_RUNTIME_HOST_APP_TITLE") or derive_host_app_title(host_app_id)
 system_env = {
     "SHADOW_APP_SURFACE_WIDTH": viewport_width,
     "SHADOW_APP_SURFACE_HEIGHT": viewport_height,
@@ -140,12 +160,16 @@ system_env = {
     "SHADOW_APP_SAFE_AREA_TOP": "0",
     "SHADOW_APP_SAFE_AREA_RIGHT": "0",
     "SHADOW_APP_SAFE_AREA_BOTTOM": "0",
+    "SHADOW_APP_TITLE": host_app_title,
+    "SHADOW_APP_WAYLAND_INSTANCE_NAME": host_app_id,
     "SHADOW_BLITZ_SURFACE_WIDTH": viewport_width,
     "SHADOW_BLITZ_SURFACE_HEIGHT": viewport_height,
     "SHADOW_BLITZ_SAFE_AREA_LEFT": "0",
     "SHADOW_BLITZ_SAFE_AREA_TOP": "0",
     "SHADOW_BLITZ_SAFE_AREA_RIGHT": "0",
     "SHADOW_BLITZ_SAFE_AREA_BOTTOM": "0",
+    "SHADOW_BLITZ_APP_TITLE": host_app_title,
+    "SHADOW_BLITZ_WAYLAND_INSTANCE_NAME": host_app_id,
 }
 wrapper_path = os.path.join(os.path.abspath(cache_dir), "shadow-system-launch.sh")
 os.makedirs(os.path.dirname(wrapper_path), exist_ok=True)

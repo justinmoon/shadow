@@ -12,6 +12,11 @@ const GM_CONTENT = "GM";
 const DEFAULT_RELAY_URLS = ["wss://relay.primal.net/", "wss://relay.damus.io/"];
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+type GmConfig = {
+  relayUrls?: string[];
+  timeoutMs?: number;
+};
+
 type AppState =
   | { kind: "idle" }
   | { kind: "publishing" }
@@ -279,6 +284,7 @@ body {
 `;
 
 export function renderApp() {
+  const config = readGmConfig();
   const [state, setState] = createSignal<AppState>({ kind: "idle" });
 
   function sendGm() {
@@ -297,10 +303,10 @@ export function renderApp() {
         generateNostrAccount();
       }
       const receipt = await publishNostr({
-        kind: 1,
+        type: "text_note",
         content: GM_CONTENT,
-        relayUrls: DEFAULT_RELAY_URLS,
-        timeoutMs: DEFAULT_TIMEOUT_MS,
+        relayUrls: config.relayUrls,
+        timeoutMs: config.timeoutMs,
       });
       setState({ kind: "success", receipt });
     } catch (error) {
@@ -326,6 +332,22 @@ export function renderApp() {
       </Show>
     </main>
   );
+}
+
+function readGmConfig(): Required<GmConfig> {
+  const value = (
+    globalThis as typeof globalThis & {
+      SHADOW_RUNTIME_APP_CONFIG?: GmConfig;
+    }
+  ).SHADOW_RUNTIME_APP_CONFIG;
+  const relayUrls =
+    Array.isArray(value?.relayUrls) && value.relayUrls.length > 0
+      ? value.relayUrls.map(String)
+      : DEFAULT_RELAY_URLS;
+  const timeoutMs = typeof value?.timeoutMs === "number" && value.timeoutMs > 0
+    ? Math.floor(value.timeoutMs)
+    : DEFAULT_TIMEOUT_MS;
+  return { relayUrls, timeoutMs };
 }
 
 type IdleOrErrorCardProps = {

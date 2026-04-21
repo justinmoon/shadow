@@ -5,37 +5,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$REPO_ROOT"
-session_json="$("$SCRIPT_DIR/runtime/runtime_prepare_host_session.sh")"
 
-SESSION_JSON="$session_json" python3 - <<'PY'
+python3 - <<'PY'
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
+from pathlib import Path
 
-session = json.loads(os.environ["SESSION_JSON"])
-bundle_path = session["bundlePath"]
-binary_path = session["systemBinaryPath"]
+REPO_ROOT = Path.cwd()
+SCRIPT_DIR = REPO_ROOT / "scripts"
+PREPARE_TIMEOUT_SECONDS = 600
 
-process = subprocess.Popen(
-    [binary_path, "--session", bundle_path],
-    stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    text=True,
-    env={
-        **os.environ,
-        "SHADOW_SYSTEM_PROMPT_RESPONSE_ACTION_ID": "allow_once",
-    },
-)
-
-requests = [
-    {"op": "render"},
-    {"op": "dispatch", "event": {"targetId": "gm", "type": "click"}},
-]
-
-responses = []
+sys.path.insert(0, str(SCRIPT_DIR / "ci" / "lib"))
+from nostr_test_harness import run, running_relay
 
 def read_response_line() -> dict:
     assert process.stdout is not None
@@ -49,72 +34,114 @@ def read_response_line() -> dict:
             continue
         return json.loads(stripped)
 
-for request in requests:
-    assert process.stdin is not None
-    process.stdin.write(json.dumps(request) + "\n")
-    process.stdin.flush()
-    responses.append(read_response_line())
-
-initial = responses[0]
-clicked = responses[1]
-
 def unwrap_payload(response):
     if response.get("status") != "ok":
         raise SystemExit(f"runtime-app-nostr-gm-smoke: unexpected response: {json.dumps(response)}")
     return response["payload"]
 
-initial_payload = unwrap_payload(initial)
-clicked_payload = unwrap_payload(clicked)
+with tempfile.TemporaryDirectory(prefix="shadow-nostr-gm-") as temp_dir:
+    temp_path = Path(temp_dir)
+    db_path = temp_path / "nostr.sqlite3"
 
-initial_html = initial_payload["html"]
-clicked_html = clicked_payload["html"]
+    with running_relay(REPO_ROOT, prefix="shadow-nostr-gm-relay-") as relay:
+        prepare_env = os.environ.copy()
+        prepare_env.update({
+            "SHADOW_RUNTIME_APP_INPUT_PATH": "runtime/app-nostr-gm/app.tsx",
+            "SHADOW_RUNTIME_APP_CACHE_DIR": "build/runtime/app-nostr-gm",
+            "SHADOW_RUNTIME_APP_CONFIG_JSON": json.dumps({
+                "relayUrls": [relay.url],
+                "timeoutMs": 12_000,
+            }),
+        })
+        session_json = run(
+            REPO_ROOT,
+            [str(SCRIPT_DIR / "runtime" / "runtime_prepare_host_session.sh")],
+            env=prepare_env,
+            timeout=PREPARE_TIMEOUT_SECONDS,
+        ).stdout
+        session = json.loads(session_json)
+        bundle_path = session["bundlePath"]
+        binary_path = session["systemBinaryPath"]
 
-if "Tap to send GM" not in initial_html:
-    raise SystemExit("runtime-app-nostr-gm-smoke: initial render missing GM call-to-action")
+        process = subprocess.Popen(
+            [binary_path, "--session", bundle_path],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={
+                **os.environ,
+                "SHADOW_RUNTIME_NOSTR_DB_PATH": str(db_path),
+                "SHADOW_SYSTEM_PROMPT_RESPONSE_ACTION_ID": "allow_once",
+            },
+        )
+        try:
+            responses = []
+            for request in (
+                {"op": "render"},
+                {"op": "dispatch", "event": {"targetId": "gm", "type": "click"}},
+            ):
+                assert process.stdin is not None
+                process.stdin.write(json.dumps(request) + "\n")
+                process.stdin.flush()
+                responses.append(read_response_line())
 
-if (
-    "Publishing GM" not in clicked_html
-    and "GM sent" not in clicked_html
-    and "Publish failed" not in clicked_html
-):
-    raise SystemExit(
-        "runtime-app-nostr-gm-smoke: click did not surface publish progress or completion"
-    )
+            initial_html = unwrap_payload(responses[0])["html"]
+            clicked_html = unwrap_payload(responses[1])["html"]
 
-final_html = None
-deadline = time.time() + 25
-while time.time() < deadline:
-    assert process.stdin is not None
-    process.stdin.write(json.dumps({"op": "render_if_dirty"}) + "\n")
-    process.stdin.flush()
-    response = read_response_line()
-    if response.get("status") == "no_update":
-        time.sleep(0.25)
-        continue
-    payload = unwrap_payload(response)
-    final_html = payload["html"]
-    break
+            if "Tap to send GM" not in initial_html:
+                raise SystemExit("runtime-app-nostr-gm-smoke: initial render missing GM call-to-action")
 
-if final_html is None:
-    raise SystemExit("runtime-app-nostr-gm-smoke: timed out waiting for publish completion")
+            if "Publishing GM" not in clicked_html and "GM sent" not in clicked_html:
+                raise SystemExit(
+                    "runtime-app-nostr-gm-smoke: click did not surface deterministic publish progress",
+                )
 
-if "GM sent" not in final_html and "Publish failed" not in final_html:
-    raise SystemExit("runtime-app-nostr-gm-smoke: publish completion missing success/error state")
+            final_html = None
+            deadline = time.time() + 25
+            while time.time() < deadline:
+                assert process.stdin is not None
+                process.stdin.write(json.dumps({"op": "render_if_dirty"}) + "\n")
+                process.stdin.flush()
+                response = read_response_line()
+                if response.get("status") == "no_update":
+                    time.sleep(0.25)
+                    continue
+                final_html = unwrap_payload(response)["html"]
+                break
 
-if "system prompt is unavailable" in final_html:
-    raise SystemExit("runtime-app-nostr-gm-smoke: publish still depended on compositor prompt UI")
+            if final_html is None:
+                raise SystemExit("runtime-app-nostr-gm-smoke: timed out waiting for publish completion")
 
-assert process.stdin is not None
-process.stdin.close()
-stderr = process.stderr.read() if process.stderr is not None else ""
-return_code = process.wait(timeout=10)
-if return_code not in (0, None):
-    raise SystemExit(f"runtime-app-nostr-gm-smoke: runtime host exited {return_code}\n{stderr}")
+            if "GM sent" not in final_html:
+                raise SystemExit(
+                    "runtime-app-nostr-gm-smoke: publish did not complete successfully\n"
+                    f"{final_html}",
+                )
 
-print(json.dumps({
-    "systemPackageAttr": session["systemPackageAttr"],
-    "systemBinaryName": session["systemBinaryName"],
-    "bundlePath": bundle_path,
-    "result": "GM sent" if "GM sent" in final_html else "Publish failed",
-}, indent=2))
+            if "system prompt is unavailable" in final_html:
+                raise SystemExit("runtime-app-nostr-gm-smoke: publish still depended on compositor prompt UI")
+
+            relay_dump = relay.query_kind1(limit=20, timeout=10)
+            relay_messages = json.loads(relay_dump)
+            if not any('"content":"GM"' in message for message in relay_messages):
+                raise SystemExit(
+                    "runtime-app-nostr-gm-smoke: local relay never observed the GM note\n"
+                    f"{relay_dump}",
+                )
+        finally:
+            assert process.stdin is not None
+            process.stdin.close()
+            stderr = process.stderr.read() if process.stderr is not None else ""
+            return_code = process.wait(timeout=10)
+            if return_code not in (0, None):
+                raise SystemExit(f"runtime-app-nostr-gm-smoke: runtime host exited {return_code}\n{stderr}")
+
+        print(json.dumps({
+            "bundlePath": bundle_path,
+            "relayUrl": relay.url,
+            "result": "gm-ok",
+            "systemBinaryName": session["systemBinaryName"],
+            "systemPackageAttr": session["systemPackageAttr"],
+        }, indent=2))
 PY

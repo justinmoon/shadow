@@ -3,6 +3,7 @@ scripts/agent-brief	public	Agent context snapshot required by AGENTS.md.
 scripts/ci/app_metadata_manifest_smoke.sh	ci	Regression smoke for manifest profile filtering and uniqueness validation.
 scripts/ci/cpio_edit_smoke.sh	ci	Fast smoke for Android ramdisk cpio extraction and patch semantics.
 scripts/ci/check_script_inventory.py	ci	Pre-commit taxonomy gate for every file under scripts/.
+scripts/ci/lib/nostr_test_harness.py	lib	Shared local Nostr relay harness for deterministic host smokes.
 scripts/ci/pixel_boot_hello_init_smoke.sh	ci	Hermetic smoke for the owned-userspace hello-init boot seam that preserves /init and replaces system/bin/init.
 scripts/ci/pixel_boot_demo_check.sh	ci	Dedicated host-side gate for private boot demo seams, including real demo cross-builds.
 scripts/ci/pixel_boot_orange_gpu_smoke.sh	ci	Hermetic smoke for the private orange-gpu boot seam that stages a boot-owned shadow-gpu-smoke bundle under /orange-gpu.

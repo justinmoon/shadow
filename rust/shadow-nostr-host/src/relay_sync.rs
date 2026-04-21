@@ -6,7 +6,9 @@ use nostr::prelude::{
 };
 use nostr_sdk::prelude::{Client, RelayStatus};
 
-use shadow_sdk::services::nostr::{NostrEvent, NostrEventReference, NostrQuery, NostrSyncRequest};
+use shadow_sdk::services::nostr::{
+    NostrEvent, NostrEventReference, NostrPublicKeyReference, NostrQuery, NostrSyncRequest,
+};
 
 const DEFAULT_SYNC_TIMEOUT_MS: u64 = 8_000;
 const DEFAULT_SYNC_LIMIT: usize = 12;
@@ -58,7 +60,7 @@ pub async fn sync_with_client(
     }
 
     let events = client
-        .fetch_events(filter, timeout)
+        .fetch_events_from(relay_urls.clone(), filter, timeout)
         .await
         .map_err(|error| format!("nostr.sync fetch events: {error}"))?;
 
@@ -205,6 +207,29 @@ pub(super) async fn connected_requested_relays(
     connected
 }
 
+pub(super) async fn reconnect_requested_relays(
+    client: &Client,
+    relay_urls: &[String],
+    timeout: Duration,
+) -> Result<Vec<String>, String> {
+    for relay_url in relay_urls.iter() {
+        client
+            .force_remove_relay(relay_url)
+            .await
+            .map_err(|error| format!("nostr relay reconnect remove {relay_url}: {error}"))?;
+        client
+            .add_relay(relay_url)
+            .await
+            .map_err(|error| format!("nostr relay reconnect add {relay_url}: {error}"))?;
+        client
+            .try_connect_relay(relay_url, timeout)
+            .await
+            .map_err(|error| format!("nostr relay reconnect {relay_url}: {error}"))?;
+    }
+
+    Ok(connected_requested_relays(client, relay_urls).await)
+}
+
 pub(super) async fn requested_relay_statuses(
     client: &Client,
     relay_urls: &[String],
@@ -237,6 +262,7 @@ pub(super) fn event_to_nostr_event(event: &Event, op_name: &str) -> Result<Nostr
         .to_bech32()
         .map_err(|error| format!("{op_name} encode npub: {error}"))?;
     let references = extract_event_references(event);
+    let public_keys = extract_public_keys(event, op_name)?;
     let (root_event_id, reply_to_event_id) = derive_thread_links(&references);
     Ok(NostrEvent {
         content: event.content.clone(),
@@ -248,6 +274,7 @@ pub(super) fn event_to_nostr_event(event: &Event, op_name: &str) -> Result<Nostr
         root_event_id,
         reply_to_event_id,
         references,
+        public_keys,
     })
 }
 
@@ -265,6 +292,46 @@ fn extract_event_references(event: &Event) -> Vec<NostrEventReference> {
             _ => None,
         })
         .collect()
+}
+
+fn extract_public_keys(
+    event: &Event,
+    op_name: &str,
+) -> Result<Vec<NostrPublicKeyReference>, String> {
+    let mut public_keys = Vec::new();
+    for public_key in event.tags.public_keys() {
+        let public_key = public_key
+            .to_bech32()
+            .map_err(|error| format!("{op_name} encode p-tag npub: {error}"))?;
+        if public_keys
+            .iter()
+            .all(|reference: &NostrPublicKeyReference| reference.public_key != public_key)
+        {
+            let (relay_url, alias) = event
+                .tags
+                .iter()
+                .find_map(|tag| match tag.as_standardized() {
+                    Some(TagStandard::PublicKey {
+                        public_key: tag_public_key,
+                        relay_url,
+                        alias,
+                        ..
+                    }) => tag_public_key
+                        .to_bech32()
+                        .ok()
+                        .filter(|tag_npub| tag_npub == &public_key)
+                        .map(|_| (relay_url.as_ref().map(ToString::to_string), alias.clone())),
+                    _ => None,
+                })
+                .unwrap_or((None, None));
+            public_keys.push(NostrPublicKeyReference {
+                public_key,
+                relay_url,
+                alias,
+            });
+        }
+    }
+    Ok(public_keys)
 }
 
 fn derive_thread_links(references: &[NostrEventReference]) -> (Option<String>, Option<String>) {
@@ -292,4 +359,29 @@ fn derive_thread_links(references: &[NostrEventReference]) -> (Option<String>, O
     });
 
     (root_event_id, reply_to_event_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::event_to_nostr_event;
+    use nostr::prelude::{EventBuilder, Keys};
+
+    #[test]
+    fn event_to_nostr_event_extracts_public_keys() {
+        let author = Keys::generate();
+        let followed = Keys::generate();
+        let event =
+            EventBuilder::contact_list([nostr::prelude::Contact::new(followed.public_key())])
+                .sign_with_keys(&author)
+                .expect("sign contact list");
+
+        let decoded = event_to_nostr_event(&event, "test").expect("decode contact list");
+
+        assert_eq!(decoded.kind, 3);
+        assert_eq!(decoded.public_keys.len(), 1);
+        assert!(
+            decoded.public_keys[0].public_key.starts_with("npub1"),
+            "expected bech32 npub"
+        );
+    }
 }

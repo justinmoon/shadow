@@ -50,7 +50,7 @@ manifest path.
 - [x] Prove shared lifecycle events through the Rust path first and define how
       they surface to TypeScript apps.
 - [x] Prove one shell/system surface rendered directly by the compositor.
-- [ ] Land the first serious Rust demo app that exercises navigation, list
+- [~] Land the first serious Rust demo app that exercises navigation, list
       rendering, and persistence.
 
 ## Near-Term Steps
@@ -59,6 +59,9 @@ manifest path.
 - [ ] Move `Theme` and similar UI environment data behind a Shadow-owned
       context/env surface so app and framework helpers stop threading `theme`
       through every function.
+- [ ] Replace the current app-local async/platform boilerplate with a
+      Shadow-owned task/effect surface so apps stop hand-rolling pending-job
+      structs, token bookkeeping, and per-app platform listener threads.
 - [ ] Decide where the generated manifest types should live as the current
       manifest expands.
 - [ ] Rename target-specific compositor crates and binaries to match their
@@ -67,7 +70,7 @@ manifest path.
       `rust` apps.
 - [x] Choose the first Rust runner spike target and keep it deliberately small.
 - [x] Choose the first shared capability to prove through both app models.
-- [ ] Decide which text-input path to spike first: single-line editor or
+- [x] Decide which text-input path to spike first: single-line editor or
       multiline editor.
 - [x] Pick the first shell/system surface to target for embedded rendering.
 - [ ] Decide whether broader TypeScript platform work should stay in
@@ -116,6 +119,31 @@ manifest path.
   acceptable for the spike, but the next framework cleanup should move theme and
   related UI dependencies into a Shadow-owned context/env surface before more
   primitives pile onto the wrong pattern.
+- The Rust timeline spike still carries too much framework leakage for the app
+  authoring bar we want. App code should not need to manually juggle
+  `with_blocking_task` jobs, token-based pending state, or a dedicated
+  platform-control listener thread just to do normal product work. Shadow UI
+  needs first-class task/effect and platform-event surfaces that feel closer to
+  SwiftUI / Jetpack Compose.
+- The Rust Nostr app now exercises more than one real write seam through the
+  shared SDK and signer: reply publishing plus contact-list updates for follow
+  management. That is good platform pressure, but it also raises the priority
+  of the env/context and task/effect cleanup because product flows are now
+  piling onto app-local async plumbing.
+- The shared service APIs should keep Shadow-owned product semantics at the
+  boundary instead of leaking raw protocol bags. The Nostr publish surface now
+  uses explicit operation variants (`text_note`, `contact_list`) rather than a
+  flat numeric `kind` request, and other service writes should follow the same
+  pattern when multiple operations diverge in UX, validation, or policy.
+- VM automation for serious Rust apps needs semantic app-owned hooks, not
+  brittle fixed tap coordinates. The Explore layout change broke the Rust
+  Timeline smoke until the app exposed a first-class “open first visible note”
+  automation action. Keep pushing test/operator seams toward explicit app
+  automation commands instead of screen-position assumptions.
+- Some current Rust app reads still happen synchronously in route prep and other
+  render-adjacent code paths. That is acceptable for the spike, but the long
+  term framework needs a clearer cached-data model so app authors are not left
+  guessing which reads are safe inline and which must become async effects.
 - Shell/system chrome rewrite is in scope. The current homegrown shell UI should
   be treated as bring-up architecture, not the final product direction.
 - The VM operator/status path now depends on truthful mixed-model probing in
@@ -128,6 +156,10 @@ manifest path.
   env-driven host implementation, explicit mock support for tests, and a small
   enough surface to expose natively through `shadow_sdk` without first solving
   the entire lifecycle/control-plane story.
+- Local-service test fixtures should stop being per-smoke one-offs. Start
+  converging host, VM, and Pixel lanes on one reusable harness for seeded Nostr
+  relays and similar ephemeral services instead of duplicating relay bring-up
+  logic in each smoke script.
 - The first Rust camera slice now keeps `runtime-camera-host` as the single
   implementation while `shadow_sdk::services::camera` owns the app-facing types.
   The public Rust SDK no longer re-exports runtime host env knobs or transport

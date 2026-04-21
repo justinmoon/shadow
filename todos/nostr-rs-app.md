@@ -74,6 +74,10 @@ typed convenience wrappers on top.
   refresh, note detail, warm restore, visible sync state.
 - [x] Add first-run timeline onboarding: import or generate an account, then
       expose the active `npub` in-app.
+- [x] Land the first follow-management slice: manual `npub` follow/unfollow
+      backed by the shared kind-3 contact list.
+- [x] Split discovery from Home: keep Home follow-only, then add an explicit
+      Explore route for recent relay notes and profile discovery.
 - [x] Remove shared-store demo seed notes so the Rust app only surfaces real
       cached relay data.
 - [x] Remove the TypeScript timeline's fake demo feed and local fake publish
@@ -153,6 +157,10 @@ typed convenience wrappers on top.
     of the throwaway-key demo path
   - the fake local `publishKind1` path and the throwaway-key
     `publishEphemeralKind1` path are gone
+  - the public publish contract is now operation-typed instead of a flat
+    numeric kind bag: apps send `type: "text_note"` or
+    `type: "contact_list"` requests, while raw numeric Nostr kinds stay an
+    internal daemon concern
 - The signer should be OS-owned, Amber-style. Apps request publication or
   signing work from the OS; the OS decides whether to prompt, deny, sign once,
   or sign automatically because the user already granted standing approval.
@@ -252,6 +260,9 @@ typed convenience wrappers on top.
   - explicit refresh against the shared Nostr engine
   - route-based timeline -> thread -> profile navigation
   - cached kind-0 profile metadata headers via `get_replaceable`
+  - follow-aware home feed resolution from the active account's cached kind-3
+    contact list, with an explicit empty-home state when no contact list has
+    been cached yet
   - local thread parent/reply loading from shared cached reference data
   - on-demand thread fetch through the shared engine: exact parent ids plus
     generic referenced-event sync for replies
@@ -265,6 +276,9 @@ typed convenience wrappers on top.
 - The shared Nostr store no longer seeds fake `shadow-note-*` rows into empty
   caches, and initialization now scrubs those old demo ids from existing sqlite
   state so upgraded VMs do not keep surfacing placeholder notes.
+- The shared Nostr event surface now preserves `p` tags as public-key
+  references. That is enough for the app to recover a contact list from cached
+  kind-3 events without inventing a second follow-store abstraction first.
 - Timeline refresh failures should be presented as cache state, not product
   panic: when relays fail but cached notes exist, the app should keep showing
   the feed with a neutral cached-data message and log the relay error
@@ -293,5 +307,21 @@ typed convenience wrappers on top.
   - strengthen app-owned publish diagnostics in VM and Pixel operator flows
   - extend timeline compose beyond reply-only into note creation, editing, and
     richer write-side UX
+  - follow management now exists as a first honest slice: the account screen
+    can publish shared contact-list updates, the profile screen can
+    follow/unfollow directly, and Home auto-refreshes from the resulting
+    follow graph
+  - discovery now has its own honest surface too: Explore fetches recent relay
+    notes into the shared cache, gives fresh accounts with no follows a real
+    first destination, and can follow real relay authors directly without
+    polluting Home semantics
+  - signer approval policy is now scoped by publish operation, so “always
+    allow” for note publishing does not silently authorize contact-list
+    replacement
+  - contact-list publish now preserves cached relay/alias metadata for existing
+    follows instead of collapsing the shared model to bare public keys
+  - the next product step after this is starter-account flow on top of Explore
+    so a fresh account can adopt a useful real follow set intentionally instead
+    of relying on manual `npub` entry or one-by-one discovery
   - keep converging TypeScript and Rust app automation/test hooks on the same
     platform seams

@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::services::session_config::{self, RUNTIME_SESSION_CONFIG_ENV};
 
 use super::types::{
-    NostrAccountSource, NostrAccountSummary, NostrEvent, NostrEventReference, NostrQuery,
-    NostrReplaceableQuery,
+    NostrAccountSource, NostrAccountSummary, NostrEvent, NostrEventReference,
+    NostrPublicKeyReference, NostrQuery, NostrReplaceableQuery,
 };
 
 pub const NOSTR_ACCOUNT_NSEC_ENV: &str = "SHADOW_RUNTIME_NOSTR_ACCOUNT_NSEC";
@@ -117,7 +117,8 @@ impl SqliteNostrService {
                     identifier TEXT,
                     root_event_id TEXT,
                     reply_to_event_id TEXT,
-                    references_json TEXT NOT NULL DEFAULT '[]'
+                    references_json TEXT NOT NULL DEFAULT '[]',
+                    public_keys_json TEXT NOT NULL DEFAULT '[]'
                 );
                 CREATE INDEX IF NOT EXISTS nostr_events_created_at_idx
                     ON nostr_events (created_at DESC, sequence DESC);
@@ -152,6 +153,10 @@ impl SqliteNostrService {
         self.ensure_nostr_events_column(
             "references_json",
             "ALTER TABLE nostr_events ADD COLUMN references_json TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        self.ensure_nostr_events_column(
+            "public_keys_json",
+            "ALTER TABLE nostr_events ADD COLUMN public_keys_json TEXT NOT NULL DEFAULT '[]'",
         )?;
         self.connection
             .execute(
@@ -239,9 +244,10 @@ impl SqliteNostrService {
                     identifier,
                     root_event_id,
                     reply_to_event_id,
-                    references_json
+                    references_json,
+                    public_keys_json
                 )
-                SELECT id, kind, pubkey, created_at, content, NULL, NULL, NULL, '[]'
+                SELECT id, kind, pubkey, created_at, content, NULL, NULL, NULL, '[]', '[]'
                 FROM nostr_kind1_events
                 ",
                 [],
@@ -364,7 +370,7 @@ impl SqliteNostrService {
             .prepare(
                 "
                 SELECT id, kind, pubkey, created_at, content, identifier,
-                       root_event_id, reply_to_event_id, references_json
+                       root_event_id, reply_to_event_id, references_json, public_keys_json
                 FROM nostr_events
                 ORDER BY created_at DESC, sequence DESC
                 ",
@@ -447,7 +453,7 @@ impl SqliteNostrService {
             .query_row(
                 "
                 SELECT id, kind, pubkey, created_at, content, identifier,
-                       root_event_id, reply_to_event_id, references_json
+                       root_event_id, reply_to_event_id, references_json, public_keys_json
                 FROM nostr_events
                 WHERE id = ?1
                 ",
@@ -481,7 +487,7 @@ impl SqliteNostrService {
         let sql = if identifier.is_some() {
             "
             SELECT id, kind, pubkey, created_at, content, identifier,
-                   root_event_id, reply_to_event_id, references_json
+                   root_event_id, reply_to_event_id, references_json, public_keys_json
             FROM nostr_events
             WHERE kind = ?1 AND pubkey = ?2 AND identifier = ?3
             ORDER BY created_at DESC, sequence DESC
@@ -490,7 +496,7 @@ impl SqliteNostrService {
         } else {
             "
             SELECT id, kind, pubkey, created_at, content, identifier,
-                   root_event_id, reply_to_event_id, references_json
+                   root_event_id, reply_to_event_id, references_json, public_keys_json
             FROM nostr_events
             WHERE kind = ?1 AND pubkey = ?2 AND identifier IS NULL
             ORDER BY created_at DESC, sequence DESC
@@ -548,8 +554,9 @@ impl SqliteNostrService {
                     identifier,
                     root_event_id,
                     reply_to_event_id,
-                    references_json
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                    references_json,
+                    public_keys_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                 ",
                 params![
                     event.id,
@@ -560,7 +567,8 @@ impl SqliteNostrService {
                     event.identifier,
                     event.root_event_id,
                     event.reply_to_event_id,
-                    encode_references_json(&event.references)?
+                    encode_references_json(&event.references)?,
+                    encode_public_keys_json(&event.public_keys)?
                 ],
             )
             .map_err(|error| {
@@ -602,6 +610,7 @@ impl From<Kind1Event> for NostrEvent {
             root_event_id: None,
             reply_to_event_id: None,
             references: Vec::new(),
+            public_keys: Vec::new(),
         }
     }
 }
@@ -816,6 +825,7 @@ fn summarize_account(
 
 fn map_nostr_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<NostrEvent> {
     let references_json: String = row.get("references_json")?;
+    let public_keys_json: String = row.get("public_keys_json")?;
     Ok(NostrEvent {
         id: row.get("id")?,
         kind: row.get("kind")?,
@@ -828,6 +838,13 @@ fn map_nostr_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<NostrEvent> {
         references: decode_references_json(&references_json).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
                 references_json.len(),
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?,
+        public_keys: decode_public_keys_json(&public_keys_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                public_keys_json.len(),
                 rusqlite::types::Type::Text,
                 Box::new(error),
             )
@@ -855,10 +872,26 @@ fn encode_references_json(references: &[NostrEventReference]) -> Result<String, 
     })
 }
 
+fn encode_public_keys_json(
+    public_keys: &[NostrPublicKeyReference],
+) -> Result<String, NostrHostError> {
+    serde_json::to_string(public_keys).map_err(|error| {
+        NostrHostError::new(format!(
+            "shadow nostr service: encode event public keys json: {error}"
+        ))
+    })
+}
+
 fn decode_references_json(
     references_json: &str,
 ) -> Result<Vec<NostrEventReference>, serde_json::Error> {
     serde_json::from_str(references_json)
+}
+
+fn decode_public_keys_json(
+    public_keys_json: &str,
+) -> Result<Vec<NostrPublicKeyReference>, serde_json::Error> {
+    serde_json::from_str(public_keys_json)
 }
 
 #[cfg(test)]
@@ -898,6 +931,7 @@ mod tests {
                 root_event_id: None,
                 reply_to_event_id: None,
                 references: Vec::new(),
+                public_keys: Vec::new(),
             },
             NostrEvent {
                 content: String::from("second cached note"),
@@ -909,6 +943,7 @@ mod tests {
                 root_event_id: None,
                 reply_to_event_id: None,
                 references: Vec::new(),
+                public_keys: Vec::new(),
             },
             NostrEvent {
                 content: String::from("third cached note"),
@@ -920,6 +955,7 @@ mod tests {
                 root_event_id: None,
                 reply_to_event_id: None,
                 references: Vec::new(),
+                public_keys: Vec::new(),
             },
         ] {
             service
@@ -1175,6 +1211,7 @@ mod tests {
                 root_event_id: None,
                 reply_to_event_id: None,
                 references: Vec::new(),
+                public_keys: Vec::new(),
             },
             NostrEvent {
                 content: String::from("profile-v2"),
@@ -1186,6 +1223,7 @@ mod tests {
                 root_event_id: None,
                 reply_to_event_id: None,
                 references: Vec::new(),
+                public_keys: Vec::new(),
             },
         ] {
             service
@@ -1224,6 +1262,7 @@ mod tests {
                     event_id: String::from("test-note-1"),
                     marker: Some(String::from("reply")),
                 }],
+                public_keys: Vec::new(),
             })
             .expect("store reply");
         service
@@ -1240,6 +1279,7 @@ mod tests {
                     event_id: String::from("test-note-2"),
                     marker: Some(String::from("reply")),
                 }],
+                public_keys: Vec::new(),
             })
             .expect("store other reply");
 
@@ -1285,6 +1325,7 @@ mod tests {
                         marker: Some(String::from("reply")),
                     },
                 ],
+                public_keys: Vec::new(),
             })
             .expect("store referenced event");
 
@@ -1320,6 +1361,7 @@ mod tests {
                 root_event_id: None,
                 reply_to_event_id: None,
                 references: Vec::new(),
+                public_keys: Vec::new(),
             })
             .expect("store non-kind1 event");
 
@@ -1400,6 +1442,7 @@ mod tests {
                     root_event_id: None,
                     reply_to_event_id: None,
                     references: Vec::new(),
+                    public_keys: Vec::new(),
                 })
                 .expect("store legacy demo row");
         }
@@ -1414,6 +1457,7 @@ mod tests {
                 root_event_id: None,
                 reply_to_event_id: None,
                 references: Vec::new(),
+                public_keys: Vec::new(),
             })
             .expect("store real cached row");
 

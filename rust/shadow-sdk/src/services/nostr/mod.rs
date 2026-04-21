@@ -11,9 +11,9 @@ pub use store::{
     NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,
 };
 pub use types::{
-    NostrAccountSource, NostrAccountSummary, NostrEvent, NostrEventReference, NostrPublishReceipt,
-    NostrPublishRequest, NostrPublishedRelayFailure, NostrQuery, NostrReplaceableQuery,
-    NostrSyncReceipt, NostrSyncRequest,
+    NostrAccountSource, NostrAccountSummary, NostrEvent, NostrEventReference,
+    NostrPublicKeyReference, NostrPublishReceipt, NostrPublishRequest, NostrPublishedRelayFailure,
+    NostrQuery, NostrReplaceableQuery, NostrSyncReceipt, NostrSyncRequest,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +162,7 @@ mod tests {
                 root_event_id: None,
                 reply_to_event_id: None,
                 references: Vec::new(),
+                public_keys: Vec::new(),
             },
             NostrEvent {
                 content: String::from("second cached note"),
@@ -173,6 +174,7 @@ mod tests {
                 root_event_id: None,
                 reply_to_event_id: None,
                 references: Vec::new(),
+                public_keys: Vec::new(),
             },
             NostrEvent {
                 content: String::from("third cached note"),
@@ -184,6 +186,7 @@ mod tests {
                 root_event_id: None,
                 reply_to_event_id: None,
                 references: Vec::new(),
+                public_keys: Vec::new(),
             },
         ] {
             service.store_event(&event).expect("store cached event");
