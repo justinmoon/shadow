@@ -122,6 +122,8 @@ struct metadata_stage_runtime {
     char temp_probe_stage_path[224];
     char probe_fingerprint_path[224];
     char temp_probe_fingerprint_path[224];
+    char probe_report_path[224];
+    char temp_probe_report_path[224];
 };
 
 static int shadow_kmsg_fd = -1;
@@ -577,6 +579,8 @@ static void init_metadata_stage_runtime(
     int probe_temp_len;
     int probe_fingerprint_len;
     int probe_fingerprint_temp_len;
+    int probe_report_len;
+    int probe_report_temp_len;
 
     memset(runtime, 0, sizeof(*runtime));
     runtime->enabled = config->orange_gpu_metadata_stage_breadcrumb;
@@ -638,6 +642,18 @@ static void init_metadata_stage_runtime(
         "%s/.probe-fingerprint.txt.tmp",
         runtime->stage_dir
     );
+    probe_report_len = snprintf(
+        runtime->probe_report_path,
+        sizeof(runtime->probe_report_path),
+        "%s/probe-report.txt",
+        runtime->stage_dir
+    );
+    probe_report_temp_len = snprintf(
+        runtime->temp_probe_report_path,
+        sizeof(runtime->temp_probe_report_path),
+        "%s/.probe-report.txt.tmp",
+        runtime->stage_dir
+    );
     if (
         dir_len < 0 || (size_t)dir_len >= sizeof(runtime->stage_dir) ||
         stage_len < 0 || (size_t)stage_len >= sizeof(runtime->stage_path) ||
@@ -645,7 +661,9 @@ static void init_metadata_stage_runtime(
         probe_stage_len < 0 || (size_t)probe_stage_len >= sizeof(runtime->probe_stage_path) ||
         probe_temp_len < 0 || (size_t)probe_temp_len >= sizeof(runtime->temp_probe_stage_path) ||
         probe_fingerprint_len < 0 || (size_t)probe_fingerprint_len >= sizeof(runtime->probe_fingerprint_path) ||
-        probe_fingerprint_temp_len < 0 || (size_t)probe_fingerprint_temp_len >= sizeof(runtime->temp_probe_fingerprint_path)
+        probe_fingerprint_temp_len < 0 || (size_t)probe_fingerprint_temp_len >= sizeof(runtime->temp_probe_fingerprint_path) ||
+        probe_report_len < 0 || (size_t)probe_report_len >= sizeof(runtime->probe_report_path) ||
+        probe_report_temp_len < 0 || (size_t)probe_report_temp_len >= sizeof(runtime->temp_probe_report_path)
     ) {
         runtime->enabled = false;
         log_stage("<4>", "metadata-stage-disabled", "reason=path_too_long");
@@ -2189,16 +2207,381 @@ static const char *orange_gpu_checkpoint_visual(const char *checkpoint_name) {
     }
 
     if (strcmp(checkpoint_name, "validated") == 0) {
-        return "bands-orange";
+        return "code-orange-2";
     }
     if (strcmp(checkpoint_name, "probe-ready") == 0) {
-        return "checker-orange";
+        return "code-orange-3";
     }
     if (strcmp(checkpoint_name, "postlude") == 0) {
-        return "frame-orange";
+        return "code-orange-4";
+    }
+    if (strcmp(checkpoint_name, "watchdog-timeout") == 0) {
+        return "code-orange-9";
+    }
+    if (strcmp(checkpoint_name, "child-signal") == 0) {
+        return "code-orange-10";
+    }
+    if (strcmp(checkpoint_name, "child-exit-nonzero") == 0) {
+        return "code-orange-11";
     }
 
     return "solid-orange";
+}
+
+typedef void (*child_watch_timeout_observer_fn)(
+    pid_t child_pid,
+    unsigned int waited_seconds,
+    unsigned int timeout_seconds,
+    void *context
+);
+
+struct child_watch_result {
+    int status;
+    bool completed;
+    bool timed_out;
+    unsigned int waited_seconds;
+};
+
+struct probe_timeout_observer_context {
+    const char *label;
+    const char *probe_stage_path;
+    struct metadata_stage_runtime *metadata_stage;
+};
+
+static void init_child_watch_result(struct child_watch_result *result) {
+    memset(result, 0, sizeof(*result));
+}
+
+static void sanitize_inline_text(char *text) {
+    size_t length;
+    size_t index;
+
+    length = strlen(text);
+    for (index = 0; index < length; index++) {
+        if (text[index] == '\r' || text[index] == '\n' || text[index] == '\t') {
+            text[index] = ' ';
+        }
+    }
+    while (length > 0 && text[length - 1] == ' ') {
+        text[length - 1] = '\0';
+        length--;
+    }
+}
+
+static bool read_text_file_best_effort(const char *path, char *dest, size_t dest_size) {
+    int fd;
+    ssize_t bytes_read;
+
+    if (dest_size == 0U) {
+        return false;
+    }
+
+    fd = open(path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+    if (fd < 0) {
+        dest[0] = '\0';
+        return false;
+    }
+
+    bytes_read = read(fd, dest, dest_size - 1U);
+    close(fd);
+    if (bytes_read < 0) {
+        dest[0] = '\0';
+        return false;
+    }
+
+    dest[bytes_read] = '\0';
+    sanitize_inline_text(dest);
+    return true;
+}
+
+static bool append_pid_proc_excerpt(
+    char *buffer,
+    size_t buffer_size,
+    size_t *used,
+    pid_t pid,
+    const char *name,
+    size_t max_bytes
+) {
+    char path[64];
+    int path_len;
+
+    path_len = snprintf(path, sizeof(path), "/proc/%d/%s", pid, name);
+    if (path_len < 0 || (size_t)path_len >= sizeof(path)) {
+        return false;
+    }
+
+    return append_file_excerpt(buffer, buffer_size, used, path, max_bytes);
+}
+
+static bool write_metadata_probe_report_best_effort(
+    struct metadata_stage_runtime *runtime,
+    const char *label,
+    const char *probe_stage_path,
+    const struct child_watch_result *result,
+    pid_t observed_pid,
+    bool capture_live_proc,
+    unsigned int timeout_seconds
+) {
+    char contents[12288];
+    char observed_probe_stage[256];
+    char wchan[256];
+    char syscall_text[512];
+    size_t used = 0U;
+    bool observed_probe_stage_present = false;
+    bool wchan_present = false;
+    bool syscall_present = false;
+
+    if (
+        runtime == NULL ||
+        !runtime->enabled ||
+        runtime->write_failed ||
+        !runtime->prepared
+    ) {
+        return false;
+    }
+
+    observed_probe_stage_present =
+        probe_stage_path != NULL &&
+        probe_stage_path[0] != '\0' &&
+        read_text_file_best_effort(
+            probe_stage_path,
+            observed_probe_stage,
+            sizeof(observed_probe_stage)
+        );
+    if (capture_live_proc && observed_pid > 0) {
+        char proc_path[64];
+        int proc_path_len;
+
+        proc_path_len = snprintf(proc_path, sizeof(proc_path), "/proc/%d/wchan", observed_pid);
+        if (proc_path_len > 0 && (size_t)proc_path_len < sizeof(proc_path)) {
+            wchan_present = read_text_file_best_effort(proc_path, wchan, sizeof(wchan));
+        }
+        proc_path_len = snprintf(proc_path, sizeof(proc_path), "/proc/%d/syscall", observed_pid);
+        if (proc_path_len > 0 && (size_t)proc_path_len < sizeof(proc_path)) {
+            syscall_present = read_text_file_best_effort(
+                proc_path,
+                syscall_text,
+                sizeof(syscall_text)
+            );
+        }
+    }
+
+    if (
+        !append_fingerprintf(contents, sizeof(contents), &used, "probe_label=%s\n", label) ||
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "probe_stage_path=%s\n",
+            probe_stage_path != NULL ? probe_stage_path : ""
+        ) ||
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "observed_probe_stage_present=%s\n",
+            bool_word(observed_probe_stage_present)
+        ) ||
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "observed_probe_stage=%s\n",
+            observed_probe_stage_present ? observed_probe_stage : ""
+        ) ||
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "child_completed=%s\nchild_timed_out=%s\nwaited_seconds=%u\ntimeout_seconds=%u\n",
+            bool_word(result != NULL && result->completed),
+            bool_word(result != NULL && result->timed_out),
+            result != NULL ? result->waited_seconds : 0U,
+            timeout_seconds
+        ) ||
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "exit_status=%d\nsignal=%d\nraw_wait_status=%d\n",
+            result != NULL && result->completed && WIFEXITED(result->status)
+                ? WEXITSTATUS(result->status)
+                : -1,
+            result != NULL && result->completed && WIFSIGNALED(result->status)
+                ? WTERMSIG(result->status)
+                : -1,
+            result != NULL ? result->status : 0
+        ) ||
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "proc_snapshot_attempted=%s\nobserved_pid=%d\nwchan_present=%s\nwchan=%s\nsyscall_present=%s\nsyscall=%s\n",
+            bool_word(capture_live_proc && observed_pid > 0),
+            observed_pid,
+            bool_word(wchan_present),
+            wchan_present ? wchan : "",
+            bool_word(syscall_present),
+            syscall_present ? syscall_text : ""
+        )
+    ) {
+        log_stage("<4>", "metadata-probe-report-write-skipped", "reason=buffer_overflow");
+        return false;
+    }
+
+    if (capture_live_proc && observed_pid > 0) {
+        if (
+            !append_pid_proc_excerpt(
+                contents,
+                sizeof(contents),
+                &used,
+                observed_pid,
+                "status",
+                2048U
+            ) ||
+            !append_pid_proc_excerpt(
+                contents,
+                sizeof(contents),
+                &used,
+                observed_pid,
+                "stack",
+                4096U
+            )
+        ) {
+            log_stage("<4>", "metadata-probe-report-write-skipped", "reason=proc_excerpt_overflow");
+            return false;
+        }
+    }
+
+    if (
+        write_atomic_text_file(
+            runtime->stage_dir,
+            runtime->temp_probe_report_path,
+            runtime->probe_report_path,
+            contents
+        ) != 0
+    ) {
+        log_stage(
+            "<4>",
+            "metadata-probe-report-write-failed",
+            "path=%s errno=%d",
+            runtime->probe_report_path,
+            errno
+        );
+        return false;
+    }
+
+    log_stage(
+        "<6>",
+        "metadata-probe-report-write",
+        "label=%s path=%s",
+        label,
+        runtime->probe_report_path
+    );
+    return true;
+}
+
+static void capture_probe_timeout_observer(
+    pid_t child_pid,
+    unsigned int waited_seconds,
+    unsigned int timeout_seconds,
+    void *context
+) {
+    struct probe_timeout_observer_context *observer_context = context;
+    struct child_watch_result result;
+
+    if (observer_context == NULL) {
+        return;
+    }
+
+    init_child_watch_result(&result);
+    result.completed = false;
+    result.timed_out = true;
+    result.waited_seconds = waited_seconds;
+    (void)write_metadata_probe_report_best_effort(
+        observer_context->metadata_stage,
+        observer_context->label,
+        observer_context->probe_stage_path,
+        &result,
+        child_pid,
+        true,
+        timeout_seconds
+    );
+}
+
+static int wait_for_child_with_watchdog(
+    pid_t child_pid,
+    const char *label,
+    unsigned int poll_seconds,
+    unsigned int timeout_seconds,
+    child_watch_timeout_observer_fn observer,
+    void *observer_context,
+    struct child_watch_result *result
+) {
+    if (result == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    init_child_watch_result(result);
+    for (;;) {
+        pid_t waited = waitpid(child_pid, &result->status, WNOHANG);
+
+        if (waited == child_pid) {
+            result->completed = true;
+            return 0;
+        }
+        if (waited == 0) {
+            sleep_seconds(poll_seconds);
+            result->waited_seconds += poll_seconds;
+            log_stage(
+                "<6>",
+                "child-wait",
+                "label=%s pid=%d seconds=%u",
+                label,
+                child_pid,
+                result->waited_seconds
+            );
+            if (timeout_seconds > 0U && result->waited_seconds >= timeout_seconds) {
+                result->timed_out = true;
+                log_stage(
+                    "<4>",
+                    "child-watchdog-timeout",
+                    "label=%s pid=%d waited_seconds=%u timeout_seconds=%u",
+                    label,
+                    child_pid,
+                    result->waited_seconds,
+                    timeout_seconds
+                );
+                if (observer != NULL) {
+                    observer(
+                        child_pid,
+                        result->waited_seconds,
+                        timeout_seconds,
+                        observer_context
+                    );
+                }
+                if (kill(child_pid, SIGKILL) != 0 && errno != ESRCH) {
+                    return -1;
+                }
+                for (;;) {
+                    waited = waitpid(child_pid, &result->status, 0);
+                    if (waited == child_pid) {
+                        result->completed = true;
+                        return 0;
+                    }
+                    if (waited < 0 && errno == EINTR) {
+                        continue;
+                    }
+                    return -1;
+                }
+            }
+            continue;
+        }
+        if (errno != EINTR) {
+            return -1;
+        }
+    }
 }
 
 static int run_orange_init_payload(
@@ -2207,9 +2590,8 @@ static int run_orange_init_payload(
     const char *visual_preset
 ) {
     pid_t child_pid;
-    int status;
     char hold_seconds[16];
-    unsigned int waited_seconds = 0;
+    struct child_watch_result watch_result;
 
     log_stage(
         "<6>",
@@ -2281,49 +2663,51 @@ static int run_orange_init_payload(
         _exit(127);
     }
 
-    for (;;) {
-        pid_t waited = waitpid(child_pid, &status, WNOHANG);
-
-        if (waited == child_pid) {
-            break;
-        }
-        if (waited == 0) {
-            sleep_seconds(5);
-            waited_seconds += 5;
-            log_stage("<6>", "orange-wait", "pid=%d seconds=%u", child_pid, waited_seconds);
-            continue;
-        }
-        if (errno != EINTR) {
-            log_stage("<3>", "orange-waitpid-failed", "pid=%d errno=%d", child_pid, errno);
-            log_boot("<3>", "waitpid(%d) failed: errno=%d", child_pid, errno);
-            return 1;
-        }
+    if (
+        wait_for_child_with_watchdog(
+            child_pid,
+            "orange-init",
+            5U,
+            0U,
+            NULL,
+            NULL,
+            &watch_result
+        ) != 0
+    ) {
+        log_stage("<3>", "orange-waitpid-failed", "pid=%d errno=%d", child_pid, errno);
+        log_boot("<3>", "waitpid(%d) failed: errno=%d", child_pid, errno);
+        return 1;
     }
 
-    if (WIFEXITED(status)) {
-        log_stage("<6>", "orange-exit", "status=%d", WEXITSTATUS(status));
+    if (WIFEXITED(watch_result.status)) {
+        log_stage("<6>", "orange-exit", "status=%d", WEXITSTATUS(watch_result.status));
         log_boot(
             "<6>",
             "payload %s exited with status=%d",
             SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH,
-            WEXITSTATUS(status)
+            WEXITSTATUS(watch_result.status)
         );
-        return WEXITSTATUS(status) == 0 ? 0 : WEXITSTATUS(status);
+        return WEXITSTATUS(watch_result.status) == 0 ? 0 : WEXITSTATUS(watch_result.status);
     }
 
-    if (WIFSIGNALED(status)) {
-        log_stage("<3>", "orange-signal", "signal=%d", WTERMSIG(status));
+    if (WIFSIGNALED(watch_result.status)) {
+        log_stage("<3>", "orange-signal", "signal=%d", WTERMSIG(watch_result.status));
         log_boot(
             "<3>",
             "payload %s died from signal=%d",
             SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH,
-            WTERMSIG(status)
+            WTERMSIG(watch_result.status)
         );
-        return 128 + WTERMSIG(status);
+        return 128 + WTERMSIG(watch_result.status);
     }
 
-    log_stage("<4>", "orange-unknown-status", "status=%d", status);
-    log_boot("<4>", "payload %s returned unknown wait status=%d", SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH, status);
+    log_stage("<4>", "orange-unknown-status", "status=%d", watch_result.status);
+    log_boot(
+        "<4>",
+        "payload %s returned unknown wait status=%d",
+        SHADOW_HELLO_INIT_ORANGE_PAYLOAD_PATH,
+        watch_result.status
+    );
     return 1;
 }
 
@@ -2413,7 +2797,6 @@ static int run_orange_gpu_parent_probe(
 ) {
     bool any_succeeded = false;
     unsigned int attempt;
-    bool watchdog_killed = false;
 
     if (result_stage != NULL && result_stage_size > 0U) {
         (void)copy_string(result_stage, result_stage_size, "parent-probe-result=not-run");
@@ -2443,11 +2826,10 @@ static int run_orange_gpu_parent_probe(
 
     for (attempt = 1; attempt <= config->orange_gpu_parent_probe_attempts; attempt++) {
         pid_t child_pid;
-        int status;
-        unsigned int waited_seconds = 0;
         unsigned int watchdog_timeout = SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS;
         char probe_stage_prefix[64];
         const char *probe_stage_path = NULL;
+        struct child_watch_result watch_result;
 
         unlink_best_effort(SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_SUMMARY_PATH);
         unlink_best_effort(SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_OUTPUT_PATH);
@@ -2528,120 +2910,40 @@ static int run_orange_gpu_parent_probe(
             child_pid
         );
 
-        for (;;) {
-            pid_t waited = waitpid(child_pid, &status, WNOHANG);
-
-            if (waited == child_pid) {
-                break;
-            }
-            if (waited == 0) {
-                sleep_seconds(1);
-                waited_seconds += 1;
-                log_stage(
-                    "<6>",
-                    "orange-gpu-parent-probe-wait",
-                    "attempt=%u/%u pid=%d seconds=%u",
-                    attempt,
-                    config->orange_gpu_parent_probe_attempts,
-                    child_pid,
-                    waited_seconds
-                );
-                if (waited_seconds >= watchdog_timeout) {
-                    log_stage(
-                        "<4>",
-                        "orange-gpu-parent-probe-watchdog-timeout",
-                        "attempt=%u/%u pid=%d waited_seconds=%u timeout_seconds=%u",
-                        attempt,
-                        config->orange_gpu_parent_probe_attempts,
-                        child_pid,
-                        waited_seconds,
-                        watchdog_timeout
-                    );
-                    log_boot(
-                        "<4>",
-                        "orange-gpu parent probe attempt=%u/%u exceeded watchdog timeout=%u second(s); sending SIGKILL",
-                        attempt,
-                        config->orange_gpu_parent_probe_attempts,
-                        watchdog_timeout
-                    );
-                    watchdog_killed = true;
-                    if (kill(child_pid, SIGKILL) != 0 && errno != ESRCH) {
-                        log_stage(
-                            "<3>",
-                            "orange-gpu-parent-probe-watchdog-kill-failed",
-                            "attempt=%u/%u pid=%d errno=%d",
-                            attempt,
-                            config->orange_gpu_parent_probe_attempts,
-                            child_pid,
-                            errno
-                        );
-                        log_boot(
-                            "<3>",
-                            "kill(%d, SIGKILL) for orange-gpu parent probe attempt=%u/%u failed: errno=%d",
-                            child_pid,
-                            attempt,
-                            config->orange_gpu_parent_probe_attempts,
-                            errno
-                        );
-                        return 1;
-                    }
-                    for (;;) {
-                        waited = waitpid(child_pid, &status, 0);
-                        if (waited == child_pid) {
-                            break;
-                        }
-                        if (waited < 0 && errno == EINTR) {
-                            continue;
-                        }
-
-                        log_stage(
-                            "<3>",
-                            "orange-gpu-parent-probe-watchdog-reap-failed",
-                            "attempt=%u/%u pid=%d errno=%d",
-                            attempt,
-                            config->orange_gpu_parent_probe_attempts,
-                            child_pid,
-                            errno
-                        );
-                        log_boot(
-                            "<3>",
-                            "watchdog waitpid(%d) for orange-gpu parent probe attempt=%u/%u failed: errno=%d",
-                            child_pid,
-                            attempt,
-                            config->orange_gpu_parent_probe_attempts,
-                            errno
-                        );
-                        return 1;
-                    }
-                    break;
-                }
-                continue;
-            }
-            if (errno != EINTR) {
-                log_stage(
-                    "<3>",
-                    "orange-gpu-parent-probe-waitpid-failed",
-                    "attempt=%u/%u pid=%d errno=%d",
-                    attempt,
-                    config->orange_gpu_parent_probe_attempts,
-                    child_pid,
-                    errno
-                );
-                log_boot(
-                    "<3>",
-                    "waitpid(%d) for orange-gpu parent probe attempt=%u/%u failed: errno=%d",
-                    child_pid,
-                    attempt,
-                    config->orange_gpu_parent_probe_attempts,
-                    errno
-                );
-                return 1;
-            }
+        if (
+            wait_for_child_with_watchdog(
+                child_pid,
+                "orange-gpu-parent-probe",
+                1U,
+                watchdog_timeout,
+                NULL,
+                NULL,
+                &watch_result
+            ) != 0
+        ) {
+            log_stage(
+                "<3>",
+                "orange-gpu-parent-probe-waitpid-failed",
+                "attempt=%u/%u pid=%d errno=%d",
+                attempt,
+                config->orange_gpu_parent_probe_attempts,
+                child_pid,
+                errno
+            );
+            log_boot(
+                "<3>",
+                "waitpid(%d) for orange-gpu parent probe attempt=%u/%u failed: errno=%d",
+                child_pid,
+                attempt,
+                config->orange_gpu_parent_probe_attempts,
+                errno
+            );
+            return 1;
         }
 
         log_file_best_effort("orange-gpu-parent-probe-output", SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_OUTPUT_PATH);
 
-        if (WIFEXITED(status)) {
+        if (WIFEXITED(watch_result.status)) {
             if (result_stage != NULL && result_stage_size > 0U) {
                 char stage_value[64];
 
@@ -2649,11 +2951,11 @@ static int run_orange_gpu_parent_probe(
                     stage_value,
                     sizeof(stage_value),
                     "parent-probe-result=exit-%d",
-                    WEXITSTATUS(status)
+                    WEXITSTATUS(watch_result.status)
                 );
                 (void)copy_string(result_stage, result_stage_size, stage_value);
             }
-            if (WEXITSTATUS(status) == 0) {
+            if (WEXITSTATUS(watch_result.status) == 0) {
                 any_succeeded = true;
                 log_stage(
                     "<6>",
@@ -2676,17 +2978,17 @@ static int run_orange_gpu_parent_probe(
                     "attempt=%u/%u status=%d",
                     attempt,
                     config->orange_gpu_parent_probe_attempts,
-                    WEXITSTATUS(status)
+                    WEXITSTATUS(watch_result.status)
                 );
                 log_boot(
                     "<4>",
                     "orange-gpu parent probe attempt=%u/%u exited with status=%d",
                     attempt,
                     config->orange_gpu_parent_probe_attempts,
-                    WEXITSTATUS(status)
+                    WEXITSTATUS(watch_result.status)
                 );
             }
-        } else if (WIFSIGNALED(status)) {
+        } else if (WIFSIGNALED(watch_result.status)) {
             if (result_stage != NULL && result_stage_size > 0U) {
                 char stage_value[64];
 
@@ -2694,8 +2996,8 @@ static int run_orange_gpu_parent_probe(
                     stage_value,
                     sizeof(stage_value),
                     "parent-probe-result=%s-%d",
-                    watchdog_killed ? "watchdog-signal" : "signal",
-                    WTERMSIG(status)
+                    watch_result.timed_out ? "watchdog-signal" : "signal",
+                    WTERMSIG(watch_result.status)
                 );
                 (void)copy_string(result_stage, result_stage_size, stage_value);
             }
@@ -2705,14 +3007,14 @@ static int run_orange_gpu_parent_probe(
                 "attempt=%u/%u signal=%d",
                 attempt,
                 config->orange_gpu_parent_probe_attempts,
-                WTERMSIG(status)
+                WTERMSIG(watch_result.status)
             );
             log_boot(
                 "<4>",
                 "orange-gpu parent probe attempt=%u/%u died from signal=%d",
                 attempt,
                 config->orange_gpu_parent_probe_attempts,
-                WTERMSIG(status)
+                WTERMSIG(watch_result.status)
             );
         } else {
             if (result_stage != NULL && result_stage_size > 0U) {
@@ -2722,7 +3024,7 @@ static int run_orange_gpu_parent_probe(
                     stage_value,
                     sizeof(stage_value),
                     "parent-probe-result=unknown-status-%d",
-                    status
+                    watch_result.status
                 );
                 (void)copy_string(result_stage, result_stage_size, stage_value);
             }
@@ -2732,14 +3034,14 @@ static int run_orange_gpu_parent_probe(
                 "attempt=%u/%u status=%d",
                 attempt,
                 config->orange_gpu_parent_probe_attempts,
-                status
+                watch_result.status
             );
             log_boot(
                 "<4>",
                 "orange-gpu parent probe attempt=%u/%u returned unknown wait status=%d",
                 attempt,
                 config->orange_gpu_parent_probe_attempts,
-                status
+                watch_result.status
             );
         }
 
@@ -2807,18 +3109,18 @@ static int run_orange_gpu_payload(
     struct metadata_stage_runtime *metadata_stage
 ) {
     pid_t child_pid;
-    int status;
     int probe_status;
     int probe_checkpoint_status = 0;
     char probe_result_stage[64];
     char hold_seconds[16];
     const char *payload_probe_stage_path = NULL;
     const char *payload_probe_stage_prefix = NULL;
-    unsigned int waited_seconds = 0;
     unsigned int watchdog_timeout =
         orange_gpu_mode_uses_success_postlude(config)
             ? SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS
             : config->hold_seconds + SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS;
+    struct child_watch_result watch_result;
+    struct probe_timeout_observer_context timeout_observer_context;
 
     if (ensure_orange_gpu_runtime_dirs() != 0) {
         return 1;
@@ -2865,6 +3167,10 @@ static int run_orange_gpu_payload(
             payload_probe_stage_prefix = "orange-gpu-payload";
         }
     }
+    memset(&timeout_observer_context, 0, sizeof(timeout_observer_context));
+    timeout_observer_context.label = "orange-gpu-payload";
+    timeout_observer_context.probe_stage_path = payload_probe_stage_path;
+    timeout_observer_context.metadata_stage = metadata_stage;
     probe_status = run_orange_gpu_parent_probe(
         config,
         metadata_stage,
@@ -3310,90 +3616,90 @@ static int run_orange_gpu_payload(
         _exit(127);
     }
 
-    for (;;) {
-        pid_t waited = waitpid(child_pid, &status, WNOHANG);
-
-        if (waited == child_pid) {
-            break;
-        }
-        if (waited == 0) {
-            sleep_seconds(5);
-            waited_seconds += 5;
-            log_stage("<6>", "orange-gpu-wait", "pid=%d seconds=%u", child_pid, waited_seconds);
-            if (waited_seconds >= watchdog_timeout) {
-                log_stage(
-                    "<4>",
-                    "orange-gpu-watchdog-timeout",
-                    "pid=%d waited_seconds=%u timeout_seconds=%u",
-                    child_pid,
-                    waited_seconds,
-                    watchdog_timeout
-                );
-                log_boot(
-                    "<4>",
-                    "orange-gpu payload exceeded watchdog timeout=%u second(s); sending SIGKILL",
-                    watchdog_timeout
-                );
-                if (kill(child_pid, SIGKILL) != 0 && errno != ESRCH) {
-                    log_stage("<3>", "orange-gpu-watchdog-kill-failed", "pid=%d errno=%d", child_pid, errno);
-                    log_boot("<3>", "kill(%d, SIGKILL) failed: errno=%d", child_pid, errno);
-                    return 1;
-                }
-                for (;;) {
-                    waited = waitpid(child_pid, &status, 0);
-                    if (waited == child_pid) {
-                        break;
-                    }
-                    if (waited < 0 && errno == EINTR) {
-                        continue;
-                    }
-
-                    log_stage("<3>", "orange-gpu-watchdog-reap-failed", "pid=%d errno=%d", child_pid, errno);
-                    log_boot("<3>", "watchdog waitpid(%d) failed: errno=%d", child_pid, errno);
-                    return 1;
-                }
-                break;
-            }
-            continue;
-        }
-        if (errno != EINTR) {
-            log_stage("<3>", "orange-gpu-waitpid-failed", "pid=%d errno=%d", child_pid, errno);
-            log_boot("<3>", "waitpid(%d) failed: errno=%d", child_pid, errno);
-            return 1;
-        }
+    if (
+        wait_for_child_with_watchdog(
+            child_pid,
+            "orange-gpu-payload",
+            5U,
+            watchdog_timeout,
+            capture_probe_timeout_observer,
+            &timeout_observer_context,
+            &watch_result
+        ) != 0
+    ) {
+        log_stage("<3>", "orange-gpu-waitpid-failed", "pid=%d errno=%d", child_pid, errno);
+        log_boot("<3>", "waitpid(%d) failed: errno=%d", child_pid, errno);
+        return 1;
     }
 
     log_file_best_effort("orange-gpu-output", SHADOW_HELLO_INIT_ORANGE_GPU_OUTPUT_PATH);
     log_file_best_effort("orange-gpu-summary", SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH);
 
-    if (WIFEXITED(status)) {
-        log_stage("<6>", "orange-gpu-exit", "status=%d", WEXITSTATUS(status));
+    if (!watch_result.timed_out) {
+        (void)write_metadata_probe_report_best_effort(
+            metadata_stage,
+            "orange-gpu-payload",
+            payload_probe_stage_path,
+            &watch_result,
+            -1,
+            false,
+            watchdog_timeout
+        );
+    }
+
+    if (watch_result.timed_out) {
+        (void)run_orange_gpu_checkpoint(config, "watchdog-timeout", 1U);
+        log_stage(
+            "<4>",
+            "orange-gpu-timeout",
+            "pid=%d waited_seconds=%u timeout_seconds=%u",
+            child_pid,
+            watch_result.waited_seconds,
+            watchdog_timeout
+        );
+        log_boot(
+            "<4>",
+            "payload %s timed out after %u second(s)",
+            SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+            watchdog_timeout
+        );
+        return 124;
+    }
+
+    if (WIFEXITED(watch_result.status)) {
+        log_stage("<6>", "orange-gpu-exit", "status=%d", WEXITSTATUS(watch_result.status));
         log_boot(
             "<6>",
             "payload %s exited with status=%d",
             SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
-            WEXITSTATUS(status)
+            WEXITSTATUS(watch_result.status)
         );
-        return WEXITSTATUS(status) == 0 ? 0 : WEXITSTATUS(status);
+        if (WEXITSTATUS(watch_result.status) != 0) {
+            (void)run_orange_gpu_checkpoint(config, "child-exit-nonzero", 1U);
+        }
+        return WEXITSTATUS(watch_result.status) == 0
+            ? 0
+            : WEXITSTATUS(watch_result.status);
     }
 
-    if (WIFSIGNALED(status)) {
-        log_stage("<3>", "orange-gpu-signal", "signal=%d", WTERMSIG(status));
+    if (WIFSIGNALED(watch_result.status)) {
+        log_stage("<3>", "orange-gpu-signal", "signal=%d", WTERMSIG(watch_result.status));
         log_boot(
             "<3>",
             "payload %s died from signal=%d",
             SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
-            WTERMSIG(status)
+            WTERMSIG(watch_result.status)
         );
-        return 128 + WTERMSIG(status);
+        (void)run_orange_gpu_checkpoint(config, "child-signal", 1U);
+        return 128 + WTERMSIG(watch_result.status);
     }
 
-    log_stage("<4>", "orange-gpu-unknown-status", "status=%d", status);
+    log_stage("<4>", "orange-gpu-unknown-status", "status=%d", watch_result.status);
     log_boot(
         "<4>",
         "payload %s returned unknown wait status=%d",
         SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
-        status
+        watch_result.status
     );
     return 1;
 }

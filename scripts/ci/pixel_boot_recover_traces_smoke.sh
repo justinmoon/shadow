@@ -165,6 +165,18 @@ PROP
       fi
       exit 3
       ;;
+    *"/metadata/shadow-hello-init/by-token/"*"/probe-report.txt"* )
+      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" ]]; then
+        cat <<EOF
+probe_label=orange-gpu-payload
+observed_probe_stage=orange-gpu-payload:kgsl-open-readonly
+child_timed_out=true
+wchan=do_wait
+EOF
+        exit 0
+      fi
+      exit 3
+      ;;
     *)
       echo "mock adb: unexpected shell command: $cmd" >&2
       exit 1
@@ -270,7 +282,8 @@ cat >"$image_path.hello-init.json" <<EOF
   "orange_gpu_metadata_stage_breadcrumb": true,
   "metadata_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/stage.txt",
   "metadata_probe_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-stage.txt",
-  "metadata_probe_fingerprint_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-fingerprint.txt"
+  "metadata_probe_fingerprint_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-fingerprint.txt",
+  "metadata_probe_report_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-report.txt"
 }
 EOF
 }
@@ -308,6 +321,7 @@ assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_stage_breadcru
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_stage_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/stage.txt"
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_probe_stage_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/probe-stage.txt"
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_probe_fingerprint_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/probe-fingerprint.txt"
+assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_probe_report_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/probe-report.txt"
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_present true
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_value "parent-probe-result=exit-0"
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_actual_access_mode root
@@ -319,6 +333,12 @@ assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_stage_exit_code "
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_fingerprint_present true
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_fingerprint_actual_access_mode root
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_fingerprint_exit_code "0"
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_report_present true
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_report_actual_access_mode root
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_report_exit_code "0"
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_report_observed_stage "orange-gpu-payload:kgsl-open-readonly"
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_report_timed_out true
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_report_wchan do_wait
 assert_json_field "$MATCHED_OUTPUT/status.json" absence_reason_summary ""
 assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channel_attempts 5
 assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channels_with_matches 4

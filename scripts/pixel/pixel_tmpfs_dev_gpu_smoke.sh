@@ -123,72 +123,6 @@ quote_args() {
   printf '%s' "${quoted[*]}"
 }
 
-kgsl_holder_scan_command() {
-  cat <<'EOF'
-set -eu
-
-device_path=/dev/kgsl-3d0
-max_fd_checks="${PIXEL_KGSL_HOLDER_SCAN_MAX_FD_CHECKS:-8192}"
-max_holders="${PIXEL_KGSL_HOLDER_SCAN_MAX_HOLDERS:-64}"
-pid_count=0
-fd_checks=0
-holder_count=0
-truncated=false
-
-sanitize_field() {
-  printf '%s' "${1-}" | tr '\t\r\n' '   '
-}
-
-printf 'format\tshadow-kgsl-holder-scan-v1\n'
-printf 'device_path\t%s\n' "$device_path"
-printf 'limits\t%s\t%s\n' "$max_fd_checks" "$max_holders"
-
-for pid in $(ls /proc 2>/dev/null | LC_ALL=C sort -n); do
-  case "$pid" in
-    ''|*[!0-9]*)
-      continue
-      ;;
-  esac
-
-  fd_dir="/proc/$pid/fd"
-  [ -d "$fd_dir" ] || continue
-  pid_count=$((pid_count + 1))
-  comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"
-  cmdline="$(tr '\000' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
-  comm="$(sanitize_field "$comm")"
-  cmdline="$(sanitize_field "$cmdline")"
-
-  for fd in $(ls "$fd_dir" 2>/dev/null | LC_ALL=C sort -n); do
-    case "$fd" in
-      ''|*[!0-9]*)
-        continue
-        ;;
-    esac
-
-    fd_checks=$((fd_checks + 1))
-    if [ "$fd_checks" -gt "$max_fd_checks" ]; then
-      truncated=true
-      break 2
-    fi
-
-    target="$(readlink "$fd_dir/$fd" 2>/dev/null || true)"
-    if [ "$target" != "$device_path" ]; then
-      continue
-    fi
-
-    holder_count=$((holder_count + 1))
-    printf 'holder\t%s\t%s\t%s\t%s\n' "$pid" "$fd" "$comm" "$cmdline"
-    if [ "$holder_count" -ge "$max_holders" ]; then
-      truncated=true
-      break 2
-    fi
-  done
-done
-
-printf 'summary\t%s\t%s\t%s\t%s\n' "$pid_count" "$fd_checks" "$holder_count" "$truncated"
-EOF
-}
-
 profile_node_sources_for() {
   case "$1" in
     dri+kgsl)
@@ -544,7 +478,7 @@ else
 fi
 
 set +e
-pixel_root_shell "$serial" "$(kgsl_holder_scan_command)" >"$kgsl_holder_scan_path" 2>"$kgsl_holder_scan_stderr_path"
+pixel_root_shell "$serial" "$(pixel_kgsl_holder_scan_command)" >"$kgsl_holder_scan_path" 2>"$kgsl_holder_scan_stderr_path"
 kgsl_holder_scan_exit_code="$?"
 set -e
 

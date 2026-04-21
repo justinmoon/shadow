@@ -8,6 +8,8 @@ Continue the Pixel 4a boot-owned bring-up from the current KGSL seam without bro
 
 ## Read First
 
+- [frontier.md](./frontier.md)
+- [history.md](./history.md)
 - [plan.md](./plan.md)
 - [spec-scope.md](./spec-scope.md)
 - [spec-phase1-shadow-at-boot.md](./spec-phase1-shadow-at-boot.md)
@@ -79,21 +81,30 @@ Do not jump back out to `orange-gpu`, compositor, or app launch work until one o
 - `scripts/pixel/pixel_boot_recover_traces.sh`
   - `kgsl-holder-scan`
   - `kernel-current-best-effort` preferring rooted `dmesg`
+  - `probe-report.txt` recovery and parsed status fields for `observed_probe_stage`, timeout, and `wchan`
 - `scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh`
   - `kgsl-holder-scan.tsv`
   - parsed holder metadata in `status.json`
+- `scripts/pixel/pixel_kgsl_matrix.sh`
+  - manifest-driven rooted KGSL falsification batches
+  - one `matrix-summary.json` plus `matrix.tsv`
+- watched runs
+  - `code-orange-2/3/4/9/10/11` stage/failure visuals
 
 The smokes covering this are:
 
 - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
 - `scripts/ci/pixel_boot_tooling_smoke.sh`
+- `scripts/ci/pixel_kgsl_matrix_smoke.sh`
 
 ## Files Most Likely To Matter Next
 
 - `scripts/pixel/pixel_hello_init.c`
 - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
 - `scripts/pixel/pixel_boot_recover_traces.sh`
+- `scripts/pixel/pixel_kgsl_matrix.sh`
 - `scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh`
+- `rust/drm-rect/src/lib.rs`
 - `ui/crates/shadow-gpu-smoke/src/main.rs`
 
 ## Ground Rules

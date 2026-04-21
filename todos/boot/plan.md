@@ -4,6 +4,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 Related docs:
 
+- [frontier.md](./frontier.md)
+- [history.md](./history.md)
 - [spec-scope.md](./spec-scope.md)
 - [spec-phase1-shadow-at-boot.md](./spec-phase1-shadow-at-boot.md)
 - [handoff-prompt.md](./handoff-prompt.md)
@@ -29,6 +31,10 @@ Related docs:
   - immediately after the first successful `boot-vulkan-offscreen` proof, port `hello-init` / the boot-owned PID 1 bootstrap seam to Rust
   - do not add `orange-gpu`, input, audio, camera, compositor, runtime, or shell rungs on top of the C seam
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
+- Prefer one reusable probe harness over many custom rungs:
+  - `hello-init` should supervise child probes through one watchdog path
+  - timeouts should emit a durable `probe-report.txt` with the last observed probe stage plus live `/proc/<pid>` hints before the child is killed
+  - watched runs should use structured screen codes, not repeated identical orange pulses
 - Reuse the current rooted takeover/runtime path for DRM, input, audio, and packaging knowledge, but not as the boot graph we are trying to ship.
 - Land boot work in small seams that can merge to `master` independently; do not stack the whole project on one long-lived boot branch.
 - Use a dedicated worktree branch per risky seam, then land or checkpoint before starting the next one.
@@ -38,6 +44,10 @@ Related docs:
 - Prefer chunks that are inert for the current Magisk path: helper libraries, private scripts, log capture, guardrails, and tiny owned-userspace proofs before Shadow-launch changes.
 - Prefer visible or durable proofs over speculative Android-`init` hook churn. A screen color or `kmsg` marker is better evidence than another late userspace property probe.
 - Use the rooted tmpfs-`/dev` control harness as a cheap falsifier for `/dev` theories on the primary raw-ash control phone. If the rooted control succeeds under a boot-shaped tmpfs `/dev`, stop grinding node permutations and move suspicion to early-boot readiness or skipped vendor-init state.
+- Use a rooted falsification matrix instead of ad hoc sidecar commands when a hypothesis needs multiple service modes or holder states:
+  - batch the cases under one manifest-driven runner
+  - record one matrix summary plus per-case holder scans
+  - keep the spare devices on independent sidecar seams, not duplicate low-observability boot failures
 - Keep low-level scanout proofs separate from future renderer proofs. `orange-kms` should remain the “can we own the panel at all?” probe even after `orange-gpu` exists, because the compositor/Blitz path will fail differently from a direct dumb-buffer scanout path.
 - Do not treat “boot the whole Shadow UX” as the next integration target after display. First prove exactly one new seam per rung on tiny owned-userspace demos: boot ownership, raw scanout, GPU render, repeated frames, input-driven redraw, compositor-owned scene, app-owned surface, app runtimes, shell, then services.
 - Keep every ladder rung mechanically deletable:
@@ -64,6 +74,9 @@ Related docs:
 - Current observability:
   - boot recovery now captures a rooted `kgsl-holder-scan` channel and a best-effort kernel-log channel (`root dmesg` when available, otherwise `logcat -b kernel`)
   - tmpfs-`/dev` rooted controls also persist `kgsl-holder-scan.tsv` plus parsed holder metadata in `status.json`
+  - boot-owned child probes now also persist `probe-report.txt` so timeouts can recover the last observed stage plus `wchan` / proc excerpts instead of only a pulse count
+  - watched runs now have structured `code-orange-*` visuals for validated/probe-ready/success/timeout/signal/nonzero states
+  - `scripts/pixel/pixel_kgsl_matrix.sh` now batches rooted KGSL falsification cases into one summary artifact
   - `scripts/ci/pixel_boot_recover_traces_smoke.sh` and `scripts/ci/pixel_boot_tooling_smoke.sh` cover those additions
 - Current lab map on 2026-04-21:
   - `09051JEC202061`: primary boot-owned lane, rooted, best current reproducer for the KGSL-open seam

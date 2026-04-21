@@ -424,7 +424,7 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'ensure_char_
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'ensure_symlink_target("/dev/stdout", "/proc/self/fd/1")'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'bootstrap_tmpfs_dev_runtime(&config)'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'bootstrap_proc_stdio_links(&config)'
-assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'log_stage("<6>", "orange-wait", "pid=%d seconds=%u", child_pid, waited_seconds);'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'wait_for_child_with_watchdog'
 
 hello_reuse_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 \

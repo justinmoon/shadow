@@ -1610,7 +1610,6 @@ test -f "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json"
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" matched_any_shadow_tags false
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" current_boot_channel_attempts 6
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" channels/kernel-current-best-effort/source_kind root-dmesg
-assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" android_has_kgsl_holders false
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" bootreason_props/ro.boot.bootreason kernel_panic
 if [[ -e "$ONESHOT_ADB_RETURN_OUTPUT/collect" ]]; then
   echo "pixel_boot_tooling_smoke: skip-collect adb-return run should not create the helper collect dir" >&2

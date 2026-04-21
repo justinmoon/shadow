@@ -40,6 +40,11 @@ enum DisplayVisual {
         accent: (u8, u8, u8),
         thickness_px: usize,
     },
+    StageCode {
+        primary: (u8, u8, u8),
+        accent: (u8, u8, u8),
+        code: usize,
+    },
 }
 
 pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
@@ -74,6 +79,17 @@ fn parse_display_visual(visual_name: &str) -> Result<DisplayVisual> {
             accent: ACCENT_DARK_COLOR,
             thickness_px: 120,
         }),
+        other if other.starts_with("code-orange-") => {
+            let code = other
+                .trim_start_matches("code-orange-")
+                .parse::<usize>()
+                .context("invalid code-orange visual")?;
+            Ok(DisplayVisual::StageCode {
+                primary: ORANGE_SOLID_COLOR,
+                accent: ACCENT_DARK_COLOR,
+                code,
+            })
+        }
         other => Err(anyhow!("unsupported display visual: {other}")),
     }
 }
@@ -189,6 +205,7 @@ fn describe_display_visual(visual: DisplayVisual) -> &'static str {
         DisplayVisual::VerticalBand { .. } => "orange-vertical-band",
         DisplayVisual::Checker { .. } => "checker-orange",
         DisplayVisual::Frame { .. } => "frame-orange",
+        DisplayVisual::StageCode { .. } => "code-orange",
     }
 }
 
@@ -596,6 +613,28 @@ fn color_for_visual(
                 primary
             } else {
                 accent
+            }
+        }
+        DisplayVisual::StageCode {
+            primary,
+            accent,
+            code,
+        } => {
+            let border = (width.min(height) / 18).clamp(24, 120);
+            let slots = 12usize;
+            let inner_width = width.saturating_sub(border * 2);
+            let slot_width = (inner_width / slots.max(1)).max(1);
+            let filled_slots = code.min(slots);
+            let top_or_bottom_band = y < border * 2 || y + border * 2 >= height;
+            let left_frame = x < border;
+            let right_frame = x + border >= width;
+            let slot_end = border + filled_slots * slot_width;
+            let slot_band = top_or_bottom_band && x >= border && x < slot_end;
+
+            if left_frame || right_frame || slot_band {
+                accent
+            } else {
+                primary
             }
         }
     }
