@@ -173,6 +173,7 @@ Related docs:
   - every run bundle should record the exact evidence collection attempt, not just the boot action
   - after the phone returns to Android, harvest previous-run traces immediately before another reboot can overwrite them
   - recover best-effort evidence from readable Android-side channels such as prior-boot log buffers, dropbox boot reports, and bootreason props
+  - `pixel_boot_oneshot.sh` should attempt one late recovery pass after a `wait-adb` timeout, record that it was a `late-wait-adb` recovery in `status.json`, and backfill any recovered slot/bootreason state instead of forcing manual post-run recovery
   - do not treat any single recovery channel as guaranteed until it proves itself repeatedly on hardware
   - classify stage evidence separately from transport evidence: `fastboot-return` proves the device came back, not which owned-userspace stage it reached
 - [ ] Add one durable non-log breadcrumb seam for owned PID 1 runs:
