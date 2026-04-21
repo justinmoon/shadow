@@ -32,8 +32,8 @@ Make the OCI ARM builder fast, well-utilized, and cheap to operate.
   April 20-21 data says keep `max-jobs = 3` and `cores = 24` for now; revisit `4x16` only if queue pressure or sustained `active_build_count = 3` becomes common.
 - [x] Project 4: Move the hot UI app package lane onto Crane.
   `shadow-rust-demo` and `shadow-rust-timeline` now use dedicated per-app source helpers plus per-app Crane `buildDepsOnly` / `buildPackage` pairs, which keeps the packages independent while reusing each app's dependency artifacts.
-- [ ] Project 5: Reduce Nix/Crane overhead.
-  Measure and test `installCargoArtifactsMode = "use-symlink"` and other artifact-flow changes for the Rust package paths that currently spend meaningful time compressing cargo outputs.
+- [x] Project 5: Reduce Nix/Crane overhead.
+  `use-symlink` was a dead end, but two real wins landed: skip redundant `buildDepsOnly` checks on the hot runtime/package lanes, and narrow the runtime Rust source filter so `shadow-sdk/src/ui/**` edits no longer invalidate `shadow-system` or the runtime test derivations.
 - [ ] Project 6: Target final-build bottlenecks.
   Measure `shadow-system-deps` versus final `shadow-system`, then A/B `lld` and `mold`, release `codegen-units`, and any other linker/profile levers on the real builder.
 - [ ] Project 7: Reduce default Rust compile surface if still needed.
@@ -56,6 +56,10 @@ Make the OCI ARM builder fast, well-utilized, and cheap to operate.
   On `aarch64-darwin`, a fresh rebuild of `shadow-runtime-workspace-deps` took about `279.94s`, with the build phase itself taking `4m38s` and archiving about `1.41 GiB` down to about `401 MiB`.
   Overriding that deps derivation to run only `cargoWithProfile build ${runtimeRustCommonArgs.cargoExtraArgs}` cut the same derivation to about `144.34s`, with the build phase dropping to `2m22s` and the archived target shrinking to about `1.21 GiB / 343 MiB`.
   The dependent `runtimeShadowSdkNostrTests` and `runtimeShadowSystemTests` still passed, though each test derivation spent a few more seconds compiling after unpacking the slimmer artifacts.
+- April 21, 2026 source-invalidation follow-on: `shadow-system` and the runtime checks no longer need the full `rust/shadow-sdk` tree.
+  Narrowing `shadowSystemSrc` to `shadow-sdk`'s `Cargo.toml`, `src/lib.rs`, `src/app.rs`, `src/services.rs`, and `src/services/**` keeps the full runtime support surface but excludes `src/ui/**`.
+  In a path-flake A/B, a one-line edit to `rust/shadow-sdk/src/ui/theme.rs` changed the old `shadow-system` package and `runtimeShadowSystemTests` derivation hashes, but it left the narrowed-source derivation hashes unchanged.
+  The narrowed-source builds still passed for `runtimeShadowSdkNostrTests`, `runtimeShadowSystemTests`, and `packages.aarch64-linux.shadow-system`.
 - Next seam: either integrate an actually effective linker path that does not invalidate most of the final derivation, or do structural compile-surface work such as splitting heavy `shadow-system` domains behind optional features or separate binaries.
 - The builder was still up on April 20, 2026 after starting on April 18, 2026, with multi-hour idle windows that exceed the configured 20 minute threshold.
 - `shadow-system` currently follows a coarse Crane split: vendoring, one `buildDepsOnly`, one `buildPackage`.

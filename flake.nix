@@ -104,15 +104,24 @@
             in
               lib.any pathMatchesPrefix prefixes || lib.any pathIsPrefixAncestor prefixes;
         };
-      shadowSystemSrc = repoSourceFromPrefixes [
-        "rust/Cargo.toml"
-        "rust/Cargo.lock"
-        "rust/shadow-sdk"
-        "rust/shadow-system"
-        "rust/shadow-runtime-protocol"
-        "rust/vendor/temporal_rs"
-        "rust/vendor/xilem"
+      shadowRuntimeSdkPrefixes = [
+        "rust/shadow-sdk/Cargo.toml"
+        "rust/shadow-sdk/src/lib.rs"
+        "rust/shadow-sdk/src/app.rs"
+        "rust/shadow-sdk/src/services.rs"
+        "rust/shadow-sdk/src/services"
       ];
+      shadowSystemSrc = repoSourceFromPrefixes (
+        [
+          "rust/Cargo.toml"
+          "rust/Cargo.lock"
+          "rust/shadow-system"
+          "rust/shadow-runtime-protocol"
+          "rust/vendor/temporal_rs"
+          "rust/vendor/xilem"
+        ]
+        ++ shadowRuntimeSdkPrefixes
+      );
       shadowInitWrapperSrc = repoSourceFromPrefixes [
         "rust/init-wrapper"
       ];
