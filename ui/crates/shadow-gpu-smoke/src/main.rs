@@ -2,9 +2,9 @@ use std::{
     collections::BTreeSet,
     env,
     ffi::CString,
-    fmt, fs,
+    fmt, fs, mem,
     num::NonZeroUsize,
-    os::fd::{AsFd, BorrowedFd},
+    os::fd::{AsFd, AsRawFd, BorrowedFd},
     path::{Path, PathBuf},
     process::ExitCode,
     thread,
@@ -37,6 +37,12 @@ const MAX_HOLD_SECS: u32 = 30;
 const FLAT_ORANGE_RGB: (u8, u8, u8) = (0xFF, 0x7A, 0x00);
 const GPU_SMOKE_STAGE_PATH_ENV: &str = "SHADOW_GPU_SMOKE_STAGE_PATH";
 const GPU_SMOKE_STAGE_PREFIX_ENV: &str = "SHADOW_GPU_SMOKE_STAGE_PREFIX";
+const KGSL_DEVICE_PATH: &str = "/dev/kgsl-3d0";
+const IOCTL_KGSL_DEVICE_GETPROPERTY: libc::c_ulong = 0xC0180902;
+const KGSL_PROP_DEVICE_INFO: u32 = 0x1;
+const KGSL_PROP_UCHE_GMEM_VADDR: u32 = 0x13;
+const KGSL_PROP_HIGHEST_BANK_BIT: u32 = 0x17;
+const KGSL_PROP_UBWC_MODE: u32 = 0x1B;
 
 fn main() -> ExitCode {
     match run() {
@@ -81,8 +87,8 @@ fn run_raw_vulkan_physical_device_count_query_exit_smoke() -> Result<(), String>
 
     let application_name =
         CString::new("shadow-gpu-smoke").map_err(|error| format!("app name cstring: {error}"))?;
-    let engine_name =
-        CString::new("shadow-gpu-smoke").map_err(|error| format!("engine name cstring: {error}"))?;
+    let engine_name = CString::new("shadow-gpu-smoke")
+        .map_err(|error| format!("engine name cstring: {error}"))?;
     let app_info = vk::ApplicationInfo::default()
         .application_name(application_name.as_c_str())
         .application_version(0)
@@ -206,6 +212,12 @@ fn build_summary(config: &Config) -> Result<SmokeSummary, String> {
     if matches!(config.scene, RenderScene::RawVulkanInstanceSmoke) {
         return Ok(SmokeSummary::RawVulkanInstance(
             build_raw_vulkan_instance_smoke_summary(config)?,
+        ));
+    }
+
+    if matches!(config.scene, RenderScene::RawKgslGetPropertiesSmoke) {
+        return Ok(SmokeSummary::RawKgslGetProperties(
+            build_raw_kgsl_getproperties_smoke_summary(config)?,
         ));
     }
 
@@ -345,8 +357,8 @@ fn build_raw_vulkan_physical_device_count_smoke_summary(
 
     let application_name =
         CString::new("shadow-gpu-smoke").map_err(|error| format!("app name cstring: {error}"))?;
-    let engine_name =
-        CString::new("shadow-gpu-smoke").map_err(|error| format!("engine name cstring: {error}"))?;
+    let engine_name = CString::new("shadow-gpu-smoke")
+        .map_err(|error| format!("engine name cstring: {error}"))?;
     let app_info = vk::ApplicationInfo::default()
         .application_name(application_name.as_c_str())
         .application_version(0)
@@ -412,8 +424,8 @@ fn build_raw_vulkan_physical_device_count_query_no_destroy_smoke_summary(
 
     let application_name =
         CString::new("shadow-gpu-smoke").map_err(|error| format!("app name cstring: {error}"))?;
-    let engine_name =
-        CString::new("shadow-gpu-smoke").map_err(|error| format!("engine name cstring: {error}"))?;
+    let engine_name = CString::new("shadow-gpu-smoke")
+        .map_err(|error| format!("engine name cstring: {error}"))?;
     let app_info = vk::ApplicationInfo::default()
         .application_name(application_name.as_c_str())
         .application_version(0)
@@ -486,8 +498,8 @@ fn build_raw_vulkan_physical_device_count_query_smoke_summary(
 
     let application_name =
         CString::new("shadow-gpu-smoke").map_err(|error| format!("app name cstring: {error}"))?;
-    let engine_name =
-        CString::new("shadow-gpu-smoke").map_err(|error| format!("engine name cstring: {error}"))?;
+    let engine_name = CString::new("shadow-gpu-smoke")
+        .map_err(|error| format!("engine name cstring: {error}"))?;
     let app_info = vk::ApplicationInfo::default()
         .application_name(application_name.as_c_str())
         .application_version(0)
@@ -529,7 +541,9 @@ fn build_raw_vulkan_physical_device_count_query_smoke_summary(
     unsafe {
         instance.destroy_instance(None);
     }
-    eprintln!("[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-smoke: destroy-instance-ok");
+    eprintln!(
+        "[shadow-gpu-smoke] raw-vulkan-physical-device-count-query-smoke: destroy-instance-ok"
+    );
 
     Ok(RawVulkanPhysicalDeviceCountQuerySmokeSummary {
         mode: "raw-vulkan-physical-device-count-query-smoke",
@@ -554,6 +568,187 @@ fn build_raw_vulkan_physical_device_count_query_smoke_summary(
         env_mesa_loader_driver_override: env::var("MESA_LOADER_DRIVER_OVERRIDE").ok(),
         env_tu_debug: env::var("TU_DEBUG").ok(),
     })
+}
+
+#[repr(C)]
+struct KgslDeviceGetProperty {
+    type_: u32,
+    value: *mut libc::c_void,
+    sizebytes: usize,
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct KgslDevinfo {
+    device_id: u32,
+    chip_id: u32,
+    mmu_enabled: u32,
+    gmem_gpubaseaddr: libc::c_ulong,
+    gpu_id: u32,
+    gmem_sizebytes: usize,
+}
+
+#[derive(Serialize)]
+struct KgslPropertySummary {
+    property: &'static str,
+    property_type: u32,
+    attempted: bool,
+    ok: bool,
+    errno: Option<i32>,
+}
+
+#[derive(Serialize)]
+struct RawKgslGetPropertiesSmokeSummary {
+    mode: &'static str,
+    scene: &'static str,
+    width: u32,
+    height: u32,
+    kgsl_device_path: &'static str,
+    kgsl_device_opened: bool,
+    device_info: KgslPropertySummary,
+    uche_gmem_vaddr: KgslPropertySummary,
+    highest_bank_bit: KgslPropertySummary,
+    ubwc_mode: KgslPropertySummary,
+    device_id: u32,
+    chip_id: u32,
+    gpu_id: u32,
+    mmu_enabled: bool,
+    gmem_sizebytes: usize,
+    gmem_gpubaseaddr: u64,
+    uche_gmem_vaddr_value: u64,
+    highest_bank_bit_value: u32,
+    ubwc_mode_value: u32,
+    summary_path: Option<String>,
+    env_wgpu_backend: Option<String>,
+    env_wgpu_adapter_name: Option<String>,
+    env_vk_icd_filenames: Option<String>,
+    env_mesa_loader_driver_override: Option<String>,
+    env_tu_debug: Option<String>,
+}
+
+fn build_raw_kgsl_getproperties_smoke_summary(
+    config: &Config,
+) -> Result<RawKgslGetPropertiesSmokeSummary, String> {
+    write_gpu_smoke_stage_best_effort("kgsl-open");
+    eprintln!("[shadow-gpu-smoke] raw-kgsl-getproperties-smoke: kgsl-open path={KGSL_DEVICE_PATH}");
+    let kgsl_file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(KGSL_DEVICE_PATH)
+        .map_err(|error| format!("open {KGSL_DEVICE_PATH}: {error}"))?;
+    write_gpu_smoke_stage_best_effort("kgsl-open-ok");
+    eprintln!("[shadow-gpu-smoke] raw-kgsl-getproperties-smoke: kgsl-open-ok");
+
+    let mut device_info = KgslDevinfo::default();
+    let device_info_summary = run_kgsl_getproperty(
+        &kgsl_file,
+        KGSL_PROP_DEVICE_INFO,
+        "kgsl-prop-device-info",
+        &mut device_info,
+    )?;
+    let mut uche_gmem_vaddr = 0_u64;
+    let uche_gmem_vaddr_summary = run_kgsl_getproperty(
+        &kgsl_file,
+        KGSL_PROP_UCHE_GMEM_VADDR,
+        "kgsl-prop-uche-gmem-vaddr",
+        &mut uche_gmem_vaddr,
+    )?;
+    let mut highest_bank_bit = 0_u32;
+    let highest_bank_bit_summary = run_kgsl_getproperty(
+        &kgsl_file,
+        KGSL_PROP_HIGHEST_BANK_BIT,
+        "kgsl-prop-highest-bank-bit",
+        &mut highest_bank_bit,
+    )?;
+    let mut ubwc_mode = 0_u32;
+    let ubwc_mode_summary = run_kgsl_getproperty(
+        &kgsl_file,
+        KGSL_PROP_UBWC_MODE,
+        "kgsl-prop-ubwc-mode",
+        &mut ubwc_mode,
+    )?;
+
+    Ok(RawKgslGetPropertiesSmokeSummary {
+        mode: "raw-kgsl-getproperties-smoke",
+        scene: config.scene.as_str(),
+        width: config.width,
+        height: config.height,
+        kgsl_device_path: KGSL_DEVICE_PATH,
+        kgsl_device_opened: true,
+        device_info: device_info_summary,
+        uche_gmem_vaddr: uche_gmem_vaddr_summary,
+        highest_bank_bit: highest_bank_bit_summary,
+        ubwc_mode: ubwc_mode_summary,
+        device_id: device_info.device_id,
+        chip_id: device_info.chip_id,
+        gpu_id: device_info.gpu_id,
+        mmu_enabled: device_info.mmu_enabled != 0,
+        gmem_sizebytes: device_info.gmem_sizebytes,
+        gmem_gpubaseaddr: device_info.gmem_gpubaseaddr as u64,
+        uche_gmem_vaddr_value: uche_gmem_vaddr,
+        highest_bank_bit_value: highest_bank_bit,
+        ubwc_mode_value: ubwc_mode,
+        summary_path: config.summary_path.as_ref().map(path_display_string),
+        env_wgpu_backend: env::var("WGPU_BACKEND").ok(),
+        env_wgpu_adapter_name: env::var("WGPU_ADAPTER_NAME").ok(),
+        env_vk_icd_filenames: env::var("VK_ICD_FILENAMES").ok(),
+        env_mesa_loader_driver_override: env::var("MESA_LOADER_DRIVER_OVERRIDE").ok(),
+        env_tu_debug: env::var("TU_DEBUG").ok(),
+    })
+}
+
+fn run_kgsl_getproperty<T>(
+    kgsl_file: &fs::File,
+    property_type: u32,
+    stage_name: &'static str,
+    value: &mut T,
+) -> Result<KgslPropertySummary, String> {
+    write_gpu_smoke_stage_best_effort(stage_name);
+    eprintln!(
+        "[shadow-gpu-smoke] raw-kgsl-getproperties-smoke: {stage_name} type=0x{property_type:x}"
+    );
+    let errno = kgsl_getproperty_ioctl(kgsl_file, property_type, value).map_err(|errno| {
+        format!("kgsl getproperty stage={stage_name} type=0x{property_type:x}: errno={errno}")
+    })?;
+    write_gpu_smoke_stage_best_effort(&format!("{stage_name}-ok"));
+    eprintln!(
+        "[shadow-gpu-smoke] raw-kgsl-getproperties-smoke: {stage_name}-ok type=0x{property_type:x}"
+    );
+
+    Ok(KgslPropertySummary {
+        property: stage_name,
+        property_type,
+        attempted: true,
+        ok: errno.is_none(),
+        errno,
+    })
+}
+
+fn kgsl_getproperty_ioctl<T>(
+    kgsl_file: &fs::File,
+    property_type: u32,
+    value: &mut T,
+) -> Result<Option<i32>, i32> {
+    let mut request = KgslDeviceGetProperty {
+        type_: property_type,
+        value: (value as *mut T).cast(),
+        sizebytes: mem::size_of::<T>(),
+    };
+    let result = unsafe {
+        libc::ioctl(
+            kgsl_file.as_raw_fd(),
+            IOCTL_KGSL_DEVICE_GETPROPERTY,
+            &mut request,
+        )
+    };
+    if result == 0 {
+        Ok(None)
+    } else {
+        let errno = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::EIO);
+        Err(errno)
+    }
 }
 
 fn build_enumerate_adapters_count_smoke_summary(
@@ -1249,6 +1444,7 @@ impl Config {
                 scene,
                 RenderScene::InstanceSmoke
                     | RenderScene::RawVulkanInstanceSmoke
+                    | RenderScene::RawKgslGetPropertiesSmoke
                     | RenderScene::RawVulkanPhysicalDeviceCountQueryExitSmoke
                     | RenderScene::RawVulkanPhysicalDeviceCountQueryNoDestroySmoke
                     | RenderScene::RawVulkanPhysicalDeviceCountQuerySmoke
@@ -1260,7 +1456,7 @@ impl Config {
                     | RenderScene::DeviceSmoke
             ) {
                 return Err(format!(
-                    "--scene instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs\n\n{}",
+                    "--scene instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --hold-secs\n\n{}",
                     Self::usage()
                 ));
             } else {
@@ -1281,6 +1477,7 @@ impl Config {
             RenderScene::BundleSmoke
                 | RenderScene::InstanceSmoke
                 | RenderScene::RawVulkanInstanceSmoke
+                | RenderScene::RawKgslGetPropertiesSmoke
                 | RenderScene::RawVulkanPhysicalDeviceCountQueryExitSmoke
                 | RenderScene::RawVulkanPhysicalDeviceCountQueryNoDestroySmoke
                 | RenderScene::RawVulkanPhysicalDeviceCountQuerySmoke
@@ -1293,7 +1490,7 @@ impl Config {
         ) && present_kms
         {
             return Err(format!(
-                "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms\n\n{}",
+                "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --present-kms\n\n{}",
                 Self::usage()
             ));
         }
@@ -1302,6 +1499,7 @@ impl Config {
             RenderScene::BundleSmoke
                 | RenderScene::InstanceSmoke
                 | RenderScene::RawVulkanInstanceSmoke
+                | RenderScene::RawKgslGetPropertiesSmoke
                 | RenderScene::RawVulkanPhysicalDeviceCountQueryExitSmoke
                 | RenderScene::RawVulkanPhysicalDeviceCountQueryNoDestroySmoke
                 | RenderScene::RawVulkanPhysicalDeviceCountQuerySmoke
@@ -1314,7 +1512,7 @@ impl Config {
         ) && ppm_path.is_some()
         {
             return Err(format!(
-                "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path\n\n{}",
+                "--scene bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, and device-smoke do not support --ppm-path\n\n{}",
                 Self::usage()
             ));
         }
@@ -1339,7 +1537,7 @@ impl Config {
 
     fn usage() -> String {
         String::from(
-            "Usage: shadow-gpu-smoke [--scene smoke|flat-orange|bundle-smoke|instance-smoke|raw-vulkan-instance-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|enumerate-adapters-count-smoke|enumerate-adapters-smoke|adapter-smoke|device-request-smoke|device-smoke] [--width N] [--height N] [--allow-non-vulkan] [--allow-software] [--present-kms] [--hold-secs N] [--summary-path PATH] [--ppm-path PATH]",
+            "Usage: shadow-gpu-smoke [--scene smoke|flat-orange|bundle-smoke|instance-smoke|raw-vulkan-instance-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|enumerate-adapters-count-smoke|enumerate-adapters-smoke|adapter-smoke|device-request-smoke|device-smoke] [--width N] [--height N] [--allow-non-vulkan] [--allow-software] [--present-kms] [--hold-secs N] [--summary-path PATH] [--ppm-path PATH]",
         )
     }
 }
@@ -1368,6 +1566,7 @@ enum SmokeSummary {
     Bundle(BundleSmokeSummary),
     Instance(InstanceSmokeSummary),
     RawVulkanInstance(RawVulkanInstanceSmokeSummary),
+    RawKgslGetProperties(RawKgslGetPropertiesSmokeSummary),
     RawVulkanPhysicalDeviceCountQueryNoDestroy(RawVulkanPhysicalDeviceCountQuerySmokeSummary),
     RawVulkanPhysicalDeviceCountQuery(RawVulkanPhysicalDeviceCountQuerySmokeSummary),
     RawVulkanPhysicalDeviceCount(RawVulkanPhysicalDeviceCountSmokeSummary),
@@ -1657,6 +1856,7 @@ enum RenderScene {
     BundleSmoke,
     InstanceSmoke,
     RawVulkanInstanceSmoke,
+    RawKgslGetPropertiesSmoke,
     RawVulkanPhysicalDeviceCountQueryExitSmoke,
     RawVulkanPhysicalDeviceCountQueryNoDestroySmoke,
     RawVulkanPhysicalDeviceCountQuerySmoke,
@@ -1676,6 +1876,7 @@ impl RenderScene {
             "bundle-smoke" => Ok(Self::BundleSmoke),
             "instance-smoke" => Ok(Self::InstanceSmoke),
             "raw-vulkan-instance-smoke" => Ok(Self::RawVulkanInstanceSmoke),
+            "raw-kgsl-getproperties-smoke" => Ok(Self::RawKgslGetPropertiesSmoke),
             "raw-vulkan-physical-device-count-query-exit-smoke" => {
                 Ok(Self::RawVulkanPhysicalDeviceCountQueryExitSmoke)
             }
@@ -1694,7 +1895,7 @@ impl RenderScene {
             "device-request-smoke" => Ok(Self::DeviceRequestSmoke),
             "device-smoke" => Ok(Self::DeviceSmoke),
             _ => Err(format!(
-                "invalid value for --scene: {raw}; expected smoke, flat-orange, bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, or device-smoke\n\n{}",
+                "invalid value for --scene: {raw}; expected smoke, flat-orange, bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, or device-smoke\n\n{}",
                 Config::usage()
             )),
         }
@@ -1707,6 +1908,7 @@ impl RenderScene {
             Self::BundleSmoke => "bundle-smoke",
             Self::InstanceSmoke => "instance-smoke",
             Self::RawVulkanInstanceSmoke => "raw-vulkan-instance-smoke",
+            Self::RawKgslGetPropertiesSmoke => "raw-kgsl-getproperties-smoke",
             Self::RawVulkanPhysicalDeviceCountQueryExitSmoke => {
                 "raw-vulkan-physical-device-count-query-exit-smoke"
             }

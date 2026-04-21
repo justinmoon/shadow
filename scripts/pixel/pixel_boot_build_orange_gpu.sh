@@ -46,7 +46,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--output PATH] [--hold-secs N]
                                                     [--prelude none|orange-init]
                                                     [--prelude-hold-secs N]
-                                                    [--orange-gpu-mode gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen]
+                                                    [--orange-gpu-mode gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen]
                                                     [--orange-gpu-launch-delay-secs N]
                                                     [--orange-gpu-parent-probe-attempts N]
                                                     [--orange-gpu-parent-probe-interval-secs N]
@@ -64,9 +64,10 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
 
 Build a private stock-kernel sunfish boot.img whose real first-stage userspace is
 hello-init PID 1 at system/bin/init and whose ramdisk contains a boot-owned
-shadow-gpu-smoke bundle under /orange-gpu for one of fourteen rungs: the real GPU
+shadow-gpu-smoke bundle under /orange-gpu for one of fifteen rungs: the real GPU
 render/present path, a strict Vulkan instance smoke, a strict raw Vulkan
-instance smoke, a strict raw Vulkan physical-device-count-query-exit smoke,
+instance smoke, a strict raw KGSL getproperties smoke, a strict raw Vulkan
+physical-device-count-query-exit smoke,
 a strict raw Vulkan physical-device-count-query-no-destroy smoke, a strict raw
 Vulkan physical-device-count-query smoke, a strict raw Vulkan physical-device-count
 smoke, a strict Vulkan raw adapter-enumeration-count smoke, a strict Vulkan
@@ -340,10 +341,10 @@ assert_orange_gpu_mode_word() {
   value="${1:?assert_orange_gpu_mode_word requires a value}"
 
   case "$value" in
-    gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
+    gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
       ;;
     *)
-      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen: $value" >&2
+      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen: $value" >&2
       exit 1
       ;;
   esac
@@ -812,10 +813,6 @@ assert_bool_word mount-sys "$MOUNT_SYS"
 assert_bool_word log-kmsg "$LOG_KMSG"
 assert_bool_word log-pmsg "$LOG_PMSG"
 assert_bool_word orange-gpu-metadata-stage-breadcrumb "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB"
-if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" && "$ORANGE_GPU_PARENT_PROBE_ATTEMPTS" == "0" ]]; then
-  echo "pixel_boot_build_orange_gpu: orange gpu metadata stage breadcrumb requires parent probe attempts > 0" >&2
-  exit 1
-fi
 if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" && "$MOUNT_DEV" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: orange gpu metadata stage breadcrumb requires mount-dev=true" >&2
   exit 1
@@ -918,6 +915,8 @@ elif [[ "$ORANGE_GPU_MODE" == "vulkan-instance-smoke" ]]; then
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan instance mode from %s\n' "$PAYLOAD_IMAGE_PATH"
 elif [[ "$ORANGE_GPU_MODE" == "raw-vulkan-instance-smoke" ]]; then
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict raw Vulkan instance-lifecycle mode from %s\n' "$PAYLOAD_IMAGE_PATH"
+elif [[ "$ORANGE_GPU_MODE" == "raw-kgsl-getproperties-smoke" ]]; then
+  printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict raw KGSL getproperties mode from %s\n' "$PAYLOAD_IMAGE_PATH"
 elif [[ "$ORANGE_GPU_MODE" == "raw-vulkan-physical-device-count-query-exit-smoke" ]]; then
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict raw Vulkan physical-device-count-query-exit mode from %s\n' "$PAYLOAD_IMAGE_PATH"
 elif [[ "$ORANGE_GPU_MODE" == "raw-vulkan-physical-device-count-query-no-destroy-smoke" ]]; then
@@ -953,6 +952,8 @@ elif [[ "$ORANGE_GPU_MODE" == "vulkan-instance-smoke" ]]; then
   printf 'GPU proof: strict Vulkan instance creation\n'
 elif [[ "$ORANGE_GPU_MODE" == "raw-vulkan-instance-smoke" ]]; then
   printf 'GPU proof: strict raw Vulkan loader plus vkCreateInstance/vkDestroyInstance\n'
+elif [[ "$ORANGE_GPU_MODE" == "raw-kgsl-getproperties-smoke" ]]; then
+  printf 'GPU proof: strict raw KGSL device getproperty sequence\n'
 elif [[ "$ORANGE_GPU_MODE" == "raw-vulkan-physical-device-count-query-exit-smoke" ]]; then
   printf 'GPU proof: strict raw Vulkan physical-device count query plus immediate exit 0 before summary\n'
 elif [[ "$ORANGE_GPU_MODE" == "raw-vulkan-physical-device-count-query-no-destroy-smoke" ]]; then

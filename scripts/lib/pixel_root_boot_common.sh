@@ -159,8 +159,41 @@ pixel_other_slot_letter() {
 
 pixel_current_slot_letter_from_adb() {
   local serial
+  local slot_suffix slot_letter cmdline
   serial="$1"
-  pixel_slot_suffix_to_letter "$(pixel_prop "$serial" ro.boot.slot_suffix)"
+  slot_suffix="$(pixel_prop "$serial" ro.boot.slot_suffix)"
+  if [[ "$slot_suffix" == "_a" || "$slot_suffix" == "_b" ]]; then
+    pixel_slot_suffix_to_letter "$slot_suffix"
+    return 0
+  fi
+
+  slot_letter="$(pixel_prop "$serial" ro.boot.slot)"
+  if [[ "$slot_letter" == "a" || "$slot_letter" == "b" ]]; then
+    pixel_slot_suffix_to_letter "_$slot_letter"
+    return 0
+  fi
+
+  cmdline="$(pixel_adb "$serial" shell su -c cat /proc/cmdline 2>/dev/null | tr -d '\r')"
+  case "$cmdline" in
+    *"androidboot.slot_suffix=_a"*)
+      pixel_slot_suffix_to_letter "_a"
+      return 0
+      ;;
+    *"androidboot.slot_suffix=_b"*)
+      pixel_slot_suffix_to_letter "_b"
+      return 0
+      ;;
+    *"androidboot.slot=a"*)
+      pixel_slot_suffix_to_letter "_a"
+      return 0
+      ;;
+    *"androidboot.slot=b"*)
+      pixel_slot_suffix_to_letter "_b"
+      return 0
+      ;;
+  esac
+
+  pixel_slot_suffix_to_letter "$slot_suffix"
 }
 
 pixel_boot_partition_for_slot() {
