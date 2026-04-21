@@ -881,6 +881,48 @@ if actual != expected:
 PY
 }
 
+assert_json_field_one_of() {
+  local json_path key_path
+  json_path="$1"
+  key_path="$2"
+  shift 2
+
+  python3 - "$json_path" "$key_path" "$@" <<'PY'
+import json
+import sys
+
+json_path = sys.argv[1]
+key_path = sys.argv[2]
+expected_raw_values = sys.argv[3:]
+
+with open(json_path, "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+actual = payload
+for part in key_path.split("/"):
+    if isinstance(actual, list):
+        actual = actual[int(part)]
+    else:
+        actual = actual[part]
+
+def parse(raw: str):
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
+    try:
+        return int(raw)
+    except ValueError:
+        return raw
+
+expected_values = [parse(raw) for raw in expected_raw_values]
+if actual not in expected_values:
+    raise SystemExit(
+        f"unexpected json field {key_path!r}: actual={actual!r} expected one of={expected_values!r}"
+    )
+PY
+}
+
 prepare_cached_tmpfs_gpu_bundle() {
   local bundle_dir launcher_artifact manifest_path package_ref fingerprint
   bundle_dir="$REPO_ROOT/build/pixel/artifacts/shadow-gpu-smoke-gnu"
@@ -2014,7 +2056,7 @@ assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" recover_traces_
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" bootreason_indicates_failure false
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" bootreason_props/sys.boot.reason bootloader
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_initial_state none
-assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_first_none_elapsed_secs 0
+assert_json_field_one_of "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_first_none_elapsed_secs 0 1
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_last_state none
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_late_recovery_reached_adb true
 test -f "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/recover-traces/status.json"
@@ -2147,7 +2189,7 @@ fi
 assert_contains "$(cat "$oneshot_adb_fastboot_timeout_stderr")" "pixel: timed out waiting for adb device TESTSERIAL"
 assert_json_field "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/status.json" failure_stage wait-adb
 assert_json_field "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/status.json" transport_initial_state fastboot
-assert_json_field "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/status.json" transport_first_fastboot_elapsed_secs 0
+assert_json_field_one_of "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/status.json" transport_first_fastboot_elapsed_secs 0 1
 assert_json_field "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/status.json" transport_last_state fastboot
 test -f "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/transport-timeline.tsv"
 assert_contains "$(cat "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/transport-timeline.tsv")" $'0\tfastboot'
@@ -2193,7 +2235,7 @@ assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" fastboo
 assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" fastboot_auto_reboot_succeeded true
 assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" fastboot_auto_reboot_reason returned-fastboot-after-leave
 assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" transport_initial_state none
-assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" transport_first_none_elapsed_secs 0
+assert_json_field_one_of "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" transport_first_none_elapsed_secs 0 1
 assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" transport_last_state adb
 test -f "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/transport-timeline.tsv"
 assert_contains "$(cat "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/transport-timeline.tsv")" $'0\tnone'

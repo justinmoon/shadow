@@ -43,6 +43,10 @@ Related docs:
 - Keep the image repack loop fast by reusing stable built payload binaries when the payload source is unchanged; do not hide avoidable rebuilds inside temp-workdir packers.
 - Prefer chunks that are inert for the current Magisk path: helper libraries, private scripts, log capture, guardrails, and tiny owned-userspace proofs before Shadow-launch changes.
 - Prefer visible or durable proofs over speculative Android-`init` hook churn. A screen color or `kmsg` marker is better evidence than another late userspace property probe.
+- Once a failing rung narrows to a named kernel or driver boundary, stop broad boot-image churn and read the owning source tree before inventing more ladder splits:
+  - use the exact Pixel kernel/device branch first
+  - check AOSP init/`ueventd` and device-specific `*.rc` only to answer the concrete dependency the driver names
+  - return to hardware with one experiment that discriminates the source-backed candidates
 - Use the rooted tmpfs-`/dev` control harness as a cheap falsifier for `/dev` theories on the primary raw-ash control phone. If the rooted control succeeds under a boot-shaped tmpfs `/dev`, stop grinding node permutations and move suspicion to early-boot readiness or skipped vendor-init state.
 - Use a rooted falsification matrix instead of ad hoc sidecar commands when a hypothesis needs multiple service modes or holder states:
   - batch the cases under one manifest-driven runner
@@ -97,21 +101,28 @@ Related docs:
 ## Current Status
 
 - Current boot-owned blocker:
-  - any owned-userspace process, including direct C in PID 1, still hangs at `open("/dev/kgsl-3d0")`
-  - this is now narrower than the staged Rust payload, dynamic loader, Vulkan loader, wgpu setup, or the Android display stack
+  - any owned-userspace process, including direct C in PID 1, still blocks inside the first KGSL open path
+  - the latest boot-owned run on `09051JEC202061` recovered `wchan=_request_firmware` plus `/proc/<pid>/stack` showing `a6xx_microcode_read -> request_firmware -> _request_firmware`
+  - this is now narrower than the staged Rust payload, dynamic loader, Vulkan loader, wgpu setup, Android display services, or late Android properties
 - Strongest current hypothesis:
-  - the failing seam is KGSL cold first-open / early vendor-init readiness, not generic `/dev` topology, not DRM, and not later Vulkan enumeration logic
-  - reviewer read is that the first meaningful next discriminator should compare warm-vs-cold KGSL ownership or run a stock-init trigger ladder, not keep shaving generic Vulkan splits
+  - the failing seam is KGSL cold first-open firmware serving, not generic `/dev` topology, not DRM, and not later Vulkan enumeration logic
+  - source-guided read of the sunfish kernel plus the recovered `probe-report.txt` now make the first Adreno SQE firmware request the leading suspect, with GMU firmware and secure zap boot as likely next blockers after that:
+    - first open reaches `kgsl_open()` -> `kgsl_open_device()` -> Adreno init/start
+    - the recovered stack currently stops in `a6xx_microcode_read`, which issues `request_firmware("a630_sqe.fw")`
+    - later in the same init path the code also names `request_firmware("a618_gmu.bin")` and likely secure zap boot via `subsystem_get("a615_zap")` / `pil_boot`
+    - rooted `cold-root-ready` success with blank `boot_completed` / `pd_mapper` / `qseecom-service` / `gpu` props makes “wait for more Android” a weaker next move than tracing the first open path directly
 - Strongest rooted controls:
   - rooted tmpfs-`/dev` controls still succeed for `raw-kgsl-getproperties-smoke` and `raw-kgsl-open-readonly-smoke`
   - rooted `raw-kgsl-open-readonly-smoke` on `0B191JEC203253` still succeeds even after stopping `surfaceflinger`, hwcomposer, and allocator, so those Android display services are not the obvious prerequisite for a readonly KGSL open
 - Current observability:
   - boot recovery now captures a rooted `kgsl-holder-scan` channel and a best-effort kernel-log channel (`root dmesg` when available, otherwise `logcat -b kernel`)
   - tmpfs-`/dev` rooted controls also persist `kgsl-holder-scan.tsv` plus parsed holder metadata in `status.json`
+  - tmpfs-`/dev` rooted controls now also persist `exec-context.txt`, so rooted control context can be compared directly against boot-owned metadata probe artifacts
   - boot-owned child probes now also persist `probe-report.txt` so timeouts can recover the last observed stage plus `wchan` / proc excerpts instead of only a pulse count
   - watched runs now have structured `code-orange-*` visuals for validated/probe-ready/success/timeout/signal/nonzero states
   - `scripts/pixel/pixel_kgsl_matrix.sh` now batches rooted KGSL falsification cases into one summary artifact
   - `scripts/ci/pixel_boot_recover_traces_smoke.sh` and `scripts/ci/pixel_boot_tooling_smoke.sh` cover those additions
+  - the latest high-signal boot-owned bundle is [`build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_), which recovered the decisive `_request_firmware` stack
 - Current stream map on 2026-04-21:
   - Stream A (`../boot`): KGSL / raw Vulkan critical path
   - Stream B (`boot-2`): boot-helper autostart and preflight before the first frame

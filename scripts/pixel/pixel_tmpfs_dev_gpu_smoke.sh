@@ -74,6 +74,7 @@ fi
 profile_slug="$(printf '%s' "$profile" | tr -c 'A-Za-z0-9._-' '_')"
 device_summary_path="$device_dir/summary.json"
 device_profile_path="$device_dir/dev-profile.tsv"
+device_context_path="$device_dir/exec-context.txt"
 device_launcher_path="$device_dir/run-shadow-gpu-smoke"
 device_preload_path="$device_dir/lib/shadow-openlog-preload.so"
 device_binary_path="$device_dir/shadow-gpu-smoke"
@@ -85,11 +86,13 @@ device_output_path="$run_dir/device-output.txt"
 checkpoint_log_path="$run_dir/checkpoints.txt"
 pull_summary_log_path="$run_dir/pull-summary.txt"
 pull_profile_log_path="$run_dir/pull-dev-profile.txt"
+pull_context_log_path="$run_dir/pull-exec-context.txt"
 kgsl_holder_scan_path="$run_dir/kgsl-holder-scan.tsv"
 kgsl_holder_scan_stderr_path="$run_dir/kgsl-holder-scan.stderr.txt"
 status_path="$run_dir/status.json"
 summary_path="$run_dir/summary.json"
 profile_path="$run_dir/dev-profile.tsv"
+context_path="$run_dir/exec-context.txt"
 summary_expected=true
 
 if [[ "$scene" == "raw-vulkan-physical-device-count-query-exit-smoke" ]]; then
@@ -233,6 +236,7 @@ set -eu
 DEVICE_DIR=$(printf '%q' "$device_dir")
 DEVICE_SUMMARY_PATH=$(printf '%q' "$device_summary_path")
 DEVICE_PROFILE_PATH=$(printf '%q' "$device_profile_path")
+DEVICE_CONTEXT_PATH=$(printf '%q' "$device_context_path")
 DEVICE_PRELOAD_PATH=$(printf '%q' "$device_preload_path")
 DEVICE_BINARY_PATH=$(printf '%q' "$device_binary_path")
 DEVICE_LAUNCHER_PATH=$(printf '%q' "$device_launcher_path")
@@ -290,6 +294,91 @@ append_symlink_spec() {
   echo "[tmpfs-dev] planned-symlink path=\$link_path target=\$link_target"
 }
 
+append_context_file_excerpt() {
+  local output_path source_path max_bytes bytes excerpt
+  output_path="\$1"
+  source_path="\$2"
+  max_bytes="\${3:-512}"
+
+  if [ ! -r "\$source_path" ]; then
+    printf 'file-excerpt path=%s present=false\n' "\$source_path" >>"\$output_path"
+    return 0
+  fi
+
+  excerpt="\$(head -c "\$max_bytes" "\$source_path" 2>/dev/null || true)"
+  bytes="\$(printf '%s' "\$excerpt" | wc -c | tr -d ' ')"
+  printf 'file-excerpt path=%s bytes=%s\n' "\$source_path" "\$bytes" >>"\$output_path"
+  printf '%s\n' "\$excerpt" >>"\$output_path"
+}
+
+append_context_path_fingerprint() {
+  local output_path source_path stat_output file_type mode uid gid major_hex minor_hex size kind
+  output_path="\$1"
+  source_path="\$2"
+
+  if [ ! -e "\$source_path" ]; then
+    printf 'path=%s present=false\n' "\$source_path" >>"\$output_path"
+    return 0
+  fi
+
+  stat_output="\$(toybox stat -c '%F|%a|%u|%g|%t|%T|%s' "\$source_path" 2>/dev/null)" || {
+    printf 'path=%s present=true stat_failed=true\n' "\$source_path" >>"\$output_path"
+    return 0
+  }
+  IFS='|' read -r file_type mode uid gid major_hex minor_hex size <<'TMPFS_DEV_STAT'
+\$stat_output
+TMPFS_DEV_STAT
+
+  case "\$file_type" in
+    "character special file")
+      kind="char"
+      printf 'path=%s present=true kind=%s mode=%s uid=%s gid=%s major_hex=%s minor_hex=%s\n' \
+        "\$source_path" "\$kind" "\$mode" "\$uid" "\$gid" "\$major_hex" "\$minor_hex" >>"\$output_path"
+      ;;
+    "block special file")
+      kind="block"
+      printf 'path=%s present=true kind=%s mode=%s uid=%s gid=%s major_hex=%s minor_hex=%s\n' \
+        "\$source_path" "\$kind" "\$mode" "\$uid" "\$gid" "\$major_hex" "\$minor_hex" >>"\$output_path"
+      ;;
+    directory)
+      printf 'path=%s present=true kind=dir mode=%s uid=%s gid=%s size=%s\n' \
+        "\$source_path" "\$mode" "\$uid" "\$gid" "\$size" >>"\$output_path"
+      ;;
+    *)
+      printf 'path=%s present=true kind=file mode=%s uid=%s gid=%s size=%s\n' \
+        "\$source_path" "\$mode" "\$uid" "\$gid" "\$size" >>"\$output_path"
+      ;;
+  esac
+}
+
+capture_exec_context() {
+  local output_path groups current_pid parent_pid
+  output_path="\$1"
+  groups="\$(id -G | tr ' ' ',')"
+  current_pid="\$\$"
+  parent_pid="\${PPID:-}"
+
+  {
+    printf 'format=shadow-exec-context-v1\n'
+    printf 'identity pid=%s ppid=%s uid=%s euid=%s gid=%s egid=%s groups=%s\n' \
+      "\$current_pid" "\$parent_pid" "\$(id -u)" "\$(id -u)" "\$(id -g)" "\$(id -g)" "\$groups"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' mnt /proc/self/ns/mnt true "\$(readlink /proc/self/ns/mnt 2>/dev/null || true)"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' pid /proc/self/ns/pid true "\$(readlink /proc/self/ns/pid 2>/dev/null || true)"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' net /proc/self/ns/net true "\$(readlink /proc/self/ns/net 2>/dev/null || true)"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' uts /proc/self/ns/uts true "\$(readlink /proc/self/ns/uts 2>/dev/null || true)"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' ipc /proc/self/ns/ipc true "\$(readlink /proc/self/ns/ipc 2>/dev/null || true)"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' user /proc/self/ns/user true "\$(readlink /proc/self/ns/user 2>/dev/null || true)"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' cgroup /proc/self/ns/cgroup true "\$(readlink /proc/self/ns/cgroup 2>/dev/null || true)"
+  } >"\$output_path"
+
+  append_context_file_excerpt "\$output_path" /proc/self/attr/current 256
+  append_context_file_excerpt "\$output_path" /proc/self/cgroup 512
+  append_context_file_excerpt "\$output_path" /proc/self/mountinfo 1536
+  append_context_path_fingerprint "\$output_path" /dev/kgsl-3d0
+  append_context_path_fingerprint "\$output_path" /dev/dri/card0
+  append_context_path_fingerprint "\$output_path" /dev/dri/renderD128
+}
+
 require_command toybox
 require_command unshare
 require_command mount
@@ -299,6 +388,8 @@ require_command mknod
 require_command mkdir
 require_command ln
 require_command find
+require_command head
+require_command id
 
 rm -f "\$DEVICE_SUMMARY_PATH" "\$DEVICE_PROFILE_PATH"
 mkdir -p "\$DEVICE_DIR"
@@ -340,6 +431,7 @@ export \
   DEVICE_DIR \
   DEVICE_SUMMARY_PATH \
   DEVICE_PROFILE_PATH \
+  DEVICE_CONTEXT_PATH \
   DEVICE_PRELOAD_PATH \
   DEVICE_BINARY_PATH \
   DEVICE_LAUNCHER_PATH \
@@ -352,6 +444,91 @@ export \
 set +e
 unshare -m /system/bin/sh <<'TMPFS_DEV_NAMESPACE'
 set -eu
+
+append_context_file_excerpt() {
+  local output_path source_path max_bytes bytes excerpt
+  output_path="\$1"
+  source_path="\$2"
+  max_bytes="\${3:-512}"
+
+  if [ ! -r "\$source_path" ]; then
+    printf 'file-excerpt path=%s present=false\n' "\$source_path" >>"\$output_path"
+    return 0
+  fi
+
+  excerpt="\$(head -c "\$max_bytes" "\$source_path" 2>/dev/null || true)"
+  bytes="\$(printf '%s' "\$excerpt" | wc -c | tr -d ' ')"
+  printf 'file-excerpt path=%s bytes=%s\n' "\$source_path" "\$bytes" >>"\$output_path"
+  printf '%s\n' "\$excerpt" >>"\$output_path"
+}
+
+append_context_path_fingerprint() {
+  local output_path source_path stat_output file_type mode uid gid major_hex minor_hex size kind
+  output_path="\$1"
+  source_path="\$2"
+
+  if [ ! -e "\$source_path" ]; then
+    printf 'path=%s present=false\n' "\$source_path" >>"\$output_path"
+    return 0
+  fi
+
+  stat_output="\$(toybox stat -c '%F|%a|%u|%g|%t|%T|%s' "\$source_path" 2>/dev/null)" || {
+    printf 'path=%s present=true stat_failed=true\n' "\$source_path" >>"\$output_path"
+    return 0
+  }
+  IFS='|' read -r file_type mode uid gid major_hex minor_hex size <<TMPFS_DEV_STAT
+\$stat_output
+TMPFS_DEV_STAT
+
+  case "\$file_type" in
+    "character special file")
+      kind="char"
+      printf 'path=%s present=true kind=%s mode=%s uid=%s gid=%s major_hex=%s minor_hex=%s\n' \
+        "\$source_path" "\$kind" "\$mode" "\$uid" "\$gid" "\$major_hex" "\$minor_hex" >>"\$output_path"
+      ;;
+    "block special file")
+      kind="block"
+      printf 'path=%s present=true kind=%s mode=%s uid=%s gid=%s major_hex=%s minor_hex=%s\n' \
+        "\$source_path" "\$kind" "\$mode" "\$uid" "\$gid" "\$major_hex" "\$minor_hex" >>"\$output_path"
+      ;;
+    directory)
+      printf 'path=%s present=true kind=dir mode=%s uid=%s gid=%s size=%s\n' \
+        "\$source_path" "\$mode" "\$uid" "\$gid" "\$size" >>"\$output_path"
+      ;;
+    *)
+      printf 'path=%s present=true kind=file mode=%s uid=%s gid=%s size=%s\n' \
+        "\$source_path" "\$mode" "\$uid" "\$gid" "\$size" >>"\$output_path"
+      ;;
+  esac
+}
+
+capture_exec_context() {
+  local output_path groups current_pid parent_pid
+  output_path="\$1"
+  groups="\$(id -G | tr ' ' ',')"
+  current_pid="\$\$"
+  parent_pid="\${PPID:-}"
+
+  {
+    printf 'format=shadow-exec-context-v1\n'
+    printf 'identity pid=%s ppid=%s uid=%s euid=%s gid=%s egid=%s groups=%s\n' \
+      "\$current_pid" "\$parent_pid" "\$(id -u)" "\$(id -u)" "\$(id -g)" "\$(id -g)" "\$groups"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' mnt /proc/self/ns/mnt true "\$(readlink /proc/self/ns/mnt 2>/dev/null || true)"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' pid /proc/self/ns/pid true "\$(readlink /proc/self/ns/pid 2>/dev/null || true)"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' net /proc/self/ns/net true "\$(readlink /proc/self/ns/net 2>/dev/null || true)"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' uts /proc/self/ns/uts true "\$(readlink /proc/self/ns/uts 2>/dev/null || true)"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' ipc /proc/self/ns/ipc true "\$(readlink /proc/self/ns/ipc 2>/dev/null || true)"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' user /proc/self/ns/user true "\$(readlink /proc/self/ns/user 2>/dev/null || true)"
+    printf 'namespace label=%s path=%s present=%s target=%s\n' cgroup /proc/self/ns/cgroup true "\$(readlink /proc/self/ns/cgroup 2>/dev/null || true)"
+  } >"\$output_path"
+
+  append_context_file_excerpt "\$output_path" /proc/self/attr/current 256
+  append_context_file_excerpt "\$output_path" /proc/self/cgroup 512
+  append_context_file_excerpt "\$output_path" /proc/self/mountinfo 1536
+  append_context_path_fingerprint "\$output_path" /dev/kgsl-3d0
+  append_context_path_fingerprint "\$output_path" /dev/dri/card0
+  append_context_path_fingerprint "\$output_path" /dev/dri/renderD128
+}
 
 apply_dir_spec() {
   local target_path mode uid gid
@@ -423,6 +600,9 @@ if [ -z "\$loader_path" ]; then
   exit 1
 fi
 
+capture_exec_context "\$DEVICE_CONTEXT_PATH"
+echo "[tmpfs-dev] context-captured path=\$DEVICE_CONTEXT_PATH"
+
 echo "[tmpfs-dev] exec loader=\$loader_path preload=\$DEVICE_PRELOAD_PATH"
 exec env \
   LD_PRELOAD="\$DEVICE_PRELOAD_PATH" \
@@ -459,6 +639,9 @@ fi
 if [ -f '$device_profile_path' ]; then
   chmod 0644 '$device_profile_path'
 fi
+if [ -f '$device_context_path' ]; then
+  chmod 0644 '$device_context_path'
+fi
 " >/dev/null; then
   :
 fi
@@ -477,6 +660,14 @@ else
   printf 'missing: %s\n' "$device_profile_path" >"$pull_profile_log_path"
 fi
 
+context_pulled=false
+if pixel_adb "$serial" shell "[ -f '$device_context_path' ]" >/dev/null 2>&1; then
+  pixel_adb "$serial" pull "$device_context_path" "$context_path" >"$pull_context_log_path" 2>&1
+  context_pulled=true
+else
+  printf 'missing: %s\n' "$device_context_path" >"$pull_context_log_path"
+fi
+
 kgsl_holder_scan_timeout_secs="${PIXEL_KGSL_HOLDER_SCAN_TIMEOUT_SECS:-20}"
 set +e
 pixel_root_shell_timeout "$kgsl_holder_scan_timeout_secs" "$serial" "$(pixel_kgsl_holder_scan_command)" \
@@ -488,7 +679,7 @@ if [[ "$kgsl_holder_scan_exit_code" -eq 124 ]]; then
     >>"$kgsl_holder_scan_stderr_path"
 fi
 
-python3 - "$status_path" "$serial" "$primary_control_serial" "$profile" "$scene" "$device_dir" "$run_status" "$summary_expected" "$summary_pulled" "$profile_pulled" "$profile_includes_ion" "$device_output_path" "$summary_path" "$profile_path" "$prepare_output_path" "$preload_build_output_path" "$baseline_nodes_csv" "$profile_nodes_csv" "$kgsl_holder_scan_path" "$kgsl_holder_scan_stderr_path" "$kgsl_holder_scan_exit_code" <<'PY'
+python3 - "$status_path" "$serial" "$primary_control_serial" "$profile" "$scene" "$device_dir" "$run_status" "$summary_expected" "$summary_pulled" "$profile_pulled" "$context_pulled" "$profile_includes_ion" "$device_output_path" "$summary_path" "$profile_path" "$context_path" "$prepare_output_path" "$preload_build_output_path" "$baseline_nodes_csv" "$profile_nodes_csv" "$kgsl_holder_scan_path" "$kgsl_holder_scan_stderr_path" "$kgsl_holder_scan_exit_code" <<'PY'
 import json
 import re
 import sys
@@ -505,10 +696,12 @@ from pathlib import Path
     summary_expected_raw,
     summary_pulled_raw,
     profile_pulled_raw,
+    context_pulled_raw,
     profile_includes_ion_raw,
     device_output_path_raw,
     summary_path_raw,
     profile_path_raw,
+    context_path_raw,
     prepare_output_path_raw,
     preload_build_output_path_raw,
     baseline_nodes_csv,
@@ -516,16 +709,18 @@ from pathlib import Path
     kgsl_holder_scan_path_raw,
     kgsl_holder_scan_stderr_path_raw,
     kgsl_holder_scan_exit_code_raw,
-) = sys.argv[1:22]
+) = sys.argv[1:24]
 
 run_status = int(run_status_raw)
 summary_expected = summary_expected_raw == "true"
 summary_pulled = summary_pulled_raw == "true"
 profile_pulled = profile_pulled_raw == "true"
+context_pulled = context_pulled_raw == "true"
 profile_includes_ion = profile_includes_ion_raw == "true"
 device_output_path = Path(device_output_path_raw)
 summary_path = Path(summary_path_raw)
 profile_path = Path(profile_path_raw)
+context_path = Path(context_path_raw)
 kgsl_holder_scan_path = Path(kgsl_holder_scan_path_raw)
 kgsl_holder_scan_stderr_path = Path(kgsl_holder_scan_stderr_path_raw)
 kgsl_holder_scan_exit_code = int(kgsl_holder_scan_exit_code_raw)
@@ -566,6 +761,10 @@ if profile_path.is_file():
             "minor_hex": parts[5] if len(parts) > 5 else None,
         }
         profile_entries.append(entry)
+
+exec_context_lines = []
+if context_path.is_file():
+    exec_context_lines = context_path.read_text(encoding="utf-8", errors="replace").splitlines()
 
 def csv_list(raw: str):
     return [item for item in raw.split(",") if item]
@@ -672,6 +871,9 @@ payload = {
     "device_profile_path": str(profile_path) if profile_path.is_file() else None,
     "device_profile_entry_count": len(profile_entries),
     "device_profile_paths": sorted(profile_paths),
+    "exec_context_pulled": context_pulled,
+    "exec_context_path": str(context_path) if context_path.is_file() else None,
+    "exec_context_preview": exec_context_lines[:20],
     "requested_baseline_nodes": baseline_nodes,
     "requested_profile_nodes": profile_nodes,
     "requested_profile_includes_ion": profile_includes_ion,

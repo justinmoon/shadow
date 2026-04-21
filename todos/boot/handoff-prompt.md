@@ -37,12 +37,16 @@ Continue the Pixel 4a boot-owned bring-up from the current KGSL seam without bro
 - Boot-owned `raw-kgsl-open-readonly-smoke` on `09051JEC202061` recovers:
   - `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly`
   - never `...:kgsl-open-readonly-ok`
+- The latest decisive boot-owned run is:
+  - [`build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_)
+  - recovered `probe-report.txt` shows `wchan=_request_firmware`
+  - recovered `/proc/<pid>/stack` shows `a6xx_microcode_read -> request_firmware -> _request_firmware`
 - The exact same thing is true for:
   - the staged Rust payload
   - direct C child probe
   - direct C PID1 probe
 - So the current seam is:
-  - any boot-owned process, including PID 1, hangs on `open("/dev/kgsl-3d0")`
+  - any boot-owned process, including PID 1, reaches the first KGSL open path and then sleeps in firmware loading during `a6xx_microcode_read`
 
 ## What Is Strongly Ruled Out
 
@@ -56,13 +60,13 @@ Continue the Pixel 4a boot-owned bring-up from the current KGSL seam without bro
 
 ## Strongest Hypothesis
 
-The remaining difference is execution context, not “wait later in Android.”
+The remaining difference is no longer generic execution context or “wait later in Android.” The leading blocker is the first firmware-serving seam named by the sunfish kernel.
 
 The best next discriminators are:
 
-1. Run the readonly KGSL-open helper from stock init (`post-fs-data` / imported rc service) to separate stock-init context from Magisk/root-shell context.
-2. Extend boot-owned breadcrumbs with execution-context facts (`id`, SELinux context, mount/cgroup markers) and compare them directly against the rooted cold control.
-3. Keep `kgsl-holder-scan` best-effort only; do not block the next seam on making holder counting perfect.
+1. Add the smallest boot-owned firmware-serving seam for `a630_sqe.fw` rather than bringing up generic full `ueventd`.
+2. Re-run the same boot-owned `c-kgsl-open-readonly-smoke` rung immediately after that seam lands to see whether the blocker moves to `a6xx_gmu_load_firmware("a618_gmu.bin")` or secure zap boot.
+3. Keep execution-context and holder-scan evidence as supporting context, not the primary blocker.
 
 Do not jump back out to `orange-gpu`, compositor, or app launch work until one of those moves the seam.
 
@@ -91,6 +95,7 @@ Do not jump back out to `orange-gpu`, compositor, or app launch work until one o
 - `scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh`
   - `kgsl-holder-scan.tsv`
   - parsed holder metadata in `status.json`
+  - `exec-context.txt`
 - `scripts/pixel/pixel_kgsl_cold_matrix.sh`
   - manifest-driven rooted cold KGSL ladder
   - the decisive current result is `cold-root-ready`, not any later service milestone

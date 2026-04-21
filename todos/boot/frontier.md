@@ -5,7 +5,13 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 ## Active Blocker
 
 - Boot-owned userspace can reach PID 1, boot-owned KMS, and the orange prelude.
-- The current blocker is still `open("/dev/kgsl-3d0")` in boot-owned userspace.
+- The current blocker is the first firmware load inside boot-owned `open("/dev/kgsl-3d0")`.
+- The decisive recovered boot-owned stack on `09051JEC202061` is:
+  - `kgsl_open`
+  - `adreno_init`
+  - `a6xx_microcode_read`
+  - `request_firmware`
+  - `_request_firmware`
 - That seam is now narrower than:
   - the staged Rust bundle
   - the dynamic loader
@@ -28,6 +34,10 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - direct C child probe
   - direct C PID 1 probe
   - the staged Rust payload
+- The latest discriminating run is:
+  - [`build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_)
+  - recovered `probe-report.txt` shows `wchan=_request_firmware`
+  - recovered `/proc/<pid>/stack` shows `a6xx_microcode_read -> request_firmware -> _request_firmware`
 
 ## Best Observability
 
@@ -46,6 +56,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 - Holder scans are now timeout-bounded and best-effort:
   - pre-run and post-run `kgsl-holder-scan` timeouts should not invalidate a positive readonly-open result
   - treat holder counts as helpful context, not as a gating success signal for the cold ladder
+- Rooted tmpfs-`/dev` controls now also recover `exec-context.txt`, so the rooted control lane can be compared directly against boot-owned `probe-fingerprint` / `probe-report` output.
 
 ## On-Screen Contract
 
@@ -61,9 +72,13 @@ Use the panel as a stage channel, not just “something orange happened.”
 
 ## Highest-Leverage Next Experiments
 
-1. Run the readonly KGSL-open helper from stock init (`post-fs-data` / imported rc service) to separate execution context from “boot-owned custom PID 1”.
-2. Extend boot-owned `probe-report.txt` / breadcrumbs with execution-context facts (`id`, SELinux context, mount/cgroup markers) so the failing boot-owned lane can be compared directly against the rooted `root-ready` control.
-3. Keep `kgsl-holder-scan` as best-effort only; do not block the next seam on making that scan perfect.
+1. Add the smallest boot-owned firmware-serving seam for the first named blocker:
+   - satisfy `a6xx_microcode_read` / `request_firmware("a630_sqe.fw")`
+   - do not jump straight to generic full `ueventd`
+2. Re-run the same boot-owned `c-kgsl-open-readonly-smoke` rung immediately after that seam lands:
+   - if it moves forward, the next likely blockers are `a6xx_gmu_load_firmware("a618_gmu.bin")` and then secure zap boot (`a615_zap`)
+   - if it still sleeps in `_request_firmware`, inspect the exact firmware helper contract instead of widening the ladder
+3. Keep the tracefs-backed `probe-report.txt` enhancement as a useful refinement, but not the blocker: the current proc snapshot already proved where the hang is.
 
 ## Fast Commands
 

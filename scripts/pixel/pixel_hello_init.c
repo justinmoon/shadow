@@ -47,6 +47,11 @@
 #define SHADOW_HELLO_INIT_METADATA_BY_TOKEN_ROOT "/metadata/shadow-hello-init/by-token"
 #define SHADOW_HELLO_INIT_METADATA_SYSFS_BLOCK_ROOT "/sys/class/block"
 #define SHADOW_HELLO_INIT_METADATA_PARTNAME "metadata"
+#define SHADOW_HELLO_INIT_TRACEFS_ROOT "/sys/kernel/tracing"
+#define SHADOW_HELLO_INIT_TRACEFS_TRACE_PATH "/sys/kernel/tracing/trace"
+#define SHADOW_HELLO_INIT_TRACEFS_TRACE_ON_PATH "/sys/kernel/tracing/tracing_on"
+#define SHADOW_HELLO_INIT_TRACEFS_CURRENT_TRACER_PATH "/sys/kernel/tracing/current_tracer"
+#define SHADOW_HELLO_INIT_TRACEFS_SET_GRAPH_FUNCTION_PATH "/sys/kernel/tracing/set_graph_function"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH "/orange-gpu/summary.json"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_OUTPUT_PATH "/orange-gpu/output.log"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_SUMMARY_PATH "/orange-gpu/probe-summary.json"
@@ -1328,11 +1333,156 @@ static bool append_file_excerpt(
     return append_fingerprintf(buffer, buffer_size, used, "%s\n", excerpt);
 }
 
+static bool append_groups_fingerprint_line(
+    char *buffer,
+    size_t buffer_size,
+    size_t *used
+) {
+    gid_t groups[32];
+    int groups_count;
+    int groups_read;
+    bool groups_truncated = false;
+    int index;
+
+    groups_count = getgroups(0, NULL);
+    if (groups_count < 0) {
+        return append_fingerprintf(
+            buffer,
+            buffer_size,
+            used,
+            "identity pid=%d ppid=%d uid=%u euid=%u gid=%u egid=%u groups_present=false errno=%d\n",
+            getpid(),
+            getppid(),
+            getuid(),
+            geteuid(),
+            getgid(),
+            getegid(),
+            errno
+        );
+    }
+
+    groups_read = groups_count;
+    if (groups_read > (int)(sizeof(groups) / sizeof(groups[0]))) {
+        groups_read = (int)(sizeof(groups) / sizeof(groups[0]));
+        groups_truncated = true;
+    }
+    if (groups_read > 0 && getgroups(groups_read, groups) < 0) {
+        return append_fingerprintf(
+            buffer,
+            buffer_size,
+            used,
+            "identity pid=%d ppid=%d uid=%u euid=%u gid=%u egid=%u groups_present=false errno=%d\n",
+            getpid(),
+            getppid(),
+            getuid(),
+            geteuid(),
+            getgid(),
+            getegid(),
+            errno
+        );
+    }
+
+    if (
+        !append_fingerprintf(
+            buffer,
+            buffer_size,
+            used,
+            "identity pid=%d ppid=%d uid=%u euid=%u gid=%u egid=%u groups_count=%d groups_truncated=%s groups=",
+            getpid(),
+            getppid(),
+            getuid(),
+            geteuid(),
+            getgid(),
+            getegid(),
+            groups_count,
+            bool_word(groups_truncated)
+        )
+    ) {
+        return false;
+    }
+
+    for (index = 0; index < groups_read; index++) {
+        if (
+            !append_fingerprintf(
+                buffer,
+                buffer_size,
+                used,
+                "%s%u",
+                index == 0 ? "" : ",",
+                groups[index]
+            )
+        ) {
+            return false;
+        }
+    }
+
+    return append_fingerprintf(buffer, buffer_size, used, "\n");
+}
+
+static bool append_symlink_target_line(
+    char *buffer,
+    size_t buffer_size,
+    size_t *used,
+    const char *label,
+    const char *path
+) {
+    char target[256];
+    ssize_t target_length;
+
+    target_length = readlink(path, target, sizeof(target) - 1U);
+    if (target_length < 0) {
+        return append_fingerprintf(
+            buffer,
+            buffer_size,
+            used,
+            "namespace label=%s path=%s present=false errno=%d\n",
+            label,
+            path,
+            errno
+        );
+    }
+
+    target[target_length] = '\0';
+    return append_fingerprintf(
+        buffer,
+        buffer_size,
+        used,
+        "namespace label=%s path=%s present=true target=%s\n",
+        label,
+        path,
+        target
+    );
+}
+
+static bool append_pid_namespace_fingerprint_lines(
+    char *buffer,
+    size_t buffer_size,
+    size_t *used,
+    pid_t pid
+) {
+    char path[64];
+    int path_length;
+    const char *labels[] = {"mnt", "pid", "net", "uts", "ipc", "user", "cgroup"};
+    size_t label_index;
+
+    for (label_index = 0; label_index < sizeof(labels) / sizeof(labels[0]); label_index++) {
+        path_length = snprintf(path, sizeof(path), "/proc/%d/ns/%s", pid, labels[label_index]);
+        if (path_length < 0 || (size_t)path_length >= sizeof(path)) {
+            return false;
+        }
+        if (!append_symlink_target_line(buffer, buffer_size, used, labels[label_index], path)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static bool write_metadata_probe_fingerprint_best_effort(
     const struct hello_init_config *config,
     struct metadata_stage_runtime *runtime
 ) {
-    char contents[4096];
+    char contents[8192];
     size_t used = 0U;
 
     if (!runtime->enabled || runtime->write_failed) {
@@ -1357,6 +1507,11 @@ static bool write_metadata_probe_fingerprint_best_effort(
             config->dev_mount,
             bool_word(runtime->prepared)
         ) ||
+        !append_groups_fingerprint_line(contents, sizeof(contents), &used) ||
+        !append_file_excerpt(contents, sizeof(contents), &used, "/proc/self/attr/current", 256U) ||
+        !append_file_excerpt(contents, sizeof(contents), &used, "/proc/self/cgroup", 512U) ||
+        !append_pid_namespace_fingerprint_lines(contents, sizeof(contents), &used, getpid()) ||
+        !append_file_excerpt(contents, sizeof(contents), &used, "/proc/self/mountinfo", 1536U) ||
         !append_path_fingerprint_line(contents, sizeof(contents), &used, "/dev/kgsl-3d0") ||
         !append_path_fingerprint_line(contents, sizeof(contents), &used, "/dev/dri/card0") ||
         !append_path_fingerprint_line(contents, sizeof(contents), &used, "/dev/dri/renderD128") ||
@@ -1552,6 +1707,81 @@ static int mount_pseudofs(
         errno
     );
     return -1;
+}
+
+static bool write_text_path_best_effort(const char *path, const char *contents) {
+    int fd;
+    bool ok = false;
+
+    fd = open(path, O_WRONLY | O_TRUNC | O_CLOEXEC | O_NOCTTY);
+    if (fd < 0) {
+        return false;
+    }
+
+    ok = write_fd_all_checked(fd, contents) == 0;
+    close(fd);
+    return ok;
+}
+
+static void teardown_kgsl_trace_best_effort(void) {
+    (void)write_text_path_best_effort(
+        SHADOW_HELLO_INIT_TRACEFS_TRACE_ON_PATH,
+        "0\n"
+    );
+    (void)write_text_path_best_effort(
+        SHADOW_HELLO_INIT_TRACEFS_CURRENT_TRACER_PATH,
+        "nop\n"
+    );
+}
+
+static bool setup_kgsl_trace_best_effort(void) {
+    static const char kKgslTraceFunctions[] =
+        "a6xx_microcode_read\n"
+        "a6xx_gmu_load_firmware\n"
+        "subsystem_get\n"
+        "pil_boot\n"
+        "gmu_start\n"
+        "a6xx_gmu_fw_start\n"
+        "a6xx_gmu_start\n"
+        "a6xx_gmu_hfi_start\n"
+        "hfi_send_cmd\n"
+        "a6xx_gmu_oob_set\n"
+        "a6xx_send_cp_init\n";
+
+    if (
+        mount_pseudofs(
+            "tracefs",
+            SHADOW_HELLO_INIT_TRACEFS_ROOT,
+            "tracefs",
+            MS_NOSUID | MS_NODEV | MS_NOEXEC,
+            NULL
+        ) != 0
+    ) {
+        return false;
+    }
+
+    if (
+        !write_text_path_best_effort(SHADOW_HELLO_INIT_TRACEFS_TRACE_ON_PATH, "0\n") ||
+        !write_text_path_best_effort(
+            SHADOW_HELLO_INIT_TRACEFS_CURRENT_TRACER_PATH,
+            "nop\n"
+        ) ||
+        !write_text_path_best_effort(SHADOW_HELLO_INIT_TRACEFS_TRACE_PATH, "") ||
+        !write_text_path_best_effort(
+            SHADOW_HELLO_INIT_TRACEFS_SET_GRAPH_FUNCTION_PATH,
+            kKgslTraceFunctions
+        ) ||
+        !write_text_path_best_effort(
+            SHADOW_HELLO_INIT_TRACEFS_CURRENT_TRACER_PATH,
+            "function_graph\n"
+        ) ||
+        !write_text_path_best_effort(SHADOW_HELLO_INIT_TRACEFS_TRACE_ON_PATH, "1\n")
+    ) {
+        teardown_kgsl_trace_best_effort();
+        return false;
+    }
+
+    return true;
 }
 
 static char *trim_whitespace(char *value) {
@@ -2322,7 +2552,7 @@ static bool write_metadata_probe_report_best_effort(
     bool capture_live_proc,
     unsigned int timeout_seconds
 ) {
-    char contents[12288];
+    char contents[24576];
     char observed_probe_stage[256];
     char wchan[256];
     char syscall_text[512];
@@ -2431,6 +2661,28 @@ static bool write_metadata_probe_report_best_effort(
 
     if (capture_live_proc && observed_pid > 0) {
         if (
+            !append_pid_namespace_fingerprint_lines(
+                contents,
+                sizeof(contents),
+                &used,
+                observed_pid
+            ) ||
+            !append_pid_proc_excerpt(
+                contents,
+                sizeof(contents),
+                &used,
+                observed_pid,
+                "attr/current",
+                256U
+            ) ||
+            !append_pid_proc_excerpt(
+                contents,
+                sizeof(contents),
+                &used,
+                observed_pid,
+                "cgroup",
+                512U
+            ) ||
             !append_pid_proc_excerpt(
                 contents,
                 sizeof(contents),
@@ -2451,6 +2703,26 @@ static bool write_metadata_probe_report_best_effort(
             log_stage("<4>", "metadata-probe-report-write-skipped", "reason=proc_excerpt_overflow");
             return false;
         }
+    }
+
+    if (
+        !append_file_excerpt(
+            contents,
+            sizeof(contents),
+            &used,
+            SHADOW_HELLO_INIT_TRACEFS_CURRENT_TRACER_PATH,
+            64U
+        ) ||
+        !append_file_excerpt(
+            contents,
+            sizeof(contents),
+            &used,
+            SHADOW_HELLO_INIT_TRACEFS_TRACE_PATH,
+            4096U
+        )
+    ) {
+        log_stage("<4>", "metadata-probe-report-write-skipped", "reason=trace_excerpt_overflow");
+        return false;
     }
 
     if (
@@ -3078,11 +3350,20 @@ static int run_c_kgsl_open_readonly_smoke(
     const char *payload_probe_stage_prefix
 ) {
     int kgsl_fd;
+    int saved_errno = 0;
+    bool trace_enabled = false;
 
     write_payload_probe_stage_best_effort(
         payload_probe_stage_path,
         payload_probe_stage_prefix,
         "kgsl-open-readonly"
+    );
+    trace_enabled = setup_kgsl_trace_best_effort();
+    log_stage(
+        trace_enabled ? "<6>" : "<4>",
+        "orange-gpu-c-kgsl-trace",
+        "enabled=%s",
+        bool_word(trace_enabled)
     );
     log_stage(
         "<6>",
@@ -3091,10 +3372,18 @@ static int run_c_kgsl_open_readonly_smoke(
     );
     kgsl_fd = open("/dev/kgsl-3d0", O_RDONLY | O_CLOEXEC | O_NOCTTY);
     if (kgsl_fd < 0) {
+        saved_errno = errno;
+        if (trace_enabled) {
+            teardown_kgsl_trace_best_effort();
+        }
+        errno = saved_errno;
         log_stage("<3>", "orange-gpu-c-kgsl-open-readonly-failed", "errno=%d", errno);
         return 1;
     }
     close(kgsl_fd);
+    if (trace_enabled) {
+        teardown_kgsl_trace_best_effort();
+    }
     write_payload_probe_stage_best_effort(
         payload_probe_stage_path,
         payload_probe_stage_prefix,
@@ -3121,6 +3410,7 @@ static int run_orange_gpu_payload(
             : config->hold_seconds + SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS;
     struct child_watch_result watch_result;
     struct probe_timeout_observer_context timeout_observer_context;
+    bool kgsl_trace_may_be_active = orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config);
 
     if (ensure_orange_gpu_runtime_dirs() != 0) {
         return 1;
@@ -3627,6 +3917,9 @@ static int run_orange_gpu_payload(
             &watch_result
         ) != 0
     ) {
+        if (kgsl_trace_may_be_active) {
+            teardown_kgsl_trace_best_effort();
+        }
         log_stage("<3>", "orange-gpu-waitpid-failed", "pid=%d errno=%d", child_pid, errno);
         log_boot("<3>", "waitpid(%d) failed: errno=%d", child_pid, errno);
         return 1;
@@ -3645,6 +3938,9 @@ static int run_orange_gpu_payload(
             false,
             watchdog_timeout
         );
+    }
+    if (kgsl_trace_may_be_active) {
+        teardown_kgsl_trace_best_effort();
     }
 
     if (watch_result.timed_out) {
