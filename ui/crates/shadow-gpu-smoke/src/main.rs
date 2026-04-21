@@ -649,11 +649,7 @@ struct RawKgslGetPropertiesSmokeSummary {
     env_tu_debug: Option<String>,
 }
 
-fn open_kgsl_device(
-    stage_name: &'static str,
-    read: bool,
-    write: bool,
-) -> Result<fs::File, String> {
+fn open_kgsl_device(stage_name: &'static str, read: bool, write: bool) -> Result<fs::File, String> {
     write_gpu_smoke_stage_best_effort(stage_name);
     eprintln!(
         "[shadow-gpu-smoke] raw-kgsl-open: {stage_name} path={KGSL_DEVICE_PATH} read={read} write={write}"

@@ -642,6 +642,7 @@ impl TimelineApp {
         if pending.token != token {
             return;
         }
+        let publish_preview = log_preview_text(&pending.content);
         self.pending_publish = None;
 
         match result {
@@ -659,6 +660,10 @@ impl TimelineApp {
                         plural_suffix(outcome.receipt.failed_relays.len())
                     )
                 };
+                eprintln!(
+                    "{APP_LOG_PREFIX}: publish_result=success preview={publish_preview} published_relays={relay_count} failed_relays={}",
+                    outcome.receipt.failed_relays.len()
+                );
                 self.status = TimelineStatus {
                     tone: Tone::Success,
                     message: format!(
@@ -668,6 +673,9 @@ impl TimelineApp {
                 };
             }
             Err(message) => {
+                eprintln!(
+                    "{APP_LOG_PREFIX}: publish_result=error preview={publish_preview} error={message}"
+                );
                 self.status = TimelineStatus {
                     tone: Tone::Danger,
                     message,
@@ -1857,6 +1865,10 @@ fn plural_suffix(count: usize) -> &'static str {
     } else {
         "s"
     }
+}
+
+fn log_preview_text(content: &str) -> String {
+    content.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn log_window_metrics(metrics: AppWindowMetrics) {

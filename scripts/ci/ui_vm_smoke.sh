@@ -354,6 +354,16 @@ wait_for_relay_note() {
   done
 }
 
+wait_for_timeline_publish_result() {
+  local preview="$1"
+  local label="$2"
+
+  wait_for_log_marker \
+    "shadow-rust-timeline: publish_result=success preview=${preview}" \
+    "$label" \
+    "shadow-rust-timeline: publish_result=error preview=${preview}"
+}
+
 start_seeded_local_relay() {
   relay_temp_dir="$(mktemp -d "$LOG_DIR/vm-smoke-nostr.XXXXXX")"
   relay_host_port="$(reserve_local_port)"
@@ -1100,6 +1110,9 @@ if actions != ["deny", "allow_once", "allow_always"]:
 PY
 run_shadowctl prompt -t vm allow_always >/dev/null
 wait_for_prompt_state 0 "rust-timeline signer prompt close" >/dev/null
+wait_for_timeline_publish_result \
+  "vm smoke reply allow always" \
+  "rust-timeline publish completion after allow_always"
 wait_for_relay_note \
   "ws://127.0.0.1:${relay_host_port}" \
   "vm smoke reply allow always" \
@@ -1121,6 +1134,9 @@ state = json.loads(os.environ["PROMPT_CLOSED_STATE"])
 if state.get("prompt_active"):
     raise SystemExit("vm-smoke: signer prompt should stay inactive after allow_always policy")
 PY
+wait_for_timeline_publish_result \
+  "vm smoke reply cached policy" \
+  "rust-timeline publish completion after cached-policy approval"
 wait_for_relay_note \
   "ws://127.0.0.1:${relay_host_port}" \
   "vm smoke reply cached policy" \
