@@ -40,7 +40,7 @@ while IFS= read -r env_line; do
 done < <(pixel_guest_session_overlay_config_env_lines "$overlay_session_env")
 stage_loader_path="$(pixel_system_stage_loader_dst)"
 stage_library_path="$(pixel_system_stage_library_dir)"
-base_client_env=$'BASE_CLIENT=alpha\nSHADOW_RUNTIME_APP_BUNDLE_PATH=/runtime/base.js\nSHADOW_BLITZ_SOFTWARE_KEYBOARD=0\nSHADOW_RUNTIME_NOSTR_DB_PATH=/runtime/ignored.sqlite3\nSHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=/runtime/ignored.sock\nSHADOW_RUNTIME_CASHU_DATA_DIR=/runtime/ignored-cashu\nSHADOW_RUNTIME_CAMERA_ENDPOINT=127.0.0.1:9\nSHADOW_RUNTIME_CAMERA_ALLOW_MOCK=0\nSHADOW_RUNTIME_CAMERA_TIMEOUT_MS=1'
+base_client_env=$'BASE_CLIENT=alpha\nSHADOW_RUNTIME_APP_BUNDLE_PATH=/runtime/base.js\nSHADOW_BLITZ_SOFTWARE_KEYBOARD=0\nSHADOW_RUNTIME_AUDIO_BACKEND=memory\nSHADOW_RUNTIME_NOSTR_DB_PATH=/runtime/ignored.sqlite3\nSHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=/runtime/ignored.sock\nSHADOW_RUNTIME_CASHU_DATA_DIR=/runtime/ignored-cashu\nSHADOW_RUNTIME_CAMERA_ENDPOINT=127.0.0.1:9\nSHADOW_RUNTIME_CAMERA_ALLOW_MOCK=0\nSHADOW_RUNTIME_CAMERA_TIMEOUT_MS=1'
 base_client_env="${base_client_env}"$'\n'"SHADOW_SYSTEM_STAGE_LOADER_PATH=$stage_loader_path"
 base_client_env="${base_client_env}"$'\n'"SHADOW_SYSTEM_STAGE_LIBRARY_PATH=$stage_library_path"
 
@@ -81,8 +81,16 @@ if [[ "$runtime_app_services_json" != '{"nostrDbPath":"/data/local/tmp/shadow-ru
   echo "pixel_guest_startup_config_smoke: runtime-app services json mismatch" >&2
   exit 1
 fi
-if [[ "$shell_services_json" != '{"cashuDataDir":"/data/local/tmp/shadow-runtime/cashu","nostrDbPath":"/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3","nostrServiceSocket":"/data/local/tmp/shadow-runtime/runtime-nostr.sock"}' ]]; then
+if [[ "$(PIXEL_RUNTIME_ENABLE_LINUX_AUDIO=1 pixel_runtime_app_services_json)" != '{"audioBackend":"linux_spike","nostrDbPath":"/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3","nostrServiceSocket":"/data/local/tmp/shadow-runtime/runtime-nostr.sock"}' ]]; then
+  echo "pixel_guest_startup_config_smoke: runtime-app audio services json mismatch" >&2
+  exit 1
+fi
+if [[ "$shell_services_json" != '{"audioBackend":"linux_spike","cashuDataDir":"/data/local/tmp/shadow-runtime/cashu","nostrDbPath":"/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3","nostrServiceSocket":"/data/local/tmp/shadow-runtime/runtime-nostr.sock"}' ]]; then
   echo "pixel_guest_startup_config_smoke: shell services json mismatch" >&2
+  exit 1
+fi
+if [[ "$(PIXEL_SHELL_ENABLE_LINUX_AUDIO=0 pixel_runtime_shell_services_json)" != '{"cashuDataDir":"/data/local/tmp/shadow-runtime/cashu","nostrDbPath":"/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3","nostrServiceSocket":"/data/local/tmp/shadow-runtime/runtime-nostr.sock"}' ]]; then
+  echo "pixel_guest_startup_config_smoke: shell disabled-audio services json mismatch" >&2
   exit 1
 fi
 
@@ -278,6 +286,7 @@ assert data["client"]["envAssignments"] == [
     {"key": "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS", "value": "45000"},
 ], data
 assert data["services"] == {
+    "audioBackend": "linux_spike",
     "camera": {
         "endpoint": "127.0.0.1:37656",
         "allowMock": True,
@@ -314,6 +323,7 @@ assert "startupConfigPath" not in run_config, run_config
 assert run_config["startup"] == {"mode": "shell", "shellStartAppId": "timeline"}, run_config
 assert run_config["client"]["appClientPath"] == "/runtime/alt-client", run_config
 assert run_config["services"] == {
+    "audioBackend": "linux_spike",
     "camera": {
         "endpoint": "127.0.0.1:37656",
         "allowMock": True,

@@ -57,6 +57,7 @@ if (( stage_only == 0 )); then
 SHADOW_BLITZ_SURFACE_WIDTH=$panel_width
 SHADOW_BLITZ_SURFACE_HEIGHT=$panel_height
 SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=play-00
+SHADOW_RUNTIME_AUDIO_BACKEND=${PIXEL_RUNTIME_AUDIO_LEGACY_CONFLICT_BACKEND:-memory}
 SHADOW_RUNTIME_AUDIO_SPIKE_GAIN=${PIXEL_RUNTIME_AUDIO_SPIKE_GAIN:-0.03}
 EOF
   )
@@ -76,7 +77,12 @@ if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS-}" ]]; then
   required_markers="${required_markers}"$'\n'"${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS}"
 fi
 
-forbidden_markers='[shadow-runtime-podcast-player] command=play error='
+forbidden_markers=$(
+  cat <<'EOF'
+[shadow-runtime-podcast-player] command=play error=
+[shadow-runtime-podcast-player] command=play episode=00 state=playing backend=memory
+EOF
+)
 if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS-}" ]]; then
   forbidden_markers="${forbidden_markers}"$'\n'"${PIXEL_RUNTIME_APP_EXTRA_FORBIDDEN_MARKERS}"
 fi

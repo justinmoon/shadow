@@ -111,6 +111,7 @@ scripts/ci/runtime_app_nostr_timeline_smoke.sh	ci	Host runtime Nostr timeline ap
 scripts/ci/runtime_app_podcast_player_smoke.sh	ci	Host runtime podcast player app smoke.
 scripts/ci/runtime_app_podcast_player_url_smoke.sh	ci	Linux-authoritative runtime podcast player URL playback smoke.
 scripts/ci/runtime_app_sound_smoke.sh	ci	Host runtime sound app smoke.
+scripts/ci/pixel_audio_backend_config_smoke.sh	ci	Focused rooted-Pixel startup/run-config smoke for typed audio-backend precedence.
 scripts/runtime/runtime_audio_linux_spike_fake.sh	runtime	Private fake Linux audio backend used by sound host smoke.
 scripts/runtime_build_artifacts.sh	public	Public runtime artifact builder wrapper used by just runtime-build-artifacts.
 scripts/runtime/runtime_build_artifacts.ts	runtime	Shared runtime artifact builder implementation.

@@ -266,8 +266,10 @@ pixel_runtime_nostr_service_socket_path() {
 
 pixel_runtime_default_services_json() {
   local include_cashu="${1:-0}"
+  local audio_backend="${2:-}"
 
   PIXEL_RUNTIME_DEFAULT_SERVICES_INCLUDE_CASHU="$include_cashu" \
+  PIXEL_RUNTIME_DEFAULT_SERVICES_AUDIO_BACKEND="$audio_backend" \
   PIXEL_RUNTIME_DEFAULT_SERVICES_NOSTR_DB_PATH="$(pixel_runtime_nostr_db_path)" \
   PIXEL_RUNTIME_DEFAULT_SERVICES_NOSTR_SERVICE_SOCKET="$(pixel_runtime_nostr_service_socket_path)" \
   PIXEL_RUNTIME_DEFAULT_SERVICES_CASHU_DATA_DIR="$(pixel_runtime_cashu_data_dir)" \
@@ -280,6 +282,9 @@ services = {
     "nostrDbPath": os.environ["PIXEL_RUNTIME_DEFAULT_SERVICES_NOSTR_DB_PATH"],
     "nostrServiceSocket": os.environ["PIXEL_RUNTIME_DEFAULT_SERVICES_NOSTR_SERVICE_SOCKET"],
 }
+audio_backend = os.environ.get("PIXEL_RUNTIME_DEFAULT_SERVICES_AUDIO_BACKEND", "").strip()
+if audio_backend:
+    services["audioBackend"] = audio_backend
 if os.environ.get("PIXEL_RUNTIME_DEFAULT_SERVICES_INCLUDE_CASHU") == "1":
     services["cashuDataDir"] = os.environ["PIXEL_RUNTIME_DEFAULT_SERVICES_CASHU_DATA_DIR"]
 
@@ -288,11 +293,23 @@ PY
 }
 
 pixel_runtime_app_services_json() {
-  pixel_runtime_default_services_json 0
+  local audio_backend=""
+
+  if [[ "${PIXEL_RUNTIME_ENABLE_LINUX_AUDIO:-0}" == "1" ]]; then
+    audio_backend="linux_spike"
+  fi
+
+  pixel_runtime_default_services_json 0 "$audio_backend"
 }
 
 pixel_runtime_shell_services_json() {
-  pixel_runtime_default_services_json 1
+  local audio_backend=""
+
+  if [[ "${PIXEL_SHELL_ENABLE_LINUX_AUDIO:-1}" == "1" ]]; then
+    audio_backend="linux_spike"
+  fi
+
+  pixel_runtime_default_services_json 1 "$audio_backend"
 }
 
 pixel_merge_services_json() {
@@ -585,6 +602,7 @@ pixel_guest_session_env_assignment_is_config_owned() {
   local key="${1:?pixel_guest_session_env_assignment_is_config_owned requires a key}"
 
   case "$key" in
+    SHADOW_RUNTIME_AUDIO_BACKEND | \
     SHADOW_RUNTIME_CASHU_DATA_DIR | \
     SHADOW_RUNTIME_NOSTR_DB_PATH | \
     SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET | \
@@ -767,6 +785,7 @@ def append_env_assignment(assignments, key, value):
 def merge_service_env_overrides(services, session_env):
     merged = dict(services or {})
     for env_key, service_key in (
+        ("SHADOW_RUNTIME_AUDIO_BACKEND", "audioBackend"),
         ("SHADOW_RUNTIME_NOSTR_DB_PATH", "nostrDbPath"),
         ("SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET", "nostrServiceSocket"),
         ("SHADOW_RUNTIME_CASHU_DATA_DIR", "cashuDataDir"),
@@ -823,6 +842,22 @@ def project_nostr_service_env(client_env_assignments, services):
                 "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET",
                 service_socket,
             )
+
+
+def filter_audio_service_env(client_env_assignments, services):
+    if "audioBackend" not in services:
+        return
+
+    filter_env_assignments(
+        client_env_assignments,
+        {"SHADOW_RUNTIME_AUDIO_BACKEND"},
+    )
+
+    audio_backend = services.get("audioBackend")
+    if audio_backend is None:
+        return
+    if not isinstance(audio_backend, str):
+        raise SystemExit("pixel: services.audioBackend must be a string")
 
 
 def project_cashu_service_env(client_env_assignments, services):
@@ -935,6 +970,7 @@ for key, value in client_env_lines:
     append_env_assignment(client_env_assignments, key, value)
 
 if services:
+    filter_audio_service_env(client_env_assignments, services)
     project_nostr_service_env(client_env_assignments, services)
     project_cashu_service_env(client_env_assignments, services)
     project_camera_service_env(client_env_assignments, services)

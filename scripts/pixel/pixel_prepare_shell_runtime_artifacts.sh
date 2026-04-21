@@ -346,7 +346,6 @@ fi
 EOF
   if [[ "$audio_enabled" == "1" ]]; then
     cat >>"$host_launcher_artifact" <<EOF
-export SHADOW_RUNTIME_AUDIO_BACKEND="linux_spike"
 export SHADOW_RUNTIME_AUDIO_SPIKE_BINARY="\$DIR/$audio_binary_name"
 export SHADOW_RUNTIME_AUDIO_SPIKE_STAGE_LOADER_PATH="\$DIR/lib/$PIXEL_RUNTIME_STAGE_LOADER_NAME"
 export SHADOW_RUNTIME_AUDIO_SPIKE_STAGE_LIBRARY_PATH="\$DIR/lib"
