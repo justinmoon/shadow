@@ -45,7 +45,9 @@ SUPPORTED_PIXEL_DEBUG_TOOLS = (
     "runtime-drm-gpu-matrix",
     "boot-lab-flash-run",
     "boot-lab-oneshot",
+    "boot-lab-preflight",
     "boot-lab-recover-traces",
+    "boot-lab-rc-trigger-ladder",
 )
 SUPPORTED_MEDIA_ACTIONS = (
     "play-pause",
@@ -671,6 +673,30 @@ def pixel_debug_command(
         if args.proof_prop:
             command.extend(["--proof-prop", args.proof_prop])
         return command, [("PIXEL_SERIAL", target.serial or target.id)]
+    if tool == "boot-lab-preflight":
+        command = [repo_root() / "scripts/pixel/pixel_boot_preflight.sh"]
+        if args.input:
+            command.extend(["--input", args.input])
+        if args.key:
+            command.extend(["--key", args.key])
+        if args.output:
+            command.extend(["--output-dir", args.output])
+        if args.wait_ready is not None:
+            command.extend(["--wait-ready", str(args.wait_ready)])
+        if args.adb_timeout is not None:
+            command.extend(["--adb-timeout", str(args.adb_timeout)])
+        if args.boot_timeout is not None:
+            command.extend(["--boot-timeout", str(args.boot_timeout)])
+        if args.recover_traces_after:
+            command.append("--recover-traces-after")
+        if args.no_wait_boot_completed:
+            command.append("--no-wait-boot-completed")
+        if args.patch_target:
+            command.extend(["--patch-target", args.patch_target])
+        if args.trigger:
+            for trigger in args.trigger:
+                command.extend(["--trigger", trigger])
+        return command, [("PIXEL_SERIAL", target.serial or target.id)]
     if tool == "boot-lab-recover-traces":
         command = [repo_root() / "scripts/pixel/pixel_boot_recover_traces.sh"]
         if args.output:
@@ -679,6 +705,32 @@ def pixel_debug_command(
             command.extend(["--adb-timeout", str(args.adb_timeout)])
         if args.boot_timeout is not None:
             command.extend(["--boot-timeout", str(args.boot_timeout)])
+        return command, [("PIXEL_SERIAL", target.serial or target.id)]
+    if tool == "boot-lab-rc-trigger-ladder":
+        command = [repo_root() / "scripts/pixel/pixel_boot_rc_trigger_ladder.sh"]
+        if args.input:
+            command.extend(["--input", args.input])
+        if args.key:
+            command.extend(["--key", args.key])
+        if args.output:
+            command.extend(["--output-dir", args.output])
+        if args.wait_ready is not None:
+            command.extend(["--wait-ready", str(args.wait_ready)])
+        if args.adb_timeout is not None:
+            command.extend(["--adb-timeout", str(args.adb_timeout)])
+        if args.boot_timeout is not None:
+            command.extend(["--boot-timeout", str(args.boot_timeout)])
+        if args.recover_traces_after:
+            command.append("--recover-traces-after")
+        if args.no_wait_boot_completed:
+            command.append("--no-wait-boot-completed")
+        if args.property_key:
+            command.extend(["--property-key", args.property_key])
+        if args.patch_target:
+            command.extend(["--patch-target", args.patch_target])
+        if args.trigger:
+            for trigger in args.trigger:
+                command.extend(["--trigger", trigger])
         return command, [("PIXEL_SERIAL", target.serial or target.id)]
     supported = ", ".join(SUPPORTED_PIXEL_DEBUG_TOOLS)
     raise SystemExit(f"shadowctl: unsupported Pixel debug tool {tool!r}; expected one of {supported}")
@@ -2614,28 +2666,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="boot-lab-flash-run / boot-lab-oneshot only: boot image to use for the experiment.",
     )
     debug.add_argument(
+        "--input",
+        help="boot-lab-preflight / boot-lab-rc-trigger-ladder only: stock boot image to patch for the experiment.",
+    )
+    debug.add_argument(
+        "--key",
+        help="boot-lab-preflight / boot-lab-rc-trigger-ladder only: AVB key path for rebuilt experimental images.",
+    )
+    debug.add_argument(
         "--slot",
         choices=("inactive", "active", "a", "b"),
         help="boot-lab-flash-run only: flash target slot. Defaults to inactive.",
     )
     debug.add_argument(
         "--output",
-        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-recover-traces only: host output dir for the run bundle.",
+        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-preflight / boot-lab-recover-traces only: host output dir for the run bundle.",
     )
     debug.add_argument(
         "--wait-ready",
         type=int,
-        help="boot-lab-flash-run / boot-lab-oneshot only: collector wait time for device-side helper logs.",
+        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-preflight only: collector wait time for device-side helper logs.",
     )
     debug.add_argument(
         "--adb-timeout",
         type=int,
-        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-recover-traces: seconds to wait for adb after boot.",
+        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-preflight / boot-lab-recover-traces: seconds to wait for adb after boot.",
     )
     debug.add_argument(
         "--boot-timeout",
         type=int,
-        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-recover-traces: seconds to wait for sys.boot_completed before collecting.",
+        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-preflight / boot-lab-recover-traces: seconds to wait for sys.boot_completed before collecting.",
     )
     debug.add_argument(
         "--success-signal",
@@ -2665,16 +2725,29 @@ def build_parser() -> argparse.ArgumentParser:
     debug.add_argument(
         "--recover-traces-after",
         action="store_true",
-        help="boot-lab-oneshot only: recover Android-side traces into output/recover-traces after adb returns.",
+        help="boot-lab-oneshot / boot-lab-preflight only: recover Android-side traces into output/recover-traces after adb returns.",
     )
     debug.add_argument(
         "--no-wait-boot-completed",
         action="store_true",
-        help="boot-lab-oneshot only: collect as soon as adb is back instead of waiting for sys.boot_completed.",
+        help="boot-lab-oneshot / boot-lab-preflight only: collect as soon as adb is back instead of waiting for sys.boot_completed.",
     )
     debug.add_argument(
         "--proof-prop",
         help="boot-lab-flash-run / boot-lab-oneshot only: treat KEY=VALUE getprop match as the boot proof signal.",
+    )
+    debug.add_argument(
+        "--property-key",
+        help="boot-lab-rc-trigger-ladder only: property key to set and verify for each trigger case.",
+    )
+    debug.add_argument(
+        "--patch-target",
+        help="boot-lab-preflight / boot-lab-rc-trigger-ladder only: explicit ramdisk rc entry to patch.",
+    )
+    debug.add_argument(
+        "--trigger",
+        action="append",
+        help="boot-lab-preflight / boot-lab-rc-trigger-ladder only: literal init trigger expression. Repeat to override the default trigger set.",
     )
     debug.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
 

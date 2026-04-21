@@ -68,27 +68,27 @@ Related docs:
   - scope: boot-owned KGSL-open discriminators, raw Vulkan / wgpu ladder splits, rooted KGSL controls that directly answer the boot-owned GPU question
   - reserved devices: `09051JEC202061` primary, `11151JEC200472` confirmation
   - rule: only this stream is allowed to change the critical-path GPU story
-- Stream B: boot orchestration, trigger, and evidence contract.
+- Stream B: boot-helper autostart and preflight before the first frame.
   - owner today: this worktree `boot-2`
-  - goal: make every boot run produce a truthful stage/transport verdict and make the automatic takeover trigger testable without borrowing GPU ownership work
-  - scope: `pixel_boot_oneshot.sh`, `pixel_boot_recover_traces.sh`, run-bundle metadata, execution-context breadcrumbs, stock-init trigger ladders, flash/rollback guardrails
+  - goal: prove a custom image can auto-run a Shadow boot helper from stock init, classify pre-takeover prerequisites, and leave a durable ready-vs-blocked report without borrowing GPU ownership work
+  - scope: stock-init trigger/launch control, boot-helper autostart breadcrumbs, preflight report format, `/data` readiness checks, staged-asset presence checks, and the supporting recovery/evidence contract
   - reserved devices: `0B191JEC203253` primary rooted sidecar, `06241JEC200520` spare; do not touch Stream A devices without an explicit handoff
-  - success looks like: late recovery, absence reasons, proof signals, and trigger context are explicit enough that GPU runs stop wasting operator time
+  - success looks like: the boot helper proves it launched on the current boot and the run bundle says separately whether preflight is ready or blocked, with a readable reason
 - Stream C: phase-1 launch contract and `/data` artifact discipline.
   - owner today: `boot-2` when Stream B is quiet
   - goal: keep boot-critical config minimal in the image while making `/data`-staged payload expectations explicit and fail-loud
   - scope: boot-helper launch contract, minimal config needed to decide whether to launch Shadow, missing-artifact behavior, typed startup/session config, recovery notes when staged assets are absent
   - reserved devices: none by default; validate on a rooted sidecar only after the host-side contract is settled
   - rule: this stream may tighten the phase-1 launch contract, but it does not claim to solve KGSL
-- Stream D: service inventory and non-GPU dependency map.
+- Stream D: takeover extraction and service prerequisite map.
   - owner today: open sidecar lane
-  - goal: decide which Android/vendor services are actually required after takeover without claiming that those answers unblock KGSL by themselves
-  - scope: rooted service inventory, input/audio dependency probes, camera/Wi-Fi/update boundary notes, phase-1 recovery rules
+  - goal: extract the current rooted takeover contract into a smaller boot-helper-ready service and recovery manifest without claiming that those answers unblock KGSL by themselves
+  - scope: rooted service inventory, display-service stop/start sets, typed takeover config, camera/Wi-Fi/update boundary notes, and phase-1 recovery rules
   - reserved devices: `06241JEC200520` or `0B191JEC203253` only
   - output shape: docs, manifests, or rooted sidecar summaries that tighten phase 1 without forking the boot-owned GPU seam
 - Coordination rules:
-  - Stream A stays the critical path until KGSL open moves.
-  - Streams B-D may land independently as long as they do not rewrite Stream A's interpretation.
+  - Stream A stays the critical path for the first real Shadow frame until KGSL open moves.
+  - Streams B-D may land independently as pre-frame migration work as long as they do not rewrite Stream A's interpretation.
   - Prefer one worktree and one explicit device reservation per active stream.
 
 ## Current Status
@@ -111,19 +111,19 @@ Related docs:
   - `scripts/ci/pixel_boot_recover_traces_smoke.sh` and `scripts/ci/pixel_boot_tooling_smoke.sh` cover those additions
 - Current stream map on 2026-04-21:
   - Stream A (`../boot`): KGSL / raw Vulkan critical path
-  - Stream B (`boot-2`): recovery, trigger, and evidence contract
+  - Stream B (`boot-2`): boot-helper autostart and preflight before the first frame
   - Stream C (`boot-2` when idle): phase-1 launch contract and `/data` artifact discipline
-  - Stream D (open sidecar lane): service inventory and non-GPU dependency map
+  - Stream D (open sidecar lane): takeover extraction and service prerequisite map
 - Current lab map on 2026-04-21:
   - `09051JEC202061`: Stream A primary boot-owned lane, rooted, best current reproducer for the KGSL-open seam
   - `11151JEC200472`: Stream A confirmation lane, rooted and healthy, but still transport-confounded for guarded `adb reboot bootloader` probes; use carefully for boot-owned runs until that path is fixed or bypassed
   - `0B191JEC203253`: Stream B rooted sidecar lane; also available for Stream C validation when explicitly idle
-  - `06241JEC200520`: Stream D rooted sidecar / spare lane; may absorb Stream B overflow when explicitly reassigned
+  - `06241JEC200520`: Stream D rooted sidecar / spare lane; currently Android-healthy but may need a Magisk-app activation pass before assuming rooted sidecar readiness
 - Handoff rule:
   - keep Stream A on the KGSL-open seam until one new discriminator lands
-  - keep Stream B on recovery, trigger, and evidence work; do not let it drift into second-guessing the GPU ladder
+  - keep Stream B on boot-helper autostart and preflight work; it may use recovery/evidence support, but it must not drift into second-guessing the GPU ladder
   - let Stream C tighten the phase-1 launch contract without waiting for KGSL
-  - let Stream D answer service-boundary questions without claiming a boot-owned product milestone
+  - let Stream D shrink the takeover/service contract without claiming a boot-owned product milestone
 
 ## Stream Backlogs
 
@@ -133,12 +133,12 @@ Related docs:
 - Land one discriminator at a time until boot-owned readonly KGSL open either succeeds or the missing prerequisite is named.
 - Do not broaden to `orange-gpu`, compositor, runtime, or shell until that happens.
 
-### Stream B: recovery / trigger / evidence (`boot-2`)
+### Stream B: boot-helper autostart / preflight (`boot-2`)
 
-- Finish the observability-first recovery loop so every run bundle reports stage evidence separately from transport evidence.
-- Extend boot-owned breadcrumbs with execution-context facts that can be compared directly against rooted controls.
-- Turn stock-init trigger ladders into reusable runners with explicit proof surfaces, not one-off probes.
-- Keep flash/rollback/run-bundle guardrails sharp enough that Stream A can iterate faster with less operator ambiguity.
+- Land a reusable stock-init preflight runner that proves the boot helper launched on the current boot before any session/compositor attempt.
+- Classify `/data` readiness, staged-asset presence, and required property/service snapshots in a durable preflight report instead of a generic "helper ran" signal.
+- Keep proof-of-launch separate from preflight-ready vs preflight-blocked so a missing artifact is a successful diagnosis, not a false-negative run.
+- Keep flash/rollback/run-bundle guardrails sharp enough that Stream B can exercise custom-image autostart safely without borrowing Stream A devices or hypotheses.
 
 ### Stream C: phase-1 launch contract / `/data` discipline (`boot-2`)
 
@@ -147,11 +147,11 @@ Related docs:
 - Keep typed startup/session config aligned with the actual phase-1 boot helper contract instead of ad hoc env assembly.
 - Land host-heavy contract work independently of the boot-owned GPU seam whenever possible.
 
-### Stream D: service inventory / non-GPU dependencies (sidecar)
+### Stream D: takeover extraction / service prerequisites (sidecar)
 
-- Inventory the minimum vendor/service set needed after Shadow takes over the display.
+- Inventory the minimum vendor/service set needed before and after Shadow takes over the display.
+- Extract the rooted display-takeover service stop/start set into a smaller, typed manifest that a future boot helper can reuse.
 - Keep camera, Wi-Fi, and broader networking explicitly non-blocking for the first milestone unless new evidence proves otherwise.
-- Use rooted sidecars for input/audio/service probes only when those probes do not compete with Stream A for interpretation or devices.
 - Convert useful answers into docs or manifests, not another unbounded experimental lane.
 
 ## Milestones
@@ -776,6 +776,18 @@ Related docs:
     - a stock-init trigger ladder for the readonly KGSL-open helper (`post-fs-data`, `init.svc.pd_mapper=running`, `init.svc.qseecom-service=running`, `init.svc.gpu=running`, `sys.boot_completed=1`)
     - a rooted warm-vs-cold holder experiment to see whether readonly KGSL open only succeeds once Android already has live KGSL holders
     - a boot-owned blocked-task stack capture around the direct C KGSL-open seam if the above are still ambiguous
+- Stock-init trigger-ladder tooling result on 2026-04-21:
+  - `scripts/pixel/pixel_boot_rc_trigger_ladder.sh` now exists as a private sidecar runner for stock-init trigger probes, and `sc debug boot-lab-rc-trigger-ladder` delegates to it
+  - the runner composes `pixel_boot_build_rc_probe.sh` with `pixel_boot_oneshot.sh`, writes `cases.tsv`, `matrix.tsv`, and `matrix-summary.json`, and now refuses to treat a missing built image as a successful build step
+  - the first real `post-fs-data` property-only probe on `06241JEC200520` returned to adb on slot `a` with `device-run/status.json.ok=true` but `shadow_probe_prop=""`, so the proof property never appeared even though transport came back cleanly
+  - that same real run left the phone back in normal Android with `sys.boot_completed=1` but Magisk root inactive again, so future sidecar use of `06241JEC200520` should begin with `sc -t 06241JEC200520 root-check` and, if needed, one Magisk-app activation pass before assuming the device is rooted
+  - keep this tooling as instrumentation rather than the Stream B milestone itself; the next Stream B seam is boot-helper autostart plus a durable preflight report
+- Stream B preflight tooling result on 2026-04-21:
+  - `scripts/pixel/pixel_boot_preflight.sh` now exists as the private Stream B runner, and `sc debug boot-lab-preflight` delegates to it
+  - `pixel_boot_build_log_probe.sh --preflight-profile phase1-shell` now emits a boot-helper preflight summary plus `preflight-checks.tsv`, and `pixel_boot_collect_logs.sh` lifts those fields into `status.json` without conflating them with transport success
+  - the first real preflight run on `06241JEC200520` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260421T233147Z/summary.json), built the image successfully, and returned to adb on slot `_a` after a slow recovery window, but neither `/.shadow-init-wrapper` nor `/data/local/tmp/shadow-boot` appeared for the current boot
+  - that makes the first preflight result a truthful `helper_proved_current_boot=false` / `preflight_status=""` miss rather than a GPU issue: the current stock-init autostart seam still lacks a positive userspace proof surface on normal `sunfish` boots
+  - next Stream B seam: strengthen launch-proof discrimination around the boot-helper autostart path itself, not the GPU path, so future preflight runs can distinguish "helper never launched" from "helper launched and blocked on prerequisites"
 - Rooted cold KGSL ladder result on 2026-04-21:
   - `scripts/pixel/pixel_kgsl_cold_matrix.sh` now exists as the rooted cold-boot falsification lane, with a single-serial manifest contract, warm-baseline preflight, and readiness rungs for `root-ready`, `pd-mapper`, `qseecom-service`, `gpu-service`, `boot-complete`, and `display-restored`
   - after fixing the cold-runner readiness / reboot bookkeeping, the rerun on `11151JEC200472` ([`build/pixel/runs/kgsl-cold-matrix/20260421T212908Z`](../../build/pixel/runs/kgsl-cold-matrix/20260421T212908Z)) still succeeded at `cold-root-ready`, with `device-run/status.json.run_succeeded=true` and `device-run/status.json.summary.kgsl_device_opened=true`

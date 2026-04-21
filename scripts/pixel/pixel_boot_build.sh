@@ -192,17 +192,23 @@ if [[ "$BUILD_MODE" == "wrapper" ]]; then
   )
 fi
 
-for spec in "${RENAME_SPECS[@]}"; do
-  cpio_args+=(--rename "$spec")
-done
+if ((${#RENAME_SPECS[@]})); then
+  for spec in "${RENAME_SPECS[@]}"; do
+    cpio_args+=(--rename "$spec")
+  done
+fi
 
-for spec in "${ADD_SPECS[@]}"; do
-  cpio_args+=(--add "$spec")
-done
+if ((${#ADD_SPECS[@]})); then
+  for spec in "${ADD_SPECS[@]}"; do
+    cpio_args+=(--add "$spec")
+  done
+fi
 
-for spec in "${REPLACE_SPECS[@]}"; do
-  cpio_args+=(--replace "$spec")
-done
+if ((${#REPLACE_SPECS[@]})); then
+  for spec in "${REPLACE_SPECS[@]}"; do
+    cpio_args+=(--replace "$spec")
+  done
+fi
 
 python3 "$SCRIPT_DIR/lib/cpio_edit.py" "${cpio_args[@]}"
 

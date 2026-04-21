@@ -513,12 +513,41 @@ check_output_case \
     --recover-traces-after
 
 check_output_case \
+  shadowctl_pixel_debug_boot_lab_preflight \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --input /tmp/stock.img --output-dir /tmp/preflight-out --adb-timeout 45 --boot-timeout 60 --recover-traces-after --patch-target init.recovery.rc --trigger post-fs-data --trigger property:init.svc.gpu=running' "$SCRIPT_DIR/pixel/pixel_boot_preflight.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL boot-lab-preflight \
+    --input /tmp/stock.img \
+    --output /tmp/preflight-out \
+    --adb-timeout 45 \
+    --boot-timeout 60 \
+    --patch-target init.recovery.rc \
+    --trigger post-fs-data \
+    --trigger property:init.svc.gpu=running \
+    --recover-traces-after
+
+check_output_case \
   shadowctl_pixel_debug_boot_lab_recover_traces \
   0 \
   "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --output /tmp/recover-out' "$SCRIPT_DIR/pixel/pixel_boot_recover_traces.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL boot-lab-recover-traces \
     --output /tmp/recover-out
+
+check_output_case \
+  shadowctl_pixel_debug_boot_lab_rc_trigger_ladder \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --input /tmp/stock.img --output-dir /tmp/trigger-out --adb-timeout 45 --boot-timeout 60 --property-key shadow.boot.rc_probe --trigger post-fs-data --trigger property:init.svc.gpu=running' "$SCRIPT_DIR/pixel/pixel_boot_rc_trigger_ladder.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL boot-lab-rc-trigger-ladder \
+    --input /tmp/stock.img \
+    --output /tmp/trigger-out \
+    --adb-timeout 45 \
+    --boot-timeout 60 \
+    --property-key shadow.boot.rc_probe \
+    --trigger post-fs-data \
+    --trigger property:init.svc.gpu=running
 
 check_output_case \
   shadowctl_pixel_ci_run_only_podcast \

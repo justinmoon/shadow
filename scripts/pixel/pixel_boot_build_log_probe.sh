@@ -15,6 +15,7 @@ OUTPUT_IMAGE="${PIXEL_BOOT_LOG_PROBE_IMAGE:-}"
 TRIGGER="${PIXEL_BOOT_LOG_PROBE_TRIGGER:-post-fs-data}"
 DEVICE_LOG_ROOT="$(pixel_boot_device_log_root)"
 PATCH_TARGET_OVERRIDE="${PIXEL_BOOT_LOG_PROBE_PATCH_TARGET:-}"
+PREFLIGHT_PROFILE="${PIXEL_BOOT_PREFLIGHT_PROFILE:-}"
 BUILD_MODE="wrapper"
 KEEP_WORK_DIR=0
 WORK_DIR=""
@@ -25,10 +26,12 @@ usage() {
 Usage: scripts/pixel/pixel_boot_build_log_probe.sh [--input PATH] [--wrapper PATH] [--key PATH]
                                                    [--output PATH] [--trigger EXPR]
                                                    [--device-log-root PATH] [--patch-target ENTRY]
+                                                   [--preflight-profile phase1-shell]
                                                    [--stock-init]
                                                    [--keep-work-dir]
 
-Build a private sunfish boot.img that imports /init.shadow.rc and runs a boot helper that only emits log markers.
+Build a private sunfish boot.img that imports /init.shadow.rc and runs a boot helper
+that emits log markers and optional preflight reports.
 EOF
 }
 
@@ -65,6 +68,18 @@ validate_patch_target_override() {
     echo "pixel_boot_build_log_probe: --patch-target contains unsupported characters" >&2
     exit 1
   }
+}
+
+validate_preflight_profile() {
+  [[ -z "$PREFLIGHT_PROFILE" ]] && return 0
+  case "$PREFLIGHT_PROFILE" in
+    phase1-shell)
+      ;;
+    *)
+      echo "pixel_boot_build_log_probe: unsupported --preflight-profile $PREFLIGHT_PROFILE; expected phase1-shell" >&2
+      exit 1
+      ;;
+  esac
 }
 
 detect_patch_target() {
@@ -172,6 +187,10 @@ while [[ $# -gt 0 ]]; do
       PATCH_TARGET_OVERRIDE="${2:?missing value for --patch-target}"
       shift 2
       ;;
+    --preflight-profile)
+      PREFLIGHT_PROFILE="${2:?missing value for --preflight-profile}"
+      shift 2
+      ;;
     --keep-work-dir)
       KEEP_WORK_DIR=1
       shift
@@ -204,6 +223,7 @@ EOF
 validate_literal_trigger
 validate_device_log_root
 validate_patch_target_override
+validate_preflight_profile
 
 pixel_prepare_dirs
 if [[ -z "$OUTPUT_IMAGE" ]]; then
@@ -271,6 +291,37 @@ capture_output() {
   return 1
 }
 
+bool_word() {
+  if [[ "\$1" == "1" || "\$1" == "true" ]]; then
+    printf 'true'
+  else
+    printf 'false'
+  fi
+}
+
+capture_prop() {
+  getprop "\$1" 2>/dev/null | tr -d '\r'
+}
+
+path_exists_for_kind() {
+  path="\$1"
+  kind="\$2"
+  case "\$kind" in
+    file)
+      [ -f "\$path" ]
+      ;;
+    dir)
+      [ -d "\$path" ]
+      ;;
+    any)
+      [ -e "\$path" ]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 rm -rf "\$log_root"
 mkdir -p "\$log_root"
 chown shell:shell "\$log_root" 2>/dev/null || true
@@ -297,6 +348,7 @@ capture_output "\$log_root/logcat-shadow.txt" logcat -d -s shadow-init:I shadow-
   printf 'trigger=%s\n' "${TRIGGER}"
   printf 'device_log_root=%s\n' "${DEVICE_LOG_ROOT}"
   printf 'patch_target=%s\n' "${PATCH_TARGET}"
+  printf 'preflight_profile=%s\n' "${PREFLIGHT_PROFILE}"
   printf 'boot_id=%s\n' "\$boot_id"
   printf 'slot_suffix=%s\n' "\$slot_suffix"
   printf 'bootmode=%s\n' "\$(getprop ro.bootmode | tr -d '\r')"
@@ -308,8 +360,134 @@ capture_output "\$log_root/logcat-shadow.txt" logcat -d -s shadow-init:I shadow-
 } >"\$log_root/service-states.txt"
 chmod 0644 "\$log_root/service-states.txt" 2>/dev/null || true
 
+EOF
+
+if [[ "$PREFLIGHT_PROFILE" == "phase1-shell" ]]; then
+  cat >>"$WORK_DIR/shadow-boot-helper" <<EOF
+preflight_status="ready"
+preflight_blocked_reason=""
+preflight_summary="\$log_root/preflight-summary.txt"
+preflight_checks="\$log_root/preflight-checks.tsv"
+preflight_required_check_count=0
+preflight_missing_required_count=0
+preflight_required_missing_labels=""
+preflight_data_mounted=false
+preflight_data_writable=false
+preflight_data_local_tmp_ready=false
+
+mark_preflight_blocked() {
+  reason="\$1"
+  preflight_status="blocked"
+  if [[ -z "\$preflight_blocked_reason" ]]; then
+    preflight_blocked_reason="\$reason"
+  fi
+}
+
+append_missing_label() {
+  label="\$1"
+  if [[ -z "\$preflight_required_missing_labels" ]]; then
+    preflight_required_missing_labels="\$label"
+  else
+    preflight_required_missing_labels="\$preflight_required_missing_labels,\$label"
+  fi
+}
+
+record_preflight_path() {
+  label="\$1"
+  required="\$2"
+  kind="\$3"
+  path="\$4"
+  exists=false
+
+  if path_exists_for_kind "\$path" "\$kind"; then
+    exists=true
+  fi
+
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "\$label" \
+    "\$required" \
+    "\$kind" \
+    "\$(bool_word "\$exists")" \
+    "\$path" >>"\$preflight_checks"
+
+  if [[ "\$required" == "true" ]]; then
+    preflight_required_check_count=\$((preflight_required_check_count + 1))
+    if [[ "\$exists" != "true" ]]; then
+      preflight_missing_required_count=\$((preflight_missing_required_count + 1))
+      append_missing_label "\$label"
+      mark_preflight_blocked "missing-required-paths"
+    fi
+  fi
+}
+
+if awk '\$2 == "/data" {found=1} END {exit(found ? 0 : 1)}' /proc/mounts 2>/dev/null; then
+  preflight_data_mounted=true
+else
+  mark_preflight_blocked "data-not-mounted"
+fi
+
+if touch "\$log_root/.preflight-write-test" 2>/dev/null; then
+  preflight_data_writable=true
+  rm -f "\$log_root/.preflight-write-test" 2>/dev/null || true
+else
+  mark_preflight_blocked "data-not-writable"
+fi
+
+if [[ -d /data/local/tmp && -w /data/local/tmp ]]; then
+  preflight_data_local_tmp_ready=true
+else
+  mark_preflight_blocked "data-local-tmp-not-ready"
+fi
+
+printf '# label\trequired\tkind\texists\tpath\n' >"\$preflight_checks"
+record_preflight_path runtime-linux-dir true dir "$(pixel_runtime_linux_dir)"
+record_preflight_path system-launcher true file "$(pixel_system_launcher_dst)"
+record_preflight_path compositor-launcher true file "$(pixel_runtime_compositor_launcher_dst)"
+record_preflight_path guest-client-launcher true file "$(pixel_guest_client_dst)"
+record_preflight_path runtime-dir false dir "$(pixel_runtime_dir)"
+record_preflight_path runtime-app-bundle false file "$(pixel_runtime_app_bundle_dst)"
+record_preflight_path runtime-session-config false file "$(pixel_runtime_session_config_path)"
+chmod 0644 "\$preflight_checks" 2>/dev/null || true
+
+{
+  printf 'profile=%s\n' "phase1-shell"
+  printf 'status=%s\n' "\$preflight_status"
+  printf 'blocked_reason=%s\n' "\$preflight_blocked_reason"
+  printf 'data_mounted=%s\n' "\$(bool_word "\$preflight_data_mounted")"
+  printf 'data_writable=%s\n' "\$(bool_word "\$preflight_data_writable")"
+  printf 'data_local_tmp_ready=%s\n' "\$(bool_word "\$preflight_data_local_tmp_ready")"
+  printf 'required_check_count=%s\n' "\$preflight_required_check_count"
+  printf 'missing_required_count=%s\n' "\$preflight_missing_required_count"
+  printf 'required_missing_labels=%s\n' "\$preflight_required_missing_labels"
+  printf 'runtime_dir=%s\n' "$(pixel_runtime_dir)"
+  printf 'runtime_linux_dir=%s\n' "$(pixel_runtime_linux_dir)"
+  printf 'system_launcher=%s\n' "$(pixel_system_launcher_dst)"
+  printf 'compositor_launcher=%s\n' "$(pixel_runtime_compositor_launcher_dst)"
+  printf 'guest_client_launcher=%s\n' "$(pixel_guest_client_dst)"
+  printf 'runtime_app_bundle=%s\n' "$(pixel_runtime_app_bundle_dst)"
+  printf 'runtime_session_config=%s\n' "$(pixel_runtime_session_config_path)"
+  printf 'surfaceflinger=%s\n' "\$(capture_prop init.svc.surfaceflinger)"
+  printf 'bootanim=%s\n' "\$(capture_prop init.svc.bootanim)"
+  printf 'pd_mapper=%s\n' "\$(capture_prop init.svc.pd_mapper)"
+  printf 'qseecom_service=%s\n' "\$(capture_prop init.svc.qseecom-service)"
+  printf 'gpu_service=%s\n' "\$(capture_prop init.svc.gpu)"
+  printf 'sys_boot_completed=%s\n' "\$(capture_prop sys.boot_completed)"
+} >"\$preflight_summary"
+chmod 0644 "\$preflight_summary" 2>/dev/null || true
+
+printf '%s\n' "\$preflight_status" >"\$log_root/status.txt"
+chmod 0644 "\$log_root/status.txt" 2>/dev/null || true
+setprop shadow.boot.preflight "\$preflight_status" || true
+log_line "preflight phase1-shell status=\$preflight_status missing_required=\$preflight_missing_required_count reason=\${preflight_blocked_reason:-none}"
+EOF
+fi
+
+cat >>"$WORK_DIR/shadow-boot-helper" <<EOF
+
+if [[ ! -f "\$log_root/status.txt" ]]; then
 printf 'ready\n' >"\$log_root/status.txt"
 chmod 0644 "\$log_root/status.txt" 2>/dev/null || true
+fi
 log_line "helper finished"
 setprop shadow.boot.log_probe ready || true
 EOF
@@ -340,6 +518,9 @@ printf 'Build mode: %s\n' "$BUILD_MODE"
 printf 'Trigger: %s\n' "$TRIGGER"
 printf 'Device log root: %s\n' "$DEVICE_LOG_ROOT"
 printf 'Patch target: %s\n' "$PATCH_TARGET"
+if [[ -n "$PREFLIGHT_PROFILE" ]]; then
+  printf 'Preflight profile: %s\n' "$PREFLIGHT_PROFILE"
+fi
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
   printf 'Kept payload workdir: %s\n' "$WORK_DIR"
 fi

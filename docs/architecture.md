@@ -71,6 +71,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 - `scripts/shadowctl` is the target-aware operator CLI for VM and Pixel.
 - `sc` is the devshell alias for `scripts/shadowctl`; `just shadowctl ...` is the fallback when `sc` is not on `PATH`.
 - `shadowctl lease ...` is the same-host cross-worktree device reservation helper for private boot-lab coordination.
+- Private boot-lab debug delegation also hangs off `shadowctl`, including one-shot runs, boot-helper preflight runs, trace recovery, and the stock-init rc trigger ladder.
 - `just run target=...` / `just stop target=...` now route through `shadowctl run` / `shadowctl stop`.
 - VM inspection/control hangs off `shadowctl`; `just` should not grow one wrapper per VM subcommand again.
 - Pixel shell control and setup/recovery now hang off `shadowctl`; remaining cleanup is private helper consolidation.

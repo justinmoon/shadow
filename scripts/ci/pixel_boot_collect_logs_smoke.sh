@@ -35,8 +35,26 @@ create_device_tree() {
     mkdir -p "$root$DEVICE_LOG_ROOT"
     printf '%s\n' "$LIVE_BOOT_ID" >"$root$DEVICE_LOG_ROOT/boot-id.txt"
     printf '%s\n' "$LIVE_SLOT_SUFFIX" >"$root$DEVICE_LOG_ROOT/slot-suffix.txt"
-    printf 'ready\n' >"$root$DEVICE_LOG_ROOT/status.txt"
+    printf 'blocked\n' >"$root$DEVICE_LOG_ROOT/status.txt"
     printf 'helper finished\n' >"$root$DEVICE_LOG_ROOT/helper.log"
+    cat >"$root$DEVICE_LOG_ROOT/preflight-summary.txt" <<'EOF'
+profile=phase1-shell
+status=blocked
+blocked_reason=missing-required-paths
+data_mounted=true
+data_writable=true
+data_local_tmp_ready=true
+required_check_count=4
+missing_required_count=2
+required_missing_labels=system-launcher,guest-client-launcher
+EOF
+    cat >"$root$DEVICE_LOG_ROOT/preflight-checks.tsv" <<'EOF'
+# label	required	kind	exists	path
+runtime-linux-dir	true	dir	true	/data/local/tmp/shadow-runtime-gnu
+system-launcher	true	file	false	/data/local/tmp/shadow-runtime-gnu/run-shadow-system
+compositor-launcher	true	file	true	/data/local/tmp/shadow-runtime-gnu/run-shadow-compositor-guest
+guest-client-launcher	true	file	false	/data/local/tmp/shadow-runtime-gnu/run-shadow-blitz-demo
+EOF
   fi
 }
 
@@ -238,6 +256,13 @@ test -f "$SUCCESS_OUTPUT/device/$(basename "$WRAPPER_MARKER_ROOT")/events.log"
 assert_json_field "$SUCCESS_OUTPUT/status.json" collection_succeeded true
 assert_json_field "$SUCCESS_OUTPUT/status.json" helper_dir_pulled true
 assert_json_field "$SUCCESS_OUTPUT/status.json" wrapper_matches_current_boot true
+assert_json_field "$SUCCESS_OUTPUT/status.json" preflight_summary_present true
+assert_json_field "$SUCCESS_OUTPUT/status.json" preflight_checks_present true
+assert_json_field "$SUCCESS_OUTPUT/status.json" preflight_profile phase1-shell
+assert_json_field "$SUCCESS_OUTPUT/status.json" preflight_status blocked
+assert_json_field "$SUCCESS_OUTPUT/status.json" preflight_ready false
+assert_json_field "$SUCCESS_OUTPUT/status.json" preflight_blocked_reason missing-required-paths
+assert_json_field "$SUCCESS_OUTPUT/status.json" preflight_missing_required_count 2
 
 PULL_FAILURE_OUTPUT="$TMP_DIR/output-pull-failure"
 assert_failure env \

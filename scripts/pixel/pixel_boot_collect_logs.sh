@@ -126,6 +126,49 @@ capture_adb_shell_best_effort() {
   return 1
 }
 
+load_preflight_summary() {
+  local summary_path key value
+  summary_path="$1"
+  [[ -f "$summary_path" ]] || return 0
+
+  preflight_summary_present=true
+  while IFS='=' read -r key value; do
+    case "$key" in
+      profile)
+        preflight_profile="$value"
+        ;;
+      status)
+        preflight_status="$value"
+        ;;
+      blocked_reason)
+        preflight_blocked_reason="$value"
+        ;;
+      data_mounted)
+        preflight_data_mounted="$value"
+        ;;
+      data_writable)
+        preflight_data_writable="$value"
+        ;;
+      data_local_tmp_ready)
+        preflight_data_local_tmp_ready="$value"
+        ;;
+      required_check_count)
+        preflight_required_check_count="$value"
+        ;;
+      missing_required_count)
+        preflight_missing_required_count="$value"
+        ;;
+      required_missing_labels)
+        preflight_required_missing_labels="$value"
+        ;;
+    esac
+  done <"$summary_path"
+
+  if [[ "$preflight_status" == "ready" ]]; then
+    preflight_ready=true
+  fi
+}
+
 collect_wrapper_markers_best_effort() {
   local serial output_root wrapper_dir marker_file
   serial="$1"
@@ -263,6 +306,22 @@ helper_status_present=false
 if [[ -f "$log_dir/status.txt" ]]; then
   helper_status_present=true
 fi
+preflight_summary_present=false
+preflight_checks_present=false
+preflight_profile=""
+preflight_status=""
+preflight_blocked_reason=""
+preflight_data_mounted=""
+preflight_data_writable=""
+preflight_data_local_tmp_ready=""
+preflight_required_check_count=0
+preflight_missing_required_count=0
+preflight_required_missing_labels=""
+preflight_ready=false
+if [[ -f "$log_dir/preflight-checks.tsv" ]]; then
+  preflight_checks_present=true
+fi
+load_preflight_summary "$log_dir/preflight-summary.txt"
 boot_id=""
 if [[ -f "$log_dir/boot-id.txt" ]]; then
   boot_id="$(tr -d '\r\n' <"$log_dir/boot-id.txt")"
@@ -349,6 +408,18 @@ pixel_write_status_json \
   proof_property_expected="$PROOF_PROP_VALUE" \
   proof_property_actual="$observed_prop_value" \
   proof_property_matched="$matched_proof_prop" \
+  preflight_summary_present="$preflight_summary_present" \
+  preflight_checks_present="$preflight_checks_present" \
+  preflight_profile="$preflight_profile" \
+  preflight_status="$preflight_status" \
+  preflight_ready="$preflight_ready" \
+  preflight_blocked_reason="$preflight_blocked_reason" \
+  preflight_data_mounted="$preflight_data_mounted" \
+  preflight_data_writable="$preflight_data_writable" \
+  preflight_data_local_tmp_ready="$preflight_data_local_tmp_ready" \
+  preflight_required_check_count="$preflight_required_check_count" \
+  preflight_missing_required_count="$preflight_missing_required_count" \
+  preflight_required_missing_labels="$preflight_required_missing_labels" \
   waited_for_ready="$(if [[ "$WAIT_READY_SECS" != "0" ]]; then printf true; else printf false; fi)" \
   wait_ready_timed_out="$wait_ready_timed_out" \
   collection_succeeded="$collection_succeeded"
@@ -388,4 +459,11 @@ fi
 if [[ -n "$PROOF_PROP_KEY" ]]; then
   printf 'Proof property: %s=%s\n' "$PROOF_PROP_KEY" "$PROOF_PROP_VALUE"
   printf 'Observed property: %s\n' "$observed_prop_value"
+fi
+if [[ "$preflight_summary_present" == "true" ]]; then
+  printf 'Preflight profile: %s\n' "$preflight_profile"
+  printf 'Preflight status: %s\n' "$preflight_status"
+  if [[ -n "$preflight_blocked_reason" ]]; then
+    printf 'Preflight blocked reason: %s\n' "$preflight_blocked_reason"
+  fi
 fi

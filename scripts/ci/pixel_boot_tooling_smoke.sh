@@ -47,7 +47,14 @@ INIT_SYMLINK_OUTPUT_IMAGE="$TMP_DIR/init-symlink-output.img"
 SYSTEM_INIT_SYMLINK_OUTPUT_IMAGE="$TMP_DIR/system-init-symlink-output.img"
 SYSTEM_INIT_WRAPPER_OUTPUT_IMAGE="$TMP_DIR/system-init-wrapper-output.img"
 LOG_PROBE_OUTPUT_IMAGE="$TMP_DIR/log-probe-stock-init.img"
+LOG_PREFLIGHT_OUTPUT_IMAGE="$TMP_DIR/log-probe-preflight-stock-init.img"
 RC_PROBE_OUTPUT_IMAGE="$TMP_DIR/rc-probe-stock-init.img"
+PREFLIGHT_OUTPUT="$TMP_DIR/boot-preflight-output"
+RC_TRIGGER_LADDER_OUTPUT="$TMP_DIR/rc-trigger-ladder-output"
+PREFLIGHT_BUILD_MOCK="$TMP_DIR/mock-preflight-build.sh"
+PREFLIGHT_ONESHOT_MOCK="$TMP_DIR/mock-preflight-oneshot.sh"
+RC_TRIGGER_LADDER_BUILD_MOCK="$TMP_DIR/mock-rc-trigger-build.sh"
+RC_TRIGGER_LADDER_ONESHOT_MOCK="$TMP_DIR/mock-rc-trigger-oneshot.sh"
 MOCK_STORE_STANDARD="$TMP_DIR/store-standard"
 MOCK_STORE_MINIMAL="$TMP_DIR/store-minimal"
 MOCK_STORE_C="$TMP_DIR/store-c"
@@ -147,6 +154,204 @@ import /init.shadow.rc
 on boot
     setprop shadow.boot.rc_probe ready
 EOF
+
+cat >"$RC_TRIGGER_LADDER_BUILD_MOCK" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+output=""
+trigger=""
+property=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output)
+      output="$2"
+      shift 2
+      ;;
+    --trigger)
+      trigger="$2"
+      shift 2
+      ;;
+    --property)
+      property="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+mkdir -p "$(dirname "$output")"
+printf 'mock rc probe image\n' >"$output"
+printf 'Trigger: %s\n' "$trigger"
+printf 'Property: %s\n' "$property"
+EOF
+chmod 0755 "$RC_TRIGGER_LADDER_BUILD_MOCK"
+
+cat >"$PREFLIGHT_BUILD_MOCK" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+output=""
+profile=""
+trigger=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output)
+      output="$2"
+      shift 2
+      ;;
+    --preflight-profile)
+      profile="$2"
+      shift 2
+      ;;
+    --trigger)
+      trigger="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+mkdir -p "$(dirname "$output")"
+printf 'mock preflight image\n' >"$output"
+printf 'Profile: %s\n' "$profile"
+printf 'Trigger: %s\n' "$trigger"
+EOF
+chmod 0755 "$PREFLIGHT_BUILD_MOCK"
+
+cat >"$PREFLIGHT_ONESHOT_MOCK" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+image=""
+output=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --image)
+      image="$2"
+      shift 2
+      ;;
+    --output)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+mkdir -p "$output/collect"
+python3 - "$output/status.json" "$output/collect/status.json" "$image" "${PIXEL_SERIAL:-TESTSERIAL}" <<'PY'
+import json
+import sys
+
+status_path, collect_status_path, image_path, serial = sys.argv[1:5]
+
+device_status = {
+    "ok": True,
+    "serial": serial,
+    "collection_succeeded": True,
+    "collect_output_dir": str(collect_status_path.rsplit("/", 1)[0]),
+}
+collect_status = {
+    "collection_succeeded": True,
+    "preflight_summary_present": True,
+    "preflight_checks_present": True,
+    "preflight_profile": "phase1-shell",
+    "preflight_status": "blocked",
+    "preflight_ready": False,
+    "preflight_blocked_reason": "missing-required-paths",
+}
+with open(status_path, "w", encoding="utf-8") as fh:
+    json.dump(device_status, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+with open(collect_status_path, "w", encoding="utf-8") as fh:
+    json.dump(collect_status, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+printf 'mock preflight oneshot for %s\n' "$image"
+EOF
+chmod 0755 "$PREFLIGHT_ONESHOT_MOCK"
+
+cat >"$RC_TRIGGER_LADDER_ONESHOT_MOCK" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+image=""
+output=""
+proof_prop=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --image)
+      image="$2"
+      shift 2
+      ;;
+    --output)
+      output="$2"
+      shift 2
+      ;;
+    --proof-prop)
+      proof_prop="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+proof_key="${proof_prop%%=*}"
+proof_value="${proof_prop#*=}"
+mkdir -p "$output/collect"
+python3 - "$output/status.json" "$output/collect/status.json" "$image" "$output" "${PIXEL_SERIAL:-TESTSERIAL}" "$proof_prop" "$proof_value" "$proof_key" <<'PY'
+import json
+import sys
+
+status_path, collect_path, image, output_dir, serial, proof_prop, proof_value, proof_key = sys.argv[1:9]
+
+status_payload = {
+    "kind": "boot_oneshot",
+    "ok": True,
+    "serial": serial,
+    "image": image,
+    "output_dir": output_dir,
+    "proof_prop": proof_prop,
+    "shadow_probe_prop": proof_value,
+    "adb_ready": True,
+    "boot_completed": True,
+    "failure_stage": "",
+}
+collect_payload = {
+    "kind": "boot_log_collect",
+    "ok": True,
+    "collection_succeeded": True,
+    "proof_property_key": proof_key,
+    "proof_property_expected": proof_value,
+    "proof_property_actual": proof_value,
+    "proof_property_matched": True,
+}
+
+with open(status_path, "w", encoding="utf-8") as fh:
+    json.dump(status_payload, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+
+with open(collect_path, "w", encoding="utf-8") as fh:
+    json.dump(collect_payload, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+
+printf 'mock oneshot for %s\n' "$proof_prop"
+EOF
+chmod 0755 "$RC_TRIGGER_LADDER_ONESHOT_MOCK"
 
 PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$BOOT_BUILD_RAMDISK" <<'PY'
 from pathlib import Path
@@ -1307,6 +1512,33 @@ if not entries[entry_name].startswith(prefix.encode("utf-8")):
 PY
 }
 
+assert_cpio_entry_contains() {
+  local archive_path entry_name needle
+  archive_path="$1"
+  entry_name="$2"
+  needle="$3"
+
+  PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$archive_path" "$entry_name" "$needle" <<'PY'
+from pathlib import Path
+import sys
+
+from cpio_edit import read_cpio
+
+archive_path, entry_name, needle = sys.argv[1:4]
+entries = {
+    entry.name: entry.data
+    for entry in read_cpio(Path(archive_path)).without_trailer()
+}
+
+if entry_name not in entries:
+    raise SystemExit(f"missing cpio entry: {entry_name}")
+if needle.encode("utf-8") not in entries[entry_name]:
+    raise SystemExit(
+        f"cpio entry {entry_name} did not contain expected bytes: {entries[entry_name]!r}"
+    )
+PY
+}
+
 assert_cpio_entry_symlink_target() {
   local archive_path entry_name expected_target
   archive_path="$1"
@@ -2281,6 +2513,23 @@ assert_cpio_entry_startswith "$LOG_PROBE_OUTPUT_IMAGE" system/etc/init/hw/init.r
 assert_cpio_entry_startswith "$LOG_PROBE_OUTPUT_IMAGE" init.shadow.rc $'on post-fs-data\n'
 assert_cpio_entry_startswith "$LOG_PROBE_OUTPUT_IMAGE" shadow-boot-helper $'#!/system/bin/sh\n'
 
+log_preflight_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_log_probe.sh" \
+      --stock-init \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$LOG_PREFLIGHT_OUTPUT_IMAGE" \
+      --trigger post-fs-data \
+      --device-log-root /data/local/tmp/shadow-boot \
+      --preflight-profile phase1-shell
+)"
+assert_contains "$log_preflight_output" "Build mode: stock-init"
+assert_contains "$log_preflight_output" "Preflight profile: phase1-shell"
+assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'setprop shadow.boot.preflight'
+assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'preflight-summary.txt'
+assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'runtime-linux-dir'
+
 rc_probe_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_rc_probe.sh" \
@@ -2300,6 +2549,73 @@ assert_cpio_entry_missing "$RC_PROBE_OUTPUT_IMAGE" init.stock
 assert_cpio_entry_startswith "$RC_PROBE_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n'
 assert_cpio_entry_equals "$RC_PROBE_OUTPUT_IMAGE" init.shadow.rc $'on post-fs-data\n    setprop shadow.boot.rc_probe ready\n'
 assert_cpio_entry_missing "$RC_PROBE_OUTPUT_IMAGE" shadow-boot-helper
+
+rm -rf "$RC_TRIGGER_LADDER_OUTPUT"
+rc_trigger_ladder_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    PIXEL_BOOT_RC_TRIGGER_LADDER_BUILD_SCRIPT="$RC_TRIGGER_LADDER_BUILD_MOCK" \
+    PIXEL_BOOT_RC_TRIGGER_LADDER_ONESHOT_SCRIPT="$RC_TRIGGER_LADDER_ONESHOT_MOCK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_rc_trigger_ladder.sh" \
+      --serial TESTSERIAL \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output-dir "$RC_TRIGGER_LADDER_OUTPUT" \
+      --property-key shadow.boot.rc_probe \
+      --trigger post-fs-data \
+      --trigger property:init.svc.gpu=running
+)"
+assert_contains "$rc_trigger_ladder_output" "Trigger ladder output: $RC_TRIGGER_LADDER_OUTPUT"
+assert_contains "$rc_trigger_ladder_output" "Matched cases: 2 / 2"
+test -f "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json"
+test -f "$RC_TRIGGER_LADDER_OUTPUT/matrix.tsv"
+test -f "$RC_TRIGGER_LADDER_OUTPUT/cases.tsv"
+assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" kind boot_rc_trigger_ladder
+assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" ok true
+assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" case_count 2
+assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" matched_case_count 2
+assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" successful_case_count 2
+assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" property_key shadow.boot.rc_probe
+assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/trigger post-fs-data
+assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/proof_property_matched true
+assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/1/trigger property:init.svc.gpu=running
+assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/1/proof_property_matched true
+assert_contains "$(cat "$RC_TRIGGER_LADDER_OUTPUT/matrix.tsv")" $'01-post-fs-data\tpost-fs-data\tshadow.boot.rc_probe=rc-trigger-01-post-fs-data\ttrue'
+assert_contains "$(cat "$RC_TRIGGER_LADDER_OUTPUT/cases.tsv")" $'02-property-init.svc.gpu-running\tTESTSERIAL\tproperty:init.svc.gpu=running\tshadow.boot.rc_probe=rc-trigger-02-property-init.svc.gpu-running'
+
+rm -rf "$PREFLIGHT_OUTPUT"
+preflight_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    PIXEL_BOOT_PREFLIGHT_BUILD_SCRIPT="$PREFLIGHT_BUILD_MOCK" \
+    PIXEL_BOOT_PREFLIGHT_ONESHOT_SCRIPT="$PREFLIGHT_ONESHOT_MOCK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_preflight.sh" \
+      --serial TESTSERIAL \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output-dir "$PREFLIGHT_OUTPUT" \
+      --trigger post-fs-data \
+      --patch-target init.recovery.rc \
+      --adb-timeout 45 \
+      --boot-timeout 60 \
+      --recover-traces-after
+)"
+assert_contains "$preflight_output" "Boot preflight output: $PREFLIGHT_OUTPUT"
+assert_contains "$preflight_output" "Preflight status: blocked"
+test -f "$PREFLIGHT_OUTPUT/summary.json"
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" kind boot_preflight
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" ok true
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" helper_proved_current_boot true
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_profile phase1-shell
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_status blocked
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_ready false
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_blocked_reason missing-required-paths
 
 prepare_cached_tmpfs_gpu_bundle
 install_tmpfs_gpu_smoke_mocks
