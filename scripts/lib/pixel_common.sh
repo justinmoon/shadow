@@ -227,6 +227,24 @@ pixel_retryable_nix_build_failure() {
     "$log_path"
 }
 
+pixel_flush_appended_stderr() {
+  local log_path emitted_bytes total_bytes
+  log_path="${1:?pixel_flush_appended_stderr requires a log path}"
+  emitted_bytes="${2:-0}"
+
+  if [[ ! -f "$log_path" ]]; then
+    printf '%s\n' "$emitted_bytes"
+    return 0
+  fi
+
+  total_bytes="$(wc -c <"$log_path" | tr -d '[:space:]')"
+  if (( total_bytes > emitted_bytes )); then
+    tail -c "+$((emitted_bytes + 1))" "$log_path" >&2 || true
+  fi
+
+  printf '%s\n' "$total_bytes"
+}
+
 pixel_retry_nix_build() {
   local attempt max_attempts retry_sleep_secs heartbeat_secs status log_path pid started_at next_heartbeat old_term_trap old_int_trap
   max_attempts="${PIXEL_NIX_BUILD_RETRIES:-3}"
@@ -311,7 +329,7 @@ pixel_retry_nix_build() {
 }
 
 pixel_retry_nix_build_print_out_paths() {
-  local attempt max_attempts retry_sleep_secs heartbeat_secs status stdout_log stderr_log combined_log pid started_at next_heartbeat old_term_trap old_int_trap
+  local attempt max_attempts retry_sleep_secs heartbeat_secs status stdout_log stderr_log combined_log pid started_at next_heartbeat old_term_trap old_int_trap stderr_emitted_bytes
   max_attempts="${PIXEL_NIX_BUILD_RETRIES:-3}"
   retry_sleep_secs="${PIXEL_NIX_BUILD_RETRY_SLEEP_SECS:-3}"
   heartbeat_secs="${PIXEL_NIX_BUILD_HEARTBEAT_SECS:-30}"
@@ -323,6 +341,7 @@ pixel_retry_nix_build_print_out_paths() {
 
   for attempt in $(seq 1 "$max_attempts"); do
     pid=""
+    stderr_emitted_bytes=0
     "$@" >"$stdout_log" 2>"$stderr_log" &
     pid=$!
     trap '
@@ -343,6 +362,7 @@ pixel_retry_nix_build_print_out_paths() {
     next_heartbeat=$((started_at + heartbeat_secs))
     while kill -0 "$pid" >/dev/null 2>&1; do
       sleep 1
+      stderr_emitted_bytes="$(pixel_flush_appended_stderr "$stderr_log" "$stderr_emitted_bytes")"
       if (( heartbeat_secs > 0 && SECONDS >= next_heartbeat )); then
         printf 'pixel: nix build still running (%ss elapsed): %s\n' \
           "$((SECONDS - started_at))" \
@@ -351,9 +371,9 @@ pixel_retry_nix_build_print_out_paths() {
       fi
     done
 
+    stderr_emitted_bytes="$(pixel_flush_appended_stderr "$stderr_log" "$stderr_emitted_bytes")"
     if wait "$pid"; then
       pid=""
-      cat "$stderr_log" >&2
       cat "$stdout_log"
       if [[ -n "$old_term_trap" ]]; then
         eval "$old_term_trap"
@@ -383,7 +403,6 @@ pixel_retry_nix_build_print_out_paths() {
     fi
     cat "$stdout_log" "$stderr_log" >"$combined_log"
     if (( attempt == max_attempts )) || ! pixel_retryable_nix_build_failure "$combined_log"; then
-      cat "$stderr_log" >&2
       cat "$stdout_log" >&2
       rm -f "$stdout_log" "$stderr_log" "$combined_log"
       return "$status"

@@ -360,6 +360,18 @@
           "rust/vendor/xilem"
         ]
       );
+      shadowUiAppSrcFor = appPath: repoSourceFromPrefixes [
+        "ui/Cargo.toml"
+        "ui/Cargo.lock"
+        "ui/${appPath}"
+        "ui/crates/shadow-ui-core"
+        "ui/third_party"
+        "rust/Cargo.toml"
+        "rust/shadow-sdk"
+        "rust/shadow-runtime-protocol"
+        "rust/vendor/temporal_rs"
+        "rust/vendor/xilem"
+      ];
       shadowUiFmtSrc = repoSourceFromPrefixes [
         "ui/Cargo.toml"
         "ui/apps"
@@ -897,49 +909,71 @@
         cross:
         pname:
         appPath:
-        cross.rustPlatform.buildRustPackage {
-          inherit pname;
-          version = "0.1.0";
-          src = shadowUiSrc;
-          cargoRoot = "ui";
-          buildAndTestSubdir = "ui";
-          cargoLock = {
-            lockFile = ./ui/Cargo.lock;
-            outputHashes = uiBlitzOutputHashes;
-          };
-          doCheck = false;
-          strictDeps = true;
-          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
-          cargoBuildFlags = [ "-p" pname ];
-          cargoInstallFlags = [ "-p" pname ];
-          nativeBuildInputs = [
-            cross.buildPackages.pkg-config
-            cross.buildPackages.python3
-          ];
-          postPatch = mkUiWorkspaceMembersPostPatch "ui/Cargo.toml" [
-            "crates/shadow-ui-core"
-            appPath
-          ];
-          depsBuildBuild =
-            lib.optionals cross.stdenv.buildPlatform.isDarwin [
-              cross.buildPackages.stdenv.cc
-              cross.buildPackages.libiconv
+        let
+          craneLib = crane.mkLib cross;
+          commonArgs = {
+            inherit pname;
+            version = "0.1.0";
+            src = shadowUiAppSrcFor appPath;
+            cargoLock = ./ui/Cargo.lock;
+            cargoToml = ./ui/Cargo.toml;
+            outputHashes = uiCraneOutputHashes;
+            cargoExtraArgs = "--offline -p ${pname}";
+            doCheck = false;
+            strictDeps = true;
+            CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+            postUnpack = ''
+              cd "$sourceRoot/ui"
+              sourceRoot="."
+            '';
+            postPatch = mkUiWorkspaceMembersPostPatch "Cargo.toml" [
+              "crates/shadow-ui-core"
+              appPath
             ];
-          buildInputs = [
-            cross.expat
-            cross.fontconfig
-            cross.freetype
-            cross.libdrm
-            cross.libffi
-            cross.libglvnd
-            cross.libxkbcommon
-            cross.mesa
-            cross.vulkan-loader
-            cross.wayland
-            cross.wayland-protocols
-          ];
-          meta.mainProgram = pname;
-        };
+            nativeBuildInputs = [
+              cross.buildPackages.pkg-config
+              cross.buildPackages.python3
+            ];
+            depsBuildBuild =
+              lib.optionals cross.stdenv.buildPlatform.isDarwin [
+                cross.buildPackages.stdenv.cc
+                cross.buildPackages.libiconv
+              ];
+            buildInputs = [
+              cross.expat
+              cross.fontconfig
+              cross.freetype
+              cross.libdrm
+              cross.libffi
+              cross.libglvnd
+              cross.libxkbcommon
+              cross.mesa
+              cross.vulkan-loader
+              cross.wayland
+              cross.wayland-protocols
+            ];
+          };
+          artifactVendorArgs = (builtins.removeAttrs commonArgs [ "cargoExtraArgs" ]) // {
+            cargoExtraArgs = "--locked";
+          };
+          artifactBuildArgs = (builtins.removeAttrs commonArgs [ "cargoExtraArgs" ]) // {
+            cargoExtraArgs = "--offline -p ${pname}";
+          };
+          cargoVendorDir = craneLib.vendorCargoDeps artifactVendorArgs;
+          cargoArtifacts = craneLib.buildDepsOnly ((builtins.removeAttrs (
+            artifactBuildArgs
+            // {
+              inherit cargoVendorDir;
+            }
+          ) [ "src" ]) // {
+            pname = "${pname}-deps";
+            dummySrc = craneLib.mkDummySrc artifactBuildArgs;
+          });
+        in
+          craneLib.buildPackage (commonArgs // {
+            inherit cargoVendorDir cargoArtifacts;
+            meta.mainProgram = pname;
+          });
       mkShadowRustDemoFor = cross:
         mkShadowRustUiAppFor cross "shadow-rust-demo" "apps/shadow-rust-demo";
       mkShadowRustTimelineFor = cross:

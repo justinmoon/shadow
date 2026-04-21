@@ -1,0 +1,89 @@
+Living plan. Revise it as we learn. Do not treat this as a fixed contract.
+
+# OCI Builder
+
+## Intent
+
+Make the OCI ARM builder fast, well-utilized, and cheap to operate.
+
+## Scope
+
+- Improve builder throughput and single-build latency where it matters.
+- Make idle shutdown authoritative, observable, and fail-closed enough that we do not pay for long idle uptime.
+- Add enough observability to explain low CPU utilization and to evaluate scheduler, linker, and package-structure experiments.
+- Keep the initial work focused on builder control-plane, scheduling, and high-leverage Rust/Nix changes.
+- Do not start broad Rust crate refactors before shutdown and measurement are trustworthy.
+
+## Approach
+
+- Fix cost control first.
+- Improve observability so we can distinguish Cargo graph limits, link bottlenecks, Crane artifact overhead, and idle/queueing effects.
+- Tune Nix scheduling for aggregate throughput across worktrees before chasing "one build uses 72 cores".
+- Run narrow A/B experiments for Crane artifact mode, linker choice, and release profile tweaks.
+- Only then decide whether Rust package splitting or feature-gating is worth the complexity.
+
+## Steps
+
+- [x] Project 1: Make idle shutdown authoritative and visible.
+  A durable API-key path now exists on macOS, and the builder now runs a local `oci-builder-idle-check` timer that issues `SOFTSTOP` after 20 idle minutes without depending on the laptop session token.
+- [x] Project 2: Upgrade builder observability.
+  A first useful slice is live: stop-relevant activity, CPU breakdown including iowait, PSI, and idle decision records are now captured well enough to judge shutdown behavior and builder underutilization.
+- [x] Project 3: Evaluate scheduler policy.
+  April 20-21 data says keep `max-jobs = 3` and `cores = 24` for now; revisit `4x16` only if queue pressure or sustained `active_build_count = 3` becomes common.
+- [x] Project 4: Move the hot UI app package lane onto Crane.
+  `shadow-rust-demo` and `shadow-rust-timeline` now use dedicated per-app source helpers plus per-app Crane `buildDepsOnly` / `buildPackage` pairs, which keeps the packages independent while reusing each app's dependency artifacts.
+- [ ] Project 5: Reduce Nix/Crane overhead.
+  Measure and test `installCargoArtifactsMode = "use-symlink"` and other artifact-flow changes for the Rust package paths that currently spend meaningful time compressing cargo outputs.
+- [ ] Project 6: Target final-build bottlenecks.
+  Measure `shadow-system-deps` versus final `shadow-system`, then A/B `lld` and `mold`, release `codegen-units`, and any other linker/profile levers on the real builder.
+- [ ] Project 7: Reduce default Rust compile surface if still needed.
+  Feature-gate or split heavy domains like Cashu, Nostr, clipboard, and camera backend only if earlier scheduling and artifact wins are insufficient.
+
+## Implementation Notes
+
+- The old laptop-only auto-stop path failed open when OCI CLI session auth expired on April 20, 2026. That is now replaced by a builder-side timer plus durable API-key auth.
+- Script scaffolding now prefers a durable `OCI_BUILDER_AUTOMATION` API-key profile at `~/.oci/oci-builder-automation-config` when present, and otherwise falls back to the old session-token path.
+- Builder-side OCI auth now uses a dedicated agenix-backed config under `/run/agenix` so the stop path does not depend on permissive `~/.oci` symlinks.
+- A first observability slice is now live: `nix-build-observer` samples include SSH connection count, CPU breakdown with `iowait`, PSI, and the current idle timer age from `/var/lib/oci-builder-idle/last-active-builder`.
+- The idle watchdog now writes structured decision records to `/var/lib/oci-builder-idle/events-YYYY-MM-DD.jsonl` so we can see `active`, `idle_waiting`, and `softstop` decisions without scraping free-form journal text.
+- On April 20, 2026, the builder did in fact auto-stop at about 17:57 PDT; the next boot started at 18:11 PDT when it was brought back up manually.
+- Observer data from April 20-21 shows `active_build_count = 3` only briefly, never above 3, and average host CPU at 3 active builds was still only about 41%, so `max-jobs` is not the first bottleneck for the current 1-2-builder workload.
+- Crane `installCargoArtifactsMode = "use-symlink"` did not help `shadow-system`: the deps derivation grew from about 191s to about 202s and still produced a 1.7G output with zero symlinks.
+- A naive `-fuse-ld=lld` experiment on the final `shadow-system` derivation also did not help: Cargo recompiled a wide set of crates, GNU `ld` still showed up in the process tree, and the final derivation ballooned from about 40s to about 156s.
+- Next seam: either integrate an actually effective linker path that does not invalidate most of the final derivation, or do structural compile-surface work such as splitting heavy `shadow-system` domains behind optional features or separate binaries.
+- The builder was still up on April 20, 2026 after starting on April 18, 2026, with multi-hour idle windows that exceed the configured 20 minute threshold.
+- `shadow-system` currently follows a coarse Crane split: vendoring, one `buildDepsOnly`, one `buildPackage`.
+- The deps derivation spends meaningful wall time after Cargo finishes compressing cargo artifacts, so CPU underutilization is not only a Rust graph problem.
+- Single-build CPU usage is low enough that aggregate throughput is likely a better first optimization target than raising per-build cores to 72.
+- Working default hypothesis: the end-state scheduler will be closer to `16x4` or `12x6` than `24x3` or `72x1`.
+- Small April 20, 2026 landable slice: point `mkShadowRustUiAppFor` at the existing `shadowUiAppsSrc` subset so `shadow-rust-demo` and `shadow-rust-timeline` package builds stop hashing the broader `shadowUiSrc`; this targets frequent rebuild churn without taking on the larger Crane shared-artifacts refactor in the same seam.
+- Follow-on slice: split `mkShadowRustUiAppFor` onto a new per-app `shadowUiAppSrcFor` helper so demo and timeline stop invalidating each other while keeping the larger shared-Crane migration as the next project.
+- Shared-family Crane experiment result: one common `buildDepsOnly` lane for demo+timeline made cold builds slower and coupled demo to timeline-only `shadow-sdk` features like `nostr`/`ui`, so it was rejected.
+- Accepted shape: per-app Crane for demo and timeline, with `shadowUiAppSrcFor` carrying the app path plus the needed Rust workspace patch inputs (`xilem`, `temporal_rs`) so each package remains independently buildable.
+- Builder measurements on April 20, 2026 using temp checkouts on `oci-builder`:
+  baseline `buildRustPackage` warm build for both apps: `103.404s`
+  baseline demo-only source edit rebuild for both attrs: `35.019s`
+  baseline shared `rust/shadow-sdk/src/app.rs` edit rebuild for both attrs: `102.963s`
+  rejected shared-family Crane warm build for both apps: `143.388s`
+  rejected shared-family Crane demo-only edit rebuild: `32.955s`
+  rejected shared-family Crane shared-sdk edit rebuild: `101.022s`
+  accepted per-app Crane warm build for both apps: `157.643s`
+  accepted per-app Crane demo-only edit rebuild: `10.580s`
+  accepted per-app Crane shared-sdk edit rebuild: `26.758s`
+- Interpretation: cold-ish package builds got slower, but the rebuilds that matter for active iteration got much faster, especially when one app changes or a shared local Rust crate changes.
+- Observer build counts from April 18-21, 2026 show the next hottest builder outputs after the demo/timeline app lane were:
+  `shadow-rust-demo` `98`
+  `shadow-ui-vm-session` `86`
+  `shadow-compositor-guest` `76`
+  `shadow-rust-timeline` `69`
+  `shadow-blitz-demo` `53`
+  `shadow-compositor` `48`
+  `shadow-system` `6`
+- Follow-on experiment result: `shadow-compositor-guest` looked like the next best package candidate by frequency, but a per-package Crane split was rejected.
+  Both the `mkDummySrc` version and the `dummySrc = real-src` version failed in `buildDepsOnly` on the static-musl guest package with missing `target/release/build/.../build-script-build` executables (for example `parking_lot_core` and `quote`), even after narrowing the source filter to only the guest workspace members.
+- Interpretation: not every hot Rust package should be forced onto the same Crane pattern.
+  The guest/compositor static-musl package lane likely needs deeper source or crate reshaping before `buildDepsOnly` is viable, so the next optimization seam should move back to `shadow-system` compile-surface / linker work or another package family rather than pushing harder on guest-compositor Crane.
+- Project 3 conclusion changed after looking at real utilization instead of the original heuristic: keep the current `3x24` default until the observer shows actual queue pressure rather than theoretical headroom.
+- The next high-leverage seam is likely in the UI app package graph, not `shadow-system`: `shadow-rust-demo`, `shadow-rust-timeline`, and `shadow-ui-vm-session` are frequent builder outputs, and those packages still build as standalone `buildRustPackage` derivations rather than sharing a Cargo artifact lane.
+- Crane is already the dominant pattern for shared Rust check/test lanes and for `shadow-system`, but not for every package output. The right standardization target is hot Rust package lanes where rebuilds matter, not every isolated Rust crate.
+- The local Crane checkout (`~/code/crane`) reinforces that intended shape: one shared `buildDepsOnly` derivation feeding multiple `buildPackage` outputs, with separate artifact families when `-p` or feature sets diverge.

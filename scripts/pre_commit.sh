@@ -67,6 +67,7 @@ scripts/ci/check_script_inventory.py
 scripts/runtime/generate_app_metadata.py --check
 start_parallel_check app-metadata scripts/ci/app_metadata_manifest_smoke.sh
 start_parallel_check operator-cli scripts/ci/operator_cli_smoke.sh
+start_parallel_check pixel-nix-progress scripts/ci/pixel_nix_build_progress_smoke.sh
 start_parallel_check pixel-guest-startup scripts/ci/pixel_guest_startup_config_smoke.sh
 scripts/ci/cpio_edit_smoke.sh
 shell_scripts=()
