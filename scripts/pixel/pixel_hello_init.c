@@ -3390,11 +3390,14 @@ static int probe_bootstrap_gpu_firmware(
     const char *payload_probe_stage_path,
     const char *payload_probe_stage_prefix
 ) {
-    static const char *kSunfishGpuFirmwarePaths[] = {
-        "/lib/firmware/a630_sqe.fw",
-        "/lib/firmware/a618_gmu.bin",
-        "/lib/firmware/a615_zap.mdt",
-        "/lib/firmware/a615_zap.b02",
+    static const struct {
+        const char *path;
+        const char *stage_token;
+    } kSunfishGpuFirmwarePaths[] = {
+        {"/lib/firmware/a630_sqe.fw", "a630-sqe"},
+        {"/lib/firmware/a618_gmu.bin", "a618-gmu"},
+        {"/lib/firmware/a615_zap.mdt", "a615-zap-mdt"},
+        {"/lib/firmware/a615_zap.b02", "a615-zap-b02"},
     };
     size_t index;
 
@@ -3410,23 +3413,30 @@ static int probe_bootstrap_gpu_firmware(
     for (index = 0; index < sizeof(kSunfishGpuFirmwarePaths) / sizeof(kSunfishGpuFirmwarePaths[0]); index++) {
         int firmware_fd;
         char probe_byte = '\0';
+        char stage_value[64];
 
         firmware_fd = open(
-            kSunfishGpuFirmwarePaths[index],
+            kSunfishGpuFirmwarePaths[index].path,
             O_RDONLY | O_CLOEXEC | O_NOCTTY
         );
         if (firmware_fd < 0) {
+            (void)snprintf(
+                stage_value,
+                sizeof(stage_value),
+                "firmware-probe-%s-open-failed",
+                kSunfishGpuFirmwarePaths[index].stage_token
+            );
             log_stage(
                 "<3>",
                 "orange-gpu-firmware-probe-open-failed",
                 "path=%s errno=%d",
-                kSunfishGpuFirmwarePaths[index],
+                kSunfishGpuFirmwarePaths[index].path,
                 errno
             );
             write_payload_probe_stage_best_effort(
                 payload_probe_stage_path,
                 payload_probe_stage_prefix,
-                "firmware-probe-failed"
+                stage_value
             );
             return 1;
         }
@@ -3435,26 +3445,43 @@ static int probe_bootstrap_gpu_firmware(
 
             close(firmware_fd);
             errno = saved_errno;
+            (void)snprintf(
+                stage_value,
+                sizeof(stage_value),
+                "firmware-probe-%s-read-failed",
+                kSunfishGpuFirmwarePaths[index].stage_token
+            );
             log_stage(
                 "<3>",
                 "orange-gpu-firmware-probe-read-failed",
                 "path=%s errno=%d",
-                kSunfishGpuFirmwarePaths[index],
+                kSunfishGpuFirmwarePaths[index].path,
                 errno
             );
             write_payload_probe_stage_best_effort(
                 payload_probe_stage_path,
                 payload_probe_stage_prefix,
-                "firmware-probe-failed"
+                stage_value
             );
             return 1;
         }
         close(firmware_fd);
+        (void)snprintf(
+            stage_value,
+            sizeof(stage_value),
+            "firmware-probe-%s-ok",
+            kSunfishGpuFirmwarePaths[index].stage_token
+        );
+        write_payload_probe_stage_best_effort(
+            payload_probe_stage_path,
+            payload_probe_stage_prefix,
+            stage_value
+        );
         log_stage(
             "<6>",
             "orange-gpu-firmware-probe-ok",
             "path=%s",
-            kSunfishGpuFirmwarePaths[index]
+            kSunfishGpuFirmwarePaths[index].path
         );
     }
 
