@@ -185,8 +185,12 @@ Related docs:
     - `frame-orange` = success postlude
   - do not treat any single recovery channel as guaranteed until it proves itself repeatedly on hardware
   - classify stage evidence separately from transport evidence: `fastboot-return` proves the device came back, not which owned-userspace stage it reached
-- [ ] Add one durable non-log breadcrumb seam for owned PID 1 runs:
-  - prefer something that survives a reboot without Android logging, such as a `/metadata` marker or equivalent
+- [x] Add one durable non-log breadcrumb seam for owned PID 1 runs:
+  - keep it private to the opt-in orange-gpu parent-probe builder path; do not make it the default boot shape
+  - `hello-init` now mounts `/metadata` late, after the validated checkpoint, and writes run-token-scoped `stage.txt` values atomically for `validated`, `parent-probe-start`, and `parent-probe-result=<...>`
+  - tmpfs `/dev` now bootstraps only `/dev/block/by-name/metadata` for this seam, using the pre-overmount block-device identity when available and otherwise falling back to `/sys/class/block/*/uevent` `PARTNAME=metadata` plus `MAJOR` / `MINOR` after `/sys` is mounted
+  - first hardware run on `11151JEC200472` with `build/pixel/boot/shadow-boot-orange-gpu-raw-vulkan-physical-device-count-query-exit-probe3-interval2-prelude2-restart7-metadata.img` and run token `parent-probe-meta-1776741916` returned `metadata_stage_present=false`, `metadata_stage_actual_access_mode=root`, and `metadata_stage_exit_code=1` even though direct atomic writes under mounted `/metadata` work on rooted Android
+  - `pixel_boot_recover_traces.sh` now pulls the run-token-scoped stage file when expected and surfaces it plainly in `status.json`
   - keep it secondary to the primary visible-proof path; do not let it delay `orange-init`
 - [~] Package a minimal DRM proof payload:
   - reuse `rust/drm-rect` or a smaller equivalent
@@ -208,7 +212,9 @@ Related docs:
   - `orange_gpu_launch_delay_secs` is already threaded through the private orange-gpu boot builder and `hello-init`
   - the watched 9-second launch-delay image on `11151JEC200472` still produced only `2 pulses -> black -> red fastboot/start`, so passive delay did not move the seam
   - `orange_gpu_parent_probe_attempts` and `orange_gpu_parent_probe_interval_secs` now thread through the same private builder and `hello-init` to run the exact raw count-query-exit scene from the parent before the real payload fork/exec
-  - next seam: build and watch a parent-probe image on `11151JEC200472` to see whether warm-up restores the third pulse
+  - the optional durable `/metadata` stage breadcrumb seam now exists only behind the orange-gpu builder opt-in and records `validated`, `parent-probe-start`, and `parent-probe-result=<...>` under the run token
+  - `/sys/class/block/sda11/uevent` on rooted Android exposes `PARTNAME=metadata`, `MAJOR=8`, and `MINOR=11`, so the boot-owned fallback now trusts sysfs for the metadata block identity when the pre-`/dev` snapshot is absent
+  - next seam: rerun the opt-in parent-probe metadata image on `11151JEC200472` and check whether the late durable stage file now reaches `validated` or `parent-probe-result=<...>` instead of failing before mount
 - [ ] Package the first on-screen GPU present payload (`orange-gpu`):
   - render a flat orange frame on GPU
   - export/import through the intended buffer path
@@ -605,3 +611,10 @@ Related docs:
   - all four were restored to rooted Android before the overnight loop continued
   - rooted tmpfs-`/dev` raw count-query-exit control now also succeeds on `0B191JEC203253`, so the exact rooted control scene is green on three separate devices
   - keep all four rooted when practical; spend overnight effort on truthful unattended recovery plus durable stage breadcrumbs so the lab does not depend on manual button presses or watched runs
+- New durable-breadcrumb result on 2026-04-21:
+  - the first private `/metadata` stage-writer attempt still recovered no stage file on `11151JEC200472`, even though the run returned through the improved late fastboot auto-recovery path
+  - a rooted control on `06241JEC200520` proved that `/metadata` itself accepts tiny atomic stage files, and a second rooted control proved that a tmpfs-backed private `/dev` plus `mknod ... b 8 11` can mount the metadata partition and hold the same stage file
+  - rooted sysfs also exposed `PARTNAME=metadata`, `MAJOR=8`, and `MINOR=11` at `/sys/class/block/sda11/uevent`, so the metadata block identity does not need to come from early `/dev`
+  - after adding the late sysfs `PARTNAME=metadata` fallback, both `11151JEC200472` and `09051JEC202061` recovered `metadata_stage_value=parent-probe-result=failure`
+  - that is the first durable unattended classification of the active seam: the boot-owned metadata writer survives, the parent probe runs and returns, and the exact raw count-query-exit probe is failing with a normal failure path rather than disappearing without a durable breadcrumb
+  - next discriminator: tighten `parent-probe-result=failure` into an exact durable result such as exit code vs signal vs watchdog, or preserve a tiny correlated probe-output summary, before splitting the raw Vulkan query path further again

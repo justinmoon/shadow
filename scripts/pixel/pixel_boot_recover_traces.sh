@@ -30,6 +30,14 @@ SOURCE_IMAGE_PATH_OVERRIDE="${PIXEL_HELLO_INIT_SOURCE_IMAGE_PATH:-}"
 SOURCE_IMAGE_PATH=""
 SOURCE_IMAGE_METADATA_PATH=""
 IMAGE_METADATA_SUFFIX=".hello-init.json"
+EXPECTED_METADATA_STAGE_BREADCRUMB=false
+EXPECTED_METADATA_STAGE_PATH=""
+RECOVERED_METADATA_STAGE_PRESENT=false
+RECOVERED_METADATA_STAGE_VALUE=""
+RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE="unattempted"
+RECOVERED_METADATA_STAGE_EXIT_CODE=""
+RECOVERED_METADATA_STAGE_OUTPUT_PATH=""
+RECOVERED_METADATA_STAGE_STDERR_PATH=""
 failure_stage=""
 transport_timeline_path="${PIXEL_BOOT_TRANSPORT_TIMELINE_PATH:-}"
 transport_timeline_elapsed_offset_secs="${PIXEL_BOOT_TRANSPORT_TIMELINE_ELAPSED_OFFSET_SECS:-0}"
@@ -122,7 +130,13 @@ write_failure_status_json() {
     "$EXPECTED_RUN_TOKEN" \
     "$EXPECTED_RUN_TOKEN_SOURCE" \
     "$SOURCE_IMAGE_PATH" \
-    "$SOURCE_IMAGE_METADATA_PATH" <<'PY'
+    "$SOURCE_IMAGE_METADATA_PATH" \
+    "$EXPECTED_METADATA_STAGE_BREADCRUMB" \
+    "$EXPECTED_METADATA_STAGE_PATH" \
+    "$RECOVERED_METADATA_STAGE_PRESENT" \
+    "$RECOVERED_METADATA_STAGE_VALUE" \
+    "$RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE" \
+    "$RECOVERED_METADATA_STAGE_EXIT_CODE" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -150,7 +164,13 @@ from pathlib import Path
     expected_run_token_source,
     source_image_path,
     source_image_metadata_path,
-) = sys.argv[1:23]
+    expected_metadata_stage_breadcrumb,
+    expected_metadata_stage_path,
+    recovered_metadata_stage_present,
+    recovered_metadata_stage_value,
+    recovered_metadata_stage_actual_access_mode,
+    recovered_metadata_stage_exit_code,
+) = sys.argv[1:29]
 
 expected_durable_logging = {"kmsg": None, "pmsg": None}
 if source_image_metadata_path:
@@ -196,6 +216,16 @@ payload = {
     ),
     "source_image_path": source_image_path,
     "source_image_metadata_path": source_image_metadata_path,
+    "expected_metadata_stage_breadcrumb": expected_metadata_stage_breadcrumb == "true",
+    "expected_metadata_stage_path": expected_metadata_stage_path,
+    "metadata_stage_present": recovered_metadata_stage_present == "true",
+    "metadata_stage_value": recovered_metadata_stage_value,
+    "metadata_stage_actual_access_mode": recovered_metadata_stage_actual_access_mode,
+    "metadata_stage_exit_code": (
+        int(recovered_metadata_stage_exit_code)
+        if recovered_metadata_stage_exit_code not in ("", None)
+        else None
+    ),
 }
 
 with open(status_output, "w", encoding="utf-8") as fh:
@@ -247,9 +277,9 @@ PY
   )"
 }
 
-load_run_token_from_metadata() {
+load_recovery_metadata_values() {
   local metadata_path
-  metadata_path="${1:?load_run_token_from_metadata requires a metadata path}"
+  metadata_path="${1:?load_recovery_metadata_values requires a metadata path}"
 
   if [[ ! -f "$metadata_path" ]]; then
     return 0
@@ -263,17 +293,30 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
     payload = json.load(fh)
 
 token = payload.get("run_token", "")
+enabled = payload.get("orange_gpu_metadata_stage_breadcrumb", False)
+stage_path = payload.get("metadata_stage_path", "")
+
 print(token if isinstance(token, str) else "")
+print("true" if enabled is True else "false")
+print(stage_path if isinstance(stage_path, str) else "")
 PY
 }
 
 discover_expected_run_token() {
+  local metadata_values=()
   local metadata_token=""
+  local metadata_stage_enabled=""
+  local metadata_stage_path=""
 
   discover_source_image_path
   if [[ -n "$SOURCE_IMAGE_PATH" ]]; then
     SOURCE_IMAGE_METADATA_PATH="$(hello_init_metadata_path "$SOURCE_IMAGE_PATH")"
-    metadata_token="$(load_run_token_from_metadata "$SOURCE_IMAGE_METADATA_PATH")"
+    mapfile -t metadata_values < <(load_recovery_metadata_values "$SOURCE_IMAGE_METADATA_PATH")
+    metadata_token="${metadata_values[0]:-}"
+    metadata_stage_enabled="${metadata_values[1]:-false}"
+    metadata_stage_path="${metadata_values[2]:-}"
+    EXPECTED_METADATA_STAGE_BREADCRUMB="$metadata_stage_enabled"
+    EXPECTED_METADATA_STAGE_PATH="$metadata_stage_path"
   fi
 
   if [[ -n "$EXPECTED_RUN_TOKEN" ]]; then
@@ -297,6 +340,8 @@ expected_run_token_present=$( [[ -n "$EXPECTED_RUN_TOKEN" ]] && printf true || p
 expected_run_token_source=$EXPECTED_RUN_TOKEN_SOURCE
 source_image_path=$SOURCE_IMAGE_PATH
 source_image_metadata_path=$SOURCE_IMAGE_METADATA_PATH
+expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
+expected_metadata_stage_path=$EXPECTED_METADATA_STAGE_PATH
 EOF
 }
 
@@ -318,6 +363,65 @@ write_root_state_summary() {
   cat >"$META_DIR/root-state.txt" <<EOF
 root_available=$( [[ "$ROOT_AVAILABLE" == "1" ]] && printf true || printf false )
 root_id=$ROOT_ID
+EOF
+}
+
+recover_metadata_stage_file() {
+  local command run_result output_path stderr_path exit_code actual_access_mode
+
+  output_path="$CHANNEL_DIR/metadata-stage.txt"
+  stderr_path="$CHANNEL_DIR/metadata-stage.stderr.txt"
+  RECOVERED_METADATA_STAGE_OUTPUT_PATH="channels/metadata-stage.txt"
+  RECOVERED_METADATA_STAGE_STDERR_PATH="channels/metadata-stage.stderr.txt"
+
+  : >"$output_path"
+  : >"$stderr_path"
+
+  if [[ "$EXPECTED_METADATA_STAGE_BREADCRUMB" != "true" || -z "$EXPECTED_METADATA_STAGE_PATH" ]]; then
+    RECOVERED_METADATA_STAGE_PRESENT=false
+    RECOVERED_METADATA_STAGE_VALUE=""
+    RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE="unattempted"
+    RECOVERED_METADATA_STAGE_EXIT_CODE=""
+    cat >"$META_DIR/metadata-stage.txt" <<EOF
+expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
+expected_metadata_stage_path=$EXPECTED_METADATA_STAGE_PATH
+metadata_stage_present=false
+metadata_stage_value=
+metadata_stage_actual_access_mode=$RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE
+metadata_stage_exit_code=
+EOF
+    return 0
+  fi
+
+  command="if [ -f $EXPECTED_METADATA_STAGE_PATH ]; then cat $EXPECTED_METADATA_STAGE_PATH; else exit 3; fi"
+  run_result="$(run_device_command "root" "$command" "$output_path" "$stderr_path")"
+  exit_code="${run_result%%$'\t'*}"
+  actual_access_mode="${run_result#*$'\t'}"
+  RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE="$actual_access_mode"
+  RECOVERED_METADATA_STAGE_EXIT_CODE="$exit_code"
+
+  if [[ "$exit_code" == "0" ]]; then
+    RECOVERED_METADATA_STAGE_PRESENT=true
+    RECOVERED_METADATA_STAGE_VALUE="$(
+      python3 - "$output_path" <<'PY'
+from pathlib import Path
+import sys
+
+print(Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").strip())
+PY
+    )"
+  else
+    RECOVERED_METADATA_STAGE_PRESENT=false
+    RECOVERED_METADATA_STAGE_VALUE=""
+  fi
+
+  cat >"$META_DIR/metadata-stage.txt" <<EOF
+expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
+expected_metadata_stage_path=$EXPECTED_METADATA_STAGE_PATH
+metadata_stage_present=$RECOVERED_METADATA_STAGE_PRESENT
+metadata_stage_value=$RECOVERED_METADATA_STAGE_VALUE
+metadata_stage_actual_access_mode=$RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE
+metadata_stage_exit_code=$RECOVERED_METADATA_STAGE_EXIT_CODE
 EOF
 }
 
@@ -634,7 +738,15 @@ write_status_json() {
     "$(bool_word "$fastboot_auto_reboot_attempted")" \
     "$(bool_word "$fastboot_auto_reboot_succeeded")" \
     "$fastboot_auto_reboot_elapsed_secs" \
-    "$fastboot_auto_reboot_reason" <<'PY'
+    "$fastboot_auto_reboot_reason" \
+    "$EXPECTED_METADATA_STAGE_BREADCRUMB" \
+    "$EXPECTED_METADATA_STAGE_PATH" \
+    "$RECOVERED_METADATA_STAGE_PRESENT" \
+    "$RECOVERED_METADATA_STAGE_VALUE" \
+    "$RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE" \
+    "$RECOVERED_METADATA_STAGE_EXIT_CODE" \
+    "$RECOVERED_METADATA_STAGE_OUTPUT_PATH" \
+    "$RECOVERED_METADATA_STAGE_STDERR_PATH" <<'PY'
 import csv
 import json
 import sys
@@ -664,6 +776,14 @@ fastboot_auto_reboot_attempted = sys.argv[21] == "true"
 fastboot_auto_reboot_succeeded = sys.argv[22] == "true"
 fastboot_auto_reboot_elapsed_secs = sys.argv[23]
 fastboot_auto_reboot_reason = sys.argv[24]
+expected_metadata_stage_breadcrumb = sys.argv[25] == "true"
+expected_metadata_stage_path = sys.argv[26]
+recovered_metadata_stage_present = sys.argv[27] == "true"
+recovered_metadata_stage_value = sys.argv[28]
+recovered_metadata_stage_actual_access_mode = sys.argv[29]
+recovered_metadata_stage_exit_code = sys.argv[30]
+recovered_metadata_stage_output_path = sys.argv[31]
+recovered_metadata_stage_stderr_path = sys.argv[32]
 expected_durable_logging = {"kmsg": None, "pmsg": None}
 
 if source_image_metadata_path:
@@ -795,6 +915,18 @@ payload = {
     ),
     "source_image_path": source_image_path,
     "source_image_metadata_path": source_image_metadata_path,
+    "expected_metadata_stage_breadcrumb": expected_metadata_stage_breadcrumb,
+    "expected_metadata_stage_path": expected_metadata_stage_path,
+    "metadata_stage_present": recovered_metadata_stage_present,
+    "metadata_stage_value": recovered_metadata_stage_value,
+    "metadata_stage_actual_access_mode": recovered_metadata_stage_actual_access_mode,
+    "metadata_stage_exit_code": (
+        int(recovered_metadata_stage_exit_code)
+        if recovered_metadata_stage_exit_code not in ("", None)
+        else None
+    ),
+    "metadata_stage_output_path": recovered_metadata_stage_output_path,
+    "metadata_stage_stderr_path": recovered_metadata_stage_stderr_path,
     "live_boot_id": live_boot_id,
     "live_slot_suffix": live_slot_suffix,
     "root_available": root_available,
@@ -925,6 +1057,7 @@ capture_current_boot_state
 detect_root_state
 write_expected_run_token_summary
 write_root_state_summary
+recover_metadata_stage_file
 
 shell_best_effort "logcat-last" "previous-boot" "adb" "logcat -L -d -v threadtime"
 shell_best_effort "dropbox-system-boot" "previous-boot" "adb" "dumpsys dropbox --print SYSTEM_BOOT"

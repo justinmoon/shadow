@@ -864,6 +864,107 @@ if continue_stage not in payload_body:
 PY
 }
 
+assert_hello_init_metadata_stage_seam_shape() {
+  python3 - "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+
+def extract(signature: str) -> str:
+    start = source.find(signature)
+    if start < 0:
+        raise SystemExit(f"missing function signature: {signature}")
+    brace = source.find("{", start)
+    if brace < 0:
+        raise SystemExit(f"missing function body for: {signature}")
+    depth = 0
+    for index in range(brace, len(source)):
+        ch = source[index]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise SystemExit(f"unterminated function body for: {signature}")
+
+uevent_body = extract("static bool read_metadata_block_identity_from_uevent(")
+for needle in [
+    'SHADOW_HELLO_INIT_METADATA_PARTNAME',
+    '"PARTNAME="',
+    '"MAJOR="',
+    '"MINOR="',
+]:
+    if needle not in uevent_body:
+        raise SystemExit(f"missing metadata uevent parser needle: {needle}")
+
+sysfs_body = extract("static bool discover_metadata_block_identity_from_sysfs(")
+for needle in [
+    'SHADOW_HELLO_INIT_METADATA_SYSFS_BLOCK_ROOT',
+    '"%s/%s/uevent"',
+    'readdir(block_dir)',
+]:
+    if needle not in sysfs_body:
+        raise SystemExit(f"missing metadata sysfs fallback needle: {needle}")
+
+prepare_body = extract("static bool prepare_metadata_stage_runtime_best_effort(")
+bootstrap_body = extract("static int bootstrap_tmpfs_metadata_block_runtime(")
+for needle in [
+    'SHADOW_HELLO_INIT_METADATA_DEVICE_PATH',
+    '"ext4"',
+    '"f2fs"',
+    'SHADOW_HELLO_INIT_METADATA_ROOT',
+    'SHADOW_HELLO_INIT_METADATA_BY_TOKEN_ROOT',
+]:
+    if needle not in prepare_body:
+        raise SystemExit(f"missing metadata prepare seam needle: {needle}")
+discover_idx = prepare_body.find('discover_metadata_block_identity_from_sysfs(config, runtime);')
+bootstrap_idx = prepare_body.find('bootstrap_tmpfs_metadata_block_runtime(config, runtime)')
+if min(discover_idx, bootstrap_idx) < 0:
+    raise SystemExit("missing metadata fallback/bootstrap call in prepare path")
+if discover_idx > bootstrap_idx:
+    raise SystemExit("metadata sysfs fallback appears after tmpfs metadata bootstrap")
+for needle in ['"/dev/block"', '"/dev/block/by-name"', 'ensure_block_device(']:
+    if needle not in bootstrap_body:
+        raise SystemExit(f"missing metadata bootstrap seam needle: {needle}")
+
+write_body = extract("static bool write_metadata_stage_best_effort(")
+for needle in [
+    'write_atomic_text_file(',
+    '"metadata-stage-write"',
+    '"metadata-stage-write-failed"',
+    'runtime->stage_path',
+]:
+    if needle not in write_body:
+        raise SystemExit(f"missing metadata write seam needle: {needle}")
+
+atomic_body = extract("static int write_atomic_text_file(")
+for needle in ['rename(temp_path, final_path)', 'fsync(temp_fd)', 'fsync(final_fd)', 'fsync_directory_path(directory_path)']:
+    if needle not in atomic_body:
+        raise SystemExit(f"missing atomic metadata write needle: {needle}")
+
+main_body = extract("int main(void)")
+validated_idx = main_body.find('run_orange_gpu_checkpoint(\n            &config,\n            "validated"')
+prepare_idx = main_body.find('prepare_metadata_stage_runtime_best_effort(&config, &metadata_stage)')
+write_idx = main_body.find('write_metadata_stage_best_effort(&metadata_stage, "validated")')
+payload_idx = main_body.find('payload_status = run_orange_gpu_payload(&config, &metadata_stage);')
+if min(validated_idx, prepare_idx, write_idx, payload_idx) < 0:
+    raise SystemExit("missing metadata-stage main flow markers")
+if not (validated_idx < prepare_idx < write_idx < payload_idx):
+    raise SystemExit("metadata-stage flow is not ordered validated -> prepare -> write -> payload")
+
+payload_body = extract("static int run_orange_gpu_payload(")
+start_idx = payload_body.find('"parent-probe-start"')
+probe_idx = payload_body.find('probe_status = run_orange_gpu_parent_probe(config);')
+result_idx = payload_body.find('probe_status == 0 ? "parent-probe-result=success" : "parent-probe-result=failure"')
+if min(start_idx, probe_idx, result_idx) < 0:
+    raise SystemExit("missing metadata parent-probe markers")
+if not (start_idx < probe_idx < result_idx):
+    raise SystemExit("metadata parent-probe writes are not ordered start -> probe -> result")
+PY
+}
+
 assert_hello_init_orange_gpu_mode_parser_smoke() {
   local smoke_c="$TMP_DIR/hello-init-orange-gpu-mode-smoke.c"
   local smoke_bin="$TMP_DIR/hello-init-orange-gpu-mode-smoke"
@@ -895,7 +996,7 @@ def extract(signature: str) -> str:
 
 functions = [
     extract("static bool copy_string("),
-    extract("static char *trim_whitespace("),
+    extract("static char *trim_whitespace(char *value) {"),
     extract("static bool parse_orange_gpu_mode_value("),
 ]
 
@@ -1921,6 +2022,13 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_m
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_launch_delay_secs'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_parent_probe_attempts'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_parent_probe_interval_secs'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_metadata_stage_breadcrumb'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO_INIT_METADATA_DEVICE_PATH'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'prepare_metadata_stage_runtime_best_effort'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'write_metadata_stage_best_effort'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"metadata-stage-write"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"parent-probe-start"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"parent-probe-result=success"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-launch-delay"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-launch-delay-complete"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-parent-probe-start"'
@@ -1957,6 +2065,7 @@ assert_orange_gpu_device_branch_shape
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_vulkan_offscreen'
 assert_orange_gpu_offscreen_branch_shape
 assert_orange_gpu_parent_probe_seam_shape
+assert_hello_init_metadata_stage_seam_shape
 assert_shadow_gpu_instance_helper_shape
 assert_shadow_gpu_instance_smoke_cli
 assert_shadow_gpu_instance_smoke_rejects_hold_secs
@@ -2047,17 +2156,22 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_LAUNCH_DELAY_SECS:-0'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_PARENT_PROBE_ATTEMPTS:-0'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS:-0'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_METADATA_STAGE_BREADCRUMB:-false'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--orange-gpu-launch-delay-secs'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--orange-gpu-parent-probe-attempts'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--orange-gpu-parent-probe-interval-secs'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--orange-gpu-metadata-stage-breadcrumb'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_launch_delay_secs='
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_parent_probe_attempts='
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_parent_probe_interval_secs='
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_metadata_stage_breadcrumb='
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Prelude: %s\\n' \"\$PRELUDE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU mode: %s\\n' \"\$ORANGE_GPU_MODE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU launch delay seconds: %s\\n' \"\$ORANGE_GPU_LAUNCH_DELAY_SECS\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU parent probe attempts: %s\\n' \"\$ORANGE_GPU_PARENT_PROBE_ATTEMPTS\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU parent probe interval seconds: %s\\n' \"\$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS\""
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU metadata stage breadcrumb: %s\\n' \"\$ORANGE_GPU_METADATA_STAGE_BREADCRUMB\""
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Metadata stage path: %s\\n' \"\$(metadata_stage_path_for_token \"\$RUN_TOKEN\")\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Parent readiness probe scene: raw-vulkan-physical-device-count-query-exit-smoke\\n'"
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Bundle exec mode: bundle-smoke\\n'"
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict Vulkan instance creation\\n'"
@@ -2167,6 +2281,54 @@ assert_cpio_entry_equals "$TMP_DIR/orange-gpu-parent-probe-boot.img" shadow-init
 assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-boot.img.hello-init.json" orange_gpu_mode "raw-vulkan-physical-device-count-query-exit-smoke"
 assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-boot.img.hello-init.json" orange_gpu_parent_probe_attempts "3"
 assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-boot.img.hello-init.json" orange_gpu_parent_probe_interval_secs "2"
+
+parent_probe_metadata_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-parent-probe-metadata-boot.img" \
+      --hold-secs 7 \
+      --orange-gpu-mode raw-vulkan-physical-device-count-query-exit-smoke \
+      --orange-gpu-parent-probe-attempts 3 \
+      --orange-gpu-parent-probe-interval-secs 2 \
+      --orange-gpu-metadata-stage-breadcrumb true \
+      --reboot-target bootloader \
+      --run-token orange-gpu-parent-probe-metadata-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false
+)"
+
+assert_contains "$parent_probe_metadata_boot_output" "Orange GPU metadata stage breadcrumb: true"
+assert_contains "$parent_probe_metadata_boot_output" "Metadata stage path: /metadata/shadow-hello-init/by-token/orange-gpu-parent-probe-metadata-run-token/stage.txt"
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-parent-probe-metadata-boot.img" shadow-init.cfg $'# Generated by pixel_boot_build_orange_gpu.sh\npayload=orange-gpu\norange_gpu_mode=raw-vulkan-physical-device-count-query-exit-smoke\nhold_seconds=7\nreboot_target=bootloader\nrun_token=orange-gpu-parent-probe-metadata-run-token\norange_gpu_parent_probe_attempts=3\norange_gpu_parent_probe_interval_secs=2\norange_gpu_metadata_stage_breadcrumb=true\ndev_mount=tmpfs\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\ndri_bootstrap=sunfish-card0-renderD128-kgsl3d0\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-metadata-boot.img.hello-init.json" orange_gpu_metadata_stage_breadcrumb "true"
+assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-metadata-boot.img.hello-init.json" metadata_stage_path "/metadata/shadow-hello-init/by-token/orange-gpu-parent-probe-metadata-run-token/stage.txt"
+
+assert_command_fails_contains \
+  "orange gpu metadata stage breadcrumb requires parent probe attempts > 0" \
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-parent-probe-metadata-invalid-boot.img" \
+      --hold-secs 7 \
+      --orange-gpu-mode raw-vulkan-physical-device-count-query-exit-smoke \
+      --orange-gpu-metadata-stage-breadcrumb true \
+      --reboot-target bootloader \
+      --run-token orange-gpu-parent-probe-metadata-invalid-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false
 
 bundle_smoke_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

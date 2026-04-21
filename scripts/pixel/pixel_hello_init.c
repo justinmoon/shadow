@@ -2,8 +2,10 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <linux/reboot.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -39,6 +41,12 @@
 #define SHADOW_HELLO_INIT_ORANGE_GPU_CACHE_HOME "/orange-gpu/home/.cache"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_CONFIG_HOME "/orange-gpu/home/.config"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_MESA_CACHE_DIR "/orange-gpu/home/.cache/mesa"
+#define SHADOW_HELLO_INIT_METADATA_MOUNT_PATH "/metadata"
+#define SHADOW_HELLO_INIT_METADATA_DEVICE_PATH "/dev/block/by-name/metadata"
+#define SHADOW_HELLO_INIT_METADATA_ROOT "/metadata/shadow-hello-init"
+#define SHADOW_HELLO_INIT_METADATA_BY_TOKEN_ROOT "/metadata/shadow-hello-init/by-token"
+#define SHADOW_HELLO_INIT_METADATA_SYSFS_BLOCK_ROOT "/sys/class/block"
+#define SHADOW_HELLO_INIT_METADATA_PARTNAME "metadata"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH "/orange-gpu/summary.json"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_OUTPUT_PATH "/orange-gpu/output.log"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_SUMMARY_PATH "/orange-gpu/probe-summary.json"
@@ -80,6 +88,7 @@ struct hello_init_config {
     unsigned int orange_gpu_launch_delay_secs;
     unsigned int orange_gpu_parent_probe_attempts;
     unsigned int orange_gpu_parent_probe_interval_secs;
+    bool orange_gpu_metadata_stage_breadcrumb;
     unsigned int hold_seconds;
     unsigned int prelude_hold_seconds;
     char reboot_target[32];
@@ -93,6 +102,22 @@ struct hello_init_config {
     bool log_pmsg;
 };
 
+struct block_device_identity {
+    bool available;
+    unsigned int major_num;
+    unsigned int minor_num;
+};
+
+struct metadata_stage_runtime {
+    bool enabled;
+    bool prepared;
+    bool write_failed;
+    struct block_device_identity block_device;
+    char stage_dir[192];
+    char stage_path[224];
+    char temp_stage_path[224];
+};
+
 static int shadow_kmsg_fd = -1;
 static int shadow_pmsg_fd = -1;
 static uint64_t shadow_boot_start_ms = 0;
@@ -100,6 +125,9 @@ static bool shadow_log_stdio = true;
 static bool shadow_log_kmsg = false;
 static bool shadow_log_pmsg = false;
 static char shadow_run_token[64] = "";
+
+static void unlink_best_effort(const char *path);
+static char *trim_whitespace(char *value);
 
 static bool fd_is_open(int fd) {
     return fcntl(fd, F_GETFL) != -1 || errno != EBADF;
@@ -150,6 +178,7 @@ static void init_default_config(struct hello_init_config *config) {
     config->orange_gpu_launch_delay_secs = 0U;
     config->orange_gpu_parent_probe_attempts = 0U;
     config->orange_gpu_parent_probe_interval_secs = 0U;
+    config->orange_gpu_metadata_stage_breadcrumb = false;
     config->hold_seconds = SHADOW_HELLO_INIT_DEFAULT_HOLD_SECONDS;
     config->prelude_hold_seconds = 0U;
     (void)copy_string(config->reboot_target, sizeof(config->reboot_target), "bootloader");
@@ -217,6 +246,31 @@ static void write_fd_all(int fd, const char *message) {
         total += (size_t)written;
         remaining -= (size_t)written;
     }
+}
+
+static int write_fd_all_checked(int fd, const char *message) {
+    size_t total = 0;
+    size_t remaining = strlen(message);
+
+    while (remaining > 0) {
+        ssize_t written = write(fd, message + total, remaining);
+
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        if (written == 0) {
+            errno = EIO;
+            return -1;
+        }
+
+        total += (size_t)written;
+        remaining -= (size_t)written;
+    }
+
+    return 0;
 }
 
 static void log_boot_v(const char *level, const char *fmt, va_list args) {
@@ -365,9 +419,10 @@ static int ensure_directory(const char *path, mode_t mode) {
     return -1;
 }
 
-static int ensure_char_device(
+static int ensure_device_node(
     const char *path,
     mode_t mode,
+    mode_t expected_type,
     unsigned int major_num,
     unsigned int minor_num
 ) {
@@ -378,7 +433,11 @@ static int ensure_char_device(
     expected_device = makedev(major_num, minor_num);
 
     if (lstat(path, &st) == 0) {
-        if (S_ISCHR(st.st_mode) && st.st_rdev == expected_device) {
+        if (
+            ((expected_type == S_IFCHR && S_ISCHR(st.st_mode)) ||
+             (expected_type == S_IFBLK && S_ISBLK(st.st_mode))) &&
+            st.st_rdev == expected_device
+        ) {
             return 0;
         }
 
@@ -398,14 +457,15 @@ static int ensure_char_device(
     }
 
     old_umask = umask(0);
-    if (mknod(path, S_IFCHR | mode, expected_device) != 0 && errno != EEXIST) {
+    if (mknod(path, expected_type | mode, expected_device) != 0 && errno != EEXIST) {
         int saved_errno = errno;
 
         (void)umask(old_umask);
         log_boot(
             "<3>",
-            "mknod(%s major=%u minor=%u) failed: errno=%d",
+            "mknod(%s type=%s major=%u minor=%u) failed: errno=%d",
             path,
+            expected_type == S_IFBLK ? "block" : "char",
             major_num,
             minor_num,
             saved_errno
@@ -418,11 +478,18 @@ static int ensure_char_device(
         log_boot("<3>", "post-mknod lstat(%s) failed: errno=%d", path, errno);
         return -1;
     }
-    if (!S_ISCHR(st.st_mode) || st.st_rdev != expected_device) {
+    if (
+        !(
+            (expected_type == S_IFCHR && S_ISCHR(st.st_mode)) ||
+            (expected_type == S_IFBLK && S_ISBLK(st.st_mode))
+        ) ||
+        st.st_rdev != expected_device
+    ) {
         log_boot(
             "<3>",
-            "device path %s did not resolve to expected char device %u:%u",
+            "device path %s did not resolve to expected %s device %u:%u",
             path,
+            expected_type == S_IFBLK ? "block" : "char",
             major_num,
             minor_num
         );
@@ -430,6 +497,24 @@ static int ensure_char_device(
     }
 
     return 0;
+}
+
+static int ensure_char_device(
+    const char *path,
+    mode_t mode,
+    unsigned int major_num,
+    unsigned int minor_num
+) {
+    return ensure_device_node(path, mode, S_IFCHR, major_num, minor_num);
+}
+
+static int ensure_block_device(
+    const char *path,
+    mode_t mode,
+    unsigned int major_num,
+    unsigned int minor_num
+) {
+    return ensure_device_node(path, mode, S_IFBLK, major_num, minor_num);
 }
 
 static int ensure_symlink_target(const char *path, const char *target) {
@@ -473,6 +558,529 @@ static int ensure_symlink_target(const char *path, const char *target) {
     }
 
     return 0;
+}
+
+static void init_metadata_stage_runtime(
+    const struct hello_init_config *config,
+    struct metadata_stage_runtime *runtime
+) {
+    int dir_len;
+    int stage_len;
+    int temp_len;
+
+    memset(runtime, 0, sizeof(*runtime));
+    runtime->enabled = config->orange_gpu_metadata_stage_breadcrumb;
+    if (!runtime->enabled) {
+        return;
+    }
+
+    if (config->run_token[0] == '\0') {
+        runtime->enabled = false;
+        log_stage("<4>", "metadata-stage-disabled", "reason=run_token_unset");
+        return;
+    }
+    if (!config->mount_dev) {
+        runtime->enabled = false;
+        log_stage("<4>", "metadata-stage-disabled", "reason=mount_dev_false");
+        return;
+    }
+
+    dir_len = snprintf(
+        runtime->stage_dir,
+        sizeof(runtime->stage_dir),
+        "%s/%s",
+        SHADOW_HELLO_INIT_METADATA_BY_TOKEN_ROOT,
+        config->run_token
+    );
+    stage_len = snprintf(
+        runtime->stage_path,
+        sizeof(runtime->stage_path),
+        "%s/stage.txt",
+        runtime->stage_dir
+    );
+    temp_len = snprintf(
+        runtime->temp_stage_path,
+        sizeof(runtime->temp_stage_path),
+        "%s/.stage.txt.tmp",
+        runtime->stage_dir
+    );
+    if (
+        dir_len < 0 || (size_t)dir_len >= sizeof(runtime->stage_dir) ||
+        stage_len < 0 || (size_t)stage_len >= sizeof(runtime->stage_path) ||
+        temp_len < 0 || (size_t)temp_len >= sizeof(runtime->temp_stage_path)
+    ) {
+        runtime->enabled = false;
+        log_stage("<4>", "metadata-stage-disabled", "reason=path_too_long");
+    }
+}
+
+static void capture_metadata_block_identity(
+    const struct hello_init_config *config,
+    struct metadata_stage_runtime *runtime
+) {
+    struct stat st;
+
+    if (!runtime->enabled || strcmp(config->dev_mount, "tmpfs") != 0) {
+        return;
+    }
+
+    if (stat(SHADOW_HELLO_INIT_METADATA_DEVICE_PATH, &st) != 0) {
+        log_stage(
+            "<4>",
+            "metadata-stage-device-identity-missing",
+            "path=%s errno=%d",
+            SHADOW_HELLO_INIT_METADATA_DEVICE_PATH,
+            errno
+        );
+        return;
+    }
+    if (!S_ISBLK(st.st_mode)) {
+        log_stage(
+            "<4>",
+            "metadata-stage-device-identity-invalid",
+            "path=%s mode=%o",
+            SHADOW_HELLO_INIT_METADATA_DEVICE_PATH,
+            st.st_mode
+        );
+        return;
+    }
+
+    runtime->block_device.available = true;
+    runtime->block_device.major_num = major(st.st_rdev);
+    runtime->block_device.minor_num = minor(st.st_rdev);
+    log_stage(
+        "<6>",
+        "metadata-stage-device-identity",
+        "source=pre-dev path=%s major=%u minor=%u",
+        SHADOW_HELLO_INIT_METADATA_DEVICE_PATH,
+        runtime->block_device.major_num,
+        runtime->block_device.minor_num
+    );
+}
+
+static bool parse_unbounded_unsigned_value(const char *raw, unsigned int *parsed) {
+    char *end = NULL;
+    unsigned long value;
+
+    errno = 0;
+    value = strtoul(raw, &end, 10);
+    if (
+        errno != 0 ||
+        end == raw ||
+        *trim_whitespace(end) != '\0' ||
+        value > (unsigned long)UINT_MAX
+    ) {
+        return false;
+    }
+
+    *parsed = (unsigned int)value;
+    return true;
+}
+
+static bool read_metadata_block_identity_from_uevent(
+    const char *uevent_path,
+    struct block_device_identity *block_device
+) {
+    FILE *uevent_file;
+    char line[256];
+    bool partname_matches = false;
+    bool major_seen = false;
+    bool minor_seen = false;
+    unsigned int major_num = 0U;
+    unsigned int minor_num = 0U;
+
+    uevent_file = fopen(uevent_path, "r");
+    if (uevent_file == NULL) {
+        return false;
+    }
+
+    while (fgets(line, sizeof(line), uevent_file) != NULL) {
+        char *value = trim_whitespace(line);
+
+        if (strncmp(value, "PARTNAME=", 9) == 0) {
+            partname_matches =
+                strcmp(value + 9, SHADOW_HELLO_INIT_METADATA_PARTNAME) == 0;
+            continue;
+        }
+        if (strncmp(value, "MAJOR=", 6) == 0) {
+            major_seen = parse_unbounded_unsigned_value(value + 6, &major_num);
+            continue;
+        }
+        if (strncmp(value, "MINOR=", 6) == 0) {
+            minor_seen = parse_unbounded_unsigned_value(value + 6, &minor_num);
+        }
+    }
+
+    fclose(uevent_file);
+
+    if (!partname_matches || !major_seen || !minor_seen) {
+        return false;
+    }
+
+    block_device->available = true;
+    block_device->major_num = major_num;
+    block_device->minor_num = minor_num;
+    return true;
+}
+
+static bool discover_metadata_block_identity_from_sysfs(
+    const struct hello_init_config *config,
+    struct metadata_stage_runtime *runtime
+) {
+    DIR *block_dir;
+    struct dirent *entry;
+    struct block_device_identity discovered_block_device;
+    char matched_uevent_path[192];
+    int saved_errno = 0;
+
+    if (
+        !runtime->enabled ||
+        runtime->block_device.available ||
+        strcmp(config->dev_mount, "tmpfs") != 0 ||
+        !config->mount_sys
+    ) {
+        return runtime->block_device.available;
+    }
+
+    block_dir = opendir(SHADOW_HELLO_INIT_METADATA_SYSFS_BLOCK_ROOT);
+    if (block_dir == NULL) {
+        log_stage(
+            "<4>",
+            "metadata-stage-device-identity-sysfs-open-failed",
+            "path=%s errno=%d",
+            SHADOW_HELLO_INIT_METADATA_SYSFS_BLOCK_ROOT,
+            errno
+        );
+        return false;
+    }
+
+    memset(&discovered_block_device, 0, sizeof(discovered_block_device));
+    matched_uevent_path[0] = '\0';
+    errno = 0;
+    while ((entry = readdir(block_dir)) != NULL) {
+        char uevent_path[192];
+        int path_len;
+
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+
+        path_len = snprintf(
+            uevent_path,
+            sizeof(uevent_path),
+            "%s/%s/uevent",
+            SHADOW_HELLO_INIT_METADATA_SYSFS_BLOCK_ROOT,
+            entry->d_name
+        );
+        if (path_len < 0 || (size_t)path_len >= sizeof(uevent_path)) {
+            continue;
+        }
+
+        if (
+            read_metadata_block_identity_from_uevent(
+                uevent_path,
+                &discovered_block_device
+            )
+        ) {
+            (void)copy_string(
+                matched_uevent_path,
+                sizeof(matched_uevent_path),
+                uevent_path
+            );
+            break;
+        }
+    }
+    saved_errno = errno;
+    closedir(block_dir);
+
+    if (!discovered_block_device.available) {
+        if (saved_errno != 0) {
+            log_stage(
+                "<4>",
+                "metadata-stage-device-identity-sysfs-scan-failed",
+                "path=%s errno=%d",
+                SHADOW_HELLO_INIT_METADATA_SYSFS_BLOCK_ROOT,
+                saved_errno
+            );
+        } else {
+            log_stage(
+                "<4>",
+                "metadata-stage-device-identity-missing",
+                "path=%s partname=%s reason=sysfs_partname_missing",
+                SHADOW_HELLO_INIT_METADATA_SYSFS_BLOCK_ROOT,
+                SHADOW_HELLO_INIT_METADATA_PARTNAME
+            );
+        }
+        return false;
+    }
+
+    runtime->block_device = discovered_block_device;
+    log_stage(
+        "<6>",
+        "metadata-stage-device-identity",
+        "source=sysfs path=%s major=%u minor=%u partname=%s",
+        matched_uevent_path,
+        runtime->block_device.major_num,
+        runtime->block_device.minor_num,
+        SHADOW_HELLO_INIT_METADATA_PARTNAME
+    );
+    return true;
+}
+
+static int bootstrap_tmpfs_metadata_block_runtime(
+    const struct hello_init_config *config,
+    const struct metadata_stage_runtime *runtime
+) {
+    if (strcmp(config->dev_mount, "tmpfs") != 0) {
+        return 0;
+    }
+    if (!runtime->block_device.available) {
+        errno = ENOENT;
+        return -1;
+    }
+    if (ensure_directory("/dev/block", 0755) != 0) {
+        return -1;
+    }
+    if (ensure_directory("/dev/block/by-name", 0755) != 0) {
+        return -1;
+    }
+    return ensure_block_device(
+        SHADOW_HELLO_INIT_METADATA_DEVICE_PATH,
+        0600,
+        runtime->block_device.major_num,
+        runtime->block_device.minor_num
+    );
+}
+
+static int fsync_directory_path(const char *path) {
+    int dir_fd;
+
+    dir_fd = open(path, O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+    if (dir_fd < 0) {
+        return -1;
+    }
+    if (fsync(dir_fd) != 0) {
+        int saved_errno = errno;
+
+        close(dir_fd);
+        errno = saved_errno;
+        return -1;
+    }
+
+    close(dir_fd);
+    return 0;
+}
+
+static int write_atomic_text_file(
+    const char *directory_path,
+    const char *temp_path,
+    const char *final_path,
+    const char *contents
+) {
+    int temp_fd;
+    int final_fd;
+
+    temp_fd = open(
+        temp_path,
+        O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOCTTY,
+        0644
+    );
+    if (temp_fd < 0) {
+        return -1;
+    }
+
+    if (write_fd_all_checked(temp_fd, contents) != 0) {
+        int saved_errno = errno;
+
+        close(temp_fd);
+        unlink_best_effort(temp_path);
+        errno = saved_errno;
+        return -1;
+    }
+    if (fsync(temp_fd) != 0) {
+        int saved_errno = errno;
+
+        close(temp_fd);
+        unlink_best_effort(temp_path);
+        errno = saved_errno;
+        return -1;
+    }
+    if (close(temp_fd) != 0) {
+        int saved_errno = errno;
+
+        unlink_best_effort(temp_path);
+        errno = saved_errno;
+        return -1;
+    }
+    if (rename(temp_path, final_path) != 0) {
+        int saved_errno = errno;
+
+        unlink_best_effort(temp_path);
+        errno = saved_errno;
+        return -1;
+    }
+
+    final_fd = open(final_path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+    if (final_fd < 0) {
+        return -1;
+    }
+    if (fsync(final_fd) != 0) {
+        int saved_errno = errno;
+
+        close(final_fd);
+        errno = saved_errno;
+        return -1;
+    }
+    close(final_fd);
+
+    return fsync_directory_path(directory_path);
+}
+
+static bool prepare_metadata_stage_runtime_best_effort(
+    const struct hello_init_config *config,
+    struct metadata_stage_runtime *runtime
+) {
+    unsigned long mount_flags = MS_NOATIME | MS_NODEV | MS_NOSUID;
+    const char *fstypes[] = {"ext4", "f2fs"};
+    size_t index;
+
+    if (!runtime->enabled) {
+        return false;
+    }
+    if (runtime->prepared) {
+        return true;
+    }
+
+    if (!runtime->block_device.available) {
+        (void)discover_metadata_block_identity_from_sysfs(config, runtime);
+    }
+    if (bootstrap_tmpfs_metadata_block_runtime(config, runtime) != 0) {
+        runtime->write_failed = true;
+        log_stage(
+            "<4>",
+            "metadata-stage-bootstrap-failed",
+            "path=%s errno=%d",
+            SHADOW_HELLO_INIT_METADATA_DEVICE_PATH,
+            errno
+        );
+        return false;
+    }
+    if (ensure_directory(SHADOW_HELLO_INIT_METADATA_MOUNT_PATH, 0755) != 0) {
+        runtime->write_failed = true;
+        log_stage(
+            "<4>",
+            "metadata-stage-mountpoint-failed",
+            "path=%s errno=%d",
+            SHADOW_HELLO_INIT_METADATA_MOUNT_PATH,
+            errno
+        );
+        return false;
+    }
+
+    for (index = 0; index < sizeof(fstypes) / sizeof(fstypes[0]); index++) {
+        if (
+            mount(
+                SHADOW_HELLO_INIT_METADATA_DEVICE_PATH,
+                SHADOW_HELLO_INIT_METADATA_MOUNT_PATH,
+                fstypes[index],
+                mount_flags,
+                ""
+            ) == 0 ||
+            errno == EBUSY
+        ) {
+            log_stage(
+                "<6>",
+                "metadata-stage-mounted",
+                "path=%s fstype=%s",
+                SHADOW_HELLO_INIT_METADATA_MOUNT_PATH,
+                fstypes[index]
+            );
+            break;
+        }
+    }
+    if (index == sizeof(fstypes) / sizeof(fstypes[0])) {
+        runtime->write_failed = true;
+        log_stage(
+            "<4>",
+            "metadata-stage-mount-failed",
+            "source=%s target=%s errno=%d",
+            SHADOW_HELLO_INIT_METADATA_DEVICE_PATH,
+            SHADOW_HELLO_INIT_METADATA_MOUNT_PATH,
+            errno
+        );
+        return false;
+    }
+
+    if (
+        ensure_directory(SHADOW_HELLO_INIT_METADATA_ROOT, 0755) != 0 ||
+        ensure_directory(SHADOW_HELLO_INIT_METADATA_BY_TOKEN_ROOT, 0755) != 0 ||
+        ensure_directory(runtime->stage_dir, 0755) != 0
+    ) {
+        runtime->write_failed = true;
+        log_stage(
+            "<4>",
+            "metadata-stage-dir-failed",
+            "dir=%s errno=%d",
+            runtime->stage_dir,
+            errno
+        );
+        return false;
+    }
+
+    runtime->prepared = true;
+    return true;
+}
+
+static bool write_metadata_stage_best_effort(
+    struct metadata_stage_runtime *runtime,
+    const char *stage_value
+) {
+    char contents[128];
+    int contents_len;
+
+    if (!runtime->enabled || runtime->write_failed) {
+        return false;
+    }
+    if (!runtime->prepared) {
+        runtime->write_failed = true;
+        log_stage("<4>", "metadata-stage-write-skipped", "reason=not_prepared");
+        return false;
+    }
+
+    contents_len = snprintf(contents, sizeof(contents), "%s\n", stage_value);
+    if (contents_len < 0 || (size_t)contents_len >= sizeof(contents)) {
+        runtime->write_failed = true;
+        log_stage("<4>", "metadata-stage-write-skipped", "reason=stage_too_long");
+        return false;
+    }
+    if (
+        write_atomic_text_file(
+            runtime->stage_dir,
+            runtime->temp_stage_path,
+            runtime->stage_path,
+            contents
+        ) != 0
+    ) {
+        runtime->write_failed = true;
+        log_stage(
+            "<4>",
+            "metadata-stage-write-failed",
+            "stage=%s path=%s errno=%d",
+            stage_value,
+            runtime->stage_path,
+            errno
+        );
+        return false;
+    }
+
+    log_stage(
+        "<6>",
+        "metadata-stage-write",
+        "stage=%s path=%s",
+        stage_value,
+        runtime->stage_path
+    );
+    return true;
 }
 
 static void ensure_stdio_fds(void) {
@@ -868,6 +1476,18 @@ static void apply_config_value(
         return;
     }
 
+    if (
+        strcmp(key, "orange_gpu_metadata_stage_breadcrumb") == 0 ||
+        strcmp(key, "orange-gpu-metadata-stage-breadcrumb") == 0
+    ) {
+        if (!parse_bool_value(value, &parsed_bool)) {
+            log_boot("<3>", "invalid orange_gpu_metadata_stage_breadcrumb value: %s", value);
+            return;
+        }
+        config->orange_gpu_metadata_stage_breadcrumb = parsed_bool;
+        return;
+    }
+
     if (strcmp(key, "hold_seconds") == 0 || strcmp(key, "hold_secs") == 0) {
         if (!parse_unsigned_value(value, &parsed_hold_seconds)) {
             log_boot("<3>", "invalid hold_seconds value: %s", value);
@@ -1155,6 +1775,19 @@ static bool validate_orange_gpu_config(const struct hello_init_config *config) {
     if (config->orange_gpu_mode_invalid) {
         log_stage("<3>", "orange-gpu-config-invalid-mode", "payload=%s", config->payload);
         log_boot("<3>", "invalid orange_gpu_mode config for payload=orange-gpu");
+        return false;
+    }
+    if (
+        config->orange_gpu_metadata_stage_breadcrumb &&
+        config->orange_gpu_parent_probe_attempts == 0U
+    ) {
+        log_stage("<3>", "orange-gpu-config-invalid-metadata-stage", "reason=parent_probe_attempts_zero");
+        log_boot("<3>", "orange_gpu_metadata_stage_breadcrumb requires parent probe attempts > 0");
+        return false;
+    }
+    if (config->orange_gpu_metadata_stage_breadcrumb && !config->mount_dev) {
+        log_stage("<3>", "orange-gpu-config-invalid-metadata-stage", "reason=mount_dev_false");
+        log_boot("<3>", "orange_gpu_metadata_stage_breadcrumb requires mount_dev=true");
         return false;
     }
     return true;
@@ -1732,7 +2365,10 @@ static int run_orange_gpu_parent_probe(const struct hello_init_config *config) {
     return any_succeeded ? 0 : 1;
 }
 
-static int run_orange_gpu_payload(const struct hello_init_config *config) {
+static int run_orange_gpu_payload(
+    const struct hello_init_config *config,
+    struct metadata_stage_runtime *metadata_stage
+) {
     pid_t child_pid;
     int status;
     int probe_status;
@@ -1774,7 +2410,19 @@ static int run_orange_gpu_payload(const struct hello_init_config *config) {
         );
     }
 
+    if (metadata_stage != NULL) {
+        (void)write_metadata_stage_best_effort(
+            metadata_stage,
+            "parent-probe-start"
+        );
+    }
     probe_status = run_orange_gpu_parent_probe(config);
+    if (metadata_stage != NULL) {
+        (void)write_metadata_stage_best_effort(
+            metadata_stage,
+            probe_status == 0 ? "parent-probe-result=success" : "parent-probe-result=failure"
+        );
+    }
     if (probe_status != 0) {
         log_stage(
             "<4>",
@@ -2421,6 +3069,7 @@ static void reboot_from_config(const struct hello_init_config *config) {
 
 int main(void) {
     struct hello_init_config config;
+    struct metadata_stage_runtime metadata_stage;
     int prelude_status = 0;
     int checkpoint_status = 0;
     int postlude_status = 0;
@@ -2433,6 +3082,7 @@ int main(void) {
 
     init_default_config(&config);
     load_config(&config);
+    init_metadata_stage_runtime(&config, &metadata_stage);
     (void)copy_string(shadow_run_token, sizeof(shadow_run_token), config.run_token);
     shadow_log_kmsg = config.log_kmsg;
     shadow_log_pmsg = config.log_pmsg;
@@ -2450,6 +3100,7 @@ int main(void) {
         if (ensure_directory("/dev", 0755) != 0) {
             return 1;
         }
+        capture_metadata_block_identity(&config, &metadata_stage);
         if (mount(config.dev_mount, "/dev", config.dev_mount, MS_NOSUID, "mode=0755") != 0 && errno != EBUSY) {
             return 1;
         }
@@ -2510,13 +3161,14 @@ int main(void) {
     log_stage(
         "<6>",
         "config-loaded",
-        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
         config.orange_gpu_launch_delay_secs,
         config.orange_gpu_parent_probe_attempts,
         config.orange_gpu_parent_probe_interval_secs,
+        bool_word(config.orange_gpu_metadata_stage_breadcrumb),
         config.hold_seconds,
         config.prelude_hold_seconds,
         config.reboot_target,
@@ -2531,13 +3183,14 @@ int main(void) {
     );
     log_boot(
         "<6>",
-        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
         config.orange_gpu_launch_delay_secs,
         config.orange_gpu_parent_probe_attempts,
         config.orange_gpu_parent_probe_interval_secs,
+        bool_word(config.orange_gpu_metadata_stage_breadcrumb),
         config.hold_seconds,
         config.prelude_hold_seconds,
         config.reboot_target,
@@ -2621,7 +3274,10 @@ int main(void) {
                 checkpoint_status
             );
         }
-        payload_status = run_orange_gpu_payload(&config);
+        if (prepare_metadata_stage_runtime_best_effort(&config, &metadata_stage)) {
+            (void)write_metadata_stage_best_effort(&metadata_stage, "validated");
+        }
+        payload_status = run_orange_gpu_payload(&config, &metadata_stage);
         if (payload_status == 0) {
             postlude_status = run_orange_gpu_postlude(&config);
             if (postlude_status != 0) {

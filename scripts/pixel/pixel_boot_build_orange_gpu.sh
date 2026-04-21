@@ -21,6 +21,7 @@ ORANGE_GPU_MODE="${PIXEL_ORANGE_GPU_MODE:-gpu-render}"
 ORANGE_GPU_LAUNCH_DELAY_SECS="${PIXEL_ORANGE_GPU_LAUNCH_DELAY_SECS:-0}"
 ORANGE_GPU_PARENT_PROBE_ATTEMPTS="${PIXEL_ORANGE_GPU_PARENT_PROBE_ATTEMPTS:-0}"
 ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS="${PIXEL_ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS:-0}"
+ORANGE_GPU_METADATA_STAGE_BREADCRUMB="${PIXEL_ORANGE_GPU_METADATA_STAGE_BREADCRUMB:-false}"
 REBOOT_TARGET="${PIXEL_HELLO_INIT_REBOOT_TARGET:-bootloader}"
 DEV_MOUNT="${PIXEL_ORANGE_GPU_DEV_MOUNT:-tmpfs}"
 MOUNT_DEV="${PIXEL_HELLO_INIT_MOUNT_DEV:-true}"
@@ -49,6 +50,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--orange-gpu-launch-delay-secs N]
                                                     [--orange-gpu-parent-probe-attempts N]
                                                     [--orange-gpu-parent-probe-interval-secs N]
+                                                    [--orange-gpu-metadata-stage-breadcrumb true|false]
                                                     [--reboot-target TARGET]
                                                     [--run-token TOKEN]
                                                     [--dev-mount devtmpfs|tmpfs]
@@ -94,6 +96,12 @@ hello_init_metadata_path() {
   local image_path
   image_path="${1:?hello_init_metadata_path requires an image path}"
   printf '%s%s\n' "$image_path" "$METADATA_SUFFIX"
+}
+
+metadata_stage_path_for_token() {
+  local run_token
+  run_token="${1:?metadata_stage_path_for_token requires a run token}"
+  printf '/metadata/shadow-hello-init/by-token/%s/stage.txt\n' "$run_token"
 }
 
 success_postlude_value() {
@@ -410,6 +418,9 @@ EOF
   if [[ "$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS" != "0" ]]; then
     printf 'orange_gpu_parent_probe_interval_secs=%s\n' "$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS" >>"$output_path"
   fi
+  if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" ]]; then
+    printf 'orange_gpu_metadata_stage_breadcrumb=%s\n' "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" >>"$output_path"
+  fi
   if [[ "$PRELUDE" != "none" ]]; then
     printf 'prelude=%s\n' "$PRELUDE" >>"$output_path"
     printf 'prelude_hold_seconds=%s\n' "$PRELUDE_HOLD_SECS" >>"$output_path"
@@ -450,6 +461,7 @@ write_metadata() {
     "$ORANGE_GPU_LAUNCH_DELAY_SECS" \
     "$ORANGE_GPU_PARENT_PROBE_ATTEMPTS" \
     "$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS" \
+    "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" \
     "$REBOOT_TARGET" \
     "$RUN_TOKEN" \
     "$DEV_MOUNT" \
@@ -476,6 +488,7 @@ from pathlib import Path
     orange_gpu_launch_delay_secs,
     orange_gpu_parent_probe_attempts,
     orange_gpu_parent_probe_interval_secs,
+    orange_gpu_metadata_stage_breadcrumb,
     reboot_target,
     run_token,
     dev_mount,
@@ -502,6 +515,7 @@ payload_json = {
     "orange_gpu_launch_delay_secs": int(orange_gpu_launch_delay_secs),
     "orange_gpu_parent_probe_attempts": int(orange_gpu_parent_probe_attempts),
     "orange_gpu_parent_probe_interval_secs": int(orange_gpu_parent_probe_interval_secs),
+    "orange_gpu_metadata_stage_breadcrumb": parse_bool(orange_gpu_metadata_stage_breadcrumb),
     "gpu_bundle_dir": bundle_dir,
     "hold_seconds": int(hold_seconds),
     "prelude": prelude,
@@ -517,6 +531,11 @@ payload_json = {
     "dri_bootstrap": dri_bootstrap,
     "success_postlude": success_postlude,
     "checkpoint_hold_seconds": int(checkpoint_hold_seconds),
+    "metadata_stage_path": (
+        f"/metadata/shadow-hello-init/by-token/{run_token}/stage.txt"
+        if parse_bool(orange_gpu_metadata_stage_breadcrumb)
+        else ""
+    ),
 }
 
 Path(metadata_path).write_text(
@@ -634,6 +653,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --orange-gpu-parent-probe-interval-secs)
       ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS="${2:?missing value for --orange-gpu-parent-probe-interval-secs}"
+      shift 2
+      ;;
+    --orange-gpu-metadata-stage-breadcrumb)
+      ORANGE_GPU_METADATA_STAGE_BREADCRUMB="${2:?missing value for --orange-gpu-metadata-stage-breadcrumb}"
       shift 2
       ;;
     --reboot-target)
@@ -762,6 +785,15 @@ assert_bool_word mount-proc "$MOUNT_PROC"
 assert_bool_word mount-sys "$MOUNT_SYS"
 assert_bool_word log-kmsg "$LOG_KMSG"
 assert_bool_word log-pmsg "$LOG_PMSG"
+assert_bool_word orange-gpu-metadata-stage-breadcrumb "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB"
+if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" && "$ORANGE_GPU_PARENT_PROBE_ATTEMPTS" == "0" ]]; then
+  echo "pixel_boot_build_orange_gpu: orange gpu metadata stage breadcrumb requires parent probe attempts > 0" >&2
+  exit 1
+fi
+if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" && "$MOUNT_DEV" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: orange gpu metadata stage breadcrumb requires mount-dev=true" >&2
+  exit 1
+fi
 if [[ -z "$DRI_BOOTSTRAP" ]]; then
   if [[ "$PRELUDE" == "orange-init" && "$ORANGE_GPU_MODE" == "bundle-smoke" ]]; then
     DRI_BOOTSTRAP="sunfish-card0-renderD128"
@@ -923,8 +955,12 @@ printf 'Prelude hold seconds: %s\n' "$PRELUDE_HOLD_SECS"
 printf 'Orange GPU launch delay seconds: %s\n' "$ORANGE_GPU_LAUNCH_DELAY_SECS"
 printf 'Orange GPU parent probe attempts: %s\n' "$ORANGE_GPU_PARENT_PROBE_ATTEMPTS"
 printf 'Orange GPU parent probe interval seconds: %s\n' "$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS"
+printf 'Orange GPU metadata stage breadcrumb: %s\n' "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB"
 if [[ "$ORANGE_GPU_PARENT_PROBE_ATTEMPTS" != "0" ]]; then
   printf 'Parent readiness probe scene: raw-vulkan-physical-device-count-query-exit-smoke\n'
+fi
+if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" ]]; then
+  printf 'Metadata stage path: %s\n' "$(metadata_stage_path_for_token "$RUN_TOKEN")"
 fi
 if [[ "$PRELUDE" == "orange-init" ]]; then
   printf 'Prelude payload path: /orange-init\n'
