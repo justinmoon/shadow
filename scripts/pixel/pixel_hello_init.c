@@ -1124,6 +1124,12 @@ static bool orange_gpu_mode_is_vulkan_device_smoke(const struct hello_init_confi
     return strcmp(config->orange_gpu_mode, "vulkan-device-smoke") == 0;
 }
 
+static int run_orange_gpu_checkpoint(
+    const struct hello_init_config *config,
+    const char *checkpoint_name,
+    unsigned int hold_seconds
+);
+
 static bool orange_gpu_mode_uses_success_postlude(const struct hello_init_config *config) {
     return orange_gpu_mode_is_bundle_smoke(config) ||
            orange_gpu_mode_is_vulkan_instance_smoke(config) ||
