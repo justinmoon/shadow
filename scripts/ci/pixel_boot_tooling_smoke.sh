@@ -63,7 +63,9 @@ printf 'probe image\n' >"$PROBE_IMAGE"
 cat >"$PROBE_IMAGE.hello-init.json" <<EOF
 {
   "kind": "hello_init_build",
-  "run_token": "$PROBE_RUN_TOKEN"
+  "run_token": "$PROBE_RUN_TOKEN",
+  "log_kmsg": true,
+  "log_pmsg": true
 }
 EOF
 printf 'stock boot image\n' >"$STOCK_BOOT_IMAGE"
@@ -1153,6 +1155,9 @@ assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_succee
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_matched_any_shadow_tags false
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_matched_any_uncorrelated_shadow_tags false
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_uncorrelated_previous_boot_channels_with_matches 0
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_proof_ok false
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_absence_reason_summary pstore_empty
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_expected_durable_logging_summary "kmsg=true,pmsg=true"
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" boot_completed true
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" slot_after b
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" failure_stage bootreason-failure
@@ -1245,6 +1250,8 @@ assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_previous_boot_channels_with_matches 4
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_uncorrelated_previous_boot_channels_with_matches 1
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_current_boot_channels_with_matches 3
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_proof_ok true
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_expected_durable_logging_summary "kmsg=true,pmsg=true"
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" failure_stage bootreason-failure
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" bootreason_indicates_failure true
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/recover-traces/status.json" wait_boot_completed false
@@ -1297,6 +1304,8 @@ assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" recover_traces_
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" recover_traces_succeeded true
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" recover_traces_reason late-wait-adb
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" recover_traces_adb_timeout_secs_used 5
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" recover_traces_proof_ok false
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" recover_traces_absence_reason_summary pstore_empty
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" bootreason_indicates_failure false
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" bootreason_props/sys.boot.reason bootloader
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_initial_state none

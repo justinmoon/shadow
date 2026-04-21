@@ -24,6 +24,7 @@ ROOT_AVAILABLE=0
 ROOT_ID=""
 EXPECTED_RUN_TOKEN="${PIXEL_HELLO_INIT_RUN_TOKEN:-}"
 EXPECTED_RUN_TOKEN_SOURCE=""
+SOURCE_IMAGE_PATH_OVERRIDE="${PIXEL_HELLO_INIT_SOURCE_IMAGE_PATH:-}"
 SOURCE_IMAGE_PATH=""
 SOURCE_IMAGE_METADATA_PATH=""
 IMAGE_METADATA_SUFFIX=".hello-init.json"
@@ -75,6 +76,12 @@ hello_init_metadata_path() {
 
 discover_source_image_path() {
   local parent_status
+
+  if [[ -n "$SOURCE_IMAGE_PATH_OVERRIDE" ]]; then
+    SOURCE_IMAGE_PATH="$SOURCE_IMAGE_PATH_OVERRIDE"
+    return 0
+  fi
+
   parent_status="$OUTPUT_DIR/../status.json"
 
   if [[ ! -f "$parent_status" ]]; then
@@ -412,6 +419,19 @@ source_image_path = sys.argv[10]
 source_image_metadata_path = sys.argv[11]
 root_available = sys.argv[12] == "1"
 root_id = sys.argv[13]
+expected_durable_logging = {"kmsg": None, "pmsg": None}
+
+if source_image_metadata_path:
+    metadata_path = Path(source_image_metadata_path)
+    if metadata_path.exists():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            metadata = {}
+        for source_key, target_key in (("log_kmsg", "kmsg"), ("log_pmsg", "pmsg")):
+            value = metadata.get(source_key)
+            if isinstance(value, bool):
+                expected_durable_logging[target_key] = value
 
 rows = []
 previous_boot_matches = 0
@@ -425,6 +445,7 @@ matched_any_correlated_shadow_tags = False
 matched_any_expected_run_token = False
 matched_any_uncorrelated_shadow_tags = False
 bootreason_values = {}
+absence_reasons = set()
 
 with channel_status_path.open("r", encoding="utf-8") as fh:
     for row in csv.DictReader(fh, delimiter="\t"):
@@ -432,6 +453,8 @@ with channel_status_path.open("r", encoding="utf-8") as fh:
         stderr_path = channel_status_path.parent / row["stderr_path"]
         matches_path = channel_status_path.parent / row["matches_path"]
         run_token_matches_path = channel_status_path.parent / row["run_token_matches_path"]
+        output_text = output_path.read_text(encoding="utf-8", errors="replace") if output_path.exists() else ""
+        stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path.exists() else ""
         matched_shadow_tags = row["matched_shadow_tags"] == "true"
         matched_expected_run_token = row["matched_expected_run_token"] == "true"
         correlated = row["correlated"] == "true"
@@ -484,6 +507,24 @@ with channel_status_path.open("r", encoding="utf-8") as fh:
             elif matched_shadow_tags:
                 current_boot_hint_matches += 1
 
+        channel_name = row["name"]
+        if channel_name == "pmsg0":
+            if "Invalid argument" in stderr_text:
+                absence_reasons.add("pmsg_invalid_argument")
+            elif row["actual_access_mode"] == "root-unavailable":
+                absence_reasons.add("pmsg_root_unavailable")
+        elif channel_name == "pstore":
+            if "no pstore entries" in output_text:
+                absence_reasons.add("pstore_empty")
+            elif row["actual_access_mode"] == "root-unavailable":
+                absence_reasons.add("pstore_root_unavailable")
+        elif channel_name == "dropbox-system-last-kmsg":
+            if "(No entries found.)" in output_text:
+                absence_reasons.add("dropbox_last_kmsg_empty")
+        elif channel_name == "logcat-last":
+            if "Logcat read failure: No such file or directory" in stderr_text:
+                absence_reasons.add("logcat_last_unavailable")
+
 bootreason_path = channel_status_path.parent / "channels/bootreason-props.txt"
 if bootreason_path.exists():
     for raw_line in bootreason_path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -495,12 +536,18 @@ if bootreason_path.exists():
 payload = {
     "kind": "boot_trace_recovery",
     "ok": True,
+    "proof_ok": matched_any_correlated_shadow_tags,
+    "matched_correlated_trace": matched_any_correlated_shadow_tags,
     "serial": serial,
     "output_dir": str(status_output.parent),
     "shadow_tag_regex": shadow_tag_regex,
     "expected_run_token": expected_run_token,
     "expected_run_token_source": expected_run_token_source,
     "expected_run_token_present": bool(expected_run_token),
+    "expected_durable_logging": expected_durable_logging,
+    "expected_durable_logging_summary": ",".join(
+        f"{key}={str(value).lower()}" for key, value in expected_durable_logging.items()
+    ),
     "source_image_path": source_image_path,
     "source_image_metadata_path": source_image_metadata_path,
     "live_boot_id": live_boot_id,
@@ -521,6 +568,8 @@ payload = {
     "matched_any_expected_run_token": matched_any_expected_run_token,
     "matched_any_uncorrelated_shadow_tags": matched_any_uncorrelated_shadow_tags,
     "recovered_previous_boot_traces": previous_boot_matches > 0,
+    "absence_reasons": sorted(absence_reasons),
+    "absence_reason_summary": ",".join(sorted(absence_reasons)),
     "channels": {name: entry for name, entry in rows},
     "bootreason_props": bootreason_values,
 }

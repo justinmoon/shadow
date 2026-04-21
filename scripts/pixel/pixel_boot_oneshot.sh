@@ -47,6 +47,9 @@ recover_traces_uncorrelated_previous_boot_channels_with_matches=0
 recover_traces_current_boot_channels_with_matches=0
 recover_traces_reason=""
 recover_traces_adb_timeout_secs_used=0
+recover_traces_proof_ok=false
+recover_traces_absence_reason_summary=""
+recover_traces_expected_durable_logging_summary=""
 transport_initial_state=""
 transport_first_none_elapsed_secs=""
 transport_first_fastboot_elapsed_secs=""
@@ -312,6 +315,9 @@ write_status() {
     "recover_traces_current_boot_channels_with_matches=$recover_traces_current_boot_channels_with_matches" \
     "recover_traces_reason=$recover_traces_reason" \
     "recover_traces_adb_timeout_secs_used=$recover_traces_adb_timeout_secs_used" \
+    "recover_traces_proof_ok=$recover_traces_proof_ok" \
+    "recover_traces_absence_reason_summary=$recover_traces_absence_reason_summary" \
+    "recover_traces_expected_durable_logging_summary=$recover_traces_expected_durable_logging_summary" \
     "transport_initial_state=$transport_initial_state" \
     "transport_first_none_elapsed_secs=$transport_first_none_elapsed_secs" \
     "transport_first_fastboot_elapsed_secs=$transport_first_fastboot_elapsed_secs" \
@@ -400,6 +406,7 @@ maybe_recover_traces() {
   hello_init_run_token="$(load_hello_init_run_token)"
   if PIXEL_SERIAL="$serial" \
     PIXEL_HELLO_INIT_RUN_TOKEN="$hello_init_run_token" \
+    PIXEL_HELLO_INIT_SOURCE_IMAGE_PATH="$IMAGE_PATH" \
     "$SCRIPT_DIR/pixel/pixel_boot_recover_traces.sh" \
       "${recover_args[@]}"; then
     recover_traces_succeeded=true
@@ -419,9 +426,13 @@ previous = "true" if payload.get("recovered_previous_boot_traces") else "false"
 previous_matches = payload.get("previous_boot_channels_with_matches", 0)
 uncorrelated_matches = payload.get("uncorrelated_previous_boot_channels_with_matches", 0)
 current_matches = payload.get("current_boot_channels_with_matches", 0)
+proof_ok = "true" if payload.get("proof_ok") else "false"
+absence_reason_summary = payload.get("absence_reason_summary", "")
+expected_durable_logging_summary = payload.get("expected_durable_logging_summary", "")
 print(
     f"{matched}\t{uncorrelated}\t{previous}\t"
-    f"{previous_matches}\t{uncorrelated_matches}\t{current_matches}"
+    f"{previous_matches}\t{uncorrelated_matches}\t{current_matches}\t"
+    f"{proof_ok}\t{absence_reason_summary}\t{expected_durable_logging_summary}"
 )
 PY
       )"
@@ -436,7 +447,13 @@ PY
         recover_summary="${recover_summary#*$'\t'}"
         recover_traces_uncorrelated_previous_boot_channels_with_matches="${recover_summary%%$'\t'*}"
         recover_summary="${recover_summary#*$'\t'}"
-        recover_traces_current_boot_channels_with_matches="$recover_summary"
+        recover_traces_current_boot_channels_with_matches="${recover_summary%%$'\t'*}"
+        recover_summary="${recover_summary#*$'\t'}"
+        recover_traces_proof_ok="${recover_summary%%$'\t'*}"
+        recover_summary="${recover_summary#*$'\t'}"
+        recover_traces_absence_reason_summary="${recover_summary%%$'\t'*}"
+        recover_summary="${recover_summary#*$'\t'}"
+        recover_traces_expected_durable_logging_summary="$recover_summary"
       fi
     fi
     return 0
@@ -483,6 +500,11 @@ print_recover_traces_summary() {
     printf 'Recovery bundle previous-boot matches: %s\n' "$recover_traces_previous_boot_channels_with_matches"
     printf 'Recovery bundle uncorrelated previous-boot matches: %s\n' "$recover_traces_uncorrelated_previous_boot_channels_with_matches"
     printf 'Recovery bundle current-boot matches: %s\n' "$recover_traces_current_boot_channels_with_matches"
+    printf 'Recovery bundle proof ok: %s\n' "$recover_traces_proof_ok"
+    printf 'Recovery bundle expected durable logging: %s\n' "$recover_traces_expected_durable_logging_summary"
+    if [[ -n "$recover_traces_absence_reason_summary" ]]; then
+      printf 'Recovery bundle absence reasons: %s\n' "$recover_traces_absence_reason_summary"
+    fi
   fi
 }
 

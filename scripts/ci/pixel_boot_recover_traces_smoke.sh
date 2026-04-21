@@ -217,10 +217,12 @@ write_recover_context() {
   "kind": "boot_oneshot"
 }
 EOF
-  cat >"$image_path.hello-init.json" <<EOF
+cat >"$image_path.hello-init.json" <<EOF
 {
   "kind": "hello_init_build",
-  "run_token": "$run_token"
+  "run_token": "$run_token",
+  "log_kmsg": true,
+  "log_pmsg": true
 }
 EOF
 }
@@ -250,8 +252,11 @@ grep -Fq "$RUN_TOKEN" "$MATCHED_OUTPUT/matches/all-run-token-matches.txt"
 assert_json_field "$MATCHED_OUTPUT/status.json" recovered_previous_boot_traces true
 assert_json_field "$MATCHED_OUTPUT/status.json" matched_any_shadow_tags true
 assert_json_field "$MATCHED_OUTPUT/status.json" matched_any_correlated_shadow_tags true
+assert_json_field "$MATCHED_OUTPUT/status.json" proof_ok true
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_run_token "$RUN_TOKEN"
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_run_token_source image-metadata
+assert_json_field "$MATCHED_OUTPUT/status.json" expected_durable_logging_summary "kmsg=true,pmsg=true"
+assert_json_field "$MATCHED_OUTPUT/status.json" absence_reason_summary ""
 assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channel_attempts 5
 assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channels_with_matches 4
 assert_json_field "$MATCHED_OUTPUT/status.json" uncorrelated_previous_boot_channels_with_matches 1
@@ -296,7 +301,10 @@ test -f "$CLEAN_OUTPUT/channels/getprop.txt"
 assert_json_field "$CLEAN_OUTPUT/status.json" recovered_previous_boot_traces false
 assert_json_field "$CLEAN_OUTPUT/status.json" matched_any_shadow_tags false
 assert_json_field "$CLEAN_OUTPUT/status.json" matched_any_correlated_shadow_tags false
+assert_json_field "$CLEAN_OUTPUT/status.json" proof_ok false
 assert_json_field "$CLEAN_OUTPUT/status.json" matched_any_uncorrelated_shadow_tags false
+assert_json_field "$CLEAN_OUTPUT/status.json" expected_durable_logging_summary "kmsg=true,pmsg=true"
+assert_json_field "$CLEAN_OUTPUT/status.json" absence_reason_summary "pmsg_root_unavailable,pstore_root_unavailable"
 assert_json_field "$CLEAN_OUTPUT/status.json" previous_boot_channel_attempts 5
 assert_json_field "$CLEAN_OUTPUT/status.json" previous_boot_channels_with_matches 0
 assert_json_field "$CLEAN_OUTPUT/status.json" root_available false
@@ -324,7 +332,9 @@ env \
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" matched_any_shadow_tags false
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" matched_any_expected_run_token true
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" matched_any_correlated_shadow_tags false
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" proof_ok false
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" recovered_previous_boot_traces false
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" expected_durable_logging_summary "kmsg=true,pmsg=true"
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" previous_boot_channels_with_matches 0
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlation_state token-only
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlated false
