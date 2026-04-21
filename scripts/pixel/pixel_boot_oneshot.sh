@@ -390,6 +390,7 @@ finish() {
 
 maybe_recover_traces() {
   local reason adb_timeout_secs boot_timeout_secs recover_status_path recover_summary hello_init_run_token
+  local transport_left_fastboot
   local -a recover_args
 
   reason="${1:-post-boot}"
@@ -413,16 +414,36 @@ maybe_recover_traces() {
   fi
 
   hello_init_run_token="$(load_hello_init_run_token)"
-  if PIXEL_SERIAL="$serial" \
+  recover_status_path="$recover_traces_output_dir/status.json"
+  transport_left_fastboot=false
+  if [[ -n "$transport_first_none_elapsed_secs" ]]; then
+    transport_left_fastboot=true
+  fi
+
+  if [[ "$reason" == "late-wait-adb" && -n "$transport_timeline_path" ]]; then
+    if env \
+      PIXEL_SERIAL="$serial" \
+      PIXEL_HELLO_INIT_RUN_TOKEN="$hello_init_run_token" \
+      PIXEL_HELLO_INIT_SOURCE_IMAGE_PATH="$IMAGE_PATH" \
+      PIXEL_BOOT_TRANSPORT_TIMELINE_PATH="$transport_timeline_path" \
+      PIXEL_BOOT_TRANSPORT_TIMELINE_ELAPSED_OFFSET_SECS="${transport_last_state_elapsed_secs:-0}" \
+      PIXEL_BOOT_TRANSPORT_TIMELINE_LAST_RECORDED_STATE="${transport_last_state:-}" \
+      PIXEL_BOOT_TRANSPORT_TIMELINE_LEFT_FASTBOOT="$transport_left_fastboot" \
+      "$SCRIPT_DIR/pixel/pixel_boot_recover_traces.sh" \
+        "${recover_args[@]}"; then
+      recover_traces_succeeded=true
+    fi
+  elif PIXEL_SERIAL="$serial" \
     PIXEL_HELLO_INIT_RUN_TOKEN="$hello_init_run_token" \
     PIXEL_HELLO_INIT_SOURCE_IMAGE_PATH="$IMAGE_PATH" \
     "$SCRIPT_DIR/pixel/pixel_boot_recover_traces.sh" \
       "${recover_args[@]}"; then
     recover_traces_succeeded=true
-    recover_status_path="$recover_traces_output_dir/status.json"
-    if [[ -f "$recover_status_path" ]]; then
-      recover_summary="$(
-        python3 - "$recover_status_path" <<'PY'
+  fi
+
+  if [[ -f "$recover_status_path" ]]; then
+    recover_summary="$(
+      python3 - "$recover_status_path" <<'PY'
 import json
 import sys
 
@@ -438,33 +459,57 @@ current_matches = payload.get("current_boot_channels_with_matches", 0)
 proof_ok = "true" if payload.get("proof_ok") else "false"
 absence_reason_summary = payload.get("absence_reason_summary", "")
 expected_durable_logging_summary = payload.get("expected_durable_logging_summary", "")
+fastboot_auto_reboot_attempted = "true" if payload.get("fastboot_auto_reboot_attempted") else "false"
+fastboot_auto_reboot_succeeded = "true" if payload.get("fastboot_auto_reboot_succeeded") else "false"
+fastboot_auto_reboot_elapsed_secs = payload.get("fastboot_auto_reboot_elapsed_secs", "")
+fastboot_auto_reboot_reason = payload.get("fastboot_auto_reboot_reason", "")
 print(
     f"{matched}\t{uncorrelated}\t{previous}\t"
     f"{previous_matches}\t{uncorrelated_matches}\t{current_matches}\t"
-    f"{proof_ok}\t{absence_reason_summary}\t{expected_durable_logging_summary}"
+    f"{proof_ok}\t{absence_reason_summary}\t{expected_durable_logging_summary}\t"
+    f"{fastboot_auto_reboot_attempted}\t{fastboot_auto_reboot_succeeded}\t"
+    f"{fastboot_auto_reboot_elapsed_secs}\t{fastboot_auto_reboot_reason}"
 )
 PY
-      )"
-      if [[ -n "$recover_summary" ]]; then
-        recover_traces_matched_any_shadow_tags="${recover_summary%%$'\t'*}"
-        recover_summary="${recover_summary#*$'\t'}"
-        recover_traces_matched_any_uncorrelated_shadow_tags="${recover_summary%%$'\t'*}"
-        recover_summary="${recover_summary#*$'\t'}"
-        recover_traces_recovered_previous_boot_traces="${recover_summary%%$'\t'*}"
-        recover_summary="${recover_summary#*$'\t'}"
-        recover_traces_previous_boot_channels_with_matches="${recover_summary%%$'\t'*}"
-        recover_summary="${recover_summary#*$'\t'}"
-        recover_traces_uncorrelated_previous_boot_channels_with_matches="${recover_summary%%$'\t'*}"
-        recover_summary="${recover_summary#*$'\t'}"
-        recover_traces_current_boot_channels_with_matches="${recover_summary%%$'\t'*}"
-        recover_summary="${recover_summary#*$'\t'}"
-        recover_traces_proof_ok="${recover_summary%%$'\t'*}"
-        recover_summary="${recover_summary#*$'\t'}"
-        recover_traces_absence_reason_summary="${recover_summary%%$'\t'*}"
-        recover_summary="${recover_summary#*$'\t'}"
-        recover_traces_expected_durable_logging_summary="$recover_summary"
+    )"
+    if [[ -n "$recover_summary" ]]; then
+      recover_traces_matched_any_shadow_tags="${recover_summary%%$'\t'*}"
+      recover_summary="${recover_summary#*$'\t'}"
+      recover_traces_matched_any_uncorrelated_shadow_tags="${recover_summary%%$'\t'*}"
+      recover_summary="${recover_summary#*$'\t'}"
+      recover_traces_recovered_previous_boot_traces="${recover_summary%%$'\t'*}"
+      recover_summary="${recover_summary#*$'\t'}"
+      recover_traces_previous_boot_channels_with_matches="${recover_summary%%$'\t'*}"
+      recover_summary="${recover_summary#*$'\t'}"
+      recover_traces_uncorrelated_previous_boot_channels_with_matches="${recover_summary%%$'\t'*}"
+      recover_summary="${recover_summary#*$'\t'}"
+      recover_traces_current_boot_channels_with_matches="${recover_summary%%$'\t'*}"
+      recover_summary="${recover_summary#*$'\t'}"
+      recover_traces_proof_ok="${recover_summary%%$'\t'*}"
+      recover_summary="${recover_summary#*$'\t'}"
+      recover_traces_absence_reason_summary="${recover_summary%%$'\t'*}"
+      recover_summary="${recover_summary#*$'\t'}"
+      recover_traces_expected_durable_logging_summary="${recover_summary%%$'\t'*}"
+      recover_summary="${recover_summary#*$'\t'}"
+      if [[ "$fastboot_auto_reboot_attempted" != "true" && "${recover_summary%%$'\t'*}" == "true" ]]; then
+        fastboot_auto_reboot_attempted=true
+      fi
+      recover_summary="${recover_summary#*$'\t'}"
+      if [[ "$fastboot_auto_reboot_succeeded" != "true" && "${recover_summary%%$'\t'*}" == "true" ]]; then
+        fastboot_auto_reboot_succeeded=true
+      fi
+      recover_summary="${recover_summary#*$'\t'}"
+      if [[ -z "$fastboot_auto_reboot_elapsed_secs" ]]; then
+        fastboot_auto_reboot_elapsed_secs="${recover_summary%%$'\t'*}"
+      fi
+      recover_summary="${recover_summary#*$'\t'}"
+      if [[ -z "$fastboot_auto_reboot_reason" ]]; then
+        fastboot_auto_reboot_reason="$recover_summary"
       fi
     fi
+  fi
+
+  if [[ "$recover_traces_succeeded" == "true" ]]; then
     return 0
   fi
 
@@ -485,8 +530,6 @@ backfill_state_after_recover_traces() {
   fi
   if [[ -z "$transport_first_adb_elapsed_secs" ]]; then
     transport_late_recovery_reached_adb=true
-    transport_last_state="adb"
-    transport_last_state_elapsed_secs=""
   fi
   capture_bootreason_props
   evaluate_bootreason_status
@@ -549,6 +592,7 @@ wait_for_adb_with_transport_timeline_and_auto_fastboot_reboot() {
     elapsed_secs=$((SECONDS - started_at))
     pixel_note_adb_transport_timeline_state "$elapsed_secs" "$current_state" "$timeline_path"
     if [[ "$current_state" == "adb" ]]; then
+      pixel_note_adb_transport_timeline_stop_event "$elapsed_secs" "$current_state" "adb-ready" "$timeline_path"
       return 0
     fi
     if [[ "$current_state" == "fastboot" ]]; then
@@ -557,6 +601,11 @@ wait_for_adb_with_transport_timeline_and_auto_fastboot_reboot() {
     sleep 1
   done
 
+  pixel_note_adb_transport_timeline_stop_event \
+    "$elapsed_secs" \
+    "${PIXEL_ADB_TRANSPORT_LAST_STATE:-unknown}" \
+    "wait-adb-timeout" \
+    "$timeline_path"
   echo "pixel: timed out waiting for adb device $serial" >&2
   return 1
 }

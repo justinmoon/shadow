@@ -17,6 +17,8 @@ ONESHOT_ADB_RETURN_OUTPUT="$TMP_DIR/oneshot-adb-return-output"
 ONESHOT_ADB_RETURN_STALE_HISTORY_OUTPUT="$TMP_DIR/oneshot-adb-return-stale-history-output"
 ONESHOT_ADB_RETURN_NOWAIT_OUTPUT="$TMP_DIR/oneshot-adb-return-nowait-output"
 ONESHOT_ADB_LATE_RECOVER_OUTPUT="$TMP_DIR/oneshot-adb-late-recover-output"
+ONESHOT_ADB_LATE_RECOVER_FAIL_OUTPUT="$TMP_DIR/oneshot-adb-late-recover-fail-output"
+ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT="$TMP_DIR/oneshot-adb-late-fastboot-auto-reboot-output"
 ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT="$TMP_DIR/oneshot-adb-fastboot-auto-reboot-output"
 ONESHOT_FASTBOOT_RETURN_OUTPUT="$TMP_DIR/oneshot-fastboot-return-output"
 ONESHOT_FASTBOOT_RETURN_FAIL_OUTPUT="$TMP_DIR/oneshot-fastboot-return-fail-output"
@@ -1315,12 +1317,105 @@ assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" bootreason_indi
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" bootreason_props/sys.boot.reason bootloader
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_initial_state none
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_first_none_elapsed_secs 0
-assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_last_state adb
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_last_state none
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_late_recovery_reached_adb true
 test -f "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/recover-traces/status.json"
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/recover-traces/status.json" ok true
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/recover-traces/status.json" transport_last_state adb
 test -f "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv"
 assert_contains "$(cat "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv")" $'elapsed_secs\ttransport'
 assert_contains "$(cat "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv")" $'0\tnone'
+assert_contains "$(cat "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv")" 'stop:wait-adb-timeout'
+assert_contains "$(cat "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv")" 'stop:recover-traces-adb-ready'
+
+reset_fastboot_cycle_state
+oneshot_adb_late_recover_fail_stdout="$TMP_DIR/oneshot-adb-late-recover-fail.stdout"
+oneshot_adb_late_recover_fail_stderr="$TMP_DIR/oneshot-adb-late-recover-fail.stderr"
+set +e
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  SHADOW_BOOTIMG_SHELL=1 \
+  PIXEL_SERIAL=TESTSERIAL \
+  PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+  MOCK_DEVICE_STATE_DIR="$MOCK_DEVICE_STATE_DIR" \
+  MOCK_PROBE_IMAGE_PATH="$PROBE_IMAGE" \
+  MOCK_STOCK_IMAGE_PATH="$STOCK_BOOT_IMAGE" \
+  MOCK_FASTBOOT_BOOT_RETURN_MODE=never \
+  PIXEL_BOOT_ONESHOT_LATE_RECOVER_ADB_TIMEOUT_SECS=2 \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+    --image "$PROBE_IMAGE" \
+    --output "$ONESHOT_ADB_LATE_RECOVER_FAIL_OUTPUT" \
+    --adb-timeout 1 \
+    --boot-timeout 60 \
+    --skip-collect \
+    --recover-traces-after \
+    >"$oneshot_adb_late_recover_fail_stdout" \
+    2>"$oneshot_adb_late_recover_fail_stderr"
+oneshot_adb_late_recover_fail_status=$?
+set -e
+if [[ "$oneshot_adb_late_recover_fail_status" -eq 0 ]]; then
+  echo "pixel_boot_tooling_smoke: expected late-recover failure when adb never returns" >&2
+  exit 1
+fi
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_FAIL_OUTPUT/status.json" failure_stage wait-adb
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_FAIL_OUTPUT/status.json" recover_traces_succeeded false
+test -f "$ONESHOT_ADB_LATE_RECOVER_FAIL_OUTPUT/recover-traces/status.json"
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_FAIL_OUTPUT/recover-traces/status.json" ok false
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_FAIL_OUTPUT/recover-traces/status.json" failure_stage wait-adb
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_FAIL_OUTPUT/recover-traces/status.json" transport_initial_state none
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_FAIL_OUTPUT/recover-traces/status.json" transport_last_state none
+assert_contains "$(cat "$ONESHOT_ADB_LATE_RECOVER_FAIL_OUTPUT/transport-timeline.tsv")" 'stop:wait-adb-timeout'
+assert_contains "$(cat "$ONESHOT_ADB_LATE_RECOVER_FAIL_OUTPUT/transport-timeline.tsv")" 'stop:recover-traces-wait-adb-timeout'
+
+reset_fastboot_cycle_state
+oneshot_adb_late_fastboot_auto_reboot_stdout="$TMP_DIR/oneshot-adb-late-fastboot-auto-reboot.stdout"
+oneshot_adb_late_fastboot_auto_reboot_stderr="$TMP_DIR/oneshot-adb-late-fastboot-auto-reboot.stderr"
+set +e
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  SHADOW_BOOTIMG_SHELL=1 \
+  PIXEL_SERIAL=TESTSERIAL \
+  PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+  MOCK_DEVICE_STATE_DIR="$MOCK_DEVICE_STATE_DIR" \
+  MOCK_PROBE_IMAGE_PATH="$PROBE_IMAGE" \
+  MOCK_STOCK_IMAGE_PATH="$STOCK_BOOT_IMAGE" \
+  MOCK_FASTBOOT_BOOT_RETURN_MODE=fastboot-cycle \
+  MOCK_FASTBOOT_RETURN_POLLS=3 \
+  MOCK_ADB_RETURN_POLLS=2 \
+  MOCK_RO_BOOT_BOOTREASON=reboot \
+  MOCK_SYS_BOOT_REASON=bootloader \
+  PIXEL_BOOT_ONESHOT_LATE_RECOVER_ADB_TIMEOUT_SECS=6 \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+    --image "$PROBE_IMAGE" \
+    --output "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT" \
+    --adb-timeout 1 \
+    --boot-timeout 60 \
+    --skip-collect \
+    --recover-traces-after \
+    >"$oneshot_adb_late_fastboot_auto_reboot_stdout" \
+    2>"$oneshot_adb_late_fastboot_auto_reboot_stderr"
+oneshot_adb_late_fastboot_auto_reboot_status=$?
+set -e
+if [[ "$oneshot_adb_late_fastboot_auto_reboot_status" -eq 0 ]]; then
+  echo "pixel_boot_tooling_smoke: expected late fastboot auto-reboot oneshot failure" >&2
+  exit 1
+fi
+oneshot_adb_late_fastboot_auto_reboot_output="$(cat "$oneshot_adb_late_fastboot_auto_reboot_stdout")"
+assert_contains "$oneshot_adb_late_fastboot_auto_reboot_output" "Auto-rebooted TESTSERIAL from fastboot return after"
+assert_contains "$oneshot_adb_late_fastboot_auto_reboot_output" "Late recovery after wait-adb timeout succeeded"
+assert_json_field "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" failure_stage wait-adb
+assert_json_field "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" fastboot_auto_reboot_attempted true
+assert_json_field "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" fastboot_auto_reboot_succeeded true
+assert_json_field "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" fastboot_auto_reboot_reason returned-fastboot-after-leave
+assert_json_field "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" transport_last_state none
+assert_json_field "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" transport_late_recovery_reached_adb true
+assert_json_field "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/recover-traces/status.json" fastboot_auto_reboot_attempted true
+assert_json_field "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/recover-traces/status.json" fastboot_auto_reboot_succeeded true
+assert_json_field "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/recover-traces/status.json" transport_initial_state fastboot
+assert_json_field "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/recover-traces/status.json" transport_last_state adb
+assert_contains "$(cat "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/transport-timeline.tsv")" 'stop:wait-adb-timeout'
+assert_contains "$(cat "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/transport-timeline.tsv")" $'\tfastboot\tstate'
+assert_contains "$(cat "$ONESHOT_ADB_LATE_FASTBOOT_AUTO_REBOOT_OUTPUT/transport-timeline.tsv")" 'stop:recover-traces-adb-ready'
 
 reset_fastboot_cycle_state
 ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT="$TMP_DIR/oneshot-adb-fastboot-timeout-output"

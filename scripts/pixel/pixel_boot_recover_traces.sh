@@ -13,10 +13,12 @@ RECOVERY_ROOT_NAME="recover-traces"
 ADB_TIMEOUT_SECS="${PIXEL_BOOT_RECOVER_TRACES_ADB_TIMEOUT_SECS:-120}"
 BOOT_TIMEOUT_SECS="${PIXEL_BOOT_RECOVER_TRACES_BOOT_TIMEOUT_SECS:-240}"
 WAIT_BOOT_COMPLETED=1
+AUTO_FASTBOOT_REBOOT="${PIXEL_BOOT_RECOVER_TRACES_AUTO_FASTBOOT_REBOOT:-1}"
 CHANNEL_STATUS_TSV=""
 CHANNEL_DIR=""
 MATCH_DIR=""
 META_DIR=""
+status_path=""
 serial=""
 live_boot_id=""
 live_slot_suffix=""
@@ -28,6 +30,21 @@ SOURCE_IMAGE_PATH_OVERRIDE="${PIXEL_HELLO_INIT_SOURCE_IMAGE_PATH:-}"
 SOURCE_IMAGE_PATH=""
 SOURCE_IMAGE_METADATA_PATH=""
 IMAGE_METADATA_SUFFIX=".hello-init.json"
+failure_stage=""
+transport_timeline_path="${PIXEL_BOOT_TRANSPORT_TIMELINE_PATH:-}"
+transport_timeline_elapsed_offset_secs="${PIXEL_BOOT_TRANSPORT_TIMELINE_ELAPSED_OFFSET_SECS:-0}"
+transport_timeline_last_recorded_state_seed="${PIXEL_BOOT_TRANSPORT_TIMELINE_LAST_RECORDED_STATE:-}"
+transport_left_fastboot_seed="${PIXEL_BOOT_TRANSPORT_TIMELINE_LEFT_FASTBOOT:-false}"
+transport_initial_state=""
+transport_first_none_elapsed_secs=""
+transport_first_fastboot_elapsed_secs=""
+transport_first_adb_elapsed_secs=""
+transport_last_state=""
+transport_last_state_elapsed_secs=""
+fastboot_auto_reboot_attempted=false
+fastboot_auto_reboot_succeeded=false
+fastboot_auto_reboot_elapsed_secs=""
+fastboot_auto_reboot_reason=""
 
 usage() {
   cat <<'EOF'
@@ -39,6 +56,18 @@ Collect best-effort Android-side evidence after a boot-lab run has already retur
 to stock Android. This private helper is intended to sit behind:
   sc -t <serial> debug boot-lab-recover-traces
 EOF
+}
+
+bool_word() {
+  if [[ "$1" == "1" || "$1" == "true" ]]; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
+flag_enabled() {
+  [[ "$(bool_word "$1")" == "true" ]]
 }
 
 recovery_runs_dir() {
@@ -66,6 +95,122 @@ prepare_output_dir() {
   fi
 
   mkdir -p "$OUTPUT_DIR"
+}
+
+write_failure_status_json() {
+  [[ -n "$status_path" ]] || return 0
+
+  python3 - \
+    "$status_path" \
+    "$serial" \
+    "$OUTPUT_DIR" \
+    "$ADB_TIMEOUT_SECS" \
+    "$BOOT_TIMEOUT_SECS" \
+    "$(bool_word "$WAIT_BOOT_COMPLETED")" \
+    "$failure_stage" \
+    "$transport_timeline_path" \
+    "$transport_initial_state" \
+    "$transport_first_none_elapsed_secs" \
+    "$transport_first_fastboot_elapsed_secs" \
+    "$transport_first_adb_elapsed_secs" \
+    "$transport_last_state" \
+    "$transport_last_state_elapsed_secs" \
+    "$(bool_word "$fastboot_auto_reboot_attempted")" \
+    "$(bool_word "$fastboot_auto_reboot_succeeded")" \
+    "$fastboot_auto_reboot_elapsed_secs" \
+    "$fastboot_auto_reboot_reason" \
+    "$EXPECTED_RUN_TOKEN" \
+    "$EXPECTED_RUN_TOKEN_SOURCE" \
+    "$SOURCE_IMAGE_PATH" \
+    "$SOURCE_IMAGE_METADATA_PATH" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+(
+    status_output,
+    serial,
+    output_dir,
+    adb_timeout_secs,
+    boot_timeout_secs,
+    wait_boot_completed,
+    failure_stage,
+    transport_timeline_path,
+    transport_initial_state,
+    transport_first_none_elapsed_secs,
+    transport_first_fastboot_elapsed_secs,
+    transport_first_adb_elapsed_secs,
+    transport_last_state,
+    transport_last_state_elapsed_secs,
+    fastboot_auto_reboot_attempted,
+    fastboot_auto_reboot_succeeded,
+    fastboot_auto_reboot_elapsed_secs,
+    fastboot_auto_reboot_reason,
+    expected_run_token,
+    expected_run_token_source,
+    source_image_path,
+    source_image_metadata_path,
+) = sys.argv[1:23]
+
+expected_durable_logging = {"kmsg": None, "pmsg": None}
+if source_image_metadata_path:
+    metadata_path = Path(source_image_metadata_path)
+    if metadata_path.exists():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            metadata = {}
+        for source_key, target_key in (("log_kmsg", "kmsg"), ("log_pmsg", "pmsg")):
+            value = metadata.get(source_key)
+            if isinstance(value, bool):
+                expected_durable_logging[target_key] = value
+
+payload = {
+    "kind": "boot_trace_recovery",
+    "ok": False,
+    "proof_ok": False,
+    "matched_correlated_trace": False,
+    "serial": serial,
+    "output_dir": output_dir,
+    "adb_timeout_secs": int(adb_timeout_secs),
+    "boot_timeout_secs": int(boot_timeout_secs),
+    "wait_boot_completed": wait_boot_completed == "true",
+    "failure_stage": failure_stage,
+    "transport_timeline_path": transport_timeline_path,
+    "transport_initial_state": transport_initial_state,
+    "transport_first_none_elapsed_secs": transport_first_none_elapsed_secs,
+    "transport_first_fastboot_elapsed_secs": transport_first_fastboot_elapsed_secs,
+    "transport_first_adb_elapsed_secs": transport_first_adb_elapsed_secs,
+    "transport_last_state": transport_last_state,
+    "transport_last_state_elapsed_secs": transport_last_state_elapsed_secs,
+    "fastboot_auto_reboot_attempted": fastboot_auto_reboot_attempted == "true",
+    "fastboot_auto_reboot_succeeded": fastboot_auto_reboot_succeeded == "true",
+    "fastboot_auto_reboot_elapsed_secs": fastboot_auto_reboot_elapsed_secs,
+    "fastboot_auto_reboot_reason": fastboot_auto_reboot_reason,
+    "expected_run_token": expected_run_token,
+    "expected_run_token_source": expected_run_token_source,
+    "expected_run_token_present": bool(expected_run_token),
+    "expected_durable_logging": expected_durable_logging,
+    "expected_durable_logging_summary": ",".join(
+        f"{key}={str(value).lower()}" for key, value in expected_durable_logging.items()
+    ),
+    "source_image_path": source_image_path,
+    "source_image_metadata_path": source_image_metadata_path,
+}
+
+with open(status_output, "w", encoding="utf-8") as fh:
+    json.dump(payload, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+}
+
+finish() {
+  local exit_code=$?
+  trap - EXIT
+  if [[ "$exit_code" -ne 0 ]]; then
+    write_failure_status_json
+  fi
+  exit "$exit_code"
 }
 
 hello_init_metadata_path() {
@@ -174,6 +319,84 @@ write_root_state_summary() {
 root_available=$( [[ "$ROOT_AVAILABLE" == "1" ]] && printf true || printf false )
 root_id=$ROOT_ID
 EOF
+}
+
+capture_transport_timeline_status() {
+  transport_initial_state="${PIXEL_ADB_TRANSPORT_INITIAL_STATE:-}"
+  transport_first_none_elapsed_secs="${PIXEL_ADB_TRANSPORT_FIRST_NONE_ELAPSED_SECS:-}"
+  transport_first_fastboot_elapsed_secs="${PIXEL_ADB_TRANSPORT_FIRST_FASTBOOT_ELAPSED_SECS:-}"
+  transport_first_adb_elapsed_secs="${PIXEL_ADB_TRANSPORT_FIRST_ADB_ELAPSED_SECS:-}"
+  transport_last_state="${PIXEL_ADB_TRANSPORT_LAST_STATE:-}"
+  transport_last_state_elapsed_secs="${PIXEL_ADB_TRANSPORT_LAST_STATE_ELAPSED_SECS:-}"
+}
+
+maybe_auto_reboot_fastboot_return() {
+  local elapsed_secs
+  elapsed_secs="${1:?maybe_auto_reboot_fastboot_return requires elapsed seconds}"
+
+  if ! flag_enabled "$AUTO_FASTBOOT_REBOOT"; then
+    return 1
+  fi
+
+  if [[ "$fastboot_auto_reboot_attempted" == "true" ]]; then
+    return 1
+  fi
+
+  if [[ "${PIXEL_ADB_TRANSPORT_LAST_STATE:-}" != "fastboot" ]]; then
+    return 1
+  fi
+
+  if [[ -z "${PIXEL_ADB_TRANSPORT_FIRST_NONE_ELAPSED_SECS:-}" && "$transport_left_fastboot_seed" != "true" ]]; then
+    return 1
+  fi
+
+  fastboot_auto_reboot_attempted=true
+  fastboot_auto_reboot_elapsed_secs="$elapsed_secs"
+  fastboot_auto_reboot_reason="returned-fastboot-after-leave"
+
+  if pixel_fastboot "$serial" reboot; then
+    fastboot_auto_reboot_succeeded=true
+    printf 'Auto-rebooted %s from fastboot return after %ss\n' "$serial" "$elapsed_secs"
+    return 0
+  fi
+
+  echo "pixel_boot_recover_traces: failed to auto-reboot $serial after fastboot return" >&2
+  return 1
+}
+
+wait_for_adb_with_transport_timeline_and_auto_fastboot_reboot() {
+  local serial timeout timeline_path elapsed_offset_secs started_at elapsed_secs current_state
+  serial="${1:?wait_for_adb_with_transport_timeline_and_auto_fastboot_reboot requires a serial}"
+  timeout="${2:-120}"
+  timeline_path="${3:-}"
+  elapsed_offset_secs="${4:-0}"
+
+  pixel_reset_adb_transport_timeline_status
+  PIXEL_ADB_TRANSPORT_TIMELINE_LAST_RECORDED_STATE="$transport_timeline_last_recorded_state_seed"
+  started_at=$SECONDS
+  elapsed_secs="$elapsed_offset_secs"
+
+  for _ in $(seq 1 "$timeout"); do
+    current_state="$(pixel_transport_state "$serial")"
+    elapsed_secs=$((elapsed_offset_secs + SECONDS - started_at))
+    pixel_note_adb_transport_timeline_state "$elapsed_secs" "$current_state" "$timeline_path"
+    if [[ "$current_state" == "adb" ]]; then
+      pixel_note_adb_transport_timeline_stop_event "$elapsed_secs" "$current_state" "recover-traces-adb-ready" "$timeline_path"
+      return 0
+    fi
+    if [[ "$current_state" == "fastboot" ]]; then
+      maybe_auto_reboot_fastboot_return "$elapsed_secs" || true
+    fi
+    sleep 1
+  done
+
+  pixel_note_adb_transport_timeline_stop_event \
+    "$elapsed_secs" \
+    "${PIXEL_ADB_TRANSPORT_LAST_STATE:-unknown}" \
+    "recover-traces-wait-adb-timeout" \
+    "$timeline_path"
+  echo "pixel: timed out waiting for adb device $serial" >&2
+  return 1
 }
 
 run_device_command() {
@@ -400,7 +623,18 @@ write_status_json() {
     "$SOURCE_IMAGE_PATH" \
     "$SOURCE_IMAGE_METADATA_PATH" \
     "$ROOT_AVAILABLE" \
-    "$ROOT_ID" <<'PY'
+    "$ROOT_ID" \
+    "$transport_timeline_path" \
+    "$transport_initial_state" \
+    "$transport_first_none_elapsed_secs" \
+    "$transport_first_fastboot_elapsed_secs" \
+    "$transport_first_adb_elapsed_secs" \
+    "$transport_last_state" \
+    "$transport_last_state_elapsed_secs" \
+    "$(bool_word "$fastboot_auto_reboot_attempted")" \
+    "$(bool_word "$fastboot_auto_reboot_succeeded")" \
+    "$fastboot_auto_reboot_elapsed_secs" \
+    "$fastboot_auto_reboot_reason" <<'PY'
 import csv
 import json
 import sys
@@ -419,6 +653,17 @@ source_image_path = sys.argv[10]
 source_image_metadata_path = sys.argv[11]
 root_available = sys.argv[12] == "1"
 root_id = sys.argv[13]
+transport_timeline_path = sys.argv[14]
+transport_initial_state = sys.argv[15]
+transport_first_none_elapsed_secs = sys.argv[16]
+transport_first_fastboot_elapsed_secs = sys.argv[17]
+transport_first_adb_elapsed_secs = sys.argv[18]
+transport_last_state = sys.argv[19]
+transport_last_state_elapsed_secs = sys.argv[20]
+fastboot_auto_reboot_attempted = sys.argv[21] == "true"
+fastboot_auto_reboot_succeeded = sys.argv[22] == "true"
+fastboot_auto_reboot_elapsed_secs = sys.argv[23]
+fastboot_auto_reboot_reason = sys.argv[24]
 expected_durable_logging = {"kmsg": None, "pmsg": None}
 
 if source_image_metadata_path:
@@ -555,6 +800,17 @@ payload = {
     "root_available": root_available,
     "root_id": root_id,
     "wait_boot_completed": wait_boot_completed,
+    "transport_timeline_path": transport_timeline_path,
+    "transport_initial_state": transport_initial_state,
+    "transport_first_none_elapsed_secs": transport_first_none_elapsed_secs,
+    "transport_first_fastboot_elapsed_secs": transport_first_fastboot_elapsed_secs,
+    "transport_first_adb_elapsed_secs": transport_first_adb_elapsed_secs,
+    "transport_last_state": transport_last_state,
+    "transport_last_state_elapsed_secs": transport_last_state_elapsed_secs,
+    "fastboot_auto_reboot_attempted": fastboot_auto_reboot_attempted,
+    "fastboot_auto_reboot_succeeded": fastboot_auto_reboot_succeeded,
+    "fastboot_auto_reboot_elapsed_secs": fastboot_auto_reboot_elapsed_secs,
+    "fastboot_auto_reboot_reason": fastboot_auto_reboot_reason,
     "previous_boot_channel_attempts": previous_boot_attempts,
     "previous_boot_channels_with_matches": previous_boot_matches,
     "current_boot_channel_attempts": current_boot_attempts,
@@ -632,10 +888,25 @@ serial="$(resolve_serial_for_mode)"
 pixel_require_host_lock "$serial" "$0" "${ORIGINAL_ARGS[@]}"
 pixel_prepare_dirs
 prepare_output_dir
+status_path="$OUTPUT_DIR/status.json"
+discover_expected_run_token
+trap finish EXIT
 
-pixel_wait_for_adb "$serial" "$ADB_TIMEOUT_SECS" >/dev/null
+if ! wait_for_adb_with_transport_timeline_and_auto_fastboot_reboot \
+  "$serial" \
+  "$ADB_TIMEOUT_SECS" \
+  "$transport_timeline_path" \
+  "$transport_timeline_elapsed_offset_secs"; then
+  capture_transport_timeline_status
+  failure_stage="wait-adb"
+  exit 1
+fi
+capture_transport_timeline_status
 if [[ "$WAIT_BOOT_COMPLETED" == "1" ]]; then
-  pixel_wait_for_boot_completed "$serial" "$BOOT_TIMEOUT_SECS" >/dev/null
+  if ! pixel_wait_for_boot_completed "$serial" "$BOOT_TIMEOUT_SECS" >/dev/null; then
+    failure_stage="wait-boot-completed"
+    exit 1
+  fi
 fi
 
 CHANNEL_DIR="$OUTPUT_DIR/channels"
@@ -643,7 +914,6 @@ MATCH_DIR="$OUTPUT_DIR/matches"
 META_DIR="$OUTPUT_DIR/meta"
 mkdir -p "$CHANNEL_DIR" "$MATCH_DIR" "$META_DIR"
 CHANNEL_STATUS_TSV="$OUTPUT_DIR/channel-status.tsv"
-discover_expected_run_token
 printf 'name\tscope\tcommand\trequested_access_mode\tactual_access_mode\toutput_path\tstderr_path\texit_code\tavailable\tmatched_shadow_tags\tshadow_match_count\tmatched_expected_run_token\trun_token_match_count\tcorrelated\tcorrelation_state\tmatches_path\trun_token_matches_path\n' >"$CHANNEL_STATUS_TSV"
 cat >"$META_DIR/shadow-tag-patterns.txt" <<EOF
 shadow-hello-init
@@ -675,3 +945,4 @@ printf 'Recovered boot traces: %s\n' "$OUTPUT_DIR"
 printf 'Serial: %s\n' "$serial"
 printf 'Live boot id: %s\n' "${live_boot_id:-unknown}"
 printf 'Live slot suffix: %s\n' "${live_slot_suffix:-unknown}"
+trap - EXIT
