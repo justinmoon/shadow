@@ -14,7 +14,7 @@ libc.workspace = true
 nostr.workspace = true
 nostr-sdk.workspace = true
 qrcodegen.workspace = true
-shadow-sdk = { workspace = true, features = ["nostr"] }
+shadow-sdk = { workspace = true, features = ["camera", "clipboard", "nostr"] }
 shadow-runtime-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true

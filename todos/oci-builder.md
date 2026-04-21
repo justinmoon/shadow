@@ -89,3 +89,13 @@ Make the OCI ARM builder fast, well-utilized, and cheap to operate.
 - The next high-leverage seam is likely in the UI app package graph, not `shadow-system`: `shadow-rust-demo`, `shadow-rust-timeline`, and `shadow-ui-vm-session` are frequent builder outputs, and those packages still build as standalone `buildRustPackage` derivations rather than sharing a Cargo artifact lane.
 - Crane is already the dominant pattern for shared Rust check/test lanes and for `shadow-system`, but not for every package output. The right standardization target is hot Rust package lanes where rebuilds matter, not every isolated Rust crate.
 - The local Crane checkout (`~/code/crane`) reinforces that intended shape: one shared `buildDepsOnly` derivation feeding multiple `buildPackage` outputs, with separate artifact families when `-p` or feature sets diverge.
+- April 21, 2026 app-level compile-surface experiment: `shadow-sdk` now exposes `camera` and `clipboard` as opt-in features, with `shadow-rust-demo` enabling only `camera`, `shadow-rust-timeline` enabling `clipboard + nostr + ui`, and `shadow-system` explicitly enabling `camera + clipboard + nostr`.
+  This is the safe "feature-gate" shape: same crates, narrower per-package compile surfaces, no runtime/package split yet.
+- Measured result for the app-level feature-gate slice:
+  `shadow-rust-timeline` unique crate graph dropped from `209` to `198` crates, removing camera/QR/image-only crates such as `base64`, `image`, `qrcodegen`, `rqrr`, `g2*`, and `zune-*`.
+  `shadow-rust-demo` unique crate graph dropped from `73` to `71` crates, removing `copypasta` and `objc-sys`.
+  Cold local `cargo check --locked` with isolated target dirs improved from `12.13s` to `11.49s` for timeline and from `4.08s` to `3.95s` for demo.
+- Interpretation: app-level feature-gating is worth keeping because it removes real compile surface for one-app iteration, but it is not the main `shadow-system` win.
+  The aggregate `ui-check apps` lane still builds a shared demo+timeline deps derivation, so that gate intentionally collapses most of this benefit by unifying the app feature sets.
+- Decision after the feature-gate experiment: do not start by splitting Nostr or Cashu out of the default `shadow-system` package.
+  Current VM/runtime lanes and smokes actively use both, so a split there would mostly create package-matrix complexity before it produces a meaningful default-build win.

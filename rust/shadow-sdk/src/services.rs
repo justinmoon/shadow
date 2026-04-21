@@ -1,6 +1,9 @@
+#[cfg(feature = "camera")]
 pub mod camera;
 #[doc(hidden)]
+#[cfg(feature = "camera")]
 pub mod camera_backend;
+#[cfg(feature = "clipboard")]
 pub mod clipboard;
 #[cfg(feature = "nostr")]
 pub mod nostr;

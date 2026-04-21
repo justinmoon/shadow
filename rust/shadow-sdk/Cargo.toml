@@ -5,17 +5,19 @@ edition.workspace = true
 
 [features]
 default = []
+camera = ["dep:base64", "dep:image", "dep:qrcodegen", "dep:rqrr"]
+clipboard = ["dep:copypasta"]
 nostr = ["dep:nostr", "dep:rusqlite"]
 ui = ["dep:masonry_winit", "dep:xilem"]
 
 [dependencies]
-base64.workspace = true
-copypasta.workspace = true
-image = { version = "=0.25.6", default-features = false, features = ["jpeg", "png"] }
+base64 = { workspace = true, optional = true }
+copypasta = { workspace = true, optional = true }
+image = { version = "=0.25.6", default-features = false, features = ["jpeg", "png"], optional = true }
 masonry_winit = { version = "0.4.0", optional = true }
 nostr = { workspace = true, optional = true }
-qrcodegen.workspace = true
-rqrr.workspace = true
+qrcodegen = { workspace = true, optional = true }
+rqrr = { workspace = true, optional = true }
 rusqlite = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
