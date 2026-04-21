@@ -2064,6 +2064,7 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_l
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_parent_probe_attempts'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_parent_probe_interval_secs'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_metadata_stage_breadcrumb'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'firmware_bootstrap'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO_INIT_METADATA_DEVICE_PATH'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'prepare_metadata_stage_runtime_best_effort'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'write_metadata_stage_best_effort'
@@ -2203,20 +2204,27 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_PARENT_PROBE_ATTEMPTS:-0'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS:-0'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_METADATA_STAGE_BREADCRUMB:-false'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_FIRMWARE_BOOTSTRAP:-none'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_FIRMWARE_DIR:-'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--orange-gpu-launch-delay-secs'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--orange-gpu-parent-probe-attempts'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--orange-gpu-parent-probe-interval-secs'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--orange-gpu-metadata-stage-breadcrumb'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--firmware-bootstrap'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--firmware-dir'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_launch_delay_secs='
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_parent_probe_attempts='
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_parent_probe_interval_secs='
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_metadata_stage_breadcrumb='
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'firmware_bootstrap='
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Prelude: %s\\n' \"\$PRELUDE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU mode: %s\\n' \"\$ORANGE_GPU_MODE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU launch delay seconds: %s\\n' \"\$ORANGE_GPU_LAUNCH_DELAY_SECS\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU parent probe attempts: %s\\n' \"\$ORANGE_GPU_PARENT_PROBE_ATTEMPTS\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU parent probe interval seconds: %s\\n' \"\$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU metadata stage breadcrumb: %s\\n' \"\$ORANGE_GPU_METADATA_STAGE_BREADCRUMB\""
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Firmware bootstrap: %s\\n' \"\$FIRMWARE_BOOTSTRAP\""
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU firmware dir: %s\\n' \"\$GPU_FIRMWARE_DIR\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Metadata stage path: %s\\n' \"\$(metadata_stage_path_for_token \"\$RUN_TOKEN\")\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Parent readiness probe scene: raw-vulkan-physical-device-count-query-exit-smoke\\n'"
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Bundle exec mode: bundle-smoke\\n'"
@@ -2465,6 +2473,53 @@ assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" log_pmsg "false"
 assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" dri_bootstrap "sunfish-card0-renderD128"
 assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" success_postlude "orange-init"
 assert_json_field_equals "$OUTPUT_IMAGE.hello-init.json" checkpoint_hold_seconds "1"
+
+GPU_FIRMWARE_DIR="$TMP_DIR/gpu-firmware"
+mkdir -p "$GPU_FIRMWARE_DIR"
+printf 'sqe-firmware\n' >"$GPU_FIRMWARE_DIR/a630_sqe.fw"
+printf 'gmu-firmware\n' >"$GPU_FIRMWARE_DIR/a618_gmu.bin"
+printf 'zap-metadata\n' >"$GPU_FIRMWARE_DIR/a615_zap.mdt"
+printf 'zap-segment\n' >"$GPU_FIRMWARE_DIR/a615_zap.b02"
+
+c_kgsl_firmware_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img" \
+      --hold-secs 7 \
+      --prelude orange-init \
+      --prelude-hold-secs 2 \
+      --orange-gpu-mode c-kgsl-open-readonly-smoke \
+      --reboot-target bootloader \
+      --run-token orange-gpu-c-kgsl-firmware-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false \
+      --firmware-bootstrap ramdisk-lib-firmware \
+      --firmware-dir "$GPU_FIRMWARE_DIR"
+)"
+
+assert_contains "$c_kgsl_firmware_boot_output" "Owned userspace mode: orange-gpu"
+assert_contains "$c_kgsl_firmware_boot_output" "Payload contract: hello-init directly opens /dev/kgsl-3d0 read-only in the owned child process before any staged Rust bundle exec"
+assert_contains "$c_kgsl_firmware_boot_output" "GPU proof: direct C-owned read-only open of /dev/kgsl-3d0 before any staged Rust bundle exec"
+assert_contains "$c_kgsl_firmware_boot_output" "Firmware bootstrap: ramdisk-lib-firmware"
+assert_contains "$c_kgsl_firmware_boot_output" "GPU firmware dir: $GPU_FIRMWARE_DIR"
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img" shadow-init.cfg $'# Generated by pixel_boot_build_orange_gpu.sh\npayload=orange-gpu\norange_gpu_mode=c-kgsl-open-readonly-smoke\nhold_seconds=7\nreboot_target=bootloader\nrun_token=orange-gpu-c-kgsl-firmware-run-token\nprelude=orange-init\nprelude_hold_seconds=2\ndev_mount=tmpfs\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\nfirmware_bootstrap=ramdisk-lib-firmware\ndri_bootstrap=sunfish-card0-renderD128-kgsl3d0\n'
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img" lib/firmware/a630_sqe.fw $'sqe-firmware\n'
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img" lib/firmware/a618_gmu.bin $'gmu-firmware\n'
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img" lib/firmware/a615_zap.mdt $'zap-metadata\n'
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img" lib/firmware/a615_zap.b02 $'zap-segment\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" orange_gpu_mode "c-kgsl-open-readonly-smoke"
+assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" firmware_bootstrap "ramdisk-lib-firmware"
+assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" gpu_firmware_dir "$GPU_FIRMWARE_DIR"
+assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" success_postlude "orange-init"
+assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" checkpoint_hold_seconds "1"
 
 instance_smoke_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

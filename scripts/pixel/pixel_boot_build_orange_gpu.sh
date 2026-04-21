@@ -31,6 +31,8 @@ LOG_KMSG="${PIXEL_HELLO_INIT_LOG_KMSG:-true}"
 LOG_PMSG="${PIXEL_HELLO_INIT_LOG_PMSG:-true}"
 RUN_TOKEN="${PIXEL_HELLO_INIT_RUN_TOKEN:-${PIXEL_ORANGE_GPU_RUN_TOKEN:-}}"
 DRI_BOOTSTRAP="${PIXEL_ORANGE_GPU_DRI_BOOTSTRAP:-}"
+FIRMWARE_BOOTSTRAP="${PIXEL_ORANGE_GPU_FIRMWARE_BOOTSTRAP:-none}"
+GPU_FIRMWARE_DIR="${PIXEL_ORANGE_GPU_FIRMWARE_DIR:-}"
 KEEP_WORK_DIR=0
 WORK_DIR=""
 CONFIG_ENTRY="shadow-init.cfg"
@@ -60,6 +62,8 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--log-kmsg true|false]
                                                     [--log-pmsg true|false]
                                                     [--dri-bootstrap none|sunfish-card0-renderD128|sunfish-card0-renderD128-kgsl3d0]
+                                                    [--firmware-bootstrap none|ramdisk-lib-firmware]
+                                                    [--firmware-dir DIR]
                                                     [--keep-work-dir]
 
 Build a private stock-kernel sunfish boot.img whose real first-stage userspace is
@@ -417,6 +421,20 @@ assert_dri_bootstrap_word() {
   esac
 }
 
+assert_firmware_bootstrap_word() {
+  local value
+  value="${1:?assert_firmware_bootstrap_word requires a value}"
+
+  case "$value" in
+    none|ramdisk-lib-firmware)
+      ;;
+    *)
+      echo "pixel_boot_build_orange_gpu: unsupported firmware-bootstrap value: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
 render_config() {
   local output_path
   output_path="${1:?render_config requires an output path}"
@@ -464,6 +482,9 @@ EOF
   if [[ "$LOG_PMSG" != "true" ]]; then
     printf 'log_pmsg=%s\n' "$LOG_PMSG" >>"$output_path"
   fi
+  if [[ "$FIRMWARE_BOOTSTRAP" != "none" ]]; then
+    printf 'firmware_bootstrap=%s\n' "$FIRMWARE_BOOTSTRAP" >>"$output_path"
+  fi
   printf 'dri_bootstrap=%s\n' "$DRI_BOOTSTRAP" >>"$output_path"
 }
 
@@ -492,6 +513,9 @@ write_metadata() {
     "$LOG_KMSG" \
     "$LOG_PMSG" \
     "$DRI_BOOTSTRAP" \
+    "$FIRMWARE_BOOTSTRAP" \
+    "$GPU_FIRMWARE_DIR" \
+    "${STAGED_GPU_FIRMWARE_DIR:-}" \
     "$(success_postlude_value)" \
     "$(checkpoint_hold_seconds_value)" \
     "$(metadata_probe_stage_path_for_token "$RUN_TOKEN")" \
@@ -522,6 +546,9 @@ from pathlib import Path
     log_kmsg,
     log_pmsg,
     dri_bootstrap,
+    firmware_bootstrap,
+    gpu_firmware_dir,
+    gpu_firmware_staged_dir,
     success_postlude,
     checkpoint_hold_seconds,
     metadata_probe_stage_path,
@@ -556,6 +583,9 @@ payload_json = {
     "log_kmsg": parse_bool(log_kmsg),
     "log_pmsg": parse_bool(log_pmsg),
     "dri_bootstrap": dri_bootstrap,
+    "firmware_bootstrap": firmware_bootstrap,
+    "gpu_firmware_dir": gpu_firmware_dir,
+    "gpu_firmware_staged_dir": gpu_firmware_staged_dir,
     "success_postlude": success_postlude,
     "checkpoint_hold_seconds": int(checkpoint_hold_seconds),
     "metadata_stage_path": (
@@ -587,26 +617,31 @@ Path(metadata_path).write_text(
 PY
 }
 
-append_payload_tree_add_specs() {
+append_tree_add_specs() {
   local host_root archive_root build_args_name
-  host_root="${1:?append_payload_tree_add_specs requires a host root}"
-  archive_root="${2:?append_payload_tree_add_specs requires an archive root}"
-  build_args_name="${3:?append_payload_tree_add_specs requires a build-args array name}"
+  host_root="${1:?append_tree_add_specs requires a host root}"
+  archive_root="${2:?append_tree_add_specs requires an archive root}"
+  build_args_name="${3:?append_tree_add_specs requires a build-args array name}"
   local -n build_args_ref="$build_args_name"
   local relative_path
 
   build_args_ref+=(--add "$archive_root=$host_root")
-  build_args_ref+=(--add "$archive_root/shadow-gpu-smoke=$host_root/shadow-gpu-smoke")
-  build_args_ref+=(--add "$archive_root/lib=$host_root/lib")
-  build_args_ref+=(--add "$archive_root/share=$host_root/share")
-
   while IFS= read -r relative_path; do
     [[ -n "$relative_path" ]] || continue
     build_args_ref+=(--add "$archive_root/$relative_path=$host_root/$relative_path")
   done < <(
     cd "$host_root"
-    find lib share -mindepth 1 -print | LC_ALL=C sort
+    find . -mindepth 1 -print | sed 's#^\./##' | LC_ALL=C sort
   )
+}
+
+stage_gpu_firmware_tree() {
+  local source_dir staged_dir
+  source_dir="${1:?stage_gpu_firmware_tree requires a source dir}"
+  staged_dir="${2:?stage_gpu_firmware_tree requires a staged dir}"
+
+  mkdir -p "$staged_dir"
+  cp -R "$source_dir"/. "$staged_dir"/
 }
 
 stage_gpu_bundle() {
@@ -737,6 +772,14 @@ while [[ $# -gt 0 ]]; do
       DRI_BOOTSTRAP="${2:?missing value for --dri-bootstrap}"
       shift 2
       ;;
+    --firmware-bootstrap)
+      FIRMWARE_BOOTSTRAP="${2:?missing value for --firmware-bootstrap}"
+      shift 2
+      ;;
+    --firmware-dir)
+      GPU_FIRMWARE_DIR="${2:?missing value for --firmware-dir}"
+      shift 2
+      ;;
     --keep-work-dir)
       KEEP_WORK_DIR=1
       shift
@@ -828,8 +871,17 @@ assert_bool_word mount-sys "$MOUNT_SYS"
 assert_bool_word log-kmsg "$LOG_KMSG"
 assert_bool_word log-pmsg "$LOG_PMSG"
 assert_bool_word orange-gpu-metadata-stage-breadcrumb "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB"
+assert_firmware_bootstrap_word "$FIRMWARE_BOOTSTRAP"
 if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" && "$MOUNT_DEV" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: orange gpu metadata stage breadcrumb requires mount-dev=true" >&2
+  exit 1
+fi
+if [[ "$FIRMWARE_BOOTSTRAP" == "none" && -n "$GPU_FIRMWARE_DIR" ]]; then
+  echo "pixel_boot_build_orange_gpu: firmware-dir requires firmware-bootstrap to be enabled" >&2
+  exit 1
+fi
+if [[ "$FIRMWARE_BOOTSTRAP" != "none" && -z "$GPU_FIRMWARE_DIR" ]]; then
+  echo "pixel_boot_build_orange_gpu: firmware-bootstrap requires --firmware-dir" >&2
   exit 1
 fi
 if [[ -z "$DRI_BOOTSTRAP" ]]; then
@@ -896,6 +948,20 @@ STAGED_GPU_BUNDLE_DIR="$WORK_DIR/orange-gpu-bundle"
 stage_gpu_bundle "$GPU_BUNDLE_DIR" "$STAGED_GPU_BUNDLE_DIR"
 assert_gpu_bundle_variant "$STAGED_GPU_BUNDLE_DIR"
 
+STAGED_GPU_FIRMWARE_DIR=""
+if [[ "$FIRMWARE_BOOTSTRAP" == "ramdisk-lib-firmware" ]]; then
+  [[ -d "$GPU_FIRMWARE_DIR" ]] || {
+    echo "pixel_boot_build_orange_gpu: firmware dir not found: $GPU_FIRMWARE_DIR" >&2
+    exit 1
+  }
+  if [[ -z "$(find "$GPU_FIRMWARE_DIR" -mindepth 1 -print -quit)" ]]; then
+    echo "pixel_boot_build_orange_gpu: firmware dir is empty: $GPU_FIRMWARE_DIR" >&2
+    exit 1
+  fi
+  STAGED_GPU_FIRMWARE_DIR="$WORK_DIR/lib-firmware"
+  stage_gpu_firmware_tree "$GPU_FIRMWARE_DIR" "$STAGED_GPU_FIRMWARE_DIR"
+fi
+
 CONFIG_PATH="$WORK_DIR/$CONFIG_ENTRY"
 render_config "$CONFIG_PATH"
 
@@ -912,7 +978,10 @@ if [[ "$PRELUDE" == "orange-init" ]]; then
   build_args+=(--add "orange-init=$ORANGE_INIT_BINARY")
 fi
 
-append_payload_tree_add_specs "$STAGED_GPU_BUNDLE_DIR" "$PAYLOAD_ROOT" build_args
+append_tree_add_specs "$STAGED_GPU_BUNDLE_DIR" "$PAYLOAD_ROOT" build_args
+if [[ "$FIRMWARE_BOOTSTRAP" == "ramdisk-lib-firmware" ]]; then
+  append_tree_add_specs "$STAGED_GPU_FIRMWARE_DIR" "lib/firmware" build_args
+fi
 
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
   build_args+=(--keep-work-dir)
@@ -1040,6 +1109,11 @@ printf 'Mount proc: %s\n' "$MOUNT_PROC"
 printf 'Mount sys: %s\n' "$MOUNT_SYS"
 printf 'Log kmsg: %s\n' "$LOG_KMSG"
 printf 'Log pmsg: %s\n' "$LOG_PMSG"
+printf 'Firmware bootstrap: %s\n' "$FIRMWARE_BOOTSTRAP"
+if [[ "$FIRMWARE_BOOTSTRAP" != "none" ]]; then
+  printf 'GPU firmware dir: %s\n' "$GPU_FIRMWARE_DIR"
+  printf 'GPU firmware staged dir: %s\n' "$STAGED_GPU_FIRMWARE_DIR"
+fi
 printf 'DRI bootstrap: %s\n' "$DRI_BOOTSTRAP"
 printf 'Metadata path: %s\n' "$(hello_init_metadata_path "$OUTPUT_IMAGE")"
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then

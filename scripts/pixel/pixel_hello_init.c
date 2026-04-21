@@ -102,6 +102,7 @@ struct hello_init_config {
     char run_token[64];
     char dev_mount[16];
     char dri_bootstrap[48];
+    char firmware_bootstrap[48];
     bool mount_dev;
     bool mount_proc;
     bool mount_sys;
@@ -198,6 +199,11 @@ static void init_default_config(struct hello_init_config *config) {
     config->run_token[0] = '\0';
     (void)copy_string(config->dev_mount, sizeof(config->dev_mount), "devtmpfs");
     (void)copy_string(config->dri_bootstrap, sizeof(config->dri_bootstrap), "none");
+    (void)copy_string(
+        config->firmware_bootstrap,
+        sizeof(config->firmware_bootstrap),
+        "none"
+    );
     config->mount_dev = true;
     config->mount_proc = true;
     config->mount_sys = true;
@@ -1885,6 +1891,26 @@ static bool parse_dri_bootstrap_value(const char *raw, char *dest, size_t dest_s
     return copy_string(dest, dest_size, value);
 }
 
+static bool parse_firmware_bootstrap_value(
+    const char *raw,
+    char *dest,
+    size_t dest_size
+) {
+    char buffer[48];
+    char *value;
+
+    if (!copy_string(buffer, sizeof(buffer), raw)) {
+        return false;
+    }
+
+    value = trim_whitespace(buffer);
+    if (strcmp(value, "none") != 0 && strcmp(value, "ramdisk-lib-firmware") != 0) {
+        return false;
+    }
+
+    return copy_string(dest, dest_size, value);
+}
+
 static bool parse_run_token_value(const char *raw, char *dest, size_t dest_size) {
     char buffer[64];
     char *value;
@@ -2112,6 +2138,20 @@ static void apply_config_value(
             )
         ) {
             log_boot("<3>", "invalid dri_bootstrap value: %s", value);
+            return;
+        }
+        return;
+    }
+
+    if (strcmp(key, "firmware_bootstrap") == 0) {
+        if (
+            !parse_firmware_bootstrap_value(
+                value,
+                config->firmware_bootstrap,
+                sizeof(config->firmware_bootstrap)
+            )
+        ) {
+            log_boot("<3>", "invalid firmware_bootstrap value: %s", value);
             return;
         }
         return;
@@ -4171,11 +4211,12 @@ int main(void) {
     log_stage(
         "<6>",
         "pre-dev-bootstrap",
-        "payload=%s mount_dev=%s dev_mount=%s dri_bootstrap=%s",
+        "payload=%s mount_dev=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s",
         config.payload,
         bool_word(config.mount_dev),
         config.dev_mount,
-        config.dri_bootstrap
+        config.dri_bootstrap,
+        config.firmware_bootstrap
     );
 
     if (config.mount_dev) {
@@ -4243,7 +4284,7 @@ int main(void) {
     log_stage(
         "<6>",
         "config-loaded",
-        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
@@ -4257,6 +4298,7 @@ int main(void) {
         run_token_or_unset(),
         config.dev_mount,
         config.dri_bootstrap,
+        config.firmware_bootstrap,
         bool_word(config.mount_dev),
         bool_word(config.mount_proc),
         bool_word(config.mount_sys),
@@ -4265,7 +4307,7 @@ int main(void) {
     );
     log_boot(
         "<6>",
-        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
@@ -4279,6 +4321,7 @@ int main(void) {
         run_token_or_unset(),
         config.dev_mount,
         config.dri_bootstrap,
+        config.firmware_bootstrap,
         bool_word(config.mount_dev),
         bool_word(config.mount_proc),
         bool_word(config.mount_sys),
