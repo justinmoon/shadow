@@ -11,6 +11,7 @@ OUTPUT_DIR=""
 WAIT_READY_SECS="${PIXEL_BOOT_ONESHOT_WAIT_READY_SECS:-120}"
 ADB_TIMEOUT_SECS="${PIXEL_BOOT_ONESHOT_ADB_TIMEOUT_SECS:-180}"
 BOOT_TIMEOUT_SECS="${PIXEL_BOOT_ONESHOT_BOOT_TIMEOUT_SECS:-240}"
+LATE_RECOVER_ADB_TIMEOUT_SECS="${PIXEL_BOOT_ONESHOT_LATE_RECOVER_ADB_TIMEOUT_SECS:-180}"
 SUCCESS_SIGNAL="${PIXEL_BOOT_ONESHOT_SUCCESS_SIGNAL:-adb}"
 RETURN_TIMEOUT_SECS="${PIXEL_BOOT_ONESHOT_RETURN_TIMEOUT_SECS:-45}"
 FASTBOOT_LEAVE_TIMEOUT_SECS="${PIXEL_BOOT_ONESHOT_FASTBOOT_LEAVE_TIMEOUT_SECS:-15}"
@@ -43,6 +44,8 @@ recover_traces_recovered_previous_boot_traces=false
 recover_traces_previous_boot_channels_with_matches=0
 recover_traces_uncorrelated_previous_boot_channels_with_matches=0
 recover_traces_current_boot_channels_with_matches=0
+recover_traces_reason=""
+recover_traces_adb_timeout_secs_used=0
 fastboot_departed=false
 fastboot_returned=false
 fastboot_leave_elapsed_secs=0
@@ -298,6 +301,8 @@ write_status() {
     "recover_traces_previous_boot_channels_with_matches=$recover_traces_previous_boot_channels_with_matches" \
     "recover_traces_uncorrelated_previous_boot_channels_with_matches=$recover_traces_uncorrelated_previous_boot_channels_with_matches" \
     "recover_traces_current_boot_channels_with_matches=$recover_traces_current_boot_channels_with_matches" \
+    "recover_traces_reason=$recover_traces_reason" \
+    "recover_traces_adb_timeout_secs_used=$recover_traces_adb_timeout_secs_used" \
     "fastboot_departed=$fastboot_departed" \
     "fastboot_returned=$fastboot_returned" \
     "fastboot_leave_elapsed_secs=$fastboot_leave_elapsed_secs" \
@@ -353,17 +358,24 @@ finish() {
 }
 
 maybe_recover_traces() {
-  local recover_status_path recover_summary hello_init_run_token
+  local reason adb_timeout_secs boot_timeout_secs recover_status_path recover_summary hello_init_run_token
+  local -a recover_args
+
+  reason="${1:-post-boot}"
+  adb_timeout_secs="${2:-$ADB_TIMEOUT_SECS}"
+  boot_timeout_secs="${3:-$BOOT_TIMEOUT_SECS}"
 
   if ! flag_enabled "$RECOVER_TRACES_AFTER"; then
     return 0
   fi
 
   recover_traces_attempted=true
+  recover_traces_reason="$reason"
+  recover_traces_adb_timeout_secs_used="$adb_timeout_secs"
   recover_args=(
     --output "$recover_traces_output_dir"
-    --adb-timeout "$ADB_TIMEOUT_SECS"
-    --boot-timeout "$BOOT_TIMEOUT_SECS"
+    --adb-timeout "$adb_timeout_secs"
+    --boot-timeout "$boot_timeout_secs"
   )
   if [[ "$WAIT_BOOT_COMPLETED" != "1" ]]; then
     recover_args+=(--no-wait-boot-completed)
@@ -418,6 +430,30 @@ PY
     failure_stage="recover-traces"
   fi
   return 1
+}
+
+backfill_state_after_recover_traces() {
+  [[ "$recover_traces_succeeded" == "true" ]] || return 0
+
+  adb_ready=true
+  slot_after="$(pixel_current_slot_letter_from_adb "$serial" 2>/dev/null || true)"
+  shadow_probe_prop="$(pixel_prop "$serial" ro.boot.shadow_probe 2>/dev/null || true)"
+  if [[ "$WAIT_BOOT_COMPLETED" == "1" ]]; then
+    boot_completed=true
+  fi
+  capture_bootreason_props
+  evaluate_bootreason_status
+}
+
+print_recover_traces_summary() {
+  if [[ "$recover_traces_succeeded" == "true" ]]; then
+    printf 'Captured Android-side recovery bundle: %s\n' "$recover_traces_output_dir"
+    printf 'Recovery bundle matched shadow tags: %s\n' "$recover_traces_matched_any_shadow_tags"
+    printf 'Recovery bundle matched uncorrelated shadow tags: %s\n' "$recover_traces_matched_any_uncorrelated_shadow_tags"
+    printf 'Recovery bundle previous-boot matches: %s\n' "$recover_traces_previous_boot_channels_with_matches"
+    printf 'Recovery bundle uncorrelated previous-boot matches: %s\n' "$recover_traces_uncorrelated_previous_boot_channels_with_matches"
+    printf 'Recovery bundle current-boot matches: %s\n' "$recover_traces_current_boot_channels_with_matches"
+  fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -528,6 +564,7 @@ EOF
   fi
   if [[ -n "$recover_traces_output_dir" ]]; then
     printf 'recover_traces_output_dir=%s\n' "$recover_traces_output_dir"
+    printf 'late_recover_adb_timeout_secs=%s\n' "$LATE_RECOVER_ADB_TIMEOUT_SECS"
   fi
   exit 0
 fi
@@ -576,6 +613,15 @@ fi
 
 if ! pixel_wait_for_adb "$serial" "$ADB_TIMEOUT_SECS"; then
   failure_stage="wait-adb"
+  if maybe_recover_traces "late-wait-adb" "$LATE_RECOVER_ADB_TIMEOUT_SECS" "$BOOT_TIMEOUT_SECS"; then
+    backfill_state_after_recover_traces
+    printf 'Late recovery after wait-adb timeout succeeded\n'
+    print_recover_traces_summary
+    if [[ "$bootreason_indicates_failure" == "true" ]]; then
+      printf 'Bootreason indicates failed Android boot: %s\n' "$bootreason_failure_summary"
+    fi
+    printf 'Run status: %s\n' "$status_path"
+  fi
   exit 1
 fi
 adb_ready=true
@@ -635,14 +681,7 @@ if [[ "$bootreason_indicates_failure" == "true" ]]; then
   else
     printf 'Collected one-shot boot evidence: %s\n' "$collect_output_dir"
   fi
-  if [[ "$recover_traces_succeeded" == "true" ]]; then
-    printf 'Captured Android-side recovery bundle: %s\n' "$recover_traces_output_dir"
-    printf 'Recovery bundle matched shadow tags: %s\n' "$recover_traces_matched_any_shadow_tags"
-    printf 'Recovery bundle matched uncorrelated shadow tags: %s\n' "$recover_traces_matched_any_uncorrelated_shadow_tags"
-    printf 'Recovery bundle previous-boot matches: %s\n' "$recover_traces_previous_boot_channels_with_matches"
-    printf 'Recovery bundle uncorrelated previous-boot matches: %s\n' "$recover_traces_uncorrelated_previous_boot_channels_with_matches"
-    printf 'Recovery bundle current-boot matches: %s\n' "$recover_traces_current_boot_channels_with_matches"
-  fi
+  print_recover_traces_summary
   printf 'Bootreason indicates failed Android boot: %s\n' "$bootreason_failure_summary"
   printf 'Run status: %s\n' "$status_path"
   exit 1
@@ -653,12 +692,5 @@ if flag_enabled "$SKIP_COLLECT"; then
 else
   printf 'Collected one-shot boot evidence: %s\n' "$collect_output_dir"
 fi
-if [[ "$recover_traces_succeeded" == "true" ]]; then
-  printf 'Captured Android-side recovery bundle: %s\n' "$recover_traces_output_dir"
-  printf 'Recovery bundle matched shadow tags: %s\n' "$recover_traces_matched_any_shadow_tags"
-  printf 'Recovery bundle matched uncorrelated shadow tags: %s\n' "$recover_traces_matched_any_uncorrelated_shadow_tags"
-  printf 'Recovery bundle previous-boot matches: %s\n' "$recover_traces_previous_boot_channels_with_matches"
-  printf 'Recovery bundle uncorrelated previous-boot matches: %s\n' "$recover_traces_uncorrelated_previous_boot_channels_with_matches"
-  printf 'Recovery bundle current-boot matches: %s\n' "$recover_traces_current_boot_channels_with_matches"
-fi
+print_recover_traces_summary
 printf 'Run status: %s\n' "$status_path"
