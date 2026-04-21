@@ -17,6 +17,7 @@ ONESHOT_ADB_RETURN_OUTPUT="$TMP_DIR/oneshot-adb-return-output"
 ONESHOT_ADB_RETURN_STALE_HISTORY_OUTPUT="$TMP_DIR/oneshot-adb-return-stale-history-output"
 ONESHOT_ADB_RETURN_NOWAIT_OUTPUT="$TMP_DIR/oneshot-adb-return-nowait-output"
 ONESHOT_ADB_LATE_RECOVER_OUTPUT="$TMP_DIR/oneshot-adb-late-recover-output"
+ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT="$TMP_DIR/oneshot-adb-fastboot-auto-reboot-output"
 ONESHOT_FASTBOOT_RETURN_OUTPUT="$TMP_DIR/oneshot-fastboot-return-output"
 ONESHOT_FASTBOOT_RETURN_FAIL_OUTPUT="$TMP_DIR/oneshot-fastboot-return-fail-output"
 FLASH_RUN_FASTBOOT_RETURN_OUTPUT="$TMP_DIR/flash-run-fastboot-return-output"
@@ -802,6 +803,10 @@ case "${1:-}" in
       fastboot)
         set_pending_transport fastboot "${MOCK_FASTBOOT_RETURN_POLLS:-2}"
         ;;
+      fastboot-cycle)
+        printf 'none\n' >"$state_dir/transport"
+        set_pending_transport fastboot "${MOCK_FASTBOOT_RETURN_POLLS:-2}"
+        ;;
       adb)
         set_pending_transport adb "${MOCK_ADB_RETURN_POLLS:-1}"
         ;;
@@ -1353,6 +1358,53 @@ assert_json_field "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/status.json" transport_f
 assert_json_field "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/status.json" transport_last_state fastboot
 test -f "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/transport-timeline.tsv"
 assert_contains "$(cat "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/transport-timeline.tsv")" $'0\tfastboot'
+
+reset_fastboot_cycle_state
+oneshot_adb_fastboot_auto_reboot_stdout="$TMP_DIR/oneshot-adb-fastboot-auto-reboot.stdout"
+oneshot_adb_fastboot_auto_reboot_stderr="$TMP_DIR/oneshot-adb-fastboot-auto-reboot.stderr"
+set +e
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  SHADOW_BOOTIMG_SHELL=1 \
+  PIXEL_SERIAL=TESTSERIAL \
+  PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+  MOCK_DEVICE_STATE_DIR="$MOCK_DEVICE_STATE_DIR" \
+  MOCK_PROBE_IMAGE_PATH="$PROBE_IMAGE" \
+  MOCK_STOCK_IMAGE_PATH="$STOCK_BOOT_IMAGE" \
+  MOCK_FASTBOOT_BOOT_RETURN_MODE=fastboot-cycle \
+  MOCK_FASTBOOT_RETURN_POLLS=3 \
+  MOCK_ADB_RETURN_POLLS=2 \
+  MOCK_RO_BOOT_BOOTREASON=reboot \
+  MOCK_SYS_BOOT_REASON=bootloader \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+    --image "$PROBE_IMAGE" \
+    --output "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT" \
+    --adb-timeout 6 \
+    --boot-timeout 60 \
+    --skip-collect \
+    >"$oneshot_adb_fastboot_auto_reboot_stdout" \
+    2>"$oneshot_adb_fastboot_auto_reboot_stderr"
+oneshot_adb_fastboot_auto_reboot_status=$?
+set -e
+if [[ "$oneshot_adb_fastboot_auto_reboot_status" -eq 0 ]]; then
+  echo "pixel_boot_tooling_smoke: expected adb-mode oneshot failure after fastboot auto-reboot" >&2
+  exit 1
+fi
+oneshot_adb_fastboot_auto_reboot_output="$(cat "$oneshot_adb_fastboot_auto_reboot_stdout")"
+assert_contains "$oneshot_adb_fastboot_auto_reboot_output" "Auto-rebooted TESTSERIAL from fastboot return after"
+assert_contains "$oneshot_adb_fastboot_auto_reboot_output" "Run returned to fastboot and was auto-rebooted to Android by the host"
+assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" failure_stage fastboot-return-auto-rebooted
+assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" adb_ready true
+assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" slot_after a
+assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" fastboot_auto_reboot_attempted true
+assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" fastboot_auto_reboot_succeeded true
+assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" fastboot_auto_reboot_reason returned-fastboot-after-leave
+assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" transport_initial_state none
+assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" transport_first_none_elapsed_secs 0
+assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" transport_last_state adb
+test -f "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/transport-timeline.tsv"
+assert_contains "$(cat "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/transport-timeline.tsv")" $'0\tnone'
+assert_contains "$(cat "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/transport-timeline.tsv")" $'\tfastboot'
 
 reset_fastboot_cycle_state
 oneshot_fastboot_return_output="$(

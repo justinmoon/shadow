@@ -12,6 +12,7 @@ WAIT_READY_SECS="${PIXEL_BOOT_ONESHOT_WAIT_READY_SECS:-120}"
 ADB_TIMEOUT_SECS="${PIXEL_BOOT_ONESHOT_ADB_TIMEOUT_SECS:-180}"
 BOOT_TIMEOUT_SECS="${PIXEL_BOOT_ONESHOT_BOOT_TIMEOUT_SECS:-240}"
 LATE_RECOVER_ADB_TIMEOUT_SECS="${PIXEL_BOOT_ONESHOT_LATE_RECOVER_ADB_TIMEOUT_SECS:-180}"
+AUTO_FASTBOOT_REBOOT="${PIXEL_BOOT_ONESHOT_AUTO_FASTBOOT_REBOOT:-1}"
 SUCCESS_SIGNAL="${PIXEL_BOOT_ONESHOT_SUCCESS_SIGNAL:-adb}"
 RETURN_TIMEOUT_SECS="${PIXEL_BOOT_ONESHOT_RETURN_TIMEOUT_SECS:-45}"
 FASTBOOT_LEAVE_TIMEOUT_SECS="${PIXEL_BOOT_ONESHOT_FASTBOOT_LEAVE_TIMEOUT_SECS:-15}"
@@ -57,6 +58,10 @@ transport_first_adb_elapsed_secs=""
 transport_last_state=""
 transport_last_state_elapsed_secs=""
 transport_late_recovery_reached_adb=false
+fastboot_auto_reboot_attempted=false
+fastboot_auto_reboot_succeeded=false
+fastboot_auto_reboot_elapsed_secs=""
+fastboot_auto_reboot_reason=""
 fastboot_departed=false
 fastboot_returned=false
 fastboot_leave_elapsed_secs=0
@@ -325,6 +330,10 @@ write_status() {
     "transport_last_state=$transport_last_state" \
     "transport_last_state_elapsed_secs=$transport_last_state_elapsed_secs" \
     "transport_late_recovery_reached_adb=$transport_late_recovery_reached_adb" \
+    "fastboot_auto_reboot_attempted=$fastboot_auto_reboot_attempted" \
+    "fastboot_auto_reboot_succeeded=$fastboot_auto_reboot_succeeded" \
+    "fastboot_auto_reboot_elapsed_secs=$fastboot_auto_reboot_elapsed_secs" \
+    "fastboot_auto_reboot_reason=$fastboot_auto_reboot_reason" \
     "fastboot_departed=$fastboot_departed" \
     "fastboot_returned=$fastboot_returned" \
     "fastboot_leave_elapsed_secs=$fastboot_leave_elapsed_secs" \
@@ -492,6 +501,66 @@ capture_transport_timeline_status() {
   transport_last_state_elapsed_secs="${PIXEL_ADB_TRANSPORT_LAST_STATE_ELAPSED_SECS:-}"
 }
 
+maybe_auto_reboot_fastboot_return() {
+  local elapsed_secs
+  elapsed_secs="${1:?maybe_auto_reboot_fastboot_return requires elapsed seconds}"
+
+  if ! flag_enabled "$AUTO_FASTBOOT_REBOOT"; then
+    return 1
+  fi
+
+  if [[ "$fastboot_auto_reboot_attempted" == "true" ]]; then
+    return 1
+  fi
+
+  if [[ "${PIXEL_ADB_TRANSPORT_LAST_STATE:-}" != "fastboot" ]]; then
+    return 1
+  fi
+
+  if [[ -z "${PIXEL_ADB_TRANSPORT_FIRST_NONE_ELAPSED_SECS:-}" ]]; then
+    return 1
+  fi
+
+  fastboot_auto_reboot_attempted=true
+  fastboot_auto_reboot_elapsed_secs="$elapsed_secs"
+  fastboot_auto_reboot_reason="returned-fastboot-after-leave"
+
+  if pixel_fastboot "$serial" reboot; then
+    fastboot_auto_reboot_succeeded=true
+    printf 'Auto-rebooted %s from fastboot return after %ss\n' "$serial" "$elapsed_secs"
+    return 0
+  fi
+
+  echo "pixel_boot_oneshot: failed to auto-reboot $serial after fastboot return" >&2
+  return 1
+}
+
+wait_for_adb_with_transport_timeline_and_auto_fastboot_reboot() {
+  local serial timeout timeline_path started_at elapsed_secs current_state
+  serial="${1:?wait_for_adb_with_transport_timeline_and_auto_fastboot_reboot requires a serial}"
+  timeout="${2:-120}"
+  timeline_path="${3:-}"
+
+  pixel_reset_adb_transport_timeline_status
+  started_at=$SECONDS
+
+  for _ in $(seq 1 "$timeout"); do
+    current_state="$(pixel_transport_state "$serial")"
+    elapsed_secs=$((SECONDS - started_at))
+    pixel_note_adb_transport_timeline_state "$elapsed_secs" "$current_state" "$timeline_path"
+    if [[ "$current_state" == "adb" ]]; then
+      return 0
+    fi
+    if [[ "$current_state" == "fastboot" ]]; then
+      maybe_auto_reboot_fastboot_return "$elapsed_secs" || true
+    fi
+    sleep 1
+  done
+
+  echo "pixel: timed out waiting for adb device $serial" >&2
+  return 1
+}
+
 print_recover_traces_summary() {
   if [[ "$recover_traces_succeeded" == "true" ]]; then
     printf 'Captured Android-side recovery bundle: %s\n' "$recover_traces_output_dir"
@@ -612,6 +681,7 @@ fastboot_leave_timeout_secs=$FASTBOOT_LEAVE_TIMEOUT_SECS
 wait_boot_completed=$(wait_boot_completed_status_word)
 skip_collect=$(bool_word "$SKIP_COLLECT")
 recover_traces_after=$(bool_word "$RECOVER_TRACES_AFTER")
+auto_fastboot_reboot=$(bool_word "$AUTO_FASTBOOT_REBOOT")
 proof_prop=$PROOF_PROP_SPEC
 EOF
   if [[ -n "$collect_output_dir" ]]; then
@@ -670,7 +740,7 @@ if [[ "$SUCCESS_SIGNAL" == "fastboot-return" ]]; then
   exit 0
 fi
 
-if ! pixel_wait_for_adb_with_transport_timeline "$serial" "$ADB_TIMEOUT_SECS" "$transport_timeline_path"; then
+if ! wait_for_adb_with_transport_timeline_and_auto_fastboot_reboot "$serial" "$ADB_TIMEOUT_SECS" "$transport_timeline_path"; then
   capture_transport_timeline_status
   failure_stage="wait-adb"
   if maybe_recover_traces "late-wait-adb" "$LATE_RECOVER_ADB_TIMEOUT_SECS" "$BOOT_TIMEOUT_SECS"; then
@@ -747,6 +817,22 @@ if [[ "$bootreason_indicates_failure" == "true" ]]; then
     printf 'Transport timeline: %s\n' "$transport_timeline_path"
   fi
   printf 'Bootreason indicates failed Android boot: %s\n' "$bootreason_failure_summary"
+  printf 'Run status: %s\n' "$status_path"
+  exit 1
+fi
+
+if [[ "$fastboot_auto_reboot_attempted" == "true" ]]; then
+  failure_stage="${failure_stage:-fastboot-return-auto-rebooted}"
+  if flag_enabled "$SKIP_COLLECT"; then
+    printf 'Skipped helper-dir collection for one-shot boot run\n'
+  else
+    printf 'Collected one-shot boot evidence: %s\n' "$collect_output_dir"
+  fi
+  print_recover_traces_summary
+  if [[ -n "$transport_timeline_path" ]]; then
+    printf 'Transport timeline: %s\n' "$transport_timeline_path"
+  fi
+  printf 'Run returned to fastboot and was auto-rebooted to Android by the host\n'
   printf 'Run status: %s\n' "$status_path"
   exit 1
 fi
