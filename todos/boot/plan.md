@@ -194,6 +194,10 @@ Related docs:
   - recreate a boot-shaped tmpfs `/dev` under `root` + `unshare -m`
   - capture host-side status plus openlog evidence so `/dev` theories can be proved or discarded without a boot cycle
   - current truth on `11151JEC200472`: the raw count-query exit scene still succeeds under a boot-shaped tmpfs `/dev`, so `/dev` topology is not the active blocker there
+- [ ] Add a boot-owned orange-gpu pre-launch delay discriminator for the raw count-query exit seam:
+  - thread `orange_gpu_launch_delay_secs` through the private orange-gpu boot builder and `hello-init`
+  - use it to test whether waiting before `/orange-gpu` launch restores the third pulse on `11151JEC200472`
+  - if the delay is still ambiguous or negative, follow it with a stronger parent-side readiness probe that exercises the exact raw count-query exit seam before the real payload launch
 - [ ] Package the first on-screen GPU present payload (`orange-gpu`):
   - render a flat orange frame on GPU
   - export/import through the intended buffer path

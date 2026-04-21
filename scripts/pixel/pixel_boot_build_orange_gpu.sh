@@ -18,6 +18,7 @@ HOLD_SECS="${PIXEL_HELLO_INIT_HOLD_SECS:-3}"
 PRELUDE="${PIXEL_ORANGE_GPU_PRELUDE:-none}"
 PRELUDE_HOLD_SECS="${PIXEL_ORANGE_GPU_PRELUDE_HOLD_SECS:-0}"
 ORANGE_GPU_MODE="${PIXEL_ORANGE_GPU_MODE:-gpu-render}"
+ORANGE_GPU_LAUNCH_DELAY_SECS="${PIXEL_ORANGE_GPU_LAUNCH_DELAY_SECS:-0}"
 REBOOT_TARGET="${PIXEL_HELLO_INIT_REBOOT_TARGET:-bootloader}"
 DEV_MOUNT="${PIXEL_ORANGE_GPU_DEV_MOUNT:-tmpfs}"
 MOUNT_DEV="${PIXEL_HELLO_INIT_MOUNT_DEV:-true}"
@@ -43,6 +44,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--prelude none|orange-init]
                                                     [--prelude-hold-secs N]
                                                     [--orange-gpu-mode gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen]
+                                                    [--orange-gpu-launch-delay-secs N]
                                                     [--reboot-target TARGET]
                                                     [--run-token TOKEN]
                                                     [--dev-mount devtmpfs|tmpfs]
@@ -395,6 +397,9 @@ reboot_target=$REBOOT_TARGET
 run_token=$RUN_TOKEN
 EOF
 
+  if [[ "$ORANGE_GPU_LAUNCH_DELAY_SECS" != "0" ]]; then
+    printf 'orange_gpu_launch_delay_secs=%s\n' "$ORANGE_GPU_LAUNCH_DELAY_SECS" >>"$output_path"
+  fi
   if [[ "$PRELUDE" != "none" ]]; then
     printf 'prelude=%s\n' "$PRELUDE" >>"$output_path"
     printf 'prelude_hold_seconds=%s\n' "$PRELUDE_HOLD_SECS" >>"$output_path"
@@ -432,6 +437,7 @@ write_metadata() {
     "$PRELUDE" \
     "$PRELUDE_HOLD_SECS" \
     "$ORANGE_GPU_MODE" \
+    "$ORANGE_GPU_LAUNCH_DELAY_SECS" \
     "$REBOOT_TARGET" \
     "$RUN_TOKEN" \
     "$DEV_MOUNT" \
@@ -455,6 +461,7 @@ from pathlib import Path
     prelude,
     prelude_hold_seconds,
     orange_gpu_mode,
+    orange_gpu_launch_delay_secs,
     reboot_target,
     run_token,
     dev_mount,
@@ -478,6 +485,7 @@ payload_json = {
     "image": image_path,
     "payload": "orange-gpu",
     "orange_gpu_mode": orange_gpu_mode,
+    "orange_gpu_launch_delay_secs": int(orange_gpu_launch_delay_secs),
     "gpu_bundle_dir": bundle_dir,
     "hold_seconds": int(hold_seconds),
     "prelude": prelude,
@@ -600,6 +608,10 @@ while [[ $# -gt 0 ]]; do
       ORANGE_GPU_MODE="${2:?missing value for --orange-gpu-mode}"
       shift 2
       ;;
+    --orange-gpu-launch-delay-secs)
+      ORANGE_GPU_LAUNCH_DELAY_SECS="${2:?missing value for --orange-gpu-launch-delay-secs}"
+      shift 2
+      ;;
     --reboot-target)
       REBOOT_TARGET="${2:?missing value for --reboot-target}"
       shift 2
@@ -671,6 +683,14 @@ if [[ ! "$HOLD_SECS" =~ ^[0-9]+$ ]]; then
 fi
 if (( HOLD_SECS > 3600 )); then
   echo "pixel_boot_build_orange_gpu: hold seconds must be <= 3600: $HOLD_SECS" >&2
+  exit 1
+fi
+if [[ ! "$ORANGE_GPU_LAUNCH_DELAY_SECS" =~ ^[0-9]+$ ]]; then
+  echo "pixel_boot_build_orange_gpu: orange gpu launch delay seconds must be an integer: $ORANGE_GPU_LAUNCH_DELAY_SECS" >&2
+  exit 1
+fi
+if (( ORANGE_GPU_LAUNCH_DELAY_SECS > 3600 )); then
+  echo "pixel_boot_build_orange_gpu: orange gpu launch delay seconds must be <= 3600: $ORANGE_GPU_LAUNCH_DELAY_SECS" >&2
   exit 1
 fi
 if [[ ! "$PRELUDE_HOLD_SECS" =~ ^[0-9]+$ ]]; then
@@ -856,6 +876,7 @@ else
 fi
 printf 'Prelude: %s\n' "$PRELUDE"
 printf 'Prelude hold seconds: %s\n' "$PRELUDE_HOLD_SECS"
+printf 'Orange GPU launch delay seconds: %s\n' "$ORANGE_GPU_LAUNCH_DELAY_SECS"
 if [[ "$PRELUDE" == "orange-init" ]]; then
   printf 'Prelude payload path: /orange-init\n'
 fi

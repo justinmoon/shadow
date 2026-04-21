@@ -73,6 +73,7 @@ struct hello_init_config {
     char orange_gpu_mode[64];
     bool orange_gpu_mode_seen;
     bool orange_gpu_mode_invalid;
+    unsigned int orange_gpu_launch_delay_secs;
     unsigned int hold_seconds;
     unsigned int prelude_hold_seconds;
     char reboot_target[32];
@@ -140,6 +141,7 @@ static void init_default_config(struct hello_init_config *config) {
     (void)copy_string(config->orange_gpu_mode, sizeof(config->orange_gpu_mode), "gpu-render");
     config->orange_gpu_mode_seen = false;
     config->orange_gpu_mode_invalid = false;
+    config->orange_gpu_launch_delay_secs = 0U;
     config->hold_seconds = SHADOW_HELLO_INIT_DEFAULT_HOLD_SECONDS;
     config->prelude_hold_seconds = 0U;
     (void)copy_string(config->reboot_target, sizeof(config->reboot_target), "bootloader");
@@ -822,6 +824,18 @@ static void apply_config_value(
         return;
     }
 
+    if (
+        strcmp(key, "orange_gpu_launch_delay_secs") == 0 ||
+        strcmp(key, "orange-gpu-launch-delay-secs") == 0
+    ) {
+        if (!parse_unsigned_value(value, &parsed_hold_seconds)) {
+            log_boot("<3>", "invalid orange_gpu_launch_delay_secs value: %s", value);
+            return;
+        }
+        config->orange_gpu_launch_delay_secs = parsed_hold_seconds;
+        return;
+    }
+
     if (strcmp(key, "hold_seconds") == 0 || strcmp(key, "hold_secs") == 0) {
         if (!parse_unsigned_value(value, &parsed_hold_seconds)) {
             log_boot("<3>", "invalid hold_seconds value: %s", value);
@@ -1347,13 +1361,37 @@ static int run_orange_gpu_payload(const struct hello_init_config *config) {
     unlink_best_effort(SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH);
     unlink_best_effort(SHADOW_HELLO_INIT_ORANGE_GPU_OUTPUT_PATH);
 
+    if (config->orange_gpu_launch_delay_secs == 0U) {
+        log_stage("<6>", "orange-gpu-launch-delay-skip", "seconds=0");
+    } else {
+        log_stage(
+            "<6>",
+            "orange-gpu-launch-delay",
+            "seconds=%u",
+            config->orange_gpu_launch_delay_secs
+        );
+        log_boot(
+            "<6>",
+            "delaying orange-gpu launch by %u second(s) before fork/exec",
+            config->orange_gpu_launch_delay_secs
+        );
+        sleep_seconds(config->orange_gpu_launch_delay_secs);
+        log_stage(
+            "<6>",
+            "orange-gpu-launch-delay-complete",
+            "seconds=%u",
+            config->orange_gpu_launch_delay_secs
+        );
+    }
+
     log_stage(
         "<6>",
         "orange-gpu-launch",
-        "loader=%s binary=%s mode=%s hold_seconds=%u",
+        "loader=%s binary=%s mode=%s launch_delay_secs=%u hold_seconds=%u",
         SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
         SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
         config->orange_gpu_mode,
+        config->orange_gpu_launch_delay_secs,
         config->hold_seconds
     );
     log_boot("<6>", "%s", kOwnedInitOrangeGpuPayloadSentinel);
@@ -2043,10 +2081,11 @@ int main(void) {
     log_stage(
         "<6>",
         "config-loaded",
-        "payload=%s prelude=%s orange_gpu_mode=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
+        config.orange_gpu_launch_delay_secs,
         config.hold_seconds,
         config.prelude_hold_seconds,
         config.reboot_target,
@@ -2061,10 +2100,11 @@ int main(void) {
     );
     log_boot(
         "<6>",
-        "config payload=%s prelude=%s orange_gpu_mode=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
+        config.orange_gpu_launch_delay_secs,
         config.hold_seconds,
         config.prelude_hold_seconds,
         config.reboot_target,
