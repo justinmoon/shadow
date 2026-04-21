@@ -91,6 +91,72 @@ flag_enabled() {
   [[ "$(bool_word "$1")" == "true" ]]
 }
 
+kgsl_holder_scan_command() {
+  cat <<'EOF'
+set -eu
+
+device_path=/dev/kgsl-3d0
+max_fd_checks="${PIXEL_KGSL_HOLDER_SCAN_MAX_FD_CHECKS:-8192}"
+max_holders="${PIXEL_KGSL_HOLDER_SCAN_MAX_HOLDERS:-64}"
+pid_count=0
+fd_checks=0
+holder_count=0
+truncated=false
+
+sanitize_field() {
+  printf '%s' "${1-}" | tr '\t\r\n' '   '
+}
+
+printf 'format\tshadow-kgsl-holder-scan-v1\n'
+printf 'device_path\t%s\n' "$device_path"
+printf 'limits\t%s\t%s\n' "$max_fd_checks" "$max_holders"
+
+for pid in $(ls /proc 2>/dev/null | LC_ALL=C sort -n); do
+  case "$pid" in
+    ''|*[!0-9]*)
+      continue
+      ;;
+  esac
+
+  fd_dir="/proc/$pid/fd"
+  [ -d "$fd_dir" ] || continue
+  pid_count=$((pid_count + 1))
+  comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"
+  cmdline="$(tr '\000' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+  comm="$(sanitize_field "$comm")"
+  cmdline="$(sanitize_field "$cmdline")"
+
+  for fd in $(ls "$fd_dir" 2>/dev/null | LC_ALL=C sort -n); do
+    case "$fd" in
+      ''|*[!0-9]*)
+        continue
+        ;;
+    esac
+
+    fd_checks=$((fd_checks + 1))
+    if [ "$fd_checks" -gt "$max_fd_checks" ]; then
+      truncated=true
+      break 2
+    fi
+
+    target="$(readlink "$fd_dir/$fd" 2>/dev/null || true)"
+    if [ "$target" != "$device_path" ]; then
+      continue
+    fi
+
+    holder_count=$((holder_count + 1))
+    printf 'holder\t%s\t%s\t%s\t%s\n' "$pid" "$fd" "$comm" "$cmdline"
+    if [ "$holder_count" -ge "$max_holders" ]; then
+      truncated=true
+      break 2
+    fi
+  done
+done
+
+printf 'summary\t%s\t%s\t%s\t%s\n' "$pid_count" "$fd_checks" "$holder_count" "$truncated"
+EOF
+}
+
 recovery_runs_dir() {
   printf '%s/%s\n' "$(pixel_boot_dir)" "$RECOVERY_ROOT_NAME"
 }
@@ -675,23 +741,21 @@ run_device_command() {
   printf '%s\t%s\n' "$exit_code" "$actual_access_mode"
 }
 
-shell_best_effort() {
+record_channel_result() {
   local output_path stderr_path status_path run_token_status_path
   local available matched matched_run_token correlated
   local match_count run_token_match_count channel_status recorded_command correlation_state
-  local actual_access_mode run_result
   local name="$1"
   local scope="$2"
   local requested_access_mode="$3"
   local command="$4"
+  local actual_access_mode="$5"
+  local channel_status="$6"
+  local source_kind="${7:-}"
   output_path="$CHANNEL_DIR/$name.txt"
   stderr_path="$CHANNEL_DIR/$name.stderr.txt"
   status_path="$MATCH_DIR/$name.shadow-tags.txt"
   run_token_status_path="$MATCH_DIR/$name.run-token.txt"
-
-  run_result="$(run_device_command "$requested_access_mode" "$command" "$output_path" "$stderr_path")"
-  channel_status="${run_result%%$'\t'*}"
-  actual_access_mode="${run_result#*$'\t'}"
 
   if grep -aE "$SHADOW_TAG_REGEX" "$output_path" >"$status_path"; then
     match_count="$(wc -l <"$status_path" | tr -d '[:space:]')"
@@ -731,12 +795,13 @@ shell_best_effort() {
   recorded_command="${command//$'\n'/\\n}"
   recorded_command="${recorded_command//$'\t'/\\t}"
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$name" \
     "$scope" \
     "$recorded_command" \
     "$requested_access_mode" \
     "$actual_access_mode" \
+    "$source_kind" \
     "channels/$name.txt" \
     "channels/$name.stderr.txt" \
     "$channel_status" \
@@ -749,6 +814,74 @@ shell_best_effort() {
     "$correlation_state" \
     "matches/$name.shadow-tags.txt" \
     "matches/$name.run-token.txt" >>"$CHANNEL_STATUS_TSV"
+}
+
+shell_best_effort() {
+  local name="$1"
+  local scope="$2"
+  local requested_access_mode="$3"
+  local command="$4"
+  local source_kind="${5:-}"
+  local output_path stderr_path run_result channel_status actual_access_mode
+
+  output_path="$CHANNEL_DIR/$name.txt"
+  stderr_path="$CHANNEL_DIR/$name.stderr.txt"
+  run_result="$(run_device_command "$requested_access_mode" "$command" "$output_path" "$stderr_path")"
+  channel_status="${run_result%%$'\t'*}"
+  actual_access_mode="${run_result#*$'\t'}"
+  record_channel_result \
+    "$name" \
+    "$scope" \
+    "$requested_access_mode" \
+    "$command" \
+    "$actual_access_mode" \
+    "$channel_status" \
+    "$source_kind"
+}
+
+capture_kernel_log_best_effort() {
+  local name="$1"
+  local scope="$2"
+  local root_command="$3"
+  local adb_command="$4"
+  local output_path stderr_path root_output_path root_stderr_path
+  local run_result channel_status actual_access_mode
+
+  output_path="$CHANNEL_DIR/$name.txt"
+  stderr_path="$CHANNEL_DIR/$name.stderr.txt"
+  root_output_path="$CHANNEL_DIR/$name.root-attempt.txt"
+  root_stderr_path="$CHANNEL_DIR/$name.root-attempt.stderr.txt"
+
+  run_result="$(run_device_command "root" "$root_command" "$root_output_path" "$root_stderr_path")"
+  channel_status="${run_result%%$'\t'*}"
+  actual_access_mode="${run_result#*$'\t'}"
+
+  if [[ "$channel_status" -eq 0 ]]; then
+    mv "$root_output_path" "$output_path"
+    mv "$root_stderr_path" "$stderr_path"
+    record_channel_result \
+      "$name" \
+      "$scope" \
+      "root-preferred" \
+      "$root_command" \
+      "$actual_access_mode" \
+      "$channel_status" \
+      "root-dmesg"
+    return 0
+  fi
+
+  rm -f "$root_output_path" "$root_stderr_path"
+  run_result="$(run_device_command "adb" "$adb_command" "$output_path" "$stderr_path")"
+  channel_status="${run_result%%$'\t'*}"
+  actual_access_mode="${run_result#*$'\t'}"
+  record_channel_result \
+    "$name" \
+    "$scope" \
+    "root-preferred" \
+    "$adb_command" \
+    "$actual_access_mode" \
+    "$channel_status" \
+    "adb-logcat-kernel"
 }
 
 capture_current_boot_state() {
@@ -958,6 +1091,55 @@ if source_image_metadata_path:
             if isinstance(value, bool):
                 expected_durable_logging[target_key] = value
 
+def parse_kgsl_holder_scan(text: str):
+    parsed = {
+        "format": None,
+        "device_path": None,
+        "max_fd_checks": None,
+        "max_holders": None,
+        "pid_count": None,
+        "fd_checks": None,
+        "holder_count": 0,
+        "has_holders": False,
+        "truncated": None,
+        "holders": [],
+        "parse_error": None,
+    }
+    try:
+        for raw_line in text.splitlines():
+            if not raw_line:
+                continue
+            parts = raw_line.split("\t")
+            kind = parts[0]
+            if kind == "format" and len(parts) >= 2:
+                parsed["format"] = parts[1]
+            elif kind == "device_path" and len(parts) >= 2:
+                parsed["device_path"] = parts[1]
+            elif kind == "limits" and len(parts) >= 3:
+                parsed["max_fd_checks"] = int(parts[1])
+                parsed["max_holders"] = int(parts[2])
+            elif kind == "holder" and len(parts) >= 5:
+                parsed["holders"].append(
+                    {
+                        "pid": int(parts[1]),
+                        "fd": int(parts[2]),
+                        "comm": parts[3],
+                        "cmdline": parts[4],
+                    }
+                )
+            elif kind == "summary" and len(parts) >= 5:
+                parsed["pid_count"] = int(parts[1])
+                parsed["fd_checks"] = int(parts[2])
+                parsed["holder_count"] = int(parts[3])
+                parsed["truncated"] = parts[4] == "true"
+    except ValueError as exc:
+        parsed["parse_error"] = str(exc)
+
+    if parsed["holder_count"] == 0 and parsed["holders"]:
+        parsed["holder_count"] = len(parsed["holders"])
+    parsed["has_holders"] = parsed["holder_count"] > 0
+    return parsed
+
 rows = []
 previous_boot_matches = 0
 current_boot_matches = 0
@@ -971,6 +1153,8 @@ matched_any_expected_run_token = False
 matched_any_uncorrelated_shadow_tags = False
 bootreason_values = {}
 absence_reasons = set()
+android_has_kgsl_holders = None
+android_kgsl_holder_count = None
 
 with channel_status_path.open("r", encoding="utf-8") as fh:
     for row in csv.DictReader(fh, delimiter="\t"):
@@ -990,6 +1174,7 @@ with channel_status_path.open("r", encoding="utf-8") as fh:
             "attempted": True,
             "requested_access_mode": row["requested_access_mode"],
             "actual_access_mode": row["actual_access_mode"],
+            "source_kind": row.get("source_kind", ""),
             "exit_code": int(row["exit_code"]),
             "available": available,
             "matched_shadow_tags": matched_shadow_tags,
@@ -1010,6 +1195,11 @@ with channel_status_path.open("r", encoding="utf-8") as fh:
                 run_token_matches_path.stat().st_size if run_token_matches_path.exists() else 0
             ),
         }
+        if row["name"] == "kgsl-holder-scan":
+            entry.update(parse_kgsl_holder_scan(output_text))
+            if available:
+                android_has_kgsl_holders = entry["has_holders"]
+                android_kgsl_holder_count = entry["holder_count"]
         rows.append((row["name"], entry))
         if matched_shadow_tags:
             matched_any_shadow_tags = True
@@ -1136,6 +1326,8 @@ payload = {
     "matched_any_correlated_shadow_tags": matched_any_correlated_shadow_tags,
     "matched_any_expected_run_token": matched_any_expected_run_token,
     "matched_any_uncorrelated_shadow_tags": matched_any_uncorrelated_shadow_tags,
+    "android_has_kgsl_holders": android_has_kgsl_holders,
+    "android_kgsl_holder_count": android_kgsl_holder_count,
     "recovered_previous_boot_traces": previous_boot_matches > 0,
     "absence_reasons": sorted(absence_reasons),
     "absence_reason_summary": ",".join(sorted(absence_reasons)),
@@ -1227,7 +1419,7 @@ MATCH_DIR="$OUTPUT_DIR/matches"
 META_DIR="$OUTPUT_DIR/meta"
 mkdir -p "$CHANNEL_DIR" "$MATCH_DIR" "$META_DIR"
 CHANNEL_STATUS_TSV="$OUTPUT_DIR/channel-status.tsv"
-printf 'name\tscope\tcommand\trequested_access_mode\tactual_access_mode\toutput_path\tstderr_path\texit_code\tavailable\tmatched_shadow_tags\tshadow_match_count\tmatched_expected_run_token\trun_token_match_count\tcorrelated\tcorrelation_state\tmatches_path\trun_token_matches_path\n' >"$CHANNEL_STATUS_TSV"
+printf 'name\tscope\tcommand\trequested_access_mode\tactual_access_mode\tsource_kind\toutput_path\tstderr_path\texit_code\tavailable\tmatched_shadow_tags\tshadow_match_count\tmatched_expected_run_token\trun_token_match_count\tcorrelated\tcorrelation_state\tmatches_path\trun_token_matches_path\n' >"$CHANNEL_STATUS_TSV"
 cat >"$META_DIR/shadow-tag-patterns.txt" <<EOF
 shadow-hello-init
 shadow-drm
@@ -1250,7 +1442,9 @@ shell_best_effort "pstore" "previous-boot" "root" $'if [ ! -d /sys/fs/pstore ]; 
 shell_best_effort "bootreason-props" "current-boot" "adb" $'for key in ro.boot.bootreason sys.boot.reason sys.boot.reason.last persist.sys.boot.reason.history ro.boot.bootreason_history ro.boot.bootreason_last; do\n  printf "%s=%s\\n" "$key" "$(getprop "$key" | tr -d "\\r")"\ndone'
 shell_best_effort "getprop" "current-boot" "adb" "getprop"
 shell_best_effort "logcat-current" "current-boot" "adb" "logcat -d -v threadtime"
+capture_kernel_log_best_effort "kernel-current-best-effort" "current-boot" "dmesg 2>/dev/null" "logcat -b kernel -d -v threadtime"
 shell_best_effort "logcat-kernel-current" "current-boot" "adb" "logcat -b kernel -d -v threadtime"
+shell_best_effort "kgsl-holder-scan" "current-boot" "root" "$(kgsl_holder_scan_command)" "root-proc-fd-scan"
 
 write_bootreason_summary
 write_all_matches

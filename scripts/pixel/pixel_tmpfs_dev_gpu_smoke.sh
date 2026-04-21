@@ -85,6 +85,8 @@ device_output_path="$run_dir/device-output.txt"
 checkpoint_log_path="$run_dir/checkpoints.txt"
 pull_summary_log_path="$run_dir/pull-summary.txt"
 pull_profile_log_path="$run_dir/pull-dev-profile.txt"
+kgsl_holder_scan_path="$run_dir/kgsl-holder-scan.tsv"
+kgsl_holder_scan_stderr_path="$run_dir/kgsl-holder-scan.stderr.txt"
 status_path="$run_dir/status.json"
 summary_path="$run_dir/summary.json"
 profile_path="$run_dir/dev-profile.tsv"
@@ -119,6 +121,72 @@ quote_args() {
     quoted+=("$(printf '%q' "$arg")")
   done
   printf '%s' "${quoted[*]}"
+}
+
+kgsl_holder_scan_command() {
+  cat <<'EOF'
+set -eu
+
+device_path=/dev/kgsl-3d0
+max_fd_checks="${PIXEL_KGSL_HOLDER_SCAN_MAX_FD_CHECKS:-8192}"
+max_holders="${PIXEL_KGSL_HOLDER_SCAN_MAX_HOLDERS:-64}"
+pid_count=0
+fd_checks=0
+holder_count=0
+truncated=false
+
+sanitize_field() {
+  printf '%s' "${1-}" | tr '\t\r\n' '   '
+}
+
+printf 'format\tshadow-kgsl-holder-scan-v1\n'
+printf 'device_path\t%s\n' "$device_path"
+printf 'limits\t%s\t%s\n' "$max_fd_checks" "$max_holders"
+
+for pid in $(ls /proc 2>/dev/null | LC_ALL=C sort -n); do
+  case "$pid" in
+    ''|*[!0-9]*)
+      continue
+      ;;
+  esac
+
+  fd_dir="/proc/$pid/fd"
+  [ -d "$fd_dir" ] || continue
+  pid_count=$((pid_count + 1))
+  comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"
+  cmdline="$(tr '\000' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+  comm="$(sanitize_field "$comm")"
+  cmdline="$(sanitize_field "$cmdline")"
+
+  for fd in $(ls "$fd_dir" 2>/dev/null | LC_ALL=C sort -n); do
+    case "$fd" in
+      ''|*[!0-9]*)
+        continue
+        ;;
+    esac
+
+    fd_checks=$((fd_checks + 1))
+    if [ "$fd_checks" -gt "$max_fd_checks" ]; then
+      truncated=true
+      break 2
+    fi
+
+    target="$(readlink "$fd_dir/$fd" 2>/dev/null || true)"
+    if [ "$target" != "$device_path" ]; then
+      continue
+    fi
+
+    holder_count=$((holder_count + 1))
+    printf 'holder\t%s\t%s\t%s\t%s\n' "$pid" "$fd" "$comm" "$cmdline"
+    if [ "$holder_count" -ge "$max_holders" ]; then
+      truncated=true
+      break 2
+    fi
+  done
+done
+
+printf 'summary\t%s\t%s\t%s\t%s\n' "$pid_count" "$fd_checks" "$holder_count" "$truncated"
+EOF
 }
 
 profile_node_sources_for() {
@@ -475,7 +543,12 @@ else
   printf 'missing: %s\n' "$device_profile_path" >"$pull_profile_log_path"
 fi
 
-python3 - "$status_path" "$serial" "$primary_control_serial" "$profile" "$scene" "$device_dir" "$run_status" "$summary_expected" "$summary_pulled" "$profile_pulled" "$profile_includes_ion" "$device_output_path" "$summary_path" "$profile_path" "$prepare_output_path" "$preload_build_output_path" "$baseline_nodes_csv" "$profile_nodes_csv" <<'PY'
+set +e
+pixel_root_shell "$serial" "$(kgsl_holder_scan_command)" >"$kgsl_holder_scan_path" 2>"$kgsl_holder_scan_stderr_path"
+kgsl_holder_scan_exit_code="$?"
+set -e
+
+python3 - "$status_path" "$serial" "$primary_control_serial" "$profile" "$scene" "$device_dir" "$run_status" "$summary_expected" "$summary_pulled" "$profile_pulled" "$profile_includes_ion" "$device_output_path" "$summary_path" "$profile_path" "$prepare_output_path" "$preload_build_output_path" "$baseline_nodes_csv" "$profile_nodes_csv" "$kgsl_holder_scan_path" "$kgsl_holder_scan_stderr_path" "$kgsl_holder_scan_exit_code" <<'PY'
 import json
 import re
 import sys
@@ -500,7 +573,10 @@ from pathlib import Path
     preload_build_output_path_raw,
     baseline_nodes_csv,
     profile_nodes_csv,
-) = sys.argv[1:19]
+    kgsl_holder_scan_path_raw,
+    kgsl_holder_scan_stderr_path_raw,
+    kgsl_holder_scan_exit_code_raw,
+) = sys.argv[1:22]
 
 run_status = int(run_status_raw)
 summary_expected = summary_expected_raw == "true"
@@ -510,6 +586,9 @@ profile_includes_ion = profile_includes_ion_raw == "true"
 device_output_path = Path(device_output_path_raw)
 summary_path = Path(summary_path_raw)
 profile_path = Path(profile_path_raw)
+kgsl_holder_scan_path = Path(kgsl_holder_scan_path_raw)
+kgsl_holder_scan_stderr_path = Path(kgsl_holder_scan_stderr_path_raw)
+kgsl_holder_scan_exit_code = int(kgsl_holder_scan_exit_code_raw)
 
 device_output = ""
 if device_output_path.is_file():
@@ -551,9 +630,62 @@ if profile_path.is_file():
 def csv_list(raw: str):
     return [item for item in raw.split(",") if item]
 
+def parse_kgsl_holder_scan(path: Path):
+    parsed = {
+        "format": None,
+        "device_path": None,
+        "max_fd_checks": None,
+        "max_holders": None,
+        "pid_count": None,
+        "fd_checks": None,
+        "holder_count": 0,
+        "has_holders": False,
+        "truncated": None,
+        "holders": [],
+        "parse_error": None,
+    }
+    if not path.is_file():
+        return parsed
+
+    try:
+        for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not raw_line:
+                continue
+            parts = raw_line.split("\t")
+            kind = parts[0]
+            if kind == "format" and len(parts) >= 2:
+                parsed["format"] = parts[1]
+            elif kind == "device_path" and len(parts) >= 2:
+                parsed["device_path"] = parts[1]
+            elif kind == "limits" and len(parts) >= 3:
+                parsed["max_fd_checks"] = int(parts[1])
+                parsed["max_holders"] = int(parts[2])
+            elif kind == "holder" and len(parts) >= 5:
+                parsed["holders"].append(
+                    {
+                        "pid": int(parts[1]),
+                        "fd": int(parts[2]),
+                        "comm": parts[3],
+                        "cmdline": parts[4],
+                    }
+                )
+            elif kind == "summary" and len(parts) >= 5:
+                parsed["pid_count"] = int(parts[1])
+                parsed["fd_checks"] = int(parts[2])
+                parsed["holder_count"] = int(parts[3])
+                parsed["truncated"] = parts[4] == "true"
+    except (OSError, ValueError) as exc:
+        parsed["parse_error"] = str(exc)
+
+    if parsed["holder_count"] == 0 and parsed["holders"]:
+        parsed["holder_count"] = len(parsed["holders"])
+    parsed["has_holders"] = parsed["holder_count"] > 0
+    return parsed
+
 baseline_nodes = csv_list(baseline_nodes_csv)
 profile_nodes = csv_list(profile_nodes_csv)
 profile_paths = {entry["path"] for entry in profile_entries if entry.get("path")}
+kgsl_holder_scan = parse_kgsl_holder_scan(kgsl_holder_scan_path)
 
 physical_device_count = None
 match = re.search(r"count-query-ok count=(\d+)", device_output)
@@ -622,6 +754,16 @@ payload = {
     "device_output_path": str(device_output_path),
     "prepare_output_path": prepare_output_path_raw,
     "preload_build_output_path": preload_build_output_path_raw,
+    "kgsl_holder_scan": {
+        "requested_access_mode": "root",
+        "actual_access_mode": "root" if kgsl_holder_scan_exit_code == 0 else "root-error",
+        "exit_code": kgsl_holder_scan_exit_code,
+        "output_path": str(kgsl_holder_scan_path) if kgsl_holder_scan_path.exists() else None,
+        "stderr_path": (
+            str(kgsl_holder_scan_stderr_path) if kgsl_holder_scan_stderr_path.exists() else None
+        ),
+        **kgsl_holder_scan,
+    },
 }
 
 Path(status_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

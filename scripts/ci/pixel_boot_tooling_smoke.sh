@@ -52,6 +52,11 @@ MOCK_STORE_STANDARD="$TMP_DIR/store-standard"
 MOCK_STORE_MINIMAL="$TMP_DIR/store-minimal"
 MOCK_STORE_C="$TMP_DIR/store-c"
 MOCK_STORE_C_SYSTEM="$TMP_DIR/store-c-system"
+MOCK_GPU_SMOKE_STORE="$TMP_DIR/store-shadow-gpu-smoke"
+TMPFS_DEV_GPU_OUTPUT="$TMP_DIR/tmpfs-dev-gpu-output"
+TMPFS_DEVICE_STATE_ROOT="$TMP_DIR/tmpfs-device-root"
+TMPFS_DEVICE_DIR="/data/local/tmp/shadow-gpu-smoke-devtmpfs-smoke"
+TMPFS_FAKE_TURNIP_LIB="$TMP_DIR/fake-turnip-lib.so"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -73,7 +78,19 @@ cat >"$PROBE_IMAGE.hello-init.json" <<EOF
 EOF
 printf 'stock boot image\n' >"$STOCK_BOOT_IMAGE"
 printf 'boot build input\n' >"$BOOT_BUILD_INPUT"
-mkdir -p "$MOCK_STORE_STANDARD/bin" "$MOCK_STORE_MINIMAL/bin" "$MOCK_STORE_C/bin" "$MOCK_STORE_C_SYSTEM/bin"
+printf 'fake turnip\n' >"$TMPFS_FAKE_TURNIP_LIB"
+mkdir -p \
+  "$MOCK_STORE_STANDARD/bin" \
+  "$MOCK_STORE_MINIMAL/bin" \
+  "$MOCK_STORE_C/bin" \
+  "$MOCK_STORE_C_SYSTEM/bin" \
+  "$MOCK_GPU_SMOKE_STORE/bin" \
+  "$MOCK_GPU_SMOKE_STORE/lib"
+printf 'mock gpu smoke binary\n' >"$MOCK_GPU_SMOKE_STORE/bin/shadow-gpu-smoke"
+printf 'mock loader\n' >"$MOCK_GPU_SMOKE_STORE/lib/ld-linux-aarch64.so.1"
+printf 'mock libc\n' >"$MOCK_GPU_SMOKE_STORE/lib/libc.so.6"
+printf 'mock vulkan loader\n' >"$MOCK_GPU_SMOKE_STORE/lib/libvulkan.so.1"
+chmod 0755 "$MOCK_GPU_SMOKE_STORE/bin/shadow-gpu-smoke" "$MOCK_GPU_SMOKE_STORE/lib/ld-linux-aarch64.so.1"
 
 cat >"$WRAPPER_STANDARD_BIN" <<'EOF'
 #!/system/bin/sh
@@ -375,22 +392,138 @@ case "$1" in
   *bad-init-wrapper-c-system-init-minimal*)
     printf '%s: POSIX shell script, ASCII text executable\n' "$1"
     ;;
+  *shadow-gpu-smoke*|*ld-linux-aarch64.so.1|*libc.so.6|*libvulkan.so.1)
+    printf '%s: ELF 64-bit LSB executable, ARM aarch64, dynamically linked\n' "$1"
+    ;;
   *)
     printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$1"
     ;;
 esac
 EOF
 
+cat >"$MOCK_BIN/llvm-readelf" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "\${1:-}" == "-lW" ]]; then
+  cat <<'OUT'
+
+      [Requesting program interpreter: $MOCK_GPU_SMOKE_STORE/lib/ld-linux-aarch64.so.1]
+OUT
+  exit 0
+fi
+
+if [[ "\${1:-}" == "-dW" ]]; then
+  case "\${2:-}" in
+    *shadow-gpu-smoke)
+      cat <<'OUT'
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+OUT
+      ;;
+  esac
+  exit 0
+fi
+
+echo "mock llvm-readelf: unexpected args: \$*" >&2
+exit 1
+EOF
+
+cat >"$MOCK_BIN/aarch64-unknown-linux-gnu-gcc" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+output=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o)
+      output="${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+[[ -n "$output" ]] || {
+  echo "mock gcc: missing -o output" >&2
+  exit 1
+}
+
+mkdir -p "$(dirname "$output")"
+printf 'mock openlog preload\n' >"$output"
+chmod 0755 "$output"
+EOF
+
 cat >"$MOCK_BIN/nix" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "\$1" != build ]]; then
+if [[ "\${1:-}" == shell ]]; then
+  shift
+  while [[ \$# -gt 0 ]]; do
+    case "\$1" in
+      -c)
+        shift
+        exec "\$@"
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  exit 0
+fi
+
+if [[ "\${1:-}" != build ]]; then
   echo "mock nix: unexpected args: \$*" >&2
   exit 1
 fi
 
-case "\$*" in
+out_link=""
+print_out_paths=0
+package_ref=""
+shift
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --accept-flake-config|--no-link)
+      shift
+      ;;
+    --print-out-paths)
+      print_out_paths=1
+      shift
+      ;;
+    --out-link)
+      out_link="\${2:-}"
+      shift 2
+      ;;
+    *)
+      package_ref="\$1"
+      shift
+      ;;
+  esac
+done
+
+case "\$package_ref" in
+  *shadow-gpu-smoke-aarch64-linux-gnu*)
+    if [[ "\$print_out_paths" == 1 ]]; then
+      printf '%s\n' "$MOCK_GPU_SMOKE_STORE"
+      exit 0
+    fi
+    if [[ -n "\$out_link" ]]; then
+      mkdir -p "\$(dirname "\$out_link")"
+      rm -rf "\$out_link"
+      ln -s "$MOCK_GPU_SMOKE_STORE" "\$out_link"
+      exit 0
+    fi
+    ;;
+  *shadow-pinned-turnip-mesa-aarch64-linux*)
+    printf '%s\n' "$MOCK_GPU_SMOKE_STORE"
+    exit 0
+    ;;
+esac
+
+case "\$package_ref" in
   *init-wrapper-c-device-system-init*)
     printf '%s\n' "$MOCK_STORE_C_SYSTEM"
     ;;
@@ -404,17 +537,39 @@ case "\$*" in
     printf '%s\n' "$MOCK_STORE_STANDARD"
     ;;
   *)
-    echo "mock nix: unexpected package ref: \$*" >&2
+    echo "mock nix: unexpected package ref: build \$package_ref" >&2
     exit 1
+    ;;
+esac
+EOF
+
+cat >"$MOCK_BIN/nix-store" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "\${1:-}" != "-qR" ]]; then
+  echo "mock nix-store: unexpected args: \$*" >&2
+  exit 1
+fi
+
+case "\${2:-}" in
+  "$MOCK_GPU_SMOKE_STORE"|*shadow-gpu-smoke-aarch64-linux-gnu-result)
+    printf '%s\n' "$MOCK_GPU_SMOKE_STORE"
+    ;;
+  *)
+    printf '%s\n' "\${2:-}"
     ;;
 esac
 EOF
 
 chmod 0755 \
   "$MOCK_BIN/adb" \
+  "$MOCK_BIN/aarch64-unknown-linux-gnu-gcc" \
   "$MOCK_BIN/file" \
   "$MOCK_BIN/just" \
   "$MOCK_BIN/nix" \
+  "$MOCK_BIN/nix-store" \
+  "$MOCK_BIN/llvm-readelf" \
   "$MOCK_BIN/payload-dumper-go" \
   "$MOCK_BIN/unpack_bootimg" \
   "$MOCK_BIN/mkbootimg" \
@@ -473,7 +628,10 @@ with open(json_path, "r", encoding="utf-8") as fh:
 
 actual = payload
 for part in key_path.split("/"):
-    actual = actual[part]
+    if isinstance(actual, list):
+        actual = actual[int(part)]
+    else:
+        actual = actual[part]
 
 if expected_raw == "true":
     expected = True
@@ -490,6 +648,208 @@ if actual != expected:
         f"unexpected json field {key_path!r}: actual={actual!r} expected={expected!r}"
     )
 PY
+}
+
+prepare_cached_tmpfs_gpu_bundle() {
+  local bundle_dir launcher_artifact manifest_path package_ref fingerprint
+  bundle_dir="$REPO_ROOT/build/pixel/artifacts/shadow-gpu-smoke-gnu"
+  launcher_artifact="$REPO_ROOT/build/pixel/artifacts/run-shadow-gpu-smoke"
+  manifest_path="$bundle_dir/.bundle-manifest.json"
+  package_ref="$REPO_ROOT#packages.aarch64-linux.shadow-gpu-smoke-aarch64-linux-gnu"
+
+  fingerprint="$(
+    REPO_ROOT="$REPO_ROOT" \
+      TMPFS_DEVICE_DIR="$TMPFS_DEVICE_DIR" \
+      TURNIP_LIB="$TMPFS_FAKE_TURNIP_LIB" \
+      bash <<'EOF'
+set -euo pipefail
+source "$REPO_ROOT/scripts/lib/pixel_common.sh"
+source "$REPO_ROOT/scripts/lib/pixel_runtime_linux_bundle_common.sh"
+
+runtime_bundle_source_fingerprint \
+  "$REPO_ROOT#packages.aarch64-linux.shadow-gpu-smoke-aarch64-linux-gnu" \
+  "__bundle_device_dir_${TMPFS_DEVICE_DIR}__" \
+  "$REPO_ROOT/flake.nix" \
+  "$REPO_ROOT/ui/Cargo.toml" \
+  "$REPO_ROOT/ui/Cargo.lock" \
+  "$REPO_ROOT/ui/crates/shadow-gpu-smoke" \
+  "$REPO_ROOT/ui/third_party/wgpu_context" \
+  "$REPO_ROOT/scripts/pixel/pixel_prepare_gpu_smoke_bundle.sh" \
+  "$REPO_ROOT/scripts/lib/pixel_runtime_linux_bundle_common.sh" \
+  "$TURNIP_LIB"
+EOF
+  )"
+
+  mkdir -p "$bundle_dir/lib" "$bundle_dir/share/vulkan/icd.d"
+  chmod -R u+w "$bundle_dir" 2>/dev/null || true
+  printf 'mock gpu smoke binary\n' >"$bundle_dir/shadow-gpu-smoke"
+  chmod 0755 "$bundle_dir/shadow-gpu-smoke"
+  printf 'mock vulkan loader\n' >"$bundle_dir/lib/libvulkan.so.1"
+  printf 'mock freedreno\n' >"$bundle_dir/lib/libvulkan_freedreno.so"
+  cat >"$bundle_dir/share/vulkan/icd.d/freedreno_icd.aarch64.json" <<EOF
+{
+  "ICD": {
+    "api_version": "1.4.335",
+    "library_arch": "64",
+    "library_path": "${TMPFS_DEVICE_DIR}/lib/libvulkan_freedreno.so"
+  },
+  "file_format_version": "1.0.1"
+}
+EOF
+  cat >"$launcher_artifact" <<'EOF'
+#!/system/bin/sh
+exit 0
+EOF
+  chmod 0755 "$launcher_artifact"
+
+  python3 - "$manifest_path" "$fingerprint" "$package_ref" "$TMPFS_FAKE_TURNIP_LIB" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+manifest_path, fingerprint, package_ref, turnip_lib = sys.argv[1:5]
+payload = {
+    "fingerprint": fingerprint,
+    "generatedAt": datetime.now(timezone.utc).isoformat(),
+    "packageRef": package_ref,
+    "vendorMesaTarball": None,
+    "vendorTurnipTarball": None,
+    "vendorTurnipLibPath": turnip_lib,
+}
+with open(manifest_path, "w", encoding="utf-8") as fh:
+    json.dump(payload, fh, indent=2)
+    fh.write("\n")
+PY
+}
+
+install_tmpfs_gpu_smoke_mocks() {
+  cat >"$MOCK_BIN/adb" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_root="${MOCK_TMPFS_DEVICE_ROOT:?}"
+device_dir="${MOCK_TMPFS_DEVICE_DIR:?}"
+serial="TESTSERIAL"
+
+map_path() {
+  printf '%s%s\n' "$state_root" "$1"
+}
+
+if [[ "${1:-}" == "devices" ]]; then
+  printf 'List of devices attached\n%s\tdevice\n' "$serial"
+  exit 0
+fi
+
+if [[ "${1:-}" == "-s" ]]; then
+  [[ "${2:-}" == "$serial" ]] || {
+    echo "mock adb: unexpected serial ${2:-}" >&2
+    exit 1
+  }
+  shift 2
+fi
+
+handle_non_root_shell() {
+  local cmd="$1"
+  case "$cmd" in
+    *"mkdir -p '$device_dir'"*)
+      mkdir -p "$(map_path "$device_dir")"
+      ;;
+    "[ -f '$device_dir/summary.json' ]")
+      test -f "$(map_path "$device_dir/summary.json")"
+      ;;
+    "[ -f '$device_dir/dev-profile.tsv' ]")
+      test -f "$(map_path "$device_dir/dev-profile.tsv")"
+      ;;
+    *)
+      echo "mock adb: unsupported shell args: $cmd" >&2
+      return 1
+      ;;
+  esac
+}
+
+handle_root_shell() {
+  local cmd="$1"
+  case "$cmd" in
+    *"rm -rf '$device_dir'"*)
+      rm -rf "$(map_path "$device_dir")"
+      ;;
+    *"chmod 0644 '$device_dir/summary.json'"*|*"chmod 0644 '$device_dir/dev-profile.tsv'"*)
+      true
+      ;;
+    *"namespace-launch=1"*)
+      mkdir -p "$(map_path "$device_dir")"
+      cat >"$(map_path "$device_dir/dev-profile.tsv")" <<'PROFILE'
+dir|755|0|0|-|-|/dev
+dir|755|0|0|-|-|/dev/dri
+char|666|0|0|1|3|/dev/null
+char|666|0|0|1fc|0|/dev/kgsl-3d0
+char|660|0|0|e2|0|/dev/dri/card0
+char|660|0|0|e2|80|/dev/dri/renderD128
+PROFILE
+      printf '[tmpfs-dev] namespace-entered=1\n'
+      printf '[tmpfs-dev] tmpfs-mounted=1\n'
+      printf '[shadow-openlog] open path=/dev/kgsl-3d0 flags=O_RDONLY\n'
+      printf '[shadow-openlog] open path=/dev/dri/renderD128 flags=O_RDONLY\n'
+      printf 'vkEnumeratePhysicalDevices-count-query\n'
+      printf 'vkEnumeratePhysicalDevices-count-query-ok count=1\n'
+      printf '[tmpfs-dev] run-status=0\n'
+      ;;
+    *"shadow-kgsl-holder-scan-v1"*)
+      printf 'format\tshadow-kgsl-holder-scan-v1\n'
+      printf 'device_path\t/dev/kgsl-3d0\n'
+      printf 'limits\t8192\t64\n'
+      printf 'holder\t432\t7\tsurfaceflinger\t/system/bin/surfaceflinger\n'
+      printf 'summary\t18\t103\t1\tfalse\n'
+      ;;
+    *)
+      echo "mock adb: unsupported root shell args: $cmd" >&2
+      return 1
+      ;;
+  esac
+}
+
+case "${1:-}" in
+  get-state)
+    printf 'device\n'
+    ;;
+  push)
+    src="${2:?}"
+    dest="${3:?}"
+    mapped_dest="$(map_path "$dest")"
+    if [[ -d "$src" ]]; then
+      mkdir -p "$mapped_dest"
+      cp -R "$src"/. "$mapped_dest"/
+    else
+      mkdir -p "$(dirname "$mapped_dest")"
+      cp "$src" "$mapped_dest"
+    fi
+    ;;
+  pull)
+    src="${2:?}"
+    dest="${3:?}"
+    mapped_src="$(map_path "$src")"
+    mkdir -p "$(dirname "$dest")"
+    cp "$mapped_src" "$dest"
+    ;;
+  shell)
+    shift
+    if [[ "$#" -eq 1 && ( "$1" == "/debug_ramdisk/su 0 sh -c id" || "$1" == "su 0 sh -c id" ) ]]; then
+      printf 'uid=0(root) gid=0(root) groups=0(root)\n'
+      exit 0
+    fi
+    if [[ "$#" -eq 3 && ( "$1" == "/debug_ramdisk/su" || "$1" == "su" ) && "$2" == "0" && "$3" == "sh" ]]; then
+      handle_root_shell "$(cat)"
+      exit $?
+    fi
+    handle_non_root_shell "$*"
+    ;;
+  *)
+    echo "mock adb: unsupported args: $*" >&2
+    exit 1
+    ;;
+esac
+EOF
+  chmod 0755 "$MOCK_BIN/adb"
 }
 
 install_fastboot_cycle_mocks() {
@@ -685,11 +1045,29 @@ case "${1:-}" in
           printf '04-19 10:05:00.000 root root I ActivityManager: idle\n'
         fi
         ;;
+      "dmesg 2>/dev/null")
+        if [[ "$trace_mode" == "matched" ]]; then
+          printf '<6>[shadow-drm] current kernel snapshot run_token=%s\n' "$trace_run_token"
+        else
+          printf '<6>[kernel] boot complete\n'
+        fi
+        ;;
       "logcat -b kernel -d -v threadtime")
         if [[ "$trace_mode" == "matched" ]]; then
           printf '<6>[shadow-drm] current kernel snapshot run_token=%s\n' "$trace_run_token"
         else
           printf '<6>[kernel] boot complete\n'
+        fi
+        ;;
+      *"shadow-kgsl-holder-scan-v1"*)
+        printf 'format\tshadow-kgsl-holder-scan-v1\n'
+        printf 'device_path\t/dev/kgsl-3d0\n'
+        printf 'limits\t8192\t64\n'
+        if [[ "$trace_mode" == "matched" ]]; then
+          printf 'holder\t432\t7\tsurfaceflinger\t/system/bin/surfaceflinger\n'
+          printf 'summary\t18\t103\t1\tfalse\n'
+        else
+          printf 'summary\t17\t88\t0\tfalse\n'
         fi
         ;;
       *)
@@ -1230,6 +1608,9 @@ assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" bootreason_props/ro.b
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" bootreason_props/sys.boot.reason kernel_panic
 test -f "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json"
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" matched_any_shadow_tags false
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" current_boot_channel_attempts 6
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" channels/kernel-current-best-effort/source_kind root-dmesg
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" android_has_kgsl_holders false
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" bootreason_props/ro.boot.bootreason kernel_panic
 if [[ -e "$ONESHOT_ADB_RETURN_OUTPUT/collect" ]]; then
   echo "pixel_boot_tooling_smoke: skip-collect adb-return run should not create the helper collect dir" >&2
@@ -1312,7 +1693,7 @@ assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_matched_any_uncorrelated_shadow_tags true
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_previous_boot_channels_with_matches 4
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_uncorrelated_previous_boot_channels_with_matches 1
-assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_current_boot_channels_with_matches 3
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_current_boot_channels_with_matches 4
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_proof_ok true
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" recover_traces_expected_durable_logging_summary "kmsg=true,pmsg=true"
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/status.json" failure_stage bootreason-failure
@@ -1321,6 +1702,10 @@ assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/recover-traces/status.json"
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/recover-traces/status.json" matched_any_shadow_tags true
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/recover-traces/status.json" matched_any_uncorrelated_shadow_tags true
 assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/recover-traces/status.json" uncorrelated_previous_boot_channels_with_matches 1
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/recover-traces/status.json" current_boot_channels_with_matches 4
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/recover-traces/status.json" channels/kernel-current-best-effort/source_kind root-dmesg
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/recover-traces/status.json" android_has_kgsl_holders true
+assert_json_field "$ONESHOT_ADB_RETURN_NOWAIT_OUTPUT/recover-traces/status.json" channels/kgsl-holder-scan/holder_count 1
 
 reset_fastboot_cycle_state
 oneshot_adb_late_recover_stdout="$TMP_DIR/oneshot-adb-late-recover.stdout"
@@ -1916,6 +2301,37 @@ assert_cpio_entry_missing "$RC_PROBE_OUTPUT_IMAGE" init.stock
 assert_cpio_entry_startswith "$RC_PROBE_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n'
 assert_cpio_entry_equals "$RC_PROBE_OUTPUT_IMAGE" init.shadow.rc $'on post-fs-data\n    setprop shadow.boot.rc_probe ready\n'
 assert_cpio_entry_missing "$RC_PROBE_OUTPUT_IMAGE" shadow-boot-helper
+
+prepare_cached_tmpfs_gpu_bundle
+install_tmpfs_gpu_smoke_mocks
+rm -rf "$TMPFS_DEVICE_STATE_ROOT" "$TMPFS_DEV_GPU_OUTPUT"
+tmpfs_dev_gpu_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    PIXEL_GPU_TMPFS_DEV_PRIMARY_SERIAL=TESTSERIAL \
+    PIXEL_GPU_TMPFS_DEV_DEVICE_DIR="$TMPFS_DEVICE_DIR" \
+    PIXEL_GPU_TMPFS_DEV_RUN_DIR="$TMPFS_DEV_GPU_OUTPUT" \
+    PIXEL_VENDOR_TURNIP_LIB_PATH="$TMPFS_FAKE_TURNIP_LIB" \
+    MOCK_TMPFS_DEVICE_ROOT="$TMPFS_DEVICE_STATE_ROOT" \
+    MOCK_TMPFS_DEVICE_DIR="$TMPFS_DEVICE_DIR" \
+    "$REPO_ROOT/scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh"
+)"
+assert_contains "$tmpfs_dev_gpu_output" "\"kgsl_holder_scan\""
+test -f "$TMPFS_DEV_GPU_OUTPUT/kgsl-holder-scan.tsv"
+assert_contains "$(cat "$TMPFS_DEV_GPU_OUTPUT/kgsl-holder-scan.tsv")" $'holder\t432\t7\tsurfaceflinger\t/system/bin/surfaceflinger'
+assert_json_field "$TMPFS_DEV_GPU_OUTPUT/status.json" run_succeeded true
+assert_json_field "$TMPFS_DEV_GPU_OUTPUT/status.json" summary_expected false
+assert_json_field "$TMPFS_DEV_GPU_OUTPUT/status.json" device_profile_pulled true
+assert_json_field "$TMPFS_DEV_GPU_OUTPUT/status.json" openlog_has_kgsl true
+assert_json_field "$TMPFS_DEV_GPU_OUTPUT/status.json" requested_profile_nodes_present true
+assert_json_field "$TMPFS_DEV_GPU_OUTPUT/status.json" vk_count_query_ok true
+assert_json_field "$TMPFS_DEV_GPU_OUTPUT/status.json" kgsl_holder_scan/exit_code 0
+assert_json_field "$TMPFS_DEV_GPU_OUTPUT/status.json" kgsl_holder_scan/has_holders true
+assert_json_field "$TMPFS_DEV_GPU_OUTPUT/status.json" kgsl_holder_scan/holder_count 1
+assert_json_field "$TMPFS_DEV_GPU_OUTPUT/status.json" kgsl_holder_scan/holders/0/comm surfaceflinger
 
 "$REPO_ROOT/scripts/ci/pixel_boot_recover_traces_smoke.sh"
 

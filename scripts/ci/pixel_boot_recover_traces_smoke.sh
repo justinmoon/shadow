@@ -117,11 +117,31 @@ PROP
         printf '04-19 10:05:00.000 root root I ActivityManager: idle\n'
       fi
       ;;
+    "dmesg 2>/dev/null")
+      if [[ "$TRACE_MODE" == "matched" ]]; then
+        printf '<6>[shadow-drm] current kernel snapshot run_token=%s\n' "$TRACE_RUN_TOKEN"
+      elif [[ "$TRACE_MODE" == "token-only" ]]; then
+        printf '<6>[kernel] run_token=%s without shadow tag\n' "$TRACE_RUN_TOKEN"
+      else
+        printf '<6>[kernel] boot complete\n'
+      fi
+      ;;
     "logcat -b kernel -d -v threadtime")
       if [[ "$TRACE_MODE" == "matched" ]]; then
         printf '<6>[shadow-drm] current kernel snapshot\n'
       else
         printf '<6>[kernel] boot complete\n'
+      fi
+      ;;
+    *"shadow-kgsl-holder-scan-v1"*)
+      printf 'format\tshadow-kgsl-holder-scan-v1\n'
+      printf 'device_path\t/dev/kgsl-3d0\n'
+      printf 'limits\t8192\t64\n'
+      if [[ "$TRACE_MODE" == "matched" ]]; then
+        printf 'holder\t432\t7\tsurfaceflinger\t/system/bin/surfaceflinger\n'
+        printf 'summary\t18\t103\t1\tfalse\n'
+      else
+        printf 'summary\t17\t88\t0\tfalse\n'
       fi
       ;;
     *"/metadata/shadow-hello-init/by-token/"*"/stage.txt"* )
@@ -211,7 +231,10 @@ with open(path, "r", encoding="utf-8") as fh:
 
 value = data
 for part in key_path.split("/"):
-    value = value[part]
+    if isinstance(value, list):
+        value = value[int(part)]
+    else:
+        value = value[part]
 
 if isinstance(value, bool):
     rendered = "true" if value else "false"
@@ -299,9 +322,13 @@ assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_fingerprint_exit_
 assert_json_field "$MATCHED_OUTPUT/status.json" absence_reason_summary ""
 assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channel_attempts 5
 assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channels_with_matches 4
+assert_json_field "$MATCHED_OUTPUT/status.json" current_boot_channel_attempts 6
+assert_json_field "$MATCHED_OUTPUT/status.json" current_boot_channels_with_matches 1
 assert_json_field "$MATCHED_OUTPUT/status.json" uncorrelated_previous_boot_channels_with_matches 1
 assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channels_with_shadow_hints 1
 assert_json_field "$MATCHED_OUTPUT/status.json" matched_any_uncorrelated_shadow_tags true
+assert_json_field "$MATCHED_OUTPUT/status.json" android_has_kgsl_holders true
+assert_json_field "$MATCHED_OUTPUT/status.json" android_kgsl_holder_count 1
 assert_json_field "$MATCHED_OUTPUT/status.json" root_available true
 assert_json_field "$MATCHED_OUTPUT/status.json" root_id "uid=0(root) gid=0(root) groups=0(root)"
 assert_json_field "$MATCHED_OUTPUT/status.json" channels/logcat-last/matched_expected_run_token true
@@ -321,6 +348,15 @@ assert_json_field "$MATCHED_OUTPUT/status.json" channels/pstore/actual_access_mo
 assert_json_field "$MATCHED_OUTPUT/status.json" channels/pstore/matched_shadow_tags true
 assert_json_field "$MATCHED_OUTPUT/status.json" channels/pstore/matched_expected_run_token true
 assert_json_field "$MATCHED_OUTPUT/status.json" channels/pstore/correlated true
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/kernel-current-best-effort/source_kind root-dmesg
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/kernel-current-best-effort/requested_access_mode root-preferred
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/kernel-current-best-effort/actual_access_mode root
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/kernel-current-best-effort/matched_expected_run_token true
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/kernel-current-best-effort/correlated true
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/kgsl-holder-scan/source_kind root-proc-fd-scan
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/kgsl-holder-scan/holder_count 1
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/kgsl-holder-scan/has_holders true
+assert_json_field "$MATCHED_OUTPUT/status.json" channels/kgsl-holder-scan/holders/0/comm surfaceflinger
 assert_json_field "$MATCHED_OUTPUT/status.json" channels/bootreason-props/available true
 assert_json_field "$MATCHED_OUTPUT/status.json" bootreason_props/ro.boot.bootreason reboot,adb
 
@@ -357,6 +393,10 @@ assert_json_field "$CLEAN_OUTPUT/status.json" metadata_probe_fingerprint_exit_co
 assert_json_field "$CLEAN_OUTPUT/status.json" absence_reason_summary "pmsg_root_unavailable,pstore_root_unavailable"
 assert_json_field "$CLEAN_OUTPUT/status.json" previous_boot_channel_attempts 5
 assert_json_field "$CLEAN_OUTPUT/status.json" previous_boot_channels_with_matches 0
+assert_json_field "$CLEAN_OUTPUT/status.json" current_boot_channel_attempts 6
+assert_json_field "$CLEAN_OUTPUT/status.json" current_boot_channels_with_matches 0
+assert_json_field "$CLEAN_OUTPUT/status.json" android_has_kgsl_holders ""
+assert_json_field "$CLEAN_OUTPUT/status.json" android_kgsl_holder_count ""
 assert_json_field "$CLEAN_OUTPUT/status.json" root_available false
 assert_json_field "$CLEAN_OUTPUT/status.json" channels/pmsg0/requested_access_mode root
 assert_json_field "$CLEAN_OUTPUT/status.json" channels/pmsg0/actual_access_mode root-unavailable
@@ -365,6 +405,10 @@ assert_json_field "$CLEAN_OUTPUT/status.json" channels/pmsg0/matched_shadow_tags
 assert_json_field "$CLEAN_OUTPUT/status.json" channels/pstore/requested_access_mode root
 assert_json_field "$CLEAN_OUTPUT/status.json" channels/pstore/actual_access_mode root-unavailable
 assert_json_field "$CLEAN_OUTPUT/status.json" channels/pstore/available false
+assert_json_field "$CLEAN_OUTPUT/status.json" channels/kernel-current-best-effort/source_kind adb-logcat-kernel
+assert_json_field "$CLEAN_OUTPUT/status.json" channels/kernel-current-best-effort/actual_access_mode adb
+assert_json_field "$CLEAN_OUTPUT/status.json" channels/kgsl-holder-scan/actual_access_mode root-unavailable
+assert_json_field "$CLEAN_OUTPUT/status.json" channels/kgsl-holder-scan/available false
 assert_json_field "$CLEAN_OUTPUT/status.json" bootreason_props/sys.boot.reason reboot,recovery
 
 TOKEN_ONLY_PARENT="$TMP_DIR/output-token-only"
@@ -395,6 +439,11 @@ assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_probe_stage_actual_a
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_probe_fingerprint_present true
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_probe_fingerprint_actual_access_mode root
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" previous_boot_channels_with_matches 0
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" current_boot_channel_attempts 6
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/kernel-current-best-effort/source_kind root-dmesg
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/kernel-current-best-effort/correlation_state token-only
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" android_has_kgsl_holders false
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/kgsl-holder-scan/holder_count 0
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlation_state token-only
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlated false
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/matched_expected_run_token true

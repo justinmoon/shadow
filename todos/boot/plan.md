@@ -6,6 +6,7 @@ Related docs:
 
 - [spec-scope.md](./spec-scope.md)
 - [spec-phase1-shadow-at-boot.md](./spec-phase1-shadow-at-boot.md)
+- [handoff-prompt.md](./handoff-prompt.md)
 
 ## Scope
 
@@ -48,6 +49,30 @@ Related docs:
   - real boot-demo cross-builds and hermetic seam smokes belong in a dedicated boot-demo lane, not the universal fast gate
   - `pre-merge` should invoke that dedicated boot-demo lane only when the branch touches demo-owned paths, with an explicit override for manual forcing
   - hardware proofs stay outside universal CI; use boot-lab runs as the truth environment for device-visible results
+
+## Current Status
+
+- Current boot-owned blocker:
+  - any owned-userspace process, including direct C in PID 1, still hangs at `open("/dev/kgsl-3d0")`
+  - this is now narrower than the staged Rust payload, dynamic loader, Vulkan loader, wgpu setup, or the Android display stack
+- Strongest current hypothesis:
+  - the failing seam is KGSL cold first-open / early vendor-init readiness, not generic `/dev` topology, not DRM, and not later Vulkan enumeration logic
+  - reviewer read is that the first meaningful next discriminator should compare warm-vs-cold KGSL ownership or run a stock-init trigger ladder, not keep shaving generic Vulkan splits
+- Strongest rooted controls:
+  - rooted tmpfs-`/dev` controls still succeed for `raw-kgsl-getproperties-smoke` and `raw-kgsl-open-readonly-smoke`
+  - rooted `raw-kgsl-open-readonly-smoke` on `0B191JEC203253` still succeeds even after stopping `surfaceflinger`, hwcomposer, and allocator, so those Android display services are not the obvious prerequisite for a readonly KGSL open
+- Current observability:
+  - boot recovery now captures a rooted `kgsl-holder-scan` channel and a best-effort kernel-log channel (`root dmesg` when available, otherwise `logcat -b kernel`)
+  - tmpfs-`/dev` rooted controls also persist `kgsl-holder-scan.tsv` plus parsed holder metadata in `status.json`
+  - `scripts/ci/pixel_boot_recover_traces_smoke.sh` and `scripts/ci/pixel_boot_tooling_smoke.sh` cover those additions
+- Current lab map on 2026-04-21:
+  - `09051JEC202061`: primary boot-owned lane, rooted, best current reproducer for the KGSL-open seam
+  - `11151JEC200472`: rooted and healthy, but still transport-confounded for guarded `adb reboot bootloader` probes; use carefully for boot-owned runs until that path is fixed or bypassed
+  - `0B191JEC203253`: healthy rooted sidecar lane, used for sound and KGSL control experiments
+  - `06241JEC200520`: healthy rooted sidecar / spare lane
+- Handoff rule:
+  - keep the critical path on the KGSL-open seam until one new discriminator lands
+  - do not broaden back out to `orange-gpu`, compositor, or app launch work until KGSL open either succeeds in owned userspace or the missing prerequisite is identified
 
 ## Milestones
 
@@ -658,6 +683,23 @@ Related docs:
   - `hello-init` now has a private `c-kgsl-open-readonly-smoke` mode that opens `/dev/kgsl-3d0` read-only directly in the owned child process before any staged Rust bundle exec
   - the owned run on `09051JEC202061` recovered the exact same durable stage value, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly`, with no `...-ok` marker and the same fastboot auto-reboot timing
   - that rules out the staged Rust bundle, dynamic loader, and Turnip/Vulkan userspace as the active blocker; the seam is now “any boot-owned child process open of `/dev/kgsl-3d0`”
+- Direct C PID1-owned KGSL open result on 2026-04-21:
+  - `hello-init` now also has a private `c-kgsl-open-readonly-pid1-smoke` mode that runs the same readonly KGSL open directly in PID 1 before the usual payload `fork()`
+  - the owned run on `09051JEC202061` recovered the exact same durable stage value, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly`, with no `...-ok` marker and the same fastboot auto-reboot contract
+  - that rules out the child-process boundary too; the seam is now “any boot-owned process, including PID 1, open of `/dev/kgsl-3d0`”
+- KGSL cold-open hypothesis / reviewer result on 2026-04-21:
+  - reviewer read is that the best current explanation is KGSL cold first-open or missing stock-init/vendor-init side effects, not path lookup, Rust, dynamic loading, or generic `/dev` correctness
+  - the highest-value next discriminators are:
+    - a stock-init trigger ladder for the readonly KGSL-open helper (`post-fs-data`, `init.svc.pd_mapper=running`, `init.svc.qseecom-service=running`, `init.svc.gpu=running`, `sys.boot_completed=1`)
+    - a rooted warm-vs-cold holder experiment to see whether readonly KGSL open only succeeds once Android already has live KGSL holders
+    - a boot-owned blocked-task stack capture around the direct C KGSL-open seam if the above are still ambiguous
+- Display-stack sidecar result on 2026-04-21:
+  - rooted `raw-kgsl-open-readonly-smoke` on `0B191JEC203253` succeeded at baseline, with `surfaceflinger` stopped, with the repo helper stop preserving allocator, and with the repo helper full display-stack stop (`surfaceflinger`, hwcomposer, allocator) before restore
+  - that makes the active boot-owned blocker much less likely to be “SurfaceFlinger / composer / allocator must already be alive” and pushes suspicion toward earlier boot context, warm-holder state, SELinux/domain differences, or vendor-init timing
+- Observability uplift on 2026-04-21:
+  - `pixel_boot_recover_traces.sh` now records a rooted `kgsl-holder-scan` current-boot channel and a `kernel-current-best-effort` channel that prefers rooted `dmesg` over `logcat -b kernel`
+  - `pixel_tmpfs_dev_gpu_smoke.sh` now emits `kgsl-holder-scan.tsv` and parsed holder metadata in `status.json`, so rooted controls can prove whether KGSL was already warm/open under Android
+  - both smoke lanes (`pixel_boot_recover_traces_smoke.sh` and `pixel_boot_tooling_smoke.sh`) now cover those observability additions
 - Boot-lab sidecar status on 2026-04-21:
   - rooted `sound` passed end-to-end on `0B191JEC203253` again, and the device returned to stable rooted Android
   - rooted `camera` on `06241JEC200520` succeeded at the direct helper layer (`list` + live JPEG capture), while the shell-app smoke still failed later in automation waiting for the preview-toggle click
