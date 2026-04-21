@@ -107,3 +107,14 @@ Make the OCI ARM builder fast, well-utilized, and cheap to operate.
   The aggregate `ui-check apps` lane still builds a shared demo+timeline deps derivation, so that gate intentionally collapses most of this benefit by unifying the app feature sets.
 - Decision after the feature-gate experiment: do not start by splitting Nostr or Cashu out of the default `shadow-system` package.
   Current VM/runtime lanes and smokes actively use both, so a split there would mostly create package-matrix complexity before it produces a meaningful default-build win.
+- April 21, 2026 `shadow-system` local-crate boundary experiment: a plain internal crate split was not enough on its own.
+  Moving Cashu into a new `shadow-cashu-host` workspace crate compiled cleanly, but Crane still rebuilt it in the final derivations because `buildDepsOnly` had compiled dummy versions of all local workspace crates.
+- The actual win came from combining the split with a `mkDummySrc` override in both `shadow-system` package lanes (`mkShadowSystemFor` and `runtimeRustCargoArtifacts`).
+  Those deps derivations now replace the dummy copies of `shadow-runtime-protocol`, `shadow-sdk`, and `shadow-cashu-host` with their real filtered sources while keeping `shadow-system` itself dummy.
+- Measured result for `checks.aarch64-darwin.runtimeShadowSystemTests`:
+  before this dummy-src override, the final test derivation compiled `shadow-runtime-protocol`, `shadow-sdk`, `shadow-cashu-host`, and `shadow-system`, and the final compile phase took about `42.69s`.
+  after the override, the final test derivation compiled only `shadow-system`, and the final compile phase dropped to about `17.98s`.
+- Measured result for `packages.aarch64-linux.shadow-system` on `oci-builder`:
+  the deps derivation still does the heavy work up front, but the final package phase now compiles only `shadow-system` and finished its compile step in about `15.59s`.
+- Follow-on coverage fix:
+  splitting Cashu out of `shadow-system` removed two Cashu path tests from `runtimeShadowSystemTests`, so the runtime gate now needs a dedicated `runtimeShadowCashuHostTests` leaf check to keep those tests inside `runtimeCheck` / `preMergeCheck`.

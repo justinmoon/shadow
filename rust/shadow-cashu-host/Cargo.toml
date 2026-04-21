@@ -1,0 +1,15 @@
+[package]
+name = "shadow-cashu-host"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bip39.workspace = true
+cdk.workspace = true
+cdk-redb.workspace = true
+deno_core = { workspace = true, features = ["include_icu_data", "reactor-tokio"] }
+deno_error.workspace = true
+getrandom.workspace = true
+qrcodegen.workspace = true
+serde.workspace = true
+shadow-sdk.workspace = true

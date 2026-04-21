@@ -4902,6 +4902,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "shadow-cashu-host"
+version = "0.1.0"
+dependencies = [
+ "bip39",
+ "cdk",
+ "cdk-redb",
+ "deno_core",
+ "deno_error",
+ "getrandom 0.2.17",
+ "qrcodegen",
+ "serde",
+ "shadow-sdk",
+]
+
+[[package]]
 name = "shadow-runtime-protocol"
 version = "0.1.0"
 dependencies = [
@@ -4931,18 +4946,14 @@ dependencies = [
 name = "shadow-system"
 version = "0.1.0"
 dependencies = [
- "bip39",
- "cdk",
- "cdk-redb",
  "deno_core",
  "deno_error",
- "getrandom 0.2.17",
  "libc",
  "nostr",
  "nostr-sdk",
- "qrcodegen",
  "serde",
  "serde_json",
+ "shadow-cashu-host",
  "shadow-runtime-protocol",
  "shadow-sdk",
  "tokio",

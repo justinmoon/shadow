@@ -115,6 +115,7 @@
         [
           "rust/Cargo.toml"
           "rust/Cargo.lock"
+          "rust/shadow-cashu-host"
           "rust/shadow-system"
           "rust/shadow-runtime-protocol"
           "rust/vendor/temporal_rs"
@@ -228,6 +229,7 @@
         "ui/third_party"
         "rust/Cargo.toml"
         "rust/Cargo.lock"
+        "rust/shadow-cashu-host"
         "rust/shadow-sdk"
         "rust/shadow-system"
         "rust/shadow-runtime-protocol"
@@ -254,10 +256,12 @@
       ];
       shadowUiRustWorkspaceManifestPrefixes = [
         "rust/Cargo.toml"
+        "rust/shadow-cashu-host/Cargo.toml"
         "rust/shadow-sdk/Cargo.toml"
         "rust/shadow-system/Cargo.toml"
       ];
       shadowUiRustWorkspaceTargetPrefixes = [
+        "rust/shadow-cashu-host/src/lib.rs"
         "rust/shadow-sdk/src/lib.rs"
         "rust/shadow-system/src/main.rs"
       ];
@@ -376,6 +380,7 @@
         "ui/crates/shadow-ui-core"
         "ui/third_party"
         "rust/Cargo.toml"
+        "rust/shadow-cashu-host"
         "rust/shadow-sdk"
         "rust/shadow-runtime-protocol"
         "rust/vendor/temporal_rs"
@@ -387,6 +392,7 @@
         "ui/crates"
         "ui/third_party"
         "rust/Cargo.toml"
+        "rust/shadow-cashu-host"
         "rust/shadow-sdk"
         "rust/shadow-system"
         "rust/shadow-runtime-protocol"
@@ -416,6 +422,7 @@
         "vm"
         "rust/Cargo.toml"
         "rust/Cargo.lock"
+        "rust/shadow-cashu-host"
         "rust/shadow-sdk"
         "rust/shadow-system"
         "rust/shadow-runtime-protocol"
@@ -1120,6 +1127,15 @@
             '';
             dummySrc = craneLib.mkDummySrc (commonArgs // {
               extraDummyScript = ''
+                rm -rf "$out/rust/shadow-runtime-protocol"
+                cp --recursive --no-preserve=ownership ${shadowSystemSrc}/rust/shadow-runtime-protocol "$out/rust/shadow-runtime-protocol"
+                chmod +w -R "$out/rust/shadow-runtime-protocol"
+                rm -rf "$out/rust/shadow-sdk"
+                cp --recursive --no-preserve=ownership ${shadowSystemSrc}/rust/shadow-sdk "$out/rust/shadow-sdk"
+                chmod +w -R "$out/rust/shadow-sdk"
+                rm -rf "$out/rust/shadow-cashu-host"
+                cp --recursive --no-preserve=ownership ${shadowSystemSrc}/rust/shadow-cashu-host "$out/rust/shadow-cashu-host"
+                chmod +w -R "$out/rust/shadow-cashu-host"
                 rm -rf "$out/rust/vendor/temporal_rs"
                 mkdir -p "$out/rust/vendor"
                 cp --recursive --no-preserve=ownership ${./rust/vendor/temporal_rs} "$out/rust/vendor/temporal_rs"
@@ -1677,6 +1693,15 @@
             '';
             dummySrc = craneLib.mkDummySrc (runtimeRustCommonArgs // {
               extraDummyScript = ''
+                rm -rf "$out/rust/shadow-runtime-protocol"
+                cp --recursive --no-preserve=ownership ${shadowSystemSrc}/rust/shadow-runtime-protocol "$out/rust/shadow-runtime-protocol"
+                chmod +w -R "$out/rust/shadow-runtime-protocol"
+                rm -rf "$out/rust/shadow-sdk"
+                cp --recursive --no-preserve=ownership ${shadowSystemSrc}/rust/shadow-sdk "$out/rust/shadow-sdk"
+                chmod +w -R "$out/rust/shadow-sdk"
+                rm -rf "$out/rust/shadow-cashu-host"
+                cp --recursive --no-preserve=ownership ${shadowSystemSrc}/rust/shadow-cashu-host "$out/rust/shadow-cashu-host"
+                chmod +w -R "$out/rust/shadow-cashu-host"
                 rm -rf "$out/rust/vendor/temporal_rs"
                 mkdir -p "$out/rust/vendor"
                 cp --recursive --no-preserve=ownership ${./rust/vendor/temporal_rs} "$out/rust/vendor/temporal_rs"
@@ -1728,6 +1753,11 @@
             '';
           };
           leafChecks = {
+            runtimeShadowCashuHostTests = craneLib.cargoTest (mkRuntimeRustTestArgs {
+              pname = "shadow-cashu-host-tests";
+            } // {
+              cargoTestExtraArgs = "-p shadow-cashu-host";
+            });
             runtimeShadowSdkNostrTests = craneLib.cargoTest (mkRuntimeRustTestArgs {
               pname = "shadow-sdk-nostr-tests";
             } // {
