@@ -629,3 +629,15 @@ Related docs:
 - Sidecar rooted-device result on 2026-04-21:
   - rooted `sound` passed end-to-end on `0B191JEC203253` (`build/pixel/runs/ci/20260421T032341Z/summary.json`), so the spare rooted control lane stayed healthy while boot-lab work continued
   - `06241JEC200520` was not a useful tmpfs-`/dev` control immediately afterward because `/dev/dri` was missing after the failed `podcast` preflight path, so treat that phone as a recovery/spare lane until its display stack is clean again
+  - a fresh rooted tmpfs-`/dev` control on `0B191JEC203253` re-proved the exact `raw-vulkan-physical-device-count-query-exit-smoke` scene under the boot-shaped `/dev` profile with `physical_device_count=1`
+  - its openlog is now the best successful control trace for the active seam: the query path opens `/dev/kgsl-3d0`, probes `/dev/dma_heap/system` and `/dev/ion`, emits KGSL ioctls, and still succeeds without any `/dev/dri/*` opens in the query-only scene
+  - that means the active boot-owned blocker is now more specifically about KGSL readiness or skipped vendor-init side effects than about generic DRM nodes or the Vulkan ICD bundle shape
+- Single-attempt / delay falsifier result on 2026-04-21:
+  - a one-attempt parent-probe image on `11151JEC200472` still recovered `metadata_stage_value=parent-probe-result=watchdog-signal-9` and `metadata_probe_stage_value=parent-probe-attempt-1:vkEnumeratePhysicalDevices-count-query`, but it auto-returned to fastboot in `93s` instead of the earlier `157s`
+  - that proves the raw query hang is present on the first attempt; retries only stretched the wall-clock failure window
+  - a second one-attempt image with `orange_gpu_launch_delay_secs=30` still recovered the same durable result pair, only later in time (`124s`), so simple “wait longer after boot” is no longer a serious explanation
+  - next owned-userspace discriminator should therefore target KGSL/device readiness directly, or persist an even smaller pre-query fingerprint, instead of more launch-delay or cleanup variants
+- Pre-exec fingerprint result on 2026-04-21:
+  - the parent-probe metadata directory now also persists a pre-exec fingerprint file (`probe-fingerprint.txt`) with the current `/proc/mounts`, key device-node stats, and the exact ICD JSON excerpt
+  - on the failing boot-owned `11151JEC200472` run, that fingerprint showed `/dev/kgsl-3d0` present with mode `0666`, `/dev/dma_heap/system` and `/dev/ion` both absent, `/dev`, `/proc`, `/sys`, and `/metadata` mounted as expected, and the Freedreno ICD JSON pointing at `/orange-gpu/lib/libvulkan_freedreno.so`
+  - because the successful rooted control on `0B191JEC203253` also tolerates missing `/dev/dma_heap/system` and `/dev/ion`, the seam has moved past “missing node / wrong mount / wrong ICD” and into the first KGSL ioctl or kernel-driver readiness path itself
