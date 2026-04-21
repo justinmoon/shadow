@@ -588,6 +588,20 @@ Related docs:
   - `pixel_boot_oneshot.sh` now attempts late recovery after `wait-adb`, records `transport-timeline.tsv`, surfaces recovery verdicts in `status.json`, and auto-reboots a returned fastboot screen back toward Android so one-shot runs no longer depend on a human pressing `Start`
   - the best recent `11151JEC200472` probe run showed transport `0 fastboot -> 1 none -> 64 fastboot`, then late recovery back into stock Android with `proof_ok=false` and explicit absence reasons (`logcat_last_unavailable`, `pmsg_invalid_argument`, `pstore_empty`)
   - so the seam is no longer “maybe adb was just slow”; the boot-owned GPU lane is really falling back to fastboot/bootloader without leaving a correlated durable breadcrumb in the current channels
+  - a later unattended `09051JEC202061` run of the stage-visual parent-probe image still exposed a late-recovery blind spot: the bundle recorded `wait-adb` plus `transport-timeline.tsv = fastboot -> none`, but the phone later sat in fastboot again outside the watched window
+  - next tooling chunk: keep transport polling and fastboot auto-reboot alive through the late-recovery window, emit an explicit terminal timeline event, and always write a recover-traces failure status even when adb never returns
 - New visible-contract result on 2026-04-21:
   - `orange-init` now carries fixed stage labels plus a four-shape contract (`solid-orange`, `bands-orange`, `checker-orange`, `frame-orange`) instead of repeated identical orange pulses
   - this is intentionally hardcoded in `hello-init` / `drm-rect`, not threaded through the builder as another matrix knob, so watched runs stay comparable across devices and the whole seam remains mechanically deletable later
+  - watched `11151JEC200472` feedback on the stage-visual parent-probe image was `solid-orange -> bands-orange -> black -> fastboot`, with no `checker-orange`
+  - that is the cleanest current proof that the first boot-owned raw `vkEnumeratePhysicalDevices(..., NULL)` count query still does not return successfully under the owned env
+  - because rooted tmpfs-`/dev` controls on `11151JEC200472` and `06241JEC200520` both still succeed on the exact same scene, the best remaining suspects are early-boot readiness or skipped vendor-init side effects, not generic `/dev` topology
+- Overnight boot-lab ledger on 2026-04-21:
+  - allowed serials: `11151JEC200472`, `09051JEC202061`, `06241JEC200520`, `0B191JEC203253`
+  - `11151JEC200472` = primary watched boot lane for new owned-userspace hypotheses
+  - `09051JEC202061` = unattended confirmation / recovery-tooling lane
+  - `06241JEC200520` = rooted tmpfs-`/dev` raw-ash control lane
+  - `0B191JEC203253` = spare rooted control / secondary confirmation lane
+  - all four were restored to rooted Android before the overnight loop continued
+  - rooted tmpfs-`/dev` raw count-query-exit control now also succeeds on `0B191JEC203253`, so the exact rooted control scene is green on three separate devices
+  - keep all four rooted when practical; spend overnight effort on truthful unattended recovery plus durable stage breadcrumbs so the lab does not depend on manual button presses or watched runs
