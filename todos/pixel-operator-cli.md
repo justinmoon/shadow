@@ -54,5 +54,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Pixel diagnostics/log capture (`logs`, `status`, `doctor`, `frame`) were already in `shadowctl`; the actual missing public seam was `prep-settings`.
 - `just pixel-prep-settings` and `just pixel-restore-android` now behave like the rest of the thin public wrappers and route through `shadowctl`.
 - This seam only touched public routing plus a non-root settings helper, so `operator_cli_smoke` plus `pre-commit` were the right pre-land gates; no extra Pixel hardware smoke was needed.
-- The next useful operator-cli slice is likely tighter `shadowctl debug` ownership or retiring more compatibility shell wrappers, not another low-level path-only split.
+- Rooted-Pixel direct-runtime/GPU probe recipes now belong under `shadowctl debug` instead of bypassing it.
+- That probe-routing seam also stayed at the wrapper/dispatch layer, so `operator_cli_smoke` plus `pre-commit` remained the right verification depth.
+- The next useful operator-cli slice is likely retiring more compatibility shell wrappers or one more honest `pixel_common.sh` extraction around display/session takeover helpers, not another low-level path-only split.
 - Do not convert a low-level bash helper to Python just because `shadowctl` is Python. Migrate only when the behavior is user-facing or benefits from typed control flow.

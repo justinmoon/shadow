@@ -34,6 +34,9 @@ SUPPORTED_PIXEL_CI_SUITES = (
 SUPPORTED_PIXEL_DEBUG_TOOLS = (
     "latency",
     "scroll-latency",
+    "runtime-drm",
+    "runtime-drm-gpu-probe",
+    "runtime-drm-gpu-matrix",
     "boot-lab-flash-run",
     "boot-lab-oneshot",
     "boot-lab-recover-traces",
@@ -322,6 +325,15 @@ def pixel_debug_command(
         return script_command("debug/pixel_touch_latency_probe.sh", target=target)
     if tool == "scroll-latency":
         return script_command("debug/pixel_shell_scroll_latency_probe.sh", target=target)
+    if tool == "runtime-drm":
+        return script_command("pixel/pixel_runtime_app_drm.sh", target=target)
+    if tool == "runtime-drm-gpu-probe":
+        command: list[str | pathlib.Path] = [repo_root() / "scripts/pixel/pixel_runtime_app_drm_gpu_probe.sh"]
+        if args.profile:
+            command.append(args.profile.removeprefix("profile="))
+        return command, [("PIXEL_SERIAL", target.serial or target.id)]
+    if tool == "runtime-drm-gpu-matrix":
+        return script_command("pixel/pixel_runtime_app_drm_gpu_matrix.sh", target=target)
     if tool == "boot-lab-flash-run":
         command = [repo_root() / "scripts/pixel/pixel_boot_flash_run.sh"]
         if args.image:
@@ -1812,6 +1824,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  sc -t vm open timeline\n"
             "  sc -t pixel open camera\n"
             "  sc -t pixel prep-settings\n"
+            "  sc -t pixel debug runtime-drm-gpu-probe --profile vulkan_kgsl_first\n"
             "  sc -t pixel ci camera\n"
             "  sc -t pixel debug latency\n"
             "  sc -t pixel debug scroll-latency"
@@ -2075,6 +2088,10 @@ def build_parser() -> argparse.ArgumentParser:
         parents=(target_parser,),
     )
     debug.add_argument("tool", choices=SUPPORTED_PIXEL_DEBUG_TOOLS)
+    debug.add_argument(
+        "--profile",
+        help="runtime-drm-gpu-probe only: GPU profile to probe. Defaults to the script's current default.",
+    )
     debug.add_argument(
         "--image",
         help="boot-lab-flash-run / boot-lab-oneshot only: boot image to use for the experiment.",

@@ -189,6 +189,45 @@ check_output_case \
   env SHADOWCTL_JUST_DRY_RUN=1 just pixel-run --target TESTSERIAL podcast
 
 check_stdout_contains \
+  just_pixel_runtime_drm_routes_through_shadowctl_debug \
+  0 \
+  'exec scripts/shadowctl debug --dry-run -t "$target_arg" runtime-drm' \
+  just --dry-run pixel-runtime-app-drm
+
+check_output_case \
+  just_pixel_runtime_drm_named_serial \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_runtime_app_drm.sh")" \
+  "" \
+  env SHADOWCTL_JUST_DRY_RUN=1 PIXEL_SERIAL=TESTSERIAL just pixel-runtime-app-drm
+
+check_stdout_contains \
+  just_pixel_runtime_drm_gpu_probe_routes_through_shadowctl_debug \
+  0 \
+  'exec scripts/shadowctl debug --dry-run -t "$target_arg" runtime-drm-gpu-probe --profile "vulkan_kgsl_first"' \
+  just --dry-run pixel-runtime-app-drm-gpu-probe
+
+check_output_case \
+  just_pixel_runtime_drm_gpu_probe_named_serial \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s gl_kgsl' "$SCRIPT_DIR/pixel/pixel_runtime_app_drm_gpu_probe.sh")" \
+  "" \
+  env SHADOWCTL_JUST_DRY_RUN=1 PIXEL_SERIAL=TESTSERIAL just pixel-runtime-app-drm-gpu-probe profile=gl_kgsl
+
+check_stdout_contains \
+  just_pixel_runtime_drm_gpu_matrix_routes_through_shadowctl_debug \
+  0 \
+  'exec scripts/shadowctl debug --dry-run -t "$target_arg" runtime-drm-gpu-matrix' \
+  just --dry-run pixel-runtime-app-drm-gpu-matrix
+
+check_output_case \
+  just_pixel_runtime_drm_gpu_matrix_named_serial \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_runtime_app_drm_gpu_matrix.sh")" \
+  "" \
+  env SHADOWCTL_JUST_DRY_RUN=1 PIXEL_SERIAL=TESTSERIAL just pixel-runtime-app-drm-gpu-matrix
+
+check_stdout_contains \
   just_pixel_prep_settings_routes_through_shadowctl \
   0 \
   'exec scripts/shadowctl prep-settings --dry-run -t "$target_arg"' \
@@ -346,6 +385,27 @@ check_output_case \
   "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/debug/pixel_touch_latency_probe.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL latency
+
+check_output_case \
+  shadowctl_pixel_debug_runtime_drm \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_runtime_app_drm.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL runtime-drm
+
+check_output_case \
+  shadowctl_pixel_debug_runtime_drm_gpu_probe \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s vulkan_kgsl_first' "$SCRIPT_DIR/pixel/pixel_runtime_app_drm_gpu_probe.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL runtime-drm-gpu-probe --profile vulkan_kgsl_first
+
+check_output_case \
+  shadowctl_pixel_debug_runtime_drm_gpu_matrix \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/pixel/pixel_runtime_app_drm_gpu_matrix.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL runtime-drm-gpu-matrix
 
 check_output_case \
   shadowctl_pixel_debug_boot_lab_flash_run \

@@ -194,7 +194,17 @@ pixel-build-local-turnip:
 
 # Run the runtime-mode Blitz demo on the rooted Pixel through the guest compositor DRM path
 pixel-runtime-app-drm:
-	@scripts/pixel/pixel_runtime_app_drm.sh
+	@target_arg="${PIXEL_SERIAL:-}"; \
+	if [ -n "${SHADOWCTL_JUST_DRY_RUN:-}" ]; then \
+		if [ -n "$target_arg" ]; then \
+			exec scripts/shadowctl debug --dry-run -t "$target_arg" runtime-drm; \
+		fi; \
+		exec scripts/shadowctl debug --dry-run runtime-drm; \
+	fi; \
+	if [ -n "$target_arg" ]; then \
+		exec scripts/shadowctl debug -t "$target_arg" runtime-drm; \
+	fi; \
+	exec scripts/shadowctl debug runtime-drm
 
 # Restore the Android display stack after a hold-mode rooted takeover run
 pixel-restore-android:
@@ -212,8 +222,28 @@ pixel-restore-android:
 
 # Run one rooted-Pixel runtime direct-gpu probe case with the selected backend profile
 pixel-runtime-app-drm-gpu-probe profile="vulkan_kgsl_first":
-	@PIXEL_RUNTIME_GPU_RENDERER=gpu scripts/pixel/pixel_runtime_app_drm_gpu_probe.sh "{{profile}}"
+	@target_arg="${PIXEL_SERIAL:-}"; \
+	if [ -n "${SHADOWCTL_JUST_DRY_RUN:-}" ]; then \
+		if [ -n "$target_arg" ]; then \
+			exec scripts/shadowctl debug --dry-run -t "$target_arg" runtime-drm-gpu-probe --profile "{{profile}}"; \
+		fi; \
+		exec scripts/shadowctl debug --dry-run runtime-drm-gpu-probe --profile "{{profile}}"; \
+	fi; \
+	if [ -n "$target_arg" ]; then \
+		exec scripts/shadowctl debug -t "$target_arg" runtime-drm-gpu-probe --profile "{{profile}}"; \
+	fi; \
+	exec scripts/shadowctl debug runtime-drm-gpu-probe --profile "{{profile}}"
 
 # Run the rooted-Pixel runtime direct-gpu probe matrix across the current default profiles
 pixel-runtime-app-drm-gpu-matrix:
-	@PIXEL_RUNTIME_GPU_RENDERER=gpu scripts/pixel/pixel_runtime_app_drm_gpu_matrix.sh
+	@target_arg="${PIXEL_SERIAL:-}"; \
+	if [ -n "${SHADOWCTL_JUST_DRY_RUN:-}" ]; then \
+		if [ -n "$target_arg" ]; then \
+			exec scripts/shadowctl debug --dry-run -t "$target_arg" runtime-drm-gpu-matrix; \
+		fi; \
+		exec scripts/shadowctl debug --dry-run runtime-drm-gpu-matrix; \
+	fi; \
+	if [ -n "$target_arg" ]; then \
+		exec scripts/shadowctl debug -t "$target_arg" runtime-drm-gpu-matrix; \
+	fi; \
+	exec scripts/shadowctl debug runtime-drm-gpu-matrix
