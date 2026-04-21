@@ -88,14 +88,18 @@ Related docs:
 - 2026-04-20: VM guest startup validates the runtime manifest and session config together, then treats the session config as the primary source of runtime/service/startup state.
 - 2026-04-20: the legacy VM env export file remains in place only as a compatibility/debug overlay while the compositor and launcher internals still expect env projection.
 - 2026-04-20: `scripts/ci/app_metadata_manifest_smoke.sh` and `just smoke target=vm` cover generation and guest consumption of the new artifact.
+- 2026-04-20: rooted Pixel shell/runtime launch now stages a typed `guest-startup.json` artifact on-device instead of shipping startup state through sourced shell export blobs.
+- 2026-04-20: `shadow-compositor-guest` now requires `schemaVersion` in the typed guest config and treats direct env as a compatibility/debug overlay that merges onto file-provided client env.
+- 2026-04-20: the supported rooted-Pixel path now keeps env projection only for process-boundary values and compatibility holdouts such as app bundle envs, profile selection, socket modes, and explicit debug overrides.
+- 2026-04-20: `scripts/ci/pixel_guest_startup_config_smoke.sh` and `just pre-commit` now cover rooted-Pixel startup-config generation plus env projection filtering.
 
 ## Implementation Notes
 
 - Current repo reality:
   - `runtime/apps.json` is already the strongest config seam in the repo.
   - VM is now artifact-driven through a generated session config, but still retains an env projection layer for compositor/runtime compatibility.
-  - rooted Pixel still relies heavily on shell-built env payloads and wrapper translation layers.
-  - guest startup config parsing is typed once it reaches Rust, but the transport into it is still stringly.
+  - rooted Pixel guest startup is now typed and artifact-driven, but shell app runtime bundle wiring and a few launcher/runtime compatibility vars still project through env.
+  - guest startup config parsing is now file-first in Rust with explicit schema/version checks; env remains an overlay seam rather than the primary transport.
 - Working migration rule:
   - do not start by normalizing every `PIXEL_*` boot/debug/test knob.
   - first fix the supported session surface where config crosses multiple layers and multiple languages.

@@ -127,6 +127,7 @@
       ];
       shadowPixelBootShellCommonPrefixes = [
         "scripts/lib/pixel_common.sh"
+        "scripts/lib/pixel_device_transport_common.sh"
         "scripts/lib/pixel_root_boot_common.sh"
         "scripts/lib/pixel_runtime_session_common.sh"
         "scripts/lib/shadow_common.sh"

@@ -180,9 +180,6 @@ while IFS= read -r env_line; do
 done < <(printf '%s\n' "$shell_gpu_profile_env")
 shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_WGPU_PRESENT_MODE=${SHADOW_WGPU_PRESENT_MODE:-fifo}"
 shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_WGPU_ANTIALIASING=${SHADOW_WGPU_ANTIALIASING:-area}"
-if [[ -n "$extra_guest_env" ]]; then
-  shell_guest_env="${shell_guest_env}"$'\n'"${extra_guest_env}"
-fi
 shell_session_env=$(
   cat <<EOF
 SHADOW_GUEST_START_APP_ID=$shell_app_id
@@ -208,9 +205,6 @@ if [[ -n "$shell_start_app_id" ]]; then
   extra_required_markers="${extra_required_markers}"$'\n''[shadow-guest-compositor] mapped-window'
   extra_required_markers="${extra_required_markers}"$'\n'"[shadow-guest-compositor] surface-app-tracked app=$shell_start_app_id"
 fi
-if [[ -n "$extra_session_env" ]]; then
-  shell_session_env="${shell_session_env}"$'\n'"${extra_session_env}"
-fi
 
 required_markers='[shadow-guest-compositor] touch-ready'
 if [[ -n "$extra_required_markers" ]]; then
@@ -234,8 +228,10 @@ exec env \
   PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME='' \
   PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
   PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
-  PIXEL_GUEST_CLIENT_ENV="$shell_guest_env" \
-  PIXEL_GUEST_SESSION_ENV="$shell_session_env" \
+  PIXEL_GUEST_CONFIG_CLIENT_ENV="$shell_guest_env" \
+  PIXEL_GUEST_CONFIG_SESSION_ENV="$shell_session_env" \
+  PIXEL_GUEST_CLIENT_ENV_OVERLAY="$extra_guest_env" \
+  PIXEL_GUEST_SESSION_ENV_OVERLAY="$extra_session_env" \
   PIXEL_GUEST_PRECREATE_DIRS="$(pixel_runtime_precreate_dirs_lines)" \
   PIXEL_GUEST_FRAME_CAPTURE_MODE="$PIXEL_GUEST_FRAME_CAPTURE_MODE" \
   PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT="$camera_start_command" \

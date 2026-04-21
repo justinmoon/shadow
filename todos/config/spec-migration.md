@@ -76,6 +76,17 @@ Current pain point:
 - `pixel_guest_ui_drm.sh` mutates them further
 - `shadow-session` and `shadow-compositor-guest` reconstruct typed state only after the string transport
 
+Current checkpoint:
+
+- `pixel_guest_ui_drm.sh` now stages a typed `guest-startup.json` artifact on-device for the supported shell/runtime-app path.
+- `shadow-compositor-guest` now loads that file first through `SHADOW_GUEST_SESSION_CONFIG`, validates `schemaVersion`, and only then applies direct env as a compatibility/debug overlay.
+- the supported rooted-Pixel launcher no longer pushes sourced startup export blobs or a device-side wrapper just to reconstruct guest startup state.
+- remaining env projection on the supported Pixel path is explicit:
+  - process-boundary values such as `XKB_CONFIG_ROOT`, `SHADOW_RUNTIME_DIR`, `SHADOW_GUEST_COMPOSITOR_BIN`, `SHADOW_GUEST_COMPOSITOR_ENABLE_DRM`, and the config pointer
+  - app-profile and control-socket compatibility vars such as `SHADOW_SESSION_APP_PROFILE` and `SHADOW_COMPOSITOR_CONTROL_SOCKET_MODE`
+  - shell app bundle envs that still exist until runtime bundle lookup is fully config-backed
+  - deliberate debug overrides such as `SHADOW_GUEST_KEYBOARD_SEAT` and `SHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE`
+
 Deliverables:
 
 - generated Pixel session config artifact

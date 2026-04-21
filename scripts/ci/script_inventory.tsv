@@ -50,6 +50,7 @@ scripts/pixel/pixel_runtime_app_camera_drm.sh	pixel	Private Pixel runtime camera
 scripts/pixel/pixel_runtime_app_drm.sh	pixel	Private generic Pixel runtime app runner.
 scripts/pixel/pixel_runtime_app_nostr_gm_drm.sh	pixel	Private Pixel runtime Nostr GM app runner.
 scripts/pixel/pixel_runtime_app_nostr_timeline_drm.sh	pixel	Private Pixel runtime Nostr timeline app runner.
+scripts/ci/pixel_guest_startup_config_smoke.sh	ci	Host smoke for rooted-Pixel JSON startup-config generation and env projection filtering.
 scripts/ci/pixel_runtime_app_nostr_timeline_local_smoke.sh	ci	Pixel CI Nostr timeline smoke against a host-local relay.
 scripts/pixel/pixel_runtime_app_podcast_player_drm.sh	pixel	Private Pixel runtime podcast app runner.
 scripts/pixel/pixel_runtime_app_sound_drm.sh	pixel	Private Pixel runtime sound app runner.

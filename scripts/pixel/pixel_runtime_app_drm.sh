@@ -160,9 +160,6 @@ while IFS= read -r env_line; do
 done < <(printf '%s\n' "$runtime_gpu_profile_env")
 runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_WGPU_PRESENT_MODE=${SHADOW_WGPU_PRESENT_MODE:-fifo}"
 runtime_guest_env="${runtime_guest_env}"$'\n'"SHADOW_WGPU_ANTIALIASING=${SHADOW_WGPU_ANTIALIASING:-area}"
-if [[ -n "$extra_guest_env" ]]; then
-  runtime_guest_env="${runtime_guest_env}"$'\n'"${extra_guest_env}"
-fi
 
 runtime_session_env=$(
   cat <<EOF
@@ -172,9 +169,6 @@ SHADOW_GUEST_COMPOSITOR_TOPLEVEL_WIDTH=$runtime_surface_width
 SHADOW_GUEST_COMPOSITOR_TOPLEVEL_HEIGHT=$runtime_surface_height
 EOF
 )
-if [[ -n "$extra_session_env" ]]; then
-  runtime_session_env="${runtime_session_env}"$'\n'"${extra_session_env}"
-fi
 
 required_markers='runtime-session-ready'
 if [[ -n "$extra_required_markers" ]]; then
@@ -213,8 +207,10 @@ PIXEL_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT=1 \
 PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE='' \
 PIXEL_GUEST_SESSION_TIMEOUT_SECS="$PIXEL_GUEST_SESSION_TIMEOUT_SECS" \
 PIXEL_GUEST_SESSION_EXIT_TIMEOUT_SECS="$runtime_session_exit_timeout_secs" \
-PIXEL_GUEST_CLIENT_ENV="$runtime_guest_env" \
-PIXEL_GUEST_SESSION_ENV="$runtime_session_env" \
+PIXEL_GUEST_CONFIG_CLIENT_ENV="$runtime_guest_env" \
+PIXEL_GUEST_CONFIG_SESSION_ENV="$runtime_session_env" \
+PIXEL_GUEST_CLIENT_ENV_OVERLAY="$extra_guest_env" \
+PIXEL_GUEST_SESSION_ENV_OVERLAY="$extra_session_env" \
 PIXEL_GUEST_PRECREATE_DIRS="$(pixel_runtime_precreate_dirs_lines)" \
 PIXEL_GUEST_FRAME_CAPTURE_MODE="$PIXEL_GUEST_FRAME_CAPTURE_MODE" \
 PIXEL_VERIFY_FORBIDDEN_MARKERS="$forbidden_markers" \

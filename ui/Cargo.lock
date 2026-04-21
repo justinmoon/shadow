@@ -4408,6 +4408,7 @@ dependencies = [
  "kurbo 0.13.0",
  "libc",
  "peniko 0.6.0",
+ "serde",
  "serde_json",
  "shadow-blitz-demo",
  "shadow-compositor-common",

@@ -30,8 +30,10 @@ compositor_exit_on_first_frame="${PIXEL_GUEST_COMPOSITOR_EXIT_ON_FIRST_FRAME-1}"
 compositor_exit_on_client_disconnect="${PIXEL_GUEST_COMPOSITOR_EXIT_ON_CLIENT_DISCONNECT-}"
 client_exit_on_configure="${PIXEL_GUEST_CLIENT_EXIT_ON_CONFIGURE-1}"
 session_timeout_secs="${PIXEL_GUEST_SESSION_TIMEOUT_SECS-}"
-guest_client_env="${PIXEL_GUEST_CLIENT_ENV-}"
-guest_session_env="${PIXEL_GUEST_SESSION_ENV-}"
+guest_config_client_env="${PIXEL_GUEST_CONFIG_CLIENT_ENV-}"
+guest_config_session_env="${PIXEL_GUEST_CONFIG_SESSION_ENV-}"
+guest_client_env_overlay="${PIXEL_GUEST_CLIENT_ENV_OVERLAY-}"
+guest_session_env_overlay="${PIXEL_GUEST_SESSION_ENV_OVERLAY-}"
 frame_capture_mode="${PIXEL_GUEST_FRAME_CAPTURE_MODE-}"
 guest_precreate_dirs="${PIXEL_GUEST_PRECREATE_DIRS-}"
 guest_pre_session_device_script="${PIXEL_GUEST_PRE_SESSION_DEVICE_SCRIPT-}"
@@ -97,21 +99,6 @@ case "$frame_capture_mode" in
     exit 2
     ;;
 esac
-
-if [[ "$frame_capture_mode" == "publish" ]]; then
-  if [[ -n "$guest_session_env" ]]; then
-    guest_session_env="${guest_session_env}"$'\n''SHADOW_GUEST_FRAME_ARTIFACTS=1'
-  else
-    guest_session_env='SHADOW_GUEST_FRAME_ARTIFACTS=1'
-  fi
-fi
-if [[ "$frame_capture_mode" == "request" ]]; then
-  if [[ -n "$guest_session_env" ]]; then
-    guest_session_env="${guest_session_env}"$'\n''SHADOW_GUEST_FRAME_SNAPSHOT_CACHE=1'
-  else
-    guest_session_env='SHADOW_GUEST_FRAME_SNAPSHOT_CACHE=1'
-  fi
-fi
 
 if [[ -n "$host_pid_path" ]]; then
   mkdir -p "$(dirname "$host_pid_path")"
@@ -371,20 +358,62 @@ if [[ -z "$skip_push" ]]; then
   "$SCRIPT_DIR/pixel/pixel_push.sh"
 fi
 
-guest_session_launch_env="$(
-  pixel_guest_ui_session_env_words \
-    "$runtime_dir" \
-    "$compositor_dst" \
-    "$client_dst" \
-    "$frame_path" \
-    "$compositor_exit_on_first_frame" \
-    "$compositor_exit_on_client_disconnect" \
-    "$client_exit_on_configure" \
-    "$guest_client_env" \
-    "$guest_session_env"
-)"
+startup_config_host_path="$run_dir/guest-startup.json"
+startup_config_dst="$(pixel_guest_startup_config_dst "$(basename "$run_dir")-$$")"
+guest_config_session_env_for_config="$guest_config_session_env"
+while IFS= read -r env_line; do
+  [[ -n "$env_line" ]] || continue
+  if [[ -n "$guest_config_session_env_for_config" ]]; then
+    guest_config_session_env_for_config="${guest_config_session_env_for_config}"$'\n'"$env_line"
+  else
+    guest_config_session_env_for_config="$env_line"
+  fi
+done < <(pixel_guest_session_overlay_config_env_lines "$guest_session_env_overlay")
+guest_session_env_passthrough="$(pixel_guest_session_overlay_passthrough_env_lines "$guest_session_env_overlay")"
+guest_client_launch_dst="$client_dst"
+guest_client_override="$(pixel_env_assignment_last_value SHADOW_GUEST_CLIENT "$guest_config_session_env_for_config" || true)"
+if [[ -n "$guest_client_override" ]]; then
+  guest_client_launch_dst="$guest_client_override"
+fi
+
+pixel_write_guest_ui_startup_config \
+  "$startup_config_host_path" \
+  "$runtime_dir" \
+  "$client_dst" \
+  "$compositor_exit_on_first_frame" \
+  "$compositor_exit_on_client_disconnect" \
+  "$client_exit_on_configure" \
+  "$guest_config_client_env" \
+  "$guest_config_session_env_for_config" \
+  "$frame_path" \
+  "$frame_capture_mode"
+pixel_validate_env_assignment_lines "guest client overlay env" "$guest_client_env_overlay"
+pixel_validate_env_assignment_lines "guest session overlay env" "$guest_session_env_overlay"
+pixel_push_device_file_verified "$serial" "$startup_config_host_path" "$startup_config_dst" 0644
+
+guest_session_launch_env_args=(
+  "XKB_CONFIG_ROOT=$(pixel_runtime_xkb_config_root)"
+  "SHADOW_SESSION_MODE=guest-ui"
+  "SHADOW_RUNTIME_DIR=$runtime_dir"
+  "SHADOW_GUEST_SESSION_CONFIG=$startup_config_dst"
+  "SHADOW_GUEST_COMPOSITOR_BIN=$compositor_dst"
+  "SHADOW_GUEST_COMPOSITOR_ENABLE_DRM=1"
+  "SHADOW_GUEST_CLIENT=$guest_client_launch_dst"
+)
+if [[ -n "$guest_client_env_overlay" ]]; then
+  guest_session_launch_env_args+=("SHADOW_GUEST_CLIENT_ENV=$guest_client_env_overlay")
+fi
+while IFS= read -r env_line; do
+  [[ -n "$env_line" ]] || continue
+  guest_session_launch_env_args+=("$env_line")
+done < <(pixel_guest_session_launch_env_lines "$guest_config_session_env")
+while IFS= read -r env_line; do
+  [[ -n "$env_line" ]] || continue
+  guest_session_launch_env_args+=("$env_line")
+done < <(printf '%s\n' "$guest_session_env_passthrough")
+guest_session_launch_env="$(pixel_shell_words_quoted "${guest_session_launch_env_args[@]}")"
 guest_precreate_dir_words="$(pixel_lines_quoted "$guest_precreate_dirs")"
-session_command_word="$(printf '%q' "$session_dst")"
+session_command_word="$(pixel_shell_words_quoted "$session_dst")"
 
 pixel_capture_props "$serial" "$run_dir/device-props.txt"
 pixel_capture_processes "$serial" "$run_dir/processes-before.txt"
@@ -400,6 +429,7 @@ ${guest_precreate_dir_words:+for prep_dir in ${guest_precreate_dir_words}; do mk
 ${guest_pre_session_device_script:+$guest_pre_session_device_script}
 ${session_timeout_secs:+timeout $session_timeout_secs }env ${guest_session_launch_env}${session_command_word}
 status=\$?
+rm -f '$startup_config_dst'
 $(if [[ -n "$restore_android" && "$restore_in_session" != "0" ]]; then pixel_takeover_start_services_script; fi)
 exit \$status
 EOF
