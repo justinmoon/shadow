@@ -162,7 +162,9 @@ mod tests {
 
     #[test]
     fn prompt_response_from_env_returns_configured_action() {
-        let _guard = test_env_lock().lock().expect("lock env");
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         std::env::set_var(PROMPT_RESPONSE_ACTION_ID_ENV, "allow_once");
 
         let response = prompt_response_from_env(&SystemPromptRequest {
@@ -193,7 +195,9 @@ mod tests {
 
     #[test]
     fn prompt_response_from_env_rejects_unknown_action() {
-        let _guard = test_env_lock().lock().expect("lock env");
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         std::env::set_var(PROMPT_RESPONSE_ACTION_ID_ENV, "always_allow");
 
         let error = prompt_response_from_env(&SystemPromptRequest {

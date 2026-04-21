@@ -252,14 +252,17 @@ mod tests {
         std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
         std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
 
-        let output = f();
+        let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
 
         std::env::remove_var(NOSTR_DB_PATH_ENV);
         std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
         std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
         std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
         let _ = fs::remove_dir_all(&temp_dir);
-        output
+        match output {
+            Ok(output) => output,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
     }
 
     fn with_temp_session_config<T>(f: impl FnOnce(PathBuf, PathBuf) -> T) -> T {
@@ -292,14 +295,19 @@ mod tests {
         std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
         std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
 
-        let output = f(db_path.clone(), account_path.clone());
+        let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            f(db_path.clone(), account_path.clone())
+        }));
 
         std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
         std::env::remove_var(NOSTR_DB_PATH_ENV);
         std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
         std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
         let _ = fs::remove_dir_all(&temp_dir);
-        output
+        match output {
+            Ok(output) => output,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
     }
 
     fn decode_ok<T>(encoded: &str) -> T

@@ -1781,6 +1781,7 @@
               pname = "shadow-nostr-host-tests";
             } // {
               cargoTestExtraArgs = "-p shadow-nostr-host";
+              nativeBuildInputs = runtimeRustCommonArgs.nativeBuildInputs ++ [ pkgs.nak ];
             });
             runtimeShadowSdkNostrTests = craneLib.cargoTest (mkRuntimeRustTestArgs {
               pname = "shadow-sdk-nostr-tests";

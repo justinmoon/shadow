@@ -441,6 +441,8 @@ mod tests {
         .expect("write session config");
         std::env::set_var(RUNTIME_SESSION_CONFIG_ENV, &config_path);
         std::env::set_var(NOSTR_DB_PATH_ENV, env_db_dir.join("runtime-nostr.sqlite3"));
+        std::env::remove_var(SIGNER_POLICY_PATH_ENV);
+        std::env::remove_var(shadow_sdk::services::nostr::NOSTR_ACCOUNT_PATH_ENV);
 
         assert_eq!(
             signer_policy_path().as_deref(),
@@ -453,6 +455,8 @@ mod tests {
 
         std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
         std::env::remove_var(NOSTR_DB_PATH_ENV);
+        std::env::remove_var(SIGNER_POLICY_PATH_ENV);
+        std::env::remove_var(shadow_sdk::services::nostr::NOSTR_ACCOUNT_PATH_ENV);
         let _ = fs::remove_dir_all(temp_dir);
     }
 
