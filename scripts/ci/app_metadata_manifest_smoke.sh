@@ -411,6 +411,64 @@ else:
 PY
 }
 
+check_runtime_session_env_tracks_camera_service_config() {
+  local manifest_path="$1"
+  local artifact_root env_output_path session_config_path
+  artifact_root="$(mktemp -d "${TMPDIR:-/tmp}/app-metadata-runtime-camera-artifacts.XXXXXX")"
+  TMP_FILES+=("$artifact_root")
+  env_output_path="$(mktemp_tracked)"
+  session_config_path="$artifact_root/session-config.json"
+
+  (
+    cd "$REPO_ROOT"
+    env SHADOW_APP_METADATA_MANIFEST="$manifest_path" \
+      SHADOW_RUNTIME_CAMERA_ENDPOINT="127.0.0.1:37656" \
+      SHADOW_RUNTIME_CAMERA_ALLOW_MOCK="1" \
+      SHADOW_RUNTIME_CAMERA_TIMEOUT_MS="45000" \
+      scripts/runtime/runtime_prepare_host_session_env.sh \
+        --system-binary-path /tmp/shadow-system \
+        --artifact-root "$artifact_root" \
+        --artifact-guest-root /opt/shadow-runtime \
+        --session-config-out "$session_config_path" \
+        >"$env_output_path"
+  )
+
+  python3 - "$env_output_path" "$session_config_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+env_output_path = Path(sys.argv[1])
+session_config_path = Path(sys.argv[2])
+
+with session_config_path.open("r", encoding="utf-8") as handle:
+    config = json.load(handle)
+
+services = config.get("services")
+if not isinstance(services, dict):
+    raise SystemExit("runtime session config services must be an object")
+camera = services.get("camera")
+if not isinstance(camera, dict):
+    raise SystemExit("runtime session config camera service must be an object")
+if camera.get("endpoint") != "127.0.0.1:37656":
+    raise SystemExit("runtime session config camera endpoint mismatch")
+if camera.get("allowMock") is not True:
+    raise SystemExit("runtime session config camera allowMock mismatch")
+if camera.get("timeoutMs") != 45000:
+    raise SystemExit("runtime session config camera timeout mismatch")
+
+env_text = env_output_path.read_text(encoding="utf-8")
+required_exports = [
+    "export SHADOW_RUNTIME_CAMERA_ENDPOINT='127.0.0.1:37656'",
+    "export SHADOW_RUNTIME_CAMERA_ALLOW_MOCK='1'",
+    "export SHADOW_RUNTIME_CAMERA_TIMEOUT_MS='45000'",
+]
+for export in required_exports:
+    if export not in env_text:
+        raise SystemExit(f"session env missing camera export: {export}")
+PY
+}
+
 write_rust_fixture() {
   local manifest_path
   manifest_path="$(mktemp_tracked)"
@@ -885,5 +943,7 @@ check_runtime_session_env_case \
   runtime_prepare_host_session_env_tracks_mixed_profile_typescript_apps \
   "$mixed_model_manifest" \
   "mixed-ts"
+
+check_runtime_session_env_tracks_camera_service_config "$mixed_model_manifest"
 
 printf 'app_metadata_manifest_smoke: ok\n'

@@ -7,9 +7,21 @@ use serde::Deserialize;
 pub const RUNTIME_SESSION_CONFIG_ENV: &str = "SHADOW_RUNTIME_SESSION_CONFIG";
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct RuntimeCameraServiceConfig {
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default, rename = "allowMock")]
+    pub allow_mock: Option<bool>,
+    #[serde(default, rename = "timeoutMs")]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct RuntimeServicesConfig {
     #[serde(default, rename = "audioBackend")]
     pub audio_backend: Option<String>,
+    #[serde(default)]
+    pub camera: Option<RuntimeCameraServiceConfig>,
     #[serde(default, rename = "cashuDataDir")]
     pub cashu_data_dir: Option<PathBuf>,
     #[serde(default, rename = "nostrDbPath")]
@@ -119,6 +131,11 @@ mod tests {
                 "schemaVersion": 1,
                 "services": {
                     "audioBackend": "memory",
+                    "camera": {
+                        "endpoint": "127.0.0.1:37656",
+                        "allowMock": true,
+                        "timeoutMs": 45000
+                    },
                     "cashuDataDir": "/tmp/runtime-cashu",
                     "nostrDbPath": "/tmp/runtime-nostr.sqlite3",
                     "nostrServiceSocket": "/tmp/runtime-nostr.sock"
@@ -132,6 +149,10 @@ mod tests {
                     .expect("load config")
                     .expect("services config");
                 assert_eq!(services.audio_backend.as_deref(), Some("memory"));
+                let camera = services.camera.expect("camera config");
+                assert_eq!(camera.endpoint.as_deref(), Some("127.0.0.1:37656"));
+                assert_eq!(camera.allow_mock, Some(true));
+                assert_eq!(camera.timeout_ms, Some(45_000));
                 assert_eq!(
                     services.cashu_data_dir.as_deref(),
                     Some(Path::new("/tmp/runtime-cashu"))

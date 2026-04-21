@@ -294,6 +294,17 @@ emit("SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET", services["nostrServiceSocket"])
 audio_backend = services.get("audioBackend")
 if isinstance(audio_backend, str) and audio_backend:
     emit("SHADOW_RUNTIME_AUDIO_BACKEND", audio_backend)
+camera = services.get("camera")
+if isinstance(camera, dict):
+    endpoint = camera.get("endpoint")
+    if isinstance(endpoint, str) and endpoint:
+        emit("SHADOW_RUNTIME_CAMERA_ENDPOINT", endpoint)
+    allow_mock = camera.get("allowMock")
+    if isinstance(allow_mock, bool):
+        emit("SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "1" if allow_mock else "0")
+    timeout_ms = camera.get("timeoutMs")
+    if isinstance(timeout_ms, int) and timeout_ms > 0:
+        emit("SHADOW_RUNTIME_CAMERA_TIMEOUT_MS", str(timeout_ms))
 
 runtime = config["runtime"]
 default_bundle_path = runtime.get("defaultBundlePath")
@@ -339,6 +350,8 @@ PY
             echo "runtime nostr socket=$SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET"
             echo "runtime cashu dir=$SHADOW_RUNTIME_CASHU_DATA_DIR"
             echo "runtime audio backend=''${SHADOW_RUNTIME_AUDIO_BACKEND:-unset}"
+            echo "runtime camera endpoint=''${SHADOW_RUNTIME_CAMERA_ENDPOINT:-unset}"
+            echo "runtime camera allow_mock=''${SHADOW_RUNTIME_CAMERA_ALLOW_MOCK:-unset}"
 
             ${shadowUiVmSessionPackage}/bin/shadow-compositor &
             compositor_pid=$!
@@ -427,6 +440,9 @@ PY
               "export SHADOW_RUNTIME_NOSTR_DB_PATH=\"$SHADOW_RUNTIME_NOSTR_DB_PATH\"" \
               "export SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=\"$SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET\"" \
               "export SHADOW_RUNTIME_AUDIO_BACKEND=\"''${SHADOW_RUNTIME_AUDIO_BACKEND:-}\"" \
+              "export SHADOW_RUNTIME_CAMERA_ENDPOINT=\"''${SHADOW_RUNTIME_CAMERA_ENDPOINT:-}\"" \
+              "export SHADOW_RUNTIME_CAMERA_ALLOW_MOCK=\"''${SHADOW_RUNTIME_CAMERA_ALLOW_MOCK:-}\"" \
+              "export SHADOW_RUNTIME_CAMERA_TIMEOUT_MS=\"''${SHADOW_RUNTIME_CAMERA_TIMEOUT_MS:-}\"" \
               "export SHADOW_SYSTEM_BINARY_PATH=\"$system_path\"" \
               "export WAYLAND_DISPLAY=\"$nested_wayland\"" \
               "export SHADOW_COMPOSITOR_CONTROL=\"$control_socket\"" \

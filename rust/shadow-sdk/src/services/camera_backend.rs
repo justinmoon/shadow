@@ -7,6 +7,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::services::session_config::{self, RUNTIME_SESSION_CONFIG_ENV};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use image::ImageFormat;
@@ -203,26 +204,50 @@ struct CameraHostConfig {
 }
 
 impl CameraHostConfig {
-    fn from_env() -> Self {
-        let endpoint = env::var(CAMERA_ENDPOINT_ENV)
-            .ok()
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty());
-        let timeout = env::var(CAMERA_TIMEOUT_MS_ENV)
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
+    fn from_env() -> Result<Self, CameraHostError> {
+        let camera = session_config::runtime_services_config()
+            .map_err(|error| CameraHostError::other(format!("camera runtime host: {error}")))?
+            .and_then(|services| services.camera);
+        let allow_mock = camera
+            .as_ref()
+            .and_then(|camera| camera.allow_mock)
+            .unwrap_or_else(|| {
+                env::var(CAMERA_ALLOW_MOCK_ENV)
+                    .ok()
+                    .is_some_and(|value| parse_truthy_env(&value))
+            });
+        let endpoint = camera
+            .as_ref()
+            .and_then(|camera| camera.endpoint.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| if allow_mock {
+                None
+            } else {
+                env::var(CAMERA_ENDPOINT_ENV)
+                    .ok()
+                    .map(|value| value.trim().to_owned())
+                    .filter(|value| !value.is_empty())
+            });
+        let timeout = camera
+            .as_ref()
+            .and_then(|camera| camera.timeout_ms)
             .filter(|value| *value > 0)
             .map(Duration::from_millis)
+            .or_else(|| {
+                env::var(CAMERA_TIMEOUT_MS_ENV)
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .filter(|value| *value > 0)
+                    .map(Duration::from_millis)
+            })
             .unwrap_or_else(|| Duration::from_millis(DEFAULT_TIMEOUT_MS));
-        let allow_mock = env::var(CAMERA_ALLOW_MOCK_ENV)
-            .ok()
-            .is_some_and(|value| parse_truthy_env(&value));
-
-        Self {
+        Ok(Self {
             endpoint,
             allow_mock,
             timeout,
-        }
+        })
     }
 
     fn list_cameras(&self) -> Result<Vec<CameraDevice>, CameraHostError> {
@@ -447,22 +472,22 @@ fn parse_truthy_env(value: &str) -> bool {
 
 fn missing_camera_backend_error() -> CameraHostError {
     CameraHostError::backend_not_configured(format!(
-        "camera backend not configured; set {CAMERA_ENDPOINT_ENV} for live capture or {CAMERA_ALLOW_MOCK_ENV}=1 for explicit mock mode"
+        "camera backend not configured; set {CAMERA_ENDPOINT_ENV}, configure {RUNTIME_SESSION_CONFIG_ENV}, or set {CAMERA_ALLOW_MOCK_ENV}=1 for explicit mock mode"
     ))
 }
 
 pub fn list_cameras() -> Result<Vec<CameraDevice>, CameraHostError> {
-    CameraHostConfig::from_env().list_cameras()
+    CameraHostConfig::from_env()?.list_cameras()
 }
 
 pub fn capture_still(request: CaptureRequest) -> Result<CaptureStillReceipt, CameraHostError> {
-    CameraHostConfig::from_env().capture_still(request)
+    CameraHostConfig::from_env()?.capture_still(request)
 }
 
 pub fn capture_preview_frame(
     request: CaptureRequest,
 ) -> Result<CaptureStillReceipt, CameraHostError> {
-    CameraHostConfig::from_env().capture_preview_frame(request)
+    CameraHostConfig::from_env()?.capture_preview_frame(request)
 }
 
 pub fn decode_qr_code(
@@ -825,6 +850,7 @@ pub(crate) fn clear_test_camera_env() {
         CAMERA_ENDPOINT_ENV,
         CAMERA_MOCK_QR_PAYLOAD_ENV,
         CAMERA_TIMEOUT_MS_ENV,
+        RUNTIME_SESSION_CONFIG_ENV,
     ] {
         std::env::remove_var(key);
     }
@@ -838,12 +864,15 @@ mod tests {
         decode_image_data_url, decode_qr_code, decode_qr_code_from_image_data_url,
         image_format_for_mime_type, list_cameras, missing_camera_backend_error,
         normalize_rotation_degrees, parse_truthy_env, test_camera_env_lock, BrokerCameraDevice,
-        BrokerListResponse, CameraHostErrorKind, CaptureRequest, DecodeQrCodeRequest,
-        BASE64_STANDARD, CAMERA_ALLOW_MOCK_ENV, CAMERA_ENDPOINT_ENV, CAMERA_MOCK_QR_PAYLOAD_ENV,
+        BrokerListResponse, CameraHostConfig, CameraHostErrorKind, CaptureRequest,
+        DecodeQrCodeRequest, BASE64_STANDARD, CAMERA_ALLOW_MOCK_ENV, CAMERA_ENDPOINT_ENV,
+        CAMERA_MOCK_QR_PAYLOAD_ENV, CAMERA_TIMEOUT_MS_ENV,
     };
+    use crate::services::session_config::RUNTIME_SESSION_CONFIG_ENV;
     use base64::Engine as _;
     use image::{DynamicImage, ImageBuffer, ImageFormat, Luma, Rgb};
     use std::io::Cursor;
+    use std::time::Duration;
 
     fn sample_png_base64(width: u32, height: u32) -> String {
         let image = DynamicImage::ImageRgb8(ImageBuffer::from_fn(width, height, |x, _| {
@@ -870,6 +899,27 @@ mod tests {
             "data:image/png;base64,{}",
             BASE64_STANDARD.encode(output.into_inner())
         )
+    }
+
+    fn with_temp_session_config<T>(contents: &str, f: impl FnOnce() -> T) -> T {
+        let _guard = test_camera_env_lock().lock().expect("env lock");
+        clear_test_camera_env();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let temp_dir =
+            std::env::temp_dir().join(format!("shadow-camera-session-config-{timestamp}"));
+        let config_path = temp_dir.join("session-config.json");
+        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+        std::fs::write(&config_path, contents).expect("write session config");
+        std::env::set_var(RUNTIME_SESSION_CONFIG_ENV, &config_path);
+
+        let output = f();
+
+        clear_test_camera_env();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        output
     }
 
     #[test]
@@ -912,6 +962,7 @@ mod tests {
         assert_eq!(error.kind(), CameraHostErrorKind::BackendNotConfigured);
         assert!(error.to_string().contains(CAMERA_ENDPOINT_ENV));
         assert!(error.to_string().contains(CAMERA_ALLOW_MOCK_ENV));
+        assert!(error.to_string().contains(RUNTIME_SESSION_CONFIG_ENV));
     }
 
     #[test]
@@ -957,6 +1008,51 @@ mod tests {
         assert_eq!(error.kind(), CameraHostErrorKind::BackendNotConfigured);
         assert!(error.to_string().contains(CAMERA_ENDPOINT_ENV));
         assert!(error.to_string().contains(CAMERA_ALLOW_MOCK_ENV));
+    }
+
+    #[test]
+    fn native_api_prefers_session_config_mock_mode_over_env() {
+        with_temp_session_config(
+            r#"{
+                "services": {
+                    "camera": {
+                        "allowMock": true,
+                        "timeoutMs": 45000
+                    }
+                }
+            }"#,
+            || {
+                std::env::set_var(CAMERA_ALLOW_MOCK_ENV, "0");
+                std::env::set_var(CAMERA_ENDPOINT_ENV, "127.0.0.1:1");
+                std::env::set_var(CAMERA_TIMEOUT_MS_ENV, "5");
+
+                let cameras = list_cameras().expect("mock cameras from config");
+                assert_eq!(cameras.len(), 1);
+                let config = CameraHostConfig::from_env().expect("resolve camera config");
+                assert!(config.allow_mock);
+                assert_eq!(config.endpoint, None);
+                assert_eq!(config.timeout, Duration::from_millis(45_000));
+            },
+        );
+    }
+
+    #[test]
+    fn native_api_prefers_session_config_false_over_env_mock_mode() {
+        with_temp_session_config(
+            r#"{
+                "services": {
+                    "camera": {
+                        "allowMock": false
+                    }
+                }
+            }"#,
+            || {
+                std::env::set_var(CAMERA_ALLOW_MOCK_ENV, "1");
+
+                let error = list_cameras().expect_err("config false should beat env mock");
+                assert_eq!(error.kind(), CameraHostErrorKind::BackendNotConfigured);
+            },
+        );
     }
 
     #[test]

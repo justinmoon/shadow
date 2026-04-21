@@ -28,6 +28,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from html.parser import HTMLParser
 
@@ -43,9 +44,28 @@ else:
     system_binary_name = os.path.basename(binary_path)
     system_package_attr = session.get("systemPackageAttr")
 
+config_dir = tempfile.TemporaryDirectory()
+session_config_path = os.path.join(config_dir.name, "session-config.json")
+with open(session_config_path, "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "services": {
+                "camera": {
+                    "allowMock": True,
+                }
+            }
+        },
+        handle,
+    )
+
 process = subprocess.Popen(
     [binary_path, "--session", bundle_path],
-    env={**os.environ, "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK": "1"},
+    env={
+        **os.environ,
+        "SHADOW_RUNTIME_SESSION_CONFIG": session_config_path,
+        "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK": "0",
+        "SHADOW_RUNTIME_CAMERA_ENDPOINT": "127.0.0.1:1",
+    },
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
@@ -185,13 +205,15 @@ except subprocess.TimeoutExpired:
         process.kill()
         return_code = process.wait(timeout=5)
 if return_code not in (0, -15, -9, None):
+    config_dir.cleanup()
     raise SystemExit(f"runtime-app-camera-smoke: runtime host exited {return_code}\n{stderr}")
+config_dir.cleanup()
 
 print(
     json.dumps(
         {
             "bundlePath": bundle_path,
-            "result": "camera-explicit-mock-capture-ok",
+            "result": "camera-session-config-mock-capture-ok",
             "systemBinaryName": system_binary_name,
             "systemPackageAttr": system_package_attr,
         },

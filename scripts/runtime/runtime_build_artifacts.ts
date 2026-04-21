@@ -15,6 +15,9 @@ type CliOptions = {
   artifactGuestRoot: string;
   artifactRoot: string;
   audioBackend: string;
+  cameraAllowMock: string;
+  cameraEndpoint: string;
+  cameraTimeoutMs: string;
   bundleRewriteFrom: string;
   bundleRewriteTo: string;
   cacheDir: string;
@@ -99,6 +102,12 @@ type RuntimeSessionAppConfig = {
   config: unknown;
 };
 
+type SessionCameraConfig = {
+  allowMock: boolean | null;
+  endpoint: string | null;
+  timeoutMs: number | null;
+};
+
 type SessionConfig = {
   artifacts: {
     guestRoot: string | null;
@@ -114,6 +123,7 @@ type SessionConfig = {
   schemaVersion: 1;
   services: {
     audioBackend: string | null;
+    camera: SessionCameraConfig | null;
     cashuDataDir: string;
     nostrDbPath: string;
     nostrServiceSocket: string;
@@ -160,6 +170,7 @@ async function main() {
     stateDir: await resolveStateDir(options.stateDir),
   };
   const sessionConfig = buildSessionConfig(manifest, {
+    camera: buildCameraServiceConfig(options),
     startupAppId: options.startupAppId || null,
   });
 
@@ -174,9 +185,12 @@ async function main() {
   }
 
   if (options.writeSessionConfig) {
-    await Deno.mkdir(path.dirname(path.resolve(cwd, options.writeSessionConfig)), {
-      recursive: true,
-    });
+    await Deno.mkdir(
+      path.dirname(path.resolve(cwd, options.writeSessionConfig)),
+      {
+        recursive: true,
+      },
+    );
     await Deno.writeTextFile(
       path.resolve(cwd, options.writeSessionConfig),
       `${JSON.stringify(sessionConfig, null, 2)}\n`,
@@ -570,7 +584,7 @@ async function resolveStateDir(override: string): Promise<string> {
 
 function buildSessionConfig(
   manifest: ArtifactManifest,
-  options: { startupAppId: string | null },
+  options: { camera: SessionCameraConfig | null; startupAppId: string | null },
 ): SessionConfig {
   const defaultApp = defaultRuntimeAppEntry(manifest.apps);
   return {
@@ -597,6 +611,7 @@ function buildSessionConfig(
     schemaVersion: 1,
     services: {
       audioBackend: manifest.audioBackend,
+      camera: options.camera,
       cashuDataDir: path.join(manifest.stateDir, "runtime-cashu"),
       nostrDbPath: path.join(manifest.stateDir, "runtime-nostr.sqlite3"),
       nostrServiceSocket: path.join(manifest.stateDir, "runtime-nostr.sock"),
@@ -629,7 +644,8 @@ function buildEnvScript(
   const exports: Record<string, string> = {
     SHADOW_RUNTIME_CASHU_DATA_DIR: sessionConfig.services.cashuDataDir,
     SHADOW_RUNTIME_NOSTR_DB_PATH: sessionConfig.services.nostrDbPath,
-    SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET: sessionConfig.services.nostrServiceSocket,
+    SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET:
+      sessionConfig.services.nostrServiceSocket,
   };
   if (sessionConfig.runtime.defaultBundlePath) {
     exports.SHADOW_RUNTIME_APP_BUNDLE_PATH = rewriteBundlePath(
@@ -638,7 +654,8 @@ function buildEnvScript(
     );
   }
   if (
-    sessionConfig.profile === "vm-shell" || sessionConfig.profile === "pixel-shell"
+    sessionConfig.profile === "vm-shell" ||
+    sessionConfig.profile === "pixel-shell"
   ) {
     exports.SHADOW_SESSION_APP_PROFILE = sessionConfig.profile;
   }
@@ -658,10 +675,48 @@ function buildEnvScript(
   if (sessionConfig.services.audioBackend) {
     exports.SHADOW_RUNTIME_AUDIO_BACKEND = sessionConfig.services.audioBackend;
   }
+  if (sessionConfig.services.camera?.endpoint) {
+    exports.SHADOW_RUNTIME_CAMERA_ENDPOINT =
+      sessionConfig.services.camera.endpoint;
+  }
+  if (
+    sessionConfig.services.camera?.allowMock !== null &&
+    sessionConfig.services.camera?.allowMock !== undefined
+  ) {
+    exports.SHADOW_RUNTIME_CAMERA_ALLOW_MOCK =
+      sessionConfig.services.camera.allowMock ? "1" : "0";
+  }
+  if (typeof sessionConfig.services.camera?.timeoutMs === "number") {
+    exports.SHADOW_RUNTIME_CAMERA_TIMEOUT_MS = String(
+      sessionConfig.services.camera.timeoutMs,
+    );
+  }
 
   return Object.entries(exports)
     .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
     .join("\n") + "\n";
+}
+
+function buildCameraServiceConfig(
+  options: CliOptions,
+): SessionCameraConfig | null {
+  const endpoint = normalizedOptionValue(options.cameraEndpoint);
+  const allowMock = parseOptionalBoolean(
+    "--camera-allow-mock",
+    options.cameraAllowMock,
+  );
+  const timeoutMs = parseOptionalPositiveInteger(
+    "--camera-timeout-ms",
+    options.cameraTimeoutMs,
+  );
+  if (!endpoint && allowMock === null && timeoutMs === null) {
+    return null;
+  }
+  return {
+    allowMock,
+    endpoint,
+    timeoutMs,
+  };
 }
 
 function rewriteBundlePath(
@@ -755,6 +810,9 @@ function parseArgs(args: string[]): CliOptions {
     artifactGuestRoot: "",
     artifactRoot: "",
     audioBackend: "",
+    cameraAllowMock: Deno.env.get("SHADOW_RUNTIME_CAMERA_ALLOW_MOCK") ?? "",
+    cameraEndpoint: Deno.env.get("SHADOW_RUNTIME_CAMERA_ENDPOINT") ?? "",
+    cameraTimeoutMs: Deno.env.get("SHADOW_RUNTIME_CAMERA_TIMEOUT_MS") ?? "",
     bundleRewriteFrom: "",
     bundleRewriteTo: "",
     cacheDir: Deno.env.get("SHADOW_RUNTIME_APP_CACHE_DIR") ?? "",
@@ -837,6 +895,18 @@ function parseArgs(args: string[]): CliOptions {
         options.audioBackend = requireValue(arg, args[index + 1]);
         index += 1;
         break;
+      case "--camera-allow-mock":
+        options.cameraAllowMock = requireValue(arg, args[index + 1]);
+        index += 1;
+        break;
+      case "--camera-endpoint":
+        options.cameraEndpoint = requireValue(arg, args[index + 1]);
+        index += 1;
+        break;
+      case "--camera-timeout-ms":
+        options.cameraTimeoutMs = requireValue(arg, args[index + 1]);
+        index += 1;
+        break;
       case "--bundle-rewrite-from":
         options.bundleRewriteFrom = requireValue(arg, args[index + 1]);
         index += 1;
@@ -897,6 +967,47 @@ function requireValue(flag: string, value: string | undefined): string {
     throw new Error(`missing value for ${flag}`);
   }
   return value;
+}
+
+function normalizedOptionValue(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function parseOptionalBoolean(flag: string, value: string): boolean | null {
+  const normalized = normalizedOptionValue(value);
+  if (normalized === null) {
+    return null;
+  }
+  switch (normalized.toLowerCase()) {
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+      return true;
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+      return false;
+    default:
+      throw new Error(`${flag} must be a boolean-ish value, got ${value}`);
+  }
+}
+
+function parseOptionalPositiveInteger(
+  flag: string,
+  value: string,
+): number | null {
+  const normalized = normalizedOptionValue(value);
+  if (normalized === null) {
+    return null;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${flag} must be a positive integer, got ${value}`);
+  }
+  return parsed;
 }
 
 if (import.meta.main) {
