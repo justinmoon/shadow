@@ -38,9 +38,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 ## Implementation Notes
 
 - This plan replaces the old `pixel_common.sh` / `shadowctl` follow-up that no longer belongs in the completed compositor refactor notebook.
-- `pixel_common.sh` is now `1231` lines after the third landed extraction.
+- `pixel_common.sh` is now well under 1k lines after the display/session helper split.
 - Landed helper splits so far:
   - `pixel_device_transport_common.sh`
+  - `pixel_display_session_common.sh`
   - `pixel_runtime_session_common.sh`
   - `pixel_root_boot_common.sh`
 - `shadowctl` already owns the public VM/Pixel `run`, `stop`, `ci`, `stage`, and `debug` surface.
@@ -56,5 +57,6 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - This seam only touched public routing plus a non-root settings helper, so `operator_cli_smoke` plus `pre-commit` were the right pre-land gates; no extra Pixel hardware smoke was needed.
 - Rooted-Pixel direct-runtime/GPU probe recipes now belong under `shadowctl debug` instead of bypassing it.
 - That probe-routing seam also stayed at the wrapper/dispatch layer, so `operator_cli_smoke` plus `pre-commit` remained the right verification depth.
-- The next useful operator-cli slice is likely retiring more compatibility shell wrappers or one more honest `pixel_common.sh` extraction around display/session takeover helpers, not another low-level path-only split.
+- The next useful `pixel_common.sh` seam was the shared display/session takeover block, not the touch helpers. That block now lives in `pixel_display_session_common.sh` and is reused by shell/runtime/CI flows without staying in the giant compatibility file.
+- The next useful operator-cli slice is likely retiring more compatibility shell wrappers or, if we keep shrinking `pixel_common.sh`, the touch/artifact helper block rather than more display/session splitting.
 - Do not convert a low-level bash helper to Python just because `shadowctl` is Python. Migrate only when the behavior is user-facing or benefits from typed control flow.
