@@ -9,7 +9,8 @@ const ORANGE_PREFLIGHT_PATHS: [&str; 4] = [
     "/sys/class/drm/card0/device",
 ];
 const DEFAULT_VISUAL: &str = "default-solid";
-const ORANGE_INIT_VISUAL: &str = "orange-solid";
+const ORANGE_INIT_VISUAL: &str = "solid-orange";
+const DEFAULT_STAGE: &str = "direct";
 
 fn invoked_as_orange_init() -> bool {
     env::args_os()
@@ -47,6 +48,7 @@ fn main() -> anyhow::Result<()> {
 
     let orange_mode = env::var("SHADOW_DRM_RECT_MODE").as_deref() == Ok("orange-init")
         || invoked_as_orange_init();
+    let stage = env::var("SHADOW_DRM_RECT_STAGE").unwrap_or_else(|_| DEFAULT_STAGE.to_string());
     let visual = env::var("SHADOW_DRM_RECT_VISUAL").unwrap_or_else(|_| {
         if orange_mode {
             ORANGE_INIT_VISUAL.to_string()
@@ -62,8 +64,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     drm_rect::log_line(&format!(
-        "trace stage=main-start mode={} hold_secs={} visual={}",
+        "trace stage=main-start mode={} stage_label={} hold_secs={} visual={}",
         if orange_mode { "orange-init" } else { "default" },
+        stage,
         hold_secs,
         visual
     ));

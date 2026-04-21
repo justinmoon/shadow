@@ -35,6 +35,11 @@ enum DisplayVisual {
         accent: (u8, u8, u8),
         cell_px: usize,
     },
+    Frame {
+        primary: (u8, u8, u8),
+        accent: (u8, u8, u8),
+        thickness_px: usize,
+    },
 }
 
 pub fn fill_display(color: (u8, u8, u8), duration: Duration) -> Result<()> {
@@ -49,9 +54,9 @@ pub fn fill_display_visual(visual_name: &str, duration: Duration) -> Result<()> 
 fn parse_display_visual(visual_name: &str) -> Result<DisplayVisual> {
     match visual_name {
         "default-solid" => Ok(DisplayVisual::Solid(DEFAULT_SOLID_COLOR)),
-        "orange-solid" => Ok(DisplayVisual::Solid(ORANGE_SOLID_COLOR)),
+        "orange-solid" | "solid-orange" => Ok(DisplayVisual::Solid(ORANGE_SOLID_COLOR)),
         "success-solid" => Ok(DisplayVisual::Solid(SUCCESS_SOLID_COLOR)),
-        "orange-horizontal-band" => Ok(DisplayVisual::HorizontalBand {
+        "orange-horizontal-band" | "bands-orange" => Ok(DisplayVisual::HorizontalBand {
             primary: ORANGE_SOLID_COLOR,
             accent: ACCENT_DARK_COLOR,
         }),
@@ -59,10 +64,15 @@ fn parse_display_visual(visual_name: &str) -> Result<DisplayVisual> {
             primary: ORANGE_SOLID_COLOR,
             accent: ACCENT_DARK_COLOR,
         }),
-        "orange-checker" => Ok(DisplayVisual::Checker {
+        "orange-checker" | "checker-orange" => Ok(DisplayVisual::Checker {
             primary: ORANGE_SOLID_COLOR,
             accent: ACCENT_DARK_COLOR,
             cell_px: 96,
+        }),
+        "frame-orange" => Ok(DisplayVisual::Frame {
+            primary: ORANGE_SOLID_COLOR,
+            accent: ACCENT_DARK_COLOR,
+            thickness_px: 120,
         }),
         other => Err(anyhow!("unsupported display visual: {other}")),
     }
@@ -172,12 +182,13 @@ fn fill_display_visual_with_pattern(visual: DisplayVisual, duration: Duration) -
 fn describe_display_visual(visual: DisplayVisual) -> &'static str {
     match visual {
         DisplayVisual::Solid(DEFAULT_SOLID_COLOR) => "default-solid",
-        DisplayVisual::Solid(ORANGE_SOLID_COLOR) => "orange-solid",
+        DisplayVisual::Solid(ORANGE_SOLID_COLOR) => "solid-orange",
         DisplayVisual::Solid(SUCCESS_SOLID_COLOR) => "success-solid",
         DisplayVisual::Solid(_) => "solid-custom",
-        DisplayVisual::HorizontalBand { .. } => "orange-horizontal-band",
+        DisplayVisual::HorizontalBand { .. } => "bands-orange",
         DisplayVisual::VerticalBand { .. } => "orange-vertical-band",
-        DisplayVisual::Checker { .. } => "orange-checker",
+        DisplayVisual::Checker { .. } => "checker-orange",
+        DisplayVisual::Frame { .. } => "frame-orange",
     }
 }
 
@@ -570,6 +581,18 @@ fn color_for_visual(
             let x_cell = x / cell_px.max(1);
             let y_cell = y / cell_px.max(1);
             if (x_cell + y_cell) % 2 == 0 {
+                primary
+            } else {
+                accent
+            }
+        }
+        DisplayVisual::Frame {
+            primary,
+            accent,
+            thickness_px,
+        } => {
+            let thickness = thickness_px.max(1);
+            if x < thickness || y < thickness || x + thickness >= width || y + thickness >= height {
                 primary
             } else {
                 accent

@@ -178,6 +178,11 @@ Related docs:
   - when an adb-mode run returns to fastboot after already leaving it once, `pixel_boot_oneshot.sh` should `fastboot reboot` it back toward Android automatically, record that rescue in `status.json`, and still fail the experiment so cleanup is automatic without hiding the regression
   - `pixel_boot_recover_traces.sh` should surface `proof_ok`, expected durable logging from image metadata, and concrete absence reasons (for example `pmsg_invalid_argument`, `pstore_empty`, `dropbox_last_kmsg_empty`, `logcat_last_unavailable`) so a clean Android return with zero correlated traces is explicit rather than inferred
   - orange-gpu visible checkpoints should be stage-distinguishable on-screen rather than repeated identical orange pulses, so watched runs can map prelude vs validated vs probe-ready vs success-postlude without depending on logs
+  - current visual contract:
+    - `solid-orange` = prelude
+    - `bands-orange` = validated checkpoint
+    - `checker-orange` = probe-ready checkpoint
+    - `frame-orange` = success postlude
   - do not treat any single recovery channel as guaranteed until it proves itself repeatedly on hardware
   - classify stage evidence separately from transport evidence: `fastboot-return` proves the device came back, not which owned-userspace stage it reached
 - [ ] Add one durable non-log breadcrumb seam for owned PID 1 runs:
@@ -579,3 +584,10 @@ Related docs:
 - New launch-delay result on 2026-04-21:
   - `11151JEC200472` still showed only two visible orange pulses on the watched 9-second launch-delay raw count-query-exit image, then black, then the red fastboot/start screen
   - so passive delay did not move the seam; the next stronger readiness discriminator is a parent-side warm-up probe that runs the exact raw count-query-exit scene before the real payload fork/exec
+- New observability result on 2026-04-21 from the adb-timeout / transport pass:
+  - `pixel_boot_oneshot.sh` now attempts late recovery after `wait-adb`, records `transport-timeline.tsv`, surfaces recovery verdicts in `status.json`, and auto-reboots a returned fastboot screen back toward Android so one-shot runs no longer depend on a human pressing `Start`
+  - the best recent `11151JEC200472` probe run showed transport `0 fastboot -> 1 none -> 64 fastboot`, then late recovery back into stock Android with `proof_ok=false` and explicit absence reasons (`logcat_last_unavailable`, `pmsg_invalid_argument`, `pstore_empty`)
+  - so the seam is no longer “maybe adb was just slow”; the boot-owned GPU lane is really falling back to fastboot/bootloader without leaving a correlated durable breadcrumb in the current channels
+- New visible-contract result on 2026-04-21:
+  - `orange-init` now carries fixed stage labels plus a four-shape contract (`solid-orange`, `bands-orange`, `checker-orange`, `frame-orange`) instead of repeated identical orange pulses
+  - this is intentionally hardcoded in `hello-init` / `drm-rect`, not threaded through the builder as another matrix knob, so watched runs stay comparable across devices and the whole seam remains mechanically deletable later
