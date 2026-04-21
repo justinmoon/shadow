@@ -110,6 +110,12 @@ metadata_probe_stage_path_for_token() {
   printf '/metadata/shadow-hello-init/by-token/%s/probe-stage.txt\n' "$run_token"
 }
 
+metadata_probe_fingerprint_path_for_token() {
+  local run_token
+  run_token="${1:?metadata_probe_fingerprint_path_for_token requires a run token}"
+  printf '/metadata/shadow-hello-init/by-token/%s/probe-fingerprint.txt\n' "$run_token"
+}
+
 success_postlude_value() {
   if [[ "$ORANGE_GPU_MODE" != "gpu-render" && "$PRELUDE" == "orange-init" ]]; then
     printf 'orange-init\n'
@@ -479,7 +485,8 @@ write_metadata() {
     "$DRI_BOOTSTRAP" \
     "$(success_postlude_value)" \
     "$(checkpoint_hold_seconds_value)" \
-    "$(metadata_probe_stage_path_for_token "$RUN_TOKEN")" <<'PY'
+    "$(metadata_probe_stage_path_for_token "$RUN_TOKEN")" \
+    "$(metadata_probe_fingerprint_path_for_token "$RUN_TOKEN")" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -508,6 +515,7 @@ from pathlib import Path
     success_postlude,
     checkpoint_hold_seconds,
     metadata_probe_stage_path,
+    metadata_probe_fingerprint_path,
 ) = sys.argv[1:]
 
 
@@ -546,6 +554,11 @@ payload_json = {
     ),
     "metadata_probe_stage_path": (
         metadata_probe_stage_path
+        if parse_bool(orange_gpu_metadata_stage_breadcrumb)
+        else ""
+    ),
+    "metadata_probe_fingerprint_path": (
+        metadata_probe_fingerprint_path
         if parse_bool(orange_gpu_metadata_stage_breadcrumb)
         else ""
     ),
@@ -975,6 +988,7 @@ fi
 if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" ]]; then
   printf 'Metadata stage path: %s\n' "$(metadata_stage_path_for_token "$RUN_TOKEN")"
   printf 'Metadata probe stage path: %s\n' "$(metadata_probe_stage_path_for_token "$RUN_TOKEN")"
+  printf 'Metadata probe fingerprint path: %s\n' "$(metadata_probe_fingerprint_path_for_token "$RUN_TOKEN")"
 fi
 if [[ "$PRELUDE" == "orange-init" ]]; then
   printf 'Prelude payload path: /orange-init\n'

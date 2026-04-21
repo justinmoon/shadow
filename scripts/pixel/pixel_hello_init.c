@@ -120,6 +120,8 @@ struct metadata_stage_runtime {
     char temp_stage_path[224];
     char probe_stage_path[224];
     char temp_probe_stage_path[224];
+    char probe_fingerprint_path[224];
+    char temp_probe_fingerprint_path[224];
 };
 
 static int shadow_kmsg_fd = -1;
@@ -573,6 +575,8 @@ static void init_metadata_stage_runtime(
     int temp_len;
     int probe_stage_len;
     int probe_temp_len;
+    int probe_fingerprint_len;
+    int probe_fingerprint_temp_len;
 
     memset(runtime, 0, sizeof(*runtime));
     runtime->enabled = config->orange_gpu_metadata_stage_breadcrumb;
@@ -622,12 +626,26 @@ static void init_metadata_stage_runtime(
         "%s/.probe-stage.txt.tmp",
         runtime->stage_dir
     );
+    probe_fingerprint_len = snprintf(
+        runtime->probe_fingerprint_path,
+        sizeof(runtime->probe_fingerprint_path),
+        "%s/probe-fingerprint.txt",
+        runtime->stage_dir
+    );
+    probe_fingerprint_temp_len = snprintf(
+        runtime->temp_probe_fingerprint_path,
+        sizeof(runtime->temp_probe_fingerprint_path),
+        "%s/.probe-fingerprint.txt.tmp",
+        runtime->stage_dir
+    );
     if (
         dir_len < 0 || (size_t)dir_len >= sizeof(runtime->stage_dir) ||
         stage_len < 0 || (size_t)stage_len >= sizeof(runtime->stage_path) ||
         temp_len < 0 || (size_t)temp_len >= sizeof(runtime->temp_stage_path) ||
         probe_stage_len < 0 || (size_t)probe_stage_len >= sizeof(runtime->probe_stage_path) ||
-        probe_temp_len < 0 || (size_t)probe_temp_len >= sizeof(runtime->temp_probe_stage_path)
+        probe_temp_len < 0 || (size_t)probe_temp_len >= sizeof(runtime->temp_probe_stage_path) ||
+        probe_fingerprint_len < 0 || (size_t)probe_fingerprint_len >= sizeof(runtime->probe_fingerprint_path) ||
+        probe_fingerprint_temp_len < 0 || (size_t)probe_fingerprint_temp_len >= sizeof(runtime->temp_probe_fingerprint_path)
     ) {
         runtime->enabled = false;
         log_stage("<4>", "metadata-stage-disabled", "reason=path_too_long");
@@ -1099,6 +1117,222 @@ static bool write_metadata_stage_best_effort(
         "stage=%s path=%s",
         stage_value,
         runtime->stage_path
+    );
+    return true;
+}
+
+static bool append_fingerprintf(
+    char *buffer,
+    size_t buffer_size,
+    size_t *used,
+    const char *fmt,
+    ...
+) {
+    int written;
+    va_list args;
+
+    if (*used >= buffer_size) {
+        return false;
+    }
+
+    va_start(args, fmt);
+    written = vsnprintf(buffer + *used, buffer_size - *used, fmt, args);
+    va_end(args);
+    if (written < 0 || (size_t)written >= buffer_size - *used) {
+        *used = buffer_size;
+        return false;
+    }
+
+    *used += (size_t)written;
+    return true;
+}
+
+static bool append_path_fingerprint_line(
+    char *buffer,
+    size_t buffer_size,
+    size_t *used,
+    const char *path
+) {
+    struct stat st;
+
+    if (stat(path, &st) != 0) {
+        return append_fingerprintf(
+            buffer,
+            buffer_size,
+            used,
+            "path=%s present=false errno=%d\n",
+            path,
+            errno
+        );
+    }
+
+    if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode)) {
+        return append_fingerprintf(
+            buffer,
+            buffer_size,
+            used,
+            "path=%s present=true kind=%s mode=%o uid=%u gid=%u major=%u minor=%u\n",
+            path,
+            S_ISCHR(st.st_mode) ? "char" : "block",
+            st.st_mode & 07777,
+            st.st_uid,
+            st.st_gid,
+            major(st.st_rdev),
+            minor(st.st_rdev)
+        );
+    }
+
+    return append_fingerprintf(
+        buffer,
+        buffer_size,
+        used,
+        "path=%s present=true kind=%s mode=%o uid=%u gid=%u size=%lld\n",
+        path,
+        S_ISDIR(st.st_mode) ? "dir" : "file",
+        st.st_mode & 07777,
+        st.st_uid,
+        st.st_gid,
+        (long long)st.st_size
+    );
+}
+
+static bool append_file_excerpt(
+    char *buffer,
+    size_t buffer_size,
+    size_t *used,
+    const char *path,
+    size_t max_bytes
+) {
+    int fd;
+    ssize_t bytes_read;
+    char excerpt[1024];
+
+    if (max_bytes > sizeof(excerpt) - 1U) {
+        max_bytes = sizeof(excerpt) - 1U;
+    }
+
+    fd = open(path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+    if (fd < 0) {
+        return append_fingerprintf(
+            buffer,
+            buffer_size,
+            used,
+            "file-excerpt path=%s present=false errno=%d\n",
+            path,
+            errno
+        );
+    }
+
+    bytes_read = read(fd, excerpt, max_bytes);
+    if (bytes_read < 0) {
+        int saved_errno = errno;
+
+        close(fd);
+        return append_fingerprintf(
+            buffer,
+            buffer_size,
+            used,
+            "file-excerpt path=%s read_failed=true errno=%d\n",
+            path,
+            saved_errno
+        );
+    }
+    close(fd);
+
+    excerpt[bytes_read] = '\0';
+    if (
+        !append_fingerprintf(
+            buffer,
+            buffer_size,
+            used,
+            "file-excerpt path=%s bytes=%zd\n",
+            path,
+            bytes_read
+        )
+    ) {
+        return false;
+    }
+    return append_fingerprintf(buffer, buffer_size, used, "%s\n", excerpt);
+}
+
+static bool write_metadata_probe_fingerprint_best_effort(
+    const struct hello_init_config *config,
+    struct metadata_stage_runtime *runtime
+) {
+    char contents[4096];
+    size_t used = 0U;
+
+    if (!runtime->enabled || runtime->write_failed) {
+        return false;
+    }
+    if (!runtime->prepared) {
+        runtime->write_failed = true;
+        log_stage("<4>", "metadata-probe-fingerprint-write-skipped", "reason=not_prepared");
+        return false;
+    }
+
+    if (
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "run_token=%s\nmount_dev=%s mount_proc=%s mount_sys=%s dev_mount=%s metadata_prepared=%s\n",
+            config->run_token,
+            bool_word(config->mount_dev),
+            bool_word(config->mount_proc),
+            bool_word(config->mount_sys),
+            config->dev_mount,
+            bool_word(runtime->prepared)
+        ) ||
+        !append_path_fingerprint_line(contents, sizeof(contents), &used, "/dev/kgsl-3d0") ||
+        !append_path_fingerprint_line(contents, sizeof(contents), &used, "/dev/dri/card0") ||
+        !append_path_fingerprint_line(contents, sizeof(contents), &used, "/dev/dri/renderD128") ||
+        !append_path_fingerprint_line(contents, sizeof(contents), &used, "/dev/dma_heap/system") ||
+        !append_path_fingerprint_line(contents, sizeof(contents), &used, "/dev/ion") ||
+        !append_path_fingerprint_line(
+            contents,
+            sizeof(contents),
+            &used,
+            SHADOW_HELLO_INIT_ORANGE_GPU_ICD_PATH
+        ) ||
+        !append_file_excerpt(contents, sizeof(contents), &used, "/proc/mounts", 1024U) ||
+        !append_file_excerpt(
+            contents,
+            sizeof(contents),
+            &used,
+            SHADOW_HELLO_INIT_ORANGE_GPU_ICD_PATH,
+            512U
+        )
+    ) {
+        runtime->write_failed = true;
+        log_stage("<4>", "metadata-probe-fingerprint-write-skipped", "reason=buffer_overflow");
+        return false;
+    }
+
+    if (
+        write_atomic_text_file(
+            runtime->stage_dir,
+            runtime->temp_probe_fingerprint_path,
+            runtime->probe_fingerprint_path,
+            contents
+        ) != 0
+    ) {
+        runtime->write_failed = true;
+        log_stage(
+            "<4>",
+            "metadata-probe-fingerprint-write-failed",
+            "path=%s errno=%d",
+            runtime->probe_fingerprint_path,
+            errno
+        );
+        return false;
+    }
+
+    log_stage(
+        "<6>",
+        "metadata-probe-fingerprint-write",
+        "path=%s",
+        runtime->probe_fingerprint_path
     );
     return true;
 }
@@ -2517,6 +2751,7 @@ static int run_orange_gpu_payload(
     }
 
     if (metadata_stage != NULL) {
+        (void)write_metadata_probe_fingerprint_best_effort(config, metadata_stage);
         (void)write_metadata_stage_best_effort(
             metadata_stage,
             "parent-probe-start"

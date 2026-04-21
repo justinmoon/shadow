@@ -138,6 +138,13 @@ PROP
       fi
       exit 3
       ;;
+    *"/metadata/shadow-hello-init/by-token/"*"/probe-fingerprint.txt"* )
+      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" ]]; then
+        printf 'path=/dev/kgsl-3d0 present=true kind=char mode=666 uid=1000 gid=1000 major=508 minor=0\n'
+        exit 0
+      fi
+      exit 3
+      ;;
     *)
       echo "mock adb: unexpected shell command: $cmd" >&2
       exit 1
@@ -239,7 +246,8 @@ cat >"$image_path.hello-init.json" <<EOF
   "log_pmsg": true,
   "orange_gpu_metadata_stage_breadcrumb": true,
   "metadata_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/stage.txt",
-  "metadata_probe_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-stage.txt"
+  "metadata_probe_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-stage.txt",
+  "metadata_probe_fingerprint_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-fingerprint.txt"
 }
 EOF
 }
@@ -276,6 +284,7 @@ assert_json_field "$MATCHED_OUTPUT/status.json" expected_durable_logging_summary
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_stage_breadcrumb true
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_stage_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/stage.txt"
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_probe_stage_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/probe-stage.txt"
+assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_probe_fingerprint_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/probe-fingerprint.txt"
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_present true
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_value "parent-probe-result=exit-0"
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_actual_access_mode root
@@ -284,6 +293,9 @@ assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_stage_present tru
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_stage_value "parent-probe-attempt-3:vkCreateInstance-ok"
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_stage_actual_access_mode root
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_stage_exit_code "0"
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_fingerprint_present true
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_fingerprint_actual_access_mode root
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_fingerprint_exit_code "0"
 assert_json_field "$MATCHED_OUTPUT/status.json" absence_reason_summary ""
 assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channel_attempts 5
 assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channels_with_matches 4
@@ -339,6 +351,9 @@ assert_json_field "$CLEAN_OUTPUT/status.json" metadata_stage_exit_code "125"
 assert_json_field "$CLEAN_OUTPUT/status.json" metadata_probe_stage_present false
 assert_json_field "$CLEAN_OUTPUT/status.json" metadata_probe_stage_actual_access_mode root-unavailable
 assert_json_field "$CLEAN_OUTPUT/status.json" metadata_probe_stage_exit_code "125"
+assert_json_field "$CLEAN_OUTPUT/status.json" metadata_probe_fingerprint_present false
+assert_json_field "$CLEAN_OUTPUT/status.json" metadata_probe_fingerprint_actual_access_mode root-unavailable
+assert_json_field "$CLEAN_OUTPUT/status.json" metadata_probe_fingerprint_exit_code "125"
 assert_json_field "$CLEAN_OUTPUT/status.json" absence_reason_summary "pmsg_root_unavailable,pstore_root_unavailable"
 assert_json_field "$CLEAN_OUTPUT/status.json" previous_boot_channel_attempts 5
 assert_json_field "$CLEAN_OUTPUT/status.json" previous_boot_channels_with_matches 0
@@ -377,6 +392,8 @@ assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_stage_actual_access_
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_probe_stage_present true
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_probe_stage_value "parent-probe-attempt-3:vkCreateInstance-ok"
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_probe_stage_actual_access_mode root
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_probe_fingerprint_present true
+assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" metadata_probe_fingerprint_actual_access_mode root
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" previous_boot_channels_with_matches 0
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlation_state token-only
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlated false

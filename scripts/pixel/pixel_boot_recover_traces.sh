@@ -33,6 +33,7 @@ IMAGE_METADATA_SUFFIX=".hello-init.json"
 EXPECTED_METADATA_STAGE_BREADCRUMB=false
 EXPECTED_METADATA_STAGE_PATH=""
 EXPECTED_METADATA_PROBE_STAGE_PATH=""
+EXPECTED_METADATA_PROBE_FINGERPRINT_PATH=""
 RECOVERED_METADATA_STAGE_PRESENT=false
 RECOVERED_METADATA_STAGE_VALUE=""
 RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE="unattempted"
@@ -45,6 +46,11 @@ RECOVERED_METADATA_PROBE_STAGE_ACTUAL_ACCESS_MODE="unattempted"
 RECOVERED_METADATA_PROBE_STAGE_EXIT_CODE=""
 RECOVERED_METADATA_PROBE_STAGE_OUTPUT_PATH=""
 RECOVERED_METADATA_PROBE_STAGE_STDERR_PATH=""
+RECOVERED_METADATA_PROBE_FINGERPRINT_PRESENT=false
+RECOVERED_METADATA_PROBE_FINGERPRINT_ACTUAL_ACCESS_MODE="unattempted"
+RECOVERED_METADATA_PROBE_FINGERPRINT_EXIT_CODE=""
+RECOVERED_METADATA_PROBE_FINGERPRINT_OUTPUT_PATH=""
+RECOVERED_METADATA_PROBE_FINGERPRINT_STDERR_PATH=""
 failure_stage=""
 transport_timeline_path="${PIXEL_BOOT_TRANSPORT_TIMELINE_PATH:-}"
 transport_timeline_elapsed_offset_secs="${PIXEL_BOOT_TRANSPORT_TIMELINE_ELAPSED_OFFSET_SECS:-0}"
@@ -306,11 +312,13 @@ token = payload.get("run_token", "")
 enabled = payload.get("orange_gpu_metadata_stage_breadcrumb", False)
 stage_path = payload.get("metadata_stage_path", "")
 probe_stage_path = payload.get("metadata_probe_stage_path", "")
+probe_fingerprint_path = payload.get("metadata_probe_fingerprint_path", "")
 
 print(token if isinstance(token, str) else "")
 print("true" if enabled is True else "false")
 print(stage_path if isinstance(stage_path, str) else "")
 print(probe_stage_path if isinstance(probe_stage_path, str) else "")
+print(probe_fingerprint_path if isinstance(probe_fingerprint_path, str) else "")
 PY
 }
 
@@ -320,6 +328,7 @@ discover_expected_run_token() {
   local metadata_stage_enabled=""
   local metadata_stage_path=""
   local metadata_probe_stage_path=""
+  local metadata_probe_fingerprint_path=""
 
   discover_source_image_path
   if [[ -n "$SOURCE_IMAGE_PATH" ]]; then
@@ -329,9 +338,11 @@ discover_expected_run_token() {
     metadata_stage_enabled="${metadata_values[1]:-false}"
     metadata_stage_path="${metadata_values[2]:-}"
     metadata_probe_stage_path="${metadata_values[3]:-}"
+    metadata_probe_fingerprint_path="${metadata_values[4]:-}"
     EXPECTED_METADATA_STAGE_BREADCRUMB="$metadata_stage_enabled"
     EXPECTED_METADATA_STAGE_PATH="$metadata_stage_path"
     EXPECTED_METADATA_PROBE_STAGE_PATH="$metadata_probe_stage_path"
+    EXPECTED_METADATA_PROBE_FINGERPRINT_PATH="$metadata_probe_fingerprint_path"
   fi
 
   if [[ -n "$EXPECTED_RUN_TOKEN" ]]; then
@@ -358,6 +369,7 @@ source_image_metadata_path=$SOURCE_IMAGE_METADATA_PATH
 expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
 expected_metadata_stage_path=$EXPECTED_METADATA_STAGE_PATH
 expected_metadata_probe_stage_path=$EXPECTED_METADATA_PROBE_STAGE_PATH
+expected_metadata_probe_fingerprint_path=$EXPECTED_METADATA_PROBE_FINGERPRINT_PATH
 EOF
 }
 
@@ -497,6 +509,53 @@ metadata_probe_stage_present=$RECOVERED_METADATA_PROBE_STAGE_PRESENT
 metadata_probe_stage_value=$RECOVERED_METADATA_PROBE_STAGE_VALUE
 metadata_probe_stage_actual_access_mode=$RECOVERED_METADATA_PROBE_STAGE_ACTUAL_ACCESS_MODE
 metadata_probe_stage_exit_code=$RECOVERED_METADATA_PROBE_STAGE_EXIT_CODE
+EOF
+}
+
+recover_metadata_probe_fingerprint_file() {
+  local command run_result output_path stderr_path exit_code actual_access_mode
+
+  output_path="$CHANNEL_DIR/metadata-probe-fingerprint.txt"
+  stderr_path="$CHANNEL_DIR/metadata-probe-fingerprint.stderr.txt"
+  RECOVERED_METADATA_PROBE_FINGERPRINT_OUTPUT_PATH="channels/metadata-probe-fingerprint.txt"
+  RECOVERED_METADATA_PROBE_FINGERPRINT_STDERR_PATH="channels/metadata-probe-fingerprint.stderr.txt"
+
+  : >"$output_path"
+  : >"$stderr_path"
+
+  if [[ "$EXPECTED_METADATA_STAGE_BREADCRUMB" != "true" || -z "$EXPECTED_METADATA_PROBE_FINGERPRINT_PATH" ]]; then
+    RECOVERED_METADATA_PROBE_FINGERPRINT_PRESENT=false
+    RECOVERED_METADATA_PROBE_FINGERPRINT_ACTUAL_ACCESS_MODE="unattempted"
+    RECOVERED_METADATA_PROBE_FINGERPRINT_EXIT_CODE=""
+    cat >"$META_DIR/metadata-probe-fingerprint.txt" <<EOF
+expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
+expected_metadata_probe_fingerprint_path=$EXPECTED_METADATA_PROBE_FINGERPRINT_PATH
+metadata_probe_fingerprint_present=false
+metadata_probe_fingerprint_actual_access_mode=$RECOVERED_METADATA_PROBE_FINGERPRINT_ACTUAL_ACCESS_MODE
+metadata_probe_fingerprint_exit_code=
+EOF
+    return 0
+  fi
+
+  command="if [ -f $EXPECTED_METADATA_PROBE_FINGERPRINT_PATH ]; then cat $EXPECTED_METADATA_PROBE_FINGERPRINT_PATH; else exit 3; fi"
+  run_result="$(run_device_command "root" "$command" "$output_path" "$stderr_path")"
+  exit_code="${run_result%%$'\t'*}"
+  actual_access_mode="${run_result#*$'\t'}"
+  RECOVERED_METADATA_PROBE_FINGERPRINT_ACTUAL_ACCESS_MODE="$actual_access_mode"
+  RECOVERED_METADATA_PROBE_FINGERPRINT_EXIT_CODE="$exit_code"
+
+  if [[ "$exit_code" == "0" ]]; then
+    RECOVERED_METADATA_PROBE_FINGERPRINT_PRESENT=true
+  else
+    RECOVERED_METADATA_PROBE_FINGERPRINT_PRESENT=false
+  fi
+
+  cat >"$META_DIR/metadata-probe-fingerprint.txt" <<EOF
+expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
+expected_metadata_probe_fingerprint_path=$EXPECTED_METADATA_PROBE_FINGERPRINT_PATH
+metadata_probe_fingerprint_present=$RECOVERED_METADATA_PROBE_FINGERPRINT_PRESENT
+metadata_probe_fingerprint_actual_access_mode=$RECOVERED_METADATA_PROBE_FINGERPRINT_ACTUAL_ACCESS_MODE
+metadata_probe_fingerprint_exit_code=$RECOVERED_METADATA_PROBE_FINGERPRINT_EXIT_CODE
 EOF
 }
 
@@ -817,6 +876,7 @@ write_status_json() {
     "$EXPECTED_METADATA_STAGE_BREADCRUMB" \
     "$EXPECTED_METADATA_STAGE_PATH" \
     "$EXPECTED_METADATA_PROBE_STAGE_PATH" \
+    "$EXPECTED_METADATA_PROBE_FINGERPRINT_PATH" \
     "$RECOVERED_METADATA_STAGE_PRESENT" \
     "$RECOVERED_METADATA_STAGE_VALUE" \
     "$RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE" \
@@ -828,7 +888,12 @@ write_status_json() {
     "$RECOVERED_METADATA_PROBE_STAGE_ACTUAL_ACCESS_MODE" \
     "$RECOVERED_METADATA_PROBE_STAGE_EXIT_CODE" \
     "$RECOVERED_METADATA_PROBE_STAGE_OUTPUT_PATH" \
-    "$RECOVERED_METADATA_PROBE_STAGE_STDERR_PATH" <<'PY'
+    "$RECOVERED_METADATA_PROBE_STAGE_STDERR_PATH" \
+    "$RECOVERED_METADATA_PROBE_FINGERPRINT_PRESENT" \
+    "$RECOVERED_METADATA_PROBE_FINGERPRINT_ACTUAL_ACCESS_MODE" \
+    "$RECOVERED_METADATA_PROBE_FINGERPRINT_EXIT_CODE" \
+    "$RECOVERED_METADATA_PROBE_FINGERPRINT_OUTPUT_PATH" \
+    "$RECOVERED_METADATA_PROBE_FINGERPRINT_STDERR_PATH" <<'PY'
 import csv
 import json
 import sys
@@ -861,18 +926,24 @@ fastboot_auto_reboot_reason = sys.argv[24]
 expected_metadata_stage_breadcrumb = sys.argv[25] == "true"
 expected_metadata_stage_path = sys.argv[26]
 expected_metadata_probe_stage_path = sys.argv[27]
-recovered_metadata_stage_present = sys.argv[28] == "true"
-recovered_metadata_stage_value = sys.argv[29]
-recovered_metadata_stage_actual_access_mode = sys.argv[30]
-recovered_metadata_stage_exit_code = sys.argv[31]
-recovered_metadata_stage_output_path = sys.argv[32]
-recovered_metadata_stage_stderr_path = sys.argv[33]
-recovered_metadata_probe_stage_present = sys.argv[34] == "true"
-recovered_metadata_probe_stage_value = sys.argv[35]
-recovered_metadata_probe_stage_actual_access_mode = sys.argv[36]
-recovered_metadata_probe_stage_exit_code = sys.argv[37]
-recovered_metadata_probe_stage_output_path = sys.argv[38]
-recovered_metadata_probe_stage_stderr_path = sys.argv[39]
+expected_metadata_probe_fingerprint_path = sys.argv[28]
+recovered_metadata_stage_present = sys.argv[29] == "true"
+recovered_metadata_stage_value = sys.argv[30]
+recovered_metadata_stage_actual_access_mode = sys.argv[31]
+recovered_metadata_stage_exit_code = sys.argv[32]
+recovered_metadata_stage_output_path = sys.argv[33]
+recovered_metadata_stage_stderr_path = sys.argv[34]
+recovered_metadata_probe_stage_present = sys.argv[35] == "true"
+recovered_metadata_probe_stage_value = sys.argv[36]
+recovered_metadata_probe_stage_actual_access_mode = sys.argv[37]
+recovered_metadata_probe_stage_exit_code = sys.argv[38]
+recovered_metadata_probe_stage_output_path = sys.argv[39]
+recovered_metadata_probe_stage_stderr_path = sys.argv[40]
+recovered_metadata_probe_fingerprint_present = sys.argv[41] == "true"
+recovered_metadata_probe_fingerprint_actual_access_mode = sys.argv[42]
+recovered_metadata_probe_fingerprint_exit_code = sys.argv[43]
+recovered_metadata_probe_fingerprint_output_path = sys.argv[44]
+recovered_metadata_probe_fingerprint_stderr_path = sys.argv[45]
 expected_durable_logging = {"kmsg": None, "pmsg": None}
 
 if source_image_metadata_path:
@@ -1007,6 +1078,7 @@ payload = {
     "expected_metadata_stage_breadcrumb": expected_metadata_stage_breadcrumb,
     "expected_metadata_stage_path": expected_metadata_stage_path,
     "expected_metadata_probe_stage_path": expected_metadata_probe_stage_path,
+    "expected_metadata_probe_fingerprint_path": expected_metadata_probe_fingerprint_path,
     "metadata_stage_present": recovered_metadata_stage_present,
     "metadata_stage_value": recovered_metadata_stage_value,
     "metadata_stage_actual_access_mode": recovered_metadata_stage_actual_access_mode,
@@ -1027,6 +1099,15 @@ payload = {
     ),
     "metadata_probe_stage_output_path": recovered_metadata_probe_stage_output_path,
     "metadata_probe_stage_stderr_path": recovered_metadata_probe_stage_stderr_path,
+    "metadata_probe_fingerprint_present": recovered_metadata_probe_fingerprint_present,
+    "metadata_probe_fingerprint_actual_access_mode": recovered_metadata_probe_fingerprint_actual_access_mode,
+    "metadata_probe_fingerprint_exit_code": (
+        int(recovered_metadata_probe_fingerprint_exit_code)
+        if recovered_metadata_probe_fingerprint_exit_code not in ("", None)
+        else None
+    ),
+    "metadata_probe_fingerprint_output_path": recovered_metadata_probe_fingerprint_output_path,
+    "metadata_probe_fingerprint_stderr_path": recovered_metadata_probe_fingerprint_stderr_path,
     "live_boot_id": live_boot_id,
     "live_slot_suffix": live_slot_suffix,
     "root_available": root_available,
@@ -1159,6 +1240,7 @@ write_expected_run_token_summary
 write_root_state_summary
 recover_metadata_stage_file
 recover_metadata_probe_stage_file
+recover_metadata_probe_fingerprint_file
 
 shell_best_effort "logcat-last" "previous-boot" "adb" "logcat -L -d -v threadtime"
 shell_best_effort "dropbox-system-boot" "previous-boot" "adb" "dumpsys dropbox --print SYSTEM_BOOT"
