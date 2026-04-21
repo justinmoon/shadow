@@ -805,6 +805,65 @@ for needle in ['"--present-kms"', 'hold_seconds,']:
 PY
 }
 
+assert_orange_gpu_parent_probe_seam_shape() {
+  python3 - "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+
+def extract(signature: str) -> str:
+    start = source.find(signature)
+    if start < 0:
+        raise SystemExit(f"missing function signature: {signature}")
+    brace = source.find("{", start)
+    if brace < 0:
+        raise SystemExit(f"missing function body for: {signature}")
+    depth = 0
+    for index in range(brace, len(source)):
+        ch = source[index]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise SystemExit(f"unterminated function body for: {signature}")
+
+probe_body = extract("static int run_orange_gpu_parent_probe(")
+for needle in [
+    'SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_OUTPUT_PATH',
+    'SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_SUMMARY_PATH',
+    '"orange-gpu-parent-probe-start"',
+    '"orange-gpu-parent-probe-child-exec"',
+    '"orange-gpu-parent-probe-attempt-success"',
+    '"orange-gpu-parent-probe-complete"',
+    '"raw-vulkan-physical-device-count-query-exit-smoke"',
+]:
+    if needle not in probe_body:
+        raise SystemExit(f"missing parent-probe seam needle: {needle}")
+
+payload_body = extract("static int run_orange_gpu_payload(")
+probe_call = 'probe_status = run_orange_gpu_parent_probe(config);'
+probe_ready_call = 'run_orange_gpu_checkpoint(config, "probe-ready", 1U);'
+launch_stage = '"orange-gpu-launch"'
+continue_stage = '"orange-gpu-parent-probe-continue"'
+
+probe_idx = payload_body.find(probe_call)
+if probe_idx < 0:
+    raise SystemExit("missing parent-probe call in run_orange_gpu_payload")
+if probe_ready_call not in payload_body:
+    raise SystemExit("missing probe-ready checkpoint call in run_orange_gpu_payload")
+launch_idx = payload_body.find(launch_stage)
+if launch_idx < 0:
+    raise SystemExit("missing real orange-gpu launch stage in run_orange_gpu_payload")
+if probe_idx > launch_idx:
+    raise SystemExit("parent probe call appears after the real orange-gpu launch stage")
+if continue_stage not in payload_body:
+    raise SystemExit("missing parent-probe continue breadcrumb in run_orange_gpu_payload")
+PY
+}
+
 assert_hello_init_orange_gpu_mode_parser_smoke() {
   local smoke_c="$TMP_DIR/hello-init-orange-gpu-mode-smoke.c"
   local smoke_bin="$TMP_DIR/hello-init-orange-gpu-mode-smoke"
@@ -1860,8 +1919,13 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'setenv(SHADO
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_seen'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_launch_delay_secs'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_parent_probe_attempts'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_parent_probe_interval_secs'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-launch-delay"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-launch-delay-complete"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-parent-probe-start"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-parent-probe-continue"'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-parent-probe-complete"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'validate_orange_gpu_config'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'missing required orange_gpu_mode config for payload=orange-gpu'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'invalid orange_gpu_mode config for payload=orange-gpu'
@@ -1892,6 +1956,7 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_m
 assert_orange_gpu_device_branch_shape
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_vulkan_offscreen'
 assert_orange_gpu_offscreen_branch_shape
+assert_orange_gpu_parent_probe_seam_shape
 assert_shadow_gpu_instance_helper_shape
 assert_shadow_gpu_instance_smoke_cli
 assert_shadow_gpu_instance_smoke_rejects_hold_secs
@@ -1980,11 +2045,20 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'assert_prelude_word'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'assert_orange_gpu_mode_word'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_LAUNCH_DELAY_SECS:-0'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_PARENT_PROBE_ATTEMPTS:-0'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS:-0'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--orange-gpu-launch-delay-secs'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--orange-gpu-parent-probe-attempts'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--orange-gpu-parent-probe-interval-secs'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_launch_delay_secs='
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_parent_probe_attempts='
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_parent_probe_interval_secs='
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Prelude: %s\\n' \"\$PRELUDE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU mode: %s\\n' \"\$ORANGE_GPU_MODE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU launch delay seconds: %s\\n' \"\$ORANGE_GPU_LAUNCH_DELAY_SECS\""
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU parent probe attempts: %s\\n' \"\$ORANGE_GPU_PARENT_PROBE_ATTEMPTS\""
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU parent probe interval seconds: %s\\n' \"\$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS\""
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Parent readiness probe scene: raw-vulkan-physical-device-count-query-exit-smoke\\n'"
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Bundle exec mode: bundle-smoke\\n'"
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict Vulkan instance creation\\n'"
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'GPU proof: strict raw Vulkan loader plus vkCreateInstance/vkDestroyInstance\\n'"
@@ -2034,6 +2108,8 @@ assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_mode
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" success_postlude "none"
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" checkpoint_hold_seconds "0"
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_launch_delay_secs "0"
+assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_parent_probe_attempts "0"
+assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_parent_probe_interval_secs "0"
 
 launch_delay_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -2061,6 +2137,36 @@ assert_cpio_entry_equals "$TMP_DIR/orange-gpu-launch-delay-boot.img" shadow-init
 assert_json_field_equals "$TMP_DIR/orange-gpu-launch-delay-boot.img.hello-init.json" orange_gpu_mode "raw-vulkan-physical-device-count-query-exit-smoke"
 assert_json_field_equals "$TMP_DIR/orange-gpu-launch-delay-boot.img.hello-init.json" orange_gpu_launch_delay_secs "9"
 assert_json_field_equals "$TMP_DIR/orange-gpu-launch-delay-boot.img.hello-init.json" checkpoint_hold_seconds "0"
+
+parent_probe_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-parent-probe-boot.img" \
+      --hold-secs 7 \
+      --orange-gpu-mode raw-vulkan-physical-device-count-query-exit-smoke \
+      --orange-gpu-parent-probe-attempts 3 \
+      --orange-gpu-parent-probe-interval-secs 2 \
+      --reboot-target bootloader \
+      --run-token orange-gpu-parent-probe-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false
+)"
+
+assert_contains "$parent_probe_boot_output" "Orange GPU mode: raw-vulkan-physical-device-count-query-exit-smoke"
+assert_contains "$parent_probe_boot_output" "Orange GPU parent probe attempts: 3"
+assert_contains "$parent_probe_boot_output" "Orange GPU parent probe interval seconds: 2"
+assert_contains "$parent_probe_boot_output" "Parent readiness probe scene: raw-vulkan-physical-device-count-query-exit-smoke"
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-parent-probe-boot.img" shadow-init.cfg $'# Generated by pixel_boot_build_orange_gpu.sh\npayload=orange-gpu\norange_gpu_mode=raw-vulkan-physical-device-count-query-exit-smoke\nhold_seconds=7\nreboot_target=bootloader\nrun_token=orange-gpu-parent-probe-run-token\norange_gpu_parent_probe_attempts=3\norange_gpu_parent_probe_interval_secs=2\ndev_mount=tmpfs\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\ndri_bootstrap=sunfish-card0-renderD128-kgsl3d0\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-boot.img.hello-init.json" orange_gpu_mode "raw-vulkan-physical-device-count-query-exit-smoke"
+assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-boot.img.hello-init.json" orange_gpu_parent_probe_attempts "3"
+assert_json_field_equals "$TMP_DIR/orange-gpu-parent-probe-boot.img.hello-init.json" orange_gpu_parent_probe_interval_secs "2"
 
 bundle_smoke_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

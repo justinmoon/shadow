@@ -194,10 +194,11 @@ Related docs:
   - recreate a boot-shaped tmpfs `/dev` under `root` + `unshare -m`
   - capture host-side status plus openlog evidence so `/dev` theories can be proved or discarded without a boot cycle
   - current truth on `11151JEC200472`: the raw count-query exit scene still succeeds under a boot-shaped tmpfs `/dev`, so `/dev` topology is not the active blocker there
-- [ ] Add a boot-owned orange-gpu pre-launch delay discriminator for the raw count-query exit seam:
-  - thread `orange_gpu_launch_delay_secs` through the private orange-gpu boot builder and `hello-init`
-  - use it to test whether waiting before `/orange-gpu` launch restores the third pulse on `11151JEC200472`
-  - if the delay is still ambiguous or negative, follow it with a stronger parent-side readiness probe that exercises the exact raw count-query exit seam before the real payload launch
+- [~] Add private boot-owned orange-gpu pre-launch readiness discriminators for the raw count-query exit seam:
+  - `orange_gpu_launch_delay_secs` is already threaded through the private orange-gpu boot builder and `hello-init`
+  - the watched 9-second launch-delay image on `11151JEC200472` still produced only `2 pulses -> black -> red fastboot/start`, so passive delay did not move the seam
+  - `orange_gpu_parent_probe_attempts` and `orange_gpu_parent_probe_interval_secs` now thread through the same private builder and `hello-init` to run the exact raw count-query-exit scene from the parent before the real payload fork/exec
+  - next seam: build and watch a parent-probe image on `11151JEC200472` to see whether warm-up restores the third pulse
 - [ ] Package the first on-screen GPU present payload (`orange-gpu`):
   - render a flat orange frame on GPU
   - export/import through the intended buffer path
@@ -570,3 +571,6 @@ Related docs:
   - that rooted control still succeeds with only `/dev/null`, `/dev/kgsl-3d0`, `/dev/dri/card0`, `/dev/dri/renderD128`, proc-fd symlinks, and boot-exact node modes/owners
   - openlog showed `/dev/kgsl-3d0` plus attempted `/dev/dma_heap/system` and `/dev/ion` access, and the scene still returned `count=1` even with `/dev/ion` absent
   - so the active boot-owned blocker is no longer best explained by `/dev` topology or node permissions; the next discriminator should target early-boot readiness or skipped vendor-init state instead
+- New launch-delay result on 2026-04-21:
+  - `11151JEC200472` still showed only two visible orange pulses on the watched 9-second launch-delay raw count-query-exit image, then black, then the red fastboot/start screen
+  - so passive delay did not move the seam; the next stronger readiness discriminator is a parent-side warm-up probe that runs the exact raw count-query-exit scene before the real payload fork/exec

@@ -39,6 +39,8 @@
 #define SHADOW_HELLO_INIT_ORANGE_GPU_MESA_CACHE_DIR "/orange-gpu/home/.cache/mesa"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH "/orange-gpu/summary.json"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_OUTPUT_PATH "/orange-gpu/output.log"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_SUMMARY_PATH "/orange-gpu/probe-summary.json"
+#define SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_OUTPUT_PATH "/orange-gpu/probe-output.log"
 #define SHADOW_HELLO_INIT_GPU_BACKEND_ENV "WGPU_BACKEND"
 #define SHADOW_HELLO_INIT_VK_ICD_FILENAMES_ENV "VK_ICD_FILENAMES"
 #define SHADOW_HELLO_INIT_MESA_DRIVER_OVERRIDE_ENV "MESA_LOADER_DRIVER_OVERRIDE"
@@ -74,6 +76,8 @@ struct hello_init_config {
     bool orange_gpu_mode_seen;
     bool orange_gpu_mode_invalid;
     unsigned int orange_gpu_launch_delay_secs;
+    unsigned int orange_gpu_parent_probe_attempts;
+    unsigned int orange_gpu_parent_probe_interval_secs;
     unsigned int hold_seconds;
     unsigned int prelude_hold_seconds;
     char reboot_target[32];
@@ -142,6 +146,8 @@ static void init_default_config(struct hello_init_config *config) {
     config->orange_gpu_mode_seen = false;
     config->orange_gpu_mode_invalid = false;
     config->orange_gpu_launch_delay_secs = 0U;
+    config->orange_gpu_parent_probe_attempts = 0U;
+    config->orange_gpu_parent_probe_interval_secs = 0U;
     config->hold_seconds = SHADOW_HELLO_INIT_DEFAULT_HOLD_SECONDS;
     config->prelude_hold_seconds = 0U;
     (void)copy_string(config->reboot_target, sizeof(config->reboot_target), "bootloader");
@@ -836,6 +842,30 @@ static void apply_config_value(
         return;
     }
 
+    if (
+        strcmp(key, "orange_gpu_parent_probe_attempts") == 0 ||
+        strcmp(key, "orange-gpu-parent-probe-attempts") == 0
+    ) {
+        if (!parse_unsigned_value(value, &parsed_hold_seconds)) {
+            log_boot("<3>", "invalid orange_gpu_parent_probe_attempts value: %s", value);
+            return;
+        }
+        config->orange_gpu_parent_probe_attempts = parsed_hold_seconds;
+        return;
+    }
+
+    if (
+        strcmp(key, "orange_gpu_parent_probe_interval_secs") == 0 ||
+        strcmp(key, "orange-gpu-parent-probe-interval-secs") == 0
+    ) {
+        if (!parse_unsigned_value(value, &parsed_hold_seconds)) {
+            log_boot("<3>", "invalid orange_gpu_parent_probe_interval_secs value: %s", value);
+            return;
+        }
+        config->orange_gpu_parent_probe_interval_secs = parsed_hold_seconds;
+        return;
+    }
+
     if (strcmp(key, "hold_seconds") == 0 || strcmp(key, "hold_secs") == 0) {
         if (!parse_unsigned_value(value, &parsed_hold_seconds)) {
             log_boot("<3>", "invalid hold_seconds value: %s", value);
@@ -1344,9 +1374,313 @@ static int set_orange_gpu_child_env(void) {
     return 0;
 }
 
+static int run_orange_gpu_parent_probe(const struct hello_init_config *config) {
+    bool any_succeeded = false;
+    unsigned int attempt;
+
+    if (config->orange_gpu_parent_probe_attempts == 0U) {
+        log_stage("<6>", "orange-gpu-parent-probe-skip", "attempts=0");
+        return 0;
+    }
+
+    log_stage(
+        "<6>",
+        "orange-gpu-parent-probe-start",
+        "attempts=%u interval_secs=%u scene=raw-vulkan-physical-device-count-query-exit-smoke",
+        config->orange_gpu_parent_probe_attempts,
+        config->orange_gpu_parent_probe_interval_secs
+    );
+    log_boot(
+        "<6>",
+        "running orange-gpu parent probe attempts=%u interval_secs=%u scene=raw-vulkan-physical-device-count-query-exit-smoke",
+        config->orange_gpu_parent_probe_attempts,
+        config->orange_gpu_parent_probe_interval_secs
+    );
+
+    for (attempt = 1; attempt <= config->orange_gpu_parent_probe_attempts; attempt++) {
+        pid_t child_pid;
+        int status;
+        unsigned int waited_seconds = 0;
+        unsigned int watchdog_timeout = SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS;
+
+        unlink_best_effort(SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_SUMMARY_PATH);
+        unlink_best_effort(SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_OUTPUT_PATH);
+
+        log_stage(
+            "<6>",
+            "orange-gpu-parent-probe-attempt-start",
+            "attempt=%u/%u",
+            attempt,
+            config->orange_gpu_parent_probe_attempts
+        );
+
+        child_pid = fork();
+        if (child_pid < 0) {
+            log_stage("<3>", "orange-gpu-parent-probe-fork-failed", "attempt=%u errno=%d", attempt, errno);
+            log_boot("<3>", "fork for orange-gpu parent probe attempt=%u failed: errno=%d", attempt, errno);
+            return 1;
+        }
+        if (child_pid == 0) {
+            if (redirect_child_output_to_path(SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_OUTPUT_PATH) != 0) {
+                log_stage("<3>", "orange-gpu-parent-probe-child-redirect-failed", "errno=%d", errno);
+                _exit(126);
+            }
+            if (set_orange_gpu_child_env() != 0) {
+                _exit(126);
+            }
+            log_stage(
+                "<6>",
+                "orange-gpu-parent-probe-child-exec",
+                "argv0=%s binary=%s scene=raw-vulkan-physical-device-count-query-exit-smoke attempt=%u/%u",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+                attempt,
+                config->orange_gpu_parent_probe_attempts
+            );
+            execl(
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                "--library-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LIBRARY_PATH,
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+                "--scene",
+                "raw-vulkan-physical-device-count-query-exit-smoke",
+                "--summary-path",
+                SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_SUMMARY_PATH,
+                (char *)NULL
+            );
+            log_stage("<3>", "orange-gpu-parent-probe-exec-failed", "errno=%d", errno);
+            log_boot(
+                "<3>",
+                "exec orange-gpu parent probe via %s failed: errno=%d",
+                SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
+                errno
+            );
+            _exit(127);
+        }
+
+        log_stage(
+            "<6>",
+            "orange-gpu-parent-probe-forked",
+            "attempt=%u/%u pid=%d",
+            attempt,
+            config->orange_gpu_parent_probe_attempts,
+            child_pid
+        );
+
+        for (;;) {
+            pid_t waited = waitpid(child_pid, &status, WNOHANG);
+
+            if (waited == child_pid) {
+                break;
+            }
+            if (waited == 0) {
+                sleep_seconds(1);
+                waited_seconds += 1;
+                log_stage(
+                    "<6>",
+                    "orange-gpu-parent-probe-wait",
+                    "attempt=%u/%u pid=%d seconds=%u",
+                    attempt,
+                    config->orange_gpu_parent_probe_attempts,
+                    child_pid,
+                    waited_seconds
+                );
+                if (waited_seconds >= watchdog_timeout) {
+                    log_stage(
+                        "<4>",
+                        "orange-gpu-parent-probe-watchdog-timeout",
+                        "attempt=%u/%u pid=%d waited_seconds=%u timeout_seconds=%u",
+                        attempt,
+                        config->orange_gpu_parent_probe_attempts,
+                        child_pid,
+                        waited_seconds,
+                        watchdog_timeout
+                    );
+                    log_boot(
+                        "<4>",
+                        "orange-gpu parent probe attempt=%u/%u exceeded watchdog timeout=%u second(s); sending SIGKILL",
+                        attempt,
+                        config->orange_gpu_parent_probe_attempts,
+                        watchdog_timeout
+                    );
+                    if (kill(child_pid, SIGKILL) != 0 && errno != ESRCH) {
+                        log_stage(
+                            "<3>",
+                            "orange-gpu-parent-probe-watchdog-kill-failed",
+                            "attempt=%u/%u pid=%d errno=%d",
+                            attempt,
+                            config->orange_gpu_parent_probe_attempts,
+                            child_pid,
+                            errno
+                        );
+                        log_boot(
+                            "<3>",
+                            "kill(%d, SIGKILL) for orange-gpu parent probe attempt=%u/%u failed: errno=%d",
+                            child_pid,
+                            attempt,
+                            config->orange_gpu_parent_probe_attempts,
+                            errno
+                        );
+                        return 1;
+                    }
+                    for (;;) {
+                        waited = waitpid(child_pid, &status, 0);
+                        if (waited == child_pid) {
+                            break;
+                        }
+                        if (waited < 0 && errno == EINTR) {
+                            continue;
+                        }
+
+                        log_stage(
+                            "<3>",
+                            "orange-gpu-parent-probe-watchdog-reap-failed",
+                            "attempt=%u/%u pid=%d errno=%d",
+                            attempt,
+                            config->orange_gpu_parent_probe_attempts,
+                            child_pid,
+                            errno
+                        );
+                        log_boot(
+                            "<3>",
+                            "watchdog waitpid(%d) for orange-gpu parent probe attempt=%u/%u failed: errno=%d",
+                            child_pid,
+                            attempt,
+                            config->orange_gpu_parent_probe_attempts,
+                            errno
+                        );
+                        return 1;
+                    }
+                    break;
+                }
+                continue;
+            }
+            if (errno != EINTR) {
+                log_stage(
+                    "<3>",
+                    "orange-gpu-parent-probe-waitpid-failed",
+                    "attempt=%u/%u pid=%d errno=%d",
+                    attempt,
+                    config->orange_gpu_parent_probe_attempts,
+                    child_pid,
+                    errno
+                );
+                log_boot(
+                    "<3>",
+                    "waitpid(%d) for orange-gpu parent probe attempt=%u/%u failed: errno=%d",
+                    child_pid,
+                    attempt,
+                    config->orange_gpu_parent_probe_attempts,
+                    errno
+                );
+                return 1;
+            }
+        }
+
+        log_file_best_effort("orange-gpu-parent-probe-output", SHADOW_HELLO_INIT_ORANGE_GPU_PROBE_OUTPUT_PATH);
+
+        if (WIFEXITED(status)) {
+            if (WEXITSTATUS(status) == 0) {
+                any_succeeded = true;
+                log_stage(
+                    "<6>",
+                    "orange-gpu-parent-probe-attempt-success",
+                    "attempt=%u/%u status=0",
+                    attempt,
+                    config->orange_gpu_parent_probe_attempts
+                );
+                log_boot(
+                    "<6>",
+                    "orange-gpu parent probe attempt=%u/%u exited with status=0",
+                    attempt,
+                    config->orange_gpu_parent_probe_attempts
+                );
+                break;
+            } else {
+                log_stage(
+                    "<4>",
+                    "orange-gpu-parent-probe-attempt-failure",
+                    "attempt=%u/%u status=%d",
+                    attempt,
+                    config->orange_gpu_parent_probe_attempts,
+                    WEXITSTATUS(status)
+                );
+                log_boot(
+                    "<4>",
+                    "orange-gpu parent probe attempt=%u/%u exited with status=%d",
+                    attempt,
+                    config->orange_gpu_parent_probe_attempts,
+                    WEXITSTATUS(status)
+                );
+            }
+        } else if (WIFSIGNALED(status)) {
+            log_stage(
+                "<4>",
+                "orange-gpu-parent-probe-attempt-signal",
+                "attempt=%u/%u signal=%d",
+                attempt,
+                config->orange_gpu_parent_probe_attempts,
+                WTERMSIG(status)
+            );
+            log_boot(
+                "<4>",
+                "orange-gpu parent probe attempt=%u/%u died from signal=%d",
+                attempt,
+                config->orange_gpu_parent_probe_attempts,
+                WTERMSIG(status)
+            );
+        } else {
+            log_stage(
+                "<4>",
+                "orange-gpu-parent-probe-attempt-unknown-status",
+                "attempt=%u/%u status=%d",
+                attempt,
+                config->orange_gpu_parent_probe_attempts,
+                status
+            );
+            log_boot(
+                "<4>",
+                "orange-gpu parent probe attempt=%u/%u returned unknown wait status=%d",
+                attempt,
+                config->orange_gpu_parent_probe_attempts,
+                status
+            );
+        }
+
+        if (
+            !any_succeeded &&
+            attempt < config->orange_gpu_parent_probe_attempts &&
+            config->orange_gpu_parent_probe_interval_secs > 0U
+        ) {
+            log_stage(
+                "<6>",
+                "orange-gpu-parent-probe-interval",
+                "attempt=%u/%u seconds=%u",
+                attempt,
+                config->orange_gpu_parent_probe_attempts,
+                config->orange_gpu_parent_probe_interval_secs
+            );
+            sleep_seconds(config->orange_gpu_parent_probe_interval_secs);
+        }
+    }
+
+    log_stage(
+        any_succeeded ? "<6>" : "<4>",
+        "orange-gpu-parent-probe-complete",
+        "attempts=%u interval_secs=%u status=%s",
+        config->orange_gpu_parent_probe_attempts,
+        config->orange_gpu_parent_probe_interval_secs,
+        any_succeeded ? "success" : "failure"
+    );
+    return any_succeeded ? 0 : 1;
+}
+
 static int run_orange_gpu_payload(const struct hello_init_config *config) {
     pid_t child_pid;
     int status;
+    int probe_status;
+    int probe_checkpoint_status = 0;
     char hold_seconds[16];
     unsigned int waited_seconds = 0;
     unsigned int watchdog_timeout =
@@ -1384,14 +1718,49 @@ static int run_orange_gpu_payload(const struct hello_init_config *config) {
         );
     }
 
+    probe_status = run_orange_gpu_parent_probe(config);
+    if (probe_status != 0) {
+        log_stage(
+            "<4>",
+            "orange-gpu-parent-probe-continue",
+            "status=%d attempts=%u interval_secs=%u",
+            probe_status,
+            config->orange_gpu_parent_probe_attempts,
+            config->orange_gpu_parent_probe_interval_secs
+        );
+        log_boot(
+            "<4>",
+            "orange-gpu parent probe returned status=%d; continuing to real payload launch",
+            probe_status
+        );
+    } else if (config->orange_gpu_parent_probe_attempts > 0U) {
+        probe_checkpoint_status = run_orange_gpu_checkpoint(config, "probe-ready", 1U);
+        if (probe_checkpoint_status != 0) {
+            log_stage(
+                "<4>",
+                "probe-checkpoint-failed",
+                "checkpoint=probe-ready status=%d hold_seconds=%u",
+                probe_checkpoint_status,
+                1U
+            );
+            log_boot(
+                "<4>",
+                "orange-gpu checkpoint=probe-ready failed with status=%d; continuing to real payload launch",
+                probe_checkpoint_status
+            );
+        }
+    }
+
     log_stage(
         "<6>",
         "orange-gpu-launch",
-        "loader=%s binary=%s mode=%s launch_delay_secs=%u hold_seconds=%u",
+        "loader=%s binary=%s mode=%s launch_delay_secs=%u parent_probe_attempts=%u parent_probe_interval_secs=%u hold_seconds=%u",
         SHADOW_HELLO_INIT_ORANGE_GPU_LOADER_PATH,
         SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
         config->orange_gpu_mode,
         config->orange_gpu_launch_delay_secs,
+        config->orange_gpu_parent_probe_attempts,
+        config->orange_gpu_parent_probe_interval_secs,
         config->hold_seconds
     );
     log_boot("<6>", "%s", kOwnedInitOrangeGpuPayloadSentinel);
@@ -2081,11 +2450,13 @@ int main(void) {
     log_stage(
         "<6>",
         "config-loaded",
-        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
         config.orange_gpu_launch_delay_secs,
+        config.orange_gpu_parent_probe_attempts,
+        config.orange_gpu_parent_probe_interval_secs,
         config.hold_seconds,
         config.prelude_hold_seconds,
         config.reboot_target,
@@ -2100,11 +2471,13 @@ int main(void) {
     );
     log_boot(
         "<6>",
-        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
         config.orange_gpu_launch_delay_secs,
+        config.orange_gpu_parent_probe_attempts,
+        config.orange_gpu_parent_probe_interval_secs,
         config.hold_seconds,
         config.prelude_hold_seconds,
         config.reboot_target,
