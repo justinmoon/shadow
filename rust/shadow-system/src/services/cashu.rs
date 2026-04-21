@@ -20,6 +20,7 @@ use deno_error::JsErrorBox;
 use getrandom::getrandom;
 use qrcodegen::{QrCode, QrCodeEcc};
 use serde::{Deserialize, Serialize};
+use shadow_sdk::services::session_config;
 
 const CASHU_DATA_DIR_ENV: &str = "SHADOW_RUNTIME_CASHU_DATA_DIR";
 const DEFAULT_CASHU_DATA_DIR: &str = "build/runtime/cashu-dev";
@@ -67,10 +68,15 @@ impl CashuHostState {
 
 impl CashuPaths {
     fn from_env() -> Result<Self, String> {
-        let data_dir = std::env::var(CASHU_DATA_DIR_ENV)
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .map(PathBuf::from)
+        let data_dir = session_config::runtime_services_config()
+            .map_err(|error| error.to_string())?
+            .and_then(|services| services.cashu_data_dir)
+            .or_else(|| {
+                std::env::var(CASHU_DATA_DIR_ENV)
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .map(PathBuf::from)
+            })
             .unwrap_or_else(|| PathBuf::from(DEFAULT_CASHU_DATA_DIR));
         fs::create_dir_all(&data_dir).map_err(|error| {
             format!(
@@ -729,4 +735,83 @@ extension!(
 
 pub fn init_extension() -> Extension {
     runtime_cashu_host_extension::init()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CashuPaths, CASHU_DATA_DIR_ENV, CASHU_DB_NAME, CASHU_MNEMONIC_NAME, DEFAULT_CASHU_DATA_DIR,
+    };
+    use crate::services::test_env_lock;
+    use shadow_sdk::services::session_config::RUNTIME_SESSION_CONFIG_ENV;
+    use std::fs;
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn with_temp_session_config<T>(contents: &str, f: impl FnOnce() -> T) -> T {
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("shadow-system-cashu-{timestamp}"));
+        let config_path = temp_dir.join("session-config.json");
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        fs::write(&config_path, contents).expect("write session config");
+        std::env::set_var(RUNTIME_SESSION_CONFIG_ENV, &config_path);
+
+        let output = f();
+
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
+        std::env::remove_var(CASHU_DATA_DIR_ENV);
+        let _ = fs::remove_dir_all(&temp_dir);
+        output
+    }
+
+    #[test]
+    fn cashu_paths_prefer_session_config_data_dir() {
+        with_temp_session_config(
+            r#"{
+                "services": {
+                    "cashuDataDir": "/tmp/runtime-config-cashu"
+                }
+            }"#,
+            || {
+                std::env::set_var(CASHU_DATA_DIR_ENV, "/tmp/runtime-env-cashu");
+
+                let paths = CashuPaths::from_env().expect("resolve cashu paths");
+                assert_eq!(
+                    paths.db_path,
+                    Path::new("/tmp/runtime-config-cashu").join(CASHU_DB_NAME)
+                );
+                assert_eq!(
+                    paths.mnemonic_path,
+                    Path::new("/tmp/runtime-config-cashu").join(CASHU_MNEMONIC_NAME)
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn cashu_paths_fall_back_to_default_without_config_or_env() {
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
+        std::env::remove_var(CASHU_DATA_DIR_ENV);
+
+        let paths = CashuPaths::from_env().expect("resolve cashu paths");
+        assert_eq!(
+            paths.db_path,
+            Path::new(DEFAULT_CASHU_DATA_DIR).join(CASHU_DB_NAME)
+        );
+        assert_eq!(
+            paths.mnemonic_path,
+            Path::new(DEFAULT_CASHU_DATA_DIR).join(CASHU_MNEMONIC_NAME)
+        );
+
+        let _ = fs::remove_dir_all(DEFAULT_CASHU_DATA_DIR);
+    }
 }

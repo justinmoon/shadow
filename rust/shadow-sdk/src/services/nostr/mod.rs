@@ -125,7 +125,7 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::services::nostr::store::test_env_lock;
+    use crate::services::test_env_lock;
 
     fn with_temp_db<T>(f: impl FnOnce() -> T) -> T {
         let _guard = test_env_lock()

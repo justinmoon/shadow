@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use shadow_runtime_protocol::{
@@ -12,6 +10,7 @@ use shadow_sdk::services::nostr::{
     NostrAccountSummary, NostrPublishRequest, SqliteNostrService, NOSTR_ACCOUNT_PATH_ENV,
     NOSTR_DB_PATH_ENV,
 };
+use shadow_sdk::services::session_config::{self, RUNTIME_SESSION_CONFIG_ENV};
 
 use crate::services::system_prompt;
 
@@ -151,7 +150,7 @@ fn store_policy(
 ) -> Result<(), String> {
     let path = signer_policy_path().ok_or_else(|| {
         format!(
-            "nostr signer policy cannot resolve a writable path; set {SIGNER_POLICY_PATH_ENV}, {NOSTR_ACCOUNT_PATH_ENV}, or {NOSTR_DB_PATH_ENV}"
+            "nostr signer policy cannot resolve a writable path; set {SIGNER_POLICY_PATH_ENV}, {NOSTR_ACCOUNT_PATH_ENV}, {RUNTIME_SESSION_CONFIG_ENV}, or {NOSTR_DB_PATH_ENV}"
         )
     })?;
     let mut policies = read_persisted_policies(&path)?;
@@ -185,10 +184,20 @@ fn signer_policy_path() -> Option<PathBuf> {
 }
 
 fn default_signer_policy_path() -> Option<PathBuf> {
-    let db_path = std::env::var(NOSTR_DB_PATH_ENV)
+    let db_path = session_config::runtime_services_config()
         .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())?;
+        .flatten()
+        .and_then(|services| {
+            services
+                .nostr_db_path
+                .map(|path| path.to_string_lossy().into_owned())
+        })
+        .or_else(|| {
+            std::env::var(NOSTR_DB_PATH_ENV)
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        })?;
     if db_path == ":memory:" {
         return None;
     }
@@ -251,20 +260,18 @@ fn preview_text(content: &str) -> String {
 }
 
 #[cfg(test)]
-fn test_env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-#[cfg(test)]
 mod tests {
     use super::{
         build_publish_prompt, load_policy, preview_text, signer_policy_path, store_policy,
-        test_env_lock, PersistedSignerPolicy, SIGNER_POLICY_PATH_ENV,
+        PersistedSignerPolicy, SIGNER_POLICY_BASENAME, SIGNER_POLICY_PATH_ENV,
     };
+    use crate::services::test_env_lock;
     use shadow_sdk::services::nostr::{
-        NostrAccountSource, NostrAccountSummary, NostrPublishRequest,
+        NostrAccountSource, NostrAccountSummary, NostrPublishRequest, NOSTR_DB_PATH_ENV,
     };
+    use shadow_sdk::services::session_config::RUNTIME_SESSION_CONFIG_ENV;
+    use std::fs;
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -279,7 +286,9 @@ mod tests {
 
     #[test]
     fn signer_policy_round_trips_by_account_and_app() {
-        let _guard = test_env_lock().lock().expect("env lock");
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time")
@@ -307,6 +316,49 @@ mod tests {
 
         std::env::remove_var(SIGNER_POLICY_PATH_ENV);
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn signer_policy_path_prefers_session_config_db_parent() {
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("shadow-nostr-signer-config-{timestamp}"));
+        let config_db_dir = temp_dir.join("config-db");
+        let env_db_dir = temp_dir.join("env-db");
+        let config_path = temp_dir.join("session-config.json");
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        fs::write(
+            &config_path,
+            format!(
+                r#"{{
+                    "services": {{
+                        "nostrDbPath": "{}"
+                    }}
+                }}"#,
+                config_db_dir.join("runtime-nostr.sqlite3").display()
+            ),
+        )
+        .expect("write session config");
+        std::env::set_var(RUNTIME_SESSION_CONFIG_ENV, &config_path);
+        std::env::set_var(NOSTR_DB_PATH_ENV, env_db_dir.join("runtime-nostr.sqlite3"));
+
+        assert_eq!(
+            signer_policy_path().as_deref(),
+            Some(
+                Path::new(&config_db_dir)
+                    .join(SIGNER_POLICY_BASENAME)
+                    .as_path()
+            )
+        );
+
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
+        std::env::remove_var(NOSTR_DB_PATH_ENV);
+        let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[test]

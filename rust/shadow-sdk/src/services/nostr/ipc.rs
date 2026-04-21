@@ -9,11 +9,12 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{APP_TITLE_ENV, WAYLAND_INSTANCE_NAME_ENV};
+use crate::services::session_config;
 
 use super::{
-    Kind1Event, ListKind1Query, NostrAccountSummary, NostrEvent, NostrHostError,
+    store, Kind1Event, ListKind1Query, NostrAccountSummary, NostrEvent, NostrHostError,
     NostrPublishReceipt, NostrPublishRequest, NostrQuery, NostrReplaceableQuery, NostrSyncReceipt,
-    NostrSyncRequest, NOSTR_DB_PATH_ENV,
+    NostrSyncRequest,
 };
 
 pub const NOSTR_SERVICE_SOCKET_ENV: &str = "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET";
@@ -122,18 +123,11 @@ pub fn ensure_service_running() -> Result<(), NostrHostError> {
 }
 
 pub fn service_socket_path() -> Option<PathBuf> {
-    std::env::var(NOSTR_SERVICE_SOCKET_ENV)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+    configured_service_socket_path().ok().flatten()
 }
 
 pub fn default_service_socket_path() -> Option<PathBuf> {
-    let db_path = std::env::var(NOSTR_DB_PATH_ENV)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())?;
+    let db_path = store::configured_db_path().ok().flatten()?;
     if db_path == IN_MEMORY_DB_PATH {
         return None;
     }
@@ -207,7 +201,7 @@ where
 }
 
 fn ensure_service_socket_path() -> Result<Option<PathBuf>, NostrHostError> {
-    if let Some(socket_path) = service_socket_path() {
+    if let Some(socket_path) = configured_service_socket_path()? {
         return Ok(Some(socket_path));
     }
 
@@ -216,6 +210,20 @@ fn ensure_service_socket_path() -> Result<Option<PathBuf>, NostrHostError> {
     };
     std::env::set_var(NOSTR_SERVICE_SOCKET_ENV, &socket_path);
     Ok(Some(socket_path))
+}
+
+fn configured_service_socket_path() -> Result<Option<PathBuf>, NostrHostError> {
+    if let Some(socket_path) = session_config::runtime_services_config()
+        .map_err(|error| NostrHostError::from(error.to_string()))?
+        .and_then(|services| services.nostr_service_socket)
+    {
+        return Ok(Some(socket_path));
+    }
+    Ok(std::env::var(NOSTR_SERVICE_SOCKET_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from))
 }
 
 fn current_app_context() -> (Option<String>, Option<String>) {
@@ -309,4 +317,81 @@ fn system_binary_path() -> Result<PathBuf, NostrHostError> {
 
 fn service_log_path(socket_path: &Path) -> PathBuf {
     socket_path.with_extension("log")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        default_service_socket_path, service_socket_path, NOSTR_SERVICE_SOCKET_BASENAME,
+        NOSTR_SERVICE_SOCKET_ENV,
+    };
+    use crate::services::nostr::NOSTR_DB_PATH_ENV;
+    use crate::services::session_config::RUNTIME_SESSION_CONFIG_ENV;
+    use crate::services::test_env_lock;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn with_temp_session_config<T>(contents: &str, f: impl FnOnce() -> T) -> T {
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("shadow-sdk-nostr-ipc-{timestamp}"));
+        let config_path = temp_dir.join("session-config.json");
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        fs::write(&config_path, contents).expect("write session config");
+        std::env::set_var(RUNTIME_SESSION_CONFIG_ENV, &config_path);
+
+        let output = f();
+
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
+        std::env::remove_var(NOSTR_SERVICE_SOCKET_ENV);
+        std::env::remove_var(NOSTR_DB_PATH_ENV);
+        let _ = fs::remove_dir_all(&temp_dir);
+        output
+    }
+
+    #[test]
+    fn service_socket_path_prefers_session_config_over_env() {
+        with_temp_session_config(
+            r#"{
+                "services": {
+                    "nostrServiceSocket": "/tmp/config-nostr.sock"
+                }
+            }"#,
+            || {
+                std::env::set_var(NOSTR_SERVICE_SOCKET_ENV, "/tmp/env-nostr.sock");
+
+                assert_eq!(
+                    service_socket_path().as_deref(),
+                    Some(Path::new("/tmp/config-nostr.sock"))
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn default_service_socket_path_uses_session_config_db_parent() {
+        with_temp_session_config(
+            r#"{
+                "services": {
+                    "nostrDbPath": "/tmp/runtime-config/runtime-nostr.sqlite3"
+                }
+            }"#,
+            || {
+                std::env::set_var(NOSTR_DB_PATH_ENV, "/tmp/runtime-env/runtime-nostr.sqlite3");
+
+                assert_eq!(
+                    default_service_socket_path(),
+                    Some(PathBuf::from(format!(
+                        "/tmp/runtime-config/{NOSTR_SERVICE_SOCKET_BASENAME}"
+                    )))
+                );
+            },
+        );
+    }
 }

@@ -63,6 +63,9 @@ Current checkpoint:
 
 - The VM guest now validates and consumes `session-config.json` as the primary startup source.
 - The legacy VM env export file is still staged, but only as a compatibility/debug overlay while compositor/runtime internals are still env-based.
+- The supported VM session now exports the mounted `session-config.json` path through `SHADOW_RUNTIME_SESSION_CONFIG` so runtime services can resolve typed service paths directly.
+- VM nostr and cashu now resolve service paths from `services.*` in `session-config.json` before falling back to `SHADOW_RUNTIME_NOSTR_*` / `SHADOW_RUNTIME_CASHU_*`.
+- `scripts/ci/ui_vm_smoke.sh` now stages conflicting runtime Nostr/Cashu path env overrides and proves the live VM still uses the config-backed DB/socket/signer-policy/data-dir paths.
 
 ## Phase 3: Pixel Supported-Surface Cleanup
 

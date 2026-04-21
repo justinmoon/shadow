@@ -2,12 +2,12 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::sync::{Mutex, OnceLock};
 
 use nostr::prelude::{Keys, ToBech32};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+
+use crate::services::session_config::{self, RUNTIME_SESSION_CONFIG_ENV};
 
 use super::types::{
     NostrAccountSource, NostrAccountSummary, NostrEvent, NostrEventReference, NostrQuery,
@@ -84,10 +84,7 @@ pub struct SqliteNostrService {
 
 impl SqliteNostrService {
     pub fn from_env() -> Result<Self, NostrHostError> {
-        let db_path = std::env::var(NOSTR_DB_PATH_ENV)
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| String::from(IN_MEMORY_DB_PATH));
+        let db_path = resolved_db_path()?;
         Self::open(&db_path)
     }
 
@@ -281,7 +278,7 @@ impl SqliteNostrService {
             return Ok(Some(summary));
         }
 
-        let Some(account_path) = account_path() else {
+        let Some(account_path) = account_path()? else {
             return Ok(None);
         };
         read_persisted_account(&account_path)
@@ -308,7 +305,7 @@ impl SqliteNostrService {
             return Ok(keys);
         }
 
-        let Some(account_path) = account_path() else {
+        let Some(account_path) = account_path()? else {
             return Err(NostrHostError::new(
                 "shadow nostr service: no active account is configured",
             ));
@@ -324,9 +321,9 @@ impl SqliteNostrService {
         keys: Keys,
         source: NostrAccountSource,
     ) -> Result<NostrAccountSummary, NostrHostError> {
-        let account_path = account_path().ok_or_else(|| {
+        let account_path = account_path()?.ok_or_else(|| {
             NostrHostError::new(format!(
-                "shadow nostr service: cannot resolve account path; set {NOSTR_ACCOUNT_PATH_ENV} or configure {NOSTR_DB_PATH_ENV}"
+                "shadow nostr service: cannot resolve account path; set {NOSTR_ACCOUNT_PATH_ENV} or configure {RUNTIME_SESSION_CONFIG_ENV} or {NOSTR_DB_PATH_ENV}"
             ))
         })?;
         let persisted = PersistedNostrAccount {
@@ -641,28 +638,50 @@ pub fn list_kind1(query: ListKind1Query) -> Result<Vec<Kind1Event>, NostrHostErr
     SqliteNostrService::from_env()?.list_kind1(query)
 }
 
-fn account_path() -> Option<PathBuf> {
-    std::env::var(NOSTR_ACCOUNT_PATH_ENV)
+fn account_path() -> Result<Option<PathBuf>, NostrHostError> {
+    let explicit_path = std::env::var(NOSTR_ACCOUNT_PATH_ENV)
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(default_account_path)
+        .map(PathBuf::from);
+    if explicit_path.is_some() {
+        return Ok(explicit_path);
+    }
+    default_account_path()
 }
 
-fn default_account_path() -> Option<PathBuf> {
-    let db_path = std::env::var(NOSTR_DB_PATH_ENV)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())?;
+fn default_account_path() -> Result<Option<PathBuf>, NostrHostError> {
+    let Some(db_path) = configured_db_path()? else {
+        return Ok(None);
+    };
     if db_path == IN_MEMORY_DB_PATH {
-        return None;
+        return Ok(None);
     }
 
-    let parent = Path::new(&db_path)
+    let Some(parent) = Path::new(&db_path)
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())?;
-    Some(parent.join(NOSTR_ACCOUNT_BASENAME))
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
+        return Ok(None);
+    };
+    Ok(Some(parent.join(NOSTR_ACCOUNT_BASENAME)))
+}
+
+pub(crate) fn configured_db_path() -> Result<Option<String>, NostrHostError> {
+    if let Some(db_path) = session_config::runtime_services_config()
+        .map_err(|error| NostrHostError::new(error.to_string()))?
+        .and_then(|services| services.nostr_db_path)
+    {
+        return Ok(Some(db_path.to_string_lossy().into_owned()));
+    }
+    Ok(std::env::var(NOSTR_DB_PATH_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty()))
+}
+
+fn resolved_db_path() -> Result<String, NostrHostError> {
+    Ok(configured_db_path()?.unwrap_or_else(|| String::from(IN_MEMORY_DB_PATH)))
 }
 
 fn ensure_db_parent_dir(db_path: &str) -> Result<(), NostrHostError> {
@@ -843,24 +862,21 @@ fn decode_references_json(
 }
 
 #[cfg(test)]
-pub(crate) fn test_env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-#[cfg(test)]
 mod tests {
     use super::{
         account_path, current_account, default_account_path, generate_account, import_account_nsec,
-        test_env_lock, Kind1Event, ListKind1Query, NostrAccountSource, NostrEvent,
-        NostrEventReference, NostrQuery, NostrReplaceableQuery, SqliteNostrService,
-        LEGACY_DEMO_EVENT_IDS, NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,
+        Kind1Event, ListKind1Query, NostrAccountSource, NostrEvent, NostrEventReference,
+        NostrQuery, NostrReplaceableQuery, SqliteNostrService, LEGACY_DEMO_EVENT_IDS,
+        NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,
+        RUNTIME_SESSION_CONFIG_ENV,
     };
     use nostr::prelude::{Keys, ToBech32};
     use rusqlite::Connection;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::services::test_env_lock;
 
     fn in_memory_service() -> SqliteNostrService {
         let service = SqliteNostrService {
@@ -927,9 +943,51 @@ mod tests {
         std::env::set_var(NOSTR_DB_PATH_ENV, &db_path);
         std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
         std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
 
         let output = f(db_path.clone(), account_path.clone());
 
+        std::env::remove_var(NOSTR_DB_PATH_ENV);
+        std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
+        std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
+        let _ = fs::remove_dir_all(&temp_dir);
+        output
+    }
+
+    fn with_temp_session_config<T>(f: impl FnOnce(PathBuf, PathBuf) -> T) -> T {
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("shadow-sdk-nostr-config-{timestamp}"));
+        let db_path = temp_dir.join("runtime-nostr.sqlite3");
+        let account_path = temp_dir.join("runtime-nostr-account.json");
+        let config_path = temp_dir.join("session-config.json");
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        fs::write(
+            &config_path,
+            format!(
+                r#"{{
+                    "services": {{
+                        "nostrDbPath": "{}"
+                    }}
+                }}"#,
+                db_path.display()
+            ),
+        )
+        .expect("write session config");
+        std::env::set_var(RUNTIME_SESSION_CONFIG_ENV, &config_path);
+        std::env::set_var(NOSTR_DB_PATH_ENV, temp_dir.join("ignored.sqlite3"));
+        std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
+        std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
+
+        let output = f(db_path.clone(), account_path.clone());
+
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
         std::env::remove_var(NOSTR_DB_PATH_ENV);
         std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
         std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
@@ -940,8 +998,14 @@ mod tests {
     #[test]
     fn default_account_path_uses_nostr_db_parent() {
         with_temp_env(|db_path, expected_account_path| {
-            assert_eq!(default_account_path(), Some(expected_account_path.clone()));
-            assert_eq!(account_path(), Some(expected_account_path.clone()));
+            assert_eq!(
+                default_account_path().expect("resolve default account path"),
+                Some(expected_account_path.clone())
+            );
+            assert_eq!(
+                account_path().expect("resolve account path"),
+                Some(expected_account_path.clone())
+            );
             assert_eq!(db_path.parent(), expected_account_path.parent());
         });
     }
@@ -954,11 +1018,30 @@ mod tests {
         std::env::set_var(NOSTR_DB_PATH_ENV, ":memory:");
         std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
         std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
 
-        assert_eq!(default_account_path(), None);
-        assert_eq!(account_path(), None);
+        assert_eq!(
+            default_account_path().expect("resolve default account path"),
+            None
+        );
+        assert_eq!(account_path().expect("resolve account path"), None);
 
         std::env::remove_var(NOSTR_DB_PATH_ENV);
+    }
+
+    #[test]
+    fn default_account_path_prefers_session_config_nostr_db_parent() {
+        with_temp_session_config(|db_path, expected_account_path| {
+            assert_eq!(
+                default_account_path().expect("resolve default account path"),
+                Some(expected_account_path.clone())
+            );
+            assert_eq!(
+                account_path().expect("resolve account path"),
+                Some(expected_account_path.clone())
+            );
+            assert_eq!(db_path.parent(), expected_account_path.parent());
+        });
     }
 
     #[test]

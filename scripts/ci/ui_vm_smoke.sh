@@ -42,6 +42,7 @@ vm_extra_env_path=""
 relay_host_port=""
 relay_guest_url=""
 relay_publish_secret=""
+VM_OVERRIDE_ROOT="/tmp/shadow-vm-smoke-env-override"
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -393,6 +394,9 @@ start_seeded_local_relay() {
 prepare_vm_extra_env() {
   vm_extra_env_path="$(mktemp "$LOG_DIR/vm-extra-env.XXXXXX.sh")"
   {
+    printf 'export SHADOW_RUNTIME_NOSTR_DB_PATH=%q\n' "$VM_OVERRIDE_ROOT/runtime-nostr.sqlite3"
+    printf 'export SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=%q\n' "$VM_OVERRIDE_ROOT/runtime-nostr.sock"
+    printf 'export SHADOW_RUNTIME_CASHU_DATA_DIR=%q\n' "$VM_OVERRIDE_ROOT/runtime-cashu"
     printf 'export SHADOW_RUNTIME_NOSTR_ACCOUNT_NSEC=%q\n' "$relay_publish_secret"
     printf 'export SHADOW_RUST_TIMELINE_RELAY_URLS=%q\n' "$relay_guest_url"
     printf 'export SHADOW_RUST_TIMELINE_SYNC_ON_START=%q\n' "1"
@@ -933,6 +937,24 @@ for app_id in sorted(expected_apps):
         )
 PY
 
+session_env_text="$(run_shadowctl ssh -t vm -- cat /var/lib/shadow-ui/shadow-ui-session-env.sh)"
+if [[ "$session_env_text" != *'export SHADOW_RUNTIME_SESSION_CONFIG="/opt/shadow-runtime/session-config.json"'* ]]; then
+  echo "vm-smoke: session env missing SHADOW_RUNTIME_SESSION_CONFIG export" >&2
+  exit 1
+fi
+if [[ "$session_env_text" != *"export SHADOW_RUNTIME_NOSTR_DB_PATH=\"$VM_OVERRIDE_ROOT/runtime-nostr.sqlite3\""* ]]; then
+  echo "vm-smoke: session env missing overridden SHADOW_RUNTIME_NOSTR_DB_PATH export" >&2
+  exit 1
+fi
+if [[ "$session_env_text" != *"export SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=\"$VM_OVERRIDE_ROOT/runtime-nostr.sock\""* ]]; then
+  echo "vm-smoke: session env missing overridden SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET export" >&2
+  exit 1
+fi
+if [[ "$session_env_text" != *"export SHADOW_RUNTIME_CASHU_DATA_DIR=\"$VM_OVERRIDE_ROOT/runtime-cashu\""* ]]; then
+  echo "vm-smoke: session env missing overridden SHADOW_RUNTIME_CASHU_DATA_DIR export" >&2
+  exit 1
+fi
+
 echo "vm-smoke: tap counter launcher tile"
 counter_launcher_tap
 state_after_counter_open="$(wait_for_open_state counter "counter open")"
@@ -1103,6 +1125,54 @@ wait_for_relay_note \
   "ws://127.0.0.1:${relay_host_port}" \
   "vm smoke reply cached policy" \
   "rust-timeline published cached-policy reply"
+
+ui_vm_ssh python3 - "$VM_OVERRIDE_ROOT" <<'PY'
+import json
+import stat
+import sys
+from pathlib import Path
+
+override_root = Path(sys.argv[1])
+config_path = Path("/opt/shadow-runtime/session-config.json")
+with config_path.open("r", encoding="utf-8") as handle:
+    config = json.load(handle)
+
+services = config.get("services")
+if not isinstance(services, dict):
+    raise SystemExit("vm-smoke: runtime session config services must be an object")
+
+nostr_db_path = Path(services["nostrDbPath"])
+nostr_socket_path = Path(services["nostrServiceSocket"])
+cashu_data_dir = Path(services["cashuDataDir"])
+signer_policy_path = nostr_db_path.parent / "runtime-nostr-signer-policy.json"
+override_signer_policy_path = override_root / "runtime-nostr-signer-policy.json"
+
+if nostr_db_path == override_root / "runtime-nostr.sqlite3":
+    raise SystemExit("vm-smoke: runtime session config nostr db unexpectedly matches env override")
+if nostr_socket_path == override_root / "runtime-nostr.sock":
+    raise SystemExit("vm-smoke: runtime session config nostr socket unexpectedly matches env override")
+if cashu_data_dir == override_root / "runtime-cashu":
+    raise SystemExit("vm-smoke: runtime session config cashu dir unexpectedly matches env override")
+
+if not nostr_db_path.is_file():
+    raise SystemExit(f"vm-smoke: expected config-backed nostr db {nostr_db_path} to exist")
+if not cashu_data_dir.is_dir():
+    raise SystemExit(f"vm-smoke: expected config-backed cashu dir {cashu_data_dir} to exist")
+if not nostr_socket_path.exists():
+    raise SystemExit(f"vm-smoke: expected config-backed nostr socket {nostr_socket_path} to exist")
+if not stat.S_ISSOCK(nostr_socket_path.stat().st_mode):
+    raise SystemExit(f"vm-smoke: expected config-backed nostr socket {nostr_socket_path} to be a unix socket")
+if not signer_policy_path.is_file():
+    raise SystemExit(f"vm-smoke: expected config-backed signer policy {signer_policy_path} to exist")
+if (override_root / "runtime-nostr.sqlite3").exists():
+    raise SystemExit("vm-smoke: env override unexpectedly owns the live nostr db path")
+if (override_root / "runtime-nostr.sock").exists():
+    raise SystemExit("vm-smoke: env override unexpectedly owns the live nostr socket path")
+if (override_root / "runtime-cashu").exists():
+    raise SystemExit("vm-smoke: env override unexpectedly owns the live cashu dir")
+if override_signer_policy_path.exists():
+    raise SystemExit("vm-smoke: env override unexpectedly owns the live signer policy path")
+PY
 
 echo "vm-smoke: home rust-timeline again"
 "$SCRIPT_DIR/shadowctl" home -t vm >/dev/null

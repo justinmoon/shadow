@@ -279,6 +279,7 @@ with config_path.open("r", encoding="utf-8") as handle:
 def emit(name: str, value: str) -> None:
     print(f"export {name}={shlex.quote(value)}")
 
+emit("SHADOW_RUNTIME_SESSION_CONFIG", str(config_path))
 emit("SHADOW_SESSION_APP_PROFILE", config["profile"])
 
 system = config["system"]
@@ -331,6 +332,7 @@ PY
             startup_app="''${SHADOW_COMPOSITOR_START_APP_ID:-shell}"
             echo "runtime bundle=''${runtime_bundle_path:-unset}"
             echo "system binary=''${system_path:-unset}"
+            echo "runtime session config=$SHADOW_RUNTIME_SESSION_CONFIG"
             echo "startup app=$startup_app"
             echo "app launch mode=metadata"
             echo "runtime nostr db=$SHADOW_RUNTIME_NOSTR_DB_PATH"
@@ -418,6 +420,7 @@ PY
               "export LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH\"" \
               "export LIBGL_DRIVERS_PATH=\"$LIBGL_DRIVERS_PATH\"" \
               "export XDG_RUNTIME_DIR=\"$XDG_RUNTIME_DIR\"" \
+              "export SHADOW_RUNTIME_SESSION_CONFIG=\"$SHADOW_RUNTIME_SESSION_CONFIG\"" \
               "export SHADOW_SESSION_APP_PROFILE=\"$SHADOW_SESSION_APP_PROFILE\"" \
               "export SHADOW_RUNTIME_APP_BUNDLE_PATH=\"$runtime_bundle_path\"" \
               "export SHADOW_RUNTIME_CASHU_DATA_DIR=\"$SHADOW_RUNTIME_CASHU_DATA_DIR\"" \

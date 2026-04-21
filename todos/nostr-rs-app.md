@@ -89,8 +89,9 @@ typed convenience wrappers on top.
   - The daemon owns the long-lived `nostr_sdk::Client`, relay registry, and
     sqlite-backed cache writes.
   - `shadow_sdk::services::nostr` now speaks to that daemon when
-    `SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET` is set, while still falling back to
-    direct sqlite reads in local/unit-test environments.
+    `SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET` is set or the mounted
+    `SHADOW_RUNTIME_SESSION_CONFIG` names a service socket, while still falling
+    back to direct sqlite reads in local/unit-test environments.
   - the TypeScript runtime now has a generic `nostr.sync(...)` path, with
     `syncKind1(...)` kept as a compatibility wrapper.
 - This is a single-account, single-daemon slice for now. It improves the real

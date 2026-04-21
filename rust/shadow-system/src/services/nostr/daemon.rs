@@ -217,21 +217,20 @@ fn error_to_string(error: NostrHostError) -> String {
 #[cfg(test)]
 mod tests {
     use super::{NostrDaemon, NostrIpcRequest, NostrIpcResponse};
+    use crate::services::test_env_lock;
     use serde::Deserialize;
     use shadow_sdk::services::nostr::{
         NostrAccountSummary, NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,
     };
+    use shadow_sdk::services::session_config::RUNTIME_SESSION_CONFIG_ENV;
     use std::fs;
-    use std::sync::{Mutex, OnceLock};
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
     fn with_temp_env<T>(f: impl FnOnce() -> T) -> T {
-        let _guard = env_lock().lock().expect("env lock");
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time")
@@ -243,9 +242,51 @@ mod tests {
         std::env::set_var(NOSTR_DB_PATH_ENV, &db_path);
         std::env::set_var(NOSTR_ACCOUNT_PATH_ENV, &account_path);
         std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
 
         let output = f();
 
+        std::env::remove_var(NOSTR_DB_PATH_ENV);
+        std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
+        std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
+        let _ = fs::remove_dir_all(&temp_dir);
+        output
+    }
+
+    fn with_temp_session_config<T>(f: impl FnOnce(PathBuf, PathBuf) -> T) -> T {
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("shadow-system-nostr-config-{timestamp}"));
+        let db_path = temp_dir.join("runtime-nostr.sqlite3");
+        let account_path = temp_dir.join("runtime-nostr-account.json");
+        let config_path = temp_dir.join("session-config.json");
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        fs::write(
+            &config_path,
+            format!(
+                r#"{{
+                    "services": {{
+                        "nostrDbPath": "{}"
+                    }}
+                }}"#,
+                db_path.display()
+            ),
+        )
+        .expect("write session config");
+        std::env::set_var(RUNTIME_SESSION_CONFIG_ENV, &config_path);
+        std::env::remove_var(NOSTR_DB_PATH_ENV);
+        std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
+        std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
+
+        let output = f(db_path.clone(), account_path.clone());
+
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
         std::env::remove_var(NOSTR_DB_PATH_ENV);
         std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
         std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
@@ -284,6 +325,26 @@ mod tests {
             );
 
             assert_eq!(current, Some(generated));
+        });
+    }
+
+    #[test]
+    fn daemon_uses_session_config_nostr_db_path() {
+        with_temp_session_config(|db_path, account_path| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build tokio runtime");
+            let mut daemon = NostrDaemon::from_env().expect("build daemon");
+
+            let _generated: NostrAccountSummary = decode_ok(
+                &daemon
+                    .handle_request(&runtime, NostrIpcRequest::GenerateAccount)
+                    .expect("generate via daemon"),
+            );
+
+            assert!(db_path.exists());
+            assert!(account_path.exists());
         });
     }
 }
