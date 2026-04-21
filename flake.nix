@@ -1106,6 +1106,9 @@
           cargoArgs = commonArgs // { inherit cargoVendorDir; };
           cargoArtifacts = craneLib.buildDepsOnly ((builtins.removeAttrs cargoArgs [ "src" ]) // {
             pname = "shadow-system-deps";
+            buildPhaseCargoCommand = ''
+              cargoWithProfile build ${commonArgs.cargoExtraArgs}
+            '';
             dummySrc = craneLib.mkDummySrc (commonArgs // {
               extraDummyScript = ''
                 rm -rf "$out/rust/vendor/temporal_rs"

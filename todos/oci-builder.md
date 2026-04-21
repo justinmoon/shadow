@@ -50,6 +50,8 @@ Make the OCI ARM builder fast, well-utilized, and cheap to operate.
 - Observer data from April 20-21 shows `active_build_count = 3` only briefly, never above 3, and average host CPU at 3 active builds was still only about 41%, so `max-jobs` is not the first bottleneck for the current 1-2-builder workload.
 - Crane `installCargoArtifactsMode = "use-symlink"` did not help `shadow-system`: the deps derivation grew from about 191s to about 202s and still produced a 1.7G output with zero symlinks.
 - A naive `-fuse-ld=lld` experiment on the final `shadow-system` derivation also did not help: Cargo recompiled a wide set of crates, GNU `ld` still showed up in the process tree, and the final derivation ballooned from about 40s to about 156s.
+- `shadow-system`'s default `buildDepsOnly` shape was doing both `cargo check` and `cargo build` for the package lane even though the final derivation only needs build artifacts.
+  An April 21, 2026 builder A/B that replaced the deps build phase with just `cargoWithProfile build ${commonArgs.cargoExtraArgs}` cut the whole `shadow-system` package build from about `276s` to about `224s` and cut the deps derivation build phase from about `3m16s` to about `2m07s`.
 - Next seam: either integrate an actually effective linker path that does not invalidate most of the final derivation, or do structural compile-surface work such as splitting heavy `shadow-system` domains behind optional features or separate binaries.
 - The builder was still up on April 20, 2026 after starting on April 18, 2026, with multi-hour idle windows that exceed the configured 20 minute threshold.
 - `shadow-system` currently follows a coarse Crane split: vendoring, one `buildDepsOnly`, one `buildPackage`.
