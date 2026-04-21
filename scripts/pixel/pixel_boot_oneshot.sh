@@ -27,6 +27,7 @@ metadata_path=""
 status_path=""
 collect_output_dir=""
 recover_traces_output_dir=""
+transport_timeline_path=""
 image_sha256=""
 slot_before=""
 slot_after=""
@@ -46,6 +47,13 @@ recover_traces_uncorrelated_previous_boot_channels_with_matches=0
 recover_traces_current_boot_channels_with_matches=0
 recover_traces_reason=""
 recover_traces_adb_timeout_secs_used=0
+transport_initial_state=""
+transport_first_none_elapsed_secs=""
+transport_first_fastboot_elapsed_secs=""
+transport_first_adb_elapsed_secs=""
+transport_last_state=""
+transport_last_state_elapsed_secs=""
+transport_late_recovery_reached_adb=false
 fastboot_departed=false
 fastboot_returned=false
 fastboot_leave_elapsed_secs=0
@@ -275,6 +283,7 @@ write_status() {
     "metadata_path=$metadata_path" \
     "collect_output_dir=$collect_output_dir" \
     "recover_traces_output_dir=$recover_traces_output_dir" \
+    "transport_timeline_path=$transport_timeline_path" \
     "wait_ready_secs=$WAIT_READY_SECS" \
     "adb_timeout_secs=$ADB_TIMEOUT_SECS" \
     "boot_timeout_secs=$BOOT_TIMEOUT_SECS" \
@@ -303,6 +312,13 @@ write_status() {
     "recover_traces_current_boot_channels_with_matches=$recover_traces_current_boot_channels_with_matches" \
     "recover_traces_reason=$recover_traces_reason" \
     "recover_traces_adb_timeout_secs_used=$recover_traces_adb_timeout_secs_used" \
+    "transport_initial_state=$transport_initial_state" \
+    "transport_first_none_elapsed_secs=$transport_first_none_elapsed_secs" \
+    "transport_first_fastboot_elapsed_secs=$transport_first_fastboot_elapsed_secs" \
+    "transport_first_adb_elapsed_secs=$transport_first_adb_elapsed_secs" \
+    "transport_last_state=$transport_last_state" \
+    "transport_last_state_elapsed_secs=$transport_last_state_elapsed_secs" \
+    "transport_late_recovery_reached_adb=$transport_late_recovery_reached_adb" \
     "fastboot_departed=$fastboot_departed" \
     "fastboot_returned=$fastboot_returned" \
     "fastboot_leave_elapsed_secs=$fastboot_leave_elapsed_secs" \
@@ -441,8 +457,22 @@ backfill_state_after_recover_traces() {
   if [[ "$WAIT_BOOT_COMPLETED" == "1" ]]; then
     boot_completed=true
   fi
+  if [[ -z "$transport_first_adb_elapsed_secs" ]]; then
+    transport_late_recovery_reached_adb=true
+    transport_last_state="adb"
+    transport_last_state_elapsed_secs=""
+  fi
   capture_bootreason_props
   evaluate_bootreason_status
+}
+
+capture_transport_timeline_status() {
+  transport_initial_state="${PIXEL_ADB_TRANSPORT_INITIAL_STATE:-}"
+  transport_first_none_elapsed_secs="${PIXEL_ADB_TRANSPORT_FIRST_NONE_ELAPSED_SECS:-}"
+  transport_first_fastboot_elapsed_secs="${PIXEL_ADB_TRANSPORT_FIRST_FASTBOOT_ELAPSED_SECS:-}"
+  transport_first_adb_elapsed_secs="${PIXEL_ADB_TRANSPORT_FIRST_ADB_ELAPSED_SECS:-}"
+  transport_last_state="${PIXEL_ADB_TRANSPORT_LAST_STATE:-}"
+  transport_last_state_elapsed_secs="${PIXEL_ADB_TRANSPORT_LAST_STATE_ELAPSED_SECS:-}"
 }
 
 print_recover_traces_summary() {
@@ -538,6 +568,9 @@ fi
 if [[ "$SUCCESS_SIGNAL" == "adb" ]] && flag_enabled "$RECOVER_TRACES_AFTER"; then
   recover_traces_output_dir="$OUTPUT_DIR/recover-traces"
 fi
+if [[ "$SUCCESS_SIGNAL" == "adb" ]]; then
+  transport_timeline_path="$OUTPUT_DIR/transport-timeline.tsv"
+fi
 image_sha256="$(shasum -a 256 "$IMAGE_PATH" | awk '{print $1}')"
 
 if [[ "$DRY_RUN" == "1" ]]; then
@@ -566,6 +599,9 @@ EOF
     printf 'recover_traces_output_dir=%s\n' "$recover_traces_output_dir"
     printf 'late_recover_adb_timeout_secs=%s\n' "$LATE_RECOVER_ADB_TIMEOUT_SECS"
   fi
+  if [[ -n "$transport_timeline_path" ]]; then
+    printf 'transport_timeline_path=%s\n' "$transport_timeline_path"
+  fi
   exit 0
 fi
 
@@ -588,7 +624,8 @@ pixel_write_status_json \
   proof_prop="$PROOF_PROP_SPEC" \
   wait_boot_completed="$(wait_boot_completed_status_word)" \
   skip_collect="$(bool_word "$SKIP_COLLECT")" \
-  recover_traces_after="$(bool_word "$RECOVER_TRACES_AFTER")"
+  recover_traces_after="$(bool_word "$RECOVER_TRACES_AFTER")" \
+  transport_timeline_path="$transport_timeline_path"
 
 printf 'One-shot booting %s on %s\n' "$IMAGE_PATH" "$serial"
 printf 'Current slot before fastboot boot: %s\n' "$slot_before"
@@ -611,7 +648,8 @@ if [[ "$SUCCESS_SIGNAL" == "fastboot-return" ]]; then
   exit 0
 fi
 
-if ! pixel_wait_for_adb "$serial" "$ADB_TIMEOUT_SECS"; then
+if ! pixel_wait_for_adb_with_transport_timeline "$serial" "$ADB_TIMEOUT_SECS" "$transport_timeline_path"; then
+  capture_transport_timeline_status
   failure_stage="wait-adb"
   if maybe_recover_traces "late-wait-adb" "$LATE_RECOVER_ADB_TIMEOUT_SECS" "$BOOT_TIMEOUT_SECS"; then
     backfill_state_after_recover_traces
@@ -624,6 +662,7 @@ if ! pixel_wait_for_adb "$serial" "$ADB_TIMEOUT_SECS"; then
   fi
   exit 1
 fi
+capture_transport_timeline_status
 adb_ready=true
 
 slot_after="$(pixel_current_slot_letter_from_adb "$serial" 2>/dev/null || true)"
@@ -682,6 +721,9 @@ if [[ "$bootreason_indicates_failure" == "true" ]]; then
     printf 'Collected one-shot boot evidence: %s\n' "$collect_output_dir"
   fi
   print_recover_traces_summary
+  if [[ -n "$transport_timeline_path" ]]; then
+    printf 'Transport timeline: %s\n' "$transport_timeline_path"
+  fi
   printf 'Bootreason indicates failed Android boot: %s\n' "$bootreason_failure_summary"
   printf 'Run status: %s\n' "$status_path"
   exit 1
@@ -693,4 +735,7 @@ else
   printf 'Collected one-shot boot evidence: %s\n' "$collect_output_dir"
 fi
 print_recover_traces_summary
+if [[ -n "$transport_timeline_path" ]]; then
+  printf 'Transport timeline: %s\n' "$transport_timeline_path"
+fi
 printf 'Run status: %s\n' "$status_path"

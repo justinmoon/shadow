@@ -1025,6 +1025,7 @@ assert_contains "$oneshot_adb_return_dry_run_output" "skip_collect=true"
 assert_contains "$oneshot_adb_return_dry_run_output" "recover_traces_after=true"
 assert_contains "$oneshot_adb_return_dry_run_output" "recover_traces_output_dir=$ONESHOT_ADB_RETURN_OUTPUT/recover-traces"
 assert_contains "$oneshot_adb_return_dry_run_output" "late_recover_adb_timeout_secs=180"
+assert_contains "$oneshot_adb_return_dry_run_output" "transport_timeline_path=$ONESHOT_ADB_RETURN_OUTPUT/transport-timeline.tsv"
 if grep -Fq 'collect_output_dir=' <<<"$oneshot_adb_return_dry_run_output"; then
   echo "pixel_boot_tooling_smoke: skip-collect dry-run should not advertise a collect output dir" >&2
   exit 1
@@ -1298,7 +1299,51 @@ assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" recover_traces_
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" recover_traces_adb_timeout_secs_used 5
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" bootreason_indicates_failure false
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" bootreason_props/sys.boot.reason bootloader
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_initial_state none
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_first_none_elapsed_secs 0
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_last_state adb
+assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/status.json" transport_late_recovery_reached_adb true
 test -f "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/recover-traces/status.json"
+test -f "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv"
+assert_contains "$(cat "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv")" $'elapsed_secs\ttransport'
+assert_contains "$(cat "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv")" $'0\tnone'
+
+reset_fastboot_cycle_state
+ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT="$TMP_DIR/oneshot-adb-fastboot-timeout-output"
+oneshot_adb_fastboot_timeout_stdout="$TMP_DIR/oneshot-adb-fastboot-timeout.stdout"
+oneshot_adb_fastboot_timeout_stderr="$TMP_DIR/oneshot-adb-fastboot-timeout.stderr"
+set +e
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  SHADOW_BOOTIMG_SHELL=1 \
+  PIXEL_SERIAL=TESTSERIAL \
+  PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+  MOCK_DEVICE_STATE_DIR="$MOCK_DEVICE_STATE_DIR" \
+  MOCK_PROBE_IMAGE_PATH="$PROBE_IMAGE" \
+  MOCK_STOCK_IMAGE_PATH="$STOCK_BOOT_IMAGE" \
+  MOCK_FASTBOOT_BOOT_RETURN_MODE=fastboot \
+  MOCK_FASTBOOT_RETURN_POLLS=2 \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+    --image "$PROBE_IMAGE" \
+    --output "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT" \
+    --adb-timeout 3 \
+    --boot-timeout 60 \
+    --skip-collect \
+    >"$oneshot_adb_fastboot_timeout_stdout" \
+    2>"$oneshot_adb_fastboot_timeout_stderr"
+oneshot_adb_fastboot_timeout_status=$?
+set -e
+if [[ "$oneshot_adb_fastboot_timeout_status" -eq 0 ]]; then
+  echo "pixel_boot_tooling_smoke: expected adb-mode oneshot timeout when device returns to fastboot" >&2
+  exit 1
+fi
+assert_contains "$(cat "$oneshot_adb_fastboot_timeout_stderr")" "pixel: timed out waiting for adb device TESTSERIAL"
+assert_json_field "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/status.json" failure_stage wait-adb
+assert_json_field "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/status.json" transport_initial_state fastboot
+assert_json_field "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/status.json" transport_first_fastboot_elapsed_secs 0
+assert_json_field "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/status.json" transport_last_state fastboot
+test -f "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/transport-timeline.tsv"
+assert_contains "$(cat "$ONESHOT_ADB_FASTBOOT_TIMEOUT_OUTPUT/transport-timeline.tsv")" $'0\tfastboot'
 
 reset_fastboot_cycle_state
 oneshot_fastboot_return_output="$(
