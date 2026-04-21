@@ -222,13 +222,15 @@ impl CameraHostConfig {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
-            .or_else(|| if allow_mock {
-                None
-            } else {
-                env::var(CAMERA_ENDPOINT_ENV)
-                    .ok()
-                    .map(|value| value.trim().to_owned())
-                    .filter(|value| !value.is_empty())
+            .or_else(|| {
+                if allow_mock {
+                    None
+                } else {
+                    env::var(CAMERA_ENDPOINT_ENV)
+                        .ok()
+                        .map(|value| value.trim().to_owned())
+                        .filter(|value| !value.is_empty())
+                }
             });
         let timeout = camera
             .as_ref()
