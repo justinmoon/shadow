@@ -36,6 +36,7 @@ Related docs:
 - Keep the image repack loop fast by reusing stable built payload binaries when the payload source is unchanged; do not hide avoidable rebuilds inside temp-workdir packers.
 - Prefer chunks that are inert for the current Magisk path: helper libraries, private scripts, log capture, guardrails, and tiny owned-userspace proofs before Shadow-launch changes.
 - Prefer visible or durable proofs over speculative Android-`init` hook churn. A screen color or `kmsg` marker is better evidence than another late userspace property probe.
+- Use the rooted tmpfs-`/dev` control harness as a cheap falsifier for `/dev` theories on the primary raw-ash control phone. If the rooted control succeeds under a boot-shaped tmpfs `/dev`, stop grinding node permutations and move suspicion to early-boot readiness or skipped vendor-init state.
 - Keep low-level scanout proofs separate from future renderer proofs. `orange-kms` should remain the “can we own the panel at all?” probe even after `orange-gpu` exists, because the compositor/Blitz path will fail differently from a direct dumb-buffer scanout path.
 - Do not treat “boot the whole Shadow UX” as the next integration target after display. First prove exactly one new seam per rung on tiny owned-userspace demos: boot ownership, raw scanout, GPU render, repeated frames, input-driven redraw, compositor-owned scene, app-owned surface, app runtimes, shell, then services.
 - Keep every ladder rung mechanically deletable:
@@ -188,6 +189,11 @@ Related docs:
   - stage only the `shadow-gpu-smoke` GNU/Linux binary plus minimal Vulkan bundle pieces
   - push and run it without `shadow-system`, guest compositor, or JS runtime coupling
   - require pulled `summary.json` plus strict Vulkan/hardware invariants before calling the run a success
+- [x] Add a rooted-Pixel tmpfs-`/dev` raw-ash control harness:
+  - stage the existing `shadow-gpu-smoke` bundle plus `shadow-openlog-preload.so`
+  - recreate a boot-shaped tmpfs `/dev` under `root` + `unshare -m`
+  - capture host-side status plus openlog evidence so `/dev` theories can be proved or discarded without a boot cycle
+  - current truth on `11151JEC200472`: the raw count-query exit scene still succeeds under a boot-shaped tmpfs `/dev`, so `/dev` topology is not the active blocker there
 - [ ] Package the first on-screen GPU present payload (`orange-gpu`):
   - render a flat orange frame on GPU
   - export/import through the intended buffer path
@@ -553,3 +559,10 @@ Related docs:
   - `boot-raw-vulkan-physical-device-count-query-no-destroy-smoke` still produced only two visible pulses on `11151JEC200472`, so skipping explicit `vkDestroyInstance` was not enough to recover the normal summary/return path
   - the next discriminator is `boot-raw-vulkan-physical-device-count-query-exit-smoke`, reusing the same bundle and visible contract but terminating the child with exit status `0` immediately after the null-pointer count query returns and before summary construction/write
   - reviewer read: this new exit split isolates the raw count query from both explicit cleanup and the normal Rust summary/return path; if it still only reaches two pulses, the active failing seam is the count query itself, and if it returns with three pulses, the remaining suspect is the post-query Rust path above the successful raw query
+- New rooted-control result on 2026-04-21:
+  - `11151JEC200472` is the primary raw-ash control phone; rooted normal-Android runs of `raw-vulkan-instance-smoke` and `raw-vulkan-physical-device-count-query-exit-smoke` both succeed there
+  - `09051JEC202061` and `06241JEC200520` are currently confounded for this seam because rooted `raw-vulkan-instance-smoke` fails at `vkCreateInstance(ERROR_INCOMPATIBLE_DRIVER)` on both
+  - the new `scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh` harness reproduced the raw count-query exit scene on `11151JEC200472` inside a boot-shaped tmpfs `/dev`
+  - that rooted control still succeeds with only `/dev/null`, `/dev/kgsl-3d0`, `/dev/dri/card0`, `/dev/dri/renderD128`, proc-fd symlinks, and boot-exact node modes/owners
+  - openlog showed `/dev/kgsl-3d0` plus attempted `/dev/dma_heap/system` and `/dev/ion` access, and the scene still returned `count=1` even with `/dev/ion` absent
+  - so the active boot-owned blocker is no longer best explained by `/dev` topology or node permissions; the next discriminator should target early-boot readiness or skipped vendor-init state instead
