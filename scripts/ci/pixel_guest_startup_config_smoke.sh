@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=./pixel_common.sh
 source "$SCRIPT_DIR/lib/pixel_common.sh"
+# shellcheck source=./pixel_camera_runtime_common.sh
+source "$SCRIPT_DIR/lib/pixel_camera_runtime_common.sh"
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/pixel-guest-startup.XXXXXX")"
 cleanup() {
@@ -22,13 +24,31 @@ legacy_run_config_path="$tmp_dir/legacy-guest-run-config.json"
 legacy_materialized_path="$tmp_dir/legacy-guest-run-config.env"
 launch_env_path="$tmp_dir/launch-env.txt"
 overlay_launch_env_path="$tmp_dir/overlay-launch-env.txt"
+services_json='{"camera":{"endpoint":"127.0.0.1:37656","allowMock":true,"timeoutMs":45000}}'
 base_session_env=$'SHADOW_GUEST_START_APP_ID=shell\nSHADOW_GUEST_SHELL_START_APP_ID=timeline\nSHADOW_GUEST_CLIENT=/runtime/alt-client\nSHADOW_GUEST_COMPOSITOR_BIN=/runtime/alt-compositor\nSHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM=1\nSHADOW_GUEST_COMPOSITOR_TOPLEVEL_WIDTH=1080\nSHADOW_GUEST_COMPOSITOR_TOPLEVEL_HEIGHT=2280\nSHADOW_SYSTEM_BINARY_PATH=/runtime/shadow-system\nSHADOW_SESSION_APP_PROFILE=pixel-shell\nSHADOW_RUNTIME_DIR_MODE=0711\nSHADOW_COMPOSITOR_CONTROL_SOCKET_MODE=0666\nSHADOW_TIMELINE_APP_BUNDLE_PATH=/runtime/timeline.js'
-overlay_session_env=$'SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT=2\nSHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE=1'
+overlay_session_env=$'SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT=2\nSHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE=1\nSHADOW_GUEST_SESSION_CONFIG=/override/guest.json\nSHADOW_RUNTIME_SESSION_CONFIG=/override/runtime.json'
 session_env_for_config="$base_session_env"
 while IFS= read -r env_line; do
   [[ -n "$env_line" ]] || continue
   session_env_for_config="${session_env_for_config}"$'\n'"$env_line"
 done < <(pixel_guest_session_overlay_config_env_lines "$overlay_session_env")
+
+if [[ "$(pixel_camera_runtime_service_json "127.0.0.1:37656")" != '{"camera":{"endpoint":"127.0.0.1:37656"}}' ]]; then
+  echo "pixel_guest_startup_config_smoke: endpoint-only camera service json mismatch" >&2
+  exit 1
+fi
+if [[ "$(pixel_camera_runtime_service_json "127.0.0.1:37656" "1" "45000")" != '{"camera":{"allowMock":true,"timeoutMs":45000}}' ]]; then
+  echo "pixel_guest_startup_config_smoke: mock camera service json mismatch" >&2
+  exit 1
+fi
+if ! pixel_camera_runtime_mock_requested "1"; then
+  echo "pixel_guest_startup_config_smoke: expected mock request for allowMock=1" >&2
+  exit 1
+fi
+if pixel_camera_runtime_mock_requested ""; then
+  echo "pixel_guest_startup_config_smoke: unexpected mock request for empty allowMock" >&2
+  exit 1
+fi
 
 if [[ "$(pixel_guest_startup_config_dst run-token)" != "/data/local/tmp/shadow-guest-startup-run-token.json" ]]; then
   echo "pixel_guest_startup_config_smoke: tokenized startup config path mismatch" >&2
@@ -42,10 +62,11 @@ pixel_write_guest_ui_startup_config \
   "1" \
   "" \
   "" \
-  $'BASE_CLIENT=alpha\nSHADOW_RUNTIME_APP_BUNDLE_PATH=/runtime/base.js\nSHADOW_BLITZ_SOFTWARE_KEYBOARD=0' \
+  $'BASE_CLIENT=alpha\nSHADOW_RUNTIME_APP_BUNDLE_PATH=/runtime/base.js\nSHADOW_BLITZ_SOFTWARE_KEYBOARD=0\nSHADOW_RUNTIME_CAMERA_ENDPOINT=127.0.0.1:9\nSHADOW_RUNTIME_CAMERA_ALLOW_MOCK=0\nSHADOW_RUNTIME_CAMERA_TIMEOUT_MS=1' \
   "$session_env_for_config" \
   "/tmp/shadow-frame-test.ppm" \
-  "publish"
+  "publish" \
+  "$services_json"
 
 pixel_guest_session_launch_env_lines \
   "$base_session_env" \
@@ -198,7 +219,17 @@ assert data["client"]["envAssignments"] == [
     {"key": "BASE_CLIENT", "value": "alpha"},
     {"key": "SHADOW_RUNTIME_APP_BUNDLE_PATH", "value": "/runtime/base.js"},
     {"key": "SHADOW_BLITZ_SOFTWARE_KEYBOARD", "value": "0"},
+    {"key": "SHADOW_RUNTIME_CAMERA_ENDPOINT", "value": "127.0.0.1:37656"},
+    {"key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "value": "1"},
+    {"key": "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS", "value": "45000"},
 ], data
+assert data["services"] == {
+    "camera": {
+        "endpoint": "127.0.0.1:37656",
+        "allowMock": True,
+        "timeoutMs": 45000,
+    }
+}, data
 assert data["compositor"]["transport"] == "direct", data
 assert data["compositor"]["enableDrm"] is True, data
 assert data["compositor"]["exitOnFirstFrame"] is True, data
@@ -225,6 +256,13 @@ assert run_config["schemaVersion"] == 1, run_config
 assert "startupConfigPath" not in run_config, run_config
 assert run_config["startup"] == {"mode": "shell", "shellStartAppId": "timeline"}, run_config
 assert run_config["client"]["appClientPath"] == "/runtime/alt-client", run_config
+assert run_config["services"] == {
+    "camera": {
+        "endpoint": "127.0.0.1:37656",
+        "allowMock": True,
+        "timeoutMs": 45000,
+    }
+}, run_config
 assert run_config["compositor"]["frameCapture"] == {
     "mode": "first-frame",
     "artifactPath": "/tmp/shadow-frame-test.ppm",

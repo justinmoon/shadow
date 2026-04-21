@@ -170,6 +170,54 @@ mod tests {
     }
 
     #[test]
+    fn runtime_services_config_reads_pixel_guest_run_config_superset() {
+        with_temp_session_config(
+            r#"{
+                "schemaVersion": 1,
+                "startup": {
+                    "mode": "shell",
+                    "shellStartAppId": "timeline"
+                },
+                "client": {
+                    "appClientPath": "/data/local/tmp/shadow-runtime-gnu/run-shadow-blitz-demo",
+                    "runtimeDir": "/data/local/tmp/shadow-runtime"
+                },
+                "services": {
+                    "camera": {
+                        "endpoint": "127.0.0.1:37656",
+                        "allowMock": false,
+                        "timeoutMs": 30000
+                    }
+                },
+                "session": {
+                    "launchEnvAssignments": [
+                        { "key": "SHADOW_SESSION_APP_PROFILE", "value": "pixel-shell" }
+                    ]
+                },
+                "verify": {
+                    "requiredMarkers": ["runtime-document-ready"]
+                },
+                "takeover": {
+                    "restoreAndroid": true
+                }
+            }"#,
+            || {
+                let services = runtime_services_config()
+                    .expect("load config")
+                    .expect("services config");
+                assert_eq!(services.audio_backend, None);
+                let camera = services.camera.expect("camera config");
+                assert_eq!(camera.endpoint.as_deref(), Some("127.0.0.1:37656"));
+                assert_eq!(camera.allow_mock, Some(false));
+                assert_eq!(camera.timeout_ms, Some(30_000));
+                assert_eq!(services.cashu_data_dir, None);
+                assert_eq!(services.nostr_db_path, None);
+                assert_eq!(services.nostr_service_socket, None);
+            },
+        );
+    }
+
+    #[test]
     fn runtime_services_config_errors_for_invalid_json() {
         with_temp_session_config("{", || {
             let error = runtime_services_config().expect_err("reject invalid json");

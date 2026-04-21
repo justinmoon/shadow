@@ -102,6 +102,9 @@ Related docs:
 - 2026-04-20: `scripts/ci/pixel_guest_startup_config_smoke.sh` and `just pre-commit` now cover rooted-Pixel startup-config generation plus env projection filtering.
 - 2026-04-20: rooted Pixel shell/runtime launch now compiles a typed host-side `guest-run-config.json` superset and passes that artifact into `pixel_guest_ui_drm.sh` instead of multiline `PIXEL_GUEST_CONFIG_*` payloads.
 - 2026-04-20: the same rooted-Pixel `guest-run-config.json` now serves as both the host takeover/verification session description and the on-device `SHADOW_GUEST_SESSION_CONFIG`, with host-driver staging controls intentionally left outside the file.
+- 2026-04-21: the rooted-Pixel shell/runtime-app path now exports that staged guest-run config to runtime clients through `SHADOW_RUNTIME_SESSION_CONFIG`, so supported runtime services can read the same typed file on-device instead of depending only on env projection.
+- 2026-04-21: rooted-Pixel camera runtime wiring is now config-first through `services.camera` in the typed guest-run/startup artifact; `SHADOW_RUNTIME_CAMERA_*` remains as compatibility env projected from that typed object rather than hand-built in each launcher.
+- 2026-04-21: `scripts/ci/pixel_guest_startup_config_smoke.sh` now proves `services.camera` round-trips through the Pixel guest startup/run config path and overrides conflicting legacy camera env in client assignments.
 
 ## Implementation Notes
 
@@ -110,6 +113,7 @@ Related docs:
   - VM is now artifact-driven through a generated session config, and the supported runtime service slice now reads that config directly through `SHADOW_RUNTIME_SESSION_CONFIG` while env remains as a compatibility/debug overlay.
   - rooted Pixel guest startup is now typed and artifact-driven, and the supported shell/runtime-app host lane now compiles a single `guest-run-config.json` artifact instead of cross-script multiline env payloads.
   - guest startup config parsing is now file-first in Rust with explicit schema/version checks; env remains an overlay seam rather than the primary transport, and host-driver-only concerns still stay env-based for now.
+  - rooted Pixel runtime services now have the first real typed slice on-device too: camera config ships in the same staged guest-run/startup artifact that the runtime tree sees via `SHADOW_RUNTIME_SESSION_CONFIG`.
 - Working migration rule:
   - do not start by normalizing every `PIXEL_*` boot/debug/test knob.
   - first fix the supported session surface where config crosses multiple layers and multiple languages.

@@ -478,9 +478,9 @@ guest_session_launch_env_args=(
   "SHADOW_SESSION_MODE=guest-ui"
   "SHADOW_RUNTIME_DIR=$runtime_dir"
   "SHADOW_GUEST_SESSION_CONFIG=$startup_config_dst"
+  "SHADOW_GUEST_CLIENT=$guest_client_launch_dst"
   "SHADOW_GUEST_COMPOSITOR_BIN=$compositor_dst"
   "SHADOW_GUEST_COMPOSITOR_ENABLE_DRM=1"
-  "SHADOW_GUEST_CLIENT=$guest_client_launch_dst"
 )
 if [[ -n "$guest_client_env_overlay" ]]; then
   guest_session_launch_env_args+=("SHADOW_GUEST_CLIENT_ENV=$guest_client_env_overlay")
@@ -489,6 +489,7 @@ while IFS= read -r env_line; do
   [[ -n "$env_line" ]] || continue
   guest_session_launch_env_args+=("$env_line")
 done < <(printf '%s\n' "$guest_session_launch_env_lines")
+guest_session_launch_env_args+=("SHADOW_RUNTIME_SESSION_CONFIG=$startup_config_dst")
 guest_session_launch_env="$(pixel_shell_words_quoted "${guest_session_launch_env_args[@]}")"
 guest_precreate_dir_words="$(pixel_lines_quoted "$guest_precreate_dirs")"
 session_command_word="$(pixel_shell_words_quoted "$session_dst")"

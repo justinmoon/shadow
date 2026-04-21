@@ -86,12 +86,14 @@ Current checkpoint:
 - the supported rooted-Pixel launcher no longer pushes sourced startup export blobs or a device-side wrapper just to reconstruct guest startup state.
 - the supported rooted-Pixel host launchers now compile a typed `guest-run-config.json` superset and pass that single artifact into `pixel_guest_ui_drm.sh` instead of multiline `PIXEL_GUEST_CONFIG_*` / overlay env payloads.
 - `pixel_guest_ui_drm.sh` now treats that host-side file as the source of truth for guest startup plus takeover/verification session policy, then pushes the same file on-device as `SHADOW_GUEST_SESSION_CONFIG`.
+- `pixel_guest_ui_drm.sh` now also exports that same staged file into the runtime tree through `SHADOW_RUNTIME_SESSION_CONFIG`, so Pixel runtime services can consume typed config directly instead of relying only on reprojected env.
 - remaining env projection on the supported Pixel path is explicit:
   - process-boundary values such as `XKB_CONFIG_ROOT`, `SHADOW_RUNTIME_DIR`, `SHADOW_GUEST_COMPOSITOR_BIN`, `SHADOW_GUEST_COMPOSITOR_ENABLE_DRM`, and the config pointer
   - host-driver staging controls such as artifact directories, run-dir selection, skip-push, and optional runtime summary generation
   - app-profile and control-socket compatibility vars such as `SHADOW_SESSION_APP_PROFILE` and `SHADOW_COMPOSITOR_CONTROL_SOCKET_MODE`
   - shell app bundle envs that still exist until runtime bundle lookup is fully config-backed
   - deliberate debug overrides such as `SHADOW_GUEST_KEYBOARD_SEAT` and `SHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE`
+  - compatibility runtime-service env such as `SHADOW_RUNTIME_CAMERA_*`, now derived from typed Pixel service config instead of authored as the primary transport
 
 Deliverables:
 
@@ -128,6 +130,7 @@ Current checkpoint:
 - `SHADOW_RUNTIME_NOSTR_*`, `SHADOW_RUNTIME_CASHU_*`, `SHADOW_RUNTIME_AUDIO_BACKEND`, and `SHADOW_RUNTIME_CAMERA_*` remain as compatibility fallbacks while non-VM and ad hoc host lanes finish migrating.
 - `scripts/ci/runtime_app_sound_smoke.sh` now proves that `SHADOW_RUNTIME_SESSION_CONFIG` beats a conflicting `SHADOW_RUNTIME_AUDIO_BACKEND=linux_spike` override on the host runtime session path.
 - `scripts/ci/runtime_app_camera_smoke.sh` now proves that `SHADOW_RUNTIME_SESSION_CONFIG` beats conflicting `SHADOW_RUNTIME_CAMERA_ALLOW_MOCK=0` and `SHADOW_RUNTIME_CAMERA_ENDPOINT=127.0.0.1:1` overrides on the host runtime session path.
+- The supported rooted-Pixel shell/runtime-app path now carries `services.camera` inside the staged guest-run/startup artifact, exports that file through `SHADOW_RUNTIME_SESSION_CONFIG`, and derives `SHADOW_RUNTIME_CAMERA_*` from the typed object as compatibility projection rather than as the primary transport.
 
 ## Phase 5: Namespace And Compatibility Cleanup
 

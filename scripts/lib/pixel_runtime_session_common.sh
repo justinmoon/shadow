@@ -491,10 +491,12 @@ pixel_guest_session_env_assignment_is_config_owned() {
     SHADOW_GUEST_FRAME_PATH | \
     SHADOW_GUEST_FRAME_SNAPSHOT_CACHE | \
     SHADOW_GUEST_FRAME_WRITE_EVERY_FRAME | \
+    SHADOW_GUEST_SESSION_CONFIG | \
     SHADOW_GUEST_SHELL_START_APP_ID | \
     SHADOW_GUEST_START_APP_ID | \
     SHADOW_GUEST_TOUCH_LATENCY_TRACE | \
     SHADOW_GUEST_TOUCH_SIGNAL_PATH | \
+    SHADOW_RUNTIME_SESSION_CONFIG | \
     SHADOW_SYSTEM_BINARY_PATH)
       return 0
       ;;
@@ -564,6 +566,7 @@ pixel_write_guest_ui_startup_config() {
   local guest_session_env="${8:-}"
   local frame_artifact_path="${9:-}"
   local frame_capture_mode="${10:-off}"
+  local guest_services_json="${11:-}"
 
   pixel_validate_env_assignment_lines "guest client env" "$guest_client_env" || return 1
   pixel_validate_env_assignment_lines "guest startup session env" "$guest_session_env" || return 1
@@ -578,6 +581,7 @@ pixel_write_guest_ui_startup_config() {
   PIXEL_GUEST_STARTUP_SESSION_ENV="$guest_session_env" \
   PIXEL_GUEST_STARTUP_FRAME_ARTIFACT_PATH="$frame_artifact_path" \
   PIXEL_GUEST_STARTUP_FRAME_CAPTURE_MODE="$frame_capture_mode" \
+  PIXEL_GUEST_STARTUP_SERVICES_JSON="$guest_services_json" \
     python3 - <<'PY'
 import json
 import os
@@ -622,6 +626,76 @@ def parse_optional_int(label, raw_value):
         raise SystemExit(f"pixel: invalid {label}: {raw_value!r}: {error}") from error
 
 
+def parse_services_json(raw_value):
+    value = raw_value.strip()
+    if not value:
+        return None
+    try:
+        services = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"pixel: invalid guest startup services json: {error}") from error
+    if services is None:
+        return None
+    if not isinstance(services, dict):
+        raise SystemExit("pixel: guest startup services json must decode to an object")
+    return services
+
+
+def append_env_assignment(assignments, key, value):
+    assignments.append({"key": key, "value": value})
+
+
+def project_camera_service_env(client_env_assignments, services):
+    camera = services.get("camera")
+    if camera is None:
+        return
+    if not isinstance(camera, dict):
+        raise SystemExit("pixel: services.camera must be an object")
+
+    filtered_assignments = [
+        assignment
+        for assignment in client_env_assignments
+        if assignment["key"]
+        not in {
+            "SHADOW_RUNTIME_CAMERA_ENDPOINT",
+            "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",
+            "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS",
+        }
+    ]
+    client_env_assignments[:] = filtered_assignments
+
+    endpoint = camera.get("endpoint")
+    if endpoint is not None:
+        if not isinstance(endpoint, str):
+            raise SystemExit("pixel: services.camera.endpoint must be a string")
+        if endpoint.strip():
+            append_env_assignment(
+                client_env_assignments,
+                "SHADOW_RUNTIME_CAMERA_ENDPOINT",
+                endpoint,
+            )
+
+    allow_mock = camera.get("allowMock")
+    if allow_mock is not None:
+        if not isinstance(allow_mock, bool):
+            raise SystemExit("pixel: services.camera.allowMock must be a boolean")
+        append_env_assignment(
+            client_env_assignments,
+            "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",
+            "1" if allow_mock else "0",
+        )
+
+    timeout_ms = camera.get("timeoutMs")
+    if timeout_ms is not None:
+        if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int):
+            raise SystemExit("pixel: services.camera.timeoutMs must be an integer")
+        append_env_assignment(
+            client_env_assignments,
+            "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS",
+            str(timeout_ms),
+        )
+
+
 output_path = os.environ["PIXEL_GUEST_STARTUP_OUTPUT_PATH"]
 runtime_dir = os.environ["PIXEL_GUEST_STARTUP_RUNTIME_DIR"]
 client_dst = os.environ["PIXEL_GUEST_STARTUP_CLIENT_DST"]
@@ -636,6 +710,7 @@ session_env_lines = parse_env_lines(
 session_env = {key: value for key, value in session_env_lines}
 frame_capture_mode = os.environ.get("PIXEL_GUEST_STARTUP_FRAME_CAPTURE_MODE", "off").strip()
 frame_artifact_path = os.environ.get("PIXEL_GUEST_STARTUP_FRAME_ARTIFACT_PATH", "").strip()
+services = parse_services_json(os.environ.get("PIXEL_GUEST_STARTUP_SERVICES_JSON", ""))
 
 if frame_capture_mode not in {"publish", "request", "off"}:
     raise SystemExit(
@@ -655,7 +730,10 @@ for key, value in client_env_lines:
         parsed = parse_bool_text(value)
         if parsed is not None:
             software_keyboard_enabled = parsed
-    client_env_assignments.append({"key": key, "value": value})
+    append_env_assignment(client_env_assignments, key, value)
+
+if services:
+    project_camera_service_env(client_env_assignments, services)
 
 if system_binary_path is None:
     candidate = session_env.get("SHADOW_SYSTEM_BINARY_PATH", "").strip()
@@ -790,6 +868,8 @@ config = {
     "client": client,
     "compositor": compositor,
 }
+if services:
+    config["services"] = services
 if touch:
     config["touch"] = touch
 if window:

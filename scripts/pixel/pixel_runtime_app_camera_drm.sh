@@ -10,6 +10,18 @@ ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
 camera_endpoint="$(pixel_camera_runtime_endpoint)"
+camera_allow_mock="${SHADOW_RUNTIME_CAMERA_ALLOW_MOCK-}"
+camera_timeout_ms="${SHADOW_RUNTIME_CAMERA_TIMEOUT_MS-}"
+camera_mock_requested=0
+if pixel_camera_runtime_mock_requested "$camera_allow_mock"; then
+  camera_mock_requested=1
+fi
+camera_service_json="$(
+  pixel_camera_runtime_service_json \
+    "$camera_endpoint" \
+    "$camera_allow_mock" \
+    "$camera_timeout_ms"
+)"
 
 cleanup() {
   pixel_camera_runtime_cleanup_broker "$serial"
@@ -17,7 +29,9 @@ cleanup() {
 
 trap cleanup EXIT
 
-pixel_camera_runtime_prepare_broker "$serial" "$camera_endpoint"
+if (( camera_mock_requested == 0 )); then
+  pixel_camera_runtime_prepare_broker "$serial" "$camera_endpoint"
+fi
 
 panel_size="$(pixel_display_size "$serial")"
 panel_width="${panel_size%x*}"
@@ -30,7 +44,6 @@ SHADOW_BLITZ_SURFACE_HEIGHT=$panel_height
 SHADOW_BLITZ_TOUCH_ANYWHERE_TARGET=capture
 SHADOW_BLITZ_RUNTIME_DEBUG_DUMP=1
 SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS=${SHADOW_BLITZ_RUNTIME_POLL_INTERVAL_MS:-16}
-SHADOW_RUNTIME_CAMERA_ENDPOINT=$camera_endpoint
 EOF
 )
 
@@ -41,6 +54,7 @@ fi
 PIXEL_TAKEOVER_STOP_ALLOCATOR=0 \
 PIXEL_RUNTIME_APP_INPUT_PATH="runtime/app-camera/app.tsx" \
 PIXEL_RUNTIME_APP_CACHE_DIR="build/runtime/pixel-app-camera" \
+PIXEL_RUNTIME_APP_SERVICES_JSON="$camera_service_json" \
 PIXEL_RUNTIME_APP_EXTRA_GUEST_CLIENT_ENV="$camera_guest_env" \
 PIXEL_GUEST_SESSION_TIMEOUT_SECS="${PIXEL_GUEST_SESSION_TIMEOUT_SECS:-120}" \
   "$SCRIPT_DIR/pixel/pixel_runtime_app_drm.sh"

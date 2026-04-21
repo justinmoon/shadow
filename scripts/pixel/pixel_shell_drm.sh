@@ -53,6 +53,10 @@ parse_args "$@"
 serial="$(pixel_resolve_serial)"
 pixel_require_host_lock "$serial" "$0" "$@"
 camera_endpoint=""
+camera_allow_mock="${SHADOW_RUNTIME_CAMERA_ALLOW_MOCK-}"
+camera_timeout_ms="${SHADOW_RUNTIME_CAMERA_TIMEOUT_MS-}"
+camera_mock_requested=0
+camera_service_json=""
 camera_start_command=""
 camera_cleanup_command=""
 
@@ -69,9 +73,20 @@ if [[ -n "$shell_start_app_id" ]]; then
   fi
 fi
 if (( camera_runtime_enabled == 1 )); then
+  if pixel_camera_runtime_mock_requested "$camera_allow_mock"; then
+    camera_mock_requested=1
+  fi
   camera_endpoint="$(pixel_camera_runtime_endpoint)"
-  camera_start_command="$(pixel_camera_runtime_start_command "$camera_endpoint")"
-  camera_cleanup_command="$(pixel_camera_runtime_cleanup_command)"
+  camera_service_json="$(
+    pixel_camera_runtime_service_json \
+      "$camera_endpoint" \
+      "$camera_allow_mock" \
+      "$camera_timeout_ms"
+  )"
+  if (( camera_mock_requested == 0 )); then
+    camera_start_command="$(pixel_camera_runtime_start_command "$camera_endpoint")"
+    camera_cleanup_command="$(pixel_camera_runtime_cleanup_command)"
+  fi
 fi
 
 if [[ -z "${PIXEL_VENDOR_TURNIP_LIB_PATH-}" && -z "${PIXEL_VENDOR_TURNIP_TARBALL-}" ]]; then
@@ -119,7 +134,7 @@ fi
 
 if (( shell_run_only == 0 )); then
   "$SCRIPT_DIR/pixel/pixel_prepare_shell_runtime_artifacts.sh"
-  if (( camera_runtime_enabled == 1 )); then
+  if (( camera_runtime_enabled == 1 && camera_mock_requested == 0 )); then
     pixel_camera_runtime_prepare_helper "$serial"
   fi
 fi
@@ -161,9 +176,6 @@ SHADOW_BLITZ_SOFTWARE_KEYBOARD=${SHADOW_BLITZ_SOFTWARE_KEYBOARD:-1}
 $(pixel_runtime_linux_user_env_lines)
 EOF
 )
-if (( camera_runtime_enabled == 1 )); then
-  shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_RUNTIME_CAMERA_ENDPOINT=$camera_endpoint"
-fi
 if [[ -n "$PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS" ]]; then
   shell_guest_env="${shell_guest_env}"$'\n'"SHADOW_BLITZ_RUNTIME_EXIT_DELAY_MS=$PIXEL_BLITZ_RUNTIME_EXIT_DELAY_MS"
 fi
@@ -252,7 +264,8 @@ pixel_write_guest_ui_startup_config \
   "$shell_guest_env" \
   "$shell_session_env_for_config" \
   "$(pixel_frame_path)" \
-  "$PIXEL_GUEST_FRAME_CAPTURE_MODE"
+  "$PIXEL_GUEST_FRAME_CAPTURE_MODE" \
+  "$camera_service_json"
 
 pixel_write_guest_run_config \
   "$run_config_path" \
