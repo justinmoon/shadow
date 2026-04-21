@@ -122,6 +122,12 @@ Exit criteria:
 
 - service paths and policies are visible in one config artifact instead of spread across independent env lookups
 
+Current checkpoint:
+
+- VM/runtime service config is now config-first for Nostr DB/socket, Cashu data dir, and audio backend through `services.*` in `session-config.json`.
+- `SHADOW_RUNTIME_NOSTR_*`, `SHADOW_RUNTIME_CASHU_*`, and `SHADOW_RUNTIME_AUDIO_BACKEND` remain as compatibility fallbacks while non-VM and ad hoc host lanes finish migrating.
+- `scripts/ci/runtime_app_sound_smoke.sh` now proves that `SHADOW_RUNTIME_SESSION_CONFIG` beats a conflicting `SHADOW_RUNTIME_AUDIO_BACKEND=linux_spike` override on the host runtime session path.
+
 ## Phase 5: Namespace And Compatibility Cleanup
 
 Goals:

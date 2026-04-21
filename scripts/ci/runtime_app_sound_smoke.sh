@@ -243,6 +243,31 @@ if "Backend:</span> memory" not in memory["backend_fragment"]:
     raise SystemExit("runtime-app-sound-smoke (memory): expected memory backend label")
 
 with tempfile.TemporaryDirectory() as tmp_dir:
+    session_config_path = os.path.join(tmp_dir, "session-config.json")
+    with open(session_config_path, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "services": {
+                    "audioBackend": "memory",
+                }
+            },
+            handle,
+        )
+
+    config_memory = run_scenario(
+        "config_memory_overrides_env",
+        file_session,
+        {
+            "SHADOW_RUNTIME_SESSION_CONFIG": session_config_path,
+            "SHADOW_RUNTIME_AUDIO_BACKEND": "linux_spike",
+        },
+        f"Source:</span> file / {asset_source_path}",
+    )
+    if "Backend:</span> memory" not in config_memory["backend_fragment"]:
+        raise SystemExit(
+            "runtime-app-sound-smoke (config_memory_overrides_env): expected memory backend label"
+        )
+
     file_capture_path = os.path.join(tmp_dir, "linux-spike-file.json")
     captured_results = {}
 

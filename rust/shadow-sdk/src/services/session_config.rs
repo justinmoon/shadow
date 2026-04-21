@@ -8,6 +8,8 @@ pub const RUNTIME_SESSION_CONFIG_ENV: &str = "SHADOW_RUNTIME_SESSION_CONFIG";
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct RuntimeServicesConfig {
+    #[serde(default, rename = "audioBackend")]
+    pub audio_backend: Option<String>,
     #[serde(default, rename = "cashuDataDir")]
     pub cashu_data_dir: Option<PathBuf>,
     #[serde(default, rename = "nostrDbPath")]
@@ -116,6 +118,7 @@ mod tests {
             r#"{
                 "schemaVersion": 1,
                 "services": {
+                    "audioBackend": "memory",
                     "cashuDataDir": "/tmp/runtime-cashu",
                     "nostrDbPath": "/tmp/runtime-nostr.sqlite3",
                     "nostrServiceSocket": "/tmp/runtime-nostr.sock"
@@ -128,6 +131,7 @@ mod tests {
                 let services = runtime_services_config()
                     .expect("load config")
                     .expect("services config");
+                assert_eq!(services.audio_backend.as_deref(), Some("memory"));
                 assert_eq!(
                     services.cashu_data_dir.as_deref(),
                     Some(Path::new("/tmp/runtime-cashu"))

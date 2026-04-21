@@ -10,6 +10,7 @@ use deno_core::Extension;
 use deno_core::OpState;
 use deno_error::JsErrorBox;
 use serde::{Deserialize, Serialize};
+use shadow_sdk::services::session_config;
 
 const AUDIO_BACKEND_ENV: &str = "SHADOW_RUNTIME_AUDIO_BACKEND";
 const AUDIO_BUNDLE_DIR_ENV: &str = "SHADOW_RUNTIME_BUNDLE_DIR";
@@ -130,7 +131,7 @@ impl AudioHostService {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum AudioBackend {
     Memory,
     LinuxSpike { binary_path: String },
@@ -138,11 +139,7 @@ enum AudioBackend {
 
 impl AudioBackend {
     fn from_env() -> Result<Self, String> {
-        let value = std::env::var(AUDIO_BACKEND_ENV)
-            .ok()
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| String::from("memory"));
+        let value = configured_audio_backend_value()?;
 
         match value.as_str() {
             "memory" => Ok(Self::Memory),
@@ -170,6 +167,21 @@ impl AudioBackend {
             Self::LinuxSpike { .. } => "linux_spike",
         }
     }
+}
+
+fn configured_audio_backend_value() -> Result<String, String> {
+    Ok(session_config::runtime_services_config()
+        .map_err(|error| error.to_string())?
+        .and_then(|services| services.audio_backend)
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var(AUDIO_BACKEND_ENV)
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| String::from("memory")))
 }
 
 #[derive(Debug)]
@@ -1281,4 +1293,97 @@ extension!(
 
 pub fn init_extension() -> Extension {
     runtime_audio_host_extension::init()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AudioBackend, AUDIO_BACKEND_ENV, AUDIO_SPIKE_BINARY_ENV};
+    use crate::services::test_env_lock;
+    use shadow_sdk::services::session_config::RUNTIME_SESSION_CONFIG_ENV;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn with_temp_session_config<T>(contents: &str, f: impl FnOnce() -> T) -> T {
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("shadow-system-audio-{timestamp}"));
+        let config_path = temp_dir.join("session-config.json");
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        fs::write(&config_path, contents).expect("write session config");
+        std::env::set_var(RUNTIME_SESSION_CONFIG_ENV, &config_path);
+
+        let output = f();
+
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
+        std::env::remove_var(AUDIO_BACKEND_ENV);
+        std::env::remove_var(AUDIO_SPIKE_BINARY_ENV);
+        let _ = fs::remove_dir_all(&temp_dir);
+        output
+    }
+
+    #[test]
+    fn audio_backend_prefers_session_config_over_env() {
+        with_temp_session_config(
+            r#"{
+                "services": {
+                    "audioBackend": "memory"
+                }
+            }"#,
+            || {
+                std::env::set_var(AUDIO_BACKEND_ENV, "linux_spike");
+
+                assert_eq!(
+                    AudioBackend::from_env().expect("resolve backend"),
+                    AudioBackend::Memory
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn audio_backend_uses_session_config_linux_spike_before_env() {
+        with_temp_session_config(
+            r#"{
+                "services": {
+                    "audioBackend": "linux_spike"
+                }
+            }"#,
+            || {
+                std::env::set_var(AUDIO_BACKEND_ENV, "memory");
+                std::env::set_var(AUDIO_SPIKE_BINARY_ENV, "/tmp/runtime-audio-spike");
+
+                assert_eq!(
+                    AudioBackend::from_env().expect("resolve backend"),
+                    AudioBackend::LinuxSpike {
+                        binary_path: String::from("/tmp/runtime-audio-spike"),
+                    }
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn audio_backend_falls_back_to_env_without_session_config() {
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
+        std::env::set_var(AUDIO_BACKEND_ENV, "linux_spike");
+        std::env::set_var(AUDIO_SPIKE_BINARY_ENV, "/tmp/runtime-audio-spike-env");
+
+        assert_eq!(
+            AudioBackend::from_env().expect("resolve backend"),
+            AudioBackend::LinuxSpike {
+                binary_path: String::from("/tmp/runtime-audio-spike-env"),
+            }
+        );
+
+        std::env::remove_var(AUDIO_BACKEND_ENV);
+        std::env::remove_var(AUDIO_SPIKE_BINARY_ENV);
+    }
 }
