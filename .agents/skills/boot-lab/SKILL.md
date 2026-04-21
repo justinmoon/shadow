@@ -26,16 +26,34 @@ Your job is to keep devices usable, rooted, assigned, observable, and recoverabl
 
 - One device, one active experiment lane, one responsible owner at a time.
 - Do not let two workers flash, boot, or recover the same serial concurrently.
-- The main agent owns:
-  - device assignment
-  - rooting state
-  - flashing / oneshot / recovery commands
+- The coordinator owns:
+  - device assignment and reservation
+  - lane selection
+  - rooting state policy
   - interpretation of hardware outcomes
-- Subagents may own an experiment only after:
+  - promotion of results into the critical path
+- Exactly one boot-owned seam is the critical path at a time.
+- Only the coordinator may reassign or promote the critical-path seam.
+- Workers may own the full experiment loop only after:
   - the artifact path is explicit
   - the target serial is explicit
   - the recovery contract is explicit
+  - the resting state is explicit
   - the write scope is explicit
+  - the worker has its own worktree if it will edit code
+
+## Reservation Protocol
+
+- Reserve each device explicitly with:
+  - serial
+  - lane
+  - owner
+  - artifact or command
+  - expected evidence surface
+  - expected resting state
+- Record reservation changes in the thread or living plan before launching the run.
+- Release or reclaim the reservation explicitly before reassigning the device.
+- If a worker exits, times out, or crashes, the coordinator must first re-establish the device's real resting state before reusing it.
 
 ## Root Readiness
 
@@ -65,12 +83,36 @@ Your job is to keep devices usable, rooted, assigned, observable, and recoverabl
 6. Recover the device to the agreed resting state.
 7. Record the outcome plainly: pass, fail, ambiguous, or blocked.
 
+## Lane Strategy
+
+- Do not spend the whole lab on one blocked seam unless later rungs truly depend on it.
+- Split the lab by lane, not by raw device count:
+  - one critical-path boot-owned lane
+  - one confirmation lane for the same seam
+  - one or more independent rooted sidecar lanes
+- Good sidecar seams:
+  - sound
+  - camera
+  - touch or input
+  - observability or recovery tooling
+  - rooted prerequisite experiments for the blocked boot-owned seam
+- Bad parallelism:
+  - multiple devices repeating the same low-observability failing boot seam
+  - later compositor or app rungs when the current boot-owned prerequisite is still unproven
+- Promote a sidecar result into the critical path only after the coordinator judges the evidence strong enough.
+
 ## Concurrency Rules
 
 - Use the primary device for the newest hypothesis.
 - Use the confirmation device for repro, comparison, or a clearly different hypothesis.
+- If you have four devices, prefer this shape:
+  - primary boot-owned lane
+  - confirmation boot-owned lane
+  - rooted sidecar lane A
+  - rooted sidecar lane B or cold spare
 - Prefer concurrent runs only when they probe different seams or different recovery assumptions.
 - Do not run the same fragile, low-observability experiment on multiple devices at once just to create more confusion faster.
+- Keep one device cold when recovery risk is high or when a user may need to intervene physically.
 - Keep a small live ledger in the thread or plan:
   - serial
   - current role
@@ -78,6 +120,18 @@ Your job is to keep devices usable, rooted, assigned, observable, and recoverabl
   - current slot
   - active hypothesis
   - last known resting state
+
+## Coordinator Model
+
+- Default to one coordinator for the boot lab.
+- Add a second coordinator only for a truly separate lane, not as a peer on the same seam.
+- If two coordinators exist:
+  - split by lane, not by arbitrary device count
+  - give each fixed serial ownership
+  - use separate worktrees
+  - avoid overlapping edits to the same script family
+  - keep one coordinator responsible for the canonical plan and promotion decisions
+- The boot-lab coordinator owns the critical path. Sidecar coordinators or workers should feed evidence back, not fork the plan.
 
 ## Observability
 
@@ -111,15 +165,38 @@ Ask for hardware help early when the blocker is physical. Do not keep iterating 
 
 ## Subagent Use
 
-- Use workers for bounded artifact work, runner scripts, and analysis.
+- Use workers for bounded artifact work, runner scripts, analysis, and independent sidecar lanes.
 - Use reviewers for risk review and seam integrity.
 - For true concurrent hardware work, give each worker:
   - one device
   - one worktree
   - one hypothesis
   - one recovery command
-- The orchestrator keeps the global lab map and decides when a device is free for reassignment.
+- Workers may own the full loop only on a sidecar lane with explicit bounds:
+  - build or stage
+  - run
+  - recover
+  - summarize evidence
+- The orchestrator keeps the global lab map, approves moves onto the critical path, and decides when a device is free for reassignment.
 - If a worker owns a device experiment, wait for that worker's result instead of duplicating the same run locally.
+- Parallel sidecars are allowed only when device, artifact path, recovery contract, and evidence surface are independent.
+- Check for hidden host collisions before parallel launch:
+  - shared adb or fastboot assumptions
+  - shared staging paths
+  - shared output paths
+  - shared USB assumptions
+
+## Waiting Discipline
+
+- Waiting is part of orchestration, not idle time.
+- After flash, boot, takeover, or recovery, allow the device to converge and capture evidence before launching the next run.
+- Do not busy-loop the same device while it is still converging or while a worker still owns the reservation.
+- A timeout is not a result. Wait again, inspect the real device state, or explicitly abandon the seam.
+- Use waiting time only for non-overlapping work:
+  - plan updates
+  - artifact review
+  - a different device on a different seam
+  - tooling or docs that do not collide with the active lane
 
 ## Boot-Lab Defaults
 
