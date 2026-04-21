@@ -12,6 +12,23 @@ pixel_connected_sideload_serials() {
   adb devices | awk 'NR > 1 && $2 == "sideload" { print $1 }'
 }
 
+pixel_transport_state() {
+  local serial
+  serial="${1:?pixel_transport_state requires a serial}"
+
+  if pixel_connected_serials | grep -Fxq "$serial"; then
+    printf 'adb\n'
+    return 0
+  fi
+
+  if pixel_connected_fastboot_serials | grep -Fxq "$serial"; then
+    printf 'fastboot\n'
+    return 0
+  fi
+
+  printf 'none\n'
+}
+
 pixel_resolve_serial() {
   local requested serial serials
   requested="${PIXEL_SERIAL:-}"
@@ -248,6 +265,108 @@ pixel_wait_for_condition() {
   if "$@"; then
     return 0
   fi
+  return 1
+}
+
+pixel_reset_adb_transport_timeline_status() {
+  PIXEL_ADB_TRANSPORT_INITIAL_STATE=""
+  PIXEL_ADB_TRANSPORT_FIRST_NONE_ELAPSED_SECS=""
+  PIXEL_ADB_TRANSPORT_FIRST_FASTBOOT_ELAPSED_SECS=""
+  PIXEL_ADB_TRANSPORT_FIRST_ADB_ELAPSED_SECS=""
+  PIXEL_ADB_TRANSPORT_LAST_STATE=""
+  PIXEL_ADB_TRANSPORT_LAST_STATE_ELAPSED_SECS=""
+  PIXEL_ADB_TRANSPORT_TIMELINE_LAST_RECORDED_STATE=""
+  PIXEL_ADB_TRANSPORT_TERMINAL_EVENT=""
+  PIXEL_ADB_TRANSPORT_TERMINAL_EVENT_ELAPSED_SECS=""
+  PIXEL_ADB_TRANSPORT_TERMINAL_EVENT_STATE=""
+}
+
+pixel_ensure_adb_transport_timeline_header() {
+  local timeline_path
+  timeline_path="${1:?pixel_ensure_adb_transport_timeline_header requires a timeline path}"
+
+  if [[ ! -f "$timeline_path" ]]; then
+    printf 'elapsed_secs\ttransport\tevent\n' >"$timeline_path"
+  fi
+}
+
+pixel_note_adb_transport_timeline_state() {
+  local elapsed_secs current_state timeline_path
+  elapsed_secs="${1:?pixel_note_adb_transport_timeline_state requires elapsed seconds}"
+  current_state="${2:?pixel_note_adb_transport_timeline_state requires a transport state}"
+  timeline_path="${3:-}"
+
+  if [[ -z "$PIXEL_ADB_TRANSPORT_INITIAL_STATE" ]]; then
+    PIXEL_ADB_TRANSPORT_INITIAL_STATE="$current_state"
+  fi
+
+  case "$current_state" in
+    none)
+      if [[ -z "$PIXEL_ADB_TRANSPORT_FIRST_NONE_ELAPSED_SECS" ]]; then
+        PIXEL_ADB_TRANSPORT_FIRST_NONE_ELAPSED_SECS="$elapsed_secs"
+      fi
+      ;;
+    fastboot)
+      if [[ -z "$PIXEL_ADB_TRANSPORT_FIRST_FASTBOOT_ELAPSED_SECS" ]]; then
+        PIXEL_ADB_TRANSPORT_FIRST_FASTBOOT_ELAPSED_SECS="$elapsed_secs"
+      fi
+      ;;
+    adb)
+      if [[ -z "$PIXEL_ADB_TRANSPORT_FIRST_ADB_ELAPSED_SECS" ]]; then
+        PIXEL_ADB_TRANSPORT_FIRST_ADB_ELAPSED_SECS="$elapsed_secs"
+      fi
+      ;;
+  esac
+
+  PIXEL_ADB_TRANSPORT_LAST_STATE="$current_state"
+  PIXEL_ADB_TRANSPORT_LAST_STATE_ELAPSED_SECS="$elapsed_secs"
+
+  if [[ -n "$timeline_path" ]]; then
+    pixel_ensure_adb_transport_timeline_header "$timeline_path"
+    if [[ "$PIXEL_ADB_TRANSPORT_TIMELINE_LAST_RECORDED_STATE" != "$current_state" ]]; then
+      printf '%s\t%s\tstate\n' "$elapsed_secs" "$current_state" >>"$timeline_path"
+      PIXEL_ADB_TRANSPORT_TIMELINE_LAST_RECORDED_STATE="$current_state"
+    fi
+  fi
+}
+
+pixel_note_adb_transport_timeline_stop_event() {
+  local elapsed_secs current_state reason timeline_path
+  elapsed_secs="${1:?pixel_note_adb_transport_timeline_stop_event requires elapsed seconds}"
+  current_state="${2:-unknown}"
+  reason="${3:?pixel_note_adb_transport_timeline_stop_event requires a reason}"
+  timeline_path="${4:-}"
+
+  PIXEL_ADB_TRANSPORT_TERMINAL_EVENT="$reason"
+  PIXEL_ADB_TRANSPORT_TERMINAL_EVENT_ELAPSED_SECS="$elapsed_secs"
+  PIXEL_ADB_TRANSPORT_TERMINAL_EVENT_STATE="$current_state"
+
+  if [[ -n "$timeline_path" ]]; then
+    pixel_ensure_adb_transport_timeline_header "$timeline_path"
+    printf '%s\t%s\tstop:%s\n' "$elapsed_secs" "$current_state" "$reason" >>"$timeline_path"
+  fi
+}
+
+pixel_wait_for_adb_with_transport_timeline() {
+  local serial timeout timeline_path started_at elapsed_secs current_state
+  serial="${1:?pixel_wait_for_adb_with_transport_timeline requires a serial}"
+  timeout="${2:-120}"
+  timeline_path="${3:-}"
+
+  pixel_reset_adb_transport_timeline_status
+  started_at=$SECONDS
+
+  for _ in $(seq 1 "$timeout"); do
+    current_state="$(pixel_transport_state "$serial")"
+    elapsed_secs=$((SECONDS - started_at))
+    pixel_note_adb_transport_timeline_state "$elapsed_secs" "$current_state" "$timeline_path"
+    if [[ "$current_state" == "adb" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "pixel: timed out waiting for adb device $serial" >&2
   return 1
 }
 
