@@ -60,6 +60,37 @@ Related docs:
   - `pre-merge` should invoke that dedicated boot-demo lane only when the branch touches demo-owned paths, with an explicit override for manual forcing
   - hardware proofs stay outside universal CI; use boot-lab runs as the truth environment for device-visible results
 
+## Execution Streams
+
+- Stream A: GPU / KGSL critical path.
+  - owner today: sibling worktree `../boot`
+  - goal: move the active seam from boot-owned `open("/dev/kgsl-3d0")` to the first successful `boot-vulkan-offscreen`, then continue to `orange-gpu`
+  - scope: boot-owned KGSL-open discriminators, raw Vulkan / wgpu ladder splits, rooted KGSL controls that directly answer the boot-owned GPU question
+  - reserved devices: `09051JEC202061` primary, `11151JEC200472` confirmation
+  - rule: only this stream is allowed to change the critical-path GPU story
+- Stream B: boot orchestration, trigger, and evidence contract.
+  - owner today: this worktree `boot-2`
+  - goal: make every boot run produce a truthful stage/transport verdict and make the automatic takeover trigger testable without borrowing GPU ownership work
+  - scope: `pixel_boot_oneshot.sh`, `pixel_boot_recover_traces.sh`, run-bundle metadata, execution-context breadcrumbs, stock-init trigger ladders, flash/rollback guardrails
+  - reserved devices: `0B191JEC203253` primary rooted sidecar, `06241JEC200520` spare; do not touch Stream A devices without an explicit handoff
+  - success looks like: late recovery, absence reasons, proof signals, and trigger context are explicit enough that GPU runs stop wasting operator time
+- Stream C: phase-1 launch contract and `/data` artifact discipline.
+  - owner today: `boot-2` when Stream B is quiet
+  - goal: keep boot-critical config minimal in the image while making `/data`-staged payload expectations explicit and fail-loud
+  - scope: boot-helper launch contract, minimal config needed to decide whether to launch Shadow, missing-artifact behavior, typed startup/session config, recovery notes when staged assets are absent
+  - reserved devices: none by default; validate on a rooted sidecar only after the host-side contract is settled
+  - rule: this stream may tighten the phase-1 launch contract, but it does not claim to solve KGSL
+- Stream D: service inventory and non-GPU dependency map.
+  - owner today: open sidecar lane
+  - goal: decide which Android/vendor services are actually required after takeover without claiming that those answers unblock KGSL by themselves
+  - scope: rooted service inventory, input/audio dependency probes, camera/Wi-Fi/update boundary notes, phase-1 recovery rules
+  - reserved devices: `06241JEC200520` or `0B191JEC203253` only
+  - output shape: docs, manifests, or rooted sidecar summaries that tighten phase 1 without forking the boot-owned GPU seam
+- Coordination rules:
+  - Stream A stays the critical path until KGSL open moves.
+  - Streams B-D may land independently as long as they do not rewrite Stream A's interpretation.
+  - Prefer one worktree and one explicit device reservation per active stream.
+
 ## Current Status
 
 - Current boot-owned blocker:
@@ -78,14 +109,50 @@ Related docs:
   - watched runs now have structured `code-orange-*` visuals for validated/probe-ready/success/timeout/signal/nonzero states
   - `scripts/pixel/pixel_kgsl_matrix.sh` now batches rooted KGSL falsification cases into one summary artifact
   - `scripts/ci/pixel_boot_recover_traces_smoke.sh` and `scripts/ci/pixel_boot_tooling_smoke.sh` cover those additions
+- Current stream map on 2026-04-21:
+  - Stream A (`../boot`): KGSL / raw Vulkan critical path
+  - Stream B (`boot-2`): recovery, trigger, and evidence contract
+  - Stream C (`boot-2` when idle): phase-1 launch contract and `/data` artifact discipline
+  - Stream D (open sidecar lane): service inventory and non-GPU dependency map
 - Current lab map on 2026-04-21:
-  - `09051JEC202061`: primary boot-owned lane, rooted, best current reproducer for the KGSL-open seam
-  - `11151JEC200472`: rooted and healthy, but still transport-confounded for guarded `adb reboot bootloader` probes; use carefully for boot-owned runs until that path is fixed or bypassed
-  - `0B191JEC203253`: healthy rooted sidecar lane, used for sound and KGSL control experiments
-  - `06241JEC200520`: healthy rooted sidecar / spare lane
+  - `09051JEC202061`: Stream A primary boot-owned lane, rooted, best current reproducer for the KGSL-open seam
+  - `11151JEC200472`: Stream A confirmation lane, rooted and healthy, but still transport-confounded for guarded `adb reboot bootloader` probes; use carefully for boot-owned runs until that path is fixed or bypassed
+  - `0B191JEC203253`: Stream B rooted sidecar lane; also available for Stream C validation when explicitly idle
+  - `06241JEC200520`: Stream D rooted sidecar / spare lane; may absorb Stream B overflow when explicitly reassigned
 - Handoff rule:
-  - keep the critical path on the KGSL-open seam until one new discriminator lands
-  - do not broaden back out to `orange-gpu`, compositor, or app launch work until KGSL open either succeeds in owned userspace or the missing prerequisite is identified
+  - keep Stream A on the KGSL-open seam until one new discriminator lands
+  - keep Stream B on recovery, trigger, and evidence work; do not let it drift into second-guessing the GPU ladder
+  - let Stream C tighten the phase-1 launch contract without waiting for KGSL
+  - let Stream D answer service-boundary questions without claiming a boot-owned product milestone
+
+## Stream Backlogs
+
+### Stream A: GPU / KGSL (`../boot`)
+
+- Keep the raw KGSL / Vulkan ladder as the only critical-path seam.
+- Land one discriminator at a time until boot-owned readonly KGSL open either succeeds or the missing prerequisite is named.
+- Do not broaden to `orange-gpu`, compositor, runtime, or shell until that happens.
+
+### Stream B: recovery / trigger / evidence (`boot-2`)
+
+- Finish the observability-first recovery loop so every run bundle reports stage evidence separately from transport evidence.
+- Extend boot-owned breadcrumbs with execution-context facts that can be compared directly against rooted controls.
+- Turn stock-init trigger ladders into reusable runners with explicit proof surfaces, not one-off probes.
+- Keep flash/rollback/run-bundle guardrails sharp enough that Stream A can iterate faster with less operator ambiguity.
+
+### Stream C: phase-1 launch contract / `/data` discipline (`boot-2`)
+
+- Make the boot-critical config surface explicit and keep it small enough to live in the image.
+- Make missing `/data`-staged payloads fail loudly and recoverably instead of black-box hanging.
+- Keep typed startup/session config aligned with the actual phase-1 boot helper contract instead of ad hoc env assembly.
+- Land host-heavy contract work independently of the boot-owned GPU seam whenever possible.
+
+### Stream D: service inventory / non-GPU dependencies (sidecar)
+
+- Inventory the minimum vendor/service set needed after Shadow takes over the display.
+- Keep camera, Wi-Fi, and broader networking explicitly non-blocking for the first milestone unless new evidence proves otherwise.
+- Use rooted sidecars for input/audio/service probes only when those probes do not compete with Stream A for interpretation or devices.
+- Convert useful answers into docs or manifests, not another unbounded experimental lane.
 
 ## Milestones
 
@@ -338,9 +405,12 @@ Related docs:
   - `orange-init`
   - minimal service supervisor and Shadow launch
 - [~] Run the next boot-lab seams concurrently when the experiments are genuinely different:
+  - reserve Stream A for KGSL / GPU work in `../boot`
+  - reserve Stream B for recovery / trigger / evidence work in `boot-2`
+  - use Stream C and Stream D for `/data` contract or service-inventory sidecars only when they do not collide with Stream A devices or artifacts
   - use one device per seam and keep the serial ownership explicit in the run bundle
   - use one sibling worktree per risky seam so partial results can land independently
-  - spend concurrency on discriminating owned-userspace hypotheses and recovery/tooling, not duplicate reruns of the same failing image
+  - spend concurrency on Stream B-D deliverables, not duplicate reruns of the same failing Stream A image
 
 ## Implementation Notes
 

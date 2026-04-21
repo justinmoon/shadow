@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import calendar
+import contextlib
+import fcntl
+import getpass
 import hashlib
 import json
 import os
@@ -11,7 +15,9 @@ import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -55,6 +61,14 @@ FRAME_CAPTURE_WAIT_INTERVAL_SECS = 0.2
 VM_CONTROL_SOCKET_TIMEOUT_SECS = 5.0
 TEXT_SEND_KEY_HOLD_TIME_MS = 25
 TEXT_SEND_KEY_INTERVAL_SECS = 0.03
+LEASE_DEFAULT_TTL_SECS = 4 * 60 * 60
+LEASE_DURATION_RE = re.compile(r"^(?P<value>\d+)(?P<unit>[smhd]?)$")
+LEASE_AGENT_ENV_KEYS = (
+    "SHADOW_DEVICE_LEASE_AGENT",
+    "CODEX_AGENT_NAME",
+    "AGENT_NAME",
+)
+LEASE_OWNER_ENV_KEYS = ("SHADOW_DEVICE_LEASE_OWNER",)
 PIXEL_PREP_SETTINGS = (
     ("global", "stay_on_while_plugged_in", "15"),
     ("system", "screen_off_timeout", "1800000"),
@@ -84,6 +98,272 @@ class TargetRef:
 
 def repo_root() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parent.parent
+
+
+def repo_common_root() -> pathlib.Path:
+    override = os.environ.get("SHADOW_REPO_COMMON_ROOT")
+    if override:
+        return pathlib.Path(override).expanduser().resolve()
+
+    result = run_local(["git", "rev-parse", "--git-common-dir"], check=False)
+    raw = result.stdout.strip() if result.stdout else ""
+    if result.returncode == 0 and raw:
+        path = pathlib.Path(raw)
+        if not path.is_absolute():
+            path = (repo_root() / path).resolve()
+        return path.parent
+
+    return repo_root()
+
+
+def pixel_shared_dir() -> pathlib.Path:
+    return repo_common_root() / "build" / "shared" / "pixel"
+
+
+def lease_dir() -> pathlib.Path:
+    return pixel_shared_dir() / "leases"
+
+
+def lease_lock_file() -> pathlib.Path:
+    return lease_dir() / ".lock"
+
+
+def lease_key(serial: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "_", serial)
+
+
+def lease_file(serial: str) -> pathlib.Path:
+    return lease_dir() / f"{lease_key(serial)}.json"
+
+
+def first_env(keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = os.environ.get(key)
+        if value:
+            return value
+    return None
+
+
+def current_holder_metadata(*, agent: str | None = None, owner: str | None = None) -> dict[str, str]:
+    worktree_root = repo_root().resolve()
+    worktree_name = worktree_root.name
+    host = socket.gethostname()
+    user = getpass.getuser()
+    agent_value = agent or first_env(LEASE_AGENT_ENV_KEYS)
+    owner_value = owner or first_env(LEASE_OWNER_ENV_KEYS)
+    holder_id_parts = [user, host, str(worktree_root)]
+    if agent_value:
+        holder_id_parts.append(agent_value)
+    holder_id = "::".join(holder_id_parts)
+    holder_label = f"{user}@{host}:{worktree_name}"
+    if agent_value:
+        holder_label = f"{holder_label}:{agent_value}"
+    if not owner_value:
+        owner_value = holder_label
+    return {
+        "holder_id": holder_id,
+        "holder_label": holder_label,
+        "host": host,
+        "user": user,
+        "worktree_name": worktree_name,
+        "worktree_root": str(worktree_root),
+        "agent": agent_value or "",
+        "owner": owner_value,
+    }
+
+
+def utc_timestamp(timestamp: float | None = None) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp or time.time()))
+
+
+def parse_utc_timestamp(value: str) -> float:
+    return float(calendar.timegm(time.strptime(value, "%Y-%m-%dT%H:%M:%SZ")))
+
+
+def parse_duration_secs(value: str) -> int:
+    match = LEASE_DURATION_RE.fullmatch(value.strip())
+    if match is None:
+        raise argparse.ArgumentTypeError(
+            "duration must look like 30m, 4h, 2d, or raw seconds"
+        )
+    amount = int(match.group("value"))
+    unit = match.group("unit") or "s"
+    multiplier = {"s": 1, "m": 60, "h": 60 * 60, "d": 24 * 60 * 60}[unit]
+    return amount * multiplier
+
+
+def lease_status(record: dict[str, Any], *, now: float | None = None) -> str:
+    expires_at_raw = record.get("expires_at")
+    if not isinstance(expires_at_raw, str) or not expires_at_raw:
+        return "unknown"
+    current = now or time.time()
+    return "expired" if parse_utc_timestamp(expires_at_raw) <= current else "active"
+
+
+def lease_remaining_secs(record: dict[str, Any], *, now: float | None = None) -> int | None:
+    expires_at_raw = record.get("expires_at")
+    if not isinstance(expires_at_raw, str) or not expires_at_raw:
+        return None
+    remaining = int(parse_utc_timestamp(expires_at_raw) - (now or time.time()))
+    return max(remaining, 0)
+
+
+def lease_owner(record: dict[str, Any]) -> str:
+    return str(record.get("owner") or record.get("holder_label") or "")
+
+
+def lease_summary(record: dict[str, Any]) -> str:
+    lane = str(record.get("lane") or "")
+    owner = lease_owner(record)
+    expires_at = str(record.get("expires_at") or "")
+    parts = [owner]
+    if lane:
+        parts.append(f"lane={lane}")
+    if expires_at:
+        parts.append(f"until={expires_at}")
+    return " ".join(part for part in parts if part)
+
+
+@contextlib.contextmanager
+def locked_lease_registry() -> Any:
+    lease_dir().mkdir(parents=True, exist_ok=True)
+    with lease_lock_file().open("a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def load_lease_record(serial: str) -> dict[str, Any] | None:
+    path = lease_file(serial)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def atomic_write_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as fh:
+            json.dump(payload, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+            temp_path = fh.name
+        os.replace(temp_path, path)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+def lease_record_payload(
+    *,
+    serial: str,
+    lane: str,
+    note: str,
+    ttl_secs: int,
+    agent: str | None,
+    owner: str | None,
+    lease_id: str | None = None,
+) -> dict[str, Any]:
+    now = time.time()
+    holder = current_holder_metadata(agent=agent, owner=owner)
+    return {
+        "serial": serial,
+        "lease_id": lease_id or uuid.uuid4().hex[:12],
+        "status": "active",
+        "owner": holder["owner"],
+        "holder_id": holder["holder_id"],
+        "holder_label": holder["holder_label"],
+        "host": holder["host"],
+        "user": holder["user"],
+        "worktree_name": holder["worktree_name"],
+        "worktree_root": holder["worktree_root"],
+        "agent": holder["agent"],
+        "lane": lane,
+        "note": note,
+        "pid": os.getpid(),
+        "acquired_at": utc_timestamp(now),
+        "updated_at": utc_timestamp(now),
+        "expires_at": utc_timestamp(now + ttl_secs),
+        "ttl_secs": ttl_secs,
+    }
+
+
+def list_lease_records() -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    if not lease_dir().exists():
+        return records
+    for path in sorted(lease_dir().glob("*.json")):
+        try:
+            records.append(json.loads(path.read_text(encoding="utf-8")))
+        except json.JSONDecodeError as exc:
+            records.append(
+                {
+                    "serial": path.stem,
+                    "status": f"invalid: {exc}",
+                    "owner": "",
+                    "lane": "",
+                    "expires_at": "",
+                    "lease_id": "",
+                }
+            )
+    return records
+
+
+def active_leases_by_serial() -> dict[str, dict[str, Any]]:
+    leases: dict[str, dict[str, Any]] = {}
+    for record in list_lease_records():
+        serial = record.get("serial")
+        if isinstance(serial, str) and lease_status(record) == "active":
+            leases[serial] = record
+    return leases
+
+
+def current_holder_matches(record: dict[str, Any], *, agent: str | None = None) -> bool:
+    holder_id = record.get("holder_id")
+    if not isinstance(holder_id, str) or not holder_id:
+        return False
+    return holder_id == current_holder_metadata(agent=agent).get("holder_id")
+
+
+def print_lease_record(record: dict[str, Any]) -> None:
+    print(f"serial={record.get('serial') or ''}")
+    print(f"lease_id={record.get('lease_id') or ''}")
+    print(f"status={record.get('status') or lease_status(record)}")
+    print(f"owner={lease_owner(record)}")
+    print(f"holder={record.get('holder_label') or ''}")
+    print(f"lane={record.get('lane') or ''}")
+    print(f"expires_at={record.get('expires_at') or ''}")
+    print(f"remaining_secs={lease_remaining_secs(record) or 0}")
+    print(f"worktree={record.get('worktree_name') or ''}")
+    print(f"note={record.get('note') or ''}")
+
+
+def print_lease_records(records: list[dict[str, Any]]) -> None:
+    if not records:
+        print("no device leases found")
+        return
+    print("serial\tstatus\towner\tlane\texpires_at\tworktree")
+    for record in records:
+        print(
+            "\t".join(
+                [
+                    str(record.get("serial") or ""),
+                    lease_status(record) if record.get("status") == "active" else str(record.get("status") or ""),
+                    lease_owner(record),
+                    str(record.get("lane") or ""),
+                    str(record.get("expires_at") or ""),
+                    str(record.get("worktree_name") or ""),
+                ]
+            )
+        )
 
 
 def app_manifest_file() -> pathlib.Path:
@@ -1174,6 +1454,7 @@ def diagnose_pixel(payload: dict[str, Any]) -> list[str]:
 
 def device_entries() -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
+    leases = active_leases_by_serial()
     local_processes = vm_processes()
     if local_processes or qmp_available():
         entries.append(
@@ -1188,6 +1469,20 @@ def device_entries() -> list[dict[str, Any]]:
     except (FileNotFoundError, RuntimeError) as exc:
         message = str(exc).removeprefix("shadowctl: ")
         entries.append({"id": "adb", "kind": "adb", "state": f"error: {message}"})
+
+    for entry in entries:
+        if entry.get("kind") != "pixel":
+            continue
+        record = leases.get(str(entry.get("id") or ""))
+        if record is None:
+            entry["lease"] = None
+            continue
+        entry["lease"] = {
+            "owner": lease_owner(record),
+            "lane": str(record.get("lane") or ""),
+            "expires_at": str(record.get("expires_at") or ""),
+            "summary": lease_summary(record),
+        }
     return entries
 
 
@@ -1195,9 +1490,13 @@ def print_device_entries(entries: list[dict[str, Any]]) -> None:
     if not entries:
         print("no running targets found")
         return
-    print("id\tkind\tstate")
+    print("id\tkind\tstate\tlease")
     for entry in entries:
-        print(f"{entry['id']}\t{entry['kind']}\t{entry['state']}")
+        lease = entry.get("lease")
+        lease_summary_value = ""
+        if isinstance(lease, dict):
+            lease_summary_value = str(lease.get("summary") or "")
+        print(f"{entry['id']}\t{entry['kind']}\t{entry['state']}\t{lease_summary_value}")
 
 
 def control_request_for(target: TargetRef, command: str) -> subprocess.CompletedProcess[str]:
@@ -1234,6 +1533,157 @@ def wait_for_remote_frame(target: TargetRef, remote_path: str) -> bool:
         if time.monotonic() >= deadline:
             return False
         time.sleep(FRAME_CAPTURE_WAIT_INTERVAL_SECS)
+
+
+def lease_conflict_message(serial: str, record: dict[str, Any]) -> str:
+    owner = lease_owner(record) or "unknown"
+    lane = str(record.get("lane") or "")
+    expires_at = str(record.get("expires_at") or "")
+    lane_segment = f" lane={lane}" if lane else ""
+    expires_segment = f" expires_at={expires_at}" if expires_at else ""
+    return (
+        f"shadowctl: active lease on {serial} held by {owner}{lane_segment}{expires_segment}; "
+        "run `sc lease show <serial>`, use `--force` to replace it, "
+        "or set `SHADOW_DEVICE_LEASE_FORCE=1` to bypass the guard"
+    )
+
+
+def cmd_lease_list(args: argparse.Namespace) -> int:
+    records = list_lease_records()
+    if args.json:
+        payload = []
+        for record in records:
+            item = dict(record)
+            item["status"] = lease_status(record) if record.get("status") == "active" else record.get("status")
+            item["remaining_secs"] = lease_remaining_secs(record)
+            payload.append(item)
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print_lease_records(records)
+    return 0
+
+
+def cmd_lease_show(args: argparse.Namespace) -> int:
+    record = load_lease_record(args.serial)
+    if record is None:
+        payload = {"serial": args.serial, "leased": False}
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"serial={args.serial}")
+            print("leased=0")
+        return 0
+
+    payload = dict(record)
+    payload["leased"] = lease_status(record) == "active"
+    payload["status"] = lease_status(record) if record.get("status") == "active" else record.get("status")
+    payload["remaining_secs"] = lease_remaining_secs(record)
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print_lease_record(payload)
+    return 0
+
+
+def cmd_lease_acquire(args: argparse.Namespace) -> int:
+    with locked_lease_registry():
+        existing = load_lease_record(args.serial)
+        existing_active = existing is not None and lease_status(existing) == "active"
+        if existing_active and not current_holder_matches(existing, agent=args.agent) and not args.force:
+            raise SystemExit(lease_conflict_message(args.serial, existing))
+
+        if existing_active and current_holder_matches(existing, agent=args.agent):
+            action = "renewed"
+            lease_id = str(existing.get("lease_id") or "")
+        elif existing is not None and args.force:
+            action = "replaced"
+            lease_id = None
+        else:
+            action = "acquired"
+            lease_id = None
+
+        record = lease_record_payload(
+            serial=args.serial,
+            lane=args.lane,
+            note=args.note,
+            ttl_secs=args.ttl,
+            agent=args.agent,
+            owner=args.owner,
+            lease_id=lease_id,
+        )
+        atomic_write_json(lease_file(args.serial), record)
+
+    payload = dict(record)
+    payload["action"] = action
+    payload["remaining_secs"] = lease_remaining_secs(record)
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print_lease_record(payload)
+        print(f"action={action}")
+    return 0
+
+
+def cmd_lease_renew(args: argparse.Namespace) -> int:
+    with locked_lease_registry():
+        existing = load_lease_record(args.serial)
+        if existing is None:
+            raise SystemExit(f"shadowctl: no existing lease for {args.serial}")
+        if not current_holder_matches(existing, agent=args.agent) and not args.force:
+            raise SystemExit(lease_conflict_message(args.serial, existing))
+
+        record = lease_record_payload(
+            serial=args.serial,
+            lane=args.lane or str(existing.get("lane") or ""),
+            note=args.note if args.note else str(existing.get("note") or ""),
+            ttl_secs=args.ttl,
+            agent=args.agent,
+            owner=args.owner or lease_owner(existing),
+            lease_id=str(existing.get("lease_id") or ""),
+        )
+        atomic_write_json(lease_file(args.serial), record)
+
+    payload = dict(record)
+    payload["action"] = "renewed"
+    payload["remaining_secs"] = lease_remaining_secs(record)
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print_lease_record(payload)
+        print("action=renewed")
+    return 0
+
+
+def cmd_lease_release(args: argparse.Namespace) -> int:
+    with locked_lease_registry():
+        existing = load_lease_record(args.serial)
+        if existing is None:
+            raise SystemExit(f"shadowctl: no existing lease for {args.serial}")
+        if not current_holder_matches(existing, agent=args.agent) and not args.force:
+            raise SystemExit(lease_conflict_message(args.serial, existing))
+        lease_file(args.serial).unlink(missing_ok=True)
+
+    payload = dict(existing)
+    payload["action"] = "released"
+    payload["status"] = "released"
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print_lease_record(payload)
+        print("action=released")
+    return 0
+
+
+def cmd_lease_check(args: argparse.Namespace) -> int:
+    if os.environ.get("SHADOW_DEVICE_LEASE_FORCE") in {"1", "true", "yes"}:
+        return 0
+
+    record = load_lease_record(args.serial)
+    if record is None or lease_status(record) != "active":
+        return 0
+    if current_holder_matches(record, agent=args.agent):
+        return 0
+    raise SystemExit(lease_conflict_message(args.serial, record))
 
 
 def cmd_devices(args: argparse.Namespace) -> int:
@@ -1842,7 +2292,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  sc -t pixel debug runtime-drm-gpu-probe --profile vulkan_kgsl_first\n"
             "  sc -t pixel ci camera\n"
             "  sc -t pixel debug latency\n"
-            "  sc -t pixel debug scroll-latency"
+            "  sc -t pixel debug scroll-latency\n"
+            "  sc lease acquire 0B191JEC203253 --lane stream-b"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1858,6 +2309,57 @@ def build_parser() -> argparse.ArgumentParser:
         cmd_devices,
     )
     devices.add_argument("--json", action="store_true")
+
+    lease = subparsers.add_parser(
+        "lease",
+        help="Manage shared Pixel device leases across worktrees.",
+        description="Manage shared Pixel device leases across worktrees.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    lease_subparsers = lease.add_subparsers(dest="lease_command", required=True)
+
+    lease_list = lease_subparsers.add_parser("list", help="List known device leases.")
+    lease_list.add_argument("--json", action="store_true")
+    lease_list.set_defaults(func=cmd_lease_list)
+
+    lease_show = lease_subparsers.add_parser("show", help="Show one device lease.")
+    lease_show.add_argument("serial", help="adb serial to inspect")
+    lease_show.add_argument("--json", action="store_true")
+    lease_show.set_defaults(func=cmd_lease_show)
+
+    lease_acquire = lease_subparsers.add_parser("acquire", help="Acquire or renew a device lease.")
+    lease_acquire.add_argument("serial", help="adb serial to lease")
+    lease_acquire.add_argument("--lane", default="", help="Short lane label, e.g. stream-b")
+    lease_acquire.add_argument("--owner", default=None, help="Human-facing lease owner label")
+    lease_acquire.add_argument("--agent", default=None, help="Optional agent label for holder identity")
+    lease_acquire.add_argument("--note", default="", help="Free-form note")
+    lease_acquire.add_argument("--ttl", type=parse_duration_secs, default=LEASE_DEFAULT_TTL_SECS)
+    lease_acquire.add_argument("--force", action="store_true", help="Replace an active lease")
+    lease_acquire.add_argument("--json", action="store_true")
+    lease_acquire.set_defaults(func=cmd_lease_acquire)
+
+    lease_renew = lease_subparsers.add_parser("renew", help="Renew an existing device lease.")
+    lease_renew.add_argument("serial", help="adb serial to renew")
+    lease_renew.add_argument("--lane", default="", help="Override lane label")
+    lease_renew.add_argument("--owner", default=None, help="Override human-facing owner label")
+    lease_renew.add_argument("--agent", default=None, help="Optional agent label for holder identity")
+    lease_renew.add_argument("--note", default="", help="Override note when non-empty")
+    lease_renew.add_argument("--ttl", type=parse_duration_secs, default=LEASE_DEFAULT_TTL_SECS)
+    lease_renew.add_argument("--force", action="store_true", help="Renew a lease held by another holder")
+    lease_renew.add_argument("--json", action="store_true")
+    lease_renew.set_defaults(func=cmd_lease_renew)
+
+    lease_release = lease_subparsers.add_parser("release", help="Release a device lease.")
+    lease_release.add_argument("serial", help="adb serial to release")
+    lease_release.add_argument("--agent", default=None, help="Optional agent label for holder identity")
+    lease_release.add_argument("--force", action="store_true", help="Release a lease held by another holder")
+    lease_release.add_argument("--json", action="store_true")
+    lease_release.set_defaults(func=cmd_lease_release)
+
+    lease_check = lease_subparsers.add_parser("check", help="Internal guard for lease-aware scripts.")
+    lease_check.add_argument("serial", help="adb serial to guard")
+    lease_check.add_argument("--agent", default=None, help=argparse.SUPPRESS)
+    lease_check.set_defaults(func=cmd_lease_check)
 
     status = add_command(
         subparsers,

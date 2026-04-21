@@ -193,7 +193,7 @@ pixel_serial_lock_key() {
 pixel_serial_lock_path() {
   local serial lock_dir lock_key
   serial="${1:?pixel_serial_lock_path requires a serial}"
-  lock_dir="$(pixel_dir)/locks"
+  lock_dir="$(pixel_shared_dir)/locks"
   lock_key="$(pixel_serial_lock_key "$serial")"
 
   mkdir -p "$lock_dir"
@@ -209,6 +209,8 @@ pixel_require_host_lock() {
   if [[ "${PIXEL_HOST_LOCK_HELD_SERIAL:-}" == "$serial" ]]; then
     return 0
   fi
+
+  "$SHADOW_SCRIPT_ROOT/shadowctl" lease check "$serial"
 
   lock_path="$(pixel_serial_lock_path "$serial")"
   script_name="$(basename "$script_path")"

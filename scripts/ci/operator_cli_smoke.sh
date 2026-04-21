@@ -9,7 +9,7 @@ TMP_FILES=()
 
 cleanup() {
   if ((${#TMP_FILES[@]})); then
-    rm -f "${TMP_FILES[@]}"
+    rm -rf "${TMP_FILES[@]}"
   fi
 }
 trap cleanup EXIT
@@ -22,6 +22,13 @@ fail() {
 mktemp_tracked() {
   local path
   path="$(mktemp "${TMPDIR:-/tmp}/operator-cli.XXXXXX")"
+  TMP_FILES+=("$path")
+  printf '%s\n' "$path"
+}
+
+mktemp_dir_tracked() {
+  local path
+  path="$(mktemp -d "${TMPDIR:-/tmp}/operator-cli.XXXXXX")"
   TMP_FILES+=("$path")
   printf '%s\n' "$path"
 }
@@ -72,6 +79,37 @@ check_stdout_contains() {
   local combined="$stdout
 $stderr"
   [[ "$combined" == *"$expected_substring"* ]] || fail "$name output missing substring: $expected_substring"
+}
+
+check_json_python_case() {
+  local name="$1"
+  local expected_status="$2"
+  local python_check="$3"
+  shift 3
+
+  local stdout_path stderr_path status stderr
+  stdout_path="$(mktemp_tracked)"
+  stderr_path="$(mktemp_tracked)"
+
+  set +e
+  (cd "$REPO_ROOT" && "$@") >"$stdout_path" 2>"$stderr_path"
+  status=$?
+  set -e
+
+  stderr="$(cat "$stderr_path")"
+  [[ "$status" -eq "$expected_status" ]] || fail "$name status=$status expected=$expected_status stderr=$stderr"
+
+  JSON_CHECK="$python_check" "$PYTHON3_BIN" - "$stdout_path" <<'PY'
+import json
+import os
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+namespace = {"payload": payload}
+exec(os.environ["JSON_CHECK"], {}, namespace)
+PY
 }
 
 mixed_model_manifest="$(mktemp_tracked)"
@@ -655,5 +693,44 @@ check_stdout_contains \
   0 \
   "adb" \
   env PATH=/usr/bin:/bin "$PYTHON3_BIN" "$SHADOWCTL_SCRIPT" devices
+
+lease_common_root="$(mktemp_dir_tracked)"
+lease_serial="LEASESERIAL01"
+
+check_json_python_case \
+  shadowctl_lease_list_empty \
+  0 \
+  "assert payload == []" \
+  env SHADOW_REPO_COMMON_ROOT="$lease_common_root" "$PYTHON3_BIN" "$SHADOWCTL_SCRIPT" lease list --json
+
+check_json_python_case \
+  shadowctl_lease_acquire \
+  0 \
+  "assert payload['action'] == 'acquired'; assert payload['serial'] == 'LEASESERIAL01'; assert payload['lane'] == 'stream-b'; assert payload['owner'] == 'boot-2'; assert payload['agent'] == 'alpha'; assert payload['status'] == 'active'; assert payload['lease_id']" \
+  env SHADOW_REPO_COMMON_ROOT="$lease_common_root" SHADOW_DEVICE_LEASE_AGENT=alpha "$PYTHON3_BIN" "$SHADOWCTL_SCRIPT" lease acquire "$lease_serial" --lane stream-b --owner boot-2 --ttl 15m --json
+
+check_json_python_case \
+  shadowctl_lease_show \
+  0 \
+  "assert payload['leased'] is True; assert payload['serial'] == 'LEASESERIAL01'; assert payload['agent'] == 'alpha'; assert payload['status'] == 'active'" \
+  env SHADOW_REPO_COMMON_ROOT="$lease_common_root" "$PYTHON3_BIN" "$SHADOWCTL_SCRIPT" lease show "$lease_serial" --json
+
+check_stdout_contains \
+  shadowctl_lease_conflict \
+  1 \
+  "active lease on LEASESERIAL01 held by boot-2 lane=stream-b" \
+  env SHADOW_REPO_COMMON_ROOT="$lease_common_root" SHADOW_DEVICE_LEASE_AGENT=beta "$PYTHON3_BIN" "$SHADOWCTL_SCRIPT" lease acquire "$lease_serial" --lane stream-c
+
+check_json_python_case \
+  shadowctl_lease_release \
+  0 \
+  "assert payload['action'] == 'released'; assert payload['serial'] == 'LEASESERIAL01'" \
+  env SHADOW_REPO_COMMON_ROOT="$lease_common_root" SHADOW_DEVICE_LEASE_AGENT=alpha "$PYTHON3_BIN" "$SHADOWCTL_SCRIPT" lease release "$lease_serial" --json
+
+check_json_python_case \
+  shadowctl_lease_list_empty_after_release \
+  0 \
+  "assert payload == []" \
+  env SHADOW_REPO_COMMON_ROOT="$lease_common_root" "$PYTHON3_BIN" "$SHADOWCTL_SCRIPT" lease list --json
 
 printf 'operator_cli_smoke: ok\n'
