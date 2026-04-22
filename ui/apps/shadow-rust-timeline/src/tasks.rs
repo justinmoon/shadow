@@ -4,7 +4,7 @@ mod start;
 use shadow_sdk::{
     services::clipboard::write_text as write_clipboard_text,
     services::nostr::{
-        generate_account, import_account_nsec, NostrPublishReceipt,
+        generate_account, import_account_nsec,
         timeline::{
             publish_reply, publish_text_note, refresh_home_feed, sync_explore_feed, sync_thread,
             update_contact_list, NostrContactListUpdateAction, NostrContactListUpdateOutcome,
@@ -12,6 +12,7 @@ use shadow_sdk::{
             NostrHomeRefreshOutcome, NostrHomeRefreshRequest, NostrReplyPublishRequest,
             NostrTextNotePublishRequest, NostrThreadSyncOutcome, NostrThreadSyncRequest,
         },
+        NostrPublishReceipt,
     },
     ui::{with_task, TaskHandle, TaskSlot, WidgetView},
 };
@@ -266,7 +267,9 @@ fn run_publish(job: PendingPublish) -> Result<PublishOutcome, String> {
         PendingPublishRequest::Note(request) => {
             publish_text_note(request).map(|outcome| outcome.receipt)
         }
-        PendingPublishRequest::Reply(request) => publish_reply(request).map(|outcome| outcome.receipt),
+        PendingPublishRequest::Reply(request) => {
+            publish_reply(request).map(|outcome| outcome.receipt)
+        }
     }
     .map_err(|error| error.to_string())?;
 

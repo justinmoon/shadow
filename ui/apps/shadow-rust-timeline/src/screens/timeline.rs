@@ -2,9 +2,9 @@ use shadow_sdk::{
     services::nostr::NostrEvent,
     ui::{
         body_text, caption_text, column, eyebrow_text, headline_text, maybe, multiline_editor,
-        panel, primary_button, primary_button_state, row, secondary_button,
-        secondary_button_state, status_chip, text_field, top_bar, with_sheet, ActionButtonState,
-        AsUnit, FlexExt, MainAxisAlignment, UiContext, WidgetView,
+        panel, primary_button, primary_button_state, row, secondary_button, secondary_button_state,
+        status_chip, text_field, top_bar, with_sheet, ActionButtonState, AsUnit, FlexExt,
+        MainAxisAlignment, UiContext, WidgetView,
     },
 };
 
@@ -27,7 +27,13 @@ pub(crate) fn timeline_screen(
     let note_count = notes.len();
     let compose_open = note_draft.is_some();
     let composer = note_draft.map(|draft| {
-        note_compose_sheet(ui, draft, publish_blocked, note_publish_pending, socket_ready)
+        note_compose_sheet(
+            ui,
+            draft,
+            publish_blocked,
+            note_publish_pending,
+            socket_ready,
+        )
     });
 
     with_sheet(

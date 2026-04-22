@@ -34,9 +34,15 @@ pub(crate) fn note_screen(
             let reply_note_id = note.id.clone();
             let parent = thread.parent.clone();
             let replies = thread.replies.clone();
-            let composer = reply_draft
-                .as_ref()
-                .map(|draft| reply_sheet(ui, &note, draft.clone(), publish_blocked, reply_publish_pending));
+            let composer = reply_draft.as_ref().map(|draft| {
+                reply_sheet(
+                    ui,
+                    &note,
+                    draft.clone(),
+                    publish_blocked,
+                    reply_publish_pending,
+                )
+            });
             with_sheet(
                 column((
                     top_bar_with_back(

@@ -3,8 +3,8 @@ use shadow_sdk::ui::TaskHandle;
 use super::{
     ExploreSyncOutcome, FollowActionKind, FollowUpdateOutcome, PendingAccountAction,
     PendingClipboardWrite, PendingExploreSync, PendingFollowUpdate, PendingPublish,
-    PendingPublishRequest, PendingPublishTarget, PendingRefresh, PendingThreadSync,
-    PublishOutcome, RefreshOutcome, ThreadSyncOutcome, RefreshSource,
+    PendingPublishRequest, PendingPublishTarget, PendingRefresh, PendingThreadSync, PublishOutcome,
+    RefreshOutcome, RefreshSource, ThreadSyncOutcome,
 };
 use crate::{
     empty_feed_status, log_preview_text, plural_suffix, short_id, FeedScope, FeedSource,
