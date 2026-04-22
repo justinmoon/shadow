@@ -2394,6 +2394,10 @@ static bool orange_gpu_checkpoint_is_firmware_probe(const char *checkpoint_name)
     return checkpoint_name != NULL && strncmp(checkpoint_name, "firmware-probe-", 15U) == 0;
 }
 
+static bool orange_gpu_checkpoint_is_timeout_classifier(const char *checkpoint_name) {
+    return checkpoint_name != NULL && strncmp(checkpoint_name, "kgsl-timeout-", 13U) == 0;
+}
+
 static bool orange_gpu_mode_uses_visible_checkpoints(
     const struct hello_init_config *config,
     const char *checkpoint_name
@@ -2402,13 +2406,18 @@ static bool orange_gpu_mode_uses_visible_checkpoints(
         return true;
     }
 
-    if (!orange_gpu_checkpoint_is_firmware_probe(checkpoint_name)) {
-        return false;
+    if (orange_gpu_checkpoint_is_firmware_probe(checkpoint_name)) {
+        return orange_gpu_mode_is_firmware_probe_only(config) ||
+               orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config) ||
+               orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(config);
     }
 
-    return orange_gpu_mode_is_firmware_probe_only(config) ||
-           orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config) ||
-           orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(config);
+    if (orange_gpu_checkpoint_is_timeout_classifier(checkpoint_name)) {
+        return orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config) ||
+               orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(config);
+    }
+
+    return false;
 }
 
 static bool validate_orange_gpu_config(const struct hello_init_config *config) {

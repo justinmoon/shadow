@@ -2132,6 +2132,8 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'missing requ
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'invalid orange_gpu_mode config for payload=orange-gpu'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO_INIT_ORANGE_GPU_CHECKPOINT_HOLD_SECONDS'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_checkpoint_is_firmware_probe'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_checkpoint_is_timeout_classifier'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'strncmp(checkpoint_name, "kgsl-timeout-", 13U) == 0'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_uses_visible_checkpoints'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'checkpoint=validated'
 assert_hello_init_orange_gpu_mode_parser_smoke
