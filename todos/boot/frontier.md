@@ -74,6 +74,9 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
     - strongest evidence: tiny direct `std` PID1 probes still panic, while direct `no_std` PID1 and `no_std PID1 -> std child` both work
     - next smallest hardware discriminator: keep the working `no_std` exact-path PID1 shim, but replace `fork()+exec()` with a straight `execv()` into the tiny `std` probe
     - if that works, the bad seam is kernel-launched initial startup; if it still panics, `std` as PID1 remains the failing contract even after `exec`
+    - the build surface is now ready for that discriminator:
+      - `pixel_boot_build_rust_bridge.sh --shim-mode exec` stages a dedicated no_std direct-exec shim
+      - the smoke covers both `fork` and `exec` shim modes
 
 ## Best Observability
 
@@ -135,13 +138,18 @@ Use the panel as a stage channel, not just “something orange happened.”
    - the host-side builder now stages the final rust-bridge image directly
    - next hardware proof should use that direct builder path for `hello`, `vulkan-offscreen`, and `gpu-render`
    - keep `pixel_boot_build_rust_bridge.sh` only as a fallback/helper path, not as the normal builder route
-4. Keep later work blocked until the Rust seam is green.
+4. Run the `std`-PID1 discriminator once a phone is back.
+   - build a stripped hello base image
+   - repack it with `pixel_boot_build_rust_bridge.sh --shim-mode exec`
+   - stage the tiny `std` probe as `/hello-init-child` or an alternate child entry
+   - classify whether direct `execv()` into the `std` probe still panics
+5. Keep later work blocked until the Rust seam is green.
    - no compositor
    - no apps
    - no shell
    - no service spikes
-4. Use `09051JEC202061` as the primary Rust-port proof device and `11151JEC200472` as confirmation.
-5. Land the helper-backed C ladder and tooling truthfully so the Rust port starts from a small, coherent baseline.
+6. Use `09051JEC202061` as the primary Rust-port proof device and `11151JEC200472` as confirmation.
+7. Land the helper-backed C ladder and tooling truthfully so the Rust port starts from a small, coherent baseline.
 
 ## Fast Commands
 

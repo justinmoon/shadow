@@ -10,6 +10,7 @@ ensure_bootimg_shell "$@"
 
 INPUT_IMAGE="${PIXEL_BOOT_INPUT_IMAGE:-}"
 SHIM_BINARY="${PIXEL_HELLO_INIT_RUST_SHIM_BIN:-}"
+SHIM_MODE="${PIXEL_HELLO_INIT_RUST_SHIM_MODE:-fork}"
 CHILD_BINARY="${PIXEL_HELLO_INIT_RUST_CHILD_BIN:-}"
 CHILD_ENTRY="${PIXEL_HELLO_INIT_RUST_CHILD_ENTRY:-hello-init-child}"
 KEY_PATH="${AVB_TEST_KEY_PATH:-}"
@@ -19,6 +20,7 @@ KEEP_WORK_DIR=0
 usage() {
   cat <<'EOF'
 Usage: scripts/pixel/pixel_boot_build_rust_bridge.sh --input PATH [--shim PATH]
+                                                     [--shim-mode fork|exec]
                                                      [--child PATH] [--child-entry NAME]
                                                      [--key PATH] [--output PATH]
                                                      [--keep-work-dir]
@@ -28,6 +30,20 @@ PID 1 shim at /system/bin/init and launches the full Rust hello-init as /hello-i
 If the input image has a companion .hello-init.json, clone it to the output image path so
 post-boot recovery still knows the expected run token and metadata paths.
 EOF
+}
+
+assert_shim_mode_word() {
+  local value
+  value="${1:?assert_shim_mode_word requires a value}"
+
+  case "$value" in
+    fork|exec)
+      ;;
+    *)
+      echo "pixel_boot_build_rust_bridge: unsupported shim mode: $value" >&2
+      exit 1
+      ;;
+  esac
 }
 
 default_output_image() {
@@ -41,6 +57,39 @@ default_output_image() {
     stem="${base_name%.img}"
   fi
   printf '%s/%s-rust-bridge%s\n' "$(pixel_boot_dir)" "$stem" "$extension"
+}
+
+default_shim_binary() {
+  case "$SHIM_MODE" in
+    fork)
+      printf '%s\n' "${PIXEL_HELLO_INIT_RUST_SHIM_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-shim}"
+      ;;
+    exec)
+      printf '%s\n' "${PIXEL_HELLO_INIT_RUST_SHIM_EXEC_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-shim-exec}"
+      ;;
+  esac
+}
+
+default_shim_package_ref() {
+  case "$SHIM_MODE" in
+    fork)
+      printf 'path:%s#hello-init-rust-shim-device\n' "$(repo_root)"
+      ;;
+    exec)
+      printf 'path:%s#hello-init-rust-shim-exec-device\n' "$(repo_root)"
+      ;;
+  esac
+}
+
+default_shim_binary_name() {
+  case "$SHIM_MODE" in
+    fork)
+      printf 'hello-init-shim\n'
+      ;;
+    exec)
+      printf 'hello-init-shim-exec\n'
+      ;;
+  esac
 }
 
 build_or_copy_rust_binary() {
@@ -123,6 +172,10 @@ while [[ $# -gt 0 ]]; do
       SHIM_BINARY="${2:?missing value for --shim}"
       shift 2
       ;;
+    --shim-mode)
+      SHIM_MODE="${2:?missing value for --shim-mode}"
+      shift 2
+      ;;
     --child)
       CHILD_BINARY="${2:?missing value for --child}"
       shift 2
@@ -163,14 +216,15 @@ done
   echo "pixel_boot_build_rust_bridge: input image not found: $INPUT_IMAGE" >&2
   exit 1
 }
+assert_shim_mode_word "$SHIM_MODE"
 
 if [[ -z "$KEY_PATH" ]]; then
   KEY_PATH="$(ensure_cached_avb_testkey)"
 fi
 
 if [[ -z "$SHIM_BINARY" ]]; then
-  SHIM_BINARY="$(pixel_boot_dir)/hello-init-rust-shim"
-  build_or_copy_rust_binary "path:$(repo_root)#hello-init-rust-shim-device" "$SHIM_BINARY" "hello-init-shim"
+  SHIM_BINARY="$(default_shim_binary)"
+  build_or_copy_rust_binary "$(default_shim_package_ref)" "$SHIM_BINARY" "$(default_shim_binary_name)"
 fi
 
 if [[ -z "$CHILD_BINARY" ]]; then
@@ -207,6 +261,7 @@ fi
 
 printf 'Rust bridge input: %s\n' "$INPUT_IMAGE"
 printf 'Rust bridge output: %s\n' "$OUTPUT_IMAGE"
+printf 'Shim mode: %s\n' "$SHIM_MODE"
 printf 'Shim binary: %s\n' "$SHIM_BINARY"
 printf 'Child binary: %s\n' "$CHILD_BINARY"
 printf 'Child entry path: /%s\n' "$CHILD_ENTRY"

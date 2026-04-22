@@ -713,6 +713,19 @@
           cargoBuildFlags = [ "--bin" "hello-init-shim" ];
           cargoInstallFlags = [ "--bin" "hello-init-shim" ];
         };
+      mkHelloInitRustExecShimFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "hello-init-rust-shim-exec";
+          version = "0.1.0";
+          src = ./rust/init-wrapper;
+          cargoLock.lockFile = ./rust/init-wrapper/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
+          cargoBuildFlags = [ "--bin" "hello-init-shim-exec" ];
+          cargoInstallFlags = [ "--bin" "hello-init-shim-exec" ];
+        };
       mkShadowSessionFor = cross:
         cross.rustPlatform.buildRustPackage {
           pname = "shadow-session";
@@ -2265,6 +2278,8 @@
             mkHelloInitRustNoStdProbeFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           hello-init-rust-shim-device =
             mkHelloInitRustShimFor pkgs.pkgsCross.aarch64-multiplatform-musl;
+          hello-init-rust-shim-exec-device =
+            mkHelloInitRustExecShimFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           shadow-session = mkShadowSession pkgs;
           shadow-session-device = mkShadowSessionFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           default = mkShadowSession pkgs;

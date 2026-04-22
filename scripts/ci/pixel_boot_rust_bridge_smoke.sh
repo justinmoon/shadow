@@ -8,8 +8,10 @@ MOCK_BIN="$TMP_DIR/bin"
 BOOT_BUILD_INPUT="$TMP_DIR/build-input.img"
 BOOT_BUILD_RAMDISK="$TMP_DIR/build-ramdisk.cpio"
 SHIM_BINARY="$TMP_DIR/hello-init-rust-shim"
+EXEC_SHIM_BINARY="$TMP_DIR/hello-init-rust-shim-exec"
 CHILD_BINARY="$TMP_DIR/hello-init-rust-child"
 OUTPUT_IMAGE="$TMP_DIR/rust-bridge-boot.img"
+EXEC_OUTPUT_IMAGE="$TMP_DIR/rust-bridge-exec-boot.img"
 AVB_KEY_PATH="$TMP_DIR/avb-testkey.pem"
 INPUT_RUN_TOKEN="rust-bridge-token-00"
 
@@ -31,6 +33,15 @@ cat >"$SHIM_BINARY" <<'EOF'
 echo hello-init-rust-shim
 EOF
 chmod 0755 "$SHIM_BINARY"
+
+cat >"$EXEC_SHIM_BINARY" <<'EOF'
+#!/system/bin/sh
+# shadow-owned-init-role:hello-init
+# shadow-owned-init-impl:rust-static
+# shadow-owned-init-config:/shadow-init.cfg
+echo hello-init-rust-shim-exec
+EOF
+chmod 0755 "$EXEC_SHIM_BINARY"
 
 cat >"$CHILD_BINARY" <<'EOF'
 #!/system/bin/sh
@@ -291,6 +302,7 @@ rust_bridge_output="$(
 assert_contains "$rust_bridge_output" "Copied companion metadata: $OUTPUT_IMAGE.hello-init.json"
 assert_contains "$rust_bridge_output" "Rust bridge input: $BOOT_BUILD_INPUT"
 assert_contains "$rust_bridge_output" "Rust bridge output: $OUTPUT_IMAGE"
+assert_contains "$rust_bridge_output" "Shim mode: fork"
 assert_contains "$rust_bridge_output" "Shim binary: $SHIM_BINARY"
 assert_contains "$rust_bridge_output" "Child binary: $CHILD_BINARY"
 assert_contains "$rust_bridge_output" "Child entry path: /hello-init-child"
@@ -305,5 +317,32 @@ assert_json_field "$OUTPUT_IMAGE.hello-init.json" kind "orange_gpu_build"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" metadata_probe_fingerprint_path ""
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" metadata_probe_timeout_class_path ""
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" run_token "$INPUT_RUN_TOKEN"
+
+exec_bridge_output="$(
+  scripts/pixel/pixel_boot_build_rust_bridge.sh \
+    --input "$BOOT_BUILD_INPUT" \
+    --shim "$EXEC_SHIM_BINARY" \
+    --shim-mode exec \
+    --child "$CHILD_BINARY" \
+    --child-entry hello-init-std-probe \
+    --key "$AVB_KEY_PATH" \
+    --output "$EXEC_OUTPUT_IMAGE"
+)"
+
+assert_contains "$exec_bridge_output" "Rust bridge input: $BOOT_BUILD_INPUT"
+assert_contains "$exec_bridge_output" "Rust bridge output: $EXEC_OUTPUT_IMAGE"
+assert_contains "$exec_bridge_output" "Shim mode: exec"
+assert_contains "$exec_bridge_output" "Shim binary: $EXEC_SHIM_BINARY"
+assert_contains "$exec_bridge_output" "Child binary: $CHILD_BINARY"
+assert_contains "$exec_bridge_output" "Child entry path: /hello-init-std-probe"
+assert_cpio_entry_equals "$EXEC_OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-shim-exec\n'
+assert_cpio_entry_equals "$EXEC_OUTPUT_IMAGE" hello-init-std-probe $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-child\n'
+assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" image "$EXEC_OUTPUT_IMAGE"
+assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_child_path "/hello-init-std-probe"
+assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_impl "rust-bridge"
+assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_mode "rust-bridge"
+assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" metadata_probe_fingerprint_path ""
+assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" metadata_probe_timeout_class_path ""
+assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" run_token "$INPUT_RUN_TOKEN"
 
 echo "pixel_boot_rust_bridge_smoke: ok"
