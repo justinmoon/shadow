@@ -183,8 +183,10 @@
       shadowPixelBootToolingSmokeSrc = repoSourceFromPrefixes (
         shadowPixelBootBootimgCommonPrefixes
         ++ [
+          "runtime/apps.json"
           "scripts/ci/pixel_boot_recover_traces_smoke.sh"
           "scripts/ci/pixel_boot_tooling_smoke.sh"
+          "scripts/shadowctl"
           "scripts/pixel/pixel_boot_build.sh"
           "scripts/pixel/pixel_boot_build_init_symlink_probe.sh"
           "scripts/pixel/pixel_boot_build_log_probe.sh"
@@ -195,8 +197,10 @@
           "scripts/pixel/pixel_boot_flash.sh"
           "scripts/pixel/pixel_boot_flash_run.sh"
           "scripts/pixel/pixel_boot_oneshot.sh"
+          "scripts/pixel/pixel_boot_preflight.sh"
           "scripts/pixel/pixel_boot_recover.sh"
           "scripts/pixel/pixel_boot_recover_traces.sh"
+          "scripts/pixel/pixel_boot_rc_trigger_ladder.sh"
           "scripts/pixel/pixel_build_init_wrapper.sh"
           "scripts/pixel/pixel_build_init_wrapper_c.sh"
           "scripts/pixel/pixel_build_openlog_preload.sh"
@@ -1953,9 +1957,11 @@
           pixelBootSmokeNativeBuildInputs = with pkgs; [
             bash
             coreutils
+            curl
             file
             findutils
             gawk
+            git
             gnugrep
             gnused
             gzip
