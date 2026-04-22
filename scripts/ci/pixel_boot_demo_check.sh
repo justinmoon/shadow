@@ -55,8 +55,8 @@ run_boot_demo_gate() {
   scripts/pixel/pixel_boot_build_orange_gpu.sh --output "$tmp_orange_gpu" >/dev/null
   tmp_orange_gpu_rust_bridge="$(mktemp "${TMPDIR:-/tmp}/shadow-orange-gpu-rust-bridge.XXXXXX.img")"
   rm -f "$tmp_orange_gpu_rust_bridge"
-  scripts/pixel/pixel_boot_build_rust_bridge.sh \
-    --input "$tmp_orange_gpu" \
+  scripts/pixel/pixel_boot_build_orange_gpu.sh \
+    --hello-init-mode rust-bridge \
     --output "$tmp_orange_gpu_rust_bridge" >/dev/null
   rm -f "$tmp_orange_gpu" "$tmp_orange_gpu.hello-init.json"
   rm -f "$tmp_orange_gpu_rust_bridge" "$tmp_orange_gpu_rust_bridge.hello-init.json"

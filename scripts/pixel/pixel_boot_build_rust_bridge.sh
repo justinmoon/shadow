@@ -89,7 +89,7 @@ clone_companion_metadata() {
   source_metadata="${1:?clone_companion_metadata requires a source metadata path}"
   destination_metadata="${2:?clone_companion_metadata requires a destination metadata path}"
 
-  python3 - "$source_metadata" "$destination_metadata" "$OUTPUT_IMAGE" <<'PY'
+  python3 - "$source_metadata" "$destination_metadata" "$OUTPUT_IMAGE" "$CHILD_ENTRY" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -97,9 +97,13 @@ from pathlib import Path
 source_metadata = Path(sys.argv[1])
 destination_metadata = Path(sys.argv[2])
 output_image = sys.argv[3]
+child_entry = sys.argv[4]
 
 payload = json.loads(source_metadata.read_text(encoding="utf-8"))
 payload["image"] = output_image
+payload["hello_init_child_path"] = f"/{child_entry}"
+payload["hello_init_impl"] = "rust-bridge"
+payload["hello_init_mode"] = "rust-bridge"
 destination_metadata.write_text(
     json.dumps(payload, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",

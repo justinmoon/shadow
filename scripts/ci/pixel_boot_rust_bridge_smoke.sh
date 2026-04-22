@@ -296,6 +296,9 @@ assert_contains "$rust_bridge_output" "Child entry path: /hello-init-child"
 assert_cpio_entry_equals "$OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-shim\n'
 assert_cpio_entry_equals "$OUTPUT_IMAGE" hello-init-child $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-child\n'
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" image "$OUTPUT_IMAGE"
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_child_path "/hello-init-child"
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_impl "rust-bridge"
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_mode "rust-bridge"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" kind "orange_gpu_build"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" run_token "$INPUT_RUN_TOKEN"
 

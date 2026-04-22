@@ -14,6 +14,7 @@ ORANGE_INIT_BINARY="${PIXEL_ORANGE_INIT_BIN:-}"
 GPU_BUNDLE_DIR="${PIXEL_ORANGE_GPU_BUNDLE_DIR:-}"
 KEY_PATH="${AVB_TEST_KEY_PATH:-}"
 OUTPUT_IMAGE="${PIXEL_BOOT_ORANGE_GPU_IMAGE:-}"
+HELLO_INIT_MODE="${PIXEL_HELLO_INIT_MODE:-direct}"
 HOLD_SECS="${PIXEL_HELLO_INIT_HOLD_SECS:-3}"
 PRELUDE="${PIXEL_ORANGE_GPU_PRELUDE:-none}"
 PRELUDE_HOLD_SECS="${PIXEL_ORANGE_GPU_PRELUDE_HOLD_SECS:-0}"
@@ -49,6 +50,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--orange-init PATH]
                                                     [--gpu-bundle DIR] [--key PATH]
                                                     [--output PATH] [--hold-secs N]
+                                                    [--hello-init-mode direct|rust-bridge]
                                                     [--prelude none|orange-init]
                                                     [--prelude-hold-secs N]
                                                     [--orange-gpu-mode gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen]
@@ -92,7 +94,11 @@ EOF
 }
 
 default_output_image() {
-  printf '%s/shadow-boot-orange-gpu.img\n' "$(pixel_boot_dir)"
+  if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
+    printf '%s/shadow-boot-orange-gpu-rust-bridge.img\n' "$(pixel_boot_dir)"
+  else
+    printf '%s/shadow-boot-orange-gpu.img\n' "$(pixel_boot_dir)"
+  fi
 }
 
 default_hello_init_binary() {
@@ -490,6 +496,20 @@ assert_timeout_action_word() {
   esac
 }
 
+assert_hello_init_mode_word() {
+  local value
+  value="${1:?assert_hello_init_mode_word requires a value}"
+
+  case "$value" in
+    direct|rust-bridge)
+      ;;
+    *)
+      echo "pixel_boot_build_orange_gpu: unsupported hello-init mode: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
 render_config() {
   local output_path
   output_path="${1:?render_config requires an output path}"
@@ -573,6 +593,7 @@ write_metadata() {
     "$ORANGE_GPU_WATCHDOG_TIMEOUT_SECS" \
     "$REBOOT_TARGET" \
     "$RUN_TOKEN" \
+    "$HELLO_INIT_MODE" \
     "$DEV_MOUNT" \
     "$MOUNT_DEV" \
     "$MOUNT_PROC" \
@@ -610,6 +631,7 @@ from pathlib import Path
     orange_gpu_watchdog_timeout_secs,
     reboot_target,
     run_token,
+    hello_init_mode,
     dev_mount,
     mount_dev,
     mount_proc,
@@ -651,6 +673,7 @@ payload_json = {
     "prelude_hold_seconds": int(prelude_hold_seconds),
     "reboot_target": reboot_target,
     "run_token": run_token,
+    "hello_init_mode": hello_init_mode,
     "dev_mount": dev_mount,
     "mount_dev": parse_bool(mount_dev),
     "mount_proc": parse_bool(mount_proc),
@@ -786,6 +809,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --hold-secs)
       HOLD_SECS="${2:?missing value for --hold-secs}"
+      shift 2
+      ;;
+    --hello-init-mode)
+      HELLO_INIT_MODE="${2:?missing value for --hello-init-mode}"
       shift 2
       ;;
     --prelude)
@@ -982,6 +1009,7 @@ fi
 assert_bool_word orange-gpu-metadata-stage-breadcrumb "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB"
 assert_bool_word orange-gpu-firmware-helper "$ORANGE_GPU_FIRMWARE_HELPER"
 assert_timeout_action_word "$ORANGE_GPU_TIMEOUT_ACTION"
+assert_hello_init_mode_word "$HELLO_INIT_MODE"
 assert_firmware_bootstrap_word "$FIRMWARE_BOOTSTRAP"
 if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" && "$MOUNT_DEV" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: orange gpu metadata stage breadcrumb requires mount-dev=true" >&2
@@ -1030,6 +1058,63 @@ mkdir -p "$(dirname "$OUTPUT_IMAGE")"
 WORK_DIR="$(bootimg_prepare_work_dir shadow-pixel-boot-orange-gpu)"
 assert_input_matches_stock_boot
 assert_stock_root_init_shape
+
+if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
+  rust_bridge_child_binary="$HELLO_INIT_BINARY"
+  rust_bridge_base_output="$WORK_DIR/orange-gpu-direct-base.img"
+
+  env \
+    PIXEL_BOOT_INPUT_IMAGE="$INPUT_IMAGE" \
+    PIXEL_HELLO_INIT_BIN= \
+    PIXEL_ORANGE_INIT_BIN="$ORANGE_INIT_BINARY" \
+    PIXEL_ORANGE_GPU_BUNDLE_DIR="$GPU_BUNDLE_DIR" \
+    AVB_TEST_KEY_PATH="$KEY_PATH" \
+    PIXEL_BOOT_ORANGE_GPU_IMAGE="$rust_bridge_base_output" \
+    PIXEL_HELLO_INIT_MODE=direct \
+    PIXEL_HELLO_INIT_HOLD_SECS="$HOLD_SECS" \
+    PIXEL_ORANGE_GPU_PRELUDE="$PRELUDE" \
+    PIXEL_ORANGE_GPU_PRELUDE_HOLD_SECS="$PRELUDE_HOLD_SECS" \
+    PIXEL_ORANGE_GPU_MODE="$ORANGE_GPU_MODE" \
+    PIXEL_ORANGE_GPU_LAUNCH_DELAY_SECS="$ORANGE_GPU_LAUNCH_DELAY_SECS" \
+    PIXEL_ORANGE_GPU_PARENT_PROBE_ATTEMPTS="$ORANGE_GPU_PARENT_PROBE_ATTEMPTS" \
+    PIXEL_ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS="$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS" \
+    PIXEL_ORANGE_GPU_METADATA_STAGE_BREADCRUMB="$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" \
+    PIXEL_ORANGE_GPU_FIRMWARE_HELPER="$ORANGE_GPU_FIRMWARE_HELPER" \
+    PIXEL_ORANGE_GPU_TIMEOUT_ACTION="$ORANGE_GPU_TIMEOUT_ACTION" \
+    PIXEL_ORANGE_GPU_WATCHDOG_TIMEOUT_SECS="$ORANGE_GPU_WATCHDOG_TIMEOUT_SECS" \
+    PIXEL_HELLO_INIT_REBOOT_TARGET="$REBOOT_TARGET" \
+    PIXEL_ORANGE_GPU_DEV_MOUNT="$DEV_MOUNT" \
+    PIXEL_HELLO_INIT_MOUNT_DEV="$MOUNT_DEV" \
+    PIXEL_HELLO_INIT_MOUNT_PROC="$MOUNT_PROC" \
+    PIXEL_HELLO_INIT_MOUNT_SYS="$MOUNT_SYS" \
+    PIXEL_HELLO_INIT_LOG_KMSG="$LOG_KMSG" \
+    PIXEL_HELLO_INIT_LOG_PMSG="$LOG_PMSG" \
+    PIXEL_HELLO_INIT_RUN_TOKEN="$RUN_TOKEN" \
+    PIXEL_ORANGE_GPU_DRI_BOOTSTRAP="$DRI_BOOTSTRAP" \
+    PIXEL_ORANGE_GPU_FIRMWARE_BOOTSTRAP="$FIRMWARE_BOOTSTRAP" \
+    PIXEL_ORANGE_GPU_FIRMWARE_DIR="$GPU_FIRMWARE_DIR" \
+    "$0"
+
+  rust_bridge_args=(
+    --input "$rust_bridge_base_output"
+    --key "$KEY_PATH"
+    --output "$OUTPUT_IMAGE"
+  )
+  if [[ -n "$rust_bridge_child_binary" ]]; then
+    rust_bridge_args+=(--child "$rust_bridge_child_binary")
+  fi
+  if [[ "$KEEP_WORK_DIR" == "1" ]]; then
+    rust_bridge_args+=(--keep-work-dir)
+  fi
+
+  "$SCRIPT_DIR/pixel/pixel_boot_build_rust_bridge.sh" "${rust_bridge_args[@]}"
+  printf 'Owned userspace mode: orange-gpu (%s)\n' "$HELLO_INIT_MODE"
+  printf 'Metadata path: %s\n' "$(hello_init_metadata_path "$OUTPUT_IMAGE")"
+  if [[ "$KEEP_WORK_DIR" == "1" ]]; then
+    printf 'Kept orange-gpu workdir: %s\n' "$WORK_DIR"
+  fi
+  exit 0
+fi
 
 if [[ -z "$HELLO_INIT_BINARY" ]]; then
   HELLO_INIT_BINARY="$(default_hello_init_binary)"
@@ -1162,6 +1247,7 @@ fi
 printf 'Payload root: %s\n' "$PAYLOAD_IMAGE_PATH"
 printf 'GPU bundle dir: %s\n' "$GPU_BUNDLE_DIR"
 printf 'GPU bundle staged dir: %s\n' "$STAGED_GPU_BUNDLE_DIR"
+printf 'Hello-init mode: %s\n' "$HELLO_INIT_MODE"
 printf 'GPU exec path: %s/shadow-gpu-smoke\n' "$PAYLOAD_IMAGE_PATH"
 printf 'GPU loader path: %s/lib/ld-linux-aarch64.so.1\n' "$PAYLOAD_IMAGE_PATH"
 printf 'Orange GPU mode: %s\n' "$ORANGE_GPU_MODE"
