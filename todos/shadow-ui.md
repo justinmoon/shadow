@@ -109,6 +109,9 @@ speculating about a huge widget catalog up front.
     profile/thread hydration into `shadow_sdk::services::nostr::timeline`, and
     the app now rehydrates route-local caches from that SDK surface instead of
     assembling Nostr read state inline during render
+  - the oversized `shadow_sdk::services::nostr::timeline` module is now split
+    internally into cache, command, and test files so the shared SDK surface
+    can keep growing without collapsing back into one giant source file
 - That is not the end state. The big remaining ergonomics problem is still the
   app-local shape of task/effect wiring:
   - per-app `Pending*` job structs still exist for UI-specific pending state
