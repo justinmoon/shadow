@@ -132,6 +132,8 @@ struct metadata_stage_runtime {
     char temp_probe_fingerprint_path[224];
     char probe_report_path[224];
     char temp_probe_report_path[224];
+    char probe_timeout_class_path[224];
+    char temp_probe_timeout_class_path[224];
 };
 
 static int shadow_kmsg_fd = -1;
@@ -594,6 +596,8 @@ static void init_metadata_stage_runtime(
     int probe_fingerprint_temp_len;
     int probe_report_len;
     int probe_report_temp_len;
+    int probe_timeout_class_len;
+    int probe_timeout_class_temp_len;
 
     memset(runtime, 0, sizeof(*runtime));
     runtime->enabled = config->orange_gpu_metadata_stage_breadcrumb;
@@ -667,6 +671,18 @@ static void init_metadata_stage_runtime(
         "%s/.probe-report.txt.tmp",
         runtime->stage_dir
     );
+    probe_timeout_class_len = snprintf(
+        runtime->probe_timeout_class_path,
+        sizeof(runtime->probe_timeout_class_path),
+        "%s/probe-timeout-class.txt",
+        runtime->stage_dir
+    );
+    probe_timeout_class_temp_len = snprintf(
+        runtime->temp_probe_timeout_class_path,
+        sizeof(runtime->temp_probe_timeout_class_path),
+        "%s/.probe-timeout-class.txt.tmp",
+        runtime->stage_dir
+    );
     if (
         dir_len < 0 || (size_t)dir_len >= sizeof(runtime->stage_dir) ||
         stage_len < 0 || (size_t)stage_len >= sizeof(runtime->stage_path) ||
@@ -676,7 +692,11 @@ static void init_metadata_stage_runtime(
         probe_fingerprint_len < 0 || (size_t)probe_fingerprint_len >= sizeof(runtime->probe_fingerprint_path) ||
         probe_fingerprint_temp_len < 0 || (size_t)probe_fingerprint_temp_len >= sizeof(runtime->temp_probe_fingerprint_path) ||
         probe_report_len < 0 || (size_t)probe_report_len >= sizeof(runtime->probe_report_path) ||
-        probe_report_temp_len < 0 || (size_t)probe_report_temp_len >= sizeof(runtime->temp_probe_report_path)
+        probe_report_temp_len < 0 || (size_t)probe_report_temp_len >= sizeof(runtime->temp_probe_report_path) ||
+        probe_timeout_class_len < 0 ||
+        (size_t)probe_timeout_class_len >= sizeof(runtime->probe_timeout_class_path) ||
+        probe_timeout_class_temp_len < 0 ||
+        (size_t)probe_timeout_class_temp_len >= sizeof(runtime->temp_probe_timeout_class_path)
     ) {
         runtime->enabled = false;
         log_stage("<4>", "metadata-stage-disabled", "reason=path_too_long");
@@ -2660,6 +2680,57 @@ static bool read_text_file_best_effort(const char *path, char *dest, size_t dest
     return true;
 }
 
+static bool extract_text_key_value_line(
+    const char *text,
+    const char *key,
+    char *dest,
+    size_t dest_size
+) {
+    const char *line_start = text;
+    size_t key_len;
+
+    if (
+        text == NULL ||
+        key == NULL ||
+        dest == NULL ||
+        dest_size == 0U
+    ) {
+        return false;
+    }
+
+    dest[0] = '\0';
+    key_len = strlen(key);
+    while (*line_start != '\0') {
+        const char *line_end = strchr(line_start, '\n');
+        size_t line_len;
+
+        if (line_end == NULL) {
+            line_end = line_start + strlen(line_start);
+        }
+        line_len = (size_t)(line_end - line_start);
+        if (
+            line_len > key_len &&
+            strncmp(line_start, key, key_len) == 0 &&
+            line_start[key_len] == '='
+        ) {
+            size_t value_len = line_len - key_len - 1U;
+
+            if (value_len >= dest_size) {
+                value_len = dest_size - 1U;
+            }
+            memcpy(dest, line_start + key_len + 1U, value_len);
+            dest[value_len] = '\0';
+            return true;
+        }
+        if (*line_end == '\0') {
+            break;
+        }
+        line_start = line_end + 1;
+    }
+
+    return false;
+}
+
 static bool text_contains_any_needle(
     const char *text,
     const char *const *needles,
@@ -2696,8 +2767,8 @@ static void init_orange_gpu_timeout_classification(
     classification->matched_needle = "";
 }
 
-static void classify_kgsl_timeout_from_probe_report(
-    const struct metadata_stage_runtime *runtime,
+static void classify_kgsl_timeout_from_text(
+    const char *text,
     struct orange_gpu_timeout_classification *classification
 ) {
     static const char *const firmware_needles[] = {
@@ -2742,25 +2813,10 @@ static void classify_kgsl_timeout_from_probe_report(
         "adreno_set_unsecured_mode",
         "adreno_switch_to_unsecure_mode",
     };
-    char report_text[32768];
     const char *matched_needle = "";
-
-    if (
-        runtime == NULL ||
-        !runtime->enabled ||
-        runtime->write_failed ||
-        !runtime->prepared
-    ) {
-        return;
-    }
-    if (!read_text_file_best_effort(runtime->probe_report_path, report_text, sizeof(report_text))) {
-        return;
-    }
-
-    classification->report_present = true;
     if (
         text_contains_any_needle(
-            report_text,
+            text,
             firmware_needles,
             sizeof(firmware_needles) / sizeof(firmware_needles[0]),
             &matched_needle
@@ -2773,7 +2829,7 @@ static void classify_kgsl_timeout_from_probe_report(
     }
     if (
         text_contains_any_needle(
-            report_text,
+            text,
             zap_needles,
             sizeof(zap_needles) / sizeof(zap_needles[0]),
             &matched_needle
@@ -2786,7 +2842,7 @@ static void classify_kgsl_timeout_from_probe_report(
     }
     if (
         text_contains_any_needle(
-            report_text,
+            text,
             gx_oob_needles,
             sizeof(gx_oob_needles) / sizeof(gx_oob_needles[0]),
             &matched_needle
@@ -2799,7 +2855,7 @@ static void classify_kgsl_timeout_from_probe_report(
     }
     if (
         text_contains_any_needle(
-            report_text,
+            text,
             gmu_hfi_needles,
             sizeof(gmu_hfi_needles) / sizeof(gmu_hfi_needles[0]),
             &matched_needle
@@ -2812,7 +2868,7 @@ static void classify_kgsl_timeout_from_probe_report(
     }
     if (
         text_contains_any_needle(
-            report_text,
+            text,
             cp_init_needles,
             sizeof(cp_init_needles) / sizeof(cp_init_needles[0]),
             &matched_needle
@@ -2823,6 +2879,89 @@ static void classify_kgsl_timeout_from_probe_report(
         classification->matched_needle = matched_needle;
         return;
     }
+}
+
+static void classify_kgsl_timeout_from_probe_report(
+    const struct metadata_stage_runtime *runtime,
+    struct orange_gpu_timeout_classification *classification
+) {
+    char timeout_class_text[4096];
+    char checkpoint_name[128];
+    char bucket_name[128];
+    char report_text[32768];
+
+    if (
+        runtime == NULL ||
+        !runtime->enabled ||
+        runtime->write_failed ||
+        !runtime->prepared
+    ) {
+        return;
+    }
+
+    if (
+        read_text_file_best_effort(
+            runtime->probe_timeout_class_path,
+            timeout_class_text,
+            sizeof(timeout_class_text)
+        )
+    ) {
+        classification->report_present = true;
+        classify_kgsl_timeout_from_text(timeout_class_text, classification);
+        checkpoint_name[0] = '\0';
+        bucket_name[0] = '\0';
+        (void)extract_text_key_value_line(
+            timeout_class_text,
+            "classification_checkpoint",
+            checkpoint_name,
+            sizeof(checkpoint_name)
+        );
+        (void)extract_text_key_value_line(
+            timeout_class_text,
+            "classification_bucket",
+            bucket_name,
+            sizeof(bucket_name)
+        );
+        if (strcmp(checkpoint_name, "kgsl-timeout-firmware") == 0) {
+            classification->checkpoint_name = "kgsl-timeout-firmware";
+        } else if (strcmp(checkpoint_name, "kgsl-timeout-zap") == 0) {
+            classification->checkpoint_name = "kgsl-timeout-zap";
+        } else if (strcmp(checkpoint_name, "kgsl-timeout-gx-oob") == 0) {
+            classification->checkpoint_name = "kgsl-timeout-gx-oob";
+        } else if (strcmp(checkpoint_name, "kgsl-timeout-gmu-hfi") == 0) {
+            classification->checkpoint_name = "kgsl-timeout-gmu-hfi";
+        } else if (strcmp(checkpoint_name, "kgsl-timeout-cp-init") == 0) {
+            classification->checkpoint_name = "kgsl-timeout-cp-init";
+        } else if (strcmp(checkpoint_name, "kgsl-timeout-control") == 0) {
+            classification->checkpoint_name = "kgsl-timeout-control";
+        }
+        if (strcmp(bucket_name, "firmware") == 0) {
+            classification->bucket_name = "firmware";
+        } else if (strcmp(bucket_name, "zap") == 0) {
+            classification->bucket_name = "zap";
+        } else if (strcmp(bucket_name, "gx-oob") == 0) {
+            classification->bucket_name = "gx-oob";
+        } else if (strcmp(bucket_name, "gmu-hfi") == 0) {
+            classification->bucket_name = "gmu-hfi";
+        } else if (strcmp(bucket_name, "cp-init") == 0) {
+            classification->bucket_name = "cp-init";
+        } else if (strcmp(bucket_name, "timeout-control") == 0) {
+            classification->bucket_name = "timeout-control";
+        }
+        if (checkpoint_name[0] != '\0' || bucket_name[0] != '\0') {
+            return;
+        }
+        if (strcmp(classification->checkpoint_name, "watchdog-timeout") != 0) {
+            return;
+        }
+    }
+
+    if (!read_text_file_best_effort(runtime->probe_report_path, report_text, sizeof(report_text))) {
+        return;
+    }
+
+    classification->report_present = true;
+    classify_kgsl_timeout_from_text(report_text, classification);
 }
 
 static bool append_pid_proc_excerpt(
@@ -2842,6 +2981,161 @@ static bool append_pid_proc_excerpt(
     }
 
     return append_file_excerpt(buffer, buffer_size, used, path, max_bytes);
+}
+
+static bool write_metadata_probe_timeout_class_best_effort(
+    struct metadata_stage_runtime *runtime,
+    const char *label,
+    const char *probe_stage_path,
+    pid_t observed_pid
+) {
+    char contents[4096];
+    char observed_probe_stage[256];
+    char wchan[256];
+    char stack_excerpt[2048];
+    char classification_text[3072];
+    size_t used = 0U;
+    bool observed_probe_stage_present = false;
+    bool wchan_present = false;
+    bool stack_excerpt_present = false;
+    struct orange_gpu_timeout_classification classification;
+
+    if (
+        runtime == NULL ||
+        !runtime->enabled ||
+        runtime->write_failed ||
+        !runtime->prepared
+    ) {
+        return false;
+    }
+
+    observed_probe_stage_present =
+        probe_stage_path != NULL &&
+        probe_stage_path[0] != '\0' &&
+        read_text_file_best_effort(
+            probe_stage_path,
+            observed_probe_stage,
+            sizeof(observed_probe_stage)
+        );
+    if (observed_pid > 0) {
+        char proc_path[64];
+        int proc_path_len;
+
+        proc_path_len = snprintf(proc_path, sizeof(proc_path), "/proc/%d/wchan", observed_pid);
+        if (proc_path_len > 0 && (size_t)proc_path_len < sizeof(proc_path)) {
+            wchan_present = read_text_file_best_effort(proc_path, wchan, sizeof(wchan));
+        }
+        proc_path_len = snprintf(proc_path, sizeof(proc_path), "/proc/%d/stack", observed_pid);
+        if (proc_path_len > 0 && (size_t)proc_path_len < sizeof(proc_path)) {
+            stack_excerpt_present = read_text_file_best_effort(
+                proc_path,
+                stack_excerpt,
+                sizeof(stack_excerpt)
+            );
+        }
+    }
+
+    init_orange_gpu_timeout_classification(&classification);
+    classification_text[0] = '\0';
+    if (
+        snprintf(
+            classification_text,
+            sizeof(classification_text),
+            "observed_probe_stage=%s\nwchan=%s\nstack=%s\n",
+            observed_probe_stage_present ? observed_probe_stage : "",
+            wchan_present ? wchan : "",
+            stack_excerpt_present ? stack_excerpt : ""
+        ) < 0
+    ) {
+        return false;
+    }
+    classify_kgsl_timeout_from_text(classification_text, &classification);
+
+    if (
+        !append_fingerprintf(contents, sizeof(contents), &used, "probe_label=%s\n", label) ||
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "probe_stage_path=%s\n",
+            probe_stage_path != NULL ? probe_stage_path : ""
+        ) ||
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "observed_probe_stage_present=%s\n",
+            bool_word(observed_probe_stage_present)
+        ) ||
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "observed_probe_stage=%s\n",
+            observed_probe_stage_present ? observed_probe_stage : ""
+        ) ||
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "observed_pid=%d\nwchan_present=%s\nwchan=%s\n",
+            observed_pid,
+            bool_word(wchan_present),
+            wchan_present ? wchan : ""
+        ) ||
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "stack_excerpt_present=%s\n",
+            bool_word(stack_excerpt_present)
+        ) ||
+        !append_fingerprintf(
+            contents,
+            sizeof(contents),
+            &used,
+            "classification_checkpoint=%s\nclassification_bucket=%s\nclassification_matched_needle=%s\n",
+            classification.checkpoint_name != NULL ? classification.checkpoint_name : "",
+            classification.bucket_name != NULL ? classification.bucket_name : "",
+            classification.matched_needle != NULL ? classification.matched_needle : ""
+        )
+    ) {
+        log_stage(
+            "<4>",
+            "metadata-probe-timeout-class-write-skipped",
+            "reason=buffer_overflow"
+        );
+        return false;
+    }
+
+    if (
+        write_atomic_text_file(
+            runtime->stage_dir,
+            runtime->temp_probe_timeout_class_path,
+            runtime->probe_timeout_class_path,
+            contents
+        ) != 0
+    ) {
+        log_stage(
+            "<4>",
+            "metadata-probe-timeout-class-write-failed",
+            "path=%s errno=%d",
+            runtime->probe_timeout_class_path,
+            errno
+        );
+        return false;
+    }
+
+    log_stage(
+        "<6>",
+        "metadata-probe-timeout-class-write",
+        "path=%s checkpoint=%s bucket=%s matched_needle=%s",
+        runtime->probe_timeout_class_path,
+        classification.checkpoint_name != NULL ? classification.checkpoint_name : "",
+        classification.bucket_name != NULL ? classification.bucket_name : "",
+        classification.matched_needle != NULL ? classification.matched_needle : ""
+    );
+    return true;
 }
 
 static bool write_metadata_probe_report_best_effort(
@@ -3071,6 +3365,12 @@ static void capture_probe_timeout_observer(
     result.completed = false;
     result.timed_out = true;
     result.waited_seconds = waited_seconds;
+    (void)write_metadata_probe_timeout_class_best_effort(
+        observer_context->metadata_stage,
+        observer_context->label,
+        observer_context->probe_stage_path,
+        child_pid
+    );
     (void)write_metadata_probe_report_best_effort(
         observer_context->metadata_stage,
         observer_context->label,

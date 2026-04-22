@@ -35,6 +35,7 @@ EXPECTED_METADATA_STAGE_PATH=""
 EXPECTED_METADATA_PROBE_STAGE_PATH=""
 EXPECTED_METADATA_PROBE_FINGERPRINT_PATH=""
 EXPECTED_METADATA_PROBE_REPORT_PATH=""
+EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH=""
 RECOVERED_METADATA_STAGE_PRESENT=false
 RECOVERED_METADATA_STAGE_VALUE=""
 RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE="unattempted"
@@ -60,6 +61,15 @@ RECOVERED_METADATA_PROBE_REPORT_STDERR_PATH=""
 RECOVERED_METADATA_PROBE_REPORT_OBSERVED_STAGE=""
 RECOVERED_METADATA_PROBE_REPORT_TIMED_OUT=""
 RECOVERED_METADATA_PROBE_REPORT_WCHAN=""
+RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_PRESENT=false
+RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_ACTUAL_ACCESS_MODE="unattempted"
+RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_EXIT_CODE=""
+RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_OUTPUT_PATH=""
+RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_STDERR_PATH=""
+RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_CHECKPOINT=""
+RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_BUCKET=""
+RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_MATCHED_NEEDLE=""
+RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_WCHAN=""
 failure_stage=""
 transport_timeline_path="${PIXEL_BOOT_TRANSPORT_TIMELINE_PATH:-}"
 transport_timeline_elapsed_offset_secs="${PIXEL_BOOT_TRANSPORT_TIMELINE_ELAPSED_OFFSET_SECS:-0}"
@@ -156,6 +166,7 @@ write_failure_status_json() {
     "$EXPECTED_METADATA_STAGE_BREADCRUMB" \
     "$EXPECTED_METADATA_STAGE_PATH" \
     "$EXPECTED_METADATA_PROBE_STAGE_PATH" \
+    "$EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH" \
     "$RECOVERED_METADATA_STAGE_PRESENT" \
     "$RECOVERED_METADATA_STAGE_VALUE" \
     "$RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE" \
@@ -190,11 +201,12 @@ from pathlib import Path
     expected_metadata_stage_breadcrumb,
     expected_metadata_stage_path,
     expected_metadata_probe_stage_path,
+    expected_metadata_probe_timeout_class_path,
     recovered_metadata_stage_present,
     recovered_metadata_stage_value,
     recovered_metadata_stage_actual_access_mode,
     recovered_metadata_stage_exit_code,
-) = sys.argv[1:30]
+) = sys.argv[1:31]
 
 expected_durable_logging = {"kmsg": None, "pmsg": None}
 if source_image_metadata_path:
@@ -243,6 +255,7 @@ payload = {
     "expected_metadata_stage_breadcrumb": expected_metadata_stage_breadcrumb == "true",
     "expected_metadata_stage_path": expected_metadata_stage_path,
     "expected_metadata_probe_stage_path": expected_metadata_probe_stage_path,
+    "expected_metadata_probe_timeout_class_path": expected_metadata_probe_timeout_class_path,
     "metadata_stage_present": recovered_metadata_stage_present == "true",
     "metadata_stage_value": recovered_metadata_stage_value,
     "metadata_stage_actual_access_mode": recovered_metadata_stage_actual_access_mode,
@@ -323,6 +336,7 @@ stage_path = payload.get("metadata_stage_path", "")
 probe_stage_path = payload.get("metadata_probe_stage_path", "")
 probe_fingerprint_path = payload.get("metadata_probe_fingerprint_path", "")
 probe_report_path = payload.get("metadata_probe_report_path", "")
+probe_timeout_class_path = payload.get("metadata_probe_timeout_class_path", "")
 
 print(token if isinstance(token, str) else "")
 print("true" if enabled is True else "false")
@@ -330,6 +344,7 @@ print(stage_path if isinstance(stage_path, str) else "")
 print(probe_stage_path if isinstance(probe_stage_path, str) else "")
 print(probe_fingerprint_path if isinstance(probe_fingerprint_path, str) else "")
 print(probe_report_path if isinstance(probe_report_path, str) else "")
+print(probe_timeout_class_path if isinstance(probe_timeout_class_path, str) else "")
 PY
 }
 
@@ -341,6 +356,7 @@ discover_expected_run_token() {
   local metadata_probe_stage_path=""
   local metadata_probe_fingerprint_path=""
   local metadata_probe_report_path=""
+  local metadata_probe_timeout_class_path=""
 
   discover_source_image_path
   if [[ -n "$SOURCE_IMAGE_PATH" ]]; then
@@ -352,11 +368,13 @@ discover_expected_run_token() {
     metadata_probe_stage_path="${metadata_values[3]:-}"
     metadata_probe_fingerprint_path="${metadata_values[4]:-}"
     metadata_probe_report_path="${metadata_values[5]:-}"
+    metadata_probe_timeout_class_path="${metadata_values[6]:-}"
     EXPECTED_METADATA_STAGE_BREADCRUMB="$metadata_stage_enabled"
     EXPECTED_METADATA_STAGE_PATH="$metadata_stage_path"
     EXPECTED_METADATA_PROBE_STAGE_PATH="$metadata_probe_stage_path"
     EXPECTED_METADATA_PROBE_FINGERPRINT_PATH="$metadata_probe_fingerprint_path"
     EXPECTED_METADATA_PROBE_REPORT_PATH="$metadata_probe_report_path"
+    EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH="$metadata_probe_timeout_class_path"
   fi
 
   if [[ -n "$EXPECTED_RUN_TOKEN" ]]; then
@@ -385,6 +403,7 @@ expected_metadata_stage_path=$EXPECTED_METADATA_STAGE_PATH
 expected_metadata_probe_stage_path=$EXPECTED_METADATA_PROBE_STAGE_PATH
 expected_metadata_probe_fingerprint_path=$EXPECTED_METADATA_PROBE_FINGERPRINT_PATH
 expected_metadata_probe_report_path=$EXPECTED_METADATA_PROBE_REPORT_PATH
+expected_metadata_probe_timeout_class_path=$EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH
 EOF
 }
 
@@ -649,6 +668,94 @@ metadata_probe_report_exit_code=$RECOVERED_METADATA_PROBE_REPORT_EXIT_CODE
 metadata_probe_report_observed_stage=$RECOVERED_METADATA_PROBE_REPORT_OBSERVED_STAGE
 metadata_probe_report_timed_out=$RECOVERED_METADATA_PROBE_REPORT_TIMED_OUT
 metadata_probe_report_wchan=$RECOVERED_METADATA_PROBE_REPORT_WCHAN
+EOF
+}
+
+recover_metadata_probe_timeout_class_file() {
+  local command run_result output_path stderr_path exit_code actual_access_mode
+  local parsed_report=()
+
+  output_path="$CHANNEL_DIR/metadata-probe-timeout-class.txt"
+  stderr_path="$CHANNEL_DIR/metadata-probe-timeout-class.stderr.txt"
+  RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_OUTPUT_PATH="channels/metadata-probe-timeout-class.txt"
+  RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_STDERR_PATH="channels/metadata-probe-timeout-class.stderr.txt"
+
+  : >"$output_path"
+  : >"$stderr_path"
+
+  if [[ "$EXPECTED_METADATA_STAGE_BREADCRUMB" != "true" || -z "$EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH" ]]; then
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_PRESENT=false
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_ACTUAL_ACCESS_MODE="unattempted"
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_EXIT_CODE=""
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_CHECKPOINT=""
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_BUCKET=""
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_MATCHED_NEEDLE=""
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_WCHAN=""
+    cat >"$META_DIR/metadata-probe-timeout-class.txt" <<EOF
+expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
+expected_metadata_probe_timeout_class_path=$EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH
+metadata_probe_timeout_class_present=false
+metadata_probe_timeout_class_actual_access_mode=$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_ACTUAL_ACCESS_MODE
+metadata_probe_timeout_class_exit_code=
+metadata_probe_timeout_class_checkpoint=
+metadata_probe_timeout_class_bucket=
+metadata_probe_timeout_class_matched_needle=
+metadata_probe_timeout_class_wchan=
+EOF
+    return 0
+  fi
+
+  command="if [ -f $EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH ]; then cat $EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH; else exit 3; fi"
+  run_result="$(run_device_command "root" "$command" "$output_path" "$stderr_path")"
+  exit_code="${run_result%%$'\t'*}"
+  actual_access_mode="${run_result#*$'\t'}"
+  RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_ACTUAL_ACCESS_MODE="$actual_access_mode"
+  RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_EXIT_CODE="$exit_code"
+
+  if [[ "$exit_code" == "0" ]]; then
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_PRESENT=true
+    mapfile -t parsed_report < <(python3 - "$output_path" <<'PY'
+from pathlib import Path
+import sys
+
+payload = {}
+for raw_line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines():
+    if "=" not in raw_line:
+        continue
+    key, value = raw_line.split("=", 1)
+    payload[key] = value
+
+for key in (
+    "classification_checkpoint",
+    "classification_bucket",
+    "classification_matched_needle",
+    "wchan",
+):
+    print(payload.get(key, ""))
+PY
+    )
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_CHECKPOINT="${parsed_report[0]:-}"
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_BUCKET="${parsed_report[1]:-}"
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_MATCHED_NEEDLE="${parsed_report[2]:-}"
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_WCHAN="${parsed_report[3]:-}"
+  else
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_PRESENT=false
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_CHECKPOINT=""
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_BUCKET=""
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_MATCHED_NEEDLE=""
+    RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_WCHAN=""
+  fi
+
+  cat >"$META_DIR/metadata-probe-timeout-class.txt" <<EOF
+expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
+expected_metadata_probe_timeout_class_path=$EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH
+metadata_probe_timeout_class_present=$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_PRESENT
+metadata_probe_timeout_class_actual_access_mode=$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_ACTUAL_ACCESS_MODE
+metadata_probe_timeout_class_exit_code=$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_EXIT_CODE
+metadata_probe_timeout_class_checkpoint=$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_CHECKPOINT
+metadata_probe_timeout_class_bucket=$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_BUCKET
+metadata_probe_timeout_class_matched_needle=$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_MATCHED_NEEDLE
+metadata_probe_timeout_class_wchan=$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_WCHAN
 EOF
 }
 
@@ -1038,6 +1145,7 @@ write_status_json() {
     "$EXPECTED_METADATA_PROBE_STAGE_PATH" \
     "$EXPECTED_METADATA_PROBE_FINGERPRINT_PATH" \
     "$EXPECTED_METADATA_PROBE_REPORT_PATH" \
+    "$EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH" \
     "$RECOVERED_METADATA_STAGE_PRESENT" \
     "$RECOVERED_METADATA_STAGE_VALUE" \
     "$RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE" \
@@ -1062,7 +1170,16 @@ write_status_json() {
     "$RECOVERED_METADATA_PROBE_REPORT_STDERR_PATH" \
     "$RECOVERED_METADATA_PROBE_REPORT_OBSERVED_STAGE" \
     "$RECOVERED_METADATA_PROBE_REPORT_TIMED_OUT" \
-    "$RECOVERED_METADATA_PROBE_REPORT_WCHAN" <<'PY'
+    "$RECOVERED_METADATA_PROBE_REPORT_WCHAN" \
+    "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_PRESENT" \
+    "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_ACTUAL_ACCESS_MODE" \
+    "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_EXIT_CODE" \
+    "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_OUTPUT_PATH" \
+    "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_STDERR_PATH" \
+    "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_CHECKPOINT" \
+    "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_BUCKET" \
+    "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_MATCHED_NEEDLE" \
+    "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_WCHAN" <<'PY'
 import csv
 import json
 import sys
@@ -1097,31 +1214,41 @@ expected_metadata_stage_path = sys.argv[26]
 expected_metadata_probe_stage_path = sys.argv[27]
 expected_metadata_probe_fingerprint_path = sys.argv[28]
 expected_metadata_probe_report_path = sys.argv[29]
-recovered_metadata_stage_present = sys.argv[30] == "true"
-recovered_metadata_stage_value = sys.argv[31]
-recovered_metadata_stage_actual_access_mode = sys.argv[32]
-recovered_metadata_stage_exit_code = sys.argv[33]
-recovered_metadata_stage_output_path = sys.argv[34]
-recovered_metadata_stage_stderr_path = sys.argv[35]
-recovered_metadata_probe_stage_present = sys.argv[36] == "true"
-recovered_metadata_probe_stage_value = sys.argv[37]
-recovered_metadata_probe_stage_actual_access_mode = sys.argv[38]
-recovered_metadata_probe_stage_exit_code = sys.argv[39]
-recovered_metadata_probe_stage_output_path = sys.argv[40]
-recovered_metadata_probe_stage_stderr_path = sys.argv[41]
-recovered_metadata_probe_fingerprint_present = sys.argv[42] == "true"
-recovered_metadata_probe_fingerprint_actual_access_mode = sys.argv[43]
-recovered_metadata_probe_fingerprint_exit_code = sys.argv[44]
-recovered_metadata_probe_fingerprint_output_path = sys.argv[45]
-recovered_metadata_probe_fingerprint_stderr_path = sys.argv[46]
-recovered_metadata_probe_report_present = sys.argv[47] == "true"
-recovered_metadata_probe_report_actual_access_mode = sys.argv[48]
-recovered_metadata_probe_report_exit_code = sys.argv[49]
-recovered_metadata_probe_report_output_path = sys.argv[50]
-recovered_metadata_probe_report_stderr_path = sys.argv[51]
-recovered_metadata_probe_report_observed_stage = sys.argv[52]
-recovered_metadata_probe_report_timed_out = sys.argv[53]
-recovered_metadata_probe_report_wchan = sys.argv[54]
+expected_metadata_probe_timeout_class_path = sys.argv[30]
+recovered_metadata_stage_present = sys.argv[31] == "true"
+recovered_metadata_stage_value = sys.argv[32]
+recovered_metadata_stage_actual_access_mode = sys.argv[33]
+recovered_metadata_stage_exit_code = sys.argv[34]
+recovered_metadata_stage_output_path = sys.argv[35]
+recovered_metadata_stage_stderr_path = sys.argv[36]
+recovered_metadata_probe_stage_present = sys.argv[37] == "true"
+recovered_metadata_probe_stage_value = sys.argv[38]
+recovered_metadata_probe_stage_actual_access_mode = sys.argv[39]
+recovered_metadata_probe_stage_exit_code = sys.argv[40]
+recovered_metadata_probe_stage_output_path = sys.argv[41]
+recovered_metadata_probe_stage_stderr_path = sys.argv[42]
+recovered_metadata_probe_fingerprint_present = sys.argv[43] == "true"
+recovered_metadata_probe_fingerprint_actual_access_mode = sys.argv[44]
+recovered_metadata_probe_fingerprint_exit_code = sys.argv[45]
+recovered_metadata_probe_fingerprint_output_path = sys.argv[46]
+recovered_metadata_probe_fingerprint_stderr_path = sys.argv[47]
+recovered_metadata_probe_report_present = sys.argv[48] == "true"
+recovered_metadata_probe_report_actual_access_mode = sys.argv[49]
+recovered_metadata_probe_report_exit_code = sys.argv[50]
+recovered_metadata_probe_report_output_path = sys.argv[51]
+recovered_metadata_probe_report_stderr_path = sys.argv[52]
+recovered_metadata_probe_report_observed_stage = sys.argv[53]
+recovered_metadata_probe_report_timed_out = sys.argv[54]
+recovered_metadata_probe_report_wchan = sys.argv[55]
+recovered_metadata_probe_timeout_class_present = sys.argv[56] == "true"
+recovered_metadata_probe_timeout_class_actual_access_mode = sys.argv[57]
+recovered_metadata_probe_timeout_class_exit_code = sys.argv[58]
+recovered_metadata_probe_timeout_class_output_path = sys.argv[59]
+recovered_metadata_probe_timeout_class_stderr_path = sys.argv[60]
+recovered_metadata_probe_timeout_class_checkpoint = sys.argv[61]
+recovered_metadata_probe_timeout_class_bucket = sys.argv[62]
+recovered_metadata_probe_timeout_class_matched_needle = sys.argv[63]
+recovered_metadata_probe_timeout_class_wchan = sys.argv[64]
 expected_durable_logging = {"kmsg": None, "pmsg": None}
 
 if source_image_metadata_path:
@@ -1315,6 +1442,7 @@ payload = {
     "expected_metadata_probe_stage_path": expected_metadata_probe_stage_path,
     "expected_metadata_probe_fingerprint_path": expected_metadata_probe_fingerprint_path,
     "expected_metadata_probe_report_path": expected_metadata_probe_report_path,
+    "expected_metadata_probe_timeout_class_path": expected_metadata_probe_timeout_class_path,
     "metadata_stage_present": recovered_metadata_stage_present,
     "metadata_stage_value": recovered_metadata_stage_value,
     "metadata_stage_actual_access_mode": recovered_metadata_stage_actual_access_mode,
@@ -1360,6 +1488,19 @@ payload = {
         else None
     ),
     "metadata_probe_report_wchan": recovered_metadata_probe_report_wchan,
+    "metadata_probe_timeout_class_present": recovered_metadata_probe_timeout_class_present,
+    "metadata_probe_timeout_class_actual_access_mode": recovered_metadata_probe_timeout_class_actual_access_mode,
+    "metadata_probe_timeout_class_exit_code": (
+        int(recovered_metadata_probe_timeout_class_exit_code)
+        if recovered_metadata_probe_timeout_class_exit_code not in ("", None)
+        else None
+    ),
+    "metadata_probe_timeout_class_output_path": recovered_metadata_probe_timeout_class_output_path,
+    "metadata_probe_timeout_class_stderr_path": recovered_metadata_probe_timeout_class_stderr_path,
+    "metadata_probe_timeout_class_checkpoint": recovered_metadata_probe_timeout_class_checkpoint,
+    "metadata_probe_timeout_class_bucket": recovered_metadata_probe_timeout_class_bucket,
+    "metadata_probe_timeout_class_matched_needle": recovered_metadata_probe_timeout_class_matched_needle,
+    "metadata_probe_timeout_class_wchan": recovered_metadata_probe_timeout_class_wchan,
     "live_boot_id": live_boot_id,
     "live_slot_suffix": live_slot_suffix,
     "root_available": root_available,
@@ -1496,6 +1637,7 @@ recover_metadata_stage_file
 recover_metadata_probe_stage_file
 recover_metadata_probe_fingerprint_file
 recover_metadata_probe_report_file
+recover_metadata_probe_timeout_class_file
 
 shell_best_effort "logcat-last" "previous-boot" "adb" "logcat -L -d -v threadtime"
 shell_best_effort "dropbox-system-boot" "previous-boot" "adb" "dumpsys dropbox --print SYSTEM_BOOT"

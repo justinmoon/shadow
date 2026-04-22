@@ -46,9 +46,14 @@ Continue the Pixel 4a boot-owned bring-up from the current KGSL seam without bro
   - [`build/pixel/boot/oneshot/20260422T002911Z-0B191JEC203253_`](../../build/pixel/boot/oneshot/20260422T002911Z-0B191JEC203253_)
   - visible sequence on both devices: `orange -> checkerboard -> black -> fastboot`
   - that proves `a630_sqe.fw`, `a618_gmu.bin`, and `a615_zap.*` are staged and readable in owned userspace before any KGSL open
-- On those fastboot-return runs, `/metadata` is currently weaker than the watched panel contract:
-  - recent recovery bundles came back with `metadata_probe_stage_present=false` and `metadata_probe_report_present=false`
-  - treat the visible checkpoint as the current source of truth for this rung
+- The next observability attempt also narrowed the problem:
+  - the timeout-control rung showed `orange -> checkerboard -> black -> orange -> black -> fastboot`
+  - so the generic parent timeout repaint path is fine
+  - the real `c-kgsl-open-readonly-smoke` rung still shows `orange -> checkerboard -> black -> fastboot`
+  - a new tiny `probe-timeout-class.txt` artifact also failed to survive that seam on `09051JEC202061`
+- So for the post-firmware KGSL seam, `/metadata` and the repaint classifier are both unreliable:
+  - recent recovery bundles came back with `metadata_probe_stage_present=false`, `metadata_probe_report_present=false`, and `metadata_probe_timeout_class_present=false`
+  - do not spend more runs on color/pattern churn for the same seam
 - The exact same thing is true for:
   - the staged Rust payload
   - direct C child probe
@@ -74,14 +79,16 @@ The remaining difference is no longer generic execution context or “wait later
 
 The best next discriminators are:
 
-1. Re-run the same boot-owned `c-kgsl-open-readonly-smoke` rung with a visible timeout classifier rather than relying on `/metadata` alone.
-2. Use the watched pattern to split the next seam:
-   - `solid-red`: firmware / readiness still unresolved
-   - `solid-blue`: GMU / HFI
-   - `solid-yellow`: secure zap boot
-   - `solid-cyan`: CP init / ringbuffer submit
-   - `solid-magenta`: GX/OOB wake or GMU power-handshake bring-up
-3. Keep execution-context and holder-scan evidence as supporting context, not the primary blocker.
+1. Re-run the same boot-owned `c-kgsl-open-readonly-smoke` rung with `log_kmsg=true` and explicit timeout-classification logging before reboot.
+2. Recover the result through the existing previous-boot log channels instead of `/metadata`:
+   - `logcat -L`
+   - `dropbox SYSTEM_LAST_KMSG`
+   - best-effort kernel log channels
+3. If that still does not survive, instrument only the named source-backed post-firmware seams:
+   - `a6xx_gmu_start` / `a6xx_gmu_hfi_start`
+   - `subsystem_get("a615_zap")`
+   - `a6xx_send_cp_init`
+4. Keep execution-context and holder-scan evidence as supporting context, not the primary blocker.
 
 Do not jump back out to `orange-gpu`, compositor, or app launch work until one of those moves the seam.
 Once the first truthful boot-owned `orange-gpu` frame is proven, stop extending the C PID 1 seam and port the bootstrap path to Rust before any compositor, runtime, shell, or service milestones.
@@ -108,6 +115,7 @@ Once the first truthful boot-owned `orange-gpu` frame is proven, stop extending 
   - `kgsl-holder-scan`
   - `kernel-current-best-effort` preferring rooted `dmesg`
   - `probe-report.txt` recovery and parsed status fields for `observed_probe_stage`, timeout, and `wchan`
+  - `probe-timeout-class.txt` recovery and parsed status fields for checkpoint / bucket / matched needle when it survives
 - `scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh`
   - `kgsl-holder-scan.tsv`
   - parsed holder metadata in `status.json`

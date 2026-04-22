@@ -177,6 +177,19 @@ EOF
       fi
       exit 3
       ;;
+    *"/metadata/shadow-hello-init/by-token/"*"/probe-timeout-class.txt"* )
+      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" ]]; then
+        cat <<EOF
+probe_label=orange-gpu-payload
+classification_checkpoint=kgsl-timeout-gmu-hfi
+classification_bucket=gmu-hfi
+classification_matched_needle=a6xx_gmu_hfi_start
+wchan=do_wait
+EOF
+        exit 0
+      fi
+      exit 3
+      ;;
     *)
       echo "mock adb: unexpected shell command: $cmd" >&2
       exit 1
@@ -283,7 +296,8 @@ cat >"$image_path.hello-init.json" <<EOF
   "metadata_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/stage.txt",
   "metadata_probe_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-stage.txt",
   "metadata_probe_fingerprint_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-fingerprint.txt",
-  "metadata_probe_report_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-report.txt"
+  "metadata_probe_report_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-report.txt",
+  "metadata_probe_timeout_class_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-timeout-class.txt"
 }
 EOF
 }
@@ -322,6 +336,7 @@ assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_stage_path "/m
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_probe_stage_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/probe-stage.txt"
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_probe_fingerprint_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/probe-fingerprint.txt"
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_probe_report_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/probe-report.txt"
+assert_json_field "$MATCHED_OUTPUT/status.json" expected_metadata_probe_timeout_class_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/probe-timeout-class.txt"
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_present true
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_value "parent-probe-result=exit-0"
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_stage_actual_access_mode root
@@ -339,6 +354,11 @@ assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_report_exit_code 
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_report_observed_stage "orange-gpu-payload:kgsl-open-readonly"
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_report_timed_out true
 assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_report_wchan do_wait
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_timeout_class_present true
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_timeout_class_checkpoint kgsl-timeout-gmu-hfi
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_timeout_class_bucket gmu-hfi
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_timeout_class_matched_needle a6xx_gmu_hfi_start
+assert_json_field "$MATCHED_OUTPUT/status.json" metadata_probe_timeout_class_wchan do_wait
 assert_json_field "$MATCHED_OUTPUT/status.json" absence_reason_summary ""
 assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channel_attempts 5
 assert_json_field "$MATCHED_OUTPUT/status.json" previous_boot_channels_with_matches 4

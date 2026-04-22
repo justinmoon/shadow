@@ -131,6 +131,12 @@ metadata_probe_report_path_for_token() {
   printf '/metadata/shadow-hello-init/by-token/%s/probe-report.txt\n' "$run_token"
 }
 
+metadata_probe_timeout_class_path_for_token() {
+  local run_token
+  run_token="${1:?metadata_probe_timeout_class_path_for_token requires a run token}"
+  printf '/metadata/shadow-hello-init/by-token/%s/probe-timeout-class.txt\n' "$run_token"
+}
+
 success_postlude_value() {
   if orange_gpu_mode_uses_success_postlude && [[ "$PRELUDE" == "orange-init" ]]; then
     printf 'orange-init\n'
@@ -548,7 +554,8 @@ write_metadata() {
     "$(checkpoint_hold_seconds_value)" \
     "$(metadata_probe_stage_path_for_token "$RUN_TOKEN")" \
     "$(metadata_probe_fingerprint_path_for_token "$RUN_TOKEN")" \
-    "$(metadata_probe_report_path_for_token "$RUN_TOKEN")" <<'PY'
+    "$(metadata_probe_report_path_for_token "$RUN_TOKEN")" \
+    "$(metadata_probe_timeout_class_path_for_token "$RUN_TOKEN")" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -582,6 +589,7 @@ from pathlib import Path
     metadata_probe_stage_path,
     metadata_probe_fingerprint_path,
     metadata_probe_report_path,
+    metadata_probe_timeout_class_path,
 ) = sys.argv[1:]
 
 
@@ -633,6 +641,11 @@ payload_json = {
     ),
     "metadata_probe_report_path": (
         metadata_probe_report_path
+        if parse_bool(orange_gpu_metadata_stage_breadcrumb)
+        else ""
+    ),
+    "metadata_probe_timeout_class_path": (
+        metadata_probe_timeout_class_path
         if parse_bool(orange_gpu_metadata_stage_breadcrumb)
         else ""
     ),
@@ -1125,6 +1138,7 @@ if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" ]]; then
   printf 'Metadata probe stage path: %s\n' "$(metadata_probe_stage_path_for_token "$RUN_TOKEN")"
   printf 'Metadata probe fingerprint path: %s\n' "$(metadata_probe_fingerprint_path_for_token "$RUN_TOKEN")"
   printf 'Metadata probe report path: %s\n' "$(metadata_probe_report_path_for_token "$RUN_TOKEN")"
+  printf 'Metadata probe timeout class path: %s\n' "$(metadata_probe_timeout_class_path_for_token "$RUN_TOKEN")"
 fi
 if [[ "$PRELUDE" == "orange-init" ]]; then
   printf 'Prelude payload path: /orange-init\n'

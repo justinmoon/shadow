@@ -38,10 +38,12 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - `firmware-probe-only` now visibly succeeds on both `09051JEC202061` and `0B191JEC203253`
   - watched sequence on both devices: `orange -> checkerboard -> black -> fastboot`
   - that proves the staged `a630_sqe.fw`, `a618_gmu.bin`, and `a615_zap.*` files are readable in owned userspace before any KGSL open
-- The durable `/metadata` probe files are still unreliable on these fastboot-return runs:
-  - both recent runs came back to Android
-  - both recovered `metadata_probe_stage_present=false` and `metadata_probe_report_present=false`
-  - so the watched visual channel is now stronger than the metadata channel for this seam
+- Post-firmware observability is now the blocker, not just GPU bring-up:
+  - watched `c-kgsl-open-readonly-smoke` still shows `orange -> checkerboard -> black -> fastboot`
+  - the timeout-control rung proved the parent repaint path is healthy in general
+  - but on the real KGSL seam, the post-timeout repaint still never appears
+  - a new tiny `probe-timeout-class.txt` artifact also failed to survive the same seam on `09051JEC202061`
+  - so for this post-firmware seam, both the panel timeout classifier and `/metadata` artifacts are currently weaker than they looked
 - C remains acceptable only for the current driver-discovery seam:
   - use it to finish post-firmware KGSL classification through the first truthful `orange-gpu` frame
   - once that first boot-owned GPU frame is proven, cut the PID 1 / bootstrap seam over to Rust before compositor, runtime, shell, or service bring-up
@@ -57,6 +59,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - `probe-stage.txt`
   - `probe-fingerprint.txt`
   - `probe-report.txt`
+  - `probe-timeout-class.txt`
 - Recovery:
   - [`scripts/pixel/pixel_boot_recover_traces.sh`](../../scripts/pixel/pixel_boot_recover_traces.sh)
   - recovers the metadata files above, `kgsl-holder-scan`, and best-effort kernel logs
@@ -90,16 +93,15 @@ Use the panel as a stage channel, not just “something orange happened.”
 
 ## Highest-Leverage Next Experiments
 
-1. Re-run the same boot-owned `c-kgsl-open-readonly-smoke` rung with staged firmware and the new visible timeout classifier:
-   - if the post-timeout color is `solid-red`, the kernel is still effectively blocked at firmware serving
-   - if it moves to `solid-blue`, the next likely seam is GMU / HFI
-   - if it moves to `solid-yellow`, the next likely seam is secure zap boot
-   - if it moves to `solid-cyan`, the next likely seam is CP init / ringbuffer submit
-   - if it moves to `solid-magenta`, the next likely seam is GX/OOB wake or GMU power-handshake bring-up
-2. Keep the durable recovery path honest, but stop treating it as the only truth channel for this seam:
-   - the current `/metadata` probe files are not surviving these fastboot-return runs reliably
-   - use them when they exist, but trust the watched panel contract first
-3. If the timeout classifier moves past firmware, instrument only the named post-firmware seam from the source-backed shortlist:
+1. Stop spending runs on the screen-only timeout classifier for this exact seam:
+   - `orange -> checkerboard -> black -> fastboot` is reproducible
+   - the timeout-control rung already proved the repaint path in general
+   - the real KGSL seam suppresses the repaint, so more color tweaks are low-value
+2. Shift the same `c-kgsl-open-readonly-smoke` rung onto direct durable logging:
+   - enable `log_kmsg=true`
+   - emit the timeout classification and `wchan` directly to kmsg before reboot
+   - recover that through the existing previous-boot log channels instead of relying on `/metadata`
+3. If that still does not survive, instrument only the named post-firmware seam from the source-backed shortlist:
    - `a6xx_gmu_fw_start`
    - `a6xx_gmu_hfi_start` / `hfi_send_cmd`
    - `subsystem_get("a615_zap")`
