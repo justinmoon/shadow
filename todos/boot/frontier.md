@@ -5,11 +5,15 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 ## Active Blocker
 
 - The C driver-discovery lane reached the first truthful boot-owned GPU frame.
-- The active blocker is now the Rust PID 1 / bootstrap port.
+- The active blocker is still the Rust PID 1 / bootstrap port, but the seam is now narrower:
+  - `std` Rust as exact-path `/system/bin/init` still panics as real PID 1
+  - `no_std` Rust exact-path PID 1 now returns cleanly to bootloader
+  - a `no_std` Rust PID 1 shim that forks and execs the full Rust `hello-init` child also returns cleanly to bootloader
 - The next critical-path goal is:
   - preserve the helper-backed boot-owned GPU proof
   - replace `scripts/pixel/pixel_hello_init.c` as the long-lived bootstrap seam
   - keep later compositor/runtime/shell work off the C seam
+  - grow the Rust seam from the working `no_std PID1 -> Rust child` shape instead of forcing `std` directly into PID 1
 
 ## Current Truth
 
@@ -41,6 +45,12 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - it found the firmware-serving prerequisite
   - it proved the real boot-owned GPU frame
   - the next seam should be the Rust port, not more C expansion
+- Rust-port breakpoint on 2026-04-22:
+  - direct `hello-init-rust` as exact-path `/system/bin/init` still returns `kernel_panic` even with `payload=hello`, `mount_dev=false`, `mount_proc=false`, `mount_sys=false`, `log_kmsg=false`, and `log_pmsg=false`
+  - [`build/pixel/boot/oneshot/20260422T073954Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T073954Z-09051JEC202061_) proves a tiny `std` Rust exact-path probe also returns `kernel_panic`
+  - [`build/pixel/boot/oneshot/20260422T074257Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T074257Z-09051JEC202061_) proves a `no_std` Rust exact-path probe returns to fastboot/bootloader instead of `kernel_panic`
+  - [`build/pixel/boot/oneshot/20260422T074912Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T074912Z-09051JEC202061_) proves a `no_std` Rust PID 1 shim can fork/exec the full Rust `hello-init` child and still return cleanly to fastboot/bootloader
+  - that makes `std`-as-PID1 the active Rust blocker, not “Rust at PID1 at all”
 
 ## Best Observability
 
@@ -88,14 +98,16 @@ Use the panel as a stage channel, not just “something orange happened.”
 
 ## Highest-Leverage Next Experiments
 
-1. Port the PID 1 / bootstrap seam to Rust now.
-   - keep the same config, mount, watchdog, metadata, and child-exec contract first
-   - do not redesign the boot graph during the port
-2. Re-prove the current helper-backed first-frame lane on the Rust seam.
-   - `gpu-render`
+1. Keep the Rust port on the working bridge shape now.
+   - `no_std` exact-path Rust PID 1 shim
+   - full Rust `hello-init` launched as a child
+   - do not go back to expanding the C seam
+2. Re-prove the helper-backed ladder on that Rust bridge seam.
+   - `hello`
+   - `orange-init`
    - `vulkan-offscreen`
-   - `vulkan-device-request-smoke`
-   - raw Vulkan query/count as fallback discriminators if the Rust seam regresses earlier
+   - `gpu-render`
+   - raw Vulkan query/count only if the bridge seam regresses earlier
 3. Keep later work blocked until the Rust seam is green.
    - no compositor
    - no apps

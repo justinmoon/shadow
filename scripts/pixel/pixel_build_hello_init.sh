@@ -7,21 +7,41 @@ source "$SCRIPT_DIR/lib/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 OUTPUT_PATH="${PIXEL_HELLO_INIT_OUT:-}"
-PACKAGE_REF="path:$(repo_root)#hello-init-device"
+HELLO_INIT_IMPL="${PIXEL_HELLO_INIT_IMPL:-c}"
+PACKAGE_REF=""
 BUILD_ID_PATH=""
 
 hello_init_build_input_hash() {
-  shasum -a 256 \
-    "$(repo_root)/scripts/pixel/pixel_hello_init.c" \
-    "$(repo_root)/flake.nix" \
-    "$(repo_root)/flake.lock" \
-    | shasum -a 256 \
-    | awk '{print $1}'
+  case "$HELLO_INIT_IMPL" in
+    c)
+      shasum -a 256 \
+        "$(repo_root)/scripts/pixel/pixel_hello_init.c" \
+        "$(repo_root)/flake.nix" \
+        "$(repo_root)/flake.lock" \
+        | shasum -a 256 \
+        | awk '{print $1}'
+      ;;
+    rust)
+      shasum -a 256 \
+        "$(repo_root)/rust/init-wrapper/Cargo.toml" \
+        "$(repo_root)/rust/init-wrapper/Cargo.lock" \
+        "$(repo_root)/rust/init-wrapper/src/main.rs" \
+        "$(repo_root)/rust/init-wrapper/src/bin/hello-init.rs" \
+        "$(repo_root)/flake.nix" \
+        "$(repo_root)/flake.lock" \
+        | shasum -a 256 \
+        | awk '{print $1}'
+      ;;
+    *)
+      echo "pixel_build_hello_init: unsupported --impl value: $HELLO_INIT_IMPL" >&2
+      exit 1
+      ;;
+  esac
 }
 
 usage() {
   cat <<'EOF'
-Usage: scripts/pixel/pixel_build_hello_init.sh [--output PATH]
+Usage: scripts/pixel/pixel_build_hello_init.sh [--impl c|rust] [--output PATH]
 
 Build the private arm64 static hello-init PID 1 used by the owned-userspace boot seam.
 EOF
@@ -70,10 +90,20 @@ validate_hello_binary() {
     echo "pixel_build_hello_init: binary is missing the hello-init role sentinel" >&2
     return 1
   fi
-  if ! grep -aFq -- 'shadow-owned-init-impl:c-static' "$binary_path"; then
-    echo "pixel_build_hello_init: binary is missing the static implementation sentinel" >&2
-    return 1
-  fi
+  case "$HELLO_INIT_IMPL" in
+    c)
+      if ! grep -aFq -- 'shadow-owned-init-impl:c-static' "$binary_path"; then
+        echo "pixel_build_hello_init: binary is missing the C implementation sentinel" >&2
+        return 1
+      fi
+      ;;
+    rust)
+      if ! grep -aFq -- 'shadow-owned-init-impl:rust-static' "$binary_path"; then
+        echo "pixel_build_hello_init: binary is missing the Rust implementation sentinel" >&2
+        return 1
+      fi
+      ;;
+  esac
   if ! grep -aFq -- 'shadow-owned-init-config:/shadow-init.cfg' "$binary_path"; then
     echo "pixel_build_hello_init: binary is missing the expected config-path sentinel" >&2
     return 1
@@ -84,6 +114,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --output)
       OUTPUT_PATH="${2:?missing value for --output}"
+      shift 2
+      ;;
+    --impl)
+      HELLO_INIT_IMPL="${2:?missing value for --impl}"
       shift 2
       ;;
     -h|--help)
@@ -98,8 +132,28 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "$HELLO_INIT_IMPL" in
+  c)
+    PACKAGE_REF="path:$(repo_root)#hello-init-device"
+    ;;
+  rust)
+    PACKAGE_REF="path:$(repo_root)#hello-init-rust-device"
+    ;;
+  *)
+    echo "pixel_build_hello_init: --impl must be c or rust: $HELLO_INIT_IMPL" >&2
+    exit 1
+    ;;
+esac
+
 if [[ -z "$OUTPUT_PATH" ]]; then
-  OUTPUT_PATH="$(pixel_boot_dir)/hello-init"
+  case "$HELLO_INIT_IMPL" in
+    c)
+      OUTPUT_PATH="$(pixel_boot_dir)/hello-init"
+      ;;
+    rust)
+      OUTPUT_PATH="$(pixel_boot_dir)/hello-init-rust"
+      ;;
+  esac
 fi
 
 pixel_prepare_dirs
@@ -111,7 +165,7 @@ if [[ -f "$OUTPUT_PATH" && -f "$BUILD_ID_PATH" ]]; then
   cached_build_id="$(tr -d '[:space:]' <"$BUILD_ID_PATH")"
   if [[ "$cached_build_id" == "$expected_build_id" ]]; then
     if validate_hello_binary "$OUTPUT_PATH"; then
-      printf 'Reusing cached hello-init -> %s\n' "$OUTPUT_PATH"
+      printf 'Reusing cached hello-init (%s) -> %s\n' "$HELLO_INIT_IMPL" "$OUTPUT_PATH"
       exit 0
     fi
 
@@ -129,4 +183,4 @@ chmod 0755 "$OUTPUT_PATH"
 validate_hello_binary "$OUTPUT_PATH"
 printf '%s\n' "$expected_build_id" >"$BUILD_ID_PATH"
 
-printf 'Built hello-init -> %s\n' "$OUTPUT_PATH"
+printf 'Built hello-init (%s) -> %s\n' "$HELLO_INIT_IMPL" "$OUTPUT_PATH"

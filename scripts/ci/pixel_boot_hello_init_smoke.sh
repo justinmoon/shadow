@@ -10,13 +10,17 @@ NONSTOCK_INPUT="$TMP_DIR/nonstock-input.img"
 BOOT_BUILD_RAMDISK="$TMP_DIR/build-ramdisk.cpio"
 BOOT_BUILD_NONSTOCK_RAMDISK="$TMP_DIR/build-nonstock-ramdisk.cpio"
 HELLO_INIT_OUTPUT="$TMP_DIR/hello-init"
+HELLO_INIT_RUST_OUTPUT="$TMP_DIR/hello-init-rust"
 OUTPUT_IMAGE="$TMP_DIR/hello-init-boot.img"
+RUST_OUTPUT_IMAGE="$TMP_DIR/hello-init-rust-boot.img"
 MINIMAL_OUTPUT_IMAGE="$TMP_DIR/hello-init-boot-minimal.img"
 TMPFS_LOG_OUTPUT_IMAGE="$TMP_DIR/hello-init-boot-tmpfs-logs.img"
 AVB_KEY_PATH="$TMP_DIR/avb-testkey.pem"
 MOCK_STORE_HELLO="$TMP_DIR/store-hello"
+MOCK_STORE_HELLO_RUST="$TMP_DIR/store-hello-rust"
 BAD_HELLO_INIT_BINARY="$TMP_DIR/bad-hello-init"
 HELLO_INIT_CACHE_OUTPUT="$TMP_DIR/hello-init-cache"
+HELLO_INIT_RUST_CACHE_OUTPUT="$TMP_DIR/hello-init-rust-cache"
 MOCK_NIX_CALLS_FILE="$TMP_DIR/mock-nix-calls"
 HELLO_RUN_TOKEN="hello-run-token-17"
 TMPFS_RUN_TOKEN="tmpfs-log-token-00"
@@ -29,7 +33,7 @@ cleanup() {
 
 trap cleanup EXIT
 
-mkdir -p "$MOCK_BIN" "$MOCK_STORE_HELLO/bin"
+mkdir -p "$MOCK_BIN" "$MOCK_STORE_HELLO/bin" "$MOCK_STORE_HELLO_RUST/bin"
 printf 'boot build input\n' >"$BOOT_BUILD_INPUT"
 printf 'nonstock build input\n' >"$NONSTOCK_INPUT"
 printf 'mock avb key\n' >"$AVB_KEY_PATH"
@@ -44,6 +48,17 @@ echo hello-init
 EOF
 chmod 0755 "$HELLO_INIT_OUTPUT"
 cp "$HELLO_INIT_OUTPUT" "$MOCK_STORE_HELLO/bin/hello-init"
+
+cat >"$HELLO_INIT_RUST_OUTPUT" <<'EOF'
+#!/system/bin/sh
+# shadow-owned-init-role:hello-init
+# shadow-owned-init-impl:rust-static
+# shadow-owned-init-config:/shadow-init.cfg
+# shadow-owned-init-mounts:dev=true,proc=true,sys=true
+echo hello-init-rust
+EOF
+chmod 0755 "$HELLO_INIT_RUST_OUTPUT"
+cp "$HELLO_INIT_RUST_OUTPUT" "$MOCK_STORE_HELLO_RUST/bin/hello-init"
 
 cat >"$BAD_HELLO_INIT_BINARY" <<'EOF'
 #!/system/bin/sh
@@ -254,6 +269,9 @@ case "\$*" in
   *hello-init-device*)
     printf '%s\n' "$MOCK_STORE_HELLO"
     ;;
+  *hello-init-rust-device*)
+    printf '%s\n' "$MOCK_STORE_HELLO_RUST"
+    ;;
   *)
     echo "mock nix: unexpected package ref: \$*" >&2
     exit 1
@@ -409,7 +427,7 @@ hello_build_output="$(
     "$REPO_ROOT/scripts/pixel/pixel_build_hello_init.sh" \
       --output "$HELLO_INIT_OUTPUT"
 )"
-assert_contains "$hello_build_output" "Built hello-init -> $HELLO_INIT_OUTPUT"
+assert_contains "$hello_build_output" "Built hello-init (c) -> $HELLO_INIT_OUTPUT"
 assert_contains "$(cat "$HELLO_INIT_OUTPUT")" "shadow-owned-init-role:hello-init"
 assert_contains "$(cat "$HELLO_INIT_OUTPUT")" "shadow-owned-init-impl:c-static"
 assert_contains "$(cat "$HELLO_INIT_OUTPUT")" "shadow-owned-init-config:/shadow-init.cfg"
@@ -431,9 +449,32 @@ hello_reuse_output="$(
     "$REPO_ROOT/scripts/pixel/pixel_build_hello_init.sh" \
       --output "$HELLO_INIT_OUTPUT"
 )"
-assert_contains "$hello_reuse_output" "Reusing cached hello-init -> $HELLO_INIT_OUTPUT"
+assert_contains "$hello_reuse_output" "Reusing cached hello-init (c) -> $HELLO_INIT_OUTPUT"
 if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "1" ]]; then
   echo "pixel_boot_hello_init_smoke: expected pixel_build_hello_init.sh to avoid a second nix build" >&2
+  exit 1
+fi
+
+hello_rust_build_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 \
+    "$REPO_ROOT/scripts/pixel/pixel_build_hello_init.sh" \
+      --impl rust \
+      --output "$HELLO_INIT_RUST_OUTPUT"
+)"
+assert_contains "$hello_rust_build_output" "Built hello-init (rust) -> $HELLO_INIT_RUST_OUTPUT"
+assert_contains "$(cat "$HELLO_INIT_RUST_OUTPUT")" "shadow-owned-init-role:hello-init"
+assert_contains "$(cat "$HELLO_INIT_RUST_OUTPUT")" "shadow-owned-init-impl:rust-static"
+assert_contains "$(cat "$HELLO_INIT_RUST_OUTPUT")" "shadow-owned-init-config:/shadow-init.cfg"
+
+hello_rust_reuse_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 \
+    "$REPO_ROOT/scripts/pixel/pixel_build_hello_init.sh" \
+      --impl rust \
+      --output "$HELLO_INIT_RUST_OUTPUT"
+)"
+assert_contains "$hello_rust_reuse_output" "Reusing cached hello-init (rust) -> $HELLO_INIT_RUST_OUTPUT"
+if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "2" ]]; then
+  echo "pixel_boot_hello_init_smoke: expected rust hello-init build to reuse the cached nix result" >&2
   exit 1
 fi
 
@@ -468,7 +509,7 @@ assert_contains "$hello_boot_output" "Mount sys: true"
 assert_contains "$hello_boot_output" "Log kmsg: true"
 assert_contains "$hello_boot_output" "Log pmsg: true"
 assert_contains "$hello_boot_output" "Metadata path: $OUTPUT_IMAGE.hello-init.json"
-assert_contains "$hello_boot_output" "Built hello-init -> $HELLO_INIT_CACHE_OUTPUT"
+assert_contains "$hello_boot_output" "Built hello-init (c) -> $HELLO_INIT_CACHE_OUTPUT"
 assert_cpio_entry_symlink_target "$OUTPUT_IMAGE" init "/system/bin/init"
 assert_cpio_entry_equals "$OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:c-static\n# shadow-owned-init-config:/shadow-init.cfg\n# shadow-owned-init-mounts:dev=true,proc=true,sys=true\necho hello-init\n'
 assert_cpio_entry_equals "$OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_hello_init.sh\npayload=hello\nhold_seconds=17\nreboot_target=bootloader\nrun_token=hello-run-token-17\n'
@@ -479,6 +520,21 @@ assert_json_field "$OUTPUT_IMAGE.hello-init.json" payload hello
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" run_token "$HELLO_RUN_TOKEN"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" log_kmsg true
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" log_pmsg true
+
+rust_hello_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_hello_init.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_RUST_OUTPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$RUST_OUTPUT_IMAGE" \
+      --payload hello \
+      --hold-secs 5 \
+      --reboot-target restart
+)"
+assert_contains "$rust_hello_boot_output" "Wrote boot image: $RUST_OUTPUT_IMAGE"
+assert_cpio_entry_equals "$RUST_OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\n# shadow-owned-init-mounts:dev=true,proc=true,sys=true\necho hello-init-rust\n'
 
 tmpfs_log_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -550,10 +606,10 @@ second_hello_boot_output="$(
       --hold-secs 11 \
       --reboot-target bootloader
 )"
-assert_contains "$second_hello_boot_output" "Reusing cached hello-init -> $HELLO_INIT_CACHE_OUTPUT"
+assert_contains "$second_hello_boot_output" "Reusing cached hello-init (c) -> $HELLO_INIT_CACHE_OUTPUT"
 assert_contains "$second_hello_boot_output" "Run token: $SECOND_RUN_TOKEN"
-if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "2" ]]; then
-  echo "pixel_boot_hello_init_smoke: expected exactly two nix builds total after two boot-image builds" >&2
+if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "3" ]]; then
+  echo "pixel_boot_hello_init_smoke: expected exactly three nix builds total after the explicit c/rust builds and cached boot-image builds" >&2
   exit 1
 fi
 
@@ -563,12 +619,12 @@ mode_repair_output="$(
     "$REPO_ROOT/scripts/pixel/pixel_build_hello_init.sh" \
       --output "$HELLO_INIT_CACHE_OUTPUT"
 )"
-assert_contains "$mode_repair_output" "Reusing cached hello-init -> $HELLO_INIT_CACHE_OUTPUT"
+assert_contains "$mode_repair_output" "Reusing cached hello-init (c) -> $HELLO_INIT_CACHE_OUTPUT"
 if [[ ! -x "$HELLO_INIT_CACHE_OUTPUT" ]]; then
   echo "pixel_boot_hello_init_smoke: expected cached hello-init reuse to restore execute permissions" >&2
   exit 1
 fi
-if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "2" ]]; then
+if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "3" ]]; then
   echo "pixel_boot_hello_init_smoke: expected mode repair reuse to avoid a new nix build" >&2
   exit 1
 fi
@@ -579,8 +635,8 @@ poisoned_cache_output="$(
     "$REPO_ROOT/scripts/pixel/pixel_build_hello_init.sh" \
       --output "$HELLO_INIT_CACHE_OUTPUT"
 )"
-assert_contains "$poisoned_cache_output" "Built hello-init -> $HELLO_INIT_CACHE_OUTPUT"
-if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "3" ]]; then
+assert_contains "$poisoned_cache_output" "Built hello-init (c) -> $HELLO_INIT_CACHE_OUTPUT"
+if [[ "$(tr -d '[:space:]' <"$MOCK_NIX_CALLS_FILE")" != "4" ]]; then
   echo "pixel_boot_hello_init_smoke: expected poisoned cache rebuild to perform one more nix build" >&2
   exit 1
 fi

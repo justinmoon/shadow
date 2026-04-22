@@ -30,6 +30,11 @@ Related docs:
   - keep the C PID 1 seam only long enough to finish the driver-discovery lane through the first truthful boot-owned GPU frame
   - that cutoff is now reached: helper-backed `gpu-render` returned `exit_status=0` on hardware
   - the next critical-path seam is the Rust port of `hello-init` / the boot-owned PID 1 bootstrap path
+  - current Rust truth on 2026-04-22:
+    - direct `std` Rust as exact-path `/system/bin/init` still returns `kernel_panic` even on the stripped `hello/no-mount/no-log` lane
+    - a tiny `no_std` exact-path Rust PID 1 probe returns cleanly to bootloader
+    - a `no_std` Rust PID 1 shim that forks/execs the full Rust `hello-init` child also returns cleanly to bootloader on the same stripped lane
+    - so the live Rust migration shape is `no_std PID1 shim -> full Rust child`, not `std` directly as PID 1
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
   - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
@@ -276,7 +281,11 @@ Related docs:
   - reuse the staged `shadow-gpu-smoke` bundle
   - require strict Vulkan env setup in boot-owned userspace
   - keep the same visible prelude/checkpoint/postlude contract so failure narrows cleanly
-- [ ] Port the boot-owned PID 1/bootstrap seam to Rust now that the first truthful helper-backed `orange-gpu` frame is proven.
+- [~] Port the boot-owned PID 1/bootstrap seam to Rust now that the first truthful helper-backed `orange-gpu` frame is proven.
+  - direct `std` Rust at exact-path `/system/bin/init` is still blocked on `kernel_panic`
+  - `no_std` exact-path PID 1 now works well enough to return cleanly to bootloader
+  - `no_std` PID 1 shim plus full Rust `hello-init` child also returns cleanly on the stripped `hello` lane
+  - next step is to climb the already-proven helper-backed ladder on that Rust bridge shape instead of forcing `std` directly into PID 1
 - [x] From that owned userspace, render one orange GPU frame and present it through dma-buf/KMS (`orange-gpu`).
 - [ ] Prove repeated GPU frame submission and synchronization for 2-3 seconds (`orange-gpu-loop`).
 - [ ] Prove one minimal input-driven redraw on the real GPU render/present path (`touch-counter-gpu`).

@@ -4,7 +4,7 @@ Use this as the starting prompt for the next boot-lab orchestrator.
 
 ## Goal
 
-Continue the Pixel 4a boot-owned bring-up from the new Rust cutoff. The C seam has already reached the first truthful boot-owned GPU frame. The critical path is now: port the PID 1 / bootstrap seam to Rust, then re-prove the same helper-backed GPU frame without broadening into compositor, app, or shell work.
+Continue the Pixel 4a boot-owned bring-up from the new Rust cutoff. The C seam has already reached the first truthful boot-owned GPU frame. The critical path is now: keep the Rust migration on the working `no_std PID1 shim -> full Rust child` shape, then re-prove the same helper-backed GPU frame without broadening into compositor, app, or shell work.
 
 ## Read First
 
@@ -44,8 +44,10 @@ Continue the Pixel 4a boot-owned bring-up from the new Rust cutoff. The C seam h
 
 - The seam is no longer “what does KGSL need.” That part is solved by the userspace firmware helper.
 - The active risk is now architectural, not driver discovery:
-  - can a Rust PID 1/bootstrap seam preserve the same config, mount, metadata, watchdog, and child-exec contract
-  - can it re-prove the helper-backed GPU frame without silently regressing to an earlier rung
+  - direct `std` Rust as exact-path `/system/bin/init` still returns `kernel_panic`
+  - `no_std` Rust exact-path PID 1 returns cleanly to bootloader
+  - `no_std` Rust PID 1 shim plus full Rust `hello-init` child also returns cleanly on the stripped `hello` lane
+  - the next question is whether that bridge shape can climb back up the helper-backed GPU ladder without silently regressing
 - The best current proof surface is `probe-report.txt`, not shadow-tag correlation.
 - The current helper-backed one-shot recipe is:
   - `--skip-collect --recover-traces-after --no-wait-boot-completed`
@@ -66,8 +68,10 @@ The driver-discovery phase is complete enough. The highest-value next move is no
 
 Do this in order:
 
-1. Port only the PID 1 / bootstrap contract to Rust.
-2. Re-prove `gpu-render` on the Rust seam first.
+1. Keep the Rust seam on the working bridge shape:
+   - `no_std` Rust PID 1 shim
+   - full Rust `hello-init` child
+2. Re-prove `gpu-render` on that Rust seam.
 3. If that regresses, fall back down the already-proven helper-backed ladder:
    - `vulkan-offscreen`
    - `vulkan-device-request-smoke`

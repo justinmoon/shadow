@@ -170,10 +170,11 @@ assert_hello_variant() {
     "$binary_path" \
     'shadow-owned-init-role:hello-init' \
     "binary is missing the hello-init role sentinel"
-  assert_binary_sentinel \
-    "$binary_path" \
-    'shadow-owned-init-impl:c-static' \
-    "binary is missing the static hello-init implementation sentinel"
+  if ! grep -aFq -- 'shadow-owned-init-impl:c-static' "$binary_path" && \
+     ! grep -aFq -- 'shadow-owned-init-impl:rust-static' "$binary_path"; then
+    echo "pixel_boot_build_orange_init: binary is missing a supported static hello-init implementation sentinel" >&2
+    exit 1
+  fi
   assert_binary_sentinel \
     "$binary_path" \
     'shadow-owned-init-config:/shadow-init.cfg' \

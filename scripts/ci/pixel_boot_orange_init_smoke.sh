@@ -491,7 +491,7 @@ assert_contains "$orange_boot_output" "Log kmsg: false"
 assert_contains "$orange_boot_output" "Log pmsg: false"
 assert_contains "$orange_boot_output" "DRI bootstrap: sunfish-card0-renderD128"
 assert_contains "$orange_boot_output" "Metadata path: $OUTPUT_IMAGE.hello-init.json"
-assert_contains "$orange_boot_output" "Built hello-init -> $HELLO_INIT_CACHE_OUTPUT"
+assert_contains "$orange_boot_output" "Built hello-init (c) -> $HELLO_INIT_CACHE_OUTPUT"
 assert_contains "$orange_boot_output" "Built orange-init -> $ORANGE_INIT_CACHE_OUTPUT"
 assert_cpio_entry_symlink_target "$OUTPUT_IMAGE" init "/system/bin/init"
 assert_cpio_entry_equals "$OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:c-static\n# shadow-owned-init-config:/shadow-init.cfg\n# shadow-owned-init-mounts:dev=true,proc=true,sys=true\necho hello-init\n'
@@ -524,7 +524,7 @@ second_orange_boot_output="$(
       --hold-secs 7 \
       --reboot-target bootloader
 )"
-assert_contains "$second_orange_boot_output" "Reusing cached hello-init -> $HELLO_INIT_CACHE_OUTPUT"
+assert_contains "$second_orange_boot_output" "Reusing cached hello-init (c) -> $HELLO_INIT_CACHE_OUTPUT"
 assert_contains "$second_orange_boot_output" "Reusing cached orange-init -> $ORANGE_INIT_CACHE_OUTPUT"
 assert_contains "$second_orange_boot_output" "Dev mount style: tmpfs"
 assert_contains "$second_orange_boot_output" "Mount /dev: true"
