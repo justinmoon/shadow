@@ -4412,7 +4412,8 @@ int main(void) {
     log_stage(
         "<6>",
         "pre-dev-bootstrap",
-        "payload=%s mount_dev=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s",
+        "payload=%s mount_dev=%s dev_mount=%s dri_bootstrap=%s"
+        " firmware_bootstrap=%s",
         config.payload,
         bool_word(config.mount_dev),
         config.dev_mount,
