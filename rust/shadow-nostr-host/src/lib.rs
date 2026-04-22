@@ -1,8 +1,8 @@
-mod system_prompt;
 mod daemon;
 mod relay_publish;
 mod relay_sync;
 mod signer;
+mod system_prompt;
 
 use std::path::PathBuf;
 
