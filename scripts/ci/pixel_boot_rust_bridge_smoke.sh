@@ -392,7 +392,7 @@ assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_mode "rust-bridge"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_shim_mode "exec"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" kind "orange_gpu_build"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" metadata_probe_fingerprint_path "/metadata/shadow-hello-init/by-token/$INPUT_RUN_TOKEN/probe-fingerprint.txt"
-assert_json_field "$OUTPUT_IMAGE.hello-init.json" metadata_probe_timeout_class_path ""
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" metadata_probe_timeout_class_path "/metadata/shadow-hello-init/by-token/$INPUT_RUN_TOKEN/probe-timeout-class.txt"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" run_token "$INPUT_RUN_TOKEN"
 
 exec_bridge_output="$(
@@ -422,7 +422,7 @@ assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_impl "rust-bri
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_mode "rust-bridge"
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_shim_mode "exec"
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" metadata_probe_fingerprint_path "/metadata/shadow-hello-init/by-token/$INPUT_RUN_TOKEN/probe-fingerprint.txt"
-assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" metadata_probe_timeout_class_path ""
+assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" metadata_probe_timeout_class_path "/metadata/shadow-hello-init/by-token/$INPUT_RUN_TOKEN/probe-timeout-class.txt"
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" run_token "$INPUT_RUN_TOKEN"
 
 std_minimal_bridge_output="$(

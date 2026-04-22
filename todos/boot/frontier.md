@@ -102,12 +102,21 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
       - the top-level one-shot wrapper status still ends at `failure_stage=fastboot-return-auto-rebooted`; treat `recover-traces/status.json` as the truth surface for this seam
     - next Rust bootstrap slice now landed on current `master`:
       - Rust `hello-init` now supports `timeout-control-smoke`, `raw-kgsl-open-readonly-smoke`, `raw-kgsl-getproperties-smoke`, and the `orange_gpu_parent_probe_*` loop on the promoted seam
-      - Rust now also writes `/metadata/.../probe-fingerprint.txt`; `probe-timeout-class.txt` is still the remaining C-only observability artifact
+      - Rust now also writes `/metadata/.../probe-fingerprint.txt`
       - image metadata: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-parentprobe-fw-helper-breadcrumb-v1.img.hello-init.json`
       - proof bundles: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T210518Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T210656Z-06241JEC200520_`
       - both recovered bundles report `proof_ok=true`, `probe_report_proves_child_success=true`, `probe_summary_proves_gpu_render=true`, and `metadata_probe_fingerprint_present=true`
       - both recovered bundles also preserve `metadata_stage_value=parent-probe-result=exit-0`, proving the Rust-side parent probe ran before the real payload succeeded
       - the top-level one-shot wrapper still ends at `failure_stage=fastboot-return-auto-rebooted`; keep treating `/recover-traces/status.json` as the truth surface
+    - current `master` now also carries the Rust timeout/KGSL parity slice:
+      - Rust `hello-init` now writes `/metadata/.../probe-timeout-class.txt` and owns the direct `c-kgsl-open-readonly-*` modes on the promoted seam
+      - timeout-control metadata recovery is now confirmed on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-timeout-control-breadcrumb-v2.img.hello-init.json`
+      - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T215441Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T215441Z-06241JEC200520_`
+      - both recovered bundles preserve `metadata_stage_value=parent-probe-result=skipped`, `metadata_probe_stage_value=orange-gpu-payload:timeout-control-sleep`, `metadata_probe_report_timed_out=true`, `metadata_probe_timeout_class_present=true`, `metadata_probe_timeout_class_checkpoint=watchdog-timeout`, `metadata_probe_timeout_class_bucket=generic-watchdog`, and `metadata_probe_fingerprint_present=true`
+      - the watched timeout-control path still reaches the green `success-solid` checkpoint, but `proof_ok` stays false by design because this rung is an intentional timeout discriminator, not a success proof
+      - helper-backed direct KGSL open is now re-proved on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-c-kgsl-open-readonly-fw-helper-breadcrumb-v1.img.hello-init.json`
+      - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T215913Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T220049Z-06241JEC200520_`
+      - both recovered bundles report `proof_ok=true`, `metadata_stage_value=parent-probe-result=skipped`, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly-ok`, `probe_report_proves_child_success=true`, and `metadata_probe_fingerprint_present=true`
 
 ## Best Observability
 
@@ -176,7 +185,7 @@ Use the panel as a stage channel, not just “something orange happened.”
    - `11151JEC200472`
    - `06241JEC200520`
 5. Use the newly ported Rust-side parent-probe / raw-KGSL / timeout-control ladder to retire the remaining C bootstrap discriminators one seam at a time.
-   - next missing Rust observability artifact: `probe-timeout-class.txt`
+   - next bootstrap discriminator: run `c-kgsl-open-readonly-pid1-smoke` on the rust-bridge seam, because the child-supervised helper-backed KGSL open now recovers durable success metadata on two rooted phones
 
 ## Fast Commands
 

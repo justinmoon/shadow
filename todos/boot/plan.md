@@ -82,7 +82,15 @@ Related docs:
         - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T210518Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T210656Z-06241JEC200520_`
         - both recovered bundles report `proof_ok=true`, `probe_report_proves_child_success=true`, `probe_summary_proves_gpu_render=true`, and `metadata_probe_fingerprint_present=true`
         - both recovered bundles also preserve `metadata_stage_value=parent-probe-result=exit-0`, which is the durable proof that the Rust parent probe ran and returned `exit-0` before the real payload succeeded
-        - `probe-timeout-class.txt` is the remaining Rust observability gap from the frozen C seam
+      - current `master` now also carries the Rust timeout/KGSL parity slice:
+        - Rust `hello-init` now writes `/metadata/.../probe-timeout-class.txt` and owns the direct `c-kgsl-open-readonly-*` modes on the rust-bridge seam
+        - timeout-control metadata recovery is now confirmed on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-timeout-control-breadcrumb-v2.img`
+        - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T215441Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T215441Z-06241JEC200520_`
+        - both recovered bundles preserve `metadata_stage_value=parent-probe-result=skipped`, `metadata_probe_stage_value=orange-gpu-payload:timeout-control-sleep`, `metadata_probe_report_timed_out=true`, `metadata_probe_timeout_class_present=true`, `metadata_probe_timeout_class_checkpoint=watchdog-timeout`, `metadata_probe_timeout_class_bucket=generic-watchdog`, and `metadata_probe_fingerprint_present=true`
+        - that rung remains an intentional timeout discriminator, so `proof_ok` stays false even though the durable timeout metadata now survives
+        - helper-backed direct KGSL open is now re-proved on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-c-kgsl-open-readonly-fw-helper-breadcrumb-v1.img`
+        - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T215913Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T220049Z-06241JEC200520_`
+        - both recovered bundles report `proof_ok=true`, `metadata_stage_value=parent-probe-result=skipped`, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly-ok`, `probe_report_proves_child_success=true`, and `metadata_probe_fingerprint_present=true`
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
   - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
@@ -488,8 +496,8 @@ Related docs:
 - [ ] Keep the Rust cutoff explicit in execution:
   - helper-backed `gpu-render` is now re-proven with recovered `probe-summary.json` and a watched `success-solid` run; freeze the C seam except for migration glue
   - current Rust port status on 2026-04-22:
-    - `probe-summary.json`, `probe-fingerprint.txt`, the parent-probe loop, `timeout-control-smoke`, and the raw-KGSL smoke modes now live in Rust on current `master`
-    - `probe-timeout-class.txt` is still the remaining C-only observability artifact before the next renderer rung lands
+    - `probe-summary.json`, `probe-fingerprint.txt`, `probe-timeout-class.txt`, the parent-probe loop, `timeout-control-smoke`, and the raw/direct KGSL smoke modes now live in Rust on current `master`
+    - the next bootstrap discriminator is `c-kgsl-open-readonly-pid1-smoke` on the rust-bridge seam rather than more child-supervised parity work
 - [ ] Package one short repeated-frame proof (`orange-gpu-loop`):
   - animate color or a frame counter for 2-3 seconds
   - use it to prove repeated submission and sync, not just one lucky frame

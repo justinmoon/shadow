@@ -43,6 +43,11 @@ mod linux {
     const ORANGE_GPU_PROBE_SUMMARY_PATH: &str = "/orange-gpu/probe-summary.json";
     const ORANGE_GPU_PROBE_OUTPUT_PATH: &str = "/orange-gpu/probe-output.log";
     const FIRMWARE_CLASS_ROOT: &str = "/sys/class/firmware";
+    const TRACEFS_ROOT: &str = "/sys/kernel/tracing";
+    const TRACEFS_TRACE_PATH: &str = "/sys/kernel/tracing/trace";
+    const TRACEFS_TRACING_ON_PATH: &str = "/sys/kernel/tracing/tracing_on";
+    const TRACEFS_CURRENT_TRACER_PATH: &str = "/sys/kernel/tracing/current_tracer";
+    const TRACEFS_SET_GRAPH_FUNCTION_PATH: &str = "/sys/kernel/tracing/set_graph_function";
     const METADATA_MOUNT_PATH: &str = "/metadata";
     const METADATA_DEVICE_PATH: &str = "/dev/block/by-name/metadata";
     const METADATA_ROOT: &str = "/metadata/shadow-hello-init";
@@ -74,6 +79,8 @@ mod linux {
     const FIRMWARE_HELPER_POLL_MILLIS: u64 = 50;
     const FIRMWARE_PROBE_CHECKPOINT_HOLD_SECONDS: u32 = 2;
     const ORANGE_GPU_CHECKPOINT_HOLD_SECONDS: u32 = 1;
+    const ORANGE_GPU_CHILD_WATCH_POLL_SECONDS: u32 = 5;
+    const ORANGE_GPU_TIMEOUT_CLASSIFIER_HOLD_SECONDS: u32 = 3;
 
     const GPU_FIRMWARE_ENTRIES: [(&str, &str); 4] = [
         ("a630_sqe.fw", "a630-sqe"),
@@ -166,11 +173,18 @@ mod linux {
         temp_probe_fingerprint_path: PathBuf,
         probe_report_path: PathBuf,
         temp_probe_report_path: PathBuf,
+        probe_timeout_class_path: PathBuf,
+        temp_probe_timeout_class_path: PathBuf,
         probe_summary_path: PathBuf,
         temp_probe_summary_path: PathBuf,
     }
 
     struct FirmwareHelper {
+        stop: Arc<AtomicBool>,
+        handle: Option<JoinHandle<()>>,
+    }
+
+    struct KgslTraceMonitor {
         stop: Arc<AtomicBool>,
         handle: Option<JoinHandle<()>>,
     }
@@ -205,6 +219,27 @@ mod linux {
         }
     }
 
+    impl KgslTraceMonitor {
+        fn start(probe_stage_path: PathBuf, probe_stage_prefix: String) -> Self {
+            let stop = Arc::new(AtomicBool::new(false));
+            let thread_stop = Arc::clone(&stop);
+            let handle = thread::spawn(move || {
+                run_kgsl_trace_monitor_loop(thread_stop, probe_stage_path, probe_stage_prefix);
+            });
+            Self {
+                stop,
+                handle: Some(handle),
+            }
+        }
+
+        fn stop(mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
     #[derive(Default)]
     struct ChildWatchResult {
         completed: bool,
@@ -212,6 +247,26 @@ mod linux {
         waited_seconds: u32,
         exit_status: Option<i32>,
         signal: Option<i32>,
+        raw_wait_status: i32,
+    }
+
+    #[derive(Clone, Debug)]
+    struct OrangeGpuTimeoutClassification {
+        checkpoint_name: String,
+        bucket_name: String,
+        matched_needle: String,
+        report_present: bool,
+    }
+
+    impl Default for OrangeGpuTimeoutClassification {
+        fn default() -> Self {
+            Self {
+                checkpoint_name: "watchdog-timeout".to_string(),
+                bucket_name: "generic-watchdog".to_string(),
+                matched_needle: String::new(),
+                report_present: false,
+            }
+        }
     }
 
     fn bool_word(value: bool) -> &'static str {
@@ -513,7 +568,12 @@ mod linux {
                         let mode = std::ffi::OsString::from_vec(mode_bytes)
                             .to_string_lossy()
                             .into_owned();
-                        if mode == "timeout-control-smoke" {
+                        if matches!(
+                            mode.as_str(),
+                            "timeout-control-smoke"
+                                | "c-kgsl-open-readonly-smoke"
+                                | "c-kgsl-open-readonly-firmware-helper-smoke"
+                        ) {
                             args.orange_gpu_child_mode = Some(mode);
                         }
                     }
@@ -571,6 +631,9 @@ mod linux {
                             "vulkan-instance-smoke",
                             "raw-vulkan-instance-smoke",
                             "timeout-control-smoke",
+                            "c-kgsl-open-readonly-smoke",
+                            "c-kgsl-open-readonly-firmware-helper-smoke",
+                            "c-kgsl-open-readonly-pid1-smoke",
                             "raw-kgsl-open-readonly-smoke",
                             "raw-kgsl-getproperties-smoke",
                             "raw-vulkan-physical-device-count-query-exit-smoke",
@@ -720,6 +783,9 @@ mod linux {
         runtime.temp_probe_fingerprint_path = runtime.stage_dir.join(".probe-fingerprint.txt.tmp");
         runtime.probe_report_path = runtime.stage_dir.join("probe-report.txt");
         runtime.temp_probe_report_path = runtime.stage_dir.join(".probe-report.txt.tmp");
+        runtime.probe_timeout_class_path = runtime.stage_dir.join("probe-timeout-class.txt");
+        runtime.temp_probe_timeout_class_path =
+            runtime.stage_dir.join(".probe-timeout-class.txt.tmp");
         runtime.probe_summary_path = runtime.stage_dir.join("probe-summary.json");
         runtime.temp_probe_summary_path = runtime.stage_dir.join(".probe-summary.json.tmp");
         runtime
@@ -835,11 +901,467 @@ mod linux {
         let Ok(text) = fs::read_to_string(&runtime.probe_stage_path) else {
             return String::new();
         };
-        let trimmed = text.trim();
+        normalize_probe_stage_value(&text)
+    }
+
+    fn normalize_probe_stage_value(value: &str) -> String {
+        let trimmed = value.trim();
         match trimmed.split_once(':') {
             Some((_, suffix)) => suffix.to_string(),
             None => trimmed.to_string(),
         }
+    }
+
+    fn sanitize_inline_text(value: &str) -> String {
+        value
+            .trim_end_matches(['\r', '\n'])
+            .chars()
+            .map(|ch| match ch {
+                '\r' | '\n' | '\t' => ' ',
+                other => other,
+            })
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
+    fn read_inline_text_file(path: &str) -> Option<String> {
+        fs::read_to_string(path)
+            .ok()
+            .map(|text| sanitize_inline_text(&text))
+    }
+
+    fn append_pid_namespace_fingerprint_lines(payload: &mut String, pid: u32) {
+        for label in ["mnt", "pid", "uts", "ipc", "net"] {
+            let path = format!("/proc/{pid}/ns/{label}");
+            match fs::read_link(&path) {
+                Ok(target) => {
+                    let _ = writeln!(payload, "ns_{}={}", label, target.display());
+                }
+                Err(error) => {
+                    let _ = writeln!(
+                        payload,
+                        "ns_{}=<unavailable errno={:?} error={}>",
+                        label,
+                        error.raw_os_error(),
+                        error
+                    );
+                }
+            }
+        }
+    }
+
+    fn append_pid_proc_excerpt(payload: &mut String, pid: u32, name: &str, max_bytes: usize) {
+        append_file_excerpt(payload, &format!("/proc/{pid}/{name}"), max_bytes);
+    }
+
+    fn extract_text_key_value_line(text: &str, key: &str) -> Option<String> {
+        text.lines()
+            .find_map(|line| line.strip_prefix(&format!("{key}=")))
+            .map(ToString::to_string)
+    }
+
+    fn text_contains_any_needle(text: &str, needles: &[&str]) -> Option<String> {
+        if text.is_empty() {
+            return None;
+        }
+        needles
+            .iter()
+            .find(|needle| text.contains(**needle))
+            .map(|needle| (*needle).to_string())
+    }
+
+    fn classify_kgsl_timeout_from_text(
+        text: &str,
+        classification: &mut OrangeGpuTimeoutClassification,
+    ) {
+        let firmware_needles = [
+            "_request_firmware",
+            "request_firmware",
+            "a6xx_microcode_read",
+            "a6xx_gmu_load_firmware",
+        ];
+        let zap_needles = ["subsystem_get", "pil_boot", "a615_zap"];
+        let gx_oob_needles = [
+            "a6xx_gmu_oob_set",
+            "oob_gpu",
+            "oob_boot_slumber",
+            "a6xx_gmu_gfx_rail_on",
+            "a6xx_rpmh_power_on_gpu",
+            "a6xx_complete_rpmh_votes",
+            "a6xx_gmu_wait_for_lowest_idle",
+            "a6xx_gmu_wait_for_idle",
+            "a6xx_gmu_notify_slumber",
+        ];
+        let gmu_hfi_needles = [
+            "a6xx_gmu_start",
+            "a6xx_gmu_fw_start",
+            "a6xx_gmu_hfi_start",
+            "hfi_start",
+            "hfi_send_cmd",
+            "hfi_send_gmu_init",
+            "hfi_send_core_fw_start",
+            "GMU doesn't boot",
+            "GMU HFI init failed",
+            "Timed out waiting on ack",
+        ];
+        let cp_init_needles = [
+            "a6xx_rb_start",
+            "a6xx_send_cp_init",
+            "adreno_ringbuffer_submit_spin",
+            "adreno_spin_idle",
+            "adreno_set_unsecured_mode",
+            "adreno_switch_to_unsecure_mode",
+        ];
+
+        if let Some(matched_needle) = text_contains_any_needle(text, &firmware_needles) {
+            classification.checkpoint_name = "kgsl-timeout-firmware".to_string();
+            classification.bucket_name = "firmware".to_string();
+            classification.matched_needle = matched_needle;
+            return;
+        }
+        if let Some(matched_needle) = text_contains_any_needle(text, &zap_needles) {
+            classification.checkpoint_name = "kgsl-timeout-zap".to_string();
+            classification.bucket_name = "zap".to_string();
+            classification.matched_needle = matched_needle;
+            return;
+        }
+        if let Some(matched_needle) = text_contains_any_needle(text, &gx_oob_needles) {
+            classification.checkpoint_name = "kgsl-timeout-gx-oob".to_string();
+            classification.bucket_name = "gx-oob".to_string();
+            classification.matched_needle = matched_needle;
+            return;
+        }
+        if let Some(matched_needle) = text_contains_any_needle(text, &gmu_hfi_needles) {
+            classification.checkpoint_name = "kgsl-timeout-gmu-hfi".to_string();
+            classification.bucket_name = "gmu-hfi".to_string();
+            classification.matched_needle = matched_needle;
+            return;
+        }
+        if let Some(matched_needle) = text_contains_any_needle(text, &cp_init_needles) {
+            classification.checkpoint_name = "kgsl-timeout-cp-init".to_string();
+            classification.bucket_name = "cp-init".to_string();
+            classification.matched_needle = matched_needle;
+        }
+    }
+
+    fn orange_gpu_checkpoint_is_firmware_probe(checkpoint_name: &str) -> bool {
+        checkpoint_name.starts_with("firmware-probe-")
+    }
+
+    fn orange_gpu_checkpoint_is_timeout_classifier(checkpoint_name: &str) -> bool {
+        checkpoint_name.starts_with("kgsl-timeout-")
+    }
+
+    fn orange_gpu_mode_is_any_c_kgsl_open_readonly_smoke(mode: &str) -> bool {
+        matches!(
+            mode,
+            "c-kgsl-open-readonly-smoke" | "c-kgsl-open-readonly-firmware-helper-smoke"
+        )
+    }
+
+    fn orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(mode: &str) -> bool {
+        mode == "c-kgsl-open-readonly-pid1-smoke"
+    }
+
+    fn orange_gpu_mode_uses_visible_checkpoints(mode: &str, checkpoint_name: &str) -> bool {
+        if orange_gpu_mode_uses_success_postlude(mode) {
+            return true;
+        }
+        if orange_gpu_checkpoint_is_firmware_probe(checkpoint_name) {
+            return matches!(
+                mode,
+                "firmware-probe-only"
+                    | "timeout-control-smoke"
+                    | "c-kgsl-open-readonly-smoke"
+                    | "c-kgsl-open-readonly-firmware-helper-smoke"
+                    | "c-kgsl-open-readonly-pid1-smoke"
+            );
+        }
+        if orange_gpu_checkpoint_is_timeout_classifier(checkpoint_name) {
+            return matches!(
+                mode,
+                "timeout-control-smoke"
+                    | "c-kgsl-open-readonly-smoke"
+                    | "c-kgsl-open-readonly-firmware-helper-smoke"
+                    | "c-kgsl-open-readonly-pid1-smoke"
+            );
+        }
+        false
+    }
+
+    fn orange_gpu_checkpoint_visual(checkpoint_name: &str) -> &'static str {
+        match checkpoint_name {
+            "kgsl-timeout-firmware" => "solid-red",
+            "kgsl-timeout-gmu-hfi" => "solid-blue",
+            "kgsl-timeout-zap" => "solid-yellow",
+            "kgsl-timeout-cp-init" => "solid-cyan",
+            "kgsl-timeout-gx-oob" => "solid-magenta",
+            "kgsl-timeout-control" => "success-solid",
+            "firmware-probe-ok" => "checker-orange",
+            "firmware-probe-a630-sqe-open-failed" | "firmware-probe-a630-sqe-read-failed" => {
+                "bands-orange"
+            }
+            "firmware-probe-a618-gmu-open-failed" | "firmware-probe-a618-gmu-read-failed" => {
+                "orange-vertical-band"
+            }
+            "firmware-probe-a615-zap-mdt-open-failed"
+            | "firmware-probe-a615-zap-mdt-read-failed"
+            | "firmware-probe-a615-zap-b02-open-failed"
+            | "firmware-probe-a615-zap-b02-read-failed" => "frame-orange",
+            "validated" => "code-orange-2",
+            "probe-ready" => "code-orange-3",
+            "postlude" => "code-orange-4",
+            "watchdog-timeout" => "code-orange-9",
+            "child-signal" => "code-orange-10",
+            "child-exit-nonzero" => "code-orange-11",
+            _ => "solid-orange",
+        }
+    }
+
+    fn write_text_path_best_effort(path: &str, contents: &str) -> bool {
+        fs::write(path, contents).is_ok()
+    }
+
+    fn teardown_kgsl_trace_best_effort() {
+        let _ = write_text_path_best_effort(TRACEFS_TRACING_ON_PATH, "0\n");
+        let _ = write_text_path_best_effort(TRACEFS_CURRENT_TRACER_PATH, "nop\n");
+    }
+
+    fn setup_kgsl_trace_best_effort() -> bool {
+        const KGSL_TRACE_FUNCTIONS: &str = concat!(
+            "a6xx_microcode_read\n",
+            "a6xx_gmu_load_firmware\n",
+            "subsystem_get\n",
+            "pil_boot\n",
+            "gmu_start\n",
+            "a6xx_gmu_fw_start\n",
+            "a6xx_gmu_start\n",
+            "a6xx_gmu_hfi_start\n",
+            "hfi_send_cmd\n",
+            "a6xx_gmu_oob_set\n",
+            "a6xx_send_cp_init\n"
+        );
+
+        if mount_fs(
+            "tracefs",
+            TRACEFS_ROOT,
+            "tracefs",
+            (libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC) as libc::c_ulong,
+            None,
+        )
+        .is_err()
+        {
+            return false;
+        }
+        if !write_text_path_best_effort(TRACEFS_TRACING_ON_PATH, "0\n")
+            || !write_text_path_best_effort(TRACEFS_CURRENT_TRACER_PATH, "nop\n")
+            || !write_text_path_best_effort(TRACEFS_TRACE_PATH, "")
+            || !write_text_path_best_effort(TRACEFS_SET_GRAPH_FUNCTION_PATH, KGSL_TRACE_FUNCTIONS)
+            || !write_text_path_best_effort(TRACEFS_CURRENT_TRACER_PATH, "function_graph\n")
+            || !write_text_path_best_effort(TRACEFS_TRACING_ON_PATH, "1\n")
+        {
+            teardown_kgsl_trace_best_effort();
+            return false;
+        }
+        true
+    }
+
+    fn highest_kgsl_trace_stage_from_text(trace_text: &str) -> Option<&'static str> {
+        if trace_text.contains("a6xx_send_cp_init") {
+            return Some("trace-cp-init");
+        }
+        if trace_text.contains("a6xx_gmu_hfi_start") {
+            return Some("trace-gmu-hfi-start");
+        }
+        if [
+            "a6xx_gmu_oob_set",
+            "a6xx_gmu_start",
+            "a6xx_gmu_fw_start",
+            "gmu_start",
+        ]
+        .iter()
+        .any(|needle| trace_text.contains(needle))
+        {
+            return Some("trace-gmu-start");
+        }
+        if trace_text.contains("pil_boot") {
+            return Some("trace-pil-boot");
+        }
+        if trace_text.contains("subsystem_get") {
+            return Some("trace-subsystem-get");
+        }
+        if ["a6xx_gmu_load_firmware", "a6xx_microcode_read"]
+            .iter()
+            .any(|needle| trace_text.contains(needle))
+        {
+            return Some("trace-microcode-read");
+        }
+        None
+    }
+
+    fn run_kgsl_trace_monitor_loop(
+        stop: Arc<AtomicBool>,
+        probe_stage_path: PathBuf,
+        probe_stage_prefix: String,
+    ) {
+        let mut last_stage = String::new();
+        while !stop.load(Ordering::Relaxed) {
+            if let Ok(trace_text) = fs::read_to_string(TRACEFS_TRACE_PATH) {
+                if let Some(trace_stage) = highest_kgsl_trace_stage_from_text(&trace_text) {
+                    if trace_stage != last_stage {
+                        write_payload_probe_stage(
+                            Some(probe_stage_path.as_path()),
+                            Some(probe_stage_prefix.as_str()),
+                            trace_stage,
+                        );
+                        last_stage = trace_stage.to_string();
+                    }
+                }
+            }
+            sleep_seconds(1);
+        }
+    }
+
+    fn classify_kgsl_timeout_from_probe_report(
+        runtime: &MetadataStageRuntime,
+        classification: &mut OrangeGpuTimeoutClassification,
+    ) {
+        if !runtime.enabled || runtime.write_failed || !runtime.prepared {
+            return;
+        }
+
+        if let Ok(timeout_class_text) = fs::read_to_string(&runtime.probe_timeout_class_path) {
+            classification.report_present = true;
+            classify_kgsl_timeout_from_text(&timeout_class_text, classification);
+            if let Some(checkpoint_name) =
+                extract_text_key_value_line(&timeout_class_text, "classification_checkpoint")
+            {
+                if !checkpoint_name.is_empty() {
+                    classification.checkpoint_name = checkpoint_name;
+                }
+            }
+            if let Some(bucket_name) =
+                extract_text_key_value_line(&timeout_class_text, "classification_bucket")
+            {
+                if !bucket_name.is_empty() {
+                    classification.bucket_name = bucket_name;
+                }
+            }
+            if let Some(matched_needle) =
+                extract_text_key_value_line(&timeout_class_text, "classification_matched_needle")
+            {
+                classification.matched_needle = matched_needle;
+            }
+            if classification.checkpoint_name != "watchdog-timeout"
+                || classification.bucket_name != "generic-watchdog"
+            {
+                return;
+            }
+        }
+
+        if let Ok(report_text) = fs::read_to_string(&runtime.probe_report_path) {
+            classification.report_present = true;
+            classify_kgsl_timeout_from_text(&report_text, classification);
+        }
+    }
+
+    fn write_metadata_probe_timeout_class(
+        runtime: &mut MetadataStageRuntime,
+        label: &str,
+        probe_stage_path: Option<&Path>,
+        observed_pid: u32,
+    ) {
+        if !runtime.enabled || runtime.write_failed || !runtime.prepared {
+            return;
+        }
+
+        let observed_probe_stage = probe_stage_path
+            .and_then(|path| fs::read_to_string(path).ok())
+            .map(|text| normalize_probe_stage_value(&text))
+            .unwrap_or_default();
+        let observed_probe_stage_present = !observed_probe_stage.is_empty();
+        let wchan_path = format!("/proc/{observed_pid}/wchan");
+        let stack_path = format!("/proc/{observed_pid}/stack");
+        let wchan = read_inline_text_file(&wchan_path).unwrap_or_default();
+        let wchan_present = !wchan.is_empty();
+        let stack_excerpt_present = fs::metadata(&stack_path).is_ok();
+
+        let mut classification = OrangeGpuTimeoutClassification::default();
+        let classification_text = format!(
+            "observed_probe_stage={}\nwchan={}\nstack={}\n",
+            observed_probe_stage,
+            wchan,
+            read_file_excerpt(&stack_path, 2048)
+        );
+        classify_kgsl_timeout_from_text(&classification_text, &mut classification);
+
+        let mut payload = String::new();
+        let _ = writeln!(payload, "probe_label={label}");
+        let _ = writeln!(
+            payload,
+            "probe_stage_path={}",
+            probe_stage_path
+                .map(|path| path.display().to_string())
+                .unwrap_or_default()
+        );
+        let _ = writeln!(
+            payload,
+            "observed_probe_stage_present={}",
+            bool_word(observed_probe_stage_present)
+        );
+        let _ = writeln!(payload, "observed_probe_stage={observed_probe_stage}");
+        let _ = writeln!(payload, "observed_pid={observed_pid}");
+        let _ = writeln!(payload, "wchan_present={}", bool_word(wchan_present));
+        let _ = writeln!(payload, "wchan={wchan}");
+        let _ = writeln!(
+            payload,
+            "stack_excerpt_present={}",
+            bool_word(stack_excerpt_present)
+        );
+        let _ = writeln!(
+            payload,
+            "classification_checkpoint={}",
+            classification.checkpoint_name
+        );
+        let _ = writeln!(
+            payload,
+            "classification_bucket={}",
+            classification.bucket_name
+        );
+        let _ = writeln!(
+            payload,
+            "classification_matched_needle={}",
+            classification.matched_needle
+        );
+        if write_atomic_text_file(
+            &runtime.temp_probe_timeout_class_path,
+            &runtime.probe_timeout_class_path,
+            &payload,
+        )
+        .is_err()
+        {
+            runtime.write_failed = true;
+        }
+    }
+
+    fn classify_orange_gpu_timeout(
+        config: &Config,
+        runtime: &MetadataStageRuntime,
+    ) -> OrangeGpuTimeoutClassification {
+        if config.orange_gpu_mode == "timeout-control-smoke" {
+            return OrangeGpuTimeoutClassification {
+                checkpoint_name: "kgsl-timeout-control".to_string(),
+                bucket_name: "timeout-control".to_string(),
+                matched_needle: "intentional-hang".to_string(),
+                report_present: true,
+            };
+        }
+        let mut classification = OrangeGpuTimeoutClassification::default();
+        if orange_gpu_mode_is_any_c_kgsl_open_readonly_smoke(&config.orange_gpu_mode) {
+            classify_kgsl_timeout_from_probe_report(runtime, &mut classification);
+        }
+        classification
     }
 
     fn remove_file_best_effort(path: &str) {
@@ -1020,33 +1542,97 @@ mod linux {
         }
     }
 
-    fn write_probe_report(runtime: &mut MetadataStageRuntime, child_result: &ChildWatchResult) {
+    fn write_probe_report(
+        runtime: &mut MetadataStageRuntime,
+        label: &str,
+        probe_stage_path: Option<&Path>,
+        child_result: &ChildWatchResult,
+        observed_pid: Option<u32>,
+        capture_live_proc: bool,
+        timeout_seconds: u32,
+    ) {
         if !runtime.enabled || runtime.write_failed || !runtime.prepared {
             return;
         }
-        let observed_probe_stage = read_probe_stage_value(runtime);
+
+        let observed_probe_stage = probe_stage_path
+            .and_then(|path| fs::read_to_string(path).ok())
+            .map(|text| normalize_probe_stage_value(&text))
+            .unwrap_or_default();
+        let observed_probe_stage_present = !observed_probe_stage.is_empty();
+        let proc_snapshot_attempted = capture_live_proc && observed_pid.is_some();
+        let wchan = observed_pid
+            .filter(|_| capture_live_proc)
+            .and_then(|pid| read_inline_text_file(&format!("/proc/{pid}/wchan")))
+            .unwrap_or_default();
+        let wchan_present = !wchan.is_empty();
+        let syscall_text = observed_pid
+            .filter(|_| capture_live_proc)
+            .and_then(|pid| read_inline_text_file(&format!("/proc/{pid}/syscall")))
+            .unwrap_or_default();
+        let syscall_present = !syscall_text.is_empty();
         let mut payload = String::new();
-        payload.push_str(&format!("observed_probe_stage={observed_probe_stage}\n"));
-        payload.push_str(&format!(
-            "child_timed_out={}\n",
-            bool_word(child_result.timed_out)
-        ));
-        payload.push_str(&format!("waited_seconds={}\n", child_result.waited_seconds));
-        payload.push_str("wchan=\n");
-        payload.push_str(&format!(
-            "child_completed={}\n",
+        let _ = writeln!(payload, "probe_label={label}");
+        let _ = writeln!(
+            payload,
+            "probe_stage_path={}",
+            probe_stage_path
+                .map(|path| path.display().to_string())
+                .unwrap_or_default()
+        );
+        let _ = writeln!(
+            payload,
+            "observed_probe_stage_present={}",
+            bool_word(observed_probe_stage_present)
+        );
+        let _ = writeln!(payload, "observed_probe_stage={observed_probe_stage}");
+        let _ = writeln!(
+            payload,
+            "child_completed={}",
             bool_word(child_result.completed)
-        ));
+        );
+        let _ = writeln!(
+            payload,
+            "child_timed_out={}",
+            bool_word(child_result.timed_out)
+        );
+        let _ = writeln!(payload, "waited_seconds={}", child_result.waited_seconds);
+        let _ = writeln!(payload, "timeout_seconds={timeout_seconds}");
         if let Some(exit_status) = child_result.exit_status {
-            payload.push_str(&format!("exit_status={exit_status}\n"));
+            let _ = writeln!(payload, "exit_status={exit_status}");
         } else {
             payload.push_str("exit_status=\n");
         }
         if let Some(signal) = child_result.signal {
-            payload.push_str(&format!("signal={signal}\n"));
+            let _ = writeln!(payload, "signal={signal}");
         } else {
             payload.push_str("signal=\n");
         }
+        let _ = writeln!(payload, "raw_wait_status={}", child_result.raw_wait_status);
+        let _ = writeln!(
+            payload,
+            "proc_snapshot_attempted={}",
+            bool_word(proc_snapshot_attempted)
+        );
+        let _ = writeln!(payload, "observed_pid={}", observed_pid.unwrap_or(0));
+        let _ = writeln!(payload, "wchan_present={}", bool_word(wchan_present));
+        let _ = writeln!(payload, "wchan={wchan}");
+        let _ = writeln!(payload, "syscall_present={}", bool_word(syscall_present));
+        let _ = writeln!(payload, "syscall={syscall_text}");
+
+        if capture_live_proc {
+            if let Some(pid) = observed_pid {
+                append_pid_namespace_fingerprint_lines(&mut payload, pid);
+                append_pid_proc_excerpt(&mut payload, pid, "attr/current", 256);
+                append_pid_proc_excerpt(&mut payload, pid, "cgroup", 512);
+                append_pid_proc_excerpt(&mut payload, pid, "status", 2048);
+                append_pid_proc_excerpt(&mut payload, pid, "stack", 4096);
+            }
+        }
+
+        append_file_excerpt(&mut payload, TRACEFS_CURRENT_TRACER_PATH, 64);
+        append_file_excerpt(&mut payload, TRACEFS_TRACE_PATH, 4096);
+
         if write_atomic_text_file(
             &runtime.temp_probe_report_path,
             &runtime.probe_report_path,
@@ -1373,6 +1959,79 @@ mod linux {
         }
     }
 
+    fn run_c_kgsl_open_readonly_smoke_internal(
+        config: &Config,
+        probe_stage_path: Option<&Path>,
+        probe_stage_prefix: Option<&str>,
+        use_firmware_helper: bool,
+    ) -> i32 {
+        if probe_bootstrap_gpu_firmware(config, probe_stage_path, probe_stage_prefix).is_err() {
+            return 1;
+        }
+
+        let firmware_helper = if use_firmware_helper {
+            Some(FirmwareHelper::start(
+                probe_stage_path.map(Path::to_path_buf),
+                probe_stage_prefix.map(ToString::to_string),
+            ))
+        } else {
+            None
+        };
+
+        write_payload_probe_stage(probe_stage_path, probe_stage_prefix, "kgsl-open-readonly");
+        let trace_enabled = setup_kgsl_trace_best_effort();
+        let trace_monitor = if trace_enabled {
+            match (probe_stage_path, probe_stage_prefix) {
+                (Some(path), Some(prefix)) => Some(KgslTraceMonitor::start(
+                    path.to_path_buf(),
+                    prefix.to_string(),
+                )),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let device_path = CString::new("/dev/kgsl-3d0").unwrap();
+        let kgsl_fd = unsafe {
+            libc::open(
+                device_path.as_ptr(),
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOCTTY,
+            )
+        };
+        if kgsl_fd < 0 {
+            if let Some(monitor) = trace_monitor {
+                monitor.stop();
+            }
+            if trace_enabled {
+                teardown_kgsl_trace_best_effort();
+            }
+            if let Some(helper) = firmware_helper {
+                helper.stop();
+            }
+            return 1;
+        }
+
+        unsafe {
+            libc::close(kgsl_fd);
+        }
+        if let Some(monitor) = trace_monitor {
+            monitor.stop();
+        }
+        if trace_enabled {
+            teardown_kgsl_trace_best_effort();
+        }
+        if let Some(helper) = firmware_helper {
+            helper.stop();
+        }
+        write_payload_probe_stage(
+            probe_stage_path,
+            probe_stage_prefix,
+            "kgsl-open-readonly-ok",
+        );
+        0
+    }
+
     fn run_internal_orange_gpu_child(config: &Config, mode: &str) -> i32 {
         let probe_stage_path = probe_stage_path_from_env();
         let probe_stage_prefix = probe_stage_prefix_from_env();
@@ -1382,6 +2041,20 @@ mod linux {
                 probe_stage_path.as_deref(),
                 probe_stage_prefix.as_deref(),
             ),
+            "c-kgsl-open-readonly-smoke" => run_c_kgsl_open_readonly_smoke_internal(
+                config,
+                probe_stage_path.as_deref(),
+                probe_stage_prefix.as_deref(),
+                false,
+            ),
+            "c-kgsl-open-readonly-firmware-helper-smoke" => {
+                run_c_kgsl_open_readonly_smoke_internal(
+                    config,
+                    probe_stage_path.as_deref(),
+                    probe_stage_prefix.as_deref(),
+                    true,
+                )
+            }
             _ => 1,
         }
     }
@@ -1434,7 +2107,9 @@ mod linux {
             let watch_result = match wait_for_child_with_watchdog(
                 &mut child,
                 "orange-gpu-parent-probe",
+                ORANGE_GPU_CHILD_WATCH_POLL_SECONDS,
                 ORANGE_GPU_WATCHDOG_GRACE_SECONDS,
+                None,
             ) {
                 Ok(result) => result,
                 Err(error) => {
@@ -1523,7 +2198,9 @@ mod linux {
     fn wait_for_child_with_watchdog(
         child: &mut Child,
         label: &str,
+        poll_seconds: u32,
         timeout_seconds: u32,
+        mut observer: Option<&mut dyn FnMut(u32, u32, u32)>,
     ) -> io::Result<ChildWatchResult> {
         let mut result = ChildWatchResult::default();
         loop {
@@ -1535,14 +2212,18 @@ mod linux {
                     {
                         use std::os::unix::process::ExitStatusExt;
                         result.signal = status.signal();
+                        result.raw_wait_status = status.into_raw();
                     }
                     return Ok(result);
                 }
                 None => {
-                    thread::sleep(Duration::from_secs(1));
-                    result.waited_seconds = result.waited_seconds.saturating_add(1);
+                    thread::sleep(Duration::from_secs(poll_seconds as u64));
+                    result.waited_seconds = result.waited_seconds.saturating_add(poll_seconds);
                     if timeout_seconds > 0 && result.waited_seconds >= timeout_seconds {
                         result.timed_out = true;
+                        if let Some(observer) = observer.as_mut() {
+                            observer(child.id(), result.waited_seconds, timeout_seconds);
+                        }
                         let _ = child.kill();
                         let status = child.wait()?;
                         result.completed = true;
@@ -1551,6 +2232,7 @@ mod linux {
                         {
                             use std::os::unix::process::ExitStatusExt;
                             result.signal = status.signal();
+                            result.raw_wait_status = status.into_raw();
                         }
                         log_line(&format!(
                             "{label} timed out after {} second(s)",
@@ -1584,12 +2266,19 @@ mod linux {
     }
 
     fn run_orange_gpu_checkpoint(config: &Config, checkpoint_name: &str, hold_seconds: u32) -> i32 {
-        if config.prelude != "orange-init" || hold_seconds == 0 {
+        if !orange_gpu_mode_uses_visible_checkpoints(&config.orange_gpu_mode, checkpoint_name)
+            || config.prelude != "orange-init"
+            || hold_seconds == 0
+        {
             return 0;
         }
         let mut checkpoint_config = config.clone();
         checkpoint_config.hold_seconds = hold_seconds;
-        run_orange_init_payload(&checkpoint_config, Some(checkpoint_name), None)
+        run_orange_init_payload(
+            &checkpoint_config,
+            Some(checkpoint_name),
+            Some(orange_gpu_checkpoint_visual(checkpoint_name)),
+        )
     }
 
     fn run_orange_gpu_prelude(config: &Config) -> i32 {
@@ -1636,6 +2325,20 @@ mod linux {
         if config.orange_gpu_firmware_helper && config.firmware_bootstrap != "ramdisk-lib-firmware"
         {
             log_line("orange_gpu_firmware_helper requires firmware_bootstrap=ramdisk-lib-firmware");
+            return false;
+        }
+        if config.orange_gpu_mode == "c-kgsl-open-readonly-firmware-helper-smoke"
+            && !config.mount_sys
+        {
+            log_line("c-kgsl-open-readonly-firmware-helper-smoke requires mount_sys=true");
+            return false;
+        }
+        if config.orange_gpu_mode == "c-kgsl-open-readonly-firmware-helper-smoke"
+            && !config.orange_gpu_metadata_stage_breadcrumb
+        {
+            log_line(
+                "c-kgsl-open-readonly-firmware-helper-smoke requires orange_gpu_metadata_stage_breadcrumb=true",
+            );
             return false;
         }
         true
@@ -1686,6 +2389,8 @@ mod linux {
                 None
             };
         let probe_stage_prefix = Some("orange-gpu-payload".to_string());
+        let kgsl_trace_may_be_active =
+            orange_gpu_mode_is_any_c_kgsl_open_readonly_smoke(&config.orange_gpu_mode);
 
         if config.orange_gpu_mode == "firmware-probe-only" {
             return match probe_bootstrap_gpu_firmware(
@@ -1698,6 +2403,15 @@ mod linux {
             };
         }
 
+        if orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(&config.orange_gpu_mode) {
+            return run_c_kgsl_open_readonly_smoke_internal(
+                config,
+                probe_stage_path.as_deref(),
+                probe_stage_prefix.as_deref(),
+                false,
+            );
+        }
+
         let firmware_helper = if config.orange_gpu_firmware_helper {
             Some(FirmwareHelper::start(
                 probe_stage_path.clone(),
@@ -1707,12 +2421,19 @@ mod linux {
             None
         };
 
-        let mut command = if config.orange_gpu_mode == "timeout-control-smoke" {
+        let child_mode = matches!(
+            config.orange_gpu_mode.as_str(),
+            "timeout-control-smoke"
+                | "c-kgsl-open-readonly-smoke"
+                | "c-kgsl-open-readonly-firmware-helper-smoke"
+        );
+
+        let mut command = if child_mode {
             let resolved_self_exec_path = self_exec_path
                 .map(Path::to_path_buf)
                 .or_else(|| std::env::current_exe().ok());
             let Some(resolved_self_exec_path) = resolved_self_exec_path else {
-                log_line("failed to resolve hello-init path for timeout-control child");
+                log_line("failed to resolve hello-init path for owned orange-gpu child");
                 if let Some(helper) = firmware_helper {
                     helper.stop();
                 }
@@ -1723,7 +2444,7 @@ mod linux {
             command.arg("--config");
             command.arg(CONFIG_PATH);
             command.arg("--orange-gpu-child-mode");
-            command.arg("timeout-control-smoke");
+            command.arg(&config.orange_gpu_mode);
             command
         } else {
             if probe_bootstrap_gpu_firmware(
@@ -1775,16 +2496,49 @@ mod linux {
             }
         };
 
+        let watchdog_timeout = resolve_watchdog_timeout(config);
+        let observed_probe_stage_path = probe_stage_path.clone();
+        let mut timeout_observer =
+            |observed_pid: u32, waited_seconds: u32, timeout_seconds: u32| {
+                let timeout_result = ChildWatchResult {
+                    completed: false,
+                    timed_out: true,
+                    waited_seconds,
+                    exit_status: None,
+                    signal: None,
+                    raw_wait_status: 0,
+                };
+                write_metadata_probe_timeout_class(
+                    metadata_stage,
+                    "orange-gpu-payload",
+                    observed_probe_stage_path.as_deref(),
+                    observed_pid,
+                );
+                write_probe_report(
+                    metadata_stage,
+                    "orange-gpu-payload",
+                    observed_probe_stage_path.as_deref(),
+                    &timeout_result,
+                    Some(observed_pid),
+                    true,
+                    timeout_seconds,
+                );
+            };
         let watch_result = match wait_for_child_with_watchdog(
             &mut child,
             "orange-gpu-payload",
-            resolve_watchdog_timeout(config),
+            ORANGE_GPU_CHILD_WATCH_POLL_SECONDS,
+            watchdog_timeout,
+            Some(&mut timeout_observer),
         ) {
             Ok(result) => result,
             Err(error) => {
                 log_line(&format!("orange-gpu wait failed: {error}"));
                 if let Some(helper) = firmware_helper {
                     helper.stop();
+                }
+                if kgsl_trace_may_be_active {
+                    teardown_kgsl_trace_best_effort();
                 }
                 return 1;
             }
@@ -1793,24 +2547,53 @@ mod linux {
         if let Some(helper) = firmware_helper {
             helper.stop();
         }
-        write_probe_report(metadata_stage, &watch_result);
+        if kgsl_trace_may_be_active {
+            teardown_kgsl_trace_best_effort();
+        }
+        if !watch_result.timed_out {
+            write_probe_report(
+                metadata_stage,
+                "orange-gpu-payload",
+                probe_stage_path.as_deref(),
+                &watch_result,
+                None,
+                false,
+                watchdog_timeout,
+            );
+        }
         if watch_result.exit_status == Some(0) && metadata_stage.enabled {
             let recorded_summary = record_probe_summary(metadata_stage, ORANGE_GPU_SUMMARY_PATH);
             if config.orange_gpu_mode == "gpu-render" {
                 let Some(summary_text) = recorded_summary.as_deref() else {
                     log_line("gpu-render summary missing or could not be persisted to metadata");
+                    let _ = run_orange_gpu_checkpoint(
+                        config,
+                        "child-exit-nonzero",
+                        ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+                    );
                     return 1;
                 };
                 if let Err(reason) = validate_gpu_render_summary(summary_text) {
                     log_line(&format!(
                         "gpu-render summary failed validation: missing {reason}"
                     ));
+                    let _ = run_orange_gpu_checkpoint(
+                        config,
+                        "child-exit-nonzero",
+                        ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+                    );
                     return 1;
                 }
             }
         }
 
         if watch_result.timed_out {
+            let timeout_classification = classify_orange_gpu_timeout(config, metadata_stage);
+            let _ = run_orange_gpu_checkpoint(
+                config,
+                &timeout_classification.checkpoint_name,
+                ORANGE_GPU_TIMEOUT_CLASSIFIER_HOLD_SECONDS,
+            );
             if config.orange_gpu_timeout_action == "panic" {
                 log_line("orange-gpu payload timed out; escalating to sysrq panic");
                 trigger_sysrq_best_effort('w');
@@ -1822,7 +2605,25 @@ mod linux {
             }
             return 124;
         }
-        watch_result.exit_status.unwrap_or(1)
+        if let Some(exit_status) = watch_result.exit_status {
+            if exit_status != 0 {
+                let _ = run_orange_gpu_checkpoint(
+                    config,
+                    "child-exit-nonzero",
+                    ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+                );
+            }
+            return exit_status;
+        }
+        if let Some(signal) = watch_result.signal {
+            let _ = run_orange_gpu_checkpoint(
+                config,
+                "child-signal",
+                ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+            );
+            return 128 + signal;
+        }
+        1
     }
 
     fn bootstrap_tmpfs_dev_runtime(config: &Config) -> io::Result<()> {

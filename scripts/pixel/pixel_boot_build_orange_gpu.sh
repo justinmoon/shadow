@@ -675,7 +675,7 @@ rust_bridge_supports_orange_gpu_mode() {
   value="${1:?rust_bridge_supports_orange_gpu_mode requires a value}"
 
   case "$value" in
-    gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
+    gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
       return 0
       ;;
     *)
@@ -942,7 +942,7 @@ payload_json = {
     ),
     "metadata_probe_timeout_class_path": (
         metadata_probe_timeout_class_path
-        if parse_bool(orange_gpu_metadata_stage_breadcrumb) and hello_init_mode != "rust-bridge"
+        if parse_bool(orange_gpu_metadata_stage_breadcrumb)
         else ""
     ),
     "metadata_probe_summary_path": (

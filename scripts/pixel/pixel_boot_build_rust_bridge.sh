@@ -249,7 +249,6 @@ payload["hello_init_impl"] = "rust-bridge"
 payload["hello_init_mode"] = "rust-bridge"
 payload["hello_init_child_profile"] = child_profile
 payload["hello_init_shim_mode"] = shim_mode
-payload["metadata_probe_timeout_class_path"] = ""
 destination_metadata.write_text(
     json.dumps(payload, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",
