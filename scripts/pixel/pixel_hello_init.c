@@ -72,6 +72,7 @@
 #define SHADOW_HELLO_INIT_MAX_HOLD_SECONDS 3600U
 #define SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS 30U
 #define SHADOW_HELLO_INIT_ORANGE_GPU_CHECKPOINT_HOLD_SECONDS 1U
+#define SHADOW_HELLO_INIT_FIRMWARE_PROBE_CHECKPOINT_HOLD_SECONDS 2U
 
 static const char kOwnedInitRoleSentinel[] = "shadow-owned-init-role:hello-init";
 static const char kOwnedInitImplSentinel[] = "shadow-owned-init-impl:c-static";
@@ -3465,7 +3466,11 @@ static int probe_bootstrap_gpu_firmware(
                 payload_probe_stage_prefix,
                 stage_value
             );
-            (void)run_orange_gpu_checkpoint(config, stage_value, 1U);
+            (void)run_orange_gpu_checkpoint(
+                config,
+                stage_value,
+                SHADOW_HELLO_INIT_FIRMWARE_PROBE_CHECKPOINT_HOLD_SECONDS
+            );
             return 1;
         }
         if (read(firmware_fd, &probe_byte, 1) < 0) {
@@ -3491,7 +3496,11 @@ static int probe_bootstrap_gpu_firmware(
                 payload_probe_stage_prefix,
                 stage_value
             );
-            (void)run_orange_gpu_checkpoint(config, stage_value, 1U);
+            (void)run_orange_gpu_checkpoint(
+                config,
+                stage_value,
+                SHADOW_HELLO_INIT_FIRMWARE_PROBE_CHECKPOINT_HOLD_SECONDS
+            );
             return 1;
         }
         close(firmware_fd);
@@ -3519,7 +3528,11 @@ static int probe_bootstrap_gpu_firmware(
         payload_probe_stage_prefix,
         "firmware-probe-ok"
     );
-    (void)run_orange_gpu_checkpoint(config, "firmware-probe-ok", 1U);
+    (void)run_orange_gpu_checkpoint(
+        config,
+        "firmware-probe-ok",
+        SHADOW_HELLO_INIT_FIRMWARE_PROBE_CHECKPOINT_HOLD_SECONDS
+    );
     return 0;
 }
 
