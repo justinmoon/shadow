@@ -3103,4 +3103,17 @@ assert_command_fails_contains "c-kgsl-open-readonly-firmware-helper-smoke requir
       --orange-gpu-mode c-kgsl-open-readonly-firmware-helper-smoke \
       --mount-sys false
 
+assert_command_fails_contains "c-kgsl-open-readonly-firmware-helper-smoke requires --orange-gpu-metadata-stage-breadcrumb true" \
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-firmware-helper-no-breadcrumb.img" \
+      --orange-gpu-mode c-kgsl-open-readonly-firmware-helper-smoke \
+      --mount-sys true \
+      --orange-gpu-metadata-stage-breadcrumb false
+
 echo "pixel_boot_orange_gpu_smoke: ok"

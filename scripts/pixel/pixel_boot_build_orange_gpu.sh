@@ -962,6 +962,10 @@ if [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" && "$MO
   echo "pixel_boot_build_orange_gpu: c-kgsl-open-readonly-firmware-helper-smoke requires --mount-sys true so hello-init can service /sys/class/firmware requests" >&2
   exit 1
 fi
+if [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" && "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: c-kgsl-open-readonly-firmware-helper-smoke requires --orange-gpu-metadata-stage-breadcrumb true so helper progress survives recovery" >&2
+  exit 1
+fi
 assert_bool_word orange-gpu-metadata-stage-breadcrumb "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB"
 assert_timeout_action_word "$ORANGE_GPU_TIMEOUT_ACTION"
 assert_firmware_bootstrap_word "$FIRMWARE_BOOTSTRAP"
