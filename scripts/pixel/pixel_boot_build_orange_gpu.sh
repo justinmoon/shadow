@@ -23,6 +23,7 @@ ORANGE_GPU_PARENT_PROBE_ATTEMPTS="${PIXEL_ORANGE_GPU_PARENT_PROBE_ATTEMPTS:-0}"
 ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS="${PIXEL_ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS:-0}"
 ORANGE_GPU_METADATA_STAGE_BREADCRUMB="${PIXEL_ORANGE_GPU_METADATA_STAGE_BREADCRUMB:-false}"
 ORANGE_GPU_TIMEOUT_ACTION="${PIXEL_ORANGE_GPU_TIMEOUT_ACTION:-reboot}"
+ORANGE_GPU_WATCHDOG_TIMEOUT_SECS="${PIXEL_ORANGE_GPU_WATCHDOG_TIMEOUT_SECS:-0}"
 REBOOT_TARGET="${PIXEL_HELLO_INIT_REBOOT_TARGET:-bootloader}"
 DEV_MOUNT="${PIXEL_ORANGE_GPU_DEV_MOUNT:-tmpfs}"
 MOUNT_DEV="${PIXEL_HELLO_INIT_MOUNT_DEV:-true}"
@@ -55,6 +56,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--orange-gpu-parent-probe-interval-secs N]
                                                     [--orange-gpu-metadata-stage-breadcrumb true|false]
                                                     [--orange-gpu-timeout-action reboot|panic]
+                                                    [--orange-gpu-watchdog-timeout-secs N]
                                                     [--reboot-target TARGET]
                                                     [--run-token TOKEN]
                                                     [--dev-mount devtmpfs|tmpfs]
@@ -513,6 +515,9 @@ EOF
   if [[ "$ORANGE_GPU_TIMEOUT_ACTION" != "reboot" ]]; then
     printf 'orange_gpu_timeout_action=%s\n' "$ORANGE_GPU_TIMEOUT_ACTION" >>"$output_path"
   fi
+  if [[ "$ORANGE_GPU_WATCHDOG_TIMEOUT_SECS" != "0" ]]; then
+    printf 'orange_gpu_watchdog_timeout_secs=%s\n' "$ORANGE_GPU_WATCHDOG_TIMEOUT_SECS" >>"$output_path"
+  fi
   if [[ "$PRELUDE" != "none" ]]; then
     printf 'prelude=%s\n' "$PRELUDE" >>"$output_path"
     printf 'prelude_hold_seconds=%s\n' "$PRELUDE_HOLD_SECS" >>"$output_path"
@@ -558,6 +563,7 @@ write_metadata() {
     "$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS" \
     "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" \
     "$ORANGE_GPU_TIMEOUT_ACTION" \
+    "$ORANGE_GPU_WATCHDOG_TIMEOUT_SECS" \
     "$REBOOT_TARGET" \
     "$RUN_TOKEN" \
     "$DEV_MOUNT" \
@@ -593,6 +599,7 @@ from pathlib import Path
     orange_gpu_parent_probe_interval_secs,
     orange_gpu_metadata_stage_breadcrumb,
     orange_gpu_timeout_action,
+    orange_gpu_watchdog_timeout_secs,
     reboot_target,
     run_token,
     dev_mount,
@@ -628,6 +635,7 @@ payload_json = {
     "orange_gpu_parent_probe_interval_secs": int(orange_gpu_parent_probe_interval_secs),
     "orange_gpu_metadata_stage_breadcrumb": parse_bool(orange_gpu_metadata_stage_breadcrumb),
     "orange_gpu_timeout_action": orange_gpu_timeout_action,
+    "orange_gpu_watchdog_timeout_secs": int(orange_gpu_watchdog_timeout_secs),
     "gpu_bundle_dir": bundle_dir,
     "hold_seconds": int(hold_seconds),
     "prelude": prelude,
@@ -803,6 +811,10 @@ while [[ $# -gt 0 ]]; do
       ORANGE_GPU_TIMEOUT_ACTION="${2:?missing value for --orange-gpu-timeout-action}"
       shift 2
       ;;
+    --orange-gpu-watchdog-timeout-secs)
+      ORANGE_GPU_WATCHDOG_TIMEOUT_SECS="${2:?missing value for --orange-gpu-watchdog-timeout-secs}"
+      shift 2
+      ;;
     --reboot-target)
       REBOOT_TARGET="${2:?missing value for --reboot-target}"
       shift 2
@@ -906,6 +918,14 @@ if [[ ! "$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS" =~ ^[0-9]+$ ]]; then
 fi
 if (( ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS > 3600 )); then
   echo "pixel_boot_build_orange_gpu: orange gpu parent probe interval seconds must be <= 3600: $ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS" >&2
+  exit 1
+fi
+if [[ ! "$ORANGE_GPU_WATCHDOG_TIMEOUT_SECS" =~ ^[0-9]+$ ]]; then
+  echo "pixel_boot_build_orange_gpu: orange gpu watchdog timeout seconds must be an integer: $ORANGE_GPU_WATCHDOG_TIMEOUT_SECS" >&2
+  exit 1
+fi
+if (( ORANGE_GPU_WATCHDOG_TIMEOUT_SECS > 3600 )); then
+  echo "pixel_boot_build_orange_gpu: orange gpu watchdog timeout seconds must be <= 3600: $ORANGE_GPU_WATCHDOG_TIMEOUT_SECS" >&2
   exit 1
 fi
 if [[ ! "$PRELUDE_HOLD_SECS" =~ ^[0-9]+$ ]]; then
@@ -1158,6 +1178,7 @@ printf 'Orange GPU parent probe attempts: %s\n' "$ORANGE_GPU_PARENT_PROBE_ATTEMP
 printf 'Orange GPU parent probe interval seconds: %s\n' "$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS"
 printf 'Orange GPU metadata stage breadcrumb: %s\n' "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB"
 printf 'Orange GPU timeout action: %s\n' "$ORANGE_GPU_TIMEOUT_ACTION"
+printf 'Orange GPU watchdog timeout seconds: %s\n' "$ORANGE_GPU_WATCHDOG_TIMEOUT_SECS"
 if [[ "$ORANGE_GPU_PARENT_PROBE_ATTEMPTS" != "0" ]]; then
   printf 'Parent readiness probe scene: raw-vulkan-physical-device-count-query-exit-smoke\n'
 fi

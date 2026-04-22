@@ -99,6 +99,7 @@ struct hello_init_config {
     unsigned int orange_gpu_parent_probe_interval_secs;
     bool orange_gpu_metadata_stage_breadcrumb;
     char orange_gpu_timeout_action[24];
+    unsigned int orange_gpu_watchdog_timeout_secs;
     unsigned int hold_seconds;
     unsigned int prelude_hold_seconds;
     char reboot_target[32];
@@ -203,6 +204,7 @@ static void init_default_config(struct hello_init_config *config) {
         sizeof(config->orange_gpu_timeout_action),
         "reboot"
     );
+    config->orange_gpu_watchdog_timeout_secs = 0U;
     config->hold_seconds = SHADOW_HELLO_INIT_DEFAULT_HOLD_SECONDS;
     config->prelude_hold_seconds = 0U;
     (void)copy_string(config->reboot_target, sizeof(config->reboot_target), "bootloader");
@@ -2124,6 +2126,18 @@ static void apply_config_value(
         return;
     }
 
+    if (
+        strcmp(key, "orange_gpu_watchdog_timeout_secs") == 0 ||
+        strcmp(key, "orange-gpu-watchdog-timeout-secs") == 0
+    ) {
+        if (!parse_unsigned_value(value, &parsed_hold_seconds)) {
+            log_boot("<3>", "invalid orange_gpu_watchdog_timeout_secs value: %s", value);
+            return;
+        }
+        config->orange_gpu_watchdog_timeout_secs = parsed_hold_seconds;
+        return;
+    }
+
     if (strcmp(key, "hold_seconds") == 0 || strcmp(key, "hold_secs") == 0) {
         if (!parse_unsigned_value(value, &parsed_hold_seconds)) {
             log_boot("<3>", "invalid hold_seconds value: %s", value);
@@ -2402,6 +2416,18 @@ static bool orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(const struct hell
 
 static bool orange_gpu_timeout_action_is_panic(const struct hello_init_config *config) {
     return strcmp(config->orange_gpu_timeout_action, "panic") == 0;
+}
+
+static unsigned int resolve_orange_gpu_payload_watchdog_timeout(
+    const struct hello_init_config *config
+) {
+    if (config->orange_gpu_watchdog_timeout_secs > 0U) {
+        return config->orange_gpu_watchdog_timeout_secs;
+    }
+
+    return orange_gpu_mode_uses_success_postlude(config)
+               ? SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS
+               : config->hold_seconds + SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS;
 }
 
 static bool orange_gpu_mode_is_raw_kgsl_open_readonly_smoke(const struct hello_init_config *config) {
@@ -4271,10 +4297,7 @@ static int run_orange_gpu_payload(
     char hold_seconds[16];
     const char *payload_probe_stage_path = NULL;
     const char *payload_probe_stage_prefix = NULL;
-    unsigned int watchdog_timeout =
-        orange_gpu_mode_uses_success_postlude(config)
-            ? SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS
-            : config->hold_seconds + SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS;
+    unsigned int watchdog_timeout = resolve_orange_gpu_payload_watchdog_timeout(config);
     struct child_watch_result watch_result;
     struct orange_gpu_timeout_classification timeout_classification;
     struct probe_timeout_observer_context timeout_observer_context;
@@ -5177,7 +5200,7 @@ int main(void) {
     log_stage(
         "<6>",
         "config-loaded",
-        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s orange_gpu_timeout_action=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s orange_gpu_timeout_action=%s orange_gpu_watchdog_timeout_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
@@ -5186,6 +5209,7 @@ int main(void) {
         config.orange_gpu_parent_probe_interval_secs,
         bool_word(config.orange_gpu_metadata_stage_breadcrumb),
         config.orange_gpu_timeout_action,
+        config.orange_gpu_watchdog_timeout_secs,
         config.hold_seconds,
         config.prelude_hold_seconds,
         config.reboot_target,
@@ -5201,7 +5225,7 @@ int main(void) {
     );
     log_boot(
         "<6>",
-        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s orange_gpu_timeout_action=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s orange_gpu_timeout_action=%s orange_gpu_watchdog_timeout_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
@@ -5210,6 +5234,7 @@ int main(void) {
         config.orange_gpu_parent_probe_interval_secs,
         bool_word(config.orange_gpu_metadata_stage_breadcrumb),
         config.orange_gpu_timeout_action,
+        config.orange_gpu_watchdog_timeout_secs,
         config.hold_seconds,
         config.prelude_hold_seconds,
         config.reboot_target,
