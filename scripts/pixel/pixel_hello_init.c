@@ -73,6 +73,7 @@
 #define SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS 30U
 #define SHADOW_HELLO_INIT_ORANGE_GPU_CHECKPOINT_HOLD_SECONDS 1U
 #define SHADOW_HELLO_INIT_FIRMWARE_PROBE_CHECKPOINT_HOLD_SECONDS 2U
+#define SHADOW_HELLO_INIT_TIMEOUT_CLASSIFIER_HOLD_SECONDS 3U
 
 static const char kOwnedInitRoleSentinel[] = "shadow-owned-init-role:hello-init";
 static const char kOwnedInitImplSentinel[] = "shadow-owned-init-impl:c-static";
@@ -4386,26 +4387,36 @@ static int run_orange_gpu_payload(
     }
 
     if (watch_result.timed_out) {
+        int timeout_checkpoint_status;
+
         classify_orange_gpu_timeout(config, metadata_stage, &timeout_classification);
-        (void)run_orange_gpu_checkpoint(config, timeout_classification.checkpoint_name, 1U);
+        timeout_checkpoint_status = run_orange_gpu_checkpoint(
+            config,
+            timeout_classification.checkpoint_name,
+            SHADOW_HELLO_INIT_TIMEOUT_CLASSIFIER_HOLD_SECONDS
+        );
         log_stage(
             "<4>",
             "orange-gpu-timeout",
-            "pid=%d waited_seconds=%u timeout_seconds=%u checkpoint=%s bucket=%s matched_needle=%s report_present=%s",
+            "pid=%d waited_seconds=%u timeout_seconds=%u checkpoint=%s checkpoint_status=%d checkpoint_hold_seconds=%u bucket=%s matched_needle=%s report_present=%s",
             child_pid,
             watch_result.waited_seconds,
             watchdog_timeout,
             timeout_classification.checkpoint_name,
+            timeout_checkpoint_status,
+            SHADOW_HELLO_INIT_TIMEOUT_CLASSIFIER_HOLD_SECONDS,
             timeout_classification.bucket_name,
             timeout_classification.matched_needle,
             bool_word(timeout_classification.report_present)
         );
         log_boot(
             "<4>",
-            "payload %s timed out after %u second(s); checkpoint=%s bucket=%s matched_needle=%s",
+            "payload %s timed out after %u second(s); checkpoint=%s checkpoint_status=%d checkpoint_hold_seconds=%u bucket=%s matched_needle=%s",
             SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
             watchdog_timeout,
             timeout_classification.checkpoint_name,
+            timeout_checkpoint_status,
+            SHADOW_HELLO_INIT_TIMEOUT_CLASSIFIER_HOLD_SECONDS,
             timeout_classification.bucket_name,
             timeout_classification.matched_needle
         );
