@@ -162,6 +162,7 @@
           "scripts/pixel/pixel_build_hello_init.sh"
           "scripts/pixel/pixel_boot_build_hello_init.sh"
           "scripts/pixel/pixel_hello_init.c"
+          "rust/init-wrapper"
         ]
       );
       shadowPixelBootOrangeInitSmokeSrc = repoSourceFromPrefixes (
@@ -174,6 +175,7 @@
           "scripts/pixel/pixel_build_orange_init.sh"
           "scripts/pixel/pixel_boot_build_orange_init.sh"
           "scripts/pixel/pixel_hello_init.c"
+          "rust/init-wrapper"
           "rust/drm-rect/Cargo.toml"
           "rust/drm-rect/Cargo.lock"
           "rust/drm-rect/src/lib.rs"
@@ -658,6 +660,58 @@
             cp hello-init $out/bin/hello-init
             runHook postInstall
           '';
+        };
+      mkHelloInitRustFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "hello-init-rust";
+          version = "0.1.0";
+          src = ./rust/init-wrapper;
+          cargoLock.lockFile = ./rust/init-wrapper/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
+          cargoBuildFlags = [ "--bin" "hello-init" ];
+          cargoInstallFlags = [ "--bin" "hello-init" ];
+        };
+      mkHelloInitRustProbeFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "hello-init-rust-probe";
+          version = "0.1.0";
+          src = ./rust/init-wrapper;
+          cargoLock.lockFile = ./rust/init-wrapper/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
+          cargoBuildFlags = [ "--bin" "hello-init-probe" ];
+          cargoInstallFlags = [ "--bin" "hello-init-probe" ];
+        };
+      mkHelloInitRustNoStdProbeFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "hello-init-rust-nostd-probe";
+          version = "0.1.0";
+          src = ./rust/init-wrapper;
+          cargoLock.lockFile = ./rust/init-wrapper/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
+          cargoBuildFlags = [ "--bin" "hello-init-nostd-probe" ];
+          cargoInstallFlags = [ "--bin" "hello-init-nostd-probe" ];
+        };
+      mkHelloInitRustShimFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "hello-init-rust-shim";
+          version = "0.1.0";
+          src = ./rust/init-wrapper;
+          cargoLock.lockFile = ./rust/init-wrapper/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
+          cargoBuildFlags = [ "--bin" "hello-init-shim" ];
+          cargoInstallFlags = [ "--bin" "hello-init-shim" ];
         };
       mkShadowSessionFor = cross:
         cross.rustPlatform.buildRustPackage {
@@ -2204,6 +2258,13 @@
               packageSuffix = "system-init";
             };
           hello-init-device = mkHelloInitFor pkgs.pkgsCross.aarch64-multiplatform-musl;
+          hello-init-rust-device = mkHelloInitRustFor pkgs.pkgsCross.aarch64-multiplatform-musl;
+          hello-init-rust-probe-device =
+            mkHelloInitRustProbeFor pkgs.pkgsCross.aarch64-multiplatform-musl;
+          hello-init-rust-nostd-probe-device =
+            mkHelloInitRustNoStdProbeFor pkgs.pkgsCross.aarch64-multiplatform-musl;
+          hello-init-rust-shim-device =
+            mkHelloInitRustShimFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           shadow-session = mkShadowSession pkgs;
           shadow-session-device = mkShadowSessionFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           default = mkShadowSession pkgs;

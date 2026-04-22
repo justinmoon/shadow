@@ -7,3 +7,6 @@ edition = "2021"
 libc = "0.2"
 
 [workspace]
+
+[profile.release]
+panic = "abort"
