@@ -112,6 +112,12 @@ speculating about a huge widget catalog up front.
   - the oversized `shadow_sdk::services::nostr::timeline` module is now split
     internally into cache, command, and test files so the shared SDK surface
     can keep growing without collapsing back into one giant source file
+  - the oversized Rust timeline app file is now split by route under
+    `ui/apps/shadow-rust-timeline/src/screens/`, so Home/Onboarding/Account/
+    Explore/Note/Profile rendering stopped accreting inside one `main.rs`
+  - the first semantic route-automation layer is now in for the Rust timeline:
+    account, explore, timeline-reset, note-open, and note-profile-open all go
+    through app-owned automation actions instead of coordinate taps
 - That is not the end state. The big remaining ergonomics problem is still the
   app-local shape of task/effect wiring:
   - per-app `Pending*` job structs still exist for UI-specific pending state
@@ -139,6 +145,9 @@ speculating about a huge widget catalog up front.
   harnesses instead of per-smoke relay bring-up scripts.
 - VM automation for serious Rust apps should keep moving toward semantic
   app-owned hooks, not brittle fixed tap coordinates.
+- The Rust timeline VM smoke now exercises more of that direction directly:
+  account, explore, timeline reset, note open, note profile, and reply publish
+  all use app-owned automation hooks.
 - Pixel remains TypeScript-first for now. Mixed-model metadata is valid, but
   native Rust packaging/staging on Pixel is still future work.
 

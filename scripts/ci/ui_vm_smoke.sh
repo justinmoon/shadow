@@ -1083,11 +1083,53 @@ wait_for_log_marker \
   "shadow-rust-timeline: lifecycle_state=foreground" \
   "rust-timeline lifecycle foreground again"
 
+echo "vm-smoke: open rust-timeline account"
+run_app_platform_request_checked rust-timeline automation open_account >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_open_account_success" \
+  "rust-timeline account route open" \
+  "shadow-rust-timeline: automation_open_account_failed"
+
+echo "vm-smoke: open rust-timeline explore"
+run_app_platform_request_checked rust-timeline automation open_explore >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_open_explore_success" \
+  "rust-timeline explore route open" \
+  "shadow-rust-timeline: automation_open_explore_failed"
+
+echo "vm-smoke: return rust-timeline to timeline route"
+run_app_platform_request_checked rust-timeline automation open_timeline >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_open_timeline_success" \
+  "rust-timeline timeline route open" \
+  "shadow-rust-timeline: automation_open_timeline_failed"
+
 echo "vm-smoke: open rust-timeline seeded note"
 run_app_platform_request_checked rust-timeline automation open_first_visible_note >/dev/null
 wait_for_log_marker \
   "shadow-rust-timeline: automation_open_first_visible_note_success" \
   "rust-timeline seeded note open" \
+  "shadow-rust-timeline: automation_open_first_visible_note_failed"
+
+echo "vm-smoke: open rust-timeline note profile"
+run_app_platform_request_checked rust-timeline automation open_note_profile >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_open_note_profile_success" \
+  "rust-timeline note profile open" \
+  "shadow-rust-timeline: automation_open_note_profile_failed"
+
+echo "vm-smoke: return rust-timeline to timeline before publish"
+run_app_platform_request_checked rust-timeline automation open_timeline >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_open_timeline_success" \
+  "rust-timeline timeline route reset before publish" \
+  "shadow-rust-timeline: automation_open_timeline_failed"
+
+echo "vm-smoke: reopen rust-timeline seeded note after profile"
+run_app_platform_request_checked rust-timeline automation open_first_visible_note >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_open_first_visible_note_success" \
+  "rust-timeline seeded note reopen after profile" \
   "shadow-rust-timeline: automation_open_first_visible_note_failed"
 
 echo "vm-smoke: rust-timeline publish with allow_always"

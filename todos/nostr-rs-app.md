@@ -128,6 +128,12 @@ internal foundation and keep the public boundary Shadow-owned.
     `shadow_sdk::services::nostr::timeline`, and the app keeps route-local
     caches hydrated from that SDK surface instead of rebuilding Nostr read
     state inline during render
+  - the app render layer is now split by route under `src/screens/` instead of
+    keeping every screen in one `main.rs`
+  - route automation is broader and more semantic now:
+    `open_account`, `open_explore`, `open_timeline`, `open_first_visible_note`,
+    `open_note_profile`, and reply compose/publish all flow through app-owned
+    automation actions
 - That still is not the end state. The timeline app still owns:
   - some `Pending*` structs for UI-specific pending-state concerns
   - route prep that still owns cache invalidation and route-local hydration
@@ -149,3 +155,6 @@ internal foundation and keep the public boundary Shadow-owned.
 - The local relay-backed test story is getting better, but it should keep
   converging toward one shared test harness instead of each smoke owning its own
   relay setup logic.
+- The VM smoke now covers more real route behavior in the Rust app before the
+  signer/publish path, so refactors to Account/Explore/Profile route wiring are
+  less likely to drift silently.

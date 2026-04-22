@@ -1,10 +1,13 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::env;
 use std::future;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+mod screens;
 mod tasks;
 
+use screens::{
+    account_screen, explore_screen, note_screen, onboarding_screen, profile_screen, timeline_screen,
+};
 use shadow_sdk::{
     app::{
         current_lifecycle_state, spawn_platform_request_listener, AppWindowDefaults,
@@ -15,19 +18,12 @@ use shadow_sdk::{
         timeline::{
             load_explore_cache_state, load_home_cache_state_for_account,
             load_home_feed_scope_for_account, load_note_cache_state, load_profile_cache_state,
-            NostrExploreCacheState, NostrExploreProfileEntry, NostrHomeFeedScope,
-            NostrHomeFeedSource, NostrNoteCacheState, NostrProfileCacheState,
-            NostrProfileSummary,
+            NostrExploreCacheState, NostrHomeFeedScope, NostrHomeFeedSource, NostrNoteCacheState,
+            NostrProfileCacheState, NostrProfileSummary,
         },
         NostrAccountSource, NostrAccountSummary, NostrEvent, NOSTR_SERVICE_SOCKET_ENV,
     },
-    ui::{
-        self, body_text, caption_text, column, eyebrow_text, fork, headline_text, maybe,
-        multiline_editor, panel, primary_button, primary_button_state, prose_text, row,
-        secondary_button, secondary_button_state, selectable_card, status_chip, text_field, tokio,
-        top_bar, top_bar_with_back, with_sheet, worker_raw, ActionButtonState, AsUnit, FlexExt,
-        MainAxisAlignment, MessageProxy, Tone, UiContext, WidgetView,
-    },
+    ui::{self, fork, tokio, worker_raw, MessageProxy, Tone, UiContext, WidgetView},
 };
 use tasks::{decorate_with_tasks, RefreshSource, TimelineTasks};
 
@@ -139,7 +135,11 @@ enum Route {
 #[derive(Debug)]
 enum PlatformMessage {
     Lifecycle(LifecycleState),
+    OpenAccount,
+    OpenExplore,
+    OpenTimeline,
     OpenFirstVisibleNote,
+    OpenNoteProfile,
     OpenReply,
     PublishReply,
     SetReplyContent(String),
@@ -448,11 +448,61 @@ impl TimelineApp {
         }
     }
 
+    fn platform_open_account(&mut self) {
+        self.open_account();
+        if matches!(self.current_route(), Route::Account) {
+            eprintln!("{APP_LOG_PREFIX}: automation_open_account_success");
+        } else {
+            eprintln!("{APP_LOG_PREFIX}: automation_open_account_failed");
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("No active account is available."),
+            };
+        }
+    }
+
+    fn platform_open_explore(&mut self) {
+        self.open_explore();
+        if matches!(self.current_route(), Route::Explore) {
+            eprintln!("{APP_LOG_PREFIX}: automation_open_explore_success");
+        } else {
+            eprintln!("{APP_LOG_PREFIX}: automation_open_explore_failed");
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("Explore needs an active account."),
+            };
+        }
+    }
+
+    fn platform_open_timeline(&mut self) {
+        self.reply_draft = None;
+        if self.account.is_some() {
+            self.route_stack = vec![Route::Timeline];
+            eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_success");
+        } else {
+            eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_failed");
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("No active account is available."),
+            };
+        }
+    }
+
     fn first_visible_note_id_for_route(&self) -> Option<String> {
         match self.current_route() {
             Route::Timeline => self.visible_notes().into_iter().next().map(|note| note.id),
-            Route::Explore => self.explore_state().notes.into_iter().next().map(|note| note.id),
-            Route::Profile { pubkey } => self.profile_state(&pubkey).notes.into_iter().next().map(|note| note.id),
+            Route::Explore => self
+                .explore_state()
+                .notes
+                .into_iter()
+                .next()
+                .map(|note| note.id),
+            Route::Profile { pubkey } => self
+                .profile_state(&pubkey)
+                .notes
+                .into_iter()
+                .next()
+                .map(|note| note.id),
             Route::Note { id } => Some(id),
             Route::Account | Route::Onboarding => None,
         }
@@ -469,6 +519,28 @@ impl TimelineApp {
         };
         eprintln!("{APP_LOG_PREFIX}: automation_open_first_visible_note_success note_id={note_id}");
         self.push_route(Route::Note { id: note_id });
+    }
+
+    fn platform_open_note_profile(&mut self) {
+        let Route::Note { id } = self.current_route() else {
+            eprintln!("{APP_LOG_PREFIX}: automation_open_note_profile_failed");
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("Open a note before opening its profile."),
+            };
+            return;
+        };
+        let Some(note) = self.note_state(&id).note else {
+            eprintln!("{APP_LOG_PREFIX}: automation_open_note_profile_failed");
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("No cached note is available for this route."),
+            };
+            return;
+        };
+        let pubkey = note.pubkey;
+        eprintln!("{APP_LOG_PREFIX}: automation_open_note_profile_success pubkey={pubkey}");
+        self.push_route(Route::Profile { pubkey });
     }
 
     fn platform_set_reply_content(&mut self, value: String) {
@@ -558,11 +630,14 @@ impl TimelineApp {
     }
 
     fn note_state(&self, note_id: &str) -> NostrNoteCacheState {
-        self.note_caches.get(note_id).cloned().unwrap_or_else(|| NostrNoteCacheState {
-            note: self.cached_note_by_id(note_id),
-            profile: NostrProfileSummary::default(),
-            thread: shadow_sdk::services::nostr::timeline::NostrThreadContext::default(),
-        })
+        self.note_caches
+            .get(note_id)
+            .cloned()
+            .unwrap_or_else(|| NostrNoteCacheState {
+                note: self.cached_note_by_id(note_id),
+                profile: NostrProfileSummary::default(),
+                thread: shadow_sdk::services::nostr::timeline::NostrThreadContext::default(),
+            })
     }
 
     fn reply_draft_for(&self, note_id: &str) -> Option<ReplyDraft> {
@@ -696,7 +771,11 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
             |_state: &mut TimelineApp, _sender: tokio::sync::mpsc::UnboundedSender<()>| {},
             |app: &mut TimelineApp, message: PlatformMessage| match message {
                 PlatformMessage::Lifecycle(state) => log_lifecycle_state(state.as_str()),
+                PlatformMessage::OpenAccount => app.platform_open_account(),
+                PlatformMessage::OpenExplore => app.platform_open_explore(),
+                PlatformMessage::OpenTimeline => app.platform_open_timeline(),
                 PlatformMessage::OpenFirstVisibleNote => app.platform_open_first_visible_note(),
+                PlatformMessage::OpenNoteProfile => app.platform_open_note_profile(),
                 PlatformMessage::OpenReply => app.platform_open_reply(),
                 PlatformMessage::PublishReply => app.begin_reply_publish(),
                 PlatformMessage::SetReplyContent(value) => app.platform_set_reply_content(value),
@@ -705,984 +784,6 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
                 }
             },
         ),
-    )
-}
-
-fn timeline_screen(
-    ui: UiContext,
-    account: Option<ActiveAccount>,
-    feed_scope: FeedScope,
-    status: TimelineStatus,
-    notes: Vec<NostrEvent>,
-    filter_text: String,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    let note_count = notes.len();
-
-    column((
-        top_bar(
-            theme,
-            "Shadow Nostr",
-            "Timeline",
-            Some(feed_scope.detail_text()),
-        ),
-        controls_section(
-            ui,
-            account,
-            &feed_scope,
-            &status,
-            note_count,
-            filter_text,
-        ),
-        feed_section(ui, "Feed", home_feed_empty_message(&feed_scope), notes),
-    ))
-    .gap(12.0.px())
-}
-
-fn controls_section(
-    ui: UiContext,
-    account: Option<ActiveAccount>,
-    feed_scope: &FeedScope,
-    status: &TimelineStatus,
-    note_count: usize,
-    filter_text: String,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    panel(
-        theme,
-        column((
-            row((
-                text_field(
-                    filter_text,
-                    "Filter notes, authors, ids",
-                    theme,
-                    |app: &mut TimelineApp, value| {
-                        app.filter_text = value;
-                    },
-                )
-                .flex(1.0),
-                secondary_button("Clear", theme, |app: &mut TimelineApp| {
-                    app.filter_text.clear();
-                }),
-            ))
-            .gap(10.0.px())
-            .main_axis_alignment(MainAxisAlignment::Start),
-            row((
-                primary_button("Refresh", theme, |app: &mut TimelineApp| {
-                    app.begin_refresh(RefreshSource::Manual);
-                }),
-                maybe(
-                    account.as_ref().map(|_| {
-                        secondary_button("Account", theme, |app: &mut TimelineApp| {
-                            app.open_account();
-                        })
-                    }),
-                    column(()),
-                ),
-                maybe(
-                    account.as_ref().map(|_| {
-                        secondary_button("Explore", theme, |app: &mut TimelineApp| {
-                            app.open_explore();
-                        })
-                    }),
-                    column(()),
-                ),
-            ))
-            .gap(10.0.px())
-            .main_axis_alignment(MainAxisAlignment::Start),
-            row((
-                status_chip(feed_scope.chip_label(), Tone::Neutral, theme),
-                status_chip(status.message.clone(), status.tone, theme),
-                caption_text(
-                    format!("{note_count} note{} visible", plural_suffix(note_count)),
-                    theme,
-                ),
-            ))
-            .gap(10.0.px()),
-        ))
-        .gap(12.0.px()),
-    )
-}
-
-fn onboarding_screen(
-    ui: UiContext,
-    nsec_input: String,
-    status: TimelineStatus,
-    action_pending: bool,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    column((
-        top_bar(
-            theme,
-            "Shadow Nostr",
-            "Set up account",
-            Some(String::from("Import an nsec or create a new key.")),
-        ),
-        panel(
-            theme,
-            column((
-                eyebrow_text("First run", theme),
-                body_text(
-                    "Shadow needs one active Nostr account before it can sync a real timeline.",
-                    theme,
-                ),
-                text_field(
-                    nsec_input,
-                    "Paste nsec to import",
-                    theme,
-                    |app: &mut TimelineApp, value| {
-                        app.nsec_input = value;
-                    },
-                ),
-                column((
-                    primary_button("Import nsec", theme, |app: &mut TimelineApp| {
-                        app.begin_account_import();
-                    }),
-                    secondary_button("Generate new", theme, |app: &mut TimelineApp| {
-                        app.begin_account_generate();
-                    }),
-                ))
-                .gap(10.0.px())
-                .main_axis_alignment(MainAxisAlignment::Start),
-                column((
-                    status_chip(status.message, status.tone, theme),
-                    caption_text(
-                        if action_pending {
-                            "Waiting for the shared Nostr service..."
-                        } else {
-                            "Stored in the shared Nostr service once created."
-                        },
-                        theme,
-                    ),
-                ))
-                .gap(8.0.px()),
-            ))
-            .gap(12.0.px()),
-        ),
-    ))
-    .gap(12.0.px())
-}
-
-fn account_screen(
-    ui: UiContext,
-    account: Option<ActiveAccount>,
-    feed_scope: FeedScope,
-    follow_input: String,
-    status: TimelineStatus,
-    clipboard_pending: bool,
-    follow_pending: bool,
-    socket_ready: bool,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    match account {
-        Some(account) => column((
-            top_bar_with_back(
-                theme,
-                "Shadow Nostr",
-                "Account",
-                Some(String::from("Active account for this device.")),
-                TimelineApp::pop_route,
-            ),
-            panel(
-                theme,
-                column((
-                    eyebrow_text("Identity", theme),
-                    headline_text("Active account", theme),
-                    status_chip(account.source.label(), Tone::Neutral, theme),
-                    caption_text("npub", theme),
-                    prose_text(account.npub.clone(), 15.0, theme),
-                    secondary_button(
-                        if clipboard_pending {
-                            "Copying npub..."
-                        } else {
-                            "Copy npub"
-                        },
-                        theme,
-                        |app: &mut TimelineApp| {
-                            app.begin_copy_account_npub();
-                        },
-                    ),
-                    follow_manager(
-                        ui,
-                        &account,
-                        &feed_scope,
-                        follow_input,
-                        follow_pending,
-                        socket_ready,
-                    ),
-                    column((
-                        status_chip(feed_scope.chip_label(), Tone::Neutral, theme),
-                        status_chip(status.message, status.tone, theme),
-                        caption_text(feed_scope.detail_text(), theme),
-                        caption_text(
-                            "Use the clipboard to move this device identity into another app.",
-                            theme,
-                        ),
-                        caption_text(
-                            "Replies and follow updates publish through the shared account and OS-owned signer approval.",
-                            theme,
-                        ),
-                    ))
-                    .gap(8.0.px()),
-                ))
-                .gap(10.0.px()),
-            ),
-        ))
-        .gap(12.0.px())
-        .boxed(),
-        None => column((
-            top_bar_with_back(
-                theme,
-                "Shadow Nostr",
-                "Account",
-                Some(String::from("No active account is available.")),
-                TimelineApp::pop_route,
-            ),
-            panel(
-                theme,
-                column((
-                    eyebrow_text("Unavailable", theme),
-                    caption_text(
-                        "Go back and import an nsec or generate an account first.",
-                        theme,
-                    ),
-                ))
-                .gap(6.0.px()),
-            ),
-        ))
-        .gap(12.0.px())
-        .boxed(),
-    }
-}
-
-fn explore_screen(
-    ui: UiContext,
-    account: Option<ActiveAccount>,
-    followed_pubkeys: Vec<String>,
-    status: TimelineStatus,
-    notes: Vec<NostrEvent>,
-    profiles: Vec<NostrExploreProfileEntry>,
-    socket_ready: bool,
-    sync_pending: bool,
-    follow_pending: bool,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    let note_count = notes.len();
-    column((
-        top_bar_with_back(
-            theme,
-            "Shadow Nostr",
-            "Explore",
-            Some(String::from("Real relay notes outside Home.")),
-            TimelineApp::pop_route,
-        ),
-        panel(
-            theme,
-            column((
-                eyebrow_text("Discovery", theme),
-                body_text(
-                    "Explore is where Shadow can show recent relay notes. Following from here updates Home, but Home itself stays follow-only.",
-                    theme,
-                ),
-                row((
-                    primary_button_state(
-                        if sync_pending {
-                            "Fetching..."
-                        } else {
-                            "Fetch relay notes"
-                        },
-                        theme,
-                        if sync_pending || !socket_ready {
-                            ActionButtonState::Disabled
-                        } else {
-                            ActionButtonState::Enabled
-                        },
-                        |app: &mut TimelineApp| {
-                            app.begin_explore_sync();
-                        },
-                    ),
-                    status_chip(
-                        format!("{note_count} note{}", plural_suffix(note_count)),
-                        Tone::Neutral,
-                        theme,
-                    ),
-                    status_chip(status.message, status.tone, theme),
-                ))
-                .gap(10.0.px())
-                .main_axis_alignment(MainAxisAlignment::Start),
-                caption_text(
-                    if socket_ready {
-                        "Refresh pulls recent notes from the configured relays into the shared cache."
-                    } else {
-                        "The shared relay engine is unavailable in this session, so Explore can only show cached notes."
-                    },
-                    theme,
-                ),
-            ))
-            .gap(10.0.px()),
-        ),
-        explore_profiles_section(
-            ui,
-            account,
-            followed_pubkeys,
-            profiles,
-            follow_pending,
-            socket_ready,
-        ),
-        feed_section(
-            ui,
-            "Recent relay notes",
-            "No cached relay notes yet. Fetch relay notes to discover profiles to follow.",
-            notes,
-        ),
-    ))
-    .gap(12.0.px())
-}
-
-fn explore_profiles_section(
-    ui: UiContext,
-    account: Option<ActiveAccount>,
-    followed_pubkeys: Vec<String>,
-    profiles: Vec<NostrExploreProfileEntry>,
-    follow_pending: bool,
-    socket_ready: bool,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    let followed = followed_pubkeys.into_iter().collect::<BTreeSet<_>>();
-    let body = maybe(
-        (!profiles.is_empty()).then_some(
-            column(
-                profiles
-                    .into_iter()
-                    .map(|profile| {
-                        explore_profile_card(
-                            ui,
-                            account.clone(),
-                            followed.contains(&profile.pubkey),
-                            profile,
-                            follow_pending,
-                            socket_ready,
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            )
-            .gap(10.0.px()),
-        ),
-        panel(
-            theme,
-            column((
-                eyebrow_text("Profiles", theme),
-                caption_text(
-                    "Fetch relay notes to discover accounts you can follow from Explore.",
-                    theme,
-                ),
-            ))
-            .gap(6.0.px()),
-        ),
-    );
-
-    column((eyebrow_text("Profiles", theme), body)).gap(8.0.px())
-}
-
-fn explore_profile_card(
-    ui: UiContext,
-    account: Option<ActiveAccount>,
-    is_following: bool,
-    profile: NostrExploreProfileEntry,
-    follow_pending: bool,
-    socket_ready: bool,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    let open_pubkey = profile.pubkey.clone();
-    let follow_pubkey = profile.pubkey.clone();
-    let is_active_account = account
-        .as_ref()
-        .is_some_and(|account| account.npub == profile.pubkey);
-    let follow_control = if is_active_account {
-        status_chip("active account", Tone::Neutral, theme).boxed()
-    } else if !socket_ready {
-        status_chip("relay engine unavailable", Tone::Neutral, theme).boxed()
-    } else if is_following {
-        secondary_button_state(
-            "Following",
-            theme,
-            ActionButtonState::Disabled,
-            |_app: &mut TimelineApp| {},
-        )
-        .boxed()
-    } else {
-        primary_button_state(
-            if follow_pending {
-                "Updating..."
-            } else {
-                "Follow"
-            },
-            theme,
-            if follow_pending {
-                ActionButtonState::Disabled
-            } else {
-                ActionButtonState::Enabled
-            },
-            move |app: &mut TimelineApp| {
-                app.begin_follow_add_for(follow_pubkey.clone());
-            },
-        )
-        .boxed()
-    };
-
-    panel(
-        theme,
-        column((
-            row((
-                column((
-                    headline_text(profile_title(&profile.profile, &profile.pubkey), theme),
-                    caption_text(short_id(&profile.pubkey), theme),
-                    profile
-                        .profile
-                        .nip05
-                        .clone()
-                        .map(|nip05| caption_text(nip05, theme)),
-                ))
-                .gap(4.0.px())
-                .flex(1.0),
-                status_chip(relative_time(profile.updated_at), Tone::Neutral, theme),
-            ))
-            .gap(10.0.px())
-            .main_axis_alignment(MainAxisAlignment::Start),
-            caption_text(
-                format!(
-                    "{} recent note{} cached from this author.",
-                    profile.note_count,
-                    plural_suffix(profile.note_count)
-                ),
-                theme,
-            ),
-            body_text(profile.latest_note_preview, theme),
-            row((
-                secondary_button("Open profile", theme, move |app: &mut TimelineApp| {
-                    app.open_profile(open_pubkey.clone());
-                }),
-                follow_control,
-            ))
-            .gap(10.0.px())
-            .main_axis_alignment(MainAxisAlignment::Start),
-        ))
-        .gap(10.0.px()),
-    )
-}
-
-fn follow_manager(
-    ui: UiContext,
-    account: &ActiveAccount,
-    feed_scope: &FeedScope,
-    follow_input: String,
-    follow_pending: bool,
-    socket_ready: bool,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    let follows = feed_scope.authors.clone().unwrap_or_default();
-    panel(
-        theme,
-        column((
-            eyebrow_text("Home feed", theme),
-            headline_text("Follow accounts", theme),
-            caption_text(
-                "Paste an npub or use Explore to add accounts to Home. This publishes a real contact-list event for the shared account.",
-                theme,
-            ),
-            row((
-                text_field(
-                    follow_input,
-                    "Paste npub to follow",
-                    theme,
-                    |app: &mut TimelineApp, value| {
-                        app.follow_input = value;
-                    },
-                )
-                .flex(1.0),
-                primary_button_state(
-                    if follow_pending {
-                        "Updating..."
-                    } else {
-                        "Follow"
-                    },
-                    theme,
-                    if follow_pending || !socket_ready {
-                        ActionButtonState::Disabled
-                    } else {
-                        ActionButtonState::Enabled
-                    },
-                    |app: &mut TimelineApp| {
-                        app.begin_follow_add();
-                    },
-                ),
-            ))
-            .gap(10.0.px())
-            .main_axis_alignment(MainAxisAlignment::Start),
-            maybe(
-                (!follows.is_empty()).then_some(
-                    column(
-                        follows
-                            .into_iter()
-                            .map(|npub| follow_row(ui, account, npub, follow_pending, socket_ready))
-                            .collect::<Vec<_>>(),
-                    )
-                    .gap(8.0.px()),
-                ),
-                caption_text(
-                    if socket_ready {
-                        "Home is empty until this account follows someone."
-                    } else {
-                        "Home is empty. Follow updates need the shared relay engine."
-                    },
-                    theme,
-                ),
-            ),
-        ))
-        .gap(10.0.px()),
-    )
-}
-
-fn follow_row(
-    ui: UiContext,
-    account: &ActiveAccount,
-    npub: String,
-    follow_pending: bool,
-    socket_ready: bool,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    let open_npub = npub.clone();
-    let remove_npub = npub.clone();
-    panel(
-        theme,
-        row((
-            column((
-                caption_text(short_id(&npub), theme),
-                maybe(
-                    (npub == account.npub).then_some(caption_text("active account", theme)),
-                    caption_text("followed account", theme),
-                ),
-            ))
-            .gap(4.0.px())
-            .flex(1.0),
-            secondary_button("Open", theme, move |app: &mut TimelineApp| {
-                app.open_profile(open_npub.clone());
-            }),
-            secondary_button_state(
-                if follow_pending {
-                    "Updating..."
-                } else {
-                    "Unfollow"
-                },
-                theme,
-                if follow_pending || !socket_ready {
-                    ActionButtonState::Disabled
-                } else {
-                    ActionButtonState::Enabled
-                },
-                move |app: &mut TimelineApp| {
-                    app.begin_follow_remove(remove_npub.clone());
-                },
-            ),
-        ))
-        .gap(10.0.px())
-        .main_axis_alignment(MainAxisAlignment::Start),
-    )
-}
-
-fn note_screen(
-    ui: UiContext,
-    note: Option<NostrEvent>,
-    profile: NostrProfileSummary,
-    thread: shadow_sdk::services::nostr::timeline::NostrThreadContext,
-    reply_draft: Option<ReplyDraft>,
-    status: TimelineStatus,
-    publish_pending: bool,
-    thread_sync_available: bool,
-    thread_sync_pending: bool,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    let body = match note {
-        Some(note) => {
-            let note_id = note.id.clone();
-            let pubkey = note.pubkey.clone();
-            let reply_note_id = note.id.clone();
-            let parent = thread.parent.clone();
-            let replies = thread.replies.clone();
-            let composer = reply_draft
-                .as_ref()
-                .map(|draft| reply_sheet(ui, &note, draft.clone(), publish_pending));
-            with_sheet(
-                column((
-                top_bar_with_back(
-                    theme,
-                    "Shadow Nostr",
-                    "Thread",
-                    Some(format!(
-                        "{}  •  {}",
-                        profile_title(&profile, &note.pubkey),
-                        relative_time(note.created_at)
-                    )),
-                    TimelineApp::pop_route,
-                ),
-                panel(
-                    theme,
-                    column((
-                        eyebrow_text("Status", theme),
-                        caption_text(status.message.clone(), theme),
-                        maybe(
-                            thread_sync_available.then_some(if thread_sync_pending {
-                                caption_text(
-                                    "Talking to relays for missing thread context.",
-                                    theme,
-                                )
-                                .boxed()
-                            } else {
-                                primary_button(
-                                    "Fetch thread",
-                                    theme,
-                                    move |app: &mut TimelineApp| {
-                                        app.begin_thread_sync(note_id.clone());
-                                    },
-                                )
-                                .boxed()
-                            }),
-                            caption_text(
-                                "Thread fetch is available when the shared Nostr engine is running.",
-                                theme,
-                            ),
-                        ),
-                    ))
-                    .gap(8.0.px()),
-                ),
-                maybe(
-                    parent.map(|parent| {
-                        let parent_id = parent.id.clone();
-                        panel(
-                            theme,
-                            column((
-                                eyebrow_text("Replying to", theme),
-                                caption_text(
-                                    format!(
-                                        "{}  •  {}",
-                                        short_id(&parent.pubkey),
-                                        relative_time(parent.created_at)
-                                    ),
-                                    theme,
-                                ),
-                                prose_text(parent.content, 15.0, theme),
-                                secondary_button(
-                                    "Open parent",
-                                    theme,
-                                    move |app: &mut TimelineApp| {
-                                        app.open_note(parent_id.clone());
-                                    },
-                                ),
-                            ))
-                            .gap(8.0.px()),
-                        )
-                    }),
-                    panel(
-                        theme,
-                        column((
-                            eyebrow_text("Reply chain", theme),
-                            caption_text("No cached parent note for this entry yet.", theme),
-                        ))
-                        .gap(6.0.px()),
-                    ),
-                ),
-                panel(
-                    theme,
-                    column((
-                        eyebrow_text("Selected note", theme),
-                        headline_text(profile_title(&profile, &note.pubkey), theme),
-                        caption_text(short_id(&note.pubkey), theme),
-                        prose_text(note.content, 17.0, theme),
-                        caption_text(format!("event {}", short_id(&note.id)), theme),
-                        row((
-                            status_chip(relative_time(note.created_at), Tone::Neutral, theme),
-                            note.root_event_id.clone().map(|root_id| {
-                                caption_text(format!("root {}", short_id(&root_id)), theme)
-                            }),
-                        ))
-                        .gap(8.0.px()),
-                        secondary_button_state(
-                            if reply_draft.is_some() {
-                                "Reply draft open"
-                            } else {
-                                "Reply"
-                            },
-                            theme,
-                            if reply_draft.is_some() {
-                                ActionButtonState::Disabled
-                            } else {
-                                ActionButtonState::Enabled
-                            },
-                            move |app: &mut TimelineApp| {
-                                app.open_reply_composer(reply_note_id.clone());
-                            },
-                        ),
-                        secondary_button("Open profile", theme, move |app: &mut TimelineApp| {
-                            app.open_profile(pubkey.clone());
-                        }),
-                    ))
-                    .gap(10.0.px()),
-                ),
-                feed_section(ui, "Replies", "No cached direct replies yet.", replies),
-                ))
-                .gap(12.0.px()),
-                theme,
-                composer.map(|view| view.boxed()),
-            )
-        }
-        None => column((
-            top_bar_with_back(
-                theme,
-                "Shadow Nostr",
-                "Note",
-                Some(String::from("This note is no longer in the shared cache.")),
-                TimelineApp::pop_route,
-            ),
-            panel(
-                theme,
-                column((
-                    eyebrow_text("Unavailable", theme),
-                    caption_text(
-                        "Refresh the timeline or go back to pick another note.",
-                        theme,
-                    ),
-                ))
-                .gap(6.0.px()),
-            ),
-        ))
-        .gap(12.0.px())
-        .boxed(),
-    };
-
-    body
-}
-
-fn reply_sheet(
-    ui: UiContext,
-    note: &NostrEvent,
-    draft: ReplyDraft,
-    publish_pending: bool,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    let note_id = draft.note_id.clone();
-    let note_preview = note.content.lines().next().unwrap_or("").trim();
-    let note_preview = if note_preview.is_empty() {
-        String::from("Write the first reply to this note.")
-    } else {
-        note_preview.to_owned()
-    };
-    let can_publish = !publish_pending && !draft.content.trim().is_empty();
-
-    column((
-        eyebrow_text("Reply draft", theme),
-        headline_text("Compose reply", theme),
-        caption_text(
-            format!(
-                "Replying to {}  •  {}",
-                short_id(&note.pubkey),
-                short_id(&note_id)
-            ),
-            theme,
-        ),
-        body_text(note_preview, theme),
-        multiline_editor(
-            draft.content,
-            "Write a reply for the shared account and relay engine.",
-            148.0,
-            theme,
-            |app: &mut TimelineApp, value| {
-                app.set_reply_draft_content(value);
-            },
-        ),
-        row((
-            secondary_button("Close", theme, |app: &mut TimelineApp| {
-                app.close_reply_composer();
-            }),
-            primary_button_state(
-                if publish_pending {
-                    "Posting..."
-                } else {
-                    "Post reply"
-                },
-                theme,
-                if can_publish {
-                    ActionButtonState::Enabled
-                } else {
-                    ActionButtonState::Disabled
-                },
-                |app: &mut TimelineApp| {
-                    app.begin_reply_publish();
-                },
-            ),
-        ))
-        .gap(10.0.px())
-        .main_axis_alignment(MainAxisAlignment::Start),
-        caption_text(
-            "This uses the shared account and the OS-owned signer approval prompt.",
-            theme,
-        ),
-    ))
-    .gap(10.0.px())
-}
-
-fn profile_screen(
-    ui: UiContext,
-    account: Option<ActiveAccount>,
-    pubkey: String,
-    profile: NostrProfileSummary,
-    notes: Vec<NostrEvent>,
-    status: TimelineStatus,
-    is_following: bool,
-    follow_pending: bool,
-    socket_ready: bool,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    let metadata_status = profile_metadata_status(&profile);
-    let note_count = notes.len();
-    let follow_button = account.filter(|account| account.npub != pubkey).map(|_| {
-        if is_following {
-            let unfollow_pubkey = pubkey.clone();
-            secondary_button_state(
-                if follow_pending {
-                    "Updating follows..."
-                } else {
-                    "Unfollow"
-                },
-                theme,
-                if follow_pending || !socket_ready {
-                    ActionButtonState::Disabled
-                } else {
-                    ActionButtonState::Enabled
-                },
-                move |app: &mut TimelineApp| {
-                    app.begin_follow_remove(unfollow_pubkey.clone());
-                },
-            )
-            .boxed()
-        } else {
-            let follow_pubkey = pubkey.clone();
-            primary_button_state(
-                if follow_pending {
-                    "Updating follows..."
-                } else {
-                    "Follow"
-                },
-                theme,
-                if follow_pending || !socket_ready {
-                    ActionButtonState::Disabled
-                } else {
-                    ActionButtonState::Enabled
-                },
-                move |app: &mut TimelineApp| {
-                    app.follow_input = follow_pubkey.clone();
-                    app.begin_follow_add();
-                },
-            )
-            .boxed()
-        }
-    });
-
-    column((
-        top_bar_with_back(
-            theme,
-            "Shadow Nostr",
-            profile_title(&profile, &pubkey),
-            Some(short_id(&pubkey)),
-            TimelineApp::pop_route,
-        ),
-        panel(
-            theme,
-            column((
-                eyebrow_text("Identity", theme),
-                headline_text(profile_title(&profile, &pubkey), theme),
-                caption_text(short_id(&pubkey), theme),
-                profile
-                    .nip05
-                    .clone()
-                    .map(|nip05| caption_text(nip05, theme)),
-                profile.about.clone().map(|about| body_text(about, theme)),
-                row((
-                    status_chip(metadata_status.0, metadata_status.1, theme),
-                    status_chip(status.message, status.tone, theme),
-                    caption_text(
-                        format!("{note_count} note{} cached", plural_suffix(note_count)),
-                        theme,
-                    ),
-                ))
-                .gap(10.0.px()),
-                primary_button("Refresh", theme, |app: &mut TimelineApp| {
-                    app.begin_refresh(RefreshSource::Manual);
-                }),
-                maybe(follow_button, column(())),
-            ))
-            .gap(10.0.px()),
-        ),
-        feed_section(
-            ui,
-            "Recent notes",
-            "This author has no cached kind-1 notes yet.",
-            notes,
-        ),
-    ))
-    .gap(12.0.px())
-}
-
-fn feed_section(
-    ui: UiContext,
-    title: &str,
-    empty_message: &str,
-    notes: Vec<NostrEvent>,
-) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    let title = title.to_owned();
-    let empty_message = empty_message.to_owned();
-    let body = maybe(
-        (!notes.is_empty()).then_some(
-            column(
-                notes
-                    .into_iter()
-                    .map(|note| note_card(ui, note))
-                    .collect::<Vec<_>>(),
-            )
-            .gap(10.0.px()),
-        ),
-        panel(
-            theme,
-            column((
-                eyebrow_text(title.clone(), theme),
-                caption_text(empty_message, theme),
-            ))
-            .gap(6.0.px()),
-        ),
-    );
-
-    column((eyebrow_text(title, theme), body)).gap(8.0.px())
-}
-
-fn note_card(ui: UiContext, note: NostrEvent) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
-    let note_id = note.id.clone();
-
-    selectable_card(
-        theme,
-        false,
-        column((
-            row((
-                caption_text(short_id(&note.pubkey), theme),
-                status_chip(relative_time(note.created_at), Tone::Neutral, theme),
-            ))
-            .gap(8.0.px()),
-            prose_text(note.content, 15.0, theme),
-        ))
-        .gap(8.0.px()),
-        move |app: &mut TimelineApp| {
-            app.open_note(note_id.clone());
-        },
     )
 }
 
@@ -1700,31 +801,6 @@ fn empty_feed_status(feed_scope: &FeedScope) -> TimelineStatus {
             tone: Tone::Danger,
             message: String::from("No active account is available."),
         },
-    }
-}
-
-fn home_feed_empty_message(feed_scope: &FeedScope) -> &'static str {
-    match feed_scope.source {
-        FeedSource::Following { .. } => "No followed-account notes match the current filter or cache state.",
-        FeedSource::NoContacts => {
-            "Home is empty until this account follows someone. Use Explore or Account to add follows."
-        }
-        FeedSource::Unavailable => "No active account is available.",
-    }
-}
-
-fn profile_title(profile: &NostrProfileSummary, pubkey: &str) -> String {
-    profile
-        .display_name
-        .clone()
-        .unwrap_or_else(|| short_id(pubkey))
-}
-
-fn profile_metadata_status(profile: &NostrProfileSummary) -> (&'static str, Tone) {
-    if profile.metadata_event_id.is_some() {
-        ("metadata cached", Tone::Success)
-    } else {
-        ("no metadata yet", Tone::Neutral)
     }
 }
 
@@ -1751,7 +827,11 @@ fn run_platform_listener(proxy: MessageProxy<PlatformMessage>) {
         ),
         shadow_runtime_protocol::AppPlatformRequest::Automation { action, argument } => {
             let message = match (action.as_str(), argument) {
+                ("open_account", None) => Some(PlatformMessage::OpenAccount),
+                ("open_explore", None) => Some(PlatformMessage::OpenExplore),
+                ("open_timeline", None) => Some(PlatformMessage::OpenTimeline),
                 ("open_first_visible_note", None) => Some(PlatformMessage::OpenFirstVisibleNote),
+                ("open_note_profile", None) => Some(PlatformMessage::OpenNoteProfile),
                 ("open_reply", None) => Some(PlatformMessage::OpenReply),
                 ("publish_reply", None) => Some(PlatformMessage::PublishReply),
                 ("publish_reply_content", Some(value)) => {
@@ -1768,9 +848,9 @@ fn run_platform_listener(proxy: MessageProxy<PlatformMessage>) {
                         if handled { 1 } else { 0 }
                     )
                 }
-                None => format!(
-                    "ok\nhandled=0\nreason=invalid-action\nrequest=automation:{action}\n"
-                ),
+                None => {
+                    format!("ok\nhandled=0\nreason=invalid-action\nrequest=automation:{action}\n")
+                }
             }
         }
     }) {
@@ -1818,23 +898,6 @@ fn short_id(value: &str) -> String {
     format!("{}…{}", &value[..8], &value[value.len() - 8..])
 }
 
-fn relative_time(created_at: u64) -> String {
-    let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
-        return created_at.to_string();
-    };
-    let delta = duration.as_secs().saturating_sub(created_at);
-    if delta < 60 {
-        return format!("{delta}s");
-    }
-    if delta < 60 * 60 {
-        return format!("{}m", delta / 60);
-    }
-    if delta < 60 * 60 * 24 {
-        return format!("{}h", delta / (60 * 60));
-    }
-    format!("{}d", delta / (60 * 60 * 24))
-}
-
 fn plural_suffix(count: usize) -> &'static str {
     if count == 1 {
         ""
@@ -1868,8 +931,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        AccountSource, ActiveAccount, FeedScope, FeedSource, Route, TimelineApp, TimelineConfig,
-        TimelineStatus,
+        app_logic, AccountSource, ActiveAccount, FeedScope, FeedSource, Route, TimelineApp,
+        TimelineConfig, TimelineStatus,
     };
     use shadow_sdk::{
         app::{AppSafeAreaInsets, AppWindowMetrics},
@@ -1916,9 +979,27 @@ mod tests {
         }
     }
 
+    fn test_note(id: &str, pubkey: &str, content: &str) -> NostrEvent {
+        NostrEvent {
+            content: content.to_owned(),
+            created_at: 1_700_000_000,
+            id: id.to_owned(),
+            kind: 1,
+            pubkey: pubkey.to_owned(),
+            identifier: None,
+            root_event_id: None,
+            reply_to_event_id: None,
+            references: Vec::new(),
+            public_keys: Vec::new(),
+        }
+    }
+
     #[test]
     fn missing_contact_list_keeps_home_empty() {
-        assert_eq!(FeedScope::from(NostrHomeFeedScope::no_contacts()), FeedScope::no_contacts());
+        assert_eq!(
+            FeedScope::from(NostrHomeFeedScope::no_contacts()),
+            FeedScope::no_contacts()
+        );
     }
 
     #[test]
@@ -1950,18 +1031,7 @@ mod tests {
     #[test]
     fn profile_state_falls_back_to_cached_home_notes_without_route_cache() {
         let mut app = test_app();
-        app.notes.push(NostrEvent {
-            content: String::from("note"),
-            created_at: 1_700_000_000,
-            id: String::from("note-1"),
-            kind: 1,
-            pubkey: String::from("npub-alice"),
-            identifier: None,
-            root_event_id: None,
-            reply_to_event_id: None,
-            references: Vec::new(),
-            public_keys: Vec::new(),
-        });
+        app.notes.push(test_note("note-1", "npub-alice", "note"));
 
         let profile = app.profile_state("npub-alice");
 
@@ -1973,22 +1043,14 @@ mod tests {
     #[test]
     fn note_state_falls_back_to_cached_note_without_route_cache() {
         let mut app = test_app();
-        app.notes.push(NostrEvent {
-            content: String::from("note"),
-            created_at: 1_700_000_000,
-            id: String::from("note-1"),
-            kind: 1,
-            pubkey: String::from("npub-alice"),
-            identifier: None,
-            root_event_id: None,
-            reply_to_event_id: None,
-            references: Vec::new(),
-            public_keys: Vec::new(),
-        });
+        app.notes.push(test_note("note-1", "npub-alice", "note"));
 
         let note = app.note_state("note-1");
 
-        assert_eq!(note.note.as_ref().map(|event| event.id.as_str()), Some("note-1"));
+        assert_eq!(
+            note.note.as_ref().map(|event| event.id.as_str()),
+            Some("note-1")
+        );
         assert!(note.profile.display_name.is_none());
         assert!(note.thread.parent.is_none());
         assert!(note.thread.replies.is_empty());
@@ -2008,5 +1070,46 @@ mod tests {
         assert!(app.explore_cache.is_none());
         assert!(app.profile_caches.is_empty());
         assert!(app.note_caches.is_empty());
+    }
+
+    #[test]
+    fn platform_route_automation_navigates_across_moved_screens() {
+        let mut app = test_app();
+        app.notes.push(test_note("note-1", "npub-alice", "hello"));
+
+        app.platform_open_first_visible_note();
+        assert_eq!(
+            app.current_route(),
+            Route::Note {
+                id: String::from("note-1")
+            }
+        );
+
+        app.platform_open_note_profile();
+        assert_eq!(
+            app.current_route(),
+            Route::Profile {
+                pubkey: String::from("npub-alice")
+            }
+        );
+
+        app.platform_open_account();
+        assert_eq!(app.current_route(), Route::Account);
+
+        app.platform_open_explore();
+        assert_eq!(app.current_route(), Route::Explore);
+
+        app.platform_open_timeline();
+        assert_eq!(app.current_route(), Route::Timeline);
+    }
+
+    #[test]
+    fn app_logic_builds_onboarding_route_without_account() {
+        let mut app = test_app();
+        app.account = None;
+        app.feed_scope = FeedScope::unavailable();
+        app.route_stack = vec![Route::Onboarding];
+
+        let _ = app_logic(&mut app);
     }
 }
