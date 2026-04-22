@@ -51,6 +51,14 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - [`build/pixel/boot/oneshot/20260422T074257Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T074257Z-09051JEC202061_) proves a `no_std` Rust exact-path probe returns to fastboot/bootloader instead of `kernel_panic`
   - [`build/pixel/boot/oneshot/20260422T074912Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T074912Z-09051JEC202061_) proves a `no_std` Rust PID 1 shim can fork/exec the full Rust `hello-init` child and still return cleanly to fastboot/bootloader
   - that makes `std`-as-PID1 the active Rust blocker, not “Rust at PID1 at all”
+  - Rust bridge proofs on the primary device:
+    - [`build/pixel/boot/oneshot/20260422T075537Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T075537Z-09051JEC202061_) proves `vulkan-offscreen` on the Rust bridge seam with `probe_report_proves_child_success=true`
+    - [`build/pixel/boot/oneshot/20260422T075901Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T075901Z-09051JEC202061_) proves `gpu-render` on the Rust bridge seam with `probe_report_proves_child_success=true`
+    - in both runs the recovered `probe-report.txt` shows `child_completed=true`, `child_timed_out=false`, `child_exit_status=0`
+    - the recovered `observed_probe_stage` is still `orange-gpu-payload:firmware-helper-waiting`, so the surviving stage file is stale relative to the successful child exit; trust `probe_report_proves_child_success` over the stage string for now
+  - Confirmation status on `11151JEC200472` is weaker:
+    - the same Rust-bridge `vulkan-offscreen` image returns cleanly to fastboot/bootloader
+    - but recovery did not recover the metadata files there, so `09051JEC202061` remains the truth device for the Rust bridge seam until the `11151` metadata gap is explained
 
 ## Best Observability
 
@@ -104,11 +112,14 @@ Use the panel as a stage channel, not just “something orange happened.”
    - do not go back to expanding the C seam
 2. Re-prove the helper-backed ladder on that Rust bridge seam.
    - `hello`
-   - `orange-init`
    - `vulkan-offscreen`
    - `gpu-render`
+   - `orange-init`
    - raw Vulkan query/count only if the bridge seam regresses earlier
-3. Keep later work blocked until the Rust seam is green.
+3. Automate the Rust bridge repack path.
+   - current bridge proofs came from repacking already-proven C images, replacing only `/system/bin/init`, adding `/hello-init-child`, and copying the companion `.hello-init.json`
+   - make that a private helper instead of repeating the manual repack/copy loop
+4. Keep later work blocked until the Rust seam is green.
    - no compositor
    - no apps
    - no shell

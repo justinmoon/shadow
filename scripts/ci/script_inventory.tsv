@@ -86,6 +86,7 @@ scripts/pixel/pixel_boot_build_init_symlink_probe.sh	pixel	Private stock-init bo
 scripts/pixel/pixel_boot_build_hello_init.sh	pixel	Private owned-userspace boot image builder that preserves /init and replaces system/bin/init with hello-init plus a tiny ramdisk config.
 scripts/pixel/pixel_boot_build_orange_gpu.sh	pixel	Private owned-userspace boot image builder that keeps hello-init as PID 1 and injects a boot-owned shadow-gpu-smoke bundle under /orange-gpu.
 scripts/pixel/pixel_boot_build_orange_init.sh	pixel	Private owned-userspace boot image builder that keeps hello-init as PID 1 and injects an /orange-init payload into the ramdisk.
+scripts/pixel/pixel_boot_build_rust_bridge.sh	pixel	Private owned-userspace bridge builder that repacks a proven image with the Rust no_std PID1 shim plus a full Rust hello-init child and cloned recovery metadata.
 scripts/pixel/pixel_boot_build_system_init_symlink_probe.sh	pixel	Private stock-init boot image builder that preserves /init and restores system/bin/init as a symlink to init.stock.
 scripts/pixel/pixel_boot_build_system_init_wrapper_probe.sh	pixel	Private stock-init boot image builder that preserves /init and restores system/bin/init as an exact-path static wrapper.
 scripts/pixel/pixel_build_hello_init.sh	pixel	Private static hello-init PID 1 build helper for the owned-userspace boot seam.

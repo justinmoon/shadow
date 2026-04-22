@@ -35,6 +35,7 @@ Related docs:
     - a tiny `no_std` exact-path Rust PID 1 probe returns cleanly to bootloader
     - a `no_std` Rust PID 1 shim that forks/execs the full Rust `hello-init` child also returns cleanly to bootloader on the same stripped lane
     - so the live Rust migration shape is `no_std PID1 shim -> full Rust child`, not `std` directly as PID 1
+    - the Rust bridge seam has now re-proved `vulkan-offscreen` and `gpu-render` on `09051JEC202061` by repacking the already-proven C images, swapping only `/system/bin/init`, adding `/hello-init-child`, and preserving the companion `.hello-init.json`
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
   - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
@@ -285,7 +286,10 @@ Related docs:
   - direct `std` Rust at exact-path `/system/bin/init` is still blocked on `kernel_panic`
   - `no_std` exact-path PID 1 now works well enough to return cleanly to bootloader
   - `no_std` PID 1 shim plus full Rust `hello-init` child also returns cleanly on the stripped `hello` lane
-  - next step is to climb the already-proven helper-backed ladder on that Rust bridge shape instead of forcing `std` directly into PID 1
+  - the Rust bridge seam now has positive `probe_report_proves_child_success=true` proofs for:
+    - `vulkan-offscreen` on `09051JEC202061`
+    - `gpu-render` on `09051JEC202061`
+  - next step is to turn the manual bridge repack into a private helper and then keep climbing from that bridge shape instead of forcing `std` directly into PID 1
 - [x] From that owned userspace, render one orange GPU frame and present it through dma-buf/KMS (`orange-gpu`).
 - [ ] Prove repeated GPU frame submission and synchronization for 2-3 seconds (`orange-gpu-loop`).
 - [ ] Prove one minimal input-driven redraw on the real GPU render/present path (`touch-counter-gpu`).

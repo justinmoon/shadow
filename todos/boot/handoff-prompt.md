@@ -47,7 +47,10 @@ Continue the Pixel 4a boot-owned bring-up from the new Rust cutoff. The C seam h
   - direct `std` Rust as exact-path `/system/bin/init` still returns `kernel_panic`
   - `no_std` Rust exact-path PID 1 returns cleanly to bootloader
   - `no_std` Rust PID 1 shim plus full Rust `hello-init` child also returns cleanly on the stripped `hello` lane
-  - the next question is whether that bridge shape can climb back up the helper-backed GPU ladder without silently regressing
+  - that bridge shape has now also re-proved:
+    - `vulkan-offscreen` on `09051JEC202061`
+    - `gpu-render` on `09051JEC202061`
+  - the next question is whether that bridge shape can be automated and confirmed more broadly without silently regressing
 - The best current proof surface is `probe-report.txt`, not shadow-tag correlation.
 - The current helper-backed one-shot recipe is:
   - `--skip-collect --recover-traces-after --no-wait-boot-completed`
@@ -71,12 +74,17 @@ Do this in order:
 1. Keep the Rust seam on the working bridge shape:
    - `no_std` Rust PID 1 shim
    - full Rust `hello-init` child
-2. Re-prove `gpu-render` on that Rust seam.
-3. If that regresses, fall back down the already-proven helper-backed ladder:
+2. Treat the Rust bridge seam as the new working truth on `09051JEC202061`.
+3. Turn the manual bridge repack into a private helper:
+   - repack an already-proven C image
+   - replace only `/system/bin/init`
+   - add `/hello-init-child`
+   - preserve/copy the companion `.hello-init.json`
+4. If the bridge helper regresses on a new rung, fall back down the already-proven helper-backed ladder:
    - `vulkan-offscreen`
    - `vulkan-device-request-smoke`
    - raw Vulkan query/count
-4. Do not broaden into compositor, apps, shell, or services until the Rust seam is green.
+5. Do not broaden into compositor, apps, shell, or services until the Rust seam is green.
 
 ## Current Device Map
 
