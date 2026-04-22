@@ -28,8 +28,9 @@ Related docs:
 - Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `gpu-kms-bridge` (the same GPU smoke presented through rooted display takeover so render/present can be debugged without boot ownership), then `boot-bundle-exec` (boot-owned dynamic bundle exec with visible prelude/checkpoint/postlude), then `boot-vulkan-instance-smoke` (boot-owned strict Vulkan instance creation plus return), then `boot-raw-vulkan-instance-smoke` (boot-owned raw Vulkan loader plus `vkCreateInstance` / `vkDestroyInstance` plus return), then `boot-raw-vulkan-physical-device-count-query-exit-smoke` (boot-owned raw Vulkan `vkEnumeratePhysicalDevices` count query with a null device pointer plus immediate child exit status `0` before summary construction/write and before the normal Rust return path), then `boot-raw-vulkan-physical-device-count-query-no-destroy-smoke` (boot-owned raw Vulkan `vkEnumeratePhysicalDevices` count query with a null device pointer plus return and no explicit `vkDestroyInstance` cleanup), then `boot-raw-vulkan-physical-device-count-query-smoke` (boot-owned raw Vulkan `vkEnumeratePhysicalDevices` count query with a null device pointer plus explicit cleanup and return), then `boot-raw-vulkan-physical-device-count-smoke` (boot-owned raw Vulkan `vkEnumeratePhysicalDevices` full handle-list count plus return), then `boot-vulkan-enumerate-adapters-count-smoke` (boot-owned strict Vulkan raw wgpu adapter enumeration count plus return), then `boot-vulkan-enumerate-adapters-smoke` (boot-owned strict Vulkan adapter enumeration plus per-adapter info extraction plus return), then `boot-vulkan-adapter-smoke` (boot-owned strict Vulkan adapter selection plus return), then `boot-vulkan-device-request-smoke` (boot-owned strict Vulkan device request plus return), then `boot-vulkan-device-smoke` (boot-owned strict Vulkan buffer-renderer allocation plus return), then `boot-vulkan-offscreen` (boot-owned strict Vulkan offscreen render plus return), then `orange-gpu` (boot-owned GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
 - Rust cutoff:
   - keep the C PID 1 seam only long enough to finish the driver-discovery lane through the first truthful boot-owned GPU frame
-  - that cutoff is now reached: helper-backed `gpu-render` returned `exit_status=0` on hardware
-  - the next critical-path seam is the Rust port of `hello-init` / the boot-owned PID 1 bootstrap path
+  - in `boot-c`, do not treat bare `probe-report.txt` child exit `0` as that cutoff
+  - the C seam only counts as signed off once helper-backed `gpu-render` is re-proven with recovered `probe-summary.json` plus a watched success cue
+  - after that re-signoff, the next critical-path seam is the Rust port of `hello-init` / the boot-owned PID 1 bootstrap path
   - current Rust truth on 2026-04-22:
     - direct `std` Rust as exact-path `/system/bin/init` still returns `kernel_panic` even on the stripped `hello/no-mount/no-log` lane
     - a tiny `no_std` exact-path Rust PID 1 probe returns cleanly to bootloader
@@ -299,7 +300,7 @@ Related docs:
   - reuse the staged `shadow-gpu-smoke` bundle
   - require strict Vulkan env setup in boot-owned userspace
   - keep the same visible prelude/checkpoint/postlude contract so failure narrows cleanly
-- [~] Port the boot-owned PID 1/bootstrap seam to Rust now that the first truthful helper-backed `orange-gpu` frame is proven.
+- [~] Port the boot-owned PID 1/bootstrap seam to Rust after `boot-c` re-signs off helper-backed `gpu-render`.
   - direct `std` Rust at exact-path `/system/bin/init` is still blocked on `kernel_panic`
   - `no_std` exact-path PID 1 now works well enough to return cleanly to bootloader
   - `no_std` PID 1 shim plus full Rust `hello-init` child also returns cleanly on the stripped `hello` lane
@@ -364,7 +365,7 @@ Related docs:
     - `solid-orange` = prelude
     - `bands-orange` = validated checkpoint
     - `checker-orange` = probe-ready checkpoint
-    - `frame-orange` = success postlude
+    - `success-solid` = validated success postlude
   - do not treat any single recovery channel as guaranteed until it proves itself repeatedly on hardware
   - classify stage evidence separately from transport evidence: `fastboot-return` proves the device came back, not which owned-userspace stage it reached
 - [x] Add one durable non-log breadcrumb seam for owned PID 1 runs:
@@ -455,7 +456,7 @@ Related docs:
   - do not present to KMS yet
   - use visible `orange-init` prelude/checkpoint/postlude to encode success on hardware
 - [ ] Keep the Rust cutoff explicit in execution:
-  - once `boot-vulkan-offscreen` passes on hardware, freeze the C seam except for migration glue
+  - once helper-backed `gpu-render` is re-proven with recovered `probe-summary.json` and watched `success-solid`, freeze the C seam except for migration glue
   - port `scripts/pixel/pixel_hello_init.c` behavior into Rust before the next renderer rung lands
 - [ ] Package one short repeated-frame proof (`orange-gpu-loop`):
   - animate color or a frame counter for 2-3 seconds

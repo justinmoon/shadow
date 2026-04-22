@@ -239,6 +239,23 @@ metadata_probe_timeout_class_path_for_token() {
   printf '/metadata/shadow-hello-init/by-token/%s/probe-timeout-class.txt\n' "$run_token"
 }
 
+metadata_probe_summary_path_for_token() {
+  local run_token
+  run_token="${1:?metadata_probe_summary_path_for_token requires a run token}"
+  printf '/metadata/shadow-hello-init/by-token/%s/probe-summary.json\n' "$run_token"
+}
+
+gpu_scene_value() {
+  case "$ORANGE_GPU_MODE" in
+    gpu-render)
+      printf 'flat-orange\n'
+      ;;
+    *)
+      printf '\n'
+      ;;
+  esac
+}
+
 success_postlude_value() {
   if orange_gpu_mode_uses_success_postlude && [[ "$PRELUDE" == "orange-init" ]]; then
     printf 'orange-init\n'
@@ -257,7 +274,7 @@ checkpoint_hold_seconds_value() {
 
 orange_gpu_mode_uses_success_postlude() {
   case "$ORANGE_GPU_MODE" in
-    bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
+    gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
       return 0
       ;;
     *)
@@ -813,12 +830,14 @@ write_metadata() {
     "$FIRMWARE_BOOTSTRAP" \
     "$GPU_FIRMWARE_DIR" \
     "${STAGED_GPU_FIRMWARE_DIR:-}" \
+    "$(gpu_scene_value)" \
     "$(success_postlude_value)" \
     "$(checkpoint_hold_seconds_value)" \
     "$(metadata_probe_stage_path_for_token "$RUN_TOKEN")" \
     "$(metadata_probe_fingerprint_path_for_token "$RUN_TOKEN")" \
     "$(metadata_probe_report_path_for_token "$RUN_TOKEN")" \
-    "$(metadata_probe_timeout_class_path_for_token "$RUN_TOKEN")" <<'PY'
+    "$(metadata_probe_timeout_class_path_for_token "$RUN_TOKEN")" \
+    "$(metadata_probe_summary_path_for_token "$RUN_TOKEN")" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -855,12 +874,14 @@ from pathlib import Path
     firmware_bootstrap,
     gpu_firmware_dir,
     gpu_firmware_staged_dir,
+    orange_gpu_scene,
     success_postlude,
     checkpoint_hold_seconds,
     metadata_probe_stage_path,
     metadata_probe_fingerprint_path,
     metadata_probe_report_path,
     metadata_probe_timeout_class_path,
+    metadata_probe_summary_path,
 ) = sys.argv[1:]
 
 
@@ -901,6 +922,7 @@ payload_json = {
     "firmware_bootstrap": firmware_bootstrap,
     "gpu_firmware_dir": gpu_firmware_dir,
     "gpu_firmware_staged_dir": gpu_firmware_staged_dir,
+    "orange_gpu_scene": orange_gpu_scene,
     "success_postlude": success_postlude,
     "checkpoint_hold_seconds": int(checkpoint_hold_seconds),
     "metadata_stage_path": (
@@ -926,6 +948,11 @@ payload_json = {
     "metadata_probe_timeout_class_path": (
         metadata_probe_timeout_class_path
         if parse_bool(orange_gpu_metadata_stage_breadcrumb) and hello_init_mode != "rust-bridge"
+        else ""
+    ),
+    "metadata_probe_summary_path": (
+        metadata_probe_summary_path
+        if parse_bool(orange_gpu_metadata_stage_breadcrumb)
         else ""
     ),
 }
@@ -1518,7 +1545,7 @@ elif [[ "$ORANGE_GPU_MODE" == "vulkan-device-smoke" ]]; then
 elif [[ "$ORANGE_GPU_MODE" == "vulkan-offscreen" ]]; then
   printf 'GPU proof: strict Vulkan offscreen render\n'
 else
-  printf 'GPU scene: flat-orange\n'
+  printf 'GPU scene: %s\n' "$(gpu_scene_value)"
 fi
 printf 'Prelude: %s\n' "$PRELUDE"
 printf 'Prelude hold seconds: %s\n' "$PRELUDE_HOLD_SECS"
@@ -1538,6 +1565,7 @@ if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" ]]; then
   printf 'Metadata probe fingerprint path: %s\n' "$(metadata_probe_fingerprint_path_for_token "$RUN_TOKEN")"
   printf 'Metadata probe report path: %s\n' "$(metadata_probe_report_path_for_token "$RUN_TOKEN")"
   printf 'Metadata probe timeout class path: %s\n' "$(metadata_probe_timeout_class_path_for_token "$RUN_TOKEN")"
+  printf 'Metadata probe summary path: %s\n' "$(metadata_probe_summary_path_for_token "$RUN_TOKEN")"
 fi
 if [[ "$PRELUDE" == "orange-init" ]]; then
   printf 'Prelude payload path: /orange-init\n'

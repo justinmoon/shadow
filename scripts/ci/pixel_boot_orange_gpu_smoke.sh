@@ -998,7 +998,7 @@ for needle in [
     if needle not in write_body:
         raise SystemExit(f"missing metadata write seam needle: {needle}")
 
-atomic_body = extract("static int write_atomic_text_file(")
+atomic_body = extract("static int write_atomic_buffer_file(")
 for needle in ['rename(temp_path, final_path)', 'fsync(temp_fd)', 'fsync(final_fd)', 'fsync_directory_path(directory_path)']:
     if needle not in atomic_body:
         raise SystemExit(f"missing atomic metadata write needle: {needle}")
@@ -2365,6 +2365,7 @@ assert_cpio_entry_equals "$DEFAULT_OUTPUT_IMAGE" shadow-init.cfg $'# Generated b
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" prelude "none"
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" prelude_hold_seconds "0"
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_mode "gpu-render"
+assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_scene "flat-orange"
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" success_postlude "none"
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" checkpoint_hold_seconds "0"
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_launch_delay_secs "0"
@@ -3131,6 +3132,7 @@ assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.js
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" hello_init_shim_mode "fork"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_stage_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-run-token/probe-stage.txt"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_report_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-run-token/probe-report.txt"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_summary_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-run-token/probe-summary.json"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_fingerprint_path ""
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_timeout_class_path ""
 

@@ -4,34 +4,29 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 
 ## Active Blocker
 
-- The C driver-discovery lane reached the first truthful boot-owned GPU frame.
-- The active blocker is still the Rust PID 1 / bootstrap port, but the seam is now narrower:
-  - `std` Rust as exact-path `/system/bin/init` still panics as real PID 1
-  - `no_std` Rust exact-path PID 1 now returns cleanly to bootloader
-  - a `no_std` Rust PID 1 shim that forks and execs the full Rust `hello-init` child also returns cleanly to bootloader
-- The next critical-path goal is:
-  - preserve the helper-backed boot-owned GPU proof
-  - replace `scripts/pixel/pixel_hello_init.c` as the long-lived bootstrap seam
-  - keep later compositor/runtime/shell work off the C seam
-  - grow the Rust seam from the working `no_std PID1 -> Rust child` shape instead of forcing `std` directly into PID 1
+- The C lane is now signed off in the narrow helper-backed `gpu-render` sense.
+- The critical path is no longer C proof-hardening. It is Rust migration on top of that signed-off seam.
+- Do not spend more critical-path time expanding C beyond migration glue or fallback diagnostics.
 
 ## Current Truth
 
-- Rooted control and cold-control proofs still hold, but they are no longer the frontier.
-- The helper-backed boot-owned ladder is now green on `09051JEC202061` through:
-  - readonly KGSL open
-  - raw KGSL getproperties
-  - raw Vulkan instance / count-query-exit / count-query-no-destroy / count-query / physical-device count
-  - wgpu enumerate-adapters-count / enumerate-adapters / adapter / device-request / device
-  - strict Vulkan offscreen render
-  - `gpu-render` with KMS present
-- The decisive first-frame proof is:
-  - [`build/pixel/boot/oneshot/20260422T062456Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T062456Z-09051JEC202061_)
-  - recovered [`probe-report.txt`](../../build/pixel/boot/oneshot/20260422T062456Z-09051JEC202061_/recover-traces/channels/metadata-probe-report.txt)
-  - `child_completed=true`
-  - `child_timed_out=false`
-  - `exit_status=0`
-  - `orange_gpu_mode=gpu-render`
+- Rooted control and cold-control proofs still hold, but the local frontier is the final C signoff contract.
+- This branch hardens that contract in three ways:
+  - `hello-init` now persists `/orange-gpu/summary.json` durably to `/metadata/.../probe-summary.json`
+  - recovery validates `gpu-render` from that summary, not just from `probe-report.txt`
+  - `gpu-render` now uses the stable `flat-orange` GPU scene plus a green `success-solid` postlude after validated success
+- The new trustworthy `gpu-render` proof tuple is:
+  - `probe-report.txt`: `child_completed=true`, `child_timed_out=false`, `exit_status=0`
+  - `probe-summary.json`: `scene=flat-orange`, `present_kms=true`, `kms_present` present, `software_backed=false`, `adapter.backend=Vulkan`, `distinct_color_count=1`, `distinct_color_samples_rgba8=["ff7a00ff"]`
+  - watched run: solid orange prelude, then green success postlude before reboot
+- Signed-off hardware evidence for that tuple now exists on two devices:
+  - [`build/pixel/boot/oneshot/20260422T163601Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T163601Z-09051JEC202061_)
+  - [`build/pixel/boot/oneshot/20260422T163601Z-06241JEC200520_`](../../build/pixel/boot/oneshot/20260422T163601Z-06241JEC200520_)
+  - both recovered bundles have `probe_summary_proves_gpu_render=true` with checksum `bb77813ec3232325`
+- The watched operator-facing confirmation run is:
+  - [`build/pixel/boot/oneshot/20260422T165710Z-06241JEC200520_`](../../build/pixel/boot/oneshot/20260422T165710Z-06241JEC200520_)
+  - human-observed sequence: orange, then green for about 10 seconds, then black -> fastboot -> Android
+  - recovered summary still proves the same `flat-orange` Vulkan/Turnip/KMS tuple with `hold_secs=10`
 - The helper-backed raw Vulkan ladder is also confirmed on `11151JEC200472`:
   - [`build/pixel/boot/oneshot/20260422T060706Z-11151JEC200472_`](../../build/pixel/boot/oneshot/20260422T060706Z-11151JEC200472_)
   - `probe-report.txt` shows `child_completed=true` and `exit_status=0` for `raw-vulkan-physical-device-count-query-smoke`

@@ -37,6 +37,7 @@ EXPECTED_METADATA_PROBE_STAGE_PATH=""
 EXPECTED_METADATA_PROBE_FINGERPRINT_PATH=""
 EXPECTED_METADATA_PROBE_REPORT_PATH=""
 EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH=""
+EXPECTED_METADATA_PROBE_SUMMARY_PATH=""
 RECOVERED_METADATA_STAGE_PRESENT=false
 RECOVERED_METADATA_STAGE_VALUE=""
 RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE="unattempted"
@@ -73,6 +74,11 @@ RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_CHECKPOINT=""
 RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_BUCKET=""
 RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_MATCHED_NEEDLE=""
 RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_WCHAN=""
+RECOVERED_METADATA_PROBE_SUMMARY_PRESENT=false
+RECOVERED_METADATA_PROBE_SUMMARY_ACTUAL_ACCESS_MODE="unattempted"
+RECOVERED_METADATA_PROBE_SUMMARY_EXIT_CODE=""
+RECOVERED_METADATA_PROBE_SUMMARY_OUTPUT_PATH=""
+RECOVERED_METADATA_PROBE_SUMMARY_STDERR_PATH=""
 failure_stage=""
 transport_timeline_path="${PIXEL_BOOT_TRANSPORT_TIMELINE_PATH:-}"
 transport_timeline_elapsed_offset_secs="${PIXEL_BOOT_TRANSPORT_TIMELINE_ELAPSED_OFFSET_SECS:-0}"
@@ -340,6 +346,7 @@ probe_stage_path = payload.get("metadata_probe_stage_path", "")
 probe_fingerprint_path = payload.get("metadata_probe_fingerprint_path", "")
 probe_report_path = payload.get("metadata_probe_report_path", "")
 probe_timeout_class_path = payload.get("metadata_probe_timeout_class_path", "")
+probe_summary_path = payload.get("metadata_probe_summary_path", "")
 
 print(token if isinstance(token, str) else "")
 print("true" if enabled is True else "false")
@@ -348,6 +355,7 @@ print(probe_stage_path if isinstance(probe_stage_path, str) else "")
 print(probe_fingerprint_path if isinstance(probe_fingerprint_path, str) else "")
 print(probe_report_path if isinstance(probe_report_path, str) else "")
 print(probe_timeout_class_path if isinstance(probe_timeout_class_path, str) else "")
+print(probe_summary_path if isinstance(probe_summary_path, str) else "")
 PY
 }
 
@@ -360,6 +368,7 @@ discover_expected_run_token() {
   local metadata_probe_fingerprint_path=""
   local metadata_probe_report_path=""
   local metadata_probe_timeout_class_path=""
+  local metadata_probe_summary_path=""
 
   discover_source_image_path
   if [[ -n "$SOURCE_IMAGE_PATH" ]]; then
@@ -372,12 +381,14 @@ discover_expected_run_token() {
     metadata_probe_fingerprint_path="${metadata_values[4]:-}"
     metadata_probe_report_path="${metadata_values[5]:-}"
     metadata_probe_timeout_class_path="${metadata_values[6]:-}"
+    metadata_probe_summary_path="${metadata_values[7]:-}"
     EXPECTED_METADATA_STAGE_BREADCRUMB="$metadata_stage_enabled"
     EXPECTED_METADATA_STAGE_PATH="$metadata_stage_path"
     EXPECTED_METADATA_PROBE_STAGE_PATH="$metadata_probe_stage_path"
     EXPECTED_METADATA_PROBE_FINGERPRINT_PATH="$metadata_probe_fingerprint_path"
     EXPECTED_METADATA_PROBE_REPORT_PATH="$metadata_probe_report_path"
     EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH="$metadata_probe_timeout_class_path"
+    EXPECTED_METADATA_PROBE_SUMMARY_PATH="$metadata_probe_summary_path"
   fi
 
   if [[ -n "$EXPECTED_RUN_TOKEN" ]]; then
@@ -681,6 +692,53 @@ metadata_probe_report_timed_out=$RECOVERED_METADATA_PROBE_REPORT_TIMED_OUT
 metadata_probe_report_wchan=$RECOVERED_METADATA_PROBE_REPORT_WCHAN
 metadata_probe_report_child_completed=$RECOVERED_METADATA_PROBE_REPORT_CHILD_COMPLETED
 metadata_probe_report_child_exit_status=$RECOVERED_METADATA_PROBE_REPORT_CHILD_EXIT_STATUS
+EOF
+}
+
+recover_metadata_probe_summary_file() {
+  local command run_result output_path stderr_path exit_code actual_access_mode
+
+  output_path="$CHANNEL_DIR/metadata-probe-summary.json"
+  stderr_path="$CHANNEL_DIR/metadata-probe-summary.stderr.txt"
+  RECOVERED_METADATA_PROBE_SUMMARY_OUTPUT_PATH="channels/metadata-probe-summary.json"
+  RECOVERED_METADATA_PROBE_SUMMARY_STDERR_PATH="channels/metadata-probe-summary.stderr.txt"
+
+  : >"$output_path"
+  : >"$stderr_path"
+
+  if [[ "$EXPECTED_METADATA_STAGE_BREADCRUMB" != "true" || -z "$EXPECTED_METADATA_PROBE_SUMMARY_PATH" ]]; then
+    RECOVERED_METADATA_PROBE_SUMMARY_PRESENT=false
+    RECOVERED_METADATA_PROBE_SUMMARY_ACTUAL_ACCESS_MODE="unattempted"
+    RECOVERED_METADATA_PROBE_SUMMARY_EXIT_CODE=""
+    cat >"$META_DIR/metadata-probe-summary.txt" <<EOF
+expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
+expected_metadata_probe_summary_path=$EXPECTED_METADATA_PROBE_SUMMARY_PATH
+metadata_probe_summary_present=false
+metadata_probe_summary_actual_access_mode=$RECOVERED_METADATA_PROBE_SUMMARY_ACTUAL_ACCESS_MODE
+metadata_probe_summary_exit_code=
+EOF
+    return 0
+  fi
+
+  command="if [ -f $EXPECTED_METADATA_PROBE_SUMMARY_PATH ]; then cat $EXPECTED_METADATA_PROBE_SUMMARY_PATH; else exit 3; fi"
+  run_result="$(run_device_command "root" "$command" "$output_path" "$stderr_path")"
+  exit_code="${run_result%%$'\t'*}"
+  actual_access_mode="${run_result#*$'\t'}"
+  RECOVERED_METADATA_PROBE_SUMMARY_ACTUAL_ACCESS_MODE="$actual_access_mode"
+  RECOVERED_METADATA_PROBE_SUMMARY_EXIT_CODE="$exit_code"
+
+  if [[ "$exit_code" == "0" ]]; then
+    RECOVERED_METADATA_PROBE_SUMMARY_PRESENT=true
+  else
+    RECOVERED_METADATA_PROBE_SUMMARY_PRESENT=false
+  fi
+
+  cat >"$META_DIR/metadata-probe-summary.txt" <<EOF
+expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
+expected_metadata_probe_summary_path=$EXPECTED_METADATA_PROBE_SUMMARY_PATH
+metadata_probe_summary_present=$RECOVERED_METADATA_PROBE_SUMMARY_PRESENT
+metadata_probe_summary_actual_access_mode=$RECOVERED_METADATA_PROBE_SUMMARY_ACTUAL_ACCESS_MODE
+metadata_probe_summary_exit_code=$RECOVERED_METADATA_PROBE_SUMMARY_EXIT_CODE
 EOF
 }
 
@@ -1163,6 +1221,7 @@ write_status_json() {
     "$EXPECTED_METADATA_PROBE_FINGERPRINT_PATH" \
     "$EXPECTED_METADATA_PROBE_REPORT_PATH" \
     "$EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH" \
+    "$EXPECTED_METADATA_PROBE_SUMMARY_PATH" \
     "$RECOVERED_METADATA_STAGE_PRESENT" \
     "$RECOVERED_METADATA_STAGE_VALUE" \
     "$RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE" \
@@ -1198,7 +1257,12 @@ write_status_json() {
     "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_CHECKPOINT" \
     "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_BUCKET" \
     "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_MATCHED_NEEDLE" \
-    "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_WCHAN" <<'PY'
+    "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_WCHAN" \
+    "$RECOVERED_METADATA_PROBE_SUMMARY_PRESENT" \
+    "$RECOVERED_METADATA_PROBE_SUMMARY_ACTUAL_ACCESS_MODE" \
+    "$RECOVERED_METADATA_PROBE_SUMMARY_EXIT_CODE" \
+    "$RECOVERED_METADATA_PROBE_SUMMARY_OUTPUT_PATH" \
+    "$RECOVERED_METADATA_PROBE_SUMMARY_STDERR_PATH" <<'PY'
 import csv
 import json
 import sys
@@ -1234,43 +1298,54 @@ expected_metadata_probe_stage_path = sys.argv[27]
 expected_metadata_probe_fingerprint_path = sys.argv[28]
 expected_metadata_probe_report_path = sys.argv[29]
 expected_metadata_probe_timeout_class_path = sys.argv[30]
-recovered_metadata_stage_present = sys.argv[31] == "true"
-recovered_metadata_stage_value = sys.argv[32]
-recovered_metadata_stage_actual_access_mode = sys.argv[33]
-recovered_metadata_stage_exit_code = sys.argv[34]
-recovered_metadata_stage_output_path = sys.argv[35]
-recovered_metadata_stage_stderr_path = sys.argv[36]
-recovered_metadata_probe_stage_present = sys.argv[37] == "true"
-recovered_metadata_probe_stage_value = sys.argv[38]
-recovered_metadata_probe_stage_actual_access_mode = sys.argv[39]
-recovered_metadata_probe_stage_exit_code = sys.argv[40]
-recovered_metadata_probe_stage_output_path = sys.argv[41]
-recovered_metadata_probe_stage_stderr_path = sys.argv[42]
-recovered_metadata_probe_fingerprint_present = sys.argv[43] == "true"
-recovered_metadata_probe_fingerprint_actual_access_mode = sys.argv[44]
-recovered_metadata_probe_fingerprint_exit_code = sys.argv[45]
-recovered_metadata_probe_fingerprint_output_path = sys.argv[46]
-recovered_metadata_probe_fingerprint_stderr_path = sys.argv[47]
-recovered_metadata_probe_report_present = sys.argv[48] == "true"
-recovered_metadata_probe_report_actual_access_mode = sys.argv[49]
-recovered_metadata_probe_report_exit_code = sys.argv[50]
-recovered_metadata_probe_report_output_path = sys.argv[51]
-recovered_metadata_probe_report_stderr_path = sys.argv[52]
-recovered_metadata_probe_report_observed_stage = sys.argv[53]
-recovered_metadata_probe_report_timed_out = sys.argv[54]
-recovered_metadata_probe_report_wchan = sys.argv[55]
-recovered_metadata_probe_report_child_completed = sys.argv[56]
-recovered_metadata_probe_report_child_exit_status = sys.argv[57]
-recovered_metadata_probe_timeout_class_present = sys.argv[58] == "true"
-recovered_metadata_probe_timeout_class_actual_access_mode = sys.argv[59]
-recovered_metadata_probe_timeout_class_exit_code = sys.argv[60]
-recovered_metadata_probe_timeout_class_output_path = sys.argv[61]
-recovered_metadata_probe_timeout_class_stderr_path = sys.argv[62]
-recovered_metadata_probe_timeout_class_checkpoint = sys.argv[63]
-recovered_metadata_probe_timeout_class_bucket = sys.argv[64]
-recovered_metadata_probe_timeout_class_matched_needle = sys.argv[65]
-recovered_metadata_probe_timeout_class_wchan = sys.argv[66]
+expected_metadata_probe_summary_path = sys.argv[31]
+recovered_metadata_stage_present = sys.argv[32] == "true"
+recovered_metadata_stage_value = sys.argv[33]
+recovered_metadata_stage_actual_access_mode = sys.argv[34]
+recovered_metadata_stage_exit_code = sys.argv[35]
+recovered_metadata_stage_output_path = sys.argv[36]
+recovered_metadata_stage_stderr_path = sys.argv[37]
+recovered_metadata_probe_stage_present = sys.argv[38] == "true"
+recovered_metadata_probe_stage_value = sys.argv[39]
+recovered_metadata_probe_stage_actual_access_mode = sys.argv[40]
+recovered_metadata_probe_stage_exit_code = sys.argv[41]
+recovered_metadata_probe_stage_output_path = sys.argv[42]
+recovered_metadata_probe_stage_stderr_path = sys.argv[43]
+recovered_metadata_probe_fingerprint_present = sys.argv[44] == "true"
+recovered_metadata_probe_fingerprint_actual_access_mode = sys.argv[45]
+recovered_metadata_probe_fingerprint_exit_code = sys.argv[46]
+recovered_metadata_probe_fingerprint_output_path = sys.argv[47]
+recovered_metadata_probe_fingerprint_stderr_path = sys.argv[48]
+recovered_metadata_probe_report_present = sys.argv[49] == "true"
+recovered_metadata_probe_report_actual_access_mode = sys.argv[50]
+recovered_metadata_probe_report_exit_code = sys.argv[51]
+recovered_metadata_probe_report_output_path = sys.argv[52]
+recovered_metadata_probe_report_stderr_path = sys.argv[53]
+recovered_metadata_probe_report_observed_stage = sys.argv[54]
+recovered_metadata_probe_report_timed_out = sys.argv[55]
+recovered_metadata_probe_report_wchan = sys.argv[56]
+recovered_metadata_probe_report_child_completed = sys.argv[57]
+recovered_metadata_probe_report_child_exit_status = sys.argv[58]
+recovered_metadata_probe_timeout_class_present = sys.argv[59] == "true"
+recovered_metadata_probe_timeout_class_actual_access_mode = sys.argv[60]
+recovered_metadata_probe_timeout_class_exit_code = sys.argv[61]
+recovered_metadata_probe_timeout_class_output_path = sys.argv[62]
+recovered_metadata_probe_timeout_class_stderr_path = sys.argv[63]
+recovered_metadata_probe_timeout_class_checkpoint = sys.argv[64]
+recovered_metadata_probe_timeout_class_bucket = sys.argv[65]
+recovered_metadata_probe_timeout_class_matched_needle = sys.argv[66]
+recovered_metadata_probe_timeout_class_wchan = sys.argv[67]
+recovered_metadata_probe_summary_present = sys.argv[68] == "true"
+recovered_metadata_probe_summary_actual_access_mode = sys.argv[69]
+recovered_metadata_probe_summary_exit_code = sys.argv[70]
+recovered_metadata_probe_summary_output_path = sys.argv[71]
+recovered_metadata_probe_summary_stderr_path = sys.argv[72]
 expected_durable_logging = {"kmsg": None, "pmsg": None}
+expected_orange_gpu_mode = ""
+expected_orange_gpu_scene = ""
+expected_orange_gpu_firmware_helper = None
+recovered_probe_summary = {}
+recovered_probe_summary_parse_error = None
 
 if source_image_metadata_path:
     metadata_path = Path(source_image_metadata_path)
@@ -1283,6 +1358,15 @@ if source_image_metadata_path:
             value = metadata.get(source_key)
             if isinstance(value, bool):
                 expected_durable_logging[target_key] = value
+        orange_gpu_mode_value = metadata.get("orange_gpu_mode")
+        if isinstance(orange_gpu_mode_value, str):
+            expected_orange_gpu_mode = orange_gpu_mode_value
+        orange_gpu_scene_value = metadata.get("orange_gpu_scene")
+        if isinstance(orange_gpu_scene_value, str):
+            expected_orange_gpu_scene = orange_gpu_scene_value
+        orange_gpu_firmware_helper_value = metadata.get("orange_gpu_firmware_helper")
+        if isinstance(orange_gpu_firmware_helper_value, bool):
+            expected_orange_gpu_firmware_helper = orange_gpu_firmware_helper_value
 
 def parse_kgsl_holder_scan(text: str):
     parsed = {
@@ -1453,13 +1537,64 @@ probe_report_proves_child_success = (
     and recovered_metadata_probe_report_timed_out == "false"
     and probe_report_child_exit_status == 0
 )
+if recovered_metadata_probe_summary_present and recovered_metadata_probe_summary_output_path:
+    summary_path = channel_status_path.parent / recovered_metadata_probe_summary_output_path
+    if summary_path.exists():
+        try:
+            recovered_probe_summary = json.loads(
+                summary_path.read_text(encoding="utf-8", errors="replace")
+            )
+        except json.JSONDecodeError as exc:
+            recovered_probe_summary = {}
+            recovered_probe_summary_parse_error = str(exc)
+
+summary_scene = recovered_probe_summary.get("scene")
+summary_present_kms = recovered_probe_summary.get("present_kms")
+summary_kms_present = recovered_probe_summary.get("kms_present")
+summary_software_backed = recovered_probe_summary.get("software_backed")
+summary_distinct_color_count = recovered_probe_summary.get("distinct_color_count")
+summary_checksum = recovered_probe_summary.get("checksum_fnv1a64")
+summary_color_samples = recovered_probe_summary.get("distinct_color_samples_rgba8")
+summary_adapter = recovered_probe_summary.get("adapter")
+summary_adapter_backend = (
+    summary_adapter.get("backend")
+    if isinstance(summary_adapter, dict)
+    else None
+)
+required_gpu_render_samples = {"ff7a00ff"}
+summary_samples_set = (
+    set(sample for sample in summary_color_samples if isinstance(sample, str))
+    if isinstance(summary_color_samples, list)
+    else set()
+)
+probe_summary_proves_gpu_render = (
+    expected_orange_gpu_mode == "gpu-render"
+    and expected_orange_gpu_firmware_helper is True
+    and probe_report_proves_child_success
+    and recovered_metadata_probe_summary_present
+    and recovered_probe_summary_parse_error is None
+    and summary_scene == (expected_orange_gpu_scene or "flat-orange")
+    and summary_present_kms is True
+    and isinstance(summary_kms_present, dict)
+    and summary_software_backed is False
+    and summary_adapter_backend == "Vulkan"
+    and summary_distinct_color_count == 1
+    and required_gpu_render_samples.issubset(summary_samples_set)
+    and isinstance(summary_checksum, str)
+    and bool(summary_checksum)
+)
+proof_ok = (
+    matched_any_correlated_shadow_tags or
+    (probe_summary_proves_gpu_render if expected_orange_gpu_mode == "gpu-render" else probe_report_proves_child_success)
+)
 
 payload = {
     "kind": "boot_trace_recovery",
     "ok": True,
-    "proof_ok": matched_any_correlated_shadow_tags or probe_report_proves_child_success,
+    "proof_ok": proof_ok,
     "matched_correlated_trace": matched_any_correlated_shadow_tags,
     "probe_report_proves_child_success": probe_report_proves_child_success,
+    "probe_summary_proves_gpu_render": probe_summary_proves_gpu_render,
     "serial": serial,
     "output_dir": str(status_output.parent),
     "shadow_tag_regex": shadow_tag_regex,
@@ -1472,12 +1607,16 @@ payload = {
     ),
     "source_image_path": source_image_path,
     "source_image_metadata_path": source_image_metadata_path,
+    "expected_orange_gpu_mode": expected_orange_gpu_mode,
+    "expected_orange_gpu_scene": expected_orange_gpu_scene,
+    "expected_orange_gpu_firmware_helper": expected_orange_gpu_firmware_helper,
     "expected_metadata_stage_breadcrumb": expected_metadata_stage_breadcrumb,
     "expected_metadata_stage_path": expected_metadata_stage_path,
     "expected_metadata_probe_stage_path": expected_metadata_probe_stage_path,
     "expected_metadata_probe_fingerprint_path": expected_metadata_probe_fingerprint_path,
     "expected_metadata_probe_report_path": expected_metadata_probe_report_path,
     "expected_metadata_probe_timeout_class_path": expected_metadata_probe_timeout_class_path,
+    "expected_metadata_probe_summary_path": expected_metadata_probe_summary_path,
     "metadata_stage_present": recovered_metadata_stage_present,
     "metadata_stage_value": recovered_metadata_stage_value,
     "metadata_stage_actual_access_mode": recovered_metadata_stage_actual_access_mode,
@@ -1542,6 +1681,24 @@ payload = {
     "metadata_probe_timeout_class_bucket": recovered_metadata_probe_timeout_class_bucket,
     "metadata_probe_timeout_class_matched_needle": recovered_metadata_probe_timeout_class_matched_needle,
     "metadata_probe_timeout_class_wchan": recovered_metadata_probe_timeout_class_wchan,
+    "metadata_probe_summary_present": recovered_metadata_probe_summary_present,
+    "metadata_probe_summary_actual_access_mode": recovered_metadata_probe_summary_actual_access_mode,
+    "metadata_probe_summary_exit_code": (
+        int(recovered_metadata_probe_summary_exit_code)
+        if recovered_metadata_probe_summary_exit_code not in ("", None)
+        else None
+    ),
+    "metadata_probe_summary_output_path": recovered_metadata_probe_summary_output_path,
+    "metadata_probe_summary_stderr_path": recovered_metadata_probe_summary_stderr_path,
+    "metadata_probe_summary_parse_error": recovered_probe_summary_parse_error,
+    "metadata_probe_summary_scene": summary_scene,
+    "metadata_probe_summary_present_kms": summary_present_kms,
+    "metadata_probe_summary_kms_present": summary_kms_present,
+    "metadata_probe_summary_software_backed": summary_software_backed,
+    "metadata_probe_summary_adapter_backend": summary_adapter_backend,
+    "metadata_probe_summary_distinct_color_count": summary_distinct_color_count,
+    "metadata_probe_summary_distinct_color_samples_rgba8": sorted(summary_samples_set),
+    "metadata_probe_summary_checksum_fnv1a64": summary_checksum,
     "live_boot_id": live_boot_id,
     "live_slot_suffix": live_slot_suffix,
     "root_available": root_available,
@@ -1679,6 +1836,7 @@ recover_metadata_stage_file
 recover_metadata_probe_stage_file
 recover_metadata_probe_fingerprint_file
 recover_metadata_probe_report_file
+recover_metadata_probe_summary_file
 recover_metadata_probe_timeout_class_file
 
 shell_best_effort "logcat-last" "previous-boot" "adb" "logcat -L -d -v threadtime"

@@ -199,6 +199,30 @@ EOF
       fi
       exit 3
       ;;
+    *"/metadata/shadow-hello-init/by-token/"*"/probe-summary.json"* )
+      if [[ "$TRACE_MODE" == "probe-only-success" ]]; then
+        cat <<'EOF'
+{
+  "scene": "flat-orange",
+  "present_kms": true,
+  "software_backed": false,
+  "distinct_color_count": 1,
+  "distinct_color_samples_rgba8": [
+    "ff7a00ff"
+  ],
+  "checksum_fnv1a64": "summary-checksum",
+  "adapter": {
+    "backend": "Vulkan"
+  },
+  "kms_present": {
+    "connector": "DSI-1"
+  }
+}
+EOF
+        exit 0
+      fi
+      exit 3
+      ;;
     *"/metadata/shadow-hello-init/by-token/"*"/probe-timeout-class.txt"* )
       if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" ]]; then
         cat <<EOF
@@ -312,6 +336,9 @@ cat >"$image_path.hello-init.json" <<EOF
 {
   "kind": "hello_init_build",
   "run_token": "$run_token",
+  "orange_gpu_mode": "gpu-render",
+  "orange_gpu_scene": "flat-orange",
+  "orange_gpu_firmware_helper": true,
   "log_kmsg": true,
   "log_pmsg": true,
   "orange_gpu_metadata_stage_breadcrumb": true,
@@ -319,7 +346,8 @@ cat >"$image_path.hello-init.json" <<EOF
   "metadata_probe_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-stage.txt",
   "metadata_probe_fingerprint_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-fingerprint.txt",
   "metadata_probe_report_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-report.txt",
-  "metadata_probe_timeout_class_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-timeout-class.txt"
+  "metadata_probe_timeout_class_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-timeout-class.txt",
+  "metadata_probe_summary_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-summary.json"
 }
 EOF
 }
@@ -526,10 +554,16 @@ env \
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" matched_any_shadow_tags false
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" matched_any_correlated_shadow_tags false
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" probe_report_proves_child_success true
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" probe_summary_proves_gpu_render true
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" proof_ok true
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_report_child_completed true
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_report_child_exit_status 0
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_report_timed_out false
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_present true
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_scene flat-orange
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_present_kms true
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_adapter_backend Vulkan
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_distinct_color_count 1
 
 ROOT_TIMEOUT_PARENT="$TMP_DIR/output-root-timeout"
 ROOT_TIMEOUT_IMAGE="$TMP_DIR/output-root-timeout.img"

@@ -152,6 +152,8 @@ struct metadata_stage_runtime {
     char temp_probe_report_path[224];
     char probe_timeout_class_path[224];
     char temp_probe_timeout_class_path[224];
+    char probe_summary_path[224];
+    char temp_probe_summary_path[224];
 };
 
 static int shadow_kmsg_fd = -1;
@@ -648,6 +650,8 @@ static void init_metadata_stage_runtime(
     int probe_report_temp_len;
     int probe_timeout_class_len;
     int probe_timeout_class_temp_len;
+    int probe_summary_len;
+    int probe_summary_temp_len;
 
     memset(runtime, 0, sizeof(*runtime));
     runtime->enabled = config->orange_gpu_metadata_stage_breadcrumb;
@@ -733,6 +737,18 @@ static void init_metadata_stage_runtime(
         "%s/.probe-timeout-class.txt.tmp",
         runtime->stage_dir
     );
+    probe_summary_len = snprintf(
+        runtime->probe_summary_path,
+        sizeof(runtime->probe_summary_path),
+        "%s/probe-summary.json",
+        runtime->stage_dir
+    );
+    probe_summary_temp_len = snprintf(
+        runtime->temp_probe_summary_path,
+        sizeof(runtime->temp_probe_summary_path),
+        "%s/.probe-summary.json.tmp",
+        runtime->stage_dir
+    );
     if (
         dir_len < 0 || (size_t)dir_len >= sizeof(runtime->stage_dir) ||
         stage_len < 0 || (size_t)stage_len >= sizeof(runtime->stage_path) ||
@@ -746,7 +762,11 @@ static void init_metadata_stage_runtime(
         probe_timeout_class_len < 0 ||
         (size_t)probe_timeout_class_len >= sizeof(runtime->probe_timeout_class_path) ||
         probe_timeout_class_temp_len < 0 ||
-        (size_t)probe_timeout_class_temp_len >= sizeof(runtime->temp_probe_timeout_class_path)
+        (size_t)probe_timeout_class_temp_len >= sizeof(runtime->temp_probe_timeout_class_path) ||
+        probe_summary_len < 0 ||
+        (size_t)probe_summary_len >= sizeof(runtime->probe_summary_path) ||
+        probe_summary_temp_len < 0 ||
+        (size_t)probe_summary_temp_len >= sizeof(runtime->temp_probe_summary_path)
     ) {
         runtime->enabled = false;
         log_stage("<4>", "metadata-stage-disabled", "reason=path_too_long");
@@ -1010,11 +1030,12 @@ static int fsync_directory_path(const char *path) {
     return 0;
 }
 
-static int write_atomic_text_file(
+static int write_atomic_buffer_file(
     const char *directory_path,
     const char *temp_path,
     const char *final_path,
-    const char *contents
+    const void *contents,
+    size_t contents_size
 ) {
     int temp_fd;
     int final_fd;
@@ -1028,7 +1049,7 @@ static int write_atomic_text_file(
         return -1;
     }
 
-    if (write_fd_all_checked(temp_fd, contents) != 0) {
+    if (write_fd_all_bytes(temp_fd, contents, contents_size) != 0) {
         int saved_errno = errno;
 
         close(temp_fd);
@@ -1073,6 +1094,21 @@ static int write_atomic_text_file(
     close(final_fd);
 
     return fsync_directory_path(directory_path);
+}
+
+static int write_atomic_text_file(
+    const char *directory_path,
+    const char *temp_path,
+    const char *final_path,
+    const char *contents
+) {
+    return write_atomic_buffer_file(
+        directory_path,
+        temp_path,
+        final_path,
+        contents,
+        strlen(contents)
+    );
 }
 
 static bool prepare_metadata_stage_runtime_best_effort(
@@ -2564,6 +2600,10 @@ static bool payload_is_orange_gpu(const struct hello_init_config *config) {
     return strcmp(config->payload, "orange-gpu") == 0;
 }
 
+static bool orange_gpu_mode_is_gpu_render(const struct hello_init_config *config) {
+    return strcmp(config->orange_gpu_mode, "gpu-render") == 0;
+}
+
 static bool orange_gpu_mode_is_bundle_smoke(const struct hello_init_config *config) {
     return strcmp(config->orange_gpu_mode, "bundle-smoke") == 0;
 }
@@ -2681,7 +2721,8 @@ static int run_orange_gpu_checkpoint(
 );
 
 static bool orange_gpu_mode_uses_success_postlude(const struct hello_init_config *config) {
-    return orange_gpu_mode_is_bundle_smoke(config) ||
+    return orange_gpu_mode_is_gpu_render(config) ||
+           orange_gpu_mode_is_bundle_smoke(config) ||
            orange_gpu_mode_is_vulkan_instance_smoke(config) ||
            orange_gpu_mode_is_raw_vulkan_instance_smoke(config) ||
            orange_gpu_mode_is_raw_vulkan_physical_device_count_query_exit_smoke(config) ||
@@ -2975,6 +3016,60 @@ static bool read_text_file_best_effort(const char *path, char *dest, size_t dest
 
     dest[bytes_read] = '\0';
     sanitize_inline_text(dest);
+    return true;
+}
+
+static bool read_file_bytes_best_effort(
+    const char *path,
+    char *dest,
+    size_t dest_size,
+    size_t *bytes_used
+) {
+    int fd;
+    size_t used = 0U;
+
+    if (bytes_used != NULL) {
+        *bytes_used = 0U;
+    }
+    if (dest_size == 0U) {
+        return false;
+    }
+
+    fd = open(path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+    if (fd < 0) {
+        dest[0] = '\0';
+        return false;
+    }
+
+    for (;;) {
+        ssize_t bytes_read;
+
+        if (used >= dest_size - 1U) {
+            close(fd);
+            dest[0] = '\0';
+            errno = EOVERFLOW;
+            return false;
+        }
+        bytes_read = read(fd, dest + used, dest_size - 1U - used);
+        if (bytes_read < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            close(fd);
+            dest[0] = '\0';
+            return false;
+        }
+        if (bytes_read == 0) {
+            break;
+        }
+        used += (size_t)bytes_read;
+    }
+
+    close(fd);
+    dest[used] = '\0';
+    if (bytes_used != NULL) {
+        *bytes_used = used;
+    }
     return true;
 }
 
@@ -3666,6 +3761,134 @@ static bool write_metadata_probe_report_best_effort(
         label,
         runtime->probe_report_path
     );
+    return true;
+}
+
+static bool write_metadata_probe_summary_best_effort(
+    struct metadata_stage_runtime *runtime,
+    const char *source_path,
+    char *summary_text,
+    size_t summary_text_size
+) {
+    size_t summary_bytes = 0U;
+
+    if (
+        runtime == NULL ||
+        !runtime->enabled ||
+        runtime->write_failed ||
+        !runtime->prepared ||
+        source_path == NULL ||
+        source_path[0] == '\0' ||
+        summary_text == NULL ||
+        summary_text_size == 0U
+    ) {
+        return false;
+    }
+
+    if (
+        !read_file_bytes_best_effort(
+            source_path,
+            summary_text,
+            summary_text_size,
+            &summary_bytes
+        )
+    ) {
+        log_stage(
+            "<4>",
+            "metadata-probe-summary-read-failed",
+            "source=%s errno=%d",
+            source_path,
+            errno
+        );
+        return false;
+    }
+    if (summary_bytes == 0U) {
+        log_stage(
+            "<4>",
+            "metadata-probe-summary-read-failed",
+            "source=%s reason=empty",
+            source_path
+        );
+        return false;
+    }
+
+    if (
+        write_atomic_buffer_file(
+            runtime->stage_dir,
+            runtime->temp_probe_summary_path,
+            runtime->probe_summary_path,
+            summary_text,
+            summary_bytes
+        ) != 0
+    ) {
+        log_stage(
+            "<4>",
+            "metadata-probe-summary-write-failed",
+            "path=%s errno=%d",
+            runtime->probe_summary_path,
+            errno
+        );
+        return false;
+    }
+
+    log_stage(
+        "<6>",
+        "metadata-probe-summary-write",
+        "source=%s path=%s bytes=%zu",
+        source_path,
+        runtime->probe_summary_path,
+        summary_bytes
+    );
+    return true;
+}
+
+static bool text_contains(const char *text, const char *needle) {
+    return text != NULL && needle != NULL && strstr(text, needle) != NULL;
+}
+
+static bool validate_gpu_render_summary_text(
+    const char *summary_text,
+    char *reason,
+    size_t reason_size
+) {
+    const char *required_substrings[] = {
+        "\"scene\": \"flat-orange\"",
+        "\"present_kms\": true",
+        "\"software_backed\": false",
+        "\"backend\": \"Vulkan\"",
+        "\"distinct_color_count\": 1",
+        "\"ff7a00ff\"",
+        "\"kms_present\": {",
+    };
+    size_t index;
+
+    if (reason != NULL && reason_size > 0U) {
+        reason[0] = '\0';
+    }
+    if (summary_text == NULL || summary_text[0] == '\0') {
+        if (reason != NULL && reason_size > 0U) {
+            (void)copy_string(reason, reason_size, "summary-empty");
+        }
+        return false;
+    }
+
+    for (index = 0; index < sizeof(required_substrings) / sizeof(required_substrings[0]); index++) {
+        if (!text_contains(summary_text, required_substrings[index])) {
+            if (reason != NULL && reason_size > 0U) {
+                (void)snprintf(
+                    reason,
+                    reason_size,
+                    "missing:%s",
+                    required_substrings[index]
+                );
+            }
+            return false;
+        }
+    }
+
+    if (reason != NULL && reason_size > 0U) {
+        (void)copy_string(reason, reason_size, "ok");
+    }
     return true;
 }
 
@@ -4921,11 +5144,17 @@ static int run_orange_gpu_payload(
     struct orange_gpu_timeout_classification timeout_classification;
     struct probe_timeout_observer_context timeout_observer_context;
     bool kgsl_trace_may_be_active = orange_gpu_mode_is_any_c_kgsl_open_readonly_smoke(config);
+    char probe_summary_text[32768];
+    char gpu_render_summary_reason[192];
+    bool probe_summary_present = false;
+    bool gpu_render_summary_valid = false;
 
     if (ensure_orange_gpu_runtime_dirs() != 0) {
         return 1;
     }
 
+    probe_summary_text[0] = '\0';
+    gpu_render_summary_reason[0] = '\0';
     unlink_best_effort(SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH);
     unlink_best_effort(SHADOW_HELLO_INIT_ORANGE_GPU_OUTPUT_PATH);
 
@@ -5486,6 +5715,12 @@ static int run_orange_gpu_payload(
     log_file_best_effort("orange-gpu-summary", SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH);
 
     if (!watch_result.timed_out) {
+        probe_summary_present = write_metadata_probe_summary_best_effort(
+            metadata_stage,
+            SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH,
+            probe_summary_text,
+            sizeof(probe_summary_text)
+        );
         (void)write_metadata_probe_report_best_effort(
             metadata_stage,
             "orange-gpu-payload",
@@ -5495,6 +5730,36 @@ static int run_orange_gpu_payload(
             false,
             watchdog_timeout
         );
+        if (
+            orange_gpu_mode_is_gpu_render(config) &&
+            metadata_stage != NULL &&
+            metadata_stage->enabled
+        ) {
+            gpu_render_summary_valid =
+                probe_summary_present &&
+                validate_gpu_render_summary_text(
+                    probe_summary_text,
+                    gpu_render_summary_reason,
+                    sizeof(gpu_render_summary_reason)
+                );
+            log_stage(
+                gpu_render_summary_valid ? "<6>" : "<4>",
+                "orange-gpu-summary-validation",
+                "mode=%s summary_present=%s valid=%s reason=%s",
+                config->orange_gpu_mode,
+                bool_word(probe_summary_present),
+                bool_word(gpu_render_summary_valid),
+                gpu_render_summary_reason
+            );
+            log_boot(
+                gpu_render_summary_valid ? "<6>" : "<4>",
+                "orange-gpu summary validation mode=%s summary_present=%s valid=%s reason=%s",
+                config->orange_gpu_mode,
+                bool_word(probe_summary_present),
+                bool_word(gpu_render_summary_valid),
+                gpu_render_summary_reason
+            );
+        }
     }
     stop_child_process_best_effort(firmware_helper_pid, "firmware-helper");
     if (kgsl_trace_may_be_active) {
@@ -5568,6 +5833,32 @@ static int run_orange_gpu_payload(
             SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
             WEXITSTATUS(watch_result.status)
         );
+        if (
+            WEXITSTATUS(watch_result.status) == 0 &&
+            orange_gpu_mode_is_gpu_render(config) &&
+            metadata_stage != NULL &&
+            metadata_stage->enabled &&
+            !gpu_render_summary_valid
+        ) {
+            log_stage(
+                "<4>",
+                "orange-gpu-summary-invalid",
+                "mode=%s summary_present=%s reason=%s",
+                config->orange_gpu_mode,
+                bool_word(probe_summary_present),
+                gpu_render_summary_reason[0] != '\0' ? gpu_render_summary_reason : "missing"
+            );
+            log_boot(
+                "<4>",
+                "payload %s summary invalid for mode=%s summary_present=%s reason=%s",
+                SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
+                config->orange_gpu_mode,
+                bool_word(probe_summary_present),
+                gpu_render_summary_reason[0] != '\0' ? gpu_render_summary_reason : "missing"
+            );
+            (void)run_orange_gpu_checkpoint(config, "child-exit-nonzero", 1U);
+            return 1;
+        }
         if (WEXITSTATUS(watch_result.status) != 0) {
             (void)run_orange_gpu_checkpoint(config, "child-exit-nonzero", 1U);
         }
@@ -5705,7 +5996,11 @@ static int run_orange_gpu_postlude(const struct hello_init_config *config) {
         config->hold_seconds
     );
 
-    return run_orange_init_payload(&postlude_config, "orange-gpu-postlude", "frame-orange");
+    return run_orange_init_payload(
+        &postlude_config,
+        "orange-gpu-postlude",
+        orange_gpu_mode_is_gpu_render(config) ? "success-solid" : "frame-orange"
+    );
 }
 
 static int raw_reboot(unsigned int cmd, const char *arg) {
