@@ -5,16 +5,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod tasks;
 
-use serde_json::Value;
 use shadow_sdk::{
     app::{
         current_lifecycle_state, spawn_platform_request_listener, AppWindowDefaults,
         AppWindowEnvironment, AppWindowMetrics, LifecycleState,
     },
     services::nostr::{
-        current_account, get_event, get_replaceable, query, NostrAccountSource,
-        NostrAccountSummary, NostrEvent, NostrPublicKeyReference, NostrQuery,
-        NostrReplaceableQuery,
+        current_account, get_event, query, timeline::{
+            load_cached_home_notes as nostr_load_cached_home_notes,
+            load_explore_notes as nostr_load_explore_notes,
+            load_home_feed_scope_for_account, load_profile_summary as nostr_load_profile_summary,
+            load_thread_context as nostr_load_thread_context, NostrHomeFeedScope,
+            NostrHomeFeedSource, NostrProfileSummary, NostrThreadContext,
+        }, NostrAccountSource, NostrAccountSummary, NostrEvent, NostrQuery,
         NOSTR_SERVICE_SOCKET_ENV,
     },
     ui::{
@@ -111,6 +114,17 @@ impl FeedScope {
     }
 }
 
+impl From<NostrHomeFeedScope> for FeedScope {
+    fn from(value: NostrHomeFeedScope) -> Self {
+        match value.source {
+            NostrHomeFeedSource::Following { count } => {
+                Self::following(value.authors.unwrap_or_default(), count)
+            }
+            NostrHomeFeedSource::NoContacts => Self::no_contacts(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Route {
     Account,
@@ -197,6 +211,17 @@ impl ProfileSummary {
     }
 }
 
+impl From<NostrProfileSummary> for ProfileSummary {
+    fn from(value: NostrProfileSummary) -> Self {
+        Self {
+            about: value.about,
+            display_name: value.display_name,
+            metadata_event_id: value.metadata_event_id,
+            nip05: value.nip05,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ExploreProfileEntry {
     latest_note_preview: String,
@@ -210,6 +235,15 @@ struct ExploreProfileEntry {
 struct ThreadContext {
     parent: Option<NostrEvent>,
     replies: Vec<NostrEvent>,
+}
+
+impl From<NostrThreadContext> for ThreadContext {
+    fn from(value: NostrThreadContext) -> Self {
+        Self {
+            parent: value.parent,
+            replies: value.replies,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1704,34 +1738,11 @@ fn note_card(ui: UiContext, note: NostrEvent) -> impl WidgetView<TimelineApp> {
 }
 
 fn load_cached_notes(limit: usize, feed_scope: &FeedScope) -> Result<Vec<NostrEvent>, String> {
-    let Some(authors) = feed_scope.authors.clone() else {
-        return Ok(Vec::new());
-    };
-    query(NostrQuery {
-        ids: None,
-        authors: Some(authors),
-        kinds: Some(vec![1]),
-        referenced_ids: None,
-        reply_to_ids: None,
-        since: None,
-        until: None,
-        limit: Some(limit),
-    })
-    .map_err(|error| error.to_string())
+    nostr_load_cached_home_notes(limit, &sdk_feed_scope(feed_scope)).map_err(|error| error.to_string())
 }
 
 fn load_explore_notes(limit: usize) -> Result<Vec<NostrEvent>, String> {
-    query(NostrQuery {
-        ids: None,
-        authors: None,
-        kinds: Some(vec![1]),
-        referenced_ids: None,
-        reply_to_ids: None,
-        since: None,
-        until: None,
-        limit: Some(limit),
-    })
-    .map_err(|error| error.to_string())
+    nostr_load_explore_notes(limit).map_err(|error| error.to_string())
 }
 
 fn load_feed_scope(account: Option<&ActiveAccount>) -> FeedScope {
@@ -1768,97 +1779,30 @@ fn home_feed_empty_message(feed_scope: &FeedScope) -> &'static str {
 }
 
 fn load_feed_scope_for_npub(npub: &str) -> FeedScope {
-    feed_scope_from_contact_list(load_contact_list_event_for_npub(npub))
-}
-
-fn feed_scope_from_contact_list(contact_list: Option<NostrEvent>) -> FeedScope {
-    let Some(contact_list) = contact_list else {
-        return FeedScope::no_contacts();
-    };
-    let mut authors = Vec::new();
-    for reference in contact_list.public_keys {
-        if authors.iter().all(|author| author != &reference.public_key) {
-            authors.push(reference.public_key);
-        }
-    }
-
-    if authors.is_empty() {
-        FeedScope::no_contacts()
-    } else {
-        let follow_count = authors.len();
-        FeedScope::following(authors, follow_count)
-    }
-}
-
-fn load_contact_list_event_for_npub(npub: &str) -> Option<NostrEvent> {
-    get_replaceable(NostrReplaceableQuery {
-        kind: 3,
-        pubkey: npub.to_owned(),
-        identifier: None,
-    })
-    .ok()
-    .flatten()
-}
-
-fn load_contact_references_for_npub(npub: &str) -> Vec<NostrPublicKeyReference> {
-    load_contact_list_event_for_npub(npub)
-        .map(|event| event.public_keys)
-        .unwrap_or_default()
+    load_home_feed_scope_for_account(npub)
+        .map(FeedScope::from)
+        .unwrap_or_else(|_| FeedScope::no_contacts())
 }
 
 fn load_profile_summary(pubkey: &str) -> ProfileSummary {
-    let Ok(Some(event)) = get_replaceable(NostrReplaceableQuery {
-        kind: 0,
-        pubkey: pubkey.to_owned(),
-        identifier: None,
-    }) else {
-        return ProfileSummary::default();
-    };
-
-    let Ok(metadata) = serde_json::from_str::<Value>(&event.content) else {
-        return ProfileSummary {
-            metadata_event_id: Some(event.id),
-            ..ProfileSummary::default()
-        };
-    };
-
-    ProfileSummary {
-        about: metadata
-            .get("about")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        display_name: metadata
-            .get("display_name")
-            .and_then(Value::as_str)
-            .or_else(|| metadata.get("displayName").and_then(Value::as_str))
-            .or_else(|| metadata.get("name").and_then(Value::as_str))
-            .map(str::to_owned),
-        metadata_event_id: Some(event.id),
-        nip05: metadata
-            .get("nip05")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-    }
+    nostr_load_profile_summary(pubkey)
+        .map(ProfileSummary::from)
+        .unwrap_or_default()
 }
 
 fn load_thread_context(note: &NostrEvent) -> ThreadContext {
-    let parent = note
-        .reply_to_event_id
-        .as_ref()
-        .and_then(|reply_to_id| get_event(reply_to_id).ok().flatten());
-    let replies = query(NostrQuery {
-        ids: None,
-        authors: None,
-        kinds: Some(vec![1]),
-        referenced_ids: None,
-        reply_to_ids: Some(vec![note.id.clone()]),
-        since: None,
-        until: None,
-        limit: Some(24),
-    })
-    .unwrap_or_default();
+    nostr_load_thread_context(note)
+        .map(ThreadContext::from)
+        .unwrap_or_default()
+}
 
-    ThreadContext { parent, replies }
+fn sdk_feed_scope(feed_scope: &FeedScope) -> NostrHomeFeedScope {
+    match feed_scope.source {
+        FeedSource::Following { .. } => {
+            NostrHomeFeedScope::following(feed_scope.authors.clone().unwrap_or_default())
+        }
+        FeedSource::NoContacts | FeedSource::Unavailable => NostrHomeFeedScope::no_contacts(),
+    }
 }
 
 fn thread_parent_ids(note: &NostrEvent) -> Vec<String> {
@@ -2020,51 +1964,29 @@ fn log_lifecycle_state(state: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{feed_scope_from_contact_list, FeedScope, FeedSource};
-    use shadow_sdk::services::nostr::{NostrEvent, NostrPublicKeyReference};
-
-    fn contact_list_event(public_keys: &[&str]) -> NostrEvent {
-        NostrEvent {
-            content: String::new(),
-            created_at: 1_700_000_000,
-            id: String::from("contact-list"),
-            kind: 3,
-            pubkey: String::from("npub-owner"),
-            identifier: None,
-            root_event_id: None,
-            reply_to_event_id: None,
-            references: Vec::new(),
-            public_keys: public_keys
-                .iter()
-                .map(|public_key| NostrPublicKeyReference {
-                    public_key: (*public_key).to_owned(),
-                    relay_url: None,
-                    alias: None,
-                })
-                .collect(),
-        }
-    }
+    use super::{FeedScope, FeedSource};
+    use shadow_sdk::services::nostr::timeline::NostrHomeFeedScope;
 
     #[test]
     fn missing_contact_list_keeps_home_empty() {
-        assert_eq!(feed_scope_from_contact_list(None), FeedScope::no_contacts());
+        assert_eq!(FeedScope::from(NostrHomeFeedScope::no_contacts()), FeedScope::no_contacts());
     }
 
     #[test]
     fn contact_list_without_follows_keeps_home_empty() {
         assert_eq!(
-            feed_scope_from_contact_list(Some(contact_list_event(&[]))),
+            FeedScope::from(NostrHomeFeedScope::following(Vec::new())),
             FeedScope::no_contacts()
         );
     }
 
     #[test]
     fn contact_list_builds_following_scope_from_unique_public_keys() {
-        let scope = feed_scope_from_contact_list(Some(contact_list_event(&[
-            "npub-follow-a",
-            "npub-follow-b",
-            "npub-follow-a",
-        ])));
+        let scope = FeedScope::from(NostrHomeFeedScope::following(vec![
+            String::from("npub-follow-a"),
+            String::from("npub-follow-b"),
+            String::from("npub-follow-a"),
+        ]));
 
         assert_eq!(scope.source, FeedSource::Following { count: 2 });
         assert_eq!(

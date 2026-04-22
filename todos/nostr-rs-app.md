@@ -119,8 +119,13 @@ internal foundation and keep the public boundary Shadow-owned.
   - the timeline task/effect seam now sits behind a dedicated `tasks.rs`
     module and one `TimelineTasks` state object instead of scattering slot
     fields and `with_task(...)` wiring through `main.rs`
+  - the app's Nostr-specific task runners and cached-data helpers now sit
+    behind `shadow_sdk::services::nostr::timeline`, so the SDK owns more of the
+    Home/Explore/thread/contact-list/reply domain logic directly
+  - the app-side task module is now split into `tasks.rs`, `tasks/start.rs`,
+    and `tasks/finish.rs` so the remaining UI-specific glue is easier to see
 - That still is not the end state. The timeline app still owns:
-  - one `Pending*` struct per job family
+  - some `Pending*` structs for UI-specific pending-state concerns
   - route prep that still mixes inline cache reads with async follow-up work
   - app-specific task runners and finish handlers that should shrink further as
     the shared framework grows

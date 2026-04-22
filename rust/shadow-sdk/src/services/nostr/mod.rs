@@ -3,6 +3,7 @@ use std::fmt;
 #[doc(hidden)]
 pub mod ipc;
 mod store;
+pub mod timeline;
 pub mod types;
 
 pub use ipc::NOSTR_SERVICE_SOCKET_ENV;

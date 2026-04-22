@@ -98,11 +98,18 @@ speculating about a huge widget catalog up front.
     module with one `TimelineTasks` state object and one `decorate_with_tasks`
     hook instead of spreading slot state and `with_task(...)` wiring through
     `main.rs`
+  - the next cleanup slice moved the timeline app's Nostr task runners and
+    cached-data helpers behind `shadow_sdk::services::nostr::timeline`, so the
+    SDK now owns more of the Home/Explore/thread/contact-list/reply domain
+    behavior instead of leaving that logic inside the app crate
+  - the oversized timeline task module is now split across `tasks.rs`,
+    `tasks/start.rs`, and `tasks/finish.rs` so the app-side task boundary stays
+    readable while the SDK absorbs more of the actual domain work
 - That is not the end state. The big remaining ergonomics problem is still the
   app-local shape of task/effect wiring:
-  - per-app `Pending*` job structs
+  - per-app `Pending*` job structs still exist for UI-specific pending state
   - no first-class distinction between inline cache reads and async effects
-  - too much app-specific task runner boilerplate sitting above the generic
+  - too much app-specific begin/finish glue still sits above the generic
     `TaskSlot` / `with_task` foundation
 - The new platform listener helper is in use for the Rust timeline, but other
   app paths still own raw socket/control loops. Keep collapsing those inward
