@@ -36,6 +36,7 @@ run_boot_demo_gate() {
   scripts/ci/pixel_boot_hello_init_smoke.sh
   scripts/ci/pixel_boot_orange_init_smoke.sh
   scripts/ci/pixel_boot_orange_gpu_smoke.sh
+  scripts/ci/pixel_boot_rust_bridge_smoke.sh
 
   # Keep the real cross-builds here so the hermetic smokes cannot hide a broken
   # flake/package seam, but keep them out of the repo-wide fast gate.
@@ -52,7 +53,13 @@ run_boot_demo_gate() {
   tmp_orange_gpu="$(mktemp "${TMPDIR:-/tmp}/shadow-orange-gpu.XXXXXX.img")"
   rm -f "$tmp_orange_gpu"
   scripts/pixel/pixel_boot_build_orange_gpu.sh --output "$tmp_orange_gpu" >/dev/null
+  tmp_orange_gpu_rust_bridge="$(mktemp "${TMPDIR:-/tmp}/shadow-orange-gpu-rust-bridge.XXXXXX.img")"
+  rm -f "$tmp_orange_gpu_rust_bridge"
+  scripts/pixel/pixel_boot_build_rust_bridge.sh \
+    --input "$tmp_orange_gpu" \
+    --output "$tmp_orange_gpu_rust_bridge" >/dev/null
   rm -f "$tmp_orange_gpu" "$tmp_orange_gpu.hello-init.json"
+  rm -f "$tmp_orange_gpu_rust_bridge" "$tmp_orange_gpu_rust_bridge.hello-init.json"
   scripts/ci/pixel_boot_tooling_smoke.sh
   scripts/ci/pixel_kgsl_cold_matrix_smoke.sh
   scripts/ci/pixel_kgsl_matrix_smoke.sh
