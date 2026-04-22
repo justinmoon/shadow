@@ -105,12 +105,18 @@ speculating about a huge widget catalog up front.
   - the oversized timeline task module is now split across `tasks.rs`,
     `tasks/start.rs`, and `tasks/finish.rs` so the app-side task boundary stays
     readable while the SDK absorbs more of the actual domain work
+  - the follow-up cleanup slice moved the remaining cache-only Home/Explore/
+    profile/thread hydration into `shadow_sdk::services::nostr::timeline`, and
+    the app now rehydrates route-local caches from that SDK surface instead of
+    assembling Nostr read state inline during render
 - That is not the end state. The big remaining ergonomics problem is still the
   app-local shape of task/effect wiring:
   - per-app `Pending*` job structs still exist for UI-specific pending state
-  - no first-class distinction between inline cache reads and async effects
+  - no first-class distinction between route-local cache hydration and async
+    effects
   - too much app-specific begin/finish glue still sits above the generic
-    `TaskSlot` / `with_task` foundation
+    `TaskSlot` / `with_task` foundation even after the cache reads moved out of
+    render
 - The new platform listener helper is in use for the Rust timeline, but other
   app paths still own raw socket/control loops. Keep collapsing those inward
   instead of letting multiple listener styles stick around.

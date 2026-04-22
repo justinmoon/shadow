@@ -1,11 +1,11 @@
-use shadow_sdk::services::nostr::timeline::NostrReplyPublishRequest;
+use shadow_sdk::services::nostr::timeline::{thread_parent_ids, NostrReplyPublishRequest};
 
 use super::{
     AccountActionKind, FollowActionKind, PendingAccountAction, PendingClipboardWrite,
     PendingExploreSync, PendingFollowUpdate, PendingPublish, PendingRefresh, PendingThreadSync,
     RefreshSource,
 };
-use crate::{socket_available, thread_parent_ids, TimelineApp, TimelineStatus, Tone};
+use crate::{socket_available, TimelineApp, TimelineStatus, Tone};
 
 impl TimelineApp {
     pub(crate) fn begin_refresh(&mut self, source: RefreshSource) {

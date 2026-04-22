@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde_json::Value;
 
 use super::{
@@ -52,6 +54,40 @@ pub struct NostrProfileSummary {
 pub struct NostrThreadContext {
     pub parent: Option<NostrEvent>,
     pub replies: Vec<NostrEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NostrHomeCacheState {
+    pub feed_scope: NostrHomeFeedScope,
+    pub notes: Vec<NostrEvent>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NostrExploreProfileEntry {
+    pub latest_note_preview: String,
+    pub note_count: usize,
+    pub profile: NostrProfileSummary,
+    pub pubkey: String,
+    pub updated_at: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NostrExploreCacheState {
+    pub notes: Vec<NostrEvent>,
+    pub profiles: Vec<NostrExploreProfileEntry>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NostrProfileCacheState {
+    pub summary: NostrProfileSummary,
+    pub notes: Vec<NostrEvent>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NostrNoteCacheState {
+    pub note: Option<NostrEvent>,
+    pub profile: NostrProfileSummary,
+    pub thread: NostrThreadContext,
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +199,15 @@ pub fn load_cached_home_notes(
     })
 }
 
+pub fn load_home_cache_state_for_account(
+    npub: impl AsRef<str>,
+    limit: usize,
+) -> Result<NostrHomeCacheState, NostrError> {
+    let feed_scope = load_home_feed_scope_for_account(npub)?;
+    let notes = load_cached_home_notes(limit, &feed_scope)?;
+    Ok(NostrHomeCacheState { feed_scope, notes })
+}
+
 pub fn load_explore_notes(limit: usize) -> Result<Vec<NostrEvent>, NostrError> {
     query(NostrQuery {
         ids: None,
@@ -174,6 +219,12 @@ pub fn load_explore_notes(limit: usize) -> Result<Vec<NostrEvent>, NostrError> {
         until: None,
         limit: Some(limit),
     })
+}
+
+pub fn load_explore_cache_state(limit: usize) -> Result<NostrExploreCacheState, NostrError> {
+    let notes = load_explore_notes(limit)?;
+    let profiles = build_explore_profile_entries(&notes)?;
+    Ok(NostrExploreCacheState { notes, profiles })
 }
 
 pub fn load_contact_references_for_account(
@@ -220,6 +271,16 @@ pub fn load_profile_summary(pubkey: impl AsRef<str>) -> Result<NostrProfileSumma
     })
 }
 
+pub fn load_profile_cache_state(
+    pubkey: impl AsRef<str>,
+    limit: usize,
+) -> Result<NostrProfileCacheState, NostrError> {
+    let pubkey = pubkey.as_ref();
+    let summary = load_profile_summary(pubkey)?;
+    let notes = load_profile_notes(pubkey, limit)?;
+    Ok(NostrProfileCacheState { summary, notes })
+}
+
 pub fn load_thread_context(note: &NostrEvent) -> Result<NostrThreadContext, NostrError> {
     let parent = note
         .reply_to_event_id
@@ -237,6 +298,32 @@ pub fn load_thread_context(note: &NostrEvent) -> Result<NostrThreadContext, Nost
     })?;
 
     Ok(NostrThreadContext { parent, replies })
+}
+
+pub fn load_note_cache_state(note_id: impl AsRef<str>) -> Result<NostrNoteCacheState, NostrError> {
+    let Some(note) = get_event(note_id.as_ref())? else {
+        return Ok(NostrNoteCacheState::default());
+    };
+    let profile = load_profile_summary(&note.pubkey)?;
+    let thread = load_thread_context(&note)?;
+    Ok(NostrNoteCacheState {
+        note: Some(note),
+        profile,
+        thread,
+    })
+}
+
+pub fn thread_parent_ids(note: &NostrEvent) -> Vec<String> {
+    let mut parent_ids = Vec::new();
+    if let Some(reply_to_event_id) = note.reply_to_event_id.as_ref() {
+        parent_ids.push(reply_to_event_id.clone());
+    }
+    if let Some(root_event_id) = note.root_event_id.as_ref() {
+        if !parent_ids.iter().any(|id| id == root_event_id) {
+            parent_ids.push(root_event_id.clone());
+        }
+    }
+    parent_ids
 }
 
 pub fn refresh_home_feed(
@@ -484,11 +571,59 @@ fn load_contact_list_event_for_account(
     })
 }
 
+fn load_profile_notes(pubkey: &str, limit: usize) -> Result<Vec<NostrEvent>, NostrError> {
+    query(NostrQuery {
+        ids: None,
+        authors: Some(vec![pubkey.to_owned()]),
+        kinds: Some(vec![1]),
+        referenced_ids: None,
+        reply_to_ids: None,
+        since: None,
+        until: None,
+        limit: Some(limit.max(24)),
+    })
+}
+
+fn build_explore_profile_entries(
+    notes: &[NostrEvent],
+) -> Result<Vec<NostrExploreProfileEntry>, NostrError> {
+    let mut note_counts = BTreeMap::new();
+    for note in notes {
+        *note_counts.entry(note.pubkey.clone()).or_insert(0_usize) += 1;
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut entries = Vec::new();
+    for note in notes {
+        if !seen.insert(note.pubkey.clone()) {
+            continue;
+        }
+        entries.push(NostrExploreProfileEntry {
+            latest_note_preview: note_preview(&note.content),
+            note_count: *note_counts.get(&note.pubkey).unwrap_or(&1),
+            profile: load_profile_summary(&note.pubkey).unwrap_or_default(),
+            pubkey: note.pubkey.clone(),
+            updated_at: note.created_at,
+        });
+    }
+    Ok(entries)
+}
+
+fn note_preview(content: &str) -> String {
+    let preview = content.lines().next().unwrap_or("").trim();
+    if preview.is_empty() {
+        String::from("No preview available.")
+    } else {
+        preview.to_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        load_home_feed_scope_for_account, load_profile_summary, load_thread_context,
-        NostrHomeFeedSource,
+        load_home_cache_state_for_account, load_home_feed_scope_for_account,
+        load_note_cache_state, load_profile_summary, load_thread_context,
+        thread_parent_ids, NostrHomeFeedSource,
     };
     use crate::services::nostr::{
         NostrEvent, SqliteNostrService, NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV,
@@ -567,6 +702,52 @@ mod tests {
                     String::from("npub-follow-b")
                 ])
             );
+        });
+    }
+
+    #[test]
+    fn home_cache_state_reads_followed_notes() {
+        with_temp_db(|| {
+            let service = SqliteNostrService::from_env().expect("open sqlite service");
+            service
+                .store_event(&NostrEvent {
+                    content: String::new(),
+                    created_at: 1_700_000_000,
+                    id: String::from("contact-list"),
+                    kind: 3,
+                    pubkey: String::from("npub-owner"),
+                    identifier: None,
+                    root_event_id: None,
+                    reply_to_event_id: None,
+                    references: Vec::new(),
+                    public_keys: vec![crate::services::nostr::NostrPublicKeyReference {
+                        public_key: String::from("npub-follow-a"),
+                        relay_url: None,
+                        alias: None,
+                    }],
+                })
+                .expect("store contact list");
+            service
+                .store_event(&NostrEvent {
+                    content: String::from("followed note"),
+                    created_at: 1_700_000_001,
+                    id: String::from("note-a"),
+                    kind: 1,
+                    pubkey: String::from("npub-follow-a"),
+                    identifier: None,
+                    root_event_id: None,
+                    reply_to_event_id: None,
+                    references: Vec::new(),
+                    public_keys: Vec::new(),
+                })
+                .expect("store followed note");
+
+            let cache =
+                load_home_cache_state_for_account("npub-owner", 20).expect("load home cache");
+
+            assert_eq!(cache.feed_scope.source, NostrHomeFeedSource::Following { count: 1 });
+            assert_eq!(cache.notes.len(), 1);
+            assert_eq!(cache.notes[0].id, "note-a");
         });
     }
 
@@ -668,5 +849,83 @@ mod tests {
             assert_eq!(context.replies.len(), 1);
             assert_eq!(context.replies[0].id, "reply");
         });
+    }
+
+    #[test]
+    fn load_note_cache_state_reads_note_profile_and_thread() {
+        with_temp_db(|| {
+            let service = SqliteNostrService::from_env().expect("open sqlite service");
+            service
+                .store_event(&NostrEvent {
+                    content: String::from(r#"{"display_name":"alice"}"#),
+                    created_at: 1_700_000_000,
+                    id: String::from("metadata"),
+                    kind: 0,
+                    pubkey: String::from("npub-alice"),
+                    identifier: None,
+                    root_event_id: None,
+                    reply_to_event_id: None,
+                    references: Vec::new(),
+                    public_keys: Vec::new(),
+                })
+                .expect("store metadata");
+            service
+                .store_event(&NostrEvent {
+                    content: String::from("root"),
+                    created_at: 1_700_000_001,
+                    id: String::from("root"),
+                    kind: 1,
+                    pubkey: String::from("npub-alice"),
+                    identifier: None,
+                    root_event_id: None,
+                    reply_to_event_id: None,
+                    references: Vec::new(),
+                    public_keys: Vec::new(),
+                })
+                .expect("store root");
+            service
+                .store_event(&NostrEvent {
+                    content: String::from("reply"),
+                    created_at: 1_700_000_002,
+                    id: String::from("reply"),
+                    kind: 1,
+                    pubkey: String::from("npub-bob"),
+                    identifier: None,
+                    root_event_id: Some(String::from("root")),
+                    reply_to_event_id: Some(String::from("root")),
+                    references: Vec::new(),
+                    public_keys: Vec::new(),
+                })
+                .expect("store reply");
+
+            let cache = load_note_cache_state("root").expect("load note cache");
+
+            assert_eq!(
+                cache.note.as_ref().map(|note| note.id.as_str()),
+                Some("root")
+            );
+            assert_eq!(cache.profile.display_name.as_deref(), Some("alice"));
+            assert!(cache.thread.parent.is_none());
+            assert_eq!(cache.thread.replies.len(), 1);
+            assert_eq!(cache.thread.replies[0].id, "reply");
+        });
+    }
+
+    #[test]
+    fn thread_parent_ids_deduplicates_root_and_reply() {
+        let ids = thread_parent_ids(&NostrEvent {
+            content: String::new(),
+            created_at: 1_700_000_000,
+            id: String::from("note"),
+            kind: 1,
+            pubkey: String::from("npub-owner"),
+            identifier: None,
+            root_event_id: Some(String::from("root")),
+            reply_to_event_id: Some(String::from("root")),
+            references: Vec::new(),
+            public_keys: Vec::new(),
+        });
+
+        assert_eq!(ids, vec![String::from("root")]);
     }
 }

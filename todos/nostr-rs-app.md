@@ -124,9 +124,14 @@ internal foundation and keep the public boundary Shadow-owned.
     Home/Explore/thread/contact-list/reply domain logic directly
   - the app-side task module is now split into `tasks.rs`, `tasks/start.rs`,
     and `tasks/finish.rs` so the remaining UI-specific glue is easier to see
+  - the remaining cache-only Home/Explore/profile/thread hydration now lives in
+    `shadow_sdk::services::nostr::timeline`, and the app keeps route-local
+    caches hydrated from that SDK surface instead of rebuilding Nostr read
+    state inline during render
 - That still is not the end state. The timeline app still owns:
   - some `Pending*` structs for UI-specific pending-state concerns
-  - route prep that still mixes inline cache reads with async follow-up work
+  - route prep that still owns cache invalidation and route-local hydration
+    policy above the shared SDK
   - app-specific task runners and finish handlers that should shrink further as
     the shared framework grows
 - The next cleanup slice should attack that remaining app-local task/effect

@@ -25,7 +25,7 @@ impl TimelineApp {
             Ok(outcome) => {
                 self.feed_scope = FeedScope::from(outcome.feed_scope);
                 self.notes = outcome.notes;
-                self.profiles.clear();
+                self.invalidate_route_caches();
                 self.sync_routes();
                 self.status = if self.notes.is_empty() {
                     empty_feed_status(&self.feed_scope)
@@ -72,15 +72,19 @@ impl TimelineApp {
         }
 
         self.status = match result {
-            Ok(outcome) => TimelineStatus {
-                tone: Tone::Success,
-                message: format!(
-                    "Explore fetched {} note{}, imported {}.",
-                    outcome.fetched_count,
-                    plural_suffix(outcome.fetched_count),
-                    outcome.imported_count,
-                ),
-            },
+            Ok(outcome) => {
+                self.invalidate_route_caches();
+                self.sync_routes();
+                TimelineStatus {
+                    tone: Tone::Success,
+                    message: format!(
+                        "Explore fetched {} note{}, imported {}.",
+                        outcome.fetched_count,
+                        plural_suffix(outcome.fetched_count),
+                        outcome.imported_count,
+                    ),
+                }
+            }
             Err(message) => TimelineStatus {
                 tone: Tone::Danger,
                 message,
@@ -96,10 +100,11 @@ impl TimelineApp {
         if self.tasks.thread_sync.finish(task.id()).is_none() {
             return;
         }
+        self.invalidate_route_caches();
+        self.sync_routes();
 
         match result {
             Ok(outcome) => {
-                self.sync_routes();
                 self.status = TimelineStatus {
                     tone: if outcome.imported_count > 0 {
                         Tone::Success
