@@ -15,7 +15,7 @@ use xilem::{AnyWidgetView, Color, FontWeight, InsertNewline, WidgetView};
 
 use crate::app::AppWindowMetrics;
 
-use super::Theme;
+use super::{TaskHandle, Theme};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
@@ -411,6 +411,25 @@ where
                 },
             )
         }),
+    )
+}
+
+pub fn with_task<State, Job, Output>(
+    content: impl WidgetView<State>,
+    task: Option<TaskHandle<Job>>,
+    run: impl Fn(Job) -> Result<Output, String> + Clone + Send + Sync + 'static,
+    apply: impl Fn(&mut State, TaskHandle<Job>, Result<Output, String>) + Clone + Send + Sync + 'static,
+) -> impl WidgetView<State>
+where
+    State: Send + Sync + 'static,
+    Job: Clone + Send + Sync + 'static,
+    Output: Debug + Send + 'static,
+{
+    with_blocking_task(
+        content,
+        task,
+        move |task: TaskHandle<Job>| run(task.into_job()),
+        apply,
     )
 }
 

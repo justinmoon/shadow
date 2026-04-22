@@ -1,16 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::future;
-use std::io::{Read, Write};
-use std::os::unix::net::UnixListener;
-use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
-use shadow_runtime_protocol::AppPlatformRequest;
 use shadow_sdk::{
     app::{
-        current_lifecycle_state, platform_control_socket_path, AppWindowDefaults,
+        current_lifecycle_state, spawn_platform_request_listener, AppWindowDefaults,
         AppWindowEnvironment, AppWindowMetrics, LifecycleState,
     },
     services::clipboard::write_text as write_clipboard_text,
@@ -22,10 +18,11 @@ use shadow_sdk::{
     },
     ui::{
         self, body_text, caption_text, column, eyebrow_text, fork, headline_text, maybe,
-        multiline_editor, panel, primary_button, primary_button_state, prose_text, row, screen,
+        multiline_editor, panel, primary_button, primary_button_state, prose_text, row,
         secondary_button, secondary_button_state, selectable_card, status_chip, text_field, tokio,
-        top_bar, top_bar_with_back, with_blocking_task, with_sheet, worker_raw, ActionButtonState,
-        AsUnit, FlexExt, MainAxisAlignment, MessageProxy, Theme, Tone, WidgetView,
+        top_bar, top_bar_with_back, with_sheet, with_task, worker_raw, ActionButtonState, AsUnit,
+        FlexExt, MainAxisAlignment, MessageProxy, TaskHandle, TaskSlot, Tone, UiContext,
+        WidgetView,
     },
 };
 
@@ -122,7 +119,6 @@ enum RefreshSource {
 
 #[derive(Clone, Debug)]
 struct PendingRefresh {
-    token: u64,
     account_npub: String,
     limit: usize,
     relay_urls: Vec<String>,
@@ -130,14 +126,12 @@ struct PendingRefresh {
 
 #[derive(Clone, Debug)]
 struct PendingExploreSync {
-    token: u64,
     limit: usize,
     relay_urls: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
 struct PendingThreadSync {
-    token: u64,
     note_id: String,
     parent_ids: Vec<String>,
     relay_urls: Vec<String>,
@@ -152,13 +146,11 @@ enum AccountActionKind {
 #[derive(Clone, Debug)]
 struct PendingAccountAction {
     kind: AccountActionKind,
-    token: u64,
 }
 
 #[derive(Clone, Debug)]
 struct PendingClipboardWrite {
     text: String,
-    token: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -172,7 +164,6 @@ struct PendingFollowUpdate {
     account_npub: String,
     action: FollowActionKind,
     relay_urls: Vec<String>,
-    token: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -182,7 +173,6 @@ struct PendingPublish {
     relay_urls: Vec<String>,
     reply_to_event_id: String,
     root_event_id: Option<String>,
-    token: u64,
 }
 
 #[derive(Debug)]
@@ -331,19 +321,18 @@ struct TimelineApp {
     follow_input: String,
     metrics: AppWindowMetrics,
     nsec_input: String,
-    pending_account_action: Option<PendingAccountAction>,
-    pending_clipboard_write: Option<PendingClipboardWrite>,
-    pending_follow_update: Option<PendingFollowUpdate>,
-    pending_publish: Option<PendingPublish>,
+    pending_account_action: TaskSlot<PendingAccountAction>,
+    pending_clipboard_write: TaskSlot<PendingClipboardWrite>,
+    pending_follow_update: TaskSlot<PendingFollowUpdate>,
+    pending_publish: TaskSlot<PendingPublish>,
     notes: Vec<NostrEvent>,
-    pending_explore_sync: Option<PendingExploreSync>,
-    pending_refresh: Option<PendingRefresh>,
-    pending_thread_sync: Option<PendingThreadSync>,
+    pending_explore_sync: TaskSlot<PendingExploreSync>,
+    pending_refresh: TaskSlot<PendingRefresh>,
+    pending_thread_sync: TaskSlot<PendingThreadSync>,
     profiles: BTreeMap<String, ProfileSummary>,
     reply_draft: Option<ReplyDraft>,
     route_stack: Vec<Route>,
     status: TimelineStatus,
-    next_refresh_token: u64,
 }
 
 impl TimelineApp {
@@ -423,19 +412,18 @@ impl TimelineApp {
             follow_input: String::new(),
             metrics,
             nsec_input: String::new(),
-            pending_account_action: None,
-            pending_clipboard_write: None,
-            pending_follow_update: None,
-            pending_publish: None,
+            pending_account_action: TaskSlot::new(),
+            pending_clipboard_write: TaskSlot::new(),
+            pending_follow_update: TaskSlot::new(),
+            pending_publish: TaskSlot::new(),
             notes,
-            pending_explore_sync: None,
-            pending_refresh: None,
-            pending_thread_sync: None,
+            pending_explore_sync: TaskSlot::new(),
+            pending_refresh: TaskSlot::new(),
+            pending_thread_sync: TaskSlot::new(),
             profiles: BTreeMap::new(),
             reply_draft: None,
             route_stack,
             status,
-            next_refresh_token: 1,
         };
         if app.account.is_some() && app.config.sync_on_start && socket_available() {
             app.begin_refresh(RefreshSource::Startup);
@@ -451,13 +439,11 @@ impl TimelineApp {
             };
             return;
         };
-        if self.pending_refresh.is_some() {
+        if self.pending_refresh.is_pending() {
             return;
         }
         let account_npub = account.npub.clone();
-        let token = self.next_token();
-        self.pending_refresh = Some(PendingRefresh {
-            token,
+        self.pending_refresh.start(PendingRefresh {
             account_npub,
             limit: self.config.limit,
             relay_urls: self.config.relay_urls.clone(),
@@ -475,11 +461,10 @@ impl TimelineApp {
     }
 
     fn begin_explore_sync(&mut self) {
-        if self.pending_explore_sync.is_some() {
+        if self.pending_explore_sync.is_pending() {
             return;
         }
-        self.pending_explore_sync = Some(PendingExploreSync {
-            token: self.next_token(),
+        self.pending_explore_sync.start(PendingExploreSync {
             limit: self.config.limit.max(24),
             relay_urls: self.config.relay_urls.clone(),
         });
@@ -490,12 +475,11 @@ impl TimelineApp {
     }
 
     fn begin_account_generate(&mut self) {
-        if self.pending_account_action.is_some() {
+        if self.pending_account_action.is_pending() {
             return;
         }
-        self.pending_account_action = Some(PendingAccountAction {
+        self.pending_account_action.start(PendingAccountAction {
             kind: AccountActionKind::Generate,
-            token: self.next_token(),
         });
         self.status = TimelineStatus {
             tone: Tone::Accent,
@@ -504,7 +488,7 @@ impl TimelineApp {
     }
 
     fn begin_account_import(&mut self) {
-        if self.pending_account_action.is_some() {
+        if self.pending_account_action.is_pending() {
             return;
         }
         let nsec = self.nsec_input.trim();
@@ -515,11 +499,10 @@ impl TimelineApp {
             };
             return;
         }
-        self.pending_account_action = Some(PendingAccountAction {
+        self.pending_account_action.start(PendingAccountAction {
             kind: AccountActionKind::Import {
                 nsec: nsec.to_owned(),
             },
-            token: self.next_token(),
         });
         self.status = TimelineStatus {
             tone: Tone::Accent,
@@ -528,15 +511,13 @@ impl TimelineApp {
     }
 
     fn begin_thread_sync(&mut self, note_id: String) {
-        if self.pending_thread_sync.is_some() {
+        if self.pending_thread_sync.is_pending() {
             return;
         }
         let Some(note) = self.cached_note_by_id(&note_id) else {
             return;
         };
-        let token = self.next_token();
-        self.pending_thread_sync = Some(PendingThreadSync {
-            token,
+        self.pending_thread_sync.start(PendingThreadSync {
             note_id,
             parent_ids: thread_parent_ids(&note),
             relay_urls: self.config.relay_urls.clone(),
@@ -548,7 +529,7 @@ impl TimelineApp {
     }
 
     fn begin_copy_account_npub(&mut self) {
-        if self.pending_clipboard_write.is_some() {
+        if self.pending_clipboard_write.is_pending() {
             return;
         }
         let Some(account) = self.account.as_ref() else {
@@ -558,9 +539,8 @@ impl TimelineApp {
             };
             return;
         };
-        self.pending_clipboard_write = Some(PendingClipboardWrite {
+        self.pending_clipboard_write.start(PendingClipboardWrite {
             text: account.npub.clone(),
-            token: self.next_token(),
         });
         self.status = TimelineStatus {
             tone: Tone::Accent,
@@ -574,7 +554,7 @@ impl TimelineApp {
     }
 
     fn begin_follow_add_for(&mut self, npub: String) {
-        if self.pending_follow_update.is_some() {
+        if self.pending_follow_update.is_pending() {
             return;
         }
         if !socket_available() {
@@ -620,11 +600,10 @@ impl TimelineApp {
             };
             return;
         }
-        self.pending_follow_update = Some(PendingFollowUpdate {
+        self.pending_follow_update.start(PendingFollowUpdate {
             account_npub: account.npub.clone(),
             action: FollowActionKind::Add { npub },
             relay_urls: self.config.relay_urls.clone(),
-            token: self.next_token(),
         });
         self.status = TimelineStatus {
             tone: Tone::Accent,
@@ -633,7 +612,7 @@ impl TimelineApp {
     }
 
     fn begin_follow_remove(&mut self, npub: String) {
-        if self.pending_follow_update.is_some() {
+        if self.pending_follow_update.is_pending() {
             return;
         }
         if !socket_available() {
@@ -652,11 +631,10 @@ impl TimelineApp {
             };
             return;
         };
-        self.pending_follow_update = Some(PendingFollowUpdate {
+        self.pending_follow_update.start(PendingFollowUpdate {
             account_npub: account.npub.clone(),
             action: FollowActionKind::Remove { npub },
             relay_urls: self.config.relay_urls.clone(),
-            token: self.next_token(),
         });
         self.status = TimelineStatus {
             tone: Tone::Accent,
@@ -693,7 +671,7 @@ impl TimelineApp {
     }
 
     fn begin_reply_publish(&mut self) {
-        if self.pending_publish.is_some() {
+        if self.pending_publish.is_pending() {
             return;
         }
         let Some(draft) = self.reply_draft.clone() else {
@@ -714,24 +692,17 @@ impl TimelineApp {
             };
             return;
         };
-        self.pending_publish = Some(PendingPublish {
+        self.pending_publish.start(PendingPublish {
             content: content.to_owned(),
             note_id: note.id.clone(),
             relay_urls: self.config.relay_urls.clone(),
             reply_to_event_id: note.id.clone(),
             root_event_id: note.root_event_id.clone().or_else(|| Some(note.id)),
-            token: self.next_token(),
         });
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Publishing reply through the shared Nostr account..."),
         };
-    }
-
-    fn next_token(&mut self) -> u64 {
-        let token = self.next_refresh_token;
-        self.next_refresh_token += 1;
-        token
     }
 
     fn current_followed_pubkeys(&self) -> Vec<String> {
@@ -747,22 +718,22 @@ impl TimelineApp {
 
     fn follow_update_pending_for(&self, pubkey: &str) -> bool {
         self.pending_follow_update
-            .as_ref()
-            .is_some_and(|pending| match &pending.action {
+            .pending()
+            .is_some_and(|pending| match &pending.job().action {
                 FollowActionKind::Add { npub } | FollowActionKind::Remove { npub } => {
                     npub == pubkey
                 }
             })
     }
 
-    fn finish_refresh(&mut self, token: u64, result: Result<RefreshOutcome, String>) {
-        let Some(pending) = &self.pending_refresh else {
+    fn finish_refresh(
+        &mut self,
+        task: TaskHandle<PendingRefresh>,
+        result: Result<RefreshOutcome, String>,
+    ) {
+        if self.pending_refresh.finish(task.id()).is_none() {
             return;
         };
-        if pending.token != token {
-            return;
-        }
-        self.pending_refresh = None;
 
         match result {
             Ok(outcome) => {
@@ -805,14 +776,14 @@ impl TimelineApp {
         }
     }
 
-    fn finish_explore_sync(&mut self, token: u64, result: Result<ExploreSyncOutcome, String>) {
-        let Some(pending) = &self.pending_explore_sync else {
+    fn finish_explore_sync(
+        &mut self,
+        task: TaskHandle<PendingExploreSync>,
+        result: Result<ExploreSyncOutcome, String>,
+    ) {
+        if self.pending_explore_sync.finish(task.id()).is_none() {
             return;
         };
-        if pending.token != token {
-            return;
-        }
-        self.pending_explore_sync = None;
 
         self.status = match result {
             Ok(outcome) => TimelineStatus {
@@ -831,14 +802,14 @@ impl TimelineApp {
         };
     }
 
-    fn finish_thread_sync(&mut self, token: u64, result: Result<ThreadSyncOutcome, String>) {
-        let Some(pending) = &self.pending_thread_sync else {
+    fn finish_thread_sync(
+        &mut self,
+        task: TaskHandle<PendingThreadSync>,
+        result: Result<ThreadSyncOutcome, String>,
+    ) {
+        if self.pending_thread_sync.finish(task.id()).is_none() {
             return;
         };
-        if pending.token != token {
-            return;
-        }
-        self.pending_thread_sync = None;
 
         match result {
             Ok(outcome) => {
@@ -867,14 +838,14 @@ impl TimelineApp {
         }
     }
 
-    fn finish_account_action(&mut self, token: u64, result: Result<ActiveAccount, String>) {
-        let Some(pending) = &self.pending_account_action else {
+    fn finish_account_action(
+        &mut self,
+        task: TaskHandle<PendingAccountAction>,
+        result: Result<ActiveAccount, String>,
+    ) {
+        if self.pending_account_action.finish(task.id()).is_none() {
             return;
         };
-        if pending.token != token {
-            return;
-        }
-        self.pending_account_action = None;
 
         match result {
             Ok(account) => {
@@ -930,14 +901,14 @@ impl TimelineApp {
         }
     }
 
-    fn finish_clipboard_write(&mut self, token: u64, result: Result<(), String>) {
-        let Some(pending) = &self.pending_clipboard_write else {
+    fn finish_clipboard_write(
+        &mut self,
+        task: TaskHandle<PendingClipboardWrite>,
+        result: Result<(), String>,
+    ) {
+        if self.pending_clipboard_write.finish(task.id()).is_none() {
             return;
         };
-        if pending.token != token {
-            return;
-        }
-        self.pending_clipboard_write = None;
 
         self.status = match result {
             Ok(()) => TimelineStatus {
@@ -951,15 +922,15 @@ impl TimelineApp {
         };
     }
 
-    fn finish_follow_update(&mut self, token: u64, result: Result<FollowUpdateOutcome, String>) {
-        let Some(pending) = &self.pending_follow_update else {
+    fn finish_follow_update(
+        &mut self,
+        task: TaskHandle<PendingFollowUpdate>,
+        result: Result<FollowUpdateOutcome, String>,
+    ) {
+        let Some(pending) = self.pending_follow_update.finish(task.id()) else {
             return;
         };
-        if pending.token != token {
-            return;
-        }
-        let action = pending.action.clone();
-        self.pending_follow_update = None;
+        let action = pending.action;
 
         match result {
             Ok(outcome) => {
@@ -1014,15 +985,15 @@ impl TimelineApp {
         }
     }
 
-    fn finish_publish(&mut self, token: u64, result: Result<PublishOutcome, String>) {
-        let Some(pending) = &self.pending_publish else {
+    fn finish_publish(
+        &mut self,
+        task: TaskHandle<PendingPublish>,
+        result: Result<PublishOutcome, String>,
+    ) {
+        let Some(pending) = self.pending_publish.finish(task.id()) else {
             return;
         };
-        if pending.token != token {
-            return;
-        }
         let publish_preview = log_preview_text(&pending.content);
-        self.pending_publish = None;
 
         match result {
             Ok(outcome) => {
@@ -1209,7 +1180,7 @@ impl TimelineApp {
         }
         self.set_reply_draft_content(value);
         self.begin_reply_publish();
-        if self.pending_publish.is_some() {
+        if self.pending_publish.is_pending() {
             eprintln!("{APP_LOG_PREFIX}: automation_publish_reply_success");
         } else {
             eprintln!("{APP_LOG_PREFIX}: automation_publish_reply_failed");
@@ -1320,20 +1291,20 @@ fn main() -> Result<(), ui::EventLoopError> {
 }
 
 fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
-    let pending_account_action = app.pending_account_action.clone();
-    let pending_clipboard_write = app.pending_clipboard_write.clone();
-    let pending_explore_sync = app.pending_explore_sync.clone();
-    let pending_follow_update = app.pending_follow_update.clone();
-    let pending_publish = app.pending_publish.clone();
-    let pending_refresh = app.pending_refresh.clone();
-    let pending_thread_sync = app.pending_thread_sync.clone();
-    let theme = Theme::shadow_dark();
+    let pending_account_action = app.pending_account_action.pending_cloned();
+    let pending_clipboard_write = app.pending_clipboard_write.pending_cloned();
+    let pending_explore_sync = app.pending_explore_sync.pending_cloned();
+    let pending_follow_update = app.pending_follow_update.pending_cloned();
+    let pending_publish = app.pending_publish.pending_cloned();
+    let pending_refresh = app.pending_refresh.pending_cloned();
+    let pending_thread_sync = app.pending_thread_sync.pending_cloned();
+    let ui = UiContext::shadow_dark(app.metrics);
     let route = app.current_route();
     app.prepare_route(&route);
 
     let body = match route {
         Route::Account => account_screen(
-            theme,
+            ui,
             app.account.clone(),
             app.feed_scope.clone(),
             app.follow_input.clone(),
@@ -1347,7 +1318,7 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
             let notes = app.explore_notes();
             let profiles = app.explore_profiles_for_notes(&notes);
             explore_screen(
-                theme,
+                ui,
                 app.account.clone(),
                 app.current_followed_pubkeys(),
                 app.status.clone(),
@@ -1360,14 +1331,14 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
             .boxed()
         }
         Route::Onboarding => onboarding_screen(
-            theme,
+            ui,
             app.nsec_input.clone(),
             app.status.clone(),
             pending_account_action.is_some(),
         )
         .boxed(),
         Route::Timeline => timeline_screen(
-            theme,
+            ui,
             app.account.clone(),
             app.feed_scope.clone(),
             app.status.clone(),
@@ -1384,12 +1355,12 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
             let thread = note.as_ref().map(load_thread_context).unwrap_or_default();
             let thread_sync_pending = pending_thread_sync
                 .as_ref()
-                .is_some_and(|job| job.note_id == id);
+                .is_some_and(|job| job.job().note_id == id);
             let publish_pending = pending_publish
                 .as_ref()
-                .is_some_and(|job| job.note_id == id);
+                .is_some_and(|job| job.job().note_id == id);
             note_screen(
-                theme,
+                ui,
                 note,
                 profile,
                 thread,
@@ -1401,84 +1372,78 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
             )
             .boxed()
         }
-        Route::Profile { pubkey } => profile_screen(
-            theme,
-            app.account.clone(),
-            pubkey.clone(),
-            app.profile_summary(&pubkey),
-            app.profile_notes(&pubkey),
-            app.status.clone(),
-            app.is_following(&pubkey),
-            app.follow_update_pending_for(&pubkey),
-            socket_available(),
-        )
-        .boxed(),
+        Route::Profile { pubkey } => {
+            profile_screen(
+                ui,
+                app.account.clone(),
+                pubkey.clone(),
+                app.profile_summary(&pubkey),
+                app.profile_notes(&pubkey),
+                app.status.clone(),
+                app.is_following(&pubkey),
+                app.follow_update_pending_for(&pubkey),
+                socket_available(),
+            )
+            .boxed()
+        }
     };
 
-    let content = screen(app.metrics, theme, body);
-    let content = with_blocking_task(
+    let content = ui.screen(body);
+    let content = with_task(
         content,
         pending_account_action,
         run_account_action,
-        |app: &mut TimelineApp,
-         job: PendingAccountAction,
-         result: Result<ActiveAccount, String>| {
-            app.finish_account_action(job.token, result);
+        |app: &mut TimelineApp, task: TaskHandle<PendingAccountAction>, result| {
+            app.finish_account_action(task, result);
         },
     );
-    let content = with_blocking_task(
+    let content = with_task(
         content,
         pending_clipboard_write,
         run_clipboard_write,
-        |app: &mut TimelineApp, job: PendingClipboardWrite, result: Result<(), String>| {
-            app.finish_clipboard_write(job.token, result);
+        |app: &mut TimelineApp, task: TaskHandle<PendingClipboardWrite>, result| {
+            app.finish_clipboard_write(task, result);
         },
     );
-    let content = with_blocking_task(
+    let content = with_task(
         content,
         pending_explore_sync,
         sync_explore_notes,
-        |app: &mut TimelineApp,
-         job: PendingExploreSync,
-         result: Result<ExploreSyncOutcome, String>| {
-            app.finish_explore_sync(job.token, result);
+        |app: &mut TimelineApp, task: TaskHandle<PendingExploreSync>, result| {
+            app.finish_explore_sync(task, result);
         },
     );
-    let content = with_blocking_task(
+    let content = with_task(
         content,
         pending_follow_update,
         run_follow_update,
-        |app: &mut TimelineApp,
-         job: PendingFollowUpdate,
-         result: Result<FollowUpdateOutcome, String>| {
-            app.finish_follow_update(job.token, result);
+        |app: &mut TimelineApp, task: TaskHandle<PendingFollowUpdate>, result| {
+            app.finish_follow_update(task, result);
         },
     );
-    let content = with_blocking_task(
+    let content = with_task(
         content,
         pending_thread_sync,
         sync_thread_context,
-        |app: &mut TimelineApp,
-         job: PendingThreadSync,
-         result: Result<ThreadSyncOutcome, String>| {
-            app.finish_thread_sync(job.token, result);
+        |app: &mut TimelineApp, task: TaskHandle<PendingThreadSync>, result| {
+            app.finish_thread_sync(task, result);
         },
     );
-    let content = with_blocking_task(
+    let content = with_task(
         content,
         pending_publish,
         run_reply_publish,
-        |app: &mut TimelineApp, job: PendingPublish, result: Result<PublishOutcome, String>| {
-            app.finish_publish(job.token, result);
+        |app: &mut TimelineApp, task: TaskHandle<PendingPublish>, result| {
+            app.finish_publish(task, result);
         },
     );
 
-    let content = with_blocking_task(
+    let content = with_task(
         content,
         pending_refresh,
         sync_notes,
-        |app: &mut TimelineApp, job: PendingRefresh, result: Result<RefreshOutcome, String>| {
-            app.finish_refresh(job.token, result);
+        |app: &mut TimelineApp, task: TaskHandle<PendingRefresh>, result| {
+            app.finish_refresh(task, result);
         },
     );
 
@@ -1486,10 +1451,7 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
         content,
         worker_raw(
             |proxy, _rx: tokio::sync::mpsc::UnboundedReceiver<()>| async move {
-                let Some(socket_path) = platform_control_socket_path() else {
-                    return;
-                };
-                std::thread::spawn(move || run_platform_listener(socket_path, proxy));
+                let _ = run_platform_listener(proxy);
                 future::pending::<()>().await;
             },
             |_state: &mut TimelineApp, _sender: tokio::sync::mpsc::UnboundedSender<()>| {},
@@ -1508,13 +1470,14 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
 }
 
 fn timeline_screen(
-    theme: Theme,
+    ui: UiContext,
     account: Option<ActiveAccount>,
     feed_scope: FeedScope,
     status: TimelineStatus,
     notes: Vec<NostrEvent>,
     filter_text: String,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     let note_count = notes.len();
 
     column((
@@ -1525,26 +1488,27 @@ fn timeline_screen(
             Some(feed_scope.detail_text()),
         ),
         controls_section(
-            theme,
+            ui,
             account,
             &feed_scope,
             &status,
             note_count,
             filter_text,
         ),
-        feed_section(theme, "Feed", home_feed_empty_message(&feed_scope), notes),
+        feed_section(ui, "Feed", home_feed_empty_message(&feed_scope), notes),
     ))
     .gap(12.0.px())
 }
 
 fn controls_section(
-    theme: Theme,
+    ui: UiContext,
     account: Option<ActiveAccount>,
     feed_scope: &FeedScope,
     status: &TimelineStatus,
     note_count: usize,
     filter_text: String,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     panel(
         theme,
         column((
@@ -1602,11 +1566,12 @@ fn controls_section(
 }
 
 fn onboarding_screen(
-    theme: Theme,
+    ui: UiContext,
     nsec_input: String,
     status: TimelineStatus,
     action_pending: bool,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     column((
         top_bar(
             theme,
@@ -1660,7 +1625,7 @@ fn onboarding_screen(
 }
 
 fn account_screen(
-    theme: Theme,
+    ui: UiContext,
     account: Option<ActiveAccount>,
     feed_scope: FeedScope,
     follow_input: String,
@@ -1669,6 +1634,7 @@ fn account_screen(
     follow_pending: bool,
     socket_ready: bool,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     match account {
         Some(account) => column((
             top_bar_with_back(
@@ -1698,7 +1664,7 @@ fn account_screen(
                         },
                     ),
                     follow_manager(
-                        theme,
+                        ui,
                         &account,
                         &feed_scope,
                         follow_input,
@@ -1751,7 +1717,7 @@ fn account_screen(
 }
 
 fn explore_screen(
-    theme: Theme,
+    ui: UiContext,
     account: Option<ActiveAccount>,
     followed_pubkeys: Vec<String>,
     status: TimelineStatus,
@@ -1761,6 +1727,7 @@ fn explore_screen(
     sync_pending: bool,
     follow_pending: bool,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     let note_count = notes.len();
     column((
         top_bar_with_back(
@@ -1816,7 +1783,7 @@ fn explore_screen(
             .gap(10.0.px()),
         ),
         explore_profiles_section(
-            theme,
+            ui,
             account,
             followed_pubkeys,
             profiles,
@@ -1824,7 +1791,7 @@ fn explore_screen(
             socket_ready,
         ),
         feed_section(
-            theme,
+            ui,
             "Recent relay notes",
             "No cached relay notes yet. Fetch relay notes to discover profiles to follow.",
             notes,
@@ -1834,13 +1801,14 @@ fn explore_screen(
 }
 
 fn explore_profiles_section(
-    theme: Theme,
+    ui: UiContext,
     account: Option<ActiveAccount>,
     followed_pubkeys: Vec<String>,
     profiles: Vec<ExploreProfileEntry>,
     follow_pending: bool,
     socket_ready: bool,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     let followed = followed_pubkeys.into_iter().collect::<BTreeSet<_>>();
     let body = maybe(
         (!profiles.is_empty()).then_some(
@@ -1849,7 +1817,7 @@ fn explore_profiles_section(
                     .into_iter()
                     .map(|profile| {
                         explore_profile_card(
-                            theme,
+                            ui,
                             account.clone(),
                             followed.contains(&profile.pubkey),
                             profile,
@@ -1878,13 +1846,14 @@ fn explore_profiles_section(
 }
 
 fn explore_profile_card(
-    theme: Theme,
+    ui: UiContext,
     account: Option<ActiveAccount>,
     is_following: bool,
     profile: ExploreProfileEntry,
     follow_pending: bool,
     socket_ready: bool,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     let open_pubkey = profile.pubkey.clone();
     let follow_pubkey = profile.pubkey.clone();
     let is_active_account = account
@@ -1964,13 +1933,14 @@ fn explore_profile_card(
 }
 
 fn follow_manager(
-    theme: Theme,
+    ui: UiContext,
     account: &ActiveAccount,
     feed_scope: &FeedScope,
     follow_input: String,
     follow_pending: bool,
     socket_ready: bool,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     let follows = feed_scope.authors.clone().unwrap_or_default();
     panel(
         theme,
@@ -2015,9 +1985,7 @@ fn follow_manager(
                     column(
                         follows
                             .into_iter()
-                            .map(|npub| {
-                                follow_row(theme, account, npub, follow_pending, socket_ready)
-                            })
+                            .map(|npub| follow_row(ui, account, npub, follow_pending, socket_ready))
                             .collect::<Vec<_>>(),
                     )
                     .gap(8.0.px()),
@@ -2037,12 +2005,13 @@ fn follow_manager(
 }
 
 fn follow_row(
-    theme: Theme,
+    ui: UiContext,
     account: &ActiveAccount,
     npub: String,
     follow_pending: bool,
     socket_ready: bool,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     let open_npub = npub.clone();
     let remove_npub = npub.clone();
     panel(
@@ -2083,7 +2052,7 @@ fn follow_row(
 }
 
 fn note_screen(
-    theme: Theme,
+    ui: UiContext,
     note: Option<NostrEvent>,
     profile: ProfileSummary,
     thread: ThreadContext,
@@ -2093,6 +2062,7 @@ fn note_screen(
     thread_sync_available: bool,
     thread_sync_pending: bool,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     let body = match note {
         Some(note) => {
             let note_id = note.id.clone();
@@ -2102,7 +2072,7 @@ fn note_screen(
             let replies = thread.replies.clone();
             let composer = reply_draft
                 .as_ref()
-                .map(|draft| reply_sheet(theme, &note, draft.clone(), publish_pending));
+                .map(|draft| reply_sheet(ui, &note, draft.clone(), publish_pending));
             with_sheet(
                 column((
                 top_bar_with_back(
@@ -2219,7 +2189,7 @@ fn note_screen(
                     ))
                     .gap(10.0.px()),
                 ),
-                feed_section(theme, "Replies", "No cached direct replies yet.", replies),
+                feed_section(ui, "Replies", "No cached direct replies yet.", replies),
                 ))
                 .gap(12.0.px()),
                 theme,
@@ -2254,11 +2224,12 @@ fn note_screen(
 }
 
 fn reply_sheet(
-    theme: Theme,
+    ui: UiContext,
     note: &NostrEvent,
     draft: ReplyDraft,
     publish_pending: bool,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     let note_id = draft.note_id.clone();
     let note_preview = note.content.lines().next().unwrap_or("").trim();
     let note_preview = if note_preview.is_empty() {
@@ -2321,7 +2292,7 @@ fn reply_sheet(
 }
 
 fn profile_screen(
-    theme: Theme,
+    ui: UiContext,
     account: Option<ActiveAccount>,
     pubkey: String,
     profile: ProfileSummary,
@@ -2331,6 +2302,7 @@ fn profile_screen(
     follow_pending: bool,
     socket_ready: bool,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     let metadata_status = profile.metadata_status();
     let note_count = notes.len();
     let follow_button = account.filter(|account| account.npub != pubkey).map(|_| {
@@ -2412,7 +2384,7 @@ fn profile_screen(
             .gap(10.0.px()),
         ),
         feed_section(
-            theme,
+            ui,
             "Recent notes",
             "This author has no cached kind-1 notes yet.",
             notes,
@@ -2422,11 +2394,12 @@ fn profile_screen(
 }
 
 fn feed_section(
-    theme: Theme,
+    ui: UiContext,
     title: &str,
     empty_message: &str,
     notes: Vec<NostrEvent>,
 ) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     let title = title.to_owned();
     let empty_message = empty_message.to_owned();
     let body = maybe(
@@ -2434,7 +2407,7 @@ fn feed_section(
             column(
                 notes
                     .into_iter()
-                    .map(|note| note_card(theme, note))
+                    .map(|note| note_card(ui, note))
                     .collect::<Vec<_>>(),
             )
             .gap(10.0.px()),
@@ -2452,7 +2425,8 @@ fn feed_section(
     column((eyebrow_text(title, theme), body)).gap(8.0.px())
 }
 
-fn note_card(theme: Theme, note: NostrEvent) -> impl WidgetView<TimelineApp> {
+fn note_card(ui: UiContext, note: NostrEvent) -> impl WidgetView<TimelineApp> {
+    let theme = ui.theme();
     let note_id = note.id.clone();
 
     selectable_card(
@@ -2895,81 +2869,47 @@ fn socket_available() -> bool {
         .is_some_and(|value| !value.is_empty())
 }
 
-fn run_platform_listener(socket_path: PathBuf, proxy: MessageProxy<PlatformMessage>) {
-    let _ = std::fs::remove_file(&socket_path);
-    let listener = match UnixListener::bind(&socket_path) {
-        Ok(listener) => listener,
-        Err(error) => {
-            eprintln!(
-                "{APP_LOG_PREFIX}: platform_listener_bind_failed path={} error={error}",
-                socket_path.display()
-            );
-            return;
+fn run_platform_listener(proxy: MessageProxy<PlatformMessage>) {
+    if let Err(error) = spawn_platform_request_listener(move |request| match request {
+        shadow_runtime_protocol::AppPlatformRequest::Lifecycle { state } => {
+            let handled = proxy.message(PlatformMessage::Lifecycle(state)).is_ok();
+            format!(
+                "ok\nhandled={}\nstate={}\n",
+                if handled { 1 } else { 0 },
+                state.as_str()
+            )
         }
-    };
-
-    for stream in listener.incoming() {
-        let mut stream = match stream {
-            Ok(stream) => stream,
-            Err(error) => {
-                eprintln!("{APP_LOG_PREFIX}: platform_listener_accept_failed error={error}");
-                continue;
-            }
-        };
-
-        let mut request = String::new();
-        if let Err(error) = stream.read_to_string(&mut request) {
-            let _ = stream.write_all(format!("error=read-failed {error}\n").as_bytes());
-            continue;
-        }
-
-        let response = match AppPlatformRequest::parse_line(&request) {
-            Some(AppPlatformRequest::Lifecycle { state }) => {
-                let handled = proxy.message(PlatformMessage::Lifecycle(state)).is_ok();
-                format!(
-                    "ok\nhandled={}\nstate={}\n",
-                    if handled { 1 } else { 0 },
-                    state.as_str()
-                )
-            }
-            Some(AppPlatformRequest::Media { action }) => format!(
-                "ok\nhandled=0\nreason=unsupported-request\nrequest={}\n",
-                action.as_str()
-            ),
-            Some(AppPlatformRequest::Automation { action, argument }) => {
-                let message = match (action.as_str(), argument) {
-                    ("open_first_visible_note", None) => {
-                        Some(PlatformMessage::OpenFirstVisibleNote)
-                    }
-                    ("open_reply", None) => Some(PlatformMessage::OpenReply),
-                    ("publish_reply", None) => Some(PlatformMessage::PublishReply),
-                    ("publish_reply_content", Some(value)) => {
-                        Some(PlatformMessage::PublishReplyContent(value))
-                    }
-                    ("set_reply_content", Some(value)) => {
-                        Some(PlatformMessage::SetReplyContent(value))
-                    }
-                    _ => None,
-                };
-                match message {
-                    Some(message) => {
-                        let handled = proxy.message(message).is_ok();
-                        format!(
-                            "ok\nhandled={}\naction={action}\n",
-                            if handled { 1 } else { 0 }
-                        )
-                    }
-                    None => format!(
-                        "ok\nhandled=0\nreason=invalid-action\nrequest=automation:{action}\n"
-                    ),
+        shadow_runtime_protocol::AppPlatformRequest::Media { action } => format!(
+            "ok\nhandled=0\nreason=unsupported-request\nrequest={}\n",
+            action.as_str()
+        ),
+        shadow_runtime_protocol::AppPlatformRequest::Automation { action, argument } => {
+            let message = match (action.as_str(), argument) {
+                ("open_first_visible_note", None) => Some(PlatformMessage::OpenFirstVisibleNote),
+                ("open_reply", None) => Some(PlatformMessage::OpenReply),
+                ("publish_reply", None) => Some(PlatformMessage::PublishReply),
+                ("publish_reply_content", Some(value)) => {
+                    Some(PlatformMessage::PublishReplyContent(value))
                 }
+                ("set_reply_content", Some(value)) => Some(PlatformMessage::SetReplyContent(value)),
+                _ => None,
+            };
+            match message {
+                Some(message) => {
+                    let handled = proxy.message(message).is_ok();
+                    format!(
+                        "ok\nhandled={}\naction={action}\n",
+                        if handled { 1 } else { 0 }
+                    )
+                }
+                None => format!(
+                    "ok\nhandled=0\nreason=invalid-action\nrequest=automation:{action}\n"
+                ),
             }
-            None => String::from("ok\nhandled=0\nreason=invalid-action\n"),
-        };
-        let _ = stream.write_all(response.as_bytes());
+        }
+    }) {
+        eprintln!("{APP_LOG_PREFIX}: platform_listener_start_failed error={error}");
     }
-
-    let _ = std::fs::remove_file(socket_path);
 }
 
 impl TimelineConfig {

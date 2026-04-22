@@ -187,9 +187,9 @@ pub fn platform_control_socket_path() -> Option<PathBuf> {
 }
 
 #[cfg(unix)]
-pub fn spawn_lifecycle_listener<F>(mut handler: F) -> io::Result<JoinHandle<()>>
+pub fn spawn_platform_request_listener<F>(mut handler: F) -> io::Result<JoinHandle<()>>
 where
-    F: FnMut(LifecycleState) + Send + 'static,
+    F: FnMut(AppPlatformRequest) -> String + Send + 'static,
 {
     let Some(socket_path) = platform_control_socket_path() else {
         return Err(io::Error::new(
@@ -220,18 +220,12 @@ where
             }
 
             let response = match AppPlatformRequest::parse_line(&request) {
-                Some(AppPlatformRequest::Lifecycle { state }) => {
-                    update_current_lifecycle_state(state);
-                    handler(state);
-                    format!("ok\nhandled=1\nstate={}\n", state.as_str())
+                Some(request) => {
+                    if let AppPlatformRequest::Lifecycle { state } = &request {
+                        update_current_lifecycle_state(*state);
+                    }
+                    handler(request)
                 }
-                Some(AppPlatformRequest::Media { action }) => format!(
-                    "ok\nhandled=0\nreason=unsupported-request\nrequest={}\n",
-                    action.as_str()
-                ),
-                Some(AppPlatformRequest::Automation { action, .. }) => format!(
-                    "ok\nhandled=0\nreason=unsupported-request\nrequest=automation:{action}\n"
-                ),
                 None => String::from("ok\nhandled=0\nreason=invalid-action\n"),
             };
             let _ = stream.write_all(response.as_bytes());
@@ -239,6 +233,37 @@ where
 
         let _ = std::fs::remove_file(socket_path);
     }))
+}
+
+#[cfg(unix)]
+pub fn spawn_lifecycle_listener<F>(mut handler: F) -> io::Result<JoinHandle<()>>
+where
+    F: FnMut(LifecycleState) + Send + 'static,
+{
+    spawn_platform_request_listener(move |request| match request {
+        AppPlatformRequest::Lifecycle { state } => {
+            handler(state);
+            format!("ok\nhandled=1\nstate={}\n", state.as_str())
+        }
+        AppPlatformRequest::Media { action } => format!(
+            "ok\nhandled=0\nreason=unsupported-request\nrequest={}\n",
+            action.as_str()
+        ),
+        AppPlatformRequest::Automation { action, .. } => {
+            format!("ok\nhandled=0\nreason=unsupported-request\nrequest=automation:{action}\n")
+        }
+    })
+}
+
+#[cfg(not(unix))]
+pub fn spawn_platform_request_listener<F>(_handler: F) -> io::Result<JoinHandle<()>>
+where
+    F: FnMut(AppPlatformRequest) -> String + Send + 'static,
+{
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "platform request listener requires unix domain sockets",
+    ))
 }
 
 #[cfg(not(unix))]
@@ -324,14 +349,15 @@ mod tests {
 
     use super::{
         app_window_metrics_from_env, current_lifecycle_state, platform_control_socket_path,
-        spawn_lifecycle_listener, AppSafeAreaInsets, AppWindowDefaults, AppWindowEnvironment,
-        LifecycleState, APP_LIFECYCLE_STATE_ENV, APP_PLATFORM_CONTROL_SOCKET_ENV, APP_TITLE_ENV,
-        LEGACY_APP_PLATFORM_CONTROL_SOCKET_ENV, LEGACY_APP_TITLE_ENV, LEGACY_SAFE_AREA_BOTTOM_ENV,
-        LEGACY_SAFE_AREA_LEFT_ENV, LEGACY_SAFE_AREA_RIGHT_ENV, LEGACY_SAFE_AREA_TOP_ENV,
-        LEGACY_SURFACE_HEIGHT_ENV, LEGACY_SURFACE_WIDTH_ENV, LEGACY_UNDECORATED_ENV,
-        LEGACY_WAYLAND_APP_ID_ENV, LEGACY_WAYLAND_INSTANCE_NAME_ENV, SAFE_AREA_BOTTOM_ENV,
-        SAFE_AREA_LEFT_ENV, SAFE_AREA_RIGHT_ENV, SAFE_AREA_TOP_ENV, SURFACE_HEIGHT_ENV,
-        SURFACE_WIDTH_ENV, UNDECORATED_ENV, WAYLAND_APP_ID_ENV, WAYLAND_INSTANCE_NAME_ENV,
+        spawn_lifecycle_listener, spawn_platform_request_listener, AppSafeAreaInsets,
+        AppWindowDefaults, AppWindowEnvironment, LifecycleState, APP_LIFECYCLE_STATE_ENV,
+        APP_PLATFORM_CONTROL_SOCKET_ENV, APP_TITLE_ENV, LEGACY_APP_PLATFORM_CONTROL_SOCKET_ENV,
+        LEGACY_APP_TITLE_ENV, LEGACY_SAFE_AREA_BOTTOM_ENV, LEGACY_SAFE_AREA_LEFT_ENV,
+        LEGACY_SAFE_AREA_RIGHT_ENV, LEGACY_SAFE_AREA_TOP_ENV, LEGACY_SURFACE_HEIGHT_ENV,
+        LEGACY_SURFACE_WIDTH_ENV, LEGACY_UNDECORATED_ENV, LEGACY_WAYLAND_APP_ID_ENV,
+        LEGACY_WAYLAND_INSTANCE_NAME_ENV, SAFE_AREA_BOTTOM_ENV, SAFE_AREA_LEFT_ENV,
+        SAFE_AREA_RIGHT_ENV, SAFE_AREA_TOP_ENV, SURFACE_HEIGHT_ENV, SURFACE_WIDTH_ENV,
+        UNDECORATED_ENV, WAYLAND_APP_ID_ENV, WAYLAND_INSTANCE_NAME_ENV,
     };
     use shadow_runtime_protocol::AppPlatformRequest;
 
@@ -632,6 +658,66 @@ mod tests {
             observed.lock().expect("observed lock").as_slice(),
             &[LifecycleState::Background]
         );
+        assert_eq!(current_lifecycle_state(), LifecycleState::Background);
+
+        let _ = std::fs::remove_file(socket_path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn platform_request_listener_updates_lifecycle_cache() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_window_env();
+        let socket_path = std::env::temp_dir().join(format!(
+            "shadow-sdk-platform-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("unix epoch")
+                .as_nanos()
+        ));
+        std::env::set_var(APP_PLATFORM_CONTROL_SOCKET_ENV, &socket_path);
+
+        let _listener = spawn_platform_request_listener(|request| match request {
+            AppPlatformRequest::Lifecycle { state } => {
+                format!("ok\nhandled=1\nstate={}\n", state.as_str())
+            }
+            AppPlatformRequest::Media { action } => format!(
+                "ok\nhandled=0\nreason=unsupported-request\nrequest={}\n",
+                action.as_str()
+            ),
+            AppPlatformRequest::Automation { action, .. } => {
+                format!("ok\nhandled=0\nreason=unsupported-request\nrequest=automation:{action}\n")
+            }
+        })
+        .expect("spawn platform request listener");
+
+        for _ in 0..50 {
+            if socket_path.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let mut stream = UnixStream::connect(&socket_path).expect("connect platform socket");
+        stream
+            .write_all(
+                AppPlatformRequest::Lifecycle {
+                    state: LifecycleState::Background,
+                }
+                .encode_line()
+                .as_bytes(),
+            )
+            .expect("write lifecycle request");
+        stream
+            .shutdown(std::net::Shutdown::Write)
+            .expect("shutdown write");
+
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("read lifecycle response");
+        assert_eq!(response, "ok\nhandled=1\nstate=background\n");
         assert_eq!(current_lifecycle_state(), LifecycleState::Background);
 
         let _ = std::fs::remove_file(socket_path);

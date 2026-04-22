@@ -6,243 +6,134 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 Build the first serious version of the long-term Shadow app platform:
 
-- equal TypeScript and Rust app-model support at the platform layer
-- one shared `shadow_sdk` surface for lifecycle, services, capabilities, and app
-  environment
-- a Shadow-owned Rust UI framework built on Masonry/Xilem foundations
-- enough runner, lifecycle, input, and service plumbing to prove the model in VM
-  first
-- a path to rewriting shell/system chrome onto the same foundation
+- equal `typescript` and `rust` app models at the metadata, launcher, and SDK
+  layers
+- one shared `shadow_sdk` / `@shadow/sdk` surface for app env, lifecycle,
+  services, and capabilities
+- a Shadow-owned Rust UI framework on top of Masonry/Xilem
+- a VM-first path to rewriting shell/system chrome onto the same foundation
+- an app-authoring experience that trends toward SwiftUI / Jetpack Compose,
+  not app-local glue code and framework leakage
 
-This plan is for the platform effort, not for the already-landed one-manifest
-app metadata cleanup by itself.
+This plan is for the platform effort, not just the already-landed app metadata
+cleanup.
 
 ## Approach
 
-Start from the constrained v1 spec in [docs/shadow-ui.md](../docs/shadow-ui.md),
-then execute in small seams with targeted risk spikes.
+Lock the important platform contracts early:
 
-Do not try to design every widget and service upfront. Lock the important
-contracts early:
+- manifest/app-model shape
+- one public SDK story
+- shared lifecycle and service boundaries
+- compositor ownership of system chrome
+- honest product semantics at the app boundary
 
-- app-model metadata shape
-- one public SDK surface
-- shared lifecycle model
-- rendering ownership
-- service and permission boundaries
-- shell/system chrome migration strategy
-
-Use the current manifest work in [runtime/apps.json](../runtime/apps.json) as
-the baseline for multi-model app registration instead of inventing a parallel
-manifest path.
+Then move in small seams. Use real apps to pressure the framework instead of
+speculating about a huge widget catalog up front.
 
 ## Milestones
 
-- [x] Extend the current manifest and generated metadata to support `typescript`
-      and `rust` app models.
-- [x] Define the first public `shadow_sdk` surface for Rust apps and the
-      matching `@shadow/sdk` binding for TypeScript apps.
-- [~] Decide the smallest useful internal boundaries behind the one public SDK
-  surface.
-- [x] Prove a minimal Rust app runner for one process-isolated Shadow UI app.
-- [x] Prove one shared capability end-to-end through both Rust and TypeScript
-      app surfaces.
-- [x] Prove shared lifecycle events through the Rust path first and define how
-      they surface to TypeScript apps.
-- [x] Prove one shell/system surface rendered directly by the compositor.
-- [~] Land the first serious Rust demo app that exercises navigation, list
-      rendering, and persistence.
+- [x] Extend app metadata and generated launch data to support `typescript` and
+      `rust`.
+- [x] Define the first public `shadow_sdk` / `@shadow/sdk` surface.
+- [~] Collapse the remaining internal runtime/service boundaries behind that one
+      public SDK story.
+- [x] Prove a minimal Rust app runner in the real VM launcher/compositor path.
+- [x] Prove shared capabilities through both app models.
+- [x] Prove shared lifecycle through the Rust path first, then expose the same
+      semantics to TypeScript.
+- [x] Prove compositor-owned system chrome in the real shell.
+- [~] Land the first serious Rust app and use it to drive framework cleanup.
 
 ## Near-Term Steps
 
-- [~] Expand the first `shadow_sdk` slice beyond app env and service bindings.
-- [ ] Move `Theme` and similar UI environment data behind a Shadow-owned
-      context/env surface so app and framework helpers stop threading `theme`
-      through every function.
-- [ ] Replace the current app-local async/platform boilerplate with a
-      Shadow-owned task/effect surface so apps stop hand-rolling pending-job
-      structs, token bookkeeping, and per-app platform listener threads.
-- [ ] Decide where the generated manifest types should live as the current
-      manifest expands.
-- [ ] Rename target-specific compositor crates and binaries to match their
-      deployment lanes more clearly.
-- [x] Sketch the minimal launch metadata required for both `typescript` and
-      `rust` apps.
-- [x] Choose the first Rust runner spike target and keep it deliberately small.
-- [x] Choose the first shared capability to prove through both app models.
-- [x] Decide which text-input path to spike first: single-line editor or
-      multiline editor.
-- [x] Pick the first shell/system surface to target for embedded rendering.
-- [ ] Decide whether broader TypeScript platform work should stay in
+- [x] Use the Rust Nostr client as the main pressure test for the platform.
+- [~] Move theme and related UI dependencies behind a Shadow-owned context/env
+      surface so app helpers stop threading `Theme` through every function.
+- [~] Replace app-local async/job bookkeeping with a Shadow-owned task/effect
+      surface so apps stop hand-rolling token ids and eventually stop
+      hand-wiring per-task slots and wrappers in each app.
+- [~] Replace per-app platform listener threads with a Shadow-owned
+      lifecycle/automation/platform-event helper.
+- [ ] Define a clearer cached-data model so app authors know which reads are
+      safe inline and which need async effects.
+- [ ] Decide where generated manifest types belong as app metadata expands.
+- [ ] Rename target-specific compositor crates/binaries to match deployment
+      lanes more clearly.
+- [ ] Decide whether broader TypeScript platform follow-ups stay in
       [todos/vdom.md](../todos/vdom.md) or move to a broader
       `todos/typescript-apps.md`.
 
 ## Implementation Notes
 
-- The one-manifest direction has landed in the repo. This platform effort should
-  extend that work to cover both app models instead of bypassing it.
-- The manifest now carries `model`, generated Rust metadata exposes a
-  launch-spec view, and runtime artifact builders skip `rust` apps by default
-  while still rejecting explicit `--include-app <rust-app>` requests.
-- `generated_apps.rs` is acceptable as a short-term static bridge, but it is not
-  the end state. Revisit whether generation should emit a smaller typed data
-  layer or move behind a build/runtime boundary before this metadata surface
-  grows much further.
-- VM now supports a real mixed-model shell session: the session package contains
-  `shadow-compositor` plus manifest-declared VM app binaries, the VM launch path
-  no longer exports a global Blitz client override, and a minimal
-  `shadow-rust-demo` binary can be launched through the normal control surface.
-- The compositor crate and binary names should become deployment-descriptive.
-  `shadow-compositor` and `shadow-compositor-guest` are too implicit once both
-  VM and Pixel lanes matter.
-- Pixel remains TypeScript-only for now. Mixed-model manifests are valid, but
-  rooted-Pixel staging and shell surfaces still filter to TypeScript until the
-  native packaging path exists there too.
-- The main host-side Deno runner is now `shadow-system`, not
-  `shadow-runtime-host`. The remaining `runtime-<something>-host` crates are
-  still transitional implementation details and should keep collapsing inward
-  behind `shadow-system` and `shadow_sdk`.
-- The remaining runtime cleanup seam is now explicit: delete the
-  `runtime-<something>-host` crates by folding shared service logic into
-  `shadow_sdk` and host-only Deno/V8 glue into `shadow-system`, then rename the
-  launch artifact/env schema off `runtimeHost*` and `SHADOW_RUNTIME_HOST_*` in
-  the same pass.
+- The architecture thesis is now proven enough to stop treating Rust apps as a
+  speculative spike. Mixed-model manifests, real Rust app launch, shared
+  services, compositor-owned shell surfaces, and one public SDK story are all
+  real.
 - The public app-authoring surface should feel like one SDK, not a pile of
-  crates and one-off bindings.
-- The first public SDK slice is now real: Rust apps have `shadow_sdk::app`,
-  TypeScript apps import `@shadow/sdk`, and the old TypeScript runtime aliases
-  remain as compatibility wrappers while in-repo apps migrate.
-- Masonry/Xilem remains the leading foundation candidate for the Rust UI
-  implementation layer because it supports both external event-loop integration
-  and rendering into caller-provided textures.
-- The current Rust UI helpers still thread `theme` explicitly too often. That is
-  acceptable for the spike, but the next framework cleanup should move theme and
-  related UI dependencies into a Shadow-owned context/env surface before more
-  primitives pile onto the wrong pattern.
-- The Rust timeline spike still carries too much framework leakage for the app
-  authoring bar we want. App code should not need to manually juggle
-  `with_blocking_task` jobs, token-based pending state, or a dedicated
-  platform-control listener thread just to do normal product work. Shadow UI
-  needs first-class task/effect and platform-event surfaces that feel closer to
-  SwiftUI / Jetpack Compose.
-- The Rust Nostr app now exercises more than one real write seam through the
-  shared SDK and signer: reply publishing plus contact-list updates for follow
-  management. That is good platform pressure, but it also raises the priority
-  of the env/context and task/effect cleanup because product flows are now
-  piling onto app-local async plumbing.
-- The shared service APIs should keep Shadow-owned product semantics at the
-  boundary instead of leaking raw protocol bags. The Nostr publish surface now
-  uses explicit operation variants (`text_note`, `contact_list`) rather than a
-  flat numeric `kind` request, and other service writes should follow the same
-  pattern when multiple operations diverge in UX, validation, or policy.
-- VM automation for serious Rust apps needs semantic app-owned hooks, not
-  brittle fixed tap coordinates. The Explore layout change broke the Rust
-  Timeline smoke until the app exposed a first-class “open first visible note”
-  automation action. Keep pushing test/operator seams toward explicit app
-  automation commands instead of screen-position assumptions.
-- Some current Rust app reads still happen synchronously in route prep and other
-  render-adjacent code paths. That is acceptable for the spike, but the long
-  term framework needs a clearer cached-data model so app authors are not left
-  guessing which reads are safe inline and which must become async effects.
-- Shell/system chrome rewrite is in scope. The current homegrown shell UI should
-  be treated as bring-up architecture, not the final product direction.
-- The VM operator/status path now depends on truthful mixed-model probing in
-  `scripts/shadowctl`; keep VM smoke and the operator CLI smoke in lockstep when
-  touching that code.
-- The next spike should move from runner proof to platform proof: one shared
-  capability or lifecycle contract that both TypeScript and Rust apps can
-  exercise through the same public SDK story.
-- Camera is the first shared capability seam. It already has a relatively clean
-  env-driven host implementation, explicit mock support for tests, and a small
-  enough surface to expose natively through `shadow_sdk` without first solving
-  the entire lifecycle/control-plane story.
-- Local-service test fixtures should stop being per-smoke one-offs. Start
-  converging host, VM, and Pixel lanes on one reusable harness for seeded Nostr
-  relays and similar ephemeral services instead of duplicating relay bring-up
-  logic in each smoke script.
-- The first Rust camera slice now keeps `runtime-camera-host` as the single
-  implementation while `shadow_sdk::services::camera` owns the app-facing types.
-  The public Rust SDK no longer re-exports runtime host env knobs or transport
-  request/receipt types.
-- The Rust camera surface still intentionally stops at `list_cameras`,
-  `capture_still`, and `decode_qr_code`. Preview remains TypeScript-only for
-  now, so API parity and VM smoke coverage are the next camera follow-up instead
-  of more wrapper churn.
-- The VM proof path for the Rust camera slice is now manifest-driven:
-  `launchEnv` metadata flows through generated app metadata into both compositor
-  launchers, `rust-demo` logs a structured `camera_probe` marker, and
-  `scripts/ci/ui_vm_smoke.sh` asserts that marker while failing fast on explicit
-  probe errors.
-- `launchEnv` is intentionally subordinate to compositor-owned wiring. The
-  metadata generator now rejects reserved launcher-managed env keys, and both
-  launchers apply manifest env before their own required Wayland/control/runtime
-  settings.
-- `scripts/ci/ui_vm_smoke.sh` now records cached success only after cleanup and
-  no longer waits unbounded on the VM runner in the EXIT path. That tightened
-  the “VM looked done but the command kept running” failure mode from this seam.
-- Lifecycle now uses the existing per-app platform-control socket instead of a
-  second transport. The first truthful contract is intentionally smaller than
-  the long-term spec: apps start in `foreground` by default and receive
-  `background` / `foreground` transitions as the shell shelves and resumes them.
-- Rust apps now read lifecycle state from `shadow_sdk::app` and can spawn a
-  lifecycle listener on the same app platform-control socket. TypeScript apps
-  now use `getLifecycleState`, `setLifecycleHandler`, and
-  `clearLifecycleHandler` from `@shadow/sdk`, backed by the same host/app
-  transport.
-- The shared app-environment seam now includes launch-time window metrics too:
-  Rust app env exposes safe-area insets alongside surface size, `shadow-system`
-  seeds the same metrics snapshot into `@shadow/sdk`, standalone host sessions
-  now wrap the host binary with the same launch env, and VM smoke proves those
-  markers through both `counter` and `rust-demo`.
-- VM smoke now proves the lifecycle seam through both app models: `counter` logs
-  TypeScript lifecycle markers on home/reopen, and `rust-demo` logs Rust
-  lifecycle markers on the same transitions.
-- The first embedded shell/system surface is now the VM top chrome strip.
-  `shadow-ui-core` exposes it as a reusable local overlay scene, the VM
-  compositor renders it as a second compositor-owned shell surface, and
-  guest/pixel keep the legacy full-shell scene for now.
-- The VM proof for that seam now covers both the normal smoke lane and a direct
-  tap on the compositor-owned strip: `just smoke target=vm` passes, and a
-  host-space tap at `330,59` shelves `podcast` through the overlay path in the
-  current 660x1240 nested VM window.
-- The next shell chrome seam is now fully on the shared geometry path too: the
-  shell model treats the bottom navigation pill as a second Home affordance, the
-  VM compositor renders it as another compositor-owned shell surface, foreground
-  capture reserves both top strip and bottom pill for shell input, and the
-  shared app viewport now reserves the lower system-chrome inset instead of
-  rendering under that pill.
-- Home / launcher content is now on the compositor-owned VM path too: the shell
-  model exposes a background-only base scene plus a transparent launcher overlay
-  scene, the VM compositor composes that overlay below the top strip and bottom
-  pill, and VM smoke now proves the path by opening `counter` from a real
-  launcher-tile tap instead of a control-plane `open`.
-- IME stays deferred for now. The compositor can render another system-owned
-  surface, but it still cannot observe focused-app `textInput` state over the
-  current app platform-control socket, so a real compositor-owned keyboard needs
-  a protocol extension before it is worth implementing.
-- The next seam should move to the next embedded shell surface or the first
-  text/input contract, rather than more launch/env churn.
-- The first serious Rust app is now concretely the Nostr client track in
-  [todos/nostr-rs-app.md](../todos/nostr-rs-app.md), not a generic demo-app
-  placeholder.
+  host/runtime crates and one-off bindings.
+- `generated_apps.rs` is acceptable as a short-term static bridge, but it is
+  not the end state. Revisit it before manifest growth makes it expensive to
+  change.
+- The main host-side Deno runner is now `shadow-system`. Keep collapsing the
+  remaining `runtime-<something>-host` seams inward behind `shadow-system` and
+  `shadow_sdk`.
+- Masonry/Xilem remains the base implementation layer, not the product API.
+- The biggest framework gap is now ergonomics, not viability. The Rust timeline
+  still exposes too much framework leakage:
+  - explicit `Theme` plumbing
+  - app-local `pending_*` async state and token bookkeeping
+  - app-local platform socket listener threads
+- The first ergonomics cleanup slice is now in:
+  - `shadow_sdk::ui::UiContext` owns app metrics plus theme selection for the
+    current view tree
+  - the Rust timeline route/render helpers now take `UiContext` instead of raw
+    `Theme`
+  - `shadow_sdk::ui::TaskSlot` / `with_task` now own task identity and stale
+    completion filtering so apps do not carry ad hoc token counters
+  - `shadow_sdk::app::spawn_platform_request_listener` now owns the raw
+    platform socket bind/read/parse/write loop so apps only map parsed requests
+    into app messages
+- That is not the end state. The big remaining ergonomics problem is still the
+  app-local shape of task/effect wiring:
+  - per-app `Pending*` job structs
+  - repeated `with_task(...)` registration
+  - no first-class distinction between inline cache reads and async effects
+- The new platform listener helper is in use for the Rust timeline, but other
+  app paths still own raw socket/control loops. Keep collapsing those inward
+  instead of letting multiple listener styles stick around.
+- The next platform work should optimize for app-authoring quality, not for
+  adding more ad hoc app-level product features on top of the current glue.
+- The Rust Nostr app is now the main pressure test because it already exercises:
+  - navigation
+  - cached reads
+  - explicit sync
+  - write flows
+  - signer approval
+  - follow graph updates
+  - real VM automation
+- The right product bar is honest data and honest state. Do not add fake notes,
+  hidden feed fallbacks, or fake onboarding just to make demos feel richer.
+- VM and host test seams should keep moving toward reusable local-service
+  harnesses instead of per-smoke relay bring-up scripts.
+- VM automation for serious Rust apps should keep moving toward semantic
+  app-owned hooks, not brittle fixed tap coordinates.
+- Pixel remains TypeScript-first for now. Mixed-model metadata is valid, but
+  native Rust packaging/staging on Pixel is still future work.
 
 ## Shell/System Chrome Migration
 
-This is a real product track inside this plan, not a vague later cleanup. The
-current homegrown shell UI should be retired incrementally by moving existing OS
-chrome onto Shadow UI surfaces in small VM-first seams, then carrying those
-seams over to guest/pixel once they are proven.
+This is a real product track inside this plan. The current homegrown shell UI
+is bring-up architecture, not the final direction.
 
-- [~] Move the existing shell/system chrome onto Shadow UI surfaces.
+- [~] Move existing shell/system chrome onto Shadow UI surfaces.
 - [x] Top chrome strip.
 - [x] Bottom navigation / home affordance.
 - [x] Home / launcher content.
-- [ ] App switcher / recents surfaces.
-- [ ] Notifications, quick settings, and other pull-down system surfaces.
+- [ ] App switcher / recents.
+- [ ] Notifications / quick settings / pull-down surfaces.
 - [ ] Lock, IME, and other always-on system-owned surfaces.
 
-The top chrome strip and bottom navigation pill are now both live Home
-affordances in the shell model, the shared viewport contract now reserves the
-lower system-surface inset instead of letting app content render under the
-compositor-owned pill, and the VM home/launcher surface now rides the same
-compositor-owned overlay path.
+The next shell migration seam should come after the first ergonomics cleanup
+pass, not before. The framework needs to get less awkward while the pressure
+app is still small enough to refactor cleanly.
