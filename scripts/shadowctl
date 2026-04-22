@@ -551,6 +551,10 @@ def session_start_command(
         scripts_dir / "pixel" / ("pixel_shell_drm_hold.sh" if hold else "pixel_shell_drm.sh")
     ]
     env = [("PIXEL_SERIAL", serial)]
+    if app_id == "camera":
+        command.append("--camera-runtime")
+    elif app_id != SHELL_APP_ID:
+        command.append("--no-camera-runtime")
     if app_id != SHELL_APP_ID:
         command.extend(["--app", app_id])
     return (command, env)

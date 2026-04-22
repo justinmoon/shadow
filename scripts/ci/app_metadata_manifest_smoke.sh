@@ -803,7 +803,7 @@ check_output_case \
 check_output_case \
   shadowctl_pixel_accepts_pixel_only \
   0 \
-  "command=$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh --app pixel-only" \
+  "command=$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh --no-camera-runtime --app pixel-only" \
   "" \
   env SHADOW_APP_METADATA_MANIFEST="$profile_manifest" "$SHADOWCTL_SCRIPT" run --dry-run -t TESTSERIAL --app pixel-only
 

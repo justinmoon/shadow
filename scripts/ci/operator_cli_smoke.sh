@@ -174,7 +174,7 @@ check_stdout_contains \
 check_output_case \
   just_run_named_args_any_order \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --app timeline' "$SCRIPT_DIR/pixel/pixel_shell_drm.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --no-camera-runtime --app timeline' "$SCRIPT_DIR/pixel/pixel_shell_drm.sh")" \
   "" \
   env SHADOWCTL_JUST_DRY_RUN=1 just run app=timeline target=TESTSERIAL hold=0
 
@@ -357,9 +357,16 @@ check_output_case \
 check_output_case \
   shadowctl_run_pixel_timeline \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --app timeline' "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --no-camera-runtime --app timeline' "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" run --dry-run -t TESTSERIAL --app timeline
+
+check_output_case \
+  shadowctl_run_pixel_camera \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --camera-runtime --app camera' "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" run --dry-run -t TESTSERIAL --app camera
 
 check_output_case \
   shadowctl_run_pixel_no_hold \
@@ -371,7 +378,7 @@ check_output_case \
 check_output_case \
   shadowctl_global_target_before_command \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --app timeline' "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --no-camera-runtime --app timeline' "$SCRIPT_DIR/pixel/pixel_shell_drm_hold.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" -t TESTSERIAL run --dry-run --app timeline
 
