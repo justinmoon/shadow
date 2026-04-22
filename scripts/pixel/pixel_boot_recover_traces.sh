@@ -62,6 +62,8 @@ RECOVERED_METADATA_PROBE_REPORT_STDERR_PATH=""
 RECOVERED_METADATA_PROBE_REPORT_OBSERVED_STAGE=""
 RECOVERED_METADATA_PROBE_REPORT_TIMED_OUT=""
 RECOVERED_METADATA_PROBE_REPORT_WCHAN=""
+RECOVERED_METADATA_PROBE_REPORT_CHILD_COMPLETED=""
+RECOVERED_METADATA_PROBE_REPORT_CHILD_EXIT_STATUS=""
 RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_PRESENT=false
 RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_ACTUAL_ACCESS_MODE="unattempted"
 RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_EXIT_CODE=""
@@ -613,6 +615,8 @@ recover_metadata_probe_report_file() {
     RECOVERED_METADATA_PROBE_REPORT_OBSERVED_STAGE=""
     RECOVERED_METADATA_PROBE_REPORT_TIMED_OUT=""
     RECOVERED_METADATA_PROBE_REPORT_WCHAN=""
+    RECOVERED_METADATA_PROBE_REPORT_CHILD_COMPLETED=""
+    RECOVERED_METADATA_PROBE_REPORT_CHILD_EXIT_STATUS=""
     cat >"$META_DIR/metadata-probe-report.txt" <<EOF
 expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
 expected_metadata_probe_report_path=$EXPECTED_METADATA_PROBE_REPORT_PATH
@@ -622,6 +626,8 @@ metadata_probe_report_exit_code=
 metadata_probe_report_observed_stage=
 metadata_probe_report_timed_out=
 metadata_probe_report_wchan=
+metadata_probe_report_child_completed=
+metadata_probe_report_child_exit_status=
 EOF
     return 0
   fi
@@ -646,18 +652,22 @@ for raw_line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").
     key, value = raw_line.split("=", 1)
     payload[key] = value
 
-for key in ("observed_probe_stage", "child_timed_out", "wchan"):
+for key in ("observed_probe_stage", "child_timed_out", "wchan", "child_completed", "exit_status"):
     print(payload.get(key, ""))
 PY
     )
     RECOVERED_METADATA_PROBE_REPORT_OBSERVED_STAGE="${parsed_report[0]:-}"
     RECOVERED_METADATA_PROBE_REPORT_TIMED_OUT="${parsed_report[1]:-}"
     RECOVERED_METADATA_PROBE_REPORT_WCHAN="${parsed_report[2]:-}"
+    RECOVERED_METADATA_PROBE_REPORT_CHILD_COMPLETED="${parsed_report[3]:-}"
+    RECOVERED_METADATA_PROBE_REPORT_CHILD_EXIT_STATUS="${parsed_report[4]:-}"
   else
     RECOVERED_METADATA_PROBE_REPORT_PRESENT=false
     RECOVERED_METADATA_PROBE_REPORT_OBSERVED_STAGE=""
     RECOVERED_METADATA_PROBE_REPORT_TIMED_OUT=""
     RECOVERED_METADATA_PROBE_REPORT_WCHAN=""
+    RECOVERED_METADATA_PROBE_REPORT_CHILD_COMPLETED=""
+    RECOVERED_METADATA_PROBE_REPORT_CHILD_EXIT_STATUS=""
   fi
 
   cat >"$META_DIR/metadata-probe-report.txt" <<EOF
@@ -669,6 +679,8 @@ metadata_probe_report_exit_code=$RECOVERED_METADATA_PROBE_REPORT_EXIT_CODE
 metadata_probe_report_observed_stage=$RECOVERED_METADATA_PROBE_REPORT_OBSERVED_STAGE
 metadata_probe_report_timed_out=$RECOVERED_METADATA_PROBE_REPORT_TIMED_OUT
 metadata_probe_report_wchan=$RECOVERED_METADATA_PROBE_REPORT_WCHAN
+metadata_probe_report_child_completed=$RECOVERED_METADATA_PROBE_REPORT_CHILD_COMPLETED
+metadata_probe_report_child_exit_status=$RECOVERED_METADATA_PROBE_REPORT_CHILD_EXIT_STATUS
 EOF
 }
 
@@ -1176,6 +1188,8 @@ write_status_json() {
     "$RECOVERED_METADATA_PROBE_REPORT_OBSERVED_STAGE" \
     "$RECOVERED_METADATA_PROBE_REPORT_TIMED_OUT" \
     "$RECOVERED_METADATA_PROBE_REPORT_WCHAN" \
+    "$RECOVERED_METADATA_PROBE_REPORT_CHILD_COMPLETED" \
+    "$RECOVERED_METADATA_PROBE_REPORT_CHILD_EXIT_STATUS" \
     "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_PRESENT" \
     "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_ACTUAL_ACCESS_MODE" \
     "$RECOVERED_METADATA_PROBE_TIMEOUT_CLASS_EXIT_CODE" \
@@ -1245,15 +1259,17 @@ recovered_metadata_probe_report_stderr_path = sys.argv[52]
 recovered_metadata_probe_report_observed_stage = sys.argv[53]
 recovered_metadata_probe_report_timed_out = sys.argv[54]
 recovered_metadata_probe_report_wchan = sys.argv[55]
-recovered_metadata_probe_timeout_class_present = sys.argv[56] == "true"
-recovered_metadata_probe_timeout_class_actual_access_mode = sys.argv[57]
-recovered_metadata_probe_timeout_class_exit_code = sys.argv[58]
-recovered_metadata_probe_timeout_class_output_path = sys.argv[59]
-recovered_metadata_probe_timeout_class_stderr_path = sys.argv[60]
-recovered_metadata_probe_timeout_class_checkpoint = sys.argv[61]
-recovered_metadata_probe_timeout_class_bucket = sys.argv[62]
-recovered_metadata_probe_timeout_class_matched_needle = sys.argv[63]
-recovered_metadata_probe_timeout_class_wchan = sys.argv[64]
+recovered_metadata_probe_report_child_completed = sys.argv[56]
+recovered_metadata_probe_report_child_exit_status = sys.argv[57]
+recovered_metadata_probe_timeout_class_present = sys.argv[58] == "true"
+recovered_metadata_probe_timeout_class_actual_access_mode = sys.argv[59]
+recovered_metadata_probe_timeout_class_exit_code = sys.argv[60]
+recovered_metadata_probe_timeout_class_output_path = sys.argv[61]
+recovered_metadata_probe_timeout_class_stderr_path = sys.argv[62]
+recovered_metadata_probe_timeout_class_checkpoint = sys.argv[63]
+recovered_metadata_probe_timeout_class_bucket = sys.argv[64]
+recovered_metadata_probe_timeout_class_matched_needle = sys.argv[65]
+recovered_metadata_probe_timeout_class_wchan = sys.argv[66]
 expected_durable_logging = {"kmsg": None, "pmsg": None}
 
 if source_image_metadata_path:
@@ -1425,11 +1441,25 @@ if bootreason_path.exists():
         key, value = raw_line.split("=", 1)
         bootreason_values[key] = value
 
+probe_report_child_completed = recovered_metadata_probe_report_child_completed == "true"
+probe_report_child_exit_status = (
+    int(recovered_metadata_probe_report_child_exit_status)
+    if recovered_metadata_probe_report_child_exit_status not in ("", None)
+    else None
+)
+probe_report_proves_child_success = (
+    recovered_metadata_probe_report_present
+    and probe_report_child_completed
+    and recovered_metadata_probe_report_timed_out == "false"
+    and probe_report_child_exit_status == 0
+)
+
 payload = {
     "kind": "boot_trace_recovery",
     "ok": True,
-    "proof_ok": matched_any_correlated_shadow_tags,
+    "proof_ok": matched_any_correlated_shadow_tags or probe_report_proves_child_success,
     "matched_correlated_trace": matched_any_correlated_shadow_tags,
+    "probe_report_proves_child_success": probe_report_proves_child_success,
     "serial": serial,
     "output_dir": str(status_output.parent),
     "shadow_tag_regex": shadow_tag_regex,
@@ -1493,6 +1523,12 @@ payload = {
         else None
     ),
     "metadata_probe_report_wchan": recovered_metadata_probe_report_wchan,
+    "metadata_probe_report_child_completed": (
+        probe_report_child_completed
+        if recovered_metadata_probe_report_child_completed in ("true", "false")
+        else None
+    ),
+    "metadata_probe_report_child_exit_status": probe_report_child_exit_status,
     "metadata_probe_timeout_class_present": recovered_metadata_probe_timeout_class_present,
     "metadata_probe_timeout_class_actual_access_mode": recovered_metadata_probe_timeout_class_actual_access_mode,
     "metadata_probe_timeout_class_exit_code": (

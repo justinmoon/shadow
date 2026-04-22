@@ -152,6 +152,9 @@ PROP
       if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" ]]; then
         printf 'parent-probe-result=exit-0\n'
         exit 0
+      elif [[ "$TRACE_MODE" == "probe-only-success" ]]; then
+        printf 'parent-probe-result=skipped\n'
+        exit 0
       fi
       exit 3
       ;;
@@ -159,11 +162,14 @@ PROP
       if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" ]]; then
         printf 'parent-probe-attempt-3:vkCreateInstance-ok\n'
         exit 0
+      elif [[ "$TRACE_MODE" == "probe-only-success" ]]; then
+        printf 'orange-gpu-payload:vkEnumeratePhysicalDevices-ok\n'
+        exit 0
       fi
       exit 3
       ;;
     *"/metadata/shadow-hello-init/by-token/"*"/probe-fingerprint.txt"* )
-      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" ]]; then
+      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" ]]; then
         printf 'path=/dev/kgsl-3d0 present=true kind=char mode=666 uid=1000 gid=1000 major=508 minor=0\n'
         exit 0
       fi
@@ -175,7 +181,19 @@ PROP
 probe_label=orange-gpu-payload
 observed_probe_stage=orange-gpu-payload:kgsl-open-readonly
 child_timed_out=true
+child_completed=false
+exit_status=
 wchan=do_wait
+EOF
+        exit 0
+      elif [[ "$TRACE_MODE" == "probe-only-success" ]]; then
+        cat <<EOF
+probe_label=orange-gpu-payload
+observed_probe_stage=orange-gpu-payload:vkEnumeratePhysicalDevices-ok
+child_timed_out=false
+child_completed=true
+exit_status=0
+wchan=
 EOF
         exit 0
       fi
@@ -492,6 +510,26 @@ assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlat
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlated false
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/matched_expected_run_token true
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/matched_shadow_tags false
+
+PROBE_ONLY_PARENT="$TMP_DIR/output-probe-only"
+PROBE_ONLY_IMAGE="$TMP_DIR/output-probe-only.img"
+PROBE_ONLY_OUTPUT="$PROBE_ONLY_PARENT/recover-traces"
+write_recover_context "$PROBE_ONLY_PARENT" "$PROBE_ONLY_IMAGE" "$RUN_TOKEN"
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=probe-only-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$PROBE_ONLY_OUTPUT" >/dev/null
+
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" matched_any_shadow_tags false
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" matched_any_correlated_shadow_tags false
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" probe_report_proves_child_success true
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" proof_ok true
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_report_child_completed true
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_report_child_exit_status 0
+assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_report_timed_out false
 
 ROOT_TIMEOUT_PARENT="$TMP_DIR/output-root-timeout"
 ROOT_TIMEOUT_IMAGE="$TMP_DIR/output-root-timeout.img"
