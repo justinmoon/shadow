@@ -38,6 +38,11 @@ use winit::platform::wayland::WindowAttributesWayland;
 
 #[cfg(target_os = "linux")]
 const RUNTIME_DEMO_WAYLAND_APP_ID: &str = "dev.shadow.counter";
+const APP_TITLE_ENV: &str = "SHADOW_APP_TITLE";
+#[cfg(target_os = "linux")]
+const APP_WAYLAND_APP_ID_ENV: &str = "SHADOW_APP_WAYLAND_APP_ID";
+#[cfg(target_os = "linux")]
+const APP_WAYLAND_INSTANCE_NAME_ENV: &str = "SHADOW_APP_WAYLAND_INSTANCE_NAME";
 const BLITZ_APP_TITLE_ENV: &str = "SHADOW_BLITZ_APP_TITLE";
 const APP_PLATFORM_CONTROL_SOCKET_ENV: &str = "SHADOW_APP_PLATFORM_CONTROL_SOCKET";
 const BLITZ_PLATFORM_CONTROL_SOCKET_ENV: &str = "SHADOW_BLITZ_PLATFORM_CONTROL_SOCKET";
@@ -123,30 +128,38 @@ fn env_override(key: &str) -> Option<String> {
     env::var(key).ok().filter(|value| !value.is_empty())
 }
 
+fn env_override_any(keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| env_override(key))
+}
+
 fn resolved_title() -> String {
-    env_override(BLITZ_APP_TITLE_ENV).unwrap_or_else(|| String::from("Shadow Counter"))
+    env_override_any(&[APP_TITLE_ENV, BLITZ_APP_TITLE_ENV])
+        .unwrap_or_else(|| String::from("Shadow Counter"))
 }
 
 #[cfg(target_os = "linux")]
 fn resolved_wayland_app_id() -> String {
-    env_override(BLITZ_WAYLAND_APP_ID_ENV)
+    env_override_any(&[APP_WAYLAND_APP_ID_ENV, BLITZ_WAYLAND_APP_ID_ENV])
         .unwrap_or_else(|| String::from(RUNTIME_DEMO_WAYLAND_APP_ID))
 }
 
 #[cfg(target_os = "linux")]
 fn resolved_wayland_instance_name() -> String {
-    env_override(BLITZ_WAYLAND_INSTANCE_NAME_ENV)
-        .or_else(|| {
-            env::var(BLITZ_WAYLAND_APP_ID_ENV).ok().map(|app_id| {
-                app_id
-                    .rsplit('.')
-                    .next()
-                    .filter(|segment| !segment.is_empty())
-                    .unwrap_or("shadow-counter")
-                    .to_string()
-            })
+    env_override_any(&[
+        APP_WAYLAND_INSTANCE_NAME_ENV,
+        BLITZ_WAYLAND_INSTANCE_NAME_ENV,
+    ])
+    .or_else(|| {
+        env_override_any(&[APP_WAYLAND_APP_ID_ENV, BLITZ_WAYLAND_APP_ID_ENV]).map(|app_id| {
+            app_id
+                .rsplit('.')
+                .next()
+                .filter(|segment| !segment.is_empty())
+                .unwrap_or("shadow-counter")
+                .to_string()
         })
-        .unwrap_or_else(|| String::from("shadow-counter"))
+    })
+    .unwrap_or_else(|| String::from("shadow-counter"))
 }
 
 struct BlitzApplication {
@@ -1049,7 +1062,8 @@ fn log_pointer_window_event(event: &WindowEvent) {
 #[cfg(test)]
 mod tests {
     use super::{
-        resolved_title, touch_signal_watch_mode_from_env, TouchSignalWatchMode, BLITZ_APP_TITLE_ENV,
+        resolved_title, touch_signal_watch_mode_from_env, TouchSignalWatchMode, APP_TITLE_ENV,
+        BLITZ_APP_TITLE_ENV,
     };
     use std::{
         env,
@@ -1057,9 +1071,9 @@ mod tests {
     };
 
     #[cfg(target_os = "linux")]
-    const WAYLAND_APP_ID_ENV: &str = "SHADOW_BLITZ_WAYLAND_APP_ID";
+    const LEGACY_WAYLAND_APP_ID_ENV: &str = "SHADOW_BLITZ_WAYLAND_APP_ID";
     #[cfg(target_os = "linux")]
-    const WAYLAND_INSTANCE_NAME_ENV: &str = "SHADOW_BLITZ_WAYLAND_INSTANCE_NAME";
+    const LEGACY_WAYLAND_INSTANCE_NAME_ENV: &str = "SHADOW_BLITZ_WAYLAND_INSTANCE_NAME";
 
     fn env_guard() -> MutexGuard<'static, ()> {
         static ENV_MUTEX: Mutex<()> = Mutex::new(());
@@ -1098,22 +1112,56 @@ mod tests {
     }
 
     #[test]
-    fn runtime_launch_honors_overrides() {
+    fn runtime_launch_prefers_canonical_env_over_legacy() {
         let _guard = env_guard();
         #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
-        let mut restore_keys = vec![BLITZ_APP_TITLE_ENV];
+        let mut restore_keys = vec![APP_TITLE_ENV, BLITZ_APP_TITLE_ENV];
         #[cfg(target_os = "linux")]
         {
-            restore_keys.push(WAYLAND_APP_ID_ENV);
-            restore_keys.push(WAYLAND_INSTANCE_NAME_ENV);
+            restore_keys.push(APP_WAYLAND_APP_ID_ENV);
+            restore_keys.push(APP_WAYLAND_INSTANCE_NAME_ENV);
+            restore_keys.push(LEGACY_WAYLAND_APP_ID_ENV);
+            restore_keys.push(LEGACY_WAYLAND_INSTANCE_NAME_ENV);
+        }
+        let _restore = EnvRestore::new(&restore_keys);
+
+        env::set_var(APP_TITLE_ENV, "Shadow Notes");
+        env::set_var(BLITZ_APP_TITLE_ENV, "Shadow Timeline");
+        #[cfg(target_os = "linux")]
+        {
+            env::set_var(APP_WAYLAND_APP_ID_ENV, "dev.shadow.notes");
+            env::set_var(APP_WAYLAND_INSTANCE_NAME_ENV, "notes");
+            env::set_var(LEGACY_WAYLAND_APP_ID_ENV, "dev.shadow.timeline");
+            env::set_var(LEGACY_WAYLAND_INSTANCE_NAME_ENV, "timeline");
+        }
+
+        assert_eq!(resolved_title(), "Shadow Notes");
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(super::resolved_wayland_app_id(), "dev.shadow.notes");
+            assert_eq!(super::resolved_wayland_instance_name(), "notes");
+        }
+    }
+
+    #[test]
+    fn runtime_launch_falls_back_to_legacy_env() {
+        let _guard = env_guard();
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+        let mut restore_keys = vec![APP_TITLE_ENV, BLITZ_APP_TITLE_ENV];
+        #[cfg(target_os = "linux")]
+        {
+            restore_keys.push(APP_WAYLAND_APP_ID_ENV);
+            restore_keys.push(APP_WAYLAND_INSTANCE_NAME_ENV);
+            restore_keys.push(LEGACY_WAYLAND_APP_ID_ENV);
+            restore_keys.push(LEGACY_WAYLAND_INSTANCE_NAME_ENV);
         }
         let _restore = EnvRestore::new(&restore_keys);
 
         env::set_var(BLITZ_APP_TITLE_ENV, "Shadow Timeline");
         #[cfg(target_os = "linux")]
         {
-            env::set_var(WAYLAND_APP_ID_ENV, "dev.shadow.timeline");
-            env::set_var(WAYLAND_INSTANCE_NAME_ENV, "timeline");
+            env::set_var(LEGACY_WAYLAND_APP_ID_ENV, "dev.shadow.timeline");
+            env::set_var(LEGACY_WAYLAND_INSTANCE_NAME_ENV, "timeline");
         }
 
         assert_eq!(resolved_title(), "Shadow Timeline");

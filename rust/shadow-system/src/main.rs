@@ -402,4 +402,52 @@ mod tests {
 
         clear_window_metric_env();
     }
+
+    #[test]
+    fn window_metrics_bootstrap_script_prefers_canonical_env_over_legacy() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_window_metric_env();
+        std::env::set_var(SURFACE_WIDTH_ENV, "540");
+        std::env::set_var(SURFACE_HEIGHT_ENV, "1042");
+        std::env::set_var(SAFE_AREA_TOP_ENV, "12");
+        std::env::set_var(LEGACY_SURFACE_WIDTH_ENV, "900");
+        std::env::set_var(LEGACY_SURFACE_HEIGHT_ENV, "1600");
+        std::env::set_var(LEGACY_SAFE_AREA_TOP_ENV, "48");
+
+        let script = initial_window_metrics_bootstrap_script()
+            .expect("bootstrap script")
+            .expect("bootstrap value");
+        assert!(script.contains("\"surfaceWidth\":540"));
+        assert!(script.contains("\"surfaceHeight\":1042"));
+        assert!(script.contains("\"top\":12"));
+        assert!(!script.contains("\"surfaceWidth\":900"));
+        assert!(!script.contains("\"surfaceHeight\":1600"));
+        assert!(!script.contains("\"top\":48"));
+
+        clear_window_metric_env();
+    }
+
+    #[test]
+    fn window_metrics_bootstrap_script_falls_back_to_legacy_env() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_window_metric_env();
+        std::env::set_var(LEGACY_SURFACE_WIDTH_ENV, "900");
+        std::env::set_var(LEGACY_SURFACE_HEIGHT_ENV, "1600");
+        std::env::set_var(LEGACY_SAFE_AREA_LEFT_ENV, "4");
+        std::env::set_var(LEGACY_SAFE_AREA_TOP_ENV, "6");
+        std::env::set_var(LEGACY_SAFE_AREA_RIGHT_ENV, "8");
+        std::env::set_var(LEGACY_SAFE_AREA_BOTTOM_ENV, "10");
+
+        let script = initial_window_metrics_bootstrap_script()
+            .expect("bootstrap script")
+            .expect("bootstrap value");
+        assert!(script.contains("\"surfaceWidth\":900"));
+        assert!(script.contains("\"surfaceHeight\":1600"));
+        assert!(script.contains("\"left\":4"));
+        assert!(script.contains("\"top\":6"));
+        assert!(script.contains("\"right\":8"));
+        assert!(script.contains("\"bottom\":10"));
+
+        clear_window_metric_env();
+    }
 }

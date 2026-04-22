@@ -27,6 +27,10 @@ const DEBUG_SELECTOR: &str = "#shadow-blitz-debug";
 const KEYBOARD_SELECTOR: &str = "#shadow-blitz-keyboard";
 const DEFAULT_SURFACE_WIDTH: u32 = APP_VIEWPORT_WIDTH_PX;
 const DEFAULT_SURFACE_HEIGHT: u32 = APP_VIEWPORT_HEIGHT_PX;
+const SURFACE_HEIGHT_ENV: &str = "SHADOW_APP_SURFACE_HEIGHT";
+const SURFACE_WIDTH_ENV: &str = "SHADOW_APP_SURFACE_WIDTH";
+const LEGACY_SURFACE_HEIGHT_ENV: &str = "SHADOW_BLITZ_SURFACE_HEIGHT";
+const LEGACY_SURFACE_WIDTH_ENV: &str = "SHADOW_BLITZ_SURFACE_WIDTH";
 const CLICK_CANCEL_DISTANCE_PX: f32 = 8.0;
 const SOFT_KEYBOARD_TARGET_PREFIX: &str = "__shadow_keyboard__";
 const SOFT_KEYBOARD_SPACER_HEIGHT_PX: u32 = 360;
@@ -1984,8 +1988,14 @@ fn truncate_debug(value: &str, max_chars: usize) -> String {
 
 pub(crate) fn runtime_surface_size_from_env() -> (u32, u32) {
     (
-        runtime_surface_dimension("SHADOW_BLITZ_SURFACE_WIDTH", DEFAULT_SURFACE_WIDTH),
-        runtime_surface_dimension("SHADOW_BLITZ_SURFACE_HEIGHT", DEFAULT_SURFACE_HEIGHT),
+        runtime_surface_dimension_any(
+            &[SURFACE_WIDTH_ENV, LEGACY_SURFACE_WIDTH_ENV],
+            DEFAULT_SURFACE_WIDTH,
+        ),
+        runtime_surface_dimension_any(
+            &[SURFACE_HEIGHT_ENV, LEGACY_SURFACE_HEIGHT_ENV],
+            DEFAULT_SURFACE_HEIGHT,
+        ),
     )
 }
 
@@ -1993,11 +2003,14 @@ pub(crate) fn runtime_ignore_safe_area_from_env() -> bool {
     env::var_os("SHADOW_BLITZ_IGNORE_SAFE_AREA").is_some()
 }
 
-fn runtime_surface_dimension(key: &str, default: u32) -> u32 {
-    env::var(key)
-        .ok()
-        .and_then(|value| value.trim().parse::<u32>().ok())
-        .filter(|value| *value > 0)
+fn runtime_surface_dimension_any(keys: &[&str], default: u32) -> u32 {
+    keys.iter()
+        .find_map(|key| {
+            env::var(key)
+                .ok()
+                .and_then(|value| value.trim().parse::<u32>().ok())
+                .filter(|value| *value > 0)
+        })
         .unwrap_or(default)
 }
 #[cfg(test)]
@@ -2014,8 +2027,9 @@ mod tests {
     };
 
     use super::{
-        auto_click_event, software_keyboard_enabled, RuntimeDocument, RuntimeDocumentPayload,
-        RuntimeTextInputPayload, AUTO_CLICK_TARGET_ENV,
+        auto_click_event, runtime_surface_size_from_env, software_keyboard_enabled,
+        RuntimeDocument, RuntimeDocumentPayload, RuntimeTextInputPayload, AUTO_CLICK_TARGET_ENV,
+        LEGACY_SURFACE_HEIGHT_ENV, LEGACY_SURFACE_WIDTH_ENV, SURFACE_HEIGHT_ENV, SURFACE_WIDTH_ENV,
     };
     use crate::runtime_session::RuntimeSelectionEvent;
     use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
@@ -2025,6 +2039,35 @@ mod tests {
         TEST_MUTEX
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    struct EnvRestore {
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl EnvRestore {
+        fn new(keys: &[&'static str]) -> Self {
+            let saved = keys
+                .iter()
+                .map(|key| (*key, env::var(key).ok()))
+                .collect::<Vec<_>>();
+            for key in keys {
+                env::remove_var(key);
+            }
+            Self { saved }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..) {
+                if let Some(value) = value {
+                    env::set_var(key, value);
+                } else {
+                    env::remove_var(key);
+                }
+            }
+        }
     }
 
     fn pointer_coords(client_x: f32, client_y: f32) -> PointerCoords {
@@ -2054,6 +2097,40 @@ mod tests {
             mods: Default::default(),
             details: Default::default(),
         }
+    }
+
+    #[test]
+    fn runtime_surface_size_prefers_canonical_env_over_legacy() {
+        let _guard = test_guard();
+        let _restore = EnvRestore::new(&[
+            SURFACE_WIDTH_ENV,
+            SURFACE_HEIGHT_ENV,
+            LEGACY_SURFACE_WIDTH_ENV,
+            LEGACY_SURFACE_HEIGHT_ENV,
+        ]);
+
+        env::set_var(SURFACE_WIDTH_ENV, "640");
+        env::set_var(SURFACE_HEIGHT_ENV, "1136");
+        env::set_var(LEGACY_SURFACE_WIDTH_ENV, "900");
+        env::set_var(LEGACY_SURFACE_HEIGHT_ENV, "1600");
+
+        assert_eq!(runtime_surface_size_from_env(), (640, 1136));
+    }
+
+    #[test]
+    fn runtime_surface_size_falls_back_to_legacy_env() {
+        let _guard = test_guard();
+        let _restore = EnvRestore::new(&[
+            SURFACE_WIDTH_ENV,
+            SURFACE_HEIGHT_ENV,
+            LEGACY_SURFACE_WIDTH_ENV,
+            LEGACY_SURFACE_HEIGHT_ENV,
+        ]);
+
+        env::set_var(LEGACY_SURFACE_WIDTH_ENV, "900");
+        env::set_var(LEGACY_SURFACE_HEIGHT_ENV, "1600");
+
+        assert_eq!(runtime_surface_size_from_env(), (900, 1600));
     }
 
     fn with_software_keyboard_enabled<T>(f: impl FnOnce() -> T) -> T {

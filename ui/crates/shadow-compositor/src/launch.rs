@@ -109,35 +109,20 @@ pub fn launch_app(
             ),
         )
         .env("SHADOW_APP_TITLE", app.window_title)
-        .env("SHADOW_BLITZ_APP_TITLE", app.window_title)
         .env("SHADOW_APP_WAYLAND_APP_ID", app.wayland_app_id)
-        .env("SHADOW_BLITZ_WAYLAND_APP_ID", app.wayland_app_id)
         .env("SHADOW_APP_WAYLAND_INSTANCE_NAME", app.id.as_str())
-        .env("SHADOW_BLITZ_WAYLAND_INSTANCE_NAME", app.id.as_str())
         .env(
             "SHADOW_APP_SURFACE_WIDTH",
-            runtime_surface_width().to_string(),
-        )
-        .env(
-            "SHADOW_BLITZ_SURFACE_WIDTH",
             runtime_surface_width().to_string(),
         )
         .env(
             "SHADOW_APP_SURFACE_HEIGHT",
             runtime_surface_height().to_string(),
         )
-        .env(
-            "SHADOW_BLITZ_SURFACE_HEIGHT",
-            runtime_surface_height().to_string(),
-        )
         .env("SHADOW_APP_SAFE_AREA_LEFT", "0")
-        .env("SHADOW_BLITZ_SAFE_AREA_LEFT", "0")
         .env("SHADOW_APP_SAFE_AREA_TOP", "0")
-        .env("SHADOW_BLITZ_SAFE_AREA_TOP", "0")
         .env("SHADOW_APP_SAFE_AREA_RIGHT", "0")
-        .env("SHADOW_BLITZ_SAFE_AREA_RIGHT", "0")
         .env("SHADOW_APP_SAFE_AREA_BOTTOM", "0")
-        .env("SHADOW_BLITZ_SAFE_AREA_BOTTOM", "0")
         .env("SHADOW_APP_LIFECYCLE_STATE", "foreground");
 
     if let Some(runtime_bundle_path) = runtime_bundle_path {

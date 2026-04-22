@@ -162,14 +162,6 @@ system_env = {
     "SHADOW_APP_SAFE_AREA_BOTTOM": "0",
     "SHADOW_APP_TITLE": host_app_title,
     "SHADOW_APP_WAYLAND_INSTANCE_NAME": host_app_id,
-    "SHADOW_BLITZ_SURFACE_WIDTH": viewport_width,
-    "SHADOW_BLITZ_SURFACE_HEIGHT": viewport_height,
-    "SHADOW_BLITZ_SAFE_AREA_LEFT": "0",
-    "SHADOW_BLITZ_SAFE_AREA_TOP": "0",
-    "SHADOW_BLITZ_SAFE_AREA_RIGHT": "0",
-    "SHADOW_BLITZ_SAFE_AREA_BOTTOM": "0",
-    "SHADOW_BLITZ_APP_TITLE": host_app_title,
-    "SHADOW_BLITZ_WAYLAND_INSTANCE_NAME": host_app_id,
 }
 wrapper_path = os.path.join(os.path.abspath(cache_dir), "shadow-system-launch.sh")
 os.makedirs(os.path.dirname(wrapper_path), exist_ok=True)
