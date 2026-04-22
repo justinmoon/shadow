@@ -1820,6 +1820,117 @@ static bool setup_kgsl_trace_best_effort(void) {
     return true;
 }
 
+static bool read_text_file_best_effort(const char *path, char *dest, size_t dest_size);
+
+static const char *highest_kgsl_trace_stage_from_text(const char *trace_text) {
+    if (trace_text == NULL || trace_text[0] == '\0') {
+        return NULL;
+    }
+    if (strstr(trace_text, "a6xx_send_cp_init") != NULL) {
+        return "trace-cp-init";
+    }
+    if (strstr(trace_text, "a6xx_gmu_hfi_start") != NULL) {
+        return "trace-gmu-hfi-start";
+    }
+    if (
+        strstr(trace_text, "a6xx_gmu_oob_set") != NULL ||
+        strstr(trace_text, "a6xx_gmu_start") != NULL ||
+        strstr(trace_text, "a6xx_gmu_fw_start") != NULL ||
+        strstr(trace_text, "gmu_start") != NULL
+    ) {
+        return "trace-gmu-start";
+    }
+    if (strstr(trace_text, "pil_boot") != NULL) {
+        return "trace-pil-boot";
+    }
+    if (strstr(trace_text, "subsystem_get") != NULL) {
+        return "trace-subsystem-get";
+    }
+    if (
+        strstr(trace_text, "a6xx_gmu_load_firmware") != NULL ||
+        strstr(trace_text, "a6xx_microcode_read") != NULL
+    ) {
+        return "trace-microcode-read";
+    }
+    return NULL;
+}
+
+static pid_t start_kgsl_trace_monitor_best_effort(
+    const char *payload_probe_stage_path,
+    const char *payload_probe_stage_prefix
+) {
+    pid_t trace_monitor_pid;
+
+    if (payload_probe_stage_path == NULL || payload_probe_stage_prefix == NULL) {
+        return -1;
+    }
+
+    trace_monitor_pid = fork();
+    if (trace_monitor_pid < 0) {
+        log_stage("<4>", "orange-gpu-c-kgsl-trace-monitor-fork-failed", "errno=%d", errno);
+        return -1;
+    }
+    if (trace_monitor_pid == 0) {
+        char trace_text[8192];
+        char last_stage[64];
+
+        last_stage[0] = '\0';
+        for (;;) {
+            const char *trace_stage = NULL;
+
+            trace_text[0] = '\0';
+            if (read_text_file_best_effort(SHADOW_HELLO_INIT_TRACEFS_TRACE_PATH, trace_text, sizeof(trace_text))) {
+                trace_stage = highest_kgsl_trace_stage_from_text(trace_text);
+            }
+            if (
+                trace_stage != NULL &&
+                strcmp(trace_stage, last_stage) != 0
+            ) {
+                write_payload_probe_stage_best_effort(
+                    payload_probe_stage_path,
+                    payload_probe_stage_prefix,
+                    trace_stage
+                );
+                (void)copy_string(last_stage, sizeof(last_stage), trace_stage);
+            }
+            sleep_seconds(1U);
+        }
+    }
+
+    log_stage(
+        "<6>",
+        "orange-gpu-c-kgsl-trace-monitor-start",
+        "pid=%d",
+        trace_monitor_pid
+    );
+    return trace_monitor_pid;
+}
+
+static void stop_kgsl_trace_monitor_best_effort(pid_t trace_monitor_pid) {
+    if (trace_monitor_pid <= 0) {
+        return;
+    }
+    if (kill(trace_monitor_pid, SIGTERM) != 0 && errno != ESRCH) {
+        log_stage(
+            "<4>",
+            "orange-gpu-c-kgsl-trace-monitor-kill-failed",
+            "pid=%d errno=%d",
+            trace_monitor_pid,
+            errno
+        );
+    }
+    for (;;) {
+        pid_t waited = waitpid(trace_monitor_pid, NULL, 0);
+        if (waited == trace_monitor_pid) {
+            break;
+        }
+        if (waited < 0 && errno == EINTR) {
+            continue;
+        }
+        break;
+    }
+}
+
 static char *trim_whitespace(char *value) {
     char *end;
 
@@ -4203,6 +4314,7 @@ static int run_c_kgsl_open_readonly_smoke(
     int kgsl_fd;
     int saved_errno = 0;
     bool trace_enabled = false;
+    pid_t trace_monitor_pid = -1;
 
     if (
         probe_bootstrap_gpu_firmware(
@@ -4231,9 +4343,16 @@ static int run_c_kgsl_open_readonly_smoke(
         "orange-gpu-c-kgsl-open-readonly",
         "path=/dev/kgsl-3d0 flags=O_RDONLY|O_CLOEXEC|O_NOCTTY"
     );
+    if (trace_enabled) {
+        trace_monitor_pid = start_kgsl_trace_monitor_best_effort(
+            payload_probe_stage_path,
+            payload_probe_stage_prefix
+        );
+    }
     kgsl_fd = open("/dev/kgsl-3d0", O_RDONLY | O_CLOEXEC | O_NOCTTY);
     if (kgsl_fd < 0) {
         saved_errno = errno;
+        stop_kgsl_trace_monitor_best_effort(trace_monitor_pid);
         if (trace_enabled) {
             teardown_kgsl_trace_best_effort();
         }
@@ -4242,6 +4361,7 @@ static int run_c_kgsl_open_readonly_smoke(
         return 1;
     }
     close(kgsl_fd);
+    stop_kgsl_trace_monitor_best_effort(trace_monitor_pid);
     if (trace_enabled) {
         teardown_kgsl_trace_best_effort();
     }
