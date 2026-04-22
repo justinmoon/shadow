@@ -2503,6 +2503,21 @@ static const char *orange_gpu_checkpoint_visual(const char *checkpoint_name) {
         return NULL;
     }
 
+    if (strcmp(checkpoint_name, "kgsl-timeout-firmware") == 0) {
+        return "bands-orange";
+    }
+    if (strcmp(checkpoint_name, "kgsl-timeout-gmu-hfi") == 0) {
+        return "orange-vertical-band";
+    }
+    if (strcmp(checkpoint_name, "kgsl-timeout-zap") == 0) {
+        return "frame-orange";
+    }
+    if (strcmp(checkpoint_name, "kgsl-timeout-cp-init") == 0) {
+        return "code-orange-12";
+    }
+    if (strcmp(checkpoint_name, "kgsl-timeout-gx-oob") == 0) {
+        return "code-orange-13";
+    }
     if (strcmp(checkpoint_name, "firmware-probe-ok") == 0) {
         return "checker-orange";
     }
@@ -2572,6 +2587,13 @@ struct probe_timeout_observer_context {
     struct metadata_stage_runtime *metadata_stage;
 };
 
+struct orange_gpu_timeout_classification {
+    const char *checkpoint_name;
+    const char *bucket_name;
+    const char *matched_needle;
+    bool report_present;
+};
+
 static void init_child_watch_result(struct child_watch_result *result) {
     memset(result, 0, sizeof(*result));
 }
@@ -2616,6 +2638,171 @@ static bool read_text_file_best_effort(const char *path, char *dest, size_t dest
     dest[bytes_read] = '\0';
     sanitize_inline_text(dest);
     return true;
+}
+
+static bool text_contains_any_needle(
+    const char *text,
+    const char *const *needles,
+    size_t needle_count,
+    const char **matched_needle
+) {
+    size_t index;
+
+    if (matched_needle != NULL) {
+        *matched_needle = "";
+    }
+    if (text == NULL || text[0] == '\0') {
+        return false;
+    }
+
+    for (index = 0U; index < needle_count; index++) {
+        if (strstr(text, needles[index]) != NULL) {
+            if (matched_needle != NULL) {
+                *matched_needle = needles[index];
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void init_orange_gpu_timeout_classification(
+    struct orange_gpu_timeout_classification *classification
+) {
+    memset(classification, 0, sizeof(*classification));
+    classification->checkpoint_name = "watchdog-timeout";
+    classification->bucket_name = "generic-watchdog";
+    classification->matched_needle = "";
+}
+
+static void classify_kgsl_timeout_from_probe_report(
+    const struct metadata_stage_runtime *runtime,
+    struct orange_gpu_timeout_classification *classification
+) {
+    static const char *const firmware_needles[] = {
+        "_request_firmware",
+        "request_firmware",
+        "a6xx_microcode_read",
+        "a6xx_gmu_load_firmware",
+    };
+    static const char *const zap_needles[] = {
+        "subsystem_get",
+        "pil_boot",
+        "a615_zap",
+    };
+    static const char *const gx_oob_needles[] = {
+        "a6xx_gmu_oob_set",
+        "oob_gpu",
+        "oob_boot_slumber",
+        "a6xx_gmu_gfx_rail_on",
+        "a6xx_rpmh_power_on_gpu",
+        "a6xx_complete_rpmh_votes",
+        "a6xx_gmu_wait_for_lowest_idle",
+        "a6xx_gmu_wait_for_idle",
+        "a6xx_gmu_notify_slumber",
+    };
+    static const char *const gmu_hfi_needles[] = {
+        "a6xx_gmu_start",
+        "a6xx_gmu_fw_start",
+        "a6xx_gmu_hfi_start",
+        "hfi_start",
+        "hfi_send_cmd",
+        "hfi_send_gmu_init",
+        "hfi_send_core_fw_start",
+        "GMU doesn't boot",
+        "GMU HFI init failed",
+        "Timed out waiting on ack",
+    };
+    static const char *const cp_init_needles[] = {
+        "a6xx_rb_start",
+        "a6xx_send_cp_init",
+        "adreno_ringbuffer_submit_spin",
+        "adreno_spin_idle",
+        "adreno_set_unsecured_mode",
+        "adreno_switch_to_unsecure_mode",
+    };
+    char report_text[32768];
+    const char *matched_needle = "";
+
+    if (
+        runtime == NULL ||
+        !runtime->enabled ||
+        runtime->write_failed ||
+        !runtime->prepared
+    ) {
+        return;
+    }
+    if (!read_text_file_best_effort(runtime->probe_report_path, report_text, sizeof(report_text))) {
+        return;
+    }
+
+    classification->report_present = true;
+    if (
+        text_contains_any_needle(
+            report_text,
+            firmware_needles,
+            sizeof(firmware_needles) / sizeof(firmware_needles[0]),
+            &matched_needle
+        )
+    ) {
+        classification->checkpoint_name = "kgsl-timeout-firmware";
+        classification->bucket_name = "firmware";
+        classification->matched_needle = matched_needle;
+        return;
+    }
+    if (
+        text_contains_any_needle(
+            report_text,
+            zap_needles,
+            sizeof(zap_needles) / sizeof(zap_needles[0]),
+            &matched_needle
+        )
+    ) {
+        classification->checkpoint_name = "kgsl-timeout-zap";
+        classification->bucket_name = "zap";
+        classification->matched_needle = matched_needle;
+        return;
+    }
+    if (
+        text_contains_any_needle(
+            report_text,
+            gx_oob_needles,
+            sizeof(gx_oob_needles) / sizeof(gx_oob_needles[0]),
+            &matched_needle
+        )
+    ) {
+        classification->checkpoint_name = "kgsl-timeout-gx-oob";
+        classification->bucket_name = "gx-oob";
+        classification->matched_needle = matched_needle;
+        return;
+    }
+    if (
+        text_contains_any_needle(
+            report_text,
+            gmu_hfi_needles,
+            sizeof(gmu_hfi_needles) / sizeof(gmu_hfi_needles[0]),
+            &matched_needle
+        )
+    ) {
+        classification->checkpoint_name = "kgsl-timeout-gmu-hfi";
+        classification->bucket_name = "gmu-hfi";
+        classification->matched_needle = matched_needle;
+        return;
+    }
+    if (
+        text_contains_any_needle(
+            report_text,
+            cp_init_needles,
+            sizeof(cp_init_needles) / sizeof(cp_init_needles[0]),
+            &matched_needle
+        )
+    ) {
+        classification->checkpoint_name = "kgsl-timeout-cp-init";
+        classification->bucket_name = "cp-init";
+        classification->matched_needle = matched_needle;
+        return;
+    }
 }
 
 static bool append_pid_proc_excerpt(
@@ -2873,6 +3060,19 @@ static void capture_probe_timeout_observer(
         true,
         timeout_seconds
     );
+}
+
+static void classify_orange_gpu_timeout(
+    const struct hello_init_config *config,
+    const struct metadata_stage_runtime *metadata_stage,
+    struct orange_gpu_timeout_classification *classification
+) {
+    init_orange_gpu_timeout_classification(classification);
+    if (!orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config)) {
+        return;
+    }
+
+    classify_kgsl_timeout_from_probe_report(metadata_stage, classification);
 }
 
 static int wait_for_child_with_watchdog(
@@ -3637,6 +3837,7 @@ static int run_orange_gpu_payload(
             ? SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS
             : config->hold_seconds + SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS;
     struct child_watch_result watch_result;
+    struct orange_gpu_timeout_classification timeout_classification;
     struct probe_timeout_observer_context timeout_observer_context;
     bool kgsl_trace_may_be_active = orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config);
 
@@ -4185,20 +4386,28 @@ static int run_orange_gpu_payload(
     }
 
     if (watch_result.timed_out) {
-        (void)run_orange_gpu_checkpoint(config, "watchdog-timeout", 1U);
+        classify_orange_gpu_timeout(config, metadata_stage, &timeout_classification);
+        (void)run_orange_gpu_checkpoint(config, timeout_classification.checkpoint_name, 1U);
         log_stage(
             "<4>",
             "orange-gpu-timeout",
-            "pid=%d waited_seconds=%u timeout_seconds=%u",
+            "pid=%d waited_seconds=%u timeout_seconds=%u checkpoint=%s bucket=%s matched_needle=%s report_present=%s",
             child_pid,
             watch_result.waited_seconds,
-            watchdog_timeout
+            watchdog_timeout,
+            timeout_classification.checkpoint_name,
+            timeout_classification.bucket_name,
+            timeout_classification.matched_needle,
+            bool_word(timeout_classification.report_present)
         );
         log_boot(
             "<4>",
-            "payload %s timed out after %u second(s)",
+            "payload %s timed out after %u second(s); checkpoint=%s bucket=%s matched_needle=%s",
             SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH,
-            watchdog_timeout
+            watchdog_timeout,
+            timeout_classification.checkpoint_name,
+            timeout_classification.bucket_name,
+            timeout_classification.matched_needle
         );
         return 124;
     }

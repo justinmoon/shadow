@@ -77,6 +77,7 @@ The best next discriminators are:
 1. Re-run the same boot-owned `c-kgsl-open-readonly-smoke` rung with a visible timeout classifier rather than relying on `/metadata` alone.
 2. Use the watched pattern to split the next seam:
    - firmware / readiness still unresolved
+   - GX/OOB wake or GMU power-handshake bring-up
    - GMU / HFI
    - secure zap boot
    - CP init / ringbuffer submit
@@ -117,7 +118,7 @@ Do not jump back out to `orange-gpu`, compositor, or app launch work until one o
   - manifest-driven rooted KGSL falsification batches
   - one `matrix-summary.json` plus `matrix.tsv`
 - watched runs
-  - `code-orange-2/3/4/9/10/11` stage/failure visuals
+  - `code-orange-2/3/4/9/10/11/12/13` stage/failure visuals
   - `checker-orange` now has a two-device proof as the firmware-preflight success contract
 
 The smokes covering this are:

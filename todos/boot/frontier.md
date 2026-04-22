@@ -80,6 +80,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 - `code-orange-10`: child died from signal
 - `code-orange-11`: child exited nonzero
 - `code-orange-12`: timeout most likely moved into CP init / ringbuffer submit
+- `code-orange-13`: timeout most likely moved into GX/OOB wake or GMU power-handshake bring-up
 
 Use the panel as a stage channel, not just “something orange happened.”
 
@@ -90,6 +91,7 @@ Use the panel as a stage channel, not just “something orange happened.”
    - if it moves to `orange-vertical-band`, the next likely seam is GMU / HFI
    - if it moves to `frame-orange`, the next likely seam is secure zap boot
    - if it moves to `code-orange-12`, the next likely seam is CP init / ringbuffer submit
+   - if it moves to `code-orange-13`, the next likely seam is GX/OOB wake or GMU power-handshake bring-up
 2. Keep the durable recovery path honest, but stop treating it as the only truth channel for this seam:
    - the current `/metadata` probe files are not surviving these fastboot-return runs reliably
    - use them when they exist, but trust the watched panel contract first

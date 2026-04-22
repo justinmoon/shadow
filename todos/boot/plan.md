@@ -109,7 +109,7 @@ Related docs:
   - this is now narrower than the staged Rust payload, dynamic loader, Vulkan loader, wgpu setup, Android display services, or late Android properties
 - Strongest current hypothesis:
   - the failing seam is now just after the first named firmware loads, not generic `/dev` topology, not DRM, and not later Vulkan enumeration logic
-  - source-guided read of the sunfish kernel plus the recovered `probe-report.txt` still make the first Adreno SQE firmware request the last durable breakpoint, but the new firmware-only watched proof moves the best next suspects forward to GMU firmware / HFI, secure zap boot, and then CP init:
+  - source-guided read of the sunfish kernel plus the recovered `probe-report.txt` still make the first Adreno SQE firmware request the last durable breakpoint, but the new firmware-only watched proof moves the best next suspects forward to GX/OOB wake or GMU power-handshake bring-up, GMU firmware / HFI, secure zap boot, and then CP init:
     - first open reaches `kgsl_open()` -> `kgsl_open_device()` -> Adreno init/start
     - the recovered stack currently stops in `a6xx_microcode_read`, which issues `request_firmware("a630_sqe.fw")`
     - later in the same init path the code also names `request_firmware("a618_gmu.bin")` and likely secure zap boot via `subsystem_get("a615_zap")` / `pil_boot`
@@ -123,6 +123,12 @@ Related docs:
   - tmpfs-`/dev` rooted controls now also persist `exec-context.txt`, so rooted control context can be compared directly against boot-owned metadata probe artifacts
   - boot-owned child probes now also persist `probe-report.txt` so timeouts can recover the last observed stage plus `wchan` / proc excerpts instead of only a pulse count
   - watched runs now have structured `code-orange-*` visuals for validated/probe-ready/success/timeout/signal/nonzero states
+  - the post-firmware timeout classifier now maps recovered kernel-symbol families onto watched checkpoints:
+    - `bands-orange`: request-firmware path
+    - `orange-vertical-band`: GMU / HFI bring-up
+    - `frame-orange`: secure zap boot
+    - `code-orange-12`: CP init / ringbuffer submit
+    - `code-orange-13`: GX/OOB wake or GMU power-handshake bring-up
   - for the current fastboot-return firmware seam, the watched panel contract is stronger than `/metadata`:
     - both firmware-only confirmation runs returned to Android with `metadata_probe_stage_present=false` and `metadata_probe_report_present=false`
     - treat watched `checker-orange` as the truthful proof for this rung until a later durable channel survives reliably
