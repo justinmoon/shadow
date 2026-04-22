@@ -382,7 +382,9 @@ discover_expected_run_token() {
   discover_source_image_path
   if [[ -n "$SOURCE_IMAGE_PATH" ]]; then
     SOURCE_IMAGE_METADATA_PATH="$(hello_init_metadata_path "$SOURCE_IMAGE_PATH")"
-    mapfile -t metadata_values < <(load_recovery_metadata_values "$SOURCE_IMAGE_METADATA_PATH")
+    while IFS= read -r metadata_value; do
+      metadata_values+=("$metadata_value")
+    done < <(load_recovery_metadata_values "$SOURCE_IMAGE_METADATA_PATH")
     metadata_token="${metadata_values[0]:-}"
     metadata_stage_enabled="${metadata_values[1]:-false}"
     metadata_stage_path="${metadata_values[2]:-}"
@@ -665,7 +667,9 @@ EOF
 
   if [[ "$exit_code" == "0" ]]; then
     RECOVERED_METADATA_PROBE_REPORT_PRESENT=true
-    mapfile -t parsed_report < <(python3 - "$output_path" <<'PY'
+    while IFS= read -r parsed_line; do
+      parsed_report+=("$parsed_line")
+    done < <(python3 - "$output_path" <<'PY'
 from pathlib import Path
 import sys
 
@@ -679,7 +683,7 @@ for raw_line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").
 for key in ("observed_probe_stage", "child_timed_out", "wchan", "child_completed", "exit_status"):
     print(payload.get(key, ""))
 PY
-    )
+)
     RECOVERED_METADATA_PROBE_REPORT_OBSERVED_STAGE="${parsed_report[0]:-}"
     RECOVERED_METADATA_PROBE_REPORT_TIMED_OUT="${parsed_report[1]:-}"
     RECOVERED_METADATA_PROBE_REPORT_WCHAN="${parsed_report[2]:-}"

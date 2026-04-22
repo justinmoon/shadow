@@ -20,6 +20,7 @@ WAIT_BOOT_COMPLETED=1
 SKIP_COLLECT="${PIXEL_BOOT_ONESHOT_SKIP_COLLECT:-0}"
 RECOVER_TRACES_AFTER="${PIXEL_BOOT_ONESHOT_RECOVER_TRACES_AFTER:-0}"
 PROOF_PROP_SPEC="${PIXEL_BOOT_PROOF_PROP:-}"
+OBSERVED_PROP_SPEC="${PIXEL_BOOT_OBSERVED_PROP:-}"
 DRY_RUN=0
 ORIGINAL_ARGS=("$@")
 
@@ -92,6 +93,7 @@ Usage: scripts/pixel/pixel_boot_oneshot.sh [--image PATH] [--output DIR] [--wait
                                           [--return-timeout SECONDS]
                                           [--skip-collect] [--recover-traces-after]
                                           [--no-wait-boot-completed] [--proof-prop KEY=VALUE]
+                                          [--observed-prop KEY=VALUE]
                                           [--dry-run]
 
 One-shot boot a custom sunfish image with `fastboot boot`, then either wait for adb
@@ -221,6 +223,11 @@ validate_success_mode() {
     exit 1
   fi
 
+  if [[ "$SUCCESS_SIGNAL" == "fastboot-return" && -n "$OBSERVED_PROP_SPEC" ]]; then
+    echo "pixel_boot_oneshot: --observed-prop is only supported with --success-signal adb" >&2
+    exit 1
+  fi
+
   if [[ "$SUCCESS_SIGNAL" == "fastboot-return" ]] && flag_enabled "$SKIP_COLLECT"; then
     echo "pixel_boot_oneshot: --skip-collect is only supported with --success-signal adb" >&2
     exit 1
@@ -233,6 +240,11 @@ validate_success_mode() {
 
   if flag_enabled "$SKIP_COLLECT" && [[ -n "$PROOF_PROP_SPEC" ]]; then
     echo "pixel_boot_oneshot: --proof-prop requires helper-dir collection; omit it when using --skip-collect" >&2
+    exit 1
+  fi
+
+  if flag_enabled "$SKIP_COLLECT" && [[ -n "$OBSERVED_PROP_SPEC" ]]; then
+    echo "pixel_boot_oneshot: --observed-prop requires helper-dir collection; omit it when using --skip-collect" >&2
     exit 1
   fi
 }
@@ -255,7 +267,8 @@ capture_bootreason_props() {
 }
 
 bootreason_value_indicates_failure() {
-  local normalized="${1,,}"
+  local normalized
+  normalized="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
   [[ -n "$normalized" ]] || return 1
 
   case "$normalized" in
@@ -349,6 +362,7 @@ write_status() {
     "skip_collect=$(bool_word "$SKIP_COLLECT")" \
     "recover_traces_after=$(bool_word "$RECOVER_TRACES_AFTER")" \
     "proof_prop=$PROOF_PROP_SPEC" \
+    "observed_prop=$OBSERVED_PROP_SPEC" \
     "slot_before=$slot_before" \
     "slot_after=$slot_after" \
     "shadow_probe_prop=$shadow_probe_prop" \
@@ -723,6 +737,10 @@ while [[ $# -gt 0 ]]; do
       PROOF_PROP_SPEC="${2:?missing value for --proof-prop}"
       shift 2
       ;;
+    --observed-prop)
+      OBSERVED_PROP_SPEC="${2:?missing value for --observed-prop}"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -789,6 +807,7 @@ skip_collect=$(bool_word "$SKIP_COLLECT")
 recover_traces_after=$(bool_word "$RECOVER_TRACES_AFTER")
 auto_fastboot_reboot=$(bool_word "$AUTO_FASTBOOT_REBOOT")
 proof_prop=$PROOF_PROP_SPEC
+observed_prop=$OBSERVED_PROP_SPEC
 EOF
   if [[ -n "$collect_output_dir" ]]; then
     printf 'collect_output_dir=%s\n' "$collect_output_dir"
@@ -820,6 +839,7 @@ pixel_write_status_json \
   return_timeout_secs="$RETURN_TIMEOUT_SECS" \
   fastboot_leave_timeout_secs="$FASTBOOT_LEAVE_TIMEOUT_SECS" \
   proof_prop="$PROOF_PROP_SPEC" \
+  observed_prop="$OBSERVED_PROP_SPEC" \
   wait_boot_completed="$(wait_boot_completed_status_word)" \
   skip_collect="$(bool_word "$SKIP_COLLECT")" \
   recover_traces_after="$(bool_word "$RECOVER_TRACES_AFTER")" \
@@ -893,6 +913,9 @@ if ! flag_enabled "$SKIP_COLLECT"; then
   )
   if [[ -n "$PROOF_PROP_SPEC" ]]; then
     collect_args+=(--proof-prop "$PROOF_PROP_SPEC")
+  fi
+  if [[ -n "$OBSERVED_PROP_SPEC" ]]; then
+    collect_args+=(--observed-prop "$OBSERVED_PROP_SPEC")
   fi
 
   collect_attempted=true

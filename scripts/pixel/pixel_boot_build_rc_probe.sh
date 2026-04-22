@@ -14,6 +14,7 @@ OUTPUT_IMAGE="${PIXEL_BOOT_RC_PROBE_IMAGE:-}"
 TRIGGER="${PIXEL_BOOT_RC_PROBE_TRIGGER:-post-fs-data}"
 PROPERTY_ASSIGNMENT="${PIXEL_BOOT_RC_PROBE_PROPERTY:-debug.shadow.boot.rc_probe=ready}"
 PATCH_TARGET_OVERRIDE="${PIXEL_BOOT_RC_PROBE_PATCH_TARGET:-}"
+PATCH_MODE="${PIXEL_BOOT_RC_PROBE_PATCH_MODE:-imported-rc}"
 KEEP_WORK_DIR=0
 WORK_DIR=""
 PATCH_TARGET=""
@@ -25,10 +26,12 @@ usage() {
 Usage: scripts/pixel/pixel_boot_build_rc_probe.sh [--input PATH] [--key PATH] [--output PATH]
                                                   [--trigger EXPR] [--property KEY=VALUE]
                                                   [--patch-target ENTRY]
+                                                  [--patch-mode imported-rc|inline]
                                                   [--stock-init]
                                                   [--keep-work-dir]
 
-Build a private stock-init sunfish boot.img that imports /init.shadow.rc and only sets one property.
+Build a private stock-init sunfish boot.img that proves one property either through
+an imported rc file or directly from the patched stock-init anchor.
 EOF
 }
 
@@ -80,6 +83,17 @@ validate_patch_target_override() {
   }
 }
 
+validate_patch_mode() {
+  case "$PATCH_MODE" in
+    imported-rc|inline)
+      ;;
+    *)
+      echo "pixel_boot_build_rc_probe: unsupported --patch-mode $PATCH_MODE; expected imported-rc or inline" >&2
+      exit 1
+      ;;
+  esac
+}
+
 detect_patch_target() {
   local ramdisk_cpio explicit_target
   ramdisk_cpio="${1:?detect_patch_target requires a ramdisk path}"
@@ -106,6 +120,11 @@ if explicit_target:
     print(explicit_target)
     sys.exit(0)
 
+fallback_target = "system/etc/init/hw/init.rc"
+if fallback_target in entries:
+    print(fallback_target)
+    sys.exit(0)
+
 hardware_recovery_targets = sorted(
     name
     for name in entries
@@ -125,11 +144,6 @@ if len(hardware_recovery_targets) > 1:
 
 if "init.recovery.rc" in entries:
     print("init.recovery.rc")
-    sys.exit(0)
-
-fallback_target = "system/etc/init/hw/init.rc"
-if fallback_target in entries:
-    print(fallback_target)
     sys.exit(0)
 
 print(
@@ -177,6 +191,10 @@ while [[ $# -gt 0 ]]; do
       PATCH_TARGET_OVERRIDE="${2:?missing value for --patch-target}"
       shift 2
       ;;
+    --patch-mode)
+      PATCH_MODE="${2:?missing value for --patch-mode}"
+      shift 2
+      ;;
     --stock-init)
       shift
       ;;
@@ -212,6 +230,7 @@ EOF
 validate_literal_trigger
 validate_property_assignment
 validate_patch_target_override
+validate_patch_mode
 
 pixel_prepare_dirs
 if [[ -z "$OUTPUT_IMAGE" ]]; then
@@ -228,34 +247,50 @@ python3 "$SCRIPT_DIR/lib/cpio_edit.py" \
   --input "$WORK_DIR/ramdisk.cpio" \
   --extract "$PATCH_TARGET=$WORK_DIR/patch-target.stock"
 
-if grep -Fxq 'import /init.shadow.rc' "$WORK_DIR/patch-target.stock"; then
-  cp "$WORK_DIR/patch-target.stock" "$WORK_DIR/patch-target.patched"
+if [[ "$PATCH_MODE" == "imported-rc" ]]; then
+  if grep -Fxq 'import /init.shadow.rc' "$WORK_DIR/patch-target.stock"; then
+    cp "$WORK_DIR/patch-target.stock" "$WORK_DIR/patch-target.patched"
+  else
+    {
+      printf 'import /init.shadow.rc\n\n'
+      cat "$WORK_DIR/patch-target.stock"
+    } >"$WORK_DIR/patch-target.patched"
+  fi
 else
   {
-    printf 'import /init.shadow.rc\n\n'
+    printf 'on %s\n' "$TRIGGER"
+    printf '    setprop %s %s\n\n' "$PROPERTY_KEY" "$PROPERTY_VALUE"
     cat "$WORK_DIR/patch-target.stock"
   } >"$WORK_DIR/patch-target.patched"
 fi
 chmod 0644 "$WORK_DIR/patch-target.patched"
 
-cat >"$WORK_DIR/init.shadow.rc" <<EOF
+if [[ "$PATCH_MODE" == "imported-rc" ]]; then
+  cat >"$WORK_DIR/init.shadow.rc" <<EOF
 on ${TRIGGER}
     setprop ${PROPERTY_KEY} ${PROPERTY_VALUE}
 EOF
-chmod 0644 "$WORK_DIR/init.shadow.rc"
+  chmod 0644 "$WORK_DIR/init.shadow.rc"
+fi
 
 if [[ -z "$KEY_PATH" ]]; then
   KEY_PATH="$(ensure_cached_avb_testkey)"
 fi
 
-"$SCRIPT_DIR/pixel/pixel_boot_build.sh" \
-  --stock-init \
-  --input "$INPUT_IMAGE" \
-  --key "$KEY_PATH" \
-  --output "$OUTPUT_IMAGE" \
-  --add "init.shadow.rc=$WORK_DIR/init.shadow.rc" \
+build_args=(
+  --stock-init
+  --input "$INPUT_IMAGE"
+  --key "$KEY_PATH"
+  --output "$OUTPUT_IMAGE"
   --replace "$PATCH_TARGET=$WORK_DIR/patch-target.patched"
+)
+if [[ "$PATCH_MODE" == "imported-rc" ]]; then
+  build_args+=(--add "init.shadow.rc=$WORK_DIR/init.shadow.rc")
+fi
 
+"$SCRIPT_DIR/pixel/pixel_boot_build.sh" "${build_args[@]}"
+
+printf 'Patch mode: %s\n' "$PATCH_MODE"
 printf 'Patch target: %s\n' "$PATCH_TARGET"
 printf 'Trigger: %s\n' "$TRIGGER"
 printf 'Property: %s=%s\n' "$PROPERTY_KEY" "$PROPERTY_VALUE"

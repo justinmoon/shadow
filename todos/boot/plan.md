@@ -146,9 +146,9 @@ Related docs:
 - Stream B: boot-helper autostart and preflight before the first frame.
   - owner today: this worktree `boot-2`
   - goal: prove a custom image can auto-run a Shadow boot helper from stock init, classify what that helper observes before takeover, and leave a durable ready-vs-blocked report without borrowing GPU ownership work
-  - scope: stock-init trigger/launch control, boot-helper autostart breadcrumbs, preflight report format, `/data` availability observation, observed staged-asset presence, required property/service snapshots, and the supporting recovery/evidence contract
+  - scope: stock-init import/launch control, boot-helper autostart breadcrumbs, import-vs-helper proof surfaces, preflight report format, `/data` availability observation, observed staged-asset presence, required property/service snapshots, and the supporting recovery/evidence contract
   - reserved devices: `0B191JEC203253` primary rooted sidecar, `06241JEC200520` spare; do not touch Stream A devices without an explicit handoff
-  - success looks like: the boot helper proves it launched on the current boot and the run bundle says separately whether preflight is ready or blocked, with a readable reason
+  - success looks like: the run bundle says separately whether stock-init import proved, whether the helper launch proved, and whether preflight is ready or blocked, with a readable reason
 - Stream C: phase-1 launch contract and `/data` artifact discipline.
   - owner today: `boot-2` when Stream B is quiet
   - goal: keep boot-critical config minimal in the image while making `/data`-staged payload expectations explicit and fail-loud
@@ -926,8 +926,20 @@ Related docs:
   - the first real preflight run on `06241JEC200520` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260421T233147Z/summary.json), built the image successfully, and returned to adb on slot `_a` after a slow recovery window, but neither `/.shadow-init-wrapper` nor `/data/local/tmp/shadow-boot` appeared for the current boot
   - that makes the first preflight result a truthful `helper_proved_current_boot=false` / `preflight_status=""` miss rather than a GPU issue: the current stock-init autostart seam still lacks a positive userspace proof surface on normal `sunfish` boots
   - the follow-up launch-proof change now uses a dedicated `debug.shadow.boot.preflight.launch=started` proof property plus `debug.shadow.boot.preflight.status`, but the second real run on `06241JEC200520` still wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260422T000211Z/summary.json) with `proof_mode=property`, `proof_property_actual=""`, `helper_proved_current_boot=false`, and no helper dir or wrapper markers
-  - that tightens the Stream B bottleneck further: this is no longer “helper dir did not survive”; it is “the imported rc / boot-helper autostart seam still does not prove current-boot execution on normal `sunfish` boots,” even with a safe debug-property proof surface
-  - next Stream B seam: move the launch proof even closer to the stock-init import path itself so we can discriminate “import never executed” from “import executed but helper service did not start”
+  - that tightened the Stream B bottleneck from “helper dir did not survive” to “the imported rc / boot-helper autostart seam still does not prove current-boot execution on normal `sunfish` boots,” even with a safe helper-launch property
+  - Stream B now splits preflight proof into two explicit surfaces:
+    - import proof from `init.shadow.rc` itself (`debug.shadow.boot.preflight.import=*`)
+    - helper-launch proof from the helper body (`debug.shadow.boot.preflight.launch=*`)
+  - interpretation rule:
+    - `import_proved_current_boot=true`, `helper_launch_proved_current_boot=false` means stock-init import ran but the helper service path did not prove execution
+    - both false means the current boot never proved the imported rc seam at all
+  - the first real import-proof sidecar run on `0B191JEC203253` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260422T015741Z-0B191JEC203253_/summary.json) and returned to adb on slot `_a`, but `import_proved_current_boot=false` and `helper_launch_proved_current_boot=false`
+  - the second real import-proof sidecar run on `06241JEC200520`, this time with the deliberately late trigger `property:sys.boot_completed=1`, wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260422T020204Z/summary.json) and still returned `import_proved_current_boot=false` plus `helper_launch_proved_current_boot=false`
+  - that burns down the “post-fs-data was simply too early” explanation for the current Stream B miss: even a late current-boot trigger does not prove the imported rc seam on normal `sunfish` boots
+  - the next debugging rung corrected the stock-init anchor selection itself. The earlier real runs had all auto-patched `init.recovery.sunfish.rc`; after preferring the normal boot anchor, the rerun on `06241JEC200520` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260422T021309Z-06241JEC200520_/summary.json) with `Patch target: system/etc/init/hw/init.rc`, but still returned `import_proved_current_boot=false` and `helper_launch_proved_current_boot=false`
+  - the direct inline-anchor probe on that same corrected normal-boot target also failed. [`device-run/collect/status.json`](../../build/pixel/runs/boot-inline-anchor/20260422T021615Z-06241JEC200520/device-run/collect/status.json) showed `proof_property_key=debug.shadow.boot.rc_probe`, `proof_property_expected=inline-anchor`, and `proof_property_matched=false`
+  - that burns down the simpler “import file is broken but the patched normal-boot rc target does execute” explanation too: even a direct property action in `system/etc/init/hw/init.rc` did not prove current-boot execution under the late trigger
+  - next Stream B seam: inspect the real stock-init trigger and anchor assumptions on normal `sunfish` boots, because the current failure now survives corrected normal-boot anchor selection, late trigger timing, and the import-vs-inline property split
 - Rooted cold KGSL ladder result on 2026-04-21:
   - `scripts/pixel/pixel_kgsl_cold_matrix.sh` now exists as the rooted cold-boot falsification lane, with a single-serial manifest contract, warm-baseline preflight, and readiness rungs for `root-ready`, `pd-mapper`, `qseecom-service`, `gpu-service`, `boot-complete`, and `display-restored`
   - after fixing the cold-runner readiness / reboot bookkeeping, the rerun on `11151JEC200472` ([`build/pixel/runs/kgsl-cold-matrix/20260421T212908Z`](../../build/pixel/runs/kgsl-cold-matrix/20260421T212908Z)) still succeeded at `cold-root-ready`, with `device-run/status.json.run_succeeded=true` and `device-run/status.json.summary.kgsl_device_opened=true`

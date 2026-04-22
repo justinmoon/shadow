@@ -15,6 +15,7 @@ default_serial="${PIXEL_SERIAL:-}"
 trigger="${PIXEL_BOOT_LOG_PROBE_TRIGGER:-post-fs-data}"
 patch_target_override="${PIXEL_BOOT_LOG_PROBE_PATCH_TARGET:-}"
 preflight_profile="${PIXEL_BOOT_PREFLIGHT_PROFILE:-phase1-shell}"
+import_proof_prop="${PIXEL_BOOT_PREFLIGHT_IMPORT_PROOF_PROP:-debug.shadow.boot.preflight.import=triggered}"
 launch_proof_prop="${PIXEL_BOOT_PREFLIGHT_LAUNCH_PROOF_PROP:-debug.shadow.boot.preflight.launch=started}"
 wait_ready_secs="${PIXEL_BOOT_PREFLIGHT_WAIT_READY_SECS:-120}"
 adb_timeout_secs="${PIXEL_BOOT_PREFLIGHT_ADB_TIMEOUT_SECS:-180}"
@@ -48,7 +49,8 @@ Usage: scripts/pixel/pixel_boot_preflight.sh [--output-dir DIR] [--serial SERIAL
                                              [--dry-run]
 
 Build a stock-init boot-helper preflight image, one-shot boot it, and summarize
-whether the helper proved the current boot plus whether preflight is ready.
+whether the imported rc ran on the current boot, whether the helper launched, and
+whether preflight is ready.
 EOF
 }
 
@@ -104,6 +106,7 @@ write_summary_json() {
     "$serial" \
     "$preflight_profile" \
     "$trigger" \
+    "$import_proof_prop" \
     "$launch_proof_prop" \
     "$input_image" \
     "$image_path" \
@@ -125,6 +128,7 @@ from pathlib import Path
     serial,
     preflight_profile,
     trigger,
+    import_proof_prop,
     launch_proof_prop,
     input_image,
     image_path,
@@ -137,7 +141,7 @@ from pathlib import Path
     device_run_dir,
     device_status_path,
     collect_status_path,
-) = sys.argv[1:17]
+) = sys.argv[1:18]
 def load_json(path_str: str):
     path = Path(path_str)
     if not path.exists():
@@ -149,12 +153,25 @@ def load_json(path_str: str):
 device_status = load_json(device_status_path)
 collect_status = load_json(collect_status_path)
 helper_proved_current_boot = False
+import_proved_current_boot = False
+helper_launch_proved_current_boot = False
 preflight_status = ""
 preflight_ready = False
 preflight_blocked_reason = ""
 
 if isinstance(collect_status, dict):
-    helper_proved_current_boot = bool(collect_status.get("collection_succeeded"))
+    import_proved_current_boot = bool(collect_status.get("collection_succeeded"))
+    helper_launch_proved_current_boot = bool(collect_status.get("observed_property_matched"))
+    if not helper_launch_proved_current_boot:
+        helper_launch_proved_current_boot = (
+            bool(collect_status.get("helper_dir_present"))
+            and bool(collect_status.get("helper_dir_pulled"))
+            and bool(collect_status.get("helper_status_present"))
+            and bool(collect_status.get("matched_current_boot"))
+            and bool(collect_status.get("matched_current_slot"))
+            and bool(collect_status.get("matched_expected_slot"))
+        )
+    helper_proved_current_boot = helper_launch_proved_current_boot
     preflight_status = str(collect_status.get("preflight_status") or "")
     preflight_ready = bool(collect_status.get("preflight_ready"))
     preflight_blocked_reason = str(collect_status.get("preflight_blocked_reason") or "")
@@ -164,6 +181,7 @@ payload = {
     "serial": serial,
     "preflight_profile": preflight_profile,
     "trigger": trigger,
+    "import_proof_prop": import_proof_prop,
     "launch_proof_prop": launch_proof_prop,
     "input_image": input_image,
     "image_path": image_path,
@@ -180,13 +198,15 @@ payload = {
     "collect_status_path": collect_status_path,
     "device_status": device_status,
     "collect_status": collect_status,
+    "import_proved_current_boot": import_proved_current_boot,
+    "helper_launch_proved_current_boot": helper_launch_proved_current_boot,
     "helper_proved_current_boot": helper_proved_current_boot,
     "preflight_status": preflight_status,
     "preflight_ready": preflight_ready,
     "preflight_blocked_reason": preflight_blocked_reason,
 }
 payload["ok"] = payload["dry_run"] or (
-    payload["build_succeeded"] and payload["run_succeeded"] and payload["helper_proved_current_boot"]
+    payload["build_succeeded"] and payload["run_succeeded"] and payload["import_proved_current_boot"]
 )
 
 Path(summary_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -281,6 +301,7 @@ if [[ -n "$patch_target_override" ]]; then
 fi
 
 set +e
+PIXEL_BOOT_PREFLIGHT_IMPORT_PROOF_PROP="$import_proof_prop" \
 PIXEL_BOOT_PREFLIGHT_LAUNCH_PROOF_PROP="$launch_proof_prop" \
   PIXEL_SERIAL="$serial" "$build_script" "${build_args[@]}" >"$build_log" 2>&1
 build_status="$?"
@@ -299,7 +320,8 @@ if [[ "$build_status" -eq 0 ]]; then
     --wait-ready "$wait_ready_secs"
     --adb-timeout "$adb_timeout_secs"
     --boot-timeout "$boot_timeout_secs"
-    --proof-prop "$launch_proof_prop"
+    --proof-prop "$import_proof_prop"
+    --observed-prop "$launch_proof_prop"
   )
   if [[ "$recover_traces_after" == "1" ]]; then
     oneshot_args+=(--recover-traces-after)
@@ -309,6 +331,7 @@ if [[ "$build_status" -eq 0 ]]; then
   fi
 
   set +e
+  PIXEL_BOOT_PREFLIGHT_IMPORT_PROOF_PROP="$import_proof_prop" \
   PIXEL_BOOT_PREFLIGHT_LAUNCH_PROOF_PROP="$launch_proof_prop" \
     PIXEL_SERIAL="$serial" "$oneshot_script" "${oneshot_args[@]}" >"$run_log" 2>&1
   run_status="$?"
@@ -323,6 +346,7 @@ printf 'Boot preflight output: %s\n' "$output_dir"
 printf 'Serial: %s\n' "$serial"
 printf 'Image: %s\n' "$image_path"
 printf 'Summary: %s\n' "$summary_path"
+printf 'Import proof prop: %s\n' "$import_proof_prop"
 printf 'Launch proof prop: %s\n' "$launch_proof_prop"
 if [[ -f "$collect_status_path" ]]; then
   python3 - "$collect_status_path" <<'PY'
@@ -335,7 +359,20 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
 preflight_status = payload.get("preflight_status", "")
 preflight_ready = payload.get("preflight_ready")
 blocked_reason = payload.get("preflight_blocked_reason", "")
+import_proved = bool(payload.get("collection_succeeded"))
+helper_launch_proved = bool(payload.get("observed_property_matched"))
+if not helper_launch_proved:
+    helper_launch_proved = (
+        bool(payload.get("helper_dir_present"))
+        and bool(payload.get("helper_dir_pulled"))
+        and bool(payload.get("helper_status_present"))
+        and bool(payload.get("matched_current_boot"))
+        and bool(payload.get("matched_current_slot"))
+        and bool(payload.get("matched_expected_slot"))
+    )
 
+print(f"Import proved current boot: {str(import_proved).lower()}")
+print(f"Helper launch proved current boot: {str(helper_launch_proved).lower()}")
 if preflight_status:
     print(f"Preflight status: {preflight_status}")
 if preflight_ready is not None:

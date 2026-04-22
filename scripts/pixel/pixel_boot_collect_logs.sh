@@ -14,12 +14,15 @@ METADATA_PATH="${PIXEL_BOOT_METADATA_PATH:-$(pixel_boot_last_action_json)}"
 PROOF_PROP_SPEC="${PIXEL_BOOT_PROOF_PROP:-}"
 PROOF_PROP_KEY=""
 PROOF_PROP_VALUE=""
+OBSERVED_PROP_SPEC="${PIXEL_BOOT_OBSERVED_PROP:-}"
+OBSERVED_PROP_KEY=""
+OBSERVED_PROP_VALUE=""
 
 usage() {
   cat <<'EOF'
 Usage: scripts/pixel/pixel_boot_collect_logs.sh [--output DIR] [--device-log-root PATH] [--wait-ready SECONDS]
                                               [--metadata PATH] [--wrapper-marker-root PATH]
-                                              [--proof-prop KEY=VALUE]
+                                              [--proof-prop KEY=VALUE] [--observed-prop KEY=VALUE]
 
 Pull private Shadow boot helper logs from a booted Pixel after an experimental stock-init boot.
 EOF
@@ -40,6 +43,25 @@ validate_proof_prop_spec() {
   }
   [[ "$PROOF_PROP_KEY" =~ ^[A-Za-z0-9._:-]+$ ]] || {
     echo "pixel_boot_collect_logs: --proof-prop key contains unsupported characters" >&2
+    exit 1
+  }
+}
+
+validate_observed_prop_spec() {
+  [[ -z "$OBSERVED_PROP_SPEC" ]] && return 0
+  [[ "$OBSERVED_PROP_SPEC" == *=* ]] || {
+    echo "pixel_boot_collect_logs: --observed-prop must be KEY=VALUE" >&2
+    exit 1
+  }
+
+  OBSERVED_PROP_KEY="${OBSERVED_PROP_SPEC%%=*}"
+  OBSERVED_PROP_VALUE="${OBSERVED_PROP_SPEC#*=}"
+  [[ -n "$OBSERVED_PROP_KEY" && -n "$OBSERVED_PROP_VALUE" ]] || {
+    echo "pixel_boot_collect_logs: --observed-prop requires non-empty KEY and VALUE" >&2
+    exit 1
+  }
+  [[ "$OBSERVED_PROP_KEY" =~ ^[A-Za-z0-9._:-]+$ ]] || {
+    echo "pixel_boot_collect_logs: --observed-prop key contains unsupported characters" >&2
     exit 1
   }
 }
@@ -209,13 +231,25 @@ proof_prop_ready() {
   [[ "$observed" == "$PROOF_PROP_VALUE" ]]
 }
 
+observed_prop_ready() {
+  local serial observed
+  serial="$1"
+  [[ -n "$OBSERVED_PROP_KEY" ]] || return 1
+
+  observed="$(device_prop_value "$serial" "$OBSERVED_PROP_KEY")"
+  [[ "$observed" == "$OBSERVED_PROP_VALUE" ]]
+}
+
 probe_signal_ready() {
   local serial
   serial="$1"
   if device_log_ready "$serial" "$DEVICE_LOG_ROOT"; then
     return 0
   fi
-  proof_prop_ready "$serial"
+  if proof_prop_ready "$serial"; then
+    return 0
+  fi
+  observed_prop_ready "$serial"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -244,6 +278,10 @@ while [[ $# -gt 0 ]]; do
       PROOF_PROP_SPEC="${2:?missing value for --proof-prop}"
       shift 2
       ;;
+    --observed-prop)
+      OBSERVED_PROP_SPEC="${2:?missing value for --observed-prop}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -257,6 +295,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 validate_proof_prop_spec
+validate_observed_prop_spec
 
 serial="$(pixel_resolve_serial)"
 pixel_prepare_dirs
@@ -343,6 +382,8 @@ wrapper_boot_id=""
 wrapper_matches_current_boot=false
 observed_prop_value=""
 matched_proof_prop=false
+observed_secondary_prop_value=""
+matched_observed_prop=false
 
 if [[ -f "$wrapper_dir/status.txt" ]]; then
   wrapper_status="$(tr -d '\r\n' <"$wrapper_dir/status.txt")"
@@ -370,6 +411,12 @@ if [[ -n "$PROOF_PROP_KEY" ]]; then
   observed_prop_value="$(device_prop_value "$serial" "$PROOF_PROP_KEY")"
   if [[ "$observed_prop_value" == "$PROOF_PROP_VALUE" ]]; then
     matched_proof_prop=true
+  fi
+fi
+if [[ -n "$OBSERVED_PROP_KEY" ]]; then
+  observed_secondary_prop_value="$(device_prop_value "$serial" "$OBSERVED_PROP_KEY")"
+  if [[ "$observed_secondary_prop_value" == "$OBSERVED_PROP_VALUE" ]]; then
+    matched_observed_prop=true
   fi
 fi
 
@@ -408,6 +455,10 @@ pixel_write_status_json \
   proof_property_expected="$PROOF_PROP_VALUE" \
   proof_property_actual="$observed_prop_value" \
   proof_property_matched="$matched_proof_prop" \
+  observed_property_key="$OBSERVED_PROP_KEY" \
+  observed_property_expected="$OBSERVED_PROP_VALUE" \
+  observed_property_actual="$observed_secondary_prop_value" \
+  observed_property_matched="$matched_observed_prop" \
   preflight_summary_present="$preflight_summary_present" \
   preflight_checks_present="$preflight_checks_present" \
   preflight_profile="$preflight_profile" \
@@ -443,6 +494,10 @@ proof_property_key=${PROOF_PROP_KEY:-<none>}
 proof_property_expected=${PROOF_PROP_VALUE:-<none>}
 proof_property_actual=${observed_prop_value:-<none>}
 proof_property_matched=$matched_proof_prop
+observed_property_key=${OBSERVED_PROP_KEY:-<none>}
+observed_property_expected=${OBSERVED_PROP_VALUE:-<none>}
+observed_property_actual=${observed_secondary_prop_value:-<none>}
+observed_property_matched=$matched_observed_prop
 live_matches_expected_slot=$live_matches_expected_slot
 status_path=$OUTPUT_DIR/status.json
 EOF
@@ -459,6 +514,10 @@ fi
 if [[ -n "$PROOF_PROP_KEY" ]]; then
   printf 'Proof property: %s=%s\n' "$PROOF_PROP_KEY" "$PROOF_PROP_VALUE"
   printf 'Observed property: %s\n' "$observed_prop_value"
+fi
+if [[ -n "$OBSERVED_PROP_KEY" ]]; then
+  printf 'Observed property target: %s=%s\n' "$OBSERVED_PROP_KEY" "$OBSERVED_PROP_VALUE"
+  printf 'Observed property actual: %s\n' "$observed_secondary_prop_value"
 fi
 if [[ "$preflight_summary_present" == "true" ]]; then
   printf 'Preflight profile: %s\n' "$preflight_profile"

@@ -18,11 +18,14 @@ PATCH_TARGET_OVERRIDE="${PIXEL_BOOT_LOG_PROBE_PATCH_TARGET:-}"
 PREFLIGHT_PROFILE="${PIXEL_BOOT_PREFLIGHT_PROFILE:-}"
 HELPER_STATUS_PROP_KEY="${PIXEL_BOOT_HELPER_STATUS_PROP_KEY:-debug.shadow.boot.log_probe}"
 PREFLIGHT_STATUS_PROP_KEY="${PIXEL_BOOT_PREFLIGHT_STATUS_PROP_KEY:-debug.shadow.boot.preflight.status}"
+PREFLIGHT_IMPORT_PROOF_PROP="${PIXEL_BOOT_PREFLIGHT_IMPORT_PROOF_PROP:-debug.shadow.boot.preflight.import=triggered}"
 PREFLIGHT_LAUNCH_PROOF_PROP="${PIXEL_BOOT_PREFLIGHT_LAUNCH_PROOF_PROP:-debug.shadow.boot.preflight.launch=started}"
 BUILD_MODE="wrapper"
 KEEP_WORK_DIR=0
 WORK_DIR=""
 PATCH_TARGET=""
+PREFLIGHT_IMPORT_PROOF_KEY=""
+PREFLIGHT_IMPORT_PROOF_VALUE=""
 PREFLIGHT_LAUNCH_PROOF_KEY=""
 PREFLIGHT_LAUNCH_PROOF_VALUE=""
 
@@ -108,6 +111,19 @@ parse_preflight_launch_proof_prop() {
   }
 }
 
+parse_preflight_import_proof_prop() {
+  [[ "$PREFLIGHT_IMPORT_PROOF_PROP" == *=* ]] || {
+    echo "pixel_boot_build_log_probe: PIXEL_BOOT_PREFLIGHT_IMPORT_PROOF_PROP must use KEY=VALUE" >&2
+    exit 1
+  }
+  PREFLIGHT_IMPORT_PROOF_KEY="${PREFLIGHT_IMPORT_PROOF_PROP%%=*}"
+  PREFLIGHT_IMPORT_PROOF_VALUE="${PREFLIGHT_IMPORT_PROOF_PROP#*=}"
+  [[ -n "$PREFLIGHT_IMPORT_PROOF_KEY" && -n "$PREFLIGHT_IMPORT_PROOF_VALUE" ]] || {
+    echo "pixel_boot_build_log_probe: PIXEL_BOOT_PREFLIGHT_IMPORT_PROOF_PROP requires a non-empty key and value" >&2
+    exit 1
+  }
+}
+
 validate_preflight_profile() {
   validate_property_key "$HELPER_STATUS_PROP_KEY" "helper status property key"
   [[ -z "$PREFLIGHT_PROFILE" ]] && return 0
@@ -120,6 +136,9 @@ validate_preflight_profile() {
       ;;
   esac
   validate_property_key "$PREFLIGHT_STATUS_PROP_KEY" "preflight status property key"
+  parse_preflight_import_proof_prop
+  validate_property_key "$PREFLIGHT_IMPORT_PROOF_KEY" "preflight import proof property key"
+  validate_property_value "$PREFLIGHT_IMPORT_PROOF_VALUE" "preflight import proof property value"
   parse_preflight_launch_proof_prop
   validate_property_key "$PREFLIGHT_LAUNCH_PROOF_KEY" "preflight launch proof property key"
   validate_property_value "$PREFLIGHT_LAUNCH_PROOF_VALUE" "preflight launch proof property value"
@@ -151,6 +170,11 @@ if explicit_target:
     print(explicit_target)
     sys.exit(0)
 
+fallback_target = "system/etc/init/hw/init.rc"
+if fallback_target in entries:
+    print(fallback_target)
+    sys.exit(0)
+
 hardware_recovery_targets = sorted(
     name
     for name in entries
@@ -170,11 +194,6 @@ if len(hardware_recovery_targets) > 1:
 
 if "init.recovery.rc" in entries:
     print("init.recovery.rc")
-    sys.exit(0)
-
-fallback_target = "system/etc/init/hw/init.rc"
-if fallback_target in entries:
-    print(fallback_target)
     sys.exit(0)
 
 print(
@@ -293,8 +312,12 @@ else
 fi
 chmod 0644 "$WORK_DIR/patch-target.patched"
 
-cat >"$WORK_DIR/init.shadow.rc" <<EOF
-on ${TRIGGER}
+{
+  printf 'on %s\n' "${TRIGGER}"
+  if [[ "$PREFLIGHT_PROFILE" == "phase1-shell" ]]; then
+    printf '    setprop %s %s\n' "$PREFLIGHT_IMPORT_PROOF_KEY" "$PREFLIGHT_IMPORT_PROOF_VALUE"
+  fi
+  cat <<'EOF'
     start shadow-boot-helper
 
 service shadow-boot-helper /system/bin/sh /shadow-boot-helper
@@ -305,6 +328,7 @@ service shadow-boot-helper /system/bin/sh /shadow-boot-helper
     disabled
     oneshot
 EOF
+} >"$WORK_DIR/init.shadow.rc"
 chmod 0644 "$WORK_DIR/init.shadow.rc"
 
 cat >"$WORK_DIR/shadow-boot-helper" <<EOF

@@ -11,6 +11,8 @@ LIVE_BOOT_ID="11111111-2222-3333-4444-555555555555"
 LIVE_SLOT_SUFFIX="_a"
 EXPECTED_PROP_KEY="debug.shadow.boot.rc_probe"
 EXPECTED_PROP_VALUE="ready"
+OBSERVED_PROP_KEY="debug.shadow.boot.preflight.launch"
+OBSERVED_PROP_VALUE="started"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -84,6 +86,8 @@ MOCK_FAIL_HELPER_PULL="${MOCK_FAIL_HELPER_PULL:-0}"
 MOCK_BEST_EFFORT_FAILURES="${MOCK_BEST_EFFORT_FAILURES:-0}"
 MOCK_EXPECTED_PROP_KEY="${MOCK_EXPECTED_PROP_KEY:-}"
 MOCK_EXPECTED_PROP_VALUE="${MOCK_EXPECTED_PROP_VALUE:-}"
+MOCK_OBSERVED_PROP_KEY="${MOCK_OBSERVED_PROP_KEY:-}"
+MOCK_OBSERVED_PROP_VALUE="${MOCK_OBSERVED_PROP_VALUE:-}"
 
 device_path_to_host() {
   local device_path
@@ -155,6 +159,9 @@ case "${1:-}" in
       "getprop $MOCK_EXPECTED_PROP_KEY")
         printf '%s\n' "${MOCK_EXPECTED_PROP_VALUE:-}"
         ;;
+      "getprop $MOCK_OBSERVED_PROP_KEY")
+        printf '%s\n' "${MOCK_OBSERVED_PROP_VALUE:-}"
+        ;;
       "getprop")
         if [[ "$MOCK_BEST_EFFORT_FAILURES" == "1" ]]; then
           exit 1
@@ -163,6 +170,7 @@ case "${1:-}" in
 [ro.boot.slot_suffix]: [$LIVE_SLOT_SUFFIX]
 [ro.bootmode]: [normal]
 [${MOCK_EXPECTED_PROP_KEY}]: [${MOCK_EXPECTED_PROP_VALUE:-}]
+[${MOCK_OBSERVED_PROP_KEY}]: [${MOCK_OBSERVED_PROP_VALUE:-}]
 PROP
         ;;
       "logcat -d -s shadow-init:I shadow-boot:I 2>/dev/null || true")
@@ -306,10 +314,13 @@ env \
   LIVE_SLOT_SUFFIX="$LIVE_SLOT_SUFFIX" \
   MOCK_EXPECTED_PROP_KEY="$EXPECTED_PROP_KEY" \
   MOCK_EXPECTED_PROP_VALUE="$EXPECTED_PROP_VALUE" \
+  MOCK_OBSERVED_PROP_KEY="$OBSERVED_PROP_KEY" \
+  MOCK_OBSERVED_PROP_VALUE="$OBSERVED_PROP_VALUE" \
   MOCK_DEVICE_ROOT="$WRAPPER_ONLY_DEVICE_ROOT" \
   "$REPO_ROOT/scripts/pixel/pixel_boot_collect_logs.sh" \
   --wait-ready 0 \
   --proof-prop "$EXPECTED_PROP_KEY=$EXPECTED_PROP_VALUE" \
+  --observed-prop "$OBSERVED_PROP_KEY=$OBSERVED_PROP_VALUE" \
   --output "$PROP_SUCCESS_OUTPUT" >/dev/null
 
 assert_json_field "$PROP_SUCCESS_OUTPUT/status.json" collection_succeeded true
@@ -318,6 +329,9 @@ assert_json_field "$PROP_SUCCESS_OUTPUT/status.json" proof_mode property
 assert_json_field "$PROP_SUCCESS_OUTPUT/status.json" proof_property_key "$EXPECTED_PROP_KEY"
 assert_json_field "$PROP_SUCCESS_OUTPUT/status.json" proof_property_actual "$EXPECTED_PROP_VALUE"
 assert_json_field "$PROP_SUCCESS_OUTPUT/status.json" proof_property_matched true
+assert_json_field "$PROP_SUCCESS_OUTPUT/status.json" observed_property_key "$OBSERVED_PROP_KEY"
+assert_json_field "$PROP_SUCCESS_OUTPUT/status.json" observed_property_actual "$OBSERVED_PROP_VALUE"
+assert_json_field "$PROP_SUCCESS_OUTPUT/status.json" observed_property_matched true
 
 PROPERTY_SLOT_MISMATCH_METADATA="$TMP_DIR/property-slot-mismatch-metadata.json"
 cat >"$PROPERTY_SLOT_MISMATCH_METADATA" <<'EOF'
@@ -339,10 +353,13 @@ assert_failure env \
   LIVE_SLOT_SUFFIX="$LIVE_SLOT_SUFFIX" \
   MOCK_EXPECTED_PROP_KEY="$EXPECTED_PROP_KEY" \
   MOCK_EXPECTED_PROP_VALUE="$EXPECTED_PROP_VALUE" \
+  MOCK_OBSERVED_PROP_KEY="$OBSERVED_PROP_KEY" \
+  MOCK_OBSERVED_PROP_VALUE="$OBSERVED_PROP_VALUE" \
   MOCK_DEVICE_ROOT="$WRAPPER_ONLY_DEVICE_ROOT" \
   "$REPO_ROOT/scripts/pixel/pixel_boot_collect_logs.sh" \
   --wait-ready 0 \
   --proof-prop "$EXPECTED_PROP_KEY=$EXPECTED_PROP_VALUE" \
+  --observed-prop "$OBSERVED_PROP_KEY=$OBSERVED_PROP_VALUE" \
   --metadata "$PROPERTY_SLOT_MISMATCH_METADATA" \
   --output "$PROP_SLOT_MISMATCH_OUTPUT" >/dev/null
 
@@ -361,11 +378,14 @@ assert_failure env \
   LIVE_SLOT_SUFFIX="$LIVE_SLOT_SUFFIX" \
   MOCK_EXPECTED_PROP_KEY="$EXPECTED_PROP_KEY" \
   MOCK_EXPECTED_PROP_VALUE= \
+  MOCK_OBSERVED_PROP_KEY="$OBSERVED_PROP_KEY" \
+  MOCK_OBSERVED_PROP_VALUE= \
   MOCK_BEST_EFFORT_FAILURES=1 \
   MOCK_DEVICE_ROOT="$WRAPPER_ONLY_DEVICE_ROOT" \
   "$REPO_ROOT/scripts/pixel/pixel_boot_collect_logs.sh" \
   --wait-ready 0 \
   --proof-prop "$EXPECTED_PROP_KEY=$EXPECTED_PROP_VALUE" \
+  --observed-prop "$OBSERVED_PROP_KEY=$OBSERVED_PROP_VALUE" \
   --output "$WRAPPER_ONLY_OUTPUT" >/dev/null
 
 test -f "$WRAPPER_ONLY_OUTPUT/device/$(basename "$WRAPPER_MARKER_ROOT")/status.txt"
@@ -374,5 +394,6 @@ assert_json_field "$WRAPPER_ONLY_OUTPUT/status.json" helper_dir_present false
 assert_json_field "$WRAPPER_ONLY_OUTPUT/status.json" wrapper_marker_dir_present true
 assert_json_field "$WRAPPER_ONLY_OUTPUT/status.json" wrapper_matches_current_boot true
 assert_json_field "$WRAPPER_ONLY_OUTPUT/status.json" proof_property_matched false
+assert_json_field "$WRAPPER_ONLY_OUTPUT/status.json" observed_property_matched false
 
 echo "pixel_boot_collect_logs_smoke: ok"
