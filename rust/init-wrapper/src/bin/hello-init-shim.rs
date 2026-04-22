@@ -56,10 +56,7 @@ mod linux {
     }
 
     fn reboot_bootloader_forever() -> ! {
-        let _ = raw_reboot(
-            libc::LINUX_REBOOT_CMD_RESTART2,
-            BOOTLOADER.as_ptr().cast(),
-        );
+        let _ = raw_reboot(libc::LINUX_REBOOT_CMD_RESTART2, BOOTLOADER.as_ptr().cast());
         let _ = raw_reboot(libc::LINUX_REBOOT_CMD_RESTART, ptr::null());
         loop {
             unsafe {

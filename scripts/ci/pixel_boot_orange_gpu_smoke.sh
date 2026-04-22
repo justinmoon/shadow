@@ -2149,6 +2149,7 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'prepare_meta
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'write_metadata_stage_best_effort'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'probe_report_path'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'probe_timeout_class_path'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'metadata_probe_fingerprint_path'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'metadata_probe_report_path'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'metadata_probe_timeout_class_path'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"metadata-stage-write"'
@@ -2159,6 +2160,13 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'watch_result
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-launch-delay"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-launch-delay-complete"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-parent-probe-start"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'probe-summary.json'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'probe-fingerprint.txt'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '\"scene\":\"flat-orange\"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"success-solid"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"timeout-control-smoke"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"raw-kgsl-getproperties-smoke"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"parent-probe-result=skipped"'
 assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" 'code-orange-'
 assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" '"solid-red"'
 assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" '"solid-blue"'
@@ -3133,7 +3141,7 @@ assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.js
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_stage_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-run-token/probe-stage.txt"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_report_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-run-token/probe-report.txt"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_summary_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-run-token/probe-summary.json"
-assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_fingerprint_path ""
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_fingerprint_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-run-token/probe-fingerprint.txt"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_timeout_class_path ""
 
 rust_bridge_exec_boot_output="$(
@@ -3175,6 +3183,56 @@ assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img.hello-in
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img.hello-init.json" hello_init_child_path "/hello-init-child"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img.hello-init.json" hello_init_child_profile "hello"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img.hello-init.json" hello_init_shim_mode "exec"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img.hello-init.json" metadata_probe_fingerprint_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-exec-run-token/probe-fingerprint.txt"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img.hello-init.json" metadata_probe_timeout_class_path ""
+
+rust_bridge_raw_kgsl_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
+      --rust-shim "$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-rust-bridge-raw-kgsl.img" \
+      --hello-init-mode rust-bridge \
+      --orange-gpu-mode raw-kgsl-getproperties-smoke \
+      --run-token orange-gpu-rust-bridge-raw-kgsl-run-token \
+      --orange-gpu-metadata-stage-breadcrumb true
+)"
+
+assert_contains "$rust_bridge_raw_kgsl_boot_output" "Orange GPU mode: raw-kgsl-getproperties-smoke"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-raw-kgsl.img.hello-init.json" orange_gpu_mode "raw-kgsl-getproperties-smoke"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-raw-kgsl.img.hello-init.json" metadata_probe_fingerprint_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-raw-kgsl-run-token/probe-fingerprint.txt"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-raw-kgsl.img.hello-init.json" metadata_probe_timeout_class_path ""
+
+rust_bridge_parent_probe_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
+      --rust-shim "$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-rust-bridge-parent-probe.img" \
+      --hello-init-mode rust-bridge \
+      --orange-gpu-mode gpu-render \
+      --orange-gpu-parent-probe-attempts 2 \
+      --orange-gpu-parent-probe-interval-secs 3 \
+      --run-token orange-gpu-rust-bridge-parent-probe-run-token \
+      --orange-gpu-metadata-stage-breadcrumb true
+)"
+
+assert_contains "$rust_bridge_parent_probe_boot_output" "Orange GPU parent probe attempts: 2"
+assert_contains "$rust_bridge_parent_probe_boot_output" "Orange GPU parent probe interval seconds: 3"
+assert_contains "$rust_bridge_parent_probe_boot_output" "Parent readiness probe scene: raw-vulkan-physical-device-count-query-exit-smoke"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-parent-probe.img.hello-init.json" orange_gpu_parent_probe_attempts "2"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-parent-probe.img.hello-init.json" orange_gpu_parent_probe_interval_secs "3"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-parent-probe.img.hello-init.json" metadata_probe_fingerprint_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-parent-probe-run-token/probe-fingerprint.txt"
 
 assert_command_fails_contains "rust-bridge orange-gpu images currently require --rust-child-profile hello" \
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -3273,32 +3331,5 @@ assert_command_fails_contains "orange-gpu-firmware-helper requires --firmware-bo
       --orange-gpu-mode raw-kgsl-getproperties-smoke \
       --orange-gpu-firmware-helper true \
       --mount-sys true
-
-assert_command_fails_contains "--hello-init-mode rust-bridge does not support orange-gpu mode: raw-kgsl-getproperties-smoke" \
-  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
-    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
-    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
-      --input "$BOOT_BUILD_INPUT" \
-      --init "$HELLO_INIT_OUTPUT" \
-      --orange-init "$ORANGE_INIT_OUTPUT" \
-      --gpu-bundle "$GPU_BUNDLE_DIR" \
-      --key "$AVB_KEY_PATH" \
-      --output "$TMP_DIR/should-fail-rust-bridge-unsupported-mode.img" \
-      --hello-init-mode rust-bridge \
-      --orange-gpu-mode raw-kgsl-getproperties-smoke
-
-assert_command_fails_contains "--hello-init-mode rust-bridge does not support orange gpu parent probes yet" \
-  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
-    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
-    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
-      --input "$BOOT_BUILD_INPUT" \
-      --init "$HELLO_INIT_OUTPUT" \
-      --orange-init "$ORANGE_INIT_OUTPUT" \
-      --gpu-bundle "$GPU_BUNDLE_DIR" \
-      --key "$AVB_KEY_PATH" \
-      --output "$TMP_DIR/should-fail-rust-bridge-parent-probe.img" \
-      --hello-init-mode rust-bridge \
-      --orange-gpu-mode gpu-render \
-      --orange-gpu-parent-probe-attempts 1
 
 echo "pixel_boot_orange_gpu_smoke: ok"

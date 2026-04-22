@@ -130,7 +130,11 @@ fn record_wrapper_marker(mode: WrapperMode, stage: &str, message: &str) {
 }
 
 fn restore_stock_init() {
-    record_wrapper_marker(WrapperMode::Standard, "restoring-stock-init", "restoring stock /init");
+    record_wrapper_marker(
+        WrapperMode::Standard,
+        "restoring-stock-init",
+        "restoring stock /init",
+    );
 
     if let Err(error) = fs::rename(INIT_PATH, "/init.wrapper") {
         record_wrapper_marker(
@@ -232,7 +236,11 @@ fn main() {
     log_line(&format!("wrapper starting ({})", wrapper_mode_sentinel()));
 
     if !access_x_ok(STOCK_INIT_PATH) {
-        record_wrapper_marker(mode, "init-stock-missing", "init.stock missing or not executable");
+        record_wrapper_marker(
+            mode,
+            "init-stock-missing",
+            "init.stock missing or not executable",
+        );
         log_line("init.stock missing or not executable");
         process::exit(126);
     }

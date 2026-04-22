@@ -61,7 +61,10 @@ mod linux {
             unsafe { libc::_exit(1) }
         }
 
-        raw_write(2, b"[shadow-hello-init-probe] entering minimal reboot probe\n");
+        raw_write(
+            2,
+            b"[shadow-hello-init-probe] entering minimal reboot probe\n",
+        );
         raw_write_line(2, OWNED_INIT_ROLE_SENTINEL);
         raw_write_line(2, OWNED_INIT_IMPL_SENTINEL);
         raw_write_line(2, OWNED_INIT_CONFIG_SENTINEL);

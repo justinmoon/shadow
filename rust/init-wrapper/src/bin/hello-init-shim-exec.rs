@@ -56,10 +56,7 @@ mod linux {
     }
 
     fn reboot_bootloader_forever() -> ! {
-        let _ = raw_reboot(
-            libc::LINUX_REBOOT_CMD_RESTART2,
-            BOOTLOADER.as_ptr().cast(),
-        );
+        let _ = raw_reboot(libc::LINUX_REBOOT_CMD_RESTART2, BOOTLOADER.as_ptr().cast());
         let _ = raw_reboot(libc::LINUX_REBOOT_CMD_RESTART, ptr::null());
         loop {
             unsafe {
@@ -89,7 +86,10 @@ mod linux {
             return 1;
         }
 
-        raw_write(2, b"[shadow-hello-init-shim-exec] execing child hello-init directly\n");
+        raw_write(
+            2,
+            b"[shadow-hello-init-shim-exec] execing child hello-init directly\n",
+        );
         raw_write_line(2, OWNED_INIT_ROLE_SENTINEL);
         raw_write_line(2, OWNED_INIT_IMPL_SENTINEL);
         raw_write_line(2, OWNED_INIT_CONFIG_SENTINEL);

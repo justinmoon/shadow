@@ -43,11 +43,11 @@ Related docs:
       - companion metadata now records `hello_init_impl=rust-bridge` and `hello_init_child_path=/hello-init-child`
       - the direct builder also supports `--rust-shim-mode exec` for the same full Rust child
     - `pixel_boot_build_rust_bridge.sh` still exists as a thin repack helper, but it is no longer the primary builder path for new rust-bridge orange-gpu images
-    - the Rust bridge builder now fails closed on configs the Rust child cannot honestly run yet:
-      - C-only orange-gpu modes are rejected early
-      - parent-probe configs are rejected early
-      - cloned metadata no longer promises `probe-fingerprint` / `probe-timeout-class` files the Rust child does not currently write
+    - the Rust bridge builder now draws a smaller honest boundary:
+      - C-only orange-gpu modes are still rejected early
       - direct orange-gpu rust-bridge images still require `--rust-child-profile hello`; probe-child variants stay on the fallback bridge helper
+      - Rust now supports `timeout-control-smoke`, `raw-kgsl-open-readonly-smoke`, `raw-kgsl-getproperties-smoke`, and the `orange_gpu_parent_probe_*` loop on the promoted `exec + raw-argv` seam
+      - cloned metadata now keeps `probe-fingerprint.txt` because the Rust child writes it again; `probe-timeout-class.txt` is still blank until that classifier is ported
     - current leading `std`-PID1 source hypothesis:
       - the likely bad seam is pre-`main` `std` runtime / TLS startup, not the `hello-init` logic
       - next hardware discriminator is `no_std` exact-path PID1 shim -> direct `execv()` into the tiny `std` probe, with no `fork()`
@@ -69,6 +69,20 @@ Related docs:
         - `build/pixel/boot/oneshot/20260422T195806Z-11151JEC200472_`
         - `build/pixel/boot/oneshot/20260422T195955Z-06241JEC200520_`
         - image metadata at `build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-fw-helper-breadcrumb-v3.img.hello-init.json` records `hello_init_shim_mode=exec`
+      - current `master` needed one more Rust-side proof-contract port:
+        - Rust `hello-init` now copies `/orange-gpu/summary.json` into `/metadata/.../probe-summary.json` and fails `gpu-render` closed if that summary is missing or no longer proves the signed-off `flat-orange` Vulkan tuple
+        - that port is now re-proved on the no-flag default image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-fw-helper-breadcrumb-v4.img`
+        - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T203707Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T203906Z-06241JEC200520_`
+        - both recovered bundles now report `probe_summary_proves_gpu_render=true` and `recover_traces_proof_ok=true`
+        - the top-level one-shot wrapper status still reports `fastboot-return-auto-rebooted`; use `recover-traces/status.json` as the truth channel for these boot-owned oneshots
+      - current `master` now also carries the next Rust bootstrap migration slice:
+        - Rust `hello-init` writes `/metadata/.../probe-fingerprint.txt` again
+        - Rust `hello-init` now owns the parent-probe loop and the remaining non-C-only probe modes (`timeout-control-smoke`, `raw-kgsl-open-readonly-smoke`, `raw-kgsl-getproperties-smoke`)
+        - helper-backed `gpu-render` with a Rust-side parent probe is now re-proved on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-parentprobe-fw-helper-breadcrumb-v1.img`
+        - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T210518Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T210656Z-06241JEC200520_`
+        - both recovered bundles report `proof_ok=true`, `probe_report_proves_child_success=true`, `probe_summary_proves_gpu_render=true`, and `metadata_probe_fingerprint_present=true`
+        - both recovered bundles also preserve `metadata_stage_value=parent-probe-result=exit-0`, which is the durable proof that the Rust parent probe ran and returned `exit-0` before the real payload succeeded
+        - `probe-timeout-class.txt` is the remaining Rust observability gap from the frozen C seam
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
   - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
@@ -473,7 +487,9 @@ Related docs:
   - use visible `orange-init` prelude/checkpoint/postlude to encode success on hardware
 - [ ] Keep the Rust cutoff explicit in execution:
   - helper-backed `gpu-render` is now re-proven with recovered `probe-summary.json` and a watched `success-solid` run; freeze the C seam except for migration glue
-  - port `scripts/pixel/pixel_hello_init.c` behavior into Rust before the next renderer rung lands
+  - current Rust port status on 2026-04-22:
+    - `probe-summary.json`, `probe-fingerprint.txt`, the parent-probe loop, `timeout-control-smoke`, and the raw-KGSL smoke modes now live in Rust on current `master`
+    - `probe-timeout-class.txt` is still the remaining C-only observability artifact before the next renderer rung lands
 - [ ] Package one short repeated-frame proof (`orange-gpu-loop`):
   - animate color or a frame counter for 2-3 seconds
   - use it to prove repeated submission and sync, not just one lucky frame
@@ -513,6 +529,9 @@ Related docs:
   - the rooted Magisk lane remains the working runtime reference, but not the target boot architecture
   - the old wrapper and stock-init-import probes are now evidence about constraints, not the primary roadmap
   - `spec-phase1-shadow-at-boot.md` is now preserved only as historical context for the abandoned stock-init-handoff plan
+- Visual-proof decision on 2026-04-22:
+  - `git show 054320d` is still a useful reference for a more obvious watched GPU scene
+  - do not port it onto current `master` yet: it would replace the current single-color `flat-orange` recovery tuple with a multi-color contract and would invalidate the signed-off `probe-summary.json` proof without a deliberate contract update
 - `sunfish` boots from `boot.img`, boot header v2, with recovery-as-boot. The old Cuttlefish `init_boot` work is a reference, not the real device path.
 - Strategy correction on 2026-04-19:
   - a Blitz/TypeScript runtime proof is not `orange-gpu`; that is a later `ts-app-minimal` rung

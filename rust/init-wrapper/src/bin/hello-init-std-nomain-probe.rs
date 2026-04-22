@@ -39,10 +39,7 @@ mod linux {
 
     fn reboot_bootloader_forever() -> ! {
         static BOOTLOADER: &[u8] = b"bootloader\0";
-        let _ = raw_reboot(
-            libc::LINUX_REBOOT_CMD_RESTART2,
-            BOOTLOADER.as_ptr().cast(),
-        );
+        let _ = raw_reboot(libc::LINUX_REBOOT_CMD_RESTART2, BOOTLOADER.as_ptr().cast());
         let _ = raw_reboot(libc::LINUX_REBOOT_CMD_RESTART, ptr::null());
         loop {
             unsafe {
@@ -57,7 +54,10 @@ mod linux {
             unsafe { libc::_exit(1) }
         }
 
-        raw_write(2, b"[shadow-hello-init-std-nomain-probe] entering std no_main reboot probe\n");
+        raw_write(
+            2,
+            b"[shadow-hello-init-std-nomain-probe] entering std no_main reboot probe\n",
+        );
         raw_write_line(2, OWNED_INIT_ROLE_SENTINEL);
         raw_write_line(2, OWNED_INIT_IMPL_SENTINEL);
         raw_write_line(2, OWNED_INIT_CONFIG_SENTINEL);

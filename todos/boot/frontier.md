@@ -66,8 +66,8 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
     - but recovery did not recover the metadata files there, so `09051JEC202061` remains the truth device for the Rust bridge seam until the `11151` metadata gap is explained
   - Rust-bridge guardrails on 2026-04-22:
     - the builder now rejects C-only orange-gpu modes up front instead of silently repacking them into a Rust image that cannot execute them
-    - the builder now rejects parent-probe configs in `rust-bridge` mode up front instead of letting the Rust child fail late
-    - cloned Rust-bridge metadata now clears unsupported `probe-fingerprint` / `probe-timeout-class` expectations instead of advertising files the Rust child does not currently write
+    - the builder now supports Rust-side `timeout-control-smoke`, `raw-kgsl-open-readonly-smoke`, `raw-kgsl-getproperties-smoke`, and `orange_gpu_parent_probe_*` on the promoted `exec + raw-argv + hello-init-rust` seam
+    - cloned Rust-bridge metadata now preserves `probe-fingerprint.txt` expectations because the Rust child writes that file again; `probe-timeout-class.txt` still stays blank until that classifier is ported
     - the Rust child now honors `log_kmsg` / `log_pmsg` toggles and restores `orange_gpu_timeout_action=panic` instead of treating it like a reboot timeout
   - Rust-bridge builder truth on 2026-04-22:
     - `pixel_boot_build_orange_gpu.sh --hello-init-mode rust-bridge` now stages the final image directly instead of recursively building a direct/C image first and then mutating it
@@ -94,6 +94,20 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
     - [`build/pixel/boot/oneshot/20260422T162509Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T162509Z-09051JEC202061_) proves `vulkan-offscreen` on the `exec + raw-argv + hello-init` seam with recovered `probe-report.txt` showing `child_completed=true`, `child_timed_out=false`, `exit_status=0`
     - [`build/pixel/boot/oneshot/20260422T162711Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T162711Z-09051JEC202061_) and [`build/pixel/boot/oneshot/20260422T162858Z-11151JEC200472_`](../../build/pixel/boot/oneshot/20260422T162858Z-11151JEC200472_) prove `gpu-render` on that same seam with the same recovered `probe-report.txt` truth surface
     - [`build/pixel/boot/oneshot/20260422T195806Z-11151JEC200472_`](../../build/pixel/boot/oneshot/20260422T195806Z-11151JEC200472_) and [`build/pixel/boot/oneshot/20260422T195955Z-06241JEC200520_`](../../build/pixel/boot/oneshot/20260422T195955Z-06241JEC200520_) prove the direct rust-bridge builder’s no-flag default now lands on that same seam: image [`shadow-boot-orange-gpu-rust-bridge-default-gpurender-fw-helper-breadcrumb-v3.img.hello-init.json`](../../build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-fw-helper-breadcrumb-v3.img.hello-init.json) records `hello_init_shim_mode=exec`, and both runs came back with `recover_traces_proof_ok=true`
+    - fresh re-validation after restoring Rust-side `probe-summary.json` persistence on current `master`:
+      - image metadata: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-fw-helper-breadcrumb-v4.img.hello-init.json`
+      - proof bundles: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T203707Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T203906Z-06241JEC200520_`
+      - both recovered `probe-report.txt` files now show `child_completed=true`, `child_timed_out=false`, `exit_status=0`
+      - both recovered bundles also now have `probe_summary_proves_gpu_render=true`, `recover_traces_proof_ok=true`, and the same `flat-orange` checksum `bb77813ec3232325`
+      - the top-level one-shot wrapper status still ends at `failure_stage=fastboot-return-auto-rebooted`; treat `recover-traces/status.json` as the truth surface for this seam
+    - next Rust bootstrap slice now landed on current `master`:
+      - Rust `hello-init` now supports `timeout-control-smoke`, `raw-kgsl-open-readonly-smoke`, `raw-kgsl-getproperties-smoke`, and the `orange_gpu_parent_probe_*` loop on the promoted seam
+      - Rust now also writes `/metadata/.../probe-fingerprint.txt`; `probe-timeout-class.txt` is still the remaining C-only observability artifact
+      - image metadata: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-parentprobe-fw-helper-breadcrumb-v1.img.hello-init.json`
+      - proof bundles: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T210518Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T210656Z-06241JEC200520_`
+      - both recovered bundles report `proof_ok=true`, `probe_report_proves_child_success=true`, `probe_summary_proves_gpu_render=true`, and `metadata_probe_fingerprint_present=true`
+      - both recovered bundles also preserve `metadata_stage_value=parent-probe-result=exit-0`, proving the Rust-side parent probe ran before the real payload succeeded
+      - the top-level one-shot wrapper still ends at `failure_stage=fastboot-return-auto-rebooted`; keep treating `/recover-traces/status.json` as the truth surface
 
 ## Best Observability
 
@@ -149,6 +163,9 @@ Use the panel as a stage channel, not just “something orange happened.”
    - `hello`
    - `vulkan-offscreen`
    - `gpu-render`
+   - `raw-kgsl-open-readonly-smoke`
+   - `raw-kgsl-getproperties-smoke`
+   - `timeout-control-smoke`
    - keep `pixel_boot_build_rust_bridge.sh` as the fallback/helper path for probe-child variants
 3. Keep later work blocked until the Rust seam is green.
    - no compositor
@@ -158,7 +175,8 @@ Use the panel as a stage channel, not just “something orange happened.”
 4. Prefer rooted proof devices for unattended confirmation.
    - `11151JEC200472`
    - `06241JEC200520`
-5. Land the helper-backed C ladder and tooling truthfully so the Rust port starts from a small, coherent baseline.
+5. Use the newly ported Rust-side parent-probe / raw-KGSL / timeout-control ladder to retire the remaining C bootstrap discriminators one seam at a time.
+   - next missing Rust observability artifact: `probe-timeout-class.txt`
 
 ## Fast Commands
 

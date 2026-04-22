@@ -9,10 +9,11 @@ fn main() {
 #[cfg(target_os = "linux")]
 mod linux {
     use std::ffi::{CStr, CString};
+    use std::fmt::Write as _;
     use std::fs::{self, File, OpenOptions};
     use std::io::{self, Read, Write};
     use std::os::unix::ffi::OsStringExt;
-    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
     use std::process::{self, Child, Command, Stdio};
     use std::sync::{
@@ -39,6 +40,8 @@ mod linux {
     const ORANGE_GPU_MESA_CACHE_DIR: &str = "/orange-gpu/home/.cache/mesa";
     const ORANGE_GPU_SUMMARY_PATH: &str = "/orange-gpu/summary.json";
     const ORANGE_GPU_OUTPUT_PATH: &str = "/orange-gpu/output.log";
+    const ORANGE_GPU_PROBE_SUMMARY_PATH: &str = "/orange-gpu/probe-summary.json";
+    const ORANGE_GPU_PROBE_OUTPUT_PATH: &str = "/orange-gpu/probe-output.log";
     const FIRMWARE_CLASS_ROOT: &str = "/sys/class/firmware";
     const METADATA_MOUNT_PATH: &str = "/metadata";
     const METADATA_DEVICE_PATH: &str = "/dev/block/by-name/metadata";
@@ -159,8 +162,12 @@ mod linux {
         temp_stage_path: PathBuf,
         probe_stage_path: PathBuf,
         temp_probe_stage_path: PathBuf,
+        probe_fingerprint_path: PathBuf,
+        temp_probe_fingerprint_path: PathBuf,
         probe_report_path: PathBuf,
         temp_probe_report_path: PathBuf,
+        probe_summary_path: PathBuf,
+        temp_probe_summary_path: PathBuf,
     }
 
     struct FirmwareHelper {
@@ -173,6 +180,8 @@ mod linux {
         selftest: bool,
         owned_child: bool,
         config_path: Option<String>,
+        orange_gpu_child_mode: Option<String>,
+        argv0: Option<String>,
     }
 
     impl FirmwareHelper {
@@ -309,19 +318,15 @@ mod linux {
     }
 
     fn ensure_char_device(path: &Path, perm: u32, major: u64, minor: u64) -> io::Result<()> {
-        ensure_node(
-            path,
-            libc::S_IFCHR | perm,
-            unsafe { libc::makedev(major as u32, minor as u32) },
-        )
+        ensure_node(path, libc::S_IFCHR | perm, unsafe {
+            libc::makedev(major as u32, minor as u32)
+        })
     }
 
     fn ensure_block_device(path: &Path, perm: u32, major: u64, minor: u64) -> io::Result<()> {
-        ensure_node(
-            path,
-            libc::S_IFBLK | perm,
-            unsafe { libc::makedev(major as u32, minor as u32) },
-        )
+        ensure_node(path, libc::S_IFBLK | perm, unsafe {
+            libc::makedev(major as u32, minor as u32)
+        })
     }
 
     fn ensure_symlink_target(path: &Path, target: &Path) -> io::Result<()> {
@@ -473,6 +478,13 @@ mod linux {
         }
 
         let raw_args = unsafe { std::slice::from_raw_parts(argv, argc) };
+        if let Some(raw_argv0) = raw_args.first().copied() {
+            if !raw_argv0.is_null() {
+                let argv0_bytes = unsafe { CStr::from_ptr(raw_argv0) }.to_bytes().to_vec();
+                let argv0 = std::ffi::OsString::from_vec(argv0_bytes);
+                args.argv0 = Some(argv0.to_string_lossy().into_owned());
+            }
+        }
         let mut index = 1usize;
         while index < raw_args.len() {
             let Some(raw_arg) = raw_args.get(index).copied() else {
@@ -493,6 +505,21 @@ mod linux {
                 args.owned_child = true;
                 index += 1;
                 continue;
+            }
+            if arg_bytes == b"--orange-gpu-child-mode" {
+                if let Some(raw_value) = raw_args.get(index + 1).copied() {
+                    if !raw_value.is_null() {
+                        let mode_bytes = unsafe { CStr::from_ptr(raw_value) }.to_bytes().to_vec();
+                        let mode = std::ffi::OsString::from_vec(mode_bytes)
+                            .to_string_lossy()
+                            .into_owned();
+                        if mode == "timeout-control-smoke" {
+                            args.orange_gpu_child_mode = Some(mode);
+                        }
+                    }
+                    index += 2;
+                    continue;
+                }
             }
             if arg_bytes == b"--config" {
                 if let Some(raw_value) = raw_args.get(index + 1).copied() {
@@ -543,6 +570,9 @@ mod linux {
                             "bundle-smoke",
                             "vulkan-instance-smoke",
                             "raw-vulkan-instance-smoke",
+                            "timeout-control-smoke",
+                            "raw-kgsl-open-readonly-smoke",
+                            "raw-kgsl-getproperties-smoke",
                             "raw-vulkan-physical-device-count-query-exit-smoke",
                             "raw-vulkan-physical-device-count-query-no-destroy-smoke",
                             "raw-vulkan-physical-device-count-query-smoke",
@@ -576,7 +606,8 @@ mod linux {
                         config.orange_gpu_parent_probe_attempts = parsed;
                     }
                 }
-                "orange_gpu_parent_probe_interval_secs" | "orange-gpu-parent-probe-interval-secs" => {
+                "orange_gpu_parent_probe_interval_secs"
+                | "orange-gpu-parent-probe-interval-secs" => {
                     if let Some(parsed) = parse_u32(value) {
                         config.orange_gpu_parent_probe_interval_secs = parsed;
                     }
@@ -640,8 +671,7 @@ mod linux {
                     }
                 }
                 "firmware_bootstrap" => {
-                    if let Some(parsed) = parse_allowed(value, &["none", "ramdisk-lib-firmware"])
-                    {
+                    if let Some(parsed) = parse_allowed(value, &["none", "ramdisk-lib-firmware"]) {
                         config.firmware_bootstrap = parsed;
                     }
                 }
@@ -686,8 +716,12 @@ mod linux {
         runtime.temp_stage_path = runtime.stage_dir.join(".stage.txt.tmp");
         runtime.probe_stage_path = runtime.stage_dir.join("probe-stage.txt");
         runtime.temp_probe_stage_path = runtime.stage_dir.join(".probe-stage.txt.tmp");
+        runtime.probe_fingerprint_path = runtime.stage_dir.join("probe-fingerprint.txt");
+        runtime.temp_probe_fingerprint_path = runtime.stage_dir.join(".probe-fingerprint.txt.tmp");
         runtime.probe_report_path = runtime.stage_dir.join("probe-report.txt");
         runtime.temp_probe_report_path = runtime.stage_dir.join(".probe-report.txt.tmp");
+        runtime.probe_summary_path = runtime.stage_dir.join("probe-summary.json");
+        runtime.temp_probe_summary_path = runtime.stage_dir.join(".probe-summary.json.tmp");
         runtime
     }
 
@@ -710,8 +744,15 @@ mod linux {
         };
     }
 
-    fn discover_metadata_block_identity_from_sysfs(runtime: &mut MetadataStageRuntime, config: &Config) {
-        if !runtime.enabled || runtime.block_device.available || config.dev_mount != "tmpfs" || !config.mount_sys {
+    fn discover_metadata_block_identity_from_sysfs(
+        runtime: &mut MetadataStageRuntime,
+        config: &Config,
+    ) {
+        if !runtime.enabled
+            || runtime.block_device.available
+            || config.dev_mount != "tmpfs"
+            || !config.mount_sys
+        {
             return;
         }
         let Ok(entries) = fs::read_dir(METADATA_SYSFS_BLOCK_ROOT) else {
@@ -747,8 +788,14 @@ mod linux {
         }
     }
 
-    fn write_atomic_text_file(temp_path: &Path, final_path: &Path, contents: &str) -> io::Result<()> {
-        let parent = final_path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::Other, "missing parent"))?;
+    fn write_atomic_text_file(
+        temp_path: &Path,
+        final_path: &Path,
+        contents: &str,
+    ) -> io::Result<()> {
+        let parent = final_path
+            .parent()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "missing parent"))?;
         {
             let mut file = OpenOptions::new()
                 .create(true)
@@ -769,7 +816,8 @@ mod linux {
             return;
         }
         let payload = format!("{value}\n");
-        if write_atomic_text_file(&runtime.temp_stage_path, &runtime.stage_path, &payload).is_err() {
+        if write_atomic_text_file(&runtime.temp_stage_path, &runtime.stage_path, &payload).is_err()
+        {
             runtime.write_failed = true;
         }
     }
@@ -794,17 +842,196 @@ mod linux {
         }
     }
 
-    fn write_probe_report(
-        runtime: &mut MetadataStageRuntime,
-        child_result: &ChildWatchResult,
-    ) {
+    fn remove_file_best_effort(path: &str) {
+        let _ = fs::remove_file(path);
+    }
+
+    fn read_file_excerpt(path: &str, max_bytes: usize) -> String {
+        match fs::read(path) {
+            Ok(bytes) => {
+                let mut text =
+                    String::from_utf8_lossy(&bytes[..bytes.len().min(max_bytes)]).into_owned();
+                if bytes.len() > max_bytes {
+                    if !text.ends_with('\n') {
+                        text.push('\n');
+                    }
+                    text.push_str("<truncated>\n");
+                } else if !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text
+            }
+            Err(error) => format!(
+                "<unavailable errno={:?} error={}>\n",
+                error.raw_os_error(),
+                error
+            ),
+        }
+    }
+
+    fn append_file_excerpt(payload: &mut String, path: &str, max_bytes: usize) {
+        let _ = writeln!(payload, "begin:{}<<", path);
+        payload.push_str(&read_file_excerpt(path, max_bytes));
+        let _ = writeln!(payload, ">>end:{}", path);
+    }
+
+    fn append_namespace_fingerprint_lines(payload: &mut String) {
+        for label in ["mnt", "pid", "uts", "ipc", "net"] {
+            let path = format!("/proc/self/ns/{label}");
+            match fs::read_link(&path) {
+                Ok(target) => {
+                    let _ = writeln!(payload, "ns_{}={}", label, target.display());
+                }
+                Err(error) => {
+                    let _ = writeln!(
+                        payload,
+                        "ns_{}=<unavailable errno={:?} error={}>",
+                        label,
+                        error.raw_os_error(),
+                        error
+                    );
+                }
+            }
+        }
+    }
+
+    fn append_path_fingerprint_line(payload: &mut String, path: &str) {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                let file_type = if metadata.file_type().is_char_device() {
+                    "char"
+                } else if metadata.file_type().is_block_device() {
+                    "block"
+                } else if metadata.file_type().is_symlink() {
+                    "symlink"
+                } else if metadata.file_type().is_dir() {
+                    "dir"
+                } else if metadata.file_type().is_file() {
+                    "file"
+                } else {
+                    "other"
+                };
+                let (major_num, minor_num) = if metadata.file_type().is_char_device()
+                    || metadata.file_type().is_block_device()
+                {
+                    let rdev = metadata.rdev();
+                    (libc::major(rdev) as u64, libc::minor(rdev) as u64)
+                } else {
+                    (0, 0)
+                };
+                let _ = writeln!(
+                    payload,
+                    "path={} exists=true type={} mode={:o} uid={} gid={} size={} major={} minor={}",
+                    path,
+                    file_type,
+                    metadata.mode() & 0o7777,
+                    metadata.uid(),
+                    metadata.gid(),
+                    metadata.len(),
+                    major_num,
+                    minor_num
+                );
+            }
+            Err(error) => {
+                let _ = writeln!(
+                    payload,
+                    "path={} exists=false errno={:?} error={}",
+                    path,
+                    error.raw_os_error(),
+                    error
+                );
+            }
+        }
+    }
+
+    fn current_group_ids() -> Option<Vec<u32>> {
+        let group_count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+        if group_count < 0 {
+            return None;
+        }
+        if group_count == 0 {
+            return Some(Vec::new());
+        }
+        let mut groups = vec![0 as libc::gid_t; group_count as usize];
+        let actual_count = unsafe { libc::getgroups(group_count, groups.as_mut_ptr()) };
+        if actual_count < 0 {
+            return None;
+        }
+        groups.truncate(actual_count as usize);
+        Some(groups.into_iter().map(|group| group as u32).collect())
+    }
+
+    fn write_metadata_probe_fingerprint(runtime: &mut MetadataStageRuntime, config: &Config) {
+        if !runtime.enabled || runtime.write_failed || !runtime.prepared {
+            return;
+        }
+
+        let mut payload = String::new();
+        let _ = writeln!(payload, "run_token={}", run_token_or_unset(config));
+        let _ = writeln!(
+            payload,
+            "mount_dev={} mount_proc={} mount_sys={} dev_mount={} metadata_prepared={}",
+            bool_word(config.mount_dev),
+            bool_word(config.mount_proc),
+            bool_word(config.mount_sys),
+            config.dev_mount,
+            bool_word(runtime.prepared)
+        );
+        if let Some(boot_id) = current_boot_id() {
+            let _ = writeln!(payload, "boot_id={boot_id}");
+        }
+        match current_group_ids() {
+            Some(groups) => {
+                let _ = writeln!(
+                    payload,
+                    "groups={}",
+                    groups
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+            }
+            None => {
+                payload.push_str("groups=<unavailable>\n");
+            }
+        }
+        append_file_excerpt(&mut payload, "/proc/self/attr/current", 256);
+        append_file_excerpt(&mut payload, "/proc/self/cgroup", 512);
+        append_namespace_fingerprint_lines(&mut payload);
+        append_file_excerpt(&mut payload, "/proc/self/mountinfo", 1536);
+        append_path_fingerprint_line(&mut payload, "/dev/kgsl-3d0");
+        append_path_fingerprint_line(&mut payload, "/dev/dri/card0");
+        append_path_fingerprint_line(&mut payload, "/dev/dri/renderD128");
+        append_path_fingerprint_line(&mut payload, "/dev/dma_heap/system");
+        append_path_fingerprint_line(&mut payload, "/dev/ion");
+        append_path_fingerprint_line(&mut payload, ORANGE_GPU_ICD_PATH);
+        append_file_excerpt(&mut payload, "/proc/mounts", 1024);
+        append_file_excerpt(&mut payload, ORANGE_GPU_ICD_PATH, 512);
+
+        if write_atomic_text_file(
+            &runtime.temp_probe_fingerprint_path,
+            &runtime.probe_fingerprint_path,
+            &payload,
+        )
+        .is_err()
+        {
+            runtime.write_failed = true;
+        }
+    }
+
+    fn write_probe_report(runtime: &mut MetadataStageRuntime, child_result: &ChildWatchResult) {
         if !runtime.enabled || runtime.write_failed || !runtime.prepared {
             return;
         }
         let observed_probe_stage = read_probe_stage_value(runtime);
         let mut payload = String::new();
         payload.push_str(&format!("observed_probe_stage={observed_probe_stage}\n"));
-        payload.push_str(&format!("child_timed_out={}\n", bool_word(child_result.timed_out)));
+        payload.push_str(&format!(
+            "child_timed_out={}\n",
+            bool_word(child_result.timed_out)
+        ));
+        payload.push_str(&format!("waited_seconds={}\n", child_result.waited_seconds));
         payload.push_str("wchan=\n");
         payload.push_str(&format!(
             "child_completed={}\n",
@@ -814,6 +1041,11 @@ mod linux {
             payload.push_str(&format!("exit_status={exit_status}\n"));
         } else {
             payload.push_str("exit_status=\n");
+        }
+        if let Some(signal) = child_result.signal {
+            payload.push_str(&format!("signal={signal}\n"));
+        } else {
+            payload.push_str("signal=\n");
         }
         if write_atomic_text_file(
             &runtime.temp_probe_report_path,
@@ -826,12 +1058,64 @@ mod linux {
         }
     }
 
-    fn bootstrap_tmpfs_metadata_block_runtime(runtime: &MetadataStageRuntime, config: &Config) -> io::Result<()> {
+    fn record_probe_summary(
+        runtime: &mut MetadataStageRuntime,
+        source_path: &str,
+    ) -> Option<String> {
+        if !runtime.enabled || runtime.write_failed || !runtime.prepared {
+            return None;
+        }
+        let summary_text = match fs::read_to_string(source_path) {
+            Ok(summary_text) if !summary_text.trim().is_empty() => summary_text,
+            _ => return None,
+        };
+        if write_atomic_text_file(
+            &runtime.temp_probe_summary_path,
+            &runtime.probe_summary_path,
+            &summary_text,
+        )
+        .is_err()
+        {
+            runtime.write_failed = true;
+            return None;
+        }
+        Some(summary_text)
+    }
+
+    fn validate_gpu_render_summary(summary_text: &str) -> Result<(), &'static str> {
+        let normalized: String = summary_text
+            .chars()
+            .filter(|ch| !ch.is_ascii_whitespace())
+            .collect();
+        let required = [
+            ("scene", "\"scene\":\"flat-orange\""),
+            ("present_kms", "\"present_kms\":true"),
+            ("kms_present", "\"kms_present\":{"),
+            ("software_backed", "\"software_backed\":false"),
+            ("backend", "\"backend\":\"Vulkan\""),
+            ("distinct_color_count", "\"distinct_color_count\":1"),
+            ("distinct_color_sample", "\"ff7a00ff\""),
+        ];
+        for (label, needle) in required {
+            if !normalized.contains(needle) {
+                return Err(label);
+            }
+        }
+        Ok(())
+    }
+
+    fn bootstrap_tmpfs_metadata_block_runtime(
+        runtime: &MetadataStageRuntime,
+        config: &Config,
+    ) -> io::Result<()> {
         if config.dev_mount != "tmpfs" {
             return Ok(());
         }
         if !runtime.block_device.available {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "metadata block device unavailable"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "metadata block device unavailable",
+            ));
         }
         ensure_directory(Path::new("/dev/block"), 0o755)?;
         ensure_directory(Path::new("/dev/block/by-name"), 0o755)?;
@@ -864,7 +1148,15 @@ mod linux {
             mount_flags,
             Some(""),
         )
-        .or_else(|_| mount_fs(METADATA_DEVICE_PATH, METADATA_MOUNT_PATH, "f2fs", mount_flags, Some("")));
+        .or_else(|_| {
+            mount_fs(
+                METADATA_DEVICE_PATH,
+                METADATA_MOUNT_PATH,
+                "f2fs",
+                mount_flags,
+                Some(""),
+            )
+        });
         if mounted.is_err() {
             runtime.write_failed = true;
             return;
@@ -889,7 +1181,11 @@ mod linux {
         let _ = fs::write("/proc/sysrq-trigger", [command as u8]);
     }
 
-    fn run_orange_init_payload(config: &Config, stage_label: Option<&str>, visual_preset: Option<&str>) -> i32 {
+    fn run_orange_init_payload(
+        config: &Config,
+        stage_label: Option<&str>,
+        visual_preset: Option<&str>,
+    ) -> i32 {
         let mut command = Command::new(ORANGE_PAYLOAD_PATH);
         command.env(ORANGE_MODE_ENV, "orange-init");
         command.env(ORANGE_HOLD_ENV, config.hold_seconds.to_string());
@@ -917,7 +1213,11 @@ mod linux {
         Ok(())
     }
 
-    fn set_orange_gpu_env(command: &mut Command, probe_stage_path: Option<&Path>, probe_stage_prefix: Option<&str>) {
+    fn set_orange_gpu_env(
+        command: &mut Command,
+        probe_stage_path: Option<&Path>,
+        probe_stage_prefix: Option<&str>,
+    ) {
         command.env(GPU_BACKEND_ENV, "vulkan");
         command.env(VK_ICD_FILENAMES_ENV, ORANGE_GPU_ICD_PATH);
         command.env(MESA_DRIVER_OVERRIDE_ENV, "kgsl");
@@ -932,6 +1232,18 @@ mod linux {
         if let Some(prefix) = probe_stage_prefix {
             command.env(GPU_SMOKE_STAGE_PREFIX_ENV, prefix);
         }
+    }
+
+    fn probe_stage_path_from_env() -> Option<PathBuf> {
+        std::env::var_os(GPU_SMOKE_STAGE_PATH_ENV)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    }
+
+    fn probe_stage_prefix_from_env() -> Option<String> {
+        std::env::var(GPU_SMOKE_STAGE_PREFIX_ENV)
+            .ok()
+            .filter(|value| !value.is_empty())
     }
 
     fn probe_bootstrap_gpu_firmware(
@@ -954,7 +1266,11 @@ mod linux {
             );
         }
         write_payload_probe_stage(probe_stage_path, probe_stage_prefix, "firmware-probe-ok");
-        let _ = run_orange_gpu_checkpoint(config, "firmware-probe-ok", FIRMWARE_PROBE_CHECKPOINT_HOLD_SECONDS);
+        let _ = run_orange_gpu_checkpoint(
+            config,
+            "firmware-probe-ok",
+            FIRMWARE_PROBE_CHECKPOINT_HOLD_SECONDS,
+        );
         Ok(())
     }
 
@@ -992,7 +1308,8 @@ mod linux {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name = name.to_string_lossy();
-                    for (index, (filename, stage_token)) in GPU_FIRMWARE_ENTRIES.iter().enumerate() {
+                    for (index, (filename, stage_token)) in GPU_FIRMWARE_ENTRIES.iter().enumerate()
+                    {
                         if serviced[index] || name.as_ref() != *filename {
                             continue;
                         }
@@ -1036,24 +1353,154 @@ mod linux {
         }
     }
 
+    fn run_timeout_control_smoke(
+        config: &Config,
+        probe_stage_path: Option<&Path>,
+        probe_stage_prefix: Option<&str>,
+    ) -> i32 {
+        if probe_bootstrap_gpu_firmware(config, probe_stage_path, probe_stage_prefix).is_err() {
+            return 1;
+        }
+        write_payload_probe_stage(
+            probe_stage_path,
+            probe_stage_prefix,
+            "timeout-control-sleep",
+        );
+        loop {
+            unsafe {
+                libc::pause();
+            }
+        }
+    }
+
+    fn run_internal_orange_gpu_child(config: &Config, mode: &str) -> i32 {
+        let probe_stage_path = probe_stage_path_from_env();
+        let probe_stage_prefix = probe_stage_prefix_from_env();
+        match mode {
+            "timeout-control-smoke" => run_timeout_control_smoke(
+                config,
+                probe_stage_path.as_deref(),
+                probe_stage_prefix.as_deref(),
+            ),
+            _ => 1,
+        }
+    }
+
+    fn run_orange_gpu_parent_probe(
+        config: &Config,
+        metadata_stage: &MetadataStageRuntime,
+    ) -> (i32, String) {
+        if config.orange_gpu_parent_probe_attempts == 0 {
+            return (0, "parent-probe-result=skipped".to_string());
+        }
+
+        let probe_stage_path =
+            if metadata_stage.enabled && metadata_stage.prepared && !metadata_stage.write_failed {
+                Some(metadata_stage.probe_stage_path.as_path())
+            } else {
+                None
+            };
+        let mut result_stage = "parent-probe-result=not-run".to_string();
+
+        for attempt in 1..=config.orange_gpu_parent_probe_attempts {
+            remove_file_best_effort(ORANGE_GPU_PROBE_SUMMARY_PATH);
+            remove_file_best_effort(ORANGE_GPU_PROBE_OUTPUT_PATH);
+
+            let probe_stage_prefix = format!("parent-probe-attempt-{attempt}");
+            let mut command = Command::new(ORANGE_GPU_LOADER_PATH);
+            command.arg("--library-path");
+            command.arg(ORANGE_GPU_LIBRARY_PATH);
+            command.arg(ORANGE_GPU_BINARY_PATH);
+            command.arg("--scene");
+            command.arg("raw-vulkan-physical-device-count-query-exit-smoke");
+            command.arg("--summary-path");
+            command.arg(ORANGE_GPU_PROBE_SUMMARY_PATH);
+            set_orange_gpu_env(&mut command, probe_stage_path, Some(&probe_stage_prefix));
+            if let Ok((stdout, stderr)) = redirect_output(ORANGE_GPU_PROBE_OUTPUT_PATH) {
+                command.stdout(stdout);
+                command.stderr(stderr);
+            }
+
+            let mut child = match command.spawn() {
+                Ok(child) => child,
+                Err(error) => {
+                    log_line(&format!(
+                        "orange-gpu parent probe attempt {attempt}/{} failed to spawn: {error}",
+                        config.orange_gpu_parent_probe_attempts
+                    ));
+                    return (1, "parent-probe-result=spawn-failed".to_string());
+                }
+            };
+            let watch_result = match wait_for_child_with_watchdog(
+                &mut child,
+                "orange-gpu-parent-probe",
+                ORANGE_GPU_WATCHDOG_GRACE_SECONDS,
+            ) {
+                Ok(result) => result,
+                Err(error) => {
+                    log_line(&format!(
+                        "orange-gpu parent probe attempt {attempt}/{} failed while waiting: {error}",
+                        config.orange_gpu_parent_probe_attempts
+                    ));
+                    return (1, "parent-probe-result=wait-failed".to_string());
+                }
+            };
+
+            result_stage = if let Some(exit_status) = watch_result.exit_status {
+                format!("parent-probe-result=exit-{exit_status}")
+            } else if let Some(signal) = watch_result.signal {
+                format!(
+                    "parent-probe-result={}-{}",
+                    if watch_result.timed_out {
+                        "watchdog-signal"
+                    } else {
+                        "signal"
+                    },
+                    signal
+                )
+            } else {
+                "parent-probe-result=unknown-status".to_string()
+            };
+
+            if watch_result.exit_status == Some(0) {
+                return (0, result_stage);
+            }
+            if attempt < config.orange_gpu_parent_probe_attempts
+                && config.orange_gpu_parent_probe_interval_secs > 0
+            {
+                sleep_seconds(config.orange_gpu_parent_probe_interval_secs);
+            }
+        }
+
+        (1, result_stage)
+    }
+
     fn scene_for_mode(mode: &str) -> (&'static str, bool, bool) {
         match mode {
             "bundle-smoke" => ("bundle-smoke", false, false),
             "vulkan-instance-smoke" => ("instance-smoke", false, false),
             "raw-vulkan-instance-smoke" => ("raw-vulkan-instance-smoke", false, false),
-            "raw-vulkan-physical-device-count-query-exit-smoke" => {
-                ("raw-vulkan-physical-device-count-query-exit-smoke", false, false)
-            }
-            "raw-vulkan-physical-device-count-query-no-destroy-smoke" => {
-                ("raw-vulkan-physical-device-count-query-no-destroy-smoke", false, false)
-            }
+            "raw-kgsl-open-readonly-smoke" => ("raw-kgsl-open-readonly-smoke", false, false),
+            "raw-kgsl-getproperties-smoke" => ("raw-kgsl-getproperties-smoke", false, false),
+            "raw-vulkan-physical-device-count-query-exit-smoke" => (
+                "raw-vulkan-physical-device-count-query-exit-smoke",
+                false,
+                false,
+            ),
+            "raw-vulkan-physical-device-count-query-no-destroy-smoke" => (
+                "raw-vulkan-physical-device-count-query-no-destroy-smoke",
+                false,
+                false,
+            ),
             "raw-vulkan-physical-device-count-query-smoke" => {
                 ("raw-vulkan-physical-device-count-query-smoke", false, false)
             }
             "raw-vulkan-physical-device-count-smoke" => {
                 ("raw-vulkan-physical-device-count-smoke", false, false)
             }
-            "vulkan-enumerate-adapters-count-smoke" => ("enumerate-adapters-count-smoke", false, false),
+            "vulkan-enumerate-adapters-count-smoke" => {
+                ("enumerate-adapters-count-smoke", false, false)
+            }
             "vulkan-enumerate-adapters-smoke" => ("enumerate-adapters-smoke", false, false),
             "vulkan-adapter-smoke" => ("adapter-smoke", false, false),
             "vulkan-device-request-smoke" => ("device-request-smoke", false, false),
@@ -1073,7 +1520,11 @@ mod linux {
         }
     }
 
-    fn wait_for_child_with_watchdog(child: &mut Child, label: &str, timeout_seconds: u32) -> io::Result<ChildWatchResult> {
+    fn wait_for_child_with_watchdog(
+        child: &mut Child,
+        label: &str,
+        timeout_seconds: u32,
+    ) -> io::Result<ChildWatchResult> {
         let mut result = ChildWatchResult::default();
         loop {
             match child.try_wait()? {
@@ -1115,7 +1566,8 @@ mod linux {
     fn orange_gpu_mode_uses_success_postlude(mode: &str) -> bool {
         matches!(
             mode,
-            "bundle-smoke"
+            "gpu-render"
+                | "bundle-smoke"
                 | "vulkan-instance-smoke"
                 | "raw-vulkan-instance-smoke"
                 | "raw-vulkan-physical-device-count-query-exit-smoke"
@@ -1146,7 +1598,11 @@ mod linux {
         }
         let mut prelude_config = config.clone();
         prelude_config.hold_seconds = config.prelude_hold_seconds;
-        run_orange_init_payload(&prelude_config, Some("orange-gpu-prelude"), Some("solid-orange"))
+        run_orange_init_payload(
+            &prelude_config,
+            Some("orange-gpu-prelude"),
+            Some("solid-orange"),
+        )
     }
 
     fn run_orange_gpu_postlude(config: &Config) -> i32 {
@@ -1156,16 +1612,17 @@ mod linux {
         {
             return 0;
         }
-        run_orange_init_payload(config, Some("orange-gpu-postlude"), Some("solid-orange"))
+        let visual = if config.orange_gpu_mode == "gpu-render" {
+            "success-solid"
+        } else {
+            "frame-orange"
+        };
+        run_orange_init_payload(config, Some("orange-gpu-postlude"), Some(visual))
     }
 
     fn validate_orange_gpu_config(config: &Config) -> bool {
         if !config.orange_gpu_mode_seen || config.orange_gpu_mode_invalid {
             log_line("orange-gpu config missing or invalid orange_gpu_mode");
-            return false;
-        }
-        if config.orange_gpu_parent_probe_attempts > 0 {
-            log_line("orange-gpu parent probe is not yet supported by rust hello-init");
             return false;
         }
         if config.orange_gpu_metadata_stage_breadcrumb && !config.mount_dev {
@@ -1176,14 +1633,19 @@ mod linux {
             log_line("orange_gpu_firmware_helper requires mount_sys=true");
             return false;
         }
-        if config.orange_gpu_firmware_helper && config.firmware_bootstrap != "ramdisk-lib-firmware" {
+        if config.orange_gpu_firmware_helper && config.firmware_bootstrap != "ramdisk-lib-firmware"
+        {
             log_line("orange_gpu_firmware_helper requires firmware_bootstrap=ramdisk-lib-firmware");
             return false;
         }
         true
     }
 
-    fn run_orange_gpu_payload(config: &Config, metadata_stage: &mut MetadataStageRuntime) -> i32 {
+    fn run_orange_gpu_payload(
+        config: &Config,
+        metadata_stage: &mut MetadataStageRuntime,
+        self_exec_path: Option<&Path>,
+    ) -> i32 {
         if ensure_orange_gpu_runtime_dirs().is_err() {
             return 1;
         }
@@ -1193,14 +1655,36 @@ mod linux {
         }
 
         if metadata_stage.prepared {
-            write_metadata_stage(metadata_stage, "validated");
+            write_metadata_probe_fingerprint(metadata_stage, config);
+            write_metadata_stage(metadata_stage, "parent-probe-start");
         }
 
-        let probe_stage_path = if metadata_stage.enabled && metadata_stage.prepared && !metadata_stage.write_failed {
-            Some(metadata_stage.probe_stage_path.clone())
-        } else {
-            None
-        };
+        let (parent_probe_status, parent_probe_result_stage) =
+            run_orange_gpu_parent_probe(config, metadata_stage);
+        if metadata_stage.prepared {
+            write_metadata_stage(metadata_stage, &parent_probe_result_stage);
+        }
+        if parent_probe_status == 0 && config.orange_gpu_parent_probe_attempts > 0 {
+            let _ = run_orange_gpu_checkpoint(
+                config,
+                "probe-ready",
+                ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+            );
+        } else if parent_probe_status != 0 {
+            log_line(&format!(
+                "orange-gpu parent probe returned status={parent_probe_status}; continuing to payload launch"
+            ));
+        }
+
+        remove_file_best_effort(ORANGE_GPU_SUMMARY_PATH);
+        remove_file_best_effort(ORANGE_GPU_OUTPUT_PATH);
+
+        let probe_stage_path =
+            if metadata_stage.enabled && metadata_stage.prepared && !metadata_stage.write_failed {
+                Some(metadata_stage.probe_stage_path.clone())
+            } else {
+                None
+            };
         let probe_stage_prefix = Some("orange-gpu-payload".to_string());
 
         if config.orange_gpu_mode == "firmware-probe-only" {
@@ -1214,16 +1698,6 @@ mod linux {
             };
         }
 
-        if probe_bootstrap_gpu_firmware(
-            config,
-            probe_stage_path.as_deref(),
-            probe_stage_prefix.as_deref(),
-        )
-        .is_err()
-        {
-            return 1;
-        }
-
         let firmware_helper = if config.orange_gpu_firmware_helper {
             Some(FirmwareHelper::start(
                 probe_stage_path.clone(),
@@ -1233,25 +1707,54 @@ mod linux {
             None
         };
 
-        let (scene, summary_needed, present_kms) = scene_for_mode(&config.orange_gpu_mode);
-        let mut command = Command::new(ORANGE_GPU_LOADER_PATH);
-        command.arg("--library-path");
-        command.arg(ORANGE_GPU_LIBRARY_PATH);
-        command.arg(ORANGE_GPU_BINARY_PATH);
-        command.arg("--scene");
-        command.arg(scene);
-        if summary_needed {
-            command.arg("--present-kms");
-            command.arg("--hold-secs");
-            command.arg(config.hold_seconds.to_string());
-        }
-        if present_kms {
-            command.arg("--summary-path");
-            command.arg(ORANGE_GPU_SUMMARY_PATH);
+        let mut command = if config.orange_gpu_mode == "timeout-control-smoke" {
+            let resolved_self_exec_path = self_exec_path
+                .map(Path::to_path_buf)
+                .or_else(|| std::env::current_exe().ok());
+            let Some(resolved_self_exec_path) = resolved_self_exec_path else {
+                log_line("failed to resolve hello-init path for timeout-control child");
+                if let Some(helper) = firmware_helper {
+                    helper.stop();
+                }
+                return 127;
+            };
+            let mut command = Command::new(resolved_self_exec_path);
+            command.arg("--owned-child");
+            command.arg("--config");
+            command.arg(CONFIG_PATH);
+            command.arg("--orange-gpu-child-mode");
+            command.arg("timeout-control-smoke");
+            command
         } else {
+            if probe_bootstrap_gpu_firmware(
+                config,
+                probe_stage_path.as_deref(),
+                probe_stage_prefix.as_deref(),
+            )
+            .is_err()
+            {
+                if let Some(helper) = firmware_helper {
+                    helper.stop();
+                }
+                return 1;
+            }
+
+            let (scene, summary_needed, _) = scene_for_mode(&config.orange_gpu_mode);
+            let mut command = Command::new(ORANGE_GPU_LOADER_PATH);
+            command.arg("--library-path");
+            command.arg(ORANGE_GPU_LIBRARY_PATH);
+            command.arg(ORANGE_GPU_BINARY_PATH);
+            command.arg("--scene");
+            command.arg(scene);
+            if summary_needed {
+                command.arg("--present-kms");
+                command.arg("--hold-secs");
+                command.arg(config.hold_seconds.to_string());
+            }
             command.arg("--summary-path");
             command.arg(ORANGE_GPU_SUMMARY_PATH);
-        }
+            command
+        };
         set_orange_gpu_env(
             &mut command,
             probe_stage_path.as_deref(),
@@ -1291,6 +1794,21 @@ mod linux {
             helper.stop();
         }
         write_probe_report(metadata_stage, &watch_result);
+        if watch_result.exit_status == Some(0) && metadata_stage.enabled {
+            let recorded_summary = record_probe_summary(metadata_stage, ORANGE_GPU_SUMMARY_PATH);
+            if config.orange_gpu_mode == "gpu-render" {
+                let Some(summary_text) = recorded_summary.as_deref() else {
+                    log_line("gpu-render summary missing or could not be persisted to metadata");
+                    return 1;
+                };
+                if let Err(reason) = validate_gpu_render_summary(summary_text) {
+                    log_line(&format!(
+                        "gpu-render summary failed validation: missing {reason}"
+                    ));
+                    return 1;
+                }
+            }
+        }
 
         if watch_result.timed_out {
             if config.orange_gpu_timeout_action == "panic" {
@@ -1401,12 +1919,23 @@ mod linux {
 
         let config = load_config(args.config_path.as_deref().unwrap_or(CONFIG_PATH));
         set_log_channel_preferences(&config);
+        if let Some(mode) = args.orange_gpu_child_mode.as_deref() {
+            process::exit(run_internal_orange_gpu_child(&config, mode));
+        }
         let mut metadata_stage = init_metadata_stage_runtime(&config);
 
         if config.mount_dev {
             let _ = ensure_directory(Path::new("/dev"), 0o755);
             capture_metadata_block_identity(&mut metadata_stage, &config);
-            if mount_fs(&config.dev_mount, "/dev", &config.dev_mount, libc::MS_NOSUID as libc::c_ulong, Some("mode=0755")).is_err() {
+            if mount_fs(
+                &config.dev_mount,
+                "/dev",
+                &config.dev_mount,
+                libc::MS_NOSUID as libc::c_ulong,
+                Some("mode=0755"),
+            )
+            .is_err()
+            {
                 process::exit(1);
             }
             if bootstrap_tmpfs_dev_runtime(&config).is_err() {
@@ -1432,7 +1961,15 @@ mod linux {
 
         if config.mount_proc {
             let _ = ensure_directory(Path::new("/proc"), 0o555);
-            if mount_fs("proc", "/proc", "proc", (libc::MS_NOSUID | libc::MS_NOEXEC | libc::MS_NODEV) as libc::c_ulong, Some("")).is_err() {
+            if mount_fs(
+                "proc",
+                "/proc",
+                "proc",
+                (libc::MS_NOSUID | libc::MS_NOEXEC | libc::MS_NODEV) as libc::c_ulong,
+                Some(""),
+            )
+            .is_err()
+            {
                 process::exit(1);
             }
             if bootstrap_proc_stdio_links(&config).is_err() {
@@ -1441,7 +1978,15 @@ mod linux {
         }
         if config.mount_sys {
             let _ = ensure_directory(Path::new("/sys"), 0o555);
-            if mount_fs("sysfs", "/sys", "sysfs", (libc::MS_NOSUID | libc::MS_NOEXEC | libc::MS_NODEV) as libc::c_ulong, Some("")).is_err() {
+            if mount_fs(
+                "sysfs",
+                "/sys",
+                "sysfs",
+                (libc::MS_NOSUID | libc::MS_NOEXEC | libc::MS_NODEV) as libc::c_ulong,
+                Some(""),
+            )
+            .is_err()
+            {
                 process::exit(1);
             }
         }
@@ -1476,29 +2021,33 @@ mod linux {
         ));
 
         if config.payload == "orange-init" {
-            let status = run_orange_init_payload(&config, Some("direct-orange-init"), Some("solid-orange"));
+            let status =
+                run_orange_init_payload(&config, Some("direct-orange-init"), Some("solid-orange"));
             if status != 0 {
                 hold_for_observation(config.hold_seconds);
             }
         } else if config.payload == "orange-gpu" {
             let prelude_status = run_orange_gpu_prelude(&config);
             if prelude_status != 0 {
-                append_wrapper_log(&format!("orange-gpu prelude failed: status={prelude_status}"));
+                append_wrapper_log(&format!(
+                    "orange-gpu prelude failed: status={prelude_status}"
+                ));
             }
             if !validate_orange_gpu_config(&config) {
                 hold_for_observation(config.hold_seconds);
                 reboot_from_config(&config);
             }
-            let _ = run_orange_gpu_checkpoint(
-                &config,
-                "validated",
-                ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
-            );
+            let _ =
+                run_orange_gpu_checkpoint(&config, "validated", ORANGE_GPU_CHECKPOINT_HOLD_SECONDS);
             prepare_metadata_stage_runtime(&mut metadata_stage, &config);
             if metadata_stage.prepared {
                 write_metadata_stage(&mut metadata_stage, "validated");
             }
-            let payload_status = run_orange_gpu_payload(&config, &mut metadata_stage);
+            let payload_status = run_orange_gpu_payload(
+                &config,
+                &mut metadata_stage,
+                args.argv0.as_deref().map(Path::new),
+            );
             if payload_status == 0 {
                 let postlude_status = run_orange_gpu_postlude(&config);
                 if postlude_status != 0 {
