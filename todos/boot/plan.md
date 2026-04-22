@@ -35,11 +35,19 @@ Related docs:
     - a tiny `no_std` exact-path Rust PID 1 probe returns cleanly to bootloader
     - a `no_std` Rust PID 1 shim that forks/execs the full Rust `hello-init` child also returns cleanly to bootloader on the same stripped lane
     - so the live Rust migration shape is `no_std PID1 shim -> full Rust child`, not `std` directly as PID 1
-    - the Rust bridge seam has now re-proved `vulkan-offscreen` and `gpu-render` on `09051JEC202061` by repacking the already-proven C images, swapping only `/system/bin/init`, adding `/hello-init-child`, and preserving the companion `.hello-init.json`
+    - the Rust bridge seam has now re-proved `vulkan-offscreen` and `gpu-render` on `09051JEC202061`
+    - `pixel_boot_build_orange_gpu.sh --hello-init-mode rust-bridge` now stages the final Rust bridge image directly:
+      - `/system/bin/init` is the no_std Rust shim
+      - `/hello-init-child` is the full Rust child
+      - companion metadata now records `hello_init_impl=rust-bridge` and `hello_init_child_path=/hello-init-child`
+    - `pixel_boot_build_rust_bridge.sh` still exists as a thin repack helper, but it is no longer the primary builder path for new rust-bridge orange-gpu images
     - the Rust bridge builder now fails closed on configs the Rust child cannot honestly run yet:
       - C-only orange-gpu modes are rejected early
       - parent-probe configs are rejected early
       - cloned metadata no longer promises `probe-fingerprint` / `probe-timeout-class` files the Rust child does not currently write
+    - current leading `std`-PID1 source hypothesis:
+      - the likely bad seam is pre-`main` `std` runtime / TLS startup, not the `hello-init` logic
+      - next hardware discriminator is `no_std` exact-path PID1 shim -> direct `execv()` into the tiny `std` probe, with no `fork()`
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
   - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
@@ -293,7 +301,7 @@ Related docs:
   - the Rust bridge seam now has positive `probe_report_proves_child_success=true` proofs for:
     - `vulkan-offscreen` on `09051JEC202061`
     - `gpu-render` on `09051JEC202061`
-  - next step is to turn the manual bridge repack into a private helper and then keep climbing from that bridge shape instead of forcing `std` directly into PID 1
+  - next step is to confirm the direct rust-bridge builder path on hardware and then keep climbing from that bridge shape instead of forcing `std` directly into PID 1
 - [x] From that owned userspace, render one orange GPU frame and present it through dma-buf/KMS (`orange-gpu`).
 - [ ] Prove repeated GPU frame submission and synchronization for 2-3 seconds (`orange-gpu-loop`).
 - [ ] Prove one minimal input-driven redraw on the real GPU render/present path (`touch-counter-gpu`).

@@ -75,11 +75,12 @@ Do this in order:
    - `no_std` Rust PID 1 shim
    - full Rust `hello-init` child
 2. Treat the Rust bridge seam as the new working truth on `09051JEC202061`.
-3. Turn the manual bridge repack into a private helper:
-   - repack an already-proven C image
-   - replace only `/system/bin/init`
-   - add `/hello-init-child`
-   - preserve/copy the companion `.hello-init.json`
+3. Use the direct rust-bridge builder path first:
+   - `pixel_boot_build_orange_gpu.sh --hello-init-mode rust-bridge`
+   - stage `/system/bin/init` as the no_std Rust shim
+   - stage `/hello-init-child` as the full Rust child
+   - keep the companion metadata honest (`hello_init_impl=rust-bridge`, `hello_init_child_path=/hello-init-child`, blank unsupported probe files)
+   - use `pixel_boot_build_rust_bridge.sh` only as a fallback/helper path when converting an already-built image
 4. If the bridge helper regresses on a new rung, fall back down the already-proven helper-backed ladder:
    - `vulkan-offscreen`
    - `vulkan-device-request-smoke`
@@ -89,6 +90,9 @@ Do this in order:
    - do not re-open C-only orange-gpu modes on the Rust bridge until the Rust child actually supports them
    - do not pass parent-probe configs through `rust-bridge` mode until the Rust child grows a real parent-probe implementation
    - if the Rust child still does not emit `probe-fingerprint` / `probe-timeout-class`, keep those metadata fields blank instead of advertising fake expectations
+7. Keep the direct `std`-PID1 investigation narrow:
+   - the leading source-backed suspect is pre-`main` `std` runtime / TLS startup
+   - next smallest hardware discriminator is `no_std` exact-path PID1 shim -> direct `execv()` into the tiny `std` probe, without `fork()`
 
 ## Current Device Map
 

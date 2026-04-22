@@ -10,6 +10,8 @@ ensure_bootimg_shell "$@"
 
 INPUT_IMAGE="${PIXEL_BOOT_INPUT_IMAGE:-}"
 HELLO_INIT_BINARY="${PIXEL_HELLO_INIT_BIN:-}"
+HELLO_INIT_RUST_SHIM_BINARY="${PIXEL_HELLO_INIT_RUST_SHIM_BIN:-}"
+HELLO_INIT_RUST_CHILD_ENTRY="${PIXEL_HELLO_INIT_RUST_CHILD_ENTRY:-hello-init-child}"
 ORANGE_INIT_BINARY="${PIXEL_ORANGE_INIT_BIN:-}"
 GPU_BUNDLE_DIR="${PIXEL_ORANGE_GPU_BUNDLE_DIR:-}"
 KEY_PATH="${AVB_TEST_KEY_PATH:-}"
@@ -47,6 +49,7 @@ METADATA_SUFFIX=".hello-init.json"
 usage() {
   cat <<'EOF'
 Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
+                                                    [--rust-shim PATH]
                                                     [--orange-init PATH]
                                                     [--gpu-bundle DIR] [--key PATH]
                                                     [--output PATH] [--hold-secs N]
@@ -103,6 +106,14 @@ default_output_image() {
 
 default_hello_init_binary() {
   printf '%s\n' "${PIXEL_HELLO_INIT_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init}"
+}
+
+default_rust_hello_init_binary() {
+  printf '%s\n' "${PIXEL_HELLO_INIT_RUST_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust}"
+}
+
+default_rust_hello_init_shim_binary() {
+  printf '%s\n' "${PIXEL_HELLO_INIT_RUST_SHIM_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-shim}"
 }
 
 default_orange_init_binary() {
@@ -302,6 +313,31 @@ assert_hello_variant() {
     "$binary_path" \
     'shadow-owned-init-config:/shadow-init.cfg' \
     "binary is missing the expected config-path sentinel"
+}
+
+assert_rust_hello_variant() {
+  local binary_path
+  binary_path="${1:?assert_rust_hello_variant requires a binary path}"
+
+  assert_hello_variant "$binary_path"
+  assert_binary_sentinel \
+    "$binary_path" \
+    'shadow-owned-init-impl:rust-static' \
+    "binary is missing the rust-static implementation sentinel"
+}
+
+build_or_copy_rust_hello_init_binary() {
+  local package_ref destination binary_name store_path
+  package_ref="${1:?build_or_copy_rust_hello_init_binary requires a package ref}"
+  destination="${2:?build_or_copy_rust_hello_init_binary requires a destination}"
+  binary_name="${3:?build_or_copy_rust_hello_init_binary requires a binary name}"
+
+  mkdir -p "$(dirname "$destination")"
+  store_path="$(
+    pixel_retry_nix_build_print_out_paths nix build --no-link --print-out-paths "$package_ref"
+  )"
+  cp "$store_path/bin/$binary_name" "$destination"
+  chmod 0755 "$destination"
 }
 
 assert_orange_variant() {
@@ -602,6 +638,22 @@ EOF
   printf 'dri_bootstrap=%s\n' "$DRI_BOOTSTRAP" >>"$output_path"
 }
 
+hello_init_impl_value() {
+  if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
+    printf 'rust-bridge\n'
+  else
+    printf '\n'
+  fi
+}
+
+hello_init_child_path_value() {
+  if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
+    printf '/%s\n' "$HELLO_INIT_RUST_CHILD_ENTRY"
+  else
+    printf '\n'
+  fi
+}
+
 write_metadata() {
   local metadata_path
   metadata_path="$(hello_init_metadata_path "$OUTPUT_IMAGE")"
@@ -624,6 +676,8 @@ write_metadata() {
     "$REBOOT_TARGET" \
     "$RUN_TOKEN" \
     "$HELLO_INIT_MODE" \
+    "$(hello_init_impl_value)" \
+    "$(hello_init_child_path_value)" \
     "$DEV_MOUNT" \
     "$MOUNT_DEV" \
     "$MOUNT_PROC" \
@@ -662,6 +716,8 @@ from pathlib import Path
     reboot_target,
     run_token,
     hello_init_mode,
+    hello_init_impl,
+    hello_init_child_path,
     dev_mount,
     mount_dev,
     mount_proc,
@@ -704,6 +760,8 @@ payload_json = {
     "reboot_target": reboot_target,
     "run_token": run_token,
     "hello_init_mode": hello_init_mode,
+    "hello_init_impl": hello_init_impl,
+    "hello_init_child_path": hello_init_child_path,
     "dev_mount": dev_mount,
     "mount_dev": parse_bool(mount_dev),
     "mount_proc": parse_bool(mount_proc),
@@ -728,7 +786,7 @@ payload_json = {
     ),
     "metadata_probe_fingerprint_path": (
         metadata_probe_fingerprint_path
-        if parse_bool(orange_gpu_metadata_stage_breadcrumb)
+        if parse_bool(orange_gpu_metadata_stage_breadcrumb) and hello_init_mode != "rust-bridge"
         else ""
     ),
     "metadata_probe_report_path": (
@@ -738,7 +796,7 @@ payload_json = {
     ),
     "metadata_probe_timeout_class_path": (
         metadata_probe_timeout_class_path
-        if parse_bool(orange_gpu_metadata_stage_breadcrumb)
+        if parse_bool(orange_gpu_metadata_stage_breadcrumb) and hello_init_mode != "rust-bridge"
         else ""
     ),
 }
@@ -819,6 +877,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --init)
       HELLO_INIT_BINARY="${2:?missing value for --init}"
+      shift 2
+      ;;
+    --rust-shim)
+      HELLO_INIT_RUST_SHIM_BINARY="${2:?missing value for --rust-shim}"
       shift 2
       ;;
     --orange-init)
@@ -1091,65 +1153,25 @@ assert_input_matches_stock_boot
 assert_stock_root_init_shape
 
 if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
-  rust_bridge_child_binary="$HELLO_INIT_BINARY"
-  rust_bridge_base_output="$WORK_DIR/orange-gpu-direct-base.img"
-
-  env \
-    PIXEL_BOOT_INPUT_IMAGE="$INPUT_IMAGE" \
-    PIXEL_HELLO_INIT_BIN= \
-    PIXEL_ORANGE_INIT_BIN="$ORANGE_INIT_BINARY" \
-    PIXEL_ORANGE_GPU_BUNDLE_DIR="$GPU_BUNDLE_DIR" \
-    AVB_TEST_KEY_PATH="$KEY_PATH" \
-    PIXEL_BOOT_ORANGE_GPU_IMAGE="$rust_bridge_base_output" \
-    PIXEL_HELLO_INIT_MODE=direct \
-    PIXEL_HELLO_INIT_HOLD_SECS="$HOLD_SECS" \
-    PIXEL_ORANGE_GPU_PRELUDE="$PRELUDE" \
-    PIXEL_ORANGE_GPU_PRELUDE_HOLD_SECS="$PRELUDE_HOLD_SECS" \
-    PIXEL_ORANGE_GPU_MODE="$ORANGE_GPU_MODE" \
-    PIXEL_ORANGE_GPU_LAUNCH_DELAY_SECS="$ORANGE_GPU_LAUNCH_DELAY_SECS" \
-    PIXEL_ORANGE_GPU_PARENT_PROBE_ATTEMPTS="$ORANGE_GPU_PARENT_PROBE_ATTEMPTS" \
-    PIXEL_ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS="$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS" \
-    PIXEL_ORANGE_GPU_METADATA_STAGE_BREADCRUMB="$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" \
-    PIXEL_ORANGE_GPU_FIRMWARE_HELPER="$ORANGE_GPU_FIRMWARE_HELPER" \
-    PIXEL_ORANGE_GPU_TIMEOUT_ACTION="$ORANGE_GPU_TIMEOUT_ACTION" \
-    PIXEL_ORANGE_GPU_WATCHDOG_TIMEOUT_SECS="$ORANGE_GPU_WATCHDOG_TIMEOUT_SECS" \
-    PIXEL_HELLO_INIT_REBOOT_TARGET="$REBOOT_TARGET" \
-    PIXEL_ORANGE_GPU_DEV_MOUNT="$DEV_MOUNT" \
-    PIXEL_HELLO_INIT_MOUNT_DEV="$MOUNT_DEV" \
-    PIXEL_HELLO_INIT_MOUNT_PROC="$MOUNT_PROC" \
-    PIXEL_HELLO_INIT_MOUNT_SYS="$MOUNT_SYS" \
-    PIXEL_HELLO_INIT_LOG_KMSG="$LOG_KMSG" \
-    PIXEL_HELLO_INIT_LOG_PMSG="$LOG_PMSG" \
-    PIXEL_HELLO_INIT_RUN_TOKEN="$RUN_TOKEN" \
-    PIXEL_ORANGE_GPU_DRI_BOOTSTRAP="$DRI_BOOTSTRAP" \
-    PIXEL_ORANGE_GPU_FIRMWARE_BOOTSTRAP="$FIRMWARE_BOOTSTRAP" \
-    PIXEL_ORANGE_GPU_FIRMWARE_DIR="$GPU_FIRMWARE_DIR" \
-    "$0"
-
-  rust_bridge_args=(
-    --input "$rust_bridge_base_output"
-    --key "$KEY_PATH"
-    --output "$OUTPUT_IMAGE"
-  )
-  if [[ -n "$rust_bridge_child_binary" ]]; then
-    rust_bridge_args+=(--child "$rust_bridge_child_binary")
+  if [[ -z "$HELLO_INIT_BINARY" ]]; then
+    HELLO_INIT_BINARY="$(default_rust_hello_init_binary)"
+    build_or_copy_rust_hello_init_binary \
+      "path:$(repo_root)#hello-init-rust-device" \
+      "$HELLO_INIT_BINARY" \
+      "hello-init"
   fi
-  if [[ "$KEEP_WORK_DIR" == "1" ]]; then
-    rust_bridge_args+=(--keep-work-dir)
+  if [[ -z "$HELLO_INIT_RUST_SHIM_BINARY" ]]; then
+    HELLO_INIT_RUST_SHIM_BINARY="$(default_rust_hello_init_shim_binary)"
+    build_or_copy_rust_hello_init_binary \
+      "path:$(repo_root)#hello-init-rust-shim-device" \
+      "$HELLO_INIT_RUST_SHIM_BINARY" \
+      "hello-init-shim"
   fi
-
-  "$SCRIPT_DIR/pixel/pixel_boot_build_rust_bridge.sh" "${rust_bridge_args[@]}"
-  printf 'Owned userspace mode: orange-gpu (%s)\n' "$HELLO_INIT_MODE"
-  printf 'Metadata path: %s\n' "$(hello_init_metadata_path "$OUTPUT_IMAGE")"
-  if [[ "$KEEP_WORK_DIR" == "1" ]]; then
-    printf 'Kept orange-gpu workdir: %s\n' "$WORK_DIR"
+else
+  if [[ -z "$HELLO_INIT_BINARY" ]]; then
+    HELLO_INIT_BINARY="$(default_hello_init_binary)"
+    "$SCRIPT_DIR/pixel/pixel_build_hello_init.sh" --output "$HELLO_INIT_BINARY"
   fi
-  exit 0
-fi
-
-if [[ -z "$HELLO_INIT_BINARY" ]]; then
-  HELLO_INIT_BINARY="$(default_hello_init_binary)"
-  "$SCRIPT_DIR/pixel/pixel_build_hello_init.sh" --output "$HELLO_INIT_BINARY"
 fi
 
 [[ -f "$HELLO_INIT_BINARY" ]] || {
@@ -1157,7 +1179,16 @@ fi
   exit 1
 }
 
-assert_hello_variant "$HELLO_INIT_BINARY"
+if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
+  [[ -f "$HELLO_INIT_RUST_SHIM_BINARY" ]] || {
+    echo "pixel_boot_build_orange_gpu: rust shim binary not found: $HELLO_INIT_RUST_SHIM_BINARY" >&2
+    exit 1
+  }
+  assert_rust_hello_variant "$HELLO_INIT_BINARY"
+  assert_rust_hello_variant "$HELLO_INIT_RUST_SHIM_BINARY"
+else
+  assert_hello_variant "$HELLO_INIT_BINARY"
+fi
 
 if [[ "$PRELUDE" == "orange-init" ]]; then
   if [[ -z "$ORANGE_INIT_BINARY" ]]; then
@@ -1208,9 +1239,15 @@ build_args=(
   --input "$INPUT_IMAGE"
   --key "$KEY_PATH"
   --output "$OUTPUT_IMAGE"
-  --replace "system/bin/init=$HELLO_INIT_BINARY"
   --add "$CONFIG_ENTRY=$CONFIG_PATH"
 )
+
+if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
+  build_args+=(--replace "system/bin/init=$HELLO_INIT_RUST_SHIM_BINARY")
+  build_args+=(--add "$HELLO_INIT_RUST_CHILD_ENTRY=$HELLO_INIT_BINARY")
+else
+  build_args+=(--replace "system/bin/init=$HELLO_INIT_BINARY")
+fi
 
 if [[ "$PRELUDE" == "orange-init" ]]; then
   build_args+=(--add "orange-init=$ORANGE_INIT_BINARY")
@@ -1231,7 +1268,11 @@ write_metadata
 
 printf 'Owned userspace mode: orange-gpu\n'
 printf 'Root init path: preserve stock /init -> /system/bin/init symlink\n'
-printf 'System init mutation: replace system/bin/init with hello-init PID 1\n'
+if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
+  printf 'System init mutation: replace system/bin/init with rust no_std PID1 shim\n'
+else
+  printf 'System init mutation: replace system/bin/init with hello-init PID 1\n'
+fi
 if [[ "$ORANGE_GPU_MODE" == "bundle-smoke" ]]; then
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in bundle-smoke mode from %s\n' "$PAYLOAD_IMAGE_PATH"
 elif [[ "$ORANGE_GPU_MODE" == "vulkan-instance-smoke" ]]; then
@@ -1279,6 +1320,12 @@ printf 'Payload root: %s\n' "$PAYLOAD_IMAGE_PATH"
 printf 'GPU bundle dir: %s\n' "$GPU_BUNDLE_DIR"
 printf 'GPU bundle staged dir: %s\n' "$STAGED_GPU_BUNDLE_DIR"
 printf 'Hello-init mode: %s\n' "$HELLO_INIT_MODE"
+if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
+  printf 'Rust shim path: /system/bin/init\n'
+  printf 'Rust shim binary: %s\n' "$HELLO_INIT_RUST_SHIM_BINARY"
+  printf 'Rust child path: /%s\n' "$HELLO_INIT_RUST_CHILD_ENTRY"
+  printf 'Rust child binary: %s\n' "$HELLO_INIT_BINARY"
+fi
 printf 'GPU exec path: %s/shadow-gpu-smoke\n' "$PAYLOAD_IMAGE_PATH"
 printf 'GPU loader path: %s/lib/ld-linux-aarch64.so.1\n' "$PAYLOAD_IMAGE_PATH"
 printf 'Orange GPU mode: %s\n' "$ORANGE_GPU_MODE"

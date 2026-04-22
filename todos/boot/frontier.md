@@ -45,7 +45,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - it found the firmware-serving prerequisite
   - it proved the real boot-owned GPU frame
   - the next seam should be the Rust port, not more C expansion
-- Rust-port breakpoint on 2026-04-22:
+  - Rust-port breakpoint on 2026-04-22:
   - direct `hello-init-rust` as exact-path `/system/bin/init` still returns `kernel_panic` even with `payload=hello`, `mount_dev=false`, `mount_proc=false`, `mount_sys=false`, `log_kmsg=false`, and `log_pmsg=false`
   - [`build/pixel/boot/oneshot/20260422T073954Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T073954Z-09051JEC202061_) proves a tiny `std` Rust exact-path probe also returns `kernel_panic`
   - [`build/pixel/boot/oneshot/20260422T074257Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T074257Z-09051JEC202061_) proves a `no_std` Rust exact-path probe returns to fastboot/bootloader instead of `kernel_panic`
@@ -64,6 +64,16 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
     - the builder now rejects parent-probe configs in `rust-bridge` mode up front instead of letting the Rust child fail late
     - cloned Rust-bridge metadata now clears unsupported `probe-fingerprint` / `probe-timeout-class` expectations instead of advertising files the Rust child does not currently write
     - the Rust child now honors `log_kmsg` / `log_pmsg` toggles and restores `orange_gpu_timeout_action=panic` instead of treating it like a reboot timeout
+  - Rust-bridge builder truth on 2026-04-22:
+    - `pixel_boot_build_orange_gpu.sh --hello-init-mode rust-bridge` now stages the final image directly instead of recursively building a direct/C image first and then mutating it
+    - the final image now stages `/system/bin/init` as the Rust no_std shim and `/hello-init-child` as the full Rust child in one pass
+    - the orange-gpu smoke now has a positive rust-bridge assertion for that final staged shape and for the companion metadata fields (`hello_init_impl=rust-bridge`, `hello_init_child_path=/hello-init-child`)
+    - `pixel_boot_build_rust_bridge.sh` remains useful as a thin repack helper, but it is no longer the primary builder path for new rust-bridge orange-gpu images
+  - Source-backed `std`-PID1 hypothesis on 2026-04-22:
+    - the leading suspect is pre-`main` `std` runtime / TLS startup, not the `hello-init` logic itself
+    - strongest evidence: tiny direct `std` PID1 probes still panic, while direct `no_std` PID1 and `no_std PID1 -> std child` both work
+    - next smallest hardware discriminator: keep the working `no_std` exact-path PID1 shim, but replace `fork()+exec()` with a straight `execv()` into the tiny `std` probe
+    - if that works, the bad seam is kernel-launched initial startup; if it still panics, `std` as PID1 remains the failing contract even after `exec`
 
 ## Best Observability
 
@@ -121,9 +131,10 @@ Use the panel as a stage channel, not just “something orange happened.”
    - `gpu-render`
    - `orange-init`
    - raw Vulkan query/count only if the bridge seam regresses earlier
-3. Automate the Rust bridge repack path.
-   - current bridge proofs came from repacking already-proven C images, replacing only `/system/bin/init`, adding `/hello-init-child`, and copying the companion `.hello-init.json`
-   - make that a private helper instead of repeating the manual repack/copy loop
+3. Confirm the direct rust-bridge builder on hardware.
+   - the host-side builder now stages the final rust-bridge image directly
+   - next hardware proof should use that direct builder path for `hello`, `vulkan-offscreen`, and `gpu-render`
+   - keep `pixel_boot_build_rust_bridge.sh` only as a fallback/helper path, not as the normal builder route
 4. Keep later work blocked until the Rust seam is green.
    - no compositor
    - no apps
