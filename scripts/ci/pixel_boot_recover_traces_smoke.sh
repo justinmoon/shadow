@@ -134,6 +134,10 @@ PROP
       fi
       ;;
     *"shadow-kgsl-holder-scan-v1"*)
+      if [[ "$TRACE_MODE" == "holder-timeout" ]]; then
+        sleep 2
+        exit 0
+      fi
       printf 'format\tshadow-kgsl-holder-scan-v1\n'
       printf 'device_path\t/dev/kgsl-3d0\n'
       printf 'limits\t8192\t64\n'
@@ -488,5 +492,24 @@ assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlat
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/correlated false
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/matched_expected_run_token true
 assert_json_field "$TOKEN_ONLY_OUTPUT/status.json" channels/logcat-last/matched_shadow_tags false
+
+ROOT_TIMEOUT_PARENT="$TMP_DIR/output-root-timeout"
+ROOT_TIMEOUT_IMAGE="$TMP_DIR/output-root-timeout.img"
+ROOT_TIMEOUT_OUTPUT="$ROOT_TIMEOUT_PARENT/recover-traces"
+write_recover_context "$ROOT_TIMEOUT_PARENT" "$ROOT_TIMEOUT_IMAGE" "$RUN_TOKEN"
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=holder-timeout \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  PIXEL_BOOT_RECOVER_TRACES_ROOT_TIMEOUT_SECS=1 \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$ROOT_TIMEOUT_OUTPUT" >/dev/null
+
+assert_json_field "$ROOT_TIMEOUT_OUTPUT/status.json" root_available true
+assert_json_field "$ROOT_TIMEOUT_OUTPUT/status.json" channels/kgsl-holder-scan/requested_access_mode root
+assert_json_field "$ROOT_TIMEOUT_OUTPUT/status.json" channels/kgsl-holder-scan/actual_access_mode root-timeout
+assert_json_field "$ROOT_TIMEOUT_OUTPUT/status.json" channels/kgsl-holder-scan/available false
+assert_json_field "$ROOT_TIMEOUT_OUTPUT/status.json" channels/kgsl-holder-scan/exit_code 124
 
 printf 'pixel_boot_recover_traces_smoke: ok\n'

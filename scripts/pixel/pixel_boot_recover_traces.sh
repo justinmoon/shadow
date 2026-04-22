@@ -12,6 +12,7 @@ SHADOW_TAG_REGEX='shadow-hello-init|shadow-drm|shadow-owned-init-'
 RECOVERY_ROOT_NAME="recover-traces"
 ADB_TIMEOUT_SECS="${PIXEL_BOOT_RECOVER_TRACES_ADB_TIMEOUT_SECS:-120}"
 BOOT_TIMEOUT_SECS="${PIXEL_BOOT_RECOVER_TRACES_BOOT_TIMEOUT_SECS:-240}"
+ROOT_TIMEOUT_SECS="${PIXEL_BOOT_RECOVER_TRACES_ROOT_TIMEOUT_SECS:-20}"
 WAIT_BOOT_COMPLETED=1
 AUTO_FASTBOOT_REBOOT="${PIXEL_BOOT_RECOVER_TRACES_AUTO_FASTBOOT_REBOOT:-1}"
 CHANNEL_STATUS_TSV=""
@@ -860,10 +861,14 @@ run_device_command() {
         actual_access_mode="root-unavailable"
       else
         set +e
-        pixel_root_shell "$serial" "$command" >"$output_path" 2>"$stderr_path"
+        pixel_root_shell_timeout "$ROOT_TIMEOUT_SECS" "$serial" "$command" >"$output_path" 2>"$stderr_path"
         exit_code="$?"
         set -e
-        actual_access_mode="root"
+        if [[ "$exit_code" -eq 124 ]]; then
+          actual_access_mode="root-timeout"
+        else
+          actual_access_mode="root"
+        fi
       fi
       ;;
     *)
@@ -1578,7 +1583,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$DRY_RUN" == "1" ]]; then
+  if [[ "$DRY_RUN" == "1" ]]; then
   serial="${PIXEL_SERIAL:-pixel}"
   if [[ -z "$OUTPUT_DIR" ]]; then
     OUTPUT_DIR="$(recovery_runs_dir)/$(pixel_timestamp)"
@@ -1588,6 +1593,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
   printf 'output=%s\n' "$OUTPUT_DIR"
   printf 'adb_timeout_secs=%s\n' "$ADB_TIMEOUT_SECS"
   printf 'boot_timeout_secs=%s\n' "$BOOT_TIMEOUT_SECS"
+  printf 'root_timeout_secs=%s\n' "$ROOT_TIMEOUT_SECS"
   printf 'wait_boot_completed=%s\n' "$( [[ "$WAIT_BOOT_COMPLETED" == "1" ]] && printf true || printf false )"
   exit 0
 fi
