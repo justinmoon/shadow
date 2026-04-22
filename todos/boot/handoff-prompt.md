@@ -34,9 +34,11 @@ Continue the Pixel 4a boot-owned bring-up from the new Rust cutoff. The C seam h
   - device
   - offscreen render
 - First truthful boot-owned GPU frame now works:
-  - [`build/pixel/boot/oneshot/20260422T062456Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T062456Z-09051JEC202061_)
-  - recovered `probe-report.txt` shows `child_completed=true`, `child_timed_out=false`, `exit_status=0`
-  - the image is `shadow-boot-orange-gpu-gpurender-fw-helper-v1.img`
+  - [`build/pixel/boot/oneshot/20260422T163601Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T163601Z-09051JEC202061_)
+  - [`build/pixel/boot/oneshot/20260422T163601Z-06241JEC200520_`](../../build/pixel/boot/oneshot/20260422T163601Z-06241JEC200520_)
+  - both recovered bundles have `probe_summary_proves_gpu_render=true`
+  - the watched operator-facing confirmation run is [`build/pixel/boot/oneshot/20260422T165710Z-06241JEC200520_`](../../build/pixel/boot/oneshot/20260422T165710Z-06241JEC200520_) with orange, then green for about 10 seconds, then reboot
+  - the signed-off image is `shadow-boot-orange-gpu-gpurender-fw-helper-signoff-v3-visible10.img`
 - Confirmation device proof exists for the helper-backed raw Vulkan ladder:
   - [`build/pixel/boot/oneshot/20260422T060706Z-11151JEC200472_`](../../build/pixel/boot/oneshot/20260422T060706Z-11151JEC200472_)
 
@@ -55,7 +57,7 @@ Continue the Pixel 4a boot-owned bring-up from the new Rust cutoff. The C seam h
 - The current helper-backed one-shot recipe is:
   - `--skip-collect --recover-traces-after --no-wait-boot-completed`
   - read `recover-traces/status.json`
-  - treat `probe_report_proves_child_success=true` as the success condition
+  - for helper-backed `gpu-render`, treat `probe_summary_proves_gpu_render=true` as the success condition
 
 ## What Is Strongly Ruled Out
 

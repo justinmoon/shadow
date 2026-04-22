@@ -10,7 +10,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 
 ## Current Truth
 
-- Rooted control and cold-control proofs still hold, but the local frontier is the final C signoff contract.
+- Rooted control and cold-control proofs still hold, but they are no longer the frontier.
 - This branch hardens that contract in three ways:
   - `hello-init` now persists `/orange-gpu/summary.json` durably to `/metadata/.../probe-summary.json`
   - recovery validates `gpu-render` from that summary, not just from `probe-report.txt`
