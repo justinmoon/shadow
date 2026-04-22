@@ -71,7 +71,7 @@ It does not initially mean:
 - custom `boot.img` with Shadow-owned PID 1, no stock Android init
 - Shadow owns `/dev` bootstrap, firmware serving, and GPU bring-up
 - prove the full GPU render path: instance, adapter, device, offscreen render, KMS present
-- port PID 1 to Rust once the C seam proves `boot-vulkan-offscreen`
+- port PID 1 to Rust as soon as the C seam proves the first truthful boot-owned GPU frame (`orange-gpu`), not later product milestones
 - firmware pulled from device (track 1) with parallel Nix reproduction (track 2)
 - success means Shadow renders to screen from boot with no Android code running
 

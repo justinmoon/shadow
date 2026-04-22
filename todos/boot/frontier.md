@@ -42,6 +42,9 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - both recent runs came back to Android
   - both recovered `metadata_probe_stage_present=false` and `metadata_probe_report_present=false`
   - so the watched visual channel is now stronger than the metadata channel for this seam
+- C remains acceptable only for the current driver-discovery seam:
+  - use it to finish post-firmware KGSL classification through the first truthful `orange-gpu` frame
+  - once that first boot-owned GPU frame is proven, cut the PID 1 / bootstrap seam over to Rust before compositor, runtime, shell, or service bring-up
 - The latest discriminating run is:
   - [`build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_)
   - recovered `probe-report.txt` shows `wchan=_request_firmware`

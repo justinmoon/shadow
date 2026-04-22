@@ -84,6 +84,7 @@ The best next discriminators are:
 3. Keep execution-context and holder-scan evidence as supporting context, not the primary blocker.
 
 Do not jump back out to `orange-gpu`, compositor, or app launch work until one of those moves the seam.
+Once the first truthful boot-owned `orange-gpu` frame is proven, stop extending the C PID 1 seam and port the bootstrap path to Rust before any compositor, runtime, shell, or service milestones.
 
 ## Current Device Map
 
