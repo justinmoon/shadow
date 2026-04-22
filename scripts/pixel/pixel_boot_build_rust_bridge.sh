@@ -12,21 +12,24 @@ INPUT_IMAGE="${PIXEL_BOOT_INPUT_IMAGE:-}"
 SHIM_BINARY="${PIXEL_HELLO_INIT_RUST_SHIM_BIN:-}"
 SHIM_MODE="${PIXEL_HELLO_INIT_RUST_SHIM_MODE:-fork}"
 CHILD_BINARY="${PIXEL_HELLO_INIT_RUST_CHILD_BIN:-}"
+CHILD_PROFILE="${PIXEL_HELLO_INIT_RUST_CHILD_PROFILE:-hello}"
 CHILD_ENTRY="${PIXEL_HELLO_INIT_RUST_CHILD_ENTRY:-hello-init-child}"
 KEY_PATH="${AVB_TEST_KEY_PATH:-}"
 OUTPUT_IMAGE="${PIXEL_BOOT_RUST_BRIDGE_IMAGE:-}"
 KEEP_WORK_DIR=0
+CHILD_PROFILE_EXPLICIT=0
+DEFAULT_CHILD_ENTRY="hello-init-child"
 
 usage() {
   cat <<'EOF'
 Usage: scripts/pixel/pixel_boot_build_rust_bridge.sh --input PATH [--shim PATH]
                                                      [--shim-mode fork|exec]
-                                                     [--child PATH] [--child-entry NAME]
+                                                     [--child PATH] [--child-profile hello|std-probe|nostd-probe]
                                                      [--key PATH] [--output PATH]
                                                      [--keep-work-dir]
 
 Repack an already-proven owned-userspace boot image so Rust uses a no_std exact-path
-PID 1 shim at /system/bin/init and launches the full Rust hello-init as /hello-init-child.
+PID 1 shim at /system/bin/init and launches a Rust child at /hello-init-child.
 If the input image has a companion .hello-init.json, clone it to the output image path so
 post-boot recovery still knows the expected run token and metadata paths.
 EOF
@@ -46,8 +49,22 @@ assert_shim_mode_word() {
   esac
 }
 
+assert_child_profile_word() {
+  local value
+  value="${1:?assert_child_profile_word requires a value}"
+
+  case "$value" in
+    hello|std-probe|nostd-probe)
+      ;;
+    *)
+      echo "pixel_boot_build_rust_bridge: unsupported child profile: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
 default_output_image() {
-  local input_path base_name extension stem
+  local input_path base_name extension stem suffix
   input_path="${1:?default_output_image requires an input path}"
   base_name="$(basename "$input_path")"
   extension=""
@@ -56,7 +73,14 @@ default_output_image() {
     extension=".img"
     stem="${base_name%.img}"
   fi
-  printf '%s/%s-rust-bridge%s\n' "$(pixel_boot_dir)" "$stem" "$extension"
+  suffix="-rust-bridge"
+  if [[ "$SHIM_MODE" != "fork" ]]; then
+    suffix+="-${SHIM_MODE}"
+  fi
+  if [[ "$CHILD_PROFILE" != "hello" ]]; then
+    suffix+="-${CHILD_PROFILE}"
+  fi
+  printf '%s/%s%s%s\n' "$(pixel_boot_dir)" "$stem" "$suffix" "$extension"
 }
 
 default_shim_binary() {
@@ -90,6 +114,56 @@ default_shim_binary_name() {
       printf 'hello-init-shim-exec\n'
       ;;
   esac
+}
+
+default_child_binary() {
+  case "$CHILD_PROFILE" in
+    hello)
+      printf '%s\n' "${PIXEL_HELLO_INIT_RUST_CHILD_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust}"
+      ;;
+    std-probe)
+      printf '%s\n' "${PIXEL_HELLO_INIT_RUST_CHILD_STD_PROBE_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-probe}"
+      ;;
+    nostd-probe)
+      printf '%s\n' "${PIXEL_HELLO_INIT_RUST_CHILD_NOSTD_PROBE_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-nostd-probe}"
+      ;;
+  esac
+}
+
+default_child_package_ref() {
+  case "$CHILD_PROFILE" in
+    hello)
+      printf 'path:%s#hello-init-rust-device\n' "$(repo_root)"
+      ;;
+    std-probe)
+      printf 'path:%s#hello-init-rust-probe-device\n' "$(repo_root)"
+      ;;
+    nostd-probe)
+      printf 'path:%s#hello-init-rust-nostd-probe-device\n' "$(repo_root)"
+      ;;
+  esac
+}
+
+default_child_binary_name() {
+  case "$CHILD_PROFILE" in
+    hello)
+      printf 'hello-init\n'
+      ;;
+    std-probe)
+      printf 'hello-init-probe\n'
+      ;;
+    nostd-probe)
+      printf 'hello-init-nostd-probe\n'
+      ;;
+  esac
+}
+
+effective_child_profile() {
+  if [[ -n "$CHILD_BINARY" && "$CHILD_PROFILE_EXPLICIT" != "1" ]]; then
+    printf 'custom\n'
+    return
+  fi
+  printf '%s\n' "$CHILD_PROFILE"
 }
 
 build_or_copy_rust_binary() {
@@ -138,7 +212,7 @@ clone_companion_metadata() {
   source_metadata="${1:?clone_companion_metadata requires a source metadata path}"
   destination_metadata="${2:?clone_companion_metadata requires a destination metadata path}"
 
-  python3 - "$source_metadata" "$destination_metadata" "$OUTPUT_IMAGE" "$CHILD_ENTRY" <<'PY'
+  python3 - "$source_metadata" "$destination_metadata" "$OUTPUT_IMAGE" "$CHILD_ENTRY" "$SHIM_MODE" "$(effective_child_profile)" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -147,12 +221,16 @@ source_metadata = Path(sys.argv[1])
 destination_metadata = Path(sys.argv[2])
 output_image = sys.argv[3]
 child_entry = sys.argv[4]
+shim_mode = sys.argv[5]
+child_profile = sys.argv[6]
 
 payload = json.loads(source_metadata.read_text(encoding="utf-8"))
 payload["image"] = output_image
 payload["hello_init_child_path"] = f"/{child_entry}"
 payload["hello_init_impl"] = "rust-bridge"
 payload["hello_init_mode"] = "rust-bridge"
+payload["hello_init_child_profile"] = child_profile
+payload["hello_init_shim_mode"] = shim_mode
 payload["metadata_probe_fingerprint_path"] = ""
 payload["metadata_probe_timeout_class_path"] = ""
 destination_metadata.write_text(
@@ -178,6 +256,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --child)
       CHILD_BINARY="${2:?missing value for --child}"
+      shift 2
+      ;;
+    --child-profile)
+      CHILD_PROFILE="${2:?missing value for --child-profile}"
+      CHILD_PROFILE_EXPLICIT=1
       shift 2
       ;;
     --child-entry)
@@ -217,6 +300,13 @@ done
   exit 1
 }
 assert_shim_mode_word "$SHIM_MODE"
+assert_child_profile_word "$CHILD_PROFILE"
+
+if [[ "$CHILD_ENTRY" != "$DEFAULT_CHILD_ENTRY" ]]; then
+  echo "pixel_boot_build_rust_bridge: unsupported child entry: $CHILD_ENTRY" >&2
+  echo "pixel_boot_build_rust_bridge: the current Rust shims always exec /$DEFAULT_CHILD_ENTRY" >&2
+  exit 1
+fi
 
 if [[ -z "$KEY_PATH" ]]; then
   KEY_PATH="$(ensure_cached_avb_testkey)"
@@ -228,8 +318,8 @@ if [[ -z "$SHIM_BINARY" ]]; then
 fi
 
 if [[ -z "$CHILD_BINARY" ]]; then
-  CHILD_BINARY="$(pixel_boot_dir)/hello-init-rust"
-  build_or_copy_rust_binary "path:$(repo_root)#hello-init-rust-device" "$CHILD_BINARY" "hello-init"
+  CHILD_BINARY="$(default_child_binary)"
+  build_or_copy_rust_binary "$(default_child_package_ref)" "$CHILD_BINARY" "$(default_child_binary_name)"
 fi
 
 assert_rust_bridge_binary "$SHIM_BINARY"
@@ -263,5 +353,6 @@ printf 'Rust bridge input: %s\n' "$INPUT_IMAGE"
 printf 'Rust bridge output: %s\n' "$OUTPUT_IMAGE"
 printf 'Shim mode: %s\n' "$SHIM_MODE"
 printf 'Shim binary: %s\n' "$SHIM_BINARY"
+printf 'Child profile: %s\n' "$(effective_child_profile)"
 printf 'Child binary: %s\n' "$CHILD_BINARY"
 printf 'Child entry path: /%s\n' "$CHILD_ENTRY"

@@ -48,7 +48,8 @@ Related docs:
     - current leading `std`-PID1 source hypothesis:
       - the likely bad seam is pre-`main` `std` runtime / TLS startup, not the `hello-init` logic
       - next hardware discriminator is `no_std` exact-path PID1 shim -> direct `execv()` into the tiny `std` probe, with no `fork()`
-      - `pixel_boot_build_rust_bridge.sh --shim-mode exec` is now wired for that exact discriminator
+      - `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe` is now wired for that exact discriminator
+      - the current bridge shims always exec `/hello-init-child`, so the helper now rejects alternate child-entry paths instead of pretending they work
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
   - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.

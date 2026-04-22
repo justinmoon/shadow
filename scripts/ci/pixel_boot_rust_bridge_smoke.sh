@@ -10,6 +10,7 @@ BOOT_BUILD_RAMDISK="$TMP_DIR/build-ramdisk.cpio"
 SHIM_BINARY="$TMP_DIR/hello-init-rust-shim"
 EXEC_SHIM_BINARY="$TMP_DIR/hello-init-rust-shim-exec"
 CHILD_BINARY="$TMP_DIR/hello-init-rust-child"
+STD_PROBE_BINARY="$TMP_DIR/hello-init-rust-probe"
 OUTPUT_IMAGE="$TMP_DIR/rust-bridge-boot.img"
 EXEC_OUTPUT_IMAGE="$TMP_DIR/rust-bridge-exec-boot.img"
 AVB_KEY_PATH="$TMP_DIR/avb-testkey.pem"
@@ -51,6 +52,15 @@ cat >"$CHILD_BINARY" <<'EOF'
 echo hello-init-rust-child
 EOF
 chmod 0755 "$CHILD_BINARY"
+
+cat >"$STD_PROBE_BINARY" <<'EOF'
+#!/system/bin/sh
+# shadow-owned-init-role:hello-init
+# shadow-owned-init-impl:rust-static
+# shadow-owned-init-config:/shadow-init.cfg
+echo hello-init-rust-probe
+EOF
+chmod 0755 "$STD_PROBE_BINARY"
 
 cat >"$BOOT_BUILD_INPUT.hello-init.json" <<EOF
 {
@@ -294,6 +304,7 @@ rust_bridge_output="$(
   scripts/pixel/pixel_boot_build_rust_bridge.sh \
     --input "$BOOT_BUILD_INPUT" \
     --shim "$SHIM_BINARY" \
+    --child-profile hello \
     --child "$CHILD_BINARY" \
     --key "$AVB_KEY_PATH" \
     --output "$OUTPUT_IMAGE"
@@ -304,6 +315,7 @@ assert_contains "$rust_bridge_output" "Rust bridge input: $BOOT_BUILD_INPUT"
 assert_contains "$rust_bridge_output" "Rust bridge output: $OUTPUT_IMAGE"
 assert_contains "$rust_bridge_output" "Shim mode: fork"
 assert_contains "$rust_bridge_output" "Shim binary: $SHIM_BINARY"
+assert_contains "$rust_bridge_output" "Child profile: hello"
 assert_contains "$rust_bridge_output" "Child binary: $CHILD_BINARY"
 assert_contains "$rust_bridge_output" "Child entry path: /hello-init-child"
 
@@ -311,8 +323,10 @@ assert_cpio_entry_equals "$OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# s
 assert_cpio_entry_equals "$OUTPUT_IMAGE" hello-init-child $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-child\n'
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" image "$OUTPUT_IMAGE"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_child_path "/hello-init-child"
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_child_profile "hello"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_impl "rust-bridge"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_mode "rust-bridge"
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_shim_mode "fork"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" kind "orange_gpu_build"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" metadata_probe_fingerprint_path ""
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" metadata_probe_timeout_class_path ""
@@ -323,8 +337,8 @@ exec_bridge_output="$(
     --input "$BOOT_BUILD_INPUT" \
     --shim "$EXEC_SHIM_BINARY" \
     --shim-mode exec \
-    --child "$CHILD_BINARY" \
-    --child-entry hello-init-std-probe \
+    --child-profile std-probe \
+    --child "$STD_PROBE_BINARY" \
     --key "$AVB_KEY_PATH" \
     --output "$EXEC_OUTPUT_IMAGE"
 )"
@@ -333,16 +347,43 @@ assert_contains "$exec_bridge_output" "Rust bridge input: $BOOT_BUILD_INPUT"
 assert_contains "$exec_bridge_output" "Rust bridge output: $EXEC_OUTPUT_IMAGE"
 assert_contains "$exec_bridge_output" "Shim mode: exec"
 assert_contains "$exec_bridge_output" "Shim binary: $EXEC_SHIM_BINARY"
-assert_contains "$exec_bridge_output" "Child binary: $CHILD_BINARY"
-assert_contains "$exec_bridge_output" "Child entry path: /hello-init-std-probe"
+assert_contains "$exec_bridge_output" "Child profile: std-probe"
+assert_contains "$exec_bridge_output" "Child binary: $STD_PROBE_BINARY"
+assert_contains "$exec_bridge_output" "Child entry path: /hello-init-child"
 assert_cpio_entry_equals "$EXEC_OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-shim-exec\n'
-assert_cpio_entry_equals "$EXEC_OUTPUT_IMAGE" hello-init-std-probe $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-child\n'
+assert_cpio_entry_equals "$EXEC_OUTPUT_IMAGE" hello-init-child $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-probe\n'
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" image "$EXEC_OUTPUT_IMAGE"
-assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_child_path "/hello-init-std-probe"
+assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_child_path "/hello-init-child"
+assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_child_profile "std-probe"
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_impl "rust-bridge"
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_mode "rust-bridge"
+assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_shim_mode "exec"
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" metadata_probe_fingerprint_path ""
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" metadata_probe_timeout_class_path ""
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" run_token "$INPUT_RUN_TOKEN"
+
+set +e
+invalid_child_entry_output="$(
+  scripts/pixel/pixel_boot_build_rust_bridge.sh \
+    --input "$BOOT_BUILD_INPUT" \
+    --shim "$EXEC_SHIM_BINARY" \
+    --shim-mode exec \
+    --child-profile std-probe \
+    --child "$STD_PROBE_BINARY" \
+    --child-entry hello-init-std-probe \
+    --key "$AVB_KEY_PATH" \
+    --output "$TMP_DIR/invalid-child-entry.img" \
+    2>&1
+)"
+invalid_child_entry_status=$?
+set -e
+
+if [[ "$invalid_child_entry_status" -eq 0 ]]; then
+  echo "pixel_boot_rust_bridge_smoke: expected custom child-entry to fail" >&2
+  exit 1
+fi
+
+assert_contains "$invalid_child_entry_output" "unsupported child entry: hello-init-std-probe"
+assert_contains "$invalid_child_entry_output" "the current Rust shims always exec /hello-init-child"
 
 echo "pixel_boot_rust_bridge_smoke: ok"
