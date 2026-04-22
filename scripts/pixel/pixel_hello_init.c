@@ -41,6 +41,7 @@
 #define SHADOW_HELLO_INIT_ORANGE_GPU_CACHE_HOME "/orange-gpu/home/.cache"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_CONFIG_HOME "/orange-gpu/home/.config"
 #define SHADOW_HELLO_INIT_ORANGE_GPU_MESA_CACHE_DIR "/orange-gpu/home/.cache/mesa"
+#define SHADOW_HELLO_INIT_FIRMWARE_CLASS_ROOT "/sys/class/firmware"
 #define SHADOW_HELLO_INIT_METADATA_MOUNT_PATH "/metadata"
 #define SHADOW_HELLO_INIT_METADATA_DEVICE_PATH "/dev/block/by-name/metadata"
 #define SHADOW_HELLO_INIT_METADATA_ROOT "/metadata/shadow-hello-init"
@@ -73,6 +74,8 @@
 #define SHADOW_HELLO_INIT_ORANGE_GPU_WATCHDOG_GRACE_SECONDS 30U
 #define SHADOW_HELLO_INIT_ORANGE_GPU_CHECKPOINT_HOLD_SECONDS 1U
 #define SHADOW_HELLO_INIT_FIRMWARE_PROBE_CHECKPOINT_HOLD_SECONDS 2U
+#define SHADOW_HELLO_INIT_FIRMWARE_HELPER_TIMEOUT_SECONDS 15U
+#define SHADOW_HELLO_INIT_FIRMWARE_HELPER_POLL_MILLIS 50U
 #define SHADOW_HELLO_INIT_TIMEOUT_CLASSIFIER_HOLD_SECONDS 3U
 
 static const char kOwnedInitRoleSentinel[] = "shadow-owned-init-role:hello-init";
@@ -118,6 +121,18 @@ struct block_device_identity {
     bool available;
     unsigned int major_num;
     unsigned int minor_num;
+};
+
+struct sunfish_gpu_firmware_entry {
+    const char *filename;
+    const char *stage_token;
+};
+
+static const struct sunfish_gpu_firmware_entry kSunfishGpuFirmwareEntries[] = {
+    { "a630_sqe.fw", "a630-sqe" },
+    { "a618_gmu.bin", "a618-gmu" },
+    { "a615_zap.mdt", "a615-zap-mdt" },
+    { "a615_zap.b02", "a615-zap-b02" },
 };
 
 struct metadata_stage_runtime {
@@ -277,6 +292,31 @@ static void write_fd_all(int fd, const char *message) {
         total += (size_t)written;
         remaining -= (size_t)written;
     }
+}
+
+static int write_fd_all_bytes(int fd, const void *buffer, size_t size) {
+    const char *cursor = (const char *)buffer;
+    size_t remaining = size;
+
+    while (remaining > 0U) {
+        ssize_t written = write(fd, cursor, remaining);
+
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        if (written == 0) {
+            errno = EIO;
+            return -1;
+        }
+
+        cursor += (size_t)written;
+        remaining -= (size_t)written;
+    }
+
+    return 0;
 }
 
 static int write_fd_all_checked(int fd, const char *message) {
@@ -2111,6 +2151,7 @@ static bool parse_orange_gpu_mode_value(const char *raw, char *dest, size_t dest
         strcmp(value, "firmware-probe-only") != 0 &&
         strcmp(value, "timeout-control-smoke") != 0 &&
         strcmp(value, "c-kgsl-open-readonly-smoke") != 0 &&
+        strcmp(value, "c-kgsl-open-readonly-firmware-helper-smoke") != 0 &&
         strcmp(value, "c-kgsl-open-readonly-pid1-smoke") != 0 &&
         strcmp(value, "raw-kgsl-open-readonly-smoke") != 0 &&
         strcmp(value, "raw-kgsl-getproperties-smoke") != 0 &&
@@ -2435,6 +2476,21 @@ static void sleep_seconds(unsigned int seconds) {
     }
 }
 
+static void sleep_milliseconds(unsigned int milliseconds) {
+    struct timespec request;
+    struct timespec remaining;
+
+    request.tv_sec = (time_t)(milliseconds / 1000U);
+    request.tv_nsec = (long)(milliseconds % 1000U) * 1000000L;
+
+    while (nanosleep(&request, &remaining) != 0) {
+        if (errno != EINTR) {
+            return;
+        }
+        request = remaining;
+    }
+}
+
 static void hold_for_observation(unsigned int hold_seconds) {
     const unsigned int heartbeat_interval = 10U;
     unsigned int remaining = hold_seconds;
@@ -2520,6 +2576,22 @@ static bool orange_gpu_mode_is_timeout_control_smoke(const struct hello_init_con
 
 static bool orange_gpu_mode_is_c_kgsl_open_readonly_smoke(const struct hello_init_config *config) {
     return strcmp(config->orange_gpu_mode, "c-kgsl-open-readonly-smoke") == 0;
+}
+
+static bool orange_gpu_mode_is_c_kgsl_open_readonly_firmware_helper_smoke(
+    const struct hello_init_config *config
+) {
+    return strcmp(
+               config->orange_gpu_mode,
+               "c-kgsl-open-readonly-firmware-helper-smoke"
+           ) == 0;
+}
+
+static bool orange_gpu_mode_is_any_c_kgsl_open_readonly_smoke(
+    const struct hello_init_config *config
+) {
+    return orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config) ||
+           orange_gpu_mode_is_c_kgsl_open_readonly_firmware_helper_smoke(config);
 }
 
 static bool orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(const struct hello_init_config *config) {
@@ -2629,13 +2701,13 @@ static bool orange_gpu_mode_uses_visible_checkpoints(
     if (orange_gpu_checkpoint_is_firmware_probe(checkpoint_name)) {
         return orange_gpu_mode_is_firmware_probe_only(config) ||
                orange_gpu_mode_is_timeout_control_smoke(config) ||
-               orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config) ||
+               orange_gpu_mode_is_any_c_kgsl_open_readonly_smoke(config) ||
                orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(config);
     }
 
     if (orange_gpu_checkpoint_is_timeout_classifier(checkpoint_name)) {
         return orange_gpu_mode_is_timeout_control_smoke(config) ||
-               orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config) ||
+               orange_gpu_mode_is_any_c_kgsl_open_readonly_smoke(config) ||
                orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(config);
     }
 
@@ -3613,7 +3685,7 @@ static void classify_orange_gpu_timeout(
         classification->report_present = true;
         return;
     }
-    if (!orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config)) {
+    if (!orange_gpu_mode_is_any_c_kgsl_open_readonly_smoke(config)) {
         return;
     }
 
@@ -4189,15 +4261,6 @@ static int probe_bootstrap_gpu_firmware(
     const char *payload_probe_stage_path,
     const char *payload_probe_stage_prefix
 ) {
-    static const struct {
-        const char *path;
-        const char *stage_token;
-    } kSunfishGpuFirmwarePaths[] = {
-        {"/lib/firmware/a630_sqe.fw", "a630-sqe"},
-        {"/lib/firmware/a618_gmu.bin", "a618-gmu"},
-        {"/lib/firmware/a615_zap.mdt", "a615-zap-mdt"},
-        {"/lib/firmware/a615_zap.b02", "a615-zap-b02"},
-    };
     size_t index;
 
     if (strcmp(config->firmware_bootstrap, "ramdisk-lib-firmware") != 0) {
@@ -4209,13 +4272,24 @@ static int probe_bootstrap_gpu_firmware(
         payload_probe_stage_prefix,
         "firmware-probe-start"
     );
-    for (index = 0; index < sizeof(kSunfishGpuFirmwarePaths) / sizeof(kSunfishGpuFirmwarePaths[0]); index++) {
+    for (index = 0; index < sizeof(kSunfishGpuFirmwareEntries) / sizeof(kSunfishGpuFirmwareEntries[0]); index++) {
         int firmware_fd;
         char probe_byte = '\0';
+        char firmware_path[PATH_MAX];
         char stage_value[64];
 
+        if (
+            snprintf(
+                firmware_path,
+                sizeof(firmware_path),
+                "/lib/firmware/%s",
+                kSunfishGpuFirmwareEntries[index].filename
+            ) < 0
+        ) {
+            return 1;
+        }
         firmware_fd = open(
-            kSunfishGpuFirmwarePaths[index].path,
+            firmware_path,
             O_RDONLY | O_CLOEXEC | O_NOCTTY
         );
         if (firmware_fd < 0) {
@@ -4223,13 +4297,13 @@ static int probe_bootstrap_gpu_firmware(
                 stage_value,
                 sizeof(stage_value),
                 "firmware-probe-%s-open-failed",
-                kSunfishGpuFirmwarePaths[index].stage_token
+                kSunfishGpuFirmwareEntries[index].stage_token
             );
             log_stage(
                 "<3>",
                 "orange-gpu-firmware-probe-open-failed",
                 "path=%s errno=%d",
-                kSunfishGpuFirmwarePaths[index].path,
+                firmware_path,
                 errno
             );
             write_payload_probe_stage_best_effort(
@@ -4253,13 +4327,13 @@ static int probe_bootstrap_gpu_firmware(
                 stage_value,
                 sizeof(stage_value),
                 "firmware-probe-%s-read-failed",
-                kSunfishGpuFirmwarePaths[index].stage_token
+                kSunfishGpuFirmwareEntries[index].stage_token
             );
             log_stage(
                 "<3>",
                 "orange-gpu-firmware-probe-read-failed",
                 "path=%s errno=%d",
-                kSunfishGpuFirmwarePaths[index].path,
+                firmware_path,
                 errno
             );
             write_payload_probe_stage_best_effort(
@@ -4279,7 +4353,7 @@ static int probe_bootstrap_gpu_firmware(
             stage_value,
             sizeof(stage_value),
             "firmware-probe-%s-ok",
-            kSunfishGpuFirmwarePaths[index].stage_token
+            kSunfishGpuFirmwareEntries[index].stage_token
         );
         write_payload_probe_stage_best_effort(
             payload_probe_stage_path,
@@ -4290,7 +4364,7 @@ static int probe_bootstrap_gpu_firmware(
             "<6>",
             "orange-gpu-firmware-probe-ok",
             "path=%s",
-            kSunfishGpuFirmwarePaths[index].path
+            firmware_path
         );
     }
 
@@ -4307,15 +4381,274 @@ static int probe_bootstrap_gpu_firmware(
     return 0;
 }
 
-static int run_c_kgsl_open_readonly_smoke(
+static const struct sunfish_gpu_firmware_entry *find_sunfish_gpu_firmware_entry(
+    const char *name,
+    size_t *entry_index
+) {
+    size_t index;
+
+    if (entry_index != NULL) {
+        *entry_index = 0U;
+    }
+    if (name == NULL || name[0] == '\0') {
+        return NULL;
+    }
+
+    for (index = 0U; index < sizeof(kSunfishGpuFirmwareEntries) / sizeof(kSunfishGpuFirmwareEntries[0]); index++) {
+        if (strcmp(name, kSunfishGpuFirmwareEntries[index].filename) == 0) {
+            if (entry_index != NULL) {
+                *entry_index = index;
+            }
+            return &kSunfishGpuFirmwareEntries[index];
+        }
+    }
+
+    return NULL;
+}
+
+static int copy_fd_contents(int source_fd, int dest_fd) {
+    char buffer[4096];
+
+    for (;;) {
+        ssize_t bytes_read = read(source_fd, buffer, sizeof(buffer));
+
+        if (bytes_read < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        if (bytes_read == 0) {
+            return 0;
+        }
+        if (write_fd_all_bytes(dest_fd, buffer, (size_t)bytes_read) != 0) {
+            return -1;
+        }
+    }
+}
+
+static int service_firmware_request_from_ramdisk(
+    const struct sunfish_gpu_firmware_entry *entry
+) {
+    char request_root[PATH_MAX];
+    char loading_path[PATH_MAX];
+    char data_path[PATH_MAX];
+    char firmware_path[PATH_MAX];
+    int loading_fd = -1;
+    int data_fd = -1;
+    int firmware_fd = -1;
+    int saved_errno = 0;
+
+    if (entry == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (
+        snprintf(
+            request_root,
+            sizeof(request_root),
+            "%s/%s",
+            SHADOW_HELLO_INIT_FIRMWARE_CLASS_ROOT,
+            entry->filename
+        ) < 0 ||
+        snprintf(loading_path, sizeof(loading_path), "%s/loading", request_root) < 0 ||
+        snprintf(data_path, sizeof(data_path), "%s/data", request_root) < 0 ||
+        snprintf(firmware_path, sizeof(firmware_path), "/lib/firmware/%s", entry->filename) < 0
+    ) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    loading_fd = open(loading_path, O_WRONLY | O_CLOEXEC | O_NOCTTY);
+    if (loading_fd < 0) {
+        return -1;
+    }
+    data_fd = open(data_path, O_WRONLY | O_CLOEXEC | O_NOCTTY);
+    if (data_fd < 0) {
+        saved_errno = errno;
+        close(loading_fd);
+        errno = saved_errno;
+        return -1;
+    }
+    firmware_fd = open(firmware_path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+    if (firmware_fd < 0) {
+        saved_errno = errno;
+        (void)write_fd_all_bytes(loading_fd, "-1", 2U);
+        close(data_fd);
+        close(loading_fd);
+        errno = saved_errno;
+        return -1;
+    }
+
+    if (write_fd_all_bytes(loading_fd, "1", 1U) != 0) {
+        saved_errno = errno;
+        (void)write_fd_all_bytes(loading_fd, "-1", 2U);
+        close(firmware_fd);
+        close(data_fd);
+        close(loading_fd);
+        errno = saved_errno;
+        return -1;
+    }
+    if (copy_fd_contents(firmware_fd, data_fd) != 0) {
+        saved_errno = errno;
+        (void)write_fd_all_bytes(loading_fd, "-1", 2U);
+        close(firmware_fd);
+        close(data_fd);
+        close(loading_fd);
+        errno = saved_errno;
+        return -1;
+    }
+    if (write_fd_all_bytes(loading_fd, "0", 1U) != 0) {
+        saved_errno = errno;
+        close(firmware_fd);
+        close(data_fd);
+        close(loading_fd);
+        errno = saved_errno;
+        return -1;
+    }
+
+    close(firmware_fd);
+    close(data_fd);
+    close(loading_fd);
+    return 0;
+}
+
+static int run_ramdisk_firmware_helper_loop(void) {
+    bool serviced[sizeof(kSunfishGpuFirmwareEntries) / sizeof(kSunfishGpuFirmwareEntries[0])] = { false };
+    uint64_t deadline = monotonic_millis() +
+                        (uint64_t)SHADOW_HELLO_INIT_FIRMWARE_HELPER_TIMEOUT_SECONDS * 1000ULL;
+    unsigned int serviced_count = 0U;
+
+    log_stage(
+        "<6>",
+        "orange-gpu-firmware-helper-start",
+        "timeout_secs=%u",
+        SHADOW_HELLO_INIT_FIRMWARE_HELPER_TIMEOUT_SECONDS
+    );
+
+    for (;;) {
+        DIR *firmware_dir = opendir(SHADOW_HELLO_INIT_FIRMWARE_CLASS_ROOT);
+        bool all_serviced = true;
+        bool timed_out = monotonic_millis() >= deadline;
+
+        if (firmware_dir != NULL) {
+            struct dirent *entry;
+
+            while ((entry = readdir(firmware_dir)) != NULL) {
+                const struct sunfish_gpu_firmware_entry *firmware_entry;
+                size_t entry_index;
+
+                if (entry->d_name[0] == '.') {
+                    continue;
+                }
+                firmware_entry = find_sunfish_gpu_firmware_entry(entry->d_name, &entry_index);
+                if (firmware_entry == NULL) {
+                    continue;
+                }
+                if (serviced[entry_index]) {
+                    continue;
+                }
+
+                all_serviced = false;
+                if (service_firmware_request_from_ramdisk(firmware_entry) == 0) {
+                    serviced[entry_index] = true;
+                    serviced_count++;
+                    log_stage(
+                        "<6>",
+                        "orange-gpu-firmware-helper-serviced",
+                        "firmware=%s count=%u",
+                        firmware_entry->filename,
+                        serviced_count
+                    );
+                } else {
+                    log_stage(
+                        "<4>",
+                        "orange-gpu-firmware-helper-service-failed",
+                        "firmware=%s errno=%d",
+                        firmware_entry->filename,
+                        errno
+                    );
+                }
+            }
+
+            closedir(firmware_dir);
+        } else {
+            log_stage(
+                "<4>",
+                "orange-gpu-firmware-helper-open-dir-failed",
+                "path=%s errno=%d",
+                SHADOW_HELLO_INIT_FIRMWARE_CLASS_ROOT,
+                errno
+            );
+        }
+
+        if (all_serviced || timed_out) {
+            log_stage(
+                all_serviced ? "<6>" : "<4>",
+                "orange-gpu-firmware-helper-complete",
+                "serviced_count=%u timed_out=%s",
+                serviced_count,
+                bool_word(timed_out)
+            );
+            return all_serviced ? 0 : 1;
+        }
+
+        sleep_milliseconds(SHADOW_HELLO_INIT_FIRMWARE_HELPER_POLL_MILLIS);
+    }
+}
+
+static void stop_child_process_best_effort(pid_t child_pid, const char *label) {
+    int status = 0;
+
+    if (child_pid <= 0) {
+        return;
+    }
+
+    if (kill(child_pid, SIGTERM) != 0 && errno != ESRCH) {
+        log_stage(
+            "<4>",
+            "child-stop-sigterm-failed",
+            "label=%s pid=%d errno=%d",
+            label != NULL ? label : "child",
+            child_pid,
+            errno
+        );
+    }
+    for (;;) {
+        pid_t waited = waitpid(child_pid, &status, 0);
+
+        if (waited == child_pid) {
+            log_stage(
+                "<6>",
+                "child-stop-complete",
+                "label=%s pid=%d",
+                label != NULL ? label : "child",
+                child_pid
+            );
+            return;
+        }
+        if (waited < 0 && errno == EINTR) {
+            continue;
+        }
+        if (waited < 0 && errno == ECHILD) {
+            return;
+        }
+        return;
+    }
+}
+
+static int run_c_kgsl_open_readonly_smoke_internal(
     const struct hello_init_config *config,
     const char *payload_probe_stage_path,
-    const char *payload_probe_stage_prefix
+    const char *payload_probe_stage_prefix,
+    bool use_firmware_helper
 ) {
     int kgsl_fd;
     int saved_errno = 0;
     bool trace_enabled = false;
     pid_t trace_monitor_pid = -1;
+    pid_t firmware_helper_pid = -1;
 
     if (
         probe_bootstrap_gpu_firmware(
@@ -4325,6 +4658,23 @@ static int run_c_kgsl_open_readonly_smoke(
         ) != 0
     ) {
         return 1;
+    }
+    if (use_firmware_helper) {
+        firmware_helper_pid = fork();
+        if (firmware_helper_pid < 0) {
+            log_stage("<3>", "orange-gpu-firmware-helper-fork-failed", "errno=%d", errno);
+            return 1;
+        }
+        if (firmware_helper_pid == 0) {
+            _exit(run_ramdisk_firmware_helper_loop());
+        }
+        log_stage(
+            "<6>",
+            "orange-gpu-firmware-helper-forked",
+            "pid=%d",
+            firmware_helper_pid
+        );
+        sleep_milliseconds(100U);
     }
 
     write_payload_probe_stage_best_effort(
@@ -4357,6 +4707,7 @@ static int run_c_kgsl_open_readonly_smoke(
         if (trace_enabled) {
             teardown_kgsl_trace_best_effort();
         }
+        stop_child_process_best_effort(firmware_helper_pid, "firmware-helper");
         errno = saved_errno;
         log_stage("<3>", "orange-gpu-c-kgsl-open-readonly-failed", "errno=%d", errno);
         return 1;
@@ -4366,6 +4717,7 @@ static int run_c_kgsl_open_readonly_smoke(
     if (trace_enabled) {
         teardown_kgsl_trace_best_effort();
     }
+    stop_child_process_best_effort(firmware_helper_pid, "firmware-helper");
     write_payload_probe_stage_best_effort(
         payload_probe_stage_path,
         payload_probe_stage_prefix,
@@ -4373,6 +4725,32 @@ static int run_c_kgsl_open_readonly_smoke(
     );
     log_stage("<6>", "orange-gpu-c-kgsl-open-readonly-ok", "path=/dev/kgsl-3d0");
     return 0;
+}
+
+static int run_c_kgsl_open_readonly_smoke(
+    const struct hello_init_config *config,
+    const char *payload_probe_stage_path,
+    const char *payload_probe_stage_prefix
+) {
+    return run_c_kgsl_open_readonly_smoke_internal(
+        config,
+        payload_probe_stage_path,
+        payload_probe_stage_prefix,
+        false
+    );
+}
+
+static int run_c_kgsl_open_readonly_firmware_helper_smoke(
+    const struct hello_init_config *config,
+    const char *payload_probe_stage_path,
+    const char *payload_probe_stage_prefix
+) {
+    return run_c_kgsl_open_readonly_smoke_internal(
+        config,
+        payload_probe_stage_path,
+        payload_probe_stage_prefix,
+        true
+    );
 }
 
 static int run_timeout_control_smoke(
@@ -4424,7 +4802,7 @@ static int run_orange_gpu_payload(
     struct child_watch_result watch_result;
     struct orange_gpu_timeout_classification timeout_classification;
     struct probe_timeout_observer_context timeout_observer_context;
-    bool kgsl_trace_may_be_active = orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config);
+    bool kgsl_trace_may_be_active = orange_gpu_mode_is_any_c_kgsl_open_readonly_smoke(config);
 
     if (ensure_orange_gpu_runtime_dirs() != 0) {
         return 1;
@@ -4681,6 +5059,17 @@ static int run_orange_gpu_payload(
                 "mode=c-kgsl-open-readonly-smoke"
             );
             _exit(run_c_kgsl_open_readonly_smoke(
+                config,
+                payload_probe_stage_path,
+                payload_probe_stage_prefix
+            ));
+        } else if (orange_gpu_mode_is_c_kgsl_open_readonly_firmware_helper_smoke(config)) {
+            log_stage(
+                "<6>",
+                "orange-gpu-child-c-probe",
+                "mode=c-kgsl-open-readonly-firmware-helper-smoke"
+            );
+            _exit(run_c_kgsl_open_readonly_firmware_helper_smoke(
                 config,
                 payload_probe_stage_path,
                 payload_probe_stage_prefix
