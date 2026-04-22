@@ -16,10 +16,15 @@ TRIGGER="${PIXEL_BOOT_LOG_PROBE_TRIGGER:-post-fs-data}"
 DEVICE_LOG_ROOT="$(pixel_boot_device_log_root)"
 PATCH_TARGET_OVERRIDE="${PIXEL_BOOT_LOG_PROBE_PATCH_TARGET:-}"
 PREFLIGHT_PROFILE="${PIXEL_BOOT_PREFLIGHT_PROFILE:-}"
+HELPER_STATUS_PROP_KEY="${PIXEL_BOOT_HELPER_STATUS_PROP_KEY:-debug.shadow.boot.log_probe}"
+PREFLIGHT_STATUS_PROP_KEY="${PIXEL_BOOT_PREFLIGHT_STATUS_PROP_KEY:-debug.shadow.boot.preflight.status}"
+PREFLIGHT_LAUNCH_PROOF_PROP="${PIXEL_BOOT_PREFLIGHT_LAUNCH_PROOF_PROP:-debug.shadow.boot.preflight.launch=started}"
 BUILD_MODE="wrapper"
 KEEP_WORK_DIR=0
 WORK_DIR=""
 PATCH_TARGET=""
+PREFLIGHT_LAUNCH_PROOF_KEY=""
+PREFLIGHT_LAUNCH_PROOF_VALUE=""
 
 usage() {
   cat <<'EOF'
@@ -70,7 +75,41 @@ validate_patch_target_override() {
   }
 }
 
+validate_property_key() {
+  local property_key label
+  property_key="${1:?validate_property_key requires a property key}"
+  label="${2:?validate_property_key requires a label}"
+  [[ "$property_key" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+    echo "pixel_boot_build_log_probe: $label contains unsupported characters: $property_key" >&2
+    exit 1
+  }
+}
+
+validate_property_value() {
+  local property_value label
+  property_value="${1:?validate_property_value requires a property value}"
+  label="${2:?validate_property_value requires a label}"
+  [[ "$property_value" =~ ^[A-Za-z0-9._:/+=,@-]+$ ]] || {
+    echo "pixel_boot_build_log_probe: $label contains unsupported characters: $property_value" >&2
+    exit 1
+  }
+}
+
+parse_preflight_launch_proof_prop() {
+  [[ "$PREFLIGHT_LAUNCH_PROOF_PROP" == *=* ]] || {
+    echo "pixel_boot_build_log_probe: PIXEL_BOOT_PREFLIGHT_LAUNCH_PROOF_PROP must use KEY=VALUE" >&2
+    exit 1
+  }
+  PREFLIGHT_LAUNCH_PROOF_KEY="${PREFLIGHT_LAUNCH_PROOF_PROP%%=*}"
+  PREFLIGHT_LAUNCH_PROOF_VALUE="${PREFLIGHT_LAUNCH_PROOF_PROP#*=}"
+  [[ -n "$PREFLIGHT_LAUNCH_PROOF_KEY" && -n "$PREFLIGHT_LAUNCH_PROOF_VALUE" ]] || {
+    echo "pixel_boot_build_log_probe: PIXEL_BOOT_PREFLIGHT_LAUNCH_PROOF_PROP requires a non-empty key and value" >&2
+    exit 1
+  }
+}
+
 validate_preflight_profile() {
+  validate_property_key "$HELPER_STATUS_PROP_KEY" "helper status property key"
   [[ -z "$PREFLIGHT_PROFILE" ]] && return 0
   case "$PREFLIGHT_PROFILE" in
     phase1-shell)
@@ -80,6 +119,10 @@ validate_preflight_profile() {
       exit 1
       ;;
   esac
+  validate_property_key "$PREFLIGHT_STATUS_PROP_KEY" "preflight status property key"
+  parse_preflight_launch_proof_prop
+  validate_property_key "$PREFLIGHT_LAUNCH_PROOF_KEY" "preflight launch proof property key"
+  validate_property_value "$PREFLIGHT_LAUNCH_PROOF_VALUE" "preflight launch proof property value"
 }
 
 detect_patch_target() {
@@ -270,6 +313,10 @@ set -eu
 
 log_root="${DEVICE_LOG_ROOT}"
 log_file="\$log_root/helper.log"
+helper_status_prop_key="${HELPER_STATUS_PROP_KEY}"
+preflight_status_prop_key="${PREFLIGHT_STATUS_PROP_KEY}"
+preflight_launch_proof_key="${PREFLIGHT_LAUNCH_PROOF_KEY}"
+preflight_launch_proof_value="${PREFLIGHT_LAUNCH_PROOF_VALUE}"
 
 timestamp() {
   date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown-time
@@ -329,7 +376,7 @@ chmod 0775 "\$log_root" 2>/dev/null || true
 : >"\$log_file"
 chmod 0644 "\$log_file" 2>/dev/null || true
 
-setprop shadow.boot.log_probe starting || true
+setprop "\$helper_status_prop_key" starting || true
 log_line "helper starting"
 
 boot_id="\$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"
@@ -374,6 +421,8 @@ preflight_required_missing_labels=""
 preflight_data_mounted=false
 preflight_data_writable=false
 preflight_data_local_tmp_ready=false
+
+setprop "\$preflight_launch_proof_key" "\$preflight_launch_proof_value" || true
 
 mark_preflight_blocked() {
   reason="\$1"
@@ -477,7 +526,7 @@ chmod 0644 "\$preflight_summary" 2>/dev/null || true
 
 printf '%s\n' "\$preflight_status" >"\$log_root/status.txt"
 chmod 0644 "\$log_root/status.txt" 2>/dev/null || true
-setprop shadow.boot.preflight "\$preflight_status" || true
+setprop "\$preflight_status_prop_key" "\$preflight_status" || true
 log_line "preflight phase1-shell status=\$preflight_status missing_required=\$preflight_missing_required_count reason=\${preflight_blocked_reason:-none}"
 EOF
 fi
@@ -489,7 +538,7 @@ printf 'ready\n' >"\$log_root/status.txt"
 chmod 0644 "\$log_root/status.txt" 2>/dev/null || true
 fi
 log_line "helper finished"
-setprop shadow.boot.log_probe ready || true
+setprop "\$helper_status_prop_key" ready || true
 EOF
 chmod 0755 "$WORK_DIR/shadow-boot-helper"
 

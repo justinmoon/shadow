@@ -50,9 +50,12 @@ LOG_PROBE_OUTPUT_IMAGE="$TMP_DIR/log-probe-stock-init.img"
 LOG_PREFLIGHT_OUTPUT_IMAGE="$TMP_DIR/log-probe-preflight-stock-init.img"
 RC_PROBE_OUTPUT_IMAGE="$TMP_DIR/rc-probe-stock-init.img"
 PREFLIGHT_OUTPUT="$TMP_DIR/boot-preflight-output"
+PREFLIGHT_CONFLICT_OUTPUT="$TMP_DIR/boot-preflight-conflict-output"
+PREFLIGHT_LEASE_COMMON_ROOT="$TMP_DIR/preflight-lease-common-root"
 RC_TRIGGER_LADDER_OUTPUT="$TMP_DIR/rc-trigger-ladder-output"
 PREFLIGHT_BUILD_MOCK="$TMP_DIR/mock-preflight-build.sh"
 PREFLIGHT_ONESHOT_MOCK="$TMP_DIR/mock-preflight-oneshot.sh"
+LOCKF_LOG="$TMP_DIR/mock-lockf.log"
 RC_TRIGGER_LADDER_BUILD_MOCK="$TMP_DIR/mock-rc-trigger-build.sh"
 RC_TRIGGER_LADDER_ONESHOT_MOCK="$TMP_DIR/mock-rc-trigger-oneshot.sh"
 MOCK_STORE_STANDARD="$TMP_DIR/store-standard"
@@ -152,7 +155,7 @@ cat >"$PATCHED_INIT_RC" <<'EOF'
 import /init.shadow.rc
 
 on boot
-    setprop shadow.boot.rc_probe ready
+    setprop debug.shadow.boot.rc_probe ready
 EOF
 
 cat >"$RC_TRIGGER_LADDER_BUILD_MOCK" <<'EOF'
@@ -280,6 +283,28 @@ PY
 printf 'mock preflight oneshot for %s\n' "$image"
 EOF
 chmod 0755 "$PREFLIGHT_ONESHOT_MOCK"
+
+cat >"$MOCK_BIN/lockf" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+log_path="${MOCK_LOCKF_LOG:-}"
+
+if [[ "${1:-}" == "-st" ]]; then
+  if [[ -n "$log_path" ]]; then
+    printf 'probe %s %s %s\n' "${2:-}" "${3:-}" "${4:-}" >>"$log_path"
+  fi
+  exit 0
+fi
+
+lock_path="${1:-}"
+script_path="${2:-}"
+shift 2
+if [[ -n "$log_path" ]]; then
+  printf 'exec %s %s\n' "$lock_path" "$script_path" >>"$log_path"
+fi
+exec "$script_path" "$@"
+EOF
 
 cat >"$RC_TRIGGER_LADDER_ONESHOT_MOCK" <<'EOF'
 #!/usr/bin/env bash
@@ -772,6 +797,7 @@ chmod 0755 \
   "$MOCK_BIN/aarch64-unknown-linux-gnu-gcc" \
   "$MOCK_BIN/file" \
   "$MOCK_BIN/just" \
+  "$MOCK_BIN/lockf" \
   "$MOCK_BIN/nix" \
   "$MOCK_BIN/nix-store" \
   "$MOCK_BIN/llvm-readelf" \
@@ -1663,7 +1689,7 @@ oneshot_output="$(
       --adb-timeout 45 \
       --boot-timeout 60 \
       --no-wait-boot-completed \
-      --proof-prop shadow.boot.rc_probe=ready
+      --proof-prop debug.shadow.boot.rc_probe=ready
 )"
 
 assert_contains "$oneshot_output" "pixel_boot_oneshot: dry-run"
@@ -1676,7 +1702,7 @@ assert_contains "$oneshot_output" "wait_ready_secs=30"
 assert_contains "$oneshot_output" "adb_timeout_secs=45"
 assert_contains "$oneshot_output" "boot_timeout_secs=60"
 assert_contains "$oneshot_output" "wait_boot_completed=false"
-assert_contains "$oneshot_output" "proof_prop=shadow.boot.rc_probe=ready"
+assert_contains "$oneshot_output" "proof_prop=debug.shadow.boot.rc_probe=ready"
 
 if [[ -e "$ONESHOT_OUTPUT" ]]; then
   echo "pixel_boot_tooling_smoke: dry-run should not create the output dir" >&2
@@ -1723,7 +1749,7 @@ flash_run_output="$(
       --boot-timeout 60 \
       --allow-active-slot \
       --recover-after \
-      --proof-prop shadow.boot.rc_probe=ready
+      --proof-prop debug.shadow.boot.rc_probe=ready
 )"
 
 assert_contains "$flash_run_output" "pixel_boot_flash_run: dry-run"
@@ -1738,7 +1764,7 @@ assert_contains "$flash_run_output" "adb_timeout_secs=45"
 assert_contains "$flash_run_output" "boot_timeout_secs=60"
 assert_contains "$flash_run_output" "allow_active_slot=true"
 assert_contains "$flash_run_output" "recover_after=true"
-assert_contains "$flash_run_output" "proof_prop=shadow.boot.rc_probe=ready"
+assert_contains "$flash_run_output" "proof_prop=debug.shadow.boot.rc_probe=ready"
 assert_contains "$flash_run_output" "activate_target=true"
 
 if [[ -e "$FLASH_RUN_OUTPUT" ]]; then
@@ -2373,7 +2399,7 @@ assert_contains "$stock_init_build_output" "Build mode: stock-init"
 assert_cpio_entry_equals "$STOCK_INIT_OUTPUT_IMAGE" init $'stock-init\n'
 assert_cpio_entry_missing "$STOCK_INIT_OUTPUT_IMAGE" init.stock
 assert_cpio_entry_equals "$STOCK_INIT_OUTPUT_IMAGE" init.extra.rc $'import /init.extra.rc\n'
-assert_cpio_entry_equals "$STOCK_INIT_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n\non boot\n    setprop shadow.boot.rc_probe ready\n'
+assert_cpio_entry_equals "$STOCK_INIT_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n\non boot\n    setprop debug.shadow.boot.rc_probe ready\n'
 
 init_symlink_build_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -2526,7 +2552,8 @@ log_preflight_output="$(
 )"
 assert_contains "$log_preflight_output" "Build mode: stock-init"
 assert_contains "$log_preflight_output" "Preflight profile: phase1-shell"
-assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'setprop shadow.boot.preflight'
+assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'setprop "$preflight_status_prop_key"'
+assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'setprop "$preflight_launch_proof_key" "$preflight_launch_proof_value"'
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'preflight-summary.txt'
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'runtime-linux-dir'
 
@@ -2538,16 +2565,16 @@ rc_probe_output="$(
       --key "$AVB_KEY_PATH" \
       --output "$RC_PROBE_OUTPUT_IMAGE" \
       --trigger post-fs-data \
-      --property shadow.boot.rc_probe=ready
+      --property debug.shadow.boot.rc_probe=ready
 )"
 assert_contains "$rc_probe_output" "Build mode: stock-init"
 assert_contains "$rc_probe_output" "Patch target: system/etc/init/hw/init.rc"
 assert_contains "$rc_probe_output" "Trigger: post-fs-data"
-assert_contains "$rc_probe_output" "Property: shadow.boot.rc_probe=ready"
+assert_contains "$rc_probe_output" "Property: debug.shadow.boot.rc_probe=ready"
 assert_cpio_entry_equals "$RC_PROBE_OUTPUT_IMAGE" init $'stock-init\n'
 assert_cpio_entry_missing "$RC_PROBE_OUTPUT_IMAGE" init.stock
 assert_cpio_entry_startswith "$RC_PROBE_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n'
-assert_cpio_entry_equals "$RC_PROBE_OUTPUT_IMAGE" init.shadow.rc $'on post-fs-data\n    setprop shadow.boot.rc_probe ready\n'
+assert_cpio_entry_equals "$RC_PROBE_OUTPUT_IMAGE" init.shadow.rc $'on post-fs-data\n    setprop debug.shadow.boot.rc_probe ready\n'
 assert_cpio_entry_missing "$RC_PROBE_OUTPUT_IMAGE" shadow-boot-helper
 
 rm -rf "$RC_TRIGGER_LADDER_OUTPUT"
@@ -2564,7 +2591,7 @@ rc_trigger_ladder_output="$(
       --input "$BOOT_BUILD_INPUT" \
       --key "$AVB_KEY_PATH" \
       --output-dir "$RC_TRIGGER_LADDER_OUTPUT" \
-      --property-key shadow.boot.rc_probe \
+      --property-key debug.shadow.boot.rc_probe \
       --trigger post-fs-data \
       --trigger property:init.svc.gpu=running
 )"
@@ -2578,21 +2605,55 @@ assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" ok true
 assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" case_count 2
 assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" matched_case_count 2
 assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" successful_case_count 2
-assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" property_key shadow.boot.rc_probe
+assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" property_key debug.shadow.boot.rc_probe
 assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/trigger post-fs-data
 assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/proof_property_matched true
 assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/1/trigger property:init.svc.gpu=running
 assert_json_field "$RC_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/1/proof_property_matched true
-assert_contains "$(cat "$RC_TRIGGER_LADDER_OUTPUT/matrix.tsv")" $'01-post-fs-data\tpost-fs-data\tshadow.boot.rc_probe=rc-trigger-01-post-fs-data\ttrue'
-assert_contains "$(cat "$RC_TRIGGER_LADDER_OUTPUT/cases.tsv")" $'02-property-init.svc.gpu-running\tTESTSERIAL\tproperty:init.svc.gpu=running\tshadow.boot.rc_probe=rc-trigger-02-property-init.svc.gpu-running'
+assert_contains "$(cat "$RC_TRIGGER_LADDER_OUTPUT/matrix.tsv")" $'01-post-fs-data\tpost-fs-data\tdebug.shadow.boot.rc_probe=rc-trigger-01-post-fs-data\ttrue'
+assert_contains "$(cat "$RC_TRIGGER_LADDER_OUTPUT/cases.tsv")" $'02-property-init.svc.gpu-running\tTESTSERIAL\tproperty:init.svc.gpu=running\tdebug.shadow.boot.rc_probe=rc-trigger-02-property-init.svc.gpu-running'
+
+mkdir -p "$PREFLIGHT_LEASE_COMMON_ROOT"
+env \
+  SHADOW_REPO_COMMON_ROOT="$PREFLIGHT_LEASE_COMMON_ROOT" \
+  SHADOW_DEVICE_LEASE_AGENT=review-holder \
+  "$REPO_ROOT/scripts/shadowctl" lease acquire TESTSERIAL --lane stream-a --ttl 15m >/dev/null
+
+rm -rf "$PREFLIGHT_CONFLICT_OUTPUT"
+if preflight_conflict_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    SHADOW_REPO_COMMON_ROOT="$PREFLIGHT_LEASE_COMMON_ROOT" \
+    SHADOW_DEVICE_LEASE_AGENT=stream-b-worker \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_BOOT_PREFLIGHT_BUILD_SCRIPT="$PREFLIGHT_BUILD_MOCK" \
+    PIXEL_BOOT_PREFLIGHT_ONESHOT_SCRIPT="$PREFLIGHT_ONESHOT_MOCK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_preflight.sh" \
+      --serial TESTSERIAL \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output-dir "$PREFLIGHT_CONFLICT_OUTPUT" \
+      --trigger post-fs-data \
+      --patch-target init.recovery.rc \
+      --adb-timeout 45 \
+      --boot-timeout 60 \
+      --recover-traces-after 2>&1
+)"; then
+  echo "pixel_boot_tooling_smoke: expected preflight lease conflict to fail" >&2
+  exit 1
+fi
+assert_contains "$preflight_conflict_output" "active lease on TESTSERIAL"
 
 rm -rf "$PREFLIGHT_OUTPUT"
+rm -f "$LOCKF_LOG"
 preflight_output="$(
   env \
     PATH="$MOCK_BIN:$PATH" \
     SHADOW_BOOTIMG_SHELL=1 \
+    SHADOW_REPO_COMMON_ROOT="$PREFLIGHT_LEASE_COMMON_ROOT-success" \
     PIXEL_SERIAL=TESTSERIAL \
-    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    MOCK_LOCKF_LOG="$LOCKF_LOG" \
     PIXEL_BOOT_PREFLIGHT_BUILD_SCRIPT="$PREFLIGHT_BUILD_MOCK" \
     PIXEL_BOOT_PREFLIGHT_ONESHOT_SCRIPT="$PREFLIGHT_ONESHOT_MOCK" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_preflight.sh" \
@@ -2616,6 +2677,8 @@ assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_profile phase1-shel
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_status blocked
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_ready false
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_blocked_reason missing-required-paths
+assert_contains "$(cat "$LOCKF_LOG")" "exec "
+assert_contains "$(cat "$LOCKF_LOG")" "pixel_boot_preflight.sh"
 
 prepare_cached_tmpfs_gpu_bundle
 install_tmpfs_gpu_smoke_mocks

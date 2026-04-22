@@ -9,7 +9,7 @@ DEVICE_LOG_ROOT="/data/local/tmp/shadow-boot"
 WRAPPER_MARKER_ROOT="/.shadow-init-wrapper"
 LIVE_BOOT_ID="11111111-2222-3333-4444-555555555555"
 LIVE_SLOT_SUFFIX="_a"
-EXPECTED_PROP_KEY="shadow.boot.rc_probe"
+EXPECTED_PROP_KEY="debug.shadow.boot.rc_probe"
 EXPECTED_PROP_VALUE="ready"
 
 cleanup() {

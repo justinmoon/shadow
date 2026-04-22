@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/lib/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
+original_args=("$@")
 preflight_root="$(pixel_runs_dir)/boot-preflight"
 output_dir="${PIXEL_BOOT_PREFLIGHT_DIR:-}"
 input_image="${PIXEL_BOOT_INPUT_IMAGE:-}"
@@ -14,6 +15,7 @@ default_serial="${PIXEL_SERIAL:-}"
 trigger="${PIXEL_BOOT_LOG_PROBE_TRIGGER:-post-fs-data}"
 patch_target_override="${PIXEL_BOOT_LOG_PROBE_PATCH_TARGET:-}"
 preflight_profile="${PIXEL_BOOT_PREFLIGHT_PROFILE:-phase1-shell}"
+launch_proof_prop="${PIXEL_BOOT_PREFLIGHT_LAUNCH_PROOF_PROP:-debug.shadow.boot.preflight.launch=started}"
 wait_ready_secs="${PIXEL_BOOT_PREFLIGHT_WAIT_READY_SECS:-120}"
 adb_timeout_secs="${PIXEL_BOOT_PREFLIGHT_ADB_TIMEOUT_SECS:-180}"
 boot_timeout_secs="${PIXEL_BOOT_PREFLIGHT_BOOT_TIMEOUT_SECS:-240}"
@@ -102,6 +104,7 @@ write_summary_json() {
     "$serial" \
     "$preflight_profile" \
     "$trigger" \
+    "$launch_proof_prop" \
     "$input_image" \
     "$image_path" \
     "$build_log" \
@@ -122,6 +125,7 @@ from pathlib import Path
     serial,
     preflight_profile,
     trigger,
+    launch_proof_prop,
     input_image,
     image_path,
     build_log,
@@ -133,9 +137,7 @@ from pathlib import Path
     device_run_dir,
     device_status_path,
     collect_status_path,
-) = sys.argv[1:16]
-
-
+) = sys.argv[1:17]
 def load_json(path_str: str):
     path = Path(path_str)
     if not path.exists():
@@ -162,6 +164,7 @@ payload = {
     "serial": serial,
     "preflight_profile": preflight_profile,
     "trigger": trigger,
+    "launch_proof_prop": launch_proof_prop,
     "input_image": input_image,
     "image_path": image_path,
     "build_log": build_log,
@@ -258,6 +261,7 @@ done
 
 serial="$(resolve_serial_for_mode)"
 pixel_prepare_dirs
+pixel_require_host_lock "$serial" "$0" "${original_args[@]}"
 prepare_output_dir
 
 build_args=(
@@ -277,7 +281,8 @@ if [[ -n "$patch_target_override" ]]; then
 fi
 
 set +e
-PIXEL_SERIAL="$serial" "$build_script" "${build_args[@]}" >"$build_log" 2>&1
+PIXEL_BOOT_PREFLIGHT_LAUNCH_PROOF_PROP="$launch_proof_prop" \
+  PIXEL_SERIAL="$serial" "$build_script" "${build_args[@]}" >"$build_log" 2>&1
 build_status="$?"
 set -e
 
@@ -294,6 +299,7 @@ if [[ "$build_status" -eq 0 ]]; then
     --wait-ready "$wait_ready_secs"
     --adb-timeout "$adb_timeout_secs"
     --boot-timeout "$boot_timeout_secs"
+    --proof-prop "$launch_proof_prop"
   )
   if [[ "$recover_traces_after" == "1" ]]; then
     oneshot_args+=(--recover-traces-after)
@@ -303,7 +309,8 @@ if [[ "$build_status" -eq 0 ]]; then
   fi
 
   set +e
-  PIXEL_SERIAL="$serial" "$oneshot_script" "${oneshot_args[@]}" >"$run_log" 2>&1
+  PIXEL_BOOT_PREFLIGHT_LAUNCH_PROOF_PROP="$launch_proof_prop" \
+    PIXEL_SERIAL="$serial" "$oneshot_script" "${oneshot_args[@]}" >"$run_log" 2>&1
   run_status="$?"
   set -e
 else
@@ -316,6 +323,7 @@ printf 'Boot preflight output: %s\n' "$output_dir"
 printf 'Serial: %s\n' "$serial"
 printf 'Image: %s\n' "$image_path"
 printf 'Summary: %s\n' "$summary_path"
+printf 'Launch proof prop: %s\n' "$launch_proof_prop"
 if [[ -f "$collect_status_path" ]]; then
   python3 - "$collect_status_path" <<'PY'
 import json

@@ -448,7 +448,7 @@ check_output_case \
 check_output_case \
   shadowctl_pixel_debug_boot_lab_flash_run \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --image /tmp/probe.img --slot inactive --output /tmp/flash-out --wait-ready 30 --adb-timeout 45 --boot-timeout 60 --allow-active-slot --recover-after --proof-prop shadow.boot.rc_probe=ready' "$SCRIPT_DIR/pixel/pixel_boot_flash_run.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --image /tmp/probe.img --slot inactive --output /tmp/flash-out --wait-ready 30 --adb-timeout 45 --boot-timeout 60 --allow-active-slot --recover-after --proof-prop debug.shadow.boot.rc_probe=ready' "$SCRIPT_DIR/pixel/pixel_boot_flash_run.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL boot-lab-flash-run \
     --image /tmp/probe.img \
@@ -459,7 +459,7 @@ check_output_case \
     --boot-timeout 60 \
     --allow-active-slot \
     --recover-after \
-    --proof-prop shadow.boot.rc_probe=ready
+    --proof-prop debug.shadow.boot.rc_probe=ready
 
 check_output_case \
   shadowctl_pixel_debug_boot_lab_flash_run_fastboot_return \
@@ -477,7 +477,7 @@ check_output_case \
 check_output_case \
   shadowctl_pixel_debug_boot_lab_oneshot \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --image /tmp/probe.img --output /tmp/boot-out --wait-ready 30 --adb-timeout 45 --boot-timeout 60 --no-wait-boot-completed --proof-prop shadow.boot.rc_probe=ready' "$SCRIPT_DIR/pixel/pixel_boot_oneshot.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --image /tmp/probe.img --output /tmp/boot-out --wait-ready 30 --adb-timeout 45 --boot-timeout 60 --no-wait-boot-completed --proof-prop debug.shadow.boot.rc_probe=ready' "$SCRIPT_DIR/pixel/pixel_boot_oneshot.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL boot-lab-oneshot \
     --image /tmp/probe.img \
@@ -486,7 +486,7 @@ check_output_case \
     --adb-timeout 45 \
     --boot-timeout 60 \
     --no-wait-boot-completed \
-    --proof-prop shadow.boot.rc_probe=ready
+    --proof-prop debug.shadow.boot.rc_probe=ready
 
 check_output_case \
   shadowctl_pixel_debug_boot_lab_oneshot_fastboot_return \
@@ -538,14 +538,14 @@ check_output_case \
 check_output_case \
   shadowctl_pixel_debug_boot_lab_rc_trigger_ladder \
   0 \
-  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --input /tmp/stock.img --output-dir /tmp/trigger-out --adb-timeout 45 --boot-timeout 60 --property-key shadow.boot.rc_probe --trigger post-fs-data --trigger property:init.svc.gpu=running' "$SCRIPT_DIR/pixel/pixel_boot_rc_trigger_ladder.sh")" \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --input /tmp/stock.img --output-dir /tmp/trigger-out --adb-timeout 45 --boot-timeout 60 --property-key debug.shadow.boot.rc_probe --trigger post-fs-data --trigger property:init.svc.gpu=running' "$SCRIPT_DIR/pixel/pixel_boot_rc_trigger_ladder.sh")" \
   "" \
   "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL boot-lab-rc-trigger-ladder \
     --input /tmp/stock.img \
     --output /tmp/trigger-out \
     --adb-timeout 45 \
     --boot-timeout 60 \
-    --property-key shadow.boot.rc_probe \
+    --property-key debug.shadow.boot.rc_probe \
     --trigger post-fs-data \
     --trigger property:init.svc.gpu=running
 
