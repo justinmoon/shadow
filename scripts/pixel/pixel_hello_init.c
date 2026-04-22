@@ -98,6 +98,7 @@ struct hello_init_config {
     unsigned int orange_gpu_parent_probe_attempts;
     unsigned int orange_gpu_parent_probe_interval_secs;
     bool orange_gpu_metadata_stage_breadcrumb;
+    char orange_gpu_timeout_action[24];
     unsigned int hold_seconds;
     unsigned int prelude_hold_seconds;
     char reboot_target[32];
@@ -197,6 +198,11 @@ static void init_default_config(struct hello_init_config *config) {
     config->orange_gpu_parent_probe_attempts = 0U;
     config->orange_gpu_parent_probe_interval_secs = 0U;
     config->orange_gpu_metadata_stage_breadcrumb = false;
+    (void)copy_string(
+        config->orange_gpu_timeout_action,
+        sizeof(config->orange_gpu_timeout_action),
+        "reboot"
+    );
     config->hold_seconds = SHADOW_HELLO_INIT_DEFAULT_HOLD_SECONDS;
     config->prelude_hold_seconds = 0U;
     (void)copy_string(config->reboot_target, sizeof(config->reboot_target), "bootloader");
@@ -2099,6 +2105,25 @@ static void apply_config_value(
         return;
     }
 
+    if (
+        strcmp(key, "orange_gpu_timeout_action") == 0 ||
+        strcmp(key, "orange-gpu-timeout-action") == 0
+    ) {
+        if (
+            strcmp(value, "reboot") != 0 &&
+            strcmp(value, "panic") != 0
+        ) {
+            log_boot("<3>", "invalid orange_gpu_timeout_action value: %s", value);
+            return;
+        }
+        (void)copy_string(
+            config->orange_gpu_timeout_action,
+            sizeof(config->orange_gpu_timeout_action),
+            value
+        );
+        return;
+    }
+
     if (strcmp(key, "hold_seconds") == 0 || strcmp(key, "hold_secs") == 0) {
         if (!parse_unsigned_value(value, &parsed_hold_seconds)) {
             log_boot("<3>", "invalid hold_seconds value: %s", value);
@@ -2309,6 +2334,32 @@ static void hold_for_observation(unsigned int hold_seconds) {
     log_stage("<6>", "hold-complete", "seconds=%u", hold_seconds);
 }
 
+static void trigger_sysrq_best_effort(char trigger) {
+    int fd;
+    char payload[2];
+
+    fd = open("/proc/sysrq-trigger", O_WRONLY | O_CLOEXEC | O_NOCTTY);
+    if (fd < 0) {
+        log_stage("<3>", "sysrq-open-failed", "errno=%d", errno);
+        log_boot("<3>", "open /proc/sysrq-trigger failed: errno=%d", errno);
+        return;
+    }
+
+    payload[0] = trigger;
+    payload[1] = '\n';
+    if (write(fd, payload, sizeof(payload)) != (ssize_t)sizeof(payload)) {
+        int saved_errno = errno;
+
+        close(fd);
+        log_stage("<3>", "sysrq-write-failed", "trigger=%c errno=%d", trigger, saved_errno);
+        log_boot("<3>", "write /proc/sysrq-trigger trigger=%c failed: errno=%d", trigger, saved_errno);
+        return;
+    }
+    close(fd);
+    log_stage("<4>", "sysrq-write", "trigger=%c", trigger);
+    log_boot("<4>", "sysrq trigger=%c", trigger);
+}
+
 static bool payload_is_orange_init(const struct hello_init_config *config) {
     return strcmp(config->payload, "orange-init") == 0;
 }
@@ -2347,6 +2398,10 @@ static bool orange_gpu_mode_is_c_kgsl_open_readonly_smoke(const struct hello_ini
 
 static bool orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(const struct hello_init_config *config) {
     return strcmp(config->orange_gpu_mode, "c-kgsl-open-readonly-pid1-smoke") == 0;
+}
+
+static bool orange_gpu_timeout_action_is_panic(const struct hello_init_config *config) {
+    return strcmp(config->orange_gpu_timeout_action, "panic") == 0;
 }
 
 static bool orange_gpu_mode_is_raw_kgsl_open_readonly_smoke(const struct hello_init_config *config) {
@@ -4814,6 +4869,28 @@ static int run_orange_gpu_payload(
             timeout_classification.bucket_name,
             timeout_classification.matched_needle
         );
+        if (orange_gpu_timeout_action_is_panic(config)) {
+            log_stage(
+                "<4>",
+                "orange-gpu-timeout-panic",
+                "pid=%d checkpoint=%s bucket=%s matched_needle=%s",
+                child_pid,
+                timeout_classification.checkpoint_name,
+                timeout_classification.bucket_name,
+                timeout_classification.matched_needle
+            );
+            log_boot(
+                "<4>",
+                "payload timeout escalating to sysrq panic: checkpoint=%s bucket=%s matched_needle=%s",
+                timeout_classification.checkpoint_name,
+                timeout_classification.bucket_name,
+                timeout_classification.matched_needle
+            );
+            trigger_sysrq_best_effort('w');
+            sleep_seconds(1U);
+            trigger_sysrq_best_effort('c');
+            pause();
+        }
         return 124;
     }
 
@@ -5100,7 +5177,7 @@ int main(void) {
     log_stage(
         "<6>",
         "config-loaded",
-        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s orange_gpu_timeout_action=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
@@ -5108,6 +5185,7 @@ int main(void) {
         config.orange_gpu_parent_probe_attempts,
         config.orange_gpu_parent_probe_interval_secs,
         bool_word(config.orange_gpu_metadata_stage_breadcrumb),
+        config.orange_gpu_timeout_action,
         config.hold_seconds,
         config.prelude_hold_seconds,
         config.reboot_target,
@@ -5123,7 +5201,7 @@ int main(void) {
     );
     log_boot(
         "<6>",
-        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s orange_gpu_timeout_action=%s hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
@@ -5131,6 +5209,7 @@ int main(void) {
         config.orange_gpu_parent_probe_attempts,
         config.orange_gpu_parent_probe_interval_secs,
         bool_word(config.orange_gpu_metadata_stage_breadcrumb),
+        config.orange_gpu_timeout_action,
         config.hold_seconds,
         config.prelude_hold_seconds,
         config.reboot_target,
