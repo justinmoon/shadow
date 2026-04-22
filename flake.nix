@@ -935,6 +935,70 @@
           '';
           meta.mainProgram = "shadow-blitz-demo";
         };
+      rustToolchainReferencePlaceholder =
+        "${builtins.storeDir}/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+      mkStripShadowStoreReferencesPostInstall = cross: ''
+        echo "stripping Shadow Rust build references"
+        export SHADOW_INSTALL_LOCATION="''${out:?not defined}"
+        export SHADOW_STORE_DIR="${builtins.storeDir}"
+        export SHADOW_REFERENCE_PLACEHOLDER="${rustToolchainReferencePlaceholder}"
+        export SHADOW_RUST_TOOLCHAIN_LOCATION="$(rustc --print sysroot)"
+        export SHADOW_CARGO_VENDOR_DIR="''${cargoVendorDir-}"
+        ${cross.buildPackages.python3}/bin/python3 <<'PY'
+        import os
+        import re
+        from pathlib import Path
+
+        store_dir = os.environ["SHADOW_STORE_DIR"]
+        pattern = re.compile(re.escape(store_dir) + r"/[a-z0-9]{32}")
+        install_root = Path(os.environ["SHADOW_INSTALL_LOCATION"])
+        replacement = os.environ["SHADOW_REFERENCE_PLACEHOLDER"].encode()
+        needles = set()
+
+        def add_store_root(candidate: str) -> None:
+            match = pattern.search(candidate)
+            if match is not None:
+                needles.add(match.group(0).encode())
+
+        add_store_root(os.environ["SHADOW_RUST_TOOLCHAIN_LOCATION"])
+
+        vendor_dir = os.environ.get("SHADOW_CARGO_VENDOR_DIR", "")
+        if vendor_dir:
+            add_store_root(vendor_dir)
+            vendor_root = Path(vendor_dir)
+            if vendor_root.exists():
+                for root, dirnames, filenames in os.walk(vendor_root, followlinks=False):
+                    root_path = Path(root)
+                    for name in [*dirnames, *filenames]:
+                        entry = root_path / name
+                        if not entry.is_symlink():
+                            continue
+                        try:
+                            add_store_root(str(entry.resolve(strict=True)))
+                        except FileNotFoundError:
+                            continue
+
+        for needle in needles:
+            if len(needle) != len(replacement):
+                raise SystemExit("store reference replacement must keep the same byte length")
+
+        for root, dirnames, filenames in os.walk(install_root, followlinks=False):
+            root_path = Path(root)
+            dirnames[:] = [name for name in dirnames if not (root_path / name).is_symlink()]
+            for name in filenames:
+                path = root_path / name
+                if path.is_symlink():
+                    continue
+                data = path.read_bytes()
+                rewritten = data
+                for needle in needles:
+                    if needle in rewritten:
+                        rewritten = rewritten.replace(needle, replacement)
+                if rewritten != data:
+                    path.write_bytes(rewritten)
+        PY
+        echo "stripping Shadow Rust build references done"
+      '';
       mkShadowRustUiAppFor =
         cross:
         pname:
@@ -950,6 +1014,8 @@
             outputHashes = uiCraneOutputHashes;
             cargoExtraArgs = "--offline -p ${pname}";
             doCheck = false;
+            doNotRemoveReferencesToRustToolchain = true;
+            doNotRemoveReferencesToVendorDir = true;
             strictDeps = true;
             CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
             postUnpack = ''
@@ -1003,6 +1069,7 @@
           craneLib.buildPackage (commonArgs // {
             inherit cargoVendorDir cargoArtifacts;
             meta.mainProgram = pname;
+            postInstall = mkStripShadowStoreReferencesPostInstall cross;
           });
       mkShadowRustDemoFor = cross:
         mkShadowRustUiAppFor cross "shadow-rust-demo" "apps/shadow-rust-demo";
@@ -1118,13 +1185,18 @@
             cargoToml = ./rust/Cargo.toml;
             cargoExtraArgs = "--locked -p shadow-system";
             doCheck = false;
+            doNotRemoveReferencesToRustToolchain = true;
+            doNotRemoveReferencesToVendorDir = true;
             strictDeps = true;
             CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.rust.rustcTarget;
             postUnpack = ''
               cd "$sourceRoot/rust"
               sourceRoot="."
             '';
-            nativeBuildInputs = [ cross.buildPackages.pkg-config ];
+            nativeBuildInputs = [
+              cross.buildPackages.pkg-config
+              cross.buildPackages.python3
+            ];
             depsBuildBuild =
               lib.optionals cross.stdenv.buildPlatform.isDarwin [
                 cross.buildPackages.stdenv.cc
@@ -1163,6 +1235,7 @@
         in craneLib.buildPackage (cargoArgs // {
           inherit cargoArtifacts;
           meta.mainProgram = "shadow-system";
+          postInstall = mkStripShadowStoreReferencesPostInstall cross;
         });
       mkShadowLinuxAudioSpikeFor = cross:
         cross.rustPlatform.buildRustPackage {
