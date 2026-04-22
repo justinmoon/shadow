@@ -48,13 +48,18 @@ SYSTEM_INIT_SYMLINK_OUTPUT_IMAGE="$TMP_DIR/system-init-symlink-output.img"
 SYSTEM_INIT_WRAPPER_OUTPUT_IMAGE="$TMP_DIR/system-init-wrapper-output.img"
 LOG_PROBE_OUTPUT_IMAGE="$TMP_DIR/log-probe-stock-init.img"
 LOG_PREFLIGHT_OUTPUT_IMAGE="$TMP_DIR/log-probe-preflight-stock-init.img"
+KGSL_PROBE_OUTPUT_IMAGE="$TMP_DIR/kgsl-probe-stock-init.img"
 RC_PROBE_OUTPUT_IMAGE="$TMP_DIR/rc-probe-stock-init.img"
 PREFLIGHT_OUTPUT="$TMP_DIR/boot-preflight-output"
 PREFLIGHT_CONFLICT_OUTPUT="$TMP_DIR/boot-preflight-conflict-output"
 PREFLIGHT_LEASE_COMMON_ROOT="$TMP_DIR/preflight-lease-common-root"
 RC_TRIGGER_LADDER_OUTPUT="$TMP_DIR/rc-trigger-ladder-output"
+KGSL_PROBE_OUTPUT="$TMP_DIR/boot-kgsl-probe-output"
+KGSL_TRIGGER_LADDER_OUTPUT="$TMP_DIR/boot-kgsl-trigger-ladder-output"
 PREFLIGHT_BUILD_MOCK="$TMP_DIR/mock-preflight-build.sh"
 PREFLIGHT_ONESHOT_MOCK="$TMP_DIR/mock-preflight-oneshot.sh"
+KGSL_PROBE_BUILD_MOCK="$TMP_DIR/mock-kgsl-probe-build.sh"
+KGSL_PROBE_ONESHOT_MOCK="$TMP_DIR/mock-kgsl-probe-oneshot.sh"
 LOCKF_LOG="$TMP_DIR/mock-lockf.log"
 RC_TRIGGER_LADDER_BUILD_MOCK="$TMP_DIR/mock-rc-trigger-build.sh"
 RC_TRIGGER_LADDER_ONESHOT_MOCK="$TMP_DIR/mock-rc-trigger-oneshot.sh"
@@ -283,6 +288,113 @@ PY
 printf 'mock preflight oneshot for %s\n' "$image"
 EOF
 chmod 0755 "$PREFLIGHT_ONESHOT_MOCK"
+
+cat >"$KGSL_PROBE_BUILD_MOCK" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+output=""
+trigger=""
+timeout_secs=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output)
+      output="$2"
+      shift 2
+      ;;
+    --trigger)
+      trigger="$2"
+      shift 2
+      ;;
+    --timeout)
+      timeout_secs="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+mkdir -p "$(dirname "$output")"
+printf 'mock kgsl probe image\n' >"$output"
+printf 'Trigger: %s\n' "$trigger"
+printf 'Timeout: %s\n' "$timeout_secs"
+EOF
+chmod 0755 "$KGSL_PROBE_BUILD_MOCK"
+
+cat >"$KGSL_PROBE_ONESHOT_MOCK" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+image=""
+output=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --image)
+      image="$2"
+      shift 2
+      ;;
+    --output)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+helper_dir="$output/collect/device/shadow-boot"
+mkdir -p "$helper_dir"
+printf 'ready\n' >"$helper_dir/status.txt"
+printf 'mock-boot-id\n' >"$helper_dir/boot-id.txt"
+printf '_a\n' >"$helper_dir/slot-suffix.txt"
+printf 'timeout\n' >"$helper_dir/kgsl-probe-stage.txt"
+printf 'request_firmware\n' >"$helper_dir/kgsl-probe-wchan.txt"
+cat >"$helper_dir/kgsl-probe-summary.txt" <<'INNER'
+trigger=post-fs-data
+timeout_secs=12
+result=timeout
+child_pid=4321
+kgsl_device_exists=true
+wchan_present=true
+stack_present=true
+INNER
+printf 'stack\n' >"$helper_dir/kgsl-probe-stack.txt"
+
+mkdir -p "$output/collect"
+python3 - "$output/status.json" "$output/collect/status.json" "$image" "${PIXEL_SERIAL:-TESTSERIAL}" <<'PY'
+import json
+import sys
+
+status_path, collect_status_path, image_path, serial = sys.argv[1:5]
+
+device_status = {
+    "ok": True,
+    "serial": serial,
+    "collection_succeeded": True,
+    "collect_output_dir": str(collect_status_path.rsplit("/", 1)[0]),
+    "failure_stage": "bootreason",
+    "bootreason_sys_boot_reason": "bootloader",
+    "fastboot_auto_reboot_attempted": True,
+    "fastboot_auto_reboot_succeeded": True,
+}
+collect_status = {
+    "collection_succeeded": True,
+}
+with open(status_path, "w", encoding="utf-8") as fh:
+    json.dump(device_status, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+with open(collect_status_path, "w", encoding="utf-8") as fh:
+    json.dump(collect_status, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+printf 'mock kgsl probe oneshot for %s\n' "$image"
+EOF
+chmod 0755 "$KGSL_PROBE_ONESHOT_MOCK"
 
 cat >"$MOCK_BIN/lockf" <<'EOF'
 #!/usr/bin/env bash
@@ -2599,6 +2711,24 @@ assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'set
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'preflight-summary.txt'
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'runtime-linux-dir'
 
+kgsl_probe_build_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_kgsl_probe.sh" \
+      --stock-init \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$KGSL_PROBE_OUTPUT_IMAGE" \
+      --trigger post-fs-data \
+      --timeout 12 \
+      --device-log-root /data/local/tmp/shadow-boot
+)"
+assert_contains "$kgsl_probe_build_output" "Wrote kgsl-probe boot image: $KGSL_PROBE_OUTPUT_IMAGE"
+assert_contains "$kgsl_probe_build_output" "Trigger: post-fs-data"
+assert_contains "$kgsl_probe_build_output" "Timeout: 12s"
+assert_cpio_entry_contains "$KGSL_PROBE_OUTPUT_IMAGE" shadow-boot-helper 'exec 3</dev/kgsl-3d0'
+assert_cpio_entry_contains "$KGSL_PROBE_OUTPUT_IMAGE" shadow-boot-helper 'kgsl-probe-summary.txt'
+assert_cpio_entry_contains "$KGSL_PROBE_OUTPUT_IMAGE" shadow-boot-helper 'kgsl-probe-wchan.txt'
+
 rc_probe_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_rc_probe.sh" \
@@ -2721,6 +2851,70 @@ assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_ready false
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_blocked_reason missing-required-paths
 assert_contains "$(cat "$LOCKF_LOG")" "exec "
 assert_contains "$(cat "$LOCKF_LOG")" "pixel_boot_preflight.sh"
+
+rm -rf "$KGSL_PROBE_OUTPUT"
+rm -f "$LOCKF_LOG"
+kgsl_probe_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    SHADOW_REPO_COMMON_ROOT="$TMP_DIR/kgsl-probe-common-root" \
+    PIXEL_SERIAL=TESTSERIAL \
+    MOCK_LOCKF_LOG="$LOCKF_LOG" \
+    PIXEL_BOOT_KGSL_PROBE_BUILD_SCRIPT="$KGSL_PROBE_BUILD_MOCK" \
+    PIXEL_BOOT_KGSL_PROBE_ONESHOT_SCRIPT="$KGSL_PROBE_ONESHOT_MOCK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_kgsl_probe.sh" \
+      --serial TESTSERIAL \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output-dir "$KGSL_PROBE_OUTPUT" \
+      --trigger post-fs-data \
+      --timeout 12 \
+      --patch-target init.recovery.rc \
+      --adb-timeout 45 \
+      --boot-timeout 60 \
+      --recover-traces-after
+)"
+assert_contains "$kgsl_probe_output" "Boot KGSL probe output: $KGSL_PROBE_OUTPUT"
+assert_contains "$kgsl_probe_output" "KGSL result: timeout"
+assert_contains "$kgsl_probe_output" "KGSL wchan: request_firmware"
+assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" kind boot_kgsl_probe
+assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" ok true
+assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" helper_proved_current_boot true
+assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" kgsl_result timeout
+assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" kgsl_wchan request_firmware
+assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" bootreason_sys_boot_reason bootloader
+assert_contains "$(cat "$LOCKF_LOG")" "pixel_boot_kgsl_probe.sh"
+
+rm -rf "$KGSL_TRIGGER_LADDER_OUTPUT"
+kgsl_trigger_ladder_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    PIXEL_BOOT_KGSL_PROBE_BUILD_SCRIPT="$KGSL_PROBE_BUILD_MOCK" \
+    PIXEL_BOOT_KGSL_PROBE_ONESHOT_SCRIPT="$KGSL_PROBE_ONESHOT_MOCK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_kgsl_trigger_ladder.sh" \
+      --serial TESTSERIAL \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output-dir "$KGSL_TRIGGER_LADDER_OUTPUT" \
+      --timeout 12 \
+      --trigger post-fs-data \
+      --trigger property:init.svc.gpu=running
+)"
+assert_contains "$kgsl_trigger_ladder_output" "KGSL trigger ladder output: $KGSL_TRIGGER_LADDER_OUTPUT"
+test -f "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json"
+test -f "$KGSL_TRIGGER_LADDER_OUTPUT/matrix.tsv"
+test -f "$KGSL_TRIGGER_LADDER_OUTPUT/cases.tsv"
+assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" kind boot_kgsl_trigger_ladder
+assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" ok true
+assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" case_count 2
+assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/kgsl_result timeout
+assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/1/helper_proved_current_boot true
+assert_contains "$(cat "$KGSL_TRIGGER_LADDER_OUTPUT/matrix.tsv")" $'01-post-fs-data\tpost-fs-data\ttrue\ttrue\ttimeout'
+assert_contains "$(cat "$KGSL_TRIGGER_LADDER_OUTPUT/cases.tsv")" $'02-property-init.svc.gpu-running\tTESTSERIAL\tproperty:init.svc.gpu=running'
 
 prepare_cached_tmpfs_gpu_bundle
 install_tmpfs_gpu_smoke_mocks
