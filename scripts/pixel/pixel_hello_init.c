@@ -1969,6 +1969,7 @@ static bool parse_orange_gpu_mode_value(const char *raw, char *dest, size_t dest
         strcmp(value, "vulkan-instance-smoke") != 0 &&
         strcmp(value, "raw-vulkan-instance-smoke") != 0 &&
         strcmp(value, "firmware-probe-only") != 0 &&
+        strcmp(value, "timeout-control-smoke") != 0 &&
         strcmp(value, "c-kgsl-open-readonly-smoke") != 0 &&
         strcmp(value, "c-kgsl-open-readonly-pid1-smoke") != 0 &&
         strcmp(value, "raw-kgsl-open-readonly-smoke") != 0 &&
@@ -2316,6 +2317,10 @@ static bool orange_gpu_mode_is_firmware_probe_only(const struct hello_init_confi
     return strcmp(config->orange_gpu_mode, "firmware-probe-only") == 0;
 }
 
+static bool orange_gpu_mode_is_timeout_control_smoke(const struct hello_init_config *config) {
+    return strcmp(config->orange_gpu_mode, "timeout-control-smoke") == 0;
+}
+
 static bool orange_gpu_mode_is_c_kgsl_open_readonly_smoke(const struct hello_init_config *config) {
     return strcmp(config->orange_gpu_mode, "c-kgsl-open-readonly-smoke") == 0;
 }
@@ -2408,12 +2413,14 @@ static bool orange_gpu_mode_uses_visible_checkpoints(
 
     if (orange_gpu_checkpoint_is_firmware_probe(checkpoint_name)) {
         return orange_gpu_mode_is_firmware_probe_only(config) ||
+               orange_gpu_mode_is_timeout_control_smoke(config) ||
                orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config) ||
                orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(config);
     }
 
     if (orange_gpu_checkpoint_is_timeout_classifier(checkpoint_name)) {
-        return orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config) ||
+        return orange_gpu_mode_is_timeout_control_smoke(config) ||
+               orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config) ||
                orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(config);
     }
 
@@ -2527,6 +2534,9 @@ static const char *orange_gpu_checkpoint_visual(const char *checkpoint_name) {
     }
     if (strcmp(checkpoint_name, "kgsl-timeout-gx-oob") == 0) {
         return "code-orange-13";
+    }
+    if (strcmp(checkpoint_name, "kgsl-timeout-control") == 0) {
+        return "code-orange-14";
     }
     if (strcmp(checkpoint_name, "firmware-probe-ok") == 0) {
         return "checker-orange";
@@ -3078,6 +3088,13 @@ static void classify_orange_gpu_timeout(
     struct orange_gpu_timeout_classification *classification
 ) {
     init_orange_gpu_timeout_classification(classification);
+    if (orange_gpu_mode_is_timeout_control_smoke(config)) {
+        classification->checkpoint_name = "kgsl-timeout-control";
+        classification->bucket_name = "timeout-control";
+        classification->matched_needle = "intentional-hang";
+        classification->report_present = true;
+        return;
+    }
     if (!orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config)) {
         return;
     }
@@ -3831,6 +3848,40 @@ static int run_c_kgsl_open_readonly_smoke(
     return 0;
 }
 
+static int run_timeout_control_smoke(
+    const struct hello_init_config *config,
+    const char *payload_probe_stage_path,
+    const char *payload_probe_stage_prefix
+) {
+    if (
+        probe_bootstrap_gpu_firmware(
+            config,
+            payload_probe_stage_path,
+            payload_probe_stage_prefix
+        ) != 0
+    ) {
+        return 1;
+    }
+
+    write_payload_probe_stage_best_effort(
+        payload_probe_stage_path,
+        payload_probe_stage_prefix,
+        "timeout-control-sleep"
+    );
+    log_stage(
+        "<6>",
+        "orange-gpu-timeout-control",
+        "stage=timeout-control-sleep"
+    );
+    log_boot("<6>", "orange-gpu timeout-control entering intentional hang");
+
+    for (;;) {
+        pause();
+    }
+
+    return 0;
+}
+
 static int run_orange_gpu_payload(
     const struct hello_init_config *config,
     struct metadata_stage_runtime *metadata_stage
@@ -4084,6 +4135,17 @@ static int run_orange_gpu_payload(
                 "mode=firmware-probe-only"
             );
             _exit(probe_bootstrap_gpu_firmware(
+                config,
+                payload_probe_stage_path,
+                payload_probe_stage_prefix
+            ));
+        } else if (orange_gpu_mode_is_timeout_control_smoke(config)) {
+            log_stage(
+                "<6>",
+                "orange-gpu-child-c-probe",
+                "mode=timeout-control-smoke"
+            );
+            _exit(run_timeout_control_smoke(
                 config,
                 payload_probe_stage_path,
                 payload_probe_stage_prefix
