@@ -76,11 +76,11 @@ The best next discriminators are:
 
 1. Re-run the same boot-owned `c-kgsl-open-readonly-smoke` rung with a visible timeout classifier rather than relying on `/metadata` alone.
 2. Use the watched pattern to split the next seam:
-   - firmware / readiness still unresolved
-   - GX/OOB wake or GMU power-handshake bring-up
-   - GMU / HFI
-   - secure zap boot
-   - CP init / ringbuffer submit
+   - `solid-red`: firmware / readiness still unresolved
+   - `solid-blue`: GMU / HFI
+   - `solid-yellow`: secure zap boot
+   - `solid-cyan`: CP init / ringbuffer submit
+   - `solid-magenta`: GX/OOB wake or GMU power-handshake bring-up
 3. Keep execution-context and holder-scan evidence as supporting context, not the primary blocker.
 
 Do not jump back out to `orange-gpu`, compositor, or app launch work until one of those moves the seam.
@@ -119,7 +119,7 @@ Once the first truthful boot-owned `orange-gpu` frame is proven, stop extending 
   - manifest-driven rooted KGSL falsification batches
   - one `matrix-summary.json` plus `matrix.tsv`
 - watched runs
-  - `code-orange-2/3/4/9/10/11/12/13` stage/failure visuals
+  - `solid-red/blue/yellow/cyan/magenta`, `success-solid`, and `code-orange-2/3/4/9/10/11` stage/failure visuals
   - `checker-orange` now has a two-device proof as the firmware-preflight success contract
 
 The smokes covering this are:

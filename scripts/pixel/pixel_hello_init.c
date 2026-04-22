@@ -2521,22 +2521,22 @@ static const char *orange_gpu_checkpoint_visual(const char *checkpoint_name) {
     }
 
     if (strcmp(checkpoint_name, "kgsl-timeout-firmware") == 0) {
-        return "bands-orange";
+        return "solid-red";
     }
     if (strcmp(checkpoint_name, "kgsl-timeout-gmu-hfi") == 0) {
-        return "orange-vertical-band";
+        return "solid-blue";
     }
     if (strcmp(checkpoint_name, "kgsl-timeout-zap") == 0) {
-        return "frame-orange";
+        return "solid-yellow";
     }
     if (strcmp(checkpoint_name, "kgsl-timeout-cp-init") == 0) {
-        return "code-orange-12";
+        return "solid-cyan";
     }
     if (strcmp(checkpoint_name, "kgsl-timeout-gx-oob") == 0) {
-        return "code-orange-13";
+        return "solid-magenta";
     }
     if (strcmp(checkpoint_name, "kgsl-timeout-control") == 0) {
-        return "code-orange-14";
+        return "success-solid";
     }
     if (strcmp(checkpoint_name, "firmware-probe-ok") == 0) {
         return "checker-orange";

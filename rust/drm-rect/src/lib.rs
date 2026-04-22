@@ -17,6 +17,11 @@ const SHADOW_INIT_CONFIG_PATH: &str = "/shadow-init.cfg";
 const DEFAULT_SOLID_COLOR: (u8, u8, u8) = (0x2a, 0xd0, 0xc9);
 const ORANGE_SOLID_COLOR: (u8, u8, u8) = (0xff, 0x7a, 0x00);
 const SUCCESS_SOLID_COLOR: (u8, u8, u8) = (0x00, 0xb8, 0x5c);
+const RED_SOLID_COLOR: (u8, u8, u8) = (0xd9, 0x23, 0x23);
+const BLUE_SOLID_COLOR: (u8, u8, u8) = (0x1f, 0x6f, 0xff);
+const YELLOW_SOLID_COLOR: (u8, u8, u8) = (0xf0, 0xc8, 0x08);
+const CYAN_SOLID_COLOR: (u8, u8, u8) = (0x00, 0xc8, 0xd7);
+const MAGENTA_SOLID_COLOR: (u8, u8, u8) = (0xd1, 0x2a, 0xff);
 const ACCENT_DARK_COLOR: (u8, u8, u8) = (0x08, 0x08, 0x08);
 
 #[derive(Clone, Copy)]
@@ -61,6 +66,11 @@ fn parse_display_visual(visual_name: &str) -> Result<DisplayVisual> {
         "default-solid" => Ok(DisplayVisual::Solid(DEFAULT_SOLID_COLOR)),
         "orange-solid" | "solid-orange" => Ok(DisplayVisual::Solid(ORANGE_SOLID_COLOR)),
         "success-solid" => Ok(DisplayVisual::Solid(SUCCESS_SOLID_COLOR)),
+        "solid-red" => Ok(DisplayVisual::Solid(RED_SOLID_COLOR)),
+        "solid-blue" => Ok(DisplayVisual::Solid(BLUE_SOLID_COLOR)),
+        "solid-yellow" => Ok(DisplayVisual::Solid(YELLOW_SOLID_COLOR)),
+        "solid-cyan" => Ok(DisplayVisual::Solid(CYAN_SOLID_COLOR)),
+        "solid-magenta" => Ok(DisplayVisual::Solid(MAGENTA_SOLID_COLOR)),
         "orange-horizontal-band" | "bands-orange" => Ok(DisplayVisual::HorizontalBand {
             primary: ORANGE_SOLID_COLOR,
             accent: ACCENT_DARK_COLOR,
@@ -200,6 +210,11 @@ fn describe_display_visual(visual: DisplayVisual) -> &'static str {
         DisplayVisual::Solid(DEFAULT_SOLID_COLOR) => "default-solid",
         DisplayVisual::Solid(ORANGE_SOLID_COLOR) => "solid-orange",
         DisplayVisual::Solid(SUCCESS_SOLID_COLOR) => "success-solid",
+        DisplayVisual::Solid(RED_SOLID_COLOR) => "solid-red",
+        DisplayVisual::Solid(BLUE_SOLID_COLOR) => "solid-blue",
+        DisplayVisual::Solid(YELLOW_SOLID_COLOR) => "solid-yellow",
+        DisplayVisual::Solid(CYAN_SOLID_COLOR) => "solid-cyan",
+        DisplayVisual::Solid(MAGENTA_SOLID_COLOR) => "solid-magenta",
         DisplayVisual::Solid(_) => "solid-custom",
         DisplayVisual::HorizontalBand { .. } => "bands-orange",
         DisplayVisual::VerticalBand { .. } => "orange-vertical-band",

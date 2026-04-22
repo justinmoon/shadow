@@ -73,28 +73,29 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 
 - `solid-orange`: prelude / panel takeover proof
 - `checker-orange`: firmware preflight succeeded before any KGSL open
-- `bands-orange`: firmware/readiness seam still points at `request_firmware`
-- `orange-vertical-band`: timeout most likely moved into GMU / HFI bring-up
-- `frame-orange`: timeout most likely moved into secure zap boot
+- `solid-red`: timeout still points at firmware / `request_firmware`
+- `solid-blue`: timeout most likely moved into GMU / HFI bring-up
+- `solid-yellow`: timeout most likely moved into secure zap boot
+- `solid-cyan`: timeout most likely moved into CP init / ringbuffer submit
+- `solid-magenta`: timeout most likely moved into GX/OOB wake or GMU power-handshake bring-up
+- `success-solid`: timeout-control rung proved the repaint path after a generic post-checkerboard hang
 - `code-orange-2`: validated checkpoint
 - `code-orange-3`: probe-ready checkpoint
 - `code-orange-4`: success postlude
 - `code-orange-9`: payload watchdog timeout
 - `code-orange-10`: child died from signal
 - `code-orange-11`: child exited nonzero
-- `code-orange-12`: timeout most likely moved into CP init / ringbuffer submit
-- `code-orange-13`: timeout most likely moved into GX/OOB wake or GMU power-handshake bring-up
 
 Use the panel as a stage channel, not just “something orange happened.”
 
 ## Highest-Leverage Next Experiments
 
 1. Re-run the same boot-owned `c-kgsl-open-readonly-smoke` rung with staged firmware and the new visible timeout classifier:
-   - if the post-timeout pattern is `bands-orange`, the kernel is still effectively blocked at firmware serving
-   - if it moves to `orange-vertical-band`, the next likely seam is GMU / HFI
-   - if it moves to `frame-orange`, the next likely seam is secure zap boot
-   - if it moves to `code-orange-12`, the next likely seam is CP init / ringbuffer submit
-   - if it moves to `code-orange-13`, the next likely seam is GX/OOB wake or GMU power-handshake bring-up
+   - if the post-timeout color is `solid-red`, the kernel is still effectively blocked at firmware serving
+   - if it moves to `solid-blue`, the next likely seam is GMU / HFI
+   - if it moves to `solid-yellow`, the next likely seam is secure zap boot
+   - if it moves to `solid-cyan`, the next likely seam is CP init / ringbuffer submit
+   - if it moves to `solid-magenta`, the next likely seam is GX/OOB wake or GMU power-handshake bring-up
 2. Keep the durable recovery path honest, but stop treating it as the only truth channel for this seam:
    - the current `/metadata` probe files are not surviving these fastboot-return runs reliably
    - use them when they exist, but trust the watched panel contract first
