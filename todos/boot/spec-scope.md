@@ -6,23 +6,48 @@ This document fixes the system boundary for Pixel 4a boot work so the living pla
 
 ## Problem
 
-Today Shadow takes over a rooted Android phone after Android has already booted. The boot project moves Shadow earlier: custom boot image, automatic Shadow launch, and progressively smaller Android dependency.
+Today Shadow takes over a rooted Android phone after Android has already booted. The goal of the boot project is to replace Android's userspace entirely with a reproducible, minimal boot image that owns everything from PID 1 upward: no Android init, no JVM, no framework services.
+
+## North Star
+
+A reproducible Nix build that produces a boot image from auditable sources:
+
+- **Kernel:** stock Pixel kernel from Google's published source tree (a specific tag)
+- **PID 1 and boot graph:** Shadow-owned, written in Rust
+- **GPU userspace:** Mesa/Turnip from upstream source
+- **Compositor, runtime, shell:** Shadow's own code, built from this repo
+- **Proprietary firmware:** only the specific blobs the hardware requires (GPU microcode, GMU, zap shader, and eventually touch/audio DSP), fetched from official upstreams where they actually exist, and otherwise from Google's published factory or vendor images, as fixed-output derivations with pinned hashes
+
+Every byte in the output is either built from source we control or is a verified proprietary blob from a known upstream. The build produces a bill of materials: what is ours, what is open-source, and what is an opaque vendor blob — and why each blob is needed.
+
+Nothing from Android's userspace — no init, no zygote, no system_server, no ART, no Play Services — is present in the target image. The stock Android system, vendor, and data partitions may still exist on-device but are not mounted or used by the boot path.
+
+## Two-Track Strategy
+
+### Track 1: Trailblaze (current)
+
+Pull firmware and vendor artifacts directly off a rooted device. Experiment, discover what the hardware actually needs, and prove each subsystem on real hardware. This track is fast, messy, and exploratory. It produces the knowledge of exactly which vendor dependencies exist and why.
+
+### Track 2: Reproduce
+
+As each dependency is discovered and proven on hardware, reproduce it in a clean Nix derivation from an official upstream source. This forces verification: if we can't build or fetch it from known inputs, we don't actually understand what we're using. Track 2 turns trailblaze discoveries into reproducible, auditable build steps.
+
+The two tracks run in parallel. Track 1 stays ahead, discovering the next hardware dependency. Track 2 follows behind, locking each proven dependency into a deterministic build.
 
 ## Definition Of Ownership
 
 For this repo, "own the boot chain" means:
 
 - own the `boot.img` contents for `sunfish`
-- own the ramdisk entrypoint and added init imports
-- decide how Shadow is launched during boot
-- decide which Android services are allowed to continue after Shadow takes over
+- own PID 1 and the entire userspace process tree
+- decide exactly which proprietary firmware blobs are included and why
+- produce the boot image from a reproducible Nix build with a clear bill of materials
 
 It does not initially mean:
 
 - replacing boot ROM, XBL, ABL, TrustZone, or other immutable pre-kernel stages
-- replacing the stock kernel on day one
-- replacing vendor firmware or HAL blobs on day one
-- shipping a full non-Android Linux distro as the first deliverable
+- replacing the stock kernel on day one (but the build should be able to build one from Google's published source)
+- building proprietary firmware from source (Qualcomm does not publish source for GPU/DSP microcode)
 
 ## Real Target
 
@@ -35,58 +60,64 @@ It does not initially mean:
 
 ## Phase Boundaries
 
-### Phase 0: Tooling And Inspection
+### Phase 0: Tooling And Inspection (done)
 
 - inspect stock and patched `boot.img`
 - restore repo-local unpack, patch, repack, and flash scripts
 - add early logging and safe rollback
 
-### Phase 1: Shadow At Boot With Stock Init Retained
+### Phase 1: Shadow-Owned PID 1 With Full GPU (current)
 
-- custom boot image and init wrapper
-- stock init still handles mounts, `ueventd`, modules, encrypted `/data`, and most service labelling
-- Shadow boot path runs automatically, likely by reusing the current takeover logic
-- success means no manual `adb` or `su` takeover after boot
+- custom `boot.img` with Shadow-owned PID 1, no stock Android init
+- Shadow owns `/dev` bootstrap, firmware serving, and GPU bring-up
+- prove the full GPU render path: instance, adapter, device, offscreen render, KMS present
+- port PID 1 to Rust once the C seam proves `boot-vulkan-offscreen`
+- firmware pulled from device (track 1) with parallel Nix reproduction (track 2)
+- success means Shadow renders to screen from boot with no Android code running
 
-### Phase 2: Reduce Android Runtime Dependency
+### Phase 2: Compositor And App Runtime From Boot
 
-- stop depending on pre-staged `/data` artifacts for the minimal boot lane
-- trim services started before Shadow takeover
-- keep only the vendor daemons actually needed for the Shadow runtime
+- bring up the compositor, app surfaces, and runtime from the boot-owned PID 1
+- prove input, audio, and basic app lifecycle
+- keep camera and Wi-Fi deferred
+- the Nix build should produce this image end-to-end by the end of this phase
 
-### Phase 3: Deeper Replacement, Only If It Pays Off
+### Phase 3: Shell And Services
 
-- replace more init and service logic
-- consider alternate rootfs shapes or stronger SELinux posture
-- not a blocker for the first product milestone
+- boot into the full Shadow shell experience
+- add narrow service spikes: audio, storage, networking as needed
+- decide the long-lived strategy for camera, Wi-Fi, update/recovery
 
 ## Subsystem Expectations
 
-- display, input, audio, and GPU are already close to Linux-native; phase 1 should reuse the current runtime path
-- `/data` likely stays Android-managed early because of encryption and checkpointing
-- camera is expected to stay Android-native for longer
-- Wi-Fi and broader networking likely stay Android-managed or are deferred after phase 1
-- update and recovery must stay simple and reversible from the start
+- display and GPU use DRM/KMS and Mesa/Turnip (open-source userspace, proprietary firmware blobs)
+- input is kernel-native, may need touchscreen firmware
+- audio needs Qualcomm ADSP firmware; the userspace path is TBD
+- camera is expected to stay the hardest Android dependency; defer it
+- Wi-Fi and networking are deferred after the first boot milestone
+- `/data` is not mounted or used by the boot path; runtime state lives in tmpfs or ramdisk
 
 ## Non-Goals For The First Delivery
 
 - relocking the bootloader
 - verified custom release keys
-- full Android replacement
 - telephony parity
 - camera and Wi-Fi parity on day one
+- building proprietary firmware from source (not possible; Qualcomm does not publish it)
 
 ## Project Rules
 
 - keep one known-good recovery path at all times
-- prefer stock `boot.img` plus small ramdisk modifications over larger platform forks
 - make the physical device the final truth for every milestone
 - treat Cuttlefish as a boot-debug helper, not a proxy for `sunfish` hardware behavior
 - do not make camera or Wi-Fi blockers for the first Shadow-at-boot milestone
+- when a hardware dependency is discovered (track 1), reproduce it from an official upstream source in Nix (track 2) before treating it as permanently understood
+- keep the bill of materials explicit: every proprietary blob should have a documented upstream, a pinned hash, and a reason it's needed
 
 ## Open Questions
 
-- what is the smallest safe trigger point for automatic takeover?
-- which vendor services are actually required after Shadow owns the display?
-- can phase 1 tolerate pre-staged runtime bundles under `/data`, or is a ramdisk-minimal bundle better?
+- what is the minimal set of proprietary firmware blobs for GPU, touch, and audio?
+- can the kernel be built from Google's published source with the same boot result, or does the stock pre-built kernel carry patches not in the published tree?
+- what is the right Nix structure for the boot image build: one flake output, or separate derivations for kernel, firmware, ramdisk, and final image?
 - how much SELinux can remain enforcing before the bring-up cost spikes?
+- what is the long-lived strategy for camera and Wi-Fi?
