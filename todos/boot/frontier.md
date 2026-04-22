@@ -117,6 +117,11 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
       - helper-backed direct KGSL open is now re-proved on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-c-kgsl-open-readonly-fw-helper-breadcrumb-v1.img.hello-init.json`
       - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T215913Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T220049Z-06241JEC200520_`
       - both recovered bundles report `proof_ok=true`, `metadata_stage_value=parent-probe-result=skipped`, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly-ok`, `probe_report_proves_child_success=true`, and `metadata_probe_fingerprint_present=true`
+      - direct PID1 KGSL open is now also re-proved on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-c-kgsl-open-readonly-pid1-breadcrumb-v2.img.hello-init.json`
+      - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T221212Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T221344Z-06241JEC200520_`
+      - both recovered bundles now report `proof_ok=true`, `metadata_stage_value=parent-probe-result=skipped`, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly-ok`, `probe_report_proves_child_success=true`, and `metadata_probe_fingerprint_present=true`
+      - that means the promoted `exec + raw-argv + hello-init-rust` seam can now reach `kgsl-open-readonly-ok` directly from PID 1 before any child payload fork/exec while still preserving the durable `probe-report.txt` proof surface
+      - for the current `pixel_hello_init.c` migration surface, C is now a frozen reference seam rather than the only executable truth
 
 ## Best Observability
 
@@ -185,7 +190,7 @@ Use the panel as a stage channel, not just “something orange happened.”
    - `11151JEC200472`
    - `06241JEC200520`
 5. Use the newly ported Rust-side parent-probe / raw-KGSL / timeout-control ladder to retire the remaining C bootstrap discriminators one seam at a time.
-   - next bootstrap discriminator: run `c-kgsl-open-readonly-pid1-smoke` on the rust-bridge seam, because the child-supervised helper-backed KGSL open now recovers durable success metadata on two rooted phones
+   - next bootstrap discriminator: move one rung above readonly KGSL open on the same PID1-visible Rust seam instead of spending more loops on C parity
 
 ## Fast Commands
 

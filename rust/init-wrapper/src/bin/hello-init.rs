@@ -2404,12 +2404,30 @@ mod linux {
         }
 
         if orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(&config.orange_gpu_mode) {
-            return run_c_kgsl_open_readonly_smoke_internal(
+            let direct_status = run_c_kgsl_open_readonly_smoke_internal(
                 config,
                 probe_stage_path.as_deref(),
                 probe_stage_prefix.as_deref(),
                 false,
             );
+            let direct_result = ChildWatchResult {
+                completed: true,
+                timed_out: false,
+                waited_seconds: 0,
+                exit_status: Some(direct_status),
+                signal: None,
+                raw_wait_status: 0,
+            };
+            write_probe_report(
+                metadata_stage,
+                "orange-gpu-payload",
+                probe_stage_path.as_deref(),
+                &direct_result,
+                None,
+                false,
+                0,
+            );
+            return direct_status;
         }
 
         let firmware_helper = if config.orange_gpu_firmware_helper {

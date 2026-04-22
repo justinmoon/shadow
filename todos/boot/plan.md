@@ -91,6 +91,11 @@ Related docs:
         - helper-backed direct KGSL open is now re-proved on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-c-kgsl-open-readonly-fw-helper-breadcrumb-v1.img`
         - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T215913Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T220049Z-06241JEC200520_`
         - both recovered bundles report `proof_ok=true`, `metadata_stage_value=parent-probe-result=skipped`, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly-ok`, `probe_report_proves_child_success=true`, and `metadata_probe_fingerprint_present=true`
+        - direct PID1 KGSL open is now also re-proved on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-c-kgsl-open-readonly-pid1-breadcrumb-v2.img`
+        - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T221212Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T221344Z-06241JEC200520_`
+        - both recovered bundles now report `proof_ok=true`, `metadata_stage_value=parent-probe-result=skipped`, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly-ok`, `probe_report_proves_child_success=true`, and `metadata_probe_fingerprint_present=true`
+        - that means the promoted Rust seam now preserves the durable `probe-report.txt` contract even when `/dev/kgsl-3d0` is opened directly from PID 1 before any child payload fork/exec
+        - for the current `pixel_hello_init.c` migration surface, Rust now owns the executable proof path and C is just a frozen reference seam
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
   - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
@@ -497,7 +502,8 @@ Related docs:
   - helper-backed `gpu-render` is now re-proven with recovered `probe-summary.json` and a watched `success-solid` run; freeze the C seam except for migration glue
   - current Rust port status on 2026-04-22:
     - `probe-summary.json`, `probe-fingerprint.txt`, `probe-timeout-class.txt`, the parent-probe loop, `timeout-control-smoke`, and the raw/direct KGSL smoke modes now live in Rust on current `master`
-    - the next bootstrap discriminator is `c-kgsl-open-readonly-pid1-smoke` on the rust-bridge seam rather than more child-supervised parity work
+    - helper-backed child KGSL open and direct PID1 KGSL open are both now re-proved on rooted hardware with `proof_ok=true`
+    - the next bootstrap discriminator is one rung above readonly KGSL open on the same PID1-visible Rust seam rather than more C-parity cleanup
 - [ ] Package one short repeated-frame proof (`orange-gpu-loop`):
   - animate color or a frame counter for 2-3 seconds
   - use it to prove repeated submission and sync, not just one lucky frame
