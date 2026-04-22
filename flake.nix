@@ -469,7 +469,6 @@
                   with sdkPkgs;
                   [
                     cmdline-tools-latest
-                    platform-tools
                     ndk-28-2-13676358
                   ]
                 )
@@ -1285,6 +1284,7 @@
           };
           toolPkgs = [
             androidSdk
+            pkgs.android-tools
             rustToolchain
             pkgs.bash
             pkgs.cargo-ndk
