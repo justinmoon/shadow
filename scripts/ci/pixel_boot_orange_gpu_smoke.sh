@@ -12,6 +12,8 @@ HELLO_INIT_RUST_CHILD_OUTPUT="$TMP_DIR/hello-init-rust-child"
 HELLO_INIT_RUST_SHIM_OUTPUT="$TMP_DIR/hello-init-rust-shim"
 HELLO_INIT_RUST_EXEC_SHIM_OUTPUT="$TMP_DIR/hello-init-rust-shim-exec"
 ORANGE_INIT_OUTPUT="$TMP_DIR/orange-init"
+SHADOW_SESSION_OUTPUT="$TMP_DIR/shadow-session"
+SHADOW_COMPOSITOR_OUTPUT="$TMP_DIR/shadow-compositor-guest"
 GPU_BUNDLE_DIR="$TMP_DIR/gpu-bundle"
 BAD_LOADER_BUNDLE_DIR="$TMP_DIR/bad-loader-bundle"
 BAD_BINARY_BUNDLE_DIR="$TMP_DIR/bad-binary-bundle"
@@ -81,6 +83,18 @@ cat >"$ORANGE_INIT_OUTPUT" <<'EOF'
 echo orange-init
 EOF
 chmod 0755 "$ORANGE_INIT_OUTPUT"
+
+cat >"$SHADOW_SESSION_OUTPUT" <<'EOF'
+#!/system/bin/sh
+echo shadow-session
+EOF
+chmod 0755 "$SHADOW_SESSION_OUTPUT"
+
+cat >"$SHADOW_COMPOSITOR_OUTPUT" <<'EOF'
+#!/system/bin/sh
+echo shadow-compositor-guest
+EOF
+chmod 0755 "$SHADOW_COMPOSITOR_OUTPUT"
 
 printf 'ELF_BINARY_AARCH64\n' >"$GPU_BUNDLE_DIR/shadow-gpu-smoke"
 chmod 0755 "$GPU_BUNDLE_DIR/shadow-gpu-smoke"
@@ -285,6 +299,10 @@ elif grep -aFq -- 'ELF_BINARY_AARCH64' "$target" 2>/dev/null; then
 elif grep -aFq -- 'shadow-owned-init-role:orange-init' "$target" 2>/dev/null; then
   printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
 elif grep -aFq -- 'shadow-owned-init-role:hello-init' "$target" 2>/dev/null; then
+  printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
+elif grep -aFq -- 'shadow-session' "$target" 2>/dev/null; then
+  printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
+elif grep -aFq -- 'shadow-compositor-guest' "$target" 2>/dev/null; then
   printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
 elif grep -aFq -- 'ELF_VULKAN_LOADER_AARCH64' "$target" 2>/dev/null || grep -aFq -- 'ELF_TURNIP_AARCH64' "$target" 2>/dev/null; then
   printf '%s: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked, not stripped\n' "$target"
@@ -3283,6 +3301,42 @@ assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-parent-probe.img.hello
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-parent-probe.img.hello-init.json" orange_gpu_parent_probe_interval_secs "3"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-parent-probe.img.hello-init.json" metadata_probe_fingerprint_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-parent-probe-run-token/probe-fingerprint.txt"
 
+rust_bridge_compositor_scene_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    PIXEL_SHADOW_SESSION_BIN="$SHADOW_SESSION_OUTPUT" \
+    PIXEL_SHADOW_COMPOSITOR_GUEST_BIN="$SHADOW_COMPOSITOR_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
+      --rust-shim "$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --firmware-dir "$GPU_FIRMWARE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-rust-bridge-compositor-scene.img" \
+      --hello-init-mode rust-bridge \
+      --orange-gpu-mode compositor-scene \
+      --orange-gpu-firmware-helper true \
+      --orange-gpu-metadata-stage-breadcrumb true \
+      --firmware-bootstrap ramdisk-lib-firmware \
+      --run-token orange-gpu-rust-bridge-compositor-scene-run-token \
+      --hold-secs 9 \
+      --mount-sys true
+)"
+
+assert_contains "$rust_bridge_compositor_scene_boot_output" "Orange GPU mode: compositor-scene"
+assert_contains "$rust_bridge_compositor_scene_boot_output" "Payload contract: hello-init launches /orange-gpu/shadow-session in shell-only compositor mode"
+assert_contains "$rust_bridge_compositor_scene_boot_output" "GPU proof: compositor-owned shell home frame captured durably through the Rust boot seam"
+assert_contains "$rust_bridge_compositor_scene_boot_output" "Metadata compositor frame path: /metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-compositor-scene-run-token/compositor-frame.ppm"
+assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-compositor-scene.img" orange-gpu/shadow-session
+assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-compositor-scene.img" orange-gpu/shadow-compositor-guest
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-compositor-scene.img" orange-gpu/shadow-shell-dummy-client $'#!/system/bin/sh\nexit 0\n'
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-compositor-scene.img" orange-gpu/compositor-scene-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "shell"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/shadow-shell-dummy-client",\n    "runtimeDir": "/shadow-runtime",\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": true,\n    "frameCapture": {\n      "mode": "first-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-compositor-scene-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  }\n}\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-compositor-scene.img.hello-init.json" orange_gpu_mode "compositor-scene"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-compositor-scene.img.hello-init.json" metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-compositor-scene-run-token/compositor-frame.ppm"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-compositor-scene.img.hello-init.json" metadata_probe_summary_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-compositor-scene-run-token/probe-summary.json"
+
 assert_command_fails_contains "rust-bridge orange-gpu images currently require --rust-child-profile hello" \
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
@@ -3319,7 +3373,7 @@ assert_command_fails_contains "expected an aarch64 ELF gpu binary" \
       --key "$AVB_KEY_PATH" \
       --output "$TMP_DIR/should-fail-bad-binary.img"
 
-assert_command_fails_contains "orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, firmware-probe-only, timeout-control-smoke, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-firmware-helper-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen" \
+assert_command_fails_contains "orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, firmware-probe-only, timeout-control-smoke, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-firmware-helper-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, vulkan-offscreen, or compositor-scene" \
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \

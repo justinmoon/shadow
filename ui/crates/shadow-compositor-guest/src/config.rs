@@ -28,6 +28,10 @@ impl StartupAction {
     pub(crate) fn shell_enabled(self) -> bool {
         matches!(self, Self::Shell { .. })
     }
+
+    pub(crate) fn needs_control_socket(self) -> bool {
+        !matches!(self, Self::Shell { start_app_id: None })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

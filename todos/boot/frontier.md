@@ -122,6 +122,12 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
       - both recovered bundles now report `proof_ok=true`, `metadata_stage_value=parent-probe-result=skipped`, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly-ok`, `probe_report_proves_child_success=true`, and `metadata_probe_fingerprint_present=true`
       - that means the promoted `exec + raw-argv + hello-init-rust` seam can now reach `kgsl-open-readonly-ok` directly from PID 1 before any child payload fork/exec while still preserving the durable `probe-report.txt` proof surface
       - for the current `pixel_hello_init.c` migration surface, C is now a frozen reference seam rather than the only executable truth
+    - shell-only `compositor-scene` is now proved on the promoted Rust seam:
+      - rooted sidecar discriminator: `/tmp/shadow-cscene-rooted-repro` on `09051JEC202061` now captures `compositor-frame.ppm` and exits `0`; the enabling fixes were tolerating rooted Android no-op chmod denial in `shadow-session`, skipping guest control sockets for shell-only startup, and carrying `exit_on_first_frame` through pre-event-loop startup
+      - image metadata: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-compositor-scene-parentprobe-fw-helper-breadcrumb-v3.img.hello-init.json`
+      - proof bundles: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T235214Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T235214Z-06241JEC200520_`
+      - both recovered bundles now report `proof_ok=true`, `metadata_stage_value=parent-probe-result=exit-0`, `metadata_probe_stage_value=orange-gpu-payload:compositor-scene-frame-captured`, `probe_summary_proves_compositor_scene=true`, `metadata_compositor_frame_proves_scene=true`, and `metadata_probe_report_child_exit_status=0`
+      - the current signed-off rung is intentionally shell-only; strict `gpuShell + strictGpuResident` compositor scanout is a later discriminator, not part of the current proof contract
 
 ## Best Observability
 

@@ -109,6 +109,30 @@ fn wait_for_path(path: &str, timeout: Duration) -> bool {
     false
 }
 
+fn ensure_directory_mode(path: &str, mode: u32) -> Result<(), String> {
+    fs::create_dir_all(path).map_err(|error| format!("create_dir_all({path}) failed: {error}"))?;
+
+    match fs::set_permissions(path, fs::Permissions::from_mode(mode)) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let current_mode = fs::metadata(path)
+                .map(|metadata| metadata.permissions().mode() & 0o777)
+                .ok();
+            if error.kind() == std::io::ErrorKind::PermissionDenied
+                && current_mode == Some(mode & 0o777)
+            {
+                log_line(&format!(
+                    "set_permissions({path}) denied but mode already {:o}; continuing",
+                    mode & 0o777
+                ));
+                Ok(())
+            } else {
+                Err(format!("set_permissions({path}) failed: {error}"))
+            }
+        }
+    }
+}
+
 fn run_command(mut command: Command, label: &str) -> ! {
     log_line(&format!("starting {label}"));
     match command.status() {
@@ -128,10 +152,7 @@ fn prepare_guest_runtime_dir() -> Result<&'static str, String> {
         env::var("SHADOW_RUNTIME_DIR").unwrap_or_else(|_| "/shadow-runtime".to_string());
     let runtime_dir_mode = parse_octal_mode_from_env("SHADOW_RUNTIME_DIR_MODE", 0o700);
 
-    fs::create_dir_all(&runtime_dir)
-        .map_err(|error| format!("create_dir_all({runtime_dir}) failed: {error}"))?;
-    fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(runtime_dir_mode))
-        .map_err(|error| format!("set_permissions({runtime_dir}) failed: {error}"))?;
+    ensure_directory_mode(&runtime_dir, runtime_dir_mode)?;
 
     Ok(Box::leak(runtime_dir.into_boxed_str()))
 }
@@ -199,4 +220,33 @@ fn main() {
 
     log_line("mode GuestUi");
     run_guest_ui()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_directory_mode;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!("shadow-session-test-{nanos}"))
+    }
+
+    #[test]
+    fn ensure_directory_mode_sets_requested_mode() {
+        let dir = unique_temp_dir();
+
+        ensure_directory_mode(dir.to_str().expect("utf8 path"), 0o700).expect("ensure mode");
+
+        let mode = fs::metadata(&dir).expect("metadata").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+
+        fs::remove_dir_all(&dir).expect("cleanup");
+    }
 }

@@ -354,7 +354,11 @@ Related docs:
 - [x] From that owned userspace, render one orange GPU frame and present it through dma-buf/KMS (`orange-gpu`).
 - [ ] Prove repeated GPU frame submission and synchronization for 2-3 seconds (`orange-gpu-loop`).
 - [ ] Prove one minimal input-driven redraw on the real GPU render/present path (`touch-counter-gpu`).
-- [ ] Prove a tiny compositor-owned scene with no app/runtime complexity (`compositor-scene`).
+- [x] Prove a tiny compositor-owned scene with no app/runtime complexity (`compositor-scene`).
+  - current signed-off rung is shell-only: image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-compositor-scene-parentprobe-fw-helper-breadcrumb-v3.img.hello-init.json`
+  - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T235214Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T235214Z-06241JEC200520_`
+  - both recovered bundles report `proof_ok=true`, `metadata_stage_value=parent-probe-result=exit-0`, `metadata_probe_stage_value=orange-gpu-payload:compositor-scene-frame-captured`, `probe_summary_proves_compositor_scene=true`, `metadata_compositor_frame_proves_scene=true`, and `metadata_probe_report_child_exit_status=0`
+  - rooted sidecar discriminator at `/tmp/shadow-cscene-rooted-repro` on `09051JEC202061` now exits `0` after `startup-exit-requested`; strict `gpuShell + strictGpuResident` remains a later follow-on rather than this rung’s contract
 - [ ] Prove an app-owned surface that the compositor imports/presents, with no shell (`app-direct-present`).
 - [ ] Prove a minimal TypeScript app in owned userspace with no shell (`ts-app-minimal`).
 - [ ] Prove a minimal Rust app in owned userspace with no shell (`rust-app-minimal`).

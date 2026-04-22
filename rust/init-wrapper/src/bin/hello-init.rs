@@ -38,6 +38,12 @@ mod linux {
     const ORANGE_GPU_CACHE_HOME: &str = "/orange-gpu/home/.cache";
     const ORANGE_GPU_CONFIG_HOME: &str = "/orange-gpu/home/.config";
     const ORANGE_GPU_MESA_CACHE_DIR: &str = "/orange-gpu/home/.cache/mesa";
+    const ORANGE_GPU_COMPOSITOR_SESSION_PATH: &str = "/orange-gpu/shadow-session";
+    const ORANGE_GPU_COMPOSITOR_BINARY_PATH: &str = "/orange-gpu/shadow-compositor-guest";
+    const ORANGE_GPU_COMPOSITOR_STARTUP_CONFIG_PATH: &str =
+        "/orange-gpu/compositor-scene-startup.json";
+    const ORANGE_GPU_COMPOSITOR_RUNTIME_DIR: &str = "/shadow-runtime";
+    const ORANGE_GPU_COMPOSITOR_DUMMY_CLIENT_PATH: &str = "/orange-gpu/shadow-shell-dummy-client";
     const ORANGE_GPU_SUMMARY_PATH: &str = "/orange-gpu/summary.json";
     const ORANGE_GPU_OUTPUT_PATH: &str = "/orange-gpu/output.log";
     const ORANGE_GPU_PROBE_SUMMARY_PATH: &str = "/orange-gpu/probe-summary.json";
@@ -58,6 +64,7 @@ mod linux {
     const VK_ICD_FILENAMES_ENV: &str = "VK_ICD_FILENAMES";
     const MESA_DRIVER_OVERRIDE_ENV: &str = "MESA_LOADER_DRIVER_OVERRIDE";
     const TU_DEBUG_ENV: &str = "TU_DEBUG";
+    const LD_LIBRARY_PATH_ENV: &str = "LD_LIBRARY_PATH";
     const HOME_ENV: &str = "HOME";
     const XDG_CACHE_HOME_ENV: &str = "XDG_CACHE_HOME";
     const XDG_CONFIG_HOME_ENV: &str = "XDG_CONFIG_HOME";
@@ -177,6 +184,7 @@ mod linux {
         temp_probe_timeout_class_path: PathBuf,
         probe_summary_path: PathBuf,
         temp_probe_summary_path: PathBuf,
+        compositor_frame_path: PathBuf,
     }
 
     struct FirmwareHelper {
@@ -646,6 +654,7 @@ mod linux {
                             "vulkan-device-request-smoke",
                             "vulkan-device-smoke",
                             "vulkan-offscreen",
+                            "compositor-scene",
                             "firmware-probe-only",
                         ],
                     ) {
@@ -788,6 +797,7 @@ mod linux {
             runtime.stage_dir.join(".probe-timeout-class.txt.tmp");
         runtime.probe_summary_path = runtime.stage_dir.join("probe-summary.json");
         runtime.temp_probe_summary_path = runtime.stage_dir.join(".probe-summary.json.tmp");
+        runtime.compositor_frame_path = runtime.stage_dir.join("compositor-frame.ppm");
         runtime
     }
 
@@ -1062,6 +1072,10 @@ mod linux {
 
     fn orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(mode: &str) -> bool {
         mode == "c-kgsl-open-readonly-pid1-smoke"
+    }
+
+    fn orange_gpu_mode_is_compositor_scene(mode: &str) -> bool {
+        mode == "compositor-scene"
     }
 
     fn orange_gpu_mode_uses_visible_checkpoints(mode: &str, checkpoint_name: &str) -> bool {
@@ -1668,6 +1682,35 @@ mod linux {
         Some(summary_text)
     }
 
+    fn record_compositor_scene_summary(
+        runtime: &mut MetadataStageRuntime,
+    ) -> Result<(), &'static str> {
+        if !runtime.enabled || runtime.write_failed || !runtime.prepared {
+            return Err("metadata-disabled");
+        }
+        let metadata = fs::metadata(&runtime.compositor_frame_path).map_err(|_| "frame-missing")?;
+        let frame_bytes = metadata.len();
+        if frame_bytes == 0 {
+            return Err("frame-empty");
+        }
+
+        let frame_path = runtime.compositor_frame_path.display();
+        let payload = format!(
+            "{{\n  \"kind\": \"compositor-scene\",\n  \"frame_path\": \"{frame_path}\",\n  \"frame_bytes\": {frame_bytes}\n}}\n"
+        );
+        if write_atomic_text_file(
+            &runtime.temp_probe_summary_path,
+            &runtime.probe_summary_path,
+            &payload,
+        )
+        .is_err()
+        {
+            runtime.write_failed = true;
+            return Err("summary-write-failed");
+        }
+        Ok(())
+    }
+
     fn validate_gpu_render_summary(summary_text: &str) -> Result<(), &'static str> {
         let normalized: String = summary_text
             .chars()
@@ -1805,6 +1848,7 @@ mod linux {
         probe_stage_prefix: Option<&str>,
     ) {
         command.env(GPU_BACKEND_ENV, "vulkan");
+        command.env(LD_LIBRARY_PATH_ENV, ORANGE_GPU_LIBRARY_PATH);
         command.env(VK_ICD_FILENAMES_ENV, ORANGE_GPU_ICD_PATH);
         command.env(MESA_DRIVER_OVERRIDE_ENV, "kgsl");
         command.env(TU_DEBUG_ENV, "noconform");
@@ -2181,6 +2225,7 @@ mod linux {
             "vulkan-device-request-smoke" => ("device-request-smoke", false, false),
             "vulkan-device-smoke" => ("device-smoke", false, false),
             "vulkan-offscreen" => ("smoke", false, false),
+            "compositor-scene" => ("flat-orange", false, false),
             _ => ("flat-orange", true, true),
         }
     }
@@ -2327,6 +2372,18 @@ mod linux {
             log_line("orange_gpu_firmware_helper requires firmware_bootstrap=ramdisk-lib-firmware");
             return false;
         }
+        if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode)
+            && !config.orange_gpu_metadata_stage_breadcrumb
+        {
+            log_line("compositor-scene requires orange_gpu_metadata_stage_breadcrumb=true");
+            return false;
+        }
+        if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode)
+            && !config.orange_gpu_firmware_helper
+        {
+            log_line("compositor-scene requires orange_gpu_firmware_helper=true");
+            return false;
+        }
         if config.orange_gpu_mode == "c-kgsl-open-readonly-firmware-helper-smoke"
             && !config.mount_sys
         {
@@ -2381,6 +2438,9 @@ mod linux {
 
         remove_file_best_effort(ORANGE_GPU_SUMMARY_PATH);
         remove_file_best_effort(ORANGE_GPU_OUTPUT_PATH);
+        if metadata_stage.prepared {
+            let _ = fs::remove_file(&metadata_stage.compositor_frame_path);
+        }
 
         let probe_stage_path =
             if metadata_stage.enabled && metadata_stage.prepared && !metadata_stage.write_failed {
@@ -2478,21 +2538,45 @@ mod linux {
                 return 1;
             }
 
-            let (scene, summary_needed, _) = scene_for_mode(&config.orange_gpu_mode);
-            let mut command = Command::new(ORANGE_GPU_LOADER_PATH);
-            command.arg("--library-path");
-            command.arg(ORANGE_GPU_LIBRARY_PATH);
-            command.arg(ORANGE_GPU_BINARY_PATH);
-            command.arg("--scene");
-            command.arg(scene);
-            if summary_needed {
-                command.arg("--present-kms");
-                command.arg("--hold-secs");
-                command.arg(config.hold_seconds.to_string());
+            if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode) {
+                let mut command = Command::new(ORANGE_GPU_COMPOSITOR_SESSION_PATH);
+                command.env("SHADOW_SESSION_MODE", "guest-ui");
+                command.env("SHADOW_RUNTIME_DIR", ORANGE_GPU_COMPOSITOR_RUNTIME_DIR);
+                command.env(
+                    "SHADOW_GUEST_SESSION_CONFIG",
+                    ORANGE_GPU_COMPOSITOR_STARTUP_CONFIG_PATH,
+                );
+                command.env(
+                    "SHADOW_GUEST_COMPOSITOR_BIN",
+                    ORANGE_GPU_COMPOSITOR_BINARY_PATH,
+                );
+                command.env(
+                    "SHADOW_GUEST_CLIENT",
+                    ORANGE_GPU_COMPOSITOR_DUMMY_CLIENT_PATH,
+                );
+                command.env("SHADOW_GUEST_COMPOSITOR_ENABLE_DRM", "1");
+                command.env(
+                    "RUST_LOG",
+                    "shadow_session=info,shadow_compositor_guest=info,smithay=warn",
+                );
+                command
+            } else {
+                let (scene, summary_needed, _) = scene_for_mode(&config.orange_gpu_mode);
+                let mut command = Command::new(ORANGE_GPU_LOADER_PATH);
+                command.arg("--library-path");
+                command.arg(ORANGE_GPU_LIBRARY_PATH);
+                command.arg(ORANGE_GPU_BINARY_PATH);
+                command.arg("--scene");
+                command.arg(scene);
+                if summary_needed {
+                    command.arg("--present-kms");
+                    command.arg("--hold-secs");
+                    command.arg(config.hold_seconds.to_string());
+                }
+                command.arg("--summary-path");
+                command.arg(ORANGE_GPU_SUMMARY_PATH);
+                command
             }
-            command.arg("--summary-path");
-            command.arg(ORANGE_GPU_SUMMARY_PATH);
-            command
         };
         set_orange_gpu_env(
             &mut command,
@@ -2580,20 +2664,10 @@ mod linux {
             );
         }
         if watch_result.exit_status == Some(0) && metadata_stage.enabled {
-            let recorded_summary = record_probe_summary(metadata_stage, ORANGE_GPU_SUMMARY_PATH);
-            if config.orange_gpu_mode == "gpu-render" {
-                let Some(summary_text) = recorded_summary.as_deref() else {
-                    log_line("gpu-render summary missing or could not be persisted to metadata");
-                    let _ = run_orange_gpu_checkpoint(
-                        config,
-                        "child-exit-nonzero",
-                        ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
-                    );
-                    return 1;
-                };
-                if let Err(reason) = validate_gpu_render_summary(summary_text) {
+            if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode) {
+                if let Err(reason) = record_compositor_scene_summary(metadata_stage) {
                     log_line(&format!(
-                        "gpu-render summary failed validation: missing {reason}"
+                        "compositor-scene frame missing or could not be summarized: {reason}"
                     ));
                     let _ = run_orange_gpu_checkpoint(
                         config,
@@ -2601,6 +2675,38 @@ mod linux {
                         ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
                     );
                     return 1;
+                }
+                write_payload_probe_stage(
+                    probe_stage_path.as_deref(),
+                    probe_stage_prefix.as_deref(),
+                    "compositor-scene-frame-captured",
+                );
+            } else {
+                let recorded_summary =
+                    record_probe_summary(metadata_stage, ORANGE_GPU_SUMMARY_PATH);
+                if config.orange_gpu_mode == "gpu-render" {
+                    let Some(summary_text) = recorded_summary.as_deref() else {
+                        log_line(
+                            "gpu-render summary missing or could not be persisted to metadata",
+                        );
+                        let _ = run_orange_gpu_checkpoint(
+                            config,
+                            "child-exit-nonzero",
+                            ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+                        );
+                        return 1;
+                    };
+                    if let Err(reason) = validate_gpu_render_summary(summary_text) {
+                        log_line(&format!(
+                            "gpu-render summary failed validation: missing {reason}"
+                        ));
+                        let _ = run_orange_gpu_checkpoint(
+                            config,
+                            "child-exit-nonzero",
+                            ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+                        );
+                        return 1;
+                    }
                 }
             }
         }
@@ -2630,6 +2736,8 @@ mod linux {
                     "child-exit-nonzero",
                     ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
                 );
+            } else if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode) {
+                hold_for_observation(config.hold_seconds);
             }
             return exit_status;
         }

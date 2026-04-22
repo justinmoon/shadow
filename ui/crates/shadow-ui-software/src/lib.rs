@@ -87,10 +87,10 @@ fn rounded_rect_coverage(px: f32, py: f32, rect: &RoundedRect, radius: f32) -> f
         return 1.0;
     }
 
-    let inner_left = rect.x + radius;
-    let inner_right = rect.x + rect.width - radius;
-    let inner_top = rect.y + radius;
-    let inner_bottom = rect.y + rect.height - radius;
+    let (inner_left, inner_right) =
+        normalized_inner_bounds(rect.x + radius, rect.x + rect.width - radius);
+    let (inner_top, inner_bottom) =
+        normalized_inner_bounds(rect.y + radius, rect.y + rect.height - radius);
 
     if (inner_left..=inner_right).contains(&px) || (inner_top..=inner_bottom).contains(&py) {
         return 1.0;
@@ -103,6 +103,15 @@ fn rounded_rect_coverage(px: f32, py: f32, rect: &RoundedRect, radius: f32) -> f
     let distance = (dx * dx + dy * dy).sqrt();
 
     (radius + 0.75 - distance).clamp(0.0, 1.0)
+}
+
+fn normalized_inner_bounds(start: f32, end: f32) -> (f32, f32) {
+    if start <= end {
+        return (start, end);
+    }
+
+    let midpoint = (start + end) * 0.5;
+    (midpoint, midpoint)
 }
 
 fn draw_text_block(pixels: &mut [u8], width: u32, height: u32, block: &TextBlock) {
@@ -302,4 +311,50 @@ fn blend_rgba(pixels: &mut [u8], width: u32, height: u32, x: i32, y: i32, color:
     pixels[index + 1] = blend_channel(sg, pixels[index + 1]);
     pixels[index + 2] = blend_channel(sr, pixels[index + 2]);
     pixels[index + 3] = (out_alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalized_inner_bounds, rounded_rect_coverage, SoftwareRenderer};
+    use shadow_ui_core::{
+        color::Color,
+        scene::{RoundedRect, Scene},
+    };
+
+    #[test]
+    fn normalized_inner_bounds_collapse_inverted_ranges() {
+        let (start, end) = normalized_inner_bounds(991.2359, 991.23584);
+
+        assert_eq!(start, end);
+        assert!((start - 991.23584).abs() < 0.001);
+    }
+
+    #[test]
+    fn rounded_rect_coverage_handles_precision_collapsed_inner_bounds() {
+        let rect = RoundedRect::new(990.0, 100.0, 2.47174, 48.0, 0.0, Color::rgba(0, 0, 0, 0));
+        let coverage = rounded_rect_coverage(991.23587, 124.0, &rect, 1.2359);
+
+        assert!(coverage.is_finite());
+        assert!((0.0..=1.0).contains(&coverage));
+    }
+
+    #[test]
+    fn render_handles_tiny_rounded_rects() {
+        let mut renderer = SoftwareRenderer::new(1200, 400);
+        let scene = Scene {
+            clear_color: Color::rgba(0, 0, 0, 0),
+            rects: vec![RoundedRect::new(
+                990.0,
+                100.0,
+                2.47174,
+                48.0,
+                400.0,
+                Color::rgba(0xff, 0x66, 0x33, 0xff),
+            )],
+            texts: Vec::new(),
+        };
+
+        let pixels = renderer.render(&scene);
+        assert!(pixels.chunks_exact(4).any(|chunk| chunk[3] != 0));
+    }
 }

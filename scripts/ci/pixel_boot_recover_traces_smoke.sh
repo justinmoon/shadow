@@ -165,6 +165,9 @@ PROP
       elif [[ "$TRACE_MODE" == "probe-only-success" ]]; then
         printf 'parent-probe-result=skipped\n'
         exit 0
+      elif [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
+        printf 'parent-probe-result=exit-0\n'
+        exit 0
       fi
       exit 3
       ;;
@@ -175,11 +178,14 @@ PROP
       elif [[ "$TRACE_MODE" == "probe-only-success" ]]; then
         printf 'orange-gpu-payload:vkEnumeratePhysicalDevices-ok\n'
         exit 0
+      elif [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
+        printf 'orange-gpu-payload:compositor-scene-frame-captured\n'
+        exit 0
       fi
       exit 3
       ;;
     *"/metadata/shadow-hello-init/by-token/"*"/probe-fingerprint.txt"* )
-      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" ]]; then
+      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" || "$TRACE_MODE" == "compositor-scene-success" ]]; then
         printf 'path=/dev/kgsl-3d0 present=true kind=char mode=666 uid=1000 gid=1000 major=508 minor=0\n'
         exit 0
       fi
@@ -200,6 +206,16 @@ EOF
         cat <<EOF
 probe_label=orange-gpu-payload
 observed_probe_stage=orange-gpu-payload:vkEnumeratePhysicalDevices-ok
+child_timed_out=false
+child_completed=true
+exit_status=0
+wchan=
+EOF
+        exit 0
+      elif [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
+        cat <<EOF
+probe_label=orange-gpu-payload
+observed_probe_stage=orange-gpu-payload:compositor-scene-frame-captured
 child_timed_out=false
 child_completed=true
 exit_status=0
@@ -229,6 +245,22 @@ EOF
   }
 }
 EOF
+        exit 0
+      elif [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
+        cat <<EOF
+{
+  "kind": "compositor-scene",
+  "frame_path": "/metadata/shadow-hello-init/by-token/$TRACE_RUN_TOKEN/compositor-frame.ppm",
+  "frame_bytes": 17
+}
+EOF
+        exit 0
+      fi
+      exit 3
+      ;;
+    *"/metadata/shadow-hello-init/by-token/"*"/compositor-frame.ppm"* )
+      if [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
+        printf 'P6\n2 1\n255\n\xff\x7a\x00\x00\x00\x00'
         exit 0
       fi
       exit 3
@@ -331,10 +363,11 @@ PY
 }
 
 write_recover_context() {
-  local parent_dir image_path run_token
+  local parent_dir image_path run_token orange_gpu_mode
   parent_dir="$1"
   image_path="$2"
   run_token="$3"
+  orange_gpu_mode="${4:-gpu-render}"
 
   mkdir -p "$parent_dir"
   cat >"$parent_dir/status.json" <<EOF
@@ -343,7 +376,27 @@ write_recover_context() {
   "kind": "boot_oneshot"
 }
 EOF
-cat >"$image_path.hello-init.json" <<EOF
+  if [[ "$orange_gpu_mode" == "compositor-scene" ]]; then
+    cat >"$image_path.hello-init.json" <<EOF
+{
+  "kind": "hello_init_build",
+  "run_token": "$run_token",
+  "orange_gpu_mode": "compositor-scene",
+  "orange_gpu_firmware_helper": true,
+  "log_kmsg": true,
+  "log_pmsg": true,
+  "orange_gpu_metadata_stage_breadcrumb": true,
+  "metadata_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/stage.txt",
+  "metadata_probe_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-stage.txt",
+  "metadata_probe_fingerprint_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-fingerprint.txt",
+  "metadata_probe_report_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-report.txt",
+  "metadata_probe_timeout_class_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-timeout-class.txt",
+  "metadata_probe_summary_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-summary.json",
+  "metadata_compositor_frame_path": "/metadata/shadow-hello-init/by-token/$run_token/compositor-frame.ppm"
+}
+EOF
+  else
+    cat >"$image_path.hello-init.json" <<EOF
 {
   "kind": "hello_init_build",
   "run_token": "$run_token",
@@ -361,6 +414,7 @@ cat >"$image_path.hello-init.json" <<EOF
   "metadata_probe_summary_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-summary.json"
 }
 EOF
+  fi
 }
 
 MATCHED_PARENT="$TMP_DIR/output-matched"
@@ -388,7 +442,7 @@ grep -Fq "$RUN_TOKEN" "$MATCHED_OUTPUT/matches/all-run-token-matches.txt"
 assert_json_field "$MATCHED_OUTPUT/status.json" recovered_previous_boot_traces true
 assert_json_field "$MATCHED_OUTPUT/status.json" matched_any_shadow_tags true
 assert_json_field "$MATCHED_OUTPUT/status.json" matched_any_correlated_shadow_tags true
-assert_json_field "$MATCHED_OUTPUT/status.json" proof_ok true
+assert_json_field "$MATCHED_OUTPUT/status.json" proof_ok false
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_run_token "$RUN_TOKEN"
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_run_token_source image-metadata
 assert_json_field "$MATCHED_OUTPUT/status.json" expected_durable_logging_summary "kmsg=true,pmsg=true"
@@ -575,6 +629,33 @@ assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_scene 
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_present_kms true
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_adapter_backend Vulkan
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_distinct_color_count 1
+
+COMPOSITOR_PARENT="$TMP_DIR/output-compositor-scene"
+COMPOSITOR_IMAGE="$TMP_DIR/output-compositor-scene.img"
+COMPOSITOR_OUTPUT="$COMPOSITOR_PARENT/recover-traces"
+write_recover_context "$COMPOSITOR_PARENT" "$COMPOSITOR_IMAGE" "$RUN_TOKEN" compositor-scene
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=compositor-scene-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$COMPOSITOR_OUTPUT" >/dev/null
+
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" matched_any_correlated_shadow_tags false
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" probe_report_proves_child_success true
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" probe_summary_proves_compositor_scene true
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_compositor_frame_proves_scene true
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" proof_ok true
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" expected_metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/compositor-frame.ppm"
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_probe_summary_kind compositor-scene
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_probe_summary_frame_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/compositor-frame.ppm"
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_probe_summary_frame_bytes 17
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_compositor_frame_present true
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_compositor_frame_width 2
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_compositor_frame_height 1
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_compositor_frame_pixel_bytes 6
+assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 2
 
 ROOT_TIMEOUT_PARENT="$TMP_DIR/output-root-timeout"
 ROOT_TIMEOUT_IMAGE="$TMP_DIR/output-root-timeout.img"

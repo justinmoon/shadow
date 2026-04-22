@@ -184,7 +184,7 @@ impl ShadowGuestCompositor {
             self.record_touch_present(frame_marker);
             self.record_scroll_frame_present(frame_marker);
             if self.exit_on_first_frame {
-                self.loop_signal.stop();
+                self.request_exit();
             }
             if self.drm_enabled && !presented {
                 self.schedule_shell_frame_retry();
@@ -340,7 +340,7 @@ impl ShadowGuestCompositor {
         self.record_scroll_frame_present(frame_marker);
 
         if self.exit_on_first_frame {
-            self.loop_signal.stop();
+            self.request_exit();
         }
 
         presented
@@ -448,7 +448,7 @@ impl ShadowGuestCompositor {
 
         if matches!(buffer_type, Some(BufferType::Dma)) && self.exit_on_first_dma_buffer {
             tracing::info!("[shadow-guest-compositor] exit-on-first-dma-buffer");
-            self.loop_signal.stop();
+            self.request_exit();
         }
 
         buffer_type
@@ -495,7 +495,7 @@ impl ShadowGuestCompositor {
                 tracing::info!("[shadow-guest-compositor] presented-frame");
                 self.record_touch_present("presented-dmabuf-direct");
                 if self.exit_on_first_frame {
-                    self.loop_signal.stop();
+                    self.request_exit();
                 }
                 buffer.release();
                 self.send_frame_callbacks(surface);
@@ -530,7 +530,7 @@ impl ShadowGuestCompositor {
                         tracing::info!("[shadow-guest-compositor] presented-frame");
                         self.record_touch_present("captured-dmabuf-frame");
                         if self.exit_on_first_frame {
-                            self.loop_signal.stop();
+                            self.request_exit();
                         }
                     } else {
                         self.publish_frame(&frame, "captured-dmabuf-frame");

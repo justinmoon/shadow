@@ -38,6 +38,7 @@ EXPECTED_METADATA_PROBE_FINGERPRINT_PATH=""
 EXPECTED_METADATA_PROBE_REPORT_PATH=""
 EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH=""
 EXPECTED_METADATA_PROBE_SUMMARY_PATH=""
+EXPECTED_METADATA_COMPOSITOR_FRAME_PATH=""
 RECOVERED_METADATA_STAGE_PRESENT=false
 RECOVERED_METADATA_STAGE_VALUE=""
 RECOVERED_METADATA_STAGE_ACTUAL_ACCESS_MODE="unattempted"
@@ -79,6 +80,11 @@ RECOVERED_METADATA_PROBE_SUMMARY_ACTUAL_ACCESS_MODE="unattempted"
 RECOVERED_METADATA_PROBE_SUMMARY_EXIT_CODE=""
 RECOVERED_METADATA_PROBE_SUMMARY_OUTPUT_PATH=""
 RECOVERED_METADATA_PROBE_SUMMARY_STDERR_PATH=""
+RECOVERED_METADATA_COMPOSITOR_FRAME_PRESENT=false
+RECOVERED_METADATA_COMPOSITOR_FRAME_ACTUAL_ACCESS_MODE="unattempted"
+RECOVERED_METADATA_COMPOSITOR_FRAME_EXIT_CODE=""
+RECOVERED_METADATA_COMPOSITOR_FRAME_OUTPUT_PATH=""
+RECOVERED_METADATA_COMPOSITOR_FRAME_STDERR_PATH=""
 failure_stage=""
 transport_timeline_path="${PIXEL_BOOT_TRANSPORT_TIMELINE_PATH:-}"
 transport_timeline_elapsed_offset_secs="${PIXEL_BOOT_TRANSPORT_TIMELINE_ELAPSED_OFFSET_SECS:-0}"
@@ -347,6 +353,7 @@ probe_fingerprint_path = payload.get("metadata_probe_fingerprint_path", "")
 probe_report_path = payload.get("metadata_probe_report_path", "")
 probe_timeout_class_path = payload.get("metadata_probe_timeout_class_path", "")
 probe_summary_path = payload.get("metadata_probe_summary_path", "")
+compositor_frame_path = payload.get("metadata_compositor_frame_path", "")
 
 print(token if isinstance(token, str) else "")
 print("true" if enabled is True else "false")
@@ -356,6 +363,7 @@ print(probe_fingerprint_path if isinstance(probe_fingerprint_path, str) else "")
 print(probe_report_path if isinstance(probe_report_path, str) else "")
 print(probe_timeout_class_path if isinstance(probe_timeout_class_path, str) else "")
 print(probe_summary_path if isinstance(probe_summary_path, str) else "")
+print(compositor_frame_path if isinstance(compositor_frame_path, str) else "")
 PY
 }
 
@@ -369,6 +377,7 @@ discover_expected_run_token() {
   local metadata_probe_report_path=""
   local metadata_probe_timeout_class_path=""
   local metadata_probe_summary_path=""
+  local metadata_compositor_frame_path=""
 
   discover_source_image_path
   if [[ -n "$SOURCE_IMAGE_PATH" ]]; then
@@ -382,6 +391,7 @@ discover_expected_run_token() {
     metadata_probe_report_path="${metadata_values[5]:-}"
     metadata_probe_timeout_class_path="${metadata_values[6]:-}"
     metadata_probe_summary_path="${metadata_values[7]:-}"
+    metadata_compositor_frame_path="${metadata_values[8]:-}"
     EXPECTED_METADATA_STAGE_BREADCRUMB="$metadata_stage_enabled"
     EXPECTED_METADATA_STAGE_PATH="$metadata_stage_path"
     EXPECTED_METADATA_PROBE_STAGE_PATH="$metadata_probe_stage_path"
@@ -389,6 +399,7 @@ discover_expected_run_token() {
     EXPECTED_METADATA_PROBE_REPORT_PATH="$metadata_probe_report_path"
     EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH="$metadata_probe_timeout_class_path"
     EXPECTED_METADATA_PROBE_SUMMARY_PATH="$metadata_probe_summary_path"
+    EXPECTED_METADATA_COMPOSITOR_FRAME_PATH="$metadata_compositor_frame_path"
   fi
 
   if [[ -n "$EXPECTED_RUN_TOKEN" ]]; then
@@ -418,6 +429,8 @@ expected_metadata_probe_stage_path=$EXPECTED_METADATA_PROBE_STAGE_PATH
 expected_metadata_probe_fingerprint_path=$EXPECTED_METADATA_PROBE_FINGERPRINT_PATH
 expected_metadata_probe_report_path=$EXPECTED_METADATA_PROBE_REPORT_PATH
 expected_metadata_probe_timeout_class_path=$EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH
+expected_metadata_probe_summary_path=$EXPECTED_METADATA_PROBE_SUMMARY_PATH
+expected_metadata_compositor_frame_path=$EXPECTED_METADATA_COMPOSITOR_FRAME_PATH
 EOF
 }
 
@@ -739,6 +752,53 @@ expected_metadata_probe_summary_path=$EXPECTED_METADATA_PROBE_SUMMARY_PATH
 metadata_probe_summary_present=$RECOVERED_METADATA_PROBE_SUMMARY_PRESENT
 metadata_probe_summary_actual_access_mode=$RECOVERED_METADATA_PROBE_SUMMARY_ACTUAL_ACCESS_MODE
 metadata_probe_summary_exit_code=$RECOVERED_METADATA_PROBE_SUMMARY_EXIT_CODE
+EOF
+}
+
+recover_metadata_compositor_frame_file() {
+  local command run_result output_path stderr_path exit_code actual_access_mode
+
+  output_path="$CHANNEL_DIR/metadata-compositor-frame.ppm"
+  stderr_path="$CHANNEL_DIR/metadata-compositor-frame.stderr.txt"
+  RECOVERED_METADATA_COMPOSITOR_FRAME_OUTPUT_PATH="channels/metadata-compositor-frame.ppm"
+  RECOVERED_METADATA_COMPOSITOR_FRAME_STDERR_PATH="channels/metadata-compositor-frame.stderr.txt"
+
+  : >"$output_path"
+  : >"$stderr_path"
+
+  if [[ "$EXPECTED_METADATA_STAGE_BREADCRUMB" != "true" || -z "$EXPECTED_METADATA_COMPOSITOR_FRAME_PATH" ]]; then
+    RECOVERED_METADATA_COMPOSITOR_FRAME_PRESENT=false
+    RECOVERED_METADATA_COMPOSITOR_FRAME_ACTUAL_ACCESS_MODE="unattempted"
+    RECOVERED_METADATA_COMPOSITOR_FRAME_EXIT_CODE=""
+    cat >"$META_DIR/metadata-compositor-frame.txt" <<EOF
+expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
+expected_metadata_compositor_frame_path=$EXPECTED_METADATA_COMPOSITOR_FRAME_PATH
+metadata_compositor_frame_present=false
+metadata_compositor_frame_actual_access_mode=$RECOVERED_METADATA_COMPOSITOR_FRAME_ACTUAL_ACCESS_MODE
+metadata_compositor_frame_exit_code=
+EOF
+    return 0
+  fi
+
+  command="if [ -f $EXPECTED_METADATA_COMPOSITOR_FRAME_PATH ]; then cat $EXPECTED_METADATA_COMPOSITOR_FRAME_PATH; else exit 3; fi"
+  run_result="$(run_device_command "root" "$command" "$output_path" "$stderr_path")"
+  exit_code="${run_result%%$'\t'*}"
+  actual_access_mode="${run_result#*$'\t'}"
+  RECOVERED_METADATA_COMPOSITOR_FRAME_ACTUAL_ACCESS_MODE="$actual_access_mode"
+  RECOVERED_METADATA_COMPOSITOR_FRAME_EXIT_CODE="$exit_code"
+
+  if [[ "$exit_code" == "0" ]]; then
+    RECOVERED_METADATA_COMPOSITOR_FRAME_PRESENT=true
+  else
+    RECOVERED_METADATA_COMPOSITOR_FRAME_PRESENT=false
+  fi
+
+  cat >"$META_DIR/metadata-compositor-frame.txt" <<EOF
+expected_metadata_stage_breadcrumb=$EXPECTED_METADATA_STAGE_BREADCRUMB
+expected_metadata_compositor_frame_path=$EXPECTED_METADATA_COMPOSITOR_FRAME_PATH
+metadata_compositor_frame_present=$RECOVERED_METADATA_COMPOSITOR_FRAME_PRESENT
+metadata_compositor_frame_actual_access_mode=$RECOVERED_METADATA_COMPOSITOR_FRAME_ACTUAL_ACCESS_MODE
+metadata_compositor_frame_exit_code=$RECOVERED_METADATA_COMPOSITOR_FRAME_EXIT_CODE
 EOF
 }
 
@@ -1262,7 +1322,12 @@ write_status_json() {
     "$RECOVERED_METADATA_PROBE_SUMMARY_ACTUAL_ACCESS_MODE" \
     "$RECOVERED_METADATA_PROBE_SUMMARY_EXIT_CODE" \
     "$RECOVERED_METADATA_PROBE_SUMMARY_OUTPUT_PATH" \
-    "$RECOVERED_METADATA_PROBE_SUMMARY_STDERR_PATH" <<'PY'
+    "$RECOVERED_METADATA_PROBE_SUMMARY_STDERR_PATH" \
+    "$RECOVERED_METADATA_COMPOSITOR_FRAME_PRESENT" \
+    "$RECOVERED_METADATA_COMPOSITOR_FRAME_ACTUAL_ACCESS_MODE" \
+    "$RECOVERED_METADATA_COMPOSITOR_FRAME_EXIT_CODE" \
+    "$RECOVERED_METADATA_COMPOSITOR_FRAME_OUTPUT_PATH" \
+    "$RECOVERED_METADATA_COMPOSITOR_FRAME_STDERR_PATH" <<'PY'
 import csv
 import json
 import sys
@@ -1340,12 +1405,25 @@ recovered_metadata_probe_summary_actual_access_mode = sys.argv[69]
 recovered_metadata_probe_summary_exit_code = sys.argv[70]
 recovered_metadata_probe_summary_output_path = sys.argv[71]
 recovered_metadata_probe_summary_stderr_path = sys.argv[72]
+recovered_metadata_compositor_frame_present = sys.argv[73] == "true"
+recovered_metadata_compositor_frame_actual_access_mode = sys.argv[74]
+recovered_metadata_compositor_frame_exit_code = sys.argv[75]
+recovered_metadata_compositor_frame_output_path = sys.argv[76]
+recovered_metadata_compositor_frame_stderr_path = sys.argv[77]
 expected_durable_logging = {"kmsg": None, "pmsg": None}
 expected_orange_gpu_mode = ""
 expected_orange_gpu_scene = ""
 expected_orange_gpu_firmware_helper = None
+expected_metadata_compositor_frame_path = ""
 recovered_probe_summary = {}
 recovered_probe_summary_parse_error = None
+recovered_compositor_frame_parse_error = None
+compositor_frame_width = None
+compositor_frame_height = None
+compositor_frame_pixel_bytes = None
+compositor_frame_distinct_color_count = None
+compositor_frame_distinct_color_samples = []
+compositor_frame_checksum_sha256 = None
 
 if source_image_metadata_path:
     metadata_path = Path(source_image_metadata_path)
@@ -1367,6 +1445,55 @@ if source_image_metadata_path:
         orange_gpu_firmware_helper_value = metadata.get("orange_gpu_firmware_helper")
         if isinstance(orange_gpu_firmware_helper_value, bool):
             expected_orange_gpu_firmware_helper = orange_gpu_firmware_helper_value
+        compositor_frame_path_value = metadata.get("metadata_compositor_frame_path")
+        if isinstance(compositor_frame_path_value, str):
+            expected_metadata_compositor_frame_path = compositor_frame_path_value
+
+def parse_ppm_artifact(path: Path):
+    data = path.read_bytes()
+    newline_count = 0
+    pixel_offset = None
+    for idx, byte in enumerate(data):
+        if byte == 0x0A:
+            newline_count += 1
+            if newline_count == 3:
+                pixel_offset = idx + 1
+                break
+    if pixel_offset is None:
+        raise ValueError("missing ppm header terminator")
+    header_lines = data[:pixel_offset].decode("ascii").splitlines()
+    if len(header_lines) < 3:
+        raise ValueError("incomplete ppm header")
+    if header_lines[0] != "P6":
+        raise ValueError(f"unsupported ppm magic: {header_lines[0]!r}")
+    width_text, height_text = header_lines[1].split()
+    width = int(width_text)
+    height = int(height_text)
+    max_value = int(header_lines[2])
+    if width <= 0 or height <= 0:
+        raise ValueError("ppm dimensions must be positive")
+    if max_value != 255:
+        raise ValueError(f"unsupported ppm max value {max_value}")
+    pixel_data = data[pixel_offset:]
+    expected_pixel_bytes = width * height * 3
+    if len(pixel_data) != expected_pixel_bytes:
+        raise ValueError(
+            f"ppm pixel byte count mismatch: expected {expected_pixel_bytes}, got {len(pixel_data)}"
+        )
+    distinct_colors = set()
+    for index in range(0, len(pixel_data), 3):
+        distinct_colors.add(pixel_data[index : index + 3].hex())
+        if len(distinct_colors) >= 4096:
+            break
+    distinct_colors = sorted(distinct_colors)
+    return {
+        "width": width,
+        "height": height,
+        "pixel_bytes": len(pixel_data),
+        "distinct_color_count": len(distinct_colors),
+        "distinct_color_samples": distinct_colors[:16],
+        "checksum_sha256": __import__("hashlib").sha256(pixel_data).hexdigest(),
+    }
 
 def parse_kgsl_holder_scan(text: str):
     parsed = {
@@ -1556,6 +1683,9 @@ summary_distinct_color_count = recovered_probe_summary.get("distinct_color_count
 summary_checksum = recovered_probe_summary.get("checksum_fnv1a64")
 summary_color_samples = recovered_probe_summary.get("distinct_color_samples_rgba8")
 summary_adapter = recovered_probe_summary.get("adapter")
+summary_kind = recovered_probe_summary.get("kind")
+summary_frame_path = recovered_probe_summary.get("frame_path")
+summary_frame_bytes = recovered_probe_summary.get("frame_bytes")
 summary_adapter_backend = (
     summary_adapter.get("backend")
     if isinstance(summary_adapter, dict)
@@ -1583,10 +1713,55 @@ probe_summary_proves_gpu_render = (
     and isinstance(summary_checksum, str)
     and bool(summary_checksum)
 )
-proof_ok = (
-    matched_any_correlated_shadow_tags or
-    (probe_summary_proves_gpu_render if expected_orange_gpu_mode == "gpu-render" else probe_report_proves_child_success)
+if recovered_metadata_compositor_frame_present and recovered_metadata_compositor_frame_output_path:
+    compositor_frame_path = channel_status_path.parent / recovered_metadata_compositor_frame_output_path
+    if compositor_frame_path.exists():
+        try:
+            compositor_frame_summary = parse_ppm_artifact(compositor_frame_path)
+        except ValueError as exc:
+            recovered_compositor_frame_parse_error = str(exc)
+        else:
+            compositor_frame_width = compositor_frame_summary["width"]
+            compositor_frame_height = compositor_frame_summary["height"]
+            compositor_frame_pixel_bytes = compositor_frame_summary["pixel_bytes"]
+            compositor_frame_distinct_color_count = compositor_frame_summary["distinct_color_count"]
+            compositor_frame_distinct_color_samples = compositor_frame_summary["distinct_color_samples"]
+            compositor_frame_checksum_sha256 = compositor_frame_summary["checksum_sha256"]
+probe_summary_proves_compositor_scene = (
+    expected_orange_gpu_mode == "compositor-scene"
+    and expected_orange_gpu_firmware_helper is True
+    and probe_report_proves_child_success
+    and recovered_metadata_probe_summary_present
+    and recovered_probe_summary_parse_error is None
+    and summary_kind == "compositor-scene"
+    and summary_frame_path == expected_metadata_compositor_frame_path
+    and isinstance(summary_frame_bytes, int)
+    and summary_frame_bytes > 0
 )
+compositor_frame_proves_scene = (
+    expected_orange_gpu_mode == "compositor-scene"
+    and recovered_metadata_compositor_frame_present
+    and recovered_compositor_frame_parse_error is None
+    and isinstance(compositor_frame_width, int)
+    and compositor_frame_width > 0
+    and isinstance(compositor_frame_height, int)
+    and compositor_frame_height > 0
+    and isinstance(compositor_frame_pixel_bytes, int)
+    and compositor_frame_pixel_bytes > 0
+    and isinstance(compositor_frame_distinct_color_count, int)
+    and compositor_frame_distinct_color_count > 1
+    and isinstance(compositor_frame_checksum_sha256, str)
+    and bool(compositor_frame_checksum_sha256)
+    and summary_frame_bytes == compositor_frame_pixel_bytes + len(
+        f"P6\n{compositor_frame_width} {compositor_frame_height}\n255\n".encode("ascii")
+    )
+)
+if expected_orange_gpu_mode == "gpu-render":
+    proof_ok = probe_summary_proves_gpu_render
+elif expected_orange_gpu_mode == "compositor-scene":
+    proof_ok = probe_summary_proves_compositor_scene and compositor_frame_proves_scene
+else:
+    proof_ok = matched_any_correlated_shadow_tags or probe_report_proves_child_success
 
 payload = {
     "kind": "boot_trace_recovery",
@@ -1595,6 +1770,8 @@ payload = {
     "matched_correlated_trace": matched_any_correlated_shadow_tags,
     "probe_report_proves_child_success": probe_report_proves_child_success,
     "probe_summary_proves_gpu_render": probe_summary_proves_gpu_render,
+    "probe_summary_proves_compositor_scene": probe_summary_proves_compositor_scene,
+    "metadata_compositor_frame_proves_scene": compositor_frame_proves_scene,
     "serial": serial,
     "output_dir": str(status_output.parent),
     "shadow_tag_regex": shadow_tag_regex,
@@ -1617,6 +1794,7 @@ payload = {
     "expected_metadata_probe_report_path": expected_metadata_probe_report_path,
     "expected_metadata_probe_timeout_class_path": expected_metadata_probe_timeout_class_path,
     "expected_metadata_probe_summary_path": expected_metadata_probe_summary_path,
+    "expected_metadata_compositor_frame_path": expected_metadata_compositor_frame_path,
     "metadata_stage_present": recovered_metadata_stage_present,
     "metadata_stage_value": recovered_metadata_stage_value,
     "metadata_stage_actual_access_mode": recovered_metadata_stage_actual_access_mode,
@@ -1691,7 +1869,10 @@ payload = {
     "metadata_probe_summary_output_path": recovered_metadata_probe_summary_output_path,
     "metadata_probe_summary_stderr_path": recovered_metadata_probe_summary_stderr_path,
     "metadata_probe_summary_parse_error": recovered_probe_summary_parse_error,
+    "metadata_probe_summary_kind": summary_kind,
     "metadata_probe_summary_scene": summary_scene,
+    "metadata_probe_summary_frame_path": summary_frame_path,
+    "metadata_probe_summary_frame_bytes": summary_frame_bytes,
     "metadata_probe_summary_present_kms": summary_present_kms,
     "metadata_probe_summary_kms_present": summary_kms_present,
     "metadata_probe_summary_software_backed": summary_software_backed,
@@ -1699,6 +1880,22 @@ payload = {
     "metadata_probe_summary_distinct_color_count": summary_distinct_color_count,
     "metadata_probe_summary_distinct_color_samples_rgba8": sorted(summary_samples_set),
     "metadata_probe_summary_checksum_fnv1a64": summary_checksum,
+    "metadata_compositor_frame_present": recovered_metadata_compositor_frame_present,
+    "metadata_compositor_frame_actual_access_mode": recovered_metadata_compositor_frame_actual_access_mode,
+    "metadata_compositor_frame_exit_code": (
+        int(recovered_metadata_compositor_frame_exit_code)
+        if recovered_metadata_compositor_frame_exit_code not in ("", None)
+        else None
+    ),
+    "metadata_compositor_frame_output_path": recovered_metadata_compositor_frame_output_path,
+    "metadata_compositor_frame_stderr_path": recovered_metadata_compositor_frame_stderr_path,
+    "metadata_compositor_frame_parse_error": recovered_compositor_frame_parse_error,
+    "metadata_compositor_frame_width": compositor_frame_width,
+    "metadata_compositor_frame_height": compositor_frame_height,
+    "metadata_compositor_frame_pixel_bytes": compositor_frame_pixel_bytes,
+    "metadata_compositor_frame_distinct_color_count": compositor_frame_distinct_color_count,
+    "metadata_compositor_frame_distinct_color_samples_rgb8": compositor_frame_distinct_color_samples,
+    "metadata_compositor_frame_checksum_sha256": compositor_frame_checksum_sha256,
     "live_boot_id": live_boot_id,
     "live_slot_suffix": live_slot_suffix,
     "root_available": root_available,
@@ -1837,6 +2034,7 @@ recover_metadata_probe_stage_file
 recover_metadata_probe_fingerprint_file
 recover_metadata_probe_report_file
 recover_metadata_probe_summary_file
+recover_metadata_compositor_frame_file
 recover_metadata_probe_timeout_class_file
 
 shell_best_effort "logcat-last" "previous-boot" "adb" "logcat -L -d -v threadtime"

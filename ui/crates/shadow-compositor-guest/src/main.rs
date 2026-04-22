@@ -143,6 +143,7 @@ struct ShadowGuestCompositor {
     display_handle: DisplayHandle,
     space: Space<Window>,
     loop_signal: LoopSignal,
+    exit_requested: bool,
     compositor_state: CompositorState,
     xdg_shell_state: XdgShellState,
     shm_state: ShmState,
@@ -252,11 +253,21 @@ impl ShadowGuestCompositor {
             seat.add_keyboard(Default::default(), 200, 25).unwrap();
         }
         seat.add_pointer();
-        let control_socket_path =
-            control::init_listener(event_loop, config.client.runtime_dir.clone())
-                .expect("create guest compositor control socket");
-        prompt::init_listener(event_loop, &control_socket_path)
-            .expect("create guest compositor system prompt socket");
+        let control_socket_path = if config.startup_action.needs_control_socket() {
+            let control_socket_path =
+                control::init_listener(event_loop, config.client.runtime_dir.clone())
+                    .expect("create guest compositor control socket");
+            prompt::init_listener(event_loop, &control_socket_path)
+                .expect("create guest compositor system prompt socket");
+            control_socket_path
+        } else {
+            tracing::info!(
+                "[shadow-guest-compositor] control sockets skipped for shell-only startup"
+            );
+            shadow_compositor_common::control::control_socket_path(
+                config.client.runtime_dir.clone(),
+            )
+        };
 
         let mut state = Self {
             start_time: Instant::now(),
@@ -264,6 +275,7 @@ impl ShadowGuestCompositor {
             display_handle: display_handle.clone(),
             space: Space::default(),
             loop_signal,
+            exit_requested: false,
             compositor_state: CompositorState::new::<Self>(&display_handle),
             xdg_shell_state: XdgShellState::new::<Self>(&display_handle),
             shm_state: ShmState::new::<Self>(&display_handle, vec![]),
@@ -546,6 +558,11 @@ impl ShadowGuestCompositor {
 
     fn ensure_kms_display(&mut self) -> Option<&mut kms::KmsDisplay> {
         self.ensure_kms_display_with_timeout(Duration::from_secs(18))
+    }
+
+    pub(crate) fn request_exit(&mut self) {
+        self.exit_requested = true;
+        self.loop_signal.stop();
     }
 
     fn ensure_kms_display_with_timeout(
@@ -1157,6 +1174,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         StartupAction::Client => state.spawn_client()?,
     }
+    if state.exit_requested {
+        tracing::info!("[shadow-guest-compositor] startup-exit-requested");
+        state.drain_client_exit_statuses(Duration::from_millis(500));
+        return Ok(());
+    }
+
     event_loop.run(None, &mut state, |_| {})?;
     state.drain_client_exit_statuses(Duration::from_millis(500));
     Ok(())
