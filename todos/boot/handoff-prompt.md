@@ -87,7 +87,7 @@ Do this in order:
    - `pixel_boot_build_orange_gpu.sh --hello-init-mode rust-bridge`
    - stage `/system/bin/init` as the no_std Rust shim
    - stage `/hello-init-child` as the full Rust child
-   - use `--rust-shim-mode exec` here as the primary seam, not just as a fork-vs-exec discriminator
+   - the no-flag builder path should already resolve to `hello_init_shim_mode=exec`; pass `--rust-shim-mode exec` only when you are diagnosing regression or overriding drift explicitly
    - keep the companion metadata honest (`hello_init_impl=rust-bridge`, `hello_init_child_path=/hello-init-child`, blank unsupported probe files)
    - use `pixel_boot_build_rust_bridge.sh` as the fallback/helper path when converting an already-built image or when you need a probe-child variant
 4. If the bridge helper regresses on a new rung, fall back down the already-proven helper-backed ladder:
@@ -102,10 +102,17 @@ Do this in order:
 7. Keep the direct `std`-PID1 investigation narrow:
    - the leading source-backed suspect is pre-`main` `std` runtime / TLS startup
    - the next already-proven split is:
-     - `std-probe` -> `kernel_panic`
+     - `std-probe` -> `kernel_panic` and is now a regression discriminator, not the main forward path
      - `std-minimal-probe` -> `kernel_panic`
      - `std-nomain-probe` -> clean bootloader return
    - do not use alternate child-entry paths here; the current shims always exec `/hello-init-child`
+8. Current promoted no-flag proof:
+   - image: `build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-fw-helper-breadcrumb-v3.img`
+   - metadata: `build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-fw-helper-breadcrumb-v3.img.hello-init.json`
+   - rooted confirmations:
+     - `build/pixel/boot/oneshot/20260422T195806Z-11151JEC200472_`
+     - `build/pixel/boot/oneshot/20260422T195955Z-06241JEC200520_`
+   - both confirmations returned to Android via host auto-reboot with `recover_traces_proof_ok=true`
 
 ## Current Device Map
 

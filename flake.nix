@@ -2065,6 +2065,7 @@
             nix
             perl
             python3
+            stdenv.cc
           ];
           mkPixelBootSmokeCheck =
             {

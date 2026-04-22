@@ -1035,6 +1035,23 @@ if actual not in expected_values:
 PY
 }
 
+assert_contains_one_of() {
+  local haystack
+  haystack="$1"
+  shift
+
+  for needle in "$@"; do
+    if [[ "$haystack" == *"$needle"* ]]; then
+      return 0
+    fi
+  done
+
+  echo "pixel_boot_tooling_smoke: expected output to contain one of:" >&2
+  printf '  %s\n' "$@" >&2
+  echo "$haystack" >&2
+  exit 1
+}
+
 prepare_cached_tmpfs_gpu_bundle() {
   local bundle_dir launcher_artifact manifest_path package_ref fingerprint
   bundle_dir="$REPO_ROOT/build/pixel/artifacts/shadow-gpu-smoke-gnu"
@@ -2377,8 +2394,9 @@ assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" transpo
 assert_json_field_one_of "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" transport_first_none_elapsed_secs 0 1
 assert_json_field "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/status.json" transport_last_state adb
 test -f "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/transport-timeline.tsv"
-assert_contains "$(cat "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/transport-timeline.tsv")" $'0\tnone'
-assert_contains "$(cat "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/transport-timeline.tsv")" $'\tfastboot'
+transport_timeline_contents="$(cat "$ONESHOT_ADB_FASTBOOT_AUTO_REBOOT_OUTPUT/transport-timeline.tsv")"
+assert_contains_one_of "$transport_timeline_contents" $'0\tnone' $'1\tnone'
+assert_contains "$transport_timeline_contents" $'\tfastboot'
 
 reset_fastboot_cycle_state
 oneshot_fastboot_return_output="$(

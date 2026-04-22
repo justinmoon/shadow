@@ -249,6 +249,18 @@ cat >"$MOCK_BIN/nix" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "\${1:-}" == "develop" ]]; then
+  while [[ "\$#" -gt 0 ]]; do
+    if [[ "\$1" == "-c" ]]; then
+      shift
+      exec "\$@"
+    fi
+    shift
+  done
+  echo "mock nix: develop missing -c command" >&2
+  exit 1
+fi
+
 for arg in "\$@"; do
   case "\$arg" in
     *#hello-init-rust-std-minimal-probe-device)
@@ -354,7 +366,7 @@ export PIXEL_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT"
 rust_bridge_output="$(
   scripts/pixel/pixel_boot_build_rust_bridge.sh \
     --input "$BOOT_BUILD_INPUT" \
-    --shim "$SHIM_BINARY" \
+    --shim "$EXEC_SHIM_BINARY" \
     --child-profile hello \
     --child "$CHILD_BINARY" \
     --key "$AVB_KEY_PATH" \
@@ -364,20 +376,20 @@ rust_bridge_output="$(
 assert_contains "$rust_bridge_output" "Copied companion metadata: $OUTPUT_IMAGE.hello-init.json"
 assert_contains "$rust_bridge_output" "Rust bridge input: $BOOT_BUILD_INPUT"
 assert_contains "$rust_bridge_output" "Rust bridge output: $OUTPUT_IMAGE"
-assert_contains "$rust_bridge_output" "Shim mode: fork"
-assert_contains "$rust_bridge_output" "Shim binary: $SHIM_BINARY"
+assert_contains "$rust_bridge_output" "Shim mode: exec"
+assert_contains "$rust_bridge_output" "Shim binary: $EXEC_SHIM_BINARY"
 assert_contains "$rust_bridge_output" "Child profile: hello"
 assert_contains "$rust_bridge_output" "Child binary: $CHILD_BINARY"
 assert_contains "$rust_bridge_output" "Child entry path: /hello-init-child"
 
-assert_cpio_entry_equals "$OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-shim\n'
+assert_cpio_entry_equals "$OUTPUT_IMAGE" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-shim-exec\n'
 assert_cpio_entry_equals "$OUTPUT_IMAGE" hello-init-child $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-child\n'
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" image "$OUTPUT_IMAGE"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_child_path "/hello-init-child"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_child_profile "hello"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_impl "rust-bridge"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_mode "rust-bridge"
-assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_shim_mode "fork"
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_shim_mode "exec"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" kind "orange_gpu_build"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" metadata_probe_fingerprint_path ""
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" metadata_probe_timeout_class_path ""

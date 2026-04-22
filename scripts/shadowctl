@@ -2783,7 +2783,7 @@ def build_parser() -> argparse.ArgumentParser:
     debug.add_argument(
         "--shim-mode",
         choices=("fork", "exec"),
-        help="boot-lab-rust-bridge-run only: Rust bridge shim mode. Defaults to fork.",
+        help="boot-lab-rust-bridge-run only: Rust bridge shim mode. Defaults to exec.",
     )
     debug.add_argument(
         "--child-profile",

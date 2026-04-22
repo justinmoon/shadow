@@ -10,7 +10,7 @@ ensure_bootimg_shell "$@"
 
 INPUT_IMAGE="${PIXEL_BOOT_INPUT_IMAGE:-}"
 SHIM_BINARY="${PIXEL_HELLO_INIT_RUST_SHIM_BIN:-}"
-SHIM_MODE="${PIXEL_HELLO_INIT_RUST_SHIM_MODE:-fork}"
+SHIM_MODE="${PIXEL_HELLO_INIT_RUST_SHIM_MODE:-exec}"
 CHILD_BINARY="${PIXEL_HELLO_INIT_RUST_CHILD_BIN:-}"
 CHILD_PROFILE="${PIXEL_HELLO_INIT_RUST_CHILD_PROFILE:-hello}"
 CHILD_ENTRY="${PIXEL_HELLO_INIT_RUST_CHILD_ENTRY:-hello-init-child}"
@@ -74,7 +74,7 @@ default_output_image() {
     stem="${base_name%.img}"
   fi
   suffix="-rust-bridge"
-  if [[ "$SHIM_MODE" != "fork" ]]; then
+  if [[ "$SHIM_MODE" != "exec" ]]; then
     suffix+="-${SHIM_MODE}"
   fi
   if [[ "$CHILD_PROFILE" != "hello" ]]; then

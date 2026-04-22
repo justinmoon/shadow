@@ -93,6 +93,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - Raw-argv exec GPU proofs on 2026-04-22:
     - [`build/pixel/boot/oneshot/20260422T162509Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T162509Z-09051JEC202061_) proves `vulkan-offscreen` on the `exec + raw-argv + hello-init` seam with recovered `probe-report.txt` showing `child_completed=true`, `child_timed_out=false`, `exit_status=0`
     - [`build/pixel/boot/oneshot/20260422T162711Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T162711Z-09051JEC202061_) and [`build/pixel/boot/oneshot/20260422T162858Z-11151JEC200472_`](../../build/pixel/boot/oneshot/20260422T162858Z-11151JEC200472_) prove `gpu-render` on that same seam with the same recovered `probe-report.txt` truth surface
+    - [`build/pixel/boot/oneshot/20260422T195806Z-11151JEC200472_`](../../build/pixel/boot/oneshot/20260422T195806Z-11151JEC200472_) and [`build/pixel/boot/oneshot/20260422T195955Z-06241JEC200520_`](../../build/pixel/boot/oneshot/20260422T195955Z-06241JEC200520_) prove the direct rust-bridge builder’s no-flag default now lands on that same seam: image [`shadow-boot-orange-gpu-rust-bridge-default-gpurender-fw-helper-breadcrumb-v3.img.hello-init.json`](../../build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-fw-helper-breadcrumb-v3.img.hello-init.json) records `hello_init_shim_mode=exec`, and both runs came back with `recover_traces_proof_ok=true`
 
 ## Best Observability
 
@@ -140,10 +141,10 @@ Use the panel as a stage channel, not just “something orange happened.”
 
 ## Highest-Leverage Next Experiments
 
-1. Promote the `exec + raw-argv + hello-init-rust` bridge as the primary Rust seam.
+1. Keep the no-flag rust-bridge builder on the `exec + raw-argv + hello-init-rust` seam.
    - `no_std` exact-path Rust PID 1 shim
    - full Rust `hello-init` launched as a child
-   - `exec` shim, not `fork`, as the architectural target
+   - explicit `--rust-shim-mode exec` is now a regression/disambiguation knob, not the normal path
 2. Update the direct rust-bridge builder and docs to use that seam first.
    - `hello`
    - `vulkan-offscreen`
@@ -154,7 +155,9 @@ Use the panel as a stage channel, not just “something orange happened.”
    - no apps
    - no shell
    - no service spikes
-4. Use `09051JEC202061` as the primary Rust-port proof device and `11151JEC200472` as confirmation.
+4. Prefer rooted proof devices for unattended confirmation.
+   - `11151JEC200472`
+   - `06241JEC200520`
 5. Land the helper-backed C ladder and tooling truthfully so the Rust port starts from a small, coherent baseline.
 
 ## Fast Commands
@@ -183,10 +186,10 @@ Recover traces from the last boot-owned run:
 PIXEL_SERIAL=09051JEC202061 scripts/pixel/pixel_boot_recover_traces.sh
 ```
 
-Run the next Rust bridge discriminator as one boot-lab command:
+Run the historical `std-probe` regression discriminator if you need to re-prove the `lang_start` split:
 
 ```sh
-scripts/shadowctl lease acquire 09051JEC202061 --lane stream-a --owner boot --agent Codex --note 'rust-bridge std-probe exec discriminator'
+scripts/shadowctl lease acquire 09051JEC202061 --lane stream-a --owner boot --agent Codex --note 'rust-bridge std-probe exec regression'
 SHADOW_DEVICE_LEASE_FORCE=1 scripts/shadowctl -t 09051JEC202061 debug boot-lab-rust-bridge-run \
   --input build/pixel/boot/shadow-boot-hello-init-rust-minimal-v2.img \
   --shim-mode exec \

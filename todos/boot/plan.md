@@ -51,8 +51,8 @@ Related docs:
     - current leading `std`-PID1 source hypothesis:
       - the likely bad seam is pre-`main` `std` runtime / TLS startup, not the `hello-init` logic
       - next hardware discriminator is `no_std` exact-path PID1 shim -> direct `execv()` into the tiny `std` probe, with no `fork()`
-    - `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe` is now wired for that exact discriminator
-    - `sc -t <serial> debug boot-lab-rust-bridge-run --input <base.img> --shim-mode exec --child-profile std-probe ...` now wraps that same discriminator into one build+oneshot run bundle with shared logs and summary
+    - `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe` remains wired as the regression discriminator for the old `lang_start` seam
+    - `sc -t <serial> debug boot-lab-rust-bridge-run --input <base.img> --shim-mode exec --child-profile std-probe ...` remains the one-command way to re-prove that split if it regresses
     - the current bridge shims always exec `/hello-init-child`, so the helper now rejects alternate child-entry paths instead of pretending they work
     - raw-argv split on 2026-04-22:
       - `std-probe` still returns `kernel_panic`
@@ -64,7 +64,11 @@ Related docs:
       - helper-backed `vulkan-offscreen` is re-proved on the `exec + raw-argv + hello-init-rust` seam on `09051JEC202061`
       - helper-backed `gpu-render` is re-proved on that same seam on `09051JEC202061` and `11151JEC200472`
       - recovered `probe-report.txt` remains the proof surface: `child_completed=true`, `child_timed_out=false`, `exit_status=0`
-      - next seam is to make this `exec + raw-argv` bridge the default Rust path and retire `fork` as the primary target
+      - `exec + raw-argv` is now the default Rust path; `fork` is only a fallback discriminator
+      - the direct rust-bridge builder path now also proves that default on rooted hardware without an explicit `--rust-shim-mode` override:
+        - `build/pixel/boot/oneshot/20260422T195806Z-11151JEC200472_`
+        - `build/pixel/boot/oneshot/20260422T195955Z-06241JEC200520_`
+        - image metadata at `build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-fw-helper-breadcrumb-v3.img.hello-init.json` records `hello_init_shim_mode=exec`
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
   - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
@@ -508,7 +512,7 @@ Related docs:
   - the project target is now "stock Pixel kernel, Shadow-owned userspace from PID 1 onward"
   - the rooted Magisk lane remains the working runtime reference, but not the target boot architecture
   - the old wrapper and stock-init-import probes are now evidence about constraints, not the primary roadmap
-  - `spec-phase1-shadow-at-boot.md` still describes the earlier stock-init-handoff plan and should be rewritten once the first owned-userspace proof lands
+  - `spec-phase1-shadow-at-boot.md` is now preserved only as historical context for the abandoned stock-init-handoff plan
 - `sunfish` boots from `boot.img`, boot header v2, with recovery-as-boot. The old Cuttlefish `init_boot` work is a reference, not the real device path.
 - Strategy correction on 2026-04-19:
   - a Blitz/TypeScript runtime proof is not `orange-gpu`; that is a later `ts-app-minimal` rung

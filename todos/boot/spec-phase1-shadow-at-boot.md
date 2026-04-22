@@ -1,8 +1,16 @@
 # Phase 1: Shadow At Boot
 
-Status: draft
+Status: superseded historical draft
 
-This spec defines the first shippable boot milestone. It is intentionally narrower than "replace Android."
+This spec defines the earlier stock-init-handoff milestone and is no longer the active project boundary.
+
+Use these documents for the current owned-userspace boot plan instead:
+
+- [spec-scope.md](./spec-scope.md)
+- [plan.md](./plan.md)
+- [frontier.md](./frontier.md)
+
+Keep the rest of this file only as historical context for the abandoned stock-init `/data` helper approach.
 
 ## Objective
 
