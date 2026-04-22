@@ -48,7 +48,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--output PATH] [--hold-secs N]
                                                     [--prelude none|orange-init]
                                                     [--prelude-hold-secs N]
-                                                    [--orange-gpu-mode gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen]
+                                                    [--orange-gpu-mode gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen]
                                                     [--orange-gpu-launch-delay-secs N]
                                                     [--orange-gpu-parent-probe-attempts N]
                                                     [--orange-gpu-parent-probe-interval-secs N]
@@ -68,9 +68,10 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
 
 Build a private stock-kernel sunfish boot.img whose real first-stage userspace is
 hello-init PID 1 at system/bin/init and whose ramdisk contains a boot-owned
-shadow-gpu-smoke bundle under /orange-gpu for one of eighteen rungs: the real GPU
+shadow-gpu-smoke bundle under /orange-gpu for one of nineteen rungs: the real GPU
 render/present path, a strict Vulkan instance smoke, a strict raw Vulkan
-instance smoke, a direct C KGSL read-only open smoke, a direct C PID1 KGSL
+instance smoke, a firmware preflight-only smoke, a direct C KGSL read-only open
+smoke, a direct C PID1 KGSL
 read-only open smoke, a strict raw KGSL read-only open smoke, a strict raw KGSL
 getproperties smoke, a strict raw Vulkan
 physical-device-count-query-exit smoke,
@@ -130,7 +131,7 @@ metadata_probe_report_path_for_token() {
 }
 
 success_postlude_value() {
-  if [[ "$ORANGE_GPU_MODE" != "gpu-render" && "$PRELUDE" == "orange-init" ]]; then
+  if orange_gpu_mode_uses_success_postlude && [[ "$PRELUDE" == "orange-init" ]]; then
     printf 'orange-init\n'
   else
     printf 'none\n'
@@ -138,11 +139,37 @@ success_postlude_value() {
 }
 
 checkpoint_hold_seconds_value() {
-  if [[ "$ORANGE_GPU_MODE" != "gpu-render" && "$PRELUDE" == "orange-init" ]]; then
+  if orange_gpu_mode_uses_visible_checkpoints && [[ "$PRELUDE" == "orange-init" ]]; then
     printf '1\n'
   else
     printf '0\n'
   fi
+}
+
+orange_gpu_mode_uses_success_postlude() {
+  case "$ORANGE_GPU_MODE" in
+    bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+orange_gpu_mode_uses_visible_checkpoints() {
+  if orange_gpu_mode_uses_success_postlude; then
+    return 0
+  fi
+
+  case "$ORANGE_GPU_MODE" in
+    firmware-probe-only|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-pid1-smoke)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 generate_run_token() {
@@ -353,10 +380,10 @@ assert_orange_gpu_mode_word() {
   value="${1:?assert_orange_gpu_mode_word requires a value}"
 
   case "$value" in
-    gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
+    gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
       ;;
     *)
-      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen: $value" >&2
+      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, firmware-probe-only, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen: $value" >&2
       exit 1
       ;;
   esac
@@ -1003,6 +1030,8 @@ elif [[ "$ORANGE_GPU_MODE" == "vulkan-instance-smoke" ]]; then
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict Vulkan instance mode from %s\n' "$PAYLOAD_IMAGE_PATH"
 elif [[ "$ORANGE_GPU_MODE" == "raw-vulkan-instance-smoke" ]]; then
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict raw Vulkan instance-lifecycle mode from %s\n' "$PAYLOAD_IMAGE_PATH"
+elif [[ "$ORANGE_GPU_MODE" == "firmware-probe-only" ]]; then
+  printf 'Payload contract: hello-init runs the owned userspace firmware preflight only, paints a firmware checkpoint pattern, and exits before any KGSL open\n'
 elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-smoke" ]]; then
   printf 'Payload contract: hello-init directly opens /dev/kgsl-3d0 read-only in the owned child process before any staged Rust bundle exec\n'
 elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-pid1-smoke" ]]; then
@@ -1046,6 +1075,8 @@ elif [[ "$ORANGE_GPU_MODE" == "vulkan-instance-smoke" ]]; then
   printf 'GPU proof: strict Vulkan instance creation\n'
 elif [[ "$ORANGE_GPU_MODE" == "raw-vulkan-instance-smoke" ]]; then
   printf 'GPU proof: strict raw Vulkan loader plus vkCreateInstance/vkDestroyInstance\n'
+elif [[ "$ORANGE_GPU_MODE" == "firmware-probe-only" ]]; then
+  printf 'GPU proof: owned userspace firmware preflight without any KGSL open\n'
 elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-smoke" ]]; then
   printf 'GPU proof: direct C-owned read-only open of /dev/kgsl-3d0 before any staged Rust bundle exec\n'
 elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-pid1-smoke" ]]; then

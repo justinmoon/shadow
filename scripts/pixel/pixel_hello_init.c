@@ -1967,6 +1967,7 @@ static bool parse_orange_gpu_mode_value(const char *raw, char *dest, size_t dest
         strcmp(value, "bundle-smoke") != 0 &&
         strcmp(value, "vulkan-instance-smoke") != 0 &&
         strcmp(value, "raw-vulkan-instance-smoke") != 0 &&
+        strcmp(value, "firmware-probe-only") != 0 &&
         strcmp(value, "c-kgsl-open-readonly-smoke") != 0 &&
         strcmp(value, "c-kgsl-open-readonly-pid1-smoke") != 0 &&
         strcmp(value, "raw-kgsl-open-readonly-smoke") != 0 &&
@@ -2310,6 +2311,10 @@ static bool orange_gpu_mode_is_raw_vulkan_instance_smoke(const struct hello_init
     return strcmp(config->orange_gpu_mode, "raw-vulkan-instance-smoke") == 0;
 }
 
+static bool orange_gpu_mode_is_firmware_probe_only(const struct hello_init_config *config) {
+    return strcmp(config->orange_gpu_mode, "firmware-probe-only") == 0;
+}
+
 static bool orange_gpu_mode_is_c_kgsl_open_readonly_smoke(const struct hello_init_config *config) {
     return strcmp(config->orange_gpu_mode, "c-kgsl-open-readonly-smoke") == 0;
 }
@@ -2382,6 +2387,27 @@ static bool orange_gpu_mode_uses_success_postlude(const struct hello_init_config
            orange_gpu_mode_is_vulkan_device_request_smoke(config) ||
            orange_gpu_mode_is_vulkan_device_smoke(config) ||
            orange_gpu_mode_is_vulkan_offscreen(config);
+}
+
+static bool orange_gpu_checkpoint_is_firmware_probe(const char *checkpoint_name) {
+    return checkpoint_name != NULL && strncmp(checkpoint_name, "firmware-probe-", 15U) == 0;
+}
+
+static bool orange_gpu_mode_uses_visible_checkpoints(
+    const struct hello_init_config *config,
+    const char *checkpoint_name
+) {
+    if (orange_gpu_mode_uses_success_postlude(config)) {
+        return true;
+    }
+
+    if (!orange_gpu_checkpoint_is_firmware_probe(checkpoint_name)) {
+        return false;
+    }
+
+    return orange_gpu_mode_is_firmware_probe_only(config) ||
+           orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config) ||
+           orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(config);
 }
 
 static bool validate_orange_gpu_config(const struct hello_init_config *config) {
@@ -3840,6 +3866,17 @@ static int run_orange_gpu_payload(
                 SHADOW_HELLO_INIT_ORANGE_GPU_SUMMARY_PATH,
                 (char *)NULL
             );
+        } else if (orange_gpu_mode_is_firmware_probe_only(config)) {
+            log_stage(
+                "<6>",
+                "orange-gpu-child-c-probe",
+                "mode=firmware-probe-only"
+            );
+            _exit(probe_bootstrap_gpu_firmware(
+                config,
+                payload_probe_stage_path,
+                payload_probe_stage_prefix
+            ));
         } else if (orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config)) {
             log_stage(
                 "<6>",
@@ -4244,7 +4281,7 @@ static int run_orange_gpu_checkpoint(
     struct hello_init_config checkpoint_config;
 
     if (
-        !orange_gpu_mode_uses_success_postlude(config) ||
+        !orange_gpu_mode_uses_visible_checkpoints(config, checkpoint_name) ||
         !prelude_is_orange_init(config) ||
         hold_seconds == 0U
     ) {

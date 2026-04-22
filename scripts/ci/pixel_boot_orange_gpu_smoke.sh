@@ -516,7 +516,7 @@ start = source.find(marker)
 if start < 0:
     raise SystemExit("missing raw-vulkan-instance-smoke branch marker")
 start += len(marker)
-end = source.find("\n        } else if (orange_gpu_mode_is_raw_vulkan_physical_device_count_smoke(config)) {", start)
+end = source.find("\n        } else if (orange_gpu_mode_is_firmware_probe_only(config)) {", start)
 if end < 0:
     raise SystemExit("missing end of raw-vulkan-instance-smoke branch")
 branch = source[start:end]
@@ -532,6 +532,35 @@ for needle in required:
 for needle in ['"--present-kms"', 'hold_seconds,']:
     if needle in branch:
         raise SystemExit(f"unexpected raw-vulkan-instance-smoke branch needle: {needle}")
+PY
+}
+
+assert_orange_gpu_firmware_probe_only_branch_shape() {
+  python3 - "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+marker = "} else if (orange_gpu_mode_is_firmware_probe_only(config)) {"
+start = source.find(marker)
+if start < 0:
+    raise SystemExit("missing firmware-probe-only branch marker")
+start += len(marker)
+end = source.find("\n        } else if (orange_gpu_mode_is_c_kgsl_open_readonly_smoke(config)) {", start)
+if end < 0:
+    raise SystemExit("missing end of firmware-probe-only branch")
+branch = source[start:end]
+required = [
+    '"orange-gpu-child-c-probe"',
+    '"mode=firmware-probe-only"',
+    "_exit(probe_bootstrap_gpu_firmware(",
+]
+for needle in required:
+    if needle not in branch:
+        raise SystemExit(f"missing firmware-probe-only branch needle: {needle}")
+for needle in ['"--scene"', 'shadow-gpu-smoke']:
+    if needle in branch:
+        raise SystemExit(f"unexpected firmware-probe-only branch needle: {needle}")
 PY
 }
 
@@ -1065,89 +1094,97 @@ int main(void) {{
         fprintf(stderr, "unexpected parsed raw-vulkan-instance-smoke mode: %s\\n", buffer);
         return 4;
     }}
+    if (!parse_orange_gpu_mode_value("firmware-probe-only", buffer, sizeof(buffer))) {{
+        fprintf(stderr, "failed to parse valid firmware-probe-only mode\\n");
+        return 5;
+    }}
+    if (strcmp(buffer, "firmware-probe-only") != 0) {{
+        fprintf(stderr, "unexpected parsed firmware-probe-only mode: %s\\n", buffer);
+        return 6;
+    }}
     if (!parse_orange_gpu_mode_value("raw-vulkan-physical-device-count-query-exit-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid raw-vulkan-physical-device-count-query-exit-smoke mode\\n");
-        return 5;
+        return 7;
     }}
     if (strcmp(buffer, "raw-vulkan-physical-device-count-query-exit-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed raw-vulkan-physical-device-count-query-exit-smoke mode: %s\\n", buffer);
-        return 6;
+        return 8;
     }}
     if (!parse_orange_gpu_mode_value("raw-vulkan-physical-device-count-query-no-destroy-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid raw-vulkan-physical-device-count-query-no-destroy-smoke mode\\n");
-        return 7;
+        return 9;
     }}
     if (strcmp(buffer, "raw-vulkan-physical-device-count-query-no-destroy-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed raw-vulkan-physical-device-count-query-no-destroy-smoke mode: %s\\n", buffer);
-        return 8;
+        return 10;
     }}
     if (!parse_orange_gpu_mode_value("raw-vulkan-physical-device-count-query-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid raw-vulkan-physical-device-count-query-smoke mode\\n");
-        return 9;
+        return 11;
     }}
     if (strcmp(buffer, "raw-vulkan-physical-device-count-query-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed raw-vulkan-physical-device-count-query-smoke mode: %s\\n", buffer);
-        return 10;
+        return 12;
     }}
     if (!parse_orange_gpu_mode_value("raw-vulkan-physical-device-count-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid raw-vulkan-physical-device-count-smoke mode\\n");
-        return 11;
+        return 13;
     }}
     if (strcmp(buffer, "raw-vulkan-physical-device-count-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed raw-vulkan-physical-device-count-smoke mode: %s\\n", buffer);
-        return 10;
+        return 14;
     }}
     if (!parse_orange_gpu_mode_value("vulkan-enumerate-adapters-count-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid enumerate-adapters-count-smoke mode\\n");
-        return 11;
+        return 15;
     }}
     if (strcmp(buffer, "vulkan-enumerate-adapters-count-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed enumerate-adapters-count-smoke mode: %s\\n", buffer);
-        return 12;
+        return 16;
     }}
     if (!parse_orange_gpu_mode_value("vulkan-enumerate-adapters-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid enumerate-adapters-smoke mode\\n");
-        return 13;
+        return 17;
     }}
     if (strcmp(buffer, "vulkan-enumerate-adapters-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed enumerate-adapters-smoke mode: %s\\n", buffer);
-        return 14;
+        return 18;
     }}
     if (!parse_orange_gpu_mode_value("vulkan-adapter-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid adapter-smoke mode\\n");
-        return 15;
+        return 19;
     }}
     if (strcmp(buffer, "vulkan-adapter-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed adapter-smoke mode: %s\\n", buffer);
-        return 16;
+        return 20;
     }}
     if (!parse_orange_gpu_mode_value("vulkan-device-request-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid device-request-smoke mode\\n");
-        return 17;
+        return 21;
     }}
     if (strcmp(buffer, "vulkan-device-request-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed device-request-smoke mode: %s\\n", buffer);
-        return 18;
+        return 22;
     }}
     if (!parse_orange_gpu_mode_value("vulkan-device-smoke", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse valid device-smoke mode\\n");
-        return 19;
+        return 23;
     }}
     if (strcmp(buffer, "vulkan-device-smoke") != 0) {{
         fprintf(stderr, "unexpected parsed device-smoke mode: %s\\n", buffer);
-        return 20;
+        return 24;
     }}
     if (!parse_orange_gpu_mode_value(" vulkan-offscreen ", buffer, sizeof(buffer))) {{
         fprintf(stderr, "failed to parse trimmed offscreen mode\\n");
-        return 21;
+        return 25;
     }}
     if (strcmp(buffer, "vulkan-offscreen") != 0) {{
         fprintf(stderr, "unexpected parsed offscreen mode: %s\\n", buffer);
-        return 22;
+        return 26;
     }}
     if (parse_orange_gpu_mode_value("nope", buffer, sizeof(buffer))) {{
         fprintf(stderr, "unexpectedly accepted invalid mode\\n");
-        return 23;
+        return 27;
     }}
 
     return 0;
@@ -2089,12 +2126,16 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'validate_ora
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'missing required orange_gpu_mode config for payload=orange-gpu'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'invalid orange_gpu_mode config for payload=orange-gpu'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'SHADOW_HELLO_INIT_ORANGE_GPU_CHECKPOINT_HOLD_SECONDS'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_checkpoint_is_firmware_probe'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_uses_visible_checkpoints'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'checkpoint=validated'
 assert_hello_init_orange_gpu_mode_parser_smoke
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_vulkan_instance_smoke'
 assert_orange_gpu_instance_branch_shape
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_raw_vulkan_instance_smoke'
 assert_orange_gpu_raw_vulkan_instance_branch_shape
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_firmware_probe_only'
+assert_orange_gpu_firmware_probe_only_branch_shape
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_raw_vulkan_physical_device_count_query_exit_smoke'
 assert_orange_gpu_raw_vulkan_physical_device_count_query_exit_branch_shape
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_mode_is_raw_vulkan_physical_device_count_query_no_destroy_smoke'
@@ -2524,8 +2565,43 @@ assert_cpio_entry_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img" lib/firm
 assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" orange_gpu_mode "c-kgsl-open-readonly-smoke"
 assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" firmware_bootstrap "ramdisk-lib-firmware"
 assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" gpu_firmware_dir "$GPU_FIRMWARE_DIR"
-assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" success_postlude "orange-init"
+assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" success_postlude "none"
 assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" checkpoint_hold_seconds "1"
+
+firmware_probe_only_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-firmware-probe-only-boot.img" \
+      --hold-secs 7 \
+      --prelude orange-init \
+      --prelude-hold-secs 2 \
+      --orange-gpu-mode firmware-probe-only \
+      --reboot-target bootloader \
+      --run-token orange-gpu-firmware-probe-only-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false \
+      --firmware-bootstrap ramdisk-lib-firmware \
+      --firmware-dir "$GPU_FIRMWARE_DIR"
+)"
+
+assert_contains "$firmware_probe_only_boot_output" "Owned userspace mode: orange-gpu"
+assert_contains "$firmware_probe_only_boot_output" "Payload contract: hello-init runs the owned userspace firmware preflight only, paints a firmware checkpoint pattern, and exits before any KGSL open"
+assert_contains "$firmware_probe_only_boot_output" "GPU proof: owned userspace firmware preflight without any KGSL open"
+assert_contains "$firmware_probe_only_boot_output" "Derived success postlude: none"
+assert_contains "$firmware_probe_only_boot_output" "Visible checkpoint hold seconds: 1"
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-firmware-probe-only-boot.img" shadow-init.cfg $'# Generated by pixel_boot_build_orange_gpu.sh\npayload=orange-gpu\norange_gpu_mode=firmware-probe-only\nhold_seconds=7\nreboot_target=bootloader\nrun_token=orange-gpu-firmware-probe-only-run-token\nprelude=orange-init\nprelude_hold_seconds=2\ndev_mount=tmpfs\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\nfirmware_bootstrap=ramdisk-lib-firmware\ndri_bootstrap=sunfish-card0-renderD128-kgsl3d0\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-firmware-probe-only-boot.img.hello-init.json" orange_gpu_mode "firmware-probe-only"
+assert_json_field_equals "$TMP_DIR/orange-gpu-firmware-probe-only-boot.img.hello-init.json" firmware_bootstrap "ramdisk-lib-firmware"
+assert_json_field_equals "$TMP_DIR/orange-gpu-firmware-probe-only-boot.img.hello-init.json" success_postlude "none"
+assert_json_field_equals "$TMP_DIR/orange-gpu-firmware-probe-only-boot.img.hello-init.json" checkpoint_hold_seconds "1"
 
 instance_smoke_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -2979,7 +3055,7 @@ assert_command_fails_contains "expected an aarch64 ELF gpu binary" \
       --key "$AVB_KEY_PATH" \
       --output "$TMP_DIR/should-fail-bad-binary.img"
 
-assert_command_fails_contains "orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen" \
+assert_command_fails_contains "orange gpu mode must be gpu-render, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, firmware-probe-only, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, or vulkan-offscreen" \
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
