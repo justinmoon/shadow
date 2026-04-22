@@ -2414,6 +2414,8 @@ static bool orange_gpu_mode_is_c_kgsl_open_readonly_pid1_smoke(const struct hell
     return strcmp(config->orange_gpu_mode, "c-kgsl-open-readonly-pid1-smoke") == 0;
 }
 
+static bool orange_gpu_mode_uses_success_postlude(const struct hello_init_config *config);
+
 static bool orange_gpu_timeout_action_is_panic(const struct hello_init_config *config) {
     return strcmp(config->orange_gpu_timeout_action, "panic") == 0;
 }
