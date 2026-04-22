@@ -30,6 +30,7 @@ const DEFAULT_SURFACE_HEIGHT: u32 = APP_VIEWPORT_HEIGHT_PX;
 const CLICK_CANCEL_DISTANCE_PX: f32 = 8.0;
 const SOFT_KEYBOARD_TARGET_PREFIX: &str = "__shadow_keyboard__";
 const SOFT_KEYBOARD_SPACER_HEIGHT_PX: u32 = 360;
+const AUTO_CLICK_TARGET_ENV: &str = "SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ShadowTarget {
@@ -85,22 +86,40 @@ impl RuntimeDocument {
         }
     }
 
-    pub(crate) fn from_runtime_session(
+    pub(crate) fn from_runtime_session(runtime_session: RuntimeSession) -> Result<Self, String> {
+        Self::from_runtime_session_with_client_env(runtime_session, &[])
+    }
+
+    pub(crate) fn from_runtime_session_with_client_env(
         mut runtime_session: RuntimeSession,
+        client_env_assignments: &[(String, String)],
     ) -> Result<Self, String> {
         let payload = runtime_session.render_document()?;
         runtime_log("runtime-session-ready");
-        Ok(Self::with_runtime(payload, Some(runtime_session)))
+        Ok(Self::with_runtime_client_env(
+            payload,
+            Some(runtime_session),
+            client_env_assignments,
+        ))
     }
 
     fn with_runtime(
         payload: RuntimeDocumentPayload,
         runtime_session: Option<RuntimeSession>,
     ) -> Self {
+        Self::with_runtime_client_env(payload, runtime_session, &[])
+    }
+
+    fn with_runtime_client_env(
+        payload: RuntimeDocumentPayload,
+        runtime_session: Option<RuntimeSession>,
+        client_env_assignments: &[(String, String)],
+    ) -> Self {
         let (timer_tx, timer_rx) = channel();
         let inner = template_document();
         let frame_nodes = FrameNodes::resolve(&inner);
-        let pending_runtime_event = auto_click_event_from_env(runtime_session.is_some());
+        let pending_runtime_event =
+            auto_click_event(runtime_session.is_some(), client_env_assignments);
         let mut document = Self {
             inner,
             payload,
@@ -1916,16 +1935,32 @@ fn soft_keyboard_key_weight(key: SoftKeyboardKey) -> f32 {
     }
 }
 
-fn auto_click_event_from_env(runtime_session_enabled: bool) -> Option<RuntimeDispatchEvent> {
+fn auto_click_target(
+    runtime_session_enabled: bool,
+    client_env_assignments: &[(String, String)],
+) -> Option<String> {
     if !runtime_session_enabled {
         return None;
     }
 
-    let target_id = env::var("SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET").ok()?;
-    if target_id.is_empty() {
-        return None;
+    if let Some(target_id) = client_env_assignments
+        .iter()
+        .rev()
+        .find_map(|(key, value)| (key == AUTO_CLICK_TARGET_ENV).then_some(value))
+    {
+        return (!target_id.is_empty()).then(|| target_id.clone());
     }
 
+    env::var(AUTO_CLICK_TARGET_ENV)
+        .ok()
+        .filter(|value| !value.is_empty())
+}
+
+fn auto_click_event(
+    runtime_session_enabled: bool,
+    client_env_assignments: &[(String, String)],
+) -> Option<RuntimeDispatchEvent> {
+    let target_id = auto_click_target(runtime_session_enabled, client_env_assignments)?;
     Some(RuntimeDispatchEvent {
         target_id,
         event_type: String::from("click"),
@@ -1979,7 +2014,8 @@ mod tests {
     };
 
     use super::{
-        software_keyboard_enabled, RuntimeDocument, RuntimeDocumentPayload, RuntimeTextInputPayload,
+        auto_click_event, software_keyboard_enabled, RuntimeDocument, RuntimeDocumentPayload,
+        RuntimeTextInputPayload, AUTO_CLICK_TARGET_ENV,
     };
     use crate::runtime_session::RuntimeSelectionEvent;
     use shadow_ui_core::scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX};
@@ -2382,6 +2418,37 @@ mod tests {
         let runtime_event = document.take_last_runtime_event().expect("runtime click");
         assert_eq!(runtime_event.event_type, "click");
         assert_eq!(runtime_event.target_id, "counter");
+    }
+
+    #[test]
+    fn auto_click_target_prefers_client_env_assignments() {
+        let _guard = test_guard();
+        with_env_var(AUTO_CLICK_TARGET_ENV, Some("wrong"), || {
+            let assignments = vec![(
+                AUTO_CLICK_TARGET_ENV.to_string(),
+                String::from("preview-toggle"),
+            )];
+            let event = auto_click_event(true, &assignments).expect("auto click event");
+            assert_eq!(event.target_id, "preview-toggle");
+        });
+    }
+
+    #[test]
+    fn auto_click_target_uses_process_env_fallback() {
+        let _guard = test_guard();
+        with_env_var(AUTO_CLICK_TARGET_ENV, Some("capture"), || {
+            let event = auto_click_event(true, &[]).expect("auto click event");
+            assert_eq!(event.target_id, "capture");
+        });
+    }
+
+    #[test]
+    fn auto_click_target_empty_client_assignment_clears_process_env() {
+        let _guard = test_guard();
+        with_env_var(AUTO_CLICK_TARGET_ENV, Some("capture"), || {
+            let assignments = vec![(AUTO_CLICK_TARGET_ENV.to_string(), String::new())];
+            assert!(auto_click_event(true, &assignments).is_none());
+        });
     }
 
     #[test]

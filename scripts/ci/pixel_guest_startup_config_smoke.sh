@@ -410,7 +410,7 @@ PY
   [[ -z "$pixel_guest_run_config_restore_android" ]]
   [[ -z "$pixel_guest_run_config_restore_in_session" ]]
   [[ "$pixel_guest_run_config_reboot_on_restore_failure" == "1" ]]
-  [[ -z "$pixel_guest_run_config_stop_allocator" ]]
+  [[ "$pixel_guest_run_config_stop_allocator" == "0" ]]
 )
 
 (

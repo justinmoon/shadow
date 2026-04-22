@@ -54,10 +54,18 @@ impl ShadowGuestCompositor {
         let focused_hosted_app = self.gpu_shell.then(|| self.focused_hosted_app()).flatten();
         self.shell_surface.resize(render_width, render_height);
         if self.drm_enabled && self.gpu_shell {
-            let scanout_candidates = self
-                .ensure_kms_display()
+            let Some(scanout_candidates) = self
+                .ensure_kms_display_with_timeout(Duration::from_millis(0))
                 .map(|display| display.scanout_candidates().to_vec())
-                .unwrap_or_default();
+            else {
+                tracing::warn!(
+                    "[shadow-guest-compositor] gpu-scanout-kms-not-ready frame_marker={frame_marker} size={}x{}",
+                    render_width,
+                    render_height
+                );
+                self.schedule_shell_frame_retry();
+                return;
+            };
             if let Err(error) = self
                 .shell_surface
                 .configure_gpu_scanout(&scanout_candidates)
@@ -208,10 +216,17 @@ impl ShadowGuestCompositor {
         let (render_width, render_height) = self.shell_render_size();
         self.shell_surface.resize(render_width, render_height);
         if self.drm_enabled && self.gpu_shell {
-            let scanout_candidates = self
-                .ensure_kms_display()
+            let Some(scanout_candidates) = self
+                .ensure_kms_display_with_timeout(Duration::from_millis(0))
                 .map(|display| display.scanout_candidates().to_vec())
-                .unwrap_or_default();
+            else {
+                tracing::warn!(
+                    "[shadow-guest-compositor] shell-prewarm-kms-not-ready size={}x{}",
+                    render_width,
+                    render_height
+                );
+                return;
+            };
             if let Err(error) = self
                 .shell_surface
                 .configure_gpu_scanout(&scanout_candidates)

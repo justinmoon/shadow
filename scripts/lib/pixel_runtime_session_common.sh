@@ -1510,7 +1510,7 @@ with open(output_path_raw, "w", encoding="utf-8") as handle:
     )
     assignment(
         "pixel_guest_run_config_stop_allocator",
-        "1" if takeover.get("stopAllocator", True) else "",
+        "1" if takeover.get("stopAllocator", True) else "0",
     )
 PY
 }

@@ -30,11 +30,15 @@ impl HostedRuntimeApp {
         bundle_path: String,
         width: u32,
         height: u32,
+        client_env_assignments: &[(String, String)],
     ) -> Result<Self, String> {
         let width = width.max(1);
         let height = height.max(1);
         let runtime_session = RuntimeSession::spawn_explicit(host_binary_path, bundle_path)?;
-        let mut document = RuntimeDocument::from_runtime_session(runtime_session)?;
+        let mut document = RuntimeDocument::from_runtime_session_with_client_env(
+            runtime_session,
+            client_env_assignments,
+        )?;
         configure_document(&mut document, width, height);
         Ok(Self {
             document,

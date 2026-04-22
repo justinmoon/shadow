@@ -47,8 +47,14 @@ impl HostedAppState {
                 )
             })?;
 
-        let app = HostedRuntimeApp::new(host_binary_path, bundle_path, width, height)
-            .map_err(io::Error::other)?;
+        let app = HostedRuntimeApp::new(
+            host_binary_path,
+            bundle_path,
+            width,
+            height,
+            &client_config.env_assignments,
+        )
+        .map_err(io::Error::other)?;
         Ok(Self { app })
     }
 
