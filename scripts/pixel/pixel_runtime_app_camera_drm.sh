@@ -10,8 +10,8 @@ ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
 camera_endpoint="$(pixel_camera_runtime_endpoint)"
-camera_allow_mock="${SHADOW_RUNTIME_CAMERA_ALLOW_MOCK-}"
-camera_timeout_ms="${SHADOW_RUNTIME_CAMERA_TIMEOUT_MS-}"
+camera_allow_mock="$(pixel_camera_runtime_allow_mock)"
+camera_timeout_ms="$(pixel_camera_runtime_timeout_ms)"
 camera_mock_requested=0
 if pixel_camera_runtime_mock_requested "$camera_allow_mock"; then
   camera_mock_requested=1

@@ -60,6 +60,22 @@ if pixel_camera_runtime_mock_requested ""; then
   echo "pixel_guest_startup_config_smoke: unexpected mock request for empty allowMock" >&2
   exit 1
 fi
+if ! PIXEL_CAMERA_ALLOW_MOCK=1 pixel_camera_runtime_mock_requested; then
+  echo "pixel_guest_startup_config_smoke: expected mock request for PIXEL_CAMERA_ALLOW_MOCK=1" >&2
+  exit 1
+fi
+if SHADOW_RUNTIME_CAMERA_ALLOW_MOCK=1 pixel_camera_runtime_mock_requested; then
+  echo "pixel_guest_startup_config_smoke: unexpected legacy camera allowMock fallback" >&2
+  exit 1
+fi
+if [[ "$(PIXEL_CAMERA_TIMEOUT_MS=45000 pixel_camera_runtime_timeout_ms)" != "45000" ]]; then
+  echo "pixel_guest_startup_config_smoke: expected PIXEL_CAMERA_TIMEOUT_MS helper value" >&2
+  exit 1
+fi
+if [[ "$(SHADOW_RUNTIME_CAMERA_TIMEOUT_MS=45000 pixel_camera_runtime_timeout_ms)" != "" ]]; then
+  echo "pixel_guest_startup_config_smoke: unexpected legacy camera timeout fallback" >&2
+  exit 1
+fi
 
 if [[ "$(pixel_guest_startup_config_dst run-token)" != "/data/local/tmp/shadow-guest-startup-run-token.json" ]]; then
   echo "pixel_guest_startup_config_smoke: tokenized startup config path mismatch" >&2
@@ -269,21 +285,6 @@ assert data["client"]["envAssignments"] == [
         "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",
         "value": os.environ["STAGE_LIBRARY_PATH"],
     },
-    {
-        "key": "SHADOW_RUNTIME_NOSTR_DB_PATH",
-        "value": "/override/runtime-nostr.sqlite3",
-    },
-    {
-        "key": "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET",
-        "value": "/override/runtime-nostr.sock",
-    },
-    {
-        "key": "SHADOW_RUNTIME_CASHU_DATA_DIR",
-        "value": "/override/runtime-cashu",
-    },
-    {"key": "SHADOW_RUNTIME_CAMERA_ENDPOINT", "value": "127.0.0.1:37656"},
-    {"key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "value": "1"},
-    {"key": "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS", "value": "45000"},
 ], data
 assert data["services"] == {
     "audioBackend": "linux_spike",
@@ -296,6 +297,18 @@ assert data["services"] == {
     "nostrDbPath": "/override/runtime-nostr.sqlite3",
     "nostrServiceSocket": "/override/runtime-nostr.sock",
 }, data
+service_env_keys = {
+    "SHADOW_RUNTIME_NOSTR_DB_PATH",
+    "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET",
+    "SHADOW_RUNTIME_CASHU_DATA_DIR",
+    "SHADOW_RUNTIME_CAMERA_ENDPOINT",
+    "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",
+    "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS",
+}
+assert not any(
+    assignment["key"] in service_env_keys
+    for assignment in data["client"]["envAssignments"]
+), data
 assert data["compositor"]["transport"] == "direct", data
 assert data["compositor"]["enableDrm"] is True, data
 assert data["compositor"]["exitOnFirstFrame"] is True, data

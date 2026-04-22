@@ -103,8 +103,8 @@ Related docs:
 - 2026-04-20: rooted Pixel shell/runtime launch now compiles a typed host-side `guest-run-config.json` superset and passes that artifact into `pixel_guest_ui_drm.sh` instead of multiline `PIXEL_GUEST_CONFIG_*` payloads.
 - 2026-04-20: the same rooted-Pixel `guest-run-config.json` now serves as both the host takeover/verification session description and the on-device `SHADOW_GUEST_SESSION_CONFIG`, with host-driver staging controls intentionally left outside the file.
 - 2026-04-21: the rooted-Pixel shell/runtime-app path now exports that staged guest-run config to runtime clients through `SHADOW_RUNTIME_SESSION_CONFIG`, so supported runtime services can read the same typed file on-device instead of depending only on env projection.
-- 2026-04-21: rooted-Pixel camera runtime wiring is now config-first through `services.camera` in the typed guest-run/startup artifact; `SHADOW_RUNTIME_CAMERA_*` remains as compatibility env projected from that typed object rather than hand-built in each launcher.
-- 2026-04-21: `scripts/ci/pixel_guest_startup_config_smoke.sh` now proves `services.camera` round-trips through the Pixel guest startup/run config path and overrides conflicting legacy camera env in client assignments.
+- 2026-04-21: rooted-Pixel camera runtime wiring is now config-first through `services.camera` in the typed guest-run/startup artifact; the supported launchers stop using `SHADOW_RUNTIME_CAMERA_*` as host-side controls and prefer Pixel-owned camera helper inputs.
+- 2026-04-21: `scripts/ci/pixel_guest_startup_config_smoke.sh` now proves typed Pixel service config wins and that supported guest startup generation scrubs legacy Nostr/Cashu/Camera service env from client assignments instead of re-projecting it.
 
 ## Implementation Notes
 

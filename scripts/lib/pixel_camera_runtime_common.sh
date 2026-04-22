@@ -4,6 +4,14 @@ pixel_camera_runtime_endpoint() {
   printf '%s\n' "${PIXEL_RUNTIME_CAMERA_ENDPOINT:-127.0.0.1:37656}"
 }
 
+pixel_camera_runtime_allow_mock() {
+  printf '%s\n' "${PIXEL_CAMERA_ALLOW_MOCK-}"
+}
+
+pixel_camera_runtime_timeout_ms() {
+  printf '%s\n' "${PIXEL_CAMERA_TIMEOUT_MS-}"
+}
+
 pixel_camera_runtime_device_binary() {
   printf '%s\n' "${PIXEL_CAMERA_RS_DEVICE_BINARY:-/data/local/tmp/shadow-camera-provider-host}"
 }
@@ -17,7 +25,7 @@ pixel_camera_runtime_daemon_log_path() {
 }
 
 pixel_camera_runtime_mock_requested() {
-  local allow_mock="${1:-${SHADOW_RUNTIME_CAMERA_ALLOW_MOCK-}}"
+  local allow_mock="${1:-$(pixel_camera_runtime_allow_mock)}"
 
   case "${allow_mock,,}" in
     1 | true | on)

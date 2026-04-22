@@ -130,7 +130,7 @@ Current checkpoint:
 - `SHADOW_RUNTIME_NOSTR_*`, `SHADOW_RUNTIME_CASHU_*`, `SHADOW_RUNTIME_AUDIO_BACKEND`, and `SHADOW_RUNTIME_CAMERA_*` remain as compatibility fallbacks while non-VM and ad hoc host lanes finish migrating.
 - `scripts/ci/runtime_app_sound_smoke.sh` now proves that `SHADOW_RUNTIME_SESSION_CONFIG` beats a conflicting `SHADOW_RUNTIME_AUDIO_BACKEND=linux_spike` override on the host runtime session path.
 - `scripts/ci/runtime_app_camera_smoke.sh` now proves that `SHADOW_RUNTIME_SESSION_CONFIG` beats conflicting `SHADOW_RUNTIME_CAMERA_ALLOW_MOCK=0` and `SHADOW_RUNTIME_CAMERA_ENDPOINT=127.0.0.1:1` overrides on the host runtime session path.
-- The supported rooted-Pixel shell/runtime-app path now carries `services.camera` inside the staged guest-run/startup artifact, exports that file through `SHADOW_RUNTIME_SESSION_CONFIG`, and derives `SHADOW_RUNTIME_CAMERA_*` from the typed object as compatibility projection rather than as the primary transport.
+- The supported rooted-Pixel shell/runtime-app path now carries service config in the staged guest-run/startup artifact, exports that file through `SHADOW_RUNTIME_SESSION_CONFIG`, and scrubs legacy Nostr/Cashu/Camera runtime-service env from generated client assignments instead of projecting it back into the supported path.
 
 ## Phase 5: Namespace And Compatibility Cleanup
 

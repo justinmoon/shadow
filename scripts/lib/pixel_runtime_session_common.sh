@@ -806,7 +806,7 @@ def filter_env_assignments(client_env_assignments, removed_keys):
     ]
 
 
-def project_nostr_service_env(client_env_assignments, services):
+def filter_nostr_service_env(client_env_assignments, services):
     if (
         "nostrDbPath" not in services
         and "nostrServiceSocket" not in services
@@ -822,26 +822,12 @@ def project_nostr_service_env(client_env_assignments, services):
     )
 
     db_path = services.get("nostrDbPath")
-    if db_path is not None:
-        if not isinstance(db_path, str):
-            raise SystemExit("pixel: services.nostrDbPath must be a string")
-        if db_path.strip():
-            append_env_assignment(
-                client_env_assignments,
-                "SHADOW_RUNTIME_NOSTR_DB_PATH",
-                db_path,
-            )
+    if db_path is not None and not isinstance(db_path, str):
+        raise SystemExit("pixel: services.nostrDbPath must be a string")
 
     service_socket = services.get("nostrServiceSocket")
-    if service_socket is not None:
-        if not isinstance(service_socket, str):
-            raise SystemExit("pixel: services.nostrServiceSocket must be a string")
-        if service_socket.strip():
-            append_env_assignment(
-                client_env_assignments,
-                "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET",
-                service_socket,
-            )
+    if service_socket is not None and not isinstance(service_socket, str):
+        raise SystemExit("pixel: services.nostrServiceSocket must be a string")
 
 
 def filter_audio_service_env(client_env_assignments, services):
@@ -860,7 +846,7 @@ def filter_audio_service_env(client_env_assignments, services):
         raise SystemExit("pixel: services.audioBackend must be a string")
 
 
-def project_cashu_service_env(client_env_assignments, services):
+def filter_cashu_service_env(client_env_assignments, services):
     if "cashuDataDir" not in services:
         return
 
@@ -874,15 +860,9 @@ def project_cashu_service_env(client_env_assignments, services):
         return
     if not isinstance(cashu_data_dir, str):
         raise SystemExit("pixel: services.cashuDataDir must be a string")
-    if cashu_data_dir.strip():
-        append_env_assignment(
-            client_env_assignments,
-            "SHADOW_RUNTIME_CASHU_DATA_DIR",
-            cashu_data_dir,
-        )
 
 
-def project_camera_service_env(client_env_assignments, services):
+def filter_camera_service_env(client_env_assignments, services):
     camera = services.get("camera")
     if camera is None:
         return
@@ -899,35 +879,18 @@ def project_camera_service_env(client_env_assignments, services):
     )
 
     endpoint = camera.get("endpoint")
-    if endpoint is not None:
-        if not isinstance(endpoint, str):
-            raise SystemExit("pixel: services.camera.endpoint must be a string")
-        if endpoint.strip():
-            append_env_assignment(
-                client_env_assignments,
-                "SHADOW_RUNTIME_CAMERA_ENDPOINT",
-                endpoint,
-            )
+    if endpoint is not None and not isinstance(endpoint, str):
+        raise SystemExit("pixel: services.camera.endpoint must be a string")
 
     allow_mock = camera.get("allowMock")
-    if allow_mock is not None:
-        if not isinstance(allow_mock, bool):
-            raise SystemExit("pixel: services.camera.allowMock must be a boolean")
-        append_env_assignment(
-            client_env_assignments,
-            "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",
-            "1" if allow_mock else "0",
-        )
+    if allow_mock is not None and not isinstance(allow_mock, bool):
+        raise SystemExit("pixel: services.camera.allowMock must be a boolean")
 
     timeout_ms = camera.get("timeoutMs")
-    if timeout_ms is not None:
-        if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int):
-            raise SystemExit("pixel: services.camera.timeoutMs must be an integer")
-        append_env_assignment(
-            client_env_assignments,
-            "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS",
-            str(timeout_ms),
-        )
+    if timeout_ms is not None and (
+        isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int)
+    ):
+        raise SystemExit("pixel: services.camera.timeoutMs must be an integer")
 
 
 output_path = os.environ["PIXEL_GUEST_STARTUP_OUTPUT_PATH"]
@@ -971,9 +934,9 @@ for key, value in client_env_lines:
 
 if services:
     filter_audio_service_env(client_env_assignments, services)
-    project_nostr_service_env(client_env_assignments, services)
-    project_cashu_service_env(client_env_assignments, services)
-    project_camera_service_env(client_env_assignments, services)
+    filter_nostr_service_env(client_env_assignments, services)
+    filter_cashu_service_env(client_env_assignments, services)
+    filter_camera_service_env(client_env_assignments, services)
 
 if system_binary_path is None:
     candidate = session_env.get("SHADOW_SYSTEM_BINARY_PATH", "").strip()
