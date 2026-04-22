@@ -67,6 +67,8 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - Rust-bridge builder truth on 2026-04-22:
     - `pixel_boot_build_orange_gpu.sh --hello-init-mode rust-bridge` now stages the final image directly instead of recursively building a direct/C image first and then mutating it
     - the final image now stages `/system/bin/init` as the Rust no_std shim and `/hello-init-child` as the full Rust child in one pass
+    - the direct builder now also supports `--rust-shim-mode exec` for that same full Rust child
+    - direct orange-gpu rust-bridge images still require the real Rust child; probe-child variants stay on `pixel_boot_build_rust_bridge.sh`
     - the orange-gpu smoke now has a positive rust-bridge assertion for that final staged shape and for the companion metadata fields (`hello_init_impl=rust-bridge`, `hello_init_child_path=/hello-init-child`)
     - `pixel_boot_build_rust_bridge.sh` remains useful as a thin repack helper, but it is no longer the primary builder path for new rust-bridge orange-gpu images
   - Source-backed `std`-PID1 hypothesis on 2026-04-22:
@@ -137,8 +139,8 @@ Use the panel as a stage channel, not just “something orange happened.”
    - raw Vulkan query/count only if the bridge seam regresses earlier
 3. Confirm the direct rust-bridge builder on hardware.
    - the host-side builder now stages the final rust-bridge image directly
-   - next hardware proof should use that direct builder path for `hello`, `vulkan-offscreen`, and `gpu-render`
-   - keep `pixel_boot_build_rust_bridge.sh` only as a fallback/helper path, not as the normal builder route
+   - next hardware proof should use that direct builder path for `hello`, `vulkan-offscreen`, `gpu-render`, and the `--rust-shim-mode exec` variant with the real Rust child
+   - keep `pixel_boot_build_rust_bridge.sh` as the fallback/helper path for probe-child variants, not as the normal orange-gpu builder route
 4. Run the `std`-PID1 discriminator once a phone is back.
    - build a stripped hello base image
    - repack it with `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe`

@@ -79,8 +79,9 @@ Do this in order:
    - `pixel_boot_build_orange_gpu.sh --hello-init-mode rust-bridge`
    - stage `/system/bin/init` as the no_std Rust shim
    - stage `/hello-init-child` as the full Rust child
+   - use `--rust-shim-mode exec` here when the seam you want to test is fork-vs-exec with the real Rust child
    - keep the companion metadata honest (`hello_init_impl=rust-bridge`, `hello_init_child_path=/hello-init-child`, blank unsupported probe files)
-   - use `pixel_boot_build_rust_bridge.sh` only as a fallback/helper path when converting an already-built image
+   - use `pixel_boot_build_rust_bridge.sh` as the fallback/helper path when converting an already-built image or when you need a probe-child variant
 4. If the bridge helper regresses on a new rung, fall back down the already-proven helper-backed ladder:
    - `vulkan-offscreen`
    - `vulkan-device-request-smoke`

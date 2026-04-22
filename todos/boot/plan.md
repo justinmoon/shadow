@@ -40,11 +40,13 @@ Related docs:
       - `/system/bin/init` is the no_std Rust shim
       - `/hello-init-child` is the full Rust child
       - companion metadata now records `hello_init_impl=rust-bridge` and `hello_init_child_path=/hello-init-child`
+      - the direct builder also supports `--rust-shim-mode exec` for the same full Rust child
     - `pixel_boot_build_rust_bridge.sh` still exists as a thin repack helper, but it is no longer the primary builder path for new rust-bridge orange-gpu images
     - the Rust bridge builder now fails closed on configs the Rust child cannot honestly run yet:
       - C-only orange-gpu modes are rejected early
       - parent-probe configs are rejected early
       - cloned metadata no longer promises `probe-fingerprint` / `probe-timeout-class` files the Rust child does not currently write
+      - direct orange-gpu rust-bridge images still require `--rust-child-profile hello`; probe-child variants stay on the fallback bridge helper
     - current leading `std`-PID1 source hypothesis:
       - the likely bad seam is pre-`main` `std` runtime / TLS startup, not the `hello-init` logic
       - next hardware discriminator is `no_std` exact-path PID1 shim -> direct `execv()` into the tiny `std` probe, with no `fork()`

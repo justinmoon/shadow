@@ -11,6 +11,8 @@ ensure_bootimg_shell "$@"
 INPUT_IMAGE="${PIXEL_BOOT_INPUT_IMAGE:-}"
 HELLO_INIT_BINARY="${PIXEL_HELLO_INIT_BIN:-}"
 HELLO_INIT_RUST_SHIM_BINARY="${PIXEL_HELLO_INIT_RUST_SHIM_BIN:-}"
+HELLO_INIT_RUST_SHIM_MODE="${PIXEL_HELLO_INIT_RUST_SHIM_MODE:-fork}"
+HELLO_INIT_RUST_CHILD_PROFILE="${PIXEL_HELLO_INIT_RUST_CHILD_PROFILE:-hello}"
 HELLO_INIT_RUST_CHILD_ENTRY="${PIXEL_HELLO_INIT_RUST_CHILD_ENTRY:-hello-init-child}"
 ORANGE_INIT_BINARY="${PIXEL_ORANGE_INIT_BIN:-}"
 GPU_BUNDLE_DIR="${PIXEL_ORANGE_GPU_BUNDLE_DIR:-}"
@@ -45,11 +47,14 @@ CONFIG_ENTRY="shadow-init.cfg"
 PAYLOAD_ROOT="orange-gpu"
 PAYLOAD_IMAGE_PATH="/orange-gpu"
 METADATA_SUFFIX=".hello-init.json"
+DEFAULT_RUST_CHILD_ENTRY="hello-init-child"
 
 usage() {
   cat <<'EOF'
 Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--rust-shim PATH]
+                                                    [--rust-shim-mode fork|exec]
+                                                    [--rust-child-profile hello|std-probe|nostd-probe]
                                                     [--orange-init PATH]
                                                     [--gpu-bundle DIR] [--key PATH]
                                                     [--output PATH] [--hold-secs N]
@@ -98,7 +103,14 @@ EOF
 
 default_output_image() {
   if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
-    printf '%s/shadow-boot-orange-gpu-rust-bridge.img\n' "$(pixel_boot_dir)"
+    local suffix=""
+    if [[ "$HELLO_INIT_RUST_SHIM_MODE" != "fork" ]]; then
+      suffix+="-${HELLO_INIT_RUST_SHIM_MODE}"
+    fi
+    if [[ "$HELLO_INIT_RUST_CHILD_PROFILE" != "hello" ]]; then
+      suffix+="-${HELLO_INIT_RUST_CHILD_PROFILE}"
+    fi
+    printf '%s/shadow-boot-orange-gpu-rust-bridge%s.img\n' "$(pixel_boot_dir)" "$suffix"
   else
     printf '%s/shadow-boot-orange-gpu.img\n' "$(pixel_boot_dir)"
   fi
@@ -109,11 +121,78 @@ default_hello_init_binary() {
 }
 
 default_rust_hello_init_binary() {
-  printf '%s\n' "${PIXEL_HELLO_INIT_RUST_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust}"
+  case "$HELLO_INIT_RUST_CHILD_PROFILE" in
+    hello)
+      printf '%s\n' "${PIXEL_HELLO_INIT_RUST_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust}"
+      ;;
+    std-probe)
+      printf '%s\n' "${PIXEL_HELLO_INIT_RUST_STD_PROBE_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-probe}"
+      ;;
+    nostd-probe)
+      printf '%s\n' "${PIXEL_HELLO_INIT_RUST_NOSTD_PROBE_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-nostd-probe}"
+      ;;
+  esac
 }
 
 default_rust_hello_init_shim_binary() {
-  printf '%s\n' "${PIXEL_HELLO_INIT_RUST_SHIM_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-shim}"
+  case "$HELLO_INIT_RUST_SHIM_MODE" in
+    fork)
+      printf '%s\n' "${PIXEL_HELLO_INIT_RUST_SHIM_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-shim}"
+      ;;
+    exec)
+      printf '%s\n' "${PIXEL_HELLO_INIT_RUST_SHIM_EXEC_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-shim-exec}"
+      ;;
+  esac
+}
+
+default_rust_hello_init_package_ref() {
+  case "$HELLO_INIT_RUST_CHILD_PROFILE" in
+    hello)
+      printf 'path:%s#hello-init-rust-device\n' "$(repo_root)"
+      ;;
+    std-probe)
+      printf 'path:%s#hello-init-rust-probe-device\n' "$(repo_root)"
+      ;;
+    nostd-probe)
+      printf 'path:%s#hello-init-rust-nostd-probe-device\n' "$(repo_root)"
+      ;;
+  esac
+}
+
+default_rust_hello_init_binary_name() {
+  case "$HELLO_INIT_RUST_CHILD_PROFILE" in
+    hello)
+      printf 'hello-init\n'
+      ;;
+    std-probe)
+      printf 'hello-init-probe\n'
+      ;;
+    nostd-probe)
+      printf 'hello-init-nostd-probe\n'
+      ;;
+  esac
+}
+
+default_rust_hello_init_shim_package_ref() {
+  case "$HELLO_INIT_RUST_SHIM_MODE" in
+    fork)
+      printf 'path:%s#hello-init-rust-shim-device\n' "$(repo_root)"
+      ;;
+    exec)
+      printf 'path:%s#hello-init-rust-shim-exec-device\n' "$(repo_root)"
+      ;;
+  esac
+}
+
+default_rust_hello_init_shim_binary_name() {
+  case "$HELLO_INIT_RUST_SHIM_MODE" in
+    fork)
+      printf 'hello-init-shim\n'
+      ;;
+    exec)
+      printf 'hello-init-shim-exec\n'
+      ;;
+  esac
 }
 
 default_orange_init_binary() {
@@ -546,6 +625,34 @@ assert_hello_init_mode_word() {
   esac
 }
 
+assert_rust_shim_mode_word() {
+  local value
+  value="${1:?assert_rust_shim_mode_word requires a value}"
+
+  case "$value" in
+    fork|exec)
+      ;;
+    *)
+      echo "pixel_boot_build_orange_gpu: unsupported rust shim mode: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
+assert_rust_child_profile_word() {
+  local value
+  value="${1:?assert_rust_child_profile_word requires a value}"
+
+  case "$value" in
+    hello|std-probe|nostd-probe)
+      ;;
+    *)
+      echo "pixel_boot_build_orange_gpu: unsupported rust child profile: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
 rust_bridge_supports_orange_gpu_mode() {
   local value
   value="${1:?rust_bridge_supports_orange_gpu_mode requires a value}"
@@ -654,6 +761,22 @@ hello_init_child_path_value() {
   fi
 }
 
+hello_init_shim_mode_value() {
+  if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
+    printf '%s\n' "$HELLO_INIT_RUST_SHIM_MODE"
+  else
+    printf '\n'
+  fi
+}
+
+hello_init_child_profile_value() {
+  if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
+    printf '%s\n' "$HELLO_INIT_RUST_CHILD_PROFILE"
+  else
+    printf '\n'
+  fi
+}
+
 write_metadata() {
   local metadata_path
   metadata_path="$(hello_init_metadata_path "$OUTPUT_IMAGE")"
@@ -678,6 +801,8 @@ write_metadata() {
     "$HELLO_INIT_MODE" \
     "$(hello_init_impl_value)" \
     "$(hello_init_child_path_value)" \
+    "$(hello_init_shim_mode_value)" \
+    "$(hello_init_child_profile_value)" \
     "$DEV_MOUNT" \
     "$MOUNT_DEV" \
     "$MOUNT_PROC" \
@@ -718,6 +843,8 @@ from pathlib import Path
     hello_init_mode,
     hello_init_impl,
     hello_init_child_path,
+    hello_init_shim_mode,
+    hello_init_child_profile,
     dev_mount,
     mount_dev,
     mount_proc,
@@ -762,6 +889,8 @@ payload_json = {
     "hello_init_mode": hello_init_mode,
     "hello_init_impl": hello_init_impl,
     "hello_init_child_path": hello_init_child_path,
+    "hello_init_shim_mode": hello_init_shim_mode,
+    "hello_init_child_profile": hello_init_child_profile,
     "dev_mount": dev_mount,
     "mount_dev": parse_bool(mount_dev),
     "mount_proc": parse_bool(mount_proc),
@@ -881,6 +1010,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --rust-shim)
       HELLO_INIT_RUST_SHIM_BINARY="${2:?missing value for --rust-shim}"
+      shift 2
+      ;;
+    --rust-shim-mode)
+      HELLO_INIT_RUST_SHIM_MODE="${2:?missing value for --rust-shim-mode}"
+      shift 2
+      ;;
+    --rust-child-profile)
+      HELLO_INIT_RUST_CHILD_PROFILE="${2:?missing value for --rust-child-profile}"
       shift 2
       ;;
     --orange-init)
@@ -1102,7 +1239,18 @@ assert_bool_word orange-gpu-metadata-stage-breadcrumb "$ORANGE_GPU_METADATA_STAG
 assert_bool_word orange-gpu-firmware-helper "$ORANGE_GPU_FIRMWARE_HELPER"
 assert_timeout_action_word "$ORANGE_GPU_TIMEOUT_ACTION"
 assert_hello_init_mode_word "$HELLO_INIT_MODE"
+assert_rust_shim_mode_word "$HELLO_INIT_RUST_SHIM_MODE"
+assert_rust_child_profile_word "$HELLO_INIT_RUST_CHILD_PROFILE"
 assert_rust_bridge_supported_config
+if [[ "$HELLO_INIT_MODE" == "rust-bridge" && "$HELLO_INIT_RUST_CHILD_ENTRY" != "$DEFAULT_RUST_CHILD_ENTRY" ]]; then
+  echo "pixel_boot_build_orange_gpu: rust-bridge mode only supports /$DEFAULT_RUST_CHILD_ENTRY as the child path" >&2
+  exit 1
+fi
+if [[ "$HELLO_INIT_MODE" == "rust-bridge" && "$HELLO_INIT_RUST_CHILD_PROFILE" != "hello" ]]; then
+  echo "pixel_boot_build_orange_gpu: rust-bridge orange-gpu images currently require --rust-child-profile hello" >&2
+  echo "pixel_boot_build_orange_gpu: use pixel_boot_build_rust_bridge.sh for std-probe or nostd-probe child variants" >&2
+  exit 1
+fi
 assert_firmware_bootstrap_word "$FIRMWARE_BOOTSTRAP"
 if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" && "$MOUNT_DEV" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: orange gpu metadata stage breadcrumb requires mount-dev=true" >&2
@@ -1156,16 +1304,16 @@ if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   if [[ -z "$HELLO_INIT_BINARY" ]]; then
     HELLO_INIT_BINARY="$(default_rust_hello_init_binary)"
     build_or_copy_rust_hello_init_binary \
-      "path:$(repo_root)#hello-init-rust-device" \
+      "$(default_rust_hello_init_package_ref)" \
       "$HELLO_INIT_BINARY" \
-      "hello-init"
+      "$(default_rust_hello_init_binary_name)"
   fi
   if [[ -z "$HELLO_INIT_RUST_SHIM_BINARY" ]]; then
     HELLO_INIT_RUST_SHIM_BINARY="$(default_rust_hello_init_shim_binary)"
     build_or_copy_rust_hello_init_binary \
-      "path:$(repo_root)#hello-init-rust-shim-device" \
+      "$(default_rust_hello_init_shim_package_ref)" \
       "$HELLO_INIT_RUST_SHIM_BINARY" \
-      "hello-init-shim"
+      "$(default_rust_hello_init_shim_binary_name)"
   fi
 else
   if [[ -z "$HELLO_INIT_BINARY" ]]; then
@@ -1322,7 +1470,9 @@ printf 'GPU bundle staged dir: %s\n' "$STAGED_GPU_BUNDLE_DIR"
 printf 'Hello-init mode: %s\n' "$HELLO_INIT_MODE"
 if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   printf 'Rust shim path: /system/bin/init\n'
+  printf 'Rust shim mode: %s\n' "$HELLO_INIT_RUST_SHIM_MODE"
   printf 'Rust shim binary: %s\n' "$HELLO_INIT_RUST_SHIM_BINARY"
+  printf 'Rust child profile: %s\n' "$HELLO_INIT_RUST_CHILD_PROFILE"
   printf 'Rust child path: /%s\n' "$HELLO_INIT_RUST_CHILD_ENTRY"
   printf 'Rust child binary: %s\n' "$HELLO_INIT_BINARY"
 fi

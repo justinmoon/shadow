@@ -10,6 +10,7 @@ BOOT_BUILD_RAMDISK="$TMP_DIR/build-ramdisk.cpio"
 HELLO_INIT_OUTPUT="$TMP_DIR/hello-init"
 HELLO_INIT_RUST_CHILD_OUTPUT="$TMP_DIR/hello-init-rust-child"
 HELLO_INIT_RUST_SHIM_OUTPUT="$TMP_DIR/hello-init-rust-shim"
+HELLO_INIT_RUST_EXEC_SHIM_OUTPUT="$TMP_DIR/hello-init-rust-shim-exec"
 ORANGE_INIT_OUTPUT="$TMP_DIR/orange-init"
 GPU_BUNDLE_DIR="$TMP_DIR/gpu-bundle"
 BAD_LOADER_BUNDLE_DIR="$TMP_DIR/bad-loader-bundle"
@@ -62,6 +63,15 @@ cat >"$HELLO_INIT_RUST_SHIM_OUTPUT" <<'EOF'
 echo hello-init-rust-shim
 EOF
 chmod 0755 "$HELLO_INIT_RUST_SHIM_OUTPUT"
+
+cat >"$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT" <<'EOF'
+#!/system/bin/sh
+# shadow-owned-init-role:hello-init
+# shadow-owned-init-impl:rust-static
+# shadow-owned-init-config:/shadow-init.cfg
+echo hello-init-rust-shim-exec
+EOF
+chmod 0755 "$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT"
 
 cat >"$ORANGE_INIT_OUTPUT" <<'EOF'
 #!/system/bin/sh
@@ -3117,10 +3127,68 @@ assert_cpio_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img" hello-init-c
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" hello_init_mode "rust-bridge"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" hello_init_impl "rust-bridge"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" hello_init_child_path "/hello-init-child"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" hello_init_child_profile "hello"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" hello_init_shim_mode "fork"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_stage_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-run-token/probe-stage.txt"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_report_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-run-token/probe-report.txt"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_fingerprint_path ""
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-boot.img.hello-init.json" metadata_probe_timeout_class_path ""
+
+rust_bridge_exec_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
+      --rust-shim "$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT" \
+      --rust-shim-mode exec \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img" \
+      --hello-init-mode rust-bridge \
+      --hold-secs 7 \
+      --prelude orange-init \
+      --prelude-hold-secs 2 \
+      --orange-gpu-mode gpu-render \
+      --reboot-target bootloader \
+      --run-token orange-gpu-rust-bridge-exec-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false \
+      --orange-gpu-metadata-stage-breadcrumb true
+)"
+
+assert_contains "$rust_bridge_exec_boot_output" "Hello-init mode: rust-bridge"
+assert_contains "$rust_bridge_exec_boot_output" "Rust shim mode: exec"
+assert_contains "$rust_bridge_exec_boot_output" "Rust shim binary: $HELLO_INIT_RUST_EXEC_SHIM_OUTPUT"
+assert_contains "$rust_bridge_exec_boot_output" "Rust child profile: hello"
+assert_contains "$rust_bridge_exec_boot_output" "Rust child path: /hello-init-child"
+assert_contains "$rust_bridge_exec_boot_output" "Rust child binary: $HELLO_INIT_RUST_CHILD_OUTPUT"
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img" system/bin/init $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-shim-exec\n'
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img" hello-init-child $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-child\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img.hello-init.json" hello_init_mode "rust-bridge"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img.hello-init.json" hello_init_impl "rust-bridge"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img.hello-init.json" hello_init_child_path "/hello-init-child"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img.hello-init.json" hello_init_child_profile "hello"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-exec-boot.img.hello-init.json" hello_init_shim_mode "exec"
+
+assert_command_fails_contains "rust-bridge orange-gpu images currently require --rust-child-profile hello" \
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
+      --rust-shim "$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT" \
+      --rust-shim-mode exec \
+      --rust-child-profile std-probe \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-rust-bridge-should-fail-std-probe.img" \
+      --hello-init-mode rust-bridge \
+      --orange-gpu-mode gpu-render
 
 assert_command_fails_contains "expected an aarch64 ELF loader" \
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
