@@ -101,6 +101,7 @@ struct hello_init_config {
     unsigned int orange_gpu_parent_probe_attempts;
     unsigned int orange_gpu_parent_probe_interval_secs;
     bool orange_gpu_metadata_stage_breadcrumb;
+    bool orange_gpu_firmware_helper;
     char orange_gpu_timeout_action[24];
     unsigned int orange_gpu_watchdog_timeout_secs;
     unsigned int hold_seconds;
@@ -214,6 +215,7 @@ static void init_default_config(struct hello_init_config *config) {
     config->orange_gpu_parent_probe_attempts = 0U;
     config->orange_gpu_parent_probe_interval_secs = 0U;
     config->orange_gpu_metadata_stage_breadcrumb = false;
+    config->orange_gpu_firmware_helper = false;
     (void)copy_string(
         config->orange_gpu_timeout_action,
         sizeof(config->orange_gpu_timeout_action),
@@ -2261,6 +2263,18 @@ static void apply_config_value(
     }
 
     if (
+        strcmp(key, "orange_gpu_firmware_helper") == 0 ||
+        strcmp(key, "orange-gpu-firmware-helper") == 0
+    ) {
+        if (!parse_bool_value(value, &parsed_bool)) {
+            log_boot("<3>", "invalid orange_gpu_firmware_helper value: %s", value);
+            return;
+        }
+        config->orange_gpu_firmware_helper = parsed_bool;
+        return;
+    }
+
+    if (
         strcmp(key, "orange_gpu_timeout_action") == 0 ||
         strcmp(key, "orange-gpu-timeout-action") == 0
     ) {
@@ -2728,6 +2742,23 @@ static bool validate_orange_gpu_config(const struct hello_init_config *config) {
     if (config->orange_gpu_metadata_stage_breadcrumb && !config->mount_dev) {
         log_stage("<3>", "orange-gpu-config-invalid-metadata-stage", "reason=mount_dev_false");
         log_boot("<3>", "orange_gpu_metadata_stage_breadcrumb requires mount_dev=true");
+        return false;
+    }
+    if (config->orange_gpu_firmware_helper && !config->mount_sys) {
+        log_stage("<3>", "orange-gpu-config-invalid-firmware-helper", "reason=mount_sys_false");
+        log_boot("<3>", "orange_gpu_firmware_helper requires mount_sys=true");
+        return false;
+    }
+    if (
+        config->orange_gpu_firmware_helper &&
+        strcmp(config->firmware_bootstrap, "ramdisk-lib-firmware") != 0
+    ) {
+        log_stage(
+            "<3>",
+            "orange-gpu-config-invalid-firmware-helper",
+            "reason=firmware_bootstrap_missing"
+        );
+        log_boot("<3>", "orange_gpu_firmware_helper requires firmware_bootstrap=ramdisk-lib-firmware");
         return false;
     }
     return true;
@@ -4705,6 +4736,33 @@ static void stop_child_process_best_effort(pid_t child_pid, const char *label) {
     }
 }
 
+static pid_t start_ramdisk_firmware_helper_child(
+    const char *payload_probe_stage_path,
+    const char *payload_probe_stage_prefix
+) {
+    pid_t child_pid = fork();
+
+    if (child_pid < 0) {
+        log_stage("<3>", "orange-gpu-firmware-helper-fork-failed", "errno=%d", errno);
+        return -1;
+    }
+    if (child_pid == 0) {
+        _exit(run_ramdisk_firmware_helper_loop(
+            payload_probe_stage_path,
+            payload_probe_stage_prefix
+        ));
+    }
+
+    log_stage(
+        "<6>",
+        "orange-gpu-firmware-helper-forked",
+        "pid=%d",
+        child_pid
+    );
+    sleep_milliseconds(100U);
+    return child_pid;
+}
+
 static int run_c_kgsl_open_readonly_smoke_internal(
     const struct hello_init_config *config,
     const char *payload_probe_stage_path,
@@ -4727,24 +4785,13 @@ static int run_c_kgsl_open_readonly_smoke_internal(
         return 1;
     }
     if (use_firmware_helper) {
-        firmware_helper_pid = fork();
+        firmware_helper_pid = start_ramdisk_firmware_helper_child(
+            payload_probe_stage_path,
+            payload_probe_stage_prefix
+        );
         if (firmware_helper_pid < 0) {
-            log_stage("<3>", "orange-gpu-firmware-helper-fork-failed", "errno=%d", errno);
             return 1;
         }
-        if (firmware_helper_pid == 0) {
-            _exit(run_ramdisk_firmware_helper_loop(
-                payload_probe_stage_path,
-                payload_probe_stage_prefix
-            ));
-        }
-        log_stage(
-            "<6>",
-            "orange-gpu-firmware-helper-forked",
-            "pid=%d",
-            firmware_helper_pid
-        );
-        sleep_milliseconds(100U);
     }
 
     write_payload_probe_stage_best_effort(
@@ -4862,6 +4909,7 @@ static int run_orange_gpu_payload(
     struct metadata_stage_runtime *metadata_stage
 ) {
     pid_t child_pid;
+    pid_t firmware_helper_pid = -1;
     int probe_status;
     int probe_checkpoint_status = 0;
     char probe_result_stage[64];
@@ -5000,8 +5048,19 @@ static int run_orange_gpu_payload(
         );
     }
 
+    if (config->orange_gpu_firmware_helper) {
+        firmware_helper_pid = start_ramdisk_firmware_helper_child(
+            payload_probe_stage_path,
+            payload_probe_stage_prefix
+        );
+        if (firmware_helper_pid < 0) {
+            return 1;
+        }
+    }
+
     child_pid = fork();
     if (child_pid < 0) {
+        stop_child_process_best_effort(firmware_helper_pid, "firmware-helper");
         log_stage("<3>", "orange-gpu-fork-failed", "errno=%d", errno);
         log_boot("<3>", "fork for %s failed: errno=%d", SHADOW_HELLO_INIT_ORANGE_GPU_BINARY_PATH, errno);
         return 1;
@@ -5414,6 +5473,7 @@ static int run_orange_gpu_payload(
             &watch_result
         ) != 0
     ) {
+        stop_child_process_best_effort(firmware_helper_pid, "firmware-helper");
         if (kgsl_trace_may_be_active) {
             teardown_kgsl_trace_best_effort();
         }
@@ -5436,6 +5496,7 @@ static int run_orange_gpu_payload(
             watchdog_timeout
         );
     }
+    stop_child_process_best_effort(firmware_helper_pid, "firmware-helper");
     if (kgsl_trace_may_be_active) {
         teardown_kgsl_trace_best_effort();
     }
@@ -5782,7 +5843,7 @@ int main(void) {
     log_stage(
         "<6>",
         "config-loaded",
-        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s orange_gpu_timeout_action=%s orange_gpu_watchdog_timeout_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s orange_gpu_firmware_helper=%s orange_gpu_timeout_action=%s orange_gpu_watchdog_timeout_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
@@ -5790,6 +5851,7 @@ int main(void) {
         config.orange_gpu_parent_probe_attempts,
         config.orange_gpu_parent_probe_interval_secs,
         bool_word(config.orange_gpu_metadata_stage_breadcrumb),
+        bool_word(config.orange_gpu_firmware_helper),
         config.orange_gpu_timeout_action,
         config.orange_gpu_watchdog_timeout_secs,
         config.hold_seconds,
@@ -5807,7 +5869,7 @@ int main(void) {
     );
     log_boot(
         "<6>",
-        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s orange_gpu_timeout_action=%s orange_gpu_watchdog_timeout_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
+        "config payload=%s prelude=%s orange_gpu_mode=%s orange_gpu_launch_delay_secs=%u orange_gpu_parent_probe_attempts=%u orange_gpu_parent_probe_interval_secs=%u orange_gpu_metadata_stage_breadcrumb=%s orange_gpu_firmware_helper=%s orange_gpu_timeout_action=%s orange_gpu_watchdog_timeout_secs=%u hold_seconds=%u prelude_hold_seconds=%u reboot_target=%s run_token=%s dev_mount=%s dri_bootstrap=%s firmware_bootstrap=%s mount_dev=%s mount_proc=%s mount_sys=%s log_kmsg=%s log_pmsg=%s",
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
@@ -5815,6 +5877,7 @@ int main(void) {
         config.orange_gpu_parent_probe_attempts,
         config.orange_gpu_parent_probe_interval_secs,
         bool_word(config.orange_gpu_metadata_stage_breadcrumb),
+        bool_word(config.orange_gpu_firmware_helper),
         config.orange_gpu_timeout_action,
         config.orange_gpu_watchdog_timeout_secs,
         config.hold_seconds,

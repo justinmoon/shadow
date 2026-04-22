@@ -3116,4 +3116,30 @@ assert_command_fails_contains "c-kgsl-open-readonly-firmware-helper-smoke requir
       --mount-sys true \
       --orange-gpu-metadata-stage-breadcrumb false
 
+assert_command_fails_contains "orange-gpu-firmware-helper requires --mount-sys true" \
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-generic-helper-no-sys.img" \
+      --orange-gpu-mode raw-kgsl-getproperties-smoke \
+      --orange-gpu-firmware-helper true \
+      --mount-sys false
+
+assert_command_fails_contains "orange-gpu-firmware-helper requires --firmware-bootstrap ramdisk-lib-firmware" \
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-generic-helper-no-firmware-bootstrap.img" \
+      --orange-gpu-mode raw-kgsl-getproperties-smoke \
+      --orange-gpu-firmware-helper true \
+      --mount-sys true
+
 echo "pixel_boot_orange_gpu_smoke: ok"

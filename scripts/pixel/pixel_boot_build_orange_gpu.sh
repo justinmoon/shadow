@@ -22,6 +22,7 @@ ORANGE_GPU_LAUNCH_DELAY_SECS="${PIXEL_ORANGE_GPU_LAUNCH_DELAY_SECS:-0}"
 ORANGE_GPU_PARENT_PROBE_ATTEMPTS="${PIXEL_ORANGE_GPU_PARENT_PROBE_ATTEMPTS:-0}"
 ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS="${PIXEL_ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS:-0}"
 ORANGE_GPU_METADATA_STAGE_BREADCRUMB="${PIXEL_ORANGE_GPU_METADATA_STAGE_BREADCRUMB:-false}"
+ORANGE_GPU_FIRMWARE_HELPER="${PIXEL_ORANGE_GPU_FIRMWARE_HELPER:-false}"
 ORANGE_GPU_TIMEOUT_ACTION="${PIXEL_ORANGE_GPU_TIMEOUT_ACTION:-reboot}"
 ORANGE_GPU_WATCHDOG_TIMEOUT_SECS="${PIXEL_ORANGE_GPU_WATCHDOG_TIMEOUT_SECS:-0}"
 REBOOT_TARGET="${PIXEL_HELLO_INIT_REBOOT_TARGET:-bootloader}"
@@ -55,6 +56,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--orange-gpu-parent-probe-attempts N]
                                                     [--orange-gpu-parent-probe-interval-secs N]
                                                     [--orange-gpu-metadata-stage-breadcrumb true|false]
+                                                    [--orange-gpu-firmware-helper true|false]
                                                     [--orange-gpu-timeout-action reboot|panic]
                                                     [--orange-gpu-watchdog-timeout-secs N]
                                                     [--reboot-target TARGET]
@@ -512,6 +514,9 @@ EOF
   if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" ]]; then
     printf 'orange_gpu_metadata_stage_breadcrumb=%s\n' "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" >>"$output_path"
   fi
+  if [[ "$ORANGE_GPU_FIRMWARE_HELPER" == "true" ]]; then
+    printf 'orange_gpu_firmware_helper=%s\n' "$ORANGE_GPU_FIRMWARE_HELPER" >>"$output_path"
+  fi
   if [[ "$ORANGE_GPU_TIMEOUT_ACTION" != "reboot" ]]; then
     printf 'orange_gpu_timeout_action=%s\n' "$ORANGE_GPU_TIMEOUT_ACTION" >>"$output_path"
   fi
@@ -562,6 +567,7 @@ write_metadata() {
     "$ORANGE_GPU_PARENT_PROBE_ATTEMPTS" \
     "$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS" \
     "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" \
+    "$ORANGE_GPU_FIRMWARE_HELPER" \
     "$ORANGE_GPU_TIMEOUT_ACTION" \
     "$ORANGE_GPU_WATCHDOG_TIMEOUT_SECS" \
     "$REBOOT_TARGET" \
@@ -598,6 +604,7 @@ from pathlib import Path
     orange_gpu_parent_probe_attempts,
     orange_gpu_parent_probe_interval_secs,
     orange_gpu_metadata_stage_breadcrumb,
+    orange_gpu_firmware_helper,
     orange_gpu_timeout_action,
     orange_gpu_watchdog_timeout_secs,
     reboot_target,
@@ -634,6 +641,7 @@ payload_json = {
     "orange_gpu_parent_probe_attempts": int(orange_gpu_parent_probe_attempts),
     "orange_gpu_parent_probe_interval_secs": int(orange_gpu_parent_probe_interval_secs),
     "orange_gpu_metadata_stage_breadcrumb": parse_bool(orange_gpu_metadata_stage_breadcrumb),
+    "orange_gpu_firmware_helper": parse_bool(orange_gpu_firmware_helper),
     "orange_gpu_timeout_action": orange_gpu_timeout_action,
     "orange_gpu_watchdog_timeout_secs": int(orange_gpu_watchdog_timeout_secs),
     "gpu_bundle_dir": bundle_dir,
@@ -807,6 +815,10 @@ while [[ $# -gt 0 ]]; do
       ORANGE_GPU_METADATA_STAGE_BREADCRUMB="${2:?missing value for --orange-gpu-metadata-stage-breadcrumb}"
       shift 2
       ;;
+    --orange-gpu-firmware-helper)
+      ORANGE_GPU_FIRMWARE_HELPER="${2:?missing value for --orange-gpu-firmware-helper}"
+      shift 2
+      ;;
     --orange-gpu-timeout-action)
       ORANGE_GPU_TIMEOUT_ACTION="${2:?missing value for --orange-gpu-timeout-action}"
       shift 2
@@ -967,10 +979,19 @@ if [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" && "$OR
   exit 1
 fi
 assert_bool_word orange-gpu-metadata-stage-breadcrumb "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB"
+assert_bool_word orange-gpu-firmware-helper "$ORANGE_GPU_FIRMWARE_HELPER"
 assert_timeout_action_word "$ORANGE_GPU_TIMEOUT_ACTION"
 assert_firmware_bootstrap_word "$FIRMWARE_BOOTSTRAP"
 if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" && "$MOUNT_DEV" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: orange gpu metadata stage breadcrumb requires mount-dev=true" >&2
+  exit 1
+fi
+if [[ "$ORANGE_GPU_FIRMWARE_HELPER" == "true" && "$MOUNT_SYS" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: orange-gpu-firmware-helper requires --mount-sys true" >&2
+  exit 1
+fi
+if [[ "$ORANGE_GPU_FIRMWARE_HELPER" == "true" && "$FIRMWARE_BOOTSTRAP" != "ramdisk-lib-firmware" ]]; then
+  echo "pixel_boot_build_orange_gpu: orange-gpu-firmware-helper requires --firmware-bootstrap ramdisk-lib-firmware" >&2
   exit 1
 fi
 if [[ "$FIRMWARE_BOOTSTRAP" == "none" && -n "$GPU_FIRMWARE_DIR" ]]; then
@@ -1190,6 +1211,7 @@ printf 'Orange GPU launch delay seconds: %s\n' "$ORANGE_GPU_LAUNCH_DELAY_SECS"
 printf 'Orange GPU parent probe attempts: %s\n' "$ORANGE_GPU_PARENT_PROBE_ATTEMPTS"
 printf 'Orange GPU parent probe interval seconds: %s\n' "$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS"
 printf 'Orange GPU metadata stage breadcrumb: %s\n' "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB"
+printf 'Orange GPU firmware helper: %s\n' "$ORANGE_GPU_FIRMWARE_HELPER"
 printf 'Orange GPU timeout action: %s\n' "$ORANGE_GPU_TIMEOUT_ACTION"
 printf 'Orange GPU watchdog timeout seconds: %s\n' "$ORANGE_GPU_WATCHDOG_TIMEOUT_SECS"
 if [[ "$ORANGE_GPU_PARENT_PROBE_ATTEMPTS" != "0" ]]; then
