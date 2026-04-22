@@ -4,7 +4,7 @@ Use this as the starting prompt for the next boot-lab orchestrator.
 
 ## Goal
 
-Continue the Pixel 4a boot-owned bring-up from the current KGSL seam without broadening scope. Keep the critical path on the smallest truthful discriminator that explains why boot-owned userspace still cannot complete `open("/dev/kgsl-3d0")`.
+Continue the Pixel 4a boot-owned bring-up from the new Rust cutoff. The C seam has already reached the first truthful boot-owned GPU frame. The critical path is now: port the PID 1 / bootstrap seam to Rust, then re-prove the same helper-backed GPU frame without broadening into compositor, app, or shell work.
 
 ## Read First
 
@@ -22,107 +22,71 @@ Continue the Pixel 4a boot-owned bring-up from the current KGSL seam without bro
 - Boot-owned bundle exec works.
 - Boot-owned strict Vulkan instance creation works.
 - Boot-owned raw Vulkan instance creation works.
-- The earlier raw Vulkan query seam was narrowed until the active blocker moved earlier: KGSL open.
-- Rooted tmpfs-`/dev` controls still succeed for:
-  - `raw-kgsl-getproperties-smoke`
-  - `raw-kgsl-open-readonly-smoke`
-- Rooted cold control on `11151JEC200472` now succeeds at `cold-root-ready`:
-  - [`build/pixel/runs/kgsl-cold-matrix/20260421T212908Z`](../../build/pixel/runs/kgsl-cold-matrix/20260421T212908Z)
-  - `device-run/status.json.run_succeeded=true`
-  - `device-run/status.json.summary.kgsl_device_opened=true`
-  - the matching `props.tsv` still had `sys.boot_completed`, `dev.bootcomplete`, `pd_mapper`, `qseecom-service`, `gpu`, and display-service props all blank
+- Helper-backed boot-owned KGSL and raw Vulkan now work:
+  - readonly KGSL open
+  - raw KGSL getproperties
+  - raw Vulkan count-query-exit / count-query-no-destroy / count-query / physical-device count
+- Helper-backed boot-owned wgpu bring-up now works:
+  - enumerate-adapters-count
+  - enumerate-adapters
+  - adapter
+  - device-request
+  - device
+  - offscreen render
+- First truthful boot-owned GPU frame now works:
+  - [`build/pixel/boot/oneshot/20260422T062456Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T062456Z-09051JEC202061_)
+  - recovered `probe-report.txt` shows `child_completed=true`, `child_timed_out=false`, `exit_status=0`
+  - the image is `shadow-boot-orange-gpu-gpurender-fw-helper-v1.img`
+- Confirmation device proof exists for the helper-backed raw Vulkan ladder:
+  - [`build/pixel/boot/oneshot/20260422T060706Z-11151JEC200472_`](../../build/pixel/boot/oneshot/20260422T060706Z-11151JEC200472_)
 
 ## Current Critical Truth
 
-- Boot-owned `raw-kgsl-open-readonly-smoke` on `09051JEC202061` recovers:
-  - `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly`
-  - never `...:kgsl-open-readonly-ok`
-- The latest decisive boot-owned run is:
-  - [`build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_)
-  - recovered `probe-report.txt` shows `wchan=_request_firmware`
-  - recovered `/proc/<pid>/stack` shows `a6xx_microcode_read -> request_firmware -> _request_firmware`
-- Two newer watched runs then proved the staged firmware seam itself:
-  - [`build/pixel/boot/oneshot/20260422T002609Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T002609Z-09051JEC202061_)
-  - [`build/pixel/boot/oneshot/20260422T002911Z-0B191JEC203253_`](../../build/pixel/boot/oneshot/20260422T002911Z-0B191JEC203253_)
-  - visible sequence on both devices: `orange -> checkerboard -> black -> fastboot`
-  - that proves `a630_sqe.fw`, `a618_gmu.bin`, and `a615_zap.*` are staged and readable in owned userspace before any KGSL open
-- The next observability attempt also narrowed the problem:
-  - the timeout-control rung showed `orange -> checkerboard -> black -> orange -> black -> fastboot`
-  - so the generic parent timeout repaint path is fine
-  - the real `c-kgsl-open-readonly-smoke` rung still shows `orange -> checkerboard -> black -> fastboot`
-  - a new tiny `probe-timeout-class.txt` artifact also failed to survive that seam on `09051JEC202061`
-- The next durable logging attempt also failed cleanly:
-  - a follow-up `log_kmsg=true` run on the same rung emitted explicit live timeout-class logs before reboot
-  - previous-boot recovery still found zero correlated shadow tags and zero surviving timeout-class lines
-- A control panic rung proved the timeout branch itself is real:
-  - `timeout-control-smoke` plus `orange_gpu_timeout_action=panic` on `11151JEC200472` came back with `kernel_panic`
-  - so sysrq-panic works when the timeout path actually wins
-- The matching real KGSL panic rungs did not change the reboot reason:
-  - the original panic run still came back as `reboot` / `bootloader`
-  - forcing the watchdog down to `12s` on `09051JEC202061` still came back as `reboot` / `bootloader` with the same `31s` fastboot return
-  - so this seam is escaping to bootloader before userspace timeout recovery changes the bootreason
-- A live tracefs monitor also failed to leave a surviving early breadcrumb:
-  - the owned child now tails the function-graph trace for `a6xx_microcode_read`, `subsystem_get`, `pil_boot`, `a6xx_gmu_start`, `a6xx_gmu_hfi_start`, and `a6xx_send_cp_init`
-  - the monitor tried to advance `probe-stage.txt` to `trace-microcode-read`, `trace-subsystem-get`, `trace-pil-boot`, `trace-gmu-start`, `trace-gmu-hfi-start`, or `trace-cp-init`
-  - on `09051JEC202061`, none of those early trace stages survived the same fastboot-return seam
-- So for the post-firmware KGSL seam, `/metadata` and the repaint classifier are both unreliable:
-  - recent recovery bundles came back with `metadata_probe_stage_present=false`, `metadata_probe_report_present=false`, and `metadata_probe_timeout_class_present=false`
-  - do not spend more runs on color/pattern churn or normal-kmsg-only retries for the same seam
-- The exact same thing is true for:
-  - the staged Rust payload
-  - direct C child probe
-  - direct C PID1 probe
-- So the current seam is:
-  - any boot-owned process, including PID 1, reaches the first KGSL open path
-  - the last durable blocker was still firmware loading during `a6xx_microcode_read`
-  - but the next working hypothesis is now the first post-firmware seam: GMU / HFI, secure zap boot, or CP init
+- The seam is no longer “what does KGSL need.” That part is solved by the userspace firmware helper.
+- The active risk is now architectural, not driver discovery:
+  - can a Rust PID 1/bootstrap seam preserve the same config, mount, metadata, watchdog, and child-exec contract
+  - can it re-prove the helper-backed GPU frame without silently regressing to an earlier rung
+- The best current proof surface is `probe-report.txt`, not shadow-tag correlation.
+- The current helper-backed one-shot recipe is:
+  - `--skip-collect --recover-traces-after --no-wait-boot-completed`
+  - read `recover-traces/status.json`
+  - treat `probe_report_proves_child_success=true` as the success condition
 
 ## What Is Strongly Ruled Out
 
-- staged Rust payload bug
+- the old KGSL-open blocker as the current frontier
+- staged Rust payload bug as the explanation for the old blocker
 - dynamic loader bug
-- Turnip/Vulkan userspace bug as the first blocker
 - generic `/dev` topology mismatch
-- write access being the issue
-- SurfaceFlinger / composer / allocator being obvious prerequisites for readonly KGSL open under rooted Android
-- late vendor-init / Android milestones (`pd_mapper`, `qseecom-service`, `gpu`, `boot_completed`) being required prerequisites for rooted readonly KGSL open
+- late Android/vendor milestones as the missing KGSL prerequisite
 
 ## Strongest Hypothesis
 
-The remaining difference is no longer generic execution context or “wait later in Android.” The firmware-serving seam itself is now proven at the userspace staging layer. The best current suspect is the first post-firmware bring-up seam named by the sunfish kernel.
+The driver-discovery phase is complete enough. The highest-value next move is no longer another helper-backed C rung; it is a narrow Rust port of the bootstrap seam.
 
-The best next discriminators are:
+Do this in order:
 
-1. Stop spending the primary loop on more direct-PID1 timeout tweaks.
-   - control panic already proved the timeout branch itself
-   - the real KGSL seam still outruns it and still beats early trace-stage writes
-2. Use the stock-init helper / `rc` trigger ladder as the next discriminator.
-   - launch the helper later in boot from the stock-init path
-   - test whether readonly KGSL open still reboots there
-   - if later launch stops the reboot, the missing prerequisite is timing / early-init state
-3. If the later-launch seam still reboots, treat zap / PAS as the leading kernel-facing suspect:
-   - `subsystem_get("a612_zap")`
-   - `pil_boot()`
-   - then GMU / HFI
-   - then CP init
-4. Keep execution-context and holder-scan evidence as supporting context, not the primary blocker.
-
-Do not jump back out to `orange-gpu`, compositor, or app launch work until one of those moves the seam.
-Once the first truthful boot-owned `orange-gpu` frame is proven, stop extending the C PID 1 seam and port the bootstrap path to Rust before any compositor, runtime, shell, or service milestones.
+1. Port only the PID 1 / bootstrap contract to Rust.
+2. Re-prove `gpu-render` on the Rust seam first.
+3. If that regresses, fall back down the already-proven helper-backed ladder:
+   - `vulkan-offscreen`
+   - `vulkan-device-request-smoke`
+   - raw Vulkan query/count
+4. Do not broaden into compositor, apps, shell, or services until the Rust seam is green.
 
 ## Current Device Map
 
 - `09051JEC202061`
   - primary boot-owned lane
   - rooted
-  - best current reproducer for the KGSL-open seam
+  - primary first-frame / Rust-port proof device
 - `11151JEC200472`
   - rooted
-  - transport-confounded for guarded `adb reboot bootloader` probes
-  - use carefully for boot-owned runs until reboot-to-bootloader is fixed or bypassed
+  - confirmation lane
+  - keep free unless confirming a promoted rung or the Rust seam
 - `0B191JEC203253`
   - healthy rooted sidecar lane
-  - proven good for sound and KGSL control experiments
+  - proven good for sidecars and rooted control experiments
 - `06241JEC200520`
   - healthy rooted sidecar / spare lane
 
@@ -157,12 +121,10 @@ The smokes covering this are:
 ## Files Most Likely To Matter Next
 
 - `scripts/pixel/pixel_hello_init.c`
+- `rust/init-wrapper/src/main.rs`
+- `flake.nix`
 - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
 - `scripts/pixel/pixel_boot_recover_traces.sh`
-- `scripts/pixel/pixel_kgsl_cold_matrix.sh`
-- `scripts/pixel/pixel_kgsl_matrix.sh`
-- `scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh`
-- `rust/drm-rect/src/lib.rs`
 - `ui/crates/shadow-gpu-smoke/src/main.rs`
 
 ## Ground Rules

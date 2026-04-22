@@ -27,11 +27,11 @@ Related docs:
 - Primary strategy: boot the stock Pixel kernel into a Shadow-owned ramdisk and custom PID 1. Do not treat `wrapper -> stock init -> later takeover` as the main path anymore.
 - Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `gpu-kms-bridge` (the same GPU smoke presented through rooted display takeover so render/present can be debugged without boot ownership), then `boot-bundle-exec` (boot-owned dynamic bundle exec with visible prelude/checkpoint/postlude), then `boot-vulkan-instance-smoke` (boot-owned strict Vulkan instance creation plus return), then `boot-raw-vulkan-instance-smoke` (boot-owned raw Vulkan loader plus `vkCreateInstance` / `vkDestroyInstance` plus return), then `boot-raw-vulkan-physical-device-count-query-exit-smoke` (boot-owned raw Vulkan `vkEnumeratePhysicalDevices` count query with a null device pointer plus immediate child exit status `0` before summary construction/write and before the normal Rust return path), then `boot-raw-vulkan-physical-device-count-query-no-destroy-smoke` (boot-owned raw Vulkan `vkEnumeratePhysicalDevices` count query with a null device pointer plus return and no explicit `vkDestroyInstance` cleanup), then `boot-raw-vulkan-physical-device-count-query-smoke` (boot-owned raw Vulkan `vkEnumeratePhysicalDevices` count query with a null device pointer plus explicit cleanup and return), then `boot-raw-vulkan-physical-device-count-smoke` (boot-owned raw Vulkan `vkEnumeratePhysicalDevices` full handle-list count plus return), then `boot-vulkan-enumerate-adapters-count-smoke` (boot-owned strict Vulkan raw wgpu adapter enumeration count plus return), then `boot-vulkan-enumerate-adapters-smoke` (boot-owned strict Vulkan adapter enumeration plus per-adapter info extraction plus return), then `boot-vulkan-adapter-smoke` (boot-owned strict Vulkan adapter selection plus return), then `boot-vulkan-device-request-smoke` (boot-owned strict Vulkan device request plus return), then `boot-vulkan-device-smoke` (boot-owned strict Vulkan buffer-renderer allocation plus return), then `boot-vulkan-offscreen` (boot-owned strict Vulkan offscreen render plus return), then `orange-gpu` (boot-owned GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
 - Rust cutoff:
-  - keep the C PID 1 seam only long enough to finish the current driver-discovery lane through the first truthful boot-owned GPU frame
-  - treat that cutoff as the first real `orange-gpu` proof on hardware: a boot-owned GPU-rendered frame presented through the owned KMS path, not just `boot-vulkan-offscreen`
-  - immediately after that proof, port `hello-init` / the boot-owned PID 1 bootstrap seam to Rust
+  - keep the C PID 1 seam only long enough to finish the driver-discovery lane through the first truthful boot-owned GPU frame
+  - that cutoff is now reached: helper-backed `gpu-render` returned `exit_status=0` on hardware
+  - the next critical-path seam is the Rust port of `hello-init` / the boot-owned PID 1 bootstrap path
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
-  - until then, only use C for the narrow KGSL / GMU / zap / CP-init discriminator work needed to reach that first truthful GPU frame
+  - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
 - When a seam gets past firmware and both the panel timeout classifier and `/metadata` artifacts fail together, stop iterating on more colors or more metadata files. Pivot that seam to direct durable logging (`kmsg` first) plus source-guided hypotheses. If that still produces zero surviving evidence, escalate to a lower-level capture path such as panic-to-pstore on a confirmation device.
 - If a control timeout path can panic cleanly but the real seam still returns to bootloader before that panic branch changes the bootreason, treat that as evidence that the seam is escaping userspace supervision entirely. Stop spending runs on later watchdog tweaks and move to a different execution seam or a kernel-facing diagnostic.
@@ -72,7 +72,7 @@ Related docs:
 
 - Stream A: GPU / KGSL critical path.
   - owner today: sibling worktree `../boot`
-  - goal: move the active seam from boot-owned `open("/dev/kgsl-3d0")` to the first successful `boot-vulkan-offscreen`, then continue to `orange-gpu`
+  - goal: preserve the newly proven helper-backed first frame while porting the PID 1 / bootstrap seam to Rust
   - scope: boot-owned KGSL-open discriminators, raw Vulkan / wgpu ladder splits, rooted KGSL controls that directly answer the boot-owned GPU question
   - reserved devices: `09051JEC202061` primary, `11151JEC200472` confirmation
   - rule: only this stream is allowed to change the critical-path GPU story
@@ -228,7 +228,7 @@ Related docs:
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs
   - stop before adapter selection so failures narrow to `WGPUContext::new()` / instance setup
-- [ ] Prove boot-owned strict Vulkan raw adapter enumeration count and return (`boot-vulkan-enumerate-adapters-count-smoke`):
+- [x] Prove boot-owned strict Vulkan raw adapter enumeration count and return (`boot-vulkan-enumerate-adapters-count-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs
   - stop immediately after `enumerate_adapters(...)` returns so failures narrow to raw enumeration count only
@@ -236,48 +236,48 @@ Related docs:
   - reuse the staged `shadow-gpu-smoke` bundle and the same strict env/bootstrap path
   - load Vulkan directly and create/destroy an instance without touching wgpu adapter enumeration
   - stop before Vulkan physical-device enumeration and all later wgpu adapter selection
-- [ ] Prove boot-owned raw Vulkan physical-device count query and immediate child exit (`boot-raw-vulkan-physical-device-count-query-exit-smoke`):
+- [x] Prove boot-owned raw Vulkan physical-device count query and immediate child exit (`boot-raw-vulkan-physical-device-count-query-exit-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle and the same strict env/bootstrap path
   - load Vulkan directly, create an instance, and stop immediately after `vkEnumeratePhysicalDevices` returns a count query with a null device pointer
   - terminate the child with exit status `0` before summary construction/write, before explicit `vkDestroyInstance`, and before the normal Rust return path
   - stop before fetching any physical-device handles, before physical-device property extraction, and before all wgpu adapter enumeration/selection
-- [ ] Prove boot-owned raw Vulkan physical-device count query and return without explicit cleanup (`boot-raw-vulkan-physical-device-count-query-no-destroy-smoke`):
+- [x] Prove boot-owned raw Vulkan physical-device count query and return without explicit cleanup (`boot-raw-vulkan-physical-device-count-query-no-destroy-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle and the same strict env/bootstrap path
   - load Vulkan directly, create an instance, and stop immediately after `vkEnumeratePhysicalDevices` returns a count query with a null device pointer
   - do not call explicit `vkDestroyInstance` in this rung; let process exit provide the only cleanup
   - stop before fetching any physical-device handles, before physical-device property extraction, and before all wgpu adapter enumeration/selection
-- [ ] Prove boot-owned raw Vulkan physical-device count query and return (`boot-raw-vulkan-physical-device-count-query-smoke`):
+- [x] Prove boot-owned raw Vulkan physical-device count query and return (`boot-raw-vulkan-physical-device-count-query-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle and the same strict env/bootstrap path
   - load Vulkan directly, create an instance, and stop immediately after `vkEnumeratePhysicalDevices` returns a count query with a null device pointer
   - keep explicit `vkDestroyInstance` cleanup in this rung so failures can still be attributed to query-vs-cleanup once the no-destroy split exists
   - stop before fetching any physical-device handles, before physical-device property extraction, and before all wgpu adapter enumeration/selection
-- [ ] Prove boot-owned raw Vulkan physical-device enumeration count and return (`boot-raw-vulkan-physical-device-count-smoke`):
+- [x] Prove boot-owned raw Vulkan physical-device enumeration count and return (`boot-raw-vulkan-physical-device-count-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle and the same strict env/bootstrap path
   - load Vulkan directly, create an instance, and stop immediately after `vkEnumeratePhysicalDevices` returns the full handle list and the count is recorded
   - stop before any Vulkan physical-device property extraction and before all wgpu adapter enumeration/selection
-- [ ] Prove boot-owned strict Vulkan adapter enumeration and return (`boot-vulkan-enumerate-adapters-smoke`):
+- [x] Prove boot-owned strict Vulkan adapter enumeration and return (`boot-vulkan-enumerate-adapters-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs
   - continue past raw enumeration into per-adapter `get_info()` / summary extraction
   - stop before default adapter request/selection so failures narrow to adapter-info extraction vs selection
-- [ ] Prove boot-owned strict Vulkan adapter selection and return (`boot-vulkan-adapter-smoke`):
+- [x] Prove boot-owned strict Vulkan adapter selection and return (`boot-vulkan-adapter-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs
   - stop before `request_device` so failures narrow to loader/env or adapter selection
-- [ ] Prove boot-owned strict Vulkan device request and return (`boot-vulkan-device-request-smoke`):
+- [x] Prove boot-owned strict Vulkan device request and return (`boot-vulkan-device-request-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs
   - stop before buffer-renderer allocation so failures narrow to `request_device`
-- [ ] Prove boot-owned strict Vulkan buffer-renderer bring-up and return (`boot-vulkan-device-smoke`):
+- [x] Prove boot-owned strict Vulkan buffer-renderer bring-up and return (`boot-vulkan-device-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs
   - stop before Vello render-to-texture so failures narrow to buffer-renderer allocation
-- [ ] Prove boot-owned strict Vulkan offscreen render and return (`boot-vulkan-offscreen`):
+- [x] Prove boot-owned strict Vulkan offscreen render and return (`boot-vulkan-offscreen`):
   - reuse the staged `shadow-gpu-smoke` bundle
   - require strict Vulkan env setup in boot-owned userspace
   - keep the same visible prelude/checkpoint/postlude contract so failure narrows cleanly
-- [ ] Port the boot-owned PID 1/bootstrap seam to Rust immediately after the first successful `boot-vulkan-offscreen` proof.
-- [ ] From that owned userspace, render one orange GPU frame and present it through dma-buf/KMS (`orange-gpu`).
+- [ ] Port the boot-owned PID 1/bootstrap seam to Rust now that the first truthful helper-backed `orange-gpu` frame is proven.
+- [x] From that owned userspace, render one orange GPU frame and present it through dma-buf/KMS (`orange-gpu`).
 - [ ] Prove repeated GPU frame submission and synchronization for 2-3 seconds (`orange-gpu-loop`).
 - [ ] Prove one minimal input-driven redraw on the real GPU render/present path (`touch-counter-gpu`).
 - [ ] Prove a tiny compositor-owned scene with no app/runtime complexity (`compositor-scene`).
