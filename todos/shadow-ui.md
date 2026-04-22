@@ -94,11 +94,16 @@ speculating about a huge widget catalog up front.
   - `shadow_sdk::app::spawn_platform_request_listener` now owns the raw
     platform socket bind/read/parse/write loop so apps only map parsed requests
     into app messages
+  - the Rust timeline task/effect seam now lives in a dedicated `tasks.rs`
+    module with one `TimelineTasks` state object and one `decorate_with_tasks`
+    hook instead of spreading slot state and `with_task(...)` wiring through
+    `main.rs`
 - That is not the end state. The big remaining ergonomics problem is still the
   app-local shape of task/effect wiring:
   - per-app `Pending*` job structs
-  - repeated `with_task(...)` registration
   - no first-class distinction between inline cache reads and async effects
+  - too much app-specific task runner boilerplate sitting above the generic
+    `TaskSlot` / `with_task` foundation
 - The new platform listener helper is in use for the Rust timeline, but other
   app paths still own raw socket/control loops. Keep collapsing those inward
   instead of letting multiple listener styles stick around.

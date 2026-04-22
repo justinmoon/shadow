@@ -116,10 +116,14 @@ internal foundation and keep the public boundary Shadow-owned.
     completion filtering instead of app-local token counters
   - the raw platform socket server loop moved under
     `shadow_sdk::app::spawn_platform_request_listener`
+  - the timeline task/effect seam now sits behind a dedicated `tasks.rs`
+    module and one `TimelineTasks` state object instead of scattering slot
+    fields and `with_task(...)` wiring through `main.rs`
 - That still is not the end state. The timeline app still owns:
   - one `Pending*` struct per job family
-  - repeated `with_task(...)` wiring in `app_logic`
   - route prep that still mixes inline cache reads with async follow-up work
+  - app-specific task runners and finish handlers that should shrink further as
+    the shared framework grows
 - The next cleanup slice should attack that remaining app-local task/effect
   shape, not add more product-specific glue on top of it.
 - The next useful product work is not a starter account. That would hide product
