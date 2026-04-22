@@ -106,6 +106,9 @@ Related docs:
 - 2026-04-21: rooted-Pixel camera runtime wiring is now config-first through `services.camera` in the typed guest-run/startup artifact; the supported launchers stop using `SHADOW_RUNTIME_CAMERA_*` as host-side controls and prefer Pixel-owned camera helper inputs.
 - 2026-04-21: the supported rooted-Pixel camera launcher/config surface is now live-or-fail only; `PIXEL_CAMERA_ALLOW_MOCK` no longer participates in typed Pixel camera config generation, while host/runtime mock support remains on the non-Pixel `SHADOW_RUNTIME_CAMERA_*` path.
 - 2026-04-21: `scripts/ci/pixel_guest_startup_config_smoke.sh` now proves typed Pixel service config wins and that supported guest startup generation scrubs legacy Nostr/Cashu/Camera service env from client assignments instead of re-projecting it.
+- 2026-04-22: the supported VM compositor, guest compositor, and runtime host session wrapper now emit only canonical generic `SHADOW_APP_*` title, Wayland identity, surface, and safe-area env; legacy generic `SHADOW_BLITZ_*` reads remain as compatibility fallback in `shadow-blitz-demo`, `shadow-sdk`, and `shadow-system` while rooted-Pixel surface launchers still need their own cleanup pass.
+- 2026-04-22: `shadow-blitz-demo` and `shadow-system` now have explicit regression coverage proving canonical generic app/window env wins over legacy fallback.
+- 2026-04-22: the `ui-check apps` nightly gate no longer builds one real-source shared artifact for both Rust apps; its shared artifact is now dummy-source scoped to `shadow-rust-demo` and `shadow-rust-timeline`, which removes the repeatable `shadow-rust-timeline` SIGKILL from `just nightly`.
 
 ## Implementation Notes
 

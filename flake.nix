@@ -1661,7 +1661,7 @@
               "apps/shadow-rust-demo"
               "apps/shadow-rust-timeline"
             ];
-            useDummySrc = false;
+            artifactCargoExtraArgs = "-p shadow-rust-demo -p shadow-rust-timeline";
           };
           shadowGpuSmokeCheckFamily = mkUiCheckFamily {
             pname = "shadow-ui-gpu-smoke-workspace";
@@ -1894,7 +1894,7 @@
             phases = [ "buildPhase" ];
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-PPpWbgFfrI0oVKkgGKQ2ehUNpNnFa/EsM/miJz1SxP4=";
+            outputHash = "sha256-pPV3CfbA3725jDbK5I86wxQy/XrreIGaV0AjaDmq/nc=";
             buildPhase = ''
               export HOME="$TMPDIR/home"
               export DENO_DIR="$TMPDIR/deno-dir"
