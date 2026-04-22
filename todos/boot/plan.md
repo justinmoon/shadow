@@ -36,6 +36,10 @@ Related docs:
     - a `no_std` Rust PID 1 shim that forks/execs the full Rust `hello-init` child also returns cleanly to bootloader on the same stripped lane
     - so the live Rust migration shape is `no_std PID1 shim -> full Rust child`, not `std` directly as PID 1
     - the Rust bridge seam has now re-proved `vulkan-offscreen` and `gpu-render` on `09051JEC202061` by repacking the already-proven C images, swapping only `/system/bin/init`, adding `/hello-init-child`, and preserving the companion `.hello-init.json`
+    - the Rust bridge builder now fails closed on configs the Rust child cannot honestly run yet:
+      - C-only orange-gpu modes are rejected early
+      - parent-probe configs are rejected early
+      - cloned metadata no longer promises `probe-fingerprint` / `probe-timeout-class` files the Rust child does not currently write
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
   - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.

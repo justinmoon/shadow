@@ -45,6 +45,8 @@ cat >"$BOOT_BUILD_INPUT.hello-init.json" <<EOF
 {
   "image": "$BOOT_BUILD_INPUT",
   "kind": "orange_gpu_build",
+  "metadata_probe_fingerprint_path": "/metadata/shadow-hello-init/by-token/$INPUT_RUN_TOKEN/probe-fingerprint.txt",
+  "metadata_probe_timeout_class_path": "/metadata/shadow-hello-init/by-token/$INPUT_RUN_TOKEN/probe-timeout-class.txt",
   "run_token": "$INPUT_RUN_TOKEN"
 }
 EOF
@@ -300,6 +302,8 @@ assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_child_path "/hello-
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_impl "rust-bridge"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" hello_init_mode "rust-bridge"
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" kind "orange_gpu_build"
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" metadata_probe_fingerprint_path ""
+assert_json_field "$OUTPUT_IMAGE.hello-init.json" metadata_probe_timeout_class_path ""
 assert_json_field "$OUTPUT_IMAGE.hello-init.json" run_token "$INPUT_RUN_TOKEN"
 
 echo "pixel_boot_rust_bridge_smoke: ok"

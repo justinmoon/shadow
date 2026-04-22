@@ -59,6 +59,11 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - Confirmation status on `11151JEC200472` is weaker:
     - the same Rust-bridge `vulkan-offscreen` image returns cleanly to fastboot/bootloader
     - but recovery did not recover the metadata files there, so `09051JEC202061` remains the truth device for the Rust bridge seam until the `11151` metadata gap is explained
+  - Rust-bridge guardrails on 2026-04-22:
+    - the builder now rejects C-only orange-gpu modes up front instead of silently repacking them into a Rust image that cannot execute them
+    - the builder now rejects parent-probe configs in `rust-bridge` mode up front instead of letting the Rust child fail late
+    - cloned Rust-bridge metadata now clears unsupported `probe-fingerprint` / `probe-timeout-class` expectations instead of advertising files the Rust child does not currently write
+    - the Rust child now honors `log_kmsg` / `log_pmsg` toggles and restores `orange_gpu_timeout_action=panic` instead of treating it like a reboot timeout
 
 ## Best Observability
 

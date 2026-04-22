@@ -510,6 +510,36 @@ assert_hello_init_mode_word() {
   esac
 }
 
+rust_bridge_supports_orange_gpu_mode() {
+  local value
+  value="${1:?rust_bridge_supports_orange_gpu_mode requires a value}"
+
+  case "$value" in
+    gpu-render|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+assert_rust_bridge_supported_config() {
+  if [[ "$HELLO_INIT_MODE" != "rust-bridge" ]]; then
+    return 0
+  fi
+
+  if ! rust_bridge_supports_orange_gpu_mode "$ORANGE_GPU_MODE"; then
+    echo "pixel_boot_build_orange_gpu: --hello-init-mode rust-bridge does not support orange-gpu mode: $ORANGE_GPU_MODE" >&2
+    exit 1
+  fi
+
+  if [[ "$ORANGE_GPU_PARENT_PROBE_ATTEMPTS" != "0" ]]; then
+    echo "pixel_boot_build_orange_gpu: --hello-init-mode rust-bridge does not support orange gpu parent probes yet" >&2
+    exit 1
+  fi
+}
+
 render_config() {
   local output_path
   output_path="${1:?render_config requires an output path}"
@@ -1010,6 +1040,7 @@ assert_bool_word orange-gpu-metadata-stage-breadcrumb "$ORANGE_GPU_METADATA_STAG
 assert_bool_word orange-gpu-firmware-helper "$ORANGE_GPU_FIRMWARE_HELPER"
 assert_timeout_action_word "$ORANGE_GPU_TIMEOUT_ACTION"
 assert_hello_init_mode_word "$HELLO_INIT_MODE"
+assert_rust_bridge_supported_config
 assert_firmware_bootstrap_word "$FIRMWARE_BOOTSTRAP"
 if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" && "$MOUNT_DEV" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: orange gpu metadata stage breadcrumb requires mount-dev=true" >&2

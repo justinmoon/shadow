@@ -76,6 +76,9 @@ mod linux {
         ("a615_zap.b02", "a615-zap-b02"),
     ];
 
+    static LOG_KMSG_ENABLED: AtomicBool = AtomicBool::new(true);
+    static LOG_PMSG_ENABLED: AtomicBool = AtomicBool::new(true);
+
     #[derive(Clone, Debug)]
     struct Config {
         payload: String,
@@ -221,6 +224,9 @@ mod linux {
     }
 
     fn write_to_kmsg(message: &str) {
+        if !LOG_KMSG_ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
         let Ok(kmsg_path) = CString::new("/dev/kmsg") else {
             return;
         };
@@ -240,11 +246,40 @@ mod linux {
         }
     }
 
+    fn write_to_pmsg(message: &str) {
+        if !LOG_PMSG_ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
+        let Ok(pmsg_path) = CString::new("/dev/pmsg0") else {
+            return;
+        };
+        let fd = unsafe {
+            libc::open(
+                pmsg_path.as_ptr(),
+                libc::O_WRONLY | libc::O_CLOEXEC | libc::O_NOCTTY,
+            )
+        };
+        if fd < 0 {
+            return;
+        }
+        let payload = format!("[shadow-hello-init] {message}\n");
+        raw_write_fd(fd, payload.as_bytes());
+        unsafe {
+            libc::close(fd);
+        }
+    }
+
     fn log_line(message: &str) {
         let payload = format!("[shadow-hello-init] {message}\n");
         raw_write_fd(1, payload.as_bytes());
         raw_write_fd(2, payload.as_bytes());
         write_to_kmsg(message);
+        write_to_pmsg(message);
+    }
+
+    fn set_log_channel_preferences(config: &Config) {
+        LOG_KMSG_ENABLED.store(config.log_kmsg, Ordering::Relaxed);
+        LOG_PMSG_ENABLED.store(config.log_pmsg, Ordering::Relaxed);
     }
 
     fn ensure_directory(path: &Path, mode: u32) -> io::Result<()> {
@@ -818,6 +853,10 @@ mod linux {
         Ok((Stdio::from(file), Stdio::from(stderr)))
     }
 
+    fn trigger_sysrq_best_effort(command: char) {
+        let _ = fs::write("/proc/sysrq-trigger", [command as u8]);
+    }
+
     fn run_orange_init_payload(config: &Config, stage_label: Option<&str>, visual_preset: Option<&str>) -> i32 {
         let mut command = Command::new(ORANGE_PAYLOAD_PATH);
         command.env(ORANGE_MODE_ENV, "orange-init");
@@ -1222,6 +1261,15 @@ mod linux {
         write_probe_report(metadata_stage, &watch_result);
 
         if watch_result.timed_out {
+            if config.orange_gpu_timeout_action == "panic" {
+                log_line("orange-gpu payload timed out; escalating to sysrq panic");
+                trigger_sysrq_best_effort('w');
+                sleep_seconds(1);
+                trigger_sysrq_best_effort('c');
+                loop {
+                    sleep_seconds(60);
+                }
+            }
             return 124;
         }
         watch_result.exit_status.unwrap_or(1)
@@ -1320,6 +1368,7 @@ mod linux {
         }
 
         let config = load_config(args.config_path.as_deref().unwrap_or(CONFIG_PATH));
+        set_log_channel_preferences(&config);
         let mut metadata_stage = init_metadata_stage_runtime(&config);
 
         if config.mount_dev {

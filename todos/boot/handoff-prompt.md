@@ -85,6 +85,10 @@ Do this in order:
    - `vulkan-device-request-smoke`
    - raw Vulkan query/count
 5. Do not broaden into compositor, apps, shell, or services until the Rust seam is green.
+6. Keep the bridge honest:
+   - do not re-open C-only orange-gpu modes on the Rust bridge until the Rust child actually supports them
+   - do not pass parent-probe configs through `rust-bridge` mode until the Rust child grows a real parent-probe implementation
+   - if the Rust child still does not emit `probe-fingerprint` / `probe-timeout-class`, keep those metadata fields blank instead of advertising fake expectations
 
 ## Current Device Map
 

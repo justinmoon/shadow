@@ -3142,4 +3142,31 @@ assert_command_fails_contains "orange-gpu-firmware-helper requires --firmware-bo
       --orange-gpu-firmware-helper true \
       --mount-sys true
 
+assert_command_fails_contains "--hello-init-mode rust-bridge does not support orange-gpu mode: raw-kgsl-getproperties-smoke" \
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-rust-bridge-unsupported-mode.img" \
+      --hello-init-mode rust-bridge \
+      --orange-gpu-mode raw-kgsl-getproperties-smoke
+
+assert_command_fails_contains "--hello-init-mode rust-bridge does not support orange gpu parent probes yet" \
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/should-fail-rust-bridge-parent-probe.img" \
+      --hello-init-mode rust-bridge \
+      --orange-gpu-mode gpu-render \
+      --orange-gpu-parent-probe-attempts 1
+
 echo "pixel_boot_orange_gpu_smoke: ok"

@@ -104,6 +104,8 @@ payload["image"] = output_image
 payload["hello_init_child_path"] = f"/{child_entry}"
 payload["hello_init_impl"] = "rust-bridge"
 payload["hello_init_mode"] = "rust-bridge"
+payload["metadata_probe_fingerprint_path"] = ""
+payload["metadata_probe_timeout_class_path"] = ""
 destination_metadata.write_text(
     json.dumps(payload, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",
