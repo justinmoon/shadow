@@ -51,9 +51,12 @@ Continue the Pixel 4a boot-owned bring-up from the current KGSL seam without bro
   - so the generic parent timeout repaint path is fine
   - the real `c-kgsl-open-readonly-smoke` rung still shows `orange -> checkerboard -> black -> fastboot`
   - a new tiny `probe-timeout-class.txt` artifact also failed to survive that seam on `09051JEC202061`
+- The next durable logging attempt also failed cleanly:
+  - a follow-up `log_kmsg=true` run on the same rung emitted explicit live timeout-class logs before reboot
+  - previous-boot recovery still found zero correlated shadow tags and zero surviving timeout-class lines
 - So for the post-firmware KGSL seam, `/metadata` and the repaint classifier are both unreliable:
   - recent recovery bundles came back with `metadata_probe_stage_present=false`, `metadata_probe_report_present=false`, and `metadata_probe_timeout_class_present=false`
-  - do not spend more runs on color/pattern churn for the same seam
+  - do not spend more runs on color/pattern churn or normal-kmsg-only retries for the same seam
 - The exact same thing is true for:
   - the staged Rust payload
   - direct C child probe
@@ -79,11 +82,10 @@ The remaining difference is no longer generic execution context or “wait later
 
 The best next discriminators are:
 
-1. Re-run the same boot-owned `c-kgsl-open-readonly-smoke` rung with `log_kmsg=true` and explicit timeout-classification logging before reboot.
-2. Recover the result through the existing previous-boot log channels instead of `/metadata`:
-   - `logcat -L`
-   - `dropbox SYSTEM_LAST_KMSG`
-   - best-effort kernel log channels
+1. Move the same boot-owned rung onto a lower-level timeout capture path:
+   - panic-to-pstore is the leading candidate
+   - use a confirmation device first, not the primary reproducer
+2. Recover the result through pstore / previous-boot kernel channels instead of `/metadata`.
 3. If that still does not survive, instrument only the named source-backed post-firmware seams:
    - `a6xx_gmu_start` / `a6xx_gmu_hfi_start`
    - `subsystem_get("a615_zap")`

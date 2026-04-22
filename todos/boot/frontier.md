@@ -43,6 +43,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - the timeout-control rung proved the parent repaint path is healthy in general
   - but on the real KGSL seam, the post-timeout repaint still never appears
   - a new tiny `probe-timeout-class.txt` artifact also failed to survive the same seam on `09051JEC202061`
+  - a follow-up `log_kmsg=true` run on `09051JEC202061` still recovered zero timeout-class lines through previous-boot log channels
   - so for this post-firmware seam, both the panel timeout classifier and `/metadata` artifacts are currently weaker than they looked
 - C remains acceptable only for the current driver-discovery seam:
   - use it to finish post-firmware KGSL classification through the first truthful `orange-gpu` frame
@@ -97,11 +98,13 @@ Use the panel as a stage channel, not just “something orange happened.”
    - `orange -> checkerboard -> black -> fastboot` is reproducible
    - the timeout-control rung already proved the repaint path in general
    - the real KGSL seam suppresses the repaint, so more color tweaks are low-value
-2. Shift the same `c-kgsl-open-readonly-smoke` rung onto direct durable logging:
-   - enable `log_kmsg=true`
-   - emit the timeout classification and `wchan` directly to kmsg before reboot
-   - recover that through the existing previous-boot log channels instead of relying on `/metadata`
-3. If that still does not survive, instrument only the named post-firmware seam from the source-backed shortlist:
+2. `log_kmsg=true` was worth trying and is now ruled out as the next easy answer:
+   - the live timeout classifier now logs directly to kmsg before reboot
+   - the previous-boot log recovery channels still came back empty on the same seam
+3. The next observability step needs to be lower-level than normal reboot-and-recover:
+   - likely a panic-to-pstore or another kernel-level capture path on timeout
+   - use a confirmation device for that, not the primary reproducer
+4. If that still does not survive, instrument only the named post-firmware seam from the source-backed shortlist:
    - `a6xx_gmu_fw_start`
    - `a6xx_gmu_hfi_start` / `hfi_send_cmd`
    - `subsystem_get("a615_zap")`

@@ -33,7 +33,7 @@ Related docs:
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
   - until then, only use C for the narrow KGSL / GMU / zap / CP-init discriminator work needed to reach that first truthful GPU frame
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
-- When a seam gets past firmware and both the panel timeout classifier and `/metadata` artifacts fail together, stop iterating on more colors or more metadata files. Pivot that seam to direct durable logging (`kmsg` first) plus source-guided hypotheses.
+- When a seam gets past firmware and both the panel timeout classifier and `/metadata` artifacts fail together, stop iterating on more colors or more metadata files. Pivot that seam to direct durable logging (`kmsg` first) plus source-guided hypotheses. If that still produces zero surviving evidence, escalate to a lower-level capture path such as panic-to-pstore on a confirmation device.
 - Prefer one reusable probe harness over many custom rungs:
   - `hello-init` should supervise child probes through one watchdog path
   - timeouts should emit a durable `probe-report.txt` with the last observed probe stage plus live `/proc/<pid>` hints before the child is killed
