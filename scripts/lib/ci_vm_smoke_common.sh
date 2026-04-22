@@ -25,6 +25,12 @@ vm_smoke_inputs_flake_ref() {
   printf '%s#vm-smoke-inputs\n' "$repo_path"
 }
 
+vm_smoke_inputs_drv_path() {
+  local repo_path="${1:-$(ci_vm_smoke_repo_root)}"
+  nix path-info --accept-flake-config --derivation \
+    "$(vm_smoke_inputs_flake_ref "$repo_path")"
+}
+
 vm_smoke_inputs_path() {
   local repo_path="${1:-$(ci_vm_smoke_repo_root)}"
   nix build --accept-flake-config --no-link --print-out-paths \
@@ -54,10 +60,10 @@ vm_smoke_results_dir() {
 }
 
 vm_smoke_record_path() {
-  local prepared_inputs_path="$1"
+  local logical_inputs_id="$1"
   local repo_path="${2:-$(ci_vm_smoke_repo_root)}"
   local key
-  key="$(python3 - "$prepared_inputs_path" <<'PY'
+  key="$(python3 - "$logical_inputs_id" <<'PY'
 import hashlib
 import sys
 
@@ -68,28 +74,30 @@ PY
 }
 
 vm_smoke_has_cached_success() {
-  local prepared_inputs_path="$1"
+  local logical_inputs_id="$1"
   local repo_path="${2:-$(ci_vm_smoke_repo_root)}"
-  [[ -f "$(vm_smoke_record_path "$prepared_inputs_path" "$repo_path")" ]]
+  [[ -f "$(vm_smoke_record_path "$logical_inputs_id" "$repo_path")" ]]
 }
 
 vm_smoke_record_success() {
-  local prepared_inputs_path="$1"
-  local repo_path="${2:-$(ci_vm_smoke_repo_root)}"
+  local logical_inputs_id="$1"
+  local prepared_inputs_path="$2"
+  local repo_path="${3:-$(ci_vm_smoke_repo_root)}"
   local record_path tmp_path head_sha
 
-  record_path="$(vm_smoke_record_path "$prepared_inputs_path" "$repo_path")"
+  record_path="$(vm_smoke_record_path "$logical_inputs_id" "$repo_path")"
   mkdir -p "$(dirname "$record_path")"
   head_sha="$(git -C "$repo_path" rev-parse HEAD 2>/dev/null || echo "")"
   tmp_path="$(mktemp "${record_path}.XXXXXX")"
-  python3 - "$prepared_inputs_path" "$head_sha" >"$tmp_path" <<'PY'
+  python3 - "$logical_inputs_id" "$prepared_inputs_path" "$head_sha" >"$tmp_path" <<'PY'
 import datetime
 import json
 import sys
 
-prepared_inputs_path, head_sha = sys.argv[1:3]
+logical_inputs_id, prepared_inputs_path, head_sha = sys.argv[1:4]
 payload = {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
+    "logicalInputsId": logical_inputs_id,
     "preparedInputsPath": prepared_inputs_path,
     "headSha": head_sha or None,
     "recordedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),

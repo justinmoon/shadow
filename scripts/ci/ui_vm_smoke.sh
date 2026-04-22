@@ -31,6 +31,7 @@ COUNTER_TILE_LOCAL_CENTER_X=104
 COUNTER_TILE_LOCAL_CENTER_Y=617
 ui_vm_run_pid=""
 prepared_inputs_path="${SHADOW_UI_VM_PREPARED_INPUTS:-}"
+logical_inputs_id="${SHADOW_UI_VM_LOGICAL_INPUTS_ID:-}"
 vm_smoke_succeeded=0
 prompt_request_pid=""
 prompt_request_response_path=""
@@ -49,6 +50,10 @@ parse_args() {
         prepared_inputs_path="${2:-}"
         shift 2
         ;;
+      --logical-inputs-id)
+        logical_inputs_id="${2:-}"
+        shift 2
+        ;;
       *)
         echo "vm-smoke: unsupported argument $1" >&2
         exit 1
@@ -60,6 +65,9 @@ parse_args() {
 parse_args "$@"
 if [[ -z "$prepared_inputs_path" ]]; then
   prepared_inputs_path="$(vm_smoke_inputs_path "$REPO_ROOT")"
+fi
+if [[ -z "$logical_inputs_id" ]]; then
+  logical_inputs_id="$(vm_smoke_inputs_drv_path "$REPO_ROOT")"
 fi
 
 run_with_timeout() {
@@ -718,7 +726,7 @@ finish() {
   fi
 
   if (( status == 0 && vm_smoke_succeeded == 1 )); then
-    vm_smoke_record_success "$prepared_inputs_path" "$REPO_ROOT"
+    vm_smoke_record_success "$logical_inputs_id" "$prepared_inputs_path" "$REPO_ROOT"
   fi
 }
 
