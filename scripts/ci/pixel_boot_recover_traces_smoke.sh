@@ -15,6 +15,16 @@ trap cleanup EXIT
 
 mkdir -p "$MOCK_BIN"
 
+rewrite_dynamic_bash_shebangs() {
+  local root="${1:-$TMP_DIR}" path first_line
+  while IFS= read -r -d '' path; do
+    IFS= read -r first_line <"$path" || continue
+    if [[ "$first_line" == "#!/usr/bin/env bash" ]]; then
+      sed -i "1s|^#!/usr/bin/env bash$|#!$BASH|" "$path"
+    fi
+  done < <(find "$root" -type f -print0 2>/dev/null)
+}
+
 cat >"$MOCK_BIN/adb" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -286,6 +296,7 @@ esac
 EOF
 
 chmod 0755 "$MOCK_BIN/adb"
+rewrite_dynamic_bash_shebangs
 
 assert_json_field() {
   local json_path key_path expected

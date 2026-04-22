@@ -3,6 +3,8 @@
 let
   lib = nixpkgs.lib;
   guestSystem = builtins.replaceStrings [ "-darwin" ] [ "-linux" ] hostSystem;
+  hostIsDarwin = lib.hasSuffix "-darwin" hostSystem;
+  shadowUiVmCiPublicKey = lib.strings.removeSuffix "\n" (builtins.readFile ./keys/shadow-ui-vm-ci.pub);
   requiredSessionBinaries = [ "shadow-compositor" ] ++ requiredBinaryNames;
   requiredSessionBinaryArgs = lib.escapeShellArgs requiredSessionBinaries;
 in
@@ -492,7 +494,7 @@ PY
           home = homeDir;
           createHome = true;
           openssh.authorizedKeys.keys = [
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK9qcRB7tF1e8M9CX8zoPfNmQgWqvnee0SKASlM0aMlm mail@justinmoon.com"
+            shadowUiVmCiPublicKey
           ];
         };
         security.sudo = {
@@ -561,22 +563,22 @@ PY
           vcpu = 4;
           mem = 4096;
           socket = ".shadow-vm/shadow-ui-vm.sock";
-          graphics = {
-            enable = false;
-            backend = "cocoa";
-          };
-          qemu.extraArgs = [
-            "-display"
-            "cocoa"
-            "-device"
-            "virtio-gpu,xres=660,yres=1240"
-            "-device"
-            "qemu-xhci"
-            "-device"
-            "usb-tablet"
-            "-device"
-            "usb-kbd"
-          ];
+          graphics = { enable = false; } // lib.optionalAttrs hostIsDarwin { backend = "cocoa"; };
+          qemu.extraArgs =
+            [
+              "-display"
+            ]
+            ++ (if hostIsDarwin then [ "cocoa" ] else [ "none" ])
+            ++ [
+              "-device"
+              "virtio-gpu,xres=660,yres=1240"
+              "-device"
+              "qemu-xhci"
+              "-device"
+              "usb-tablet"
+              "-device"
+              "usb-kbd"
+            ];
           writableStoreOverlay = "/nix/.rw-store";
           volumes = [
             {

@@ -8,14 +8,23 @@ ci_vm_smoke_repo_root() {
   fi
 }
 
+ci_vm_smoke_has_git() {
+  local repo_path="${1:-$(ci_vm_smoke_repo_root)}"
+  git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
 ci_vm_smoke_git_common_dir() {
   local repo_path="${1:-$(ci_vm_smoke_repo_root)}"
-  git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir
+  git -C "$repo_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true
 }
 
 vm_smoke_root_repo() {
   local repo_path="${1:-$(ci_vm_smoke_repo_root)}"
   local common_git_dir
+  if ! ci_vm_smoke_has_git "$repo_path"; then
+    printf '%s\n' "$repo_path"
+    return 0
+  fi
   common_git_dir="$(ci_vm_smoke_git_common_dir "$repo_path")"
   (cd "$common_git_dir/.." && pwd)
 }
@@ -56,7 +65,15 @@ PY
 
 vm_smoke_results_dir() {
   local repo_path="${1:-$(ci_vm_smoke_repo_root)}"
-  printf '%s/shadow-ci/vm-smoke-success\n' "$(ci_vm_smoke_git_common_dir "$repo_path")"
+  if [[ -n "${SHADOW_VM_SMOKE_RESULTS_DIR:-}" ]]; then
+    printf '%s\n' "$SHADOW_VM_SMOKE_RESULTS_DIR"
+    return 0
+  fi
+  if ci_vm_smoke_has_git "$repo_path"; then
+    printf '%s/shadow-ci/vm-smoke-success\n' "$(ci_vm_smoke_git_common_dir "$repo_path")"
+    return 0
+  fi
+  printf '%s/.shadow-ci/vm-smoke-success\n' "$repo_path"
 }
 
 vm_smoke_record_path() {
@@ -87,7 +104,11 @@ vm_smoke_record_success() {
 
   record_path="$(vm_smoke_record_path "$logical_inputs_id" "$repo_path")"
   mkdir -p "$(dirname "$record_path")"
-  head_sha="$(git -C "$repo_path" rev-parse HEAD 2>/dev/null || echo "")"
+  if ci_vm_smoke_has_git "$repo_path"; then
+    head_sha="$(git -C "$repo_path" rev-parse HEAD 2>/dev/null || echo "")"
+  else
+    head_sha=""
+  fi
   tmp_path="$(mktemp "${record_path}.XXXXXX")"
   python3 - "$logical_inputs_id" "$prepared_inputs_path" "$head_sha" >"$tmp_path" <<'PY'
 import datetime

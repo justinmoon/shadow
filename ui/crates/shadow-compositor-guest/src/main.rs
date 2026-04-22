@@ -253,7 +253,8 @@ impl ShadowGuestCompositor {
         }
         seat.add_pointer();
         let control_socket_path =
-            control::init_listener(event_loop).expect("create guest compositor control socket");
+            control::init_listener(event_loop, config.client.runtime_dir.clone())
+                .expect("create guest compositor control socket");
         prompt::init_listener(event_loop, &control_socket_path)
             .expect("create guest compositor system prompt socket");
 

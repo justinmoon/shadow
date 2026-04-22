@@ -580,7 +580,7 @@ mod tests {
                     exit_on_configure: false,
                     linger_ms: None,
                 },
-                transport: TransportRequest::Socket,
+                transport: TransportRequest::Direct,
                 exit_on_client_disconnect: false,
                 exit_on_first_frame: false,
                 exit_on_first_dma_buffer: false,

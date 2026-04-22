@@ -32,6 +32,21 @@ ui_vm_socket_path() {
   printf '%s/shadow-ui-vm.sock\n' "$(ui_vm_state_dir)"
 }
 
+ui_vm_ssh_key_source_path() {
+  printf '%s/vm/keys/shadow-ui-vm-ci\n' "$(ui_vm_repo_root)"
+}
+
+ui_vm_ssh_key_path() {
+  printf '%s/shadow-ui-vm-key\n' "$(ui_vm_state_dir)"
+}
+
+ui_vm_prepare_ssh_key() {
+  local source_path target_path
+  source_path="$(ui_vm_ssh_key_source_path)"
+  target_path="$(ui_vm_ssh_key_path)"
+  install -m 0600 "$source_path" "$target_path"
+}
+
 ui_vm_ssh_port() {
   if [[ -n "${SHADOW_UI_VM_SSH_PORT:-}" ]]; then
     printf '%s\n' "$SHADOW_UI_VM_SSH_PORT"
@@ -52,7 +67,9 @@ PY
 
 ui_vm_ssh() {
   ssh \
+    -i "$(ui_vm_ssh_key_path)" \
     -p "$(ui_vm_ssh_port)" \
+    -o IdentitiesOnly=yes \
     -o LogLevel=ERROR \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \

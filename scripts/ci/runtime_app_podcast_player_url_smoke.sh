@@ -26,7 +26,7 @@ remote_ssh() {
     if ssh \
       "${SSH_OPTS[@]}" \
       "$REMOTE_HOST" \
-      /bin/bash -lc "$(printf '%q' "$script")"; then
+      bash -lc "$(printf '%q' "$script")"; then
       return 0
     fi
     status=$?

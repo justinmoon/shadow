@@ -3,9 +3,11 @@ scripts/agent-brief	public	Agent context snapshot required by AGENTS.md.
 scripts/ci/app_metadata_manifest_smoke.sh	ci	Regression smoke for manifest profile filtering and uniqueness validation.
 scripts/ci/cpio_edit_smoke.sh	ci	Fast smoke for Android ramdisk cpio extraction and patch semantics.
 scripts/ci/check_script_inventory.py	ci	Pre-commit taxonomy gate for every file under scripts/.
+scripts/ci/linux_nightly.sh	ci	Canonical x86_64-linux nightly gate used locally on Linux or via the remote CI executor.
+scripts/ci/linux_pre_merge.sh	ci	Canonical x86_64-linux pre-merge gate used locally on Linux or via the remote CI executor.
 scripts/ci/lib/nostr_test_harness.py	lib	Shared local Nostr relay harness for deterministic host smokes.
 scripts/ci/pixel_boot_hello_init_smoke.sh	ci	Hermetic smoke for the owned-userspace hello-init boot seam that preserves /init and replaces system/bin/init.
-scripts/ci/pixel_boot_demo_check.sh	ci	Dedicated host-side gate for private boot demo seams, including real demo cross-builds.
+scripts/ci/pixel_boot_demo_check.sh	ci	Dedicated host-side gate for private boot demo seams, including real demo cross-builds and changed-file reporting for remote CI dispatch.
 scripts/ci/pixel_boot_orange_gpu_smoke.sh	ci	Hermetic smoke for the private orange-gpu boot seam that stages a boot-owned shadow-gpu-smoke bundle under /orange-gpu.
 scripts/ci/pixel_boot_orange_init_smoke.sh	ci	Hermetic smoke for the private orange-init boot seam that keeps hello-init as PID 1 and injects /orange-init into the ramdisk.
 scripts/ci/pixel_boot_rust_bridge_run_smoke.sh	ci	Hermetic smoke for the private rust-bridge build+oneshot runner that keeps build/run logs and a summary bundle together.
@@ -16,13 +18,14 @@ scripts/ci/pixel_boot_collect_logs_smoke.sh	ci	Hermetic smoke for boot-log colle
 scripts/ci/pixel_nix_build_progress_smoke.sh	ci	Fast regression smoke for live stderr progress from pixel_retry_nix_build_print_out_paths.
 scripts/ci/pixel_boot_recover_traces_smoke.sh	ci	Hermetic smoke for post-reboot Android-side boot trace recovery and truthful status semantics.
 scripts/ci/pixel_boot_safety_smoke.sh	ci	Private smoke for experimental boot-script safety rails and slot defaults.
+scripts/ci/remote_ci.sh	ci	Sync-and-dispatch wrapper that runs the canonical Linux CI gates on the configured remote executor.
 scripts/ci/required_vm_smoke.sh	ci	Required branch-gate VM smoke wrapper with logical-input reuse.
 scripts/ci/vm_smoke_logical_inputs_smoke.sh	ci	Fast regression smoke proving required_vm_smoke skips on matching logical-input derivations without realizing vm-smoke-inputs.
 scripts/runtime/ensure_cashu_test_mint.sh	runtime	Private Cashu host-smoke fixture helper.
 scripts/runtime/generate_app_metadata.py	runtime	Generates checked Rust app metadata from runtime/apps.json.
 scripts/runtime/generate_sound_demo_fixture.sh	runtime	Private sound demo fixture generator.
 scripts/land.sh	public	Canonical local landing gate.
-scripts/nightly.sh	public	Slow nightly gate: pre-merge plus ui-check, derivation-backed private Pixel boot/tooling checks, and real Pixel boot artifact cross-builds.
+scripts/nightly.sh	public	Slow nightly gate that prefers the local Linux canonical path and otherwise dispatches the x86 CI gate remotely.
 scripts/ci/operator_cli_smoke.sh	ci	Dry-run smoke coverage for the public just/shadowctl routing surface.
 scripts/pixel/pixel_build.sh	pixel	Private Pixel build delegate used by rooted device staging.
 scripts/pixel/pixel_build_local_turnip.sh	pixel	Private local Turnip override builder for direct-GPU probe work.
@@ -109,7 +112,7 @@ scripts/debug/pixel_touch_latency_probe.sh	debug	Pixel latency probe exposed as 
 scripts/pixel/pixel_verify.sh	pixel	Private rooted-Pixel session verification helper.
 scripts/pixel/pixel_kgsl_cold_matrix.sh	pixel	Private rooted-Pixel cold-boot KGSL timing matrix runner.
 scripts/pre_commit.sh	public	Fast local gate.
-scripts/pre_merge.sh	public	Required branch gate wrapper for the current-host preMergeCheck plus the local VM smoke.
+scripts/pre_merge.sh	public	Required branch gate wrapper that prefers the local Linux canonical path and otherwise dispatches the x86 CI gate remotely.
 scripts/runtime/prepare_podcast_player_demo_assets.sh	runtime	Private podcast host/device smoke fixture helper.
 scripts/runtime/prepare_sound_demo_assets.sh	runtime	Private sound host/device smoke fixture helper.
 scripts/lib/remote_guest_build_common.sh	lib	Shared remote/Linux guest build fallback helpers.
@@ -135,6 +138,7 @@ scripts/runtime/runtime_viewport.py	runtime	Runtime viewport helper.
 scripts/sc	public	Short devshell alias entrypoint for shadowctl.
 scripts/ci/script_inventory.tsv	data	Manifest consumed by check_script_inventory.py.
 scripts/lib/session_apps.sh	lib	Shared shell loader for supported session app ids.
+scripts/lib/ci_common.sh	lib	Shared CI system, run-id, boot-demo selection, and remote executor path helpers.
 scripts/lib/shadow_common.sh	lib	Shared repo/bootstrap shell helper library.
 scripts/lib/ci_vm_smoke_common.sh	lib	Shared VM smoke logical-input and success-cache helper library.
 scripts/shadowctl	public	Primary target-aware Shadow development CLI.
@@ -142,6 +146,6 @@ scripts/ci/timeline_sync_defaults_smoke.sh	ci	Static smoke for timeline sync def
 scripts/ui_check.sh	public	UI formatting/test/compile gate with optional suite selection.
 scripts/lib/ui_vm_common.sh	lib	Shared local VM/QEMU helper library.
 scripts/vm/ui_vm_run.sh	vm	Private VM session runner behind sc run.
-scripts/ci/ui_vm_smoke.sh	ci	Required local VM shell/app smoke behind just smoke target=vm.
+scripts/ci/ui_vm_smoke.sh	ci	Required VM shell/app smoke behind just smoke target=vm, now with structured timing summaries for CI runs.
 scripts/vm/ui_vm_ssh.sh	vm	Private VM SSH delegate behind sc ssh.
 scripts/vm/ui_vm_stop.sh	vm	Private VM stop delegate behind sc stop.

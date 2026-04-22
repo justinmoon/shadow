@@ -12,7 +12,7 @@ boot_demo_regex='^(flake\.nix|flake\.lock|scripts/ci/pixel_boot_|scripts/ci/pixe
 
 usage() {
   cat <<'EOF'
-Usage: pixel_boot_demo_check.sh [--if-changed]
+Usage: pixel_boot_demo_check.sh [--if-changed|--print-changed-files]
 
 Runs the dedicated host-side boot demo gate. With --if-changed, the gate runs
 only when the current branch differs from root master in demo-owned paths.
@@ -73,11 +73,15 @@ run_boot_demo_gate() {
 }
 
 if_changed=false
+print_changed_files=false
 case "${1-}" in
   "")
     ;;
   --if-changed)
     if_changed=true
+    ;;
+  --print-changed-files)
+    print_changed_files=true
     ;;
   --help|-h)
     usage
@@ -88,6 +92,11 @@ case "${1-}" in
     exit 2
     ;;
 esac
+
+if [[ "$print_changed_files" == true ]]; then
+  changed_boot_demo_files
+  exit 0
+fi
 
 if [[ "$if_changed" == true && -z "${SHADOW_FORCE_BOOT_DEMO_CHECK:-}" ]]; then
   changed_files="$(changed_boot_demo_files)"

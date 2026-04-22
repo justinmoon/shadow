@@ -233,15 +233,15 @@ remote_shell() {
   if is_local_host; then
     bash -lc "$script"
   else
-    ssh_retry "$REMOTE_HOST" /bin/bash -s <<<"$script"
+    ssh_retry "$REMOTE_HOST" bash -s <<<"$script"
   fi
 }
 
 remote_bash() {
   if is_local_host; then
-    /bin/bash
+    bash
   else
-    ssh_retry "$REMOTE_HOST" /bin/bash
+    ssh_retry "$REMOTE_HOST" bash
   fi
 }
 
@@ -268,7 +268,7 @@ remote_nix_bash() {
   else
     sync_remote_flake
     command="cd $(printf '%q' "$(remote_flake_dir)") && nix develop .#bootimg -c bash -c $(printf '%q' "$script")"
-    ssh_retry "$REMOTE_HOST" /bin/bash -lc "$(printf '%q' "$command")"
+    ssh_retry "$REMOTE_HOST" bash -lc "$(printf '%q' "$command")"
   fi
 }
 

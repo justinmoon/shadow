@@ -11,7 +11,8 @@ REPO_ROOT="$(repo_root)"
 ROOT_REPO="$(vm_smoke_root_repo "$REPO_ROOT")"
 current_inputs_id="$(vm_smoke_inputs_drv_path "$REPO_ROOT")"
 
-if [[ "$ROOT_REPO" != "$REPO_ROOT" ]] \
+if ci_vm_smoke_has_git "$REPO_ROOT" \
+  && [[ "$ROOT_REPO" != "$REPO_ROOT" ]] \
   && [[ "$(git -C "$ROOT_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || true)" == "master" ]] \
   && [[ -z "$(git -C "$ROOT_REPO" status --short 2>/dev/null || true)" ]]; then
   if root_inputs_id="$(vm_smoke_inputs_drv_path "$ROOT_REPO" 2>/dev/null)"; then

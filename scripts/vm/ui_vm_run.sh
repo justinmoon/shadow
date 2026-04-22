@@ -43,6 +43,7 @@ parse_args "$@"
 
 cd "$REPO_ROOT"
 mkdir -p .shadow-vm "$RUNTIME_ARTIFACT_DIR"
+ui_vm_prepare_ssh_key
 runtime_env_tmp=""
 runtime_config_tmp=""
 ui_vm_state_dir="/var/lib/shadow-ui"
@@ -186,7 +187,7 @@ runtime_config_tmp=""
 prepare_runner_link "$ui_vm_runner_package_path" "$ui_vm_runner_binary_path" "$ui_vm_ssh_port_value"
 
 echo "vm: launching Shadow UI VM"
-echo "vm: qemu window will host the real Linux compositor"
+echo "vm: qemu will host the real Linux compositor"
 echo "vm: ssh endpoint shadow@127.0.0.1:$ui_vm_ssh_port_value"
 echo "vm: state image .shadow-vm/shadow-ui-state.img"
 echo "vm: runtime artifacts .shadow-vm/runtime-artifacts"

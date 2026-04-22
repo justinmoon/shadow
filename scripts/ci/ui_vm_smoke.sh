@@ -12,6 +12,7 @@ source "$SCRIPT_DIR/lib/session_apps.sh"
 LOG_DIR="$REPO_ROOT/build/ui-vm"
 RUN_LOG="$LOG_DIR/ui-vm-smoke.log"
 SHOT_PATH="$LOG_DIR/ui-vm-smoke.png"
+SUMMARY_PATH="$LOG_DIR/ui-vm-smoke-summary.json"
 HOME_SURFACE_SHOT_PATH="$LOG_DIR/ui-vm-home-surface.ppm"
 VM_SOCKET_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-vm.sock"
 VM_STATE_IMAGE_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-state.img"
@@ -42,6 +43,9 @@ relay_host_port=""
 relay_guest_url=""
 relay_publish_secret=""
 VM_OVERRIDE_ROOT="/tmp/shadow-vm-smoke-env-override"
+vm_smoke_started_unix="$(date +%s)"
+vm_bootstrap_secs=""
+vm_ready_secs=""
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -68,6 +72,14 @@ if [[ -z "$prepared_inputs_path" ]]; then
 fi
 if [[ -z "$logical_inputs_id" ]]; then
   logical_inputs_id="$(vm_smoke_inputs_drv_path "$REPO_ROOT")"
+fi
+
+if [[ -d "$prepared_inputs_path/host-tools/bin" ]]; then
+  export PATH="$prepared_inputs_path/host-tools/bin:$PATH"
+fi
+if ! command -v nak >/dev/null 2>&1; then
+  echo "vm-smoke: missing host tool 'nak' in $prepared_inputs_path/host-tools/bin" >&2
+  exit 127
 fi
 
 run_with_timeout() {
@@ -402,7 +414,7 @@ start_seeded_local_relay() {
       --sec "$relay_publish_secret" \
       -p "$pub_a" \
       -p "$pub_b" \
-      "$seed_url"
+      "$seed_url" </dev/null
   )"
   relay_query_dump "$seed_url" >/dev/null
   printf '%s\n%s\n%s\n' "$event_a" "$event_b" "$event_follow_list" >"$events_path"
@@ -725,6 +737,54 @@ finish() {
     rm -rf "$relay_temp_dir" >/dev/null 2>&1 || true
   fi
 
+  python3 - "$SUMMARY_PATH" "$status" "$vm_smoke_started_unix" "$vm_bootstrap_secs" "$vm_ready_secs" "$logical_inputs_id" "$prepared_inputs_path" "$RUN_LOG" "$SHOT_PATH" "$VM_SOCKET_PATH" "$VM_STATE_IMAGE_PATH" "$vm_smoke_succeeded" <<'PY'
+import json
+import pathlib
+import sys
+import time
+
+(
+    summary_path,
+    status,
+    started_unix,
+    vm_bootstrap_secs,
+    vm_ready_secs,
+    logical_inputs_id,
+    prepared_inputs_path,
+    run_log,
+    screenshot_path,
+    vm_socket_path,
+    vm_state_image_path,
+    vm_smoke_succeeded,
+) = sys.argv[1:]
+
+def maybe_int(value: str) -> int | None:
+    return int(value) if value else None
+
+finished_unix = int(time.time())
+payload = {
+    "schemaVersion": 1,
+    "status": int(status),
+    "ok": int(status) == 0,
+    "succeeded": vm_smoke_succeeded == "1",
+    "startedAtUnix": int(started_unix),
+    "finishedAtUnix": finished_unix,
+    "totalSecs": finished_unix - int(started_unix),
+    "vmBootstrapSecs": maybe_int(vm_bootstrap_secs),
+    "vmReadySecs": maybe_int(vm_ready_secs),
+    "logicalInputsId": logical_inputs_id,
+    "preparedInputsPath": prepared_inputs_path,
+    "runLogPath": run_log,
+    "screenshotPath": screenshot_path if pathlib.Path(screenshot_path).exists() else None,
+    "vmSocketPath": vm_socket_path,
+    "vmStateImagePath": vm_state_image_path,
+}
+
+path = pathlib.Path(summary_path)
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+
   if (( status == 0 && vm_smoke_succeeded == 1 )); then
     vm_smoke_record_success "$logical_inputs_id" "$prepared_inputs_path" "$REPO_ROOT"
   fi
@@ -769,8 +829,10 @@ while true; do
 
   sleep 1
 done
+vm_bootstrap_secs=$(( $(date +%s) - prep_start ))
 
 "$SCRIPT_DIR/shadowctl" wait-ready -t vm --timeout "$UI_VM_READY_TIMEOUT_SECS"
+vm_ready_secs=$(( $(date +%s) - prep_start ))
 assert_guest_tcp_connectivity "10.0.2.2" "$relay_host_port"
 
 doctor_json="$("$SCRIPT_DIR/shadowctl" doctor -t vm --json)"

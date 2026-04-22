@@ -461,7 +461,6 @@
         shadowVmSmokeControllerPrefixes
         ++ shadowVmSmokeRuntimeBuilderPrefixes
       );
-      darwinSystems = builtins.filter (system: lib.hasSuffix "-darwin" system) systems;
       forAllSystems = f:
         lib.genAttrs systems (
           system:
@@ -1420,9 +1419,11 @@
             cargo-zigbuild
             coreutils
             curl
+            deno
             file
             findutils
             gawk
+            git
             gnugrep
             gnused
             gzip
@@ -1435,6 +1436,7 @@
             payload-dumper-go
             python3
             rustc
+            rustfmt
             unzip
             zig
           ];
@@ -1472,6 +1474,7 @@
           runtimeLibs =
             (with pkgs; [ libxkbcommon ])
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux (with pkgs; [
+              fontconfig
               libdrm
               libGL
               mesa
@@ -1502,6 +1505,7 @@
       uiCheckRuntimeLibsFor = pkgs:
         [ pkgs.libxkbcommon ]
         ++ pkgs.lib.optionals pkgs.stdenv.isLinux (with pkgs; [
+          fontconfig
           libdrm
           libGL
           mesa
@@ -1837,6 +1841,7 @@
           };
           initWrapperCargoArtifacts = craneLib.buildDepsOnly ((builtins.removeAttrs initWrapperCargoArgs [ "src" ]) // {
             pname = "shadow-init-wrapper-deps";
+            buildPhaseCargoCommand = "cargo build --release --locked";
             dummySrc = craneLib.mkDummySrc initWrapperCommonArgs;
           });
         in
@@ -1844,7 +1849,7 @@
             pname = "shadow-init-wrapper-check";
             cargoArtifacts = initWrapperCargoArtifacts;
             doInstallCargoArtifacts = false;
-            buildPhaseCargoCommand = "cargo check --locked";
+            buildPhaseCargoCommand = "cargo check --profile release --locked";
             checkPhaseCargoCommand = "";
             installPhaseCommand = "mkdir -p $out";
           });
@@ -1914,6 +1919,14 @@
               doInstallCargoArtifacts = false;
               installPhaseCommand = "mkdir -p $out";
             };
+          runtimeBundleDenoCacheHash =
+            {
+              aarch64-darwin = "sha256-pPV3CfbA3725jDbK5I86wxQy/XrreIGaV0AjaDmq/nc=";
+              x86_64-darwin = "sha256-pPV3CfbA3725jDbK5I86wxQy/XrreIGaV0AjaDmq/nc=";
+              aarch64-linux = "sha256-W7CvDx1aEWNm9bOyZcawLEheAgnyv8IfxKHCh7s5VZY=";
+              x86_64-linux = "sha256-W7CvDx1aEWNm9bOyZcawLEheAgnyv8IfxKHCh7s5VZY=";
+            }
+            .${pkgs.stdenv.hostPlatform.system};
           runtimeBundleDenoCache = pkgs.stdenvNoCC.mkDerivation {
             pname = "shadow-runtime-bundle-test-deno-cache";
             version = "0.1.0";
@@ -1923,7 +1936,7 @@
             phases = [ "buildPhase" ];
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-pPV3CfbA3725jDbK5I86wxQy/XrreIGaV0AjaDmq/nc=";
+            outputHash = runtimeBundleDenoCacheHash;
             buildPhase = ''
               export HOME="$TMPDIR/home"
               export DENO_DIR="$TMPDIR/deno-dir"
@@ -2097,6 +2110,7 @@
               export PATH="$TMPDIR/check-bin:$PATH"
               cp -R ${src} source
               chmod -R u+w source
+              patchShebangs source/scripts
               cd source
               bash ${script}
               mkdir -p "$out"
@@ -2190,6 +2204,10 @@
           systemPackageAttr = systemPackageAttrForHostSystem hostSystem;
           systemPackage = self.packages.${hostSystem}.${systemPackageAttr};
           uiVmRunnerPackage = self.packages.${hostSystem}.ui-vm-ci;
+          vmSmokeHostTools = pkgs.symlinkJoin {
+            name = "shadow-vm-smoke-host-tools";
+            paths = [ pkgs.nak ];
+          };
           requiredAppsJson = builtins.toJSON [
             "camera"
             "cashu"
@@ -2206,6 +2224,7 @@
             ln -s ${shadowVmSmokeSrc} "$out/source"
             ln -s ${systemPackage} "$out/system"
             ln -s ${uiVmRunnerPackage} "$out/ui-vm-runner"
+            ln -s ${vmSmokeHostTools} "$out/host-tools"
             cat >"$out/metadata.json" <<EOF
             {
               "schemaVersion": 1,
@@ -2231,7 +2250,7 @@
               value = shadowUiVmConfig;
             }
           ]
-      ) darwinSystems);
+      ) systems);
       devShells = forAllSystems ({ androidDevPkgs, androidSdk, pkgs }: {
         android =
           if androidSdk != null then
@@ -2318,11 +2337,11 @@
           shadow-session-device = mkShadowSessionFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           default = mkShadowSession pkgs;
           ui-vm-ci =
-            if pkgs.stdenv.isDarwin then
+            if pkgs.stdenv.isDarwin || pkgs.stdenv.isLinux then
               self.nixosConfigurations."${pkgs.stdenv.hostPlatform.system}-shadow-ui-vm-ci".config.microvm.declaredRunner
             else
               mkUnavailablePackage pkgs "shadow-ui-vm-ci-unavailable"
-                "ui-vm-ci requires a macOS host. Use just run target=vm.";
+                "ui-vm-ci requires a Linux or macOS host. Use just run target=vm.";
           vm-smoke-inputs = mkVmSmokeInputsFor pkgs;
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {

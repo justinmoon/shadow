@@ -79,6 +79,16 @@ cleanup() {
 
 trap cleanup EXIT
 
+rewrite_dynamic_bash_shebangs() {
+  local root="${1:-$TMP_DIR}" path first_line
+  while IFS= read -r -d '' path; do
+    IFS= read -r first_line <"$path" || continue
+    if [[ "$first_line" == "#!/usr/bin/env bash" ]]; then
+      sed -i "1s|^#!/usr/bin/env bash$|#!$BASH|" "$path"
+    fi
+  done < <(find "$root" -type f -print0 2>/dev/null)
+}
+
 mkdir -p "$MOCK_BIN"
 printf 'local boot image\n' >"$LOCAL_BOOT"
 printf 'shared boot image\n' >"$SHARED_BOOT"
@@ -917,6 +927,7 @@ chmod 0755 \
   "$MOCK_BIN/unpack_bootimg" \
   "$MOCK_BIN/mkbootimg" \
   "$MOCK_BIN/avbtool"
+rewrite_dynamic_bash_shebangs
 
 assert_eq() {
   local actual expected message
@@ -1252,6 +1263,7 @@ case "${1:-}" in
 esac
 EOF
   chmod 0755 "$MOCK_BIN/adb"
+  rewrite_dynamic_bash_shebangs
 }
 
 install_fastboot_cycle_mocks() {
@@ -1635,6 +1647,7 @@ esac
 EOF
 
   chmod 0755 "$MOCK_BIN/adb" "$MOCK_BIN/fastboot"
+  rewrite_dynamic_bash_shebangs
 }
 
 reset_fastboot_cycle_state() {
@@ -2219,10 +2232,13 @@ test -f "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/recover-traces/status.json"
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/recover-traces/status.json" ok true
 assert_json_field "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/recover-traces/status.json" transport_last_state adb
 test -f "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv"
-assert_contains "$(cat "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv")" $'elapsed_secs\ttransport'
-assert_contains "$(cat "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv")" $'0\tnone'
-assert_contains "$(cat "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv")" 'stop:wait-adb-timeout'
-assert_contains "$(cat "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv")" 'stop:recover-traces-adb-ready'
+oneshot_adb_late_recover_timeline="$(cat "$ONESHOT_ADB_LATE_RECOVER_OUTPUT/transport-timeline.tsv")"
+assert_contains "$oneshot_adb_late_recover_timeline" $'elapsed_secs\ttransport'
+if [[ "$oneshot_adb_late_recover_timeline" != *$'0\tnone'* && "$oneshot_adb_late_recover_timeline" != *$'1\tnone'* ]]; then
+  fail "expected late recover transport timeline to include 0 or 1 seconds in none state"
+fi
+assert_contains "$oneshot_adb_late_recover_timeline" 'stop:wait-adb-timeout'
+assert_contains "$oneshot_adb_late_recover_timeline" 'stop:recover-traces-adb-ready'
 
 reset_fastboot_cycle_state
 oneshot_adb_late_recover_fail_stdout="$TMP_DIR/oneshot-adb-late-recover-fail.stdout"

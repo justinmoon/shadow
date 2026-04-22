@@ -15,6 +15,15 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$MOCK_BIN"
+rewrite_dynamic_bash_shebangs() {
+  local root="${1:-$TMP_DIR}" path first_line
+  while IFS= read -r -d '' path; do
+    IFS= read -r first_line <"$path" || continue
+    if [[ "$first_line" == "#!/usr/bin/env bash" ]]; then
+      sed -i "1s|^#!/usr/bin/env bash$|#!$BASH|" "$path"
+    fi
+  done < <(find "$root" -type f -print0 2>/dev/null)
+}
 printf 'mock boot image\n' >"$MOCK_IMAGE"
 
 cat >"$MOCK_BIN/adb" <<EOF
@@ -89,6 +98,7 @@ exit 0
 EOF
 
 chmod 0755 "$MOCK_BIN/adb" "$MOCK_BIN/fastboot" "$MOCK_BIN/just" "$MOCK_BIN/payload-dumper-go"
+rewrite_dynamic_bash_shebangs
 
 TEST_PATH="$MOCK_BIN:$PATH"
 

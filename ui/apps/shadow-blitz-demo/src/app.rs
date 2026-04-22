@@ -1065,6 +1065,8 @@ mod tests {
         resolved_title, touch_signal_watch_mode_from_env, TouchSignalWatchMode, APP_TITLE_ENV,
         BLITZ_APP_TITLE_ENV,
     };
+    #[cfg(target_os = "linux")]
+    use super::{APP_WAYLAND_APP_ID_ENV, APP_WAYLAND_INSTANCE_NAME_ENV};
     use std::{
         env,
         sync::{Mutex, MutexGuard},

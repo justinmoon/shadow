@@ -108,7 +108,10 @@ def repo_common_root() -> pathlib.Path:
     if override:
         return pathlib.Path(override).expanduser().resolve()
 
-    result = run_local(["git", "rev-parse", "--git-common-dir"], check=False)
+    try:
+        result = run_local(["git", "rev-parse", "--git-common-dir"], check=False)
+    except FileNotFoundError:
+        return repo_root()
     raw = result.stdout.strip() if result.stdout else ""
     if result.returncode == 0 and raw:
         path = pathlib.Path(raw)
@@ -460,11 +463,19 @@ def ssh_port() -> str:
     return os.environ.get("SHADOW_UI_VM_SSH_PORT", default_vm_ssh_port())
 
 
+def vm_ssh_key_path() -> pathlib.Path:
+    return state_dir() / "shadow-ui-vm-key"
+
+
 def ssh_base() -> list[str]:
     return [
         "ssh",
+        "-i",
+        str(vm_ssh_key_path()),
         "-p",
         ssh_port(),
+        "-o",
+        "IdentitiesOnly=yes",
         "-o",
         "BatchMode=yes",
         "-o",
@@ -777,13 +788,19 @@ def pixel_debug_command(
 
 
 def vm_processes() -> list[str]:
-    result = run_local(["pgrep", "-f", "microvm@shadow-ui-vm"], check=False)
+    try:
+        result = run_local(["pgrep", "-f", "microvm@shadow-ui-vm"], check=False)
+    except FileNotFoundError:
+        return []
     if result.returncode != 0:
         return []
     pids = [pid for pid in result.stdout.split() if pid.strip()]
     if not pids:
         return []
-    process_list = run_local(["ps", "-p", ",".join(pids), "-o", "pid=,command="], check=False)
+    try:
+        process_list = run_local(["ps", "-p", ",".join(pids), "-o", "pid=,command="], check=False)
+    except FileNotFoundError:
+        return pids
     if process_list.returncode != 0:
         return pids
     port_marker = f"hostfwd=tcp::{ssh_port()}-:22"
