@@ -3045,11 +3045,34 @@ static bool write_metadata_probe_timeout_class_best_effort(
             observed_probe_stage_present ? observed_probe_stage : "",
             wchan_present ? wchan : "",
             stack_excerpt_present ? stack_excerpt : ""
-        ) < 0
+    ) < 0
     ) {
         return false;
     }
     classify_kgsl_timeout_from_text(classification_text, &classification);
+    log_stage(
+        "<4>",
+        "orange-gpu-timeout-live-class",
+        "label=%s pid=%d observed_probe_stage=%s checkpoint=%s bucket=%s matched_needle=%s wchan=%s",
+        label != NULL ? label : "",
+        observed_pid,
+        observed_probe_stage_present ? observed_probe_stage : "",
+        classification.checkpoint_name != NULL ? classification.checkpoint_name : "",
+        classification.bucket_name != NULL ? classification.bucket_name : "",
+        classification.matched_needle != NULL ? classification.matched_needle : "",
+        wchan_present ? wchan : ""
+    );
+    log_boot(
+        "<4>",
+        "payload timeout live classification: label=%s pid=%d stage=%s checkpoint=%s bucket=%s matched_needle=%s wchan=%s",
+        label != NULL ? label : "",
+        observed_pid,
+        observed_probe_stage_present ? observed_probe_stage : "",
+        classification.checkpoint_name != NULL ? classification.checkpoint_name : "",
+        classification.bucket_name != NULL ? classification.bucket_name : "",
+        classification.matched_needle != NULL ? classification.matched_needle : "",
+        wchan_present ? wchan : ""
+    );
 
     if (
         !append_fingerprintf(contents, sizeof(contents), &used, "probe_label=%s\n", label) ||
