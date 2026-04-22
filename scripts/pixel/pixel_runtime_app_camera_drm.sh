@@ -10,16 +10,10 @@ ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
 camera_endpoint="$(pixel_camera_runtime_endpoint)"
-camera_allow_mock="$(pixel_camera_runtime_allow_mock)"
 camera_timeout_ms="$(pixel_camera_runtime_timeout_ms)"
-camera_mock_requested=0
-if pixel_camera_runtime_mock_requested "$camera_allow_mock"; then
-  camera_mock_requested=1
-fi
 camera_service_json="$(
   pixel_camera_runtime_service_json \
     "$camera_endpoint" \
-    "$camera_allow_mock" \
     "$camera_timeout_ms"
 )"
 
@@ -29,9 +23,7 @@ cleanup() {
 
 trap cleanup EXIT
 
-if (( camera_mock_requested == 0 )); then
-  pixel_camera_runtime_prepare_broker "$serial" "$camera_endpoint"
-fi
+pixel_camera_runtime_prepare_broker "$serial" "$camera_endpoint"
 
 panel_size="$(pixel_display_size "$serial")"
 panel_width="${panel_size%x*}"

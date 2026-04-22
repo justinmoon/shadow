@@ -112,6 +112,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 ## Important Constraints
 
 - The rooted Pixel path assumes a rooted device and uses the guest compositor control socket on-device for shell actions like `state`, `open`, `home`, `switcher`, and focused-app media control.
+- The supported rooted-Pixel camera lane is live-or-fail only: it stages the on-device camera broker and does not expose `PIXEL_CAMERA_ALLOW_MOCK` on the supported launcher surface.
 - VM and Pixel are the validation targets that matter for cleanup work. Linux desktop host smokes and other historical bring-up paths are secondary.
 - The local macOS VM gate is allowed to use the local `linux-builder`; removing guest-side Cargo/Rust is part of keeping build-time and runtime responsibilities separate.
 - `just pre-merge` still proves the local VM smoke imperatively, but it now reuses a shared success record when the current `vm-smoke-inputs` store path already passed or matches landed `master`.

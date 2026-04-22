@@ -29,7 +29,7 @@ shell_services_json="$(pixel_runtime_shell_services_json)"
 services_json="$(
   pixel_merge_services_json \
     "$shell_services_json" \
-    '{"camera":{"endpoint":"127.0.0.1:37656","allowMock":true,"timeoutMs":45000}}'
+    '{"camera":{"endpoint":"127.0.0.1:37656","timeoutMs":45000}}'
 )"
 base_session_env=$'SHADOW_GUEST_START_APP_ID=shell\nSHADOW_GUEST_SHELL_START_APP_ID=timeline\nSHADOW_GUEST_CLIENT=/runtime/alt-client\nSHADOW_GUEST_COMPOSITOR_BIN=/runtime/alt-compositor\nSHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM=1\nSHADOW_GUEST_COMPOSITOR_TOPLEVEL_WIDTH=1080\nSHADOW_GUEST_COMPOSITOR_TOPLEVEL_HEIGHT=2280\nSHADOW_SYSTEM_BINARY_PATH=/runtime/shadow-system\nSHADOW_SESSION_APP_PROFILE=pixel-shell\nSHADOW_RUNTIME_DIR_MODE=0711\nSHADOW_COMPOSITOR_CONTROL_SOCKET_MODE=0666\nSHADOW_TIMELINE_APP_BUNDLE_PATH=/runtime/timeline.js'
 overlay_session_env=$'SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT=2\nSHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE=1\nSHADOW_GUEST_SESSION_CONFIG=/override/guest.json\nSHADOW_RUNTIME_SESSION_CONFIG=/override/runtime.json\nSHADOW_RUNTIME_NOSTR_DB_PATH=/override/runtime-nostr.sqlite3\nSHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=/override/runtime-nostr.sock\nSHADOW_RUNTIME_CASHU_DATA_DIR=/override/runtime-cashu'
@@ -48,24 +48,16 @@ if [[ "$(pixel_camera_runtime_service_json "127.0.0.1:37656")" != '{"camera":{"e
   echo "pixel_guest_startup_config_smoke: endpoint-only camera service json mismatch" >&2
   exit 1
 fi
-if [[ "$(pixel_camera_runtime_service_json "127.0.0.1:37656" "1" "45000")" != '{"camera":{"allowMock":true,"timeoutMs":45000}}' ]]; then
-  echo "pixel_guest_startup_config_smoke: mock camera service json mismatch" >&2
+if [[ "$(pixel_camera_runtime_service_json "127.0.0.1:37656" "45000")" != '{"camera":{"endpoint":"127.0.0.1:37656","timeoutMs":45000}}' ]]; then
+  echo "pixel_guest_startup_config_smoke: endpoint+timeout camera service json mismatch" >&2
   exit 1
 fi
-if ! pixel_camera_runtime_mock_requested "1"; then
-  echo "pixel_guest_startup_config_smoke: expected mock request for allowMock=1" >&2
+if [[ "$(PIXEL_CAMERA_ALLOW_MOCK=1 pixel_camera_runtime_service_json "127.0.0.1:37656" "45000")" != '{"camera":{"endpoint":"127.0.0.1:37656","timeoutMs":45000}}' ]]; then
+  echo "pixel_guest_startup_config_smoke: unexpected PIXEL_CAMERA_ALLOW_MOCK influence on camera service json" >&2
   exit 1
 fi
-if pixel_camera_runtime_mock_requested ""; then
-  echo "pixel_guest_startup_config_smoke: unexpected mock request for empty allowMock" >&2
-  exit 1
-fi
-if ! PIXEL_CAMERA_ALLOW_MOCK=1 pixel_camera_runtime_mock_requested; then
-  echo "pixel_guest_startup_config_smoke: expected mock request for PIXEL_CAMERA_ALLOW_MOCK=1" >&2
-  exit 1
-fi
-if SHADOW_RUNTIME_CAMERA_ALLOW_MOCK=1 pixel_camera_runtime_mock_requested; then
-  echo "pixel_guest_startup_config_smoke: unexpected legacy camera allowMock fallback" >&2
+if [[ "$(SHADOW_RUNTIME_CAMERA_ALLOW_MOCK=1 pixel_camera_runtime_service_json "127.0.0.1:37656" "45000")" != '{"camera":{"endpoint":"127.0.0.1:37656","timeoutMs":45000}}' ]]; then
+  echo "pixel_guest_startup_config_smoke: unexpected legacy camera allowMock influence on camera service json" >&2
   exit 1
 fi
 if [[ "$(PIXEL_CAMERA_TIMEOUT_MS=45000 pixel_camera_runtime_timeout_ms)" != "45000" ]]; then
@@ -290,7 +282,6 @@ assert data["services"] == {
     "audioBackend": "linux_spike",
     "camera": {
         "endpoint": "127.0.0.1:37656",
-        "allowMock": True,
         "timeoutMs": 45000,
     },
     "cashuDataDir": "/override/runtime-cashu",
@@ -339,7 +330,6 @@ assert run_config["services"] == {
     "audioBackend": "linux_spike",
     "camera": {
         "endpoint": "127.0.0.1:37656",
-        "allowMock": True,
         "timeoutMs": 45000,
     },
     "cashuDataDir": "/override/runtime-cashu",

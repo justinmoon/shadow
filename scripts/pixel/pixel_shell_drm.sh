@@ -53,9 +53,7 @@ parse_args "$@"
 serial="$(pixel_resolve_serial)"
 pixel_require_host_lock "$serial" "$0" "$@"
 camera_endpoint=""
-camera_allow_mock="$(pixel_camera_runtime_allow_mock)"
 camera_timeout_ms="$(pixel_camera_runtime_timeout_ms)"
-camera_mock_requested=0
 camera_service_json=""
 camera_start_command=""
 camera_cleanup_command=""
@@ -73,20 +71,14 @@ if [[ -n "$shell_start_app_id" ]]; then
   fi
 fi
 if (( camera_runtime_enabled == 1 )); then
-  if pixel_camera_runtime_mock_requested "$camera_allow_mock"; then
-    camera_mock_requested=1
-  fi
   camera_endpoint="$(pixel_camera_runtime_endpoint)"
   camera_service_json="$(
     pixel_camera_runtime_service_json \
       "$camera_endpoint" \
-      "$camera_allow_mock" \
       "$camera_timeout_ms"
   )"
-  if (( camera_mock_requested == 0 )); then
-    camera_start_command="$(pixel_camera_runtime_start_command "$camera_endpoint")"
-    camera_cleanup_command="$(pixel_camera_runtime_cleanup_command)"
-  fi
+  camera_start_command="$(pixel_camera_runtime_start_command "$camera_endpoint")"
+  camera_cleanup_command="$(pixel_camera_runtime_cleanup_command)"
 fi
 shell_services_json="$(
   pixel_merge_services_json \
@@ -139,7 +131,7 @@ fi
 
 if (( shell_run_only == 0 )); then
   "$SCRIPT_DIR/pixel/pixel_prepare_shell_runtime_artifacts.sh"
-  if (( camera_runtime_enabled == 1 && camera_mock_requested == 0 )); then
+  if (( camera_runtime_enabled == 1 )); then
     pixel_camera_runtime_prepare_helper "$serial"
   fi
 fi

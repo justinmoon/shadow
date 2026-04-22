@@ -104,6 +104,7 @@ Related docs:
 - 2026-04-20: the same rooted-Pixel `guest-run-config.json` now serves as both the host takeover/verification session description and the on-device `SHADOW_GUEST_SESSION_CONFIG`, with host-driver staging controls intentionally left outside the file.
 - 2026-04-21: the rooted-Pixel shell/runtime-app path now exports that staged guest-run config to runtime clients through `SHADOW_RUNTIME_SESSION_CONFIG`, so supported runtime services can read the same typed file on-device instead of depending only on env projection.
 - 2026-04-21: rooted-Pixel camera runtime wiring is now config-first through `services.camera` in the typed guest-run/startup artifact; the supported launchers stop using `SHADOW_RUNTIME_CAMERA_*` as host-side controls and prefer Pixel-owned camera helper inputs.
+- 2026-04-21: the supported rooted-Pixel camera launcher/config surface is now live-or-fail only; `PIXEL_CAMERA_ALLOW_MOCK` no longer participates in typed Pixel camera config generation, while host/runtime mock support remains on the non-Pixel `SHADOW_RUNTIME_CAMERA_*` path.
 - 2026-04-21: `scripts/ci/pixel_guest_startup_config_smoke.sh` now proves typed Pixel service config wins and that supported guest startup generation scrubs legacy Nostr/Cashu/Camera service env from client assignments instead of re-projecting it.
 
 ## Implementation Notes
@@ -114,6 +115,7 @@ Related docs:
   - rooted Pixel guest startup is now typed and artifact-driven, and the supported shell/runtime-app host lane now compiles a single `guest-run-config.json` artifact instead of cross-script multiline env payloads.
   - guest startup config parsing is now file-first in Rust with explicit schema/version checks; env remains an overlay seam rather than the primary transport, and host-driver-only concerns still stay env-based for now.
   - rooted Pixel runtime services now have the first real typed slice on-device too: camera config ships in the same staged guest-run/startup artifact that the runtime tree sees via `SHADOW_RUNTIME_SESSION_CONFIG`.
+  - the supported rooted-Pixel camera lane now always emits a live broker endpoint in typed config; mock capture remains available only in non-Pixel host/runtime lanes that still read `SHADOW_RUNTIME_CAMERA_ALLOW_MOCK`.
 - Working migration rule:
   - do not start by normalizing every `PIXEL_*` boot/debug/test knob.
   - first fix the supported session surface where config crosses multiple layers and multiple languages.

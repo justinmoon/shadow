@@ -23,6 +23,7 @@ Do not add a new top-level script or `just` recipe for every app. The reusable o
 - Treat `stage` and `ci` as deterministic validation lanes. They should stage only the artifacts required by the selected suite.
 - Keep app selection inside the existing suite model. Extend `shadowctl` and `scripts/ci/pixel_ci.sh`; do not create parallel ad hoc wrappers.
 - For rooted-Pixel hardware features, use live-or-fail behavior. Do not silently fall back to mocks in the device lane.
+- The supported rooted-Pixel camera lane no longer accepts `PIXEL_CAMERA_ALLOW_MOCK`; if the live camera broker is unavailable, the lane should fail.
 - Put reusable behavior in `shadowctl` or shared helper libraries under `scripts/lib/`. Do not grow more one-off scripts in `scripts/`.
 
 ## Current Suite Model

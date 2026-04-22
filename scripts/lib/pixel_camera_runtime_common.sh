@@ -4,10 +4,6 @@ pixel_camera_runtime_endpoint() {
   printf '%s\n' "${PIXEL_RUNTIME_CAMERA_ENDPOINT:-127.0.0.1:37656}"
 }
 
-pixel_camera_runtime_allow_mock() {
-  printf '%s\n' "${PIXEL_CAMERA_ALLOW_MOCK-}"
-}
-
 pixel_camera_runtime_timeout_ms() {
   printf '%s\n' "${PIXEL_CAMERA_TIMEOUT_MS-}"
 }
@@ -24,45 +20,16 @@ pixel_camera_runtime_daemon_log_path() {
   printf '%s\n' "/data/local/tmp/shadow-camera-provider-host-serve.log"
 }
 
-pixel_camera_runtime_mock_requested() {
-  local allow_mock="${1:-$(pixel_camera_runtime_allow_mock)}"
-
-  case "${allow_mock,,}" in
-    1 | true | on)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
 pixel_camera_runtime_service_json() {
   local endpoint="${1:-}"
-  local allow_mock="${2:-}"
-  local timeout_ms="${3:-}"
+  local timeout_ms="${2:-}"
 
   PIXEL_CAMERA_SERVICE_ENDPOINT="$endpoint" \
-  PIXEL_CAMERA_SERVICE_ALLOW_MOCK="$allow_mock" \
   PIXEL_CAMERA_SERVICE_TIMEOUT_MS="$timeout_ms" \
     python3 - <<'PY'
 import json
 import os
 import sys
-
-
-def parse_optional_bool(raw_value):
-    value = raw_value.strip().lower()
-    if not value:
-        return None
-    if value in {"1", "true", "on"}:
-        return True
-    if value in {"0", "false", "off"}:
-        return False
-    raise SystemExit(
-        "pixel: invalid camera service allowMock value: "
-        f"{raw_value!r}"
-    )
 
 
 def parse_optional_int(raw_value):
@@ -85,14 +52,11 @@ def parse_optional_int(raw_value):
 
 
 endpoint = os.environ.get("PIXEL_CAMERA_SERVICE_ENDPOINT", "").strip()
-allow_mock = parse_optional_bool(os.environ.get("PIXEL_CAMERA_SERVICE_ALLOW_MOCK", ""))
 timeout_ms = parse_optional_int(os.environ.get("PIXEL_CAMERA_SERVICE_TIMEOUT_MS", ""))
 
 camera = {}
-if allow_mock is not True and endpoint:
+if endpoint:
     camera["endpoint"] = endpoint
-if allow_mock is not None:
-    camera["allowMock"] = allow_mock
 if timeout_ms is not None:
     camera["timeoutMs"] = timeout_ms
 
@@ -104,7 +68,7 @@ PY
 }
 
 pixel_camera_runtime_prepare_broker() {
-  local serial endpoint helper_script
+  local serial endpoint
   serial="${1:?pixel_camera_runtime_prepare_broker requires a serial}"
   endpoint="${2:-$(pixel_camera_runtime_endpoint)}"
   pixel_camera_runtime_prepare_helper "$serial"
