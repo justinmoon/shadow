@@ -34,6 +34,7 @@ Related docs:
   - until then, only use C for the narrow KGSL / GMU / zap / CP-init discriminator work needed to reach that first truthful GPU frame
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
 - When a seam gets past firmware and both the panel timeout classifier and `/metadata` artifacts fail together, stop iterating on more colors or more metadata files. Pivot that seam to direct durable logging (`kmsg` first) plus source-guided hypotheses. If that still produces zero surviving evidence, escalate to a lower-level capture path such as panic-to-pstore on a confirmation device.
+- If a control timeout path can panic cleanly but the real seam still returns to bootloader before that panic branch changes the bootreason, treat that as evidence that the seam is escaping userspace supervision entirely. Stop spending runs on later watchdog tweaks and move to a different execution seam or a kernel-facing diagnostic.
 - Prefer one reusable probe harness over many custom rungs:
   - `hello-init` should supervise child probes through one watchdog path
   - timeouts should emit a durable `probe-report.txt` with the last observed probe stage plus live `/proc/<pid>` hints before the child is killed
@@ -110,12 +111,16 @@ Related docs:
   - that two-device proof means the staged `a630_sqe.fw`, `a618_gmu.bin`, and `a615_zap.*` blobs are readable in owned userspace before any KGSL open
   - the active seam is therefore the first post-firmware stage inside boot-owned KGSL bring-up, not generic staging or visibility of the blobs themselves
   - this is now narrower than the staged Rust payload, dynamic loader, Vulkan loader, wgpu setup, Android display services, or late Android properties
+  - new control/result pair:
+    - `timeout-control-smoke` with `orange_gpu_timeout_action=panic` on `11151JEC200472` came back with `kernel_panic`
+    - the real `c-kgsl-open-readonly-smoke` still came back with `reboot` / `bootloader`, even with a forced `12s` watchdog on `09051JEC202061`
+    - so the real KGSL seam is escaping to bootloader before userspace timeout recovery changes the reboot reason
 - Strongest current hypothesis:
   - the failing seam is now just after the first named firmware loads, not generic `/dev` topology, not DRM, and not later Vulkan enumeration logic
-  - source-guided read of the sunfish kernel plus the recovered `probe-report.txt` still make the first Adreno SQE firmware request the last durable breakpoint, but the new firmware-only watched proof moves the best next suspects forward to GX/OOB wake or GMU power-handshake bring-up, GMU firmware / HFI, secure zap boot, and then CP init:
+  - source-guided read of the sunfish kernel plus the recovered `probe-report.txt` still make the first Adreno SQE firmware request the last durable breakpoint, but the new firmware-only watched proof moves the best next suspects forward to secure zap / PAS first, then GX/OOB wake or GMU power-handshake bring-up, then GMU firmware / HFI, and then CP init:
     - first open reaches `kgsl_open()` -> `kgsl_open_device()` -> Adreno init/start
     - the recovered stack currently stops in `a6xx_microcode_read`, which issues `request_firmware("a630_sqe.fw")`
-    - later in the same init path the code also names `request_firmware("a618_gmu.bin")` and likely secure zap boot via `subsystem_get("a615_zap")` / `pil_boot`
+    - later in the same init path the code also names `request_firmware("a618_gmu.bin")` and secure zap boot via `subsystem_get("a612_zap")` / `pil_boot`
     - rooted `cold-root-ready` success with blank `boot_completed` / `pd_mapper` / `qseecom-service` / `gpu` props makes “wait for more Android” a weaker next move than tracing the first open path directly
 - Strongest rooted controls:
   - rooted tmpfs-`/dev` controls still succeed for `raw-kgsl-getproperties-smoke` and `raw-kgsl-open-readonly-smoke`
@@ -135,6 +140,10 @@ Related docs:
   - for the current fastboot-return firmware seam, the watched panel contract is stronger than `/metadata`:
     - both firmware-only confirmation runs returned to Android with `metadata_probe_stage_present=false` and `metadata_probe_report_present=false`
     - treat watched `checker-orange` as the truthful proof for this rung until a later durable channel survives reliably
+  - new negative result:
+    - a live tracefs monitor now tries to advance `probe-stage.txt` to `trace-microcode-read`, `trace-subsystem-get`, `trace-pil-boot`, `trace-gmu-start`, `trace-gmu-hfi-start`, or `trace-cp-init` while `open("/dev/kgsl-3d0")` is in flight
+    - on `09051JEC202061`, none of those early stage writes survived the same fastboot-return seam
+    - so this seam currently beats both late recovery artifacts and early metadata stage updates
   - `scripts/pixel/pixel_kgsl_matrix.sh` now batches rooted KGSL falsification cases into one summary artifact
   - `scripts/ci/pixel_boot_recover_traces_smoke.sh` and `scripts/ci/pixel_boot_tooling_smoke.sh` cover those additions
   - the latest high-signal boot-owned bundle is [`build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_), which recovered the decisive `_request_firmware` stack
@@ -161,6 +170,10 @@ Related docs:
 - Keep the raw KGSL / Vulkan ladder as the only critical-path seam.
 - Land one discriminator at a time until boot-owned readonly KGSL open either succeeds or the missing prerequisite is named.
 - Do not broaden to `orange-gpu`, compositor, runtime, or shell until that happens.
+- Near-term pivot inside Stream A:
+  - stop spending the primary loop on more direct-PID1 timeout-color variants
+  - use the stock-init helper / `rc` trigger ladder as the next discriminator for “too early in boot” vs “fundamentally bad open path”
+  - if that later-launch seam still reboots to bootloader, plan a minimal kernel-facing zap/PAS diagnostic lane
 
 ### Stream B: boot-helper autostart / preflight (`boot-2`)
 

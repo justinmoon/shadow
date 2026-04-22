@@ -44,6 +44,10 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - but on the real KGSL seam, the post-timeout repaint still never appears
   - a new tiny `probe-timeout-class.txt` artifact also failed to survive the same seam on `09051JEC202061`
   - a follow-up `log_kmsg=true` run on `09051JEC202061` still recovered zero timeout-class lines through previous-boot log channels
+  - a control `timeout-control-smoke` run with `orange_gpu_timeout_action=panic` on `11151JEC200472` came back with `ro.boot.bootreason=kernel_panic`, so the sysrq-panic path itself is real when the timeout branch actually wins
+  - the matching real KGSL run with `orange_gpu_timeout_action=panic` still returned to fastboot/Android with `ro.boot.bootreason=reboot` and `sys.boot.reason=bootloader`
+  - forcing the KGSL watchdog down to `12s` still did not change that `31s` fastboot-return shape on `09051JEC202061`
+  - a live tracefs monitor that tried to advance `probe-stage.txt` to `trace-subsystem-get`, `trace-pil-boot`, `trace-gmu-start`, `trace-gmu-hfi-start`, or `trace-cp-init` also left no surviving metadata on the same seam
   - so for this post-firmware seam, both the panel timeout classifier and `/metadata` artifacts are currently weaker than they looked
 - C remains acceptable only for the current driver-discovery seam:
   - use it to finish post-firmware KGSL classification through the first truthful `orange-gpu` frame
@@ -52,6 +56,10 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - [`build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_)
   - recovered `probe-report.txt` shows `wchan=_request_firmware`
   - recovered `/proc/<pid>/stack` shows `a6xx_microcode_read -> request_firmware -> _request_firmware`
+- The latest source-guided diagnosis is:
+  - the post-firmware reboot-class suspect is now secure zap / PAS, not generic KGSL or GMU timeout handling
+  - the strongest named path is `subsystem_get("a612_zap")` / `pil_boot()` during `a6xx_microcode_load()`
+  - the rooted/control evidence still says ordinary Android display services are not the missing prerequisite for readonly KGSL open
 
 ## Best Observability
 
@@ -101,14 +109,16 @@ Use the panel as a stage channel, not just “something orange happened.”
 2. `log_kmsg=true` was worth trying and is now ruled out as the next easy answer:
    - the live timeout classifier now logs directly to kmsg before reboot
    - the previous-boot log recovery channels still came back empty on the same seam
-3. The next observability step needs to be lower-level than normal reboot-and-recover:
-   - likely a panic-to-pstore or another kernel-level capture path on timeout
-   - use a confirmation device for that, not the primary reproducer
-4. If that still does not survive, instrument only the named post-firmware seam from the source-backed shortlist:
-   - `a6xx_gmu_fw_start`
-   - `a6xx_gmu_hfi_start` / `hfi_send_cmd`
-   - `subsystem_get("a615_zap")`
-   - `a6xx_send_cp_init`
+3. Treat the direct PID 1 seam as an observability wall for now:
+   - control panic works, so the missing `kernel_panic` on the real KGSL seam is evidence
+   - the KGSL path is escaping to bootloader before the userspace watchdog can win
+   - even live trace-stage writes do not survive once that seam starts
+4. The next discriminator should come from a different seam, not more color churn on the same one:
+   - use the stock-init helper / `rc` trigger ladder to launch the helper later in boot and see whether readonly KGSL open still resets there
+   - if a later stock-init trigger stops the reboot, the missing prerequisite is timing / early-init state, not the open call alone
+5. If the stock-init trigger ladder does not move it, the next diagnostic rung is kernel-facing:
+   - target the zap/PAS seam named by source (`subsystem_get("a612_zap")` / `pil_boot()`)
+   - prefer a minimal diagnostic branch or patch over more blind boot-image permutations
 
 ## Fast Commands
 

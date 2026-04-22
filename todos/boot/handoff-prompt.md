@@ -54,6 +54,17 @@ Continue the Pixel 4a boot-owned bring-up from the current KGSL seam without bro
 - The next durable logging attempt also failed cleanly:
   - a follow-up `log_kmsg=true` run on the same rung emitted explicit live timeout-class logs before reboot
   - previous-boot recovery still found zero correlated shadow tags and zero surviving timeout-class lines
+- A control panic rung proved the timeout branch itself is real:
+  - `timeout-control-smoke` plus `orange_gpu_timeout_action=panic` on `11151JEC200472` came back with `kernel_panic`
+  - so sysrq-panic works when the timeout path actually wins
+- The matching real KGSL panic rungs did not change the reboot reason:
+  - the original panic run still came back as `reboot` / `bootloader`
+  - forcing the watchdog down to `12s` on `09051JEC202061` still came back as `reboot` / `bootloader` with the same `31s` fastboot return
+  - so this seam is escaping to bootloader before userspace timeout recovery changes the bootreason
+- A live tracefs monitor also failed to leave a surviving early breadcrumb:
+  - the owned child now tails the function-graph trace for `a6xx_microcode_read`, `subsystem_get`, `pil_boot`, `a6xx_gmu_start`, `a6xx_gmu_hfi_start`, and `a6xx_send_cp_init`
+  - the monitor tried to advance `probe-stage.txt` to `trace-microcode-read`, `trace-subsystem-get`, `trace-pil-boot`, `trace-gmu-start`, `trace-gmu-hfi-start`, or `trace-cp-init`
+  - on `09051JEC202061`, none of those early trace stages survived the same fastboot-return seam
 - So for the post-firmware KGSL seam, `/metadata` and the repaint classifier are both unreliable:
   - recent recovery bundles came back with `metadata_probe_stage_present=false`, `metadata_probe_report_present=false`, and `metadata_probe_timeout_class_present=false`
   - do not spend more runs on color/pattern churn or normal-kmsg-only retries for the same seam
@@ -82,14 +93,18 @@ The remaining difference is no longer generic execution context or “wait later
 
 The best next discriminators are:
 
-1. Move the same boot-owned rung onto a lower-level timeout capture path:
-   - panic-to-pstore is the leading candidate
-   - use a confirmation device first, not the primary reproducer
-2. Recover the result through pstore / previous-boot kernel channels instead of `/metadata`.
-3. If that still does not survive, instrument only the named source-backed post-firmware seams:
-   - `a6xx_gmu_start` / `a6xx_gmu_hfi_start`
-   - `subsystem_get("a615_zap")`
-   - `a6xx_send_cp_init`
+1. Stop spending the primary loop on more direct-PID1 timeout tweaks.
+   - control panic already proved the timeout branch itself
+   - the real KGSL seam still outruns it and still beats early trace-stage writes
+2. Use the stock-init helper / `rc` trigger ladder as the next discriminator.
+   - launch the helper later in boot from the stock-init path
+   - test whether readonly KGSL open still reboots there
+   - if later launch stops the reboot, the missing prerequisite is timing / early-init state
+3. If the later-launch seam still reboots, treat zap / PAS as the leading kernel-facing suspect:
+   - `subsystem_get("a612_zap")`
+   - `pil_boot()`
+   - then GMU / HFI
+   - then CP init
 4. Keep execution-context and holder-scan evidence as supporting context, not the primary blocker.
 
 Do not jump back out to `orange-gpu`, compositor, or app launch work until one of those moves the seam.
