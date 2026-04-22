@@ -1370,6 +1370,18 @@ case "${1:-}" in
       "cat /proc/sys/kernel/random/boot_id 2>/dev/null")
         printf '%s\n' "${MOCK_BOOT_ID:-11111111-2222-3333-4444-555555555555}"
         ;;
+      "rm -rf '/metadata/shadow-hello-init/by-token/"*)
+        token="$(printf '%s\n' "$cmd" | sed -n "s|.*'/metadata/shadow-hello-init/by-token/\\([^']*\\)'.*|\\1|p")"
+        printf '%s\n' "$token" >"$state_dir/precleared_run_token"
+        rm -f "$state_dir/metadata-token-$token"
+        ;;
+      "[ ! -e '/metadata/shadow-hello-init/by-token/"*)
+        token="$(printf '%s\n' "$cmd" | sed -n "s|.*'/metadata/shadow-hello-init/by-token/\\([^']*\\)'.*|\\1|p")"
+        printf '%s\n' "$token" >"$state_dir/preclear_verified_run_token"
+        if [[ -e "$state_dir/metadata-token-$token" ]]; then
+          exit 1
+        fi
+        ;;
       "getprop")
         printf '[ro.boot.slot_suffix]: [%s]\n' "$(slot_suffix | tr -d '\r\n')"
         printf '[ro.boot.bootreason]: [%s]\n' "$(prop_value ro.boot.bootreason | tr -d '\r\n')"
@@ -1616,7 +1628,9 @@ reset_fastboot_cycle_state() {
   printf 'stock\n' >"$MOCK_DEVICE_STATE_DIR/boot_b_image"
   rm -f \
     "$MOCK_DEVICE_STATE_DIR/pending_transport" \
-    "$MOCK_DEVICE_STATE_DIR/pending_polls"
+    "$MOCK_DEVICE_STATE_DIR/pending_polls" \
+    "$MOCK_DEVICE_STATE_DIR/precleared_run_token" \
+    "$MOCK_DEVICE_STATE_DIR/preclear_verified_run_token"
 }
 
 assert_cpio_entry_equals() {
@@ -1961,6 +1975,7 @@ assert_contains "$flash_run_fastboot_return_dry_run_output" "recover_after=true"
 install_fastboot_cycle_mocks
 
 reset_fastboot_cycle_state
+printf 'stale metadata\n' >"$MOCK_DEVICE_STATE_DIR/metadata-token-$PROBE_RUN_TOKEN"
 printf 'b\n' >"$MOCK_DEVICE_STATE_DIR/active_slot"
 oneshot_adb_return_stdout="$TMP_DIR/oneshot-adb-return.stdout"
 oneshot_adb_return_stderr="$TMP_DIR/oneshot-adb-return.stderr"
@@ -1999,6 +2014,8 @@ assert_contains "$oneshot_adb_return_output" "Recovery bundle matched uncorrelat
 assert_contains "$oneshot_adb_return_output" "Bootreason indicates failed Android boot: ro.boot.bootreason=kernel_panic; sys.boot.reason=kernel_panic"
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" ok false
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" success_signal adb
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" hello_init_run_token "$PROBE_RUN_TOKEN"
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" hello_init_token_dir "/metadata/shadow-hello-init/by-token/$PROBE_RUN_TOKEN"
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" skip_collect true
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" collect_attempted false
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" collect_succeeded false
@@ -2011,6 +2028,10 @@ assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_uncorr
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_proof_ok false
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_absence_reason_summary pstore_empty
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" recover_traces_expected_durable_logging_summary "kmsg=true,pmsg=true"
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" token_preclear_attempted true
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" token_preclear_succeeded true
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" token_preclear_reason cleared
+assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" token_preclear_root_id "uid=0(root) gid=0(root) groups=0(root)"
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" boot_completed true
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" slot_after b
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/status.json" failure_stage bootreason-failure
@@ -2023,6 +2044,12 @@ assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" matche
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" current_boot_channel_attempts 6
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" channels/kernel-current-best-effort/source_kind root-dmesg
 assert_json_field "$ONESHOT_ADB_RETURN_OUTPUT/recover-traces/status.json" bootreason_props/ro.boot.bootreason kernel_panic
+assert_eq "$(cat "$MOCK_DEVICE_STATE_DIR/precleared_run_token")" "$PROBE_RUN_TOKEN" "oneshot should pre-clear the expected metadata run token"
+assert_eq "$(cat "$MOCK_DEVICE_STATE_DIR/preclear_verified_run_token")" "$PROBE_RUN_TOKEN" "oneshot should verify the cleared metadata run token"
+if [[ -e "$MOCK_DEVICE_STATE_DIR/metadata-token-$PROBE_RUN_TOKEN" ]]; then
+  echo "pixel_boot_tooling_smoke: oneshot should remove stale metadata for the run token" >&2
+  exit 1
+fi
 if [[ -e "$ONESHOT_ADB_RETURN_OUTPUT/collect" ]]; then
   echo "pixel_boot_tooling_smoke: skip-collect adb-return run should not create the helper collect dir" >&2
   exit 1

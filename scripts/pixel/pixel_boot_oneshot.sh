@@ -32,6 +32,8 @@ transport_timeline_path=""
 image_sha256=""
 slot_before=""
 slot_after=""
+hello_init_run_token=""
+hello_init_token_dir=""
 shadow_probe_prop=""
 adb_ready=false
 boot_completed=false
@@ -76,6 +78,10 @@ bootreason_ro_boot_bootreason_history=""
 bootreason_ro_boot_bootreason_last=""
 bootreason_indicates_failure=false
 bootreason_failure_summary=""
+token_preclear_attempted=false
+token_preclear_succeeded=false
+token_preclear_reason=""
+token_preclear_root_id=""
 failure_stage=""
 
 usage() {
@@ -136,6 +142,45 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
 token = payload.get("run_token", "")
 print(token if isinstance(token, str) else "")
 PY
+}
+
+metadata_token_dir_path_for_token() {
+  local run_token
+  run_token="${1:?metadata_token_dir_path_for_token requires a run token}"
+  printf '/metadata/shadow-hello-init/by-token/%s\n' "$run_token"
+}
+
+maybe_preclear_hello_init_token_dir() {
+  local preclear_timeout_secs root_id
+  preclear_timeout_secs="${PIXEL_BOOT_ONESHOT_TOKEN_PRECLEAR_TIMEOUT_SECS:-20}"
+
+  if [[ -z "$hello_init_run_token" ]]; then
+    token_preclear_reason="no-run-token"
+    return 0
+  fi
+
+  hello_init_token_dir="$(metadata_token_dir_path_for_token "$hello_init_run_token")"
+  token_preclear_attempted=true
+  root_id="$(pixel_root_id "$serial" 2>/dev/null || true)"
+  if [[ -z "$root_id" ]]; then
+    token_preclear_reason="root-unavailable"
+    return 0
+  fi
+
+  token_preclear_root_id="$root_id"
+  if ! pixel_root_shell_timeout "$preclear_timeout_secs" "$serial" "rm -rf '$hello_init_token_dir'"; then
+    token_preclear_reason="clear-failed"
+    return 0
+  fi
+
+  if pixel_root_shell_timeout "$preclear_timeout_secs" "$serial" "[ ! -e '$hello_init_token_dir' ]"; then
+    token_preclear_succeeded=true
+    token_preclear_reason="cleared"
+    return 0
+  fi
+
+  token_preclear_reason="verify-failed"
+  return 0
 }
 
 wait_boot_completed_status_word() {
@@ -289,6 +334,8 @@ write_status() {
     "image_sha256=$image_sha256" \
     "output_dir=$OUTPUT_DIR" \
     "metadata_path=$metadata_path" \
+    "hello_init_run_token=$hello_init_run_token" \
+    "hello_init_token_dir=$hello_init_token_dir" \
     "collect_output_dir=$collect_output_dir" \
     "recover_traces_output_dir=$recover_traces_output_dir" \
     "transport_timeline_path=$transport_timeline_path" \
@@ -323,6 +370,10 @@ write_status() {
     "recover_traces_proof_ok=$recover_traces_proof_ok" \
     "recover_traces_absence_reason_summary=$recover_traces_absence_reason_summary" \
     "recover_traces_expected_durable_logging_summary=$recover_traces_expected_durable_logging_summary" \
+    "token_preclear_attempted=$token_preclear_attempted" \
+    "token_preclear_succeeded=$token_preclear_succeeded" \
+    "token_preclear_reason=$token_preclear_reason" \
+    "token_preclear_root_id=$token_preclear_root_id" \
     "transport_initial_state=$transport_initial_state" \
     "transport_first_none_elapsed_secs=$transport_first_none_elapsed_secs" \
     "transport_first_fastboot_elapsed_secs=$transport_first_fastboot_elapsed_secs" \
@@ -712,6 +763,10 @@ if [[ "$SUCCESS_SIGNAL" == "adb" ]]; then
   transport_timeline_path="$OUTPUT_DIR/transport-timeline.tsv"
 fi
 image_sha256="$(shasum -a 256 "$IMAGE_PATH" | awk '{print $1}')"
+hello_init_run_token="$(load_hello_init_run_token)"
+if [[ -n "$hello_init_run_token" ]]; then
+  hello_init_token_dir="$(metadata_token_dir_path_for_token "$hello_init_run_token")"
+fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
   cat <<EOF
@@ -721,6 +776,8 @@ image=$IMAGE_PATH
 image_sha256=$image_sha256
 output_dir=$OUTPUT_DIR
 metadata_path=$metadata_path
+hello_init_run_token=$hello_init_run_token
+hello_init_token_dir=$hello_init_token_dir
 success_signal=$SUCCESS_SIGNAL
 wait_ready_secs=$WAIT_READY_SECS
 adb_timeout_secs=$ADB_TIMEOUT_SECS
@@ -768,8 +825,17 @@ pixel_write_status_json \
   recover_traces_after="$(bool_word "$RECOVER_TRACES_AFTER")" \
   transport_timeline_path="$transport_timeline_path"
 
+maybe_preclear_hello_init_token_dir
+
 printf 'One-shot booting %s on %s\n' "$IMAGE_PATH" "$serial"
 printf 'Current slot before fastboot boot: %s\n' "$slot_before"
+if [[ -n "$hello_init_run_token" ]]; then
+  if [[ "$token_preclear_succeeded" == "true" ]]; then
+    printf 'Pre-cleared metadata token dir: %s\n' "$hello_init_token_dir"
+  else
+    printf 'Metadata token dir pre-clear status: %s (%s)\n' "$hello_init_token_dir" "${token_preclear_reason:-unknown}"
+  fi
+fi
 pixel_adb "$serial" reboot bootloader
 pixel_wait_for_fastboot "$serial" 60
 pixel_fastboot "$serial" boot "$IMAGE_PATH"
