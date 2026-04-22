@@ -957,6 +957,11 @@ assert_bool_word mount-proc "$MOUNT_PROC"
 assert_bool_word mount-sys "$MOUNT_SYS"
 assert_bool_word log-kmsg "$LOG_KMSG"
 assert_bool_word log-pmsg "$LOG_PMSG"
+
+if [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" && "$MOUNT_SYS" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: c-kgsl-open-readonly-firmware-helper-smoke requires --mount-sys true so hello-init can service /sys/class/firmware requests" >&2
+  exit 1
+fi
 assert_bool_word orange-gpu-metadata-stage-breadcrumb "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB"
 assert_timeout_action_word "$ORANGE_GPU_TIMEOUT_ACTION"
 assert_firmware_bootstrap_word "$FIRMWARE_BOOTSTRAP"

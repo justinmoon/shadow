@@ -4514,11 +4514,15 @@ static int service_firmware_request_from_ramdisk(
     return 0;
 }
 
-static int run_ramdisk_firmware_helper_loop(void) {
+static int run_ramdisk_firmware_helper_loop(
+    const char *payload_probe_stage_path,
+    const char *payload_probe_stage_prefix
+) {
     bool serviced[sizeof(kSunfishGpuFirmwareEntries) / sizeof(kSunfishGpuFirmwareEntries[0])] = { false };
     uint64_t deadline = monotonic_millis() +
                         (uint64_t)SHADOW_HELLO_INIT_FIRMWARE_HELPER_TIMEOUT_SECONDS * 1000ULL;
     unsigned int serviced_count = 0U;
+    bool saw_supported_request = false;
 
     log_stage(
         "<6>",
@@ -4526,10 +4530,14 @@ static int run_ramdisk_firmware_helper_loop(void) {
         "timeout_secs=%u",
         SHADOW_HELLO_INIT_FIRMWARE_HELPER_TIMEOUT_SECONDS
     );
+    write_payload_probe_stage_best_effort(
+        payload_probe_stage_path,
+        payload_probe_stage_prefix,
+        "firmware-helper-waiting"
+    );
 
     for (;;) {
         DIR *firmware_dir = opendir(SHADOW_HELLO_INIT_FIRMWARE_CLASS_ROOT);
-        bool all_serviced = true;
         bool timed_out = monotonic_millis() >= deadline;
 
         if (firmware_dir != NULL) {
@@ -4546,14 +4554,30 @@ static int run_ramdisk_firmware_helper_loop(void) {
                 if (firmware_entry == NULL) {
                     continue;
                 }
+                saw_supported_request = true;
                 if (serviced[entry_index]) {
                     continue;
                 }
 
-                all_serviced = false;
                 if (service_firmware_request_from_ramdisk(firmware_entry) == 0) {
+                    char stage_value[64];
+
                     serviced[entry_index] = true;
                     serviced_count++;
+                    if (
+                        snprintf(
+                            stage_value,
+                            sizeof(stage_value),
+                            "firmware-helper-%s-ok",
+                            firmware_entry->stage_token
+                        ) > 0
+                    ) {
+                        write_payload_probe_stage_best_effort(
+                            payload_probe_stage_path,
+                            payload_probe_stage_prefix,
+                            stage_value
+                        );
+                    }
                     log_stage(
                         "<6>",
                         "orange-gpu-firmware-helper-serviced",
@@ -4569,6 +4593,24 @@ static int run_ramdisk_firmware_helper_loop(void) {
                         firmware_entry->filename,
                         errno
                     );
+                    {
+                        char stage_value[64];
+
+                        if (
+                            snprintf(
+                                stage_value,
+                                sizeof(stage_value),
+                                "firmware-helper-%s-failed",
+                                firmware_entry->stage_token
+                            ) > 0
+                        ) {
+                            write_payload_probe_stage_best_effort(
+                                payload_probe_stage_path,
+                                payload_probe_stage_prefix,
+                                stage_value
+                            );
+                        }
+                    }
                 }
             }
 
@@ -4583,15 +4625,40 @@ static int run_ramdisk_firmware_helper_loop(void) {
             );
         }
 
-        if (all_serviced || timed_out) {
-            log_stage(
-                all_serviced ? "<6>" : "<4>",
-                "orange-gpu-firmware-helper-complete",
-                "serviced_count=%u timed_out=%s",
-                serviced_count,
-                bool_word(timed_out)
+        if (
+            serviced_count ==
+            sizeof(kSunfishGpuFirmwareEntries) / sizeof(kSunfishGpuFirmwareEntries[0])
+        ) {
+            write_payload_probe_stage_best_effort(
+                payload_probe_stage_path,
+                payload_probe_stage_prefix,
+                "firmware-helper-all-serviced"
             );
-            return all_serviced ? 0 : 1;
+            log_stage(
+                "<6>",
+                "orange-gpu-firmware-helper-complete",
+                "serviced_count=%u timed_out=false",
+                serviced_count
+            );
+            return 0;
+        }
+
+        if (timed_out) {
+            write_payload_probe_stage_best_effort(
+                payload_probe_stage_path,
+                payload_probe_stage_prefix,
+                saw_supported_request
+                    ? "firmware-helper-partial-timeout"
+                    : "firmware-helper-no-request-timeout"
+            );
+            log_stage(
+                "<4>",
+                "orange-gpu-firmware-helper-complete",
+                "serviced_count=%u timed_out=true saw_supported_request=%s",
+                serviced_count,
+                bool_word(saw_supported_request)
+            );
+            return 1;
         }
 
         sleep_milliseconds(SHADOW_HELLO_INIT_FIRMWARE_HELPER_POLL_MILLIS);
@@ -4666,7 +4733,10 @@ static int run_c_kgsl_open_readonly_smoke_internal(
             return 1;
         }
         if (firmware_helper_pid == 0) {
-            _exit(run_ramdisk_firmware_helper_loop());
+            _exit(run_ramdisk_firmware_helper_loop(
+                payload_probe_stage_path,
+                payload_probe_stage_prefix
+            ));
         }
         log_stage(
             "<6>",
