@@ -1821,6 +1821,7 @@ static bool setup_kgsl_trace_best_effort(void) {
 }
 
 static bool read_text_file_best_effort(const char *path, char *dest, size_t dest_size);
+static void sleep_seconds(unsigned int seconds);
 
 static const char *highest_kgsl_trace_stage_from_text(const char *trace_text) {
     if (trace_text == NULL || trace_text[0] == '\0') {
