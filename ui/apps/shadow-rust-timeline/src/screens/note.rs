@@ -21,7 +21,8 @@ pub(crate) fn note_screen(
     thread: NostrThreadContext,
     reply_draft: Option<ReplyDraft>,
     status: TimelineStatus,
-    publish_pending: bool,
+    publish_blocked: bool,
+    reply_publish_pending: bool,
     thread_sync_available: bool,
     thread_sync_pending: bool,
 ) -> impl WidgetView<TimelineApp> {
@@ -35,7 +36,7 @@ pub(crate) fn note_screen(
             let replies = thread.replies.clone();
             let composer = reply_draft
                 .as_ref()
-                .map(|draft| reply_sheet(ui, &note, draft.clone(), publish_pending));
+                .map(|draft| reply_sheet(ui, &note, draft.clone(), publish_blocked, reply_publish_pending));
             with_sheet(
                 column((
                     top_bar_with_back(
@@ -133,11 +134,13 @@ pub(crate) fn note_screen(
                             secondary_button_state(
                                 if reply_draft.is_some() {
                                     "Reply draft open"
+                                } else if publish_blocked {
+                                    "Busy..."
                                 } else {
                                     "Reply"
                                 },
                                 theme,
-                                if reply_draft.is_some() {
+                                if reply_draft.is_some() || publish_blocked {
                                     ActionButtonState::Disabled
                                 } else {
                                     ActionButtonState::Enabled
@@ -190,7 +193,8 @@ fn reply_sheet(
     ui: UiContext,
     note: &NostrEvent,
     draft: ReplyDraft,
-    publish_pending: bool,
+    publish_blocked: bool,
+    reply_publish_pending: bool,
 ) -> impl WidgetView<TimelineApp> {
     let theme = ui.theme();
     let note_id = draft.note_id.clone();
@@ -200,7 +204,7 @@ fn reply_sheet(
     } else {
         note_preview.to_owned()
     };
-    let can_publish = !publish_pending && !draft.content.trim().is_empty();
+    let can_publish = !publish_blocked && !draft.content.trim().is_empty();
 
     column((
         eyebrow_text("Reply draft", theme),
@@ -228,7 +232,7 @@ fn reply_sheet(
                 app.close_reply_composer();
             }),
             primary_button_state(
-                if publish_pending {
+                if reply_publish_pending {
                     "Posting..."
                 } else {
                     "Post reply"

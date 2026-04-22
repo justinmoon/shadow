@@ -71,7 +71,7 @@ internal foundation and keep the public boundary Shadow-owned.
   - theme/env context
   - task/effect surface
   - platform event helper
-- [ ] Extend compose beyond reply-only into real top-level note creation.
+- [x] Extend compose beyond reply-only into real top-level note creation.
 - [ ] Tighten profile and thread UX into a serious client, not just a seam
       demonstration.
 - [ ] Decide whether optional starter packs are worth adding later as explicit
@@ -134,6 +134,8 @@ internal foundation and keep the public boundary Shadow-owned.
     `open_account`, `open_explore`, `open_timeline`, `open_first_visible_note`,
     `open_note_profile`, and reply compose/publish all flow through app-owned
     automation actions
+  - the app is no longer reply-only for writes; Home now has a real top-level
+    compose sheet that publishes through the shared signer path
 - That still is not the end state. The timeline app still owns:
   - some `Pending*` structs for UI-specific pending-state concerns
   - route prep that still owns cache invalidation and route-local hydration
@@ -147,7 +149,6 @@ internal foundation and keep the public boundary Shadow-owned.
 - If first-run richness becomes important later, prefer explicit starter packs
   or explicit follow imports over any hidden fallback/feed seeding.
 - The next Nostr product seams, after framework cleanup, are:
-  - top-level compose
   - better thread UX
   - better profile UX
   - optional curated follow import if the empty-account experience still needs
@@ -158,3 +159,5 @@ internal foundation and keep the public boundary Shadow-owned.
 - The VM smoke now covers more real route behavior in the Rust app before the
   signer/publish path, so refactors to Account/Explore/Profile route wiring are
   less likely to drift silently.
+- The VM smoke now also covers a real top-level note publish with `allow_once`
+  before the existing reply publish + cached-policy path.

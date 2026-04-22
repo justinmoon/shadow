@@ -4,11 +4,11 @@ use super::{
         NostrSyncRequest,
     },
     load_cached_home_notes, load_contact_references_for_account, load_explore_notes,
-    load_home_feed_scope_for_account, NostrContactListUpdateAction,
-    NostrContactListUpdateOutcome, NostrContactListUpdateRequest, NostrExploreSyncOutcome,
-    NostrExploreSyncRequest, NostrHomeRefreshOutcome, NostrHomeRefreshRequest,
-    NostrReplyPublishOutcome, NostrReplyPublishRequest, NostrThreadSyncOutcome,
-    NostrThreadSyncRequest,
+    load_home_feed_scope_for_account, NostrContactListUpdateAction, NostrContactListUpdateOutcome,
+    NostrContactListUpdateRequest, NostrExploreSyncOutcome, NostrExploreSyncRequest,
+    NostrHomeRefreshOutcome, NostrHomeRefreshRequest, NostrReplyPublishOutcome,
+    NostrReplyPublishRequest, NostrTextNotePublishOutcome, NostrTextNotePublishRequest,
+    NostrThreadSyncOutcome, NostrThreadSyncRequest,
 };
 
 pub fn refresh_home_feed(
@@ -132,9 +132,7 @@ pub fn sync_explore_feed(
     })
 }
 
-pub fn sync_thread(
-    request: NostrThreadSyncRequest,
-) -> Result<NostrThreadSyncOutcome, NostrError> {
+pub fn sync_thread(request: NostrThreadSyncRequest) -> Result<NostrThreadSyncOutcome, NostrError> {
     let mut fetched_count = 0_usize;
     let mut imported_count = 0_usize;
     let relay_urls = (!request.relay_urls.is_empty()).then_some(request.relay_urls.clone());
@@ -200,7 +198,9 @@ pub fn update_contact_list(
         timeout_ms: Some(8_000),
     })
     .map_err(|error| {
-        NostrHostError::from(format!("Could not refresh the latest contact list: {error}"))
+        NostrHostError::from(format!(
+            "Could not refresh the latest contact list: {error}"
+        ))
     })
     .map_err(NostrError::from)?;
 
@@ -244,4 +244,18 @@ pub fn publish_reply(
     })?;
 
     Ok(NostrReplyPublishOutcome { receipt })
+}
+
+pub fn publish_text_note(
+    request: NostrTextNotePublishRequest,
+) -> Result<NostrTextNotePublishOutcome, NostrError> {
+    let receipt = publish(NostrPublishRequest::TextNote {
+        content: request.content,
+        root_event_id: None,
+        reply_to_event_id: None,
+        relay_urls: (!request.relay_urls.is_empty()).then_some(request.relay_urls),
+        timeout_ms: Some(12_000),
+    })?;
+
+    Ok(NostrTextNotePublishOutcome { receipt })
 }

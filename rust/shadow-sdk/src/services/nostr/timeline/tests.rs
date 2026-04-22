@@ -18,8 +18,10 @@ fn with_temp_db<T>(f: impl FnOnce() -> T) -> T {
         .duration_since(UNIX_EPOCH)
         .expect("system time")
         .as_nanos();
-    let db_path = std::env::temp_dir().join(format!("shadow-sdk-nostr-timeline-{timestamp}.sqlite"));
-    let account_path = db_path.with_file_name(format!("shadow-sdk-nostr-timeline-{timestamp}.json"));
+    let db_path =
+        std::env::temp_dir().join(format!("shadow-sdk-nostr-timeline-{timestamp}.sqlite"));
+    let account_path =
+        db_path.with_file_name(format!("shadow-sdk-nostr-timeline-{timestamp}.json"));
     std::env::set_var(NOSTR_DB_PATH_ENV, &db_path);
     std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
     std::env::set_var(NOSTR_ACCOUNT_PATH_ENV, &account_path);
@@ -119,7 +121,10 @@ fn home_cache_state_reads_followed_notes() {
 
         let cache = load_home_cache_state_for_account("npub-owner", 20).expect("load home cache");
 
-        assert_eq!(cache.feed_scope.source, NostrHomeFeedSource::Following { count: 1 });
+        assert_eq!(
+            cache.feed_scope.source,
+            NostrHomeFeedSource::Following { count: 1 }
+        );
         assert_eq!(cache.notes.len(), 1);
         assert_eq!(cache.notes[0].id, "note-a");
     });

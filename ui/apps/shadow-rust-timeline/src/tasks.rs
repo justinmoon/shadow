@@ -4,12 +4,13 @@ mod start;
 use shadow_sdk::{
     services::clipboard::write_text as write_clipboard_text,
     services::nostr::{
-        generate_account, import_account_nsec, timeline::{
-            publish_reply, refresh_home_feed, sync_explore_feed, sync_thread, update_contact_list,
-            NostrContactListUpdateAction, NostrContactListUpdateOutcome,
+        generate_account, import_account_nsec, NostrPublishReceipt,
+        timeline::{
+            publish_reply, publish_text_note, refresh_home_feed, sync_explore_feed, sync_thread,
+            update_contact_list, NostrContactListUpdateAction, NostrContactListUpdateOutcome,
             NostrContactListUpdateRequest, NostrExploreSyncOutcome, NostrExploreSyncRequest,
-            NostrHomeRefreshOutcome, NostrHomeRefreshRequest, NostrReplyPublishOutcome,
-            NostrReplyPublishRequest, NostrThreadSyncOutcome, NostrThreadSyncRequest,
+            NostrHomeRefreshOutcome, NostrHomeRefreshRequest, NostrReplyPublishRequest,
+            NostrTextNotePublishRequest, NostrThreadSyncOutcome, NostrThreadSyncRequest,
         },
     },
     ui::{with_task, TaskHandle, TaskSlot, WidgetView},
@@ -33,7 +34,11 @@ pub(crate) type RefreshOutcome = NostrHomeRefreshOutcome;
 pub(crate) type ExploreSyncOutcome = NostrExploreSyncOutcome;
 pub(crate) type ThreadSyncOutcome = NostrThreadSyncOutcome;
 pub(crate) type FollowUpdateOutcome = NostrContactListUpdateOutcome;
-pub(crate) type PublishOutcome = NostrReplyPublishOutcome;
+
+#[derive(Debug)]
+pub(crate) struct PublishOutcome {
+    pub(crate) receipt: NostrPublishReceipt,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) enum AccountActionKind {
@@ -53,8 +58,20 @@ pub(crate) struct PendingClipboardWrite {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PendingPublish {
-    pub(crate) note_id: String,
-    pub(crate) request: NostrReplyPublishRequest,
+    pub(crate) target: PendingPublishTarget,
+    pub(crate) request: PendingPublishRequest,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum PendingPublishTarget {
+    Note,
+    Reply { note_id: String },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum PendingPublishRequest {
+    Note(NostrTextNotePublishRequest),
+    Reply(NostrReplyPublishRequest),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -92,8 +109,21 @@ impl TimelineTasks {
         }
     }
 
-    pub(crate) fn publish_pending(&self) -> bool {
-        self.publish.is_pending()
+    pub(crate) fn publish_note_pending(&self) -> bool {
+        self.publish
+            .pending()
+            .is_some_and(|pending| matches!(pending.job().target, PendingPublishTarget::Note))
+    }
+
+    pub(crate) fn publish_reply_pending_for(&self, note_id: &str) -> bool {
+        self.publish.pending().is_some_and(|pending| {
+            matches!(
+                pending.job().target,
+                PendingPublishTarget::Reply {
+                    note_id: ref pending_note_id
+                } if pending_note_id == note_id
+            )
+        })
     }
 
     pub(crate) fn follow_update_pending_for(&self, pubkey: &str) -> bool {
@@ -124,10 +154,26 @@ impl TimelineTaskSnapshot {
         self.follow_update.is_some()
     }
 
-    pub(crate) fn publish_pending_for(&self, note_id: &str) -> bool {
+    pub(crate) fn publish_pending(&self) -> bool {
+        self.publish.is_some()
+    }
+
+    pub(crate) fn publish_reply_pending_for(&self, note_id: &str) -> bool {
+        self.publish.as_ref().is_some_and(|job| {
+            matches!(
+                job.job().target,
+                PendingPublishTarget::Reply {
+                    note_id: ref pending_note_id
+                }
+                    if pending_note_id == note_id
+            )
+        })
+    }
+
+    pub(crate) fn publish_note_pending(&self) -> bool {
         self.publish
             .as_ref()
-            .is_some_and(|job| job.job().note_id == note_id)
+            .is_some_and(|job| matches!(job.job().target, PendingPublishTarget::Note))
     }
 
     pub(crate) fn thread_sync_pending_for(&self, note_id: &str) -> bool {
@@ -184,7 +230,7 @@ pub(crate) fn decorate_with_tasks(
     let content = with_task(
         content,
         tasks.publish,
-        run_reply_publish,
+        run_publish,
         |app: &mut TimelineApp, task: TaskHandle<PendingPublish>, result| {
             app.finish_publish(task, result);
         },
@@ -215,6 +261,14 @@ fn run_clipboard_write(job: PendingClipboardWrite) -> Result<(), String> {
     write_clipboard_text(job.text).map_err(|error| error.to_string())
 }
 
-fn run_reply_publish(job: PendingPublish) -> Result<PublishOutcome, String> {
-    publish_reply(job.request).map_err(|error| error.to_string())
+fn run_publish(job: PendingPublish) -> Result<PublishOutcome, String> {
+    let receipt = match job.request {
+        PendingPublishRequest::Note(request) => {
+            publish_text_note(request).map(|outcome| outcome.receipt)
+        }
+        PendingPublishRequest::Reply(request) => publish_reply(request).map(|outcome| outcome.receipt),
+    }
+    .map_err(|error| error.to_string())?;
+
+    Ok(PublishOutcome { receipt })
 }

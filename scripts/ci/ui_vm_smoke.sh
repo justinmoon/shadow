@@ -1104,6 +1104,56 @@ wait_for_log_marker \
   "rust-timeline timeline route open" \
   "shadow-rust-timeline: automation_open_timeline_failed"
 
+echo "vm-smoke: rust-timeline top-level publish with allow_once"
+run_app_platform_request_checked rust-timeline automation open_note_compose >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_open_note_compose_success" \
+  "rust-timeline note compose open" \
+  "shadow-rust-timeline: automation_open_note_compose_failed"
+run_app_platform_request_checked \
+  rust-timeline \
+  automation set_note_content "vm smoke top level note" >/dev/null
+run_app_platform_request_checked rust-timeline automation publish_note >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_publish_note_success" \
+  "rust-timeline top-level publish request queued" \
+  "shadow-rust-timeline: automation_publish_note_failed"
+rust_timeline_note_prompt_open_state="$(wait_for_prompt_state 1 "rust-timeline note signer prompt open")"
+PROMPT_OPEN_STATE="$rust_timeline_note_prompt_open_state" python3 - <<'PY'
+import json
+import os
+
+state = json.loads(os.environ["PROMPT_OPEN_STATE"])
+if state.get("prompt_source_app_id") != "rust-timeline":
+    raise SystemExit(
+        "vm-smoke: expected rust-timeline note signer prompt source app id, "
+        f"got {state.get('prompt_source_app_id')!r}"
+    )
+PY
+run_shadowctl prompt -t vm allow_once >/dev/null
+wait_for_prompt_state 0 "rust-timeline note signer prompt close" >/dev/null
+wait_for_timeline_publish_result \
+  "vm smoke top level note" \
+  "rust-timeline top-level publish completion after allow_once"
+wait_for_relay_note \
+  "ws://127.0.0.1:${relay_host_port}" \
+  "vm smoke top level note" \
+  "rust-timeline top-level note after allow_once"
+
+echo "vm-smoke: prove rust-timeline top-level publish opened the new note"
+run_app_platform_request_checked rust-timeline automation open_note_profile >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_open_note_profile_success" \
+  "rust-timeline published note route open" \
+  "shadow-rust-timeline: automation_open_note_profile_failed"
+
+echo "vm-smoke: return rust-timeline to timeline after top-level publish"
+run_app_platform_request_checked rust-timeline automation open_timeline >/dev/null
+wait_for_log_marker \
+  "shadow-rust-timeline: automation_open_timeline_success" \
+  "rust-timeline timeline route reset after top-level publish" \
+  "shadow-rust-timeline: automation_open_timeline_failed"
+
 echo "vm-smoke: open rust-timeline seeded note"
 run_app_platform_request_checked rust-timeline automation open_first_visible_note >/dev/null
 wait_for_log_marker \

@@ -8,7 +8,8 @@ pub use cache::{
     thread_parent_ids,
 };
 pub use commands::{
-    publish_reply, refresh_home_feed, sync_explore_feed, sync_thread, update_contact_list,
+    publish_reply, publish_text_note, refresh_home_feed, sync_explore_feed, sync_thread,
+    update_contact_list,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,6 +162,17 @@ pub struct NostrReplyPublishRequest {
 
 #[derive(Debug)]
 pub struct NostrReplyPublishOutcome {
+    pub receipt: super::NostrPublishReceipt,
+}
+
+#[derive(Debug, Clone)]
+pub struct NostrTextNotePublishRequest {
+    pub content: String,
+    pub relay_urls: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct NostrTextNotePublishOutcome {
     pub receipt: super::NostrPublishReceipt,
 }
 

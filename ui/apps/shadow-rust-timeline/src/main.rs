@@ -137,12 +137,16 @@ enum PlatformMessage {
     Lifecycle(LifecycleState),
     OpenAccount,
     OpenExplore,
+    OpenNoteCompose,
     OpenTimeline,
     OpenFirstVisibleNote,
     OpenNoteProfile,
     OpenReply,
+    PublishNote,
     PublishReply,
+    SetNoteContent(String),
     SetReplyContent(String),
+    PublishNoteContent(String),
     PublishReplyContent(String),
 }
 
@@ -204,6 +208,7 @@ struct TimelineApp {
     metrics: AppWindowMetrics,
     nsec_input: String,
     notes: Vec<NostrEvent>,
+    note_draft: Option<String>,
     explore_cache: Option<NostrExploreCacheState>,
     note_caches: BTreeMap<String, NostrNoteCacheState>,
     profile_caches: BTreeMap<String, NostrProfileCacheState>,
@@ -300,6 +305,7 @@ impl TimelineApp {
             metrics,
             nsec_input: String::new(),
             notes,
+            note_draft: None,
             note_caches: BTreeMap::new(),
             profile_caches: BTreeMap::new(),
             reply_draft: None,
@@ -329,6 +335,31 @@ impl TimelineApp {
             tone: Tone::Neutral,
             message: String::from("Compose the reply, then publish through the shared account."),
         };
+    }
+
+    fn open_note_composer(&mut self) {
+        if !matches!(self.current_route(), Route::Timeline) {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("Top-level compose is available from Home."),
+            };
+            return;
+        }
+        self.note_draft.get_or_insert_with(String::new);
+        self.status = TimelineStatus {
+            tone: Tone::Neutral,
+            message: String::from("Compose a note, then publish through the shared account."),
+        };
+    }
+
+    fn close_note_composer(&mut self) {
+        self.note_draft = None;
+    }
+
+    fn set_note_draft_content(&mut self, value: String) {
+        if let Some(draft) = self.note_draft.as_mut() {
+            *draft = value;
+        }
     }
 
     fn close_reply_composer(&mut self) {
@@ -393,6 +424,7 @@ impl TimelineApp {
 
     fn sync_routes(&mut self) {
         if self.account.is_none() {
+            self.note_draft = None;
             self.route_stack = vec![Route::Onboarding];
             return;
         }
@@ -474,10 +506,21 @@ impl TimelineApp {
         }
     }
 
+    fn platform_open_note_compose(&mut self) {
+        self.open_note_composer();
+        if self.note_draft.is_some() {
+            eprintln!("{APP_LOG_PREFIX}: automation_open_note_compose_success");
+        } else {
+            eprintln!("{APP_LOG_PREFIX}: automation_open_note_compose_failed");
+        }
+    }
+
     fn platform_open_timeline(&mut self) {
+        self.note_draft = None;
         self.reply_draft = None;
         if self.account.is_some() {
             self.route_stack = vec![Route::Timeline];
+            self.prepare_route(&Route::Timeline);
             eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_success");
         } else {
             eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_failed");
@@ -543,6 +586,20 @@ impl TimelineApp {
         self.push_route(Route::Profile { pubkey });
     }
 
+    fn platform_set_note_content(&mut self, value: String) {
+        if !matches!(self.current_route(), Route::Timeline) {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("Return to Home before editing the top-level note draft."),
+            };
+            return;
+        }
+        if self.note_draft.is_none() {
+            self.platform_open_note_compose();
+        }
+        self.set_note_draft_content(value);
+    }
+
     fn platform_set_reply_content(&mut self, value: String) {
         if self.reply_draft.is_none() {
             self.platform_open_reply();
@@ -550,13 +607,66 @@ impl TimelineApp {
         self.set_reply_draft_content(value);
     }
 
+    fn platform_publish_note_content(&mut self, value: String) {
+        if !matches!(self.current_route(), Route::Timeline) {
+            eprintln!("{APP_LOG_PREFIX}: automation_publish_note_failed");
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("Return to Home before publishing a top-level note."),
+            };
+            return;
+        }
+        if self.note_draft.is_none() {
+            self.platform_open_note_compose();
+        }
+        self.set_note_draft_content(value);
+        self.begin_note_publish();
+        if self.tasks.publish_note_pending() {
+            eprintln!("{APP_LOG_PREFIX}: automation_publish_note_success");
+        } else {
+            eprintln!("{APP_LOG_PREFIX}: automation_publish_note_failed");
+        }
+    }
+
+    fn platform_publish_note(&mut self) {
+        self.begin_note_publish();
+        if self.tasks.publish_note_pending() {
+            eprintln!("{APP_LOG_PREFIX}: automation_publish_note_success");
+        } else {
+            eprintln!("{APP_LOG_PREFIX}: automation_publish_note_failed");
+        }
+    }
+
     fn platform_publish_reply_content(&mut self, value: String) {
+        let note_id = match self.current_route() {
+            Route::Note { ref id } => Some(id.clone()),
+            _ => None,
+        };
         if self.reply_draft.is_none() {
             self.platform_open_reply();
         }
         self.set_reply_draft_content(value);
         self.begin_reply_publish();
-        if self.tasks.publish_pending() {
+        if note_id
+            .as_ref()
+            .is_some_and(|note_id| self.tasks.publish_reply_pending_for(note_id))
+        {
+            eprintln!("{APP_LOG_PREFIX}: automation_publish_reply_success");
+        } else {
+            eprintln!("{APP_LOG_PREFIX}: automation_publish_reply_failed");
+        }
+    }
+
+    fn platform_publish_reply(&mut self) {
+        let note_id = match self.current_route() {
+            Route::Note { ref id } => Some(id.clone()),
+            _ => None,
+        };
+        self.begin_reply_publish();
+        if note_id
+            .as_ref()
+            .is_some_and(|note_id| self.tasks.publish_reply_pending_for(note_id))
+        {
             eprintln!("{APP_LOG_PREFIX}: automation_publish_reply_success");
         } else {
             eprintln!("{APP_LOG_PREFIX}: automation_publish_reply_failed");
@@ -647,6 +757,10 @@ impl TimelineApp {
             .cloned()
     }
 
+    fn note_draft(&self) -> Option<String> {
+        self.note_draft.clone()
+    }
+
     fn reload_feed_from_cache(&mut self) -> Result<(), String> {
         let Some(account) = self.account.as_ref() else {
             self.feed_scope = FeedScope::unavailable();
@@ -724,6 +838,10 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
             app.status.clone(),
             app.visible_notes(),
             app.filter_text.clone(),
+            app.note_draft(),
+            task_snapshot.publish_pending(),
+            task_snapshot.publish_note_pending(),
+            socket_available(),
         )
         .boxed(),
         Route::Note { id } => {
@@ -735,7 +853,8 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
                 note_state.thread,
                 app.reply_draft_for(&id),
                 app.status.clone(),
-                task_snapshot.publish_pending_for(&id),
+                task_snapshot.publish_pending(),
+                task_snapshot.publish_reply_pending_for(&id),
                 socket_available(),
                 task_snapshot.thread_sync_pending_for(&id),
             )
@@ -773,12 +892,18 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
                 PlatformMessage::Lifecycle(state) => log_lifecycle_state(state.as_str()),
                 PlatformMessage::OpenAccount => app.platform_open_account(),
                 PlatformMessage::OpenExplore => app.platform_open_explore(),
+                PlatformMessage::OpenNoteCompose => app.platform_open_note_compose(),
                 PlatformMessage::OpenTimeline => app.platform_open_timeline(),
                 PlatformMessage::OpenFirstVisibleNote => app.platform_open_first_visible_note(),
                 PlatformMessage::OpenNoteProfile => app.platform_open_note_profile(),
+                PlatformMessage::PublishNote => app.platform_publish_note(),
                 PlatformMessage::OpenReply => app.platform_open_reply(),
-                PlatformMessage::PublishReply => app.begin_reply_publish(),
+                PlatformMessage::PublishReply => app.platform_publish_reply(),
+                PlatformMessage::SetNoteContent(value) => app.platform_set_note_content(value),
                 PlatformMessage::SetReplyContent(value) => app.platform_set_reply_content(value),
+                PlatformMessage::PublishNoteContent(value) => {
+                    app.platform_publish_note_content(value)
+                }
                 PlatformMessage::PublishReplyContent(value) => {
                     app.platform_publish_reply_content(value)
                 }
@@ -829,14 +954,20 @@ fn run_platform_listener(proxy: MessageProxy<PlatformMessage>) {
             let message = match (action.as_str(), argument) {
                 ("open_account", None) => Some(PlatformMessage::OpenAccount),
                 ("open_explore", None) => Some(PlatformMessage::OpenExplore),
+                ("open_note_compose", None) => Some(PlatformMessage::OpenNoteCompose),
                 ("open_timeline", None) => Some(PlatformMessage::OpenTimeline),
                 ("open_first_visible_note", None) => Some(PlatformMessage::OpenFirstVisibleNote),
                 ("open_note_profile", None) => Some(PlatformMessage::OpenNoteProfile),
+                ("publish_note", None) => Some(PlatformMessage::PublishNote),
                 ("open_reply", None) => Some(PlatformMessage::OpenReply),
                 ("publish_reply", None) => Some(PlatformMessage::PublishReply),
+                ("publish_note_content", Some(value)) => {
+                    Some(PlatformMessage::PublishNoteContent(value))
+                }
                 ("publish_reply_content", Some(value)) => {
                     Some(PlatformMessage::PublishReplyContent(value))
                 }
+                ("set_note_content", Some(value)) => Some(PlatformMessage::SetNoteContent(value)),
                 ("set_reply_content", Some(value)) => Some(PlatformMessage::SetReplyContent(value)),
                 _ => None,
             };
@@ -966,6 +1097,7 @@ mod tests {
             },
             nsec_input: String::new(),
             notes: Vec::new(),
+            note_draft: None,
             explore_cache: None,
             note_caches: BTreeMap::new(),
             profile_caches: BTreeMap::new(),
@@ -1101,6 +1233,54 @@ mod tests {
 
         app.platform_open_timeline();
         assert_eq!(app.current_route(), Route::Timeline);
+    }
+
+    #[test]
+    fn note_compose_draft_persists_across_route_changes_until_closed() {
+        let mut app = test_app();
+
+        app.open_note_composer();
+        app.set_note_draft_content(String::from("hello world"));
+        assert_eq!(app.note_draft.as_deref(), Some("hello world"));
+
+        app.open_account();
+        assert_eq!(app.note_draft.as_deref(), Some("hello world"));
+
+        app.pop_route();
+        assert_eq!(app.current_route(), Route::Timeline);
+        assert_eq!(app.note_draft.as_deref(), Some("hello world"));
+
+        app.close_note_composer();
+        assert!(app.note_draft.is_none());
+    }
+
+    #[test]
+    fn note_publish_requires_timeline_route() {
+        let mut app = test_app();
+        app.open_note_composer();
+        app.set_note_draft_content(String::from("hello world"));
+        app.open_account();
+
+        app.begin_note_publish();
+
+        assert!(!app.tasks.publish_note_pending());
+        assert_eq!(
+            app.status.message,
+            "Return to Home before publishing the top-level note draft."
+        );
+    }
+
+    #[test]
+    fn automation_open_timeline_clears_note_compose_draft() {
+        let mut app = test_app();
+        app.open_note_composer();
+        app.set_note_draft_content(String::from("hello world"));
+        app.open_account();
+
+        app.platform_open_timeline();
+
+        assert_eq!(app.current_route(), Route::Timeline);
+        assert!(app.note_draft.is_none());
     }
 
     #[test]

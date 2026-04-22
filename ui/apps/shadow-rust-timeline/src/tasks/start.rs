@@ -1,9 +1,11 @@
-use shadow_sdk::services::nostr::timeline::{thread_parent_ids, NostrReplyPublishRequest};
+use shadow_sdk::services::nostr::timeline::{
+    thread_parent_ids, NostrReplyPublishRequest, NostrTextNotePublishRequest,
+};
 
 use super::{
     AccountActionKind, FollowActionKind, PendingAccountAction, PendingClipboardWrite,
-    PendingExploreSync, PendingFollowUpdate, PendingPublish, PendingRefresh, PendingThreadSync,
-    RefreshSource,
+    PendingExploreSync, PendingFollowUpdate, PendingPublish, PendingPublishRequest,
+    PendingPublishTarget, PendingRefresh, PendingThreadSync, RefreshSource,
 };
 use crate::{socket_available, TimelineApp, TimelineStatus, Tone};
 
@@ -241,17 +243,63 @@ impl TimelineApp {
             return;
         };
         self.tasks.publish.start(PendingPublish {
-            note_id: note.id.clone(),
-            request: NostrReplyPublishRequest {
+            target: PendingPublishTarget::Reply {
+                note_id: note.id.clone(),
+            },
+            request: PendingPublishRequest::Reply(NostrReplyPublishRequest {
                 content: content.to_owned(),
                 relay_urls: self.config.relay_urls.clone(),
                 reply_to_event_id: note.id.clone(),
                 root_event_id: note.root_event_id.clone().or_else(|| Some(note.id)),
-            },
+            }),
         });
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Publishing reply through the shared Nostr account..."),
+        };
+    }
+
+    pub(crate) fn begin_note_publish(&mut self) {
+        if self.tasks.publish.is_pending() {
+            return;
+        }
+        if !matches!(self.current_route(), crate::Route::Timeline) {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("Return to Home before publishing the top-level note draft."),
+            };
+            return;
+        }
+        if !socket_available() {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from(
+                    "Publishing notes needs the shared relay engine. Start a session with Nostr services enabled.",
+                ),
+            };
+            return;
+        }
+        let Some(content) = self.note_draft.clone() else {
+            return;
+        };
+        let content = content.trim();
+        if content.is_empty() {
+            self.status = TimelineStatus {
+                tone: Tone::Danger,
+                message: String::from("Write a note before trying to publish."),
+            };
+            return;
+        }
+        self.tasks.publish.start(PendingPublish {
+            target: PendingPublishTarget::Note,
+            request: PendingPublishRequest::Note(NostrTextNotePublishRequest {
+                content: content.to_owned(),
+                relay_urls: self.config.relay_urls.clone(),
+            }),
+        });
+        self.status = TimelineStatus {
+            tone: Tone::Accent,
+            message: String::from("Publishing note through the shared Nostr account..."),
         };
     }
 

@@ -3,8 +3,8 @@ use shadow_sdk::ui::TaskHandle;
 use super::{
     ExploreSyncOutcome, FollowActionKind, FollowUpdateOutcome, PendingAccountAction,
     PendingClipboardWrite, PendingExploreSync, PendingFollowUpdate, PendingPublish,
-    PendingRefresh, PendingThreadSync, PublishOutcome, RefreshOutcome, ThreadSyncOutcome,
-    RefreshSource,
+    PendingPublishRequest, PendingPublishTarget, PendingRefresh, PendingThreadSync,
+    PublishOutcome, RefreshOutcome, ThreadSyncOutcome, RefreshSource,
 };
 use crate::{
     empty_feed_status, log_preview_text, plural_suffix, short_id, FeedScope, FeedSource,
@@ -284,7 +284,10 @@ impl TimelineApp {
         let Some(pending) = self.tasks.publish.finish(task.id()) else {
             return;
         };
-        let publish_preview = log_preview_text(&pending.request.content);
+        let publish_preview = match &pending.request {
+            PendingPublishRequest::Note(request) => log_preview_text(&request.content),
+            PendingPublishRequest::Reply(request) => log_preview_text(&request.content),
+        };
 
         match result {
             Ok(outcome) => {
@@ -295,8 +298,20 @@ impl TimelineApp {
                     };
                     return;
                 }
-                self.sync_routes();
-                self.reply_draft = None;
+                let (publish_label, status_suffix) = match pending.target {
+                    PendingPublishTarget::Note => {
+                        self.note_draft = None;
+                        self.route_stack = vec![crate::Route::Timeline];
+                        self.open_note(outcome.receipt.event.id.clone());
+                        self.sync_routes();
+                        ("note", " Opened the published note.")
+                    }
+                    PendingPublishTarget::Reply { .. } => {
+                        self.reply_draft = None;
+                        self.sync_routes();
+                        ("reply", "")
+                    }
+                };
                 let relay_count = outcome.receipt.published_relays.len();
                 let suffix = if outcome.receipt.failed_relays.is_empty() {
                     String::new()
@@ -314,7 +329,7 @@ impl TimelineApp {
                 self.status = TimelineStatus {
                     tone: Tone::Success,
                     message: format!(
-                        "Published reply to {relay_count} relay{}{suffix}.",
+                        "Published {publish_label} to {relay_count} relay{}{suffix}.{status_suffix}",
                         plural_suffix(relay_count),
                     ),
                 };
