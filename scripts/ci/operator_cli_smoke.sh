@@ -520,6 +520,22 @@ check_output_case \
     --recover-traces-after
 
 check_output_case \
+  shadowctl_pixel_debug_boot_lab_rust_bridge_run \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --input /tmp/base.img --output-dir /tmp/rust-bridge-out --image-output /tmp/rust-bridge.img --shim-mode exec --child-profile std-probe --adb-timeout 45 --boot-timeout 60 --skip-collect --recover-traces-after' "$SCRIPT_DIR/pixel/pixel_boot_rust_bridge_run.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" debug --dry-run -t TESTSERIAL boot-lab-rust-bridge-run \
+    --input /tmp/base.img \
+    --output /tmp/rust-bridge-out \
+    --image-output /tmp/rust-bridge.img \
+    --shim-mode exec \
+    --child-profile std-probe \
+    --adb-timeout 45 \
+    --boot-timeout 60 \
+    --skip-collect \
+    --recover-traces-after
+
+check_output_case \
   shadowctl_pixel_debug_boot_lab_preflight \
   0 \
   "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --input /tmp/stock.img --output-dir /tmp/preflight-out --adb-timeout 45 --boot-timeout 60 --recover-traces-after --patch-target init.recovery.rc --trigger post-fs-data --trigger property:init.svc.gpu=running' "$SCRIPT_DIR/pixel/pixel_boot_preflight.sh")" \

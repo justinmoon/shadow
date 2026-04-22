@@ -144,6 +144,7 @@ Use the panel as a stage channel, not just “something orange happened.”
 4. Run the `std`-PID1 discriminator once a phone is back.
    - build a stripped hello base image
    - repack it with `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe`
+   - or use `sc -t <serial> debug boot-lab-rust-bridge-run --input <base.img> --shim-mode exec --child-profile std-probe ...`
    - stage the tiny `std` probe as `/hello-init-child`
    - classify whether direct `execv()` into the `std` probe still panics
 5. Keep later work blocked until the Rust seam is green.
@@ -178,6 +179,22 @@ Recover traces from the last boot-owned run:
 
 ```sh
 PIXEL_SERIAL=09051JEC202061 scripts/pixel/pixel_boot_recover_traces.sh
+```
+
+Run the next Rust bridge discriminator as one boot-lab command:
+
+```sh
+scripts/shadowctl lease acquire 09051JEC202061 --lane stream-a --owner boot --agent Codex --note 'rust-bridge std-probe exec discriminator'
+SHADOW_DEVICE_LEASE_FORCE=1 scripts/shadowctl -t 09051JEC202061 debug boot-lab-rust-bridge-run \
+  --input build/pixel/boot/shadow-boot-orange-gpu-rust-bridge.img \
+  --shim-mode exec \
+  --child-profile std-probe \
+  --adb-timeout 120 \
+  --boot-timeout 180 \
+  --skip-collect \
+  --recover-traces-after \
+  --no-wait-boot-completed
+scripts/shadowctl lease release 09051JEC202061 --agent Codex
 ```
 
 Re-run the first-frame proof lane:

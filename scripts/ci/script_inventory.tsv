@@ -8,6 +8,7 @@ scripts/ci/pixel_boot_hello_init_smoke.sh	ci	Hermetic smoke for the owned-usersp
 scripts/ci/pixel_boot_demo_check.sh	ci	Dedicated host-side gate for private boot demo seams, including real demo cross-builds.
 scripts/ci/pixel_boot_orange_gpu_smoke.sh	ci	Hermetic smoke for the private orange-gpu boot seam that stages a boot-owned shadow-gpu-smoke bundle under /orange-gpu.
 scripts/ci/pixel_boot_orange_init_smoke.sh	ci	Hermetic smoke for the private orange-init boot seam that keeps hello-init as PID 1 and injects /orange-init into the ramdisk.
+scripts/ci/pixel_boot_rust_bridge_run_smoke.sh	ci	Hermetic smoke for the private rust-bridge build+oneshot runner that keeps build/run logs and a summary bundle together.
 scripts/ci/pixel_boot_rust_bridge_smoke.sh	ci	Hermetic smoke for the Rust bridge repack helper that swaps in the no_std PID1 shim plus a full Rust hello-init child and cloned metadata.
 scripts/ci/pixel_boot_tooling_smoke.sh	ci	Hermetic smoke for shared stock-boot resolution plus boot-lab oneshot and flash-run dry-run semantics.
 scripts/ci/pixel_kgsl_matrix_smoke.sh	ci	Dry-run smoke for the rooted KGSL falsification matrix runner and summary output contract.
@@ -75,6 +76,7 @@ scripts/pixel/pixel_boot_collect_logs.sh	pixel	Private host-side collector for e
 scripts/pixel/pixel_boot_recover_traces.sh	pixel	Private host-side collector for post-reboot Android boot trace recovery behind sc debug boot-lab-recover-traces.
 scripts/pixel/pixel_boot_flash.sh	pixel	Private sunfish custom boot image flash helper for the active slot.
 scripts/pixel/pixel_boot_flash_run.sh	pixel	Private flashed-slot boot-lab runner that composes flash, collect, and optional recovery.
+scripts/pixel/pixel_boot_rust_bridge_run.sh	pixel	Private rust-bridge boot-lab runner that composes the Rust bridge repack step with the standard one-shot delegate.
 scripts/pixel/pixel_boot_kgsl_probe.sh	pixel	Private stock-init KGSL probe runner that summarizes durable helper launch proof and readonly KGSL-open outcomes.
 scripts/pixel/pixel_boot_kgsl_trigger_ladder.sh	pixel	Private stock-init KGSL trigger ladder runner that drives the supervised KGSL probe across init triggers.
 scripts/pixel/pixel_boot_oneshot.sh	pixel	Private one-shot boot-lab delegate behind sc debug boot-lab-oneshot.

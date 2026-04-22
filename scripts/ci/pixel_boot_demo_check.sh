@@ -37,6 +37,7 @@ run_boot_demo_gate() {
   scripts/ci/pixel_boot_orange_init_smoke.sh
   scripts/ci/pixel_boot_orange_gpu_smoke.sh
   scripts/ci/pixel_boot_rust_bridge_smoke.sh
+  scripts/ci/pixel_boot_rust_bridge_run_smoke.sh
 
   # Keep the real cross-builds here so the hermetic smokes cannot hide a broken
   # flake/package seam, but keep them out of the repo-wide fast gate.

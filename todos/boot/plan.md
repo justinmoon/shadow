@@ -51,6 +51,7 @@ Related docs:
       - the likely bad seam is pre-`main` `std` runtime / TLS startup, not the `hello-init` logic
       - next hardware discriminator is `no_std` exact-path PID1 shim -> direct `execv()` into the tiny `std` probe, with no `fork()`
       - `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe` is now wired for that exact discriminator
+      - `sc -t <serial> debug boot-lab-rust-bridge-run --input <base.img> --shim-mode exec --child-profile std-probe ...` now wraps that same discriminator into one build+oneshot run bundle with shared logs and summary
       - the current bridge shims always exec `/hello-init-child`, so the helper now rejects alternate child-entry paths instead of pretending they work
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
   - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam

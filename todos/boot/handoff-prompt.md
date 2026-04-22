@@ -95,6 +95,7 @@ Do this in order:
    - the leading source-backed suspect is pre-`main` `std` runtime / TLS startup
    - next smallest hardware discriminator is `no_std` exact-path PID1 shim -> direct `execv()` into the tiny `std` probe, without `fork()`
    - the build path for that now exists: `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe`
+   - the structured run path also exists now: `sc -t <serial> debug boot-lab-rust-bridge-run --input <base.img> --shim-mode exec --child-profile std-probe ...`
    - do not use alternate child-entry paths here; the current shims always exec `/hello-init-child`
 
 ## Current Device Map

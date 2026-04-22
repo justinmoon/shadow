@@ -45,6 +45,7 @@ SUPPORTED_PIXEL_DEBUG_TOOLS = (
     "runtime-drm-gpu-matrix",
     "boot-lab-flash-run",
     "boot-lab-oneshot",
+    "boot-lab-rust-bridge-run",
     "boot-lab-preflight",
     "boot-lab-recover-traces",
     "boot-lab-rc-trigger-ladder",
@@ -658,6 +659,41 @@ def pixel_debug_command(
             command.extend(["--image", args.image])
         if args.output:
             command.extend(["--output", args.output])
+        if args.wait_ready is not None:
+            command.extend(["--wait-ready", str(args.wait_ready)])
+        if args.adb_timeout is not None:
+            command.extend(["--adb-timeout", str(args.adb_timeout)])
+        if args.boot_timeout is not None:
+            command.extend(["--boot-timeout", str(args.boot_timeout)])
+        if args.success_signal:
+            command.extend(["--success-signal", args.success_signal])
+        if args.return_timeout is not None:
+            command.extend(["--return-timeout", str(args.return_timeout)])
+        if args.skip_collect:
+            command.append("--skip-collect")
+        if args.recover_traces_after:
+            command.append("--recover-traces-after")
+        if args.no_wait_boot_completed:
+            command.append("--no-wait-boot-completed")
+        if args.proof_prop:
+            command.extend(["--proof-prop", args.proof_prop])
+        return command, [("PIXEL_SERIAL", target.serial or target.id)]
+    if tool == "boot-lab-rust-bridge-run":
+        command = [repo_root() / "scripts/pixel/pixel_boot_rust_bridge_run.sh"]
+        if args.input:
+            command.extend(["--input", args.input])
+        if args.output:
+            command.extend(["--output-dir", args.output])
+        if args.image_output:
+            command.extend(["--image-output", args.image_output])
+        if args.shim_mode:
+            command.extend(["--shim-mode", args.shim_mode])
+        if args.child_profile:
+            command.extend(["--child-profile", args.child_profile])
+        if args.child:
+            command.extend(["--child", args.child])
+        if args.key:
+            command.extend(["--key", args.key])
         if args.wait_ready is not None:
             command.extend(["--wait-ready", str(args.wait_ready)])
         if args.adb_timeout is not None:
@@ -2671,11 +2707,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     debug.add_argument(
         "--input",
-        help="boot-lab-preflight / boot-lab-rc-trigger-ladder only: stock boot image to patch for the experiment.",
+        help="boot-lab-preflight / boot-lab-rc-trigger-ladder / boot-lab-rust-bridge-run only: stock or proven boot image to patch/repack for the experiment.",
     )
     debug.add_argument(
         "--key",
-        help="boot-lab-preflight / boot-lab-rc-trigger-ladder only: AVB key path for rebuilt experimental images.",
+        help="boot-lab-preflight / boot-lab-rc-trigger-ladder / boot-lab-rust-bridge-run only: AVB key path for rebuilt experimental images.",
+    )
+    debug.add_argument(
+        "--image-output",
+        help="boot-lab-rust-bridge-run only: explicit output path for the rebuilt rust-bridge image.",
     )
     debug.add_argument(
         "--slot",
@@ -2684,32 +2724,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     debug.add_argument(
         "--output",
-        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-preflight / boot-lab-recover-traces only: host output dir for the run bundle.",
+        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-rust-bridge-run / boot-lab-preflight / boot-lab-recover-traces only: host output dir for the run bundle.",
     )
     debug.add_argument(
         "--wait-ready",
         type=int,
-        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-preflight only: collector wait time for device-side helper logs.",
+        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-rust-bridge-run / boot-lab-preflight only: collector wait time for device-side helper logs.",
     )
     debug.add_argument(
         "--adb-timeout",
         type=int,
-        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-preflight / boot-lab-recover-traces: seconds to wait for adb after boot.",
+        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-rust-bridge-run / boot-lab-preflight / boot-lab-recover-traces: seconds to wait for adb after boot.",
     )
     debug.add_argument(
         "--boot-timeout",
         type=int,
-        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-preflight / boot-lab-recover-traces: seconds to wait for sys.boot_completed before collecting.",
+        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-rust-bridge-run / boot-lab-preflight / boot-lab-recover-traces: seconds to wait for sys.boot_completed before collecting.",
     )
     debug.add_argument(
         "--success-signal",
         choices=("adb", "fastboot-return"),
-        help="boot-lab-flash-run / boot-lab-oneshot only: expected success condition. Defaults to adb.",
+        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-rust-bridge-run only: expected success condition. Defaults to adb.",
     )
     debug.add_argument(
         "--return-timeout",
         type=int,
-        help="boot-lab-flash-run / boot-lab-oneshot only: when --success-signal fastboot-return, seconds to wait for fastboot to come back.",
+        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-rust-bridge-run only: when --success-signal fastboot-return, seconds to wait for fastboot to come back.",
     )
     debug.add_argument(
         "--allow-active-slot",
@@ -2724,21 +2764,35 @@ def build_parser() -> argparse.ArgumentParser:
     debug.add_argument(
         "--skip-collect",
         action="store_true",
-        help="boot-lab-oneshot only: skip helper-dir collection after adb returns.",
+        help="boot-lab-oneshot / boot-lab-rust-bridge-run only: skip helper-dir collection after adb returns.",
     )
     debug.add_argument(
         "--recover-traces-after",
         action="store_true",
-        help="boot-lab-oneshot / boot-lab-preflight only: recover Android-side traces into output/recover-traces after adb returns.",
+        help="boot-lab-oneshot / boot-lab-rust-bridge-run / boot-lab-preflight only: recover Android-side traces into output/recover-traces after adb returns.",
     )
     debug.add_argument(
         "--no-wait-boot-completed",
         action="store_true",
-        help="boot-lab-oneshot / boot-lab-preflight only: collect as soon as adb is back instead of waiting for sys.boot_completed.",
+        help="boot-lab-oneshot / boot-lab-rust-bridge-run / boot-lab-preflight only: collect as soon as adb is back instead of waiting for sys.boot_completed.",
     )
     debug.add_argument(
         "--proof-prop",
-        help="boot-lab-flash-run / boot-lab-oneshot only: treat KEY=VALUE getprop match as the boot proof signal.",
+        help="boot-lab-flash-run / boot-lab-oneshot / boot-lab-rust-bridge-run only: treat KEY=VALUE getprop match as the boot proof signal.",
+    )
+    debug.add_argument(
+        "--shim-mode",
+        choices=("fork", "exec"),
+        help="boot-lab-rust-bridge-run only: Rust bridge shim mode. Defaults to fork.",
+    )
+    debug.add_argument(
+        "--child-profile",
+        choices=("hello", "std-probe", "nostd-probe"),
+        help="boot-lab-rust-bridge-run only: Rust bridge child profile. Defaults to hello.",
+    )
+    debug.add_argument(
+        "--child",
+        help="boot-lab-rust-bridge-run only: explicit Rust child binary to stage instead of the default profile artifact.",
     )
     debug.add_argument(
         "--property-key",
