@@ -101,12 +101,15 @@ Related docs:
 ## Current Status
 
 - Current boot-owned blocker:
-  - any owned-userspace process, including direct C in PID 1, still blocks inside the first KGSL open path
-  - the latest boot-owned run on `09051JEC202061` recovered `wchan=_request_firmware` plus `/proc/<pid>/stack` showing `a6xx_microcode_read -> request_firmware -> _request_firmware`
+  - any owned-userspace process, including direct C in PID 1, still fails to complete the first boot-owned KGSL open path
+  - the last durable recovered blocker on `09051JEC202061` was still `wchan=_request_firmware` plus `/proc/<pid>/stack` showing `a6xx_microcode_read -> request_firmware -> _request_firmware`
+  - since then, a dedicated firmware-only checkpoint rung visibly succeeded on both `09051JEC202061` and `0B191JEC203253` with `orange -> checkerboard -> black -> fastboot`
+  - that two-device proof means the staged `a630_sqe.fw`, `a618_gmu.bin`, and `a615_zap.*` blobs are readable in owned userspace before any KGSL open
+  - the active seam is therefore the first post-firmware stage inside boot-owned KGSL bring-up, not generic staging or visibility of the blobs themselves
   - this is now narrower than the staged Rust payload, dynamic loader, Vulkan loader, wgpu setup, Android display services, or late Android properties
 - Strongest current hypothesis:
-  - the failing seam is KGSL cold first-open firmware serving, not generic `/dev` topology, not DRM, and not later Vulkan enumeration logic
-  - source-guided read of the sunfish kernel plus the recovered `probe-report.txt` now make the first Adreno SQE firmware request the leading suspect, with GMU firmware and secure zap boot as likely next blockers after that:
+  - the failing seam is now just after the first named firmware loads, not generic `/dev` topology, not DRM, and not later Vulkan enumeration logic
+  - source-guided read of the sunfish kernel plus the recovered `probe-report.txt` still make the first Adreno SQE firmware request the last durable breakpoint, but the new firmware-only watched proof moves the best next suspects forward to GMU firmware / HFI, secure zap boot, and then CP init:
     - first open reaches `kgsl_open()` -> `kgsl_open_device()` -> Adreno init/start
     - the recovered stack currently stops in `a6xx_microcode_read`, which issues `request_firmware("a630_sqe.fw")`
     - later in the same init path the code also names `request_firmware("a618_gmu.bin")` and likely secure zap boot via `subsystem_get("a615_zap")` / `pil_boot`
@@ -120,6 +123,9 @@ Related docs:
   - tmpfs-`/dev` rooted controls now also persist `exec-context.txt`, so rooted control context can be compared directly against boot-owned metadata probe artifacts
   - boot-owned child probes now also persist `probe-report.txt` so timeouts can recover the last observed stage plus `wchan` / proc excerpts instead of only a pulse count
   - watched runs now have structured `code-orange-*` visuals for validated/probe-ready/success/timeout/signal/nonzero states
+  - for the current fastboot-return firmware seam, the watched panel contract is stronger than `/metadata`:
+    - both firmware-only confirmation runs returned to Android with `metadata_probe_stage_present=false` and `metadata_probe_report_present=false`
+    - treat watched `checker-orange` as the truthful proof for this rung until a later durable channel survives reliably
   - `scripts/pixel/pixel_kgsl_matrix.sh` now batches rooted KGSL falsification cases into one summary artifact
   - `scripts/ci/pixel_boot_recover_traces_smoke.sh` and `scripts/ci/pixel_boot_tooling_smoke.sh` cover those additions
   - the latest high-signal boot-owned bundle is [`build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_), which recovered the decisive `_request_firmware` stack
@@ -191,6 +197,11 @@ Related docs:
   - `orange-init` prelude proves boot-owned KMS still works in the image
   - a second short checkpoint proves config validation passed before launching the bundle
   - a long postlude proves the staged `/orange-gpu` bundle returned successfully
+- [x] Prove boot-owned staged firmware preflight before any KGSL open (`firmware-probe-only`):
+  - stage `a630_sqe.fw`, `a618_gmu.bin`, and `a615_zap.*` into the ramdisk image
+  - open and read those blobs directly in owned userspace before touching KGSL
+  - use `checker-orange` as the watched proof contract for success
+  - observed `orange -> checkerboard -> black -> fastboot` on both `09051JEC202061` and `0B191JEC203253`
 - [x] Prove boot-owned strict Vulkan instance creation and return (`boot-vulkan-instance-smoke`):
   - reuse the staged `shadow-gpu-smoke` bundle
   - require the same strict Vulkan env setup as later GPU rungs

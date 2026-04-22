@@ -41,12 +41,22 @@ Continue the Pixel 4a boot-owned bring-up from the current KGSL seam without bro
   - [`build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_)
   - recovered `probe-report.txt` shows `wchan=_request_firmware`
   - recovered `/proc/<pid>/stack` shows `a6xx_microcode_read -> request_firmware -> _request_firmware`
+- Two newer watched runs then proved the staged firmware seam itself:
+  - [`build/pixel/boot/oneshot/20260422T002609Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T002609Z-09051JEC202061_)
+  - [`build/pixel/boot/oneshot/20260422T002911Z-0B191JEC203253_`](../../build/pixel/boot/oneshot/20260422T002911Z-0B191JEC203253_)
+  - visible sequence on both devices: `orange -> checkerboard -> black -> fastboot`
+  - that proves `a630_sqe.fw`, `a618_gmu.bin`, and `a615_zap.*` are staged and readable in owned userspace before any KGSL open
+- On those fastboot-return runs, `/metadata` is currently weaker than the watched panel contract:
+  - recent recovery bundles came back with `metadata_probe_stage_present=false` and `metadata_probe_report_present=false`
+  - treat the visible checkpoint as the current source of truth for this rung
 - The exact same thing is true for:
   - the staged Rust payload
   - direct C child probe
   - direct C PID1 probe
 - So the current seam is:
-  - any boot-owned process, including PID 1, reaches the first KGSL open path and then sleeps in firmware loading during `a6xx_microcode_read`
+  - any boot-owned process, including PID 1, reaches the first KGSL open path
+  - the last durable blocker was still firmware loading during `a6xx_microcode_read`
+  - but the next working hypothesis is now the first post-firmware seam: GMU / HFI, secure zap boot, or CP init
 
 ## What Is Strongly Ruled Out
 
@@ -60,12 +70,16 @@ Continue the Pixel 4a boot-owned bring-up from the current KGSL seam without bro
 
 ## Strongest Hypothesis
 
-The remaining difference is no longer generic execution context or “wait later in Android.” The leading blocker is the first firmware-serving seam named by the sunfish kernel.
+The remaining difference is no longer generic execution context or “wait later in Android.” The firmware-serving seam itself is now proven at the userspace staging layer. The best current suspect is the first post-firmware bring-up seam named by the sunfish kernel.
 
 The best next discriminators are:
 
-1. Add the smallest boot-owned firmware-serving seam for `a630_sqe.fw` rather than bringing up generic full `ueventd`.
-2. Re-run the same boot-owned `c-kgsl-open-readonly-smoke` rung immediately after that seam lands to see whether the blocker moves to `a6xx_gmu_load_firmware("a618_gmu.bin")` or secure zap boot.
+1. Re-run the same boot-owned `c-kgsl-open-readonly-smoke` rung with a visible timeout classifier rather than relying on `/metadata` alone.
+2. Use the watched pattern to split the next seam:
+   - firmware / readiness still unresolved
+   - GMU / HFI
+   - secure zap boot
+   - CP init / ringbuffer submit
 3. Keep execution-context and holder-scan evidence as supporting context, not the primary blocker.
 
 Do not jump back out to `orange-gpu`, compositor, or app launch work until one of those moves the seam.
@@ -104,6 +118,7 @@ Do not jump back out to `orange-gpu`, compositor, or app launch work until one o
   - one `matrix-summary.json` plus `matrix.tsv`
 - watched runs
   - `code-orange-2/3/4/9/10/11` stage/failure visuals
+  - `checker-orange` now has a two-device proof as the firmware-preflight success contract
 
 The smokes covering this are:
 
