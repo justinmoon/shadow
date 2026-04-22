@@ -5,8 +5,18 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 ## Active Blocker
 
 - The C lane is now signed off in the narrow helper-backed `gpu-render` sense.
-- The critical path is no longer C proof-hardening. It is Rust migration on top of that signed-off seam.
-- Do not spend more critical-path time expanding C beyond migration glue or fallback diagnostics.
+- The active blocker is the Rust PID 1 / bootstrap port, and the seam is now narrower:
+  - Rust's normal `main` / `lang_start` startup path is the bad boundary under PID 1
+  - `std` Rust as exact-path `/system/bin/init` still panics as real PID 1
+  - `std-minimal-probe` still panics as PID 1
+  - `std-nomain-probe` now returns cleanly to bootloader
+  - the full Rust `hello-init` child now also returns cleanly once it enters through raw `argc/argv`
+- The next critical-path goal is:
+  - preserve the signed-off helper-backed boot-owned GPU proof
+  - promote the `exec + raw-argv + hello-init-rust` bridge as the primary Rust seam
+  - replace `scripts/pixel/pixel_hello_init.c` as the long-lived bootstrap seam
+  - keep later compositor/runtime/shell work off the C seam
+  - stop treating the old `fork` bridge as the primary target
 
 ## Current Truth
 
@@ -75,6 +85,14 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
       - `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe` stages a dedicated no_std direct-exec shim plus the tiny `std` probe child
       - the bridge helper now fails closed on custom child-entry paths; the current shims always exec `/hello-init-child`
       - the smoke covers both `fork` and `exec` shim modes plus the fixed child-path contract
+  - Raw-argv Rust bridge split on 2026-04-22:
+    - [`build/pixel/boot/rust-bridge-run/20260422T155220Z-11151JEC200472_`](../../build/pixel/boot/rust-bridge-run/20260422T155220Z-11151JEC200472_) proves `std-minimal-probe` still returns `kernel_panic`
+    - [`build/pixel/boot/rust-bridge-run/20260422T155403Z-09051JEC202061_`](../../build/pixel/boot/rust-bridge-run/20260422T155403Z-09051JEC202061_) and [`build/pixel/boot/rust-bridge-run/20260422T155539Z-11151JEC200472_`](../../build/pixel/boot/rust-bridge-run/20260422T155539Z-11151JEC200472_) prove `std-nomain-probe` returns cleanly to bootloader on both devices
+    - [`build/pixel/boot/rust-bridge-run/20260422T160853Z-09051JEC202061_`](../../build/pixel/boot/rust-bridge-run/20260422T160853Z-09051JEC202061_) and [`build/pixel/boot/rust-bridge-run/20260422T161040Z-11151JEC200472_`](../../build/pixel/boot/rust-bridge-run/20260422T161040Z-11151JEC200472_) prove the full Rust `hello-init` child also returns cleanly once it enters through raw `argc/argv`
+    - that makes `lang_start` / normal Rust `main` the live Rust blocker, not general `std` linkage
+  - Raw-argv exec GPU proofs on 2026-04-22:
+    - [`build/pixel/boot/oneshot/20260422T162509Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T162509Z-09051JEC202061_) proves `vulkan-offscreen` on the `exec + raw-argv + hello-init` seam with recovered `probe-report.txt` showing `child_completed=true`, `child_timed_out=false`, `exit_status=0`
+    - [`build/pixel/boot/oneshot/20260422T162711Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260422T162711Z-09051JEC202061_) and [`build/pixel/boot/oneshot/20260422T162858Z-11151JEC200472_`](../../build/pixel/boot/oneshot/20260422T162858Z-11151JEC200472_) prove `gpu-render` on that same seam with the same recovered `probe-report.txt` truth surface
 
 ## Best Observability
 
@@ -122,33 +140,22 @@ Use the panel as a stage channel, not just “something orange happened.”
 
 ## Highest-Leverage Next Experiments
 
-1. Keep the Rust port on the working bridge shape now.
+1. Promote the `exec + raw-argv + hello-init-rust` bridge as the primary Rust seam.
    - `no_std` exact-path Rust PID 1 shim
    - full Rust `hello-init` launched as a child
-   - do not go back to expanding the C seam
-2. Re-prove the helper-backed ladder on that Rust bridge seam.
+   - `exec` shim, not `fork`, as the architectural target
+2. Update the direct rust-bridge builder and docs to use that seam first.
    - `hello`
    - `vulkan-offscreen`
    - `gpu-render`
-   - `orange-init`
-   - raw Vulkan query/count only if the bridge seam regresses earlier
-3. Confirm the direct rust-bridge builder on hardware.
-   - the host-side builder now stages the final rust-bridge image directly
-   - next hardware proof should use that direct builder path for `hello`, `vulkan-offscreen`, `gpu-render`, and the `--rust-shim-mode exec` variant with the real Rust child
-   - keep `pixel_boot_build_rust_bridge.sh` as the fallback/helper path for probe-child variants, not as the normal orange-gpu builder route
-4. Run the `std`-PID1 discriminator once a phone is back.
-   - build a stripped hello base image
-   - repack it with `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe`
-   - or use `sc -t <serial> debug boot-lab-rust-bridge-run --input <base.img> --shim-mode exec --child-profile std-probe ...`
-   - stage the tiny `std` probe as `/hello-init-child`
-   - classify whether direct `execv()` into the `std` probe still panics
-5. Keep later work blocked until the Rust seam is green.
+   - keep `pixel_boot_build_rust_bridge.sh` as the fallback/helper path for probe-child variants
+3. Keep later work blocked until the Rust seam is green.
    - no compositor
    - no apps
    - no shell
    - no service spikes
-6. Use `09051JEC202061` as the primary Rust-port proof device and `11151JEC200472` as confirmation.
-7. Land the helper-backed C ladder and tooling truthfully so the Rust port starts from a small, coherent baseline.
+4. Use `09051JEC202061` as the primary Rust-port proof device and `11151JEC200472` as confirmation.
+5. Land the helper-backed C ladder and tooling truthfully so the Rust port starts from a small, coherent baseline.
 
 ## Fast Commands
 
@@ -181,7 +188,7 @@ Run the next Rust bridge discriminator as one boot-lab command:
 ```sh
 scripts/shadowctl lease acquire 09051JEC202061 --lane stream-a --owner boot --agent Codex --note 'rust-bridge std-probe exec discriminator'
 SHADOW_DEVICE_LEASE_FORCE=1 scripts/shadowctl -t 09051JEC202061 debug boot-lab-rust-bridge-run \
-  --input build/pixel/boot/shadow-boot-orange-gpu-rust-bridge.img \
+  --input build/pixel/boot/shadow-boot-hello-init-rust-minimal-v2.img \
   --shim-mode exec \
   --child-profile std-probe \
   --adb-timeout 120 \
@@ -192,12 +199,12 @@ SHADOW_DEVICE_LEASE_FORCE=1 scripts/shadowctl -t 09051JEC202061 debug boot-lab-r
 scripts/shadowctl lease release 09051JEC202061 --agent Codex
 ```
 
-Re-run the first-frame proof lane:
+Re-run the promoted exec/raw-argv GPU lane:
 
 ```sh
-scripts/shadowctl lease acquire 09051JEC202061 --lane stream-a --owner boot --agent Codex --note 'gpu-render fw-helper'
+scripts/shadowctl lease acquire 09051JEC202061 --lane stream-a --owner boot --agent Codex --note 'rust-bridge exec gpu-render raw-argv'
 SHADOW_DEVICE_LEASE_FORCE=1 scripts/shadowctl -t 09051JEC202061 debug boot-lab-oneshot \
-  --image build/pixel/boot/shadow-boot-orange-gpu-gpurender-fw-helper-v1.img \
+  --image build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-exec-gpurender-fw-helper-rawargv-v1.img \
   --adb-timeout 120 \
   --boot-timeout 180 \
   --skip-collect \

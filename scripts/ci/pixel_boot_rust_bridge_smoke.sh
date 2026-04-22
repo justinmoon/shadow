@@ -11,8 +11,15 @@ SHIM_BINARY="$TMP_DIR/hello-init-rust-shim"
 EXEC_SHIM_BINARY="$TMP_DIR/hello-init-rust-shim-exec"
 CHILD_BINARY="$TMP_DIR/hello-init-rust-child"
 STD_PROBE_BINARY="$TMP_DIR/hello-init-rust-probe"
+STD_MINIMAL_PROBE_BINARY="$TMP_DIR/hello-init-rust-std-minimal-probe"
+STD_NOMAIN_PROBE_BINARY="$TMP_DIR/hello-init-rust-std-nomain-probe"
 OUTPUT_IMAGE="$TMP_DIR/rust-bridge-boot.img"
 EXEC_OUTPUT_IMAGE="$TMP_DIR/rust-bridge-exec-boot.img"
+STD_MINIMAL_OUTPUT_IMAGE="$TMP_DIR/rust-bridge-std-minimal-boot.img"
+STD_NOMAIN_OUTPUT_IMAGE="$TMP_DIR/rust-bridge-std-nomain-boot.img"
+MOCK_STORE_DIR="$TMP_DIR/mock-store"
+MOCK_STD_MINIMAL_STORE="$MOCK_STORE_DIR/std-minimal"
+MOCK_STD_NOMAIN_STORE="$MOCK_STORE_DIR/std-nomain"
 AVB_KEY_PATH="$TMP_DIR/avb-testkey.pem"
 INPUT_RUN_TOKEN="rust-bridge-token-00"
 
@@ -61,6 +68,28 @@ cat >"$STD_PROBE_BINARY" <<'EOF'
 echo hello-init-rust-probe
 EOF
 chmod 0755 "$STD_PROBE_BINARY"
+
+cat >"$STD_MINIMAL_PROBE_BINARY" <<'EOF'
+#!/system/bin/sh
+# shadow-owned-init-role:hello-init
+# shadow-owned-init-impl:rust-static
+# shadow-owned-init-config:/shadow-init.cfg
+echo hello-init-rust-std-minimal-probe
+EOF
+chmod 0755 "$STD_MINIMAL_PROBE_BINARY"
+
+cat >"$STD_NOMAIN_PROBE_BINARY" <<'EOF'
+#!/system/bin/sh
+# shadow-owned-init-role:hello-init
+# shadow-owned-init-impl:rust-static
+# shadow-owned-init-config:/shadow-init.cfg
+echo hello-init-rust-std-nomain-probe
+EOF
+chmod 0755 "$STD_NOMAIN_PROBE_BINARY"
+
+mkdir -p "$MOCK_STD_MINIMAL_STORE/bin" "$MOCK_STD_NOMAIN_STORE/bin"
+cp "$STD_MINIMAL_PROBE_BINARY" "$MOCK_STD_MINIMAL_STORE/bin/hello-init-std-minimal-probe"
+cp "$STD_NOMAIN_PROBE_BINARY" "$MOCK_STD_NOMAIN_STORE/bin/hello-init-std-nomain-probe"
 
 cat >"$BOOT_BUILD_INPUT.hello-init.json" <<EOF
 {
@@ -216,12 +245,34 @@ set -euo pipefail
 printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$1"
 EOF
 
+cat >"$MOCK_BIN/nix" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+for arg in "\$@"; do
+  case "\$arg" in
+    *#hello-init-rust-std-minimal-probe-device)
+      printf '%s\n' "$MOCK_STD_MINIMAL_STORE"
+      exit 0
+      ;;
+    *#hello-init-rust-std-nomain-probe-device)
+      printf '%s\n' "$MOCK_STD_NOMAIN_STORE"
+      exit 0
+      ;;
+  esac
+done
+
+echo "mock nix: unexpected args: \$*" >&2
+exit 1
+EOF
+
 chmod 0755 \
   "$MOCK_BIN/adb" \
   "$MOCK_BIN/avbtool" \
   "$MOCK_BIN/file" \
   "$MOCK_BIN/just" \
   "$MOCK_BIN/mkbootimg" \
+  "$MOCK_BIN/nix" \
   "$MOCK_BIN/payload-dumper-go" \
   "$MOCK_BIN/unpack_bootimg"
 
@@ -361,6 +412,68 @@ assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" hello_init_shim_mode "exe
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" metadata_probe_fingerprint_path ""
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" metadata_probe_timeout_class_path ""
 assert_json_field "$EXEC_OUTPUT_IMAGE.hello-init.json" run_token "$INPUT_RUN_TOKEN"
+
+std_minimal_bridge_output="$(
+  scripts/pixel/pixel_boot_build_rust_bridge.sh \
+    --input "$BOOT_BUILD_INPUT" \
+    --shim "$EXEC_SHIM_BINARY" \
+    --shim-mode exec \
+    --child-profile std-minimal-probe \
+    --child "$STD_MINIMAL_PROBE_BINARY" \
+    --key "$AVB_KEY_PATH" \
+    --output "$STD_MINIMAL_OUTPUT_IMAGE"
+)"
+
+assert_contains "$std_minimal_bridge_output" "Child profile: std-minimal-probe"
+assert_contains "$std_minimal_bridge_output" "Child binary: $STD_MINIMAL_PROBE_BINARY"
+assert_json_field "$STD_MINIMAL_OUTPUT_IMAGE.hello-init.json" hello_init_child_profile "std-minimal-probe"
+assert_json_field "$STD_MINIMAL_OUTPUT_IMAGE.hello-init.json" hello_init_shim_mode "exec"
+
+std_minimal_default_output="$(
+  scripts/pixel/pixel_boot_build_rust_bridge.sh \
+    --input "$BOOT_BUILD_INPUT" \
+    --shim "$EXEC_SHIM_BINARY" \
+    --shim-mode exec \
+    --child-profile std-minimal-probe \
+    --key "$AVB_KEY_PATH" \
+    --output "$TMP_DIR/rust-bridge-std-minimal-default-boot.img"
+)"
+
+assert_contains "$std_minimal_default_output" "Child profile: std-minimal-probe"
+assert_contains "$std_minimal_default_output" "Child binary: $REPO_ROOT/build/pixel/boot/hello-init-rust-std-minimal-probe"
+assert_cpio_entry_equals "$TMP_DIR/rust-bridge-std-minimal-default-boot.img" hello-init-child $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-std-minimal-probe\n'
+assert_json_field "$TMP_DIR/rust-bridge-std-minimal-default-boot.img.hello-init.json" hello_init_child_profile "std-minimal-probe"
+
+std_nomain_bridge_output="$(
+  scripts/pixel/pixel_boot_build_rust_bridge.sh \
+    --input "$BOOT_BUILD_INPUT" \
+    --shim "$EXEC_SHIM_BINARY" \
+    --shim-mode exec \
+    --child-profile std-nomain-probe \
+    --child "$STD_NOMAIN_PROBE_BINARY" \
+    --key "$AVB_KEY_PATH" \
+    --output "$STD_NOMAIN_OUTPUT_IMAGE"
+)"
+
+assert_contains "$std_nomain_bridge_output" "Child profile: std-nomain-probe"
+assert_contains "$std_nomain_bridge_output" "Child binary: $STD_NOMAIN_PROBE_BINARY"
+assert_json_field "$STD_NOMAIN_OUTPUT_IMAGE.hello-init.json" hello_init_child_profile "std-nomain-probe"
+assert_json_field "$STD_NOMAIN_OUTPUT_IMAGE.hello-init.json" hello_init_shim_mode "exec"
+
+std_nomain_default_output="$(
+  scripts/pixel/pixel_boot_build_rust_bridge.sh \
+    --input "$BOOT_BUILD_INPUT" \
+    --shim "$EXEC_SHIM_BINARY" \
+    --shim-mode exec \
+    --child-profile std-nomain-probe \
+    --key "$AVB_KEY_PATH" \
+    --output "$TMP_DIR/rust-bridge-std-nomain-default-boot.img"
+)"
+
+assert_contains "$std_nomain_default_output" "Child profile: std-nomain-probe"
+assert_contains "$std_nomain_default_output" "Child binary: $REPO_ROOT/build/pixel/boot/hello-init-rust-std-nomain-probe"
+assert_cpio_entry_equals "$TMP_DIR/rust-bridge-std-nomain-default-boot.img" hello-init-child $'#!/system/bin/sh\n# shadow-owned-init-role:hello-init\n# shadow-owned-init-impl:rust-static\n# shadow-owned-init-config:/shadow-init.cfg\necho hello-init-rust-std-nomain-probe\n'
+assert_json_field "$TMP_DIR/rust-bridge-std-nomain-default-boot.img.hello-init.json" hello_init_child_profile "std-nomain-probe"
 
 set +e
 invalid_child_entry_output="$(

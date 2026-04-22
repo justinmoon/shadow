@@ -47,12 +47,18 @@ Continue the Pixel 4a boot-owned bring-up from the new Rust cutoff. The C seam h
 - The seam is no longer “what does KGSL need.” That part is solved by the userspace firmware helper.
 - The active risk is now architectural, not driver discovery:
   - direct `std` Rust as exact-path `/system/bin/init` still returns `kernel_panic`
-  - `no_std` Rust exact-path PID 1 returns cleanly to bootloader
-  - `no_std` Rust PID 1 shim plus full Rust `hello-init` child also returns cleanly on the stripped `hello` lane
-  - that bridge shape has now also re-proved:
+  - `std-minimal-probe` still returns `kernel_panic`
+  - `std-nomain-probe` now returns cleanly to bootloader on both `09051JEC202061` and `11151JEC200472`
+  - the full Rust `hello-init` child now also returns cleanly on both devices when it enters through raw `argc/argv`
+  - that makes the live blocker specifically Rust's normal `main` / `lang_start` startup path, not general `std` linkage
+  - the promoted bridge shape is now:
+    - no_std exact-path PID 1 shim
+    - `exec` into the full Rust child
+    - raw `argc/argv` parsing in the child
+  - that promoted bridge shape has now re-proved:
     - `vulkan-offscreen` on `09051JEC202061`
     - `gpu-render` on `09051JEC202061`
-  - the next question is whether that bridge shape can be automated and confirmed more broadly without silently regressing
+    - `gpu-render` on `11151JEC200472`
 - The best current proof surface is `probe-report.txt`, not shadow-tag correlation.
 - The current helper-backed one-shot recipe is:
   - `--skip-collect --recover-traces-after --no-wait-boot-completed`
@@ -76,12 +82,12 @@ Do this in order:
 1. Keep the Rust seam on the working bridge shape:
    - `no_std` Rust PID 1 shim
    - full Rust `hello-init` child
-2. Treat the Rust bridge seam as the new working truth on `09051JEC202061`.
+2. Treat the `exec + raw-argv + hello-init-rust` seam as the new working truth on `09051JEC202061` and `11151JEC200472`.
 3. Use the direct rust-bridge builder path first:
    - `pixel_boot_build_orange_gpu.sh --hello-init-mode rust-bridge`
    - stage `/system/bin/init` as the no_std Rust shim
    - stage `/hello-init-child` as the full Rust child
-   - use `--rust-shim-mode exec` here when the seam you want to test is fork-vs-exec with the real Rust child
+   - use `--rust-shim-mode exec` here as the primary seam, not just as a fork-vs-exec discriminator
    - keep the companion metadata honest (`hello_init_impl=rust-bridge`, `hello_init_child_path=/hello-init-child`, blank unsupported probe files)
    - use `pixel_boot_build_rust_bridge.sh` as the fallback/helper path when converting an already-built image or when you need a probe-child variant
 4. If the bridge helper regresses on a new rung, fall back down the already-proven helper-backed ladder:
@@ -95,9 +101,10 @@ Do this in order:
    - if the Rust child still does not emit `probe-fingerprint` / `probe-timeout-class`, keep those metadata fields blank instead of advertising fake expectations
 7. Keep the direct `std`-PID1 investigation narrow:
    - the leading source-backed suspect is pre-`main` `std` runtime / TLS startup
-   - next smallest hardware discriminator is `no_std` exact-path PID1 shim -> direct `execv()` into the tiny `std` probe, without `fork()`
-   - the build path for that now exists: `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe`
-   - the structured run path also exists now: `sc -t <serial> debug boot-lab-rust-bridge-run --input <base.img> --shim-mode exec --child-profile std-probe ...`
+   - the next already-proven split is:
+     - `std-probe` -> `kernel_panic`
+     - `std-minimal-probe` -> `kernel_panic`
+     - `std-nomain-probe` -> clean bootloader return
    - do not use alternate child-entry paths here; the current shims always exec `/hello-init-child`
 
 ## Current Device Map

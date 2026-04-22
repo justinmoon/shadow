@@ -51,12 +51,24 @@ Related docs:
     - current leading `std`-PID1 source hypothesis:
       - the likely bad seam is pre-`main` `std` runtime / TLS startup, not the `hello-init` logic
       - next hardware discriminator is `no_std` exact-path PID1 shim -> direct `execv()` into the tiny `std` probe, with no `fork()`
-      - `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe` is now wired for that exact discriminator
-      - `sc -t <serial> debug boot-lab-rust-bridge-run --input <base.img> --shim-mode exec --child-profile std-probe ...` now wraps that same discriminator into one build+oneshot run bundle with shared logs and summary
-      - the current bridge shims always exec `/hello-init-child`, so the helper now rejects alternate child-entry paths instead of pretending they work
+    - `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe` is now wired for that exact discriminator
+    - `sc -t <serial> debug boot-lab-rust-bridge-run --input <base.img> --shim-mode exec --child-profile std-probe ...` now wraps that same discriminator into one build+oneshot run bundle with shared logs and summary
+    - the current bridge shims always exec `/hello-init-child`, so the helper now rejects alternate child-entry paths instead of pretending they work
+    - raw-argv split on 2026-04-22:
+      - `std-probe` still returns `kernel_panic`
+      - `std-minimal-probe` still returns `kernel_panic`
+      - `std-nomain-probe` returns cleanly to fastboot/bootloader on both `09051JEC202061` and `11151JEC200472`
+      - the full `hello-init-rust` child now also returns cleanly to fastboot/bootloader on both devices once it enters through raw `argc/argv`
+      - that makes the failing seam specifically Rust's normal `main` / `lang_start` startup under PID 1
+    - promoted Rust bridge truth on 2026-04-22:
+      - helper-backed `vulkan-offscreen` is re-proved on the `exec + raw-argv + hello-init-rust` seam on `09051JEC202061`
+      - helper-backed `gpu-render` is re-proved on that same seam on `09051JEC202061` and `11151JEC200472`
+      - recovered `probe-report.txt` remains the proof surface: `child_completed=true`, `child_timed_out=false`, `exit_status=0`
+      - next seam is to make this `exec + raw-argv` bridge the default Rust path and retire `fork` as the primary target
   - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
   - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam
 - Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
+- Before any Nix-backed validation that depends on new files, stage the new paths in Git. The flake source filter otherwise omits them and can make default package wiring lie.
 - When a seam gets past firmware and both the panel timeout classifier and `/metadata` artifacts fail together, stop iterating on more colors or more metadata files. Pivot that seam to direct durable logging (`kmsg` first) plus source-guided hypotheses. If that still produces zero surviving evidence, escalate to a lower-level capture path such as panic-to-pstore on a confirmation device.
 - If a control timeout path can panic cleanly but the real seam still returns to bootloader before that panic branch changes the bootreason, treat that as evidence that the seam is escaping userspace supervision entirely. Stop spending runs on later watchdog tweaks and move to a different execution seam or a kernel-facing diagnostic.
 - Prefer one reusable probe harness over many custom rungs:

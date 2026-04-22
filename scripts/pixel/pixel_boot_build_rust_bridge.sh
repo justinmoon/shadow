@@ -24,7 +24,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/pixel/pixel_boot_build_rust_bridge.sh --input PATH [--shim PATH]
                                                      [--shim-mode fork|exec]
-                                                     [--child PATH] [--child-profile hello|std-probe|nostd-probe]
+                                                     [--child PATH] [--child-profile hello|std-probe|std-minimal-probe|std-nomain-probe|nostd-probe]
                                                      [--key PATH] [--output PATH]
                                                      [--keep-work-dir]
 
@@ -54,7 +54,7 @@ assert_child_profile_word() {
   value="${1:?assert_child_profile_word requires a value}"
 
   case "$value" in
-    hello|std-probe|nostd-probe)
+    hello|std-probe|std-minimal-probe|std-nomain-probe|nostd-probe)
       ;;
     *)
       echo "pixel_boot_build_rust_bridge: unsupported child profile: $value" >&2
@@ -124,6 +124,12 @@ default_child_binary() {
     std-probe)
       printf '%s\n' "${PIXEL_HELLO_INIT_RUST_CHILD_STD_PROBE_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-probe}"
       ;;
+    std-minimal-probe)
+      printf '%s\n' "${PIXEL_HELLO_INIT_RUST_CHILD_STD_MINIMAL_PROBE_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-std-minimal-probe}"
+      ;;
+    std-nomain-probe)
+      printf '%s\n' "${PIXEL_HELLO_INIT_RUST_CHILD_STD_NOMAIN_PROBE_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-std-nomain-probe}"
+      ;;
     nostd-probe)
       printf '%s\n' "${PIXEL_HELLO_INIT_RUST_CHILD_NOSTD_PROBE_DEFAULT_BIN:-$(pixel_boot_dir)/hello-init-rust-nostd-probe}"
       ;;
@@ -138,6 +144,12 @@ default_child_package_ref() {
     std-probe)
       printf 'path:%s#hello-init-rust-probe-device\n' "$(repo_root)"
       ;;
+    std-minimal-probe)
+      printf 'path:%s#hello-init-rust-std-minimal-probe-device\n' "$(repo_root)"
+      ;;
+    std-nomain-probe)
+      printf 'path:%s#hello-init-rust-std-nomain-probe-device\n' "$(repo_root)"
+      ;;
     nostd-probe)
       printf 'path:%s#hello-init-rust-nostd-probe-device\n' "$(repo_root)"
       ;;
@@ -151,6 +163,12 @@ default_child_binary_name() {
       ;;
     std-probe)
       printf 'hello-init-probe\n'
+      ;;
+    std-minimal-probe)
+      printf 'hello-init-std-minimal-probe\n'
+      ;;
+    std-nomain-probe)
+      printf 'hello-init-std-nomain-probe\n'
       ;;
     nostd-probe)
       printf 'hello-init-nostd-probe\n'

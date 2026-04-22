@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "linux", no_main)]
+
 #[cfg(not(target_os = "linux"))]
 fn main() {
     eprintln!("hello-init only supports linux targets");
@@ -6,9 +8,10 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::ffi::CString;
+    use std::ffi::{CStr, CString};
     use std::fs::{self, File, OpenOptions};
     use std::io::{self, Read, Write};
+    use std::os::unix::ffi::OsStringExt;
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
     use std::path::{Path, PathBuf};
     use std::process::{self, Child, Command, Stdio};
@@ -458,22 +461,51 @@ mod linux {
         }
     }
 
-    fn parse_args() -> Args {
+    fn parse_args_raw(argc: libc::c_int, argv: *const *const libc::c_char) -> Args {
         let mut args = Args::default();
-        let mut iter = std::env::args_os().skip(1);
-        while let Some(arg) = iter.next() {
-            let arg_bytes = arg.as_encoded_bytes();
+        if argc <= 1 || argv.is_null() {
+            return args;
+        }
+
+        let argc = usize::try_from(argc).unwrap_or(0);
+        if argc <= 1 {
+            return args;
+        }
+
+        let raw_args = unsafe { std::slice::from_raw_parts(argv, argc) };
+        let mut index = 1usize;
+        while index < raw_args.len() {
+            let Some(raw_arg) = raw_args.get(index).copied() else {
+                break;
+            };
+            if raw_arg.is_null() {
+                index += 1;
+                continue;
+            }
+
+            let arg_bytes = unsafe { CStr::from_ptr(raw_arg) }.to_bytes();
             if arg_bytes == b"--selftest" {
                 args.selftest = true;
+                index += 1;
                 continue;
             }
             if arg_bytes == b"--owned-child" {
                 args.owned_child = true;
+                index += 1;
                 continue;
             }
             if arg_bytes == b"--config" {
-                args.config_path = iter.next().map(|value| value.to_string_lossy().into_owned());
+                if let Some(raw_value) = raw_args.get(index + 1).copied() {
+                    if !raw_value.is_null() {
+                        let config_bytes = unsafe { CStr::from_ptr(raw_value) }.to_bytes().to_vec();
+                        let config_path = std::ffi::OsString::from_vec(config_bytes);
+                        args.config_path = Some(config_path.to_string_lossy().into_owned());
+                    }
+                    index += 2;
+                    continue;
+                }
             }
+            index += 1;
         }
         args
     }
@@ -1361,8 +1393,8 @@ mod linux {
         ));
     }
 
-    pub(crate) fn main_linux() -> ! {
-        let args = parse_args();
+    pub(crate) fn main_linux_raw(argc: libc::c_int, argv: *const *const libc::c_char) -> ! {
+        let args = parse_args_raw(argc, argv);
         if !args.selftest && !args.owned_child && process::id() != 1 {
             process::exit(1);
         }
@@ -1488,6 +1520,7 @@ mod linux {
 }
 
 #[cfg(target_os = "linux")]
-fn main() {
-    linux::main_linux();
+#[unsafe(no_mangle)]
+pub extern "C" fn main(argc: libc::c_int, argv: *const *const libc::c_char) -> libc::c_int {
+    linux::main_linux_raw(argc, argv);
 }

@@ -2787,7 +2787,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     debug.add_argument(
         "--child-profile",
-        choices=("hello", "std-probe", "nostd-probe"),
+        choices=("hello", "std-probe", "std-minimal-probe", "std-nomain-probe", "nostd-probe"),
         help="boot-lab-rust-bridge-run only: Rust bridge child profile. Defaults to hello.",
     )
     debug.add_argument(

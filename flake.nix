@@ -690,6 +690,32 @@
           cargoBuildFlags = [ "--bin" "hello-init-probe" ];
           cargoInstallFlags = [ "--bin" "hello-init-probe" ];
         };
+      mkHelloInitRustStdMinimalProbeFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "hello-init-rust-std-minimal-probe";
+          version = "0.1.0";
+          src = ./rust/init-wrapper;
+          cargoLock.lockFile = ./rust/init-wrapper/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
+          cargoBuildFlags = [ "--bin" "hello-init-std-minimal-probe" ];
+          cargoInstallFlags = [ "--bin" "hello-init-std-minimal-probe" ];
+        };
+      mkHelloInitRustStdNoMainProbeFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "hello-init-rust-std-nomain-probe";
+          version = "0.1.0";
+          src = ./rust/init-wrapper;
+          cargoLock.lockFile = ./rust/init-wrapper/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
+          cargoBuildFlags = [ "--bin" "hello-init-std-nomain-probe" ];
+          cargoInstallFlags = [ "--bin" "hello-init-std-nomain-probe" ];
+        };
       mkHelloInitRustNoStdProbeFor = cross:
         cross.rustPlatform.buildRustPackage {
           pname = "hello-init-rust-nostd-probe";
@@ -2277,6 +2303,10 @@
           hello-init-rust-device = mkHelloInitRustFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           hello-init-rust-probe-device =
             mkHelloInitRustProbeFor pkgs.pkgsCross.aarch64-multiplatform-musl;
+          hello-init-rust-std-minimal-probe-device =
+            mkHelloInitRustStdMinimalProbeFor pkgs.pkgsCross.aarch64-multiplatform-musl;
+          hello-init-rust-std-nomain-probe-device =
+            mkHelloInitRustStdNoMainProbeFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           hello-init-rust-nostd-probe-device =
             mkHelloInitRustNoStdProbeFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           hello-init-rust-shim-device =

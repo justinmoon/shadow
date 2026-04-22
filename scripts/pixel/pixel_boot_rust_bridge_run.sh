@@ -43,7 +43,7 @@ Usage: scripts/pixel/pixel_boot_rust_bridge_run.sh --input PATH
                                                    [--output-dir DIR]
                                                    [--image-output PATH]
                                                    [--shim-mode fork|exec]
-                                                   [--child-profile hello|std-probe|nostd-probe]
+                                                   [--child-profile hello|std-probe|std-minimal-probe|std-nomain-probe|nostd-probe]
                                                    [--child PATH]
                                                    [--key PATH]
                                                    [--wait-ready SECONDS]
