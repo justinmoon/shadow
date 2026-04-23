@@ -53,7 +53,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 - The `app-direct-present` fix was two-part:
   - replace the boot-owned app client shell wrapper with a static Rust launcher
   - stage the Wayland libraries that `winit` loads dynamically and set `LD_LIBRARY_PATH` for the app bundle
-- The next honest product rung on `master` is first input/touch on the same boot-owned render/present path.
+- The next honest product rung on `master` is runtime-backed input on the same boot-owned render/present path.
 - The `app-direct-present-touch-counter` proof uses a compositor-owned synthetic tap in the Rust demo app path and requires recovered metadata showing input observed, tap dispatched, counter incremented, touch-present latency, and a post-touch frame capture.
 - Stock-init trigger / imported-rc / preflight work is now parked:
   - latest high-signal negative result: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/runs/boot-kgsl-trigger-ladder/20260423T082243Z-09051JEC202061_/matrix-summary.json`
@@ -76,8 +76,10 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 ## Highest-Leverage Next Experiments
 
 1. Run `touch-counter-gpu` so the first runtime-backed input redraw lands on the same boot-owned render/present path.
-2. Move into `shell-home-static` only after both the first real app lane and the first real input lane are truthful.
-3. Keep direct `std` PID1 and stock-init imported-rc work as fallback discriminators only.
+2. Run `ts-runtime-app-matrix-proof` if the TS worker is free, so app direct-present is not counter-demo-specific.
+3. Run `boot-camera-rust-hal-frame-probe` as the camera sidecar; provider-service capture is reference evidence only.
+4. Move into `shell-home-static` only after both the first real app lane and the first runtime-backed input lane are truthful.
+5. Keep direct `std` PID1 and stock-init imported-rc work as fallback discriminators only.
 
 ## Fast Commands
 

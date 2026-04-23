@@ -187,6 +187,7 @@ Related docs:
   - blocked_by: none
 - [x] `touch-rust-counter-boot-proof`
   - task_id: boot-touch-rust-counter-boot-proof
+  - priority: 12
   - why sidecar: prove the landed Rust counter touch path inside the boot-owned app/direct-present image without waiting on the TypeScript runtime
   - result:
     - added `app-direct-present-touch-counter` as a boot image mode
@@ -196,6 +197,14 @@ Related docs:
     - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-app-direct-present-touch-counter-v1.img.hello-init.json`
   - proof bundle:
     - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/app-direct-present-touch-counter-v1-primary-0B191JEC203253/recover-traces/status.json`
+  - owned paths:
+    - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
+    - `scripts/pixel/pixel_boot_recover_traces.sh`
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - `ui/crates/shadow-compositor-guest/`
+    - `todos/boot/`
   - validation:
     - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
     - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
@@ -260,24 +269,91 @@ Related docs:
     - write `build/pixel/camera-hal-api/<timestamp>-<serial>/{hal-probe.json,device-output.txt,status.json}` or an equally explicit blocker bundle
     - document whether the next frame-capture track should stay provider-service-contained, return to direct vendor HAL loading, or split into a separate Linux-only instrumentation lane
   - blocked_by: none
+- [ ] `camera-rust-hal-frame-probe`
+  - task_id: boot-camera-rust-hal-frame-probe
+  - priority: 11
+  - why next: keep worker-3 on the camera/HAL context and move from rooted-Android reference capture to the real Shadow boot direct-HAL path
+  - owned paths:
+    - `rust/`
+    - `scripts/pixel/`
+    - `scripts/ci/`
+    - `todos/boot/camera-linux-api-recon.md`
+    - `todos/boot/plan.md`
+  - acceptance:
+    - add the smallest Rust-owned boot HAL probe and native shim needed to direct-load `/vendor/lib64/hw/camera.sm6150.so` from Shadow boot userspace
+    - stage and recover artifacts with `scripts/pixel/pixel_boot_camera_hal_probe.sh` or an equally narrow canonical script
+    - advance through explicit `link`, `hmi`, `module`, `open`, `configure`, and `request` stages until one rear-camera frame is captured or a precise blocker is recorded
+    - prove the run does not use Android `ICameraProvider`, `cameraserver`, Java Camera2, or rooted-Android shell as the camera API
+  - validation:
+    - `SHADOW_DEVICE_LEASE_FORCE=1 PIXEL_SERIAL=<serial> scripts/pixel/pixel_boot_camera_hal_probe.sh`
+    - write `build/pixel/camera-boot-hal/<timestamp>-<serial>/{status.json,boot-hal-probe.json,device-output.txt,dmesg.txt}` and `first-frame.jpg` or `first-frame.raw` only if capture succeeds
+    - `just pre-commit`
+  - blocked_by:
+    - `boot-camera-hal-provider-frame-probe`
 - [ ] `touch-counter-gpu`
   - task_id: boot-touch-counter-gpu
-  - why next: first runtime-backed input rung on the real boot-owned render/present path
+  - priority: 12
+  - why next: keep worker-2 on touch/input and carry the landed Rust counter proof into the runtime-backed TypeScript counter path
   - owned paths:
     - `scripts/pixel/`
     - `ui/`
     - `runtime/app-counter/`
     - `todos/boot/`
   - acceptance:
-    - one input-driven redraw is proved on the same boot-owned render/present path, not on rooted takeover
+    - one runtime-backed TypeScript counter redraw is proved on the same boot-owned render/present path, not on rooted takeover
+    - recovered metadata proves input observed, app state changed, post-touch frame committed, and post-touch artifact captured
+    - preserve the Rust counter boot proof as a regression discriminator rather than replacing its artifact contract
   - validation:
     - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
     - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
-    - canonical rooted proof recipe for the first input-driven redraw artifact on the preferred rooted proof pair
+    - canonical rooted proof recipe for the runtime-backed input artifact on the preferred rooted proof pair
   - blocked_by:
-    - `ts-app-minimal`
+    - `boot-ts-app-minimal`
+    - `boot-touch-rust-counter-boot-proof`
+- [ ] `ts-runtime-app-matrix-proof`
+  - task_id: boot-ts-runtime-app-matrix-proof
+  - priority: 13
+  - why next: keep worker-1 on the TypeScript boot lane and prove the direct-present contract is not hard-coded to the first counter demo
+  - owned paths:
+    - `runtime/`
+    - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `rust/shadow-system/`
+    - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
+    - `scripts/pixel/pixel_boot_recover_traces.sh`
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - `todos/boot/`
+  - acceptance:
+    - boot-owned app direct-present can stage and select at least one additional TypeScript runtime app by app id or an equivalent manifest-backed selector
+    - recovered status preserves the landed proof contract fields for app id, client kind, TypeScript renderer, runtime bundle, expected frame path, and captured frame
+    - if a second TS app is blocked, land the precise blocker and smallest code/docs cleanup that makes the remaining counter-specific assumption explicit
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - canonical rooted proof recipe if image metadata or app selection changes
+  - blocked_by:
+    - `boot-ts-app-direct-present-proof-contract`
+- [ ] `sound-boot-owned-probe`
+  - task_id: boot-sound-boot-owned-probe
+  - priority: 16
+  - why sidecar: keep audio available as an independent boot-owned service probe without stealing the camera, touch, or TypeScript continuity lanes
+  - owned paths:
+    - `runtime/app-sound-smoke/`
+    - `rust/shadow-system/src/services/audio.rs`
+    - `rust/shadow-linux-audio-spike/`
+    - `scripts/pixel/pixel_runtime_app_sound_drm.sh`
+    - `scripts/ci/runtime_app_sound_smoke.sh`
+    - `todos/boot/`
+  - acceptance:
+    - sound smoke or a low-level audio probe runs under boot-owned userspace constraints, or lands a precise blocker artifact
+    - metadata distinguishes audible/backend success from app-frame-only success
+  - validation:
+    - `scripts/ci/runtime_app_sound_smoke.sh`
+    - `just pixel-ci sound` if the implementation touches rooted-Pixel audio behavior
+  - blocked_by: none
 - [ ] `shell-home-static`
   - task_id: boot-shell-home-static
+  - priority: 18
   - why after app + input: shell work should sit on top of the first truthful app lane and the first truthful input lane
   - owned paths:
     - `ui/`
@@ -291,7 +367,7 @@ Related docs:
     - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
     - canonical rooted proof recipe for the first static shell/home artifact on the preferred rooted proof pair
   - blocked_by:
-    - `touch-counter-gpu`
+    - `boot-touch-counter-gpu`
 
 ## Parked / Fallback Seams
 
@@ -304,6 +380,68 @@ Related docs:
   - reference only; do not extend it
 - [~] Rooted KGSL falsification matrices.
   - use as falsifiers only, not as the execution plan
+
+## Retired Dispatch Records
+
+These cards exist so dispatch definitions live in `todos/` instead of runtime
+queue JSON. Do not claim them.
+
+- [x] `ts-app-minimal-mainline`
+  - task_id: boot-ts-app-minimal-mainline
+  - result: superseded by `boot-ts-app-minimal` and `boot-ts-app-direct-present-proof-contract`
+  - owned paths:
+    - `runtime/`
+    - `rust/shadow-system/`
+    - `scripts/pixel/`
+    - `todos/boot/`
+  - validation:
+    - migrated to plan truth
+  - blocked_by: none
+- [x] `camera-boot-owned-probe`
+  - task_id: boot-camera-boot-owned-probe
+  - result: retired as too broad; replaced by `boot-camera-rust-hal-frame-probe`
+  - owned paths:
+    - `runtime/app-camera/`
+    - `rust/shadow-system/src/services/camera.rs`
+    - `rust/shadow-sdk/src/services/camera.rs`
+    - `scripts/pixel/`
+    - `todos/boot/camera-linux-api-recon.md`
+  - validation:
+    - migrate to the direct-HAL boot probe contract before claiming more camera work
+  - blocked_by: none
+- [x] `touch-rust-counter-probe`
+  - task_id: boot-touch-rust-counter-probe
+  - result: superseded by landed `boot-touch-rust-counter-boot-proof`
+  - owned paths:
+    - `ui/apps/shadow-rust-demo/`
+    - `ui/crates/shadow-compositor-guest/`
+    - `scripts/debug/pixel_touch_latency_probe.sh`
+    - `todos/boot/`
+  - validation:
+    - migrated to plan truth
+  - blocked_by: none
+- [x] `camera-linux-surface-probe`
+  - task_id: boot-camera-linux-surface-probe
+  - result: implemented as read-only Linux media/V4L2/Qualcomm query-cap discovery
+  - owned paths:
+    - `rust/shadow-camera-provider-host/`
+    - `scripts/pixel/pixel_camera_rs_run.sh`
+    - `scripts/lib/pixel_camera_runtime_common.sh`
+    - `todos/boot/camera-linux-api-recon.md`
+  - validation:
+    - `SHADOW_DEVICE_LEASE_FORCE=1 PIXEL_SERIAL=<serial> scripts/pixel/pixel_camera_rs_run.sh linux-probe`
+  - blocked_by: none
+- [x] `camera-hal-containment-probe`
+  - task_id: boot-camera-hal-containment-probe
+  - result: direct HAL load/HMI evidence captured; provider-service capture now only reference data
+  - owned paths:
+    - `rust/shadow-camera-provider-host/`
+    - `scripts/pixel/pixel_camera_rs_run.sh`
+    - `scripts/lib/pixel_camera_runtime_common.sh`
+    - `todos/boot/camera-linux-api-recon.md`
+  - validation:
+    - `SHADOW_DEVICE_LEASE_FORCE=1 PIXEL_SERIAL=<serial> scripts/pixel/pixel_camera_rs_run.sh hal-probe`
+  - blocked_by: none
 
 ## Device Policy
 
