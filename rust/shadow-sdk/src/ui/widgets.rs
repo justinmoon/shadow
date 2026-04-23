@@ -15,7 +15,7 @@ use xilem::{AnyWidgetView, Color, FontWeight, InsertNewline, WidgetView};
 
 use crate::app::AppWindowMetrics;
 
-use super::{TaskHandle, Theme};
+use super::{task::TaskHandle, theme::Theme};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
@@ -56,7 +56,7 @@ pub fn maybe<State: 'static, Action: 'static>(
     }
 }
 
-pub fn screen<State: Send + Sync + 'static, Action: Send + Sync + 'static>(
+pub(super) fn screen<State: Send + Sync + 'static, Action: Send + Sync + 'static>(
     metrics: AppWindowMetrics,
     theme: Theme,
     body: impl WidgetView<State, Action>,
@@ -71,7 +71,7 @@ pub fn screen<State: Send + Sync + 'static, Action: Send + Sync + 'static>(
     sized_box(portal(sized_box(body).padding(padding))).background_color(theme.background)
 }
 
-pub fn panel<State: 'static, Action: 'static>(
+pub(super) fn panel<State: 'static, Action: 'static>(
     theme: Theme,
     body: impl WidgetView<State, Action>,
 ) -> impl WidgetView<State, Action> {
@@ -82,7 +82,7 @@ pub fn panel<State: 'static, Action: 'static>(
         .corner_radius(6.0)
 }
 
-pub fn eyebrow_text<State: 'static, Action: 'static>(
+pub(super) fn eyebrow_text<State: 'static, Action: 'static>(
     text: impl Into<String>,
     theme: Theme,
 ) -> impl WidgetView<State, Action> {
@@ -92,7 +92,7 @@ pub fn eyebrow_text<State: 'static, Action: 'static>(
         .color(theme.text_muted)
 }
 
-pub fn headline_text<State: 'static, Action: 'static>(
+pub(super) fn headline_text<State: 'static, Action: 'static>(
     text: impl Into<String>,
     theme: Theme,
 ) -> impl WidgetView<State, Action> {
@@ -102,7 +102,7 @@ pub fn headline_text<State: 'static, Action: 'static>(
         .color(theme.text_primary)
 }
 
-pub fn top_bar<State: 'static, Action: 'static>(
+pub(super) fn top_bar<State: 'static, Action: 'static>(
     theme: Theme,
     eyebrow: impl Into<String>,
     title: impl Into<String>,
@@ -122,7 +122,7 @@ pub fn top_bar<State: 'static, Action: 'static>(
     )
 }
 
-pub fn top_bar_with_back<State: 'static>(
+pub(super) fn top_bar_with_back<State: 'static>(
     theme: Theme,
     eyebrow: impl Into<String>,
     title: impl Into<String>,
@@ -148,14 +148,14 @@ pub fn top_bar_with_back<State: 'static>(
     )
 }
 
-pub fn body_text<State: 'static, Action: 'static>(
+pub(super) fn body_text<State: 'static, Action: 'static>(
     text: impl Into<String>,
     theme: Theme,
 ) -> impl WidgetView<State, Action> {
     prose_text(text, 15.0, theme)
 }
 
-pub fn prose_text<State: 'static, Action: 'static>(
+pub(super) fn prose_text<State: 'static, Action: 'static>(
     text: impl Into<String>,
     text_size: f32,
     theme: Theme,
@@ -165,14 +165,14 @@ pub fn prose_text<State: 'static, Action: 'static>(
         .text_color(theme.text_primary)
 }
 
-pub fn caption_text<State: 'static, Action: 'static>(
+pub(super) fn caption_text<State: 'static, Action: 'static>(
     text: impl Into<String>,
     theme: Theme,
 ) -> impl WidgetView<State, Action> {
     label(text.into()).text_size(12.0).color(theme.text_muted)
 }
 
-pub fn primary_button<State: 'static>(
+pub(super) fn primary_button<State: 'static>(
     label_text: impl Into<String>,
     theme: Theme,
     on_press: impl Fn(&mut State) + Send + Sync + 'static,
@@ -180,7 +180,7 @@ pub fn primary_button<State: 'static>(
     primary_button_state(label_text, theme, ActionButtonState::Enabled, on_press)
 }
 
-pub fn primary_button_state<State: 'static>(
+pub(super) fn primary_button_state<State: 'static>(
     label_text: impl Into<String>,
     theme: Theme,
     state: ActionButtonState,
@@ -211,7 +211,7 @@ pub fn primary_button_state<State: 'static>(
     .corner_radius(6.0)
 }
 
-pub fn secondary_button<State: 'static>(
+pub(super) fn secondary_button<State: 'static>(
     label_text: impl Into<String>,
     theme: Theme,
     on_press: impl Fn(&mut State) + Send + Sync + 'static,
@@ -219,7 +219,7 @@ pub fn secondary_button<State: 'static>(
     secondary_button_state(label_text, theme, ActionButtonState::Enabled, on_press)
 }
 
-pub fn secondary_button_state<State: 'static>(
+pub(super) fn secondary_button_state<State: 'static>(
     label_text: impl Into<String>,
     theme: Theme,
     state: ActionButtonState,
@@ -256,7 +256,7 @@ pub fn secondary_button_state<State: 'static>(
     .corner_radius(6.0)
 }
 
-pub fn status_chip<State: 'static, Action: 'static>(
+pub(super) fn status_chip<State: 'static, Action: 'static>(
     text: impl Into<String>,
     tone: Tone,
     theme: Theme,
@@ -273,7 +273,7 @@ pub fn status_chip<State: 'static, Action: 'static>(
     .corner_radius(999.0)
 }
 
-pub fn text_field<State: 'static>(
+pub(super) fn text_field<State: 'static>(
     value: impl Into<String>,
     placeholder: impl Into<String>,
     theme: Theme,
@@ -291,7 +291,7 @@ pub fn text_field<State: 'static>(
     .corner_radius(6.0)
 }
 
-pub fn multiline_editor<State: 'static>(
+pub(super) fn multiline_editor<State: 'static>(
     value: impl Into<String>,
     placeholder: impl Into<String>,
     min_height: f64,
@@ -313,7 +313,7 @@ pub fn multiline_editor<State: 'static>(
     .corner_radius(6.0)
 }
 
-pub fn selectable_card<State: 'static>(
+pub(super) fn selectable_card<State: 'static>(
     theme: Theme,
     is_selected: bool,
     body: impl WidgetView<State>,
@@ -337,7 +337,7 @@ pub fn selectable_card<State: 'static>(
         .corner_radius(6.0)
 }
 
-pub fn sheet<State: 'static, Action: 'static>(
+fn sheet<State: 'static, Action: 'static>(
     theme: Theme,
     body: impl WidgetView<State, Action>,
 ) -> impl WidgetView<State, Action> {
@@ -348,7 +348,7 @@ pub fn sheet<State: 'static, Action: 'static>(
         .corner_radius(14.0)
 }
 
-pub fn with_sheet<State: 'static, Action: 'static>(
+pub(super) fn with_sheet<State: 'static, Action: 'static>(
     body: impl WidgetView<State, Action>,
     theme: Theme,
     sheet_content: Option<Box<AnyWidgetView<State, Action>>>,

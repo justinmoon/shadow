@@ -1,21 +1,21 @@
 use xilem::Color;
 
 #[derive(Clone, Copy, Debug)]
-pub struct Theme {
-    pub background: Color,
-    pub surface: Color,
-    pub surface_raised: Color,
-    pub border: Color,
-    pub text_primary: Color,
-    pub text_muted: Color,
-    pub accent: Color,
-    pub accent_soft: Color,
-    pub success: Color,
-    pub danger: Color,
+pub(super) struct Theme {
+    pub(super) background: Color,
+    pub(super) surface: Color,
+    pub(super) surface_raised: Color,
+    pub(super) border: Color,
+    pub(super) text_primary: Color,
+    pub(super) text_muted: Color,
+    pub(super) accent: Color,
+    pub(super) accent_soft: Color,
+    pub(super) success: Color,
+    pub(super) danger: Color,
 }
 
 impl Theme {
-    pub fn shadow_dark() -> Self {
+    pub(super) fn shadow_dark() -> Self {
         Self {
             background: Color::from_rgb8(0x12, 0x13, 0x15),
             surface: Color::from_rgb8(0x1b, 0x1d, 0x21),

@@ -2,7 +2,7 @@ use xilem::{AnyWidgetView, WidgetView};
 
 use crate::app::AppWindowMetrics;
 
-use super::{widgets, ActionButtonState, Theme, Tone};
+use super::{theme::Theme, widgets, ActionButtonState, Tone};
 
 #[derive(Clone, Copy, Debug)]
 pub struct UiContext {
@@ -11,7 +11,7 @@ pub struct UiContext {
 }
 
 impl UiContext {
-    pub const fn new(metrics: AppWindowMetrics, theme: Theme) -> Self {
+    const fn new(metrics: AppWindowMetrics, theme: Theme) -> Self {
         Self { metrics, theme }
     }
 
@@ -21,10 +21,6 @@ impl UiContext {
 
     pub const fn metrics(self) -> AppWindowMetrics {
         self.metrics
-    }
-
-    pub const fn theme(self) -> Theme {
-        self.theme
     }
 
     pub fn panel<State: 'static, Action: 'static>(

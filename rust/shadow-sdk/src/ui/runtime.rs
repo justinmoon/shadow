@@ -8,7 +8,7 @@ use xilem::{EventLoop, WidgetView, WindowOptions, Xilem};
 
 use crate::app::{AppWindowDefaults, AppWindowEnvironment};
 
-use super::Theme;
+use super::theme::Theme;
 
 pub const PHONE_SURFACE_WIDTH: u32 = 540;
 pub const PHONE_SURFACE_HEIGHT: u32 = 1042;
