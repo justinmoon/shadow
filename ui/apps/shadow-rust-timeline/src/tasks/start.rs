@@ -1,15 +1,6 @@
-use shadow_sdk::services::{
-    clipboard::ClipboardWriteRequest,
-    nostr::{
-        timeline::{
-            thread_parent_ids, NostrContactListUpdateRequest, NostrExploreSyncRequest,
-            NostrHomeRefreshRequest, NostrThreadSyncRequest, NostrTimelinePublishRequest,
-        },
-        NostrAccountTask,
-    },
-};
+use shadow_sdk::services::nostr::timeline::thread_parent_ids;
 
-use super::{FollowActionKind, RefreshSource};
+use super::RefreshSource;
 use crate::{socket_available, TimelineApp, TimelineStatus, Tone};
 
 impl TimelineApp {
@@ -32,11 +23,11 @@ impl TimelineApp {
         if self.tasks.refresh.is_pending() {
             return;
         }
-        self.tasks.refresh.start(NostrHomeRefreshRequest {
-            account_npub: account.npub.clone(),
-            limit: self.config.limit,
-            relay_urls: self.config.relay_urls.clone(),
-        });
+        self.tasks.start_refresh(
+            account.npub.clone(),
+            self.config.limit,
+            self.config.relay_urls.clone(),
+        );
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: match source {
@@ -53,10 +44,8 @@ impl TimelineApp {
         if self.tasks.explore_sync.is_pending() {
             return;
         }
-        self.tasks.explore_sync.start(NostrExploreSyncRequest {
-            limit: self.config.limit.max(24),
-            relay_urls: self.config.relay_urls.clone(),
-        });
+        self.tasks
+            .start_explore_sync(self.config.limit.max(24), self.config.relay_urls.clone());
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Fetching recent relay notes for Explore..."),
@@ -71,7 +60,7 @@ impl TimelineApp {
         if self.tasks.account_action.is_pending() {
             return;
         }
-        self.tasks.account_action.start(NostrAccountTask::generate());
+        self.tasks.start_account_generate();
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Generating a new Nostr account..."),
@@ -90,9 +79,7 @@ impl TimelineApp {
             };
             return;
         }
-        self.tasks
-            .account_action
-            .start(NostrAccountTask::import(nsec.to_owned()));
+        self.tasks.start_account_import(nsec.to_owned());
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Importing the Nostr account from nsec..."),
@@ -106,11 +93,11 @@ impl TimelineApp {
         let Some(note) = self.cached_note_by_id(&note_id) else {
             return;
         };
-        self.tasks.thread_sync.start(NostrThreadSyncRequest {
+        self.tasks.start_thread_sync(
             note_id,
-            parent_ids: thread_parent_ids(&note),
-            relay_urls: self.config.relay_urls.clone(),
-        });
+            thread_parent_ids(&note),
+            self.config.relay_urls.clone(),
+        );
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Pulling thread context from relays..."),
@@ -128,9 +115,7 @@ impl TimelineApp {
             };
             return;
         };
-        self.tasks
-            .clipboard_write
-            .start(ClipboardWriteRequest::new(account.npub.clone()));
+        self.tasks.start_clipboard_write(account.npub.clone());
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Copying the active npub to the clipboard..."),
@@ -189,11 +174,8 @@ impl TimelineApp {
             };
             return;
         }
-        self.tasks.follow_update.start(NostrContactListUpdateRequest {
-            account_npub: account.npub.clone(),
-            action: FollowActionKind::Add { npub },
-            relay_urls: self.config.relay_urls.clone(),
-        });
+        self.tasks
+            .start_follow_add(account.npub.clone(), npub, self.config.relay_urls.clone());
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Updating the shared contact list..."),
@@ -220,11 +202,8 @@ impl TimelineApp {
             };
             return;
         };
-        self.tasks.follow_update.start(NostrContactListUpdateRequest {
-            account_npub: account.npub.clone(),
-            action: FollowActionKind::Remove { npub },
-            relay_urls: self.config.relay_urls.clone(),
-        });
+        self.tasks
+            .start_follow_remove(account.npub.clone(), npub, self.config.relay_urls.clone());
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Updating the shared contact list..."),
@@ -253,12 +232,12 @@ impl TimelineApp {
             };
             return;
         };
-        self.tasks.publish.start(NostrTimelinePublishRequest::reply(
+        self.tasks.start_reply_publish(
             content.to_owned(),
             self.config.relay_urls.clone(),
             note.id.clone(),
             note.root_event_id.clone().or_else(|| Some(note.id)),
-        ));
+        );
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Publishing reply through the shared Nostr account..."),
@@ -296,10 +275,8 @@ impl TimelineApp {
             };
             return;
         }
-        self.tasks.publish.start(NostrTimelinePublishRequest::note(
-            content.to_owned(),
-            self.config.relay_urls.clone(),
-        ));
+        self.tasks
+            .start_note_publish(content.to_owned(), self.config.relay_urls.clone());
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Publishing note through the shared Nostr account..."),

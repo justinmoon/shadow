@@ -74,6 +74,100 @@ impl Default for TimelineTasks {
 }
 
 impl TimelineTasks {
+    pub(crate) fn start_refresh(
+        &mut self,
+        account_npub: String,
+        limit: usize,
+        relay_urls: Vec<String>,
+    ) -> bool {
+        self.refresh.start(NostrHomeRefreshRequest {
+            account_npub,
+            limit,
+            relay_urls,
+        })
+    }
+
+    pub(crate) fn start_explore_sync(&mut self, limit: usize, relay_urls: Vec<String>) -> bool {
+        self.explore_sync
+            .start(NostrExploreSyncRequest { limit, relay_urls })
+    }
+
+    pub(crate) fn start_account_generate(&mut self) -> bool {
+        self.account_action.start(NostrAccountTask::generate())
+    }
+
+    pub(crate) fn start_account_import(&mut self, nsec: String) -> bool {
+        self.account_action.start(NostrAccountTask::import(nsec))
+    }
+
+    pub(crate) fn start_thread_sync(
+        &mut self,
+        note_id: String,
+        parent_ids: Vec<String>,
+        relay_urls: Vec<String>,
+    ) -> bool {
+        self.thread_sync.start(NostrThreadSyncRequest {
+            note_id,
+            parent_ids,
+            relay_urls,
+        })
+    }
+
+    pub(crate) fn start_clipboard_write(&mut self, text: String) -> bool {
+        self.clipboard_write.start(ClipboardWriteRequest::new(text))
+    }
+
+    pub(crate) fn start_follow_add(
+        &mut self,
+        account_npub: String,
+        npub: String,
+        relay_urls: Vec<String>,
+    ) -> bool {
+        self.start_follow_update(account_npub, FollowActionKind::Add { npub }, relay_urls)
+    }
+
+    pub(crate) fn start_follow_remove(
+        &mut self,
+        account_npub: String,
+        npub: String,
+        relay_urls: Vec<String>,
+    ) -> bool {
+        self.start_follow_update(account_npub, FollowActionKind::Remove { npub }, relay_urls)
+    }
+
+    fn start_follow_update(
+        &mut self,
+        account_npub: String,
+        action: FollowActionKind,
+        relay_urls: Vec<String>,
+    ) -> bool {
+        self.follow_update.start(NostrContactListUpdateRequest {
+            account_npub,
+            action,
+            relay_urls,
+        })
+    }
+
+    pub(crate) fn start_reply_publish(
+        &mut self,
+        content: String,
+        relay_urls: Vec<String>,
+        reply_to_event_id: String,
+        root_event_id: Option<String>,
+    ) -> bool {
+        self.publish.start(NostrTimelinePublishRequest::reply(
+            content,
+            relay_urls,
+            reply_to_event_id,
+            root_event_id,
+        ))
+    }
+
+    pub(crate) fn start_note_publish(&mut self, content: String, relay_urls: Vec<String>) -> bool {
+        self.publish
+            .start(NostrTimelinePublishRequest::note(content, relay_urls))
+    }
+
     pub(crate) fn pending_follow_update_target(&self) -> Option<&str> {
         self.follow_update
             .pending()
@@ -130,20 +224,36 @@ fn follow_update_target(job: &NostrContactListUpdateRequest) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use shadow_sdk::services::nostr::timeline::NostrContactListUpdateRequest;
+    use shadow_sdk::services::nostr::timeline::NostrTimelinePublishRequest;
 
-    use super::{FollowActionKind, TimelineTasks};
+    use super::{follow_update_target, TimelineTasks};
+
+    #[test]
+    fn refresh_start_builds_pending_request() {
+        let mut tasks = TimelineTasks::default();
+        assert!(tasks.start_refresh(
+            String::from("npub-account"),
+            42,
+            vec![String::from("wss://relay.example")],
+        ));
+
+        let pending = tasks.refresh.pending().expect("pending refresh").job();
+        assert_eq!(pending.account_npub, "npub-account");
+        assert_eq!(pending.limit, 42);
+        assert_eq!(
+            pending.relay_urls,
+            vec![String::from("wss://relay.example")]
+        );
+    }
 
     #[test]
     fn follow_update_helpers_track_pending_target() {
         let mut tasks = TimelineTasks::default();
-        assert!(tasks.follow_update.start(NostrContactListUpdateRequest {
-            account_npub: String::from("npub-account"),
-            action: FollowActionKind::Add {
-                npub: String::from("npub-target"),
-            },
-            relay_urls: Vec::new(),
-        }));
+        assert!(tasks.start_follow_add(
+            String::from("npub-account"),
+            String::from("npub-target"),
+            Vec::new(),
+        ));
 
         assert_eq!(tasks.pending_follow_update_target(), Some("npub-target"));
         assert!(tasks.follow_update_pending_for("npub-target"));
@@ -153,13 +263,11 @@ mod tests {
     #[test]
     fn follow_update_finish_returns_matching_pending_job() {
         let mut tasks = TimelineTasks::default();
-        assert!(tasks.follow_update.start(NostrContactListUpdateRequest {
-            account_npub: String::from("npub-account"),
-            action: FollowActionKind::Remove {
-                npub: String::from("npub-target"),
-            },
-            relay_urls: vec![String::from("wss://relay.example")],
-        }));
+        assert!(tasks.start_follow_remove(
+            String::from("npub-account"),
+            String::from("npub-target"),
+            vec![String::from("wss://relay.example")],
+        ));
 
         let pending = tasks
             .follow_update
@@ -172,5 +280,46 @@ mod tests {
 
         assert_eq!(follow_update_target(&finished), "npub-target");
         assert!(!tasks.follow_update.is_pending());
+    }
+
+    #[test]
+    fn publish_start_helpers_build_note_and_reply_requests() {
+        let mut note_tasks = TimelineTasks::default();
+        assert!(note_tasks.start_note_publish(
+            String::from("hello"),
+            vec![String::from("wss://relay.example")],
+        ));
+        assert!(note_tasks.publish_note_pending());
+        let note = note_tasks
+            .publish
+            .pending()
+            .expect("pending note publish")
+            .job();
+        assert!(note.is_note());
+        assert_eq!(note.content(), "hello");
+
+        let mut reply_tasks = TimelineTasks::default();
+        assert!(reply_tasks.start_reply_publish(
+            String::from("reply"),
+            vec![String::from("wss://relay.example")],
+            String::from("note-1"),
+            Some(String::from("root-1")),
+        ));
+        assert!(!reply_tasks.publish_note_pending());
+        assert!(reply_tasks.publish_reply_pending_for("note-1"));
+
+        match reply_tasks
+            .publish
+            .pending()
+            .expect("pending reply publish")
+            .job()
+        {
+            NostrTimelinePublishRequest::Reply(request) => {
+                assert_eq!(request.reply_to_event_id, "note-1");
+                assert_eq!(request.root_event_id.as_deref(), Some("root-1"));
+                assert_eq!(request.content, "reply");
+            }
+            NostrTimelinePublishRequest::Note(_) => panic!("expected reply request"),
+        }
     }
 }
