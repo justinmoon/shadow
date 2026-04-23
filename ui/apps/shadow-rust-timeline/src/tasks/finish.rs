@@ -163,6 +163,7 @@ impl TimelineApp {
                 } else {
                     crate::Route::Explore
                 }];
+                self.hydrate_current_route();
                 self.status = if has_follows {
                     TimelineStatus {
                         tone: Tone::Success,

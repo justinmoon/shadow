@@ -282,6 +282,7 @@ impl TimelineApp {
             status,
             tasks: TimelineTasks::default(),
         };
+        app.hydrate_current_route();
         if app.account.is_some() && app.config.sync_on_start && socket_available() {
             app.begin_refresh(RefreshSource::Startup);
         }
@@ -367,6 +368,7 @@ impl TimelineApp {
         }
         self.reply_draft = None;
         self.route_stack.push(route);
+        self.hydrate_current_route();
     }
 
     fn pop_route(&mut self) {
@@ -374,6 +376,7 @@ impl TimelineApp {
         if self.route_stack.len() > 1 {
             self.route_stack.pop();
         }
+        self.hydrate_current_route();
     }
 
     fn open_note(&mut self, id: String) {
@@ -414,7 +417,7 @@ impl TimelineApp {
         }
 
         let route = self.current_route();
-        self.prepare_route(&route);
+        self.cached_data.hydrate_route(&route, self.config.limit);
         if self.reply_draft.as_ref().is_some_and(|draft| match route {
             Route::Note { ref id } => {
                 draft.note_id != *id || self.cached_note_by_id(&draft.note_id).is_none()
@@ -425,8 +428,9 @@ impl TimelineApp {
         }
     }
 
-    fn prepare_route(&mut self, route: &Route) {
-        self.cached_data.prepare_route(route, self.config.limit);
+    pub(crate) fn hydrate_current_route(&mut self) {
+        let route = self.current_route();
+        self.cached_data.hydrate_route(&route, self.config.limit);
     }
 
     fn platform_open_reply(&mut self) {
@@ -489,7 +493,7 @@ impl TimelineApp {
         self.reply_draft = None;
         if self.account.is_some() {
             self.route_stack = vec![Route::Timeline];
-            self.prepare_route(&Route::Timeline);
+            self.hydrate_current_route();
             eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_success");
         } else {
             eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_failed");
@@ -690,7 +694,9 @@ impl TimelineApp {
 
     fn reload_feed_from_cache(&mut self) -> Result<(), String> {
         self.cached_data
-            .reload_home(self.account.as_ref(), self.config.limit)
+            .reload_home(self.account.as_ref(), self.config.limit)?;
+        self.sync_routes();
+        Ok(())
     }
 }
 
@@ -706,7 +712,6 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
     let task_snapshot = app.tasks.snapshot();
     let ui = UiContext::shadow_dark(app.metrics);
     let route = app.current_route();
-    app.prepare_route(&route);
 
     let body = match route {
         Route::Account => account_screen(
@@ -1155,5 +1160,16 @@ mod tests {
         app.route_stack = vec![Route::Onboarding];
 
         let _ = app_logic(&mut app);
+    }
+
+    #[test]
+    fn reload_feed_from_cache_without_account_resets_to_onboarding_route() {
+        let mut app = test_app();
+        app.account = None;
+        app.route_stack = vec![Route::Timeline];
+
+        app.reload_feed_from_cache().expect("reload without account");
+
+        assert_eq!(app.current_route(), Route::Onboarding);
     }
 }

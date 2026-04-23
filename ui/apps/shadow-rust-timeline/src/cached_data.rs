@@ -82,12 +82,14 @@ impl TimelineCachedData {
         &self.home_notes
     }
 
-    pub(crate) fn prepare_route(&mut self, route: &Route, limit: usize) {
+    // Route-local cache reads stay explicit: hydrate the active route up front,
+    // then render from the cached state without hidden work.
+    pub(crate) fn hydrate_route(&mut self, route: &Route, limit: usize) {
         match route {
             Route::Account | Route::Onboarding | Route::Timeline => {}
-            Route::Explore => self.ensure_explore_loaded(limit.max(24)),
-            Route::Note { id } => self.ensure_note_loaded(id),
-            Route::Profile { pubkey } => self.ensure_profile_loaded(pubkey, limit.max(24)),
+            Route::Explore => self.hydrate_explore_route(limit.max(24)),
+            Route::Note { id } => self.hydrate_note_route(id),
+            Route::Profile { pubkey } => self.hydrate_profile_route(pubkey, limit.max(24)),
         }
     }
 
@@ -135,14 +137,14 @@ impl TimelineCachedData {
             })
     }
 
-    fn ensure_explore_loaded(&mut self, limit: usize) {
+    fn hydrate_explore_route(&mut self, limit: usize) {
         if self.explore_cache.is_some() {
             return;
         }
         self.explore_cache = load_explore_cache_state(limit).ok();
     }
 
-    fn ensure_profile_loaded(&mut self, pubkey: &str, limit: usize) {
+    fn hydrate_profile_route(&mut self, pubkey: &str, limit: usize) {
         if self.profile_caches.contains_key(pubkey) {
             return;
         }
@@ -151,7 +153,7 @@ impl TimelineCachedData {
         }
     }
 
-    fn ensure_note_loaded(&mut self, note_id: &str) {
+    fn hydrate_note_route(&mut self, note_id: &str) {
         if self.note_caches.contains_key(note_id) {
             return;
         }
