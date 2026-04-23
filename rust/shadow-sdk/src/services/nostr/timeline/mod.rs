@@ -242,6 +242,12 @@ pub fn run_update_contact_list_task(
     update_contact_list(request).map_err(|error| error.to_string())
 }
 
+pub fn run_publish_note_or_reply_task(
+    request: NostrTimelinePublishRequest,
+) -> Result<super::NostrPublishReceipt, String> {
+    publish_note_or_reply(request).map_err(|error| error.to_string())
+}
+
 #[derive(Debug)]
 pub struct NostrTextNotePublishOutcome {
     pub receipt: super::NostrPublishReceipt,

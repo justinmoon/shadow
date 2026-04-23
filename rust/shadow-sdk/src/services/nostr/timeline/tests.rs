@@ -1,10 +1,10 @@
 use super::{
     load_home_cache_state_for_account, load_home_feed_scope_for_account, load_note_cache_state,
     load_profile_summary, load_thread_context, run_refresh_home_feed_task,
-    run_sync_explore_feed_task, run_sync_thread_task, run_update_contact_list_task,
-    thread_parent_ids, NostrContactListUpdateAction, NostrContactListUpdateRequest,
-    NostrExploreSyncRequest, NostrHomeFeedSource, NostrHomeRefreshRequest,
-    NostrThreadSyncRequest, NostrTimelinePublishRequest,
+    run_publish_note_or_reply_task, run_sync_explore_feed_task, run_sync_thread_task,
+    run_update_contact_list_task, thread_parent_ids, NostrContactListUpdateAction,
+    NostrContactListUpdateRequest, NostrExploreSyncRequest, NostrHomeFeedSource,
+    NostrHomeRefreshRequest, NostrThreadSyncRequest, NostrTimelinePublishRequest,
 };
 use crate::services::nostr::{
     NostrEvent, SqliteNostrService, NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV,
@@ -380,6 +380,19 @@ fn run_update_contact_list_task_stringifies_missing_service_config() {
             },
             relay_urls: Vec::new(),
         })
+        .expect_err("missing nostr service config should fail");
+
+        assert!(error.contains("shadow nostr service socket is not configured"));
+    });
+}
+
+#[test]
+fn run_publish_note_or_reply_task_stringifies_missing_service_config() {
+    with_missing_nostr_service_config(|| {
+        let error = run_publish_note_or_reply_task(NostrTimelinePublishRequest::note(
+            String::from("hello"),
+            Vec::new(),
+        ))
         .expect_err("missing nostr service config should fail");
 
         assert!(error.contains("shadow nostr service socket is not configured"));

@@ -7,12 +7,12 @@ use shadow_sdk::{
         nostr::{
             run_account_task,
             timeline::{
-                publish_note_or_reply, run_refresh_home_feed_task, run_sync_explore_feed_task,
-                run_sync_thread_task, run_update_contact_list_task, NostrContactListUpdateAction,
-                NostrContactListUpdateOutcome, NostrContactListUpdateRequest,
-                NostrExploreSyncOutcome, NostrExploreSyncRequest, NostrHomeRefreshOutcome,
-                NostrHomeRefreshRequest, NostrThreadSyncOutcome, NostrThreadSyncRequest,
-                NostrTimelinePublishRequest,
+                run_publish_note_or_reply_task, run_refresh_home_feed_task,
+                run_sync_explore_feed_task, run_sync_thread_task, run_update_contact_list_task,
+                NostrContactListUpdateAction, NostrContactListUpdateOutcome,
+                NostrContactListUpdateRequest, NostrExploreSyncOutcome,
+                NostrExploreSyncRequest, NostrHomeRefreshOutcome, NostrHomeRefreshRequest,
+                NostrThreadSyncOutcome, NostrThreadSyncRequest, NostrTimelinePublishRequest,
             },
             NostrAccountSummary, NostrAccountTask, NostrPublishReceipt,
         },
@@ -66,7 +66,10 @@ impl Default for TimelineTasks {
                 run_update_contact_list_task,
                 TimelineApp::finish_follow_update,
             ),
-            publish: TimelineTask::new(run_publish, TimelineApp::finish_publish),
+            publish: TimelineTask::new(
+                run_publish_note_or_reply_task,
+                TimelineApp::finish_publish,
+            ),
             refresh: TimelineTask::new(run_refresh_home_feed_task, TimelineApp::finish_refresh),
             thread_sync: TimelineTask::new(run_sync_thread_task, TimelineApp::finish_thread_sync),
         }
@@ -244,10 +247,6 @@ pub(crate) fn decorate_with_tasks(
             refresh.decoration(),
         ],
     )
-}
-
-fn run_publish(job: NostrTimelinePublishRequest) -> Result<PublishOutcome, String> {
-    publish_note_or_reply(job).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
