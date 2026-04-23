@@ -19,7 +19,7 @@ pub(super) struct ExploreScreenProps {
     pub(super) profiles: Vec<NostrExploreProfileEntry>,
     pub(super) socket_ready: bool,
     pub(super) sync_pending: bool,
-    pub(super) follow_pending: bool,
+    pub(super) pending_follow_npub: Option<String>,
 }
 
 pub(crate) fn explore_screen(
@@ -34,7 +34,7 @@ pub(crate) fn explore_screen(
         profiles,
         socket_ready,
         sync_pending,
-        follow_pending,
+        pending_follow_npub,
     } = props;
     let note_count = notes.len();
     column((
@@ -89,7 +89,7 @@ pub(crate) fn explore_screen(
             account,
             followed_pubkeys,
             profiles,
-            follow_pending,
+            pending_follow_npub,
             socket_ready,
         ),
         feed_section(
@@ -107,7 +107,7 @@ fn explore_profiles_section(
     account: Option<ActiveAccount>,
     followed_pubkeys: Vec<String>,
     profiles: Vec<NostrExploreProfileEntry>,
-    follow_pending: bool,
+    pending_follow_npub: Option<String>,
     socket_ready: bool,
 ) -> impl WidgetView<TimelineApp> {
     let followed = followed_pubkeys.into_iter().collect::<BTreeSet<_>>();
@@ -122,7 +122,7 @@ fn explore_profiles_section(
                             account.clone(),
                             followed.contains(&profile.pubkey),
                             profile,
-                            follow_pending,
+                            pending_follow_npub.clone(),
                             socket_ready,
                         )
                     })
@@ -149,11 +149,14 @@ fn explore_profile_card(
     account: Option<ActiveAccount>,
     is_following: bool,
     profile: NostrExploreProfileEntry,
-    follow_pending: bool,
+    pending_follow_npub: Option<String>,
     socket_ready: bool,
 ) -> impl WidgetView<TimelineApp> {
     let open_pubkey = profile.pubkey.clone();
     let follow_pubkey = profile.pubkey.clone();
+    let follow_pending = pending_follow_npub
+        .as_deref()
+        .is_some_and(|pending| pending == profile.pubkey.as_str());
     let is_active_account = account
         .as_ref()
         .is_some_and(|account| account.npub == profile.pubkey);

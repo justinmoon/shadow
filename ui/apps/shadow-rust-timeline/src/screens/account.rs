@@ -11,7 +11,7 @@ pub(super) struct AccountScreenProps {
     pub(super) follow_input: String,
     pub(super) status: TimelineStatus,
     pub(super) clipboard_pending: bool,
-    pub(super) follow_pending: bool,
+    pub(super) pending_follow_npub: Option<String>,
     pub(super) socket_ready: bool,
 }
 
@@ -25,7 +25,7 @@ pub(crate) fn account_screen(
         follow_input,
         status,
         clipboard_pending,
-        follow_pending,
+        pending_follow_npub,
         socket_ready,
     } = props;
     match account {
@@ -58,7 +58,7 @@ pub(crate) fn account_screen(
                         &account,
                         &feed_scope,
                         follow_input,
-                        follow_pending,
+                        pending_follow_npub,
                         socket_ready,
                     ),
                     column((
@@ -106,10 +106,13 @@ fn follow_manager(
     account: &ActiveAccount,
     feed_scope: &FeedScope,
     follow_input: String,
-    follow_pending: bool,
+    pending_follow_npub: Option<String>,
     socket_ready: bool,
 ) -> impl WidgetView<TimelineApp> {
     let follows = feed_scope.authors.clone().unwrap_or_default();
+    let follow_input_pending = pending_follow_npub
+        .as_deref()
+        .is_some_and(|pending| pending == follow_input.trim());
     ui.panel(
         column((
             ui.eyebrow_text("Home feed"),
@@ -127,12 +130,12 @@ fn follow_manager(
                 )
                 .flex(1.0),
                 ui.primary_button_state(
-                    if follow_pending {
+                    if follow_input_pending {
                         "Updating..."
                     } else {
                         "Follow"
                     },
-                    if follow_pending || !socket_ready {
+                    if follow_input_pending || !socket_ready {
                         ActionButtonState::Disabled
                     } else {
                         ActionButtonState::Enabled
@@ -147,10 +150,13 @@ fn follow_manager(
             maybe(
                 (!follows.is_empty()).then_some(
                     column(
-                        follows
-                            .into_iter()
-                            .map(|npub| follow_row(ui, account, npub, follow_pending, socket_ready))
-                            .collect::<Vec<_>>(),
+                        follows.into_iter().map(|npub| {
+                            let follow_pending = pending_follow_npub
+                                .as_deref()
+                                .is_some_and(|pending| pending == npub.as_str());
+                            follow_row(ui, account, npub, follow_pending, socket_ready)
+                        })
+                        .collect::<Vec<_>>(),
                     )
                     .gap(8.0.px()),
                 ),

@@ -25,7 +25,9 @@ pub(crate) fn route_screen(
                 follow_input: app.follow_input.clone(),
                 status: app.status.clone(),
                 clipboard_pending: task_snapshot.clipboard_write.is_pending(),
-                follow_pending: task_snapshot.follow_update.is_pending(),
+                pending_follow_npub: task_snapshot
+                    .pending_follow_update_target()
+                    .map(str::to_owned),
                 socket_ready,
             },
         )
@@ -42,7 +44,9 @@ pub(crate) fn route_screen(
                     profiles: explore.profiles,
                     socket_ready,
                     sync_pending: task_snapshot.explore_sync.is_pending(),
-                    follow_pending: task_snapshot.follow_update.is_pending(),
+                    pending_follow_npub: task_snapshot
+                        .pending_follow_update_target()
+                        .map(str::to_owned),
                 },
             )
             .boxed()

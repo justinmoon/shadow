@@ -88,15 +88,18 @@ impl TimelineTasks {
     }
 
     pub(crate) fn follow_update_pending_for(&self, pubkey: &str) -> bool {
-        self.follow_update.pending_matches(|job| match &job.action {
-                FollowActionKind::Add { npub } | FollowActionKind::Remove { npub } => {
-                    npub == pubkey
-                }
-            })
+        self.follow_update
+            .pending_matches(|job| follow_update_target(job) == pubkey)
     }
 }
 
 impl TimelineTaskSnapshot {
+    pub(crate) fn pending_follow_update_target(&self) -> Option<&str> {
+        self.follow_update
+            .pending()
+            .map(|pending| follow_update_target(pending.job()))
+    }
+
     pub(crate) fn publish_reply_pending_for(&self, note_id: &str) -> bool {
         self.publish.pending_matches(|job| job.is_reply_to(note_id))
     }
@@ -182,4 +185,35 @@ pub(crate) fn decorate_with_tasks(
 
 fn run_publish(job: PendingPublish) -> Result<PublishOutcome, String> {
     publish_note_or_reply(job).map_err(|error| error.to_string())
+}
+
+fn follow_update_target(job: &PendingFollowUpdate) -> &str {
+    match &job.action {
+        FollowActionKind::Add { npub } | FollowActionKind::Remove { npub } => npub,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FollowActionKind, PendingFollowUpdate, TimelineTasks};
+
+    #[test]
+    fn follow_update_snapshot_tracks_pending_target() {
+        let mut tasks = TimelineTasks::default();
+        assert!(tasks.follow_update.start(PendingFollowUpdate {
+            account_npub: String::from("npub-account"),
+            action: FollowActionKind::Add {
+                npub: String::from("npub-target"),
+            },
+            relay_urls: Vec::new(),
+        }));
+
+        let snapshot = tasks.snapshot();
+        assert_eq!(
+            snapshot.pending_follow_update_target(),
+            Some("npub-target")
+        );
+        assert!(tasks.follow_update_pending_for("npub-target"));
+        assert!(!tasks.follow_update_pending_for("npub-other"));
+    }
 }
