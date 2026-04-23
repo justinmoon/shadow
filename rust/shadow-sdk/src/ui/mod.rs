@@ -8,7 +8,9 @@ pub use context::UiContext;
 pub use runtime::{
     phone_window_defaults, run, run_with_env, PHONE_SURFACE_HEIGHT, PHONE_SURFACE_WIDTH,
 };
-pub use task::{TaskDecoration, TaskDecorationRegistry, TaskHandle, TaskSlot, TaskSnapshot};
+pub use task::{
+    TaskDecoration, TaskDecorationRegistry, TaskHandle, TaskSlot, TaskSlotBinding, TaskSnapshot,
+};
 pub use widgets::{
     column, maybe, row, task_decoration, with_blocking_task, with_task, with_tasks,
     ActionButtonState, Tone,

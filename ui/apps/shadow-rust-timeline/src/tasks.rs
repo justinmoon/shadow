@@ -8,16 +8,16 @@ use shadow_sdk::{
             run_account_task,
             timeline::{
                 publish_note_or_reply, run_refresh_home_feed_task, run_sync_explore_feed_task,
-                run_sync_thread_task, run_update_contact_list_task,
-                NostrContactListUpdateAction, NostrContactListUpdateOutcome,
-                NostrContactListUpdateRequest, NostrExploreSyncOutcome, NostrExploreSyncRequest,
-                NostrHomeRefreshOutcome, NostrHomeRefreshRequest, NostrThreadSyncOutcome,
-                NostrThreadSyncRequest, NostrTimelinePublishRequest,
+                run_sync_thread_task, run_update_contact_list_task, NostrContactListUpdateAction,
+                NostrContactListUpdateOutcome, NostrContactListUpdateRequest,
+                NostrExploreSyncOutcome, NostrExploreSyncRequest, NostrHomeRefreshOutcome,
+                NostrHomeRefreshRequest, NostrThreadSyncOutcome, NostrThreadSyncRequest,
+                NostrTimelinePublishRequest,
             },
             NostrAccountSummary, NostrAccountTask, NostrPublishReceipt,
         },
     },
-    ui::{with_tasks, TaskHandle, TaskSlot, WidgetView},
+    ui::{with_tasks, TaskHandle, TaskSlotBinding, WidgetView},
 };
 
 use crate::TimelineApp;
@@ -37,46 +37,129 @@ pub(crate) type FollowUpdateOutcome = NostrContactListUpdateOutcome;
 pub(crate) type PublishOutcome = NostrPublishReceipt;
 pub(crate) type AccountActionOutcome = NostrAccountSummary;
 
-#[derive(Clone, Debug, Default)]
+type TimelineTask<Job, Output> = TaskSlotBinding<TimelineApp, Job, Output>;
+
+macro_rules! timeline_task_bool_methods {
+    ($pending:ident, $start:ident, $finish:ident, $field:ident, $job:ty) => {
+        pub(crate) fn $pending(&self) -> bool {
+            self.$field.is_pending()
+        }
+
+        pub(crate) fn $start(&mut self, job: $job) -> bool {
+            self.$field.start(job)
+        }
+
+        pub(crate) fn $finish(&mut self, task: TaskHandle<$job>) -> bool {
+            self.$field.finish(task).is_some()
+        }
+    };
+}
+
+macro_rules! timeline_task_job_methods {
+    ($pending:ident, $start:ident, $finish:ident, $field:ident, $job:ty) => {
+        pub(crate) fn $pending(&self) -> bool {
+            self.$field.is_pending()
+        }
+
+        pub(crate) fn $start(&mut self, job: $job) -> bool {
+            self.$field.start(job)
+        }
+
+        pub(crate) fn $finish(&mut self, task: TaskHandle<$job>) -> Option<$job> {
+            self.$field.finish(task)
+        }
+    };
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct TimelineTasks {
-    account_action: TaskSlot<NostrAccountTask>,
-    clipboard_write: TaskSlot<ClipboardWriteRequest>,
-    explore_sync: TaskSlot<NostrExploreSyncRequest>,
-    follow_update: TaskSlot<NostrContactListUpdateRequest>,
-    publish: TaskSlot<NostrTimelinePublishRequest>,
-    refresh: TaskSlot<NostrHomeRefreshRequest>,
-    thread_sync: TaskSlot<NostrThreadSyncRequest>,
+    account_action: TimelineTask<NostrAccountTask, AccountActionOutcome>,
+    clipboard_write: TimelineTask<ClipboardWriteRequest, ()>,
+    explore_sync: TimelineTask<NostrExploreSyncRequest, ExploreSyncOutcome>,
+    follow_update: TimelineTask<NostrContactListUpdateRequest, FollowUpdateOutcome>,
+    publish: TimelineTask<NostrTimelinePublishRequest, PublishOutcome>,
+    refresh: TimelineTask<NostrHomeRefreshRequest, RefreshOutcome>,
+    thread_sync: TimelineTask<NostrThreadSyncRequest, ThreadSyncOutcome>,
+}
+
+impl Default for TimelineTasks {
+    fn default() -> Self {
+        Self {
+            account_action: TimelineTask::new(run_account_task, TimelineApp::finish_account_action),
+            clipboard_write: TimelineTask::new(
+                run_write_text_task,
+                TimelineApp::finish_clipboard_write,
+            ),
+            explore_sync: TimelineTask::new(
+                run_sync_explore_feed_task,
+                TimelineApp::finish_explore_sync,
+            ),
+            follow_update: TimelineTask::new(
+                run_update_contact_list_task,
+                TimelineApp::finish_follow_update,
+            ),
+            publish: TimelineTask::new(run_publish, TimelineApp::finish_publish),
+            refresh: TimelineTask::new(run_refresh_home_feed_task, TimelineApp::finish_refresh),
+            thread_sync: TimelineTask::new(run_sync_thread_task, TimelineApp::finish_thread_sync),
+        }
+    }
 }
 
 impl TimelineTasks {
-    pub(crate) fn account_action_pending(&self) -> bool {
-        self.account_action.is_pending()
-    }
-
-    pub(crate) fn clipboard_write_pending(&self) -> bool {
-        self.clipboard_write.is_pending()
-    }
-
-    pub(crate) fn explore_sync_pending(&self) -> bool {
-        self.explore_sync.is_pending()
-    }
-
-    pub(crate) fn follow_update_pending(&self) -> bool {
-        self.follow_update.is_pending()
-    }
+    timeline_task_bool_methods!(
+        account_action_pending,
+        start_account_action,
+        finish_account_action,
+        account_action,
+        NostrAccountTask
+    );
+    timeline_task_bool_methods!(
+        clipboard_write_pending,
+        start_clipboard_write,
+        finish_clipboard_write,
+        clipboard_write,
+        ClipboardWriteRequest
+    );
+    timeline_task_bool_methods!(
+        explore_sync_pending,
+        start_explore_sync,
+        finish_explore_sync,
+        explore_sync,
+        NostrExploreSyncRequest
+    );
+    timeline_task_job_methods!(
+        follow_update_pending,
+        start_follow_update,
+        finish_follow_update,
+        follow_update,
+        NostrContactListUpdateRequest
+    );
+    timeline_task_job_methods!(
+        publish_pending,
+        start_publish,
+        finish_publish,
+        publish,
+        NostrTimelinePublishRequest
+    );
+    timeline_task_bool_methods!(
+        refresh_pending,
+        start_refresh,
+        finish_refresh,
+        refresh,
+        NostrHomeRefreshRequest
+    );
+    timeline_task_bool_methods!(
+        thread_sync_pending,
+        start_thread_sync,
+        finish_thread_sync,
+        thread_sync,
+        NostrThreadSyncRequest
+    );
 
     pub(crate) fn pending_follow_update_target(&self) -> Option<&str> {
         self.follow_update
             .pending()
             .map(|pending| follow_update_target(pending.job()))
-    }
-
-    pub(crate) fn publish_pending(&self) -> bool {
-        self.publish.is_pending()
-    }
-
-    pub(crate) fn refresh_pending(&self) -> bool {
-        self.refresh.is_pending()
     }
 
     pub(crate) fn publish_note_pending(&self) -> bool {
@@ -97,78 +180,6 @@ impl TimelineTasks {
         self.thread_sync
             .pending_matches(|job| job.note_id == note_id)
     }
-
-    pub(crate) fn thread_sync_pending(&self) -> bool {
-        self.thread_sync.is_pending()
-    }
-
-    pub(crate) fn start_account_action(&mut self, job: NostrAccountTask) -> bool {
-        self.account_action.start(job)
-    }
-
-    pub(crate) fn finish_account_action(&mut self, task: TaskHandle<NostrAccountTask>) -> bool {
-        self.account_action.finish_handle(task).is_some()
-    }
-
-    pub(crate) fn start_clipboard_write(&mut self, job: ClipboardWriteRequest) -> bool {
-        self.clipboard_write.start(job)
-    }
-
-    pub(crate) fn finish_clipboard_write(
-        &mut self,
-        task: TaskHandle<ClipboardWriteRequest>,
-    ) -> bool {
-        self.clipboard_write.finish_handle(task).is_some()
-    }
-
-    pub(crate) fn start_explore_sync(&mut self, job: NostrExploreSyncRequest) -> bool {
-        self.explore_sync.start(job)
-    }
-
-    pub(crate) fn finish_explore_sync(
-        &mut self,
-        task: TaskHandle<NostrExploreSyncRequest>,
-    ) -> bool {
-        self.explore_sync.finish_handle(task).is_some()
-    }
-
-    pub(crate) fn start_follow_update(&mut self, job: NostrContactListUpdateRequest) -> bool {
-        self.follow_update.start(job)
-    }
-
-    pub(crate) fn finish_follow_update(
-        &mut self,
-        task: TaskHandle<NostrContactListUpdateRequest>,
-    ) -> Option<NostrContactListUpdateRequest> {
-        self.follow_update.finish_handle(task)
-    }
-
-    pub(crate) fn start_publish(&mut self, job: NostrTimelinePublishRequest) -> bool {
-        self.publish.start(job)
-    }
-
-    pub(crate) fn finish_publish(
-        &mut self,
-        task: TaskHandle<NostrTimelinePublishRequest>,
-    ) -> Option<NostrTimelinePublishRequest> {
-        self.publish.finish_handle(task)
-    }
-
-    pub(crate) fn start_refresh(&mut self, job: NostrHomeRefreshRequest) -> bool {
-        self.refresh.start(job)
-    }
-
-    pub(crate) fn finish_refresh(&mut self, task: TaskHandle<NostrHomeRefreshRequest>) -> bool {
-        self.refresh.finish_handle(task).is_some()
-    }
-
-    pub(crate) fn start_thread_sync(&mut self, job: NostrThreadSyncRequest) -> bool {
-        self.thread_sync.start(job)
-    }
-
-    pub(crate) fn finish_thread_sync(&mut self, task: TaskHandle<NostrThreadSyncRequest>) -> bool {
-        self.thread_sync.finish_handle(task).is_some()
-    }
 }
 
 pub(crate) fn decorate_with_tasks(
@@ -178,27 +189,13 @@ pub(crate) fn decorate_with_tasks(
     with_tasks(
         content,
         [
-            tasks
-                .account_action
-                .decoration(run_account_task, TimelineApp::finish_account_action),
-            tasks
-                .clipboard_write
-                .decoration(run_write_text_task, TimelineApp::finish_clipboard_write),
-            tasks
-                .explore_sync
-                .decoration(run_sync_explore_feed_task, TimelineApp::finish_explore_sync),
-            tasks
-                .follow_update
-                .decoration(run_update_contact_list_task, TimelineApp::finish_follow_update),
-            tasks
-                .thread_sync
-                .decoration(run_sync_thread_task, TimelineApp::finish_thread_sync),
-            tasks
-                .publish
-                .decoration(run_publish, TimelineApp::finish_publish),
-            tasks
-                .refresh
-                .decoration(run_refresh_home_feed_task, TimelineApp::finish_refresh),
+            tasks.account_action.decoration(),
+            tasks.clipboard_write.decoration(),
+            tasks.explore_sync.decoration(),
+            tasks.follow_update.decoration(),
+            tasks.thread_sync.decoration(),
+            tasks.publish.decoration(),
+            tasks.refresh.decoration(),
         ],
     )
 }

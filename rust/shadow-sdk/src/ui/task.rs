@@ -10,6 +10,8 @@ use super::widgets::task_decoration;
 type TaskDecorationFn<State> =
     dyn FnOnce(Box<AnyWidgetView<State>>) -> Box<AnyWidgetView<State>> + Send + Sync;
 type TaskDecorationFactory<State, Registry> = fn(&Registry) -> TaskDecoration<State>;
+type TaskRunFn<Job, Output> = fn(Job) -> Result<Output, String>;
+type TaskApplyFn<State, Job, Output> = fn(&mut State, TaskHandle<Job>, Result<Output, String>);
 
 // Type-erase heterogeneous task wrappers so apps can apply them as one list.
 pub struct TaskDecoration<State> {
@@ -51,7 +53,10 @@ impl<State, Registry, const N: usize> TaskDecorationRegistry<State, Registry, N>
     where
         State: Send + Sync + 'static,
     {
-        apply_task_decorations(content, self.decorate.iter().map(|decorate| decorate(registry)))
+        apply_task_decorations(
+            content,
+            self.decorate.iter().map(|decorate| decorate(registry)),
+        )
     }
 }
 
@@ -205,6 +210,79 @@ impl<Job> TaskSlot<Job> {
     }
 }
 
+#[derive(Debug)]
+pub struct TaskSlotBinding<State, Job, Output> {
+    slot: TaskSlot<Job>,
+    run: TaskRunFn<Job, Output>,
+    apply: TaskApplyFn<State, Job, Output>,
+}
+
+impl<State, Job, Output> Clone for TaskSlotBinding<State, Job, Output>
+where
+    Job: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            slot: self.slot.clone(),
+            run: self.run,
+            apply: self.apply,
+        }
+    }
+}
+
+impl<State, Job, Output> TaskSlotBinding<State, Job, Output> {
+    pub const fn new(run: TaskRunFn<Job, Output>, apply: TaskApplyFn<State, Job, Output>) -> Self {
+        Self {
+            slot: TaskSlot::new(),
+            run,
+            apply,
+        }
+    }
+
+    pub const fn is_pending(&self) -> bool {
+        self.slot.is_pending()
+    }
+
+    pub fn pending(&self) -> Option<&TaskHandle<Job>> {
+        self.slot.pending()
+    }
+
+    pub fn pending_cloned(&self) -> Option<TaskHandle<Job>>
+    where
+        Job: Clone,
+    {
+        self.slot.pending_cloned()
+    }
+
+    pub fn pending_matches(&self, select: impl FnOnce(&Job) -> bool) -> bool {
+        self.slot.pending_matches(select)
+    }
+
+    pub fn snapshot(&self) -> TaskSnapshot<Job>
+    where
+        Job: Clone,
+    {
+        self.slot.snapshot()
+    }
+
+    pub fn start(&mut self, job: Job) -> bool {
+        self.slot.start(job)
+    }
+
+    pub fn finish(&mut self, task: TaskHandle<Job>) -> Option<Job> {
+        self.slot.finish_handle(task)
+    }
+
+    pub fn decoration(&self) -> TaskDecoration<State>
+    where
+        State: Send + Sync + 'static,
+        Job: Clone + Send + Sync + 'static,
+        Output: Debug + Send + 'static,
+    {
+        self.slot.decoration(self.run, self.apply)
+    }
+}
+
 fn next_task_id() -> u64 {
     static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
     NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed)
@@ -216,7 +294,21 @@ mod tests {
 
     use xilem::view::label;
 
-    use super::{TaskDecoration, TaskDecorationRegistry, TaskSlot, TaskSnapshot};
+    use super::{TaskDecoration, TaskDecorationRegistry, TaskSlot, TaskSlotBinding, TaskSnapshot};
+
+    fn run_bound_task(job: String) -> Result<usize, String> {
+        if job == "error" {
+            return Err(String::from("error"));
+        }
+        Ok(job.len())
+    }
+
+    fn apply_bound_task(
+        _state: &mut (),
+        _task: super::TaskHandle<String>,
+        _result: Result<usize, String>,
+    ) {
+    }
 
     #[test]
     fn task_decoration_registry_invokes_factories_in_order() {
@@ -225,7 +317,11 @@ mod tests {
         }
 
         fn first(registry: &Registry) -> TaskDecoration<()> {
-            registry.visited.lock().expect("first visit lock").push("first");
+            registry
+                .visited
+                .lock()
+                .expect("first visit lock")
+                .push("first");
             TaskDecoration::new(|content| content)
         }
 
@@ -321,5 +417,22 @@ mod tests {
 
         let empty_snapshot = TaskSnapshot::<String>::default();
         assert!(!empty_snapshot.is_pending());
+    }
+
+    #[test]
+    fn task_slot_binding_delegates_to_bound_slot() {
+        let mut slot = TaskSlotBinding::new(run_bound_task, apply_bound_task);
+
+        assert!(slot.start(String::from("note")));
+        assert!(slot.is_pending());
+        assert!(slot.pending_matches(|job| job == "note"));
+        assert_eq!(
+            slot.pending().map(|pending| pending.job().as_str()),
+            Some("note")
+        );
+
+        let pending = slot.pending_cloned().expect("pending task");
+        assert_eq!(slot.finish(pending), Some(String::from("note")));
+        assert!(!slot.is_pending());
     }
 }
