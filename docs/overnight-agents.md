@@ -21,6 +21,39 @@ The UX is intentionally small:
 
 There is no controller-owned tmux, slot, worktree, worker, or session layer.
 
+## Conversational Use
+
+The skills are meant to be conversational.
+
+Good planner examples:
+
+```text
+/groom let's discuss how to break down the blocking task into multiple concurrent experiments. don't mutate the queue yet.
+```
+
+```text
+/groom we are blocked on boot-finish-inflight-app-direct-present. propose 3 parallel hypothesis tasks with different approaches.
+```
+
+```text
+/groom go ahead and create two child tasks for this blocker.
+```
+
+Good worker examples:
+
+```text
+/next
+```
+
+```text
+/next just tell me what this worktree owns; don't start coding yet.
+```
+
+Default intent:
+
+- `/groom` alone: inspect and summarize first; do not mutate queue state yet
+- `/next` alone: claim or resume and start work
+
 ## Files
 
 Checked in:

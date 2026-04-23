@@ -9,11 +9,27 @@ Use this skill from a worker pane or worker worktree.
 
 The current worktree is the worker identity. There are no controller-managed slots.
 
+Treat the user's text after `/next` as the primary instruction.
+
+## Default Behavior
+
+- `/next` alone:
+  - claim or resume normally
+  - start implementing the task
+- `/next ... don't start coding yet`, `/next ... just tell me what I own`, or similar:
+  - inspect first
+  - summarize the current claim or the next likely task
+  - do not start coding until the user says to proceed
+
 ## Loop
 
 1. Ask what this worktree should do.
-   - `dis interactive-next --json`
+   - for normal claim/resume:
+     - `dis interactive-next --json`
    - If project inference is ambiguous, rerun with `--project <project>`.
+   - for discussion-only / inspect-first requests:
+     - use `dis interactive-status --json`
+     - explain the current claim or the next available task without claiming a new one unless the user explicitly asked you to
 
 2. Handle the returned action.
    - `claimed`: this worktree owns a new task; start implementing it
