@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=./pixel_common.sh
+source "$SCRIPT_DIR/lib/pixel_common.sh"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/shadow-pixel-boot-collect.XXXXXX")"
 MOCK_BIN="$TMP_DIR/bin"
 DEVICE_LOG_ROOT="/data/local/tmp/shadow-boot"
@@ -14,6 +16,10 @@ EXPECTED_PROP_VALUE="ready"
 OBSERVED_PROP_KEY="debug.shadow.boot.preflight.launch"
 OBSERVED_PROP_VALUE="started"
 PROOF_DEVICE_PATH="/data/vendor/wifidump"
+PHASE1_RUNTIME_LINUX_DIR="$(pixel_runtime_linux_dir)"
+PHASE1_SYSTEM_LAUNCHER_PATH="$(pixel_system_launcher_dst)"
+PHASE1_COMPOSITOR_LAUNCHER_PATH="$(pixel_runtime_compositor_launcher_dst)"
+PHASE1_GUEST_CLIENT_LAUNCHER_PATH="$(pixel_guest_client_dst)"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -61,12 +67,12 @@ required_check_count=4
 missing_required_count=2
 required_missing_labels=system-launcher,guest-client-launcher
 EOF
-    cat >"$root$DEVICE_LOG_ROOT/preflight-checks.tsv" <<'EOF'
+    cat >"$root$DEVICE_LOG_ROOT/preflight-checks.tsv" <<EOF
 # label	required	kind	exists	path
-runtime-linux-dir	true	dir	true	/data/local/tmp/shadow-runtime-gnu
-system-launcher	true	file	false	/data/local/tmp/shadow-runtime-gnu/run-shadow-system
-compositor-launcher	true	file	true	/data/local/tmp/shadow-runtime-gnu/run-shadow-compositor-guest
-guest-client-launcher	true	file	false	/data/local/tmp/shadow-runtime-gnu/run-shadow-blitz-demo
+runtime-linux-dir	true	dir	true	$PHASE1_RUNTIME_LINUX_DIR
+system-launcher	true	file	false	$PHASE1_SYSTEM_LAUNCHER_PATH
+compositor-launcher	true	file	true	$PHASE1_COMPOSITOR_LAUNCHER_PATH
+guest-client-launcher	true	file	false	$PHASE1_GUEST_CLIENT_LAUNCHER_PATH
 EOF
   fi
 }

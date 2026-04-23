@@ -88,12 +88,20 @@ pixel_artifact_path() {
   printf '%s/%s\n' "$(pixel_artifacts_dir)" "$1"
 }
 
+pixel_runtime_compositor_binary_name() {
+  printf '%s\n' "${PIXEL_RUNTIME_COMPOSITOR_BINARY_NAME:-shadow-compositor-guest}"
+}
+
+pixel_runtime_compositor_launcher_name() {
+  printf 'run-%s\n' "$(pixel_runtime_compositor_binary_name)"
+}
+
 pixel_session_artifact() {
   pixel_artifact_path shadow-session
 }
 
 pixel_compositor_artifact() {
-  pixel_artifact_path shadow-compositor-guest
+  pixel_artifact_path "$(pixel_runtime_compositor_binary_name)"
 }
 
 pixel_runtime_app_bundle_artifact() {
@@ -195,7 +203,7 @@ pixel_session_dst() {
 }
 
 pixel_compositor_dst() {
-  printf '%s\n' "${PIXEL_COMPOSITOR_DST:-/data/local/tmp/shadow-compositor-guest}"
+  printf '%s\n' "${PIXEL_COMPOSITOR_DST:-/data/local/tmp/$(pixel_runtime_compositor_binary_name)}"
 }
 
 pixel_guest_client_dst() {
@@ -424,11 +432,11 @@ pixel_system_launcher_dst() {
 }
 
 pixel_runtime_compositor_binary_dst() {
-  printf '%s/shadow-compositor-guest\n' "$(pixel_runtime_linux_dir)"
+  printf '%s/%s\n' "$(pixel_runtime_linux_dir)" "$(pixel_runtime_compositor_binary_name)"
 }
 
 pixel_runtime_compositor_launcher_dst() {
-  printf '%s/run-shadow-compositor-guest\n' "$(pixel_runtime_linux_dir)"
+  printf '%s/%s\n' "$(pixel_runtime_linux_dir)" "$(pixel_runtime_compositor_launcher_name)"
 }
 
 pixel_runtime_openlog_preload_dst() {

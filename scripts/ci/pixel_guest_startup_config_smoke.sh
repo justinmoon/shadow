@@ -49,6 +49,10 @@ expected_default_display_service_profile_json="$(
 expected_keep_allocator_display_service_profile_json="$(
   pixel_takeover_display_service_profile_json_from_stop_allocator 0
 )"
+expected_phase1_runtime_linux_dir="$(pixel_runtime_linux_dir)"
+expected_phase1_system_launcher_path="$(pixel_system_launcher_dst)"
+expected_phase1_compositor_launcher_path="$(pixel_runtime_compositor_launcher_dst)"
+expected_phase1_guest_client_launcher_path="$(pixel_guest_client_dst)"
 
 if [[ "$(pixel_camera_runtime_service_json "127.0.0.1:37656")" != '{"camera":{"endpoint":"127.0.0.1:37656"}}' ]]; then
   echo "pixel_guest_startup_config_smoke: endpoint-only camera service json mismatch" >&2
@@ -252,6 +256,10 @@ STAGE_LOADER_PATH="$stage_loader_path" \
 STAGE_LIBRARY_PATH="$stage_library_path" \
 EXPECTED_DEFAULT_DISPLAY_SERVICE_PROFILE_JSON="$expected_default_display_service_profile_json" \
 EXPECTED_KEEP_ALLOCATOR_DISPLAY_SERVICE_PROFILE_JSON="$expected_keep_allocator_display_service_profile_json" \
+EXPECTED_PHASE1_RUNTIME_LINUX_DIR="$expected_phase1_runtime_linux_dir" \
+EXPECTED_PHASE1_SYSTEM_LAUNCHER_PATH="$expected_phase1_system_launcher_path" \
+EXPECTED_PHASE1_COMPOSITOR_LAUNCHER_PATH="$expected_phase1_compositor_launcher_path" \
+EXPECTED_PHASE1_GUEST_CLIENT_LAUNCHER_PATH="$expected_phase1_guest_client_launcher_path" \
 python3 - "$config_path" "$run_config_path" "$launch_env_path" "$overlay_launch_env_path" <<'PY'
 import json
 import os
@@ -308,22 +316,22 @@ assert data["phase1"] == {
         {
             "kind": "dir",
             "label": "runtime-linux-dir",
-            "path": "/data/local/tmp/shadow-runtime-gnu",
+            "path": os.environ["EXPECTED_PHASE1_RUNTIME_LINUX_DIR"],
         },
         {
             "kind": "file",
             "label": "system-launcher",
-            "path": "/data/local/tmp/shadow-runtime-gnu/run-shadow-system",
+            "path": os.environ["EXPECTED_PHASE1_SYSTEM_LAUNCHER_PATH"],
         },
         {
             "kind": "file",
             "label": "compositor-launcher",
-            "path": "/data/local/tmp/shadow-runtime-gnu/run-shadow-compositor-guest",
+            "path": os.environ["EXPECTED_PHASE1_COMPOSITOR_LAUNCHER_PATH"],
         },
         {
             "kind": "file",
             "label": "guest-client-launcher",
-            "path": "/data/local/tmp/shadow-runtime-gnu/run-shadow-blitz-demo",
+            "path": os.environ["EXPECTED_PHASE1_GUEST_CLIENT_LAUNCHER_PATH"],
         },
     ]
 }, data
