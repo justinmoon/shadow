@@ -360,18 +360,30 @@ impl TimelineApp {
         self.route_stack.last().cloned().unwrap_or(Route::Timeline)
     }
 
+    fn prune_stale_reply_draft(&mut self) {
+        let route = self.current_route();
+        if self.reply_draft.as_ref().is_some_and(|draft| match route {
+            Route::Note { ref id } => {
+                draft.note_id != *id || self.cached_note_by_id(&draft.note_id).is_none()
+            }
+            _ => true,
+        }) {
+            self.reply_draft = None;
+        }
+    }
+
     fn push_route(&mut self, route: Route) {
-        self.reply_draft = None;
         let limit = self.config.limit;
         self.cached_data
             .push_onto_route_stack(&mut self.route_stack, route, limit);
+        self.prune_stale_reply_draft();
     }
 
     fn pop_route(&mut self) {
-        self.reply_draft = None;
         let limit = self.config.limit;
         self.cached_data
             .pop_route_stack(&mut self.route_stack, limit);
+        self.prune_stale_reply_draft();
     }
 
     fn open_note(&mut self, id: String) {
@@ -400,20 +412,13 @@ impl TimelineApp {
             let limit = self.config.limit;
             self.cached_data
                 .reset_route_stack(&mut self.route_stack, Route::Onboarding, limit);
+            self.prune_stale_reply_draft();
             return;
         }
         let limit = self.config.limit;
         self.cached_data
             .normalize_route_stack(&mut self.route_stack, limit);
-        let route = self.current_route();
-        if self.reply_draft.as_ref().is_some_and(|draft| match route {
-            Route::Note { ref id } => {
-                draft.note_id != *id || self.cached_note_by_id(&draft.note_id).is_none()
-            }
-            _ => true,
-        }) {
-            self.reply_draft = None;
-        }
+        self.prune_stale_reply_draft();
     }
 
     pub(crate) fn hydrate_current_route(&mut self) {
@@ -479,11 +484,11 @@ impl TimelineApp {
 
     fn platform_open_timeline(&mut self) {
         self.note_draft = None;
-        self.reply_draft = None;
         if self.account.is_some() {
             let limit = self.config.limit;
             self.cached_data
                 .reset_route_stack(&mut self.route_stack, Route::Timeline, limit);
+            self.prune_stale_reply_draft();
             eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_success");
         } else {
             eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_failed");
@@ -1030,6 +1035,80 @@ mod tests {
 
         app.close_note_composer();
         assert!(app.note_draft.is_none());
+    }
+
+    #[test]
+    fn duplicate_note_route_push_keeps_reply_draft_when_route_stays_the_same() {
+        let mut app = test_app();
+        app.cached_data = TimelineCachedData::from_home(
+            FeedScope::no_contacts(),
+            vec![test_note("note-1", "npub-alice", "hello")],
+        );
+        app.route_stack = vec![Route::Note {
+            id: String::from("note-1"),
+        }];
+        app.open_reply_composer(String::from("note-1"));
+        app.set_reply_draft_content(String::from("draft reply"));
+
+        app.open_note(String::from("note-1"));
+
+        assert_eq!(
+            app.current_route(),
+            Route::Note {
+                id: String::from("note-1"),
+            }
+        );
+        assert_eq!(
+            app.reply_draft_for("note-1").map(|draft| draft.content),
+            Some(String::from("draft reply"))
+        );
+    }
+
+    #[test]
+    fn pop_route_keeps_reply_draft_when_root_note_route_cannot_pop() {
+        let mut app = test_app();
+        app.cached_data = TimelineCachedData::from_home(
+            FeedScope::no_contacts(),
+            vec![test_note("note-1", "npub-alice", "hello")],
+        );
+        app.route_stack = vec![Route::Note {
+            id: String::from("note-1"),
+        }];
+        app.open_reply_composer(String::from("note-1"));
+        app.set_reply_draft_content(String::from("draft reply"));
+
+        app.pop_route();
+
+        assert_eq!(
+            app.current_route(),
+            Route::Note {
+                id: String::from("note-1"),
+            }
+        );
+        assert_eq!(
+            app.reply_draft_for("note-1").map(|draft| draft.content),
+            Some(String::from("draft reply"))
+        );
+    }
+
+    #[test]
+    fn sync_routes_clears_reply_draft_after_cached_data_pops_stale_note_route() {
+        let mut app = test_app();
+        app.route_stack = vec![
+            Route::Timeline,
+            Route::Note {
+                id: String::from("missing-note"),
+            },
+        ];
+        app.reply_draft = Some(super::ReplyDraft {
+            note_id: String::from("missing-note"),
+            content: String::from("draft reply"),
+        });
+
+        app.sync_routes();
+
+        assert_eq!(app.current_route(), Route::Timeline);
+        assert!(app.reply_draft.is_none());
     }
 
     #[test]
