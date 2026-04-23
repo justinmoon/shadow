@@ -67,34 +67,36 @@ Related docs:
 
 ## Ladder To Full Shadow Userspace
 
-- [x] `gpu-render`
-- [x] `orange-gpu-loop`
-- [x] `compositor-scene`
-- [ ] `app-direct-present`
+- Signed off:
+  - `gpu-render`
+  - `orange-gpu-loop`
+  - `compositor-scene`
+- Next product rungs:
+  - `app-direct-present`
   - prove an app-owned surface that the compositor imports/presents on the current Rust seam
-- [ ] `touch-counter-gpu`
-  - prove one minimal input-driven redraw on the real boot-owned render/present path
-- [ ] `ts-app-minimal`
+  - `ts-app-minimal`
   - first minimal Shadow runtime / TypeScript app rung on the boot-owned seam
-- [ ] `rust-app-minimal`
+  - `touch-counter-gpu`
+  - prove one minimal input-driven redraw on the real boot-owned render/present path
+  - `rust-app-minimal`
   - secondary isolation rung; raise priority only if the TS runtime obscures bootstrap bugs
-- [ ] `shell-home-static`
-- [ ] `shell-launch-ts-app`
-- [ ] `shell-launch-rust-app`
-- [ ] `shell-interaction`
-- [ ] selected service spikes required for a usable shell
-  - audio output
-  - storage / networking / control seams as needed
-- [ ] decide whether direct `std` PID1 still matters for the shipping architecture or stays a parked non-goal
+  - `shell-home-static`
+  - `shell-launch-ts-app`
+  - `shell-launch-rust-app`
+  - `shell-interaction`
+  - selected service spikes required for a usable shell
+    - audio output
+    - storage / networking / control seams as needed
+  - decide whether direct `std` PID1 still matters for the shipping architecture or stays a parked non-goal
 
 ## Immediate Milestones
 
-- [ ] Land `app-direct-present` on current `master` truth or drop it cleanly if it cannot satisfy the signed-off proof contract.
-- [ ] Pick the first real app lane after `app-direct-present`.
+- Land `app-direct-present` on current `master` truth or drop it cleanly if it cannot satisfy the signed-off proof contract.
+- Pick the first real app lane after `app-direct-present`.
   - prefer `ts-app-minimal` if it is the shortest path to actual Shadow userspace
   - use `rust-app-minimal` first only if it materially de-risks the boot seam
-- [ ] Land one minimal touch/input rung before starting shell interaction work.
-- [ ] Keep the direct `std` PID1 seam honest as a regression discriminator while not letting it block the main ladder.
+- Land one minimal touch/input rung before starting shell interaction work.
+- Keep the direct `std` PID1 seam honest as a regression discriminator while not letting it block the main ladder.
 
 ## Next Dispatch Batch
 
@@ -126,6 +128,10 @@ Related docs:
     - `todos/boot/`
   - acceptance:
     - a minimal TypeScript-backed Shadow app launches on the boot-owned Rust seam with a truthful recovered proof bundle
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - canonical rooted proof recipe for the app-direct-present successor on the preferred rooted proof pair
   - blocked_by:
     - `finish-inflight-app-direct-present`
 - [ ] `touch-counter-gpu`
@@ -137,8 +143,12 @@ Related docs:
     - `todos/boot/`
   - acceptance:
     - one input-driven redraw is proved on the same boot-owned render/present path, not on rooted takeover
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - canonical rooted proof recipe for the first input-driven redraw artifact on the preferred rooted proof pair
   - blocked_by:
-    - `finish-inflight-app-direct-present`
+    - `ts-app-minimal`
 - [ ] `shell-home-static`
   - why after app + input: shell work should sit on top of the first truthful app lane and the first truthful input lane
   - owned paths:
@@ -148,8 +158,11 @@ Related docs:
     - `todos/boot/`
   - acceptance:
     - a static Shadow home/shell surface appears from the boot-owned seam and preserves the current recovered proof contract
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - canonical rooted proof recipe for the first static shell/home artifact on the preferred rooted proof pair
   - blocked_by:
-    - `ts-app-minimal`
     - `touch-counter-gpu`
 
 ## Parked / Fallback Seams

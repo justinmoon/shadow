@@ -10,3 +10,4 @@ result
 .shadow-vm/
 .direnv/
 node_modules/
+.agents/dispatch/state/
