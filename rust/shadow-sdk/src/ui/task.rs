@@ -1,6 +1,11 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    fmt::Debug,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use xilem::{AnyWidgetView, WidgetView};
+
+use super::widgets::task_decoration;
 
 type TaskDecorationFn<State> =
     dyn FnOnce(Box<AnyWidgetView<State>>) -> Box<AnyWidgetView<State>> + Send + Sync;
@@ -177,6 +182,27 @@ impl<Job> TaskSlot<Job> {
         }
         self.pending.take().map(TaskHandle::into_job)
     }
+
+    pub fn finish_handle(&mut self, task: TaskHandle<Job>) -> Option<Job> {
+        self.finish(task.id())
+    }
+
+    pub fn decoration<State, Output>(
+        &self,
+        run: impl Fn(Job) -> Result<Output, String> + Clone + Send + Sync + 'static,
+        apply: impl Fn(&mut State, TaskHandle<Job>, Result<Output, String>)
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+    ) -> TaskDecoration<State>
+    where
+        State: Send + Sync + 'static,
+        Job: Clone + Send + Sync + 'static,
+        Output: Debug + Send + 'static,
+    {
+        task_decoration(self.pending_cloned(), run, apply)
+    }
 }
 
 fn next_task_id() -> u64 {
@@ -256,6 +282,17 @@ mod tests {
         assert_eq!(first.finish(second_id), None);
         assert_eq!(first.finish(first_id), Some(String::from("first")));
         assert_eq!(second.finish(second_id), Some(String::from("second")));
+    }
+
+    #[test]
+    fn task_slot_can_finish_by_handle() {
+        let mut slot = TaskSlot::new();
+        assert!(slot.start(String::from("job")));
+
+        let pending = slot.pending_cloned().expect("pending task");
+
+        assert_eq!(slot.finish_handle(pending), Some(String::from("job")));
+        assert!(!slot.is_pending());
     }
 
     #[test]
