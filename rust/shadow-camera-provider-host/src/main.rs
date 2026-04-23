@@ -7,6 +7,10 @@ mod camera_aidl;
 #[cfg(target_os = "android")]
 mod camera_metadata;
 #[cfg(target_os = "android")]
+mod hal_containment_probe;
+#[cfg(target_os = "android")]
+mod hal_probe_support;
+#[cfg(target_os = "android")]
 mod linux_camera_probe;
 
 #[cfg(target_os = "android")]
@@ -92,6 +96,7 @@ fn main() {
         "list" => make_list_response(&argv),
         "open" => make_open_response(&argv),
         "configure" => make_configure_response(&argv),
+        "hal-probe" => hal_containment_probe::make_hal_probe_response(&argv),
         "linux-probe" => linux_camera_probe::make_linux_probe_response(&argv),
         "preview" => make_preview_response(&argv),
         "capture" => make_capture_response(&argv),

@@ -50,11 +50,23 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Current working thesis:
   - a pure Rust/Linux kernel-UAPI camera stack remains valuable to evaluate, but it is likely to become a large Qualcomm request-manager, sensor, ISP, buffer, and sync reimplementation project
   - a contained HAL backend is probably the faster path to a working Pixel 4a camera if its Android dependencies can be isolated behind a small Shadow-owned Rust-facing daemon contract
+- The first contained HAL probe succeeded on `0B191JEC203253`:
+  - artifact root: `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-hal-api/20260423T213734Z-0B191JEC203253_`
+  - provider-service listing is measured before direct HAL loading so the two containment candidates are not conflated.
+  - direct loading of `/vendor/lib64/hw/camera.sm6150.so` succeeds from the exported `default` namespace.
+  - exported `sphal` namespace lookup works, but loading the camera HAL there fails on missing `libcamera_metadata.so`, which is useful evidence for any future vendor-namespace daemon.
+  - plain current-namespace `dlopen` is intentionally skipped after the successful `default` namespace load because it would not be an independent cold-load measurement in the same process.
+  - `HMI` parsed as QTI Camera HAL with `id=camera`, `name=QTI Camera HAL`, `author=Qualcomm Technologies, Inc.`, `moduleApiVersion=517`, and `halApiVersion=256`.
+  - the existing provider-service containment seam listed `device@1.1/internal/0` and `device@1.1/internal/1` through `android.hardware.camera.provider.ICameraProvider/internal/0`.
+  - runtime dependency evidence includes running `cameraserver` and `android.hardware.camera.provider@2.7-service-google`, Google HWL camera properties, Binder/HwBinder/VndBinder nodes, ION, graphics allocator services, and loaded vendor camera/CamX/gralloc/protobuf/QMI/sensor libraries.
+  - the probe did not attempt frame capture; the precise blocker is now the missing contained `camera_module_t`/device-open/native-handle/gralloc shim for direct HAL capture, or choosing provider-service one-frame containment as the smaller next seam.
 - Evidence:
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/runs/camera-linux-api-recon/20260423T201839Z-0B191JEC203253/status.json`
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/runs/camera-linux-api-recon/20260423T201839Z-0B191JEC203253/device-inventory.txt`
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-linux-api/20260423T205038Z-0B191JEC203253_/status.json`
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-linux-api/20260423T205038Z-0B191JEC203253_/linux-probe.json`
+  - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-hal-api/20260423T213734Z-0B191JEC203253_/status.json`
+  - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-hal-api/20260423T213734Z-0B191JEC203253_/hal-probe.json`
 
 ## Source-Level Recon
 
@@ -105,9 +117,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - optional C/C++ FFI shim for HAL structs, callbacks, native handles, and linker details
   - vendor HAL/provider code treated as an implementation detail behind that daemon
 - First HAL questions:
-  - can a native helper direct-load or otherwise instantiate `/vendor/lib64/hw/camera.sm6150.so` and the Google/Qualcomm camera HAL components on the rooted Pixel?
+  - can a native helper direct-load or otherwise instantiate `/vendor/lib64/hw/camera.sm6150.so` and the Google/Qualcomm camera HAL components on the rooted Pixel? Initial answer: direct load succeeds and exposes the standard `HMI` module record.
   - which dependencies are required at runtime: Bionic linker namespaces, Android properties, vendor services, gralloc/AHardwareBuffer, sync fences, Binder/HIDL/AIDL libraries, SELinux labels, or camera provider process state?
-  - if direct-load is brittle, is talking to the existing provider service a smaller and more reliable contained backend?
+  - if direct-load is brittle, is talking to the existing provider service a smaller and more reliable contained backend? Initial answer: provider-service containment is still the smaller first-frame seam because the Rust Binder helper can already list cameras and has existing capture plumbing.
 - First HAL proof artifacts should mirror the Linux probe lane under `build/pixel/camera-linux-api/<timestamp>-<serial>/` or a sibling `camera-hal-api` run root, with `hal-probe.json`, `device-output.txt`, and `status.json`.
 - Success criterion for the HAL probe:
   - list cameras through the contained backend
@@ -185,8 +197,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Define first Linux-only probe contract from source plus device inventory.
 - [x] Implement `linux-probe` as the next narrow code slice.
 - [x] Validate `linux-probe` on a rooted Pixel and compare with Android provider camera IDs.
-- [ ] Add a HAL dependency/probe task to the queue.
-- [ ] Run a contained HAL inventory probe and decide whether direct HAL loading or provider-service containment is the smaller backend.
+- [x] Add a HAL dependency/probe task to the queue.
+- [x] Run a contained HAL inventory probe and decide whether direct HAL loading or provider-service containment is the smaller backend.
 - [ ] Decide whether a direct Linux capture probe is plausible from Linux media/V4L2/Qualcomm UAPI alone or whether that lane should stay limited to instrumentation.
 - [ ] Choose the first frame-capture track: direct Linux UAPI, contained HAL backend, or both if the probes remain cheap and informative.
 
@@ -217,3 +229,4 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The implemented probe is still discovery-only. Successful query-cap proves the kernel surface is reachable from rooted userspace; it does not prove Linux-only capture because capture still requires sessions, request-manager links, buffers, sync objects, sensor power/config packets, and likely vendor HAL policy.
 - A Linux-only camera library should probably start as a separate internal module under `rust/shadow-camera-provider-host` or a new narrow `rust/shadow-linux-camera-probe` binary, then graduate only if the discovery probe identifies a real capture path.
 - A HAL-backed path should start as a quarantined backend, not as Shadow adopting Android camera architecture. The acceptable shape is a small Rust-facing daemon/helper that hides Android/HAL details and can later be swapped or retired if direct Linux capture becomes viable.
+- HAL containment probe source references used for the first implementation: AOSP `hardware.h` confirms the `HMI` module symbol and `hw_module_t` prefix; AOSP `camera_common.h` confirms `camera_module_t` begins with `hw_module_t`; Android linker namespace docs and `libvndksupport` show the `sphal`/`android_dlopen_ext` pattern. On the rooted Pixel helper, the exported `default` namespace loaded the HAL and the exported `sphal` namespace reported the concrete missing `libcamera_metadata.so` dependency.

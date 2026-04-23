@@ -6,6 +6,7 @@ use std::os::raw::c_char;
 use std::sync::OnceLock;
 
 type WaitForServiceFn = unsafe extern "C" fn(*const c_char) -> *mut AIBinder;
+type CheckForServiceFn = unsafe extern "C" fn(*const c_char) -> *mut AIBinder;
 type IsDeclaredFn = unsafe extern "C" fn(*const c_char) -> bool;
 type ForEachDeclaredInstanceFn = unsafe extern "C" fn(
     *const c_char,
@@ -17,6 +18,7 @@ type SetThreadPoolMaxThreadCountFn = unsafe extern "C" fn(u32) -> bool;
 
 struct BinderNdkPlatformApi {
     wait_for_service: WaitForServiceFn,
+    check_for_service: CheckForServiceFn,
     is_declared: IsDeclaredFn,
     for_each_declared_instance: ForEachDeclaredInstanceFn,
     start_thread_pool: StartThreadPoolFn,
@@ -50,6 +52,7 @@ fn load_platform_api() -> binder::Result<BinderNdkPlatformApi> {
 
     Ok(BinderNdkPlatformApi {
         wait_for_service: unsafe { load_symbol(handle, b"AServiceManager_waitForService\0")? },
+        check_for_service: unsafe { load_symbol(handle, b"AServiceManager_checkService\0")? },
         is_declared: unsafe { load_symbol(handle, b"AServiceManager_isDeclared\0")? },
         for_each_declared_instance: unsafe {
             load_symbol(handle, b"AServiceManager_forEachDeclaredInstance\0")?
@@ -103,6 +106,12 @@ fn wait_for_service(name: &str) -> Option<SpIBinder> {
     unsafe { new_spibinder((api.wait_for_service)(name.as_ptr())) }
 }
 
+fn check_for_service(name: &str) -> Option<SpIBinder> {
+    let name = CString::new(name).ok()?;
+    let api = platform_api().ok()?;
+    unsafe { new_spibinder((api.check_for_service)(name.as_ptr())) }
+}
+
 pub fn start_thread_pool() {
     if let Ok(api) = platform_api() {
         unsafe { (api.start_thread_pool)() };
@@ -119,6 +128,10 @@ pub fn set_thread_pool_max_thread_count(num_threads: u32) {
 
 pub fn wait_for_interface<T: FromIBinder + ?Sized>(name: &str) -> binder::Result<Strong<T>> {
     interface_cast(wait_for_service(name))
+}
+
+pub fn check_for_interface<T: FromIBinder + ?Sized>(name: &str) -> binder::Result<Strong<T>> {
+    interface_cast(check_for_service(name))
 }
 
 pub fn is_declared(interface: &str) -> binder::Result<bool> {

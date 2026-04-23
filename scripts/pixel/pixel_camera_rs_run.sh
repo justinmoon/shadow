@@ -19,11 +19,17 @@ device_binary="${PIXEL_CAMERA_RS_DEVICE_BINARY:-/data/local/tmp/shadow-camera-pr
 profile="${PIXEL_CAMERA_RS_PROFILE:-debug}"
 command="${1:-ping}"
 
-if [[ "$command" == "linux-probe" ]]; then
-  run_root="$(pixel_dir)/camera-linux-api"
-else
-  run_root="$(pixel_dir)/camera-rs"
-fi
+case "$command" in
+  linux-probe)
+    run_root="$(pixel_dir)/camera-linux-api"
+    ;;
+  hal-probe)
+    run_root="$(pixel_dir)/camera-hal-api"
+    ;;
+  *)
+    run_root="$(pixel_dir)/camera-rs"
+    ;;
+esac
 run_dir="$(pixel_prepare_named_run_dir "$run_root")"
 
 if [[ "$#" -gt 0 ]]; then
@@ -36,6 +42,7 @@ device_command_path="$run_dir/device-command.txt"
 checkpoint_log_path="$run_dir/checkpoints.txt"
 file_output_path="$run_dir/file.txt"
 linux_probe_json_path="$run_dir/linux-probe.json"
+hal_probe_json_path="$run_dir/hal-probe.json"
 
 build_device_command() {
   local quoted=()
@@ -95,8 +102,18 @@ if [[ "$run_status" -eq 0 ]]; then
   fi
 fi
 
-if [[ "$command" == "linux-probe" ]]; then
-  python3 - "$device_output_path" "$linux_probe_json_path" <<'PY'
+probe_json_path=""
+case "$command" in
+  linux-probe)
+    probe_json_path="$linux_probe_json_path"
+    ;;
+  hal-probe)
+    probe_json_path="$hal_probe_json_path"
+    ;;
+esac
+
+if [[ -n "$probe_json_path" ]]; then
+  python3 - "$device_output_path" "$probe_json_path" <<'PY'
 import json
 import sys
 
@@ -129,6 +146,7 @@ pixel_write_status_json "$run_dir/status.json" \
   command="$command" \
   deviceBinary="$device_binary" \
   helperSucceeded="$([[ "$helper_status" -eq 0 ]] && printf true || printf false)" \
+  halProbeJson="$([[ "$command" == "hal-probe" ]] && printf '%s' "$hal_probe_json_path" || printf '')" \
   linuxProbeJson="$([[ "$command" == "linux-probe" ]] && printf '%s' "$linux_probe_json_path" || printf '')" \
   profile="$profile" \
   runSucceeded="$([[ "$run_status" -eq 0 ]] && printf true || printf false)" \
