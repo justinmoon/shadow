@@ -602,10 +602,6 @@ pixel_guest_session_env_assignment_is_config_owned() {
   local key="${1:?pixel_guest_session_env_assignment_is_config_owned requires a key}"
 
   case "$key" in
-    SHADOW_RUNTIME_AUDIO_BACKEND | \
-    SHADOW_RUNTIME_CASHU_DATA_DIR | \
-    SHADOW_RUNTIME_NOSTR_DB_PATH | \
-    SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET | \
     SHADOW_GUEST_CLIENT | \
     SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE | \
     SHADOW_GUEST_CLIENT_LINGER_MS | \
@@ -782,22 +778,6 @@ def append_env_assignment(assignments, key, value):
     assignments.append({"key": key, "value": value})
 
 
-def merge_service_env_overrides(services, session_env):
-    merged = dict(services or {})
-    for env_key, service_key in (
-        ("SHADOW_RUNTIME_AUDIO_BACKEND", "audioBackend"),
-        ("SHADOW_RUNTIME_NOSTR_DB_PATH", "nostrDbPath"),
-        ("SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET", "nostrServiceSocket"),
-        ("SHADOW_RUNTIME_CASHU_DATA_DIR", "cashuDataDir"),
-    ):
-        value = session_env.get(env_key)
-        if value is None:
-            continue
-        if value.strip():
-            merged[service_key] = value
-    return merged or None
-
-
 def filter_env_assignments(client_env_assignments, removed_keys):
     client_env_assignments[:] = [
         assignment
@@ -907,10 +887,7 @@ session_env_lines = parse_env_lines(
 session_env = {key: value for key, value in session_env_lines}
 frame_capture_mode = os.environ.get("PIXEL_GUEST_STARTUP_FRAME_CAPTURE_MODE", "off").strip()
 frame_artifact_path = os.environ.get("PIXEL_GUEST_STARTUP_FRAME_ARTIFACT_PATH", "").strip()
-services = merge_service_env_overrides(
-    parse_services_json(os.environ.get("PIXEL_GUEST_STARTUP_SERVICES_JSON", "")),
-    session_env,
-)
+services = parse_services_json(os.environ.get("PIXEL_GUEST_STARTUP_SERVICES_JSON", ""))
 
 if frame_capture_mode not in {"publish", "request", "off"}:
     raise SystemExit(
