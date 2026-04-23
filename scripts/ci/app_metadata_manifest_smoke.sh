@@ -689,18 +689,41 @@ mixed_model_manifest="$(write_mixed_model_fixture)"
 launch_env_manifest="$(write_launch_env_fixture)"
 invalid_launch_env_manifest="$(write_invalid_launch_env_fixture)"
 rust_out="$(mktemp_tracked)"
+launch_rust_out="$(mktemp_tracked)"
 
-scripts/runtime/generate_app_metadata.py --manifest "$profile_manifest" --rust-out "$rust_out" >/dev/null
-python3 - "$rust_out" <<'PY'
+generate_metadata_fixture() {
+  scripts/runtime/generate_app_metadata.py \
+    --manifest "$1" \
+    --rust-out "$rust_out" \
+    --launch-rust-out "$launch_rust_out"
+}
+
+check_output_case \
+  generate_app_metadata_requires_launch_rust_out_for_custom_rust_out \
+  1 \
+  "" \
+  "--launch-rust-out is required when --rust-out is set to a non-default path" \
+  scripts/runtime/generate_app_metadata.py --manifest "$profile_manifest" --rust-out "$rust_out"
+
+check_output_case \
+  generate_app_metadata_rejects_same_split_output_path \
+  1 \
+  "" \
+  "--rust-out and --launch-rust-out must be different paths" \
+  scripts/runtime/generate_app_metadata.py --manifest "$profile_manifest" --rust-out "$rust_out" --launch-rust-out "$rust_out"
+
+generate_metadata_fixture "$profile_manifest" >/dev/null
+python3 - "$rust_out" "$launch_rust_out" <<'PY'
 from pathlib import Path
 import re
 import sys
 
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
+apps_text = Path(sys.argv[1]).read_text(encoding="utf-8")
+launch_text = Path(sys.argv[2]).read_text(encoding="utf-8")
 
 def array_body(name: str) -> str:
     pattern = rf"pub const {name}: .*? = \[(.*?)\];"
-    match = re.search(pattern, text, re.DOTALL)
+    match = re.search(pattern, apps_text, re.DOTALL)
     if match is None:
         raise SystemExit(f"app_metadata_manifest_smoke: could not parse {name}")
     return match.group(1)
@@ -715,22 +738,35 @@ if "VM_ONLY_APP" not in vm_shell_apps or "SHARED_APP" not in vm_shell_apps or "P
     raise SystemExit("app_metadata_manifest_smoke: generated VM_SHELL_DEMO_APPS is not profile filtered")
 if "PIXEL_ONLY_APP" not in pixel_shell_apps or "SHARED_APP" not in pixel_shell_apps or "VM_ONLY_APP" in pixel_shell_apps:
     raise SystemExit("app_metadata_manifest_smoke: generated PIXEL_SHELL_DEMO_APPS is not profile filtered")
+if "manifest_launch: super::SHARED_MANIFEST_LAUNCH" not in apps_text:
+    raise SystemExit("app_metadata_manifest_smoke: generated apps file did not wire split manifest launch metadata")
+if "pub const SHARED_MANIFEST_RUNTIME: AppRuntimeMetadata =" in apps_text:
+    raise SystemExit("app_metadata_manifest_smoke: generated apps file should not include split runtime metadata")
+if "pub const SHARED_MANIFEST_LAUNCH: ManifestAppLaunch =" in apps_text:
+    raise SystemExit("app_metadata_manifest_smoke: generated apps file should not include split manifest launch constants")
+if "pub const SHARED_MANIFEST_RUNTIME: AppRuntimeMetadata =" not in launch_text:
+    raise SystemExit("app_metadata_manifest_smoke: generated launch file is missing split runtime metadata")
+if "pub const SHARED_MANIFEST_LAUNCH: ManifestAppLaunch =" not in launch_text:
+    raise SystemExit("app_metadata_manifest_smoke: generated launch file is missing split manifest launch constants")
 PY
 
-scripts/runtime/generate_app_metadata.py --manifest "$rust_manifest" --rust-out "$rust_out" >/dev/null
-python3 - "$rust_out" <<'PY'
+generate_metadata_fixture "$rust_manifest" >/dev/null
+python3 - "$rust_out" "$launch_rust_out" <<'PY'
 from pathlib import Path
 import sys
 
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
+apps_text = Path(sys.argv[1]).read_text(encoding="utf-8")
+launch_text = Path(sys.argv[2]).read_text(encoding="utf-8")
 
-if 'pub const RUST_NOTES_MODEL: AppModel = AppModel::Rust;' not in text:
+if 'pub const RUST_NOTES_MODEL: AppModel = AppModel::Rust;' not in apps_text:
     raise SystemExit("app_metadata_manifest_smoke: rust app model was not generated")
-if "pub const RUST_NOTES_MANIFEST_LAUNCH: ManifestAppLaunch =" not in text:
+if "pub const RUST_NOTES_MANIFEST_LAUNCH: ManifestAppLaunch =" in apps_text:
+    raise SystemExit("app_metadata_manifest_smoke: rust app manifest launch should live in the split launch file")
+if "pub const RUST_NOTES_MANIFEST_LAUNCH: ManifestAppLaunch =" not in launch_text:
     raise SystemExit("app_metadata_manifest_smoke: rust app manifest launch was not generated")
-if "RUST_NOTES_MANIFEST_RUNTIME" in text:
+if "RUST_NOTES_MANIFEST_RUNTIME" in apps_text or "RUST_NOTES_MANIFEST_RUNTIME" in launch_text:
     raise SystemExit("app_metadata_manifest_smoke: rust app should not get TypeScript runtime metadata")
-if "manifest_launch: RUST_NOTES_MANIFEST_LAUNCH" not in text:
+if "manifest_launch: super::RUST_NOTES_MANIFEST_LAUNCH" not in apps_text:
     raise SystemExit("app_metadata_manifest_smoke: rust app manifest launch was not wired into DemoApp")
 PY
 
@@ -739,19 +775,20 @@ check_output_case \
   1 \
   "" \
   "rust apps must not declare pixel-shell" \
-  scripts/runtime/generate_app_metadata.py --manifest "$invalid_rust_pixel_manifest" --rust-out "$rust_out"
+  scripts/runtime/generate_app_metadata.py --manifest "$invalid_rust_pixel_manifest" --rust-out "$rust_out" --launch-rust-out "$launch_rust_out"
 
-scripts/runtime/generate_app_metadata.py --manifest "$mixed_model_manifest" --rust-out "$rust_out" >/dev/null
-python3 - "$rust_out" <<'PY'
+generate_metadata_fixture "$mixed_model_manifest" >/dev/null
+python3 - "$rust_out" "$launch_rust_out" <<'PY'
 from pathlib import Path
 import re
 import sys
 
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
+apps_text = Path(sys.argv[1]).read_text(encoding="utf-8")
+launch_text = Path(sys.argv[2]).read_text(encoding="utf-8")
 
 def array_body(name: str) -> str:
     pattern = rf"pub const {name}: .*? = \[(.*?)\];"
-    match = re.search(pattern, text, re.DOTALL)
+    match = re.search(pattern, apps_text, re.DOTALL)
     if match is None:
         raise SystemExit(f"app_metadata_manifest_smoke: could not parse {name}")
     return match.group(1)
@@ -763,23 +800,32 @@ if "MIXED_TS_APP" not in vm_shell_apps or "MIXED_RUST_APP" not in vm_shell_apps:
     raise SystemExit("app_metadata_manifest_smoke: generated VM_SHELL_DEMO_APPS should include both mixed-model VM apps")
 if "MIXED_TS_APP" not in pixel_shell_apps or "MIXED_RUST_APP" in pixel_shell_apps:
     raise SystemExit("app_metadata_manifest_smoke: generated PIXEL_SHELL_DEMO_APPS should only include launchable mixed-model apps")
+if "pub const MIXED_TS_MANIFEST_LAUNCH: ManifestAppLaunch =" not in launch_text:
+    raise SystemExit("app_metadata_manifest_smoke: generated launch file is missing mixed-model TypeScript launch metadata")
+if "pub const MIXED_RUST_MANIFEST_LAUNCH: ManifestAppLaunch =" not in launch_text:
+    raise SystemExit("app_metadata_manifest_smoke: generated launch file is missing mixed-model Rust launch metadata")
 PY
 
-scripts/runtime/generate_app_metadata.py --manifest "$launch_env_manifest" --rust-out "$rust_out" >/dev/null
-python3 - "$rust_out" <<'PY'
+generate_metadata_fixture "$launch_env_manifest" >/dev/null
+python3 - "$rust_out" "$launch_rust_out" <<'PY'
 from pathlib import Path
 import sys
 
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
+apps_text = Path(sys.argv[1]).read_text(encoding="utf-8")
+launch_text = Path(sys.argv[2]).read_text(encoding="utf-8")
 
-if "pub const LAUNCH_ENV_RUST_LAUNCH_ENV: [AppLaunchEnv; 1]" not in text:
+if "pub const LAUNCH_ENV_RUST_LAUNCH_ENV: [AppLaunchEnv; 1]" in apps_text:
+    raise SystemExit("app_metadata_manifest_smoke: generated apps file should not include split launchEnv constants")
+if "pub const LAUNCH_ENV_RUST_LAUNCH_ENV: [AppLaunchEnv; 1]" not in launch_text:
     raise SystemExit("app_metadata_manifest_smoke: launchEnv constant was not generated")
-if '("SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "1")' not in text:
+if '("SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "1")' not in launch_text:
     raise SystemExit("app_metadata_manifest_smoke: launchEnv entry was not generated")
-if "pub const LAUNCH_ENV_RUST_MANIFEST_LAUNCH: ManifestAppLaunch =" not in text:
+if "pub const LAUNCH_ENV_RUST_MANIFEST_LAUNCH: ManifestAppLaunch =" not in launch_text:
     raise SystemExit("app_metadata_manifest_smoke: launchEnv manifest launch was not generated")
-if "launch_env: &LAUNCH_ENV_RUST_LAUNCH_ENV" not in text:
+if "launch_env: &LAUNCH_ENV_RUST_LAUNCH_ENV" not in launch_text:
     raise SystemExit("app_metadata_manifest_smoke: launchEnv was not wired into manifest launch")
+if "manifest_launch: super::LAUNCH_ENV_RUST_MANIFEST_LAUNCH" not in apps_text:
+    raise SystemExit("app_metadata_manifest_smoke: generated apps file did not wire split launchEnv metadata")
 PY
 
 check_output_case \
@@ -787,7 +833,7 @@ check_output_case \
   1 \
   "" \
   "reserved for launcher-managed configuration" \
-  scripts/runtime/generate_app_metadata.py --manifest "$invalid_launch_env_manifest" --rust-out "$rust_out"
+  scripts/runtime/generate_app_metadata.py --manifest "$invalid_launch_env_manifest" --rust-out "$rust_out" --launch-rust-out "$launch_rust_out"
 
 check_output_case \
   shadowctl_vm_accepts_vm_only \
@@ -892,7 +938,7 @@ check_output_case \
   1 \
   "" \
   "duplicate bundleEnv" \
-  scripts/runtime/generate_app_metadata.py --manifest "$duplicate_env_manifest" --rust-out "$rust_out"
+  scripts/runtime/generate_app_metadata.py --manifest "$duplicate_env_manifest" --rust-out "$rust_out" --launch-rust-out "$launch_rust_out"
 
 check_output_case \
   runtime_build_artifacts_rejects_duplicate_bundle_env \
@@ -908,7 +954,7 @@ check_output_case \
   1 \
   "" \
   "duplicate bundleFilename" \
-  scripts/runtime/generate_app_metadata.py --manifest "$duplicate_filename_manifest" --rust-out "$rust_out"
+  scripts/runtime/generate_app_metadata.py --manifest "$duplicate_filename_manifest" --rust-out "$rust_out" --launch-rust-out "$launch_rust_out"
 
 check_output_case \
   runtime_build_artifacts_rejects_duplicate_bundle_filename \
