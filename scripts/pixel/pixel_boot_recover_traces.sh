@@ -1814,7 +1814,13 @@ required_app_direct_present_frame_samples = {
     "74d3ae",
     "f7fafc",
 }
-if expected_app_direct_present_app_id == "counter":
+if expected_orange_gpu_mode == "app-direct-present-runtime-touch-counter":
+    required_app_direct_present_frame_samples = {
+        "2a1209",
+        "ff8a42",
+        "ffe0a6",
+    }
+elif expected_app_direct_present_app_id == "counter":
     required_app_direct_present_frame_samples = {
         "0b1630",
         "10243b",
@@ -1952,6 +1958,28 @@ probe_summary_proves_app_direct_present_touch_counter = (
     and summary_touch_counter_touch_latency_present is True
     and summary_touch_counter_post_touch_frame_captured is True
 )
+probe_summary_proves_app_direct_present_runtime_touch_counter = (
+    expected_orange_gpu_mode == "app-direct-present-runtime-touch-counter"
+    and expected_orange_gpu_firmware_helper is True
+    and probe_report_proves_child_success
+    and recovered_metadata_probe_summary_present
+    and recovered_probe_summary_parse_error is None
+    and summary_kind == "app-direct-present-runtime-touch-counter"
+    and summary_startup_mode == "app"
+    and summary_app_id == "counter"
+    and summary_frame_path == expected_metadata_compositor_frame_path
+    and isinstance(summary_frame_bytes, int)
+    and summary_frame_bytes > 0
+    and summary_touch_counter_probe_ok is True
+    and summary_touch_counter_injection == "synthetic-compositor"
+    and summary_touch_counter_input_observed is True
+    and summary_touch_counter_tap_dispatched is True
+    and summary_touch_counter_counter_incremented is True
+    and summary_touch_counter_post_touch_frame_committed is True
+    and summary_touch_counter_post_touch_frame_artifact_logged is True
+    and summary_touch_counter_touch_latency_present is True
+    and summary_touch_counter_post_touch_frame_captured is True
+)
 compositor_frame_proves_scene = (
     expected_orange_gpu_mode == "compositor-scene"
     and recovered_metadata_compositor_frame_present
@@ -1971,7 +1999,12 @@ compositor_frame_proves_scene = (
     )
 )
 compositor_frame_proves_app_direct_present = (
-    expected_orange_gpu_mode in {"app-direct-present", "app-direct-present-touch-counter"}
+    expected_orange_gpu_mode
+    in {
+        "app-direct-present",
+        "app-direct-present-touch-counter",
+        "app-direct-present-runtime-touch-counter",
+    }
     and recovered_metadata_compositor_frame_present
     and recovered_compositor_frame_parse_error is None
     and isinstance(compositor_frame_width, int)
@@ -2012,7 +2045,8 @@ app_direct_present_proof_contract_summary = ",".join(
     ]
 )
 app_direct_present_proof_contract_ok = (
-    expected_orange_gpu_mode != "app-direct-present"
+    expected_orange_gpu_mode
+    not in {"app-direct-present", "app-direct-present-runtime-touch-counter"}
     or (
         bool(expected_app_direct_present_app_id)
         and expected_app_direct_present_client_kind in {"rust", "typescript"}
@@ -2028,7 +2062,8 @@ app_direct_present_proof_contract_ok = (
     )
 )
 app_direct_present_proof_contract_required = (
-    expected_orange_gpu_mode == "app-direct-present"
+    expected_orange_gpu_mode
+    in {"app-direct-present", "app-direct-present-runtime-touch-counter"}
     and (
         expected_app_direct_present_app_id != "rust-demo"
         or bool(expected_app_direct_present_client_kind)
@@ -2054,6 +2089,12 @@ elif expected_orange_gpu_mode == "app-direct-present-touch-counter":
         probe_summary_proves_app_direct_present_touch_counter
         and compositor_frame_proves_app_direct_present
     )
+elif expected_orange_gpu_mode == "app-direct-present-runtime-touch-counter":
+    proof_ok = (
+        app_direct_present_proof_contract_ok
+        and probe_summary_proves_app_direct_present_runtime_touch_counter
+        and compositor_frame_proves_app_direct_present
+    )
 else:
     proof_ok = matched_any_correlated_shadow_tags or probe_report_proves_child_success
 
@@ -2068,6 +2109,7 @@ payload = {
     "probe_summary_proves_compositor_scene": probe_summary_proves_compositor_scene,
     "probe_summary_proves_app_direct_present": probe_summary_proves_app_direct_present,
     "probe_summary_proves_app_direct_present_touch_counter": probe_summary_proves_app_direct_present_touch_counter,
+    "probe_summary_proves_app_direct_present_runtime_touch_counter": probe_summary_proves_app_direct_present_runtime_touch_counter,
     "app_direct_present_proof_contract_ok": app_direct_present_proof_contract_ok,
     "app_direct_present_proof_contract_required": app_direct_present_proof_contract_required,
     "app_direct_present_proof_contract": app_direct_present_proof_contract,

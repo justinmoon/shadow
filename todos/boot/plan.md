@@ -44,7 +44,7 @@ Related docs:
   - `exec` into `/hello-init-child`
   - raw `argc/argv` parsing in the child
 - Direct `std` Rust as PID1 still panics. Keep it as a background regression discriminator, not the main execution plan.
-- Signed-off Rust rungs on current `master` are `gpu-render`, `orange-gpu-loop`, `compositor-scene`, and `app-direct-present`.
+- Signed-off Rust rungs on current `master` are `gpu-render`, `orange-gpu-loop`, `compositor-scene`, `app-direct-present`, and the runtime-backed `touch-counter-gpu` input redraw.
 - See [frontier.md](./frontier.md) for the current proof artifacts and absolute validation paths.
 - The truth surface is:
   - `recover-traces/status.json`
@@ -102,7 +102,7 @@ Related docs:
 - Pick the first real app lane after `app-direct-present`.
   - prefer `ts-app-minimal` if it is the shortest path to actual Shadow userspace
   - use `rust-app-minimal` first only if it materially de-risks the boot seam
-- The Rust-demo touch/input rung is signed off; land the first runtime-backed touch/input rung before starting shell interaction work.
+- The Rust-demo and runtime-backed TypeScript touch/input rungs are signed off; start shell/home work from this proof surface rather than adding another counter-specific rung.
 - Keep the direct `std` PID1 seam honest as a regression discriminator while not letting it block the main ladder.
 - Add a planning slice for sustainable payload storage: decide what remains in the boot ramdisk versus what moves to mounted `/vendor`, `/system`, `userdata`, or a Shadow-owned partition image.
 
@@ -292,10 +292,18 @@ Related docs:
     - `just pre-commit`
   - blocked_by:
     - `boot-camera-hal-provider-frame-probe`
-- [ ] `touch-counter-gpu`
+- [x] `touch-counter-gpu`
   - task_id: boot-touch-counter-gpu
   - priority: 12
   - why next: keep worker-2 on touch/input and carry the landed Rust counter proof into the runtime-backed TypeScript counter path
+  - result:
+    - added `app-direct-present-runtime-touch-counter` as a boot image mode
+    - runtime `counter` logs render state and `counter_incremented count=2` so the proof distinguishes the TypeScript app path from the Rust demo discriminator
+    - recovered metadata proves synthetic compositor input observed, tap dispatched, counter incremented, post-touch frame committed, post-touch frame artifact logged, touch latency present, and post-touch frame captured
+  - proof image:
+    - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/rt-touch-v1-0905-20260423230353/orange-gpu.img.hello-init.json`
+  - proof bundle:
+    - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/rt-touch-v1-0905-20260423230353/run-adb-recover/recover-traces/status.json`
   - owned paths:
     - `scripts/pixel/`
     - `ui/`
@@ -308,7 +316,9 @@ Related docs:
   - validation:
     - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
     - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
-    - canonical rooted proof recipe for the runtime-backed input artifact on the preferred rooted proof pair
+    - `just pre-commit`
+    - `cargo check --manifest-path rust/init-wrapper/Cargo.toml --bin hello-init`
+    - rooted Pixel one-shot on `09051JEC202061`
   - blocked_by:
     - `boot-ts-app-minimal`
     - `boot-touch-rust-counter-boot-proof`

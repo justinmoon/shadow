@@ -41,6 +41,9 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - `app-direct-present-touch-counter`
     - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-app-direct-present-touch-counter-v1.img.hello-init.json`
     - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/app-direct-present-touch-counter-v1-primary-0B191JEC203253/recover-traces/status.json`
+  - `touch-counter-gpu`
+    - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/rt-touch-v1-0905-20260423230353/orange-gpu.img.hello-init.json`
+    - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/rt-touch-v1-0905-20260423230353/run-adb-recover/recover-traces/status.json`
 - The truth surface is `recover-traces/status.json` plus recovered metadata files, not the top-level one-shot wrapper result.
 - The `ts-app-minimal` proof contract is now explicit in recovered status:
   - `expected_app_direct_present_app_id`
@@ -53,8 +56,9 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 - The `app-direct-present` fix was two-part:
   - replace the boot-owned app client shell wrapper with a static Rust launcher
   - stage the Wayland libraries that `winit` loads dynamically and set `LD_LIBRARY_PATH` for the app bundle
-- The next honest product rung on `master` is runtime-backed input on the same boot-owned render/present path.
+- The next honest product rung on `master` is the first static shell/home surface on top of the proven runtime app and input path.
 - The `app-direct-present-touch-counter` proof uses a compositor-owned synthetic tap in the Rust demo app path and requires recovered metadata showing input observed, tap dispatched, counter incremented, touch-present latency, and a post-touch frame capture.
+- The `touch-counter-gpu` proof uses the same compositor-owned synthetic tap on the TypeScript runtime `counter` app and requires recovered metadata showing input observed, tap dispatched, `counter_incremented`, post-touch commit, touch-present latency, and a post-touch frame capture.
 - Stock-init trigger / imported-rc / preflight work is now parked:
   - latest high-signal negative result: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/runs/boot-kgsl-trigger-ladder/20260423T082243Z-09051JEC202061_/matrix-summary.json`
   - treat that seam as fallback evidence, not as a peer execution stream
@@ -75,11 +79,10 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 
 ## Highest-Leverage Next Experiments
 
-1. Run `touch-counter-gpu` so the first runtime-backed input redraw lands on the same boot-owned render/present path.
+1. Move into `shell-home-static` now that both the first real app lane and the first runtime-backed input lane are truthful.
 2. Run `ts-runtime-app-matrix-proof` if the TS worker is free, so app direct-present is not counter-demo-specific.
 3. Run `boot-camera-rust-hal-frame-probe` as the camera sidecar; provider-service capture is reference evidence only.
-4. Move into `shell-home-static` only after both the first real app lane and the first runtime-backed input lane are truthful.
-5. Keep direct `std` PID1 and stock-init imported-rc work as fallback discriminators only.
+4. Keep direct `std` PID1 and stock-init imported-rc work as fallback discriminators only.
 
 ## Fast Commands
 

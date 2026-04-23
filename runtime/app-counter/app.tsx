@@ -1,5 +1,6 @@
 import {
   clearLifecycleHandler,
+  createEffect,
   createSignal,
   getLifecycleState,
   getWindowMetrics,
@@ -85,6 +86,14 @@ export function renderApp() {
   const windowMetrics = getWindowMetrics();
   const active = () => count() > 1;
 
+  createEffect(() => {
+    const value = count();
+    console.error(
+      `[shadow-runtime-counter] render count=${value} state=${
+        value > 1 ? "warm" : "cool"
+      }`,
+    );
+  });
   setLifecycleHandler(({ state }: { state: string }) => {
     setLifecycleState(state);
     console.error(`[shadow-runtime-counter] lifecycle_state=${state}`);
@@ -110,7 +119,14 @@ export function renderApp() {
         <Counter
           count={count()}
           active={active()}
-          onClick={() => setCount((value) => value + 1)}
+          onClick={() =>
+            setCount((value) => {
+              const next = value + 1;
+              console.error(
+                `[shadow-runtime-counter] counter_incremented count=${next}`,
+              );
+              return next;
+            })}
         />
       </div>
     </main>
