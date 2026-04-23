@@ -969,6 +969,39 @@ mod linux {
         append_file_excerpt(payload, &format!("/proc/{pid}/{name}"), max_bytes);
     }
 
+    fn append_pid_children_tree_excerpt(payload: &mut String, pid: u32, depth: u32) {
+        if depth == 0 {
+            return;
+        }
+
+        let children_path = format!("/proc/{pid}/task/{pid}/children");
+        let children = fs::read_to_string(&children_path).unwrap_or_else(|error| {
+            format!(
+                "<unavailable errno={:?} error={}>\n",
+                error.raw_os_error(),
+                error
+            )
+        });
+        let _ = writeln!(payload, "begin:{children_path}<<");
+        payload.push_str(&children);
+        if !children.ends_with('\n') {
+            payload.push('\n');
+        }
+        let _ = writeln!(payload, ">>end:{children_path}");
+
+        for child_pid in children
+            .split_whitespace()
+            .filter_map(|value| value.parse::<u32>().ok())
+            .take(16)
+        {
+            append_pid_proc_excerpt(payload, child_pid, "cmdline", 512);
+            append_pid_proc_excerpt(payload, child_pid, "wchan", 128);
+            append_pid_proc_excerpt(payload, child_pid, "status", 2048);
+            append_pid_proc_excerpt(payload, child_pid, "stack", 4096);
+            append_pid_children_tree_excerpt(payload, child_pid, depth - 1);
+        }
+    }
+
     fn extract_text_key_value_line(text: &str, key: &str) -> Option<String> {
         text.lines()
             .find_map(|line| line.strip_prefix(&format!("{key}=")))
@@ -1653,9 +1686,11 @@ mod linux {
                 append_pid_proc_excerpt(&mut payload, pid, "cgroup", 512);
                 append_pid_proc_excerpt(&mut payload, pid, "status", 2048);
                 append_pid_proc_excerpt(&mut payload, pid, "stack", 4096);
+                append_pid_children_tree_excerpt(&mut payload, pid, 2);
             }
         }
 
+        append_file_excerpt(&mut payload, ORANGE_GPU_OUTPUT_PATH, 16384);
         append_file_excerpt(&mut payload, TRACEFS_CURRENT_TRACER_PATH, 64);
         append_file_excerpt(&mut payload, TRACEFS_TRACE_PATH, 4096);
 

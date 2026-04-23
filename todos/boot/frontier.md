@@ -30,8 +30,15 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
     - `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-compositor-scene-parentprobe-fw-helper-breadcrumb-v3.img.hello-init.json`
     - `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T235214Z-11151JEC200472_/recover-traces/status.json`
     - `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T235214Z-06241JEC200520_/recover-traces/status.json`
+  - `app-direct-present`
+    - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-app-direct-present-wayland-v4.img.hello-init.json`
+    - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/app-direct-present-wayland-v4-primary-11151JEC200472/recover-traces/status.json`
+    - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/app-direct-present-wayland-v4-confirm-06241JEC200520/recover-traces/status.json`
 - The truth surface is `recover-traces/status.json` plus recovered metadata files, not the top-level one-shot wrapper result.
-- The next honest rung on `master` is `app-direct-present`.
+- The `app-direct-present` fix was two-part:
+  - replace the boot-owned app client shell wrapper with a static Rust launcher
+  - stage the Wayland libraries that `winit` loads dynamically and set `LD_LIBRARY_PATH` for the app bundle
+- The next honest rung on `master` is `ts-app-minimal`.
 - Stock-init trigger / imported-rc / preflight work is now parked:
   - latest high-signal negative result: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/runs/boot-kgsl-trigger-ladder/20260423T082243Z-09051JEC202061_/matrix-summary.json`
   - treat that seam as fallback evidence, not as a peer execution stream
@@ -52,8 +59,8 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 
 ## Highest-Leverage Next Experiments
 
-1. Finish, land, or cleanly park the in-flight `app-direct-present` seam in `/Users/justin/code/shadow/worktrees/rust-boot`.
-2. If `app-direct-present` lands, run `ts-app-minimal` and `touch-counter-gpu` as the next parallel batch.
+1. Run `ts-app-minimal` as the next product-facing app lane on top of the signed-off `app-direct-present` proof.
+2. Run `touch-counter-gpu` after the minimal app lane so the first input redraw lands on the same boot-owned render/present path.
 3. Move into `shell-home-static` only after both the first real app lane and the first real input lane are truthful.
 4. Keep direct `std` PID1 and stock-init imported-rc work as fallback discriminators only.
 

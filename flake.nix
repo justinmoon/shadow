@@ -756,6 +756,19 @@
           cargoBuildFlags = [ "--bin" "hello-init-shim-exec" ];
           cargoInstallFlags = [ "--bin" "hello-init-shim-exec" ];
         };
+      mkAppDirectPresentLauncherFor = cross:
+        cross.rustPlatform.buildRustPackage {
+          pname = "app-direct-present-launcher";
+          version = "0.1.0";
+          src = ./rust/init-wrapper;
+          cargoLock.lockFile = ./rust/init-wrapper/Cargo.lock;
+          doCheck = false;
+          strictDeps = true;
+          CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
+          RUSTFLAGS = lib.optionalString cross.stdenv.hostPlatform.isMusl "-C target-feature=+crt-static";
+          cargoBuildFlags = [ "--bin" "app-direct-present-launcher" ];
+          cargoInstallFlags = [ "--bin" "app-direct-present-launcher" ];
+        };
       mkShadowSessionFor = cross:
         cross.rustPlatform.buildRustPackage {
           pname = "shadow-session";
@@ -1148,11 +1161,40 @@
               cross.wayland
               cross.wayland-protocols
             ];
+            postInstall = ''
+              mkdir -p "$out/runtime-libs"
+              ln -s "${cross.expat}" "$out/runtime-libs/expat"
+              ln -s "${cross.fontconfig}" "$out/runtime-libs/fontconfig"
+              ln -s "${cross.freetype}" "$out/runtime-libs/freetype"
+              ln -s "${cross.libdrm}" "$out/runtime-libs/libdrm"
+              ln -s "${cross.libffi}" "$out/runtime-libs/libffi"
+              ln -s "${cross.libglvnd}" "$out/runtime-libs/libglvnd"
+              ln -s "${cross.libxkbcommon}" "$out/runtime-libs/libxkbcommon"
+              ln -s "${cross.mesa}" "$out/runtime-libs/mesa-drivers"
+              ln -s "${cross.vulkan-loader}" "$out/runtime-libs/vulkan-loader"
+              ln -s "${cross.wayland}" "$out/runtime-libs/wayland"
+              ln -s "${cross.wayland-protocols}" "$out/runtime-libs/wayland-protocols"
+              if [ -d "${cross.mesa}/lib/dri" ]; then
+                mkdir -p "$out/lib"
+                ln -s "${cross.mesa}/lib/dri" "$out/lib/dri"
+              fi
+              if [ -d "${cross.mesa}/share/vulkan/icd.d" ]; then
+                mkdir -p "$out/share/vulkan"
+                ln -s "${cross.mesa}/share/vulkan/icd.d" "$out/share/vulkan/icd.d"
+              fi
+              if [ -d "${cross.mesa}/share/glvnd/egl_vendor.d" ]; then
+                mkdir -p "$out/share/glvnd"
+                ln -s "${cross.mesa}/share/glvnd/egl_vendor.d" "$out/share/glvnd/egl_vendor.d"
+              elif [ -d "${cross.libglvnd}/share/glvnd/egl_vendor.d" ]; then
+                mkdir -p "$out/share/glvnd"
+                ln -s "${cross.libglvnd}/share/glvnd/egl_vendor.d" "$out/share/glvnd/egl_vendor.d"
+              fi
+            '';
           };
-          artifactVendorArgs = (builtins.removeAttrs commonArgs [ "cargoExtraArgs" ]) // {
+          artifactVendorArgs = (builtins.removeAttrs commonArgs [ "cargoExtraArgs" "postInstall" ]) // {
             cargoExtraArgs = "--locked";
           };
-          artifactBuildArgs = (builtins.removeAttrs commonArgs [ "cargoExtraArgs" ]) // {
+          artifactBuildArgs = (builtins.removeAttrs commonArgs [ "cargoExtraArgs" "postInstall" ]) // {
             cargoExtraArgs = "--offline -p ${pname}";
           };
           cargoVendorDir = craneLib.vendorCargoDeps artifactVendorArgs;
@@ -1169,7 +1211,10 @@
           craneLib.buildPackage (commonArgs // {
             inherit cargoVendorDir cargoArtifacts;
             meta.mainProgram = pname;
-            postInstall = mkStripShadowStoreReferencesPostInstall cross;
+            postInstall = ''
+              ${commonArgs.postInstall or ""}
+              ${mkStripShadowStoreReferencesPostInstall cross}
+            '';
           });
       mkShadowRustDemoFor = cross:
         mkShadowRustUiAppFor cross "shadow-rust-demo" "apps/shadow-rust-demo";
@@ -2335,6 +2380,8 @@
             mkHelloInitRustShimFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           hello-init-rust-shim-exec-device =
             mkHelloInitRustExecShimFor pkgs.pkgsCross.aarch64-multiplatform-musl;
+          app-direct-present-launcher-device =
+            mkAppDirectPresentLauncherFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           shadow-session = mkShadowSession pkgs;
           shadow-session-device = mkShadowSessionFor pkgs.pkgsCross.aarch64-multiplatform-musl;
           default = mkShadowSession pkgs;

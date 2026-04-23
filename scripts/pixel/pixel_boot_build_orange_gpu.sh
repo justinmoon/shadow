@@ -22,6 +22,7 @@ ORANGE_INIT_BINARY="${PIXEL_ORANGE_INIT_BIN:-}"
 GPU_BUNDLE_DIR="${PIXEL_ORANGE_GPU_BUNDLE_DIR:-}"
 SHADOW_SESSION_BINARY="${PIXEL_SHADOW_SESSION_BIN:-}"
 SHADOW_COMPOSITOR_BINARY="${PIXEL_SHADOW_COMPOSITOR_GUEST_BIN:-}"
+APP_DIRECT_PRESENT_CLIENT_LAUNCHER_BINARY="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_BIN:-}"
 KEY_PATH="${AVB_TEST_KEY_PATH:-}"
 OUTPUT_IMAGE="${PIXEL_BOOT_ORANGE_GPU_IMAGE:-}"
 HELLO_INIT_MODE="${PIXEL_HELLO_INIT_MODE:-direct}"
@@ -227,6 +228,10 @@ default_orange_init_binary() {
 
 default_gpu_bundle_dir() {
   printf '%s\n' "$(pixel_artifact_path shadow-gpu-smoke-gnu)"
+}
+
+default_app_direct_present_client_launcher_binary() {
+  printf '%s\n' "${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_DEFAULT_BIN:-$(pixel_artifact_path app-direct-present-launcher)}"
 }
 
 hello_init_metadata_path() {
@@ -485,6 +490,17 @@ assert_static_device_binary() {
     echo "pixel_boot_build_orange_gpu: expected a static $label binary, got a dynamic one: $file_output" >&2
     exit 1
   fi
+}
+
+assert_app_direct_present_client_launcher_variant() {
+  local binary_path
+  binary_path="${1:?assert_app_direct_present_client_launcher_variant requires a binary path}"
+
+  assert_static_device_binary "$binary_path" "app-direct-present client launcher"
+  assert_binary_sentinel \
+    "$binary_path" \
+    'shadow-app-direct-present-launcher-role:static-loader-exec' \
+    "app-direct-present client launcher is missing the static-loader-exec role sentinel"
 }
 
 build_or_copy_static_device_binary() {
@@ -917,6 +933,9 @@ payload = {
     "client": {
         "appClientPath": client_path,
         "runtimeDir": runtime_dir,
+        "envAssignments": [
+            {"key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "value": "1"},
+        ],
         "lingerMs": 500,
     },
     "compositor": {
@@ -937,23 +956,21 @@ Path(output_path).write_text(
 PY
 }
 
-render_app_direct_present_client_launcher() {
-  local output_path
-  output_path="${1:?render_app_direct_present_client_launcher requires an output path}"
+stage_app_direct_present_runtime_libs() {
+  local package_out_path output_dir bundle_lib_dir
+  package_out_path="${1:?stage_app_direct_present_runtime_libs requires a package output path}"
+  output_dir="${2:?stage_app_direct_present_runtime_libs requires an output dir}"
+  bundle_lib_dir="$output_dir/lib"
 
-  cat >"$output_path" <<EOF
-#!/system/bin/sh
-DIR=\$(cd "\$(dirname "\$0")" && pwd)
-
-export HOME="\${HOME:-\$DIR/home}"
-export XDG_CACHE_HOME="\${XDG_CACHE_HOME:-\$HOME/.cache}"
-export XDG_CONFIG_HOME="\${XDG_CONFIG_HOME:-\$HOME/.config}"
-
-mkdir -p "\$HOME" "\$XDG_CACHE_HOME" "\$XDG_CONFIG_HOME"
-
-exec "\$DIR/lib/$(basename "$APP_DIRECT_PRESENT_STAGE_LOADER_PATH")" --library-path "\$DIR/lib" "\$DIR/$(basename "$APP_DIRECT_PRESENT_BINARY_PATH")" "\$@"
-EOF
-  chmod 0755 "$output_path"
+  copy_runtime_named_libs_from_package_output \
+    "$package_out_path" \
+    "$bundle_lib_dir" \
+    libwayland-client.so.0 \
+    libwayland-cursor.so.0 \
+    libwayland-egl.so.1 \
+    libxkbcommon.so.0 \
+    libffi.so.8
+  fill_linux_bundle_runtime_deps "$output_dir"
 }
 
 stage_app_direct_present_client_bundle() {
@@ -973,20 +990,35 @@ stage_app_direct_present_client_bundle() {
       "$app_out_link" \
       "$output_dir" \
       "$APP_DIRECT_PRESENT_BINARY_NAME"
+    stage_app_direct_present_runtime_libs "$app_out_link" "$output_dir"
     client_bundle_dir="$output_dir"
+  fi
+
+  if [[ -z "$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_BINARY" ]]; then
+    APP_DIRECT_PRESENT_CLIENT_LAUNCHER_BINARY="$(default_app_direct_present_client_launcher_binary)"
+    build_or_copy_linux_static_device_binary \
+      "app-direct-present-launcher-device" \
+      "$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_BINARY" \
+      "app-direct-present-launcher"
   fi
 
   [[ -d "$client_bundle_dir" ]] || {
     echo "pixel_boot_build_orange_gpu: app-direct-present client bundle dir not found: $client_bundle_dir" >&2
     exit 1
   }
+  [[ -f "$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_BINARY" ]] || {
+    echo "pixel_boot_build_orange_gpu: app-direct-present client launcher binary not found: $APP_DIRECT_PRESENT_CLIENT_LAUNCHER_BINARY" >&2
+    exit 1
+  }
+  assert_app_direct_present_client_launcher_variant "$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_BINARY"
 
   if [[ "$client_bundle_dir" != "$output_dir" ]]; then
     rm -rf "$output_dir"
     mkdir -p "$output_dir"
     cp -R "$client_bundle_dir"/. "$output_dir"/
   fi
-  render_app_direct_present_client_launcher "$output_dir/$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_NAME"
+  cp "$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_BINARY" "$output_dir/$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_NAME"
+  chmod 0755 "$output_dir/$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_NAME"
 
   [[ -f "$output_dir/$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_NAME" ]] || {
     echo "pixel_boot_build_orange_gpu: app-direct-present client launcher missing from staged bundle" >&2

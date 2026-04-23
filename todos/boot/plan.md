@@ -42,7 +42,7 @@ Related docs:
   - `exec` into `/hello-init-child`
   - raw `argc/argv` parsing in the child
 - Direct `std` Rust as PID1 still panics. Keep it as a background regression discriminator, not the main execution plan.
-- Signed-off Rust rungs on current `master` are `gpu-render`, `orange-gpu-loop`, and `compositor-scene`.
+- Signed-off Rust rungs on current `master` are `gpu-render`, `orange-gpu-loop`, `compositor-scene`, and `app-direct-present`.
 - See [frontier.md](./frontier.md) for the current proof artifacts and absolute validation paths.
 - The truth surface is:
   - `recover-traces/status.json`
@@ -71,9 +71,8 @@ Related docs:
   - `gpu-render`
   - `orange-gpu-loop`
   - `compositor-scene`
-- Next product rungs:
   - `app-direct-present`
-  - prove an app-owned surface that the compositor imports/presents on the current Rust seam
+- Next product rungs:
   - `ts-app-minimal`
   - first minimal Shadow runtime / TypeScript app rung on the boot-owned seam
   - `touch-counter-gpu`
@@ -91,7 +90,7 @@ Related docs:
 
 ## Immediate Milestones
 
-- Land `app-direct-present` on current `master` truth or drop it cleanly if it cannot satisfy the signed-off proof contract.
+- Land `app-direct-present` on current `master` truth.
 - Pick the first real app lane after `app-direct-present`.
   - prefer `ts-app-minimal` if it is the shortest path to actual Shadow userspace
   - use `rust-app-minimal` first only if it materially de-risks the boot seam
@@ -100,11 +99,21 @@ Related docs:
 
 ## Next Dispatch Batch
 
-- [ ] `finish-inflight-app-direct-present`
+- [x] `finish-inflight-app-direct-present`
   - why first: this is the current in-flight seam and it blocks every downstream product rung
-  - worktree policy: prefer finishing it in the existing `/Users/justin/code/shadow/worktrees/rust-boot` worktree instead of opening a fresh branch first
+  - result: signed off in `/Users/justin/code/shadow/worktrees/worker-1`
+  - proof image:
+    - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-app-direct-present-wayland-v4.img.hello-init.json`
+  - proof bundles:
+    - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/app-direct-present-wayland-v4-primary-11151JEC200472/recover-traces/status.json`
+    - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/app-direct-present-wayland-v4-confirm-06241JEC200520/recover-traces/status.json`
+  - root cause fixed:
+    - the first boot-owned app client path used a shell launcher and then hit `winit` `NoWaylandLib`
+    - the landed contract uses a static launcher, explicit mock-camera env for the proof app, staged Wayland runtime libraries, and `LD_LIBRARY_PATH=/orange-gpu/app-direct-present/lib`
   - owned paths:
     - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `rust/init-wrapper/src/bin/app-direct-present-launcher.rs`
+    - `scripts/lib/pixel_runtime_linux_bundle_common.sh`
     - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
     - `scripts/pixel/pixel_boot_recover_traces.sh`
     - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`

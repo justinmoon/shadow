@@ -14,6 +14,7 @@ HELLO_INIT_RUST_EXEC_SHIM_OUTPUT="$TMP_DIR/hello-init-rust-shim-exec"
 ORANGE_INIT_OUTPUT="$TMP_DIR/orange-init"
 SHADOW_SESSION_OUTPUT="$TMP_DIR/shadow-session"
 SHADOW_COMPOSITOR_OUTPUT="$TMP_DIR/shadow-compositor-guest"
+APP_DIRECT_PRESENT_LAUNCHER_OUTPUT="$TMP_DIR/app-direct-present-launcher"
 GPU_BUNDLE_DIR="$TMP_DIR/gpu-bundle"
 APP_DIRECT_PRESENT_BUNDLE_DIR="$TMP_DIR/app-direct-present-bundle"
 BAD_LOADER_BUNDLE_DIR="$TMP_DIR/bad-loader-bundle"
@@ -97,6 +98,12 @@ cat >"$SHADOW_COMPOSITOR_OUTPUT" <<'EOF'
 echo shadow-compositor-guest
 EOF
 chmod 0755 "$SHADOW_COMPOSITOR_OUTPUT"
+
+cat >"$APP_DIRECT_PRESENT_LAUNCHER_OUTPUT" <<'EOF'
+MOCK_AARCH64_STATIC_APP_DIRECT_PRESENT_LAUNCHER
+shadow-app-direct-present-launcher-role:static-loader-exec
+EOF
+chmod 0755 "$APP_DIRECT_PRESENT_LAUNCHER_OUTPUT"
 
 printf 'ELF_RUST_DEMO_AARCH64\n' >"$APP_DIRECT_PRESENT_BUNDLE_DIR/shadow-rust-demo"
 chmod 0755 "$APP_DIRECT_PRESENT_BUNDLE_DIR/shadow-rust-demo"
@@ -313,6 +320,8 @@ elif grep -aFq -- 'shadow-owned-init-role:hello-init' "$target" 2>/dev/null; the
 elif grep -aFq -- 'shadow-session' "$target" 2>/dev/null; then
   printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
 elif grep -aFq -- 'shadow-compositor-guest' "$target" 2>/dev/null; then
+  printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
+elif grep -aFq -- 'shadow-app-direct-present-launcher-role:static-loader-exec' "$target" 2>/dev/null; then
   printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
 elif grep -aFq -- 'ELF_VULKAN_LOADER_AARCH64' "$target" 2>/dev/null || grep -aFq -- 'ELF_TURNIP_AARCH64' "$target" 2>/dev/null; then
   printf '%s: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked, not stripped\n' "$target"
@@ -3429,6 +3438,7 @@ rust_bridge_app_direct_present_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_BUNDLE_DIR="$APP_DIRECT_PRESENT_BUNDLE_DIR" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_BIN="$APP_DIRECT_PRESENT_LAUNCHER_OUTPUT" \
     PIXEL_SHADOW_SESSION_BIN="$SHADOW_SESSION_OUTPUT" \
     PIXEL_SHADOW_COMPOSITOR_GUEST_BIN="$SHADOW_COMPOSITOR_OUTPUT" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
@@ -3456,13 +3466,13 @@ assert_contains "$rust_bridge_app_direct_present_boot_output" "GPU proof: app-ow
 assert_contains "$rust_bridge_app_direct_present_boot_output" "Metadata compositor frame path: /metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/compositor-frame.ppm"
 assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/shadow-session
 assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/shadow-compositor-guest
-assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/run-shadow-rust-demo
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/run-shadow-rust-demo $'MOCK_AARCH64_STATIC_APP_DIRECT_PRESENT_LAUNCHER\nshadow-app-direct-present-launcher-role:static-loader-exec\n'
 assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/shadow-rust-demo
 assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/lib/ld-linux-aarch64.so.1
 assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/lib/libc.so.6
 assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/lib/libm.so.6
 assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/lib/libgcc_s.so.1
-assert_cpio_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "app",\n    "startAppId": "rust-demo"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-rust-demo",\n    "runtimeDir": "/shadow-runtime",\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": true,\n    "frameCapture": {\n      "mode": "first-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  }\n}\n'
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "app",\n    "startAppId": "rust-demo"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-rust-demo",\n    "runtimeDir": "/shadow-runtime",\n    "envAssignments": [\n      {\n        "key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",\n        "value": "1"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": true,\n    "frameCapture": {\n      "mode": "first-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  }\n}\n'
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img.hello-init.json" orange_gpu_mode "app-direct-present"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img.hello-init.json" metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/compositor-frame.ppm"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img.hello-init.json" metadata_probe_summary_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/probe-summary.json"

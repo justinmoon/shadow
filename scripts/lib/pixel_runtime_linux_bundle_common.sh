@@ -358,6 +358,26 @@ copy_runtime_optional_lib() {
   cp "$lib_source_path" "$bundle_lib_dir/$name"
 }
 
+copy_runtime_named_libs_from_package_output() {
+  local package_out_path bundle_lib_dir runtime_libs_root lib_name source_path destination_path
+  package_out_path="$1"
+  bundle_lib_dir="$2"
+  shift 2
+  runtime_libs_root="$package_out_path/runtime-libs"
+
+  [[ -d "$runtime_libs_root" ]] || return 0
+
+  for lib_name in "$@"; do
+    source_path="$(find -L "$runtime_libs_root" -path "*/lib/$lib_name" -type f -print -quit 2>/dev/null || true)"
+    [[ -n "$source_path" ]] || continue
+    destination_path="$bundle_lib_dir/$lib_name"
+    if [[ -e "$destination_path" ]]; then
+      continue
+    fi
+    cp -L "$source_path" "$destination_path"
+  done
+}
+
 copy_closure_dir_into_bundle() {
   local relative_path destination required source_path closure_path found_any
   relative_path="$1"
