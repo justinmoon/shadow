@@ -15,6 +15,8 @@ default_serial="${PIXEL_SERIAL:-}"
 trigger="${PIXEL_BOOT_KGSL_PROBE_TRIGGER:-post-fs-data}"
 device_log_root="$(pixel_boot_device_log_root)"
 import_proof_prop="${PIXEL_BOOT_KGSL_PROBE_IMPORT_PROOF_PROP:-debug.shadow.boot.kgsl.import=triggered}"
+injected_rc_parse_proof_prop="${PIXEL_BOOT_KGSL_PROBE_PARSE_PROOF_PROP:-debug.shadow.boot.kgsl.parse=registered}"
+parse_handoff_trigger="${PIXEL_BOOT_KGSL_PROBE_PARSE_HANDOFF_TRIGGER:-property:init.svc.adbd=running}"
 launch_proof_prop="${PIXEL_BOOT_KGSL_PROBE_LAUNCH_PROOF_PROP:-debug.shadow.boot.kgsl.launch=started}"
 second_stage_proof_prop="${PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP:-debug.shadow.boot.kgsl.second_stage=ready}"
 init_script_selection_proof_prop="${PIXEL_BOOT_KGSL_PROBE_INIT_SCRIPT_SELECTION_PROOF_PROP:-init.svc.servicemanager=running}"
@@ -47,6 +49,8 @@ Usage: scripts/pixel/pixel_boot_kgsl_probe.sh [--output-dir DIR] [--serial SERIA
                                              [--trigger EXPR]
                                              [--device-log-root PATH]
                                              [--import-proof-prop KEY=VALUE]
+                                             [--parse-proof-prop KEY=VALUE]
+                                             [--parse-handoff-trigger EXPR]
                                              [--launch-proof-prop KEY=VALUE]
                                              [--second-stage-proof-prop KEY=VALUE]
                                              [--init-script-selection-proof-prop KEY=VALUE]
@@ -123,6 +127,8 @@ write_summary_json() {
     "$second_stage_proof_prop" \
     "$init_script_selection_proof_prop" \
     "$imported_rc_proof_prop" \
+    "$injected_rc_parse_proof_prop" \
+    "$parse_handoff_trigger" \
     "$control_point_prop" \
     "$control_point_proof_prop" \
     "$launch_proof_prop" \
@@ -154,6 +160,8 @@ from pathlib import Path
     second_stage_proof_prop,
     init_script_selection_proof_prop,
     imported_rc_proof_prop,
+    injected_rc_parse_proof_prop,
+    parse_handoff_trigger,
     control_point_prop,
     control_point_proof_prop,
     launch_proof_prop,
@@ -173,7 +181,7 @@ from pathlib import Path
     timeout_secs,
     import_proof_prop,
     helper_dir_name,
-) = sys.argv[1:26]
+) = sys.argv[1:28]
 
 
 def load_json(path_str: str):
@@ -271,6 +279,13 @@ init_script_selection_proved_current_boot = (
 imported_rc_proof_key, imported_rc_proof_value = parse_prop_spec(imported_rc_proof_prop)
 actual_imported_rc_value = getprop_value(getprop_path, imported_rc_proof_key)
 imported_rc_proved_current_boot = actual_imported_rc_value == imported_rc_proof_value
+injected_rc_parse_proof_key, injected_rc_parse_proof_value = parse_prop_spec(
+    injected_rc_parse_proof_prop
+)
+actual_injected_rc_parse_value = getprop_value(getprop_path, injected_rc_parse_proof_key)
+injected_rc_parse_proved_current_boot = (
+    actual_injected_rc_parse_value == injected_rc_parse_proof_value
+)
 control_point_proof_key, control_point_proof_value = parse_prop_spec(control_point_proof_prop)
 actual_control_point_value = getprop_value(getprop_path, control_point_proof_key)
 control_point_proved_current_boot = actual_control_point_value == control_point_proof_value
@@ -282,8 +297,10 @@ if helper_launch_proved_current_boot:
         launch_discriminator = "helper-launched-no-kgsl-summary"
 elif import_proved_current_boot:
     launch_discriminator = "import-proved-helper-missing"
+elif injected_rc_parse_proved_current_boot:
+    launch_discriminator = "injected-rc-parse-proved-action-missing"
 elif imported_rc_proved_current_boot:
-    launch_discriminator = "imported-rc-proved-no-import-proof"
+    launch_discriminator = "imported-rc-proved-no-injected-parse-proof"
 elif control_point_proved_current_boot:
     launch_discriminator = "control-point-proved-no-imported-rc-proof"
 elif init_script_selection_proved_current_boot:
@@ -306,6 +323,8 @@ payload = {
     "second_stage_proof_prop": second_stage_proof_prop,
     "init_script_selection_proof_prop": init_script_selection_proof_prop,
     "imported_rc_proof_prop": imported_rc_proof_prop,
+    "injected_rc_parse_proof_prop": injected_rc_parse_proof_prop,
+    "parse_handoff_trigger": parse_handoff_trigger,
     "control_point_prop": control_point_prop,
     "control_point_proof_prop": control_point_proof_prop,
     "import_proof_prop": import_proof_prop,
@@ -329,6 +348,8 @@ payload = {
     "second_stage_property_proved_current_boot": second_stage_property_proved_current_boot,
     "init_script_selection_proved_current_boot": init_script_selection_proved_current_boot,
     "imported_rc_proved_current_boot": imported_rc_proved_current_boot,
+    "injected_rc_parse_proved_current_boot": injected_rc_parse_proved_current_boot,
+    "injected_rc_parse_proof_actual": actual_injected_rc_parse_value,
     "control_point_proved_current_boot": control_point_proved_current_boot,
     "import_proved_current_boot": import_proved_current_boot,
     "helper_launch_proved_current_boot": helper_launch_proved_current_boot,
@@ -417,6 +438,14 @@ while [[ $# -gt 0 ]]; do
       import_proof_prop="${2:?missing value for --import-proof-prop}"
       shift 2
       ;;
+    --parse-proof-prop)
+      injected_rc_parse_proof_prop="${2:?missing value for --parse-proof-prop}"
+      shift 2
+      ;;
+    --parse-handoff-trigger)
+      parse_handoff_trigger="${2:?missing value for --parse-handoff-trigger}"
+      shift 2
+      ;;
     --launch-proof-prop)
       launch_proof_prop="${2:?missing value for --launch-proof-prop}"
       shift 2
@@ -496,6 +525,8 @@ build_args=(
   --trigger "$trigger"
   --device-log-root "$device_log_root"
   --import-proof-prop "$import_proof_prop"
+  --parse-proof-prop "$injected_rc_parse_proof_prop"
+  --parse-handoff-trigger "$parse_handoff_trigger"
   --launch-proof-prop "$launch_proof_prop"
   --second-stage-proof-prop "$second_stage_proof_prop"
   --control-point-prop "$control_point_prop"
@@ -543,6 +574,7 @@ if [[ "$build_status" -eq 0 ]]; then
     PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP="$second_stage_proof_prop" \
     PIXEL_BOOT_KGSL_PROBE_INIT_SCRIPT_SELECTION_PROOF_PROP="$init_script_selection_proof_prop" \
     PIXEL_BOOT_KGSL_PROBE_IMPORTED_RC_PROOF_PROP="$imported_rc_proof_prop" \
+    PIXEL_BOOT_KGSL_PROBE_PARSE_PROOF_PROP="$injected_rc_parse_proof_prop" \
     PIXEL_BOOT_KGSL_PROBE_CONTROL_POINT_PROOF_PROP="$control_point_proof_prop" \
     PIXEL_SERIAL="$serial" "$oneshot_script" "${oneshot_args[@]}" >"$run_log" 2>&1
   run_status="$?"
@@ -572,6 +604,8 @@ if "init_script_selection_proved_current_boot" in payload:
     print(f"Init-script-selection proved: {payload['init_script_selection_proved_current_boot']}")
 if "imported_rc_proved_current_boot" in payload:
     print(f"Imported-rc proved: {payload['imported_rc_proved_current_boot']}")
+if "injected_rc_parse_proved_current_boot" in payload:
+    print(f"Injected rc parse proved: {payload['injected_rc_parse_proved_current_boot']}")
 if "control_point_proved_current_boot" in payload:
     print(f"Control point proved: {payload['control_point_proved_current_boot']}")
 if "import_proved_current_boot" in payload:

@@ -15,6 +15,8 @@ TRIGGER="${PIXEL_BOOT_KGSL_PROBE_TRIGGER:-post-fs-data}"
 DEVICE_LOG_ROOT="$(pixel_boot_device_log_root)"
 PATCH_TARGET_OVERRIDE="${PIXEL_BOOT_KGSL_PROBE_PATCH_TARGET:-}"
 IMPORT_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_IMPORT_PROOF_PROP:-debug.shadow.boot.kgsl.import=triggered}"
+PARSE_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_PARSE_PROOF_PROP:-debug.shadow.boot.kgsl.parse=registered}"
+PARSE_HANDOFF_TRIGGER="${PIXEL_BOOT_KGSL_PROBE_PARSE_HANDOFF_TRIGGER:-property:init.svc.adbd=running}"
 LAUNCH_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_LAUNCH_PROOF_PROP:-debug.shadow.boot.kgsl.launch=started}"
 SECOND_STAGE_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP:-debug.shadow.boot.kgsl.second_stage=ready}"
 CONTROL_POINT_PROP="${PIXEL_BOOT_KGSL_PROBE_CONTROL_POINT_PROP:-llk.enable=1}"
@@ -27,6 +29,8 @@ WORK_DIR=""
 PATCH_TARGET=""
 IMPORT_PROOF_KEY=""
 IMPORT_PROOF_VALUE=""
+PARSE_PROOF_KEY=""
+PARSE_PROOF_VALUE=""
 LAUNCH_PROOF_KEY=""
 LAUNCH_PROOF_VALUE=""
 SECOND_STAGE_PROOF_KEY=""
@@ -41,6 +45,8 @@ Usage: scripts/pixel/pixel_boot_build_kgsl_probe.sh [--input PATH] [--key PATH] 
                                                     [--trigger EXPR] [--device-log-root PATH]
                                                     [--patch-target ENTRY]
                                                     [--import-proof-prop KEY=VALUE]
+                                                    [--parse-proof-prop KEY=VALUE]
+                                                    [--parse-handoff-trigger EXPR]
                                                     [--launch-proof-prop KEY=VALUE]
                                                     [--second-stage-proof-prop KEY=VALUE]
                                                     [--control-point-prop KEY=VALUE]
@@ -53,7 +59,9 @@ Usage: scripts/pixel/pixel_boot_build_kgsl_probe.sh [--input PATH] [--key PATH] 
 Build a private stock-init sunfish boot.img that imports /init.shadow.rc and runs a
 boot helper which attempts a supervised readonly open of /dev/kgsl-3d0 with durable
 breadcrumbs under /data/local/tmp/shadow-boot while also promoting one stock-init
-control-point property above the imported rc seam.
+control-point property above the imported rc seam. A late stock-init action also
+starts a parse-proof service declared only inside /init.shadow.rc, separating
+injected-rc parse/registration from the injected action trigger.
 EOF
 }
 
@@ -139,6 +147,23 @@ parse_import_proof_prop() {
 
   validate_property_key "$IMPORT_PROOF_KEY" "import proof property key"
   validate_property_value "$IMPORT_PROOF_VALUE" "import proof property value"
+}
+
+parse_parse_proof_prop() {
+  [[ "$PARSE_PROOF_PROP" == *=* ]] || {
+    echo "pixel_boot_build_kgsl_probe: --parse-proof-prop must use KEY=VALUE" >&2
+    exit 1
+  }
+
+  PARSE_PROOF_KEY="${PARSE_PROOF_PROP%%=*}"
+  PARSE_PROOF_VALUE="${PARSE_PROOF_PROP#*=}"
+  [[ -n "$PARSE_PROOF_KEY" && -n "$PARSE_PROOF_VALUE" ]] || {
+    echo "pixel_boot_build_kgsl_probe: --parse-proof-prop requires a non-empty key and value" >&2
+    exit 1
+  }
+
+  validate_property_key "$PARSE_PROOF_KEY" "parse proof property key"
+  validate_property_value "$PARSE_PROOF_VALUE" "parse proof property value"
 }
 
 parse_second_stage_proof_prop() {
@@ -307,6 +332,14 @@ while [[ $# -gt 0 ]]; do
       IMPORT_PROOF_PROP="${2:?missing value for --import-proof-prop}"
       shift 2
       ;;
+    --parse-proof-prop)
+      PARSE_PROOF_PROP="${2:?missing value for --parse-proof-prop}"
+      shift 2
+      ;;
+    --parse-handoff-trigger)
+      PARSE_HANDOFF_TRIGGER="${2:?missing value for --parse-handoff-trigger}"
+      shift 2
+      ;;
     --launch-proof-prop)
       LAUNCH_PROOF_PROP="${2:?missing value for --launch-proof-prop}"
       shift 2
@@ -364,9 +397,14 @@ EOF
 }
 
 validate_literal_trigger
+TRIGGER_TO_VALIDATE="$TRIGGER"
+TRIGGER="$PARSE_HANDOFF_TRIGGER"
+validate_literal_trigger
+TRIGGER="$TRIGGER_TO_VALIDATE"
 validate_device_log_root
 validate_patch_target_override
 parse_import_proof_prop
+parse_parse_proof_prop
 parse_launch_proof_prop
 parse_second_stage_proof_prop
 parse_control_point_prop
@@ -403,20 +441,33 @@ append_ramdisk_prop_probe \
   "$CONTROL_POINT_VALUE"
 RAMDISK_PROP_PATH="$WORK_DIR/ramdisk-build.prop.modified"
 
-if grep -Fxq 'import /init.shadow.rc' "$WORK_DIR/patch-target.stock"; then
-  cp "$WORK_DIR/patch-target.stock" "$WORK_DIR/patch-target.patched"
-else
-  {
+{
+  if ! grep -Fxq 'import /init.shadow.rc' "$WORK_DIR/patch-target.stock"; then
     printf 'import /init.shadow.rc\n\n'
-    cat "$WORK_DIR/patch-target.stock"
-  } >"$WORK_DIR/patch-target.patched"
-fi
+  fi
+  if ! grep -Fq 'start shadow-boot-parse-probe' "$WORK_DIR/patch-target.stock"; then
+    cat <<EOF
+on ${PARSE_HANDOFF_TRIGGER}
+    start shadow-boot-parse-probe
+
+EOF
+  fi
+  cat "$WORK_DIR/patch-target.stock"
+} >"$WORK_DIR/patch-target.patched"
 chmod 0644 "$WORK_DIR/patch-target.patched"
 
 cat >"$WORK_DIR/init.shadow.rc" <<EOF
 on ${TRIGGER}
     setprop ${IMPORT_PROOF_KEY} ${IMPORT_PROOF_VALUE}
     start shadow-boot-helper
+
+service shadow-boot-parse-probe /system/bin/sh /shadow-boot-parse-probe
+    class late_start
+    user root
+    group root system shell log
+    seclabel u:r:init:s0
+    disabled
+    oneshot
 
 service shadow-boot-helper /system/bin/sh /shadow-boot-helper
     class late_start
@@ -427,6 +478,35 @@ service shadow-boot-helper /system/bin/sh /shadow-boot-helper
     oneshot
 EOF
 chmod 0644 "$WORK_DIR/init.shadow.rc"
+
+cat >"$WORK_DIR/shadow-boot-parse-probe" <<EOF
+#!/system/bin/sh
+set -eu
+
+parse_log_root="${DEVICE_LOG_ROOT}-parse"
+parse_proof_key="${PARSE_PROOF_KEY}"
+parse_proof_value="${PARSE_PROOF_VALUE}"
+
+timestamp() {
+  date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown-time
+}
+
+rm -rf "\$parse_log_root"
+mkdir -p "\$parse_log_root"
+chown shell:shell "\$parse_log_root" 2>/dev/null || true
+chmod 0775 "\$parse_log_root" 2>/dev/null || true
+
+boot_id="\$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"
+slot_suffix="\$(getprop ro.boot.slot_suffix | tr -d '\r')"
+printf '%s\n' "\$boot_id" >"\$parse_log_root/boot-id.txt"
+printf '%s\n' "\$slot_suffix" >"\$parse_log_root/slot-suffix.txt"
+printf '%s [shadow-boot] injected rc parse probe registered\n' "\$(timestamp)" >"\$parse_log_root/parse-probe.log"
+printf 'ready\n' >"\$parse_log_root/status.txt"
+chmod 0644 "\$parse_log_root"/*.txt "\$parse_log_root/parse-probe.log" 2>/dev/null || true
+setprop "\$parse_proof_key" "\$parse_proof_value" || true
+printf '<6>[shadow-boot] injected rc parse probe registered\n' >/dev/kmsg 2>/dev/null || true
+EOF
+chmod 0755 "$WORK_DIR/shadow-boot-parse-probe"
 
 cat >"$WORK_DIR/shadow-boot-helper" <<EOF
 #!/system/bin/sh
@@ -635,6 +715,7 @@ fi
   --key "$KEY_PATH" \
   --output "$OUTPUT_IMAGE" \
   --add "init.shadow.rc=$WORK_DIR/init.shadow.rc" \
+  --add "shadow-boot-parse-probe=$WORK_DIR/shadow-boot-parse-probe" \
   --add "shadow-boot-helper=$WORK_DIR/shadow-boot-helper" \
   --replace "$PATCH_TARGET=$WORK_DIR/patch-target.patched" \
   --replace "$RAMDISK_PROP_ENTRY=$RAMDISK_PROP_PATH"
@@ -646,6 +727,8 @@ printf 'Device log root: %s\n' "$DEVICE_LOG_ROOT"
 printf 'Patch target: %s\n' "$PATCH_TARGET"
 printf 'Second-stage proof prop: %s\n' "$SECOND_STAGE_PROOF_PROP"
 printf 'Control-point prop: %s\n' "$CONTROL_POINT_PROP"
+printf 'Parse proof prop: %s\n' "$PARSE_PROOF_PROP"
+printf 'Parse handoff trigger: %s\n' "$PARSE_HANDOFF_TRIGGER"
 printf 'Launch proof prop: %s\n' "$LAUNCH_PROOF_PROP"
 printf 'Result prop key: %s\n' "$RESULT_PROP_KEY"
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then

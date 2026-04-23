@@ -228,6 +228,10 @@ Related docs:
     - the next imported-rc proof-point promotion now also surfaces `imported_rc_proved_current_boot` from `init.svc.adbd=running`, matching the later USB/adbd action path in that same patched `system/etc/init/hw/init.rc`
     - that rerun on `09051JEC202061` wrote [`matrix-summary.json`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T071613Z-09051JEC202061_/matrix-summary.json) with `case_count=5`, `second_stage_proved_case_count=5`, `init_script_selection_proved_case_count=5`, `imported_rc_proved_case_count=5`, `control_point_proved_case_count=5`, `import_proved_case_count=0`, `helper_launch_case_count=0`, and `surviving_discriminator=imported-rc-proved-no-import-proof`
     - the matching [`matrix.tsv`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T071613Z-09051JEC202061_/matrix.tsv) kept every trigger on `adb` with `failure_stage=collect`, so the ladder now truthfully proves the patched stock imported rc reached its later `adbd` service-start path on every case while the injected `/init.shadow.rc` import/helper proof still stays dark
+    - the next split now also adds a late stock handoff action (`on property:init.svc.adbd=running`) which tries to `start shadow-boot-parse-probe`, where that service is declared only inside `/init.shadow.rc`; `pixel_boot_kgsl_probe.sh` / `pixel_boot_kgsl_trigger_ladder.sh` now surface `injected_rc_parse_proved_current_boot` plus the stronger `injected-rc-parse-proved-action-missing` / `imported-rc-proved-no-injected-parse-proof` split
+    - that rerun on `09051JEC202061` wrote [`matrix-summary.json`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T074635Z-09051JEC202061_/matrix-summary.json) with `case_count=5`, `second_stage_proved_case_count=5`, `init_script_selection_proved_case_count=5`, `imported_rc_proved_case_count=5`, `injected_rc_parse_proved_case_count=0`, `control_point_proved_case_count=5`, `import_proved_case_count=0`, `helper_launch_case_count=0`, and `surviving_discriminator=imported-rc-proved-no-injected-parse-proof`
+    - the matching [`matrix.tsv`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T074635Z-09051JEC202061_/matrix.tsv) again kept every trigger on `adb` with `failure_stage=collect`, but now the late stock parse handoff stayed dark too: no helper dir, blank `debug.shadow.boot.kgsl.parse`, blank `debug.shadow.boot.kgsl.import`, and blank `debug.shadow.boot.kgsl.launch`
+    - tightened Stream A conclusion: on `09051JEC202061`, the new stock-owned parse handoff failed on every trigger even after the same boots proved `servicemanager`, `llkd-0`, and `adbd`; within the current stock-init userspace seam, the strongest truthful interpretation is now that injected `/init.shadow.rc` content is still not being parsed or registered at all on normal `sunfish` boots, not merely that its own action fires too early
 - Current stream map on 2026-04-21:
   - Stream A (`../boot`): KGSL / raw Vulkan critical path
   - Stream B (`boot-2`): boot-helper autostart and preflight before the first frame
@@ -238,7 +242,7 @@ Related docs:
   - `11151JEC200472`: Stream A confirmation lane, rooted and healthy, but still transport-confounded for guarded `adb reboot bootloader` probes; use carefully for boot-owned runs until that path is fixed or bypassed
   - `0B191JEC203253`: Stream B rooted sidecar lane; also available for Stream C validation when explicitly idle
   - `06241JEC200520`: Stream D rooted sidecar / spare lane; verify root state with `sc -t 06241JEC200520 root-check` before reassigning it
-  - 2026-04-23 note: the latest stock-init KGSL trigger ladder on `09051JEC202061` left the phone adb-visible on slot `_b` with `sys.boot_completed=1`, `init.svc.servicemanager=running`, `init.svc.llkd-0=running`, `init.svc.adbd=running`, `debug.shadow.boot.kgsl.second_stage=ready`, blank import/helper proof props, and Magisk root inactive, so start the next rooted follow-up with `sc -t 09051JEC202061 root-check` and a Magisk activation pass if needed
+  - 2026-04-23 note: the latest stock-init KGSL trigger ladder on `09051JEC202061` left the phone adb-visible on slot `_b` with `sys.boot_completed=1`, `init.svc.servicemanager=running`, `init.svc.llkd-0=running`, `init.svc.adbd=running`, `debug.shadow.boot.kgsl.second_stage=ready`, blank `debug.shadow.boot.kgsl.parse` / `debug.shadow.boot.kgsl.import` / `debug.shadow.boot.kgsl.launch`, and Magisk root inactive, so start the next rooted follow-up with `sc -t 09051JEC202061 root-check` and a Magisk activation pass if needed
 - Handoff rule:
   - keep Stream A on the KGSL-open seam until one new discriminator lands
   - keep Stream B on boot-helper autostart and preflight work; it may use recovery/evidence support, but it must not drift into second-guessing the GPU ladder
@@ -254,8 +258,8 @@ Related docs:
 - Do not broaden to `orange-gpu`, compositor, runtime, or shell until that happens.
 - Near-term pivot inside Stream A:
   - stop spending the primary loop on more direct-PID1 timeout-color variants
-  - stop varying stock-init triggers on `09051JEC202061`; the full default trigger ladder now collapses to `android-returned-no-import-proof`
-  - treat the imported stock-init rc seam itself as the surviving Stream A discriminator until one run proves import or helper launch on the current boot
+  - stop varying stock-init triggers on `09051JEC202061`; the full default trigger ladder now collapses to `imported-rc-proved-no-injected-parse-proof`
+  - treat injected `/init.shadow.rc` parse or registration itself as the surviving Stream A discriminator until one run proves either the new stock-owned parse handoff or the original injected action on the current boot
   - once that init-proof seam is no longer the variable, either borrow a stronger proof surface from Stream B or plan the minimal kernel-facing zap/PAS diagnostic lane
 
 ### Stream B: boot-helper autostart / preflight (`boot-2`)

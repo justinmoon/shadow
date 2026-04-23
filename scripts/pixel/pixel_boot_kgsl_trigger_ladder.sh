@@ -13,6 +13,8 @@ input_image="${PIXEL_BOOT_INPUT_IMAGE:-}"
 key_path="${AVB_TEST_KEY_PATH:-}"
 default_serial="${PIXEL_SERIAL:-}"
 device_log_root="$(pixel_boot_device_log_root)"
+injected_rc_parse_proof_prop="${PIXEL_BOOT_KGSL_PROBE_PARSE_PROOF_PROP:-debug.shadow.boot.kgsl.parse=registered}"
+parse_handoff_trigger="${PIXEL_BOOT_KGSL_PROBE_PARSE_HANDOFF_TRIGGER:-property:init.svc.adbd=running}"
 launch_proof_prop="${PIXEL_BOOT_KGSL_PROBE_LAUNCH_PROOF_PROP:-debug.shadow.boot.kgsl.launch=started}"
 second_stage_proof_prop="${PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP:-debug.shadow.boot.kgsl.second_stage=ready}"
 init_script_selection_proof_prop="${PIXEL_BOOT_KGSL_PROBE_INIT_SCRIPT_SELECTION_PROOF_PROP:-init.svc.servicemanager=running}"
@@ -41,6 +43,8 @@ Usage: scripts/pixel/pixel_boot_kgsl_trigger_ladder.sh [--output-dir DIR] [--ser
                                                        [--input PATH] [--key PATH]
                                                        [--trigger EXPR]...
                                                        [--device-log-root PATH]
+                                                       [--parse-proof-prop KEY=VALUE]
+                                                       [--parse-handoff-trigger EXPR]
                                                        [--launch-proof-prop KEY=VALUE]
                                                        [--second-stage-proof-prop KEY=VALUE]
                                                        [--init-script-selection-proof-prop KEY=VALUE]
@@ -158,6 +162,9 @@ init_script_selection_proved_cases = [
 imported_rc_proved_cases = [
     case["case_name"] for case in cases if case.get("imported_rc_proved_current_boot") is True
 ]
+injected_rc_parse_proved_cases = [
+    case["case_name"] for case in cases if case.get("injected_rc_parse_proved_current_boot") is True
+]
 control_point_proved_cases = [
     case["case_name"] for case in cases if case.get("control_point_proved_current_boot") is True
 ]
@@ -177,6 +184,7 @@ payload = {
     "second_stage_proved_case_count": len(second_stage_proved_cases),
     "init_script_selection_proved_case_count": len(init_script_selection_proved_cases),
     "imported_rc_proved_case_count": len(imported_rc_proved_cases),
+    "injected_rc_parse_proved_case_count": len(injected_rc_parse_proved_cases),
     "control_point_proved_case_count": len(control_point_proved_cases),
     "import_proved_case_count": len(import_proved_cases),
     "helper_launch_case_count": len(helper_launch_cases),
@@ -184,6 +192,7 @@ payload = {
     "second_stage_proved_cases": second_stage_proved_cases,
     "init_script_selection_proved_cases": init_script_selection_proved_cases,
     "imported_rc_proved_cases": imported_rc_proved_cases,
+    "injected_rc_parse_proved_cases": injected_rc_parse_proved_cases,
     "control_point_proved_cases": control_point_proved_cases,
     "import_proved_cases": import_proved_cases,
     "helper_launch_cases": helper_launch_cases,
@@ -191,6 +200,7 @@ payload = {
     "first_second_stage_proved_case": second_stage_proved_cases[0] if second_stage_proved_cases else "",
     "first_init_script_selection_proved_case": init_script_selection_proved_cases[0] if init_script_selection_proved_cases else "",
     "first_imported_rc_proved_case": imported_rc_proved_cases[0] if imported_rc_proved_cases else "",
+    "first_injected_rc_parse_proved_case": injected_rc_parse_proved_cases[0] if injected_rc_parse_proved_cases else "",
     "first_control_point_proved_case": control_point_proved_cases[0] if control_point_proved_cases else "",
     "first_import_proved_case": import_proved_cases[0] if import_proved_cases else "",
     "first_helper_launch_case": helper_launch_cases[0] if helper_launch_cases else "",
@@ -208,6 +218,7 @@ columns = [
     "second_stage_property_proved_current_boot",
     "init_script_selection_proved_current_boot",
     "imported_rc_proved_current_boot",
+    "injected_rc_parse_proved_current_boot",
     "control_point_proved_current_boot",
     "import_proved_current_boot",
     "helper_launch_proved_current_boot",
@@ -232,6 +243,7 @@ for case in cases:
                 "true" if case.get("second_stage_property_proved_current_boot") else "false",
                 "true" if case.get("init_script_selection_proved_current_boot") else "false",
                 "true" if case.get("imported_rc_proved_current_boot") else "false",
+                "true" if case.get("injected_rc_parse_proved_current_boot") else "false",
                 "true" if case.get("control_point_proved_current_boot") else "false",
                 "true" if case.get("import_proved_current_boot") else "false",
                 "true" if case.get("helper_launch_proved_current_boot") else "false",
@@ -273,6 +285,8 @@ run_case() {
     --output-dir "$case_output"
     --trigger "$trigger_value"
     --device-log-root "$device_log_root"
+    --parse-proof-prop "$injected_rc_parse_proof_prop"
+    --parse-handoff-trigger "$parse_handoff_trigger"
     --launch-proof-prop "$launch_proof_prop"
     --second-stage-proof-prop "$second_stage_proof_prop"
     --init-script-selection-proof-prop "$init_script_selection_proof_prop"
@@ -357,6 +371,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --device-log-root)
       device_log_root="${2:?missing value for --device-log-root}"
+      shift 2
+      ;;
+    --parse-proof-prop)
+      injected_rc_parse_proof_prop="${2:?missing value for --parse-proof-prop}"
+      shift 2
+      ;;
+    --parse-handoff-trigger)
+      parse_handoff_trigger="${2:?missing value for --parse-handoff-trigger}"
       shift 2
       ;;
     --launch-proof-prop)
