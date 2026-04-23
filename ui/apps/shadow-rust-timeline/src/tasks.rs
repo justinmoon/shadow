@@ -72,6 +72,10 @@ impl TimelineTasks {
         self.explore_sync.is_pending()
     }
 
+    pub(crate) fn follow_update_pending(&self) -> bool {
+        self.follow_update.is_pending()
+    }
+
     pub(crate) fn pending_follow_update_target(&self) -> Option<&str> {
         self.follow_update
             .pending()
@@ -80,6 +84,10 @@ impl TimelineTasks {
 
     pub(crate) fn publish_pending(&self) -> bool {
         self.publish.is_pending()
+    }
+
+    pub(crate) fn refresh_pending(&self) -> bool {
+        self.refresh.is_pending()
     }
 
     pub(crate) fn publish_note_pending(&self) -> bool {
@@ -99,6 +107,78 @@ impl TimelineTasks {
     pub(crate) fn thread_sync_pending_for(&self, note_id: &str) -> bool {
         self.thread_sync
             .pending_matches(|job| job.note_id == note_id)
+    }
+
+    pub(crate) fn thread_sync_pending(&self) -> bool {
+        self.thread_sync.is_pending()
+    }
+
+    pub(crate) fn start_account_action(&mut self, job: NostrAccountTask) -> bool {
+        self.account_action.start(job)
+    }
+
+    pub(crate) fn finish_account_action(&mut self, task: TaskHandle<NostrAccountTask>) -> bool {
+        self.account_action.finish(task.id()).is_some()
+    }
+
+    pub(crate) fn start_clipboard_write(&mut self, job: ClipboardWriteRequest) -> bool {
+        self.clipboard_write.start(job)
+    }
+
+    pub(crate) fn finish_clipboard_write(
+        &mut self,
+        task: TaskHandle<ClipboardWriteRequest>,
+    ) -> bool {
+        self.clipboard_write.finish(task.id()).is_some()
+    }
+
+    pub(crate) fn start_explore_sync(&mut self, job: NostrExploreSyncRequest) -> bool {
+        self.explore_sync.start(job)
+    }
+
+    pub(crate) fn finish_explore_sync(
+        &mut self,
+        task: TaskHandle<NostrExploreSyncRequest>,
+    ) -> bool {
+        self.explore_sync.finish(task.id()).is_some()
+    }
+
+    pub(crate) fn start_follow_update(&mut self, job: NostrContactListUpdateRequest) -> bool {
+        self.follow_update.start(job)
+    }
+
+    pub(crate) fn finish_follow_update(
+        &mut self,
+        task: TaskHandle<NostrContactListUpdateRequest>,
+    ) -> Option<NostrContactListUpdateRequest> {
+        self.follow_update.finish(task.id())
+    }
+
+    pub(crate) fn start_publish(&mut self, job: NostrTimelinePublishRequest) -> bool {
+        self.publish.start(job)
+    }
+
+    pub(crate) fn finish_publish(
+        &mut self,
+        task: TaskHandle<NostrTimelinePublishRequest>,
+    ) -> Option<NostrTimelinePublishRequest> {
+        self.publish.finish(task.id())
+    }
+
+    pub(crate) fn start_refresh(&mut self, job: NostrHomeRefreshRequest) -> bool {
+        self.refresh.start(job)
+    }
+
+    pub(crate) fn finish_refresh(&mut self, task: TaskHandle<NostrHomeRefreshRequest>) -> bool {
+        self.refresh.finish(task.id()).is_some()
+    }
+
+    pub(crate) fn start_thread_sync(&mut self, job: NostrThreadSyncRequest) -> bool {
+        self.thread_sync.start(job)
+    }
+
+    pub(crate) fn finish_thread_sync(&mut self, task: TaskHandle<NostrThreadSyncRequest>) -> bool {
+        self.thread_sync.finish(task.id()).is_some()
     }
 }
 
@@ -198,7 +278,7 @@ mod tests {
     #[test]
     fn follow_update_helpers_track_pending_target() {
         let mut tasks = TimelineTasks::default();
-        assert!(tasks.follow_update.start(NostrContactListUpdateRequest {
+        assert!(tasks.start_follow_update(NostrContactListUpdateRequest {
             account_npub: String::from("npub-account"),
             action: FollowActionKind::Add {
                 npub: String::from("npub-target"),
@@ -209,5 +289,28 @@ mod tests {
         assert_eq!(tasks.pending_follow_update_target(), Some("npub-target"));
         assert!(tasks.follow_update_pending_for("npub-target"));
         assert!(!tasks.follow_update_pending_for("npub-other"));
+    }
+
+    #[test]
+    fn follow_update_finish_returns_matching_pending_job() {
+        let mut tasks = TimelineTasks::default();
+        assert!(tasks.start_follow_update(NostrContactListUpdateRequest {
+            account_npub: String::from("npub-account"),
+            action: FollowActionKind::Remove {
+                npub: String::from("npub-target"),
+            },
+            relay_urls: vec![String::from("wss://relay.example")],
+        }));
+
+        let pending = tasks
+            .follow_update
+            .pending_cloned()
+            .expect("pending follow update");
+        let finished = tasks
+            .finish_follow_update(pending)
+            .expect("matching finished follow update");
+
+        assert_eq!(follow_update_target(&finished), "npub-target");
+        assert!(!tasks.follow_update_pending());
     }
 }

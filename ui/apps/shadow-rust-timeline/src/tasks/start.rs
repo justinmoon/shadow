@@ -29,10 +29,10 @@ impl TimelineApp {
             };
             return;
         };
-        if self.tasks.refresh.is_pending() {
+        if self.tasks.refresh_pending() {
             return;
         }
-        self.tasks.refresh.start(NostrHomeRefreshRequest {
+        self.tasks.start_refresh(NostrHomeRefreshRequest {
             account_npub: account.npub.clone(),
             limit: self.config.limit,
             relay_urls: self.config.relay_urls.clone(),
@@ -50,10 +50,10 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_explore_sync(&mut self) {
-        if self.tasks.explore_sync.is_pending() {
+        if self.tasks.explore_sync_pending() {
             return;
         }
-        self.tasks.explore_sync.start(NostrExploreSyncRequest {
+        self.tasks.start_explore_sync(NostrExploreSyncRequest {
             limit: self.config.limit.max(24),
             relay_urls: self.config.relay_urls.clone(),
         });
@@ -68,10 +68,10 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_account_generate(&mut self) {
-        if self.tasks.account_action.is_pending() {
+        if self.tasks.account_action_pending() {
             return;
         }
-        self.tasks.account_action.start(NostrAccountTask::generate());
+        self.tasks.start_account_action(NostrAccountTask::generate());
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Generating a new Nostr account..."),
@@ -79,7 +79,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_account_import(&mut self) {
-        if self.tasks.account_action.is_pending() {
+        if self.tasks.account_action_pending() {
             return;
         }
         let nsec = self.nsec_input.trim();
@@ -91,8 +91,7 @@ impl TimelineApp {
             return;
         }
         self.tasks
-            .account_action
-            .start(NostrAccountTask::import(nsec.to_owned()));
+            .start_account_action(NostrAccountTask::import(nsec.to_owned()));
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Importing the Nostr account from nsec..."),
@@ -100,13 +99,13 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_thread_sync(&mut self, note_id: String) {
-        if self.tasks.thread_sync.is_pending() {
+        if self.tasks.thread_sync_pending() {
             return;
         }
         let Some(note) = self.cached_note_by_id(&note_id) else {
             return;
         };
-        self.tasks.thread_sync.start(NostrThreadSyncRequest {
+        self.tasks.start_thread_sync(NostrThreadSyncRequest {
             note_id,
             parent_ids: thread_parent_ids(&note),
             relay_urls: self.config.relay_urls.clone(),
@@ -118,7 +117,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_copy_account_npub(&mut self) {
-        if self.tasks.clipboard_write.is_pending() {
+        if self.tasks.clipboard_write_pending() {
             return;
         }
         let Some(account) = self.account.as_ref() else {
@@ -129,8 +128,7 @@ impl TimelineApp {
             return;
         };
         self.tasks
-            .clipboard_write
-            .start(ClipboardWriteRequest::new(account.npub.clone()));
+            .start_clipboard_write(ClipboardWriteRequest::new(account.npub.clone()));
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Copying the active npub to the clipboard..."),
@@ -143,7 +141,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_follow_add_for(&mut self, npub: String) {
-        if self.tasks.follow_update.is_pending() {
+        if self.tasks.follow_update_pending() {
             return;
         }
         if !socket_available() {
@@ -189,7 +187,7 @@ impl TimelineApp {
             };
             return;
         }
-        self.tasks.follow_update.start(NostrContactListUpdateRequest {
+        self.tasks.start_follow_update(NostrContactListUpdateRequest {
             account_npub: account.npub.clone(),
             action: FollowActionKind::Add { npub },
             relay_urls: self.config.relay_urls.clone(),
@@ -201,7 +199,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_follow_remove(&mut self, npub: String) {
-        if self.tasks.follow_update.is_pending() {
+        if self.tasks.follow_update_pending() {
             return;
         }
         if !socket_available() {
@@ -220,7 +218,7 @@ impl TimelineApp {
             };
             return;
         };
-        self.tasks.follow_update.start(NostrContactListUpdateRequest {
+        self.tasks.start_follow_update(NostrContactListUpdateRequest {
             account_npub: account.npub.clone(),
             action: FollowActionKind::Remove { npub },
             relay_urls: self.config.relay_urls.clone(),
@@ -232,7 +230,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_reply_publish(&mut self) {
-        if self.tasks.publish.is_pending() {
+        if self.tasks.publish_pending() {
             return;
         }
         let Some(draft) = self.reply_draft.clone() else {
@@ -253,7 +251,7 @@ impl TimelineApp {
             };
             return;
         };
-        self.tasks.publish.start(NostrTimelinePublishRequest::reply(
+        self.tasks.start_publish(NostrTimelinePublishRequest::reply(
             content.to_owned(),
             self.config.relay_urls.clone(),
             note.id.clone(),
@@ -266,7 +264,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_note_publish(&mut self) {
-        if self.tasks.publish.is_pending() {
+        if self.tasks.publish_pending() {
             return;
         }
         if !matches!(self.current_route(), crate::Route::Timeline) {
@@ -296,7 +294,7 @@ impl TimelineApp {
             };
             return;
         }
-        self.tasks.publish.start(NostrTimelinePublishRequest::note(
+        self.tasks.start_publish(NostrTimelinePublishRequest::note(
             content.to_owned(),
             self.config.relay_urls.clone(),
         ));
