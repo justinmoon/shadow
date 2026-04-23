@@ -154,7 +154,10 @@ impl ManifestAppLaunch {
 
 #[path = "generated_apps.rs"]
 mod generated_apps;
+#[path = "generated_manifest_launch.rs"]
+mod generated_manifest_launch;
 pub use self::generated_apps::*;
+pub use self::generated_manifest_launch::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SessionAppProfile {
