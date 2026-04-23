@@ -4,14 +4,6 @@ use super::RefreshSource;
 use crate::{socket_available, TimelineApp, TimelineStatus, Tone};
 
 impl TimelineApp {
-    pub(crate) fn account_action_pending(&self) -> bool {
-        self.tasks.account_action_pending()
-    }
-
-    pub(crate) fn clipboard_write_pending(&self) -> bool {
-        self.tasks.clipboard_write_pending()
-    }
-
     pub(crate) fn begin_refresh(&mut self, source: RefreshSource) {
         let Some(account) = self.account.as_ref() else {
             self.status = TimelineStatus {
@@ -20,7 +12,7 @@ impl TimelineApp {
             };
             return;
         };
-        if self.tasks.refresh_pending() {
+        if self.tasks.refresh.is_pending() {
             return;
         }
         self.tasks.start_refresh(
@@ -41,7 +33,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_explore_sync(&mut self) {
-        if self.tasks.explore_sync_pending() {
+        if self.tasks.explore_sync.is_pending() {
             return;
         }
         self.tasks
@@ -52,12 +44,8 @@ impl TimelineApp {
         };
     }
 
-    pub(crate) fn explore_sync_pending(&self) -> bool {
-        self.tasks.explore_sync_pending()
-    }
-
     pub(crate) fn begin_account_generate(&mut self) {
-        if self.tasks.account_action_pending() {
+        if self.tasks.account_action.is_pending() {
             return;
         }
         self.tasks.start_account_generate();
@@ -68,7 +56,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_account_import(&mut self) {
-        if self.tasks.account_action_pending() {
+        if self.tasks.account_action.is_pending() {
             return;
         }
         let nsec = self.nsec_input.trim();
@@ -87,7 +75,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_thread_sync(&mut self, note_id: String) {
-        if self.tasks.thread_sync_pending() {
+        if self.tasks.thread_sync.is_pending() {
             return;
         }
         let Some(note) = self.cached_note_by_id(&note_id) else {
@@ -105,7 +93,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_copy_account_npub(&mut self) {
-        if self.tasks.clipboard_write_pending() {
+        if self.tasks.clipboard_write.is_pending() {
             return;
         }
         let Some(account) = self.account.as_ref() else {
@@ -128,7 +116,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_follow_add_for(&mut self, npub: String) {
-        if self.tasks.follow_update_pending() {
+        if self.tasks.follow_update.is_pending() {
             return;
         }
         if !socket_available() {
@@ -183,7 +171,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_follow_remove(&mut self, npub: String) {
-        if self.tasks.follow_update_pending() {
+        if self.tasks.follow_update.is_pending() {
             return;
         }
         if !socket_available() {
@@ -211,7 +199,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_reply_publish(&mut self) {
-        if self.tasks.publish_pending() {
+        if self.tasks.publish.is_pending() {
             return;
         }
         let Some(draft) = self.reply_draft.clone() else {
@@ -245,7 +233,7 @@ impl TimelineApp {
     }
 
     pub(crate) fn begin_note_publish(&mut self) {
-        if self.tasks.publish_pending() {
+        if self.tasks.publish.is_pending() {
             return;
         }
         if !matches!(self.current_route(), crate::Route::Timeline) {
@@ -283,27 +271,11 @@ impl TimelineApp {
         };
     }
 
-    pub(crate) fn pending_follow_update_target(&self) -> Option<&str> {
-        self.tasks.pending_follow_update_target()
-    }
-
-    pub(crate) fn publish_pending(&self) -> bool {
-        self.tasks.publish_pending()
-    }
-
     pub(crate) fn note_publish_pending(&self) -> bool {
-        self.tasks.publish_note_pending()
+        self.tasks.publish.pending_matches(|job| job.is_note())
     }
 
     pub(crate) fn reply_publish_pending_for(&self, note_id: &str) -> bool {
-        self.tasks.publish_reply_pending_for(note_id)
-    }
-
-    pub(crate) fn thread_sync_pending_for(&self, note_id: &str) -> bool {
-        self.tasks.thread_sync_pending_for(note_id)
-    }
-
-    pub(crate) fn follow_update_pending_for(&self, pubkey: &str) -> bool {
-        self.tasks.follow_update_pending_for(pubkey)
+        self.tasks.publish.pending_matches(|job| job.is_reply_to(note_id))
     }
 }

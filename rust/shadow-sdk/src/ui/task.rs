@@ -108,6 +108,10 @@ impl<Job> TaskSnapshot<Job> {
         self.pending.as_ref()
     }
 
+    pub fn pending_job(&self) -> Option<&Job> {
+        self.pending().map(TaskHandle::job)
+    }
+
     pub fn pending_matches(&self, select: impl FnOnce(&Job) -> bool) -> bool {
         self.pending
             .as_ref()
@@ -153,6 +157,10 @@ impl<Job> TaskSlot<Job> {
 
     pub fn pending(&self) -> Option<&TaskHandle<Job>> {
         self.pending.as_ref()
+    }
+
+    pub fn pending_job(&self) -> Option<&Job> {
+        self.pending().map(TaskHandle::job)
     }
 
     pub fn pending_cloned(&self) -> Option<TaskHandle<Job>>
@@ -253,6 +261,10 @@ impl<State, Job, Output> TaskBindingSnapshot<State, Job, Output> {
         self.pending.pending()
     }
 
+    pub fn pending_job(&self) -> Option<&Job> {
+        self.pending.pending_job()
+    }
+
     pub fn pending_matches(&self, select: impl FnOnce(&Job) -> bool) -> bool {
         self.pending.pending_matches(select)
     }
@@ -311,6 +323,10 @@ impl<State, Job, Output> TaskSlotBinding<State, Job, Output> {
 
     pub fn pending(&self) -> Option<&TaskHandle<Job>> {
         self.slot.pending()
+    }
+
+    pub fn pending_job(&self) -> Option<&Job> {
+        self.slot.pending_job()
     }
 
     pub fn pending_cloned(&self) -> Option<TaskHandle<Job>>
@@ -528,6 +544,7 @@ mod tests {
         let empty = slot.snapshot();
         assert!(!empty.is_pending());
         assert_eq!(empty.pending(), None);
+        assert_eq!(empty.pending_job(), None);
         assert!(!empty.pending_matches(|job: &String| job == "note"));
 
         assert!(slot.start(String::from("note")));
@@ -538,8 +555,10 @@ mod tests {
             snapshot.pending().map(|pending| pending.job().as_str()),
             Some("note")
         );
+        assert_eq!(snapshot.pending_job().map(String::as_str), Some("note"));
         assert!(snapshot.pending_matches(|job| job == "note"));
         assert!(!snapshot.pending_matches(|job| job == "reply"));
+        assert_eq!(slot.pending_job().map(String::as_str), Some("note"));
         assert!(slot.pending_matches(|job| job == "note"));
         assert!(!slot.pending_matches(|job| job == "reply"));
 
@@ -557,6 +576,7 @@ mod tests {
         assert!(slot.start(String::from("note")));
         assert!(slot.is_pending());
         assert!(slot.pending_matches(|job| job == "note"));
+        assert_eq!(slot.pending_job().map(String::as_str), Some("note"));
         assert_eq!(
             slot.pending().map(|pending| pending.job().as_str()),
             Some("note")

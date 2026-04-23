@@ -41,13 +41,13 @@ type TimelineTask<Job, Output> = TaskSlotBinding<TimelineApp, Job, Output>;
 
 #[derive(Clone, Debug)]
 pub(crate) struct TimelineTasks {
-    account_action: TimelineTask<NostrAccountTask, AccountActionOutcome>,
-    clipboard_write: TimelineTask<ClipboardWriteRequest, ()>,
-    explore_sync: TimelineTask<NostrExploreSyncRequest, ExploreSyncOutcome>,
-    follow_update: TimelineTask<NostrContactListUpdateRequest, FollowUpdateOutcome>,
-    publish: TimelineTask<NostrTimelinePublishRequest, PublishOutcome>,
-    refresh: TimelineTask<NostrHomeRefreshRequest, RefreshOutcome>,
-    thread_sync: TimelineTask<NostrThreadSyncRequest, ThreadSyncOutcome>,
+    pub(crate) account_action: TimelineTask<NostrAccountTask, AccountActionOutcome>,
+    pub(crate) clipboard_write: TimelineTask<ClipboardWriteRequest, ()>,
+    pub(crate) explore_sync: TimelineTask<NostrExploreSyncRequest, ExploreSyncOutcome>,
+    pub(crate) follow_update: TimelineTask<NostrContactListUpdateRequest, FollowUpdateOutcome>,
+    pub(crate) publish: TimelineTask<NostrTimelinePublishRequest, PublishOutcome>,
+    pub(crate) refresh: TimelineTask<NostrHomeRefreshRequest, RefreshOutcome>,
+    pub(crate) thread_sync: TimelineTask<NostrThreadSyncRequest, ThreadSyncOutcome>,
 }
 
 impl Default for TimelineTasks {
@@ -207,59 +207,6 @@ impl TimelineTasks {
     ) -> Option<NostrTimelinePublishRequest> {
         self.publish.finish(task)
     }
-
-    pub(crate) fn account_action_pending(&self) -> bool {
-        self.account_action.is_pending()
-    }
-
-    pub(crate) fn clipboard_write_pending(&self) -> bool {
-        self.clipboard_write.is_pending()
-    }
-
-    pub(crate) fn refresh_pending(&self) -> bool {
-        self.refresh.is_pending()
-    }
-
-    pub(crate) fn explore_sync_pending(&self) -> bool {
-        self.explore_sync.is_pending()
-    }
-
-    pub(crate) fn thread_sync_pending(&self) -> bool {
-        self.thread_sync.is_pending()
-    }
-
-    pub(crate) fn follow_update_pending(&self) -> bool {
-        self.follow_update.is_pending()
-    }
-
-    pub(crate) fn publish_pending(&self) -> bool {
-        self.publish.is_pending()
-    }
-
-    pub(crate) fn pending_follow_update_target(&self) -> Option<&str> {
-        self.follow_update
-            .pending()
-            .map(|pending| follow_update_target(pending.job()))
-    }
-
-    pub(crate) fn publish_note_pending(&self) -> bool {
-        self.publish
-            .pending_matches(NostrTimelinePublishRequest::is_note)
-    }
-
-    pub(crate) fn publish_reply_pending_for(&self, note_id: &str) -> bool {
-        self.publish.pending_matches(|job| job.is_reply_to(note_id))
-    }
-
-    pub(crate) fn follow_update_pending_for(&self, pubkey: &str) -> bool {
-        self.follow_update
-            .pending_matches(|job| follow_update_target(job) == pubkey)
-    }
-
-    pub(crate) fn thread_sync_pending_for(&self, note_id: &str) -> bool {
-        self.thread_sync
-            .pending_matches(|job| job.note_id == note_id)
-    }
 }
 
 pub(crate) fn decorate_with_tasks(
@@ -303,17 +250,21 @@ fn run_publish(job: NostrTimelinePublishRequest) -> Result<PublishOutcome, Strin
     publish_note_or_reply(job).map_err(|error| error.to_string())
 }
 
-fn follow_update_target(job: &NostrContactListUpdateRequest) -> &str {
-    match &job.action {
-        FollowActionKind::Add { npub } | FollowActionKind::Remove { npub } => npub,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use shadow_sdk::services::nostr::timeline::NostrTimelinePublishRequest;
 
-    use super::{follow_update_target, TimelineTasks};
+    use super::TimelineTasks;
+
+    fn follow_update_target(
+        job: &shadow_sdk::services::nostr::timeline::NostrContactListUpdateRequest,
+    ) -> &str {
+        match &job.action {
+            super::FollowActionKind::Add { npub } | super::FollowActionKind::Remove { npub } => {
+                npub
+            }
+        }
+    }
 
     #[test]
     fn refresh_start_builds_pending_request() {
@@ -342,9 +293,20 @@ mod tests {
             Vec::new(),
         ));
 
-        assert_eq!(tasks.pending_follow_update_target(), Some("npub-target"));
-        assert!(tasks.follow_update_pending_for("npub-target"));
-        assert!(!tasks.follow_update_pending_for("npub-other"));
+        assert_eq!(
+            tasks.follow_update.pending_job().map(follow_update_target),
+            Some("npub-target")
+        );
+        assert!(
+            tasks
+                .follow_update
+                .pending_matches(|job| follow_update_target(job) == "npub-target")
+        );
+        assert!(
+            !tasks
+                .follow_update
+                .pending_matches(|job| follow_update_target(job) == "npub-other")
+        );
     }
 
     #[test]
@@ -354,7 +316,7 @@ mod tests {
 
         let pending = tasks.refresh.pending_cloned().expect("pending refresh");
         assert!(tasks.finish_refresh(pending));
-        assert!(!tasks.refresh_pending());
+        assert!(!tasks.refresh.is_pending());
     }
 
     #[test]
@@ -375,7 +337,7 @@ mod tests {
             .expect("matching finished follow update");
 
         assert_eq!(follow_update_target(&finished), "npub-target");
-        assert!(!tasks.follow_update_pending());
+        assert!(!tasks.follow_update.is_pending());
     }
 
     #[test]
@@ -385,7 +347,7 @@ mod tests {
             String::from("hello"),
             vec![String::from("wss://relay.example")],
         ));
-        assert!(note_tasks.publish_note_pending());
+        assert!(note_tasks.publish.pending_matches(|job| job.is_note()));
         let note = note_tasks
             .publish
             .pending()
@@ -401,8 +363,8 @@ mod tests {
             String::from("note-1"),
             Some(String::from("root-1")),
         ));
-        assert!(!reply_tasks.publish_note_pending());
-        assert!(reply_tasks.publish_reply_pending_for("note-1"));
+        assert!(!reply_tasks.publish.pending_matches(|job| job.is_note()));
+        assert!(reply_tasks.publish.pending_matches(|job| job.is_reply_to("note-1")));
 
         match reply_tasks
             .publish

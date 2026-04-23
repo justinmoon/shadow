@@ -8,10 +8,18 @@ mod timeline;
 
 use shadow_sdk::ui::{UiContext, WidgetView};
 
-use crate::TimelineApp;
+use crate::{tasks::FollowActionKind, TimelineApp};
 
 pub(crate) fn route_screen(ui: UiContext, app: &TimelineApp) -> impl WidgetView<TimelineApp> {
     let socket_ready = crate::socket_available();
+    let tasks = &app.tasks;
+    let pending_follow_npub = tasks
+        .follow_update
+        .pending_job()
+        .map(|job| match &job.action {
+            FollowActionKind::Add { npub } | FollowActionKind::Remove { npub } => npub.as_str(),
+        })
+        .map(str::to_owned);
     match app.current_route() {
         crate::Route::Account => account::account_screen(
             ui,
@@ -20,8 +28,8 @@ pub(crate) fn route_screen(ui: UiContext, app: &TimelineApp) -> impl WidgetView<
                 feed_scope: app.cached_data.feed_scope().clone(),
                 follow_input: app.follow_input.clone(),
                 status: app.status.clone(),
-                clipboard_pending: app.clipboard_write_pending(),
-                pending_follow_npub: app.pending_follow_update_target().map(str::to_owned),
+                clipboard_pending: tasks.clipboard_write.is_pending(),
+                pending_follow_npub: pending_follow_npub.clone(),
                 socket_ready,
             },
         )
@@ -37,8 +45,8 @@ pub(crate) fn route_screen(ui: UiContext, app: &TimelineApp) -> impl WidgetView<
                     notes: explore.notes,
                     profiles: explore.profiles,
                     socket_ready,
-                    sync_pending: app.explore_sync_pending(),
-                    pending_follow_npub: app.pending_follow_update_target().map(str::to_owned),
+                    sync_pending: tasks.explore_sync.is_pending(),
+                    pending_follow_npub: pending_follow_npub.clone(),
                 },
             )
             .boxed()
@@ -48,7 +56,7 @@ pub(crate) fn route_screen(ui: UiContext, app: &TimelineApp) -> impl WidgetView<
             onboarding::OnboardingScreenProps {
                 nsec_input: app.nsec_input.clone(),
                 status: app.status.clone(),
-                action_pending: app.account_action_pending(),
+                action_pending: tasks.account_action.is_pending(),
             },
         )
         .boxed(),
@@ -61,8 +69,8 @@ pub(crate) fn route_screen(ui: UiContext, app: &TimelineApp) -> impl WidgetView<
                 notes: app.visible_notes(),
                 filter_text: app.filter_text.clone(),
                 note_draft: app.note_draft(),
-                publish_blocked: app.publish_pending(),
-                note_publish_pending: app.note_publish_pending(),
+                publish_blocked: tasks.publish.is_pending(),
+                note_publish_pending: tasks.publish.pending_matches(|job| job.is_note()),
                 socket_ready,
             },
         )
@@ -77,10 +85,12 @@ pub(crate) fn route_screen(ui: UiContext, app: &TimelineApp) -> impl WidgetView<
                     thread: note_state.thread,
                     reply_draft: app.reply_draft_for(&id),
                     status: app.status.clone(),
-                    publish_blocked: app.publish_pending(),
-                    reply_publish_pending: app.reply_publish_pending_for(&id),
+                    publish_blocked: tasks.publish.is_pending(),
+                    reply_publish_pending: tasks.publish.pending_matches(|job| job.is_reply_to(&id)),
                     thread_sync_available: socket_ready,
-                    thread_sync_pending: app.thread_sync_pending_for(&id),
+                    thread_sync_pending: tasks
+                        .thread_sync
+                        .pending_matches(|job| job.note_id == id.as_str()),
                 },
             )
             .boxed()
@@ -96,7 +106,11 @@ pub(crate) fn route_screen(ui: UiContext, app: &TimelineApp) -> impl WidgetView<
                     notes: profile_state.notes,
                     status: app.status.clone(),
                     is_following: app.is_following(&pubkey),
-                    follow_pending: app.follow_update_pending_for(&pubkey),
+                    follow_pending: tasks.follow_update.pending_matches(|job| match &job.action {
+                        FollowActionKind::Add { npub } | FollowActionKind::Remove { npub } => {
+                            npub == pubkey.as_str()
+                        }
+                    }),
                     socket_ready,
                 },
             )
