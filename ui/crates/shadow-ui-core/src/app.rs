@@ -29,12 +29,40 @@ pub struct TypeScriptAppRuntime {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ManifestAppRuntime {
+    pub bundle_env: &'static str,
+    pub input_path: &'static str,
+    pub cache_dir: &'static str,
+}
+
+impl ManifestAppRuntime {
+    pub const fn typescript_runtime(self) -> TypeScriptAppRuntime {
+        TypeScriptAppRuntime {
+            bundle_env: self.bundle_env,
+            input_path: self.input_path,
+            cache_dir: self.cache_dir,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppLaunchModel {
     TypeScript { runtime: TypeScriptAppRuntime },
     Rust,
 }
 
 pub type AppLaunchEnv = (&'static str, &'static str);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ManifestAppLaunch {
+    TypeScript {
+        runtime: ManifestAppRuntime,
+        launch_env: &'static [AppLaunchEnv],
+    },
+    Rust {
+        launch_env: &'static [AppLaunchEnv],
+    },
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AppLaunchSpec {
@@ -57,6 +85,7 @@ pub struct DemoApp {
     pub binary_name: &'static str,
     pub wayland_app_id: &'static str,
     pub window_title: &'static str,
+    pub manifest_launch: ManifestAppLaunch,
     pub typescript_runtime: Option<TypeScriptAppRuntime>,
     pub runtime_bundle_env: &'static str,
     pub runtime_input_path: &'static str,
@@ -67,18 +96,12 @@ pub struct DemoApp {
 
 impl DemoApp {
     pub const fn launch_spec(self) -> AppLaunchSpec {
-        let model = match self.typescript_runtime {
-            Some(runtime) => AppLaunchModel::TypeScript { runtime },
-            None => AppLaunchModel::Rust,
-        };
-        AppLaunchSpec {
-            id: self.id,
-            binary_name: self.binary_name,
-            wayland_app_id: self.wayland_app_id,
-            window_title: self.window_title,
-            model,
-            launch_env: self.launch_env,
-        }
+        self.manifest_launch.launch_spec(
+            self.id,
+            self.binary_name,
+            self.wayland_app_id,
+            self.window_title,
+        )
     }
 }
 
@@ -87,6 +110,68 @@ impl AppLaunchSpec {
         match self.model {
             AppLaunchModel::TypeScript { runtime } => Some(runtime),
             AppLaunchModel::Rust => None,
+        }
+    }
+}
+
+impl ManifestAppLaunch {
+    pub const fn model(self) -> AppLaunchModel {
+        match self {
+            Self::TypeScript { runtime, .. } => AppLaunchModel::TypeScript {
+                runtime: runtime.typescript_runtime(),
+            },
+            Self::Rust { .. } => AppLaunchModel::Rust,
+        }
+    }
+
+    pub const fn typescript_runtime(self) -> Option<TypeScriptAppRuntime> {
+        match self {
+            Self::TypeScript { runtime, .. } => Some(runtime.typescript_runtime()),
+            Self::Rust { .. } => None,
+        }
+    }
+
+    pub const fn runtime_bundle_env(self) -> &'static str {
+        match self {
+            Self::TypeScript { runtime, .. } => runtime.bundle_env,
+            Self::Rust { .. } => "",
+        }
+    }
+
+    pub const fn runtime_input_path(self) -> &'static str {
+        match self {
+            Self::TypeScript { runtime, .. } => runtime.input_path,
+            Self::Rust { .. } => "",
+        }
+    }
+
+    pub const fn runtime_cache_dir(self) -> &'static str {
+        match self {
+            Self::TypeScript { runtime, .. } => runtime.cache_dir,
+            Self::Rust { .. } => "",
+        }
+    }
+
+    pub const fn launch_env(self) -> &'static [AppLaunchEnv] {
+        match self {
+            Self::TypeScript { launch_env, .. } | Self::Rust { launch_env } => launch_env,
+        }
+    }
+
+    pub const fn launch_spec(
+        self,
+        id: AppId,
+        binary_name: &'static str,
+        wayland_app_id: &'static str,
+        window_title: &'static str,
+    ) -> AppLaunchSpec {
+        AppLaunchSpec {
+            id,
+            binary_name,
+            wayland_app_id,
+            window_title,
+            model: self.model(),
+            launch_env: self.launch_env(),
         }
     }
 }
@@ -158,13 +243,14 @@ mod tests {
 
     use super::{
         app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, home_apps,
-        launch_spec, AppId, AppLaunchModel, AppLaunchSpec, AppModel, DemoApp, CAMERA_APP,
-        CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP, CASHU_APP_ID, CASHU_WAYLAND_APP_ID,
-        COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, DEMO_APPS, PIXEL_SHELL_DEMO_APPS,
-        PODCAST_APP, PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, RUST_DEMO_APP, RUST_DEMO_APP_ID,
-        RUST_DEMO_WAYLAND_APP_ID, RUST_TIMELINE_APP, RUST_TIMELINE_APP_ID,
-        RUST_TIMELINE_WAYLAND_APP_ID, SESSION_APP_PROFILE_ENV, SHELL_APP_ID, SHELL_WAYLAND_APP_ID,
-        TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID, VM_SHELL_DEMO_APPS,
+        launch_spec, AppId, AppLaunchModel, AppLaunchSpec, AppModel, DemoApp, ManifestAppLaunch,
+        ManifestAppRuntime, CAMERA_APP, CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP,
+        CASHU_APP_ID, CASHU_WAYLAND_APP_ID, COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID,
+        DEMO_APPS, PIXEL_SHELL_DEMO_APPS, PODCAST_APP, PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID,
+        RUST_DEMO_APP, RUST_DEMO_APP_ID, RUST_DEMO_WAYLAND_APP_ID, RUST_TIMELINE_APP,
+        RUST_TIMELINE_APP_ID, RUST_TIMELINE_WAYLAND_APP_ID, SESSION_APP_PROFILE_ENV,
+        SHELL_APP_ID, SHELL_WAYLAND_APP_ID, TIMELINE_APP, TIMELINE_APP_ID,
+        TIMELINE_WAYLAND_APP_ID, VM_SHELL_DEMO_APPS,
     };
 
     fn env_lock() -> &'static Mutex<()> {
@@ -187,8 +273,37 @@ mod tests {
         result
     }
 
+    fn assert_manifest_launch_compat(app: &DemoApp) {
+        assert_eq!(app.typescript_runtime, app.manifest_launch.typescript_runtime());
+        assert_eq!(app.runtime_bundle_env, app.manifest_launch.runtime_bundle_env());
+        assert_eq!(app.runtime_input_path, app.manifest_launch.runtime_input_path());
+        assert_eq!(app.runtime_cache_dir, app.manifest_launch.runtime_cache_dir());
+        assert_eq!(app.launch_env, app.manifest_launch.launch_env());
+        assert_eq!(
+            app.launch_spec(),
+            app.manifest_launch.launch_spec(
+                app.id,
+                app.binary_name,
+                app.wayland_app_id,
+                app.window_title,
+            )
+        );
+    }
+
     fn assert_current_typescript_app(app: &DemoApp) {
         assert_eq!(app.model, AppModel::TypeScript);
+        assert_manifest_launch_compat(app);
+        assert_eq!(
+            app.manifest_launch,
+            ManifestAppLaunch::TypeScript {
+                runtime: ManifestAppRuntime {
+                    bundle_env: app.runtime_bundle_env,
+                    input_path: app.runtime_input_path,
+                    cache_dir: app.runtime_cache_dir,
+                },
+                launch_env: app.launch_env,
+            }
+        );
         let runtime = app
             .typescript_runtime
             .expect("current manifest apps should have TypeScript runtime metadata");
@@ -220,6 +335,7 @@ mod tests {
             binary_name: "shadow-rust-demo",
             wayland_app_id: "dev.shadow.rust-notes",
             window_title: "Rust Notes",
+            manifest_launch: ManifestAppLaunch::Rust { launch_env: &[] },
             typescript_runtime: None,
             runtime_bundle_env: "",
             runtime_input_path: "",
@@ -236,6 +352,7 @@ mod tests {
         assert_eq!(spec.model, AppLaunchModel::Rust);
         assert!(spec.launch_env.is_empty());
         assert_eq!(spec.typescript_runtime(), None);
+        assert_manifest_launch_compat(&app);
     }
 
     #[test]
@@ -348,6 +465,13 @@ mod tests {
             assert_eq!(app.icon_label, "RS");
             assert!(app.lifecycle_hint.contains("native binary launch path"));
             assert_eq!(app.model, AppModel::Rust);
+            assert_manifest_launch_compat(app);
+            assert_eq!(
+                app.manifest_launch,
+                ManifestAppLaunch::Rust {
+                    launch_env: &[("SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "1")],
+                }
+            );
             assert_eq!(
                 launch_spec(RUST_DEMO_APP_ID),
                 Some(AppLaunchSpec {
@@ -385,6 +509,20 @@ mod tests {
             assert_eq!(app.icon_label, "NR");
             assert!(app.lifecycle_hint.contains("cache-backed feed"));
             assert_eq!(app.model, AppModel::Rust);
+            assert_manifest_launch_compat(app);
+            assert_eq!(
+                app.manifest_launch,
+                ManifestAppLaunch::Rust {
+                    launch_env: &[
+                        ("SHADOW_RUST_TIMELINE_LIMIT", "18"),
+                        (
+                            "SHADOW_RUST_TIMELINE_RELAY_URLS",
+                            "wss://relay.primal.net/,wss://relay.damus.io/",
+                        ),
+                        ("SHADOW_RUST_TIMELINE_SYNC_ON_START", "1"),
+                    ],
+                }
+            );
             assert_eq!(
                 launch_spec(RUST_TIMELINE_APP_ID),
                 Some(AppLaunchSpec {
