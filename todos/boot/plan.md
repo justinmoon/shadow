@@ -8,6 +8,7 @@ Related docs:
 - [history.md](./history.md)
 - [spec-scope.md](./spec-scope.md)
 - [spec-phase1-shadow-at-boot.md](./spec-phase1-shadow-at-boot.md)
+- [camera-linux-api-recon.md](./camera-linux-api-recon.md)
 
 ## Intent
 
@@ -33,6 +34,7 @@ Related docs:
   - shipping the rooted Android takeover lane as architecture
   - broad service bring-up before shell/home/app loop exists
   - camera, Wi-Fi, update, and recovery product work before usable shell
+  - Linux camera capture or Camera HAL replacement before the read-only Linux camera API probe identifies a truthful first contract
 
 ## Current Master Truth
 
@@ -50,6 +52,11 @@ Related docs:
   - `probe-summary.json`
   - `probe-fingerprint.txt`
   - `probe-timeout-class.txt` when applicable
+- Camera remains a sidecar recon lane, not a product rung:
+  - current supported Shadow camera path still goes through Android camera provider Binder services
+  - rooted Pixel Linux inventory found `/dev/media*`, `/dev/video1` `cam-req-mgr`, `/dev/video2` `cam_sync`, and Qualcomm `/dev/v4l-subdev*` nodes
+  - source-level recon shows this is media topology plus Qualcomm private `VIDIOC_CAM_CONTROL` query-cap UAPI, not a generic UVC/V4L2 capture surface
+  - next allowed camera step is the read-only `camera-linux-surface-probe` contract in [camera-linux-api-recon.md](./camera-linux-api-recon.md), not capture, request-manager sessions, `CAM_ACQUIRE_DEV`, `CAM_START_DEV`, `CAM_CONFIG_DEV`, or runtime integration
 - The top-level one-shot wrapper can still end at `fastboot-return-auto-rebooted`. Treat `recover-traces/status.json` as truth.
 - The stock-init trigger / imported-rc / preflight seams are no longer peer execution streams:
   - latest negative proof: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/runs/boot-kgsl-trigger-ladder/20260423T082243Z-09051JEC202061_/matrix-summary.json`
@@ -143,6 +150,35 @@ Related docs:
     - canonical rooted proof recipe for the app-direct-present successor on the preferred rooted proof pair
   - blocked_by:
     - `finish-inflight-app-direct-present`
+- [x] `camera-linux-api-recon`
+  - why sidecar: identify whether boot-owned userspace has a Linux camera ABI worth pursuing without blocking the app/input/shell ladder
+  - result:
+    - created [camera-linux-api-recon.md](./camera-linux-api-recon.md)
+    - captured read-only Linux camera surface inventory on `0B191JEC203253`
+    - captured existing Android provider `list` baseline on the same phone
+    - read AOSP camera provider/device/session source and Pixel 4a Qualcomm Linux camera UAPI/driver source
+    - first runnable Linux-only probe is media topology plus Qualcomm query-cap discovery, not capture
+  - proof artifacts:
+    - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/runs/camera-linux-api-recon/20260423T201839Z-0B191JEC203253/status.json`
+    - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/runs/camera-linux-api-recon/20260423T201839Z-0B191JEC203253/device-inventory.txt`
+    - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-rs/20260423T201930Z-0B191JEC203253_/status.json`
+  - owned paths:
+    - `runtime/app-camera/`
+    - `rust/shadow-camera-provider-host/`
+    - `rust/shadow-system/src/services/camera.rs`
+    - `rust/shadow-sdk/src/services/camera.rs`
+    - `scripts/lib/pixel_camera_runtime_common.sh`
+    - `scripts/pixel/pixel_camera_rs_run.sh`
+    - `todos/boot/camera-linux-api-recon.md`
+  - acceptance:
+    - concrete Linux-camera library plan with first probe contract, expected nodes/ioctls/libs, owned paths, and proof artifacts
+    - no broad integration until the first Linux-only probe contract is implemented and validated
+  - validation:
+    - study current Android-camera path and existing Shadow camera abstractions
+    - study rooted Pixel Linux camera device/driver surface outside Android APIs
+    - read relevant Android/Linux source before finalizing the probe contract
+    - document first read-only `camera-linux-surface-probe` contract
+  - blocked_by: none
 - [ ] `touch-counter-gpu`
   - why next: first honest input rung on the real boot-owned render/present path
   - owned paths:
@@ -203,3 +239,4 @@ Related docs:
   - read `recover-traces/status.json`
 - Keep later compositor, app, shell, and service work on the Rust seam only.
 - Delete demo-only wrappers, binaries, and smokes once a product rung fully subsumes them.
+- Camera Linux API recon is parked at a read-only probe contract; do not attempt frame capture until media/V4L2 topology and querycap output prove a candidate path.
