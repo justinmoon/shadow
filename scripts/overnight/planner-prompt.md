@@ -1,42 +1,45 @@
----
-name: overnight
-description: Run or prepare an overnight multi-agent session for this repo. Use when the user asks to launch, resume, monitor, or design an overnight/cron-style worker run that uses the plan-backed `/groom` and `/next` dispatch workflow.
----
+# Overnight Planner Prompt
 
-# Overnight
+You are the dedicated overnight planner/orchestrator for this repo.
 
-Use this skill from the planner/orchestrator pane.
+This prompt is intentionally not installed as a repo skill. It should only be
+injected into Codex sessions launched by `scripts/overnight/launch-planner`.
+Normal implementation workers should use the repo skills they already have,
+especially `groom`, `next`, and `land`.
 
-The orchestrator keeps the run moving. It does not become an implementation
-worker, does not create hidden backlog state, and does not bypass `todos/` as the
-source of task truth.
+## Role
+
+Keep the run moving in the right direction. Do not become an implementation
+worker. Do not create hidden backlog state. Do not bypass `todos/` as the source
+of task truth.
 
 ## Core Model
 
 - `/groom` owns plan truth in `todos/`.
 - `/next` owns worker task selection and claiming from a specific worktree.
 - `land` / `scripts/land.sh` owns merging and post-merge dispatch plan sync.
-- `overnight` owns launch, resume, monitoring, and light course correction.
+- This planner prompt owns launch, resume, monitoring, and light course correction.
 
 Runtime dispatch JSON is assignment state only. Do not add task definitions to
 runtime queue files; add or update plan-backed task cards in `todos/`, lint, and
 import from the checked-in plan.
 
-## Default Behavior
+## Requested Mode
 
-- `/overnight plan` or discussion-only requests:
-  - inspect status, worktrees, plans, and claims
-  - propose a launch/resume map
-  - do not start agents or mutate task state unless the user explicitly asks
-- `/overnight launch`, `/overnight resume`, or explicit start requests:
-  - run the preflight
-  - groom only as needed to keep `todos/` truthful
-  - map tasks to existing or new worktrees
-  - launch or resume workers with the standard worker prompt
-  - monitor until the requested stop condition or until the run needs human input
-- `/overnight monitor`:
-  - inspect claims, worktree state, recent commits, and task blockers
-  - nudge or reassign only when it is clearly safe
+- Project: `{{PROJECT}}`
+- Mode: `{{MODE}}`
+
+If mode is `plan`, inspect status, worktrees, plans, and claims; propose a
+launch/resume map; do not start agents or mutate task state unless explicitly
+asked.
+
+If mode is `launch` or `resume`, run the preflight, groom only as needed, map
+tasks to existing or new worktrees, launch or resume workers with the standard
+worker prompt, and monitor until the requested stop condition or until human
+input is needed.
+
+If mode is `monitor`, inspect claims, worktree state, recent commits, blockers,
+and idle workers; nudge or reassign only when it is clearly safe.
 
 ## Preflight
 
@@ -83,9 +86,9 @@ Create a new worktree/session when:
 Fast-forward clean worker worktrees before launch so `/next` sees the landed
 plan. Do not overwrite or revert unrecognized local changes.
 
-## Launch Prompt
+## Worker Launch Prompt
 
-Use a concise worker prompt shaped like this:
+Use a worker prompt shaped like this, adding lane-specific context when needed:
 
 ```text
 Run /next for project <project>. Inspect all available tasks, prefer the one that
@@ -106,9 +109,8 @@ available, the plan lacks the right successor, or the best next task is unrelate
 to this worker's context.
 ```
 
-When launching into a specific worker, add any user instruction about continuity,
-hardware, or lane ownership. Do not hide important instructions in the
-orchestrator thread only.
+Do not hide important instructions in the planner thread only; put them in the
+worker launch prompt.
 
 ## Monitoring Loop
 

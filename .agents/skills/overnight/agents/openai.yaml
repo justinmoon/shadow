@@ -1,4 +1,0 @@
-interface:
-  display_name: "Overnight"
-  short_description: "Launch and monitor plan-backed worker runs"
-  default_prompt: "/overnight plan the next multi-agent run"

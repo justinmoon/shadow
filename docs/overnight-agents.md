@@ -18,13 +18,15 @@ The UX is intentionally small:
 
 - planner pane/worktree: `/groom`
 - worker pane/worktree: `/next`
-- overnight planner/orchestrator: `/overnight`
+- dedicated overnight planner session: `scripts/overnight/launch-planner`
 - tmux and worktrees: managed by the human
 
 Interactive dispatch itself has no controller-owned tmux, slot, worktree,
-worker, or session layer. The `overnight` skill may launch or resume worker
-sessions, but it still uses the same plan-backed dispatch state and should not
-create a second backlog.
+worker, or session layer. Overnight orchestration is intentionally not installed
+as a repo skill; the private planner prompt is injected only by
+`scripts/overnight/launch-planner` into a dedicated planner Codex session.
+That planner may launch or resume worker sessions, but it still uses the same
+plan-backed dispatch state and should not create a second backlog.
 
 ## Conversational Use
 
@@ -58,12 +60,27 @@ Default intent:
 
 - `/groom` alone: inspect and summarize first; do not mutate queue state yet
 - `/next` alone: resume an existing claim, or inspect all available tasks, choose the best fit for this worker, claim it, and start work
-- `/overnight plan`: inspect plans, worktrees, claims, and propose a launch/resume map without starting workers
-- `/overnight launch`: preflight the plan, map workers to tasks, launch or resume sessions, and monitor progress
+- `scripts/overnight/launch-planner --mode plan`: inspect plans, worktrees, claims, and propose a launch/resume map without starting workers
+- `scripts/overnight/launch-planner --mode launch`: preflight the plan, map workers to tasks, launch or resume sessions, and monitor progress
 
 ## Overnight Runs
 
-`overnight` is a thin orchestrator over `/groom`, `/next`, and `land`.
+The overnight planner prompt is a thin orchestrator over `/groom`, `/next`, and
+`land`. It lives at
+[`scripts/overnight/planner-prompt.md`](../scripts/overnight/planner-prompt.md)
+instead of `.agents/skills/` so normal agents do not discover it.
+
+Launch a planner with:
+
+```sh
+scripts/overnight/launch-planner --project boot --mode plan
+```
+
+Inspect the injected prompt without launching Codex:
+
+```sh
+scripts/overnight/launch-planner --project boot --mode launch --print-prompt
+```
 
 It should:
 
