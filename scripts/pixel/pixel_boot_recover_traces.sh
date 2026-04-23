@@ -1427,6 +1427,7 @@ compositor_frame_height = None
 compositor_frame_pixel_bytes = None
 compositor_frame_distinct_color_count = None
 compositor_frame_distinct_color_samples = []
+compositor_frame_distinct_color_set = set()
 compositor_frame_checksum_sha256 = None
 
 if source_image_metadata_path:
@@ -1496,6 +1497,7 @@ def parse_ppm_artifact(path: Path):
         "pixel_bytes": len(pixel_data),
         "distinct_color_count": len(distinct_colors),
         "distinct_color_samples": distinct_colors[:16],
+        "distinct_colors": distinct_colors,
         "checksum_sha256": __import__("hashlib").sha256(pixel_data).hexdigest(),
     }
 
@@ -1689,6 +1691,8 @@ summary_color_samples = recovered_probe_summary.get("distinct_color_samples_rgba
 summary_adapter = recovered_probe_summary.get("adapter")
 summary_mode = recovered_probe_summary.get("mode")
 summary_kind = recovered_probe_summary.get("kind")
+summary_startup_mode = recovered_probe_summary.get("startup_mode")
+summary_app_id = recovered_probe_summary.get("app_id")
 summary_frame_path = recovered_probe_summary.get("frame_path")
 summary_frame_bytes = recovered_probe_summary.get("frame_bytes")
 summary_target_duration_secs = recovered_probe_summary.get("target_duration_secs")
@@ -1731,6 +1735,11 @@ summary_last_frame_checksum = (
     else None
 )
 required_gpu_render_samples = {"ff7a00ff"}
+required_app_direct_present_frame_samples = {
+    "17362c",
+    "74d3ae",
+    "f7fafc",
+}
 summary_samples_set = (
     set(sample for sample in summary_color_samples if isinstance(sample, str))
     if isinstance(summary_color_samples, list)
@@ -1813,6 +1822,9 @@ if recovered_metadata_compositor_frame_present and recovered_metadata_compositor
             compositor_frame_pixel_bytes = compositor_frame_summary["pixel_bytes"]
             compositor_frame_distinct_color_count = compositor_frame_summary["distinct_color_count"]
             compositor_frame_distinct_color_samples = compositor_frame_summary["distinct_color_samples"]
+            compositor_frame_distinct_color_set = set(
+                compositor_frame_summary["distinct_colors"]
+            )
             compositor_frame_checksum_sha256 = compositor_frame_summary["checksum_sha256"]
 probe_summary_proves_compositor_scene = (
     expected_orange_gpu_mode == "compositor-scene"
@@ -1821,6 +1833,19 @@ probe_summary_proves_compositor_scene = (
     and recovered_metadata_probe_summary_present
     and recovered_probe_summary_parse_error is None
     and summary_kind == "compositor-scene"
+    and summary_frame_path == expected_metadata_compositor_frame_path
+    and isinstance(summary_frame_bytes, int)
+    and summary_frame_bytes > 0
+)
+probe_summary_proves_app_direct_present = (
+    expected_orange_gpu_mode == "app-direct-present"
+    and expected_orange_gpu_firmware_helper is True
+    and probe_report_proves_child_success
+    and recovered_metadata_probe_summary_present
+    and recovered_probe_summary_parse_error is None
+    and summary_kind == "app-direct-present"
+    and summary_startup_mode == "app"
+    and summary_app_id == "rust-demo"
     and summary_frame_path == expected_metadata_compositor_frame_path
     and isinstance(summary_frame_bytes, int)
     and summary_frame_bytes > 0
@@ -1843,12 +1868,36 @@ compositor_frame_proves_scene = (
         f"P6\n{compositor_frame_width} {compositor_frame_height}\n255\n".encode("ascii")
     )
 )
+compositor_frame_proves_app_direct_present = (
+    expected_orange_gpu_mode == "app-direct-present"
+    and recovered_metadata_compositor_frame_present
+    and recovered_compositor_frame_parse_error is None
+    and isinstance(compositor_frame_width, int)
+    and compositor_frame_width > 0
+    and isinstance(compositor_frame_height, int)
+    and compositor_frame_height > 0
+    and isinstance(compositor_frame_pixel_bytes, int)
+    and compositor_frame_pixel_bytes > 0
+    and isinstance(compositor_frame_distinct_color_count, int)
+    and compositor_frame_distinct_color_count >= len(required_app_direct_present_frame_samples)
+    and required_app_direct_present_frame_samples.issubset(compositor_frame_distinct_color_set)
+    and isinstance(compositor_frame_checksum_sha256, str)
+    and bool(compositor_frame_checksum_sha256)
+    and summary_frame_bytes == compositor_frame_pixel_bytes + len(
+        f"P6\n{compositor_frame_width} {compositor_frame_height}\n255\n".encode("ascii")
+    )
+)
 if expected_orange_gpu_mode == "gpu-render":
     proof_ok = probe_summary_proves_gpu_render
 elif expected_orange_gpu_mode == "orange-gpu-loop":
     proof_ok = probe_summary_proves_orange_gpu_loop
 elif expected_orange_gpu_mode == "compositor-scene":
     proof_ok = probe_summary_proves_compositor_scene and compositor_frame_proves_scene
+elif expected_orange_gpu_mode == "app-direct-present":
+    proof_ok = (
+        probe_summary_proves_app_direct_present
+        and compositor_frame_proves_app_direct_present
+    )
 else:
     proof_ok = matched_any_correlated_shadow_tags or probe_report_proves_child_success
 
@@ -1861,7 +1910,9 @@ payload = {
     "probe_summary_proves_gpu_render": probe_summary_proves_gpu_render,
     "probe_summary_proves_orange_gpu_loop": probe_summary_proves_orange_gpu_loop,
     "probe_summary_proves_compositor_scene": probe_summary_proves_compositor_scene,
+    "probe_summary_proves_app_direct_present": probe_summary_proves_app_direct_present,
     "metadata_compositor_frame_proves_scene": compositor_frame_proves_scene,
+    "metadata_compositor_frame_proves_app_direct_present": compositor_frame_proves_app_direct_present,
     "serial": serial,
     "output_dir": str(status_output.parent),
     "shadow_tag_regex": shadow_tag_regex,
@@ -1960,6 +2011,8 @@ payload = {
     "metadata_probe_summary_stderr_path": recovered_metadata_probe_summary_stderr_path,
     "metadata_probe_summary_parse_error": recovered_probe_summary_parse_error,
     "metadata_probe_summary_kind": summary_kind,
+    "metadata_probe_summary_startup_mode": summary_startup_mode,
+    "metadata_probe_summary_app_id": summary_app_id,
     "metadata_probe_summary_scene": summary_scene,
     "metadata_probe_summary_frame_path": summary_frame_path,
     "metadata_probe_summary_frame_bytes": summary_frame_bytes,

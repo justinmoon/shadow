@@ -168,6 +168,9 @@ PROP
       elif [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
         printf 'parent-probe-result=exit-0\n'
         exit 0
+      elif [[ "$TRACE_MODE" == "app-direct-present-success" ]]; then
+        printf 'parent-probe-result=exit-0\n'
+        exit 0
       fi
       exit 3
       ;;
@@ -184,11 +187,14 @@ PROP
       elif [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
         printf 'orange-gpu-payload:compositor-scene-frame-captured\n'
         exit 0
+      elif [[ "$TRACE_MODE" == "app-direct-present-success" ]]; then
+        printf 'orange-gpu-payload:app-direct-present-frame-captured\n'
+        exit 0
       fi
       exit 3
       ;;
     *"/metadata/shadow-hello-init/by-token/"*"/probe-fingerprint.txt"* )
-      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" || "$TRACE_MODE" == "orange-gpu-loop-success" || "$TRACE_MODE" == "compositor-scene-success" ]]; then
+      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" || "$TRACE_MODE" == "orange-gpu-loop-success" || "$TRACE_MODE" == "compositor-scene-success" || "$TRACE_MODE" == "app-direct-present-success" ]]; then
         printf 'path=/dev/kgsl-3d0 present=true kind=char mode=666 uid=1000 gid=1000 major=508 minor=0\n'
         exit 0
       fi
@@ -229,6 +235,16 @@ EOF
         cat <<EOF
 probe_label=orange-gpu-payload
 observed_probe_stage=orange-gpu-payload:compositor-scene-frame-captured
+child_timed_out=false
+child_completed=true
+exit_status=0
+wchan=
+EOF
+        exit 0
+      elif [[ "$TRACE_MODE" == "app-direct-present-success" ]]; then
+        cat <<EOF
+probe_label=orange-gpu-payload
+observed_probe_stage=orange-gpu-payload:app-direct-present-frame-captured
 child_timed_out=false
 child_completed=true
 exit_status=0
@@ -323,12 +339,26 @@ EOF
 }
 EOF
         exit 0
+      elif [[ "$TRACE_MODE" == "app-direct-present-success" ]]; then
+        cat <<EOF
+{
+  "kind": "app-direct-present",
+  "startup_mode": "app",
+  "app_id": "rust-demo",
+  "frame_path": "/metadata/shadow-hello-init/by-token/$TRACE_RUN_TOKEN/compositor-frame.ppm",
+  "frame_bytes": 20
+}
+EOF
+        exit 0
       fi
       exit 3
       ;;
     *"/metadata/shadow-hello-init/by-token/"*"/compositor-frame.ppm"* )
       if [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
         printf 'P6\n2 1\n255\n\xff\x7a\x00\x00\x00\x00'
+        exit 0
+      elif [[ "$TRACE_MODE" == "app-direct-present-success" ]]; then
+        printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'
         exit 0
       fi
       exit 3
@@ -450,6 +480,25 @@ EOF
   "kind": "hello_init_build",
   "run_token": "$run_token",
   "orange_gpu_mode": "compositor-scene",
+  "orange_gpu_firmware_helper": true,
+  "log_kmsg": true,
+  "log_pmsg": true,
+  "orange_gpu_metadata_stage_breadcrumb": true,
+  "metadata_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/stage.txt",
+  "metadata_probe_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-stage.txt",
+  "metadata_probe_fingerprint_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-fingerprint.txt",
+  "metadata_probe_report_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-report.txt",
+  "metadata_probe_timeout_class_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-timeout-class.txt",
+  "metadata_probe_summary_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-summary.json",
+  "metadata_compositor_frame_path": "/metadata/shadow-hello-init/by-token/$run_token/compositor-frame.ppm"
+}
+EOF
+  elif [[ "$orange_gpu_mode" == "app-direct-present" ]]; then
+    cat >"$image_path.hello-init.json" <<EOF
+{
+  "kind": "hello_init_build",
+  "run_token": "$run_token",
+  "orange_gpu_mode": "app-direct-present",
   "orange_gpu_firmware_helper": true,
   "log_kmsg": true,
   "log_pmsg": true,
@@ -768,6 +817,35 @@ assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_compositor_frame_wid
 assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_compositor_frame_height 1
 assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_compositor_frame_pixel_bytes 6
 assert_json_field "$COMPOSITOR_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 2
+
+APP_DIRECT_PRESENT_PARENT="$TMP_DIR/output-app-direct-present"
+APP_DIRECT_PRESENT_IMAGE="$TMP_DIR/output-app-direct-present.img"
+APP_DIRECT_PRESENT_OUTPUT="$APP_DIRECT_PRESENT_PARENT/recover-traces"
+write_recover_context "$APP_DIRECT_PRESENT_PARENT" "$APP_DIRECT_PRESENT_IMAGE" "$RUN_TOKEN" app-direct-present
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=app-direct-present-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$APP_DIRECT_PRESENT_OUTPUT" >/dev/null
+
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" matched_any_correlated_shadow_tags false
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" probe_report_proves_child_success true
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" probe_summary_proves_app_direct_present true
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" proof_ok true
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" expected_metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/compositor-frame.ppm"
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_probe_summary_kind app-direct-present
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_probe_summary_startup_mode app
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_probe_summary_app_id rust-demo
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_probe_summary_frame_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/compositor-frame.ppm"
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_probe_summary_frame_bytes 20
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_present true
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_width 3
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_height 1
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_pixel_bytes 9
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
 
 ROOT_TIMEOUT_PARENT="$TMP_DIR/output-root-timeout"
 ROOT_TIMEOUT_IMAGE="$TMP_DIR/output-root-timeout.img"

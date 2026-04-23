@@ -42,6 +42,8 @@ mod linux {
     const ORANGE_GPU_COMPOSITOR_BINARY_PATH: &str = "/orange-gpu/shadow-compositor-guest";
     const ORANGE_GPU_COMPOSITOR_STARTUP_CONFIG_PATH: &str =
         "/orange-gpu/compositor-scene-startup.json";
+    const ORANGE_GPU_APP_DIRECT_PRESENT_STARTUP_CONFIG_PATH: &str =
+        "/orange-gpu/app-direct-present-startup.json";
     const ORANGE_GPU_COMPOSITOR_RUNTIME_DIR: &str = "/shadow-runtime";
     const ORANGE_GPU_COMPOSITOR_DUMMY_CLIENT_PATH: &str = "/orange-gpu/shadow-shell-dummy-client";
     const ORANGE_GPU_SUMMARY_PATH: &str = "/orange-gpu/summary.json";
@@ -656,6 +658,7 @@ mod linux {
                             "vulkan-device-smoke",
                             "vulkan-offscreen",
                             "compositor-scene",
+                            "app-direct-present",
                             "firmware-probe-only",
                         ],
                     ) {
@@ -1077,6 +1080,14 @@ mod linux {
 
     fn orange_gpu_mode_is_compositor_scene(mode: &str) -> bool {
         mode == "compositor-scene"
+    }
+
+    fn orange_gpu_mode_is_app_direct_present(mode: &str) -> bool {
+        mode == "app-direct-present"
+    }
+
+    fn orange_gpu_mode_uses_session_frame_capture(mode: &str) -> bool {
+        orange_gpu_mode_is_compositor_scene(mode) || orange_gpu_mode_is_app_direct_present(mode)
     }
 
     fn orange_gpu_mode_uses_visible_checkpoints(mode: &str, checkpoint_name: &str) -> bool {
@@ -1683,8 +1694,11 @@ mod linux {
         Some(summary_text)
     }
 
-    fn record_compositor_scene_summary(
+    fn record_session_frame_summary(
         runtime: &mut MetadataStageRuntime,
+        kind: &str,
+        startup_mode: &str,
+        app_id: Option<&str>,
     ) -> Result<(), &'static str> {
         if !runtime.enabled || runtime.write_failed || !runtime.prepared {
             return Err("metadata-disabled");
@@ -1696,8 +1710,15 @@ mod linux {
         }
 
         let frame_path = runtime.compositor_frame_path.display();
-        let payload = format!(
-            "{{\n  \"kind\": \"compositor-scene\",\n  \"frame_path\": \"{frame_path}\",\n  \"frame_bytes\": {frame_bytes}\n}}\n"
+        let mut payload = format!(
+            "{{\n  \"kind\": \"{kind}\",\n  \"startup_mode\": \"{startup_mode}\",\n"
+        );
+        if let Some(app_id) = app_id {
+            let _ = write!(payload, "  \"app_id\": \"{app_id}\",\n");
+        }
+        let _ = write!(
+            payload,
+            "  \"frame_path\": \"{frame_path}\",\n  \"frame_bytes\": {frame_bytes}\n}}\n"
         );
         if write_atomic_text_file(
             &runtime.temp_probe_summary_path,
@@ -2258,6 +2279,7 @@ mod linux {
             "vulkan-device-smoke" => ("device-smoke", false, false),
             "vulkan-offscreen" => ("smoke", false, false),
             "compositor-scene" => ("flat-orange", false, false),
+            "app-direct-present" => ("flat-orange", false, false),
             _ => ("flat-orange", true, true),
         }
     }
@@ -2408,16 +2430,18 @@ mod linux {
             log_line("orange_gpu_firmware_helper requires firmware_bootstrap=ramdisk-lib-firmware");
             return false;
         }
-        if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode)
+        if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode)
             && !config.orange_gpu_metadata_stage_breadcrumb
         {
-            log_line("compositor-scene requires orange_gpu_metadata_stage_breadcrumb=true");
+            log_line(
+                "session frame modes require orange_gpu_metadata_stage_breadcrumb=true",
+            );
             return false;
         }
-        if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode)
+        if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode)
             && !config.orange_gpu_firmware_helper
         {
-            log_line("compositor-scene requires orange_gpu_firmware_helper=true");
+            log_line("session frame modes require orange_gpu_firmware_helper=true");
             return false;
         }
         if config.orange_gpu_mode == "c-kgsl-open-readonly-firmware-helper-smoke"
@@ -2574,22 +2598,28 @@ mod linux {
                 return 1;
             }
 
-            if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode) {
+            if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode) {
+                let session_config_path = if orange_gpu_mode_is_compositor_scene(
+                    &config.orange_gpu_mode,
+                ) {
+                    ORANGE_GPU_COMPOSITOR_STARTUP_CONFIG_PATH
+                } else {
+                    ORANGE_GPU_APP_DIRECT_PRESENT_STARTUP_CONFIG_PATH
+                };
                 let mut command = Command::new(ORANGE_GPU_COMPOSITOR_SESSION_PATH);
                 command.env("SHADOW_SESSION_MODE", "guest-ui");
                 command.env("SHADOW_RUNTIME_DIR", ORANGE_GPU_COMPOSITOR_RUNTIME_DIR);
-                command.env(
-                    "SHADOW_GUEST_SESSION_CONFIG",
-                    ORANGE_GPU_COMPOSITOR_STARTUP_CONFIG_PATH,
-                );
+                command.env("SHADOW_GUEST_SESSION_CONFIG", session_config_path);
                 command.env(
                     "SHADOW_GUEST_COMPOSITOR_BIN",
                     ORANGE_GPU_COMPOSITOR_BINARY_PATH,
                 );
-                command.env(
-                    "SHADOW_GUEST_CLIENT",
-                    ORANGE_GPU_COMPOSITOR_DUMMY_CLIENT_PATH,
-                );
+                if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode) {
+                    command.env(
+                        "SHADOW_GUEST_CLIENT",
+                        ORANGE_GPU_COMPOSITOR_DUMMY_CLIENT_PATH,
+                    );
+                }
                 command.env("SHADOW_GUEST_COMPOSITOR_ENABLE_DRM", "1");
                 command.env(
                     "RUST_LOG",
@@ -2700,10 +2730,26 @@ mod linux {
             );
         }
         if watch_result.exit_status == Some(0) && metadata_stage.enabled {
-            if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode) {
-                if let Err(reason) = record_compositor_scene_summary(metadata_stage) {
+            if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode) {
+                let (summary_kind, startup_mode, app_id, stage_name) =
+                    if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode) {
+                        ("compositor-scene", "shell", None, "compositor-scene-frame-captured")
+                    } else {
+                        (
+                            "app-direct-present",
+                            "app",
+                            Some("rust-demo"),
+                            "app-direct-present-frame-captured",
+                        )
+                    };
+                if let Err(reason) = record_session_frame_summary(
+                    metadata_stage,
+                    summary_kind,
+                    startup_mode,
+                    app_id,
+                ) {
                     log_line(&format!(
-                        "compositor-scene frame missing or could not be summarized: {reason}"
+                        "{summary_kind} frame missing or could not be summarized: {reason}"
                     ));
                     let _ = run_orange_gpu_checkpoint(
                         config,
@@ -2715,7 +2761,7 @@ mod linux {
                 write_payload_probe_stage(
                     probe_stage_path.as_deref(),
                     probe_stage_prefix.as_deref(),
-                    "compositor-scene-frame-captured",
+                    stage_name,
                 );
             } else {
                 let recorded_summary =
@@ -2795,7 +2841,7 @@ mod linux {
                     "child-exit-nonzero",
                     ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
                 );
-            } else if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode) {
+            } else if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode) {
                 hold_for_observation(config.hold_seconds);
             }
             return exit_status;
