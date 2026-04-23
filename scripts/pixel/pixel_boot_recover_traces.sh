@@ -1683,18 +1683,68 @@ summary_distinct_color_count = recovered_probe_summary.get("distinct_color_count
 summary_checksum = recovered_probe_summary.get("checksum_fnv1a64")
 summary_color_samples = recovered_probe_summary.get("distinct_color_samples_rgba8")
 summary_adapter = recovered_probe_summary.get("adapter")
+summary_mode = recovered_probe_summary.get("mode")
 summary_kind = recovered_probe_summary.get("kind")
 summary_frame_path = recovered_probe_summary.get("frame_path")
 summary_frame_bytes = recovered_probe_summary.get("frame_bytes")
+summary_target_duration_secs = recovered_probe_summary.get("target_duration_secs")
+summary_frame_interval_millis = recovered_probe_summary.get("frame_interval_millis")
+summary_frames_rendered = recovered_probe_summary.get("frames_rendered")
+summary_scanout_updates = recovered_probe_summary.get("scanout_updates")
+summary_distinct_frame_count = recovered_probe_summary.get("distinct_frame_count")
+summary_frame_label_samples = recovered_probe_summary.get("frame_label_samples")
+summary_frame_checksum_samples = recovered_probe_summary.get("frame_checksum_samples_fnv1a64")
+summary_first_frame = recovered_probe_summary.get("first_frame")
+summary_last_frame = recovered_probe_summary.get("last_frame")
 summary_adapter_backend = (
     summary_adapter.get("backend")
     if isinstance(summary_adapter, dict)
+    else None
+)
+summary_kms_present_count = (
+    summary_kms_present.get("present_count")
+    if isinstance(summary_kms_present, dict)
+    else None
+)
+summary_first_frame_label = (
+    summary_first_frame.get("label")
+    if isinstance(summary_first_frame, dict)
+    else None
+)
+summary_first_frame_distinct_color_count = (
+    summary_first_frame.get("distinct_color_count")
+    if isinstance(summary_first_frame, dict)
+    else None
+)
+summary_first_frame_color_samples = (
+    summary_first_frame.get("distinct_color_samples_rgba8")
+    if isinstance(summary_first_frame, dict)
+    else None
+)
+summary_last_frame_checksum = (
+    summary_last_frame.get("checksum_fnv1a64")
+    if isinstance(summary_last_frame, dict)
     else None
 )
 required_gpu_render_samples = {"ff7a00ff"}
 summary_samples_set = (
     set(sample for sample in summary_color_samples if isinstance(sample, str))
     if isinstance(summary_color_samples, list)
+    else set()
+)
+summary_loop_label_samples_set = (
+    set(sample for sample in summary_frame_label_samples if isinstance(sample, str))
+    if isinstance(summary_frame_label_samples, list)
+    else set()
+)
+summary_loop_checksum_samples_set = (
+    set(sample for sample in summary_frame_checksum_samples if isinstance(sample, str))
+    if isinstance(summary_frame_checksum_samples, list)
+    else set()
+)
+summary_first_frame_color_samples_set = (
+    set(sample for sample in summary_first_frame_color_samples if isinstance(sample, str))
+    if isinstance(summary_first_frame_color_samples, list)
     else set()
 )
 probe_summary_proves_gpu_render = (
@@ -1712,6 +1762,39 @@ probe_summary_proves_gpu_render = (
     and required_gpu_render_samples.issubset(summary_samples_set)
     and isinstance(summary_checksum, str)
     and bool(summary_checksum)
+)
+probe_summary_proves_orange_gpu_loop = (
+    expected_orange_gpu_mode == "orange-gpu-loop"
+    and expected_orange_gpu_firmware_helper is True
+    and probe_report_proves_child_success
+    and recovered_metadata_probe_summary_present
+    and recovered_probe_summary_parse_error is None
+    and summary_mode == "orange-gpu-loop"
+    and summary_scene == (expected_orange_gpu_scene or "orange-gpu-loop")
+    and summary_present_kms is True
+    and isinstance(summary_kms_present, dict)
+    and summary_software_backed is False
+    and summary_adapter_backend == "Vulkan"
+    and isinstance(summary_target_duration_secs, int)
+    and summary_target_duration_secs >= 2
+    and isinstance(summary_frame_interval_millis, int)
+    and summary_frame_interval_millis > 0
+    and isinstance(summary_frames_rendered, int)
+    and summary_frames_rendered >= 2
+    and isinstance(summary_scanout_updates, int)
+    and summary_scanout_updates >= 2
+    and summary_scanout_updates == summary_frames_rendered
+    and isinstance(summary_kms_present_count, int)
+    and summary_kms_present_count == summary_scanout_updates
+    and isinstance(summary_distinct_frame_count, int)
+    and summary_distinct_frame_count >= 2
+    and {"flat-orange", "smoke"}.issubset(summary_loop_label_samples_set)
+    and len(summary_loop_checksum_samples_set) >= 2
+    and summary_first_frame_label == "flat-orange"
+    and summary_first_frame_distinct_color_count == 1
+    and required_gpu_render_samples.issubset(summary_first_frame_color_samples_set)
+    and isinstance(summary_last_frame_checksum, str)
+    and bool(summary_last_frame_checksum)
 )
 if recovered_metadata_compositor_frame_present and recovered_metadata_compositor_frame_output_path:
     compositor_frame_path = channel_status_path.parent / recovered_metadata_compositor_frame_output_path
@@ -1758,6 +1841,8 @@ compositor_frame_proves_scene = (
 )
 if expected_orange_gpu_mode == "gpu-render":
     proof_ok = probe_summary_proves_gpu_render
+elif expected_orange_gpu_mode == "orange-gpu-loop":
+    proof_ok = probe_summary_proves_orange_gpu_loop
 elif expected_orange_gpu_mode == "compositor-scene":
     proof_ok = probe_summary_proves_compositor_scene and compositor_frame_proves_scene
 else:
@@ -1770,6 +1855,7 @@ payload = {
     "matched_correlated_trace": matched_any_correlated_shadow_tags,
     "probe_report_proves_child_success": probe_report_proves_child_success,
     "probe_summary_proves_gpu_render": probe_summary_proves_gpu_render,
+    "probe_summary_proves_orange_gpu_loop": probe_summary_proves_orange_gpu_loop,
     "probe_summary_proves_compositor_scene": probe_summary_proves_compositor_scene,
     "metadata_compositor_frame_proves_scene": compositor_frame_proves_scene,
     "serial": serial,

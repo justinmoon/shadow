@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     process::ExitCode,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use ash::vk;
@@ -33,7 +33,9 @@ const DEFAULT_THREADS: Option<NonZeroUsize> = None;
 const DEFAULT_WIDTH: u32 = 128;
 const DEFAULT_HEIGHT: u32 = 128;
 const MAX_DISTINCT_COLOR_SAMPLES: usize = 8;
+const MAX_FRAME_CHECKSUM_SAMPLES: usize = 8;
 const MAX_HOLD_SECS: u32 = 30;
+const GPU_LOOP_FRAME_INTERVAL_MILLIS: u64 = 250;
 const FLAT_ORANGE_RGB: (u8, u8, u8) = (0xFF, 0x7A, 0x00);
 const GPU_SMOKE_STAGE_PATH_ENV: &str = "SHADOW_GPU_SMOKE_STAGE_PATH";
 const GPU_SMOKE_STAGE_PREFIX_ENV: &str = "SHADOW_GPU_SMOKE_STAGE_PREFIX";
@@ -275,6 +277,10 @@ fn build_summary(config: &Config) -> Result<SmokeSummary, String> {
 
     if matches!(config.scene, RenderScene::DeviceSmoke) {
         return Ok(SmokeSummary::Device(build_device_smoke_summary(config)?));
+    }
+
+    if matches!(config.scene, RenderScene::OrangeGpuLoop) {
+        return Ok(SmokeSummary::GpuLoop(render_gpu_loop_summary(config)?));
     }
 
     Ok(SmokeSummary::Gpu(render_gpu_summary(config)?))
@@ -993,59 +999,109 @@ fn request_device_handle(config: &Config) -> Result<RequestedDevice, String> {
     })
 }
 
-fn render_gpu_summary(config: &Config) -> Result<GpuSmokeSummary, String> {
-    let mut context = WGPUContext::new();
-    let buffer_renderer =
-        pollster::block_on(context.create_buffer_renderer(BufferRendererConfig {
-            width: config.width,
-            height: config.height,
-            usage: TextureUsages::STORAGE_BINDING,
-        }))
-        .map_err(|error| format!("create offscreen buffer renderer: {error:?}"))?;
+struct GpuRenderSession {
+    buffer_renderer: BufferRenderer,
+    renderer: VelloRenderer,
+    adapter_info: AdapterInfo,
+    width: u32,
+    height: u32,
+}
 
-    let adapter_info = buffer_renderer.device_handle.adapter.get_info();
-    validate_adapter(config, &adapter_info)?;
+struct RenderedFrame {
+    label: &'static str,
+    pixels: Vec<u8>,
+    pixel_stats: PixelStats,
+    checksum_fnv1a64: String,
+}
 
-    let mut renderer = VelloRenderer::new(
-        buffer_renderer.device(),
-        RendererOptions {
-            use_cpu: false,
-            num_init_threads: DEFAULT_THREADS,
-            antialiasing_support: AaSupport::area_only(),
-            pipeline_cache: None,
-        },
-    )
-    .map_err(|error| format!("create vello renderer: {error:?}"))?;
-
-    let mut scene = Scene::new();
-    build_scene(&mut scene, config.width, config.height, config.scene);
-
-    renderer
-        .render_to_texture(
-            buffer_renderer.device(),
-            buffer_renderer.queue(),
-            &scene,
-            &buffer_renderer.target_texture_view(),
-            &RenderParams {
-                base_color: Color::TRANSPARENT,
+impl GpuRenderSession {
+    fn new(config: &Config) -> Result<Self, String> {
+        let mut context = WGPUContext::new();
+        let buffer_renderer =
+            pollster::block_on(context.create_buffer_renderer(BufferRendererConfig {
                 width: config.width,
                 height: config.height,
-                antialiasing_method: AaConfig::Area,
+                usage: TextureUsages::STORAGE_BINDING,
+            }))
+            .map_err(|error| format!("create offscreen buffer renderer: {error:?}"))?;
+
+        let adapter_info = buffer_renderer.device_handle.adapter.get_info();
+        validate_adapter(config, &adapter_info)?;
+
+        let renderer = VelloRenderer::new(
+            buffer_renderer.device(),
+            RendererOptions {
+                use_cpu: false,
+                num_init_threads: DEFAULT_THREADS,
+                antialiasing_support: AaSupport::area_only(),
+                pipeline_cache: None,
             },
         )
-        .map_err(|error| format!("render scene to texture: {error:?}"))?;
+        .map_err(|error| format!("create vello renderer: {error:?}"))?;
 
-    let mut pixels = vec![0_u8; (config.width as usize) * (config.height as usize) * 4];
-    buffer_renderer.copy_texture_to_buffer(&mut pixels);
-
-    if let Some(path) = &config.ppm_path {
-        write_ppm(path, config.width, config.height, &pixels)?;
+        Ok(Self {
+            buffer_renderer,
+            renderer,
+            adapter_info,
+            width: config.width,
+            height: config.height,
+        })
     }
 
-    let pixel_stats = analyze_pixels(&pixels);
+    fn render(&mut self, render_scene: RenderScene) -> Result<RenderedFrame, String> {
+        let mut scene = Scene::new();
+        build_scene(&mut scene, self.width, self.height, render_scene);
+
+        self.renderer
+            .render_to_texture(
+                self.buffer_renderer.device(),
+                self.buffer_renderer.queue(),
+                &scene,
+                &self.buffer_renderer.target_texture_view(),
+                &RenderParams {
+                    base_color: Color::TRANSPARENT,
+                    width: self.width,
+                    height: self.height,
+                    antialiasing_method: AaConfig::Area,
+                },
+            )
+            .map_err(|error| format!("render scene to texture: {error:?}"))?;
+
+        let mut pixels = vec![0_u8; (self.width as usize) * (self.height as usize) * 4];
+        self.buffer_renderer.copy_texture_to_buffer(&mut pixels);
+
+        Ok(RenderedFrame {
+            label: render_scene.as_str(),
+            pixel_stats: analyze_pixels(&pixels),
+            checksum_fnv1a64: format!("{:016x}", fnv1a64(&pixels)),
+            pixels,
+        })
+    }
+}
+
+fn frame_readback_summary(frame: &RenderedFrame) -> FrameReadbackSummary {
+    FrameReadbackSummary {
+        label: frame.label,
+        byte_len: frame.pixels.len(),
+        checksum_fnv1a64: frame.checksum_fnv1a64.clone(),
+        distinct_color_count: frame.pixel_stats.distinct_color_count,
+        distinct_color_samples_rgba8: frame.pixel_stats.distinct_color_samples_rgba8.clone(),
+        opaque_pixel_count: frame.pixel_stats.opaque_pixel_count,
+        nonzero_alpha_pixel_count: frame.pixel_stats.nonzero_alpha_pixel_count,
+    }
+}
+
+fn render_gpu_summary(config: &Config) -> Result<GpuSmokeSummary, String> {
+    let mut session = GpuRenderSession::new(config)?;
+    let frame = session.render(config.scene)?;
+
+    if let Some(path) = &config.ppm_path {
+        write_ppm(path, config.width, config.height, &frame.pixels)?;
+    }
+
     let kms_present = if config.present_kms {
         Some(present_pixels_via_kms(
-            &pixels,
+            &frame.pixels,
             config.width,
             config.height,
             Duration::from_secs(u64::from(config.hold_secs)),
@@ -1057,14 +1113,112 @@ fn render_gpu_summary(config: &Config) -> Result<GpuSmokeSummary, String> {
         scene: config.scene.as_str(),
         width: config.width,
         height: config.height,
-        byte_len: pixels.len(),
-        checksum_fnv1a64: format!("{:016x}", fnv1a64(&pixels)),
-        distinct_color_count: pixel_stats.distinct_color_count,
-        distinct_color_samples_rgba8: pixel_stats.distinct_color_samples_rgba8,
-        opaque_pixel_count: pixel_stats.opaque_pixel_count,
-        nonzero_alpha_pixel_count: pixel_stats.nonzero_alpha_pixel_count,
-        adapter: AdapterSummary::from_info(&adapter_info),
-        software_backed: adapter_is_software(&adapter_info),
+        byte_len: frame.pixels.len(),
+        checksum_fnv1a64: frame.checksum_fnv1a64,
+        distinct_color_count: frame.pixel_stats.distinct_color_count,
+        distinct_color_samples_rgba8: frame.pixel_stats.distinct_color_samples_rgba8,
+        opaque_pixel_count: frame.pixel_stats.opaque_pixel_count,
+        nonzero_alpha_pixel_count: frame.pixel_stats.nonzero_alpha_pixel_count,
+        adapter: AdapterSummary::from_info(&session.adapter_info),
+        software_backed: adapter_is_software(&session.adapter_info),
+        require_vulkan: !config.allow_non_vulkan,
+        allow_software: config.allow_software,
+        present_kms: config.present_kms,
+        hold_secs: config.hold_secs,
+        env_wgpu_backend: env::var("WGPU_BACKEND").ok(),
+        env_wgpu_adapter_name: env::var("WGPU_ADAPTER_NAME").ok(),
+        env_vk_icd_filenames: env::var("VK_ICD_FILENAMES").ok(),
+        env_mesa_loader_driver_override: env::var("MESA_LOADER_DRIVER_OVERRIDE").ok(),
+        env_tu_debug: env::var("TU_DEBUG").ok(),
+        ppm_path: config.ppm_path.as_ref().map(path_display_string),
+        kms_present,
+    })
+}
+
+fn render_gpu_loop_summary(config: &Config) -> Result<GpuLoopSmokeSummary, String> {
+    let mut session = GpuRenderSession::new(config)?;
+    let mut kms_session = if config.present_kms {
+        Some(KmsScanoutSession::new(config.width, config.height)?)
+    } else {
+        None
+    };
+    let start = Instant::now();
+    let target_duration = Duration::from_secs(u64::from(config.hold_secs));
+    let mut frames_rendered = 0_u32;
+    let mut scanout_updates = 0_u32;
+    let mut distinct_frame_checksums = BTreeSet::new();
+    let mut frame_label_samples = BTreeSet::new();
+    let mut frame_checksum_samples_fnv1a64 = Vec::new();
+    let mut first_frame = None;
+    let mut last_frame = None;
+    let mut final_pixels = None;
+
+    loop {
+        let render_scene = if frames_rendered % 2 == 0 {
+            RenderScene::FlatOrange
+        } else {
+            RenderScene::Smoke
+        };
+        let frame = session.render(render_scene)?;
+
+        if let Some(kms) = kms_session.as_mut() {
+            kms.update(&frame.pixels)?;
+            scanout_updates = scanout_updates.saturating_add(1);
+        }
+
+        if distinct_frame_checksums.insert(frame.checksum_fnv1a64.clone())
+            && frame_checksum_samples_fnv1a64.len() < MAX_FRAME_CHECKSUM_SAMPLES
+        {
+            frame_checksum_samples_fnv1a64.push(frame.checksum_fnv1a64.clone());
+        }
+        frame_label_samples.insert(frame.label.to_string());
+        if first_frame.is_none() {
+            first_frame = Some(frame_readback_summary(&frame));
+        }
+        last_frame = Some(frame_readback_summary(&frame));
+        final_pixels = Some(frame.pixels.clone());
+        frames_rendered = frames_rendered.saturating_add(1);
+
+        let elapsed = start.elapsed();
+        if elapsed >= target_duration {
+            break;
+        }
+        let remaining = target_duration.saturating_sub(elapsed);
+        thread::sleep(remaining.min(Duration::from_millis(GPU_LOOP_FRAME_INTERVAL_MILLIS)));
+    }
+
+    if let Some(path) = &config.ppm_path {
+        let final_pixels = final_pixels
+            .as_deref()
+            .ok_or_else(|| String::from("orange-gpu-loop rendered no final frame"))?;
+        write_ppm(path, config.width, config.height, final_pixels)?;
+    }
+
+    let kms_present = match kms_session {
+        Some(kms) => Some(kms.finish(target_duration)?),
+        None => None,
+    };
+    let first_frame =
+        first_frame.ok_or_else(|| String::from("orange-gpu-loop rendered no frames"))?;
+    let last_frame =
+        last_frame.ok_or_else(|| String::from("orange-gpu-loop rendered no frames"))?;
+
+    Ok(GpuLoopSmokeSummary {
+        mode: "orange-gpu-loop",
+        scene: config.scene.as_str(),
+        width: config.width,
+        height: config.height,
+        target_duration_secs: config.hold_secs,
+        frame_interval_millis: GPU_LOOP_FRAME_INTERVAL_MILLIS,
+        frames_rendered,
+        scanout_updates,
+        distinct_frame_count: distinct_frame_checksums.len() as u32,
+        frame_label_samples: frame_label_samples.into_iter().collect(),
+        frame_checksum_samples_fnv1a64,
+        first_frame,
+        last_frame,
+        adapter: AdapterSummary::from_info(&session.adapter_info),
+        software_backed: adapter_is_software(&session.adapter_info),
         require_vulkan: !config.allow_non_vulkan,
         allow_software: config.allow_software,
         present_kms: config.present_kms,
@@ -1189,75 +1343,147 @@ fn present_pixels_via_kms(
     src_height: u32,
     hold_duration: Duration,
 ) -> Result<KmsPresentSummary, String> {
-    let mut card = open_card("/dev/dri/card0")?;
-    let master_locked = acquire_master_lock_if_supported(&card)?;
-    let res_handles = card
-        .resource_handles()
-        .map_err(|error| format!("fetch DRM resource handles: {error}"))?;
-
-    let connector_info = find_connected_connector(&card, &res_handles)?;
-    let connector_handle = connector_info.handle();
-    let mode = connector_info
-        .modes()
-        .first()
-        .copied()
-        .ok_or_else(|| format!("connector {connector_handle:?} reported no modes"))?;
-    let encoder_handle = connector_info
-        .current_encoder()
-        .or_else(|| connector_info.encoders().first().copied())
-        .ok_or_else(|| format!("connector {connector_handle:?} reported no encoder"))?;
-    let encoder = card
-        .get_encoder(encoder_handle)
-        .map_err(|error| format!("query encoder {encoder_handle:?}: {error}"))?;
-    let crtc_handle = select_crtc_handle(&encoder, &res_handles, connector_handle, encoder_handle)?;
-
-    let (mode_width, mode_height) = mode.size();
-    let width = u32::from(mode_width);
-    let height = u32::from(mode_height);
-    let mut dumb = card
-        .create_dumb_buffer((width, height), DrmFourcc::Xrgb8888, 32)
-        .map_err(|error| format!("allocate dumb buffer: {error}"))?;
-    let fb_handle = card
-        .add_framebuffer(&dumb, 24, 32)
-        .map_err(|error| format!("create framebuffer: {error}"))?;
-
-    fill_buffer_with_scaled_pixels(&mut card, &mut dumb, pixels, src_width, src_height)?;
-
-    card.set_crtc(
-        crtc_handle,
-        Some(fb_handle),
-        (0, 0),
-        &[connector_handle],
-        Some(mode),
-    )
-    .map_err(|error| format!("set CRTC configuration: {error}"))?;
-
+    let mut session = KmsScanoutSession::new(src_width, src_height)?;
+    session.update(pixels)?;
     thread::sleep(hold_duration);
+    session.finish(hold_duration)
+}
 
-    if let Err(error) = card.set_crtc(crtc_handle, None, (0, 0), &[], None) {
-        eprintln!("[shadow-gpu-smoke] clear CRTC failed: {error}");
-    }
+struct KmsScanoutSession {
+    card: Card,
+    master_locked: bool,
+    connector_handle: connector::Handle,
+    crtc_handle: drm::control::crtc::Handle,
+    mode: drm::control::Mode,
+    buffers: Vec<KmsFramebuffer>,
+    mode_width: u32,
+    mode_height: u32,
+    src_width: u32,
+    src_height: u32,
+    present_count: u32,
+    configured: bool,
+}
 
-    if master_locked {
-        if let Err(error) = card.release_master_lock() {
-            eprintln!("[shadow-gpu-smoke] release DRM master lock failed: {error}");
+struct KmsFramebuffer {
+    fb_handle: drm::control::framebuffer::Handle,
+    dumb: DumbBuffer,
+}
+
+impl KmsScanoutSession {
+    fn new(src_width: u32, src_height: u32) -> Result<Self, String> {
+        let card = open_card("/dev/dri/card0")?;
+        let master_locked = acquire_master_lock_if_supported(&card)?;
+        let res_handles = card
+            .resource_handles()
+            .map_err(|error| format!("fetch DRM resource handles: {error}"))?;
+
+        let connector_info = find_connected_connector(&card, &res_handles)?;
+        let connector_handle = connector_info.handle();
+        let mode = connector_info
+            .modes()
+            .first()
+            .copied()
+            .ok_or_else(|| format!("connector {connector_handle:?} reported no modes"))?;
+        let encoder_handle = connector_info
+            .current_encoder()
+            .or_else(|| connector_info.encoders().first().copied())
+            .ok_or_else(|| format!("connector {connector_handle:?} reported no encoder"))?;
+        let encoder = card
+            .get_encoder(encoder_handle)
+            .map_err(|error| format!("query encoder {encoder_handle:?}: {error}"))?;
+        let crtc_handle =
+            select_crtc_handle(&encoder, &res_handles, connector_handle, encoder_handle)?;
+
+        let (mode_width, mode_height) = mode.size();
+        let mode_width = u32::from(mode_width);
+        let mode_height = u32::from(mode_height);
+        let mut buffers = Vec::with_capacity(2);
+        for _ in 0..2 {
+            let dumb = card
+                .create_dumb_buffer((mode_width, mode_height), DrmFourcc::Xrgb8888, 32)
+                .map_err(|error| format!("allocate dumb buffer: {error}"))?;
+            let fb_handle = card
+                .add_framebuffer(&dumb, 24, 32)
+                .map_err(|error| format!("create framebuffer: {error}"))?;
+            buffers.push(KmsFramebuffer { fb_handle, dumb });
         }
+
+        Ok(Self {
+            card,
+            master_locked,
+            connector_handle,
+            crtc_handle,
+            mode,
+            buffers,
+            mode_width,
+            mode_height,
+            src_width,
+            src_height,
+            present_count: 0,
+            configured: false,
+        })
     }
 
-    card.destroy_framebuffer(fb_handle)
-        .map_err(|error| format!("destroy framebuffer: {error}"))?;
-    card.destroy_dumb_buffer(dumb)
-        .map_err(|error| format!("destroy dumb buffer: {error}"))?;
+    fn update(&mut self, pixels: &[u8]) -> Result<(), String> {
+        let buffer_index = usize::try_from(self.present_count)
+            .map_err(|error| format!("present count usize: {error}"))?
+            % self.buffers.len();
+        let buffer = &mut self.buffers[buffer_index];
+        fill_buffer_with_scaled_pixels(
+            &mut self.card,
+            &mut buffer.dumb,
+            pixels,
+            self.src_width,
+            self.src_height,
+        )?;
+        self.card
+            .set_crtc(
+                self.crtc_handle,
+                Some(buffer.fb_handle),
+                (0, 0),
+                &[self.connector_handle],
+                Some(self.mode),
+            )
+            .map_err(|error| format!("set CRTC configuration: {error}"))?;
+        self.configured = true;
+        self.present_count = self.present_count.saturating_add(1);
+        Ok(())
+    }
 
-    Ok(KmsPresentSummary {
-        connector: format!("{connector_handle:?}"),
-        crtc: format!("{crtc_handle:?}"),
-        mode_width: width,
-        mode_height: height,
-        hold_secs: hold_duration.as_secs(),
-        source_width: src_width,
-        source_height: src_height,
-    })
+    fn finish(mut self, hold_duration: Duration) -> Result<KmsPresentSummary, String> {
+        if self.configured {
+            if let Err(error) = self
+                .card
+                .set_crtc(self.crtc_handle, None, (0, 0), &[], None)
+            {
+                eprintln!("[shadow-gpu-smoke] clear CRTC failed: {error}");
+            }
+        }
+        if self.master_locked {
+            if let Err(error) = self.card.release_master_lock() {
+                eprintln!("[shadow-gpu-smoke] release DRM master lock failed: {error}");
+            }
+        }
+        for buffer in self.buffers.drain(..) {
+            self.card
+                .destroy_framebuffer(buffer.fb_handle)
+                .map_err(|error| format!("destroy framebuffer: {error}"))?;
+            self.card
+                .destroy_dumb_buffer(buffer.dumb)
+                .map_err(|error| format!("destroy dumb buffer: {error}"))?;
+        }
+
+        Ok(KmsPresentSummary {
+            connector: format!("{:?}", self.connector_handle),
+            crtc: format!("{:?}", self.crtc_handle),
+            mode_width: self.mode_width,
+            mode_height: self.mode_height,
+            hold_secs: hold_duration.as_secs(),
+            source_width: self.src_width,
+            source_height: self.src_height,
+            present_count: self.present_count,
+        })
+    }
 }
 
 fn fill_buffer_with_scaled_pixels(
@@ -1593,7 +1819,7 @@ impl Config {
 
     fn usage() -> String {
         String::from(
-            "Usage: shadow-gpu-smoke [--scene smoke|flat-orange|bundle-smoke|instance-smoke|raw-vulkan-instance-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|enumerate-adapters-count-smoke|enumerate-adapters-smoke|adapter-smoke|device-request-smoke|device-smoke] [--width N] [--height N] [--allow-non-vulkan] [--allow-software] [--present-kms] [--hold-secs N] [--summary-path PATH] [--ppm-path PATH]",
+            "Usage: shadow-gpu-smoke [--scene smoke|flat-orange|orange-gpu-loop|bundle-smoke|instance-smoke|raw-vulkan-instance-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|enumerate-adapters-count-smoke|enumerate-adapters-smoke|adapter-smoke|device-request-smoke|device-smoke] [--width N] [--height N] [--allow-non-vulkan] [--allow-software] [--present-kms] [--hold-secs N] [--summary-path PATH] [--ppm-path PATH]",
         )
     }
 }
@@ -1619,6 +1845,7 @@ struct PixelStats {
 #[serde(untagged)]
 enum SmokeSummary {
     Gpu(GpuSmokeSummary),
+    GpuLoop(GpuLoopSmokeSummary),
     Bundle(BundleSmokeSummary),
     Instance(InstanceSmokeSummary),
     RawVulkanInstance(RawVulkanInstanceSmokeSummary),
@@ -1632,6 +1859,47 @@ enum SmokeSummary {
     Adapter(AdapterSmokeSummary),
     DeviceRequest(DeviceRequestSmokeSummary),
     Device(DeviceSmokeSummary),
+}
+
+#[derive(Serialize)]
+struct FrameReadbackSummary {
+    label: &'static str,
+    byte_len: usize,
+    checksum_fnv1a64: String,
+    distinct_color_count: u32,
+    distinct_color_samples_rgba8: Vec<String>,
+    opaque_pixel_count: u32,
+    nonzero_alpha_pixel_count: u32,
+}
+
+#[derive(Serialize)]
+struct GpuLoopSmokeSummary {
+    mode: &'static str,
+    scene: &'static str,
+    width: u32,
+    height: u32,
+    target_duration_secs: u32,
+    frame_interval_millis: u64,
+    frames_rendered: u32,
+    scanout_updates: u32,
+    distinct_frame_count: u32,
+    frame_label_samples: Vec<String>,
+    frame_checksum_samples_fnv1a64: Vec<String>,
+    first_frame: FrameReadbackSummary,
+    last_frame: FrameReadbackSummary,
+    adapter: AdapterSummary,
+    software_backed: bool,
+    require_vulkan: bool,
+    allow_software: bool,
+    present_kms: bool,
+    hold_secs: u32,
+    env_wgpu_backend: Option<String>,
+    env_wgpu_adapter_name: Option<String>,
+    env_vk_icd_filenames: Option<String>,
+    env_mesa_loader_driver_override: Option<String>,
+    env_tu_debug: Option<String>,
+    ppm_path: Option<String>,
+    kms_present: Option<KmsPresentSummary>,
 }
 
 #[derive(Serialize)]
@@ -1873,6 +2141,7 @@ struct KmsPresentSummary {
     hold_secs: u64,
     source_width: u32,
     source_height: u32,
+    present_count: u32,
 }
 
 #[derive(Serialize)]
@@ -1910,6 +2179,7 @@ impl fmt::Display for Config {
 enum RenderScene {
     Smoke,
     FlatOrange,
+    OrangeGpuLoop,
     BundleSmoke,
     InstanceSmoke,
     RawVulkanInstanceSmoke,
@@ -1931,6 +2201,7 @@ impl RenderScene {
         match raw.as_str() {
             "smoke" => Ok(Self::Smoke),
             "flat-orange" => Ok(Self::FlatOrange),
+            "orange-gpu-loop" => Ok(Self::OrangeGpuLoop),
             "bundle-smoke" => Ok(Self::BundleSmoke),
             "instance-smoke" => Ok(Self::InstanceSmoke),
             "raw-vulkan-instance-smoke" => Ok(Self::RawVulkanInstanceSmoke),
@@ -1954,7 +2225,7 @@ impl RenderScene {
             "device-request-smoke" => Ok(Self::DeviceRequestSmoke),
             "device-smoke" => Ok(Self::DeviceSmoke),
             _ => Err(format!(
-                "invalid value for --scene: {raw}; expected smoke, flat-orange, bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, or device-smoke\n\n{}",
+                "invalid value for --scene: {raw}; expected smoke, flat-orange, orange-gpu-loop, bundle-smoke, instance-smoke, raw-vulkan-instance-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, enumerate-adapters-count-smoke, enumerate-adapters-smoke, adapter-smoke, device-request-smoke, or device-smoke\n\n{}",
                 Config::usage()
             )),
         }
@@ -1964,6 +2235,7 @@ impl RenderScene {
         match self {
             Self::Smoke => "smoke",
             Self::FlatOrange => "flat-orange",
+            Self::OrangeGpuLoop => "orange-gpu-loop",
             Self::BundleSmoke => "bundle-smoke",
             Self::InstanceSmoke => "instance-smoke",
             Self::RawVulkanInstanceSmoke => "raw-vulkan-instance-smoke",

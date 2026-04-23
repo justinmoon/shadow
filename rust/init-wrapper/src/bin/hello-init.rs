@@ -635,6 +635,7 @@ mod linux {
                         value,
                         &[
                             "gpu-render",
+                            "orange-gpu-loop",
                             "bundle-smoke",
                             "vulkan-instance-smoke",
                             "raw-vulkan-instance-smoke",
@@ -1733,6 +1734,36 @@ mod linux {
         Ok(())
     }
 
+    fn validate_orange_gpu_loop_summary(summary_text: &str) -> Result<(), &'static str> {
+        let normalized: String = summary_text
+            .chars()
+            .filter(|ch| !ch.is_ascii_whitespace())
+            .collect();
+        let required = [
+            ("mode", "\"mode\":\"orange-gpu-loop\""),
+            ("scene", "\"scene\":\"orange-gpu-loop\""),
+            ("present_kms", "\"present_kms\":true"),
+            ("kms_present", "\"kms_present\":{"),
+            ("software_backed", "\"software_backed\":false"),
+            ("backend", "\"backend\":\"Vulkan\""),
+            ("distinct_frame_count", "\"distinct_frame_count\":2"),
+            ("frames_rendered", "\"frames_rendered\":"),
+            ("scanout_updates", "\"scanout_updates\":"),
+            ("present_count", "\"present_count\":"),
+            ("flat_orange_label", "\"flat-orange\""),
+            ("smoke_label", "\"smoke\""),
+            ("flat_orange_sample", "\"ff7a00ff\""),
+            ("smoke_sample", "\"651c00ff\""),
+            ("checksum_samples", "\"frame_checksum_samples_fnv1a64\":["),
+        ];
+        for (label, needle) in required {
+            if !normalized.contains(needle) {
+                return Err(label);
+            }
+        }
+        Ok(())
+    }
+
     fn bootstrap_tmpfs_metadata_block_runtime(
         runtime: &MetadataStageRuntime,
         config: &Config,
@@ -2196,6 +2227,7 @@ mod linux {
 
     fn scene_for_mode(mode: &str) -> (&'static str, bool, bool) {
         match mode {
+            "orange-gpu-loop" => ("orange-gpu-loop", true, true),
             "bundle-smoke" => ("bundle-smoke", false, false),
             "vulkan-instance-smoke" => ("instance-smoke", false, false),
             "raw-vulkan-instance-smoke" => ("raw-vulkan-instance-smoke", false, false),
@@ -2294,6 +2326,7 @@ mod linux {
         matches!(
             mode,
             "gpu-render"
+                | "orange-gpu-loop"
                 | "bundle-smoke"
                 | "vulkan-instance-smoke"
                 | "raw-vulkan-instance-smoke"
@@ -2346,7 +2379,10 @@ mod linux {
         {
             return 0;
         }
-        let visual = if config.orange_gpu_mode == "gpu-render" {
+        let visual = if matches!(
+            config.orange_gpu_mode.as_str(),
+            "gpu-render" | "orange-gpu-loop"
+        ) {
             "success-solid"
         } else {
             "frame-orange"
@@ -2699,6 +2735,29 @@ mod linux {
                     if let Err(reason) = validate_gpu_render_summary(summary_text) {
                         log_line(&format!(
                             "gpu-render summary failed validation: missing {reason}"
+                        ));
+                        let _ = run_orange_gpu_checkpoint(
+                            config,
+                            "child-exit-nonzero",
+                            ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+                        );
+                        return 1;
+                    }
+                } else if config.orange_gpu_mode == "orange-gpu-loop" {
+                    let Some(summary_text) = recorded_summary.as_deref() else {
+                        log_line(
+                            "orange-gpu-loop summary missing or could not be persisted to metadata",
+                        );
+                        let _ = run_orange_gpu_checkpoint(
+                            config,
+                            "child-exit-nonzero",
+                            ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+                        );
+                        return 1;
+                    };
+                    if let Err(reason) = validate_orange_gpu_loop_summary(summary_text) {
+                        log_line(&format!(
+                            "orange-gpu-loop summary failed validation: missing {reason}"
                         ));
                         let _ = run_orange_gpu_checkpoint(
                             config,

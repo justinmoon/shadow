@@ -162,7 +162,7 @@ PROP
       if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" ]]; then
         printf 'parent-probe-result=exit-0\n'
         exit 0
-      elif [[ "$TRACE_MODE" == "probe-only-success" ]]; then
+      elif [[ "$TRACE_MODE" == "probe-only-success" || "$TRACE_MODE" == "orange-gpu-loop-success" ]]; then
         printf 'parent-probe-result=skipped\n'
         exit 0
       elif [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
@@ -178,6 +178,9 @@ PROP
       elif [[ "$TRACE_MODE" == "probe-only-success" ]]; then
         printf 'orange-gpu-payload:vkEnumeratePhysicalDevices-ok\n'
         exit 0
+      elif [[ "$TRACE_MODE" == "orange-gpu-loop-success" ]]; then
+        printf 'orange-gpu-payload:firmware-probe-ok\n'
+        exit 0
       elif [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
         printf 'orange-gpu-payload:compositor-scene-frame-captured\n'
         exit 0
@@ -185,7 +188,7 @@ PROP
       exit 3
       ;;
     *"/metadata/shadow-hello-init/by-token/"*"/probe-fingerprint.txt"* )
-      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" || "$TRACE_MODE" == "compositor-scene-success" ]]; then
+      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" || "$TRACE_MODE" == "orange-gpu-loop-success" || "$TRACE_MODE" == "compositor-scene-success" ]]; then
         printf 'path=/dev/kgsl-3d0 present=true kind=char mode=666 uid=1000 gid=1000 major=508 minor=0\n'
         exit 0
       fi
@@ -206,6 +209,16 @@ EOF
         cat <<EOF
 probe_label=orange-gpu-payload
 observed_probe_stage=orange-gpu-payload:vkEnumeratePhysicalDevices-ok
+child_timed_out=false
+child_completed=true
+exit_status=0
+wchan=
+EOF
+        exit 0
+      elif [[ "$TRACE_MODE" == "orange-gpu-loop-success" ]]; then
+        cat <<EOF
+probe_label=orange-gpu-payload
+observed_probe_stage=firmware-probe-ok
 child_timed_out=false
 child_completed=true
 exit_status=0
@@ -242,6 +255,61 @@ EOF
   },
   "kms_present": {
     "connector": "DSI-1"
+  }
+}
+EOF
+        exit 0
+      elif [[ "$TRACE_MODE" == "orange-gpu-loop-success" ]]; then
+        cat <<'EOF'
+{
+  "mode": "orange-gpu-loop",
+  "scene": "orange-gpu-loop",
+  "target_duration_secs": 3,
+  "frame_interval_millis": 250,
+  "frames_rendered": 11,
+  "scanout_updates": 11,
+  "distinct_frame_count": 2,
+  "frame_label_samples": [
+    "flat-orange",
+    "smoke"
+  ],
+  "frame_checksum_samples_fnv1a64": [
+    "bb77813ec3232325",
+    "e317ffe624895aa5"
+  ],
+  "first_frame": {
+    "label": "flat-orange",
+    "byte_len": 65536,
+    "checksum_fnv1a64": "bb77813ec3232325",
+    "distinct_color_count": 1,
+    "distinct_color_samples_rgba8": [
+      "ff7a00ff"
+    ],
+    "opaque_pixel_count": 16384,
+    "nonzero_alpha_pixel_count": 16384
+  },
+  "last_frame": {
+    "label": "smoke",
+    "byte_len": 65536,
+    "checksum_fnv1a64": "e317ffe624895aa5",
+    "distinct_color_count": 3,
+    "distinct_color_samples_rgba8": [
+      "651c00ff",
+      "ff8a42ff",
+      "ffe0a6ff"
+    ],
+    "opaque_pixel_count": 16384,
+    "nonzero_alpha_pixel_count": 16384
+  },
+  "present_kms": true,
+  "software_backed": false,
+  "adapter": {
+    "backend": "Vulkan"
+  },
+  "kms_present": {
+    "connector": "DSI-1",
+    "present_count": 11,
+    "hold_secs": 3
   }
 }
 EOF
@@ -393,6 +461,25 @@ EOF
   "metadata_probe_timeout_class_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-timeout-class.txt",
   "metadata_probe_summary_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-summary.json",
   "metadata_compositor_frame_path": "/metadata/shadow-hello-init/by-token/$run_token/compositor-frame.ppm"
+}
+EOF
+  elif [[ "$orange_gpu_mode" == "orange-gpu-loop" ]]; then
+    cat >"$image_path.hello-init.json" <<EOF
+{
+  "kind": "hello_init_build",
+  "run_token": "$run_token",
+  "orange_gpu_mode": "orange-gpu-loop",
+  "orange_gpu_scene": "orange-gpu-loop",
+  "orange_gpu_firmware_helper": true,
+  "log_kmsg": true,
+  "log_pmsg": true,
+  "orange_gpu_metadata_stage_breadcrumb": true,
+  "metadata_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/stage.txt",
+  "metadata_probe_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-stage.txt",
+  "metadata_probe_fingerprint_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-fingerprint.txt",
+  "metadata_probe_report_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-report.txt",
+  "metadata_probe_timeout_class_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-timeout-class.txt",
+  "metadata_probe_summary_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-summary.json"
 }
 EOF
   else
@@ -629,6 +716,31 @@ assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_scene 
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_present_kms true
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_adapter_backend Vulkan
 assert_json_field "$PROBE_ONLY_OUTPUT/status.json" metadata_probe_summary_distinct_color_count 1
+
+LOOP_PARENT="$TMP_DIR/output-orange-gpu-loop"
+LOOP_IMAGE="$TMP_DIR/output-orange-gpu-loop.img"
+LOOP_OUTPUT="$LOOP_PARENT/recover-traces"
+write_recover_context "$LOOP_PARENT" "$LOOP_IMAGE" "$RUN_TOKEN" orange-gpu-loop
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=orange-gpu-loop-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$LOOP_OUTPUT" >/dev/null
+
+assert_json_field "$LOOP_OUTPUT/status.json" matched_any_correlated_shadow_tags false
+assert_json_field "$LOOP_OUTPUT/status.json" probe_report_proves_child_success true
+assert_json_field "$LOOP_OUTPUT/status.json" probe_summary_proves_orange_gpu_loop true
+assert_json_field "$LOOP_OUTPUT/status.json" proof_ok true
+assert_json_field "$LOOP_OUTPUT/status.json" expected_orange_gpu_mode orange-gpu-loop
+assert_json_field "$LOOP_OUTPUT/status.json" expected_orange_gpu_scene orange-gpu-loop
+assert_json_field "$LOOP_OUTPUT/status.json" metadata_probe_summary_present true
+assert_json_field "$LOOP_OUTPUT/status.json" metadata_probe_summary_scene orange-gpu-loop
+assert_json_field "$LOOP_OUTPUT/status.json" metadata_probe_summary_present_kms true
+assert_json_field "$LOOP_OUTPUT/status.json" metadata_probe_summary_adapter_backend Vulkan
+assert_json_field "$LOOP_OUTPUT/status.json" metadata_probe_summary_kms_present/present_count 11
+assert_json_field "$LOOP_OUTPUT/status.json" metadata_probe_summary_kms_present/hold_secs 3
 
 COMPOSITOR_PARENT="$TMP_DIR/output-compositor-scene"
 COMPOSITOR_IMAGE="$TMP_DIR/output-compositor-scene.img"

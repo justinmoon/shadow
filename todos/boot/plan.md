@@ -352,7 +352,11 @@ Related docs:
     - `gpu-render` on `09051JEC202061`
   - next step is to confirm the direct rust-bridge builder path on hardware and then keep climbing from that bridge shape instead of forcing `std` directly into PID 1
 - [x] From that owned userspace, render one orange GPU frame and present it through dma-buf/KMS (`orange-gpu`).
-- [ ] Prove repeated GPU frame submission and synchronization for 2-3 seconds (`orange-gpu-loop`).
+- [x] Prove repeated GPU frame submission and synchronization for 2-3 seconds (`orange-gpu-loop`).
+  - current signed-off rung: image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-orange-gpu-loop-parentprobe-fw-helper-breadcrumb-v2.img.hello-init.json`
+  - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/orange-gpu-loop-v2-primary-11151JEC200472/recover-traces/status.json` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/orange-gpu-loop-v2-confirm-06241JEC200520/recover-traces/status.json`
+  - both recovered bundles report `proof_ok=true`, `probe_report_proves_child_success=true`, `probe_summary_proves_orange_gpu_loop=true`, `metadata_stage_value=parent-probe-result=exit-0`, and `metadata_probe_summary_kms_present.present_count=11`
+  - the recovered loop summaries also preserve `frames_rendered=11`, `scanout_updates=11`, `distinct_frame_count=2`, and `kms_present.hold_secs=3`, which keeps the proof on the same durable `probe-summary.json` contract instead of a watched-only claim
 - [ ] Prove one minimal input-driven redraw on the real GPU render/present path (`touch-counter-gpu`).
 - [x] Prove a tiny compositor-owned scene with no app/runtime complexity (`compositor-scene`).
   - current signed-off rung is shell-only: image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-compositor-scene-parentprobe-fw-helper-breadcrumb-v3.img.hello-init.json`
@@ -508,9 +512,12 @@ Related docs:
     - `probe-summary.json`, `probe-fingerprint.txt`, `probe-timeout-class.txt`, the parent-probe loop, `timeout-control-smoke`, and the raw/direct KGSL smoke modes now live in Rust on current `master`
     - helper-backed child KGSL open and direct PID1 KGSL open are both now re-proved on rooted hardware with `proof_ok=true`
     - the next bootstrap discriminator is one rung above readonly KGSL open on the same PID1-visible Rust seam rather than more C-parity cleanup
-- [ ] Package one short repeated-frame proof (`orange-gpu-loop`):
+- [x] Package one short repeated-frame proof (`orange-gpu-loop`):
   - animate color or a frame counter for 2-3 seconds
   - use it to prove repeated submission and sync, not just one lucky frame
+  - current signed-off proof artifacts:
+    - image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-orange-gpu-loop-parentprobe-fw-helper-breadcrumb-v2.img.hello-init.json`
+    - recovered truth surface `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/orange-gpu-loop-v2-primary-11151JEC200472/recover-traces/status.json` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/orange-gpu-loop-v2-confirm-06241JEC200520/recover-traces/status.json`
 - [ ] Probe the smallest prerequisite set for DRM on stock kernel:
   - does `/dev/dri/card0` exist under owned PID 1 with only `tmpfs /dev`
   - if not, add the smallest necessary coldplug, module, firmware, or mount step
