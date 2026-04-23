@@ -17,7 +17,7 @@ use shadow_sdk::{
             NostrAccountSummary, NostrAccountTask, NostrPublishReceipt,
         },
     },
-    ui::{with_tasks, TaskHandle, TaskSlotBinding, WidgetView},
+    ui::{with_tasks, TaskGroupSnapshot, TaskHandle, TaskSlotBinding, WidgetView},
 };
 
 use crate::TimelineApp;
@@ -266,16 +266,35 @@ pub(crate) fn decorate_with_tasks(
     content: impl WidgetView<TimelineApp>,
     tasks: &TimelineTasks,
 ) -> impl WidgetView<TimelineApp> {
+    let (
+        account_action,
+        clipboard_write,
+        explore_sync,
+        follow_update,
+        thread_sync,
+        publish,
+        refresh,
+    ) = (
+        &tasks.account_action,
+        &tasks.clipboard_write,
+        &tasks.explore_sync,
+        &tasks.follow_update,
+        &tasks.thread_sync,
+        &tasks.publish,
+        &tasks.refresh,
+    )
+        .snapshot_group();
+
     with_tasks(
         content,
         [
-            tasks.account_action.decoration(),
-            tasks.clipboard_write.decoration(),
-            tasks.explore_sync.decoration(),
-            tasks.follow_update.decoration(),
-            tasks.thread_sync.decoration(),
-            tasks.publish.decoration(),
-            tasks.refresh.decoration(),
+            account_action.decoration(),
+            clipboard_write.decoration(),
+            explore_sync.decoration(),
+            follow_update.decoration(),
+            thread_sync.decoration(),
+            publish.decoration(),
+            refresh.decoration(),
         ],
     )
 }

@@ -119,6 +119,18 @@ impl<Job> TaskSnapshot<Job> {
     }
 }
 
+pub trait TaskSnapshotSource {
+    type Snapshot;
+
+    fn snapshot_item(&self) -> Self::Snapshot;
+}
+
+pub trait TaskGroupSnapshot {
+    type Snapshot;
+
+    fn snapshot_group(&self) -> Self::Snapshot;
+}
+
 #[derive(Clone, Debug)]
 pub struct TaskSlot<Job> {
     pending: Option<TaskHandle<Job>>,
@@ -214,6 +226,56 @@ impl<Job> TaskSlot<Job> {
     }
 }
 
+impl<Job> TaskSnapshotSource for TaskSlot<Job>
+where
+    Job: Clone,
+{
+    type Snapshot = TaskSnapshot<Job>;
+
+    fn snapshot_item(&self) -> Self::Snapshot {
+        self.snapshot()
+    }
+}
+
+#[derive(Clone)]
+pub struct TaskBindingSnapshot<State, Job, Output> {
+    pending: TaskSnapshot<Job>,
+    run: TaskRunFn<Job, Output>,
+    apply: TaskApplyFn<State, Job, Output>,
+}
+
+impl<State, Job, Output> TaskBindingSnapshot<State, Job, Output> {
+    pub fn is_pending(&self) -> bool {
+        self.pending.is_pending()
+    }
+
+    pub fn pending(&self) -> Option<&TaskHandle<Job>> {
+        self.pending.pending()
+    }
+
+    pub fn pending_matches(&self, select: impl FnOnce(&Job) -> bool) -> bool {
+        self.pending.pending_matches(select)
+    }
+
+    pub fn into_pending(self) -> Option<TaskHandle<Job>> {
+        self.pending.into_pending()
+    }
+
+    pub fn decoration(self) -> TaskDecoration<State>
+    where
+        State: Send + Sync + 'static,
+        Job: Clone + Send + Sync + 'static,
+        Output: Debug + Send + 'static,
+    {
+        let Self {
+            pending,
+            run,
+            apply,
+        } = self;
+        task_decoration(pending.into_pending(), run, apply)
+    }
+}
+
 #[derive(Debug)]
 pub struct TaskSlotBinding<State, Job, Output> {
     slot: TaskSlot<Job>,
@@ -269,6 +331,17 @@ impl<State, Job, Output> TaskSlotBinding<State, Job, Output> {
         self.slot.snapshot()
     }
 
+    pub fn binding_snapshot(&self) -> TaskBindingSnapshot<State, Job, Output>
+    where
+        Job: Clone,
+    {
+        TaskBindingSnapshot {
+            pending: self.snapshot(),
+            run: self.run,
+            apply: self.apply,
+        }
+    }
+
     pub fn start(&mut self, job: Job) -> bool {
         self.slot.start(job)
     }
@@ -287,9 +360,45 @@ impl<State, Job, Output> TaskSlotBinding<State, Job, Output> {
         Job: Clone + Send + Sync + 'static,
         Output: Debug + Send + 'static,
     {
-        self.slot.decoration(self.run, self.apply)
+        self.binding_snapshot().decoration()
     }
 }
+
+impl<State, Job, Output> TaskSnapshotSource for TaskSlotBinding<State, Job, Output>
+where
+    Job: Clone,
+{
+    type Snapshot = TaskBindingSnapshot<State, Job, Output>;
+
+    fn snapshot_item(&self) -> Self::Snapshot {
+        self.binding_snapshot()
+    }
+}
+
+macro_rules! impl_task_group_snapshot {
+    ($($binding:ident : $item:ident),+ $(,)?) => {
+        impl<'a, $($item),+> TaskGroupSnapshot for ($(&'a $item,)+)
+        where
+            $($item: TaskSnapshotSource,)+
+        {
+            type Snapshot = ($(<$item as TaskSnapshotSource>::Snapshot,)+);
+
+            fn snapshot_group(&self) -> Self::Snapshot {
+                let ($($binding,)+) = self;
+                ($((*$binding).snapshot_item(),)+)
+            }
+        }
+    };
+}
+
+impl_task_group_snapshot!(a: A);
+impl_task_group_snapshot!(a: A, b: B);
+impl_task_group_snapshot!(a: A, b: B, c: C);
+impl_task_group_snapshot!(a: A, b: B, c: C, d: D);
+impl_task_group_snapshot!(a: A, b: B, c: C, d: D, e: E);
+impl_task_group_snapshot!(a: A, b: B, c: C, d: D, e: E, f: F);
+impl_task_group_snapshot!(a: A, b: B, c: C, d: D, e: E, f: F, g: G);
+impl_task_group_snapshot!(a: A, b: B, c: C, d: D, e: E, f: F, g: G, h: H);
 
 fn next_task_id() -> u64 {
     static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
@@ -302,7 +411,10 @@ mod tests {
 
     use xilem::view::label;
 
-    use super::{TaskDecoration, TaskDecorationRegistry, TaskSlot, TaskSlotBinding, TaskSnapshot};
+    use super::{
+        TaskDecoration, TaskDecorationRegistry, TaskGroupSnapshot, TaskSlot, TaskSlotBinding,
+        TaskSnapshot,
+    };
 
     fn run_bound_task(job: String) -> Result<usize, String> {
         if job == "error" {
@@ -453,5 +565,27 @@ mod tests {
         let pending = slot.pending_cloned().expect("pending task");
         assert_eq!(slot.finish(pending), Some(String::from("note")));
         assert!(!slot.is_pending());
+    }
+
+    #[test]
+    fn task_group_snapshots_collect_mixed_slots() {
+        let mut plain = TaskSlot::new();
+        let mut bound = TaskSlotBinding::new(run_bound_task, apply_bound_task);
+
+        assert!(plain.start(String::from("plain")));
+        assert!(bound.start(String::from("bound")));
+
+        let (plain_snapshot, bound_snapshot) = (&plain, &bound).snapshot_group();
+
+        assert!(plain_snapshot.pending_matches(|job| job == "plain"));
+        assert_eq!(
+            bound_snapshot.pending().map(|pending| pending.job().as_str()),
+            Some("bound")
+        );
+        assert!(bound_snapshot.is_pending());
+        assert!(bound_snapshot.pending_matches(|job| job == "bound"));
+
+        let pending = bound_snapshot.into_pending().expect("pending bound task");
+        assert_eq!(pending.job(), "bound");
     }
 }
