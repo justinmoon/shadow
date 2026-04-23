@@ -374,7 +374,12 @@ impl ShadowCompositor {
                 self.go_home();
                 Ok("ok\n".to_string())
             }
-            ControlRequest::Switcher => Ok("ok\n".to_string()),
+            ControlRequest::Switcher => {
+                if let Some(app_id) = self.shell.switcher_target_app() {
+                    self.launch_or_focus_app(app_id)?;
+                }
+                Ok("ok\n".to_string())
+            }
             ControlRequest::Prompt { action_id } => {
                 self.resolve_system_prompt_via_control(action_id)
             }

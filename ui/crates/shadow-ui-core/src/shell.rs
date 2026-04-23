@@ -388,6 +388,13 @@ impl ShellModel {
         &self.running_apps
     }
 
+    pub fn switcher_target_app(&self) -> Option<AppId> {
+        self.recent_apps
+            .iter()
+            .copied()
+            .find(|app_id| Some(*app_id) != self.foreground_app)
+    }
+
     fn recent_app_titles(&self) -> Vec<&'static str> {
         self.recent_apps
             .iter()
@@ -1093,6 +1100,35 @@ mod tests {
             shell.handle(ShellEvent::Navigate(NavAction::Home)),
             Some(ShellAction::Home)
         );
+    }
+
+    #[test]
+    fn switcher_target_uses_most_recent_app_from_home() {
+        let mut shell = ShellModel::new();
+        shell.set_app_running(COUNTER_APP_ID, true);
+        shell.set_app_running(TIMELINE_APP_ID, true);
+
+        assert_eq!(shell.switcher_target_app(), Some(TIMELINE_APP_ID));
+    }
+
+    #[test]
+    fn switcher_target_skips_foreground_app() {
+        let mut shell = ShellModel::new();
+        shell.set_app_running(COUNTER_APP_ID, true);
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+        shell.set_app_running(TIMELINE_APP_ID, true);
+        shell.set_foreground_app(Some(TIMELINE_APP_ID));
+
+        assert_eq!(shell.switcher_target_app(), Some(COUNTER_APP_ID));
+    }
+
+    #[test]
+    fn switcher_target_is_empty_without_another_recent_app() {
+        let mut shell = ShellModel::new();
+        assert_eq!(shell.switcher_target_app(), None);
+
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+        assert_eq!(shell.switcher_target_app(), None);
     }
 
     #[test]

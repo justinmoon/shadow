@@ -8,6 +8,7 @@ use std::{
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
+use shadow_ui_core::control::ControlRequest;
 use shadow_ui_core::app::{self, AppId};
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 use tempfile::TempDir;
@@ -212,4 +213,26 @@ fn relaunching_existing_unmapped_app_is_idempotent() {
         .try_wait()
         .expect("poll app")
         .is_none());
+}
+
+#[test]
+fn switcher_control_uses_shell_recents_to_pick_previous_app() {
+    let mut harness = HostSessionHarness::new();
+
+    harness.state.shell.set_app_running(app::RUST_DEMO_APP_ID, true);
+    harness.set_foreground_app(app::RUST_TIMELINE_APP_ID);
+
+    let response = harness
+        .state
+        .handle_control_request(ControlRequest::Switcher)
+        .expect("switcher control request");
+
+    assert_eq!(response, "ok\n");
+    assert_eq!(harness.state.focused_app, None);
+    assert_eq!(harness.state.shell.foreground_app(), None);
+    assert!(harness
+        .state
+        .launched_apps
+        .contains_key(&app::RUST_DEMO_APP_ID));
+    assert_eq!(harness.state.launched_apps.len(), 1);
 }
