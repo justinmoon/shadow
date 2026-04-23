@@ -32,11 +32,6 @@ pub const COUNTER_APP: DemoApp = DemoApp {
     wayland_app_id: COUNTER_WAYLAND_APP_ID,
     window_title: COUNTER_WINDOW_TITLE,
     manifest_launch: COUNTER_MANIFEST_LAUNCH,
-    typescript_runtime: COUNTER_MANIFEST_LAUNCH.typescript_runtime(),
-    runtime_bundle_env: COUNTER_MANIFEST_LAUNCH.runtime_bundle_env(),
-    runtime_input_path: COUNTER_MANIFEST_LAUNCH.runtime_input_path(),
-    runtime_cache_dir: COUNTER_MANIFEST_LAUNCH.runtime_cache_dir(),
-    launch_env: &[],
     icon_color: ICON_CYAN,
 };
 
@@ -67,11 +62,6 @@ pub const CAMERA_APP: DemoApp = DemoApp {
     wayland_app_id: CAMERA_WAYLAND_APP_ID,
     window_title: CAMERA_WINDOW_TITLE,
     manifest_launch: CAMERA_MANIFEST_LAUNCH,
-    typescript_runtime: CAMERA_MANIFEST_LAUNCH.typescript_runtime(),
-    runtime_bundle_env: CAMERA_MANIFEST_LAUNCH.runtime_bundle_env(),
-    runtime_input_path: CAMERA_MANIFEST_LAUNCH.runtime_input_path(),
-    runtime_cache_dir: CAMERA_MANIFEST_LAUNCH.runtime_cache_dir(),
-    launch_env: &[],
     icon_color: ICON_ORANGE,
 };
 
@@ -103,11 +93,6 @@ pub const TIMELINE_APP: DemoApp = DemoApp {
     wayland_app_id: TIMELINE_WAYLAND_APP_ID,
     window_title: TIMELINE_WINDOW_TITLE,
     manifest_launch: TIMELINE_MANIFEST_LAUNCH,
-    typescript_runtime: TIMELINE_MANIFEST_LAUNCH.typescript_runtime(),
-    runtime_bundle_env: TIMELINE_MANIFEST_LAUNCH.runtime_bundle_env(),
-    runtime_input_path: TIMELINE_MANIFEST_LAUNCH.runtime_input_path(),
-    runtime_cache_dir: TIMELINE_MANIFEST_LAUNCH.runtime_cache_dir(),
-    launch_env: &[],
     icon_color: ICON_ORANGE,
 };
 
@@ -138,11 +123,6 @@ pub const PODCAST_APP: DemoApp = DemoApp {
     wayland_app_id: PODCAST_WAYLAND_APP_ID,
     window_title: PODCAST_WINDOW_TITLE,
     manifest_launch: PODCAST_MANIFEST_LAUNCH,
-    typescript_runtime: PODCAST_MANIFEST_LAUNCH.typescript_runtime(),
-    runtime_bundle_env: PODCAST_MANIFEST_LAUNCH.runtime_bundle_env(),
-    runtime_input_path: PODCAST_MANIFEST_LAUNCH.runtime_input_path(),
-    runtime_cache_dir: PODCAST_MANIFEST_LAUNCH.runtime_cache_dir(),
-    launch_env: &[],
     icon_color: ICON_PINK,
 };
 
@@ -173,11 +153,6 @@ pub const CASHU_APP: DemoApp = DemoApp {
     wayland_app_id: CASHU_WAYLAND_APP_ID,
     window_title: CASHU_WINDOW_TITLE,
     manifest_launch: CASHU_MANIFEST_LAUNCH,
-    typescript_runtime: CASHU_MANIFEST_LAUNCH.typescript_runtime(),
-    runtime_bundle_env: CASHU_MANIFEST_LAUNCH.runtime_bundle_env(),
-    runtime_input_path: CASHU_MANIFEST_LAUNCH.runtime_input_path(),
-    runtime_cache_dir: CASHU_MANIFEST_LAUNCH.runtime_cache_dir(),
-    launch_env: &[],
     icon_color: ICON_GREEN,
 };
 
@@ -203,11 +178,6 @@ pub const RUST_DEMO_APP: DemoApp = DemoApp {
     wayland_app_id: RUST_DEMO_WAYLAND_APP_ID,
     window_title: RUST_DEMO_WINDOW_TITLE,
     manifest_launch: RUST_DEMO_MANIFEST_LAUNCH,
-    typescript_runtime: None,
-    runtime_bundle_env: "",
-    runtime_input_path: "",
-    runtime_cache_dir: "",
-    launch_env: &RUST_DEMO_LAUNCH_ENV,
     icon_color: ICON_PURPLE,
 };
 
@@ -240,11 +210,6 @@ pub const RUST_TIMELINE_APP: DemoApp = DemoApp {
     wayland_app_id: RUST_TIMELINE_WAYLAND_APP_ID,
     window_title: RUST_TIMELINE_WINDOW_TITLE,
     manifest_launch: RUST_TIMELINE_MANIFEST_LAUNCH,
-    typescript_runtime: None,
-    runtime_bundle_env: "",
-    runtime_input_path: "",
-    runtime_cache_dir: "",
-    launch_env: &RUST_TIMELINE_LAUNCH_ENV,
     icon_color: ICON_RED,
 };
 

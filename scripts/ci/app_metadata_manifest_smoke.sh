@@ -729,8 +729,12 @@ text = Path(sys.argv[1]).read_text(encoding="utf-8")
 
 if 'pub const RUST_NOTES_MODEL: AppModel = AppModel::Rust;' not in text:
     raise SystemExit("app_metadata_manifest_smoke: rust app model was not generated")
-if "typescript_runtime: None" not in text:
+if "pub const RUST_NOTES_MANIFEST_LAUNCH: ManifestAppLaunch =" not in text:
+    raise SystemExit("app_metadata_manifest_smoke: rust app manifest launch was not generated")
+if "RUST_NOTES_MANIFEST_RUNTIME" in text:
     raise SystemExit("app_metadata_manifest_smoke: rust app should not get TypeScript runtime metadata")
+if "manifest_launch: RUST_NOTES_MANIFEST_LAUNCH" not in text:
+    raise SystemExit("app_metadata_manifest_smoke: rust app manifest launch was not wired into DemoApp")
 PY
 
 check_output_case \
@@ -775,8 +779,10 @@ if "pub const LAUNCH_ENV_RUST_LAUNCH_ENV: [AppLaunchEnv; 1]" not in text:
     raise SystemExit("app_metadata_manifest_smoke: launchEnv constant was not generated")
 if '("SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "1")' not in text:
     raise SystemExit("app_metadata_manifest_smoke: launchEnv entry was not generated")
+if "pub const LAUNCH_ENV_RUST_MANIFEST_LAUNCH: ManifestAppLaunch =" not in text:
+    raise SystemExit("app_metadata_manifest_smoke: launchEnv manifest launch was not generated")
 if "launch_env: &LAUNCH_ENV_RUST_LAUNCH_ENV" not in text:
-    raise SystemExit("app_metadata_manifest_smoke: launchEnv was not wired into DemoApp")
+    raise SystemExit("app_metadata_manifest_smoke: launchEnv was not wired into manifest launch")
 PY
 
 check_output_case \

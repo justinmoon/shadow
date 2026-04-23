@@ -310,15 +310,6 @@ def generate_rust(manifest: dict[str, Any]) -> str:
                     "",
                 ]
             )
-            typescript_runtime = f"{launch_const}.typescript_runtime()"
-            runtime_bundle_env = f"{launch_const}.runtime_bundle_env()"
-            runtime_input_path = f"{launch_const}.runtime_input_path()"
-            runtime_cache_dir = f"{launch_const}.runtime_cache_dir()"
-        else:
-            typescript_runtime = "None"
-            runtime_bundle_env = '""'
-            runtime_input_path = '""'
-            runtime_cache_dir = '""'
         launch_env = app.get("launchEnv") or {}
         if launch_env:
             env_const = rust_const_name(app_id, "LAUNCH_ENV")
@@ -373,11 +364,6 @@ def generate_rust(manifest: dict[str, Any]) -> str:
                 f"    wayland_app_id: {rust_const_name(app_id, 'WAYLAND_APP_ID')},",
                 f"    window_title: {rust_const_name(app_id, 'WINDOW_TITLE')},",
                 f"    manifest_launch: {launch_const},",
-                f"    typescript_runtime: {typescript_runtime},",
-                f"    runtime_bundle_env: {runtime_bundle_env},",
-                f"    runtime_input_path: {runtime_input_path},",
-                f"    runtime_cache_dir: {runtime_cache_dir},",
-                f"    launch_env: {launch_env_ref},",
                 f"    icon_color: {app['ui']['iconColor']},",
                 "};",
                 "",

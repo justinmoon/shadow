@@ -86,11 +86,6 @@ pub struct DemoApp {
     pub wayland_app_id: &'static str,
     pub window_title: &'static str,
     pub manifest_launch: ManifestAppLaunch,
-    pub typescript_runtime: Option<TypeScriptAppRuntime>,
-    pub runtime_bundle_env: &'static str,
-    pub runtime_input_path: &'static str,
-    pub runtime_cache_dir: &'static str,
-    pub launch_env: &'static [AppLaunchEnv],
     pub icon_color: Color,
 }
 
@@ -243,8 +238,8 @@ mod tests {
 
     use super::{
         app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, home_apps,
-        launch_spec, AppId, AppLaunchModel, AppLaunchSpec, AppModel, DemoApp, ManifestAppLaunch,
-        ManifestAppRuntime, CAMERA_APP, CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP,
+        launch_spec, AppId, AppLaunchModel, AppLaunchSpec, AppModel, DemoApp,
+        ManifestAppLaunch, CAMERA_APP, CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP,
         CASHU_APP_ID, CASHU_WAYLAND_APP_ID, COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID,
         DEMO_APPS, PIXEL_SHELL_DEMO_APPS, PODCAST_APP, PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID,
         RUST_DEMO_APP, RUST_DEMO_APP_ID, RUST_DEMO_WAYLAND_APP_ID, RUST_TIMELINE_APP,
@@ -274,11 +269,6 @@ mod tests {
     }
 
     fn assert_manifest_launch_compat(app: &DemoApp) {
-        assert_eq!(app.typescript_runtime, app.manifest_launch.typescript_runtime());
-        assert_eq!(app.runtime_bundle_env, app.manifest_launch.runtime_bundle_env());
-        assert_eq!(app.runtime_input_path, app.manifest_launch.runtime_input_path());
-        assert_eq!(app.runtime_cache_dir, app.manifest_launch.runtime_cache_dir());
-        assert_eq!(app.launch_env, app.manifest_launch.launch_env());
         assert_eq!(
             app.launch_spec(),
             app.manifest_launch.launch_spec(
@@ -293,23 +283,10 @@ mod tests {
     fn assert_current_typescript_app(app: &DemoApp) {
         assert_eq!(app.model, AppModel::TypeScript);
         assert_manifest_launch_compat(app);
-        assert_eq!(
-            app.manifest_launch,
-            ManifestAppLaunch::TypeScript {
-                runtime: ManifestAppRuntime {
-                    bundle_env: app.runtime_bundle_env,
-                    input_path: app.runtime_input_path,
-                    cache_dir: app.runtime_cache_dir,
-                },
-                launch_env: app.launch_env,
-            }
-        );
-        let runtime = app
-            .typescript_runtime
-            .expect("current manifest apps should have TypeScript runtime metadata");
-        assert_eq!(runtime.bundle_env, app.runtime_bundle_env);
-        assert_eq!(runtime.input_path, app.runtime_input_path);
-        assert_eq!(runtime.cache_dir, app.runtime_cache_dir);
+        let ManifestAppLaunch::TypeScript { runtime, launch_env } = app.manifest_launch else {
+            panic!("current manifest apps should have TypeScript launch metadata");
+        };
+        let runtime = runtime.typescript_runtime();
         assert_eq!(
             launch_spec(app.id),
             Some(AppLaunchSpec {
@@ -318,7 +295,7 @@ mod tests {
                 wayland_app_id: app.wayland_app_id,
                 window_title: app.window_title,
                 model: AppLaunchModel::TypeScript { runtime },
-                launch_env: app.launch_env,
+                launch_env,
             })
         );
     }
@@ -336,11 +313,6 @@ mod tests {
             wayland_app_id: "dev.shadow.rust-notes",
             window_title: "Rust Notes",
             manifest_launch: ManifestAppLaunch::Rust { launch_env: &[] },
-            typescript_runtime: None,
-            runtime_bundle_env: "",
-            runtime_input_path: "",
-            runtime_cache_dir: "",
-            launch_env: &[],
             icon_color: crate::color::ICON_PURPLE,
         };
 
@@ -484,7 +456,7 @@ mod tests {
                 })
             );
             assert_eq!(
-                RUST_DEMO_APP.launch_env,
+                RUST_DEMO_APP.manifest_launch.launch_env(),
                 &[("SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "1")]
             );
             assert_eq!(
@@ -540,6 +512,17 @@ mod tests {
                         ("SHADOW_RUST_TIMELINE_SYNC_ON_START", "1"),
                     ],
                 })
+            );
+            assert_eq!(
+                RUST_TIMELINE_APP.manifest_launch.launch_env(),
+                &[
+                    ("SHADOW_RUST_TIMELINE_LIMIT", "18"),
+                    (
+                        "SHADOW_RUST_TIMELINE_RELAY_URLS",
+                        "wss://relay.primal.net/,wss://relay.damus.io/",
+                    ),
+                    ("SHADOW_RUST_TIMELINE_SYNC_ON_START", "1"),
+                ]
             );
             assert_eq!(
                 app_id_from_wayland_app_id(RUST_TIMELINE_WAYLAND_APP_ID),
