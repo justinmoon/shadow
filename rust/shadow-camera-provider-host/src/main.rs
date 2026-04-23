@@ -6,6 +6,8 @@ mod android_service;
 mod camera_aidl;
 #[cfg(target_os = "android")]
 mod camera_metadata;
+#[cfg(target_os = "android")]
+mod linux_camera_probe;
 
 #[cfg(target_os = "android")]
 use android_buffer::{
@@ -90,6 +92,7 @@ fn main() {
         "list" => make_list_response(&argv),
         "open" => make_open_response(&argv),
         "configure" => make_configure_response(&argv),
+        "linux-probe" => linux_camera_probe::make_linux_probe_response(&argv),
         "preview" => make_preview_response(&argv),
         "capture" => make_capture_response(&argv),
         "serve" => run_socket_server(&argv),

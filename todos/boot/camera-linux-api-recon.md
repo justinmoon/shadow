@@ -40,9 +40,16 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `/dev/video32..34` are `qcom,vidc1`
   - `/sys/class/media` was empty even though `/dev/media*` exists
   - Android still exposes the real public cameras through `android.hardware.camera.provider.ICameraProvider/internal/0`
+- The first implemented Linux probe succeeded on `0B191JEC203253`:
+  - artifact root: `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-linux-api/20260423T205038Z-0B191JEC203253_`
+  - `linux-probe.json` reports `ok=true`, `interpretation=topology-visible`, and 28 successful ioctl calls.
+  - Qualcomm `CAM_QUERY_CAP` succeeded for CPAS, ISP, CSIPHY, actuator, both sensors, EEPROM, OIS, JPEG, FD, and LRME without invoking acquire/start/config/request/buffer ioctls.
+  - `/dev/video1` `cam-req-mgr` remained intentionally skipped for direct open; `/dev/video2` `cam_sync` returned `EALREADY` on open and was recorded as data.
 - Evidence:
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/runs/camera-linux-api-recon/20260423T201839Z-0B191JEC203253/status.json`
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/runs/camera-linux-api-recon/20260423T201839Z-0B191JEC203253/device-inventory.txt`
+  - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-linux-api/20260423T205038Z-0B191JEC203253_/status.json`
+  - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-linux-api/20260423T205038Z-0B191JEC203253_/linux-probe.json`
 
 ## Source-Level Recon
 
@@ -148,8 +155,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Run existing Android provider `list` baseline on `0B191JEC203253`.
 - [x] Read relevant AOSP camera HAL and Pixel 4a Qualcomm Linux camera source.
 - [x] Define first Linux-only probe contract from source plus device inventory.
-- [ ] Implement `linux-probe` as the next narrow code slice.
-- [ ] Validate `linux-probe` on a rooted Pixel and compare with Android provider camera IDs.
+- [x] Implement `linux-probe` as the next narrow code slice.
+- [x] Validate `linux-probe` on a rooted Pixel and compare with Android provider camera IDs.
 - [ ] Decide whether a capture probe is plausible from Linux media/V4L2 alone or whether this lane should stay blocked behind vendor camera HAL behavior.
 
 ## References
@@ -176,4 +183,5 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - `/dev/media*` and the Qualcomm camera nodes are owned `system:camera` with `u:object_r:video_device:s0`; root can open them in Android userspace, but boot-owned userspace will need matching node creation, ownership, and SELinux implications only after the read-only ABI probe proves useful.
 - Current Android provider process is `android.hardware.camera.provider@2.7-service-google`; current Shadow helper talks to service `android.hardware.camera.provider.ICameraProvider/internal/0`.
 - The source-level correction is that Linux recon is not plain media/V4L2. The useful public ABI is media topology plus Qualcomm private `VIDIOC_CAM_CONTROL` query-cap payloads, with strict no-acquire/no-start/no-config limits.
+- The implemented probe is still discovery-only. Successful query-cap proves the kernel surface is reachable from rooted userspace; it does not prove Linux-only capture because capture still requires sessions, request-manager links, buffers, sync objects, sensor power/config packets, and likely vendor HAL policy.
 - A Linux-only camera library should probably start as a separate internal module under `rust/shadow-camera-provider-host` or a new narrow `rust/shadow-linux-camera-probe` binary, then graduate only if the discovery probe identifies a real capture path.

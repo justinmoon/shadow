@@ -10,8 +10,6 @@ pixel_prepare_dirs
 serial="$(pixel_resolve_serial)"
 pixel_require_host_lock "$serial" "$0" "$@"
 repo="$(repo_root)"
-run_root="$(pixel_dir)/camera-rs"
-run_dir="$(pixel_prepare_named_run_dir "$run_root")"
 artifact="$(pixel_artifact_path shadow-camera-provider-host)"
 android_shell_ref="$repo#android"
 android_abi="arm64-v8a"
@@ -20,6 +18,13 @@ android_platform="${PIXEL_CAMERA_RS_PLATFORM:-31}"
 device_binary="${PIXEL_CAMERA_RS_DEVICE_BINARY:-/data/local/tmp/shadow-camera-provider-host}"
 profile="${PIXEL_CAMERA_RS_PROFILE:-debug}"
 command="${1:-ping}"
+
+if [[ "$command" == "linux-probe" ]]; then
+  run_root="$(pixel_dir)/camera-linux-api"
+else
+  run_root="$(pixel_dir)/camera-rs"
+fi
+run_dir="$(pixel_prepare_named_run_dir "$run_root")"
 
 if [[ "$#" -gt 0 ]]; then
   shift
@@ -30,6 +35,7 @@ device_output_path="$run_dir/device-output.txt"
 device_command_path="$run_dir/device-command.txt"
 checkpoint_log_path="$run_dir/checkpoints.txt"
 file_output_path="$run_dir/file.txt"
+linux_probe_json_path="$run_dir/linux-probe.json"
 
 build_device_command() {
   local quoted=()
@@ -89,6 +95,33 @@ if [[ "$run_status" -eq 0 ]]; then
   fi
 fi
 
+if [[ "$command" == "linux-probe" ]]; then
+  python3 - "$device_output_path" "$linux_probe_json_path" <<'PY'
+import json
+import sys
+
+input_path, output_path = sys.argv[1:3]
+payload = None
+
+with open(input_path, "r", encoding="utf-8", errors="replace") as fh:
+    for raw_line in fh:
+        line = raw_line.strip()
+        if not line.startswith("{") or not line.endswith("}"):
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+if payload is None:
+    sys.exit(0)
+
+with open(output_path, "w", encoding="utf-8") as fh:
+    json.dump(payload, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+fi
+
 pixel_write_status_json "$run_dir/status.json" \
   androidShell="$android_shell_ref" \
   androidPlatform="$android_platform" \
@@ -96,6 +129,7 @@ pixel_write_status_json "$run_dir/status.json" \
   command="$command" \
   deviceBinary="$device_binary" \
   helperSucceeded="$([[ "$helper_status" -eq 0 ]] && printf true || printf false)" \
+  linuxProbeJson="$([[ "$command" == "linux-probe" ]] && printf '%s' "$linux_probe_json_path" || printf '')" \
   profile="$profile" \
   runSucceeded="$([[ "$run_status" -eq 0 ]] && printf true || printf false)" \
   serial="$serial"
