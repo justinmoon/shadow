@@ -707,12 +707,11 @@ fn main() -> Result<(), ui::EventLoopError> {
 }
 
 fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
-    let task_snapshot = app.tasks.snapshot();
     let ui = UiContext::shadow_dark(app.metrics);
     let body = route_screen(ui, app);
 
     let content = ui.screen(body);
-    let content = decorate_with_tasks(content, task_snapshot);
+    let content = decorate_with_tasks(content, &app.tasks);
 
     fork(
         content,

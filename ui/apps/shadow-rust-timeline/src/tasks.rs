@@ -17,7 +17,7 @@ use shadow_sdk::{
             NostrAccountSummary, NostrAccountTask, NostrPublishReceipt,
         },
     },
-    ui::{task_decoration, with_tasks, TaskHandle, TaskSlot, TaskSnapshot, WidgetView},
+    ui::{task_decoration, with_tasks, TaskHandle, TaskSlot, WidgetView},
 };
 
 use crate::TimelineApp;
@@ -48,30 +48,7 @@ pub(crate) struct TimelineTasks {
     thread_sync: TaskSlot<NostrThreadSyncRequest>,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct TimelineTaskSnapshot {
-    pub(crate) account_action: TaskSnapshot<NostrAccountTask>,
-    pub(crate) clipboard_write: TaskSnapshot<ClipboardWriteRequest>,
-    pub(crate) explore_sync: TaskSnapshot<NostrExploreSyncRequest>,
-    pub(crate) follow_update: TaskSnapshot<NostrContactListUpdateRequest>,
-    pub(crate) publish: TaskSnapshot<NostrTimelinePublishRequest>,
-    pub(crate) refresh: TaskSnapshot<NostrHomeRefreshRequest>,
-    pub(crate) thread_sync: TaskSnapshot<NostrThreadSyncRequest>,
-}
-
 impl TimelineTasks {
-    pub(crate) fn snapshot(&self) -> TimelineTaskSnapshot {
-        TimelineTaskSnapshot {
-            account_action: self.account_action.snapshot(),
-            clipboard_write: self.clipboard_write.snapshot(),
-            explore_sync: self.explore_sync.snapshot(),
-            follow_update: self.follow_update.snapshot(),
-            publish: self.publish.snapshot(),
-            refresh: self.refresh.snapshot(),
-            thread_sync: self.thread_sync.snapshot(),
-        }
-    }
-
     pub(crate) fn account_action_pending(&self) -> bool {
         self.account_action.is_pending()
     }
@@ -116,64 +93,55 @@ impl TimelineTasks {
 
 pub(crate) fn decorate_with_tasks(
     content: impl WidgetView<TimelineApp>,
-    tasks: TimelineTaskSnapshot,
+    tasks: &TimelineTasks,
 ) -> impl WidgetView<TimelineApp> {
-    let TimelineTaskSnapshot {
-        account_action,
-        clipboard_write,
-        explore_sync,
-        follow_update,
-        publish,
-        refresh,
-        thread_sync,
-    } = tasks;
     with_tasks(
         content,
         [
             task_decoration(
-                account_action.into_pending(),
+                tasks.account_action.pending_cloned(),
                 run_account_task,
                 |app: &mut TimelineApp, task: TaskHandle<NostrAccountTask>, result| {
                     app.finish_account_action(task, result);
                 },
             ),
             task_decoration(
-                clipboard_write.into_pending(),
+                tasks.clipboard_write.pending_cloned(),
                 run_write_text_task,
                 |app: &mut TimelineApp, task: TaskHandle<ClipboardWriteRequest>, result| {
                     app.finish_clipboard_write(task, result);
                 },
             ),
             task_decoration(
-                explore_sync.into_pending(),
+                tasks.explore_sync.pending_cloned(),
                 run_sync_explore_feed_task,
                 |app: &mut TimelineApp, task: TaskHandle<NostrExploreSyncRequest>, result| {
                     app.finish_explore_sync(task, result);
                 },
             ),
             task_decoration(
-                follow_update.into_pending(),
+                tasks.follow_update.pending_cloned(),
                 run_update_contact_list_task,
                 |app: &mut TimelineApp, task: TaskHandle<NostrContactListUpdateRequest>, result| {
                     app.finish_follow_update(task, result);
                 },
             ),
             task_decoration(
-                thread_sync.into_pending(),
+                tasks.thread_sync.pending_cloned(),
                 run_sync_thread_task,
                 |app: &mut TimelineApp, task: TaskHandle<NostrThreadSyncRequest>, result| {
                     app.finish_thread_sync(task, result);
                 },
             ),
             task_decoration(
-                publish.into_pending(),
+                tasks.publish.pending_cloned(),
                 run_publish,
                 |app: &mut TimelineApp, task: TaskHandle<NostrTimelinePublishRequest>, result| {
                     app.finish_publish(task, result);
                 },
             ),
             task_decoration(
-                refresh.into_pending(),
+                tasks.refresh.pending_cloned(),
                 run_refresh_home_feed_task,
                 |app: &mut TimelineApp, task: TaskHandle<NostrHomeRefreshRequest>, result| {
                     app.finish_refresh(task, result);
