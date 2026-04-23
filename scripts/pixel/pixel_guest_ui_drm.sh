@@ -55,6 +55,7 @@ restore_android="${PIXEL_TAKEOVER_RESTORE_ANDROID-1}"
 restore_in_session="${PIXEL_TAKEOVER_RESTORE_IN_SESSION:-1}"
 reboot_on_restore_failure="${PIXEL_TAKEOVER_REBOOT_ON_RESTORE_FAILURE:-0}"
 stop_allocator="${PIXEL_TAKEOVER_STOP_ALLOCATOR-1}"
+takeover_display_service_profile_json=""
 # These launcher-level defaults have no in-repo callers today.
 stop_checkpoint_timeout_secs=15
 process_checkpoint_timeout_secs=15
@@ -144,6 +145,7 @@ if [[ -n "$guest_run_config_path" ]]; then
   restore_in_session="$pixel_guest_run_config_restore_in_session"
   reboot_on_restore_failure="$pixel_guest_run_config_reboot_on_restore_failure"
   stop_allocator="$pixel_guest_run_config_stop_allocator"
+  takeover_display_service_profile_json="${pixel_guest_run_config_takeover_display_service_profile_json-}"
   client_name="$(basename "$guest_client_launch_dst")"
   if [[ -n "$pixel_guest_run_config_compositor_marker" ]]; then
     export PIXEL_COMPOSITOR_MARKER="$pixel_guest_run_config_compositor_marker"
@@ -154,6 +156,16 @@ if [[ -n "$guest_run_config_path" ]]; then
     export PIXEL_CLIENT_MARKER="$pixel_guest_run_config_client_marker"
   else
     unset PIXEL_CLIENT_MARKER || true
+  fi
+fi
+
+if [[ -z "$takeover_display_service_profile_json" ]]; then
+  if [[ -n "${PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON-}" ]]; then
+    takeover_display_service_profile_json="$PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON"
+  else
+    takeover_display_service_profile_json="$(
+      pixel_takeover_display_service_profile_json_from_stop_allocator "$stop_allocator"
+    )"
   fi
 fi
 
@@ -179,11 +191,9 @@ if [[ -n "$host_pid_path" ]]; then
 fi
 
 display_services_stopped_condition() {
-  if [[ "$stop_allocator" == "0" ]]; then
-    pixel_display_services_stopped_keep_allocator "$serial"
-    return
-  fi
-  pixel_display_services_stopped "$serial"
+  pixel_display_services_stopped_for_profile \
+    "$serial" \
+    "$takeover_display_service_profile_json"
 }
 
 cleanup() {
@@ -350,7 +360,10 @@ restore_android_now() {
     return 0
   fi
   checkpoint_note "restoring Android display services"
-  if ! pixel_root_shell "$serial" "$(pixel_takeover_start_services_script)"; then
+  if ! pixel_root_shell "$serial" "$(
+    pixel_takeover_start_services_script_for_profile \
+      "$takeover_display_service_profile_json"
+  )"; then
     checkpoint_note "failed: Android display service restore command did not complete cleanly"
     return 1
   fi
@@ -515,7 +528,7 @@ logcat_pid="$!"
 phone_script="$(
   cat <<EOF
 set -e
-$(pixel_takeover_stop_services_script "$stop_allocator")
+$(pixel_takeover_stop_services_script_for_profile "$takeover_display_service_profile_json")
 rm -rf $runtime_dir && mkdir -p $runtime_dir && chmod 700 $runtime_dir && rm -f $frame_path
 cp '$runtime_session_config_staging_dst' '$runtime_session_config_dst' && chmod 644 '$runtime_session_config_dst'
 mkdir -p '$runtime_session_config_chroot_parent' && cp '$runtime_session_config_staging_dst' '$runtime_session_config_chroot_dst' && chmod 644 '$runtime_session_config_chroot_dst'
@@ -526,7 +539,9 @@ ${session_timeout_secs:+timeout $session_timeout_secs }env ${guest_session_launc
 status=\$?
 set -e
 rm -f '$startup_config_dst' '$runtime_session_config_staging_dst'
-$(if [[ -n "$restore_android" && "$restore_in_session" != "0" ]]; then pixel_takeover_start_services_script; fi)
+$(if [[ -n "$restore_android" && "$restore_in_session" != "0" ]]; then
+    pixel_takeover_start_services_script_for_profile "$takeover_display_service_profile_json"
+  fi)
 exit \$status
 EOF
 )"
@@ -536,10 +551,10 @@ pixel_root_shell "$serial" "$phone_script" >"$session_output_path" 2>&1 &
 session_pid="$!"
 set -e
 
-stop_description="Android display services stopped"
-if [[ "$stop_allocator" == "0" ]]; then
-  stop_description="Android display services stopped with allocator preserved"
-fi
+stop_description="$(
+  pixel_takeover_display_service_stop_description \
+    "$takeover_display_service_profile_json"
+)"
 
 if wait_for_checkpoint "$stop_description" "$stop_checkpoint_timeout_secs" display_services_stopped_condition; then
   services_stopped=true

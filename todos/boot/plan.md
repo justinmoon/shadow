@@ -1080,6 +1080,9 @@ Related docs:
 - Display-stack sidecar result on 2026-04-21:
   - rooted `raw-kgsl-open-readonly-smoke` on `0B191JEC203253` succeeded at baseline, with `surfaceflinger` stopped, with the repo helper stop preserving allocator, and with the repo helper full display-stack stop (`surfaceflinger`, hwcomposer, allocator) before restore
   - that makes the active boot-owned blocker much less likely to be “SurfaceFlinger / composer / allocator must already be alive” and pushes suspicion toward earlier boot context, warm-holder state, SELinux/domain differences, or vendor-init timing
+- Typed takeover-config result on 2026-04-22:
+  - the supported rooted guest-run config now carries `takeover.displayServiceProfile`, a typed description of the current display takeover stop set, preserved allocator set, restore order, bootanim policy, and SELinux restore toggles
+  - `pixel_guest_ui_drm.sh` and `pixel_restore_android.sh` now consume that typed profile as the source of truth for the supported rooted display-takeover lane, while the old `stopAllocator` boolean remains only as a derived compatibility alias
 - Observability uplift on 2026-04-21:
   - `pixel_boot_recover_traces.sh` now records a rooted `kgsl-holder-scan` current-boot channel and a `kernel-current-best-effort` channel that prefers rooted `dmesg` over `logcat -b kernel`
   - `pixel_tmpfs_dev_gpu_smoke.sh` now emits `kgsl-holder-scan.tsv` and parsed holder metadata in `status.json`, so rooted controls can prove whether KGSL was already warm/open under Android

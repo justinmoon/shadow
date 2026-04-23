@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 
 pixel_restore_android_best_effort() {
-  local serial timeout_secs reboot_timeout_secs pid
+  local serial timeout_secs reboot_timeout_secs pid takeover_display_service_profile_json
   serial="$1"
   timeout_secs="${2:-60}"
   reboot_timeout_secs="${PIXEL_RESTORE_ANDROID_REBOOT_TIMEOUT_SECS:-120}"
   pid=""
+  takeover_display_service_profile_json="${PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON-}"
 
   if pixel_android_display_restored "$serial"; then
     return 0
   fi
 
   (
-    PIXEL_SERIAL="$serial" "$SHADOW_SCRIPT_ROOT/pixel/pixel_restore_android.sh" >/dev/null 2>&1 || true
+    PIXEL_SERIAL="$serial" \
+    PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON="$takeover_display_service_profile_json" \
+      "$SHADOW_SCRIPT_ROOT/pixel/pixel_restore_android.sh" >/dev/null 2>&1 || true
   ) &
   pid="$!"
 
@@ -181,9 +184,252 @@ wait_for_service_state() {
 EOF
 }
 
-pixel_takeover_stop_services_script() {
-  local stop_allocator
-  stop_allocator="${1:-1}"
+pixel_takeover_display_service_profile_json_from_stop_allocator() {
+  local stop_allocator="${1:-1}"
+
+  PIXEL_TAKEOVER_STOP_ALLOCATOR="$stop_allocator" python3 - <<'PY'
+import json
+import os
+
+
+display_allocator_services = [
+    "vendor.qti.hardware.display.allocator",
+    "vendor.qti.hardware.display.allocator-service",
+]
+stop_allocator = os.environ.get("PIXEL_TAKEOVER_STOP_ALLOCATOR", "1").strip().lower()
+stop_allocator = stop_allocator not in {"", "0", "false", "off"}
+
+stop_services = [
+    "surfaceflinger",
+    "bootanim",
+    "vendor.hwcomposer-2-4",
+    "android.hardware.graphics.composer@2.4-service-sm8150",
+    "android.hardware.graphics.composer@2.4-service",
+]
+preserve_services = []
+profile_name = "default"
+if stop_allocator:
+    stop_services.extend(display_allocator_services)
+else:
+    profile_name = "keep-allocator"
+    preserve_services.extend(display_allocator_services)
+
+print(
+    json.dumps(
+        {
+            "name": profile_name,
+            "preserveServices": preserve_services,
+            "restoreBootanim": "conditional",
+            "setEnforceAfterRestore": True,
+            "setEnforceAfterStop": False,
+            "startServices": display_allocator_services
+            + [
+                "vendor.hwcomposer-2-4",
+                "android.hardware.graphics.composer@2.4-service-sm8150",
+                "android.hardware.graphics.composer@2.4-service",
+                "surfaceflinger",
+            ],
+            "stopServices": stop_services,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+)
+PY
+}
+
+pixel_takeover_display_service_profile_json_from_env() {
+  if [[ -n "${PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON-}" ]]; then
+    printf '%s\n' "$PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON"
+    return 0
+  fi
+
+  pixel_takeover_display_service_profile_json_from_stop_allocator "${PIXEL_TAKEOVER_STOP_ALLOCATOR:-1}"
+}
+
+pixel_takeover_display_service_profile_field() {
+  local profile_json="${1:-}"
+  local field="${2:?pixel_takeover_display_service_profile_field requires a field}"
+
+  if [[ -z "$profile_json" ]]; then
+    profile_json="$(pixel_takeover_display_service_profile_json_from_env)"
+  fi
+
+  PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON="$profile_json" \
+  PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_FIELD="$field" \
+    python3 - <<'PY'
+import json
+import os
+
+
+display_allocator_services = [
+    "vendor.qti.hardware.display.allocator",
+    "vendor.qti.hardware.display.allocator-service",
+]
+
+
+def default_profile(stop_allocator):
+    stop_services = [
+        "surfaceflinger",
+        "bootanim",
+        "vendor.hwcomposer-2-4",
+        "android.hardware.graphics.composer@2.4-service-sm8150",
+        "android.hardware.graphics.composer@2.4-service",
+    ]
+    preserve_services = []
+    profile_name = "default"
+    if stop_allocator:
+        stop_services.extend(display_allocator_services)
+    else:
+        profile_name = "keep-allocator"
+        preserve_services.extend(display_allocator_services)
+    return {
+        "name": profile_name,
+        "preserveServices": preserve_services,
+        "restoreBootanim": "conditional",
+        "setEnforceAfterRestore": True,
+        "setEnforceAfterStop": False,
+        "startServices": display_allocator_services
+        + [
+            "vendor.hwcomposer-2-4",
+            "android.hardware.graphics.composer@2.4-service-sm8150",
+            "android.hardware.graphics.composer@2.4-service",
+            "surfaceflinger",
+        ],
+        "stopServices": stop_services,
+    }
+
+
+def parse_bool_field(label, value, default):
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise SystemExit(f"pixel: display service profile {label} must be a boolean")
+    return value
+
+
+def parse_list_field(label, value):
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise SystemExit(f"pixel: display service profile {label} must be a list")
+    parsed = []
+    for item in value:
+        if not isinstance(item, str):
+            raise SystemExit(f"pixel: display service profile {label} entries must be strings")
+        parsed.append(item)
+    return parsed
+
+
+raw = os.environ.get("PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON", "").strip()
+if raw:
+    try:
+        profile = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise SystemExit(
+            f"pixel: invalid display service profile json: {error}"
+        ) from error
+    if not isinstance(profile, dict):
+        raise SystemExit("pixel: display service profile must decode to an object")
+else:
+    profile = default_profile(True)
+
+name = profile.get("name", "custom")
+if not isinstance(name, str):
+    raise SystemExit("pixel: display service profile name must be a string")
+restore_bootanim = profile.get("restoreBootanim", "conditional")
+if not isinstance(restore_bootanim, str):
+    raise SystemExit("pixel: display service profile restoreBootanim must be a string")
+if restore_bootanim not in {"conditional", "always-start", "always-stop", "ignore"}:
+    raise SystemExit(
+        "pixel: unsupported display service profile restoreBootanim: "
+        f"{restore_bootanim!r}"
+    )
+
+profile = {
+    "name": name,
+    "preserveServices": parse_list_field("preserveServices", profile.get("preserveServices")),
+    "restoreBootanim": restore_bootanim,
+    "setEnforceAfterRestore": parse_bool_field(
+        "setEnforceAfterRestore",
+        profile.get("setEnforceAfterRestore"),
+        True,
+    ),
+    "setEnforceAfterStop": parse_bool_field(
+        "setEnforceAfterStop",
+        profile.get("setEnforceAfterStop"),
+        False,
+    ),
+    "startServices": parse_list_field("startServices", profile.get("startServices")),
+    "stopServices": parse_list_field("stopServices", profile.get("stopServices")),
+}
+
+field = os.environ["PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_FIELD"]
+if field in {"stopServices", "preserveServices", "startServices"}:
+    print("\n".join(profile[field]))
+elif field in {"setEnforceAfterRestore", "setEnforceAfterStop"}:
+    print("1" if profile[field] else "0")
+elif field in {"name", "restoreBootanim"}:
+    print(profile[field])
+else:
+    raise SystemExit(f"pixel: unsupported display service profile field: {field}")
+PY
+}
+
+pixel_takeover_display_service_stop_description() {
+  local profile_json="${1:-}"
+  local preserve_services=""
+
+  preserve_services="$(pixel_takeover_display_service_profile_field "$profile_json" preserveServices)"
+  if [[ -n "$preserve_services" ]]; then
+    printf 'Android display services stopped with allocator preserved\n'
+    return 0
+  fi
+
+  printf 'Android display services stopped\n'
+}
+
+pixel_display_services_stopped_for_profile() {
+  local serial="${1:?pixel_display_services_stopped_for_profile requires a serial}"
+  local profile_json="${2:-}"
+  local service=""
+  local stop_services=()
+  local preserve_services=()
+
+  while IFS= read -r service; do
+    [[ -n "$service" ]] || continue
+    stop_services+=("$service")
+  done < <(pixel_takeover_display_service_profile_field "$profile_json" stopServices)
+  if (( ${#stop_services[@]} > 0 )); then
+    pixel_all_named_services_stopped "$serial" "${stop_services[@]}" || return 1
+  fi
+
+  while IFS= read -r service; do
+    [[ -n "$service" ]] || continue
+    preserve_services+=("$service")
+  done < <(pixel_takeover_display_service_profile_field "$profile_json" preserveServices)
+  if (( ${#preserve_services[@]} > 0 )); then
+    pixel_any_named_service_running "$serial" "${preserve_services[@]}" || return 1
+  fi
+
+  return 0
+}
+
+pixel_takeover_stop_services_script_for_profile() {
+  local profile_json="${1:-}"
+  local stop_services=""
+  local set_enforce_after_stop=""
+  local service=""
+
+  if [[ -z "$profile_json" ]]; then
+    profile_json="$(pixel_takeover_display_service_profile_json_from_env)"
+  fi
+
+  stop_services="$(pixel_takeover_display_service_profile_field "$profile_json" stopServices)"
+  set_enforce_after_stop="$(
+    pixel_takeover_display_service_profile_field "$profile_json" setEnforceAfterStop
+  )"
+
   cat <<'EOF'
 EOF
   pixel_takeover_display_service_helpers_script
@@ -195,36 +441,41 @@ stop_service_and_wait() {
   wait_for_service_state "$service" stopped 50 || true
 }
 
-stop_service_and_wait surfaceflinger
-stop_service_and_wait bootanim
-for service in \
-  vendor.hwcomposer-2-4 \
-  android.hardware.graphics.composer@2.4-service-sm8150 \
-  android.hardware.graphics.composer@2.4-service
-do
-  if service_is_known "$service"; then
-    stop_service_and_wait "$service"
-  fi
-done
 EOF
-  if [[ "$stop_allocator" != "0" ]]; then
+  while IFS= read -r service; do
+    [[ -n "$service" ]] || continue
+    printf 'stop_service_and_wait %q\n' "$service"
+  done <<< "$stop_services"
+  if [[ "$set_enforce_after_stop" == "1" ]]; then
     cat <<'EOF'
-for service in \
-  vendor.qti.hardware.display.allocator \
-  vendor.qti.hardware.display.allocator-service
-do
-  if service_is_known "$service"; then
-    stop_service_and_wait "$service"
-  fi
-done
+setenforce 1 >/dev/null 2>&1 || true
 EOF
-  fi
-  cat <<'EOF'
+  else
+    cat <<'EOF'
 setenforce 0 >/dev/null 2>&1 || true
 EOF
+  fi
 }
 
-pixel_takeover_start_services_script() {
+pixel_takeover_start_services_script_for_profile() {
+  local profile_json="${1:-}"
+  local start_services=""
+  local restore_bootanim=""
+  local set_enforce_after_restore=""
+  local service=""
+
+  if [[ -z "$profile_json" ]]; then
+    profile_json="$(pixel_takeover_display_service_profile_json_from_env)"
+  fi
+
+  start_services="$(pixel_takeover_display_service_profile_field "$profile_json" startServices)"
+  restore_bootanim="$(
+    pixel_takeover_display_service_profile_field "$profile_json" restoreBootanim
+  )"
+  set_enforce_after_restore="$(
+    pixel_takeover_display_service_profile_field "$profile_json" setEnforceAfterRestore
+  )"
+
   cat <<'EOF'
 EOF
   pixel_takeover_display_service_helpers_script
@@ -250,28 +501,68 @@ boot_completed() {
     || [ "$(getprop dev.bootcomplete | tr -d '\r')" = "1" ]
 }
 
-for service in \
-  vendor.qti.hardware.display.allocator \
-  vendor.qti.hardware.display.allocator-service
-do
-  start_service_if_known "$service"
-done
-for service in \
-  vendor.hwcomposer-2-4 \
-  android.hardware.graphics.composer@2.4-service-sm8150 \
-  android.hardware.graphics.composer@2.4-service
-do
-  start_service_if_known "$service"
-done
-start surfaceflinger || true
+EOF
+  while IFS= read -r service; do
+    [[ -n "$service" ]] || continue
+    printf 'start_service_if_known %q\n' "$service"
+  done <<< "$start_services"
+  case "$restore_bootanim" in
+    conditional)
+      cat <<'EOF'
 if boot_completed; then
   setprop service.bootanim.exit 1 || true
   stop bootanim || true
 else
   start bootanim || true
 fi
+EOF
+      ;;
+    always-start)
+      cat <<'EOF'
+start bootanim || true
+EOF
+      ;;
+    always-stop)
+      cat <<'EOF'
+setprop service.bootanim.exit 1 || true
+stop bootanim || true
+EOF
+      ;;
+    ignore) ;;
+    *)
+      echo "pixel: unsupported display service profile restoreBootanim: $restore_bootanim" >&2
+      return 1
+      ;;
+  esac
+  if [[ "$set_enforce_after_restore" == "1" ]]; then
+    cat <<'EOF'
 setenforce 1 >/dev/null 2>&1 || true
 EOF
+  else
+    cat <<'EOF'
+setenforce 0 >/dev/null 2>&1 || true
+EOF
+  fi
+}
+
+pixel_takeover_stop_services_script() {
+  local stop_allocator
+  stop_allocator="${1:-1}"
+
+  pixel_takeover_stop_services_script_for_profile \
+    "$(pixel_takeover_display_service_profile_json_from_stop_allocator "$stop_allocator")"
+}
+
+pixel_takeover_start_services_script() {
+  local profile_json="${1:-}"
+
+  if [[ -n "$profile_json" ]]; then
+    pixel_takeover_start_services_script_for_profile "$profile_json"
+    return
+  fi
+
+  pixel_takeover_start_services_script_for_profile \
+    "$(pixel_takeover_display_service_profile_json_from_env)"
 }
 
 pixel_service_state() {

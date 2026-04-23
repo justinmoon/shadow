@@ -1250,6 +1250,44 @@ def filter_session_launch_env_services(assignments, services):
     return filtered
 
 
+DISPLAY_ALLOCATOR_SERVICES = (
+    "vendor.qti.hardware.display.allocator",
+    "vendor.qti.hardware.display.allocator-service",
+)
+
+
+def default_display_service_profile(stop_allocator):
+    stop_services = [
+        "surfaceflinger",
+        "bootanim",
+        "vendor.hwcomposer-2-4",
+        "android.hardware.graphics.composer@2.4-service-sm8150",
+        "android.hardware.graphics.composer@2.4-service",
+    ]
+    preserve_services = []
+    profile_name = "default"
+    if stop_allocator:
+        stop_services.extend(DISPLAY_ALLOCATOR_SERVICES)
+    else:
+        profile_name = "keep-allocator"
+        preserve_services.extend(DISPLAY_ALLOCATOR_SERVICES)
+    return {
+        "name": profile_name,
+        "stopServices": stop_services,
+        "preserveServices": preserve_services,
+        "startServices": list(DISPLAY_ALLOCATOR_SERVICES)
+        + [
+            "vendor.hwcomposer-2-4",
+            "android.hardware.graphics.composer@2.4-service-sm8150",
+            "android.hardware.graphics.composer@2.4-service",
+            "surfaceflinger",
+        ],
+        "restoreBootanim": "conditional",
+        "setEnforceAfterStop": False,
+        "setEnforceAfterRestore": True,
+    }
+
+
 output_path = os.environ["PIXEL_GUEST_RUN_CONFIG_OUTPUT_PATH"]
 startup_config_path = os.environ["PIXEL_GUEST_RUN_CONFIG_STARTUP_CONFIG_PATH"]
 if not startup_config_path:
@@ -1362,6 +1400,9 @@ takeover["rebootOnRestoreFailure"] = parse_flag(
 takeover["stopAllocator"] = parse_flag(
     os.environ.get("PIXEL_GUEST_RUN_CONFIG_STOP_ALLOCATOR", "1")
 )
+takeover["displayServiceProfile"] = default_display_service_profile(
+    takeover["stopAllocator"]
+)
 for env_name, field_name in [
     ("PIXEL_GUEST_RUN_CONFIG_RESTORE_CHECKPOINT_TIMEOUT_SECS", "restoreCheckpointTimeoutSecs"),
     ("PIXEL_GUEST_RUN_CONFIG_RESTORE_REBOOT_TIMEOUT_SECS", "restoreRebootTimeoutSecs"),
@@ -1406,6 +1447,145 @@ def assignment(name, value):
 
 def assignment_lines(name, items):
     assignment(name, "\n".join(items))
+
+
+DISPLAY_ALLOCATOR_SERVICES = {
+    "vendor.qti.hardware.display.allocator",
+    "vendor.qti.hardware.display.allocator-service",
+}
+
+
+def default_display_service_profile(stop_allocator):
+    stop_services = [
+        "surfaceflinger",
+        "bootanim",
+        "vendor.hwcomposer-2-4",
+        "android.hardware.graphics.composer@2.4-service-sm8150",
+        "android.hardware.graphics.composer@2.4-service",
+    ]
+    preserve_services = []
+    profile_name = "default"
+    if stop_allocator:
+        stop_services.extend(sorted(DISPLAY_ALLOCATOR_SERVICES))
+    else:
+        profile_name = "keep-allocator"
+        preserve_services.extend(sorted(DISPLAY_ALLOCATOR_SERVICES))
+    return {
+        "name": profile_name,
+        "stopServices": stop_services,
+        "preserveServices": preserve_services,
+        "startServices": [
+            "vendor.qti.hardware.display.allocator",
+            "vendor.qti.hardware.display.allocator-service",
+            "vendor.hwcomposer-2-4",
+            "android.hardware.graphics.composer@2.4-service-sm8150",
+            "android.hardware.graphics.composer@2.4-service",
+            "surfaceflinger",
+        ],
+        "restoreBootanim": "conditional",
+        "setEnforceAfterStop": False,
+        "setEnforceAfterRestore": True,
+    }
+
+
+def parse_bool_field(label, raw_value, default):
+    if raw_value is None:
+        return default
+    if not isinstance(raw_value, bool):
+        raise SystemExit(f"pixel: guest run {label} must be a boolean")
+    return raw_value
+
+
+def parse_string_field(label, raw_value, default):
+    if raw_value is None:
+        return default
+    if not isinstance(raw_value, str):
+        raise SystemExit(f"pixel: guest run {label} must be a string")
+    return raw_value
+
+
+def parse_string_list(label, raw_value):
+    if raw_value is None:
+        return []
+    if not isinstance(raw_value, list):
+        raise SystemExit(f"pixel: guest run {label} must be a list")
+    parsed = []
+    for item in raw_value:
+        if not isinstance(item, str):
+            raise SystemExit(f"pixel: guest run {label} entries must be strings")
+        parsed.append(item)
+    return parsed
+
+
+def parse_display_service_profile(raw_profile, stop_allocator):
+    if raw_profile is None:
+        return default_display_service_profile(stop_allocator)
+    if not isinstance(raw_profile, dict):
+        raise SystemExit("pixel: guest run takeover.displayServiceProfile must be an object")
+
+    profile = {
+        "name": parse_string_field(
+            "takeover.displayServiceProfile.name",
+            raw_profile.get("name"),
+            "custom",
+        ),
+        "stopServices": parse_string_list(
+            "takeover.displayServiceProfile.stopServices",
+            raw_profile.get("stopServices"),
+        ),
+        "preserveServices": parse_string_list(
+            "takeover.displayServiceProfile.preserveServices",
+            raw_profile.get("preserveServices"),
+        ),
+        "startServices": parse_string_list(
+            "takeover.displayServiceProfile.startServices",
+            raw_profile.get("startServices"),
+        ),
+        "restoreBootanim": parse_string_field(
+            "takeover.displayServiceProfile.restoreBootanim",
+            raw_profile.get("restoreBootanim"),
+            "conditional",
+        ),
+        "setEnforceAfterStop": parse_bool_field(
+            "takeover.displayServiceProfile.setEnforceAfterStop",
+            raw_profile.get("setEnforceAfterStop"),
+            False,
+        ),
+        "setEnforceAfterRestore": parse_bool_field(
+            "takeover.displayServiceProfile.setEnforceAfterRestore",
+            raw_profile.get("setEnforceAfterRestore"),
+            True,
+        ),
+    }
+
+    if profile["restoreBootanim"] not in {
+        "conditional",
+        "always-start",
+        "always-stop",
+        "ignore",
+    }:
+        raise SystemExit(
+            "pixel: unsupported takeover.displayServiceProfile.restoreBootanim: "
+            f"{profile['restoreBootanim']!r}"
+        )
+
+    overlap = set(profile["stopServices"]) & set(profile["preserveServices"])
+    if overlap:
+        overlap_list = ", ".join(sorted(overlap))
+        raise SystemExit(
+            "pixel: takeover.displayServiceProfile stop/preserve overlap is not allowed: "
+            f"{overlap_list}"
+        )
+
+    return profile
+
+
+def display_service_profile_stops_allocator(profile):
+    stop_services = set(profile.get("stopServices") or [])
+    preserve_services = set(profile.get("preserveServices") or [])
+    return bool(DISPLAY_ALLOCATOR_SERVICES & stop_services) and not bool(
+        DISPLAY_ALLOCATOR_SERVICES & preserve_services
+    )
 
 
 def startup_projection(startup):
@@ -1467,6 +1647,16 @@ runtime_dir, client_path, frame_capture_mode, frame_artifact_path = startup_proj
 session = config.get("session") or {}
 verify = config.get("verify") or {}
 takeover = config.get("takeover") or {}
+legacy_stop_allocator = takeover.get("stopAllocator")
+if legacy_stop_allocator is not None and not isinstance(legacy_stop_allocator, bool):
+    raise SystemExit("pixel: guest run takeover.stopAllocator must be a boolean")
+display_service_profile = parse_display_service_profile(
+    takeover.get("displayServiceProfile"),
+    True if legacy_stop_allocator is None else legacy_stop_allocator,
+)
+stop_allocator = legacy_stop_allocator
+if stop_allocator is None:
+    stop_allocator = display_service_profile_stops_allocator(display_service_profile)
 
 session_launch_env = [
     f"{item['key']}={item['value']}"
@@ -1571,8 +1761,12 @@ with open(output_path_raw, "w", encoding="utf-8") as handle:
         "1" if takeover.get("rebootOnRestoreFailure", False) else "",
     )
     assignment(
+        "pixel_guest_run_config_takeover_display_service_profile_json",
+        json.dumps(display_service_profile, separators=(",", ":"), sort_keys=True),
+    )
+    assignment(
         "pixel_guest_run_config_stop_allocator",
-        "1" if takeover.get("stopAllocator", True) else "0",
+        "1" if stop_allocator else "0",
     )
 PY
 }

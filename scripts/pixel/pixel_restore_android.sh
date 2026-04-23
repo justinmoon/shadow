@@ -7,7 +7,11 @@ source "$SCRIPT_DIR/lib/pixel_common.sh"
 ensure_bootimg_shell "$@"
 
 serial="$(pixel_resolve_serial)"
-pixel_root_shell "$serial" "$(pixel_takeover_start_services_script)"
+takeover_display_service_profile_json="$(pixel_takeover_display_service_profile_json_from_env)"
+pixel_root_shell "$serial" "$(
+  pixel_takeover_start_services_script_for_profile \
+    "$takeover_display_service_profile_json"
+)"
 if ! pixel_wait_for_condition 60 1 pixel_android_display_restored "$serial"; then
   if [[ "${PIXEL_RESTORE_ANDROID_REBOOT_ON_FAILURE:-1}" != "0" ]]; then
     echo "pixel_restore_android: direct restore did not complete cleanly; rebooting fallback" >&2

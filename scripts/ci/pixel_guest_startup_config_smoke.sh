@@ -43,6 +43,12 @@ stage_library_path="$(pixel_system_stage_library_dir)"
 base_client_env=$'BASE_CLIENT=alpha\nSHADOW_RUNTIME_APP_BUNDLE_PATH=/runtime/base.js\nSHADOW_BLITZ_SOFTWARE_KEYBOARD=0\nSHADOW_RUNTIME_AUDIO_BACKEND=memory\nSHADOW_RUNTIME_NOSTR_DB_PATH=/runtime/ignored.sqlite3\nSHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=/runtime/ignored.sock\nSHADOW_RUNTIME_CASHU_DATA_DIR=/runtime/ignored-cashu\nSHADOW_RUNTIME_CAMERA_ENDPOINT=127.0.0.1:9\nSHADOW_RUNTIME_CAMERA_ALLOW_MOCK=0\nSHADOW_RUNTIME_CAMERA_TIMEOUT_MS=1'
 base_client_env="${base_client_env}"$'\n'"SHADOW_SYSTEM_STAGE_LOADER_PATH=$stage_loader_path"
 base_client_env="${base_client_env}"$'\n'"SHADOW_SYSTEM_STAGE_LIBRARY_PATH=$stage_library_path"
+expected_default_display_service_profile_json="$(
+  pixel_takeover_display_service_profile_json_from_stop_allocator 1
+)"
+expected_keep_allocator_display_service_profile_json="$(
+  pixel_takeover_display_service_profile_json_from_stop_allocator 0
+)"
 
 if [[ "$(pixel_camera_runtime_service_json "127.0.0.1:37656")" != '{"camera":{"endpoint":"127.0.0.1:37656"}}' ]]; then
   echo "pixel_guest_startup_config_smoke: endpoint-only camera service json mismatch" >&2
@@ -244,6 +250,8 @@ pixel_materialize_guest_run_config "$legacy_run_config_path" "$legacy_materializ
 
 STAGE_LOADER_PATH="$stage_loader_path" \
 STAGE_LIBRARY_PATH="$stage_library_path" \
+EXPECTED_DEFAULT_DISPLAY_SERVICE_PROFILE_JSON="$expected_default_display_service_profile_json" \
+EXPECTED_KEEP_ALLOCATOR_DISPLAY_SERVICE_PROFILE_JSON="$expected_keep_allocator_display_service_profile_json" \
 python3 - "$config_path" "$run_config_path" "$launch_env_path" "$overlay_launch_env_path" <<'PY'
 import json
 import os
@@ -258,6 +266,13 @@ with open(launch_env_path, encoding="utf-8") as handle:
     launch_env_lines = [line.strip() for line in handle if line.strip()]
 with open(overlay_launch_env_path, encoding="utf-8") as handle:
     overlay_launch_env_lines = [line.strip() for line in handle if line.strip()]
+
+expected_default_profile = json.loads(
+    os.environ["EXPECTED_DEFAULT_DISPLAY_SERVICE_PROFILE_JSON"]
+)
+expected_keep_allocator_profile = json.loads(
+    os.environ["EXPECTED_KEEP_ALLOCATOR_DISPLAY_SERVICE_PROFILE_JSON"]
+)
 
 assert data["schemaVersion"] == 1, data
 assert data["startup"] == {"mode": "shell", "shellStartAppId": "timeline"}, data
@@ -381,6 +396,7 @@ assert run_config["verify"] == {
     "frameCheckpointTimeoutSecs": 60,
 }, run_config
 assert run_config["takeover"] == {
+    "displayServiceProfile": expected_keep_allocator_profile,
     "restoreAndroid": False,
     "restoreInSession": False,
     "rebootOnRestoreFailure": True,
@@ -418,6 +434,7 @@ PY
   [[ -z "$pixel_guest_run_config_restore_android" ]]
   [[ -z "$pixel_guest_run_config_restore_in_session" ]]
   [[ "$pixel_guest_run_config_reboot_on_restore_failure" == "1" ]]
+  [[ "$pixel_guest_run_config_takeover_display_service_profile_json" == "$expected_keep_allocator_display_service_profile_json" ]]
   [[ "$pixel_guest_run_config_stop_allocator" == "0" ]]
 )
 
@@ -436,6 +453,7 @@ PY
   [[ "$pixel_guest_run_config_expect_client_process" == "1" ]]
   [[ "$pixel_guest_run_config_restore_android" == "1" ]]
   [[ "$pixel_guest_run_config_restore_in_session" == "1" ]]
+  [[ "$pixel_guest_run_config_takeover_display_service_profile_json" == "$expected_default_display_service_profile_json" ]]
   [[ "$pixel_guest_run_config_stop_allocator" == "1" ]]
 )
 
@@ -447,6 +465,8 @@ PY
   [[ "$pixel_guest_run_config_startup_config_path" == "$alias_run_config_path" ]]
   [[ "$pixel_guest_run_config_frame_capture_mode" == "publish" ]]
   [[ "$pixel_guest_run_config_frame_artifact_path" == "/alias/frame.ppm" ]]
+  [[ "$pixel_guest_run_config_takeover_display_service_profile_json" == "$expected_default_display_service_profile_json" ]]
+  [[ "$pixel_guest_run_config_stop_allocator" == "1" ]]
 )
 
 (
@@ -459,4 +479,6 @@ PY
   [[ "$pixel_guest_run_config_client_launch_path" == "/legacy/client" ]]
   [[ "$pixel_guest_run_config_frame_capture_mode" == "publish" ]]
   [[ "$pixel_guest_run_config_frame_artifact_path" == "/legacy/frame.ppm" ]]
+  [[ "$pixel_guest_run_config_takeover_display_service_profile_json" == "$expected_default_display_service_profile_json" ]]
+  [[ "$pixel_guest_run_config_stop_allocator" == "1" ]]
 )
