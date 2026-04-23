@@ -13,6 +13,7 @@ EXPECTED_PROP_KEY="debug.shadow.boot.rc_probe"
 EXPECTED_PROP_VALUE="ready"
 OBSERVED_PROP_KEY="debug.shadow.boot.preflight.launch"
 OBSERVED_PROP_VALUE="started"
+PROOF_DEVICE_PATH="/data/vendor/wifidump"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -74,6 +75,7 @@ SUCCESS_DEVICE_ROOT="$TMP_DIR/device-success"
 WRAPPER_ONLY_DEVICE_ROOT="$TMP_DIR/device-wrapper-only"
 create_device_tree "$SUCCESS_DEVICE_ROOT" 1
 create_device_tree "$WRAPPER_ONLY_DEVICE_ROOT" 0
+mkdir -p "$WRAPPER_ONLY_DEVICE_ROOT$PROOF_DEVICE_PATH"
 
 cat >"$MOCK_BIN/adb" <<'EOF'
 #!/usr/bin/env bash
@@ -86,6 +88,8 @@ MOCK_FAIL_HELPER_PULL="${MOCK_FAIL_HELPER_PULL:-0}"
 MOCK_BEST_EFFORT_FAILURES="${MOCK_BEST_EFFORT_FAILURES:-0}"
 MOCK_EXPECTED_PROP_KEY="${MOCK_EXPECTED_PROP_KEY:-}"
 MOCK_EXPECTED_PROP_VALUE="${MOCK_EXPECTED_PROP_VALUE:-}"
+MOCK_PROOF_LOGCAT_SUBSTRING="${MOCK_PROOF_LOGCAT_SUBSTRING:-}"
+MOCK_PROOF_PS_SUBSTRING="${MOCK_PROOF_PS_SUBSTRING:-}"
 MOCK_OBSERVED_PROP_KEY="${MOCK_OBSERVED_PROP_KEY:-}"
 MOCK_OBSERVED_PROP_VALUE="${MOCK_OBSERVED_PROP_VALUE:-}"
 
@@ -179,6 +183,15 @@ PROP
         fi
         printf '%s\n' '--------- beginning of main'
         ;;
+      "logcat -d 2>/dev/null || true")
+        if [[ "$MOCK_BEST_EFFORT_FAILURES" == "1" ]]; then
+          exit 1
+        fi
+        printf '%s\n' '--------- beginning of main'
+        if [[ -n "$MOCK_PROOF_LOGCAT_SUBSTRING" ]]; then
+          printf '%s\n' "I proof( 123): $MOCK_PROOF_LOGCAT_SUBSTRING"
+        fi
+        ;;
       "logcat -b kernel -d 2>/dev/null || true")
         if [[ "$MOCK_BEST_EFFORT_FAILURES" == "1" ]]; then
           exit 1
@@ -190,6 +203,9 @@ PROP
           exit 1
         fi
         printf 'USER PID PPID NAME ARGS\nroot 1 0 init /init\n'
+        if [[ -n "$MOCK_PROOF_PS_SUBSTRING" ]]; then
+          printf 'radio 2312 1 vendor.qcrild2 /vendor/bin/qcrild2 --tag=%s\n' "$MOCK_PROOF_PS_SUBSTRING"
+        fi
         ;;
       *)
         echo "mock adb: unexpected shell command: $cmd" >&2
@@ -332,6 +348,73 @@ assert_json_field "$PROP_SUCCESS_OUTPUT/status.json" proof_property_matched true
 assert_json_field "$PROP_SUCCESS_OUTPUT/status.json" observed_property_key "$OBSERVED_PROP_KEY"
 assert_json_field "$PROP_SUCCESS_OUTPUT/status.json" observed_property_actual "$OBSERVED_PROP_VALUE"
 assert_json_field "$PROP_SUCCESS_OUTPUT/status.json" observed_property_matched true
+
+LOGCAT_PROOF_OUTPUT="$TMP_DIR/output-logcat-proof"
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  SHADOW_BOOTIMG_SHELL=1 \
+  PIXEL_SERIAL=TESTSERIAL \
+  PIXEL_BOOT_DEVICE_LOG_ROOT="$DEVICE_LOG_ROOT" \
+  PIXEL_INIT_WRAPPER_MARKER_ROOT="$WRAPPER_MARKER_ROOT" \
+  LIVE_BOOT_ID="$LIVE_BOOT_ID" \
+  LIVE_SLOT_SUFFIX="$LIVE_SLOT_SUFFIX" \
+  MOCK_PROOF_LOGCAT_SUBSTRING="subsystem_ramdump proof reached" \
+  MOCK_DEVICE_ROOT="$WRAPPER_ONLY_DEVICE_ROOT" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_collect_logs.sh" \
+  --wait-ready 0 \
+  --proof-logcat-substring "subsystem_ramdump proof reached" \
+  --output "$LOGCAT_PROOF_OUTPUT" >/dev/null
+
+assert_json_field "$LOGCAT_PROOF_OUTPUT/status.json" collection_succeeded true
+assert_json_field "$LOGCAT_PROOF_OUTPUT/status.json" helper_dir_present false
+assert_json_field "$LOGCAT_PROOF_OUTPUT/status.json" proof_mode logcat-substring
+assert_json_field "$LOGCAT_PROOF_OUTPUT/status.json" proof_logcat_substring "subsystem_ramdump proof reached"
+assert_json_field "$LOGCAT_PROOF_OUTPUT/status.json" proof_logcat_match_count 1
+assert_json_field "$LOGCAT_PROOF_OUTPUT/status.json" proof_logcat_matched true
+
+DEVICE_PATH_PROOF_OUTPUT="$TMP_DIR/output-device-path-proof"
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  SHADOW_BOOTIMG_SHELL=1 \
+  PIXEL_SERIAL=TESTSERIAL \
+  PIXEL_BOOT_DEVICE_LOG_ROOT="$DEVICE_LOG_ROOT" \
+  PIXEL_INIT_WRAPPER_MARKER_ROOT="$WRAPPER_MARKER_ROOT" \
+  LIVE_BOOT_ID="$LIVE_BOOT_ID" \
+  LIVE_SLOT_SUFFIX="$LIVE_SLOT_SUFFIX" \
+  MOCK_DEVICE_ROOT="$WRAPPER_ONLY_DEVICE_ROOT" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_collect_logs.sh" \
+  --wait-ready 0 \
+  --proof-device-path "$PROOF_DEVICE_PATH" \
+  --output "$DEVICE_PATH_PROOF_OUTPUT" >/dev/null
+
+assert_json_field "$DEVICE_PATH_PROOF_OUTPUT/status.json" collection_succeeded true
+assert_json_field "$DEVICE_PATH_PROOF_OUTPUT/status.json" helper_dir_present false
+assert_json_field "$DEVICE_PATH_PROOF_OUTPUT/status.json" proof_mode device-path
+assert_json_field "$DEVICE_PATH_PROOF_OUTPUT/status.json" proof_device_path "$PROOF_DEVICE_PATH"
+assert_json_field "$DEVICE_PATH_PROOF_OUTPUT/status.json" proof_device_path_present true
+
+PS_PROOF_OUTPUT="$TMP_DIR/output-ps-proof"
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  SHADOW_BOOTIMG_SHELL=1 \
+  PIXEL_SERIAL=TESTSERIAL \
+  PIXEL_BOOT_DEVICE_LOG_ROOT="$DEVICE_LOG_ROOT" \
+  PIXEL_INIT_WRAPPER_MARKER_ROOT="$WRAPPER_MARKER_ROOT" \
+  LIVE_BOOT_ID="$LIVE_BOOT_ID" \
+  LIVE_SLOT_SUFFIX="$LIVE_SLOT_SUFFIX" \
+  MOCK_PROOF_PS_SUBSTRING="qcrild2" \
+  MOCK_DEVICE_ROOT="$WRAPPER_ONLY_DEVICE_ROOT" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_collect_logs.sh" \
+  --wait-ready 0 \
+  --proof-ps-substring "qcrild2" \
+  --output "$PS_PROOF_OUTPUT" >/dev/null
+
+assert_json_field "$PS_PROOF_OUTPUT/status.json" collection_succeeded true
+assert_json_field "$PS_PROOF_OUTPUT/status.json" helper_dir_present false
+assert_json_field "$PS_PROOF_OUTPUT/status.json" proof_mode ps-substring
+assert_json_field "$PS_PROOF_OUTPUT/status.json" proof_ps_substring "qcrild2"
+assert_json_field "$PS_PROOF_OUTPUT/status.json" proof_ps_match_count 1
+assert_json_field "$PS_PROOF_OUTPUT/status.json" proof_ps_matched true
 
 PROPERTY_SLOT_MISMATCH_METADATA="$TMP_DIR/property-slot-mismatch-metadata.json"
 cat >"$PROPERTY_SLOT_MISMATCH_METADATA" <<'EOF'

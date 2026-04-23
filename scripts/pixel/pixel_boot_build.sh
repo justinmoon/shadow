@@ -20,12 +20,14 @@ WORK_DIR=""
 declare -a RENAME_SPECS=()
 declare -a ADD_SPECS=()
 declare -a REPLACE_SPECS=()
+declare -a APPEND_CMDLINE_TOKENS=()
 
 usage() {
   cat <<'EOF'
 Usage: scripts/pixel/pixel_boot_build.sh [--input PATH] [--wrapper PATH] [--key PATH] [--output PATH]
                                          [--wrapper-mode standard|minimal]
                                          [--rename OLD=NEW] [--add ENTRY=HOST_PATH] [--replace ENTRY=HOST_PATH]
+                                         [--append-cmdline TOKEN]
                                          [--stock-init]
                                          [--keep-work-dir]
 
@@ -52,6 +54,58 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+validate_cmdline_token() {
+  local token
+  token="${1:?validate_cmdline_token requires a token}"
+
+  [[ "$token" =~ ^[A-Za-z0-9._:/+=,@-]+$ ]] || {
+    echo "pixel_boot_build: --append-cmdline contains unsupported characters: $token" >&2
+    exit 1
+  }
+}
+
+write_mkbootimg_args_with_cmdline_tokens() {
+  local input_args output_args
+  input_args="${1:?write_mkbootimg_args_with_cmdline_tokens requires an input path}"
+  output_args="${2:?write_mkbootimg_args_with_cmdline_tokens requires an output path}"
+  shift 2
+
+  python3 - "$input_args" "$output_args" "$@" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+input_args = Path(sys.argv[1])
+output_args = Path(sys.argv[2])
+tokens_to_append = sys.argv[3:]
+
+argv = shlex.split(input_args.read_text(encoding="utf-8"))
+
+try:
+    cmdline_index = argv.index("--cmdline")
+except ValueError:
+    cmdline_index = -1
+
+if cmdline_index >= 0:
+    if cmdline_index + 1 >= len(argv):
+        raise SystemExit("pixel_boot_build: mkbootimg args have a truncated --cmdline value")
+    cmdline_value = argv[cmdline_index + 1]
+    existing_tokens = [token for token in cmdline_value.split(" ") if token]
+else:
+    existing_tokens = []
+
+for token in tokens_to_append:
+    if token not in existing_tokens:
+        existing_tokens.append(token)
+
+if cmdline_index >= 0:
+    argv[cmdline_index + 1] = " ".join(existing_tokens)
+else:
+    argv.extend(["--cmdline", " ".join(existing_tokens)])
+output_args.write_text(shlex.join(argv) + "\n", encoding="utf-8")
+PY
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -90,6 +144,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --replace)
       REPLACE_SPECS+=("${2:?missing value for --replace}")
+      shift 2
+      ;;
+    --append-cmdline)
+      APPEND_CMDLINE_TOKENS+=("${2:?missing value for --append-cmdline}")
       shift 2
       ;;
     --keep-work-dir)
@@ -164,6 +222,12 @@ if [[ "$BUILD_MODE" == "wrapper" ]]; then
   pixel_assert_wrapper_binary_mode "$WRAPPER_BINARY" "$WRAPPER_MODE"
 fi
 
+if ((${#APPEND_CMDLINE_TOKENS[@]})); then
+  for token in "${APPEND_CMDLINE_TOKENS[@]}"; do
+    validate_cmdline_token "$token"
+  done
+fi
+
 if [[ -z "$KEY_PATH" ]]; then
   KEY_PATH="$(ensure_cached_avb_testkey)"
 fi
@@ -217,9 +281,18 @@ bootimg_compress_ramdisk \
   "$WORK_DIR/ramdisk.modified.cpio" \
   "$WORK_DIR/ramdisk.modified"
 
+mkbootimg_args_path="$WORK_DIR/unpacked/mkbootimg_args.txt"
+if ((${#APPEND_CMDLINE_TOKENS[@]})); then
+  mkbootimg_args_path="$WORK_DIR/mkbootimg_args.modified.txt"
+  write_mkbootimg_args_with_cmdline_tokens \
+    "$WORK_DIR/unpacked/mkbootimg_args.txt" \
+    "$mkbootimg_args_path" \
+    "${APPEND_CMDLINE_TOKENS[@]}"
+fi
+
 (
   cd "$WORK_DIR/unpacked"
-  bootimg_repack_from_args_file "mkbootimg_args.txt" "$WORK_DIR/ramdisk.modified" "$WORK_DIR/boot.modified.img"
+  bootimg_repack_from_args_file "$mkbootimg_args_path" "$WORK_DIR/ramdisk.modified" "$WORK_DIR/boot.modified.img"
 )
 bootimg_reapply_avb_footer "$WORK_DIR/boot.img" "$WORK_DIR/boot.modified.img" "$KEY_PATH" boot
 cp "$WORK_DIR/boot.modified.img" "$OUTPUT_IMAGE"
@@ -239,6 +312,9 @@ if ((${#ADD_SPECS[@]})); then
 fi
 if ((${#REPLACE_SPECS[@]})); then
   printf 'Extra replaced entries: %s\n' "${#REPLACE_SPECS[@]}"
+fi
+if ((${#APPEND_CMDLINE_TOKENS[@]})); then
+  printf 'Extra cmdline tokens: %s\n' "${#APPEND_CMDLINE_TOKENS[@]}"
 fi
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
   printf 'Kept workdir: %s\n' "$WORK_DIR"

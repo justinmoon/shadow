@@ -14,6 +14,9 @@ METADATA_PATH="${PIXEL_BOOT_METADATA_PATH:-$(pixel_boot_last_action_json)}"
 PROOF_PROP_SPEC="${PIXEL_BOOT_PROOF_PROP:-}"
 PROOF_PROP_KEY=""
 PROOF_PROP_VALUE=""
+PROOF_LOGCAT_SUBSTRING="${PIXEL_BOOT_PROOF_LOGCAT_SUBSTRING:-}"
+PROOF_DEVICE_PATH="${PIXEL_BOOT_PROOF_DEVICE_PATH:-}"
+PROOF_PS_SUBSTRING="${PIXEL_BOOT_PROOF_PS_SUBSTRING:-}"
 OBSERVED_PROP_SPEC="${PIXEL_BOOT_OBSERVED_PROP:-}"
 OBSERVED_PROP_KEY=""
 OBSERVED_PROP_VALUE=""
@@ -22,7 +25,10 @@ usage() {
   cat <<'EOF'
 Usage: scripts/pixel/pixel_boot_collect_logs.sh [--output DIR] [--device-log-root PATH] [--wait-ready SECONDS]
                                               [--metadata PATH] [--wrapper-marker-root PATH]
-                                              [--proof-prop KEY=VALUE] [--observed-prop KEY=VALUE]
+                                              [--proof-prop KEY=VALUE] [--proof-logcat-substring TEXT]
+                                              [--proof-device-path PATH]
+                                              [--proof-ps-substring TEXT]
+                                              [--observed-prop KEY=VALUE]
 
 Pull private Shadow boot helper logs from a booted Pixel after an experimental stock-init boot.
 EOF
@@ -62,6 +68,34 @@ validate_observed_prop_spec() {
   }
   [[ "$OBSERVED_PROP_KEY" =~ ^[A-Za-z0-9._:-]+$ ]] || {
     echo "pixel_boot_collect_logs: --observed-prop key contains unsupported characters" >&2
+    exit 1
+  }
+}
+
+validate_proof_logcat_substring() {
+  [[ -z "$PROOF_LOGCAT_SUBSTRING" ]] && return 0
+  [[ "$PROOF_LOGCAT_SUBSTRING" != *$'\n'* ]] || {
+    echo "pixel_boot_collect_logs: --proof-logcat-substring must be a single line" >&2
+    exit 1
+  }
+}
+
+validate_proof_device_path() {
+  [[ -z "$PROOF_DEVICE_PATH" ]] && return 0
+  [[ "$PROOF_DEVICE_PATH" != *$'\n'* ]] || {
+    echo "pixel_boot_collect_logs: --proof-device-path must be a single path" >&2
+    exit 1
+  }
+  [[ "$PROOF_DEVICE_PATH" == /* ]] || {
+    echo "pixel_boot_collect_logs: --proof-device-path must be absolute" >&2
+    exit 1
+  }
+}
+
+validate_proof_ps_substring() {
+  [[ -z "$PROOF_PS_SUBSTRING" ]] && return 0
+  [[ "$PROOF_PS_SUBSTRING" != *$'\n'* ]] || {
+    echo "pixel_boot_collect_logs: --proof-ps-substring must be a single line" >&2
     exit 1
   }
 }
@@ -240,6 +274,32 @@ observed_prop_ready() {
   [[ "$observed" == "$OBSERVED_PROP_VALUE" ]]
 }
 
+proof_logcat_ready() {
+  local serial
+  serial="$1"
+  [[ -n "$PROOF_LOGCAT_SUBSTRING" ]] || return 1
+
+  pixel_adb "$serial" shell 'logcat -d 2>/dev/null || true' 2>/dev/null | \
+    grep -F -- "$PROOF_LOGCAT_SUBSTRING" >/dev/null
+}
+
+proof_device_path_ready() {
+  local serial
+  serial="$1"
+  [[ -n "$PROOF_DEVICE_PATH" ]] || return 1
+
+  device_path_exists "$serial" "$PROOF_DEVICE_PATH"
+}
+
+proof_ps_ready() {
+  local serial
+  serial="$1"
+  [[ -n "$PROOF_PS_SUBSTRING" ]] || return 1
+
+  pixel_adb "$serial" shell 'ps -A -o USER,PID,PPID,NAME,ARGS 2>/dev/null || ps -A || true' 2>/dev/null | \
+    grep -F -- "$PROOF_PS_SUBSTRING" >/dev/null
+}
+
 probe_signal_ready() {
   local serial
   serial="$1"
@@ -247,6 +307,15 @@ probe_signal_ready() {
     return 0
   fi
   if proof_prop_ready "$serial"; then
+    return 0
+  fi
+  if proof_logcat_ready "$serial"; then
+    return 0
+  fi
+  if proof_device_path_ready "$serial"; then
+    return 0
+  fi
+  if proof_ps_ready "$serial"; then
     return 0
   fi
   observed_prop_ready "$serial"
@@ -278,6 +347,18 @@ while [[ $# -gt 0 ]]; do
       PROOF_PROP_SPEC="${2:?missing value for --proof-prop}"
       shift 2
       ;;
+    --proof-logcat-substring)
+      PROOF_LOGCAT_SUBSTRING="${2:?missing value for --proof-logcat-substring}"
+      shift 2
+      ;;
+    --proof-device-path)
+      PROOF_DEVICE_PATH="${2:?missing value for --proof-device-path}"
+      shift 2
+      ;;
+    --proof-ps-substring)
+      PROOF_PS_SUBSTRING="${2:?missing value for --proof-ps-substring}"
+      shift 2
+      ;;
     --observed-prop)
       OBSERVED_PROP_SPEC="${2:?missing value for --observed-prop}"
       shift 2
@@ -295,6 +376,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 validate_proof_prop_spec
+validate_proof_logcat_substring
+validate_proof_device_path
+validate_proof_ps_substring
 validate_observed_prop_spec
 
 serial="$(pixel_resolve_serial)"
@@ -336,9 +420,39 @@ if device_path_exists "$serial" "$WRAPPER_MARKER_ROOT"; then
 fi
 collect_wrapper_markers_best_effort "$serial" "$OUTPUT_DIR/device"
 capture_adb_shell_best_effort "$serial" "$OUTPUT_DIR/getprop.txt" getprop || true
+capture_adb_shell_best_effort "$serial" "$OUTPUT_DIR/logcat-all.txt" 'logcat -d 2>/dev/null || true' || true
 capture_adb_shell_best_effort "$serial" "$OUTPUT_DIR/logcat-shadow.txt" 'logcat -d -s shadow-init:I shadow-boot:I 2>/dev/null || true' || true
 capture_adb_shell_best_effort "$serial" "$OUTPUT_DIR/logcat-kernel.txt" 'logcat -b kernel -d 2>/dev/null || true' || true
 capture_adb_shell_best_effort "$serial" "$OUTPUT_DIR/ps.txt" 'ps -A -o USER,PID,PPID,NAME,ARGS 2>/dev/null || ps -A || true' || true
+
+proof_logcat_path="$OUTPUT_DIR/proof-logcat.txt"
+matched_proof_logcat=false
+proof_logcat_match_count=0
+if [[ -n "$PROOF_LOGCAT_SUBSTRING" ]]; then
+  if grep -F -- "$PROOF_LOGCAT_SUBSTRING" "$OUTPUT_DIR/logcat-all.txt" >"$proof_logcat_path"; then
+    matched_proof_logcat=true
+    proof_logcat_match_count="$(wc -l <"$proof_logcat_path" | tr -d '[:space:]')"
+  else
+    : >"$proof_logcat_path"
+  fi
+fi
+
+matched_proof_device_path=false
+if [[ -n "$PROOF_DEVICE_PATH" ]] && device_path_exists "$serial" "$PROOF_DEVICE_PATH"; then
+  matched_proof_device_path=true
+fi
+
+proof_ps_path="$OUTPUT_DIR/proof-ps.txt"
+matched_proof_ps=false
+proof_ps_match_count=0
+if [[ -n "$PROOF_PS_SUBSTRING" ]]; then
+  if grep -F -- "$PROOF_PS_SUBSTRING" "$OUTPUT_DIR/ps.txt" >"$proof_ps_path"; then
+    matched_proof_ps=true
+    proof_ps_match_count="$(wc -l <"$proof_ps_path" | tr -d '[:space:]')"
+  else
+    : >"$proof_ps_path"
+  fi
+fi
 
 log_dir="$OUTPUT_DIR/device/$(device_log_dir_name)"
 helper_status_present=false
@@ -427,6 +541,15 @@ fi
 if [[ "$collection_succeeded" != "true" && -n "$PROOF_PROP_KEY" && "$matched_proof_prop" == "true" && "$live_matches_expected_slot" == "true" ]]; then
   collection_succeeded=true
 fi
+if [[ "$collection_succeeded" != "true" && -n "$PROOF_LOGCAT_SUBSTRING" && "$matched_proof_logcat" == "true" && "$live_matches_expected_slot" == "true" ]]; then
+  collection_succeeded=true
+fi
+if [[ "$collection_succeeded" != "true" && -n "$PROOF_DEVICE_PATH" && "$matched_proof_device_path" == "true" && "$live_matches_expected_slot" == "true" ]]; then
+  collection_succeeded=true
+fi
+if [[ "$collection_succeeded" != "true" && -n "$PROOF_PS_SUBSTRING" && "$matched_proof_ps" == "true" && "$live_matches_expected_slot" == "true" ]]; then
+  collection_succeeded=true
+fi
 
 pixel_write_status_json \
   "$OUTPUT_DIR/status.json" \
@@ -450,11 +573,19 @@ pixel_write_status_json \
   matched_current_slot="$matched_current_slot" \
   matched_expected_slot="$matched_expected_slot" \
   live_matches_expected_slot="$live_matches_expected_slot" \
-  proof_mode="$(if [[ -n "$PROOF_PROP_KEY" ]]; then printf property; else printf helper-dir; fi)" \
+  proof_mode="$(if [[ -n "$PROOF_PROP_KEY" ]]; then printf property; elif [[ -n "$PROOF_LOGCAT_SUBSTRING" ]]; then printf logcat-substring; elif [[ -n "$PROOF_DEVICE_PATH" ]]; then printf device-path; elif [[ -n "$PROOF_PS_SUBSTRING" ]]; then printf ps-substring; else printf helper-dir; fi)" \
   proof_property_key="$PROOF_PROP_KEY" \
   proof_property_expected="$PROOF_PROP_VALUE" \
   proof_property_actual="$observed_prop_value" \
   proof_property_matched="$matched_proof_prop" \
+  proof_logcat_substring="$PROOF_LOGCAT_SUBSTRING" \
+  proof_logcat_match_count="$proof_logcat_match_count" \
+  proof_logcat_matched="$matched_proof_logcat" \
+  proof_device_path="$PROOF_DEVICE_PATH" \
+  proof_device_path_present="$matched_proof_device_path" \
+  proof_ps_substring="$PROOF_PS_SUBSTRING" \
+  proof_ps_match_count="$proof_ps_match_count" \
+  proof_ps_matched="$matched_proof_ps" \
   observed_property_key="$OBSERVED_PROP_KEY" \
   observed_property_expected="$OBSERVED_PROP_VALUE" \
   observed_property_actual="$observed_secondary_prop_value" \
@@ -494,6 +625,14 @@ proof_property_key=${PROOF_PROP_KEY:-<none>}
 proof_property_expected=${PROOF_PROP_VALUE:-<none>}
 proof_property_actual=${observed_prop_value:-<none>}
 proof_property_matched=$matched_proof_prop
+proof_logcat_substring=${PROOF_LOGCAT_SUBSTRING:-<none>}
+proof_logcat_match_count=$proof_logcat_match_count
+proof_logcat_matched=$matched_proof_logcat
+proof_device_path=${PROOF_DEVICE_PATH:-<none>}
+proof_device_path_present=$matched_proof_device_path
+proof_ps_substring=${PROOF_PS_SUBSTRING:-<none>}
+proof_ps_match_count=$proof_ps_match_count
+proof_ps_matched=$matched_proof_ps
 observed_property_key=${OBSERVED_PROP_KEY:-<none>}
 observed_property_expected=${OBSERVED_PROP_VALUE:-<none>}
 observed_property_actual=${observed_secondary_prop_value:-<none>}
@@ -514,6 +653,18 @@ fi
 if [[ -n "$PROOF_PROP_KEY" ]]; then
   printf 'Proof property: %s=%s\n' "$PROOF_PROP_KEY" "$PROOF_PROP_VALUE"
   printf 'Observed property: %s\n' "$observed_prop_value"
+fi
+if [[ -n "$PROOF_LOGCAT_SUBSTRING" ]]; then
+  printf 'Proof logcat substring: %s\n' "$PROOF_LOGCAT_SUBSTRING"
+  printf 'Proof logcat matches: %s\n' "$proof_logcat_match_count"
+fi
+if [[ -n "$PROOF_DEVICE_PATH" ]]; then
+  printf 'Proof device path: %s\n' "$PROOF_DEVICE_PATH"
+  printf 'Proof device path present: %s\n' "$matched_proof_device_path"
+fi
+if [[ -n "$PROOF_PS_SUBSTRING" ]]; then
+  printf 'Proof ps substring: %s\n' "$PROOF_PS_SUBSTRING"
+  printf 'Proof ps matches: %s\n' "$proof_ps_match_count"
 fi
 if [[ -n "$OBSERVED_PROP_KEY" ]]; then
   printf 'Observed property target: %s=%s\n' "$OBSERVED_PROP_KEY" "$OBSERVED_PROP_VALUE"

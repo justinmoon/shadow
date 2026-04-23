@@ -20,6 +20,9 @@ WAIT_BOOT_COMPLETED=1
 SKIP_COLLECT="${PIXEL_BOOT_ONESHOT_SKIP_COLLECT:-0}"
 RECOVER_TRACES_AFTER="${PIXEL_BOOT_ONESHOT_RECOVER_TRACES_AFTER:-0}"
 PROOF_PROP_SPEC="${PIXEL_BOOT_PROOF_PROP:-}"
+PROOF_LOGCAT_SUBSTRING="${PIXEL_BOOT_PROOF_LOGCAT_SUBSTRING:-}"
+PROOF_DEVICE_PATH="${PIXEL_BOOT_PROOF_DEVICE_PATH:-}"
+PROOF_PS_SUBSTRING="${PIXEL_BOOT_PROOF_PS_SUBSTRING:-}"
 OBSERVED_PROP_SPEC="${PIXEL_BOOT_OBSERVED_PROP:-}"
 DRY_RUN=0
 ORIGINAL_ARGS=("$@")
@@ -93,6 +96,9 @@ Usage: scripts/pixel/pixel_boot_oneshot.sh [--image PATH] [--output DIR] [--wait
                                           [--return-timeout SECONDS]
                                           [--skip-collect] [--recover-traces-after]
                                           [--no-wait-boot-completed] [--proof-prop KEY=VALUE]
+                                          [--proof-logcat-substring TEXT]
+                                          [--proof-device-path PATH]
+                                          [--proof-ps-substring TEXT]
                                           [--observed-prop KEY=VALUE]
                                           [--dry-run]
 
@@ -228,6 +234,21 @@ validate_success_mode() {
     exit 1
   fi
 
+  if [[ "$SUCCESS_SIGNAL" == "fastboot-return" && -n "$PROOF_LOGCAT_SUBSTRING" ]]; then
+    echo "pixel_boot_oneshot: --proof-logcat-substring is only supported with --success-signal adb" >&2
+    exit 1
+  fi
+
+  if [[ "$SUCCESS_SIGNAL" == "fastboot-return" && -n "$PROOF_DEVICE_PATH" ]]; then
+    echo "pixel_boot_oneshot: --proof-device-path is only supported with --success-signal adb" >&2
+    exit 1
+  fi
+
+  if [[ "$SUCCESS_SIGNAL" == "fastboot-return" && -n "$PROOF_PS_SUBSTRING" ]]; then
+    echo "pixel_boot_oneshot: --proof-ps-substring is only supported with --success-signal adb" >&2
+    exit 1
+  fi
+
   if [[ "$SUCCESS_SIGNAL" == "fastboot-return" ]] && flag_enabled "$SKIP_COLLECT"; then
     echo "pixel_boot_oneshot: --skip-collect is only supported with --success-signal adb" >&2
     exit 1
@@ -240,6 +261,21 @@ validate_success_mode() {
 
   if flag_enabled "$SKIP_COLLECT" && [[ -n "$PROOF_PROP_SPEC" ]]; then
     echo "pixel_boot_oneshot: --proof-prop requires helper-dir collection; omit it when using --skip-collect" >&2
+    exit 1
+  fi
+
+  if flag_enabled "$SKIP_COLLECT" && [[ -n "$PROOF_LOGCAT_SUBSTRING" ]]; then
+    echo "pixel_boot_oneshot: --proof-logcat-substring requires helper-dir collection; omit it when using --skip-collect" >&2
+    exit 1
+  fi
+
+  if flag_enabled "$SKIP_COLLECT" && [[ -n "$PROOF_DEVICE_PATH" ]]; then
+    echo "pixel_boot_oneshot: --proof-device-path requires helper-dir collection; omit it when using --skip-collect" >&2
+    exit 1
+  fi
+
+  if flag_enabled "$SKIP_COLLECT" && [[ -n "$PROOF_PS_SUBSTRING" ]]; then
+    echo "pixel_boot_oneshot: --proof-ps-substring requires helper-dir collection; omit it when using --skip-collect" >&2
     exit 1
   fi
 
@@ -362,6 +398,8 @@ write_status() {
     "skip_collect=$(bool_word "$SKIP_COLLECT")" \
     "recover_traces_after=$(bool_word "$RECOVER_TRACES_AFTER")" \
     "proof_prop=$PROOF_PROP_SPEC" \
+    "proof_device_path=$PROOF_DEVICE_PATH" \
+    "proof_ps_substring=$PROOF_PS_SUBSTRING" \
     "observed_prop=$OBSERVED_PROP_SPEC" \
     "slot_before=$slot_before" \
     "slot_after=$slot_after" \
@@ -416,6 +454,7 @@ write_status() {
     "bootreason_failure_summary=$bootreason_failure_summary" <<'PY'
 import json
 import sys
+from pathlib import Path
 
 output = sys.argv[1]
 payload = {}
@@ -439,6 +478,61 @@ for item in sys.argv[2:]:
         payload[key] = parsed
 
 payload["bootreason_props"] = bootreason_props
+
+collect_output_dir = payload.get("collect_output_dir")
+collect_status = None
+collect_status_path = None
+if isinstance(collect_output_dir, str) and collect_output_dir:
+    collect_status_path = Path(collect_output_dir) / "status.json"
+    payload["collect_status_path"] = str(collect_status_path)
+    if collect_status_path.is_file():
+        with collect_status_path.open("r", encoding="utf-8") as fh:
+            collect_status = json.load(fh)
+        payload["collect_status"] = collect_status
+
+        for key in (
+            "collection_succeeded",
+            "helper_dir_present",
+            "helper_dir_pulled",
+            "helper_status_present",
+            "matched_current_boot",
+            "matched_current_slot",
+            "matched_expected_slot",
+            "wrapper_marker_dir_present",
+            "wrapper_matches_current_boot",
+            "wrapper_status",
+            "proof_mode",
+            "proof_property_key",
+            "proof_property_expected",
+            "proof_property_actual",
+            "proof_property_matched",
+            "proof_logcat_substring",
+            "proof_logcat_match_count",
+            "proof_logcat_matched",
+            "proof_device_path",
+            "proof_device_path_present",
+            "proof_ps_substring",
+            "proof_ps_match_count",
+            "proof_ps_matched",
+            "observed_property_key",
+            "observed_property_expected",
+            "observed_property_actual",
+            "observed_property_matched",
+            "preflight_summary_present",
+            "preflight_checks_present",
+            "preflight_profile",
+            "preflight_status",
+            "preflight_ready",
+            "preflight_blocked_reason",
+            "preflight_data_mounted",
+            "preflight_data_writable",
+            "preflight_data_local_tmp_ready",
+            "preflight_required_check_count",
+            "preflight_missing_required_count",
+            "preflight_required_missing_labels",
+        ):
+            if key in collect_status:
+                payload[key] = collect_status[key]
 
 with open(output, "w", encoding="utf-8") as fh:
     json.dump(payload, fh, indent=2, sort_keys=True)
@@ -737,6 +831,18 @@ while [[ $# -gt 0 ]]; do
       PROOF_PROP_SPEC="${2:?missing value for --proof-prop}"
       shift 2
       ;;
+    --proof-logcat-substring)
+      PROOF_LOGCAT_SUBSTRING="${2:?missing value for --proof-logcat-substring}"
+      shift 2
+      ;;
+    --proof-device-path)
+      PROOF_DEVICE_PATH="${2:?missing value for --proof-device-path}"
+      shift 2
+      ;;
+    --proof-ps-substring)
+      PROOF_PS_SUBSTRING="${2:?missing value for --proof-ps-substring}"
+      shift 2
+      ;;
     --observed-prop)
       OBSERVED_PROP_SPEC="${2:?missing value for --observed-prop}"
       shift 2
@@ -807,6 +913,9 @@ skip_collect=$(bool_word "$SKIP_COLLECT")
 recover_traces_after=$(bool_word "$RECOVER_TRACES_AFTER")
 auto_fastboot_reboot=$(bool_word "$AUTO_FASTBOOT_REBOOT")
 proof_prop=$PROOF_PROP_SPEC
+proof_logcat_substring=$PROOF_LOGCAT_SUBSTRING
+proof_device_path=$PROOF_DEVICE_PATH
+proof_ps_substring=$PROOF_PS_SUBSTRING
 observed_prop=$OBSERVED_PROP_SPEC
 EOF
   if [[ -n "$collect_output_dir" ]]; then
@@ -839,6 +948,8 @@ pixel_write_status_json \
   return_timeout_secs="$RETURN_TIMEOUT_SECS" \
   fastboot_leave_timeout_secs="$FASTBOOT_LEAVE_TIMEOUT_SECS" \
   proof_prop="$PROOF_PROP_SPEC" \
+  proof_device_path="$PROOF_DEVICE_PATH" \
+  proof_ps_substring="$PROOF_PS_SUBSTRING" \
   observed_prop="$OBSERVED_PROP_SPEC" \
   wait_boot_completed="$(wait_boot_completed_status_word)" \
   skip_collect="$(bool_word "$SKIP_COLLECT")" \
@@ -913,6 +1024,15 @@ if ! flag_enabled "$SKIP_COLLECT"; then
   )
   if [[ -n "$PROOF_PROP_SPEC" ]]; then
     collect_args+=(--proof-prop "$PROOF_PROP_SPEC")
+  fi
+  if [[ -n "$PROOF_LOGCAT_SUBSTRING" ]]; then
+    collect_args+=(--proof-logcat-substring "$PROOF_LOGCAT_SUBSTRING")
+  fi
+  if [[ -n "$PROOF_DEVICE_PATH" ]]; then
+    collect_args+=(--proof-device-path "$PROOF_DEVICE_PATH")
+  fi
+  if [[ -n "$PROOF_PS_SUBSTRING" ]]; then
+    collect_args+=(--proof-ps-substring "$PROOF_PS_SUBSTRING")
   fi
   if [[ -n "$OBSERVED_PROP_SPEC" ]]; then
     collect_args+=(--observed-prop "$OBSERVED_PROP_SPEC")

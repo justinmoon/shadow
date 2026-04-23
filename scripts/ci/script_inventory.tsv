@@ -72,8 +72,11 @@ scripts/lib/cpio_edit.py	lib	Shared Android ramdisk cpio editor used by the boot
 scripts/lib/pixel_runtime_linux_bundle_common.sh	lib	Shared Pixel runtime Linux bundle helper library.
 scripts/pixel/pixel_runtime_summary.py	pixel	Private Pixel runtime result summarizer.
 scripts/pixel/pixel_boot_build.sh	pixel	Private sunfish boot image wrapper/repack helper.
+scripts/pixel/pixel_boot_build_cmdline_probe.sh	pixel	Private stock-init sunfish boot image builder that appends boot header cmdline tokens for androidboot/ro.boot probes.
 scripts/pixel/pixel_boot_build_rc_probe.sh	pixel	Private stock-init sunfish boot image builder that injects a property-only imported-rc probe.
 scripts/pixel/pixel_boot_build_kgsl_probe.sh	pixel	Private stock-init sunfish boot image builder that injects a supervised readonly KGSL probe helper with durable breadcrumbs.
+scripts/pixel/pixel_boot_build_ramdisk_prop_probe.sh	pixel	Private stock-init sunfish boot image builder that appends a property to the preserved ramdisk build.prop path.
+scripts/pixel/pixel_boot_build_second_stage_rc_probe.sh	pixel	Private stock-init sunfish boot image builder that retargets the primary second-stage init rc path through /second_stage_resources.
 scripts/pixel/pixel_boot_build_log_probe.sh	pixel	Private sunfish boot image builder that injects a log-probe or preflight-report boot helper.
 scripts/pixel/pixel_boot_collect_logs.sh	pixel	Private host-side collector for experimental Shadow boot helper logs and preflight summaries.
 scripts/pixel/pixel_boot_recover_traces.sh	pixel	Private host-side collector for post-reboot Android boot trace recovery behind sc debug boot-lab-recover-traces.

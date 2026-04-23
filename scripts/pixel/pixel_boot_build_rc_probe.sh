@@ -18,6 +18,7 @@ PATCH_MODE="${PIXEL_BOOT_RC_PROBE_PATCH_MODE:-imported-rc}"
 KEEP_WORK_DIR=0
 WORK_DIR=""
 PATCH_TARGET=""
+PATCH_TARGET_PROFILE="unknown"
 PROPERTY_KEY=""
 PROPERTY_VALUE=""
 
@@ -154,6 +155,26 @@ sys.exit(1)
 PY
 }
 
+classify_patch_target_profile() {
+  local target_path
+  target_path="${1:?classify_patch_target_profile requires a target path}"
+
+  if grep -Eq '^[[:space:]]*import /init\.recovery\.' "$target_path"; then
+    printf 'recovery-style\n'
+    return 0
+  fi
+  if grep -Eq '^[[:space:]]*service recovery /system/bin/recovery$' "$target_path"; then
+    printf 'recovery-style\n'
+    return 0
+  fi
+  if grep -Eq '^[[:space:]]*service fastbootd /system/bin/fastbootd$' "$target_path"; then
+    printf 'recovery-style\n'
+    return 0
+  fi
+
+  printf 'unclassified\n'
+}
+
 cleanup() {
   if [[ "$KEEP_WORK_DIR" == "1" ]]; then
     return 0
@@ -246,6 +267,7 @@ PATCH_TARGET="$(detect_patch_target "$WORK_DIR/ramdisk.cpio" "$PATCH_TARGET_OVER
 python3 "$SCRIPT_DIR/lib/cpio_edit.py" \
   --input "$WORK_DIR/ramdisk.cpio" \
   --extract "$PATCH_TARGET=$WORK_DIR/patch-target.stock"
+PATCH_TARGET_PROFILE="$(classify_patch_target_profile "$WORK_DIR/patch-target.stock")"
 
 if [[ "$PATCH_MODE" == "imported-rc" ]]; then
   if grep -Fxq 'import /init.shadow.rc' "$WORK_DIR/patch-target.stock"; then
@@ -292,6 +314,7 @@ fi
 
 printf 'Patch mode: %s\n' "$PATCH_MODE"
 printf 'Patch target: %s\n' "$PATCH_TARGET"
+printf 'Patch target profile: %s\n' "$PATCH_TARGET_PROFILE"
 printf 'Trigger: %s\n' "$TRIGGER"
 printf 'Property: %s=%s\n' "$PROPERTY_KEY" "$PROPERTY_VALUE"
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then

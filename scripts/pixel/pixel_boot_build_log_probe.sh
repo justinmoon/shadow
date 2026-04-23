@@ -18,12 +18,18 @@ PATCH_TARGET_OVERRIDE="${PIXEL_BOOT_LOG_PROBE_PATCH_TARGET:-}"
 PREFLIGHT_PROFILE="${PIXEL_BOOT_PREFLIGHT_PROFILE:-}"
 HELPER_STATUS_PROP_KEY="${PIXEL_BOOT_HELPER_STATUS_PROP_KEY:-debug.shadow.boot.log_probe}"
 PREFLIGHT_STATUS_PROP_KEY="${PIXEL_BOOT_PREFLIGHT_STATUS_PROP_KEY:-debug.shadow.boot.preflight.status}"
+PREFLIGHT_SECOND_STAGE_PROOF_PROP="${PIXEL_BOOT_PREFLIGHT_SECOND_STAGE_PROOF_PROP:-debug.shadow.boot.preflight.second_stage=ready}"
 PREFLIGHT_IMPORT_PROOF_PROP="${PIXEL_BOOT_PREFLIGHT_IMPORT_PROOF_PROP:-debug.shadow.boot.preflight.import=triggered}"
 PREFLIGHT_LAUNCH_PROOF_PROP="${PIXEL_BOOT_PREFLIGHT_LAUNCH_PROOF_PROP:-debug.shadow.boot.preflight.launch=started}"
 BUILD_MODE="wrapper"
 KEEP_WORK_DIR=0
 WORK_DIR=""
 PATCH_TARGET=""
+PATCH_TARGET_PROFILE="unknown"
+RAMDISK_PROP_ENTRY="system/etc/ramdisk/build.prop"
+RAMDISK_PROP_PATH=""
+PREFLIGHT_SECOND_STAGE_PROOF_KEY=""
+PREFLIGHT_SECOND_STAGE_PROOF_VALUE=""
 PREFLIGHT_IMPORT_PROOF_KEY=""
 PREFLIGHT_IMPORT_PROOF_VALUE=""
 PREFLIGHT_LAUNCH_PROOF_KEY=""
@@ -111,6 +117,19 @@ parse_preflight_launch_proof_prop() {
   }
 }
 
+parse_preflight_second_stage_proof_prop() {
+  [[ "$PREFLIGHT_SECOND_STAGE_PROOF_PROP" == *=* ]] || {
+    echo "pixel_boot_build_log_probe: PIXEL_BOOT_PREFLIGHT_SECOND_STAGE_PROOF_PROP must use KEY=VALUE" >&2
+    exit 1
+  }
+  PREFLIGHT_SECOND_STAGE_PROOF_KEY="${PREFLIGHT_SECOND_STAGE_PROOF_PROP%%=*}"
+  PREFLIGHT_SECOND_STAGE_PROOF_VALUE="${PREFLIGHT_SECOND_STAGE_PROOF_PROP#*=}"
+  [[ -n "$PREFLIGHT_SECOND_STAGE_PROOF_KEY" && -n "$PREFLIGHT_SECOND_STAGE_PROOF_VALUE" ]] || {
+    echo "pixel_boot_build_log_probe: PIXEL_BOOT_PREFLIGHT_SECOND_STAGE_PROOF_PROP requires a non-empty key and value" >&2
+    exit 1
+  }
+}
+
 parse_preflight_import_proof_prop() {
   [[ "$PREFLIGHT_IMPORT_PROOF_PROP" == *=* ]] || {
     echo "pixel_boot_build_log_probe: PIXEL_BOOT_PREFLIGHT_IMPORT_PROOF_PROP must use KEY=VALUE" >&2
@@ -136,12 +155,39 @@ validate_preflight_profile() {
       ;;
   esac
   validate_property_key "$PREFLIGHT_STATUS_PROP_KEY" "preflight status property key"
+  parse_preflight_second_stage_proof_prop
+  validate_property_key "$PREFLIGHT_SECOND_STAGE_PROOF_KEY" "preflight second-stage proof property key"
+  validate_property_value "$PREFLIGHT_SECOND_STAGE_PROOF_VALUE" "preflight second-stage proof property value"
   parse_preflight_import_proof_prop
   validate_property_key "$PREFLIGHT_IMPORT_PROOF_KEY" "preflight import proof property key"
   validate_property_value "$PREFLIGHT_IMPORT_PROOF_VALUE" "preflight import proof property value"
   parse_preflight_launch_proof_prop
   validate_property_key "$PREFLIGHT_LAUNCH_PROOF_KEY" "preflight launch proof property key"
   validate_property_value "$PREFLIGHT_LAUNCH_PROOF_VALUE" "preflight launch proof property value"
+}
+
+append_ramdisk_prop_probe() {
+  local input_path output_path property_key property_value
+  input_path="${1:?append_ramdisk_prop_probe requires an input path}"
+  output_path="${2:?append_ramdisk_prop_probe requires an output path}"
+  property_key="${3:?append_ramdisk_prop_probe requires a property key}"
+  property_value="${4:?append_ramdisk_prop_probe requires a property value}"
+
+  python3 - "$input_path" "$output_path" "$property_key" "$property_value" <<'PY'
+from pathlib import Path
+import sys
+
+input_path = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+property_key = sys.argv[3]
+property_value = sys.argv[4]
+
+payload = input_path.read_text(encoding="utf-8")
+if payload and not payload.endswith("\n"):
+    payload += "\n"
+payload += f"{property_key}={property_value}\n"
+output_path.write_text(payload, encoding="utf-8")
+PY
 }
 
 detect_patch_target() {
@@ -202,6 +248,26 @@ print(
 )
 sys.exit(1)
 PY
+}
+
+classify_patch_target_profile() {
+  local target_path
+  target_path="${1:?classify_patch_target_profile requires a target path}"
+
+  if grep -Eq '^[[:space:]]*import /init\.recovery\.' "$target_path"; then
+    printf 'recovery-style\n'
+    return 0
+  fi
+  if grep -Eq '^[[:space:]]*service recovery /system/bin/recovery$' "$target_path"; then
+    printf 'recovery-style\n'
+    return 0
+  fi
+  if grep -Eq '^[[:space:]]*service fastbootd /system/bin/fastbootd$' "$target_path"; then
+    printf 'recovery-style\n'
+    return 0
+  fi
+
+  printf 'unclassified\n'
 }
 
 cleanup() {
@@ -301,6 +367,7 @@ PATCH_TARGET="$(detect_patch_target "$WORK_DIR/ramdisk.cpio" "$PATCH_TARGET_OVER
 python3 "$SCRIPT_DIR/lib/cpio_edit.py" \
   --input "$WORK_DIR/ramdisk.cpio" \
   --extract "$PATCH_TARGET=$WORK_DIR/patch-target.stock"
+PATCH_TARGET_PROFILE="$(classify_patch_target_profile "$WORK_DIR/patch-target.stock")"
 
 if grep -Fxq 'import /init.shadow.rc' "$WORK_DIR/patch-target.stock"; then
   cp "$WORK_DIR/patch-target.stock" "$WORK_DIR/patch-target.patched"
@@ -311,6 +378,18 @@ else
   } >"$WORK_DIR/patch-target.patched"
 fi
 chmod 0644 "$WORK_DIR/patch-target.patched"
+
+if [[ "$PREFLIGHT_PROFILE" == "phase1-shell" ]]; then
+  python3 "$SCRIPT_DIR/lib/cpio_edit.py" \
+    --input "$WORK_DIR/ramdisk.cpio" \
+    --extract "$RAMDISK_PROP_ENTRY=$WORK_DIR/ramdisk-build.prop.stock"
+  append_ramdisk_prop_probe \
+    "$WORK_DIR/ramdisk-build.prop.stock" \
+    "$WORK_DIR/ramdisk-build.prop.modified" \
+    "$PREFLIGHT_SECOND_STAGE_PROOF_KEY" \
+    "$PREFLIGHT_SECOND_STAGE_PROOF_VALUE"
+  RAMDISK_PROP_PATH="$WORK_DIR/ramdisk-build.prop.modified"
+fi
 
 {
   printf 'on %s\n' "${TRIGGER}"
@@ -574,6 +653,10 @@ build_args=(
   --replace "$PATCH_TARGET=$WORK_DIR/patch-target.patched"
 )
 
+if [[ -n "$RAMDISK_PROP_PATH" ]]; then
+  build_args+=(--replace "$RAMDISK_PROP_ENTRY=$RAMDISK_PROP_PATH")
+fi
+
 if [[ "$BUILD_MODE" == "stock-init" ]]; then
   build_args+=(--stock-init)
 else
@@ -591,6 +674,7 @@ printf 'Build mode: %s\n' "$BUILD_MODE"
 printf 'Trigger: %s\n' "$TRIGGER"
 printf 'Device log root: %s\n' "$DEVICE_LOG_ROOT"
 printf 'Patch target: %s\n' "$PATCH_TARGET"
+printf 'Patch target profile: %s\n' "$PATCH_TARGET_PROFILE"
 if [[ -n "$PREFLIGHT_PROFILE" ]]; then
   printf 'Preflight profile: %s\n' "$PREFLIGHT_PROFILE"
 fi

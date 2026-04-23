@@ -13,6 +13,9 @@ PROBE_RUN_TOKEN="tooling-run-token-42"
 STOCK_BOOT_IMAGE="$TMP_DIR/stock-boot.img"
 ONESHOT_OUTPUT="$TMP_DIR/oneshot-output"
 FLASH_RUN_OUTPUT="$TMP_DIR/flash-run-output"
+ONESHOT_ADB_LOGCAT_PROOF_OUTPUT="$TMP_DIR/oneshot-adb-logcat-proof-output"
+ONESHOT_ADB_DEVICE_PATH_PROOF_OUTPUT="$TMP_DIR/oneshot-adb-device-path-proof-output"
+ONESHOT_ADB_PS_PROOF_OUTPUT="$TMP_DIR/oneshot-adb-ps-proof-output"
 ONESHOT_ADB_RETURN_OUTPUT="$TMP_DIR/oneshot-adb-return-output"
 ONESHOT_ADB_RETURN_STALE_HISTORY_OUTPUT="$TMP_DIR/oneshot-adb-return-stale-history-output"
 ONESHOT_ADB_RETURN_NOWAIT_OUTPUT="$TMP_DIR/oneshot-adb-return-nowait-output"
@@ -27,8 +30,11 @@ MOCK_DEVICE_STATE_DIR="$TMP_DIR/mock-device-state"
 BOOT_BUILD_INPUT="$TMP_DIR/build-input.img"
 BOOT_BUILD_RAMDISK="$TMP_DIR/build-ramdisk.cpio"
 BOOT_BUILD_RAMDISK_WITH_RECOVERY="$TMP_DIR/build-ramdisk-with-recovery.cpio"
+BOOT_BUILD_RAMDISK_RECOVERY_STYLE="$TMP_DIR/build-ramdisk-recovery-style.cpio"
 BOOT_BUILD_SYSTEM_INIT_RAMDISK="$TMP_DIR/build-system-init-ramdisk.cpio"
 BOOT_BUILD_SYSTEM_INIT_NONSTOCK_ROOT_RAMDISK="$TMP_DIR/build-system-init-nonstock-root-ramdisk.cpio"
+BOOT_BUILD_SECOND_STAGE_RC_RAMDISK="$TMP_DIR/build-second-stage-rc-ramdisk.cpio"
+BOOT_BUILD_RAMDISK_PROP_RAMDISK="$TMP_DIR/build-ramdisk-prop-ramdisk.cpio"
 WRAPPER_STANDARD_BIN="$TMP_DIR/init-wrapper-standard"
 WRAPPER_MINIMAL_BIN="$TMP_DIR/init-wrapper-minimal"
 AVB_KEY_PATH="$TMP_DIR/avb-testkey.pem"
@@ -44,6 +50,7 @@ C_WRAPPER_SYSTEM_BUILD_OUTPUT="$TMP_DIR/built-init-wrapper-c-system-init-minimal
 BAD_C_WRAPPER_SYSTEM_BUILD_OUTPUT="$TMP_DIR/bad-init-wrapper-c-system-init-minimal"
 WRONG_TARGET_C_WRAPPER_SYSTEM_BUILD_OUTPUT="$TMP_DIR/wrong-target-init-wrapper-c-system-init-minimal"
 STOCK_INIT_OUTPUT_IMAGE="$TMP_DIR/stock-init-output.img"
+CMDLINE_PROBE_OUTPUT_IMAGE="$TMP_DIR/cmdline-probe-stock-init.img"
 INIT_SYMLINK_OUTPUT_IMAGE="$TMP_DIR/init-symlink-output.img"
 SYSTEM_INIT_SYMLINK_OUTPUT_IMAGE="$TMP_DIR/system-init-symlink-output.img"
 SYSTEM_INIT_WRAPPER_OUTPUT_IMAGE="$TMP_DIR/system-init-wrapper-output.img"
@@ -52,6 +59,8 @@ LOG_PREFLIGHT_OUTPUT_IMAGE="$TMP_DIR/log-probe-preflight-stock-init.img"
 KGSL_PROBE_OUTPUT_IMAGE="$TMP_DIR/kgsl-probe-stock-init.img"
 RC_PROBE_OUTPUT_IMAGE="$TMP_DIR/rc-probe-stock-init.img"
 RC_PROBE_INLINE_OUTPUT_IMAGE="$TMP_DIR/rc-probe-inline-stock-init.img"
+RAMDISK_PROP_PROBE_OUTPUT_IMAGE="$TMP_DIR/ramdisk-prop-probe-stock-init.img"
+SECOND_STAGE_RC_PROBE_OUTPUT_IMAGE="$TMP_DIR/second-stage-rc-probe-stock-init.img"
 PREFLIGHT_OUTPUT="$TMP_DIR/boot-preflight-output"
 PREFLIGHT_CONFLICT_OUTPUT="$TMP_DIR/boot-preflight-conflict-output"
 PREFLIGHT_LEASE_COMMON_ROOT="$TMP_DIR/preflight-lease-common-root"
@@ -279,6 +288,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 mkdir -p "$output/collect"
+cat >"$output/collect/getprop.txt" <<'GPROPS'
+[debug.shadow.boot.preflight.second_stage]: [ready]
+GPROPS
 python3 - "$output/status.json" "$output/collect/status.json" "$image" "${PIXEL_SERIAL:-TESTSERIAL}" "$proof_prop" "$observed_prop" <<'PY'
 import json
 import sys
@@ -535,9 +547,17 @@ init_rc_path.write_text(
 )
 init_rc_path.chmod(0o644)
 
+ramdisk_build_prop_path = tmp_dir / "stock-ramdisk-build.prop"
+ramdisk_build_prop_path.write_text(
+    "ro.build.version.release=13\n",
+    encoding="utf-8",
+)
+ramdisk_build_prop_path.chmod(0o644)
+
 entries = [
     build_entry_from_path("init", init_path, 1),
     build_entry_from_path("system/etc/init/hw/init.rc", init_rc_path, 2),
+    build_entry_from_path("system/etc/ramdisk/build.prop", ramdisk_build_prop_path, 3),
 ]
 trailer = CpioEntry(
     name="TRAILER!!!",
@@ -589,6 +609,53 @@ entries = [
     build_entry_from_path("init", init_path, 1),
     build_entry_from_path("system/etc/init/hw/init.rc", normal_init_rc_path, 2),
     build_entry_from_path("init.recovery.sunfish.rc", recovery_init_rc_path, 3),
+]
+trailer = CpioEntry(
+    name="TRAILER!!!",
+    ino=0,
+    mode=0,
+    uid=0,
+    gid=0,
+    nlink=1,
+    mtime=0,
+    filesize=0,
+    devmajor=0,
+    devminor=0,
+    rdevmajor=0,
+    rdevminor=0,
+    check=0,
+    data=b"",
+)
+write_cpio(CpioArchive(entries + [trailer], b""), ramdisk_path)
+PY
+
+PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$BOOT_BUILD_RAMDISK_RECOVERY_STYLE" <<'PY'
+from pathlib import Path
+import sys
+
+from cpio_edit import CpioArchive, CpioEntry, build_entry_from_path, write_cpio
+
+ramdisk_path = Path(sys.argv[1])
+tmp_dir = ramdisk_path.parent
+
+init_path = tmp_dir / "stock-init-recovery-style"
+init_path.write_text("stock-init\n", encoding="utf-8")
+init_path.chmod(0o755)
+
+recovery_style_init_rc_path = tmp_dir / "stock-init-recovery-style.rc"
+recovery_style_init_rc_path.write_text(
+    "import /init.recovery.${ro.hardware}.rc\n\n"
+    "service recovery /system/bin/recovery\n"
+    "    disabled\n\n"
+    "service fastbootd /system/bin/fastbootd\n"
+    "    disabled\n",
+    encoding="utf-8",
+)
+recovery_style_init_rc_path.chmod(0o644)
+
+entries = [
+    build_entry_from_path("init", init_path, 1),
+    build_entry_from_path("system/etc/init/hw/init.rc", recovery_style_init_rc_path, 2),
 ]
 trailer = CpioEntry(
     name="TRAILER!!!",
@@ -689,6 +756,104 @@ entries = [
     build_entry_from_path("init", root_init_path, 1),
     build_entry_from_path("system/bin/init", system_init_path, 2),
     build_entry_from_path("system/etc/init/hw/init.rc", init_rc_path, 3),
+]
+trailer = CpioEntry(
+    name="TRAILER!!!",
+    ino=0,
+    mode=0,
+    uid=0,
+    gid=0,
+    nlink=1,
+    mtime=0,
+    filesize=0,
+    devmajor=0,
+    devminor=0,
+    rdevmajor=0,
+    rdevminor=0,
+    check=0,
+    data=b"",
+)
+write_cpio(CpioArchive(entries + [trailer], b""), ramdisk_path)
+PY
+
+PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$BOOT_BUILD_SECOND_STAGE_RC_RAMDISK" <<'PY'
+from pathlib import Path
+import os
+import sys
+
+from cpio_edit import CpioArchive, CpioEntry, build_entry_from_path, write_cpio
+
+ramdisk_path = Path(sys.argv[1])
+tmp_dir = ramdisk_path.parent
+
+root_init_path = tmp_dir / "second-stage-root-init"
+try:
+    root_init_path.unlink()
+except FileNotFoundError:
+    pass
+os.symlink("/system/bin/init", root_init_path)
+
+system_init_path = tmp_dir / "second-stage-system-bin-init"
+system_init_path.write_bytes(
+    b"prefix:/system/etc/init/hw/init.rc:suffix\n"
+)
+system_init_path.chmod(0o755)
+
+init_rc_path = tmp_dir / "second-stage-stock-init.rc"
+init_rc_path.write_text(
+    "on boot\n    setprop shadow.boot.base 1\n",
+    encoding="utf-8",
+)
+init_rc_path.chmod(0o644)
+
+entries = [
+    build_entry_from_path("init", root_init_path, 1),
+    build_entry_from_path("system/bin/init", system_init_path, 2),
+    build_entry_from_path("system/etc/init/hw/init.rc", init_rc_path, 3),
+]
+trailer = CpioEntry(
+    name="TRAILER!!!",
+    ino=0,
+    mode=0,
+    uid=0,
+    gid=0,
+    nlink=1,
+    mtime=0,
+    filesize=0,
+    devmajor=0,
+    devminor=0,
+    rdevmajor=0,
+    rdevminor=0,
+    check=0,
+    data=b"",
+)
+write_cpio(CpioArchive(entries + [trailer], b""), ramdisk_path)
+PY
+
+PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$BOOT_BUILD_RAMDISK_PROP_RAMDISK" <<'PY'
+from pathlib import Path
+import sys
+
+from cpio_edit import CpioArchive, CpioEntry, build_entry_from_path, write_cpio
+
+ramdisk_path = Path(sys.argv[1])
+tmp_dir = ramdisk_path.parent
+
+init_path = tmp_dir / "ramdisk-prop-stock-init"
+init_path.write_text("stock-init\n", encoding="utf-8")
+init_path.chmod(0o755)
+
+build_prop_path = tmp_dir / "ramdisk-build.prop"
+build_prop_path.write_text(
+    "ro.build.version.release=13\n"
+    "ro.build.version.sdk=33\n",
+    encoding="utf-8",
+)
+build_prop_path.chmod(0o644)
+
+entries = [
+    build_entry_from_path("init", init_path, 1),
+    build_entry_from_path("system/etc/ramdisk/build.prop", build_prop_path, 2),
 ]
 trailer = CpioEntry(
     name="TRAILER!!!",
@@ -1427,6 +1592,17 @@ print_bootreason_props() {
   done
 }
 
+device_path_exists() {
+  local device_path existing_path
+  device_path="$1"
+  for existing_path in ${MOCK_EXISTING_DEVICE_PATHS:-}; do
+    if [[ "$existing_path" == "$device_path" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 case "${1:-}" in
   devices)
     advance_pending_transport
@@ -1492,6 +1668,16 @@ case "${1:-}" in
       "getprop "*)
         prop_value "${cmd#getprop }"
         ;;
+      "[ -e '/data/vendor/wifidump' ]")
+        device_path_exists "/data/vendor/wifidump"
+        ;;
+      *'live_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null'*)
+        exit 1
+        ;;
+      "ls -ld '/.shadow-init-wrapper' 2>/dev/null || true")
+        ;;
+      "cat '/.shadow-init-wrapper/boot-id.txt' 2>/dev/null || true"|"cat '/.shadow-init-wrapper/events.log' 2>/dev/null || true"|"cat '/.shadow-init-wrapper/pid.txt' 2>/dev/null || true"|"cat '/.shadow-init-wrapper/status.txt' 2>/dev/null || true")
+        ;;
       "logcat -L -d -v threadtime")
         if [[ "$trace_mode" == "matched" ]]; then
           printf '04-19 10:00:00.000 root root I shadow-hello-init: previous boot breadcrumb run_token=%s\n' "$trace_run_token"
@@ -1530,7 +1716,16 @@ case "${1:-}" in
       *"ro.boot.bootreason"*)
         print_bootreason_props
         ;;
-      "logcat -d -v threadtime")
+      "logcat -d -v threadtime"|"logcat -d 2>/dev/null || true")
+        if [[ -n "${MOCK_LOGCAT_D_OUTPUT:-}" ]]; then
+          printf '%s\n' "$MOCK_LOGCAT_D_OUTPUT"
+        elif [[ "$trace_mode" == "matched" ]]; then
+          printf '04-19 10:05:00.000 root root I shadow-drm: current boot kernel handoff summary run_token=%s\n' "$trace_run_token"
+        else
+          printf '04-19 10:05:00.000 root root I ActivityManager: idle\n'
+        fi
+        ;;
+      "logcat -d -s shadow-init:I shadow-boot:I 2>/dev/null || true")
         if [[ "$trace_mode" == "matched" ]]; then
           printf '04-19 10:05:00.000 root root I shadow-drm: current boot kernel handoff summary run_token=%s\n' "$trace_run_token"
         else
@@ -1544,11 +1739,17 @@ case "${1:-}" in
           printf '<6>[kernel] boot complete\n'
         fi
         ;;
-      "logcat -b kernel -d -v threadtime")
+      "logcat -b kernel -d -v threadtime"|"logcat -b kernel -d 2>/dev/null || true")
         if [[ "$trace_mode" == "matched" ]]; then
           printf '<6>[shadow-drm] current kernel snapshot run_token=%s\n' "$trace_run_token"
         else
           printf '<6>[kernel] boot complete\n'
+        fi
+        ;;
+      "ps -A -o USER,PID,PPID,NAME,ARGS 2>/dev/null || ps -A || true")
+        printf 'USER PID PPID NAME ARGS\n'
+        if [[ -n "${MOCK_PS_OUTPUT:-}" ]]; then
+          printf '%s\n' "$MOCK_PS_OUTPUT"
         fi
         ;;
       *"shadow-kgsl-holder-scan-v1"*)
@@ -1953,7 +2154,8 @@ oneshot_output="$(
       --adb-timeout 45 \
       --boot-timeout 60 \
       --no-wait-boot-completed \
-      --proof-prop debug.shadow.boot.rc_probe=ready
+      --proof-prop debug.shadow.boot.rc_probe=ready \
+      --proof-logcat-substring subsystem_ramdump
 )"
 
 assert_contains "$oneshot_output" "pixel_boot_oneshot: dry-run"
@@ -1967,6 +2169,8 @@ assert_contains "$oneshot_output" "adb_timeout_secs=45"
 assert_contains "$oneshot_output" "boot_timeout_secs=60"
 assert_contains "$oneshot_output" "wait_boot_completed=false"
 assert_contains "$oneshot_output" "proof_prop=debug.shadow.boot.rc_probe=ready"
+assert_contains "$oneshot_output" "proof_logcat_substring=subsystem_ramdump"
+assert_contains "$oneshot_output" "proof_ps_substring="
 
 if [[ -e "$ONESHOT_OUTPUT" ]]; then
   echo "pixel_boot_tooling_smoke: dry-run should not create the output dir" >&2
@@ -2069,6 +2273,101 @@ assert_contains "$flash_run_fastboot_return_dry_run_output" "return_timeout_secs
 assert_contains "$flash_run_fastboot_return_dry_run_output" "recover_after=true"
 
 install_fastboot_cycle_mocks
+
+reset_fastboot_cycle_state
+oneshot_adb_logcat_proof_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    MOCK_DEVICE_STATE_DIR="$MOCK_DEVICE_STATE_DIR" \
+    MOCK_PROBE_IMAGE_PATH="$PROBE_IMAGE" \
+    MOCK_STOCK_IMAGE_PATH="$STOCK_BOOT_IMAGE" \
+    MOCK_FASTBOOT_BOOT_RETURN_MODE=adb \
+    MOCK_ADB_RETURN_POLLS=2 \
+    MOCK_RO_BOOT_BOOTREASON=reboot \
+    MOCK_SYS_BOOT_REASON=reboot \
+    MOCK_LOGCAT_D_OUTPUT='04-22 17:33:02.474  3124  3124 E subsystem_ramdump: Unable to open /sys/module/subsystem_restart/parameters/enable_ramdumps' \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+      --image "$PROBE_IMAGE" \
+      --output "$ONESHOT_ADB_LOGCAT_PROOF_OUTPUT" \
+      --proof-logcat-substring 'subsystem_ramdump: Unable to open /sys/module/subsystem_restart/parameters/enable_ramdumps'
+)"
+
+assert_contains "$oneshot_adb_logcat_proof_output" "Collected one-shot boot evidence: $ONESHOT_ADB_LOGCAT_PROOF_OUTPUT/collect"
+assert_json_field "$ONESHOT_ADB_LOGCAT_PROOF_OUTPUT/status.json" ok true
+assert_json_field "$ONESHOT_ADB_LOGCAT_PROOF_OUTPUT/status.json" collect_succeeded true
+assert_json_field "$ONESHOT_ADB_LOGCAT_PROOF_OUTPUT/status.json" collection_succeeded true
+assert_json_field "$ONESHOT_ADB_LOGCAT_PROOF_OUTPUT/status.json" proof_mode logcat-substring
+assert_json_field "$ONESHOT_ADB_LOGCAT_PROOF_OUTPUT/status.json" proof_logcat_substring "subsystem_ramdump: Unable to open /sys/module/subsystem_restart/parameters/enable_ramdumps"
+assert_json_field "$ONESHOT_ADB_LOGCAT_PROOF_OUTPUT/status.json" proof_logcat_match_count 1
+assert_json_field "$ONESHOT_ADB_LOGCAT_PROOF_OUTPUT/status.json" proof_logcat_matched true
+assert_json_field "$ONESHOT_ADB_LOGCAT_PROOF_OUTPUT/status.json" helper_dir_present false
+assert_json_field "$ONESHOT_ADB_LOGCAT_PROOF_OUTPUT/status.json" collect_status/proof_mode logcat-substring
+assert_json_field "$ONESHOT_ADB_LOGCAT_PROOF_OUTPUT/status.json" collect_status/proof_logcat_match_count 1
+assert_json_field "$ONESHOT_ADB_LOGCAT_PROOF_OUTPUT/collect/status.json" proof_logcat_matched true
+
+reset_fastboot_cycle_state
+oneshot_adb_device_path_proof_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    MOCK_DEVICE_STATE_DIR="$MOCK_DEVICE_STATE_DIR" \
+    MOCK_PROBE_IMAGE_PATH="$PROBE_IMAGE" \
+    MOCK_STOCK_IMAGE_PATH="$STOCK_BOOT_IMAGE" \
+    MOCK_FASTBOOT_BOOT_RETURN_MODE=adb \
+    MOCK_ADB_RETURN_POLLS=2 \
+    MOCK_RO_BOOT_BOOTREASON=reboot \
+    MOCK_SYS_BOOT_REASON=reboot \
+    MOCK_EXISTING_DEVICE_PATHS=/data/vendor/wifidump \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+      --image "$PROBE_IMAGE" \
+      --output "$ONESHOT_ADB_DEVICE_PATH_PROOF_OUTPUT" \
+      --proof-device-path /data/vendor/wifidump
+)"
+
+assert_contains "$oneshot_adb_device_path_proof_output" "Collected one-shot boot evidence: $ONESHOT_ADB_DEVICE_PATH_PROOF_OUTPUT/collect"
+assert_json_field "$ONESHOT_ADB_DEVICE_PATH_PROOF_OUTPUT/status.json" ok true
+assert_json_field "$ONESHOT_ADB_DEVICE_PATH_PROOF_OUTPUT/status.json" collect_succeeded true
+assert_json_field "$ONESHOT_ADB_DEVICE_PATH_PROOF_OUTPUT/status.json" proof_mode device-path
+assert_json_field "$ONESHOT_ADB_DEVICE_PATH_PROOF_OUTPUT/status.json" proof_device_path /data/vendor/wifidump
+assert_json_field "$ONESHOT_ADB_DEVICE_PATH_PROOF_OUTPUT/status.json" proof_device_path_present true
+assert_json_field "$ONESHOT_ADB_DEVICE_PATH_PROOF_OUTPUT/status.json" collect_status/proof_mode device-path
+assert_json_field "$ONESHOT_ADB_DEVICE_PATH_PROOF_OUTPUT/collect/status.json" proof_device_path_present true
+
+reset_fastboot_cycle_state
+oneshot_adb_ps_proof_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    MOCK_DEVICE_STATE_DIR="$MOCK_DEVICE_STATE_DIR" \
+    MOCK_PROBE_IMAGE_PATH="$PROBE_IMAGE" \
+    MOCK_STOCK_IMAGE_PATH="$STOCK_BOOT_IMAGE" \
+    MOCK_FASTBOOT_BOOT_RETURN_MODE=adb \
+    MOCK_ADB_RETURN_POLLS=2 \
+    MOCK_RO_BOOT_BOOTREASON=reboot \
+    MOCK_SYS_BOOT_REASON=reboot \
+    MOCK_PS_OUTPUT='radio 2312 1 qcrild2 /vendor/bin/qcrild2' \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_oneshot.sh" \
+      --image "$PROBE_IMAGE" \
+      --output "$ONESHOT_ADB_PS_PROOF_OUTPUT" \
+      --proof-ps-substring qcrild2
+)"
+
+assert_contains "$oneshot_adb_ps_proof_output" "Collected one-shot boot evidence: $ONESHOT_ADB_PS_PROOF_OUTPUT/collect"
+assert_json_field "$ONESHOT_ADB_PS_PROOF_OUTPUT/status.json" ok true
+assert_json_field "$ONESHOT_ADB_PS_PROOF_OUTPUT/status.json" collect_succeeded true
+assert_json_field "$ONESHOT_ADB_PS_PROOF_OUTPUT/status.json" proof_mode ps-substring
+assert_json_field "$ONESHOT_ADB_PS_PROOF_OUTPUT/status.json" proof_ps_substring qcrild2
+assert_json_field "$ONESHOT_ADB_PS_PROOF_OUTPUT/status.json" proof_ps_match_count 1
+assert_json_field "$ONESHOT_ADB_PS_PROOF_OUTPUT/status.json" proof_ps_matched true
+assert_json_field "$ONESHOT_ADB_PS_PROOF_OUTPUT/status.json" collect_status/proof_mode ps-substring
+assert_json_field "$ONESHOT_ADB_PS_PROOF_OUTPUT/collect/status.json" proof_ps_matched true
 
 reset_fastboot_cycle_state
 printf 'stale metadata\n' >"$MOCK_DEVICE_STATE_DIR/metadata-token-$PROBE_RUN_TOKEN"
@@ -2682,6 +2981,30 @@ assert_cpio_entry_missing "$STOCK_INIT_OUTPUT_IMAGE" init.stock
 assert_cpio_entry_equals "$STOCK_INIT_OUTPUT_IMAGE" init.extra.rc $'import /init.extra.rc\n'
 assert_cpio_entry_equals "$STOCK_INIT_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n\non boot\n    setprop debug.shadow.boot.rc_probe ready\n'
 
+cmdline_probe_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_cmdline_probe.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$CMDLINE_PROBE_OUTPUT_IMAGE" \
+      --androidboot shadow_probe=cmdline-smoke \
+      --androidboot init_rc=/system/etc/init/hw/init.rc \
+      --keep-work-dir
+)"
+assert_contains "$cmdline_probe_output" "Build mode: stock-init"
+assert_contains "$cmdline_probe_output" "Extra cmdline tokens: 2"
+assert_contains "$cmdline_probe_output" "Probe mode: cmdline"
+assert_contains "$cmdline_probe_output" "Cmdline token: androidboot.shadow_probe=cmdline-smoke"
+assert_contains "$cmdline_probe_output" "Cmdline token: androidboot.init_rc=/system/etc/init/hw/init.rc"
+assert_cpio_entry_equals "$CMDLINE_PROBE_OUTPUT_IMAGE" init $'stock-init\n'
+cmdline_probe_workdir="$(printf '%s\n' "$cmdline_probe_output" | awk -F': ' '/^Kept workdir: /{print $2; exit}')"
+if [[ -z "$cmdline_probe_workdir" ]]; then
+  echo "pixel_boot_tooling_smoke: cmdline probe output did not report a kept workdir" >&2
+  exit 1
+fi
+assert_contains "$(cat "$cmdline_probe_workdir/mkbootimg_args.modified.txt")" "androidboot.shadow_probe=cmdline-smoke"
+assert_contains "$(cat "$cmdline_probe_workdir/mkbootimg_args.modified.txt")" "androidboot.init_rc=/system/etc/init/hw/init.rc"
+
 init_symlink_build_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_init_symlink_probe.sh" \
@@ -2814,6 +3137,7 @@ log_probe_output="$(
 )"
 assert_contains "$log_probe_output" "Build mode: stock-init"
 assert_contains "$log_probe_output" "Patch target: system/etc/init/hw/init.rc"
+assert_contains "$log_probe_output" "Patch target profile: unclassified"
 assert_cpio_entry_equals "$LOG_PROBE_OUTPUT_IMAGE" init $'stock-init\n'
 assert_cpio_entry_missing "$LOG_PROBE_OUTPUT_IMAGE" init.stock
 assert_cpio_entry_startswith "$LOG_PROBE_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n'
@@ -2831,7 +3155,20 @@ log_probe_prefers_normal_anchor_output="$(
       --device-log-root /data/local/tmp/shadow-boot
 )"
 assert_contains "$log_probe_prefers_normal_anchor_output" "Patch target: system/etc/init/hw/init.rc"
+assert_contains "$log_probe_prefers_normal_anchor_output" "Patch target profile: unclassified"
 assert_cpio_entry_startswith "$LOG_PROBE_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n'
+
+log_probe_recovery_style_anchor_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK_RECOVERY_STYLE" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_log_probe.sh" \
+      --stock-init \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$LOG_PROBE_OUTPUT_IMAGE" \
+      --trigger post-fs-data \
+      --device-log-root /data/local/tmp/shadow-boot
+)"
+assert_contains "$log_probe_recovery_style_anchor_output" "Patch target profile: recovery-style"
 
 log_preflight_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -2847,6 +3184,7 @@ log_preflight_output="$(
 assert_contains "$log_preflight_output" "Build mode: stock-init"
 assert_contains "$log_preflight_output" "Preflight profile: phase1-shell"
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" init.shadow.rc 'setprop debug.shadow.boot.preflight.import triggered'
+assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" system/etc/ramdisk/build.prop 'debug.shadow.boot.preflight.second_stage=ready'
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'setprop "$preflight_status_prop_key"'
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'setprop "$preflight_launch_proof_key" "$preflight_launch_proof_value"'
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'preflight-summary.txt'
@@ -2882,6 +3220,7 @@ rc_probe_output="$(
 )"
 assert_contains "$rc_probe_output" "Build mode: stock-init"
 assert_contains "$rc_probe_output" "Patch target: system/etc/init/hw/init.rc"
+assert_contains "$rc_probe_output" "Patch target profile: unclassified"
 assert_contains "$rc_probe_output" "Trigger: post-fs-data"
 assert_contains "$rc_probe_output" "Property: debug.shadow.boot.rc_probe=ready"
 assert_cpio_entry_equals "$RC_PROBE_OUTPUT_IMAGE" init $'stock-init\n'
@@ -2901,6 +3240,7 @@ rc_probe_prefers_normal_anchor_output="$(
       --property debug.shadow.boot.rc_probe=ready
 )"
 assert_contains "$rc_probe_prefers_normal_anchor_output" "Patch target: system/etc/init/hw/init.rc"
+assert_contains "$rc_probe_prefers_normal_anchor_output" "Patch target profile: unclassified"
 assert_cpio_entry_startswith "$RC_PROBE_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'import /init.shadow.rc\n'
 
 rc_probe_inline_output="$(
@@ -2916,6 +3256,7 @@ rc_probe_inline_output="$(
 )"
 assert_contains "$rc_probe_inline_output" "Patch mode: inline"
 assert_contains "$rc_probe_inline_output" "Patch target: system/etc/init/hw/init.rc"
+assert_contains "$rc_probe_inline_output" "Patch target profile: unclassified"
 assert_contains "$rc_probe_inline_output" "Trigger: property:sys.boot_completed=1"
 assert_contains "$rc_probe_inline_output" "Property: debug.shadow.boot.rc_probe=inline"
 assert_cpio_entry_equals "$RC_PROBE_INLINE_OUTPUT_IMAGE" init $'stock-init\n'
@@ -2923,6 +3264,56 @@ assert_cpio_entry_missing "$RC_PROBE_INLINE_OUTPUT_IMAGE" init.stock
 assert_cpio_entry_startswith "$RC_PROBE_INLINE_OUTPUT_IMAGE" system/etc/init/hw/init.rc $'on property:sys.boot_completed=1\n    setprop debug.shadow.boot.rc_probe inline\n\n'
 assert_cpio_entry_missing "$RC_PROBE_INLINE_OUTPUT_IMAGE" init.shadow.rc
 assert_cpio_entry_missing "$RC_PROBE_INLINE_OUTPUT_IMAGE" shadow-boot-helper
+
+second_stage_rc_probe_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_SECOND_STAGE_RC_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_second_stage_rc_probe.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$SECOND_STAGE_RC_PROBE_OUTPUT_IMAGE" \
+      --trigger property:sys.boot_completed=1 \
+      --property debug.shadow.boot.second_stage_rc_probe=ready
+)"
+assert_contains "$second_stage_rc_probe_output" "Build mode: stock-init"
+assert_contains "$second_stage_rc_probe_output" "Probe mode: second-stage-rc"
+assert_contains "$second_stage_rc_probe_output" "Primary rc path mutation: /system/etc/init/hw/init.rc -> /second_stage_resources/.rc"
+assert_contains "$second_stage_rc_probe_output" "Trigger: property:sys.boot_completed=1"
+assert_contains "$second_stage_rc_probe_output" "Property: debug.shadow.boot.second_stage_rc_probe=ready"
+assert_cpio_entry_symlink_target "$SECOND_STAGE_RC_PROBE_OUTPUT_IMAGE" init "/system/bin/init"
+assert_cpio_entry_contains "$SECOND_STAGE_RC_PROBE_OUTPUT_IMAGE" system/bin/init '/second_stage_resources/.rc'
+PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$SECOND_STAGE_RC_PROBE_OUTPUT_IMAGE" <<'PY'
+from pathlib import Path
+import sys
+
+from cpio_edit import read_cpio
+
+entries = {
+    entry.name: entry.data
+    for entry in read_cpio(Path(sys.argv[1])).without_trailer()
+}
+
+system_init = entries["system/bin/init"]
+if b"/system/etc/init/hw/init.rc" in system_init:
+    raise SystemExit("system/bin/init still contains the stock primary rc path")
+PY
+assert_cpio_entry_equals "$SECOND_STAGE_RC_PROBE_OUTPUT_IMAGE" second_stage_resources/.rc $'import /system/etc/init/hw/init.rc\n\non property:sys.boot_completed=1\n    setprop debug.shadow.boot.second_stage_rc_probe ready\n'
+
+ramdisk_prop_probe_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK_PROP_RAMDISK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_ramdisk_prop_probe.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output "$RAMDISK_PROP_PROBE_OUTPUT_IMAGE" \
+      --property debug.shadow.boot.ramdisk_prop_probe=ready \
+      --property bootreceiver.enable=1
+)"
+assert_contains "$ramdisk_prop_probe_output" "Build mode: stock-init"
+assert_contains "$ramdisk_prop_probe_output" "Probe mode: ramdisk-build-prop"
+assert_contains "$ramdisk_prop_probe_output" "Ramdisk property entry: system/etc/ramdisk/build.prop"
+assert_contains "$ramdisk_prop_probe_output" "Property: debug.shadow.boot.ramdisk_prop_probe=ready"
+assert_contains "$ramdisk_prop_probe_output" "Property: bootreceiver.enable=1"
+assert_cpio_entry_equals "$RAMDISK_PROP_PROBE_OUTPUT_IMAGE" init $'stock-init\n'
+assert_cpio_entry_equals "$RAMDISK_PROP_PROBE_OUTPUT_IMAGE" system/etc/ramdisk/build.prop $'ro.build.version.release=13\nro.build.version.sdk=33\ndebug.shadow.boot.ramdisk_prop_probe=ready\nbootreceiver.enable=1\n'
 
 rm -rf "$RC_TRIGGER_LADDER_OUTPUT"
 rc_trigger_ladder_output="$(
@@ -3019,6 +3410,8 @@ assert_contains "$preflight_output" "Preflight status: blocked"
 test -f "$PREFLIGHT_OUTPUT/summary.json"
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" kind boot_preflight
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" ok true
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" second_stage_proof_prop debug.shadow.boot.preflight.second_stage=ready
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" second_stage_property_proved_current_boot true
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" import_proof_prop debug.shadow.boot.preflight.import=triggered
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" import_proved_current_boot true
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" helper_launch_proved_current_boot true

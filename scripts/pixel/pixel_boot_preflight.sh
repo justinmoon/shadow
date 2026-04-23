@@ -15,6 +15,7 @@ default_serial="${PIXEL_SERIAL:-}"
 trigger="${PIXEL_BOOT_LOG_PROBE_TRIGGER:-post-fs-data}"
 patch_target_override="${PIXEL_BOOT_LOG_PROBE_PATCH_TARGET:-}"
 preflight_profile="${PIXEL_BOOT_PREFLIGHT_PROFILE:-phase1-shell}"
+second_stage_proof_prop="${PIXEL_BOOT_PREFLIGHT_SECOND_STAGE_PROOF_PROP:-debug.shadow.boot.preflight.second_stage=ready}"
 import_proof_prop="${PIXEL_BOOT_PREFLIGHT_IMPORT_PROOF_PROP:-debug.shadow.boot.preflight.import=triggered}"
 launch_proof_prop="${PIXEL_BOOT_PREFLIGHT_LAUNCH_PROOF_PROP:-debug.shadow.boot.preflight.launch=started}"
 wait_ready_secs="${PIXEL_BOOT_PREFLIGHT_WAIT_READY_SECS:-120}"
@@ -106,6 +107,7 @@ write_summary_json() {
     "$serial" \
     "$preflight_profile" \
     "$trigger" \
+    "$second_stage_proof_prop" \
     "$import_proof_prop" \
     "$launch_proof_prop" \
     "$input_image" \
@@ -118,8 +120,10 @@ write_summary_json() {
     "$output_dir" \
     "$device_run_dir" \
     "$device_status_path" \
-    "$collect_status_path" <<'PY'
+    "$collect_status_path" \
+    "$device_run_dir/collect/getprop.txt" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -128,6 +132,7 @@ from pathlib import Path
     serial,
     preflight_profile,
     trigger,
+    second_stage_proof_prop,
     import_proof_prop,
     launch_proof_prop,
     input_image,
@@ -141,7 +146,8 @@ from pathlib import Path
     device_run_dir,
     device_status_path,
     collect_status_path,
-) = sys.argv[1:18]
+    getprop_path,
+) = sys.argv[1:20]
 def load_json(path_str: str):
     path = Path(path_str)
     if not path.exists():
@@ -150,11 +156,35 @@ def load_json(path_str: str):
         return json.load(fh)
 
 
+def parse_prop_spec(spec: str):
+    if "=" not in spec:
+        return "", ""
+    key, value = spec.split("=", 1)
+    return key, value
+
+
+def getprop_value(path_str: str, key: str):
+    if not key:
+        return ""
+    path = Path(path_str)
+    if not path.exists():
+        return ""
+
+    pattern = re.compile(r"^\[(?P<key>.+?)\]: \[(?P<value>.*)\]$")
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            match = pattern.match(line.rstrip("\n"))
+            if match and match.group("key") == key:
+                return match.group("value")
+    return ""
+
+
 device_status = load_json(device_status_path)
 collect_status = load_json(collect_status_path)
 helper_proved_current_boot = False
 import_proved_current_boot = False
 helper_launch_proved_current_boot = False
+second_stage_property_proved_current_boot = False
 preflight_status = ""
 preflight_ready = False
 preflight_blocked_reason = ""
@@ -176,11 +206,17 @@ if isinstance(collect_status, dict):
     preflight_ready = bool(collect_status.get("preflight_ready"))
     preflight_blocked_reason = str(collect_status.get("preflight_blocked_reason") or "")
 
+second_stage_proof_key, second_stage_proof_value = parse_prop_spec(second_stage_proof_prop)
+if second_stage_proof_key:
+    actual_second_stage_value = getprop_value(getprop_path, second_stage_proof_key)
+    second_stage_property_proved_current_boot = actual_second_stage_value == second_stage_proof_value
+
 payload = {
     "kind": "boot_preflight",
     "serial": serial,
     "preflight_profile": preflight_profile,
     "trigger": trigger,
+    "second_stage_proof_prop": second_stage_proof_prop,
     "import_proof_prop": import_proof_prop,
     "launch_proof_prop": launch_proof_prop,
     "input_image": input_image,
@@ -198,6 +234,7 @@ payload = {
     "collect_status_path": collect_status_path,
     "device_status": device_status,
     "collect_status": collect_status,
+    "second_stage_property_proved_current_boot": second_stage_property_proved_current_boot,
     "import_proved_current_boot": import_proved_current_boot,
     "helper_launch_proved_current_boot": helper_launch_proved_current_boot,
     "helper_proved_current_boot": helper_proved_current_boot,
@@ -346,19 +383,23 @@ printf 'Boot preflight output: %s\n' "$output_dir"
 printf 'Serial: %s\n' "$serial"
 printf 'Image: %s\n' "$image_path"
 printf 'Summary: %s\n' "$summary_path"
+printf 'Second-stage proof prop: %s\n' "$second_stage_proof_prop"
 printf 'Import proof prop: %s\n' "$import_proof_prop"
 printf 'Launch proof prop: %s\n' "$launch_proof_prop"
 if [[ -f "$collect_status_path" ]]; then
-  python3 - "$collect_status_path" <<'PY'
+  python3 - "$summary_path" "$collect_status_path" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    summary = json.load(fh)
+with open(sys.argv[2], "r", encoding="utf-8") as fh:
     payload = json.load(fh)
 
 preflight_status = payload.get("preflight_status", "")
 preflight_ready = payload.get("preflight_ready")
 blocked_reason = payload.get("preflight_blocked_reason", "")
+second_stage_proved = bool(summary.get("second_stage_property_proved_current_boot"))
 import_proved = bool(payload.get("collection_succeeded"))
 helper_launch_proved = bool(payload.get("observed_property_matched"))
 if not helper_launch_proved:
@@ -371,6 +412,7 @@ if not helper_launch_proved:
         and bool(payload.get("matched_expected_slot"))
     )
 
+print(f"Second-stage property proved: {str(second_stage_proved).lower()}")
 print(f"Import proved current boot: {str(import_proved).lower()}")
 print(f"Helper launch proved current boot: {str(helper_launch_proved).lower()}")
 if preflight_status:

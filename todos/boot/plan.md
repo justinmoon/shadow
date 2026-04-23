@@ -939,7 +939,118 @@ Related docs:
   - the next debugging rung corrected the stock-init anchor selection itself. The earlier real runs had all auto-patched `init.recovery.sunfish.rc`; after preferring the normal boot anchor, the rerun on `06241JEC200520` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260422T021309Z-06241JEC200520_/summary.json) with `Patch target: system/etc/init/hw/init.rc`, but still returned `import_proved_current_boot=false` and `helper_launch_proved_current_boot=false`
   - the direct inline-anchor probe on that same corrected normal-boot target also failed. [`device-run/collect/status.json`](../../build/pixel/runs/boot-inline-anchor/20260422T021615Z-06241JEC200520/device-run/collect/status.json) showed `proof_property_key=debug.shadow.boot.rc_probe`, `proof_property_expected=inline-anchor`, and `proof_property_matched=false`
   - that burns down the simpler “import file is broken but the patched normal-boot rc target does execute” explanation too: even a direct property action in `system/etc/init/hw/init.rc` did not prove current-boot execution under the late trigger
-  - next Stream B seam: inspect the real stock-init trigger and anchor assumptions on normal `sunfish` boots, because the current failure now survives corrected normal-boot anchor selection, late trigger timing, and the import-vs-inline property split
+  - host-side unpack of the cached stock `boot.img` sharpened the interpretation again:
+    - the ramdisk has no file-level `/init.rc`
+    - the ramdisk copy of `system/etc/init/hw/init.rc` is recovery-flavored and starts with `import /init.recovery.${ro.hardware}.rc`
+    - the ramdisk also contains `init.recovery.sunfish.rc`
+  - so “patched `system/etc/init/hw/init.rc` inside the boot ramdisk” does not automatically mean “patched the normal Android boot init graph”
+  - a rooted stock Android check on `0B191JEC203253` tightened that further:
+    - `/first_stage_ramdisk` is absent on the live normal-boot rootfs
+    - `/second_stage_resources` is present and empty
+    - the stock second-stage `system/bin/init` binary contains exactly one `/system/etc/init/hw/init.rc` string
+  - that makes the next Stream B seam a direct stock-init-owned primary-rc retarget, not another ramdisk-side rc import tweak:
+    - keep stock `/init -> /system/bin/init`
+    - keep stock `system/bin/init` as the launched binary shape
+    - patch only the one primary-rc string inside `system/bin/init`
+    - point it at `/second_stage_resources/.rc`
+    - let that trampoline rc import the stock `/system/etc/init/hw/init.rc` and emit one proof property on a safe late trigger
+  - repo tooling now has a dedicated host builder for that seam: `scripts/pixel/pixel_boot_build_second_stage_rc_probe.sh`
+  - the first real second-stage-retarget run on `0B191JEC203253` wrote [`device-run/collect/status.json`](../../build/pixel/runs/boot-second-stage-rc-probe/20260422T024739Z-0B191JEC203253/device-run/collect/status.json) and reached Android on slot `_a`, but still returned `proof_property_matched=false`
+  - the same still-booted custom image was then inspected over adb:
+    - `/second_stage_resources` existed on the live rootfs
+    - `/second_stage_resources/.rc` was absent on the live rootfs
+    - the built boot image did contain the injected trampoline file under `second_stage_resources/.rc`
+  - that means the tightened blocker is no longer “can stock second-stage init consume a retargeted primary rc path?” It is earlier: “which boot-ramdisk path, if any, actually survives into the live second-stage-visible rootfs on normal `sunfish` boots?”
+  - the next two path-survival probes on `0B191JEC203253` tightened that again:
+    - a benign stock-init image that only added `/shadow.root.probe` and `second_stage_resources/shadow.stage.probe` reached Android, but neither file existed on the live custom boot
+    - a second image that added `init.environ.rc` and `debug_ramdisk/boot.probe` also reached Android, but neither file existed on the live custom boot
+  - local source read against a cloned `platform/system/core` `android13-qpr3-release` branch now explains those misses:
+    - first-stage init mounts tmpfs at `/debug_ramdisk` and `/second_stage_resources`
+    - after first-stage mount it frees the old ramdisk tree
+    - Android 13 QPR3 explicitly preserves only selected channels, notably `/system/etc/ramdisk/build.prop` into `/second_stage_resources/system/etc/ramdisk/build.prop`, plus the debug-ramdisk files behind `/force_debuggable`
+  - the first real proof on that preserved channel succeeded on `0B191JEC203253`: [`boot-ramdisk-build-prop-probe`](../../build/pixel/runs/boot-ramdisk-build-prop-probe/20260422T030547Z-0B191JEC203253/) reached Android and the live custom boot reported `getprop debug.shadow.boot.ramdisk_prop_probe = ready`
+  - that is the first positive Stream B current-boot proof surface that does not borrow the GPU seam or rely on rooted Android after takeover
+  - repo tooling now has a dedicated builder for that seam: `scripts/pixel/pixel_boot_build_ramdisk_prop_probe.sh`
+  - that preserved-property seam is now promoted into the preflight contract itself. The rerun on `0B191JEC203253` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260422T031416Z-0B191JEC203253-stage2/summary.json) with `second_stage_property_proved_current_boot=true` while `import_proved_current_boot=false` and `helper_launch_proved_current_boot=false`
+  - that gives Stream B three truthful current-boot booleans now:
+    - `second_stage_property_proved_current_boot`
+    - `import_proved_current_boot`
+    - `helper_launch_proved_current_boot`
+  - local source read against `platform/system/core` `android13-qpr3-release` sharpened the interpretation one step further:
+    - `PropertyInit()` loads `/second_stage_resources/system/etc/ramdisk/build.prop` before `LoadBootScripts()`
+    - but `UmountSecondStageRes()` runs before `LoadBootScripts()`
+    - so the boot image can steer second-stage properties on normal `sunfish`, but `/second_stage_resources` is not a viable rc or helper-file handoff surface for later boot-script parsing
+  - that burns down the remaining “keep chasing boot-ramdisk rc files” theory for Stream B on normal Android 13 `sunfish`: boot-image-only rc injection is structurally downstream of a path that init unmounts before it chooses the second-stage bootscript
+  - repo tooling now has a dedicated builder for the next stock-init-owned seam too: `scripts/pixel/pixel_boot_build_cmdline_probe.sh`, which appends `androidboot.*` header tokens without mutating the ramdisk
+  - the first real cmdline control on `0B191JEC203253` wrote [`device-run/status.json`](../../build/pixel/runs/cmdline-probe/20260422T032650Z-0B191JEC203253-control/device-run/status.json) and reached adb with `shadow_probe_prop=stream-b-cmdline-control`
+  - that re-proves, on the new dedicated builder path, that boot header cmdline changes survive into normal Android as `ro.boot.*` on the one-shot custom image
+  - the next real cmdline falsifier on `0B191JEC203253`, with `androidboot.init_rc=/does/not/exist.rc`, wrote [`device-run/status.json`](../../build/pixel/runs/cmdline-probe/20260422T032957Z-0B191JEC203253-invalid-init-rc/device-run/status.json) and never returned to adb within the guarded window
+  - that is the strongest current evidence that `ro.boot.init_rc` is a real stock-init control point from the boot header on normal `sunfish`
+  - current lab note: after that invalid-`init_rc` run, `0B191JEC203253` dropped out of both adb and fastboot; the phone was later manually pushed to fastboot and restored to stock `boot_a`, then re-rooted successfully through the supported Magisk patch/flash flow
+  - the next two constructive cmdline controls on rooted `0B191JEC203253` tightened the interpretation further:
+    - [`explicit-init-rc`](../../build/pixel/runs/cmdline-probe/20260422T153950Z-0B191JEC203253-explicit-init-rc/device-run/status.json) appended both `androidboot.shadow_probe=stream-b-explicit-init-rc` and `androidboot.init_rc=/system/etc/init/hw/init.rc`; adb returned, but neither `ro.boot.shadow_probe` nor `ro.boot.init_rc` matched, and the returned Android boot reported `sys.boot.reason=reboot,boringssl-self-check-failed`
+    - [`init-rc-only`](../../build/pixel/runs/cmdline-probe/20260422T154250Z-0B191JEC203253-init-rc-only/device-run/status.json) appended only `androidboot.init_rc=/system/etc/init/hw/init.rc`; adb still returned, but `ro.boot.init_rc` was absent again and the returned Android boot reported the same `reboot,boringssl-self-check-failed` reason
+  - host-side unpack confirms those images really did carry the appended boot header tokens, so this is not a mkbootimg packing bug
+  - local source explains the behavior exactly. In `LoadBootScripts()`, a non-empty `ro.boot.init_rc` takes the `else` branch and calls `parser.ParseConfig(bootscript)` only; it does not also parse `/system/etc/init`, `/vendor/etc/init`, `/odm/etc/init`, or `/product/etc/init`
+  - that means `androidboot.init_rc=/system/etc/init/hw/init.rc` is not equivalent to the stock default path: it suppresses the normal directory-based init graph, which matches the observed `boringssl-self-check-failed` reboots
+  - tightened Stream B conclusion:
+    - boot-header `ro.boot.init_rc` is a real stock-init control point
+    - but it is destructive unless the replacement bootscript itself recreates the full stock import behavior
+    - because the boot image currently cannot add a surviving second-stage bootscript file, this cmdline lane is not a constructive path to boot-helper autostart on normal `sunfish`
+  - next Stream B seam: keep the work on stock-init-owned control points that the boot image can actually reach:
+    - header/cmdline-driven init selection or gating
+    - narrower stock `system/bin/init` binary patches that preserve the real init image shape
+    - do not spend more cycles on boot-ramdisk rc file injection for normal `sunfish`
+  - one more operational truth is now explicit too: a successful `pixel_boot_oneshot.sh` run leaves the phone on the temporary `fastboot boot` image until the next reboot. Root disappearing after a successful one-shot is therefore expected on that temporary boot, not evidence that the flashed slot lost Magisk.
+  - rooted runtime controls on `0B191JEC203253` then split the preserved-property seam further:
+    - `debug.touch_sensitivity_mode=1` survives at runtime, but its stock vendor-init action never sets `persist.vendor.touch_sensitivity_mode=1`; that trigger is not a constructive Stream B lane even before boot-image injection
+    - `persist.heapprofd.enable=1` and `persist.traced_perf.enable=1` both start their stock services at runtime, but the first real one-shot ramdisk-build-prop rerun for `persist.traced_perf.enable=1` still missed on the live custom boot: [`device-run/status.json`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T160035Z-0B191JEC203253-traced-perf/device-run/status.json) reached adb with `boot_completed=true`, but `persist.traced_perf.enable` was absent and `init.svc.traced_perf=stopped`
+  - the next one-shot on the non-persistent `sys.*` seam is the first clean constructive win:
+    - rooted runtime control proved `sys.lpdumpd=start` starts stock `lpdumpd` and `sys.lpdumpd=stop` unwinds it again
+    - the matching one-shot ramdisk-build-prop image on `0B191JEC203253` wrote [`device-run/status.json`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T160851Z-0B191JEC203253-lpdumpd/device-run/status.json) with `ok=true`, `observed_prop=sys.lpdumpd=start`, `observed_property_actual=start`, and `proof_prop=init.svc.lpdumpd=running`
+  - the next runtime-vs-oneshot split explains why some preserved-property rungs still miss:
+    - rooted runtime control proved `sys.init.updatable_crashing=1` fires the stock `flags_health_check` path and rewrites `/data/server_configurable_flags/reset_flags`
+    - the matching one-shot ramdisk-build-prop image preserved `sys.init.updatable_crashing=1` on the temporary custom boot, but it neither rewrote `/data/server_configurable_flags/reset_flags` nor emitted the stock `flags_health_check` log lines
+    - local `system/core/init` source study matches that miss: initial property triggers are queued before the later `late-init` / `post-fs-data` event ladder, so data-dependent actions can fail even when the injected property itself survives
+  - the next post-`/data` vendor seam is another constructive win:
+    - rooted runtime control showed `persist.vendor.sys.ssr.enable_ramdumps=1` drives the `post-fs-data && property:persist.vendor.sys.ssr.enable_ramdumps=1` action in `init.sm7150.rc`
+    - the matching one-shot ramdisk-build-prop image on `0B191JEC203253` created `/data/vendor/wifidump`, `/data/vendor/ramdump`, `/data/vendor/ssrdump`, and `/data/vendor/ssrlog` on the temporary custom boot
+    - shell-readable property proofs stayed blank on that returned Android shell because vendor property access is denied there, so Stream B now also treats matching logcat lines as a first-class proof surface
+    - the rerun with `--proof-logcat-substring 'subsystem_ramdump: Unable to open /sys/module/subsystem_restart/parameters/enable_ramdumps'` wrote [`collect/status.json`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T162349Z-0B191JEC203253-ssr-ramdumps-logcat-proof/device-run/collect/status.json) with `proof_mode=logcat-substring`, `proof_logcat_match_count=1`, and `proof_logcat_matched=true`
+    - Stream B tooling now also supports durable device-path proofs, and the rerun with `--proof-device-path /data/vendor/wifidump` wrote [`device-run/status.json`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T162349Z-0B191JEC203253-ssr-ramdumps-device-path-proof/device-run/status.json) with `proof_mode=device-path`, `proof_device_path=/data/vendor/wifidump`, and `proof_device_path_present=true`
+  - tightened Stream B conclusion after that run:
+    - preserved `/system/etc/ramdisk/build.prop` is a truthful stock second-stage control surface on normal `sunfish`
+    - non-persistent `sys.*` actions are currently the first proven shell-readable constructive trigger family on that seam
+    - preserved build-prop can also drive at least one post-`/data` vendor-init action; the failure mode there was proof-surface visibility, not lack of stock-init execution
+    - misses now split into two different classes:
+      - early property survives, but the data-dependent action is still too early (`sys.init.updatable_crashing=1`)
+      - the action runs, but returned-shell property visibility is too weak to prove it unless collection also checks durable artifacts or matching logcat lines (`persist.vendor.sys.ssr.enable_ramdumps=1`)
+    - local source survey in `aosp-device-google-sunfish` / `aosp-system-core` tightened the search space too:
+      - on current `sunfish`, `persist.vendor.sys.ssr.enable_ramdumps=1` is the only obvious device-local `post-fs-data && property:` block that leaves direct `/data` artifacts
+      - the remaining nearby device-local property seams are mostly pure property-triggered service starts (`persist.vendor.sys.ssr.restart_level=*`, IMS/radio toggles) or boot-completed gates, not more event-gated `/data` writers
+  - next Stream B seam after the `lpdumpd` win:
+    - keep using durable artifact or logcat proof surfaces, not just shell-readable properties, for later stock-init lanes
+    - choose the next real property rung from the now-smaller local-source set: the cleanest adjacent candidate is `persist.vendor.sys.ssr.restart_level=* -> start vendor.ssr_setup`, because it stays in the already-proven SSR family without touching USB, radio, or the GPU seam
+    - rooted runtime discovery on `0B191JEC203253` tightened that candidate further:
+      - `persist.vendor.sys.ssr.restart_level` is already set to `modem,adsp,slpi` on the rooted baseline, so a future one-shot must use an alternate valid value if we want attribution to the injected image rather than the existing persisted state
+      - the useful proof surface is logcat from `ssr_setup`, not `init.svc.*`: invalid test values log `No subsys found ...`, and restoring the stock value logs `Using persist.vendor.sys.ssr.restart_level for ssr_setup` plus `Enabling SSR for subsys*` / `Disabling ssr for subsys*`
+    - prefer actions that leave durable artifacts, service state, or logcat breadcrumbs over proofs that depend on unrestricted `getprop` visibility
+    - keep the local-source timing model explicit: initial property evaluation can be earlier than `/data`, so data-dependent property seams need later stock actions, not just surviving properties
+  - Stream B service-state proofing tightened again on 2026-04-22:
+    - `pixel_boot_collect_logs.sh` / `pixel_boot_oneshot.sh` now also support `--proof-ps-substring`, so service-start seams can prove success from collected process state when property visibility is weak
+    - rooted runtime control on `0B191JEC203253` showed `persist.radio.multisim.config=dsds` starts `vendor.qcrild2`, but the matching one-shot ramdisk-build-prop image wrote [`device-run/status.json`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T195523Z-0B191JEC203253-multisim-qcrild2/device-run/status.json) with `boot_completed=true`, `proof_mode=ps-substring`, `proof_ps_substring=qcrild2`, `proof_ps_match_count=0`, and `observed_property_actual=` while [`collect/getprop.txt`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T195523Z-0B191JEC203253-multisim-qcrild2/device-run/collect/getprop.txt) kept `persist.radio.multisim.config` blank
+    - local source in `aosp-device-google-sunfish/init.hardware.rc` explains why that candidate is noisy: `persist.radio.multisim.config` is tied to `ro.boot.hardware.dsds`, `vendor.radio.sim_num.switch`, and telephony-specific restart logic, so it is not a clean generic stock-init control point for Stream B
+    - rooted runtime then validated a better system-core seam: on this user build (`ro.debuggable=0`), setting `llk.enable=1` starts `llkd-0`
+    - the matching one-shot ramdisk-build-prop image on `0B191JEC203253` wrote [`device-run/status.json`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T200226Z-0B191JEC203253-llkd/device-run/status.json) with `ok=true`, `boot_completed=true`, `proof_mode=property`, `proof_property_key=init.svc.llkd-0`, `proof_property_actual=running`, and `proof_property_matched=true`
+    - the same bundle's [`collect/ps.txt`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T200226Z-0B191JEC203253-llkd/device-run/collect/ps.txt) contained `llkd`, while [`collect/getprop.txt`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T200226Z-0B191JEC203253-llkd/device-run/collect/getprop.txt) did not expose `llk.enable`
+  - tightened Stream B conclusion after the `llkd` win:
+    - preserved `/system/etc/ramdisk/build.prop` can drive at least one generic `system/core` service-start action on normal `sunfish`, not just vendor-local triggers like `lpdumpd` or SSR
+    - service-state proof (`init.svc.*` or collected `ps`) is now a better default evidence surface than readback of the triggering property itself for these late-start seams
+    - device-specific telephony properties like `persist.radio.multisim.config` are lower-value next steps than generic stock-init/system-core actions because they are easier for later device logic to override or reinterpret
+  - next Stream B seam after `llkd`:
+    - keep choosing generic stock-init/system-core property triggers whose proof surface is a started service or other shell-visible state
+    - use `--proof-prop init.svc.*=running` first when available, and fall back to `--proof-ps-substring` when the service property is unavailable or too indirect
+    - treat property readback as optional supporting evidence, not the primary success condition, unless the property family is already known to stay shell-readable on the returned Android boot
 - Rooted cold KGSL ladder result on 2026-04-21:
   - `scripts/pixel/pixel_kgsl_cold_matrix.sh` now exists as the rooted cold-boot falsification lane, with a single-serial manifest contract, warm-baseline preflight, and readiness rungs for `root-ready`, `pd-mapper`, `qseecom-service`, `gpu-service`, `boot-complete`, and `display-restored`
   - after fixing the cold-runner readiness / reboot bookkeeping, the rerun on `11151JEC200472` ([`build/pixel/runs/kgsl-cold-matrix/20260421T212908Z`](../../build/pixel/runs/kgsl-cold-matrix/20260421T212908Z)) still succeeded at `cold-root-ready`, with `device-run/status.json.run_succeeded=true` and `device-run/status.json.summary.kgsl_device_opened=true`
