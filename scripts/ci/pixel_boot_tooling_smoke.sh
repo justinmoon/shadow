@@ -69,6 +69,7 @@ RC_TRIGGER_LADDER_OUTPUT="$TMP_DIR/rc-trigger-ladder-output"
 KGSL_PROBE_OUTPUT="$TMP_DIR/boot-kgsl-probe-output"
 KGSL_TRIGGER_LADDER_OUTPUT="$TMP_DIR/boot-kgsl-trigger-ladder-output"
 KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT="$TMP_DIR/boot-kgsl-trigger-ladder-negative-output"
+KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT="$TMP_DIR/boot-kgsl-trigger-ladder-action-only-output"
 KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT="$TMP_DIR/boot-kgsl-trigger-ladder-imported-rc-only-output"
 KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT="$TMP_DIR/boot-kgsl-trigger-ladder-control-point-only-output"
 KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT="$TMP_DIR/boot-kgsl-trigger-ladder-init-script-selection-only-output"
@@ -450,12 +451,14 @@ python3 - \
     "${PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP:-debug.shadow.boot.kgsl.second_stage=ready}" \
     "${PIXEL_BOOT_KGSL_PROBE_INIT_SCRIPT_SELECTION_PROOF_PROP:-init.svc.servicemanager=running}" \
     "${PIXEL_BOOT_KGSL_PROBE_IMPORTED_RC_PROOF_PROP:-init.svc.adbd=running}" \
+    "${PIXEL_BOOT_KGSL_PROBE_ACTION_PROOF_PROP:-debug.shadow.boot.kgsl.action=triggered}" \
     "${PIXEL_BOOT_KGSL_PROBE_PARSE_PROOF_PROP:-debug.shadow.boot.kgsl.parse=registered}" \
     "${PIXEL_BOOT_KGSL_PROBE_CONTROL_POINT_PROOF_PROP:-init.svc.llkd-0=running}" \
     "${MOCK_KGSL_SECOND_STAGE_PROOF_MATCHED:-1}" \
     "${MOCK_KGSL_INIT_SCRIPT_SELECTION_PROOF_MATCHED:-1}" \
     "${MOCK_KGSL_IMPORTED_RC_PROOF_MATCHED:-1}" \
-    "${MOCK_KGSL_INJECTED_RC_PARSE_PROOF_MATCHED:-${MOCK_KGSL_IMPORTED_RC_PROOF_MATCHED:-1}}" \
+    "${MOCK_KGSL_INJECTED_RC_ACTION_PROOF_MATCHED:-${MOCK_KGSL_IMPORTED_RC_PROOF_MATCHED:-1}}" \
+    "${MOCK_KGSL_INJECTED_RC_PARSE_PROOF_MATCHED:-${MOCK_KGSL_INJECTED_RC_ACTION_PROOF_MATCHED:-${MOCK_KGSL_IMPORTED_RC_PROOF_MATCHED:-1}}}" \
     "${MOCK_KGSL_CONTROL_POINT_PROOF_MATCHED:-1}" \
     "${MOCK_KGSL_IMPORT_PROOF_MATCHED:-1}" \
     "${MOCK_KGSL_HELPER_LAUNCH_MATCHED:-1}" <<'PY'
@@ -473,16 +476,18 @@ import sys
     second_stage_proof_prop,
     init_script_selection_proof_prop,
     imported_rc_proof_prop,
+    injected_rc_action_proof_prop,
     injected_rc_parse_proof_prop,
     control_point_proof_prop,
     second_stage_proof_matched,
     init_script_selection_proof_matched,
     imported_rc_proof_matched,
+    injected_rc_action_proof_matched,
     injected_rc_parse_proof_matched,
     control_point_proof_matched,
     import_proof_matched,
     helper_launch_matched,
-) = sys.argv[1:20]
+) = sys.argv[1:22]
 
 
 def parse_prop_spec(spec: str):
@@ -496,11 +501,13 @@ observed_key, observed_expected = parse_prop_spec(observed_prop)
 second_stage_key, second_stage_expected = parse_prop_spec(second_stage_proof_prop)
 init_script_selection_key, init_script_selection_expected = parse_prop_spec(init_script_selection_proof_prop)
 imported_rc_key, imported_rc_expected = parse_prop_spec(imported_rc_proof_prop)
+injected_rc_action_key, injected_rc_action_expected = parse_prop_spec(injected_rc_action_proof_prop)
 injected_rc_parse_key, injected_rc_parse_expected = parse_prop_spec(injected_rc_parse_proof_prop)
 control_point_key, control_point_expected = parse_prop_spec(control_point_proof_prop)
 second_stage_matched = second_stage_proof_matched == "1"
 init_script_selection_matched = init_script_selection_proof_matched == "1"
 imported_rc_matched = imported_rc_proof_matched == "1"
+injected_rc_action_matched = injected_rc_action_proof_matched == "1"
 injected_rc_parse_matched = injected_rc_parse_proof_matched == "1"
 control_point_matched = control_point_proof_matched == "1"
 import_matched = import_proof_matched == "1"
@@ -558,6 +565,9 @@ with open(getprop_path, "w", encoding="utf-8") as fh:
     if imported_rc_key:
         actual_imported_rc = imported_rc_expected if imported_rc_matched else ""
         fh.write(f"[{imported_rc_key}]: [{actual_imported_rc}]\n")
+    if injected_rc_action_key:
+        actual_injected_rc_action = injected_rc_action_expected if injected_rc_action_matched else ""
+        fh.write(f"[{injected_rc_action_key}]: [{actual_injected_rc_action}]\n")
     if injected_rc_parse_key:
         actual_injected_rc_parse = injected_rc_parse_expected if injected_rc_parse_matched else ""
         fh.write(f"[{injected_rc_parse_key}]: [{actual_injected_rc_parse}]\n")
@@ -3376,9 +3386,11 @@ assert_contains "$kgsl_probe_build_output" "Wrote kgsl-probe boot image: $KGSL_P
 assert_contains "$kgsl_probe_build_output" "Trigger: post-fs-data"
 assert_contains "$kgsl_probe_build_output" "Timeout: 12s"
 assert_contains "$kgsl_probe_build_output" "Second-stage proof prop: debug.shadow.boot.kgsl.second_stage=ready"
+assert_contains "$kgsl_probe_build_output" "Action proof prop: debug.shadow.boot.kgsl.action=triggered"
 assert_contains "$kgsl_probe_build_output" "Parse proof prop: debug.shadow.boot.kgsl.parse=registered"
 assert_contains "$kgsl_probe_build_output" "Parse handoff trigger: property:init.svc.adbd=running"
 assert_cpio_entry_contains "$KGSL_PROBE_OUTPUT_IMAGE" system/etc/init/hw/init.rc 'start shadow-boot-parse-probe'
+assert_cpio_entry_contains "$KGSL_PROBE_OUTPUT_IMAGE" init.shadow.rc 'setprop debug.shadow.boot.kgsl.action triggered'
 assert_cpio_entry_contains "$KGSL_PROBE_OUTPUT_IMAGE" init.shadow.rc 'service shadow-boot-parse-probe /system/bin/sh /shadow-boot-parse-probe'
 assert_cpio_entry_contains "$KGSL_PROBE_OUTPUT_IMAGE" shadow-boot-parse-probe 'setprop "$parse_proof_key" "$parse_proof_value"'
 assert_cpio_entry_contains "$KGSL_PROBE_OUTPUT_IMAGE" shadow-boot-helper 'exec 3</dev/kgsl-3d0'
@@ -3708,6 +3720,7 @@ assert_contains "$kgsl_probe_output" "Boot KGSL probe output: $KGSL_PROBE_OUTPUT
 assert_contains "$kgsl_probe_output" "Second-stage property proved: True"
 assert_contains "$kgsl_probe_output" "Init-script-selection proved: True"
 assert_contains "$kgsl_probe_output" "Imported-rc proved: True"
+assert_contains "$kgsl_probe_output" "Injected rc action proved: True"
 assert_contains "$kgsl_probe_output" "Injected rc parse proved: True"
 assert_contains "$kgsl_probe_output" "Control point proved: True"
 assert_contains "$kgsl_probe_output" "Import proved current boot: True"
@@ -3723,6 +3736,8 @@ assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" init_script_selection_proof_
 assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" init_script_selection_proved_current_boot true
 assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" imported_rc_proof_prop init.svc.adbd=running
 assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" imported_rc_proved_current_boot true
+assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" injected_rc_action_proof_prop debug.shadow.boot.kgsl.action=triggered
+assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" injected_rc_action_proved_current_boot true
 assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" injected_rc_parse_proof_prop debug.shadow.boot.kgsl.parse=registered
 assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" injected_rc_parse_proved_current_boot true
 assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" parse_handoff_trigger property:init.svc.adbd=running
@@ -3767,6 +3782,7 @@ assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" case_count 2
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" second_stage_proved_case_count 2
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" init_script_selection_proved_case_count 2
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" imported_rc_proved_case_count 2
+assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" injected_rc_action_proved_case_count 2
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" injected_rc_parse_proved_case_count 2
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" control_point_proved_case_count 2
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" import_proved_case_count 2
@@ -3776,11 +3792,12 @@ assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/kgsl
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/second_stage_property_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/init_script_selection_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/imported_rc_proved_current_boot true
+assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/injected_rc_action_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/injected_rc_parse_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/control_point_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/import_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/1/helper_proved_current_boot true
-assert_contains "$(cat "$KGSL_TRIGGER_LADDER_OUTPUT/matrix.tsv")" $'01-post-fs-data\tpost-fs-data\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\thelper-launched-kgsl-outcome\ttimeout'
+assert_contains "$(cat "$KGSL_TRIGGER_LADDER_OUTPUT/matrix.tsv")" $'01-post-fs-data\tpost-fs-data\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\thelper-launched-kgsl-outcome\ttimeout'
 assert_contains "$(cat "$KGSL_TRIGGER_LADDER_OUTPUT/cases.tsv")" $'02-property-init.svc.gpu-running\tTESTSERIAL\tproperty:init.svc.gpu=running'
 
 rm -rf "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT"
@@ -3812,6 +3829,7 @@ assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" ok 
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" second_stage_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" init_script_selection_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" imported_rc_proved_case_count 1
+assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" injected_rc_action_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" injected_rc_parse_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" control_point_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" import_proved_case_count 1
@@ -3820,11 +3838,63 @@ assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" sur
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" cases/0/second_stage_property_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" cases/0/init_script_selection_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" cases/0/imported_rc_proved_current_boot true
+assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" cases/0/injected_rc_action_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" cases/0/injected_rc_parse_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" cases/0/control_point_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" cases/0/import_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" cases/0/helper_launch_proved_current_boot false
 assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" cases/0/launch_discriminator import-proved-helper-missing
+
+rm -rf "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT"
+set +e
+kgsl_trigger_ladder_action_only_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    MOCK_KGSL_SECOND_STAGE_PROOF_MATCHED=1 \
+    MOCK_KGSL_INIT_SCRIPT_SELECTION_PROOF_MATCHED=1 \
+    MOCK_KGSL_IMPORTED_RC_PROOF_MATCHED=1 \
+    MOCK_KGSL_INJECTED_RC_ACTION_PROOF_MATCHED=1 \
+    MOCK_KGSL_INJECTED_RC_PARSE_PROOF_MATCHED=0 \
+    MOCK_KGSL_CONTROL_POINT_PROOF_MATCHED=1 \
+    MOCK_KGSL_IMPORT_PROOF_MATCHED=0 \
+    MOCK_KGSL_HELPER_LAUNCH_MATCHED=0 \
+    PIXEL_BOOT_KGSL_PROBE_BUILD_SCRIPT="$KGSL_PROBE_BUILD_MOCK" \
+    PIXEL_BOOT_KGSL_PROBE_ONESHOT_SCRIPT="$KGSL_PROBE_ONESHOT_MOCK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_kgsl_trigger_ladder.sh" \
+      --serial TESTSERIAL \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output-dir "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT" \
+      --timeout 12 \
+      --trigger property:init.svc.gpu=running
+)"
+kgsl_trigger_ladder_action_only_status="$?"
+set -e
+test "$kgsl_trigger_ladder_action_only_status" -eq 1
+assert_contains "$kgsl_trigger_ladder_action_only_output" "KGSL trigger ladder output: $KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT"
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" kind boot_kgsl_trigger_ladder
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" ok false
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" second_stage_proved_case_count 1
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" init_script_selection_proved_case_count 1
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" imported_rc_proved_case_count 1
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" injected_rc_action_proved_case_count 1
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" injected_rc_parse_proved_case_count 0
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" control_point_proved_case_count 1
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" import_proved_case_count 0
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" helper_launch_case_count 0
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" surviving_discriminator injected-rc-action-proved-no-parse-service-proof
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" cases/0/second_stage_property_proved_current_boot true
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" cases/0/init_script_selection_proved_current_boot true
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" cases/0/imported_rc_proved_current_boot true
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" cases/0/injected_rc_action_proved_current_boot true
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" cases/0/injected_rc_parse_proved_current_boot false
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" cases/0/control_point_proved_current_boot true
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" cases/0/import_proved_current_boot false
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" cases/0/helper_launch_proved_current_boot false
+assert_json_field "$KGSL_TRIGGER_LADDER_ACTION_ONLY_OUTPUT/matrix-summary.json" cases/0/launch_discriminator injected-rc-action-proved-no-parse-service-proof
 
 rm -rf "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT"
 set +e
@@ -3837,6 +3907,8 @@ kgsl_trigger_ladder_imported_rc_only_output="$(
     MOCK_KGSL_SECOND_STAGE_PROOF_MATCHED=1 \
     MOCK_KGSL_INIT_SCRIPT_SELECTION_PROOF_MATCHED=1 \
     MOCK_KGSL_IMPORTED_RC_PROOF_MATCHED=1 \
+    MOCK_KGSL_INJECTED_RC_ACTION_PROOF_MATCHED=0 \
+    MOCK_KGSL_INJECTED_RC_PARSE_PROOF_MATCHED=0 \
     MOCK_KGSL_CONTROL_POINT_PROOF_MATCHED=1 \
     MOCK_KGSL_IMPORT_PROOF_MATCHED=0 \
     MOCK_KGSL_HELPER_LAUNCH_MATCHED=0 \
@@ -3859,19 +3931,21 @@ assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.j
 assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" second_stage_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" init_script_selection_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" imported_rc_proved_case_count 1
-assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" injected_rc_parse_proved_case_count 1
+assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" injected_rc_action_proved_case_count 0
+assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" injected_rc_parse_proved_case_count 0
 assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" control_point_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" import_proved_case_count 0
 assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" helper_launch_case_count 0
-assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" surviving_discriminator injected-rc-parse-proved-action-missing
+assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" surviving_discriminator imported-rc-proved-no-injected-action-proof
 assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" cases/0/second_stage_property_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" cases/0/init_script_selection_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" cases/0/imported_rc_proved_current_boot true
-assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" cases/0/injected_rc_parse_proved_current_boot true
+assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" cases/0/injected_rc_action_proved_current_boot false
+assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" cases/0/injected_rc_parse_proved_current_boot false
 assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" cases/0/control_point_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" cases/0/import_proved_current_boot false
 assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" cases/0/helper_launch_proved_current_boot false
-assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" cases/0/launch_discriminator injected-rc-parse-proved-action-missing
+assert_json_field "$KGSL_TRIGGER_LADDER_IMPORTED_RC_ONLY_OUTPUT/matrix-summary.json" cases/0/launch_discriminator imported-rc-proved-no-injected-action-proof
 
 rm -rf "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT"
 set +e
@@ -3905,6 +3979,7 @@ assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary
 assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" second_stage_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" init_script_selection_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" imported_rc_proved_case_count 0
+assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" injected_rc_action_proved_case_count 0
 assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" injected_rc_parse_proved_case_count 0
 assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" control_point_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" import_proved_case_count 0
@@ -3913,6 +3988,7 @@ assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary
 assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" cases/0/second_stage_property_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" cases/0/init_script_selection_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" cases/0/imported_rc_proved_current_boot false
+assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" cases/0/injected_rc_action_proved_current_boot false
 assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" cases/0/injected_rc_parse_proved_current_boot false
 assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" cases/0/control_point_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_CONTROL_POINT_ONLY_OUTPUT/matrix-summary.json" cases/0/import_proved_current_boot false
@@ -3952,6 +4028,7 @@ assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix
 assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" second_stage_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" init_script_selection_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" imported_rc_proved_case_count 0
+assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" injected_rc_action_proved_case_count 0
 assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" injected_rc_parse_proved_case_count 0
 assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" control_point_proved_case_count 0
 assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" import_proved_case_count 0
@@ -3960,6 +4037,7 @@ assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix
 assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" cases/0/second_stage_property_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" cases/0/init_script_selection_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" cases/0/imported_rc_proved_current_boot false
+assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" cases/0/injected_rc_action_proved_current_boot false
 assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" cases/0/injected_rc_parse_proved_current_boot false
 assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" cases/0/control_point_proved_current_boot false
 assert_json_field "$KGSL_TRIGGER_LADDER_INIT_SCRIPT_SELECTION_ONLY_OUTPUT/matrix-summary.json" cases/0/import_proved_current_boot false
@@ -3999,6 +4077,7 @@ assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.
 assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" second_stage_proved_case_count 1
 assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" init_script_selection_proved_case_count 0
 assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" imported_rc_proved_case_count 0
+assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" injected_rc_action_proved_case_count 0
 assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" injected_rc_parse_proved_case_count 0
 assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" control_point_proved_case_count 0
 assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" import_proved_case_count 0
@@ -4007,6 +4086,7 @@ assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.
 assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" cases/0/second_stage_property_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" cases/0/init_script_selection_proved_current_boot false
 assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" cases/0/imported_rc_proved_current_boot false
+assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" cases/0/injected_rc_action_proved_current_boot false
 assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" cases/0/injected_rc_parse_proved_current_boot false
 assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" cases/0/control_point_proved_current_boot false
 assert_json_field "$KGSL_TRIGGER_LADDER_SECOND_STAGE_ONLY_OUTPUT/matrix-summary.json" cases/0/import_proved_current_boot false

@@ -15,6 +15,7 @@ TRIGGER="${PIXEL_BOOT_KGSL_PROBE_TRIGGER:-post-fs-data}"
 DEVICE_LOG_ROOT="$(pixel_boot_device_log_root)"
 PATCH_TARGET_OVERRIDE="${PIXEL_BOOT_KGSL_PROBE_PATCH_TARGET:-}"
 IMPORT_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_IMPORT_PROOF_PROP:-debug.shadow.boot.kgsl.import=triggered}"
+ACTION_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_ACTION_PROOF_PROP:-debug.shadow.boot.kgsl.action=triggered}"
 PARSE_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_PARSE_PROOF_PROP:-debug.shadow.boot.kgsl.parse=registered}"
 PARSE_HANDOFF_TRIGGER="${PIXEL_BOOT_KGSL_PROBE_PARSE_HANDOFF_TRIGGER:-property:init.svc.adbd=running}"
 LAUNCH_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_LAUNCH_PROOF_PROP:-debug.shadow.boot.kgsl.launch=started}"
@@ -29,6 +30,8 @@ WORK_DIR=""
 PATCH_TARGET=""
 IMPORT_PROOF_KEY=""
 IMPORT_PROOF_VALUE=""
+ACTION_PROOF_KEY=""
+ACTION_PROOF_VALUE=""
 PARSE_PROOF_KEY=""
 PARSE_PROOF_VALUE=""
 LAUNCH_PROOF_KEY=""
@@ -45,6 +48,7 @@ Usage: scripts/pixel/pixel_boot_build_kgsl_probe.sh [--input PATH] [--key PATH] 
                                                     [--trigger EXPR] [--device-log-root PATH]
                                                     [--patch-target ENTRY]
                                                     [--import-proof-prop KEY=VALUE]
+                                                    [--action-proof-prop KEY=VALUE]
                                                     [--parse-proof-prop KEY=VALUE]
                                                     [--parse-handoff-trigger EXPR]
                                                     [--launch-proof-prop KEY=VALUE]
@@ -59,9 +63,10 @@ Usage: scripts/pixel/pixel_boot_build_kgsl_probe.sh [--input PATH] [--key PATH] 
 Build a private stock-init sunfish boot.img that imports /init.shadow.rc and runs a
 boot helper which attempts a supervised readonly open of /dev/kgsl-3d0 with durable
 breadcrumbs under /data/local/tmp/shadow-boot while also promoting one stock-init
-control-point property above the imported rc seam. A late stock-init action also
-starts a parse-proof service declared only inside /init.shadow.rc, separating
-injected-rc parse/registration from the injected action trigger.
+control-point property above the imported rc seam. A paired injected-rc
+on-property action sets a durable proof property directly, and a late stock-init
+action also starts a parse-proof service declared only inside /init.shadow.rc,
+separating injected action registration from start-service semantics.
 EOF
 }
 
@@ -147,6 +152,23 @@ parse_import_proof_prop() {
 
   validate_property_key "$IMPORT_PROOF_KEY" "import proof property key"
   validate_property_value "$IMPORT_PROOF_VALUE" "import proof property value"
+}
+
+parse_action_proof_prop() {
+  [[ "$ACTION_PROOF_PROP" == *=* ]] || {
+    echo "pixel_boot_build_kgsl_probe: --action-proof-prop must use KEY=VALUE" >&2
+    exit 1
+  }
+
+  ACTION_PROOF_KEY="${ACTION_PROOF_PROP%%=*}"
+  ACTION_PROOF_VALUE="${ACTION_PROOF_PROP#*=}"
+  [[ -n "$ACTION_PROOF_KEY" && -n "$ACTION_PROOF_VALUE" ]] || {
+    echo "pixel_boot_build_kgsl_probe: --action-proof-prop requires a non-empty key and value" >&2
+    exit 1
+  }
+
+  validate_property_key "$ACTION_PROOF_KEY" "action proof property key"
+  validate_property_value "$ACTION_PROOF_VALUE" "action proof property value"
 }
 
 parse_parse_proof_prop() {
@@ -332,6 +354,10 @@ while [[ $# -gt 0 ]]; do
       IMPORT_PROOF_PROP="${2:?missing value for --import-proof-prop}"
       shift 2
       ;;
+    --action-proof-prop)
+      ACTION_PROOF_PROP="${2:?missing value for --action-proof-prop}"
+      shift 2
+      ;;
     --parse-proof-prop)
       PARSE_PROOF_PROP="${2:?missing value for --parse-proof-prop}"
       shift 2
@@ -404,6 +430,7 @@ TRIGGER="$TRIGGER_TO_VALIDATE"
 validate_device_log_root
 validate_patch_target_override
 parse_import_proof_prop
+parse_action_proof_prop
 parse_parse_proof_prop
 parse_launch_proof_prop
 parse_second_stage_proof_prop
@@ -460,6 +487,9 @@ cat >"$WORK_DIR/init.shadow.rc" <<EOF
 on ${TRIGGER}
     setprop ${IMPORT_PROOF_KEY} ${IMPORT_PROOF_VALUE}
     start shadow-boot-helper
+
+on ${PARSE_HANDOFF_TRIGGER}
+    setprop ${ACTION_PROOF_KEY} ${ACTION_PROOF_VALUE}
 
 service shadow-boot-parse-probe /system/bin/sh /shadow-boot-parse-probe
     class late_start
@@ -727,6 +757,7 @@ printf 'Device log root: %s\n' "$DEVICE_LOG_ROOT"
 printf 'Patch target: %s\n' "$PATCH_TARGET"
 printf 'Second-stage proof prop: %s\n' "$SECOND_STAGE_PROOF_PROP"
 printf 'Control-point prop: %s\n' "$CONTROL_POINT_PROP"
+printf 'Action proof prop: %s\n' "$ACTION_PROOF_PROP"
 printf 'Parse proof prop: %s\n' "$PARSE_PROOF_PROP"
 printf 'Parse handoff trigger: %s\n' "$PARSE_HANDOFF_TRIGGER"
 printf 'Launch proof prop: %s\n' "$LAUNCH_PROOF_PROP"
