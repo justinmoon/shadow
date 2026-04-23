@@ -720,8 +720,8 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
             app.cached_data.feed_scope().clone(),
             app.follow_input.clone(),
             app.status.clone(),
-            task_snapshot.clipboard_write_pending(),
-            task_snapshot.follow_update_pending(),
+            task_snapshot.clipboard_write.is_pending(),
+            task_snapshot.follow_update.is_pending(),
             socket_available(),
         )
         .boxed(),
@@ -735,8 +735,8 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
                 explore.notes,
                 explore.profiles,
                 socket_available(),
-                task_snapshot.explore_sync_pending(),
-                task_snapshot.follow_update_pending(),
+                task_snapshot.explore_sync.is_pending(),
+                task_snapshot.follow_update.is_pending(),
             )
             .boxed()
         }
@@ -744,7 +744,7 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
             ui,
             app.nsec_input.clone(),
             app.status.clone(),
-            task_snapshot.account_action_pending(),
+            task_snapshot.account_action.is_pending(),
         )
         .boxed(),
         Route::Timeline => timeline_screen(
@@ -755,7 +755,7 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
             app.visible_notes(),
             app.filter_text.clone(),
             app.note_draft(),
-            task_snapshot.publish_pending(),
+            task_snapshot.publish.is_pending(),
             task_snapshot.publish_note_pending(),
             socket_available(),
         )
@@ -769,7 +769,7 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
                 note_state.thread,
                 app.reply_draft_for(&id),
                 app.status.clone(),
-                task_snapshot.publish_pending(),
+                task_snapshot.publish.is_pending(),
                 task_snapshot.publish_reply_pending_for(&id),
                 socket_available(),
                 task_snapshot.thread_sync_pending_for(&id),

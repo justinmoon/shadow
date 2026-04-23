@@ -61,6 +61,31 @@ impl<Job> TaskHandle<Job> {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct TaskSnapshot<Job> {
+    pending: Option<TaskHandle<Job>>,
+}
+
+impl<Job> TaskSnapshot<Job> {
+    pub fn is_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    pub fn pending(&self) -> Option<&TaskHandle<Job>> {
+        self.pending.as_ref()
+    }
+
+    pub fn pending_matches(&self, select: impl FnOnce(&Job) -> bool) -> bool {
+        self.pending
+            .as_ref()
+            .is_some_and(|pending| select(pending.job()))
+    }
+
+    pub fn into_pending(self) -> Option<TaskHandle<Job>> {
+        self.pending
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TaskSlot<Job> {
     pending: Option<TaskHandle<Job>>,
@@ -89,7 +114,22 @@ impl<Job> TaskSlot<Job> {
     where
         Job: Clone,
     {
-        self.pending.clone()
+        self.snapshot().into_pending()
+    }
+
+    pub fn pending_matches(&self, select: impl FnOnce(&Job) -> bool) -> bool {
+        self.pending
+            .as_ref()
+            .is_some_and(|pending| select(pending.job()))
+    }
+
+    pub fn snapshot(&self) -> TaskSnapshot<Job>
+    where
+        Job: Clone,
+    {
+        TaskSnapshot {
+            pending: self.pending.clone(),
+        }
     }
 
     pub fn start(&mut self, job: Job) -> bool {
@@ -123,7 +163,7 @@ fn next_task_id() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::TaskSlot;
+    use super::{TaskSlot, TaskSnapshot};
 
     #[test]
     fn task_slot_rejects_overlap_and_finishes_by_id() {
@@ -155,5 +195,33 @@ mod tests {
         assert_eq!(first.finish(second_id), None);
         assert_eq!(first.finish(first_id), Some(String::from("first")));
         assert_eq!(second.finish(second_id), Some(String::from("second")));
+    }
+
+    #[test]
+    fn task_snapshots_expose_pending_selectors() {
+        let mut slot = TaskSlot::new();
+        let empty = slot.snapshot();
+        assert!(!empty.is_pending());
+        assert_eq!(empty.pending(), None);
+        assert!(!empty.pending_matches(|job: &String| job == "note"));
+
+        assert!(slot.start(String::from("note")));
+
+        let snapshot = slot.snapshot();
+        assert!(snapshot.is_pending());
+        assert_eq!(
+            snapshot.pending().map(|pending| pending.job().as_str()),
+            Some("note")
+        );
+        assert!(snapshot.pending_matches(|job| job == "note"));
+        assert!(!snapshot.pending_matches(|job| job == "reply"));
+        assert!(slot.pending_matches(|job| job == "note"));
+        assert!(!slot.pending_matches(|job| job == "reply"));
+
+        let snapshot_handle = snapshot.into_pending().expect("pending task");
+        assert_eq!(snapshot_handle.job(), "note");
+
+        let empty_snapshot = TaskSnapshot::<String>::default();
+        assert!(!empty_snapshot.is_pending());
     }
 }
