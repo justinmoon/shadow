@@ -8,1140 +8,176 @@ Related docs:
 - [history.md](./history.md)
 - [spec-scope.md](./spec-scope.md)
 - [spec-phase1-shadow-at-boot.md](./spec-phase1-shadow-at-boot.md)
-- [handoff-prompt.md](./handoff-prompt.md)
+
+## Intent
+
+- Boot a Pixel 4a (`sunfish`) into full Shadow userspace from a custom `boot.img`.
+- Perfect-world target for this push: wake up to a booted Pixel running the real Shadow experience, not just one more proof artifact.
+- Treat boot ownership as "from kernel handoff / PID 1 upward" on unlocked hardware.
+- Use the proven Rust Stream A seam as the only critical path.
+- Preserve the signed-off GPU proof contract while replacing proof demos with real app, runtime, and shell milestones.
 
 ## Scope
 
-- Boot a Pixel 4a (`sunfish`) into Shadow from a custom `boot.img`.
-- Treat ownership as "from kernel handoff / PID 1 upward" on unlocked hardware.
-- Keep the stock Pixel kernel and vendor kernel support at first, but do not depend on stock Android userspace in the new boot lane.
-- Keep the current shell/home/app experience as the first product target.
-- Keep the current Magisk/rooted takeover lane usable for normal development while the new boot lane iterates in parallel.
-- Use the rooted lane as a reference for subsystem behavior, not as the target boot architecture.
+- In scope:
+  - boot-owned Rust bootstrap (`no_std` PID1 shim -> Rust child)
+  - boot-owned GPU render/present, compositor, app, and shell ladders
+  - the smallest runtime and launch contract needed to run real Shadow userspace
+  - input and selected services only when they unblock the next product rung
+- Parked unless they directly unblock Stream A:
+  - direct `std` PID1 investigation
+  - stock-init trigger / imported-rc / preflight seams
+  - rooted takeover extraction and service inventory work
+  - new C seam work
+- Out of scope for now:
+  - shipping the rooted Android takeover lane as architecture
+  - broad service bring-up before shell/home/app loop exists
+  - camera, Wi-Fi, update, and recovery product work before usable shell
 
-## Approach
+## Current Master Truth
 
-- Keep the physical Pixel 4a as the truth environment for boot work.
-- Use host-side `bootimg` tooling for the inner loop: unpack, patch, repack, inspect, sign.
-- Use Cuttlefish only for generic bring-up ideas, not as the primary model for `sunfish`.
-- Primary strategy: boot the stock Pixel kernel into a Shadow-owned ramdisk and custom PID 1. Do not treat `wrapper -> stock init -> later takeover` as the main path anymore.
-- Climb the ladder through the smallest truthful proofs first: `hello-init` (`/dev/kmsg` plus bounded hold/reboot), then `orange-kms` (direct DRM/KMS fill), then `gpu-smoke` (offscreen Vulkan/wgpu render plus readback hash), then `gpu-kms-bridge` (the same GPU smoke presented through rooted display takeover so render/present can be debugged without boot ownership), then `boot-bundle-exec` (boot-owned dynamic bundle exec with visible prelude/checkpoint/postlude), then `boot-vulkan-instance-smoke` (boot-owned strict Vulkan instance creation plus return), then `boot-raw-vulkan-instance-smoke` (boot-owned raw Vulkan loader plus `vkCreateInstance` / `vkDestroyInstance` plus return), then `boot-raw-vulkan-physical-device-count-query-exit-smoke` (boot-owned raw Vulkan `vkEnumeratePhysicalDevices` count query with a null device pointer plus immediate child exit status `0` before summary construction/write and before the normal Rust return path), then `boot-raw-vulkan-physical-device-count-query-no-destroy-smoke` (boot-owned raw Vulkan `vkEnumeratePhysicalDevices` count query with a null device pointer plus return and no explicit `vkDestroyInstance` cleanup), then `boot-raw-vulkan-physical-device-count-query-smoke` (boot-owned raw Vulkan `vkEnumeratePhysicalDevices` count query with a null device pointer plus explicit cleanup and return), then `boot-raw-vulkan-physical-device-count-smoke` (boot-owned raw Vulkan `vkEnumeratePhysicalDevices` full handle-list count plus return), then `boot-vulkan-enumerate-adapters-count-smoke` (boot-owned strict Vulkan raw wgpu adapter enumeration count plus return), then `boot-vulkan-enumerate-adapters-smoke` (boot-owned strict Vulkan adapter enumeration plus per-adapter info extraction plus return), then `boot-vulkan-adapter-smoke` (boot-owned strict Vulkan adapter selection plus return), then `boot-vulkan-device-request-smoke` (boot-owned strict Vulkan device request plus return), then `boot-vulkan-device-smoke` (boot-owned strict Vulkan buffer-renderer allocation plus return), then `boot-vulkan-offscreen` (boot-owned strict Vulkan offscreen render plus return), then `orange-gpu` (boot-owned GPU render -> dma-buf -> KMS present), then `orange-gpu-loop` (repeated submission), then `touch-counter-gpu`, then `compositor-scene`, then `app-direct-present`, then `ts-app-minimal` / `rust-app-minimal`, then shell milestones, and only then service spikes.
-- Rust cutoff:
-  - keep the C PID 1 seam only long enough to finish the driver-discovery lane through the first truthful boot-owned GPU frame
-  - in `boot-c`, the bare `probe-report.txt` child exit `0` shortcut was retired in favor of recovered `probe-summary.json`
-  - the C seam is now signed off by helper-backed `gpu-render` on `09051JEC202061` and `06241JEC200520`, with recovered `probe_summary_proves_gpu_render=true` and a watched orange-then-green confirmation run on `06241JEC200520`
-  - the next critical-path seam is the Rust port of `hello-init` / the boot-owned PID 1 bootstrap path
-  - current Rust truth on 2026-04-22:
-    - direct `std` Rust as exact-path `/system/bin/init` still returns `kernel_panic` even on the stripped `hello/no-mount/no-log` lane
-    - a tiny `no_std` exact-path Rust PID 1 probe returns cleanly to bootloader
-    - a `no_std` Rust PID 1 shim that forks/execs the full Rust `hello-init` child also returns cleanly to bootloader on the same stripped lane
-    - so the live Rust migration shape is `no_std PID1 shim -> full Rust child`, not `std` directly as PID 1
-    - the Rust bridge seam has now re-proved `vulkan-offscreen` and `gpu-render` on `09051JEC202061`
-    - `pixel_boot_build_orange_gpu.sh --hello-init-mode rust-bridge` now stages the final Rust bridge image directly:
-      - `/system/bin/init` is the no_std Rust shim
-      - `/hello-init-child` is the full Rust child
-      - companion metadata now records `hello_init_impl=rust-bridge` and `hello_init_child_path=/hello-init-child`
-      - the direct builder also supports `--rust-shim-mode exec` for the same full Rust child
-    - `pixel_boot_build_rust_bridge.sh` still exists as a thin repack helper, but it is no longer the primary builder path for new rust-bridge orange-gpu images
-    - the Rust bridge builder now draws a smaller honest boundary:
-      - C-only orange-gpu modes are still rejected early
-      - direct orange-gpu rust-bridge images still require `--rust-child-profile hello`; probe-child variants stay on the fallback bridge helper
-      - Rust now supports `timeout-control-smoke`, `raw-kgsl-open-readonly-smoke`, `raw-kgsl-getproperties-smoke`, and the `orange_gpu_parent_probe_*` loop on the promoted `exec + raw-argv` seam
-      - cloned metadata now keeps `probe-fingerprint.txt` because the Rust child writes it again; `probe-timeout-class.txt` is still blank until that classifier is ported
-    - current leading `std`-PID1 source hypothesis:
-      - the likely bad seam is pre-`main` `std` runtime / TLS startup, not the `hello-init` logic
-      - next hardware discriminator is `no_std` exact-path PID1 shim -> direct `execv()` into the tiny `std` probe, with no `fork()`
-    - `pixel_boot_build_rust_bridge.sh --shim-mode exec --child-profile std-probe` remains wired as the regression discriminator for the old `lang_start` seam
-    - `sc -t <serial> debug boot-lab-rust-bridge-run --input <base.img> --shim-mode exec --child-profile std-probe ...` remains the one-command way to re-prove that split if it regresses
-    - the current bridge shims always exec `/hello-init-child`, so the helper now rejects alternate child-entry paths instead of pretending they work
-    - raw-argv split on 2026-04-22:
-      - `std-probe` still returns `kernel_panic`
-      - `std-minimal-probe` still returns `kernel_panic`
-      - `std-nomain-probe` returns cleanly to fastboot/bootloader on both `09051JEC202061` and `11151JEC200472`
-      - the full `hello-init-rust` child now also returns cleanly to fastboot/bootloader on both devices once it enters through raw `argc/argv`
-      - that makes the failing seam specifically Rust's normal `main` / `lang_start` startup under PID 1
-    - promoted Rust bridge truth on 2026-04-22:
-      - helper-backed `vulkan-offscreen` is re-proved on the `exec + raw-argv + hello-init-rust` seam on `09051JEC202061`
-      - helper-backed `gpu-render` is re-proved on that same seam on `09051JEC202061` and `11151JEC200472`
-      - recovered `probe-report.txt` remains the proof surface: `child_completed=true`, `child_timed_out=false`, `exit_status=0`
-      - `exec + raw-argv` is now the default Rust path; `fork` is only a fallback discriminator
-      - the direct rust-bridge builder path now also proves that default on rooted hardware without an explicit `--rust-shim-mode` override:
-        - `build/pixel/boot/oneshot/20260422T195806Z-11151JEC200472_`
-        - `build/pixel/boot/oneshot/20260422T195955Z-06241JEC200520_`
-        - image metadata at `build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-fw-helper-breadcrumb-v3.img.hello-init.json` records `hello_init_shim_mode=exec`
-      - current `master` needed one more Rust-side proof-contract port:
-        - Rust `hello-init` now copies `/orange-gpu/summary.json` into `/metadata/.../probe-summary.json` and fails `gpu-render` closed if that summary is missing or no longer proves the signed-off `flat-orange` Vulkan tuple
-        - that port is now re-proved on the no-flag default image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-fw-helper-breadcrumb-v4.img`
-        - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T203707Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T203906Z-06241JEC200520_`
-        - both recovered bundles now report `probe_summary_proves_gpu_render=true` and `recover_traces_proof_ok=true`
-        - the top-level one-shot wrapper status still reports `fastboot-return-auto-rebooted`; use `recover-traces/status.json` as the truth channel for these boot-owned oneshots
-      - current `master` now also carries the next Rust bootstrap migration slice:
-        - Rust `hello-init` writes `/metadata/.../probe-fingerprint.txt` again
-        - Rust `hello-init` now owns the parent-probe loop and the remaining non-C-only probe modes (`timeout-control-smoke`, `raw-kgsl-open-readonly-smoke`, `raw-kgsl-getproperties-smoke`)
-        - helper-backed `gpu-render` with a Rust-side parent probe is now re-proved on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-gpurender-parentprobe-fw-helper-breadcrumb-v1.img`
-        - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T210518Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T210656Z-06241JEC200520_`
-        - both recovered bundles report `proof_ok=true`, `probe_report_proves_child_success=true`, `probe_summary_proves_gpu_render=true`, and `metadata_probe_fingerprint_present=true`
-        - both recovered bundles also preserve `metadata_stage_value=parent-probe-result=exit-0`, which is the durable proof that the Rust parent probe ran and returned `exit-0` before the real payload succeeded
-      - current `master` now also carries the Rust timeout/KGSL parity slice:
-        - Rust `hello-init` now writes `/metadata/.../probe-timeout-class.txt` and owns the direct `c-kgsl-open-readonly-*` modes on the rust-bridge seam
-        - timeout-control metadata recovery is now confirmed on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-timeout-control-breadcrumb-v2.img`
-        - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T215441Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T215441Z-06241JEC200520_`
-        - both recovered bundles preserve `metadata_stage_value=parent-probe-result=skipped`, `metadata_probe_stage_value=orange-gpu-payload:timeout-control-sleep`, `metadata_probe_report_timed_out=true`, `metadata_probe_timeout_class_present=true`, `metadata_probe_timeout_class_checkpoint=watchdog-timeout`, `metadata_probe_timeout_class_bucket=generic-watchdog`, and `metadata_probe_fingerprint_present=true`
-        - that rung remains an intentional timeout discriminator, so `proof_ok` stays false even though the durable timeout metadata now survives
-        - helper-backed direct KGSL open is now re-proved on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-c-kgsl-open-readonly-fw-helper-breadcrumb-v1.img`
-        - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T215913Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T220049Z-06241JEC200520_`
-        - both recovered bundles report `proof_ok=true`, `metadata_stage_value=parent-probe-result=skipped`, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly-ok`, `probe_report_proves_child_success=true`, and `metadata_probe_fingerprint_present=true`
-        - direct PID1 KGSL open is now also re-proved on image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-c-kgsl-open-readonly-pid1-breadcrumb-v2.img`
-        - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T221212Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T221344Z-06241JEC200520_`
-        - both recovered bundles now report `proof_ok=true`, `metadata_stage_value=parent-probe-result=skipped`, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly-ok`, `probe_report_proves_child_success=true`, and `metadata_probe_fingerprint_present=true`
-        - that means the promoted Rust seam now preserves the durable `probe-report.txt` contract even when `/dev/kgsl-3d0` is opened directly from PID 1 before any child payload fork/exec
-        - for the current `pixel_hello_init.c` migration surface, Rust now owns the executable proof path and C is just a frozen reference seam
-  - do not add compositor, runtime, shell, input, audio, camera, or later boot-product rungs on top of the C seam
-  - from here forward, use C only as migration reference or fallback discriminator, not as the growing product seam
-- Make observability part of the boot contract, not an afterthought: each owned-userspace experiment should emit stage breadcrumbs to multiple channels, and the host loop should have an explicit post-run recovery step for whatever survives.
-- Before any Nix-backed validation that depends on new files, stage the new paths in Git. The flake source filter otherwise omits them and can make default package wiring lie.
-- When a seam gets past firmware and both the panel timeout classifier and `/metadata` artifacts fail together, stop iterating on more colors or more metadata files. Pivot that seam to direct durable logging (`kmsg` first) plus source-guided hypotheses. If that still produces zero surviving evidence, escalate to a lower-level capture path such as panic-to-pstore on a confirmation device.
-- If a control timeout path can panic cleanly but the real seam still returns to bootloader before that panic branch changes the bootreason, treat that as evidence that the seam is escaping userspace supervision entirely. Stop spending runs on later watchdog tweaks and move to a different execution seam or a kernel-facing diagnostic.
-- Prefer one reusable probe harness over many custom rungs:
-  - `hello-init` should supervise child probes through one watchdog path
-  - timeouts should emit a durable `probe-report.txt` with the last observed probe stage plus live `/proc/<pid>` hints before the child is killed
-  - watched runs should use structured screen codes, not repeated identical orange pulses
-- Reuse the current rooted takeover/runtime path for DRM, input, audio, and packaging knowledge, but not as the boot graph we are trying to ship.
-- Land boot work in small seams that can merge to `master` independently; do not stack the whole project on one long-lived boot branch.
-- Use a dedicated worktree branch per risky seam, then land or checkpoint before starting the next one.
-- Keep experimental boot tooling private until it proves itself on-device. Private delegators may live under `shadowctl debug`, but do not promote boot-lab flows into the public `just` surface early.
-- When a boot experiment loop repeats or burns operator time twice, bias toward small private tools that capture the loop truthfully: shared immutable inputs, structured run bundles, explicit safety rails, and thin `shadowctl debug` delegation instead of more handwritten terminal choreography.
-- Keep the image repack loop fast by reusing stable built payload binaries when the payload source is unchanged; do not hide avoidable rebuilds inside temp-workdir packers.
-- Prefer chunks that are inert for the current Magisk path: helper libraries, private scripts, log capture, guardrails, and tiny owned-userspace proofs before Shadow-launch changes.
-- Prefer visible or durable proofs over speculative Android-`init` hook churn. A screen color or `kmsg` marker is better evidence than another late userspace property probe.
-- Once a failing rung narrows to a named kernel or driver boundary, stop broad boot-image churn and read the owning source tree before inventing more ladder splits:
-  - use the exact Pixel kernel/device branch first
-  - check AOSP init/`ueventd` and device-specific `*.rc` only to answer the concrete dependency the driver names
-  - return to hardware with one experiment that discriminates the source-backed candidates
-- Use the rooted tmpfs-`/dev` control harness as a cheap falsifier for `/dev` theories on the primary raw-ash control phone. If the rooted control succeeds under a boot-shaped tmpfs `/dev`, stop grinding node permutations and move suspicion to early-boot readiness or skipped vendor-init state.
-- Use a rooted falsification matrix instead of ad hoc sidecar commands when a hypothesis needs multiple service modes or holder states:
-  - batch the cases under one manifest-driven runner
-  - record one matrix summary plus per-case holder scans
-  - keep the spare devices on independent sidecar seams, not duplicate low-observability boot failures
-- Keep low-level scanout proofs separate from future renderer proofs. `orange-kms` should remain the “can we own the panel at all?” probe even after `orange-gpu` exists, because the compositor/Blitz path will fail differently from a direct dumb-buffer scanout path.
-- Do not treat “boot the whole Shadow UX” as the next integration target after display. First prove exactly one new seam per rung on tiny owned-userspace demos: boot ownership, raw scanout, GPU render, repeated frames, input-driven redraw, compositor-owned scene, app-owned surface, app runtimes, shell, then services.
-- Keep every ladder rung mechanically deletable:
-  - each demo should own a narrow binary or payload, a narrow runner, and a narrow smoke or gate entry
-  - do not let product code depend on demo-only wrappers or ad hoc demo binaries
-  - when a rung becomes obsolete, delete its binary, runner, smoke, and plan entry together instead of preserving it as historical ballast
-- CI policy for boot demos:
-  - repo-wide `pre-commit` keeps only cheap structural invariants for private boot-demo code paths: syntax, script inventory, dry-run CLI routing, and shared library compile coverage that is already paid for elsewhere
-  - real boot-demo cross-builds and hermetic seam smokes belong in a dedicated boot-demo lane, not the universal fast gate
-  - `pre-merge` should invoke that dedicated boot-demo lane only when the branch touches demo-owned paths, with an explicit override for manual forcing
-  - hardware proofs stay outside universal CI; use boot-lab runs as the truth environment for device-visible results
+- The C seam is signed off and frozen as reference only.
+- The live boot seam on current `master` is:
+  - `/system/bin/init` = no_std Rust shim
+  - `exec` into `/hello-init-child`
+  - raw `argc/argv` parsing in the child
+- Direct `std` Rust as PID1 still panics. Keep it as a background regression discriminator, not the main execution plan.
+- Signed-off Rust rungs on current `master` are `gpu-render`, `orange-gpu-loop`, and `compositor-scene`.
+- See [frontier.md](./frontier.md) for the current proof artifacts and absolute validation paths.
+- The truth surface is:
+  - `recover-traces/status.json`
+  - `probe-report.txt`
+  - `probe-summary.json`
+  - `probe-fingerprint.txt`
+  - `probe-timeout-class.txt` when applicable
+- The top-level one-shot wrapper can still end at `fastboot-return-auto-rebooted`. Treat `recover-traces/status.json` as truth.
+- The stock-init trigger / imported-rc / preflight seams are no longer peer execution streams:
+  - latest negative proof: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/runs/boot-kgsl-trigger-ladder/20260423T082243Z-09051JEC202061_/matrix-summary.json`
+  - current interpretation: later stock init actions prove, but injected `/init.shadow.rc` action registration still does not prove on normal `sunfish` boots
+  - keep that seam parked as fallback evidence, not as the product path
 
-## Execution Streams
+## Strategy
 
-- Stream A: GPU / KGSL critical path.
-  - owner today: sibling worktree `../boot`
-  - goal: preserve the newly proven helper-backed first frame while porting the PID 1 / bootstrap seam to Rust
-  - scope: boot-owned KGSL-open discriminators, raw Vulkan / wgpu ladder splits, rooted KGSL controls that directly answer the boot-owned GPU question
-  - reserved devices: `09051JEC202061` primary, `11151JEC200472` confirmation
-  - rule: only this stream is allowed to change the critical-path GPU story
-- Stream B: boot-helper autostart and preflight before the first frame.
-  - owner today: this worktree `boot-2`
-  - goal: prove a custom image can auto-run a Shadow boot helper from stock init, classify what that helper observes before takeover, and leave a durable ready-vs-blocked report without borrowing GPU ownership work
-  - scope: stock-init import/launch control, boot-helper autostart breadcrumbs, import-vs-helper proof surfaces, preflight report format, `/data` availability observation, observed staged-asset presence, required property/service snapshots, and the supporting recovery/evidence contract
-  - reserved devices: `0B191JEC203253` primary rooted sidecar, `06241JEC200520` spare; do not touch Stream A devices without an explicit handoff
-  - success looks like: the run bundle says separately whether stock-init import proved, whether the helper launch proved, and whether preflight is ready or blocked, with a readable reason
-- Stream C: phase-1 launch contract and `/data` artifact discipline.
-  - owner today: `boot-2` when Stream B is quiet
-  - goal: keep boot-critical config minimal in the image while making `/data`-staged payload expectations explicit and fail-loud
-  - scope: boot-helper launch contract, minimal config needed to decide whether to launch Shadow, missing-artifact behavior, typed startup/session config, recovery notes when staged assets are absent
-  - reserved devices: none by default; validate on a rooted sidecar only after the host-side contract is settled
-  - rule: this stream may tighten the phase-1 launch contract, but it does not claim to solve KGSL
-- Boundary between Stream B and Stream C:
-  - Stream B answers “did the helper launch, and what did it observe on this boot?”
-  - Stream C answers “what config and staged artifacts should the helper require once launch proof exists?”
-- Stream D: takeover extraction and service prerequisite map.
-  - owner today: open sidecar lane
-  - goal: extract the current rooted takeover contract into a smaller boot-helper-ready service and recovery manifest without claiming that those answers unblock KGSL by themselves
-  - scope: rooted service inventory, display-service stop/start sets, typed takeover config, camera/Wi-Fi/update boundary notes, and phase-1 recovery rules
-  - reserved devices: `06241JEC200520` or `0B191JEC203253` only
-  - output shape: docs, manifests, or rooted sidecar summaries that tighten phase 1 without forking the boot-owned GPU seam
-- Coordination rules:
-  - Stream A stays the critical path for the first real Shadow frame until KGSL open moves.
-  - Streams B-D may land independently as pre-frame migration work as long as they do not rewrite Stream A's interpretation.
-  - Prefer one worktree and one explicit device reservation per active stream.
+- Keep exactly one critical path: Stream A.
+- Advance the smallest rung that moves toward full Shadow userspace.
+- Favor real product-path milestones over more generic proof demos once a seam is established.
+- Keep the current proof contract and observability intact while climbing.
+- Use absolute paths for artifact references in docs.
+- Land small, truthful chunks instead of carrying a second parallel roadmap.
 
-## Current Status
+## Ladder To Full Shadow Userspace
 
-- Current boot-owned blocker:
-  - any owned-userspace process, including direct C in PID 1, still fails to complete the first boot-owned KGSL open path
-  - the last durable recovered blocker on `09051JEC202061` was still `wchan=_request_firmware` plus `/proc/<pid>/stack` showing `a6xx_microcode_read -> request_firmware -> _request_firmware`
-  - since then, a dedicated firmware-only checkpoint rung visibly succeeded on both `09051JEC202061` and `0B191JEC203253` with `orange -> checkerboard -> black -> fastboot`
-  - that two-device proof means the staged `a630_sqe.fw`, `a618_gmu.bin`, and `a615_zap.*` blobs are readable in owned userspace before any KGSL open
-  - the active seam is therefore the first post-firmware stage inside boot-owned KGSL bring-up, not generic staging or visibility of the blobs themselves
-  - this is now narrower than the staged Rust payload, dynamic loader, Vulkan loader, wgpu setup, Android display services, or late Android properties
-  - new control/result pair:
-    - `timeout-control-smoke` with `orange_gpu_timeout_action=panic` on `11151JEC200472` came back with `kernel_panic`
-    - the real `c-kgsl-open-readonly-smoke` still came back with `reboot` / `bootloader`, even with a forced `12s` watchdog on `09051JEC202061`
-    - so the real KGSL seam is escaping to bootloader before userspace timeout recovery changes the reboot reason
-- Strongest current hypothesis:
-  - the failing seam is now just after the first named firmware loads, not generic `/dev` topology, not DRM, and not later Vulkan enumeration logic
-  - source-guided read of the sunfish kernel plus the recovered `probe-report.txt` still make the first Adreno SQE firmware request the last durable breakpoint, but the new firmware-only watched proof moves the best next suspects forward to secure zap / PAS first, then GX/OOB wake or GMU power-handshake bring-up, then GMU firmware / HFI, and then CP init:
-    - first open reaches `kgsl_open()` -> `kgsl_open_device()` -> Adreno init/start
-    - the recovered stack currently stops in `a6xx_microcode_read`, which issues `request_firmware("a630_sqe.fw")`
-    - later in the same init path the code also names `request_firmware("a618_gmu.bin")` and secure zap boot via `subsystem_get("a612_zap")` / `pil_boot`
-    - rooted `cold-root-ready` success with blank `boot_completed` / `pd_mapper` / `qseecom-service` / `gpu` props makes “wait for more Android” a weaker next move than tracing the first open path directly
-- Strongest rooted controls:
-  - rooted tmpfs-`/dev` controls still succeed for `raw-kgsl-getproperties-smoke` and `raw-kgsl-open-readonly-smoke`
-  - rooted `raw-kgsl-open-readonly-smoke` on `0B191JEC203253` still succeeds even after stopping `surfaceflinger`, hwcomposer, and allocator, so those Android display services are not the obvious prerequisite for a readonly KGSL open
-- Current observability:
-  - boot recovery now captures a rooted `kgsl-holder-scan` channel and a best-effort kernel-log channel (`root dmesg` when available, otherwise `logcat -b kernel`)
-  - tmpfs-`/dev` rooted controls also persist `kgsl-holder-scan.tsv` plus parsed holder metadata in `status.json`
-  - tmpfs-`/dev` rooted controls now also persist `exec-context.txt`, so rooted control context can be compared directly against boot-owned metadata probe artifacts
-  - boot-owned child probes now also persist `probe-report.txt` so timeouts can recover the last observed stage plus `wchan` / proc excerpts instead of only a pulse count
-  - watched runs now have structured `code-orange-*` visuals for validated/probe-ready/success/timeout/signal/nonzero states
-  - the post-firmware timeout classifier now maps recovered kernel-symbol families onto watched checkpoints:
-    - `bands-orange`: request-firmware path
-    - `orange-vertical-band`: GMU / HFI bring-up
-    - `frame-orange`: secure zap boot
-    - `code-orange-12`: CP init / ringbuffer submit
-    - `code-orange-13`: GX/OOB wake or GMU power-handshake bring-up
-  - for the current fastboot-return firmware seam, the watched panel contract is stronger than `/metadata`:
-    - both firmware-only confirmation runs returned to Android with `metadata_probe_stage_present=false` and `metadata_probe_report_present=false`
-    - treat watched `checker-orange` as the truthful proof for this rung until a later durable channel survives reliably
-  - new negative result:
-    - a live tracefs monitor now tries to advance `probe-stage.txt` to `trace-microcode-read`, `trace-subsystem-get`, `trace-pil-boot`, `trace-gmu-start`, `trace-gmu-hfi-start`, or `trace-cp-init` while `open("/dev/kgsl-3d0")` is in flight
-    - on `09051JEC202061`, none of those early stage writes survived the same fastboot-return seam
-    - so this seam currently beats both late recovery artifacts and early metadata stage updates
-  - `scripts/pixel/pixel_kgsl_matrix.sh` now batches rooted KGSL falsification cases into one summary artifact
-  - `scripts/ci/pixel_boot_recover_traces_smoke.sh` and `scripts/ci/pixel_boot_tooling_smoke.sh` cover those additions
-  - the latest high-signal boot-owned bundle is [`build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_), which recovered the decisive `_request_firmware` stack
-  - Stream A stock-init KGSL trigger ladder result on 2026-04-23:
-    - `pixel_boot_build_kgsl_probe.sh` now sets a separate import proof (`debug.shadow.boot.kgsl.import=triggered`) before `start shadow-boot-helper`, and `pixel_boot_kgsl_probe.sh` / `pixel_boot_kgsl_trigger_ladder.sh` now surface `import_proved_current_boot`, `helper_launch_proved_current_boot`, and `launch_discriminator`
-    - the first real split-proof run on `09051JEC202061` wrote [`matrix-summary.json`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T042615Z-09051JEC202061_/matrix-summary.json) and returned adb on slot `_b` for every default trigger (`post-fs-data`, `pd_mapper`, `qseecom-service`, `gpu`, `sys.boot_completed=1`)
-    - that matrix reported `import_proved_case_count=0`, `helper_launch_case_count=0`, `kgsl_result_case_count=0`, and `surviving_discriminator=android-returned-no-import-proof`
-    - every case still had blank import/helper proof properties plus no helper dir or recovered shadow tags for the current boot, so the truthful Stream A bottleneck is now the imported stock-init rc seam itself rather than “the KGSL helper is merely launching too early”
-    - the follow-up control-point promotion now also appends `llk.enable=1` through the preserved ramdisk build-prop seam and surfaces `control_point_proved_current_boot` from `init.svc.llkd-0=running`
-    - that rerun on `09051JEC202061` wrote [`matrix-summary.json`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T061517Z-09051JEC202061_/matrix-summary.json) with `case_count=5`, `second_stage_proved_case_count=5`, `control_point_proved_case_count=5`, `import_proved_case_count=0`, `helper_launch_case_count=0`, and `surviving_discriminator=control-point-proved-no-import-proof`
-    - the matching [`matrix.tsv`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T061517Z-09051JEC202061_/matrix.tsv) kept every trigger on `adb` with `failure_stage=collect`, which means the custom image now proves both preserved second-stage property loading and one constructive stock system-core service-start seam while the imported rc/helper proof still stays dark
-    - the next proof-point promotion now also surfaces `init_script_selection_proved_current_boot` from `init.svc.servicemanager=running`, matching the stock `start servicemanager` action in the patched `system/etc/init/hw/init.rc` file
-    - that rerun on `09051JEC202061` wrote [`matrix-summary.json`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T064853Z-09051JEC202061_/matrix-summary.json) with `case_count=5`, `second_stage_proved_case_count=5`, `init_script_selection_proved_case_count=5`, `control_point_proved_case_count=5`, `import_proved_case_count=0`, `helper_launch_case_count=0`, and `surviving_discriminator=control-point-proved-no-import-proof`
-    - the matching [`matrix.tsv`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T064853Z-09051JEC202061_/matrix.tsv) kept every trigger on `adb` with `failure_stage=collect`, so the new rung truthfully proves the patched stock imported rc reached its `servicemanager` start on every case, but it still does not split the missing imported rc/helper seam any further
-    - the next imported-rc proof-point promotion now also surfaces `imported_rc_proved_current_boot` from `init.svc.adbd=running`, matching the later USB/adbd action path in that same patched `system/etc/init/hw/init.rc`
-    - that rerun on `09051JEC202061` wrote [`matrix-summary.json`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T071613Z-09051JEC202061_/matrix-summary.json) with `case_count=5`, `second_stage_proved_case_count=5`, `init_script_selection_proved_case_count=5`, `imported_rc_proved_case_count=5`, `control_point_proved_case_count=5`, `import_proved_case_count=0`, `helper_launch_case_count=0`, and `surviving_discriminator=imported-rc-proved-no-import-proof`
-    - the matching [`matrix.tsv`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T071613Z-09051JEC202061_/matrix.tsv) kept every trigger on `adb` with `failure_stage=collect`, so the ladder now truthfully proves the patched stock imported rc reached its later `adbd` service-start path on every case while the injected `/init.shadow.rc` import/helper proof still stays dark
-    - the next split now also adds a late stock handoff action (`on property:init.svc.adbd=running`) which tries to `start shadow-boot-parse-probe`, where that service is declared only inside `/init.shadow.rc`; `pixel_boot_kgsl_probe.sh` / `pixel_boot_kgsl_trigger_ladder.sh` now surface `injected_rc_parse_proved_current_boot` plus the stronger `injected-rc-parse-proved-action-missing` / `imported-rc-proved-no-injected-parse-proof` split
-    - that rerun on `09051JEC202061` wrote [`matrix-summary.json`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T074635Z-09051JEC202061_/matrix-summary.json) with `case_count=5`, `second_stage_proved_case_count=5`, `init_script_selection_proved_case_count=5`, `imported_rc_proved_case_count=5`, `injected_rc_parse_proved_case_count=0`, `control_point_proved_case_count=5`, `import_proved_case_count=0`, `helper_launch_case_count=0`, and `surviving_discriminator=imported-rc-proved-no-injected-parse-proof`
-    - the matching [`matrix.tsv`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T074635Z-09051JEC202061_/matrix.tsv) again kept every trigger on `adb` with `failure_stage=collect`, but now the late stock parse handoff stayed dark too: no helper dir, blank `debug.shadow.boot.kgsl.parse`, blank `debug.shadow.boot.kgsl.import`, and blank `debug.shadow.boot.kgsl.launch`
-    - tightened Stream A conclusion: on `09051JEC202061`, the new stock-owned parse handoff failed on every trigger even after the same boots proved `servicemanager`, `llkd-0`, and `adbd`; within the current stock-init userspace seam, the strongest truthful interpretation is now that injected `/init.shadow.rc` content is still not being parsed or registered at all on normal `sunfish` boots, not merely that its own action fires too early
-    - the next discriminator adds a direct injected-rc action proof (`on property:init.svc.adbd=running -> setprop debug.shadow.boot.kgsl.action triggered`) so `/init.shadow.rc` action registration can be tested without depending on `start shadow-boot-parse-probe`
-    - that rerun on `09051JEC202061` wrote [`matrix-summary.json`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T082243Z-09051JEC202061_/matrix-summary.json) with `case_count=5`, `second_stage_proved_case_count=5`, `init_script_selection_proved_case_count=5`, `imported_rc_proved_case_count=5`, `injected_rc_action_proved_case_count=0`, `injected_rc_parse_proved_case_count=0`, `control_point_proved_case_count=5`, `import_proved_case_count=0`, `helper_launch_case_count=0`, and `surviving_discriminator=imported-rc-proved-no-injected-action-proof`
-    - the matching [`matrix.tsv`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T082243Z-09051JEC202061_/matrix.tsv) kept every trigger on `adb` with `failure_stage=collect`; the direct action proof stayed blank along with `debug.shadow.boot.kgsl.parse`, `debug.shadow.boot.kgsl.import`, and `debug.shadow.boot.kgsl.launch`, so the negative result is now stronger than a `start service` failure
-    - tightened Stream A conclusion: on `09051JEC202061`, normal `sunfish` stock init boots still do not prove any injected `/init.shadow.rc` `on property:` action registration/execution even after the same boots prove the late stock `adbd` property path; stop spending Stream A on more trigger choices inside this imported-file shape
-- Current stream map on 2026-04-21:
-  - Stream A (`../boot`): KGSL / raw Vulkan critical path
-  - Stream B (`boot-2`): boot-helper autostart and preflight before the first frame
-  - Stream C (`boot-2` when idle): phase-1 launch contract and `/data` artifact discipline
-  - Stream D (open sidecar lane): takeover extraction and service prerequisite map
-- Current lab map on 2026-04-21:
-  - `09051JEC202061`: Stream A primary boot-owned lane, rooted, best current reproducer for the KGSL-open seam
-  - `11151JEC200472`: Stream A confirmation lane, rooted and healthy, but still transport-confounded for guarded `adb reboot bootloader` probes; use carefully for boot-owned runs until that path is fixed or bypassed
-  - `0B191JEC203253`: Stream B rooted sidecar lane; also available for Stream C validation when explicitly idle
-  - `06241JEC200520`: Stream D rooted sidecar / spare lane; verify root state with `sc -t 06241JEC200520 root-check` before reassigning it
-  - 2026-04-23 note: the latest stock-init KGSL trigger ladder on `09051JEC202061` left the phone adb-visible on slot `_b` with `sys.boot_completed=1`, `init.svc.servicemanager=running`, `init.svc.llkd-0=running`, `init.svc.adbd=running`, `debug.shadow.boot.kgsl.second_stage=ready`, blank `debug.shadow.boot.kgsl.action` / `debug.shadow.boot.kgsl.parse` / `debug.shadow.boot.kgsl.import` / `debug.shadow.boot.kgsl.launch`, and Magisk root inactive, so start the next rooted follow-up with `sc -t 09051JEC202061 root-check` and a Magisk activation pass if needed
-- Handoff rule:
-  - keep Stream A on the KGSL-open seam until one new discriminator lands
-  - keep Stream B on boot-helper autostart and preflight work; it may use recovery/evidence support, but it must not drift into second-guessing the GPU ladder
-  - let Stream C tighten the phase-1 launch contract without waiting for KGSL
-  - let Stream D shrink the takeover/service contract without claiming a boot-owned product milestone
+- [x] `gpu-render`
+- [x] `orange-gpu-loop`
+- [x] `compositor-scene`
+- [ ] `app-direct-present`
+  - prove an app-owned surface that the compositor imports/presents on the current Rust seam
+- [ ] `touch-counter-gpu`
+  - prove one minimal input-driven redraw on the real boot-owned render/present path
+- [ ] `ts-app-minimal`
+  - first minimal Shadow runtime / TypeScript app rung on the boot-owned seam
+- [ ] `rust-app-minimal`
+  - secondary isolation rung; raise priority only if the TS runtime obscures bootstrap bugs
+- [ ] `shell-home-static`
+- [ ] `shell-launch-ts-app`
+- [ ] `shell-launch-rust-app`
+- [ ] `shell-interaction`
+- [ ] selected service spikes required for a usable shell
+  - audio output
+  - storage / networking / control seams as needed
+- [ ] decide whether direct `std` PID1 still matters for the shipping architecture or stays a parked non-goal
 
-## Stream Backlogs
+## Immediate Milestones
 
-### Stream A: GPU / KGSL (`../boot`)
+- [ ] Land `app-direct-present` on current `master` truth or drop it cleanly if it cannot satisfy the signed-off proof contract.
+- [ ] Pick the first real app lane after `app-direct-present`.
+  - prefer `ts-app-minimal` if it is the shortest path to actual Shadow userspace
+  - use `rust-app-minimal` first only if it materially de-risks the boot seam
+- [ ] Land one minimal touch/input rung before starting shell interaction work.
+- [ ] Keep the direct `std` PID1 seam honest as a regression discriminator while not letting it block the main ladder.
 
-- Keep the raw KGSL / Vulkan ladder as the only critical-path seam.
-- Land one discriminator at a time until boot-owned readonly KGSL open either succeeds or the missing prerequisite is named.
-- Do not broaden to `orange-gpu`, compositor, runtime, or shell until that happens.
-- Near-term pivot inside Stream A:
-  - stop spending the primary loop on more direct-PID1 timeout-color variants
-  - stop varying stock-init triggers on `09051JEC202061`; the full default trigger ladder now collapses to `imported-rc-proved-no-injected-action-proof`
-  - treat the stock-init imported-file shape itself as exhausted for Stream A until a stronger proof surface explains why injected `/init.shadow.rc` actions never register on normal `sunfish` boots
-  - once that init-proof seam is no longer the variable, either borrow a stronger proof surface from Stream B or plan the minimal kernel-facing zap/PAS diagnostic lane
+## Next Dispatch Batch
 
-### Stream B: boot-helper autostart / preflight (`boot-2`)
+- [ ] `finish-inflight-app-direct-present`
+  - why first: this is the current in-flight seam and it blocks every downstream product rung
+  - worktree policy: prefer finishing it in the existing `/Users/justin/code/shadow/worktrees/rust-boot` worktree instead of opening a fresh branch first
+  - owned paths:
+    - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
+    - `scripts/pixel/pixel_boot_recover_traces.sh`
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - `todos/boot/plan.md`
+    - `todos/boot/frontier.md`
+  - acceptance:
+    - land the current `app-direct-present` seam on `master`, or land a truthful note/doc update saying why the current seam is not the right contract
+    - keep the signed-off `recover-traces/status.json` truth model intact
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - canonical rooted proof recipe on the primary/confirm device pair
+  - blocked_by: none
+- [ ] `ts-app-minimal`
+  - why next: default first real app lane unless the runtime itself becomes the blocker
+  - owned paths:
+    - `runtime/`
+    - `rust/shadow-system/`
+    - `scripts/pixel/`
+    - `todos/boot/`
+  - acceptance:
+    - a minimal TypeScript-backed Shadow app launches on the boot-owned Rust seam with a truthful recovered proof bundle
+  - blocked_by:
+    - `finish-inflight-app-direct-present`
+- [ ] `touch-counter-gpu`
+  - why next: first honest input rung on the real boot-owned render/present path
+  - owned paths:
+    - `scripts/pixel/`
+    - `ui/`
+    - `runtime/app-counter/`
+    - `todos/boot/`
+  - acceptance:
+    - one input-driven redraw is proved on the same boot-owned render/present path, not on rooted takeover
+  - blocked_by:
+    - `finish-inflight-app-direct-present`
+- [ ] `shell-home-static`
+  - why after app + input: shell work should sit on top of the first truthful app lane and the first truthful input lane
+  - owned paths:
+    - `ui/`
+    - `rust/shadow-system/`
+    - `scripts/pixel/`
+    - `todos/boot/`
+  - acceptance:
+    - a static Shadow home/shell surface appears from the boot-owned seam and preserves the current recovered proof contract
+  - blocked_by:
+    - `ts-app-minimal`
+    - `touch-counter-gpu`
 
-- Land a reusable stock-init preflight runner that proves the boot helper launched on the current boot before any session/compositor attempt.
-- Classify `/data` availability, observed staged-asset presence, and required property/service snapshots in a durable preflight report instead of a generic "helper ran" signal.
-- Keep proof-of-launch separate from preflight-ready vs preflight-blocked so a missing artifact is a successful diagnosis, not a false-negative run.
-- Keep flash/rollback/run-bundle guardrails sharp enough that Stream B can exercise custom-image autostart safely without borrowing Stream A devices or hypotheses.
+## Parked / Fallback Seams
 
-### Stream C: phase-1 launch contract / `/data` discipline (`boot-2`)
+- [~] Direct `std` PID1 `lang_start` regression lane.
+  - use `scripts/shadowctl -t <serial> debug boot-lab-rust-bridge-run --shim-mode exec --child-profile std-probe ...`
+- [~] Stock-init trigger / imported-rc / preflight lane.
+  - use only if the boot-owned launch contract regresses or `/data` artifact handling needs independent evidence
+  - latest high-signal negative result: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/runs/boot-kgsl-trigger-ladder/20260423T082243Z-09051JEC202061_/matrix-summary.json`
+- [~] C seam.
+  - reference only; do not extend it
+- [~] Rooted KGSL falsification matrices.
+  - use as falsifiers only, not as the execution plan
 
-- Make the boot-critical config surface explicit and keep it small enough to live in the image.
-- Make missing `/data`-staged payloads fail loudly and recoverably instead of black-box hanging.
-- Keep typed startup/session config aligned with the actual phase-1 boot helper contract instead of ad hoc env assembly.
-- Land host-heavy contract work independently of the boot-owned GPU seam whenever possible.
+## Device Policy
 
-### Stream D: takeover extraction / service prerequisites (sidecar)
-
-- Inventory the minimum vendor/service set needed before and after Shadow takes over the display.
-- Extract the rooted display-takeover service stop/start set into a smaller, typed manifest that a future boot helper can reuse.
-- Keep camera, Wi-Fi, and broader networking explicitly non-blocking for the first milestone unless new evidence proves otherwise.
-- Convert useful answers into docs or manifests, not another unbounded experimental lane.
-
-## Milestones
-
-- [x] Confirm the real `sunfish` boot seam and round-trip the stock `boot.img` with repo-local tooling.
-- [~] Recreate a safe custom `boot.img` flash loop on-device with clear rollback steps.
-- [x] Bound the old stock-init-handoff seam tightly enough to stop treating it as primary:
-  - foreign PID 1 handoff wrappers fail
-  - extra symlink hops at `/init` or `system/bin/init` fail
-  - imported ramdisk rc hooks can perturb boot but do not give clean proof on normal `sunfish` boots
-- [~] Boot the stock kernel into a tiny Shadow-owned PID 1 that never execs stock Android init (`hello-init`).
-- [x] From that owned userspace, paint the panel orange with a minimal DRM/KMS proof (`orange-kms`).
-- [x] Prove GPU-only bring-up with a minimal debug smoke (`gpu-smoke`):
-  - offscreen Vulkan/wgpu render
-  - readback hash or equivalent host-verifiable checksum
-  - no compositor, no TS runtime, no shell
-- [x] Prove the render/present bridge on rooted hardware before boot ownership (`gpu-kms-bridge`):
-  - reuse `gpu-smoke`'s strict Vulkan/wgpu render path
-  - present the rendered pixels through KMS under explicit rooted display takeover
-  - restore Android after the run so the lab device stays reusable
-  - do not treat this as a substitute for boot-owned `orange-gpu`
-- [x] Prove boot-owned dynamic bundle exec with visible checkpoints (`boot-bundle-exec`):
-  - `orange-init` prelude proves boot-owned KMS still works in the image
-  - a second short checkpoint proves config validation passed before launching the bundle
-  - a long postlude proves the staged `/orange-gpu` bundle returned successfully
-- [x] Prove boot-owned staged firmware preflight before any KGSL open (`firmware-probe-only`):
-  - stage `a630_sqe.fw`, `a618_gmu.bin`, and `a615_zap.*` into the ramdisk image
-  - open and read those blobs directly in owned userspace before touching KGSL
-  - use `checker-orange` as the watched proof contract for success
-  - observed `orange -> checkerboard -> black -> fastboot` on both `09051JEC202061` and `0B191JEC203253`
-- [x] Prove boot-owned strict Vulkan instance creation and return (`boot-vulkan-instance-smoke`):
-  - reuse the staged `shadow-gpu-smoke` bundle
-  - require the same strict Vulkan env setup as later GPU rungs
-  - stop before adapter selection so failures narrow to `WGPUContext::new()` / instance setup
-- [x] Prove boot-owned strict Vulkan raw adapter enumeration count and return (`boot-vulkan-enumerate-adapters-count-smoke`):
-  - reuse the staged `shadow-gpu-smoke` bundle
-  - require the same strict Vulkan env setup as later GPU rungs
-  - stop immediately after `enumerate_adapters(...)` returns so failures narrow to raw enumeration count only
-- [x] Prove boot-owned raw Vulkan loader plus `vkCreateInstance` / `vkDestroyInstance` and return (`boot-raw-vulkan-instance-smoke`):
-  - reuse the staged `shadow-gpu-smoke` bundle and the same strict env/bootstrap path
-  - load Vulkan directly and create/destroy an instance without touching wgpu adapter enumeration
-  - stop before Vulkan physical-device enumeration and all later wgpu adapter selection
-- [x] Prove boot-owned raw Vulkan physical-device count query and immediate child exit (`boot-raw-vulkan-physical-device-count-query-exit-smoke`):
-  - reuse the staged `shadow-gpu-smoke` bundle and the same strict env/bootstrap path
-  - load Vulkan directly, create an instance, and stop immediately after `vkEnumeratePhysicalDevices` returns a count query with a null device pointer
-  - terminate the child with exit status `0` before summary construction/write, before explicit `vkDestroyInstance`, and before the normal Rust return path
-  - stop before fetching any physical-device handles, before physical-device property extraction, and before all wgpu adapter enumeration/selection
-- [x] Prove boot-owned raw Vulkan physical-device count query and return without explicit cleanup (`boot-raw-vulkan-physical-device-count-query-no-destroy-smoke`):
-  - reuse the staged `shadow-gpu-smoke` bundle and the same strict env/bootstrap path
-  - load Vulkan directly, create an instance, and stop immediately after `vkEnumeratePhysicalDevices` returns a count query with a null device pointer
-  - do not call explicit `vkDestroyInstance` in this rung; let process exit provide the only cleanup
-  - stop before fetching any physical-device handles, before physical-device property extraction, and before all wgpu adapter enumeration/selection
-- [x] Prove boot-owned raw Vulkan physical-device count query and return (`boot-raw-vulkan-physical-device-count-query-smoke`):
-  - reuse the staged `shadow-gpu-smoke` bundle and the same strict env/bootstrap path
-  - load Vulkan directly, create an instance, and stop immediately after `vkEnumeratePhysicalDevices` returns a count query with a null device pointer
-  - keep explicit `vkDestroyInstance` cleanup in this rung so failures can still be attributed to query-vs-cleanup once the no-destroy split exists
-  - stop before fetching any physical-device handles, before physical-device property extraction, and before all wgpu adapter enumeration/selection
-- [x] Prove boot-owned raw Vulkan physical-device enumeration count and return (`boot-raw-vulkan-physical-device-count-smoke`):
-  - reuse the staged `shadow-gpu-smoke` bundle and the same strict env/bootstrap path
-  - load Vulkan directly, create an instance, and stop immediately after `vkEnumeratePhysicalDevices` returns the full handle list and the count is recorded
-  - stop before any Vulkan physical-device property extraction and before all wgpu adapter enumeration/selection
-- [x] Prove boot-owned strict Vulkan adapter enumeration and return (`boot-vulkan-enumerate-adapters-smoke`):
-  - reuse the staged `shadow-gpu-smoke` bundle
-  - require the same strict Vulkan env setup as later GPU rungs
-  - continue past raw enumeration into per-adapter `get_info()` / summary extraction
-  - stop before default adapter request/selection so failures narrow to adapter-info extraction vs selection
-- [x] Prove boot-owned strict Vulkan adapter selection and return (`boot-vulkan-adapter-smoke`):
-  - reuse the staged `shadow-gpu-smoke` bundle
-  - require the same strict Vulkan env setup as later GPU rungs
-  - stop before `request_device` so failures narrow to loader/env or adapter selection
-- [x] Prove boot-owned strict Vulkan device request and return (`boot-vulkan-device-request-smoke`):
-  - reuse the staged `shadow-gpu-smoke` bundle
-  - require the same strict Vulkan env setup as later GPU rungs
-  - stop before buffer-renderer allocation so failures narrow to `request_device`
-- [x] Prove boot-owned strict Vulkan buffer-renderer bring-up and return (`boot-vulkan-device-smoke`):
-  - reuse the staged `shadow-gpu-smoke` bundle
-  - require the same strict Vulkan env setup as later GPU rungs
-  - stop before Vello render-to-texture so failures narrow to buffer-renderer allocation
-- [x] Prove boot-owned strict Vulkan offscreen render and return (`boot-vulkan-offscreen`):
-  - reuse the staged `shadow-gpu-smoke` bundle
-  - require strict Vulkan env setup in boot-owned userspace
-  - keep the same visible prelude/checkpoint/postlude contract so failure narrows cleanly
-- [~] Port the boot-owned PID 1/bootstrap seam to Rust after `boot-c` re-signs off helper-backed `gpu-render`.
-  - direct `std` Rust at exact-path `/system/bin/init` is still blocked on `kernel_panic`
-  - `no_std` exact-path PID 1 now works well enough to return cleanly to bootloader
-  - `no_std` PID 1 shim plus full Rust `hello-init` child also returns cleanly on the stripped `hello` lane
-  - the Rust bridge seam now has positive `probe_report_proves_child_success=true` proofs for:
-    - `vulkan-offscreen` on `09051JEC202061`
-    - `gpu-render` on `09051JEC202061`
-  - next step is to confirm the direct rust-bridge builder path on hardware and then keep climbing from that bridge shape instead of forcing `std` directly into PID 1
-- [x] From that owned userspace, render one orange GPU frame and present it through dma-buf/KMS (`orange-gpu`).
-- [x] Prove repeated GPU frame submission and synchronization for 2-3 seconds (`orange-gpu-loop`).
-  - current signed-off rung: image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-orange-gpu-loop-parentprobe-fw-helper-breadcrumb-v2.img.hello-init.json`
-  - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/orange-gpu-loop-v2-primary-11151JEC200472/recover-traces/status.json` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/orange-gpu-loop-v2-confirm-06241JEC200520/recover-traces/status.json`
-  - both recovered bundles report `proof_ok=true`, `probe_report_proves_child_success=true`, `probe_summary_proves_orange_gpu_loop=true`, `metadata_stage_value=parent-probe-result=exit-0`, and `metadata_probe_summary_kms_present.present_count=11`
-  - the recovered loop summaries also preserve `frames_rendered=11`, `scanout_updates=11`, `distinct_frame_count=2`, and `kms_present.hold_secs=3`, which keeps the proof on the same durable `probe-summary.json` contract instead of a watched-only claim
-- [ ] Prove one minimal input-driven redraw on the real GPU render/present path (`touch-counter-gpu`).
-- [x] Prove a tiny compositor-owned scene with no app/runtime complexity (`compositor-scene`).
-  - current signed-off rung is shell-only: image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-compositor-scene-parentprobe-fw-helper-breadcrumb-v3.img.hello-init.json`
-  - rooted confirmations: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T235214Z-11151JEC200472_` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/20260422T235214Z-06241JEC200520_`
-  - both recovered bundles report `proof_ok=true`, `metadata_stage_value=parent-probe-result=exit-0`, `metadata_probe_stage_value=orange-gpu-payload:compositor-scene-frame-captured`, `probe_summary_proves_compositor_scene=true`, `metadata_compositor_frame_proves_scene=true`, and `metadata_probe_report_child_exit_status=0`
-  - rooted sidecar discriminator at `/tmp/shadow-cscene-rooted-repro` on `09051JEC202061` now exits `0` after `startup-exit-requested`; strict `gpuShell + strictGpuResident` remains a later follow-on rather than this rung’s contract
-- [~] Prove an app-owned surface that the compositor imports/presents, with no shell (`app-direct-present`).
-  - host-side seam is green: `scripts/ci/pixel_boot_orange_gpu_smoke.sh` and `scripts/ci/pixel_boot_recover_traces_smoke.sh` both pass with the new builder/recovery contract for `app-direct-present`
-  - parked negative result on 2026-04-22/2026-04-23: image `/Users/justin/code/shadow/worktrees/overnight-boot-finish-the-in-flight-rus-20260423T033316Z-dc653d7a/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-app-direct-present-parentprobe-fw-helper-breadcrumb-v1.img.hello-init.json`
-  - rooted confirmation bundles: `/Users/justin/code/shadow/worktrees/overnight-boot-finish-the-in-flight-rus-20260423T033316Z-dc653d7a/build/pixel/boot/oneshot/app-direct-present-v1-primary-11151JEC200472/recover-traces/status.json` and `/Users/justin/code/shadow/worktrees/overnight-boot-finish-the-in-flight-rus-20260423T033316Z-dc653d7a/build/pixel/boot/oneshot/app-direct-present-v1-confirm-06241JEC200520/recover-traces/status.json`
-  - both recovered bundles preserve `metadata_stage_value=parent-probe-result=exit-0`, but then stall at `metadata_probe_stage_value=orange-gpu-payload:firmware-helper-timeout` with `metadata_probe_report_timed_out=true`, `probe_report_proves_child_success=false`, no recovered `probe-summary.json`, and no recovered `compositor-frame.ppm`
-  - both recovered `metadata-probe-report.txt` bundles show `shadow-session` sleeping in `do_wait`, which points at the app/session path hanging before the first frame instead of a generic parent-probe or boot-owned KGSL regression
-  - truth boundary for this parked note: the on-device discriminator used the current worktree's Rust boot binaries plus sibling `rust-boot` `shadow-compositor-guest` / `shadow-rust-demo` artifacts, because the current worktree's aarch64 `shadow-compositor-guest-device` package build still fails before the boot rung with missing `rust/shadow-sdk/src/{app.rs,services.rs}` in the Nix build source
-- [ ] Prove a minimal TypeScript app in owned userspace with no shell (`ts-app-minimal`).
-- [ ] Prove a minimal Rust app in owned userspace with no shell (`rust-app-minimal`).
-- [ ] Boot into a static shell/home scene with no launched apps (`shell-home-static`).
-- [ ] Prove shell launch of a minimal TS app (`shell-launch-ts-app`).
-- [ ] Prove shell launch of a minimal Rust app (`shell-launch-rust-app`).
-- [ ] Prove the first usable shell interaction loop: home, open/close app, back, switcher (`shell-interaction`).
-- [ ] Add narrow service spikes on top of the owned renderer/runtime path:
-  - audio tone
-  - camera preview
-  - simple storage/network/control seams as needed
-- [ ] Reach one minimal control lane from owned userspace when needed, without reintroducing stock Android init or framework.
-- [ ] Reduce or eliminate the first-boot dependence on pre-staged `/data/local/tmp` runtime artifacts.
-- [ ] Decide the long-lived subsystem strategy for camera, Wi-Fi, and update/recovery.
-
-## Near-Term Steps
-
-- [x] Add repo-local scripts for `sunfish` boot unpack/repack and ramdisk patching.
-- [x] Add explicit flash guardrails so experimental boot images do not accidentally clobber the working Magisk development lane.
-- [~] Add a safe on-device validation shape:
-  - prefer inactive-slot or otherwise isolated flashing when possible
-  - keep rollback obvious and scripted
-- [x] Add a device-side log capture path for wrapper, init, and Shadow boot markers.
-- [x] Add worktree-friendly boot-lab tooling:
-  - shared stock `boot.img` fallback across worktrees
-  - one-shot `fastboot boot` orchestration with structured host-side evidence capture
-- [x] Add a dedicated owned-userspace boot builder that preserves stock `/init -> /system/bin/init` and replaces `system/bin/init` with a tiny custom PID 1.
-- [~] Implement `hello-init` as the first boot-owned payload:
-  - static arm64 PID 1
-  - mount `/proc`, `/sys`, and `/dev`
-  - write durable breadcrumbs to `/dev/kmsg`
-  - hold long enough for observation, then reboot bootloader or power off cleanly
-  - do not let experimental images silently fall back to the known-bad `devtmpfs /dev` path on `sunfish`; either stay on `tmpfs /dev` with explicit node bootstrap or emit a breadcrumb before and after the `/dev` transition
-- [~] Pick the first truthful proof channel for owned userspace:
-  - `hello-init`: bounded host-visible `fastboot-return` is the first automation-friendly proof that does not require Android userspace
-  - `orange-init`: a visible panel fill is the first direct proof of owned userspace beyond PID 1; pair it with a later reboot-to-fastboot for host correlation
-  - treat `/dev/kmsg` as one breadcrumb channel, not the primary success criterion
-  - emit the same stage markers to `kmsg`, `pmsg` when present, and process stdio so the host can recover whichever channel survives on real hardware
-  - do not depend on `adb`, transient properties, or `/data/local/tmp` for the owned-userspace proof path
-  - only add USB transport after the PID 1 seam is stable
-- [~] Add an observability-first recovery loop for owned-userspace runs:
-  - every run bundle should record the exact evidence collection attempt, not just the boot action
-  - after the phone returns to Android, harvest previous-run traces immediately before another reboot can overwrite them
-  - recover best-effort evidence from readable Android-side channels such as prior-boot log buffers, dropbox boot reports, and bootreason props
-  - `pixel_boot_oneshot.sh` should attempt one late recovery pass after a `wait-adb` timeout, record that it was a `late-wait-adb` recovery in `status.json`, and backfill any recovered slot/bootreason state instead of forcing manual post-run recovery
-  - `pixel_boot_oneshot.sh` should also record an adb-mode `transport-timeline.tsv` plus first-seen transport states from the original wait window, and distinguish “adb seen during the original wait” from “adb only reached during late recovery”
-  - when an adb-mode run returns to fastboot after already leaving it once, `pixel_boot_oneshot.sh` should `fastboot reboot` it back toward Android automatically, record that rescue in `status.json`, and still fail the experiment so cleanup is automatic without hiding the regression
-  - `pixel_boot_recover_traces.sh` should surface `proof_ok`, expected durable logging from image metadata, and concrete absence reasons (for example `pmsg_invalid_argument`, `pstore_empty`, `dropbox_last_kmsg_empty`, `logcat_last_unavailable`) so a clean Android return with zero correlated traces is explicit rather than inferred
-  - orange-gpu visible checkpoints should be stage-distinguishable on-screen rather than repeated identical orange pulses, so watched runs can map prelude vs validated vs probe-ready vs success-postlude without depending on logs
-  - current visual contract:
-    - `solid-orange` = prelude
-    - `bands-orange` = validated checkpoint
-    - `checker-orange` = probe-ready checkpoint
-    - `success-solid` = validated success postlude
-  - do not treat any single recovery channel as guaranteed until it proves itself repeatedly on hardware
-  - classify stage evidence separately from transport evidence: `fastboot-return` proves the device came back, not which owned-userspace stage it reached
-- [x] Add one durable non-log breadcrumb seam for owned PID 1 runs:
-  - keep it private to the opt-in orange-gpu parent-probe builder path; do not make it the default boot shape
-  - `hello-init` now mounts `/metadata` late, after the validated checkpoint, and writes run-token-scoped `stage.txt` values atomically for `validated`, `parent-probe-start`, and `parent-probe-result=<...>`
-  - tmpfs `/dev` now bootstraps only `/dev/block/by-name/metadata` for this seam, using the pre-overmount block-device identity when available and otherwise falling back to `/sys/class/block/*/uevent` `PARTNAME=metadata` plus `MAJOR` / `MINOR` after `/sys` is mounted
-  - first hardware run on `11151JEC200472` with `build/pixel/boot/shadow-boot-orange-gpu-raw-vulkan-physical-device-count-query-exit-probe3-interval2-prelude2-restart7-metadata.img` and run token `parent-probe-meta-1776741916` returned `metadata_stage_present=false`, `metadata_stage_actual_access_mode=root`, and `metadata_stage_exit_code=1` even though direct atomic writes under mounted `/metadata` work on rooted Android
-  - `pixel_boot_recover_traces.sh` now pulls the run-token-scoped stage file when expected and surfaces it plainly in `status.json`
-  - keep it secondary to the primary visible-proof path; do not let it delay `orange-init`
-- [~] Package a minimal DRM proof payload:
-  - reuse `rust/drm-rect` or a smaller equivalent
-  - make the color, hold time, and logging explicit
-- [ ] Package the smallest truthful GPU-only proof payload (`gpu-smoke`):
-  - offscreen render plus readback hash
-  - no compositor event loop, no TS runtime, no shell, no extra drivers beyond what basic GPU bring-up needs
-  - make this the first discriminator when later onscreen GPU proofs fail
-- [x] Add a rooted-Pixel direct-bundle `gpu-smoke` runner:
-  - stage only the `shadow-gpu-smoke` GNU/Linux binary plus minimal Vulkan bundle pieces
-  - push and run it without `shadow-system`, guest compositor, or JS runtime coupling
-  - require pulled `summary.json` plus strict Vulkan/hardware invariants before calling the run a success
-- [x] Add a rooted-Pixel tmpfs-`/dev` raw-ash control harness:
-  - stage the existing `shadow-gpu-smoke` bundle plus `shadow-openlog-preload.so`
-  - recreate a boot-shaped tmpfs `/dev` under `root` + `unshare -m`
-  - capture host-side status plus openlog evidence so `/dev` theories can be proved or discarded without a boot cycle
-  - current truth on `11151JEC200472`: the raw count-query exit scene still succeeds under a boot-shaped tmpfs `/dev`, so `/dev` topology is not the active blocker there
-- [~] Add private boot-owned orange-gpu pre-launch readiness discriminators for the raw count-query exit seam:
-  - `orange_gpu_launch_delay_secs` is already threaded through the private orange-gpu boot builder and `hello-init`
-  - the watched 9-second launch-delay image on `11151JEC200472` still produced only `2 pulses -> black -> red fastboot/start`, so passive delay did not move the seam
-  - `orange_gpu_parent_probe_attempts` and `orange_gpu_parent_probe_interval_secs` now thread through the same private builder and `hello-init` to run the exact raw count-query-exit scene from the parent before the real payload fork/exec
-  - the optional durable `/metadata` stage breadcrumb seam now exists only behind the orange-gpu builder opt-in and records `validated`, `parent-probe-start`, and `parent-probe-result=<...>` under the run token
-  - `/sys/class/block/sda11/uevent` on rooted Android exposes `PARTNAME=metadata`, `MAJOR=8`, and `MINOR=11`, so the boot-owned fallback now trusts sysfs for the metadata block identity when the pre-`/dev` snapshot is absent
-  - next seam: rerun the opt-in parent-probe metadata image on `11151JEC200472` and check whether the late durable stage file now reaches `validated` or `parent-probe-result=<...>` instead of failing before mount
-- [ ] Package the first on-screen GPU present payload (`orange-gpu`):
-  - render a flat orange frame on GPU
-  - export/import through the intended buffer path
-  - present through KMS
-  - keep it separate from app/session launch
-- [x] Package the boot-owned strict Vulkan instance payload (`boot-vulkan-instance-smoke`):
-  - run the real `shadow-gpu-smoke` strict Vulkan env plus instance-creation path in owned userspace
-  - stop before adapter selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
-  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
-- [ ] Package the boot-owned strict Vulkan raw adapter-enumeration-count payload (`boot-vulkan-enumerate-adapters-count-smoke`):
-  - run the real `shadow-gpu-smoke` strict Vulkan env plus raw `enumerate_adapters(...)` count in owned userspace
-  - stop before per-adapter `get_info()`, default adapter request/selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
-  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
-- [x] Package the boot-owned raw Vulkan instance payload (`boot-raw-vulkan-instance-smoke`):
-  - run the real `shadow-gpu-smoke` bundle in the same strict env but use direct Vulkan loader plus `vkCreateInstance` / `vkDestroyInstance`
-  - stop before Vulkan physical-device enumeration, all wgpu adapter enumeration/selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
-  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
-- [ ] Package the boot-owned raw Vulkan physical-device-count-query-no-destroy payload (`boot-raw-vulkan-physical-device-count-query-no-destroy-smoke`):
-  - run the real `shadow-gpu-smoke` bundle in the same strict env but use direct Vulkan loader, `vkCreateInstance`, and a null-pointer `vkEnumeratePhysicalDevices` count query
-  - do not call explicit `vkDestroyInstance`; stop immediately after the raw count query returns
-  - stop before fetching physical-device handles, before physical-device property extraction, all wgpu adapter enumeration/selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
-  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
-- [ ] Package the boot-owned raw Vulkan physical-device-count-query-exit payload (`boot-raw-vulkan-physical-device-count-query-exit-smoke`):
-  - run the real `shadow-gpu-smoke` bundle in the same strict env but use direct Vulkan loader, `vkCreateInstance`, and a null-pointer `vkEnumeratePhysicalDevices` count query
-  - terminate the child with exit status `0` immediately after the raw count query returns, before summary construction/write, before explicit `vkDestroyInstance`, and before the normal Rust return path
-  - stop before fetching physical-device handles, before physical-device property extraction, all wgpu adapter enumeration/selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
-  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
-- [ ] Package the boot-owned raw Vulkan physical-device-count-query payload (`boot-raw-vulkan-physical-device-count-query-smoke`):
-  - run the real `shadow-gpu-smoke` bundle in the same strict env but use direct Vulkan loader, `vkCreateInstance`, and a null-pointer `vkEnumeratePhysicalDevices` count query
-  - keep explicit `vkDestroyInstance` cleanup after the raw count query returns so cleanup remains part of this rung's contract
-  - stop immediately after the raw count query returns plus explicit cleanup, before fetching physical-device handles, before physical-device property extraction, all wgpu adapter enumeration/selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
-  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
-- [ ] Package the boot-owned raw Vulkan physical-device-count payload (`boot-raw-vulkan-physical-device-count-smoke`):
-  - run the real `shadow-gpu-smoke` bundle in the same strict env but use direct Vulkan loader, `vkCreateInstance`, and `vkEnumeratePhysicalDevices`
-  - stop immediately after the raw physical-device handle list is fetched and the count is recorded, before physical-device property extraction, all wgpu adapter enumeration/selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
-  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
-- [ ] Package the boot-owned strict Vulkan adapter-enumeration payload (`boot-vulkan-enumerate-adapters-smoke`):
-  - run the real `shadow-gpu-smoke` strict Vulkan env plus adapter-enumeration path in owned userspace
-  - continue into per-adapter `get_info()` / summary extraction after raw enumeration returns
-  - stop before default adapter request/selection, `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
-  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
-- [ ] Package the boot-owned strict Vulkan adapter payload (`boot-vulkan-adapter-smoke`):
-  - run the real `shadow-gpu-smoke` strict Vulkan env plus adapter-selection path in owned userspace
-  - stop before `request_device`, buffer-renderer allocation, Vello render-to-texture, and KMS present
-  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
-- [ ] Package the boot-owned strict Vulkan device-request payload (`boot-vulkan-device-request-smoke`):
-  - run the real `shadow-gpu-smoke` strict Vulkan env, adapter selection, and `request_device` path in owned userspace
-  - stop before buffer-renderer allocation, Vello render-to-texture, and KMS present
-  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
-- [ ] Package the boot-owned strict Vulkan device/buffer payload (`boot-vulkan-device-smoke`):
-  - run the real `shadow-gpu-smoke` strict Vulkan env plus buffer-renderer allocation in owned userspace
-  - stop before Vello render-to-texture and KMS present
-  - reuse the visible `orange-init` prelude/checkpoint/postlude contract to encode success on hardware
-- [ ] Package the boot-owned strict Vulkan offscreen payload (`boot-vulkan-offscreen`):
-  - run the real `shadow-gpu-smoke` Vulkan path in owned userspace
-  - do not present to KMS yet
-  - use visible `orange-init` prelude/checkpoint/postlude to encode success on hardware
-- [ ] Keep the Rust cutoff explicit in execution:
-  - helper-backed `gpu-render` is now re-proven with recovered `probe-summary.json` and a watched `success-solid` run; freeze the C seam except for migration glue
-  - current Rust port status on 2026-04-22:
-    - `probe-summary.json`, `probe-fingerprint.txt`, `probe-timeout-class.txt`, the parent-probe loop, `timeout-control-smoke`, and the raw/direct KGSL smoke modes now live in Rust on current `master`
-    - helper-backed child KGSL open and direct PID1 KGSL open are both now re-proved on rooted hardware with `proof_ok=true`
-    - the next bootstrap discriminator is one rung above readonly KGSL open on the same PID1-visible Rust seam rather than more C-parity cleanup
-- [x] Package one short repeated-frame proof (`orange-gpu-loop`):
-  - animate color or a frame counter for 2-3 seconds
-  - use it to prove repeated submission and sync, not just one lucky frame
-  - current signed-off proof artifacts:
-    - image `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-orange-gpu-loop-parentprobe-fw-helper-breadcrumb-v2.img.hello-init.json`
-    - recovered truth surface `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/orange-gpu-loop-v2-primary-11151JEC200472/recover-traces/status.json` and `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/boot/oneshot/orange-gpu-loop-v2-confirm-06241JEC200520/recover-traces/status.json`
-- [ ] Probe the smallest prerequisite set for DRM on stock kernel:
-  - does `/dev/dri/card0` exist under owned PID 1 with only `tmpfs /dev`
-  - if not, add the smallest necessary coldplug, module, firmware, or mount step
-- [ ] Prove one tiny owned-userspace boot lane before reintroducing compositor complexity, app runtimes, or service-heavy cases.
-- [ ] Keep post-orange bring-up spikes narrow and device-oriented:
-  - one GPU-only smoke
-  - one on-screen GPU present
-  - one repeated-frame proof
-  - one input proof
-  - one compositor-only scene
-  - one app-surface proof
-  - only then app runtimes and shell
-- [ ] Keep demo retirement mechanical:
-  - maintain one deleteable owner per rung: payload, runner, smoke
-  - avoid shared production dependencies on demo-only files
-  - once the full owned Shadow path is real, delete superseded ladder rungs instead of keeping them as permanent fixtures
-- [ ] Keep the next chunks separately landable:
-  - owned-userspace builder and guarded runner
-  - `hello-init`
-  - `orange-init`
-  - minimal service supervisor and Shadow launch
-- [~] Run the next boot-lab seams concurrently when the experiments are genuinely different:
-  - reserve Stream A for KGSL / GPU work in `../boot`
-  - reserve Stream B for recovery / trigger / evidence work in `boot-2`
-  - use Stream C and Stream D for `/data` contract or service-inventory sidecars only when they do not collide with Stream A devices or artifacts
-  - use one device per seam and keep the serial ownership explicit in the run bundle
-  - use one sibling worktree per risky seam so partial results can land independently
-  - spend concurrency on Stream B-D deliverables, not duplicate reruns of the same failing Stream A image
+- Preferred rooted proof pair when available:
+  - `11151JEC200472`
+  - `06241JEC200520`
+- Treat one phone as the primary hypothesis lane and one as confirmation.
+- Use other attached phones only for independent sidecars or recovery.
+- Verify current root state before hardware work; do not trust stale notes.
 
 ## Implementation Notes
 
-- Strategy pivot on 2026-04-19:
-  - the project target is now "stock Pixel kernel, Shadow-owned userspace from PID 1 onward"
-  - the rooted Magisk lane remains the working runtime reference, but not the target boot architecture
-  - the old wrapper and stock-init-import probes are now evidence about constraints, not the primary roadmap
-  - `spec-phase1-shadow-at-boot.md` is now preserved only as historical context for the abandoned stock-init-handoff plan
-- Visual-proof decision on 2026-04-22:
-  - `git show 054320d` is still a useful reference for a more obvious watched GPU scene
-  - do not port it onto current `master` yet: it would replace the current single-color `flat-orange` recovery tuple with a multi-color contract and would invalidate the signed-off `probe-summary.json` proof without a deliberate contract update
-- `sunfish` boots from `boot.img`, boot header v2, with recovery-as-boot. The old Cuttlefish `init_boot` work is a reference, not the real device path.
-- Strategy correction on 2026-04-19:
-  - a Blitz/TypeScript runtime proof is not `orange-gpu`; that is a later `ts-app-minimal` rung
-  - `gpu-smoke` should be the quickest discriminator when the on-screen GPU path fails, because it removes KMS/compositor/app concerns
-  - `orange-gpu` should add exactly one seam beyond `gpu-smoke`: GPU render-to-scanout
-- Candidate implementation seam for `gpu-smoke` on 2026-04-19:
-  - `ui/third_party/anyrender_vello::VelloImageRenderer` already does offscreen GPU render-to-texture plus CPU readback through `wgpu_context::BufferRenderer`
-  - `ui/third_party/wgpu_context` already logs adapter selection and surface/device diagnostics
-  - the most truthful next chunk is likely a tiny standalone binary around those two pieces: render one trivial scene, hash the readback bytes, and emit a structured summary
-- New `gpu-smoke` result on 2026-04-20:
-  - `ui/crates/shadow-gpu-smoke` now enforces strict Vulkan-by-default and rejects software fallback unless explicitly relaxed for host debugging
-  - `scripts/pixel/pixel_prepare_gpu_smoke_bundle.sh` and `scripts/pixel/pixel_gpu_smoke.sh` provide a private rooted-Pixel direct-bundle runner with no compositor / runtime / shell coupling
-  - `11151JEC200472` proved the rung first, then `09051JEC202061` reproduced it with the same checksum `e317ffe624895aa5`
-  - both rooted devices reported `adapter.backend=Vulkan`, `name=Turnip Adreno (TM) 618`, `software_backed=false`, and strict proof artifacts were pulled to host run dirs
-- Gate strategy update on 2026-04-20:
-  - `scripts/pre_commit.sh` no longer pays the private boot-demo cross-build tax for every branch
-  - `scripts/ci/pixel_boot_demo_check.sh` is now the dedicated host-side boot-demo gate for hello/orange/tooling/gpu demo seams
-  - `scripts/pre_merge.sh` should run that dedicated gate only when the branch touches demo-owned paths, so boot work still gets protected while unrelated branches stay fast
-  - keep hardware validation separate from the host-side demo gate; device-visible proofs remain a boot-lab responsibility
-- The repo already has a usable host-side `bootimg` shell with `unpack_bootimg`, `mkbootimg`, and `avbtool`.
-- The new private boot helpers live under `scripts/pixel/`: `pixel_boot_unpack.sh`, `pixel_boot_build.sh`, `pixel_boot_build_log_probe.sh`, `pixel_boot_collect_logs.sh`, `pixel_boot_flash.sh`, `pixel_boot_restore.sh`, and `pixel_build_init_wrapper.sh`.
-- The wrapper seam now also has a separate static C build path: `scripts/pixel/pixel_build_init_wrapper_c.sh` builds a minimal `/init.stock` handoff binary that stays out of the default Rust wrapper cache and plugs into `pixel_boot_build.sh --wrapper`.
-- `pixel_boot_build.sh` now accepts additive ramdisk `--add` and `--replace` overlays so later boot seams can reuse one wrapper/repack path instead of cloning it.
-- `pixel_boot_build_log_probe.sh` now injects `/init.shadow.rc`, patches `system/etc/init/hw/init.rc`, and adds a log-only `/shadow-boot-helper` triggered from `post-fs-data`.
-- `pixel_boot_collect_logs.sh` now pulls `/data/local/tmp/shadow-boot` plus host-visible `logcat`/`getprop` snapshots into `build/pixel/boot/logs/<timestamp>/`.
-- The log-probe seam now prefers a root recovery rc import anchor when one exists in the ramdisk, falling back to `system/etc/init/hw/init.rc` only when recovery rc is unavailable. On current `sunfish` stock images that resolves to `init.recovery.sunfish.rc`.
-- The init wrapper now drops persistent stage markers under `/.shadow-init-wrapper/` so later userspace collection can prove whether the wrapper ran even if early stdout or `/dev/kmsg` logs are lost.
-- `pixel_boot_collect_logs.sh` now gathers those wrapper markers best-effort and records wrapper-only evidence in `status.json` without treating that as a full helper success.
-- Collector success now also requires a successful pull of the helper log root; partial helper pulls and wrapper-only evidence stay non-successful by design.
-- The collector's timeout path now keeps writing `status.json` even if later `adb shell getprop` / `logcat` / `ps` calls fail, so slow or degraded boots still leave a truthful artifact bundle behind.
-- The ramdisk patch step is back in repo-local form via `scripts/lib/cpio_edit.py`, and the minimal wrapper is a static aarch64 Rust binary at `rust/init-wrapper`.
-- `scripts/lib/cpio_edit.py` now supports entry extraction as well as add/replace/rename, and `scripts/ci/cpio_edit_smoke.sh` keeps those semantics covered in `pre-commit`.
-- Fundroid prior art is useful mainly as tooling guidance, not as a proof that Pixel 4a boot bring-up already worked there:
-  - keep deriving mkbootimg arguments and AVB footer inputs from the stock image rather than copying hardcoded demo metadata
-  - keep ramdisk mutation surgical through cpio entry editing so device nodes and other special archive entries survive unchanged
-  - prefer direct `execv()` handoff to the stock init path, plus `/dev/kmsg` breadcrumbs, over extra shell or symlink indirection when probing a foreign first-stage wrapper
-  - treat Fundroid's successful boot/init results as mostly Cuttlefish-host evidence; the Pixel 4a material there is a plan, not completed hardware proof
-- `scripts/ci/pixel_boot_collect_logs_smoke.sh` now locks the collector's success-vs-wrapper-only fallback semantics into derivation-backed `just nightly`.
-- The shared cross-worktree cache is intentionally narrow: only the immutable stock `boot.img` falls back through the git common-dir at `build/shared/pixel/root/boot.img`. Custom boot images, run bundles, and `last-action.json` stay worktree-local.
-- `sc -t <serial> debug boot-lab-oneshot` now stays as a thin private delegator into `scripts/pixel/pixel_boot_oneshot.sh` for the fast `fastboot boot` plus collect loop. It does not change the public `just` surface.
-- `pixel_boot_oneshot.sh` writes a run bundle under `build/pixel/boot/oneshot/<timestamp>/` with a local `boot-action.json`, collector output, and a truthful `status.json`.
-- `sc -t <serial> debug boot-lab-flash-run` now stays as the flashed-slot counterpart: it composes guarded flash, automatic target-slot activation, log collection, and optional inactive-slot recovery into one private run bundle.
-- `pixel_boot_flash.sh` now accepts `PIXEL_BOOT_METADATA_PATH`, so higher-level private runners can keep flash metadata inside a per-run bundle instead of clobbering the worktree-local default.
-- `scripts/ci/pixel_boot_tooling_smoke.sh` now locks the shared-stock-boot plus oneshot and flash-run dry-run contracts into derivation-backed `just nightly`, and `scripts/ci/operator_cli_smoke.sh` covers both `shadowctl` delegation paths.
-- Tooling rule for later seams: prefer operator-grade helpers when they remove repeated manual steps, but keep them private, narrow, and evidence-first. Avoid “tooling” that merely hides uncertainty or bundles unrelated experiments together.
-- Current boot-lab lane split:
-  - `11151JEC200472` is the primary boot-lab phone for new display / renderer spikes
-  - `09051JEC202061` is the confirmation phone for follow-up repro and second-device checks
-  - do not use other attached phones for boot-lab work unless the plan changes explicitly
-  - treat each serial as a separately owned lane with its own guarded run bundle, recovery path, and worktree seam
-  - prefer concurrent experiments only when the images probe different owned-userspace hypotheses
-  - keep an explicit boot-lab ledger in the thread or plan: allowed serials, device role, root state, slot, active hypothesis, and recovery path
-- `rust/init-wrapper/Cargo.toml` is now standalone enough for `cargo check --manifest-path rust/init-wrapper/Cargo.toml`, and the crate now rides in nightly through the derivation-backed `pixelBootInitWrapperCheck` instead of only relying on host-side boot-image builds.
-- The private wrapper seam now has two build flavors: the default wrapper still writes markers and restores `/init`, while `pixel_boot_build.sh --wrapper-mode minimal` builds `shadow-boot-wrapper-minimal.img` with a wrapper that directly `execv`s `/init.stock` using `/init` as `argv[0]`.
-- The minimal wrapper build path now enforces mode-tagged binaries, rejects cross-mode cache-path mistakes, and still leaves a `shadow-init` kmsg breadcrumb so later on-device collection can tell whether the wrapper reached userspace at all.
-- The cached stock `boot.img` can now be unpacked, wrapped, and reflashed locally. Live device validation still remains before the flash-loop milestone can flip fully green.
-- The first imported boot-helper trigger is `post-fs-data`, wired through `system/etc/init/hw/init.rc` in the recovery-as-boot ramdisk. This is intentionally a log-only probe before any automatic takeover steps.
-- The current rooted takeover path is already close to the desired runtime surface: it waits for DRM, stops Android display services, and launches `shadow-session`.
-- Phase 1 should build on stock `boot.img`, not the Magisk-patched image. Magisk already rewrites init flow and adds avoidable complexity.
-- Stock init still owns the hardest early responsibilities: first-stage mounts, `ueventd`, kernel modules, `/data` decryption, and service labelling.
-- The new flash and rollback scripts intentionally target stock-init images, not Magisk-patched ones. After those scripts reboot successfully, ADB should come back but Magisk root should not.
-- `pixel_boot_flash.sh` now requires `--experimental`, defaults to `--slot inactive`, refuses to touch the running slot unless `--allow-active-slot` is also passed, and supports `--dry-run` plus optional target-slot activation.
-- `pixel_boot_restore.sh` now requires an explicit `--slot current|inactive|a|b` so recovery never silently overwrites whichever slot happens to be convenient.
-- `scripts/ci/pixel_boot_safety_smoke.sh` locks the current safety contract into derivation-backed `just nightly`.
-- `bootimg_unpack_to_dir()` now resolves the input path before `cd` so host inspection scripts work with relative image paths too.
-- Hardware result on 2026-04-18:
-  - inactive-slot activation on `11151JEC200472` (`a -> b`) returned to slot `a` with no probe logs
-  - inactive-slot activation on `09051JEC202061` (`b -> a`) returned to slot `b` with no probe logs
-  - active-slot flash on `11151JEC200472` produced fastboot `Enter reason: no valid slot to boot` on slot `a`
-  - restoring stock `boot_a` from fastboot recovered the phone, but Magisk/root on that slot is now gone until it is patched again
-- Current conclusion: the host-side probe tooling and rollback path are real, but the current custom boot image is not yet a successful on-device boot path on physical `sunfish`.
-- New probe result on 2026-04-18: a one-shot `fastboot boot` image with only an added `androidboot.shadow_probe=<tag>` cmdline token surfaced `ro.boot.shadow_probe=<tag>` on both `11151JEC200472` and `09051JEC202061`. So the passed boot image is definitely being used for header/cmdline state.
-- But the same session also showed no signal from any ramdisk-side experiment on either phone:
-  - no wrapper markers from the landed wrapper probe
-  - no helper logs from the landed imported-rc probe
-  - no `shadow.boot.rc_only_probe` property from an rc-only probe that left stock `/init` untouched
-  - no `shadow.boot.rc_file` property even when directly prepending `setprop` to existing `init.recovery.sunfish.rc` or `system/etc/init/hw/init.rc`
-- Working inference: on current `sunfish`, `fastboot boot` is a truthful loop for boot-image header/cmdline experiments, but not a trustworthy loop for our ramdisk-side validation. Treat negative ramdisk results from one-shot boots as non-decisive and shift the next seam back toward flashed-image validity / AVB-footer work.
-- New flashed active-slot matrix result on 2026-04-18 (`11151JEC200472`, slot `a`):
-  - flashing the stock baseline image booted Android successfully
-  - flashing a cmdline-only modified image booted Android successfully and surfaced `ro.boot.shadow_probe=flash-matrix-20260418T215506Z`
-  - flashing a minimal repack with the stock ramdisk booted Android successfully
-  - flashing the current `shadow-boot-log-probe.img` failed back into fastboot; restoring stock `boot_a` recovered the phone
-- Working inference from that matrix: the flashed active-slot path itself is real on `sunfish`; the failing delta is now inside our ramdisk/init mutations, not generic repacking, AVB footer reapplication, or slot activation.
-- The stock-init builder path is now real in repo-local tooling: `pixel_boot_build.sh --stock-init` keeps stock `/init` while still applying ramdisk `--add` / `--replace` overlays, and `pixel_boot_build_log_probe.sh --stock-init` reuses that seam for stock-init helper probes.
-- The property-proof path is now real in repo-local tooling too: `pixel_boot_build_rc_probe.sh --stock-init` builds an imported-rc image that only sets a transient `debug.shadow.boot.*` property, and the boot-lab runners / collector now accept `--proof-prop KEY=VALUE` so a live non-persistent property can count as success without `/data/local/tmp/shadow-boot`.
-- New hardware result on 2026-04-18 from that stock-init seam:
-  - flashing `shadow-boot-log-probe-stock-init.img` to active slot `a` on `11151JEC200472` booted Android successfully on slot `a`
-  - a one-shot boot of the same stock-init log-probe image on `09051JEC202061` also reached Android on slot `b`
-  - neither run produced `/data/local/tmp/shadow-boot` or helper-ready evidence, so the rc/import/helper seam still lacks a positive userspace signal
-- Working inference from the stock-init result: replacing `/init` is the remaining suspect for the hard boot failure, but the imported rc/helper path is still not proven even when stock init boots the image.
-- New hardware result on 2026-04-18 from the property-only stock-init seam (`09051JEC202061`, slot `b`):
-  - one-shot boot of `shadow-boot-rc-probe-stock-init.img` reached Android on slot `b`, but `shadow.boot.rc_probe` never appeared
-  - flashed active-slot boot of the same image also reached Android on slot `b`, but `shadow.boot.rc_probe` still never appeared
-  - both runs now leave truthful property-mode bundles, so the negative result is about the rc/import seam itself rather than missing helper-log plumbing
-- Working inference from the property-only result: stock-init images still boot, but the current imported rc fragment is not executing in a way that surfaces either helper logs or a transient property. The wrapper remains a separate hard-boot suspect, but the next bottleneck is now rc patch-target / trigger choice.
-- Follow-up fact from the same line of work: `shadow.boot.rc_probe` is not a safe proof namespace on this device for shell-driven checks, while `debug.shadow.boot.rc_probe` is settable manually. That tightened the proof mechanism, but it did not change the boot result.
-- New hardware result on 2026-04-18 from the forced `system/etc/init/hw/init.rc` debug-property seam (`09051JEC202061`, slot `b`):
-  - flashing `shadow-boot-rc-probe-stock-init-system-initrc-debugprop.img` to active slot `b` still booted Android successfully on slot `b`
-  - there was still no helper dir, no wrapper markers, and no `debug.shadow.boot.rc_probe`
-  - the live booted device showed stock `/system/etc/init/hw/init.rc` contents with no `import /init.shadow.rc`
-  - `/init.shadow.rc` was absent on the live rootfs after boot
-- Working inference from that live-device check: ramdisk-side rc patching of `system/etc/init/hw/init.rc` and the recovery rc files is not in the normal `sunfish` boot init graph once the system partition is mounted. Continuing to vary stock-init rc patch targets is low-value churn.
-- Follow-up hardware result on 2026-04-18 from the explicit `init.recovery.sunfish.rc` debug-property seam (`09051JEC202061`, slot `b`):
-  - flashing `shadow-boot-rc-probe-stock-init-recovery-debugprop.img` to active slot `b` still booted Android successfully on slot `b`
-  - there was still no helper dir, no wrapper markers, and no `debug.shadow.boot.rc_probe`
-  - so both current ramdisk rc import anchors now fail to surface any live proof on flashed normal boots
-- Tightened inference after both rc-anchor checks: the imported stock-init rc strategy is effectively exhausted for normal `sunfish` boots. Further rc-target or trigger churn is unlikely to teach us more than a direct `/init` seam.
-- New hardware result on 2026-04-19 from the minimal wrapper seam (`09051JEC202061`, inactive slot `a`):
-  - flashing `shadow-boot-wrapper-minimal.img` to inactive slot `a` and activating it did not produce a successful boot on `a`
-  - the device recovered back to Android on slot `b`, with `sys.boot_completed=1` on the known-good slot
-  - the minimal wrapper removed the old marker/rename choreography, so the failure now points at the wrapper seam itself rather than the extra bookkeeping layered on top of it
-- Follow-up hardware result on 2026-04-19 from the tiny static C wrapper seam (`09051JEC202061`, inactive slot `a`):
-  - flashing `shadow-boot-wrapper-c-minimal.img` to inactive slot `a` triggered the yellow corrupt-device warning instead of reaching Android
-  - the guarded runner did not see `adb` or `fastboot` on its own after the failure, so host-side recovery needed manual fastboot entry before it could restore stock `boot_a`
-  - after recovery, the device booted Android successfully on slot `b`, with `sys.boot_completed=1`
-- Tightened inference after both minimal wrapper tests: the failure is not Rust-specific and likely not about wrapper bookkeeping. On this device, a foreign PID 1 that later `execv()`s `/init.stock` is probably not a valid stand-in for stock `/init`.
-- Next discriminating seam: keep stock Android init as the kernel-launched `/init` path and test a path-preserving ramdisk mutation instead of another foreign-PID1 wrapper variant.
-- Candidate landable tool seam for that probe: add a dedicated private builder that renames the stock ramdisk `init` to `init.stock`, reintroduces `init` as a symlink or equivalent path-preserving shim to `init.stock`, and reuses the existing guarded flash/collect tooling on `09051JEC202061`.
-- Follow-up fact from the same line of work on 2026-04-19:
-  - the stock ramdisk already ships `init` as a symlink to `/system/bin/init`
-  - the ramdisk also contains the real `system/bin/init` ELF, so the device does not boot a root-level regular-file `/init` today
-- New hardware result on 2026-04-19 from the path-preserving symlink probe (`09051JEC202061`, inactive slot `a`):
-  - flashing `shadow-boot-init-symlink-probe.img` to inactive slot `a` and activating it did not reach Android on `a`
-  - after the yellow corrupt-device warning was acknowledged, the phone hung at the `Google` screen with no `adb` or `fastboot` visibility
-  - forcing fastboot and restoring stock `boot_a` recovered the device; it booted Android successfully again on slot `b`, with `sys.boot_completed=1`
-- Tightened inference after unpacking the stock ramdisk and running the symlink probe: changing `/init` from the stock one-hop symlink (`/init -> /system/bin/init`) into a two-hop chain (`/init -> /init.stock -> /system/bin/init`) is already enough to break `sunfish` boot. So the next seam should preserve the stock `/init` link itself and move one level deeper, likely around `system/bin/init` rather than root-path aliasing.
-- Current probe plan after that result: keep `/init -> /system/bin/init` exactly as stock, then test whether a deeper `system/bin/init -> init.stock` hop is tolerated before trying any new foreign-PID1 handoff at that path.
-- New hardware result on 2026-04-19 from the deeper `system/bin/init` symlink probe (`09051JEC202061`, inactive slot `a`):
-  - flashing `shadow-boot-system-init-symlink-probe.img` to inactive slot `a` and activating it also failed to reach Android on `a`
-  - the guarded runner again saw no `adb` or `fastboot` on its own before timing out
-  - once the phone was pushed into fastboot, the host restored stock `boot_a`, switched back to slot `b`, and the device booted Android successfully again with `sys.boot_completed=1`
-- Tightened inference after the deeper probe: preserving the stock root `/init -> /system/bin/init` link is still not enough if `system/bin/init` itself becomes a symlink hop to `system/bin/init.stock`. So the current device constraint is stricter than “keep `/init` special”; even a symlink indirection at the real first-stage init path appears to break `sunfish` boot.
-- Truthfulness rule for the new boot-lab runners: top-level `status.json` and process exit codes must stay aligned with the underlying flash/collect result; false-success wrapper statuses are not acceptable evidence.
-- New observability result on 2026-04-19 from the tokenized `hello-init` log seam:
-  - `pixel_boot_build_hello_init.sh` now emits a per-image run token and image-sidecar metadata, `hello-init` logs that token in its own breadcrumbs, and `pixel_boot_oneshot.sh` / `pixel_boot_recover_traces.sh` now carry the token through the live one-shot recovery path
-  - the recovery/status path now distinguishes correlated hits (`run token + shadow tag`) from stale hints and token-only noise, and stale bootreason history no longer marks a clean current run as failed
-  - focused gates now cover the stale-history false-failure case and the token-only false-positive case
-  - hardware reality is still negative on both `09051JEC202061` and `11151JEC200472`: tokenized `hello-init` one-shots with tmpfs `/dev` logging recovered zero correlated hits, zero uncorrelated shadow-tag hints, and zero current-boot hits
-- Working inference after that observability pass: the host-side boot-lab tooling is now good enough to trust a negative result, and the current `hello-init` log channels are not landing anywhere Android can recover on `sunfish`.
-- Next discriminating seam after landing this tooling chunk: stop grinding purely log-based proof on the same image shape and move to a visible owned-userspace proof (`orange-init` / direct framebuffer or DRM fill), optionally paired with one durable non-log marker such as `/metadata` if the panel proof needs a post-reboot cross-check.
-- New hardware result on 2026-04-19 from the first explicit `tmpfs /dev` orange-init proof run (`0B191JEC203253`):
-  - `pixel_boot_build_orange_init.sh` now carries the same run-token and mount/log metadata surface as `hello-init`, and `drm-rect` now emits its own run-token, mount-state, and `/dev/dri` / `/metadata` breadcrumbs
-  - the first real orange image was built with `--dev-mount tmpfs` specifically to avoid the known-bad `devtmpfs /dev` failure mode on `sunfish`
-  - a one-shot boot of that image left fastboot successfully but never returned to `adb` within the runner window; the phone later sat in fastboot with no automatic recovery traces collected
-  - after a manual `fastboot reboot` back to stock Android on slot `_a`, `pixel_boot_recover_traces.sh` recovered the bundle and found `sys.boot.reason=bootloader` plus zero correlated run-token matches and zero shadow-tag matches across all readable channels
-- Tightened inference after that orange-init run:
-  - the explicit `tmpfs /dev` guardrail worked, so this negative result is no longer confounded by the old `devtmpfs` failure mode
-  - stock boot ramdisk inspection shows only a bare `dev/` directory, so `mount_dev=false` will not surface `/dev/dri/card0` on its own
-  - the remaining blocker for visible proof is now the smallest truthful device-population seam under owned PID 1, not more blind orange reruns on the same `/dev` shape
-- Follow-up hardware result on 2026-04-19 from the default-path orange-init one-shot (`11151JEC200472`):
-  - after changing the private orange builder default from `devtmpfs` to `tmpfs`, a one-shot boot of `shadow-boot-orange-init-default-tmpfs-hold5.img` returned to fastboot in 27 seconds
-  - after rebooting back to stock Android on slot `_a`, trace recovery loaded the image-sidecar run token `orange-default-tmpfs-20260419` and still found zero shadow tags and zero run-token matches across all readable Android-side channels
-  - bootreason props for that run were `ro.boot.bootreason=reboot` and `sys.boot.reason=bootloader`
-- Tightened inference after the default-path follow-up:
-  - the new default is now hardware-validated on a second `sunfish` and behaves the same as the earlier explicit `--dev-mount tmpfs` run
-  - so the orange seam is no longer blocked on mount-strategy ambiguity; it is blocked on minimal device population under `tmpfs /dev`
-- Breakthrough hardware result on 2026-04-19 from the minimal `/dev/dri` bootstrap proof (`11151JEC200472`):
-  - a dedicated orange-proof image that kept `tmpfs /dev` and created only `/dev/dri/card0` (`226:0`) plus `/dev/dri/renderD128` (`226:128`) did paint the panel orange on real hardware; the orange screen was directly observed during the run
-  - that image held orange for roughly 20 seconds and then returned to bootloader as designed
-  - after rebooting back to stock Android, Android-side recovery still found zero shadow tags and zero run-token matches, so the visible proof outran the current surviving-log channels
-- Tightened inference after the orange proof:
-  - the first visible owned-userspace milestone is now real on `sunfish`; the remaining work is to improve post-run breadcrumbs around it and then move one layer up the stack
-  - this confirms that the earlier dark orange runs were not blocked on DRM or the panel in the abstract; they were blocked specifically on device-node availability under `tmpfs /dev`
-  - this milestone is `orange-kms`, not `orange-gpu`: it proves scanout and panel ownership, but it does not yet prove the future compositor / Blitz renderer path
-- New hardware result on 2026-04-19 from the `/metadata` breadcrumb experiment (`09051JEC202061`):
-  - a hello-init variant that attempted targeted tmpfs coldboot plus `/metadata` breadcrumb writes still failed on real hardware with `ro.boot.bootreason=kernel_panic`
-  - `pixel_boot_recover_traces.sh` was able to look for `/metadata/shadow-hello-init/{latest,by-token/...}` after recovery, but the recovered `metadata-breadcrumb.txt` stayed empty on-device
-  - the only correlated evidence from that lane came from existing Android-side boot reports such as `SYSTEM_LAST_KMSG`, not from the new durable breadcrumb
-- Tightened inference after the `/metadata` lane:
-  - durable breadcrumb collection is still worth keeping in the host recovery toolbox, but the attempted writer should not become the default hello-init path yet
-  - the current blocker is still earlier in owned userspace: create only the minimum device population needed for the next proof, rather than broadening hello-init with more mounts and block-node work at once
-- Because stock-init experimental flashes can disrupt the working rooted lane on the same slot, future chunks should bias toward safety rails before convenience or public surfacing.
-- Landing rule for this project: each chunk should be truthful, green, and mergeable on its own, so other worktrees can keep rebasing on `master` instead of waiting for a giant boot branch to finish.
-- Camera remains Android-bound today. Wi-Fi likely does too. Do not make them blockers for the first Shadow-at-boot milestone.
-- New hardware result on 2026-04-19 from the exact-path `system/bin/init` wrapper seam (`09051JEC202061`, inactive slot `a`):
-  - flashing `shadow-boot-system-init-wrapper-probe.img` to inactive slot `a` and activating it did not return to Android on `a`
-  - the guarded flash-run saw the slot flash and reboot succeed, but no `adb` or `fastboot` visibility came back before timeout, so automatic recovery did not complete on its own
-  - manual recovery back to stock `boot_a` restored the device, and it booted Android successfully again on slot `_b` with `sys.boot_completed=1`
-- Tightened inference after the exact-path wrapper probe: even when both visible init paths stay exact (`/init -> /system/bin/init`, real wrapper binary installed at `system/bin/init`, stock binary moved to `system/bin/init.stock`), a foreign first-stage PID 1 that later `execv()`s the stock init path still appears to break normal `sunfish` boot. That pushes the next seam away from wrapper handoff variants and toward mechanisms that leave stock first-stage init itself in control.
-- Next seam: stop replacing init binaries entirely and probe a stock-init-owned hook point such as bootconfig/cmdline-triggered behavior, first-stage-visible imported config that stock init already consumes, or an even narrower binary patch that preserves the stock init image shape instead of swapping in a new ELF.
-- Current parallel next seams:
-  - a visible stock-init-owned proof that should leave an external transport or other durable signal if the patched rc actually executes
-  - tighter serial-safe boot-lab orchestration so two devices can be exercised concurrently without ambiguous recovery state
-- New concurrent hardware result on 2026-04-19 from two stock-init USB transport probes:
-  - `11151JEC200472` flashed `shadow-boot-rc-probe-stock-init-fastboot.img` to inactive slot `b`; `09051JEC202061` flashed `shadow-boot-usb-transport-fastboot.img` to inactive slot `a`
-  - both devices left Android, both later showed fastboot screens on-device, and neither returned to host-visible `adb` on its own within the guarded flash-run window
-  - direct bundle-local `pixel_boot_recover.sh` recovery succeeded on both phones once they were visible in fastboot again, restoring `11151JEC200472` to slot `_a` and `09051JEC202061` to slot `_b`, both with `sys.boot_completed=1`
-- Tightened inference after the first concurrent stock-init transport lab:
-  - imported-rc transport probes are now strong enough to alter boot outcome on real hardware, but they still do not yield a clean, automatically consumable proof of rc execution for normal `sunfish` boot
-  - both the simple `sys.usb.config=fastboot` probe and the stronger `sys.usb.config none -> fastboot` transport-reset probe ended at fastboot screens rather than a clean Android boot or a host-visible transport that the current runner could harvest directly
-- Current tooling gap after the same run:
-  - the deferred bundle-local recovery watcher still failed in real hardware use even though the phones later became visible in fastboot
-  - the truthful recovery path today is the direct serial-scoped `pixel_boot_recover.sh` invocation with bundle metadata, not the detached watcher handoff
-- New implementation seam on 2026-04-19:
-  - `hello-init` now exists as a private static aarch64 PID 1 that preserves the stock `/init -> /system/bin/init` link, replaces the ramdisk `system/bin/init` ELF, mounts `/dev` / `/proc` / `/sys`, reads `/shadow-init.cfg`, writes to `/dev/kmsg`, holds, and then reboots
-  - the repo now has `scripts/pixel/pixel_build_hello_init.sh`, `scripts/pixel/pixel_boot_build_hello_init.sh`, `scripts/ci/pixel_boot_hello_init_smoke.sh`, and a real `hello-init-device` flake package wired into `just nightly` alongside the hermetic nightly-only smoke lane
-- New hardware result on 2026-04-19 from `fastboot boot` hello-init oneshot runs (`09051JEC202061` and `0B191JEC203253`):
-  - `hold=9`, `hold=21`, and a later `hold=0` image all left fastboot successfully and later returned to normal `adb` Android on the original slot (`_b` on `09051JEC202061`, `_a` on `0B191JEC203253`)
-  - the return-to-`adb` timing clustered around 46-48 seconds after the boot handoff regardless of the configured hold value
-  - unpacked images do contain the expected distinct `/shadow-init.cfg` payloads (`hold_seconds=0`, `9`, and `21`) plus the `hello-init` replacement binary, so the one-shot path is currently not a truthful proof of the config-driven runtime behavior
-- Tightened inference after the first hello-init oneshot runs:
-  - `fastboot boot` is strong enough to show the owned-userspace image is not rejected immediately at the bootloader seam because the device leaves fastboot and comes back alive
-  - but the current oneshot loop does not yet prove that `hello-init` is reading `/shadow-init.cfg` or that `reboot_target=bootloader` is honored on `sunfish`
-  - the next discriminating owned-userspace seam should avoid treating one-shot return timing as proof and should either add a better host-visible success signal or use the guarded flashed-slot path when an operator is present for recovery
-- New tooling seam on 2026-04-19:
-  - the private boot-lab runners now support `--success-signal fastboot-return` plus a bounded `--return-timeout`, backed by a shared fastboot-cycle helper and truthful `status.json` fields for fastboot departure / return timing
-  - hermetic coverage now exercises the new success mode and dry-run delegation shape through both the script layer and `shadowctl`
-- New build-loop tightening on 2026-04-19:
-  - `pixel_boot_build_hello_init.sh` no longer asks `pixel_build_hello_init.sh` to compile into a fresh temp-workdir path on every repack
-  - `pixel_build_hello_init.sh` now reuses a stable cached `build/pixel/boot/hello-init` binary when the current `pixel_hello_init.c` plus `flake.nix` / `flake.lock` inputs are unchanged, and only falls back to `nix build` when that cache is stale
-  - this keeps repeated ramdisk/config repacks fast without weakening the real-build guarantee in `nightly`
-- New observability facts on 2026-04-19 from read-only Android-side probes on `09051JEC202061`:
-  - `/dev/pmsg0` exists on stock `sunfish`, so owned PID 1 should write there in addition to `/dev/kmsg` when available
-  - unprivileged `adb shell logcat -L` did not recover a manual `/dev/pmsg0` probe token on this device, so `pmsg` is currently best-effort rather than a proven shell-readable recovery path
-  - `dumpsys dropbox --print SYSTEM_BOOT` and bootreason props are readable from the normal Android shell, so every post-run recovery bundle should capture them automatically
-- New owned-userspace isolation result on 2026-04-19 from the trimmed `hello-init` matrix on `09051JEC202061`:
-  - `mount_dev=false mount_proc=false mount_sys=false log_kmsg=false log_pmsg=false` returned to Android with `ro.boot.bootreason=reboot`
-  - `mount_dev=true mount_proc=true mount_sys=true log_kmsg=false log_pmsg=false` returned to Android with `ro.boot.bootreason=kernel_panic`
-  - `mount_dev=true mount_proc=false mount_sys=false log_kmsg=false log_pmsg=false` also returned `kernel_panic`
-  - that isolates the current failure boundary to the `/dev` strategy rather than the mere existence of a Shadow-owned PID 1 or the `/dev/kmsg` / `/dev/pmsg0` writers
-- New stock-ramdisk fact on 2026-04-19 from local unpacked `sunfish` analysis:
-  - the stock ramdisk carries `/dev`, `/proc`, and `/sys` only as empty directories; there are no pre-existing `dev/*` nodes in the shipped cpio
-  - stock recovery init imports `init.recovery.${ro.hardware}.rc`, starts `ueventd`, and expects runtime `/dev` population instead of a pre-populated devtmpfs tree
-- New `/dev` mount-strategy result on 2026-04-19 from the same owned-userspace matrix:
-  - switching the owned `/dev` mount from `devtmpfs` to `tmpfs` changed the outcome on `09051JEC202061` from `kernel_panic` back to `reboot`
-  - `tmpfs /dev` plus `proc` and `sysfs` also returned cleanly on `09051JEC202061`
-  - the same `tmpfs /dev` owned-userspace image returned cleanly on `11151JEC200472`, which is now proven as an adb-visible second boot-lab serial
-- Tightened inference after the `/dev` mount matrix:
-  - the bad actor is specifically the `devtmpfs` model we introduced, not the broader idea of mounting something on `/dev`
-  - the next owned-userspace step should model stock Android more closely: `tmpfs /dev` first, then the smallest truthful device-population mechanism needed for logs or DRM instead of mounting `devtmpfs`
-- Read-only review result on 2026-04-19:
-  - the remaining blind spot is early stage classification around `/dev` bootstrap: negative recovery is now trustworthy, but a dark run can still fail before durable breadcrumbs or DRM ever execute
-  - so the next discriminating experiments must either preserve a durable non-log marker such as `/metadata` or make the pre-`/dev` and post-`/dev` boundary observable before treating a dark run as evidence about later stages
-- New bundle-exec result on 2026-04-20:
-  - after fixing the `dri_bootstrap` regression for the orange prelude, `11151JEC200472` showed three visible orange pulses on the `shadow-boot-orange-gpu-bundle-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
-  - that proves boot-owned `hello-init`, config validation, staged `/orange-gpu` bundle exec, and successful bundle return, even though no durable Android-side breadcrumbs survived reboot
-- New offscreen result on 2026-04-20:
-  - `11151JEC200472` showed two visible orange pulses on the `shadow-boot-orange-gpu-vulkan-offscreen-prelude2-checkpoint1-restart7.img` one-shot lane
-  - that means the visible prelude and validation checkpoint ran, then the strict Vulkan offscreen branch failed to return before the watchdog restart
-- New device-smoke result on 2026-04-20:
-  - `11151JEC200472` showed two visible orange pulses on the `shadow-boot-orange-gpu-vulkan-device-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
-  - that means the visible prelude and validation checkpoint ran, then the strict Vulkan device/buffer branch failed to return before the watchdog restart
-- New device-request result on 2026-04-20:
-  - `11151JEC200472` showed two visible orange pulses on the `shadow-boot-orange-gpu-vulkan-device-request-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
-  - that means the visible prelude and validation checkpoint ran, then the strict Vulkan `request_device` branch failed to return before the watchdog restart
-- New adapter result on 2026-04-20:
-  - `11151JEC200472` showed two visible orange pulses on the `shadow-boot-orange-gpu-vulkan-adapter-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
-  - that means the visible prelude and validation checkpoint ran, then the strict Vulkan adapter-selection branch failed to return before the watchdog restart
-- New instance result on 2026-04-20:
-  - `11151JEC200472` showed three visible orange pulses on the `shadow-boot-orange-gpu-vulkan-instance-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
-  - that proves boot-owned strict Vulkan instance creation returns successfully under the owned `hello-init` environment
-- New enumerate-count result on 2026-04-20:
-  - `11151JEC200472` showed two visible orange pulses on the `shadow-boot-orange-gpu-vulkan-enumerate-adapters-count-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
-  - that means the visible prelude and validation checkpoint ran, then the raw wgpu adapter-enumeration-count branch failed to return before the watchdog restart
-- New raw-Vulkan-instance result on 2026-04-20:
-  - `11151JEC200472` showed three visible orange pulses on the `shadow-boot-orange-gpu-raw-vulkan-instance-smoke-prelude2-checkpoint1-restart7.img` one-shot lane
-  - that proves the strict boot-owned raw Vulkan instance lifecycle returns successfully under the owned `hello-init` environment
-- Tightened inference after the bundle/offscreen/device-request/device/adapter/instance/raw-Vulkan proofs:
-  - bundle-exec and instance-smoke now both return successfully on `11151JEC200472`, each with three visible orange pulses
-  - raw Vulkan instance-lifecycle also returns successfully on `11151JEC200472`, so the failure is later than loader load plus `vkCreateInstance` / `vkDestroyInstance`
-  - raw wgpu enumeration-count still stops after two visible orange pulses, so the next useful split is raw Vulkan physical-device enumeration rather than more wgpu-only micro-splits
-  - the active question has shifted again: does raw Vulkan physical-device enumeration return under this env, or is the problem specific to wgpu-backed enumeration/wrapping above a working raw instance lifecycle?
-  - `boot-raw-vulkan-physical-device-count-smoke` reached only two visible pulses on `11151JEC200472`, so the failure is still earlier than a full successful raw physical-device handle-list fetch
-  - the watched `boot-raw-vulkan-physical-device-count-smoke` runs also settled as `2 pulses -> black -> bootloader/Android`, which fits the existing watchdog-plus-reboot contract more than a clean post-return success path
-  - `boot-raw-vulkan-physical-device-count-query-smoke` also reached only two visible pulses on `11151JEC200472`, so the null-pointer count query plus explicit cleanup still does not return successfully under the owned env
-  - `boot-raw-vulkan-physical-device-count-query-no-destroy-smoke` still produced only two visible pulses on `11151JEC200472`, so skipping explicit `vkDestroyInstance` was not enough to recover the normal summary/return path
-  - the next discriminator is `boot-raw-vulkan-physical-device-count-query-exit-smoke`, reusing the same bundle and visible contract but terminating the child with exit status `0` immediately after the null-pointer count query returns and before summary construction/write
-  - reviewer read: this new exit split isolates the raw count query from both explicit cleanup and the normal Rust summary/return path; if it still only reaches two pulses, the active failing seam is the count query itself, and if it returns with three pulses, the remaining suspect is the post-query Rust path above the successful raw query
-- New rooted-control result on 2026-04-21:
-  - `11151JEC200472` is the primary raw-ash control phone; rooted normal-Android runs of `raw-vulkan-instance-smoke` and `raw-vulkan-physical-device-count-query-exit-smoke` both succeed there
-  - `09051JEC202061` and `06241JEC200520` are currently confounded for this seam because rooted `raw-vulkan-instance-smoke` fails at `vkCreateInstance(ERROR_INCOMPATIBLE_DRIVER)` on both
-  - the new `scripts/pixel/pixel_tmpfs_dev_gpu_smoke.sh` harness reproduced the raw count-query exit scene on `11151JEC200472` inside a boot-shaped tmpfs `/dev`
-  - that rooted control still succeeds with only `/dev/null`, `/dev/kgsl-3d0`, `/dev/dri/card0`, `/dev/dri/renderD128`, proc-fd symlinks, and boot-exact node modes/owners
-  - openlog showed `/dev/kgsl-3d0` plus attempted `/dev/dma_heap/system` and `/dev/ion` access, and the scene still returned `count=1` even with `/dev/ion` absent
-  - so the active boot-owned blocker is no longer best explained by `/dev` topology or node permissions; the next discriminator should target early-boot readiness or skipped vendor-init state instead
-- New launch-delay result on 2026-04-21:
-  - `11151JEC200472` still showed only two visible orange pulses on the watched 9-second launch-delay raw count-query-exit image, then black, then the red fastboot/start screen
-  - so passive delay did not move the seam; the next stronger readiness discriminator is a parent-side warm-up probe that runs the exact raw count-query-exit scene before the real payload fork/exec
-- New observability result on 2026-04-21 from the adb-timeout / transport pass:
-  - `pixel_boot_oneshot.sh` now attempts late recovery after `wait-adb`, records `transport-timeline.tsv`, surfaces recovery verdicts in `status.json`, and auto-reboots a returned fastboot screen back toward Android so one-shot runs no longer depend on a human pressing `Start`
-  - the best recent `11151JEC200472` probe run showed transport `0 fastboot -> 1 none -> 64 fastboot`, then late recovery back into stock Android with `proof_ok=false` and explicit absence reasons (`logcat_last_unavailable`, `pmsg_invalid_argument`, `pstore_empty`)
-  - so the seam is no longer “maybe adb was just slow”; the boot-owned GPU lane is really falling back to fastboot/bootloader without leaving a correlated durable breadcrumb in the current channels
-  - a later unattended `09051JEC202061` run of the stage-visual parent-probe image still exposed a late-recovery blind spot: the bundle recorded `wait-adb` plus `transport-timeline.tsv = fastboot -> none`, but the phone later sat in fastboot again outside the watched window
-  - follow-up landed the same day: late recovery now keeps polling transport against the same timeline, can auto-reboot a late fastboot return, emits explicit terminal `stop:*` timeline rows, writes a recover-traces failure `status.json` when adb never returns, and keeps the oneshot transport summary anchored to the original wait window instead of overwriting it after late recovery
-- New visible-contract result on 2026-04-21:
-  - `orange-init` now carries fixed stage labels plus a four-shape contract (`solid-orange`, `bands-orange`, `checker-orange`, `frame-orange`) instead of repeated identical orange pulses
-  - this is intentionally hardcoded in `hello-init` / `drm-rect`, not threaded through the builder as another matrix knob, so watched runs stay comparable across devices and the whole seam remains mechanically deletable later
-  - watched `11151JEC200472` feedback on the stage-visual parent-probe image was `solid-orange -> bands-orange -> black -> fastboot`, with no `checker-orange`
-  - that is the cleanest current proof that the first boot-owned raw `vkEnumeratePhysicalDevices(..., NULL)` count query still does not return successfully under the owned env
-  - because rooted tmpfs-`/dev` controls on `11151JEC200472` and `06241JEC200520` both still succeed on the exact same scene, the best remaining suspects are early-boot readiness or skipped vendor-init side effects, not generic `/dev` topology
-- Overnight boot-lab ledger on 2026-04-21:
-  - allowed serials: `11151JEC200472`, `09051JEC202061`, `06241JEC200520`, `0B191JEC203253`
-  - `11151JEC200472` = primary watched boot lane for new owned-userspace hypotheses
-  - `09051JEC202061` = unattended confirmation / recovery-tooling lane
-  - `06241JEC200520` = rooted tmpfs-`/dev` raw-ash control lane
-  - `0B191JEC203253` = spare rooted control / secondary confirmation lane
-  - all four were restored to rooted Android before the overnight loop continued
-  - rooted tmpfs-`/dev` raw count-query-exit control now also succeeds on `0B191JEC203253`, so the exact rooted control scene is green on three separate devices
-  - keep all four rooted when practical; spend overnight effort on truthful unattended recovery plus durable stage breadcrumbs so the lab does not depend on manual button presses or watched runs
-- New durable-breadcrumb result on 2026-04-21:
-  - the first private `/metadata` stage-writer attempt still recovered no stage file on `11151JEC200472`, even though the run returned through the improved late fastboot auto-recovery path
-  - a rooted control on `06241JEC200520` proved that `/metadata` itself accepts tiny atomic stage files, and a second rooted control proved that a tmpfs-backed private `/dev` plus `mknod ... b 8 11` can mount the metadata partition and hold the same stage file
-  - rooted sysfs also exposed `PARTNAME=metadata`, `MAJOR=8`, and `MINOR=11` at `/sys/class/block/sda11/uevent`, so the metadata block identity does not need to come from early `/dev`
-  - after adding the late sysfs `PARTNAME=metadata` fallback, both `11151JEC200472` and `09051JEC202061` recovered `metadata_stage_value=parent-probe-result=failure`
-  - that is the first durable unattended classification of the active seam: the boot-owned metadata writer survives, the parent probe runs and returns, and the exact raw count-query-exit probe is failing with a normal failure path rather than disappearing without a durable breadcrumb
-  - next discriminator: tighten `parent-probe-result=failure` into an exact durable result such as exit code vs signal vs watchdog, or preserve a tiny correlated probe-output summary, before splitting the raw Vulkan query path further again
-- Follow-up observability result on 2026-04-21:
-  - concurrent oneshots initially collided on the same timestamp-only run dir (`build/pixel/boot/oneshot/20260421T040612Z`), so serial-scoped unique run-dir allocation landed before trusting more parallel boot-lab evidence
-  - with isolated run bundles, both `11151JEC200472` and `09051JEC202061` independently recovered `metadata_stage_value=parent-probe-result=watchdog-signal-9` on the exact same raw count-query-exit parent-probe image
-  - that proved the child was not returning with a normal exit code; the parent watchdog was killing it after the probe timeout on both devices
-  - a second follow-up then added a separate durable child checkpoint file (`probe-stage.txt`) under the same `/metadata/.../by-token/<run_token>/` directory so the Rust probe could report its last internal checkpoint without losing the parent's final result
-  - with that child checkpoint seam enabled, both `11151JEC200472` and `09051JEC202061` independently recovered `metadata_probe_stage_value=parent-probe-attempt-3:vkEnumeratePhysicalDevices-count-query` together with `metadata_stage_value=parent-probe-result=watchdog-signal-9`
-  - that is the clearest current truth: boot-owned raw Vulkan instance creation returns, the child reaches the physical-device count query call itself, and the hang is inside or beneath `vkEnumeratePhysicalDevices(..., NULL)` rather than earlier setup or later cleanup/summary code
-  - next discriminator should compare that boot-owned hang against a fresh rooted tmpfs-`/dev` control on a healthy spare phone and then target the minimal missing readiness/vendor-init prerequisite, not more generic `/dev` speculation
-- Sidecar rooted-device result on 2026-04-21:
-  - rooted `sound` passed end-to-end on `0B191JEC203253` (`build/pixel/runs/ci/20260421T032341Z/summary.json`), so the spare rooted control lane stayed healthy while boot-lab work continued
-  - `06241JEC200520` was not a useful tmpfs-`/dev` control immediately afterward because `/dev/dri` was missing after the failed `podcast` preflight path, so treat that phone as a recovery/spare lane until its display stack is clean again
-  - a fresh rooted tmpfs-`/dev` control on `0B191JEC203253` re-proved the exact `raw-vulkan-physical-device-count-query-exit-smoke` scene under the boot-shaped `/dev` profile with `physical_device_count=1`
-  - its openlog is now the best successful control trace for the active seam: the query path opens `/dev/kgsl-3d0`, probes `/dev/dma_heap/system` and `/dev/ion`, emits KGSL ioctls, and still succeeds without any `/dev/dri/*` opens in the query-only scene
-  - that means the active boot-owned blocker is now more specifically about KGSL readiness or skipped vendor-init side effects than about generic DRM nodes or the Vulkan ICD bundle shape
-- Single-attempt / delay falsifier result on 2026-04-21:
-  - a one-attempt parent-probe image on `11151JEC200472` still recovered `metadata_stage_value=parent-probe-result=watchdog-signal-9` and `metadata_probe_stage_value=parent-probe-attempt-1:vkEnumeratePhysicalDevices-count-query`, but it auto-returned to fastboot in `93s` instead of the earlier `157s`
-  - that proves the raw query hang is present on the first attempt; retries only stretched the wall-clock failure window
-  - a second one-attempt image with `orange_gpu_launch_delay_secs=30` still recovered the same durable result pair, only later in time (`124s`), so simple “wait longer after boot” is no longer a serious explanation
-  - next owned-userspace discriminator should therefore target KGSL/device readiness directly, or persist an even smaller pre-query fingerprint, instead of more launch-delay or cleanup variants
-- Pre-exec fingerprint result on 2026-04-21:
-  - the parent-probe metadata directory now also persists a pre-exec fingerprint file (`probe-fingerprint.txt`) with the current `/proc/mounts`, key device-node stats, and the exact ICD JSON excerpt
-  - on the failing boot-owned `11151JEC200472` run, that fingerprint showed `/dev/kgsl-3d0` present with mode `0666`, `/dev/dma_heap/system` and `/dev/ion` both absent, `/dev`, `/proc`, `/sys`, and `/metadata` mounted as expected, and the Freedreno ICD JSON pointing at `/orange-gpu/lib/libvulkan_freedreno.so`
-  - because the successful rooted control on `0B191JEC203253` also tolerates missing `/dev/dma_heap/system` and `/dev/ion`, the seam has moved past “missing node / wrong mount / wrong ICD” and into the first KGSL ioctl or kernel-driver readiness path itself
-- Raw KGSL open seam result on 2026-04-21:
-  - `shadow-gpu-smoke` now has a dedicated `raw-kgsl-getproperties-smoke` rung, and `hello-init` now passes durable `probe-stage.txt` breadcrumbs into the real orange-gpu payload when metadata breadcrumbs are enabled, even with `orange_gpu_parent_probe_attempts=0`
-  - rooted tmpfs-`/dev` controls on `11151JEC200472` and `0B191JEC203253` both returned `run_status=0`, `run_succeeded=true`, and `summary.kgsl_device_opened=true` on that rung, with all four early `KGSL_DEVICE_GETPROPERTY` calls succeeding
-  - the first boot-owned actual-payload run on `09051JEC202061` recovered `metadata_probe_stage_value=orange-gpu-payload:kgsl-open`, not `...:kgsl-open-ok`, so the owned-userspace stall is now narrowed to `open("/dev/kgsl-3d0")` itself rather than any later KGSL ioctl or Vulkan enumeration step
-  - a second boot-owned run on the same phone with `orange_gpu_launch_delay_secs=30` recovered the exact same `metadata_probe_stage_value=orange-gpu-payload:kgsl-open`, only later in wall clock (`fastboot_auto_reboot_elapsed_secs=100` instead of `68`), so “wait longer before touching KGSL” is not a serious explanation at the `kgsl-open` seam
-  - a spare rooted control on `0B191JEC203253` still succeeded on `raw-kgsl-getproperties-smoke` even after a display-stack stop attempt using the repo’s existing service helpers, so the obvious `surfaceflinger` / composer / allocator Android services are not required just to open KGSL and read the early properties under the rooted tmpfs-`/dev` control lane
-  - the boot-lab slot preflight now falls back from blank `ro.boot.slot_suffix` / `ro.boot.slot` properties to rooted `/proc/cmdline` parsing, because `11151JEC200472` and `06241JEC200520` currently expose the kernel-truthful `androidboot.slot_suffix=_a` only through `su -c cat /proc/cmdline`
-  - a boot-owned `devtmpfs` variant on `09051JEC202061` regressed to a `kernel_panic` lane with no recovered metadata fingerprint or stage file at all, so `devtmpfs` is currently worse than the informative `tmpfs` path and should not replace it as the main experiment surface
-- Read-only KGSL open result on 2026-04-21:
-  - `shadow-gpu-smoke` now has a dedicated `raw-kgsl-open-readonly-smoke` rung
-  - rooted tmpfs-`/dev` controls on both `11151JEC200472` and `09051JEC202061` returned `run_status=0`, `run_succeeded=true`, and `summary.kgsl_device_opened=true` with `access_mode=read-only`
-  - the matching boot-owned run on `09051JEC202061` recovered `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly`, not `...:kgsl-open-readonly-ok`, and returned to fastboot in the same `69s` window as the earlier read-write KGSL seam
-  - that same-phone contrast proves the blocker is not specific to write access, ioctl setup, or a special-case `09051` rooted environment; boot-owned userspace cannot complete even a read-only open of `/dev/kgsl-3d0`
-- Direct C-owned KGSL open result on 2026-04-21:
-  - `hello-init` now has a private `c-kgsl-open-readonly-smoke` mode that opens `/dev/kgsl-3d0` read-only directly in the owned child process before any staged Rust bundle exec
-  - the owned run on `09051JEC202061` recovered the exact same durable stage value, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly`, with no `...-ok` marker and the same fastboot auto-reboot timing
-  - that rules out the staged Rust bundle, dynamic loader, and Turnip/Vulkan userspace as the active blocker; the seam is now “any boot-owned child process open of `/dev/kgsl-3d0`”
-- Direct C PID1-owned KGSL open result on 2026-04-21:
-  - `hello-init` now also has a private `c-kgsl-open-readonly-pid1-smoke` mode that runs the same readonly KGSL open directly in PID 1 before the usual payload `fork()`
-  - the owned run on `09051JEC202061` recovered the exact same durable stage value, `metadata_probe_stage_value=orange-gpu-payload:kgsl-open-readonly`, with no `...-ok` marker and the same fastboot auto-reboot contract
-  - that rules out the child-process boundary too; the seam is now “any boot-owned process, including PID 1, open of `/dev/kgsl-3d0`”
-- KGSL cold-open hypothesis / reviewer result on 2026-04-21:
-  - reviewer read is that the best current explanation is KGSL cold first-open or missing stock-init/vendor-init side effects, not path lookup, Rust, dynamic loading, or generic `/dev` correctness
-  - the highest-value next discriminators are:
-    - a stock-init trigger ladder for the readonly KGSL-open helper (`post-fs-data`, `init.svc.pd_mapper=running`, `init.svc.qseecom-service=running`, `init.svc.gpu=running`, `sys.boot_completed=1`)
-    - a rooted warm-vs-cold holder experiment to see whether readonly KGSL open only succeeds once Android already has live KGSL holders
-    - a boot-owned blocked-task stack capture around the direct C KGSL-open seam if the above are still ambiguous
-- Stock-init trigger-ladder tooling result on 2026-04-21:
-  - `scripts/pixel/pixel_boot_rc_trigger_ladder.sh` now exists as a private sidecar runner for stock-init trigger probes, and `sc debug boot-lab-rc-trigger-ladder` delegates to it
-  - the runner composes `pixel_boot_build_rc_probe.sh` with `pixel_boot_oneshot.sh`, writes `cases.tsv`, `matrix.tsv`, and `matrix-summary.json`, and now refuses to treat a missing built image as a successful build step
-  - the first real `post-fs-data` property-only probe on `06241JEC200520` returned to adb on slot `a` with `device-run/status.json.ok=true` but `shadow_probe_prop=""`, so the proof property never appeared even though transport came back cleanly
-  - that same real run left the phone back in normal Android with `sys.boot_completed=1` but Magisk root inactive again, so future sidecar use of `06241JEC200520` should begin with `sc -t 06241JEC200520 root-check` and, if needed, one Magisk-app activation pass before assuming the device is rooted
-  - keep this tooling as instrumentation rather than the Stream B milestone itself; the next Stream B seam is boot-helper autostart plus a durable preflight report
-- Stream B preflight tooling result on 2026-04-21:
-  - `scripts/pixel/pixel_boot_preflight.sh` now exists as the private Stream B runner, and `sc debug boot-lab-preflight` delegates to it
-  - `pixel_boot_build_log_probe.sh --preflight-profile phase1-shell` now emits a boot-helper preflight summary plus `preflight-checks.tsv`, and `pixel_boot_collect_logs.sh` lifts those fields into `status.json` without conflating them with transport success
-  - the first real preflight run on `06241JEC200520` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260421T233147Z/summary.json), built the image successfully, and returned to adb on slot `_a` after a slow recovery window, but neither `/.shadow-init-wrapper` nor `/data/local/tmp/shadow-boot` appeared for the current boot
-  - that makes the first preflight result a truthful `helper_proved_current_boot=false` / `preflight_status=""` miss rather than a GPU issue: the current stock-init autostart seam still lacks a positive userspace proof surface on normal `sunfish` boots
-  - the follow-up launch-proof change now uses a dedicated `debug.shadow.boot.preflight.launch=started` proof property plus `debug.shadow.boot.preflight.status`, but the second real run on `06241JEC200520` still wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260422T000211Z/summary.json) with `proof_mode=property`, `proof_property_actual=""`, `helper_proved_current_boot=false`, and no helper dir or wrapper markers
-  - that tightened the Stream B bottleneck from “helper dir did not survive” to “the imported rc / boot-helper autostart seam still does not prove current-boot execution on normal `sunfish` boots,” even with a safe helper-launch property
-  - Stream B now splits preflight proof into two explicit surfaces:
-    - import proof from `init.shadow.rc` itself (`debug.shadow.boot.preflight.import=*`)
-    - helper-launch proof from the helper body (`debug.shadow.boot.preflight.launch=*`)
-  - interpretation rule:
-    - `import_proved_current_boot=true`, `helper_launch_proved_current_boot=false` means stock-init import ran but the helper service path did not prove execution
-    - both false means the current boot never proved the imported rc seam at all
-  - the first real import-proof sidecar run on `0B191JEC203253` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260422T015741Z-0B191JEC203253_/summary.json) and returned to adb on slot `_a`, but `import_proved_current_boot=false` and `helper_launch_proved_current_boot=false`
-  - the second real import-proof sidecar run on `06241JEC200520`, this time with the deliberately late trigger `property:sys.boot_completed=1`, wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260422T020204Z/summary.json) and still returned `import_proved_current_boot=false` plus `helper_launch_proved_current_boot=false`
-  - that burns down the “post-fs-data was simply too early” explanation for the current Stream B miss: even a late current-boot trigger does not prove the imported rc seam on normal `sunfish` boots
-  - the next debugging rung corrected the stock-init anchor selection itself. The earlier real runs had all auto-patched `init.recovery.sunfish.rc`; after preferring the normal boot anchor, the rerun on `06241JEC200520` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260422T021309Z-06241JEC200520_/summary.json) with `Patch target: system/etc/init/hw/init.rc`, but still returned `import_proved_current_boot=false` and `helper_launch_proved_current_boot=false`
-  - the direct inline-anchor probe on that same corrected normal-boot target also failed. [`device-run/collect/status.json`](../../build/pixel/runs/boot-inline-anchor/20260422T021615Z-06241JEC200520/device-run/collect/status.json) showed `proof_property_key=debug.shadow.boot.rc_probe`, `proof_property_expected=inline-anchor`, and `proof_property_matched=false`
-  - that burns down the simpler “import file is broken but the patched normal-boot rc target does execute” explanation too: even a direct property action in `system/etc/init/hw/init.rc` did not prove current-boot execution under the late trigger
-  - host-side unpack of the cached stock `boot.img` sharpened the interpretation again:
-    - the ramdisk has no file-level `/init.rc`
-    - the ramdisk copy of `system/etc/init/hw/init.rc` is recovery-flavored and starts with `import /init.recovery.${ro.hardware}.rc`
-    - the ramdisk also contains `init.recovery.sunfish.rc`
-  - so “patched `system/etc/init/hw/init.rc` inside the boot ramdisk” does not automatically mean “patched the normal Android boot init graph”
-  - a rooted stock Android check on `0B191JEC203253` tightened that further:
-    - `/first_stage_ramdisk` is absent on the live normal-boot rootfs
-    - `/second_stage_resources` is present and empty
-    - the stock second-stage `system/bin/init` binary contains exactly one `/system/etc/init/hw/init.rc` string
-  - that makes the next Stream B seam a direct stock-init-owned primary-rc retarget, not another ramdisk-side rc import tweak:
-    - keep stock `/init -> /system/bin/init`
-    - keep stock `system/bin/init` as the launched binary shape
-    - patch only the one primary-rc string inside `system/bin/init`
-    - point it at `/second_stage_resources/.rc`
-    - let that trampoline rc import the stock `/system/etc/init/hw/init.rc` and emit one proof property on a safe late trigger
-  - repo tooling now has a dedicated host builder for that seam: `scripts/pixel/pixel_boot_build_second_stage_rc_probe.sh`
-  - the first real second-stage-retarget run on `0B191JEC203253` wrote [`device-run/collect/status.json`](../../build/pixel/runs/boot-second-stage-rc-probe/20260422T024739Z-0B191JEC203253/device-run/collect/status.json) and reached Android on slot `_a`, but still returned `proof_property_matched=false`
-  - the same still-booted custom image was then inspected over adb:
-    - `/second_stage_resources` existed on the live rootfs
-    - `/second_stage_resources/.rc` was absent on the live rootfs
-    - the built boot image did contain the injected trampoline file under `second_stage_resources/.rc`
-  - that means the tightened blocker is no longer “can stock second-stage init consume a retargeted primary rc path?” It is earlier: “which boot-ramdisk path, if any, actually survives into the live second-stage-visible rootfs on normal `sunfish` boots?”
-  - the next two path-survival probes on `0B191JEC203253` tightened that again:
-    - a benign stock-init image that only added `/shadow.root.probe` and `second_stage_resources/shadow.stage.probe` reached Android, but neither file existed on the live custom boot
-    - a second image that added `init.environ.rc` and `debug_ramdisk/boot.probe` also reached Android, but neither file existed on the live custom boot
-  - local source read against a cloned `platform/system/core` `android13-qpr3-release` branch now explains those misses:
-    - first-stage init mounts tmpfs at `/debug_ramdisk` and `/second_stage_resources`
-    - after first-stage mount it frees the old ramdisk tree
-    - Android 13 QPR3 explicitly preserves only selected channels, notably `/system/etc/ramdisk/build.prop` into `/second_stage_resources/system/etc/ramdisk/build.prop`, plus the debug-ramdisk files behind `/force_debuggable`
-  - the first real proof on that preserved channel succeeded on `0B191JEC203253`: [`boot-ramdisk-build-prop-probe`](../../build/pixel/runs/boot-ramdisk-build-prop-probe/20260422T030547Z-0B191JEC203253/) reached Android and the live custom boot reported `getprop debug.shadow.boot.ramdisk_prop_probe = ready`
-  - that is the first positive Stream B current-boot proof surface that does not borrow the GPU seam or rely on rooted Android after takeover
-  - repo tooling now has a dedicated builder for that seam: `scripts/pixel/pixel_boot_build_ramdisk_prop_probe.sh`
-  - that preserved-property seam is now promoted into the preflight contract itself. The rerun on `0B191JEC203253` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260422T031416Z-0B191JEC203253-stage2/summary.json) with `second_stage_property_proved_current_boot=true` while `import_proved_current_boot=false` and `helper_launch_proved_current_boot=false`
-  - that gives Stream B three truthful current-boot booleans now:
-    - `second_stage_property_proved_current_boot`
-    - `import_proved_current_boot`
-    - `helper_launch_proved_current_boot`
-  - local source read against `platform/system/core` `android13-qpr3-release` sharpened the interpretation one step further:
-    - `PropertyInit()` loads `/second_stage_resources/system/etc/ramdisk/build.prop` before `LoadBootScripts()`
-    - but `UmountSecondStageRes()` runs before `LoadBootScripts()`
-    - so the boot image can steer second-stage properties on normal `sunfish`, but `/second_stage_resources` is not a viable rc or helper-file handoff surface for later boot-script parsing
-  - that burns down the remaining “keep chasing boot-ramdisk rc files” theory for Stream B on normal Android 13 `sunfish`: boot-image-only rc injection is structurally downstream of a path that init unmounts before it chooses the second-stage bootscript
-  - repo tooling now has a dedicated builder for the next stock-init-owned seam too: `scripts/pixel/pixel_boot_build_cmdline_probe.sh`, which appends `androidboot.*` header tokens without mutating the ramdisk
-  - the first real cmdline control on `0B191JEC203253` wrote [`device-run/status.json`](../../build/pixel/runs/cmdline-probe/20260422T032650Z-0B191JEC203253-control/device-run/status.json) and reached adb with `shadow_probe_prop=stream-b-cmdline-control`
-  - that re-proves, on the new dedicated builder path, that boot header cmdline changes survive into normal Android as `ro.boot.*` on the one-shot custom image
-  - the next real cmdline falsifier on `0B191JEC203253`, with `androidboot.init_rc=/does/not/exist.rc`, wrote [`device-run/status.json`](../../build/pixel/runs/cmdline-probe/20260422T032957Z-0B191JEC203253-invalid-init-rc/device-run/status.json) and never returned to adb within the guarded window
-  - that is the strongest current evidence that `ro.boot.init_rc` is a real stock-init control point from the boot header on normal `sunfish`
-  - current lab note: after that invalid-`init_rc` run, `0B191JEC203253` dropped out of both adb and fastboot; the phone was later manually pushed to fastboot and restored to stock `boot_a`, then re-rooted successfully through the supported Magisk patch/flash flow
-  - the next two constructive cmdline controls on rooted `0B191JEC203253` tightened the interpretation further:
-    - [`explicit-init-rc`](../../build/pixel/runs/cmdline-probe/20260422T153950Z-0B191JEC203253-explicit-init-rc/device-run/status.json) appended both `androidboot.shadow_probe=stream-b-explicit-init-rc` and `androidboot.init_rc=/system/etc/init/hw/init.rc`; adb returned, but neither `ro.boot.shadow_probe` nor `ro.boot.init_rc` matched, and the returned Android boot reported `sys.boot.reason=reboot,boringssl-self-check-failed`
-    - [`init-rc-only`](../../build/pixel/runs/cmdline-probe/20260422T154250Z-0B191JEC203253-init-rc-only/device-run/status.json) appended only `androidboot.init_rc=/system/etc/init/hw/init.rc`; adb still returned, but `ro.boot.init_rc` was absent again and the returned Android boot reported the same `reboot,boringssl-self-check-failed` reason
-  - host-side unpack confirms those images really did carry the appended boot header tokens, so this is not a mkbootimg packing bug
-  - local source explains the behavior exactly. In `LoadBootScripts()`, a non-empty `ro.boot.init_rc` takes the `else` branch and calls `parser.ParseConfig(bootscript)` only; it does not also parse `/system/etc/init`, `/vendor/etc/init`, `/odm/etc/init`, or `/product/etc/init`
-  - that means `androidboot.init_rc=/system/etc/init/hw/init.rc` is not equivalent to the stock default path: it suppresses the normal directory-based init graph, which matches the observed `boringssl-self-check-failed` reboots
-  - tightened Stream B conclusion:
-    - boot-header `ro.boot.init_rc` is a real stock-init control point
-    - but it is destructive unless the replacement bootscript itself recreates the full stock import behavior
-    - because the boot image currently cannot add a surviving second-stage bootscript file, this cmdline lane is not a constructive path to boot-helper autostart on normal `sunfish`
-  - next Stream B seam: keep the work on stock-init-owned control points that the boot image can actually reach:
-    - header/cmdline-driven init selection or gating
-    - narrower stock `system/bin/init` binary patches that preserve the real init image shape
-    - do not spend more cycles on boot-ramdisk rc file injection for normal `sunfish`
-  - one more operational truth is now explicit too: a successful `pixel_boot_oneshot.sh` run leaves the phone on the temporary `fastboot boot` image until the next reboot. Root disappearing after a successful one-shot is therefore expected on that temporary boot, not evidence that the flashed slot lost Magisk.
-  - rooted runtime controls on `0B191JEC203253` then split the preserved-property seam further:
-    - `debug.touch_sensitivity_mode=1` survives at runtime, but its stock vendor-init action never sets `persist.vendor.touch_sensitivity_mode=1`; that trigger is not a constructive Stream B lane even before boot-image injection
-    - `persist.heapprofd.enable=1` and `persist.traced_perf.enable=1` both start their stock services at runtime, but the first real one-shot ramdisk-build-prop rerun for `persist.traced_perf.enable=1` still missed on the live custom boot: [`device-run/status.json`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T160035Z-0B191JEC203253-traced-perf/device-run/status.json) reached adb with `boot_completed=true`, but `persist.traced_perf.enable` was absent and `init.svc.traced_perf=stopped`
-  - the next one-shot on the non-persistent `sys.*` seam is the first clean constructive win:
-    - rooted runtime control proved `sys.lpdumpd=start` starts stock `lpdumpd` and `sys.lpdumpd=stop` unwinds it again
-    - the matching one-shot ramdisk-build-prop image on `0B191JEC203253` wrote [`device-run/status.json`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T160851Z-0B191JEC203253-lpdumpd/device-run/status.json) with `ok=true`, `observed_prop=sys.lpdumpd=start`, `observed_property_actual=start`, and `proof_prop=init.svc.lpdumpd=running`
-  - the next runtime-vs-oneshot split explains why some preserved-property rungs still miss:
-    - rooted runtime control proved `sys.init.updatable_crashing=1` fires the stock `flags_health_check` path and rewrites `/data/server_configurable_flags/reset_flags`
-    - the matching one-shot ramdisk-build-prop image preserved `sys.init.updatable_crashing=1` on the temporary custom boot, but it neither rewrote `/data/server_configurable_flags/reset_flags` nor emitted the stock `flags_health_check` log lines
-    - local `system/core/init` source study matches that miss: initial property triggers are queued before the later `late-init` / `post-fs-data` event ladder, so data-dependent actions can fail even when the injected property itself survives
-  - the next post-`/data` vendor seam is another constructive win:
-    - rooted runtime control showed `persist.vendor.sys.ssr.enable_ramdumps=1` drives the `post-fs-data && property:persist.vendor.sys.ssr.enable_ramdumps=1` action in `init.sm7150.rc`
-    - the matching one-shot ramdisk-build-prop image on `0B191JEC203253` created `/data/vendor/wifidump`, `/data/vendor/ramdump`, `/data/vendor/ssrdump`, and `/data/vendor/ssrlog` on the temporary custom boot
-    - shell-readable property proofs stayed blank on that returned Android shell because vendor property access is denied there, so Stream B now also treats matching logcat lines as a first-class proof surface
-    - the rerun with `--proof-logcat-substring 'subsystem_ramdump: Unable to open /sys/module/subsystem_restart/parameters/enable_ramdumps'` wrote [`collect/status.json`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T162349Z-0B191JEC203253-ssr-ramdumps-logcat-proof/device-run/collect/status.json) with `proof_mode=logcat-substring`, `proof_logcat_match_count=1`, and `proof_logcat_matched=true`
-    - Stream B tooling now also supports durable device-path proofs, and the rerun with `--proof-device-path /data/vendor/wifidump` wrote [`device-run/status.json`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T162349Z-0B191JEC203253-ssr-ramdumps-device-path-proof/device-run/status.json) with `proof_mode=device-path`, `proof_device_path=/data/vendor/wifidump`, and `proof_device_path_present=true`
-  - tightened Stream B conclusion after that run:
-    - preserved `/system/etc/ramdisk/build.prop` is a truthful stock second-stage control surface on normal `sunfish`
-    - non-persistent `sys.*` actions are currently the first proven shell-readable constructive trigger family on that seam
-    - preserved build-prop can also drive at least one post-`/data` vendor-init action; the failure mode there was proof-surface visibility, not lack of stock-init execution
-    - misses now split into two different classes:
-      - early property survives, but the data-dependent action is still too early (`sys.init.updatable_crashing=1`)
-      - the action runs, but returned-shell property visibility is too weak to prove it unless collection also checks durable artifacts or matching logcat lines (`persist.vendor.sys.ssr.enable_ramdumps=1`)
-    - local source survey in `aosp-device-google-sunfish` / `aosp-system-core` tightened the search space too:
-      - on current `sunfish`, `persist.vendor.sys.ssr.enable_ramdumps=1` is the only obvious device-local `post-fs-data && property:` block that leaves direct `/data` artifacts
-      - the remaining nearby device-local property seams are mostly pure property-triggered service starts (`persist.vendor.sys.ssr.restart_level=*`, IMS/radio toggles) or boot-completed gates, not more event-gated `/data` writers
-  - next Stream B seam after the `lpdumpd` win:
-    - keep using durable artifact or logcat proof surfaces, not just shell-readable properties, for later stock-init lanes
-    - choose the next real property rung from the now-smaller local-source set: the cleanest adjacent candidate is `persist.vendor.sys.ssr.restart_level=* -> start vendor.ssr_setup`, because it stays in the already-proven SSR family without touching USB, radio, or the GPU seam
-    - rooted runtime discovery on `0B191JEC203253` tightened that candidate further:
-      - `persist.vendor.sys.ssr.restart_level` is already set to `modem,adsp,slpi` on the rooted baseline, so a future one-shot must use an alternate valid value if we want attribution to the injected image rather than the existing persisted state
-      - the useful proof surface is logcat from `ssr_setup`, not `init.svc.*`: invalid test values log `No subsys found ...`, and restoring the stock value logs `Using persist.vendor.sys.ssr.restart_level for ssr_setup` plus `Enabling SSR for subsys*` / `Disabling ssr for subsys*`
-    - prefer actions that leave durable artifacts, service state, or logcat breadcrumbs over proofs that depend on unrestricted `getprop` visibility
-    - keep the local-source timing model explicit: initial property evaluation can be earlier than `/data`, so data-dependent property seams need later stock actions, not just surviving properties
-  - Stream B service-state proofing tightened again on 2026-04-22:
-    - `pixel_boot_collect_logs.sh` / `pixel_boot_oneshot.sh` now also support `--proof-ps-substring`, so service-start seams can prove success from collected process state when property visibility is weak
-    - rooted runtime control on `0B191JEC203253` showed `persist.radio.multisim.config=dsds` starts `vendor.qcrild2`, but the matching one-shot ramdisk-build-prop image wrote [`device-run/status.json`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T195523Z-0B191JEC203253-multisim-qcrild2/device-run/status.json) with `boot_completed=true`, `proof_mode=ps-substring`, `proof_ps_substring=qcrild2`, `proof_ps_match_count=0`, and `observed_property_actual=` while [`collect/getprop.txt`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T195523Z-0B191JEC203253-multisim-qcrild2/device-run/collect/getprop.txt) kept `persist.radio.multisim.config` blank
-    - local source in `aosp-device-google-sunfish/init.hardware.rc` explains why that candidate is noisy: `persist.radio.multisim.config` is tied to `ro.boot.hardware.dsds`, `vendor.radio.sim_num.switch`, and telephony-specific restart logic, so it is not a clean generic stock-init control point for Stream B
-    - rooted runtime then validated a better system-core seam: on this user build (`ro.debuggable=0`), setting `llk.enable=1` starts `llkd-0`
-    - the matching one-shot ramdisk-build-prop image on `0B191JEC203253` wrote [`device-run/status.json`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T200226Z-0B191JEC203253-llkd/device-run/status.json) with `ok=true`, `boot_completed=true`, `proof_mode=property`, `proof_property_key=init.svc.llkd-0`, `proof_property_actual=running`, and `proof_property_matched=true`
-    - the same bundle's [`collect/ps.txt`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T200226Z-0B191JEC203253-llkd/device-run/collect/ps.txt) contained `llkd`, while [`collect/getprop.txt`](../../build/pixel/runs/ramdisk-prop-trigger/20260422T200226Z-0B191JEC203253-llkd/device-run/collect/getprop.txt) did not expose `llk.enable`
-  - tightened Stream B conclusion after the `llkd` win:
-    - preserved `/system/etc/ramdisk/build.prop` can drive at least one generic `system/core` service-start action on normal `sunfish`, not just vendor-local triggers like `lpdumpd` or SSR
-    - service-state proof (`init.svc.*` or collected `ps`) is now a better default evidence surface than readback of the triggering property itself for these late-start seams
-    - device-specific telephony properties like `persist.radio.multisim.config` are lower-value next steps than generic stock-init/system-core actions because they are easier for later device logic to override or reinterpret
-  - next Stream B seam after `llkd`:
-    - keep choosing generic stock-init/system-core property triggers whose proof surface is a started service or other shell-visible state
-    - use `--proof-prop init.svc.*=running` first when available, and fall back to `--proof-ps-substring` when the service property is unavailable or too indirect
-    - treat property readback as optional supporting evidence, not the primary success condition, unless the property family is already known to stay shell-readable on the returned Android boot
-  - Stream B launch-proof retarget result on 2026-04-23:
-    - `pixel_boot_build_log_probe.sh` now emits `debug.shadow.boot.preflight.launch=started` from a generated `shadow-boot-helper-launcher` service-entry wrapper before `/shadow-boot-helper` runs, and `scripts/ci/pixel_boot_tooling_smoke.sh` covers that earlier proof contract
-    - the rerun on `0B191JEC203253` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260423T032536Z-0B191JEC203253_/summary.json) with `second_stage_property_proved_current_boot=true`, `import_proved_current_boot=false`, and `helper_launch_proved_current_boot=false`
-    - that burns down the simpler “the helper started but died before it could write the old launch proof” explanation; even the service-entry proof stayed dark on the current boot
-    - the narrower property-only stock-init ladder on the same device then wrote [`matrix-summary.json`](../../build/pixel/runs/boot-rc-trigger-ladder/20260423T032829Z-0B191JEC203253_/matrix-summary.json) with `matched_case_count=0` across `post-fs-data`, `property:init.svc.pd_mapper=running`, `property:init.svc.qseecom-service=running`, `property:init.svc.gpu=running`, and `property:sys.boot_completed=1`
-    - tightened Stream B conclusion: on normal `sunfish` one-shot boots, the current ramdisk-side imported-rc seam still never proves execution at all, so later helper-start debugging inside that same seam is lower-value than stock-init-owned control points the boot image can actually reach
-  - Stream C phase-1 preflight contract result on 2026-04-23:
-    - `pixel_boot_preflight.sh` now preserves the raw proof tuple (`second_stage_property_proved_current_boot`, `import_proved_current_boot`, `helper_launch_proved_current_boot`, and helper-emitted `preflight_*`) but also derives a top-level `phase1_preflight_*` contract in `summary.json`
-    - the host-derived contract now treats a truthful blocked result as success: `summary.ok=true` and shell exit `0` when the runner can prove either `ready` or `blocked`, even if the import/helper proof seam stayed dark
-    - `scripts/ci/pixel_boot_tooling_smoke.sh` now covers both contract sources:
-      - helper-emitted blocked preflight summary
-      - second-stage-only blocked result with no current-boot import/helper proof
-    - the rerun on `06241JEC200520` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260423T041208Z-06241JEC200520_/summary.json) with `ok=true`, `second_stage_property_proved_current_boot=true`, `import_proved_current_boot=false`, `helper_launch_proved_current_boot=false`, `phase1_preflight_status=blocked`, `phase1_preflight_blocked_reason=stock-init-import-not-proved`, and `phase1_preflight_status_source=second-stage-property-proof`, while raw `preflight_status` stayed blank
-    - the retargeted rerun on `0B191JEC203253` wrote [`summary.json`](../../build/pixel/runs/boot-preflight/20260423T060953Z-0B191JEC203253_/summary.json) with the same top-level blocked contract (`ok=true`, `second_stage_property_proved_current_boot=true`, `import_proved_current_boot=false`, `helper_launch_proved_current_boot=false`, `phase1_preflight_status=blocked`, `phase1_preflight_blocked_reason=stock-init-import-not-proved`, `phase1_preflight_status_source=second-stage-property-proof`) while [`device-run/status.json`](../../build/pixel/runs/boot-preflight/20260423T060953Z-0B191JEC203253_/device-run/status.json) still truthfully recorded the lower-level collection failure as `failure_stage=collect` with `ok=false`
-    - tightened Stream C conclusion: the existing preflight runner already had enough negative evidence to produce the durable ready-vs-blocked phase-1 contract on both rooted sidecars; later Stream B work can now focus on flipping that top-level contract to `ready` instead of teaching callers to reinterpret the raw proof tuple themselves
-  - Stream C typed phase-1 required-path contract result on 2026-04-23:
-    - `pixel_write_guest_ui_startup_config` now emits the boot-critical staged payload contract under `phase1.requiredPaths` in the typed startup config instead of leaving those paths as boot-helper-only literals
-    - `pixel_boot_build_log_probe.sh --preflight-profile phase1-shell` now materializes its required-path checks from that typed startup contract before generating `/shadow-boot-helper`
-    - `pixel_boot_preflight.sh` now lifts helper-emitted `preflight_required_missing_labels` into top-level `summary.json` / `device-run/status.json` as `phase1_preflight_required_missing_labels`, so callers no longer need to descend into nested collect payloads to name the missing phase-1 artifacts
-    - `pixel_boot_preflight.sh` now also derives operator-facing `phase1_preflight_recovery_notes` from those missing labels, pointing callers back at the supported `sc -t pixel stage shell` recovery command plus the specific absent `/data/local/tmp/shadow-runtime-gnu/*` launchers
-    - `scripts/ci/pixel_guest_startup_config_smoke.sh` and `scripts/ci/pixel_boot_tooling_smoke.sh` cover the new typed required-path seam and the recovery-note follow-on
-  - Stream A stronger import-proof surface result on 2026-04-23:
-    - `pixel_boot_build_kgsl_probe.sh` now injects `debug.shadow.boot.kgsl.second_stage=ready` through the preserved `/system/etc/ramdisk/build.prop` seam, and `pixel_boot_kgsl_probe.sh` / `pixel_boot_kgsl_trigger_ladder.sh` now surface `second_stage_property_proved_current_boot` plus the stronger `second-stage-property-proved-no-import-proof` discriminator
-    - the rerun on `09051JEC202061` wrote [`matrix-summary.json`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T050314Z-09051JEC202061_/matrix-summary.json) with `case_count=5`, `second_stage_proved_case_count=5`, `import_proved_case_count=0`, `helper_launch_case_count=0`, and `surviving_discriminator=second-stage-property-proved-no-import-proof`
-    - the matching [`matrix.tsv`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T050314Z-09051JEC202061_/matrix.tsv) showed every trigger returning to `adb` on slot `_b` with `failure_stage=collect` after the boot image proved second-stage property preservation but never proved the imported rc or helper seam
-    - tightened Stream A conclusion: on `09051JEC202061`, the stock-init KGSL ladder no longer collapses to the weaker “Android returned” bucket; it now truthfully proves the custom boot image ran on every trigger while the imported rc/helper seam still never executes
-  - Stream A promoted stock control-point result on 2026-04-23:
-    - `pixel_boot_build_kgsl_probe.sh` now also appends `llk.enable=1` through the preserved ramdisk build-prop seam, and `pixel_boot_kgsl_probe.sh` / `pixel_boot_kgsl_trigger_ladder.sh` now surface `control_point_proved_current_boot` from `init.svc.llkd-0=running` plus the stronger `control-point-proved-no-import-proof` / `second-stage-property-proved-no-control-point` split
-    - the rerun on `09051JEC202061` wrote [`matrix-summary.json`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T061517Z-09051JEC202061_/matrix-summary.json) with `case_count=5`, `second_stage_proved_case_count=5`, `control_point_proved_case_count=5`, `import_proved_case_count=0`, `helper_launch_case_count=0`, `kgsl_result_case_count=0`, and `surviving_discriminator=control-point-proved-no-import-proof`
-    - the matching [`matrix.tsv`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T061517Z-09051JEC202061_/matrix.tsv) still showed every trigger returning to `adb` with `failure_stage=collect`, and the final live shell on the temporary custom boot kept `sys.boot_completed=1`, `init.svc.llkd-0=running`, `debug.shadow.boot.kgsl.second_stage=ready`, and blank `debug.shadow.boot.kgsl.import` / `debug.shadow.boot.kgsl.launch`
-    - tightened Stream A conclusion: on `09051JEC202061`, the KGSL ladder now proves not just preserved second-stage property loading but one constructive stock `system/core` service-start control point above the imported rc seam on every trigger; the remaining truthful bottleneck is still the imported stock-init rc/helper handoff itself, so the next honest move stays “add or prove a seam even closer to init script selection,” not “keep varying helper launch timing inside the current imported rc path”
-  - Stream A promoted imported-rc proof-point result on 2026-04-23:
-    - `pixel_boot_kgsl_probe.sh` / `pixel_boot_kgsl_trigger_ladder.sh` now also surface `imported_rc_proved_current_boot` from `init.svc.adbd=running`, plus the stronger `imported-rc-proved-no-import-proof` / `control-point-proved-no-imported-rc-proof` split
-    - the rerun on `09051JEC202061` wrote [`matrix-summary.json`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T071613Z-09051JEC202061_/matrix-summary.json) with `case_count=5`, `second_stage_proved_case_count=5`, `init_script_selection_proved_case_count=5`, `imported_rc_proved_case_count=5`, `control_point_proved_case_count=5`, `import_proved_case_count=0`, `helper_launch_case_count=0`, `kgsl_result_case_count=0`, and `surviving_discriminator=imported-rc-proved-no-import-proof`
-    - the matching [`matrix.tsv`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T071613Z-09051JEC202061_/matrix.tsv) still showed every trigger returning to `adb` with `failure_stage=collect`, while the final live shell on the temporary custom boot kept `sys.boot_completed=1`, `init.svc.servicemanager=running`, `init.svc.llkd-0=running`, `init.svc.adbd=running`, `debug.shadow.boot.kgsl.second_stage=ready`, and blank `debug.shadow.boot.kgsl.import` / `debug.shadow.boot.kgsl.launch`
-    - tightened Stream A conclusion: on `09051JEC202061`, the ladder now proves the patched stock imported rc reaches a later `adbd` service-start path on every trigger, so the remaining truthful bottleneck is no longer generic imported-rc progress; it is specifically the injected `/init.shadow.rc` parse/registration or action handoff that still never proves current-boot execution
-- Rooted cold KGSL ladder result on 2026-04-21:
-  - `scripts/pixel/pixel_kgsl_cold_matrix.sh` now exists as the rooted cold-boot falsification lane, with a single-serial manifest contract, warm-baseline preflight, and readiness rungs for `root-ready`, `pd-mapper`, `qseecom-service`, `gpu-service`, `boot-complete`, and `display-restored`
-  - after fixing the cold-runner readiness / reboot bookkeeping, the rerun on `11151JEC200472` ([`build/pixel/runs/kgsl-cold-matrix/20260421T212908Z`](../../build/pixel/runs/kgsl-cold-matrix/20260421T212908Z)) still succeeded at `cold-root-ready`, with `device-run/status.json.run_succeeded=true` and `device-run/status.json.summary.kgsl_device_opened=true`
-  - the matching [`cold-root-ready/props.tsv`](../../build/pixel/runs/kgsl-cold-matrix/20260421T212908Z/cold-root-ready/props.tsv) still had `sys.boot_completed`, `dev.bootcomplete`, `init.svc.pd_mapper`, `init.svc.qseecom-service`, `init.svc.gpu`, `surfaceflinger`, and display allocator/composer props all blank
-  - that burns down the “wait for later vendor-init / Android milestones” hypothesis for readonly KGSL open in the rooted control lane; the critical difference is now execution context, not those service milestones
-  - both the matrix pre-scan and the tmpfs runner post-scan can still time out on live systems, so `kgsl-holder-scan` is now explicitly best-effort observability rather than a success criterion
-- Display-stack sidecar result on 2026-04-21:
-  - rooted `raw-kgsl-open-readonly-smoke` on `0B191JEC203253` succeeded at baseline, with `surfaceflinger` stopped, with the repo helper stop preserving allocator, and with the repo helper full display-stack stop (`surfaceflinger`, hwcomposer, allocator) before restore
-  - that makes the active boot-owned blocker much less likely to be “SurfaceFlinger / composer / allocator must already be alive” and pushes suspicion toward earlier boot context, warm-holder state, SELinux/domain differences, or vendor-init timing
-- Typed takeover-config result on 2026-04-22:
-  - the supported rooted guest-run config now carries `takeover.displayServiceProfile`, a typed description of the current display takeover stop set, preserved allocator set, restore order, bootanim policy, and SELinux restore toggles
-  - `pixel_guest_ui_drm.sh` and `pixel_restore_android.sh` now consume that typed profile as the source of truth for the supported rooted display-takeover lane, while the old `stopAllocator` boolean remains only as a derived compatibility alias
-  - `pixel_kgsl_matrix.sh` now resolves rooted takeover cases through the same typed `default` / `keep-allocator` display-service profiles, threads the selected profile through stop/verify/restore, and records the resolved profile in `matrix-summary.json` while still accepting the old service-mode aliases
-- Rooted gpu-smoke takeover-profile result on 2026-04-23:
-  - `pixel_gpu_smoke.sh` now resolves the same typed rooted display-takeover profile before `--present-kms` runs, uses the profile-specific stop/verify/restore helpers, and records the resolved profile in `status.json`
-  - `PIXEL_TAKEOVER_STOP_ALLOCATOR` remains only as the compatibility alias that derives the default rooted `takeover.displayServiceProfile` when callers do not provide explicit profile JSON
-- Observability uplift on 2026-04-21:
-  - `pixel_boot_recover_traces.sh` now records a rooted `kgsl-holder-scan` current-boot channel and a `kernel-current-best-effort` channel that prefers rooted `dmesg` over `logcat -b kernel`
-  - `pixel_tmpfs_dev_gpu_smoke.sh` now emits `kgsl-holder-scan.tsv` and parsed holder metadata in `status.json`, so rooted controls can prove whether KGSL was already warm/open under Android
-  - both smoke lanes (`pixel_boot_recover_traces_smoke.sh` and `pixel_boot_tooling_smoke.sh`) now cover those observability additions
-  - `pixel_root_shell_timeout()` now exists in `scripts/lib/pixel_common.sh`, and the KGSL matrix / cold-matrix / tmpfs-dev runners all use it so holder-scan hangs degrade into recorded timeout artifacts instead of silently wedging the entire lane
-- Boot-lab sidecar status on 2026-04-21:
-  - rooted `sound` passed end-to-end on `0B191JEC203253` again, and the device returned to stable rooted Android
-  - rooted `camera` on `06241JEC200520` succeeded at the direct helper layer (`list` + live JPEG capture), while the shell-app smoke still failed later in automation waiting for the preview-toggle click
-  - the camera sidecar produced a narrow tooling fix in `/Users/justin/code/shadow/worktrees/boot-camera-sidecar` commit `cf12fe0` (`fix: allow prebuilt pixel camera helper reuse`)
-- Bootloader transport note on 2026-04-21:
-  - `adb reboot bootloader` now cleanly reaches fastboot on `09051JEC202061`, but `11151JEC200472` emits `failed to create pty master: No such file or directory` and never leaves Android on the same guarded transport probe
-  - because the owned boot seam now reproduces on `09051JEC202061`, treat `11151JEC200472` as transport-confounded until the reboot-to-bootloader path is fixed or bypassed
+- Canonical builder: `scripts/pixel/pixel_boot_build_orange_gpu.sh --hello-init-mode rust-bridge`
+- Canonical proof recipe:
+  - `--skip-collect --recover-traces-after --no-wait-boot-completed`
+  - read `recover-traces/status.json`
+- Keep later compositor, app, shell, and service work on the Rust seam only.
+- Delete demo-only wrappers, binaries, and smokes once a product rung fully subsumes them.

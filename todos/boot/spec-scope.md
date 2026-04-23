@@ -66,7 +66,7 @@ It does not initially mean:
 - restore repo-local unpack, patch, repack, and flash scripts
 - add early logging and safe rollback
 
-### Phase 1: Shadow-Owned PID 1 With Full GPU (current)
+### Phase 1: Shadow-Owned PID 1 With Full GPU (done)
 
 - custom `boot.img` with Shadow-owned PID 1, no stock Android init
 - Shadow owns `/dev` bootstrap, firmware serving, and GPU bring-up
@@ -75,9 +75,10 @@ It does not initially mean:
 - firmware pulled from device (track 1) with parallel Nix reproduction (track 2)
 - success means Shadow renders to screen from boot with no Android code running
 
-### Phase 2: Compositor And App Runtime From Boot
+### Phase 2: Compositor And App Runtime From Boot (current)
 
 - bring up the compositor, app surfaces, and runtime from the boot-owned PID 1
+- prefer the first TypeScript-backed app rung unless it hides a lower-level bootstrap bug
 - prove input, audio, and basic app lifecycle
 - keep camera and Wi-Fi deferred
 - the Nix build should produce this image end-to-end by the end of this phase
