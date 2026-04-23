@@ -56,7 +56,19 @@ Treat the user's text after `/next` as the primary instruction.
    - read the relevant plan/doc context
    - work only in the current worktree
 
-6. Finish honestly.
+6. Review before landing.
+   - for any substantive code, script, hardware, or architecture/doc change, spawn at least one blocking review subagent before landing
+   - use model `gpt-5.4` with reasoning effort `xhigh`
+   - for complex or risky changes, use multiple reviewers with distinct perspectives, chosen by worker judgement:
+     - correctness / edge cases
+     - validation / test coverage
+     - integration / hardware safety
+     - docs / operator workflow
+   - tell reviewers they are not alone in the codebase, must not revert unrelated work, and should focus only on this task's changed paths and validation contract
+   - wait for blocking review results with minutes-scale timeouts, integrate relevant fixes, then rerun the affected validation
+   - if a reviewer finds a real issue that should not be fixed in the current task, document it clearly and ask `/groom` to add or prioritize the follow-up
+
+7. Finish honestly.
    - if the task is ready to land, use the `land` skill
    - if the task is blocked or should go back to queue, use:
      - `dis interactive-finish --project <project> --state blocked`
