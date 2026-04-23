@@ -335,6 +335,27 @@ Related docs:
     - canonical rooted proof recipe if image metadata or app selection changes
   - blocked_by:
     - `boot-ts-app-direct-present-proof-contract`
+- [ ] `ramdisk-payload-partition-plan`
+  - task_id: boot-ramdisk-payload-partition-plan
+  - priority: 9
+  - why now: ramdisk growth is becoming a cross-cutting blocker for shell, apps, runtime bundles, GPU/userland libraries, fonts, and service helpers; plan the partition-backed payload/root split before more workers encode proof-only ramdisk assumptions
+  - owned paths:
+    - `todos/boot/plan.md`
+    - `todos/boot/frontier.md`
+    - `todos/boot/spec-phase1-shadow-at-boot.md`
+    - `scripts/pixel/`
+    - `scripts/lib/pixel_root_boot_common.sh`
+    - `scripts/lib/pixel_runtime_linux_bundle_common.sh`
+  - acceptance:
+    - document the target split between minimal boot ramdisk contents and partition-backed Shadow payloads
+    - compare at least these options without implementing them: mount stock `/vendor` as-is for HAL/GPU/vendor libraries, use a Shadow-owned `system.img` or `userdata` payload area, or flash a matched A/B slot system/vendor payload alongside `boot.img`
+    - define which early-boot responsibilities stay in the Rust PID1 child: mounting partitions, verifying expected payload version, exposing `/vendor` and payload roots, and handing off to the session
+    - identify proof artifact changes needed to show the mounted payload source, version, and fallback path without hiding boot failures
+    - leave implementation tasks only after the plan chooses a first narrow probe
+  - validation:
+    - `python3 scripts/debug/dispatch.py plan-lint --project boot`
+    - no code implementation in this planning slice
+  - blocked_by: none
 - [ ] `sound-boot-owned-probe`
   - task_id: boot-sound-boot-owned-probe
   - priority: 16
@@ -369,33 +390,6 @@ Related docs:
     - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
     - canonical rooted proof recipe for the first static shell/home artifact on the preferred rooted proof pair
   - blocked_by:
-    - `boot-touch-counter-gpu`
-
-## Architecture Backlog
-
-- [ ] `ramdisk-payload-partition-plan`
-  - task_id: boot-ramdisk-payload-partition-plan
-  - state: backlog
-  - priority: 30
-  - why later: ramdisk-only staging is fine for proofs, but real Shadow userspace will outgrow `boot.img` as soon as shell, multiple apps, runtime bundles, GPU/userland libraries, fonts, and service helpers accumulate
-  - owned paths:
-    - `todos/boot/plan.md`
-    - `todos/boot/frontier.md`
-    - `todos/boot/spec-phase1-shadow-at-boot.md`
-    - `scripts/pixel/`
-    - `scripts/lib/pixel_root_boot_common.sh`
-    - `scripts/lib/pixel_runtime_linux_bundle_common.sh`
-  - acceptance:
-    - document the target split between minimal boot ramdisk contents and partition-backed Shadow payloads
-    - compare at least these options without implementing them: mount stock `/vendor` as-is for HAL/GPU/vendor libraries, use a Shadow-owned `system.img` or `userdata` payload area, or flash a matched A/B slot system/vendor payload alongside `boot.img`
-    - define which early-boot responsibilities stay in the Rust PID1 child: mounting partitions, verifying expected payload version, exposing `/vendor` and payload roots, and handing off to the session
-    - identify proof artifact changes needed to show the mounted payload source, version, and fallback path without hiding boot failures
-    - leave implementation tasks only after the plan chooses a first narrow probe
-  - validation:
-    - `python3 scripts/debug/dispatch.py plan-lint --project boot`
-    - no code implementation in this planning slice
-  - blocked_by:
-    - `boot-ts-runtime-app-matrix-proof`
     - `boot-touch-counter-gpu`
 
 ## Parked / Fallback Seams
