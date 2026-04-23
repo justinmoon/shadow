@@ -368,6 +368,7 @@
           "ui/apps/shadow-blitz-demo"
           "ui/crates/shadow-ui-core"
           "ui/third_party"
+          "rust/shadow-sdk"
           "rust/vendor/xilem"
           "rust/shadow-runtime-protocol"
         ]

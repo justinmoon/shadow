@@ -297,6 +297,9 @@ services = config["services"]
 assign("shadow_session_cashu_data_dir", services["cashuDataDir"])
 assign("shadow_session_nostr_db_path", services["nostrDbPath"])
 assign("shadow_session_nostr_service_socket", services["nostrServiceSocket"])
+emit("SHADOW_RUNTIME_CASHU_DATA_DIR", services["cashuDataDir"])
+emit("SHADOW_RUNTIME_NOSTR_DB_PATH", services["nostrDbPath"])
+emit("SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET", services["nostrServiceSocket"])
 audio_backend = services.get("audioBackend")
 assign(
     "shadow_session_audio_backend",
@@ -360,9 +363,9 @@ PY
             echo "runtime session config=$SHADOW_RUNTIME_SESSION_CONFIG"
             echo "startup app=$startup_app"
             echo "app launch mode=metadata"
-            echo "runtime nostr db=$shadow_session_nostr_db_path"
-            echo "runtime nostr socket=$shadow_session_nostr_service_socket"
-            echo "runtime cashu dir=$shadow_session_cashu_data_dir"
+            echo "runtime nostr db=''${shadow_session_nostr_db_path:-unset}"
+            echo "runtime nostr socket=''${shadow_session_nostr_service_socket:-unset}"
+            echo "runtime cashu dir=''${shadow_session_cashu_data_dir:-unset}"
             echo "runtime audio backend=''${shadow_session_audio_backend:-unset}"
             echo "runtime camera endpoint=''${shadow_session_camera_endpoint:-unset}"
             echo "runtime camera allow_mock=''${shadow_session_camera_allow_mock:-unset}"
@@ -580,6 +583,7 @@ PY
 
         systemd.tmpfiles.rules = [
           "d ${stateDir} 0755 shadow shadow -"
+          "d ${homeDir} 0755 shadow shadow -"
           "d ${logDir} 0755 shadow shadow -"
           "d ${runtimeLibDir} 0755 shadow shadow -"
         ];

@@ -635,6 +635,8 @@ function defaultRuntimeAppEntry(
 }
 
 function buildEnvScript(runtimeSessionConfigPath: string): string {
+  // Typed runtime services live in the session config; the env shim only needs
+  // to point the guest at that file.
   return Object.entries({
     SHADOW_RUNTIME_SESSION_CONFIG: runtimeSessionConfigPath,
   })

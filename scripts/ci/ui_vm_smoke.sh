@@ -433,9 +433,6 @@ start_seeded_local_relay() {
 prepare_vm_extra_env() {
   vm_extra_env_path="$(mktemp "$LOG_DIR/vm-extra-env.XXXXXX.sh")"
   {
-    printf 'export SHADOW_RUNTIME_NOSTR_DB_PATH=%q\n' "$VM_OVERRIDE_ROOT/runtime-nostr.sqlite3"
-    printf 'export SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=%q\n' "$VM_OVERRIDE_ROOT/runtime-nostr.sock"
-    printf 'export SHADOW_RUNTIME_CASHU_DATA_DIR=%q\n' "$VM_OVERRIDE_ROOT/runtime-cashu"
     printf 'export SHADOW_RUNTIME_NOSTR_ACCOUNT_NSEC=%q\n' "$relay_publish_secret"
     printf 'export SHADOW_RUST_TIMELINE_RELAY_URLS=%q\n' "$relay_guest_url"
     printf 'export SHADOW_RUST_TIMELINE_SYNC_ON_START=%q\n' "1"
@@ -860,17 +857,14 @@ repo_root = Path(os.environ["REPO_ROOT"]).resolve()
 
 if issues:
     raise SystemExit(f"vm-smoke: doctor reported issues: {issues!r}")
-if artifact_share is None:
-    raise SystemExit(
-        f"vm-smoke: expected artifact share {str(expected)!r}, got {artifact_share!r}"
-    )
-artifact_share_path = Path(artifact_share)
-if not artifact_share_path.is_absolute():
-    artifact_share_path = (repo_root / artifact_share_path).resolve()
-if artifact_share_path != expected:
-    raise SystemExit(
-        f"vm-smoke: expected artifact share {str(expected)!r}, got {artifact_share!r}"
-    )
+if artifact_share is not None:
+    artifact_share_path = Path(artifact_share)
+    if not artifact_share_path.is_absolute():
+        artifact_share_path = (repo_root / artifact_share_path).resolve()
+    if artifact_share_path != expected:
+        raise SystemExit(
+            f"vm-smoke: expected artifact share {str(expected)!r}, got {artifact_share!r}"
+        )
 
 manifest_path = expected / "artifact-manifest.json"
 if not manifest_path.is_file():
@@ -1010,13 +1004,12 @@ for app_id in sorted(expected_apps):
         )
 PY
 
-python3 - "$RUNTIME_ENV_PATH" "$VM_OVERRIDE_ROOT" <<'PY'
+python3 - "$RUNTIME_ENV_PATH" <<'PY'
 import shlex
 import sys
 from pathlib import Path
 
 env_path = Path(sys.argv[1])
-override_root = Path(sys.argv[2])
 env_lines = [line for line in env_path.read_text(encoding="utf-8").splitlines() if line]
 env_assignments = {}
 
@@ -1031,9 +1024,6 @@ for line in env_lines:
 
 expected_values = {
     "SHADOW_RUNTIME_SESSION_CONFIG": "/opt/shadow-runtime/session-config.json",
-    "SHADOW_RUNTIME_NOSTR_DB_PATH": str(override_root / "runtime-nostr.sqlite3"),
-    "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET": str(override_root / "runtime-nostr.sock"),
-    "SHADOW_RUNTIME_CASHU_DATA_DIR": str(override_root / "runtime-cashu"),
 }
 for key, expected in expected_values.items():
     actual = env_assignments.get(key)
@@ -1046,6 +1036,9 @@ for forbidden_key in (
     "SHADOW_SESSION_APP_PROFILE",
     "SHADOW_SYSTEM_BINARY_PATH",
     "SHADOW_RUNTIME_APP_BUNDLE_PATH",
+    "SHADOW_RUNTIME_NOSTR_DB_PATH",
+    "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET",
+    "SHADOW_RUNTIME_CASHU_DATA_DIR",
     "SHADOW_RUNTIME_AUDIO_BACKEND",
     "SHADOW_RUNTIME_CAMERA_ENDPOINT",
     "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",

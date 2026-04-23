@@ -834,8 +834,11 @@ def qmp_request(command: str, arguments: dict[str, Any] | None = None) -> dict[s
     if not qmp_socket.exists():
         raise FileNotFoundError(f"shadowctl: missing QMP socket {qmp_socket}")
 
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.connect(str(qmp_socket))
+    with qmp_connect_path(qmp_socket) as connect_path, socket.socket(
+        socket.AF_UNIX,
+        socket.SOCK_STREAM,
+    ) as client:
+        client.connect(connect_path)
         greeting = _qmp_read_message(client)
         if "QMP" not in greeting:
             raise RuntimeError(f"shadowctl: unexpected QMP greeting: {greeting!r}")
@@ -853,6 +856,19 @@ def qmp_request(command: str, arguments: dict[str, Any] | None = None) -> dict[s
         if "error" in response:
             raise RuntimeError(f"shadowctl: QMP {command} failed: {response['error']}")
         return response
+
+
+@contextlib.contextmanager
+def qmp_connect_path(qmp_socket: pathlib.Path):
+    socket_path = str(qmp_socket)
+    if len(os.fsencode(socket_path)) < 100:
+        yield socket_path
+        return
+
+    with tempfile.TemporaryDirectory(prefix="shadow-qmp-", dir="/tmp") as temp_dir:
+        alias_path = pathlib.Path(temp_dir) / "socket"
+        alias_path.symlink_to(qmp_socket)
+        yield str(alias_path)
 
 
 def qmp_available() -> bool:
