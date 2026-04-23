@@ -18,6 +18,7 @@ APP_DIRECT_PRESENT_LAUNCHER_OUTPUT="$TMP_DIR/app-direct-present-launcher"
 GPU_BUNDLE_DIR="$TMP_DIR/gpu-bundle"
 APP_DIRECT_PRESENT_BUNDLE_DIR="$TMP_DIR/app-direct-present-bundle"
 TS_APP_DIRECT_PRESENT_BUNDLE_DIR="$TMP_DIR/ts-app-direct-present-bundle"
+TS_TIMELINE_APP_DIRECT_PRESENT_BUNDLE_DIR="$TMP_DIR/ts-timeline-app-direct-present-bundle"
 BAD_LOADER_BUNDLE_DIR="$TMP_DIR/bad-loader-bundle"
 BAD_BINARY_BUNDLE_DIR="$TMP_DIR/bad-binary-bundle"
 OUTPUT_IMAGE="$TMP_DIR/orange-gpu-boot.img"
@@ -36,6 +37,7 @@ mkdir -p \
   "$GPU_BUNDLE_DIR/share/vulkan/icd.d" \
   "$APP_DIRECT_PRESENT_BUNDLE_DIR/lib" \
   "$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/lib" \
+  "$TS_TIMELINE_APP_DIRECT_PRESENT_BUNDLE_DIR/lib" \
   "$BAD_LOADER_BUNDLE_DIR/lib" \
   "$BAD_LOADER_BUNDLE_DIR/share/vulkan/icd.d" \
   "$BAD_BINARY_BUNDLE_DIR/lib" \
@@ -125,6 +127,10 @@ chmod 0755 "$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/lib/ld-linux-aarch64.so.1"
 printf 'ELF_LIBC_AARCH64\n' >"$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/lib/libc.so.6"
 printf 'ELF_LIBM_AARCH64\n' >"$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/lib/libm.so.6"
 printf 'ELF_LIBGCC_S_AARCH64\n' >"$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/lib/libgcc_s.so.1"
+
+cp -R "$TS_APP_DIRECT_PRESENT_BUNDLE_DIR"/. "$TS_TIMELINE_APP_DIRECT_PRESENT_BUNDLE_DIR"/
+rm -f "$TS_TIMELINE_APP_DIRECT_PRESENT_BUNDLE_DIR/runtime-app-counter-bundle.js"
+printf 'console.error("timeline bundle")\n' >"$TS_TIMELINE_APP_DIRECT_PRESENT_BUNDLE_DIR/runtime-app-timeline-bundle.js"
 
 printf 'ELF_BINARY_AARCH64\n' >"$GPU_BUNDLE_DIR/shadow-gpu-smoke"
 chmod 0755 "$GPU_BUNDLE_DIR/shadow-gpu-smoke"
@@ -1224,6 +1230,101 @@ for needle in [
 ]:
     if needle not in fingerprint_body:
         raise SystemExit(f"missing metadata probe fingerprint seam needle: {needle}")
+PY
+}
+
+assert_app_direct_present_typescript_manifest_selector_shape() {
+  python3 - "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+signature = "stage_app_direct_present_typescript_bundle()"
+start = source.find(signature)
+if start < 0:
+    raise SystemExit("missing stage_app_direct_present_typescript_bundle")
+brace = source.find("{", start)
+if brace < 0:
+    raise SystemExit("missing stage_app_direct_present_typescript_bundle body")
+depth = 0
+end = -1
+for index in range(brace, len(source)):
+    char = source[index]
+    if char == "{":
+        depth += 1
+    elif char == "}":
+        depth -= 1
+        if depth == 0:
+            end = index + 1
+            break
+if end < 0:
+    raise SystemExit("unterminated stage_app_direct_present_typescript_bundle body")
+body = source[start:end]
+required = [
+    "--profile pixel-shell",
+    '--include-app "$APP_DIRECT_PRESENT_APP_ID"',
+    '"PIXEL_SHELL_${runtime_app_env_prefix}_CACHE_DIR"',
+    "python3 -c",
+    'data["apps"][app_id]["effectiveBundlePath"]',
+]
+for needle in required:
+    if needle not in body:
+        raise SystemExit(f"missing TypeScript manifest selector needle: {needle}")
+for needle in [
+    "--profile single",
+    "--app-id app",
+    'python3 - "$APP_DIRECT_PRESENT_APP_ID" <<',
+    'data["apps"]["app"]["effectiveBundlePath"]',
+]:
+    if needle in body:
+        raise SystemExit(f"unexpected single-app TypeScript selector needle: {needle}")
+PY
+}
+
+assert_runtime_build_artifacts_timeline_manifest_selector_cli() {
+  local cache_root output_path
+  cache_root="$TMP_DIR/runtime-pixel-shell-timeline"
+  output_path="$TMP_DIR/runtime-build-artifacts-timeline.json"
+
+  PIXEL_SHELL_TIMELINE_CACHE_DIR="$cache_root" \
+    "$REPO_ROOT/scripts/runtime_build_artifacts.sh" \
+      --profile pixel-shell \
+      --include-app timeline >"$output_path"
+
+  python3 - "$output_path" "$cache_root" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+output_path = Path(sys.argv[1])
+cache_root = Path(sys.argv[2]).resolve()
+data = json.loads(output_path.read_text(encoding="utf-8"))
+apps = data.get("apps")
+if data.get("profile") != "pixel-shell":
+    raise SystemExit("runtime selector did not use pixel-shell profile")
+if not isinstance(apps, dict) or set(apps) != {"timeline"}:
+    raise SystemExit(f"runtime selector did not select only timeline: {apps!r}")
+timeline = apps["timeline"]
+expected = {
+    "id": "timeline",
+    "inputPath": "runtime/app-nostr-timeline/app.tsx",
+    "bundleEnv": "SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH",
+    "bundleFilename": "runtime-app-timeline-bundle.js",
+}
+for key, value in expected.items():
+    if timeline.get(key) != value:
+        raise SystemExit(f"timeline selector field mismatch: {key}={timeline.get(key)!r}")
+config = timeline.get("runtimeAppConfig")
+if not isinstance(config, dict) or config.get("syncOnStart") is not True:
+    raise SystemExit("timeline selector did not preserve runtimeAppConfig.syncOnStart")
+bundle_path_value = timeline.get("effectiveBundlePath")
+if not isinstance(bundle_path_value, str):
+    raise SystemExit("timeline selector did not emit effectiveBundlePath")
+bundle_path = Path(bundle_path_value).resolve()
+if not bundle_path.exists():
+    raise SystemExit(f"timeline selector bundle does not exist: {bundle_path}")
+if not bundle_path.is_relative_to(cache_root):
+    raise SystemExit(f"timeline selector ignored cache env: {bundle_path} not under {cache_root}")
 PY
 }
 
@@ -2412,6 +2513,8 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'orange_gpu_m
 assert_orange_gpu_offscreen_branch_shape
 assert_orange_gpu_parent_probe_seam_shape
 assert_hello_init_metadata_stage_seam_shape
+assert_app_direct_present_typescript_manifest_selector_shape
+assert_runtime_build_artifacts_timeline_manifest_selector_cli
 assert_shadow_gpu_instance_helper_shape
 assert_shadow_gpu_instance_smoke_cli
 assert_shadow_gpu_instance_smoke_rejects_hold_secs
@@ -3702,6 +3805,64 @@ assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img.hello-init.json" app_direct_present_runtime_bundle_env SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img.hello-init.json" app_direct_present_runtime_bundle_path /orange-gpu/app-direct-present/runtime-app-counter-bundle.js
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img.hello-init.json" metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-runtime-touch-counter-run-token/compositor-frame.ppm"
+
+ts_timeline_app_direct_present_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_APP_ID=timeline \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_BUNDLE_DIR="$TS_TIMELINE_APP_DIRECT_PRESENT_BUNDLE_DIR" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_BIN="$APP_DIRECT_PRESENT_LAUNCHER_OUTPUT" \
+    PIXEL_SHADOW_SESSION_BIN="$SHADOW_SESSION_OUTPUT" \
+    PIXEL_SHADOW_COMPOSITOR_GUEST_BIN="$SHADOW_COMPOSITOR_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
+      --rust-shim "$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --firmware-dir "$GPU_FIRMWARE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" \
+      --hello-init-mode rust-bridge \
+      --orange-gpu-mode app-direct-present \
+      --orange-gpu-firmware-helper true \
+      --orange-gpu-metadata-stage-breadcrumb true \
+      --firmware-bootstrap ramdisk-lib-firmware \
+      --run-token orange-gpu-rust-bridge-ts-timeline-app-direct-present-run-token \
+      --hold-secs 9 \
+      --mount-sys true
+)"
+
+assert_contains "$ts_timeline_app_direct_present_boot_output" "Orange GPU mode: app-direct-present"
+assert_contains "$ts_timeline_app_direct_present_boot_output" "Payload contract: hello-init launches /orange-gpu/shadow-session in app-only direct-present mode for timeline"
+assert_contains "$ts_timeline_app_direct_present_boot_output" "GPU proof: app-owned timeline surface imported and presented with no shell through the Rust boot seam"
+assert_contains "$ts_timeline_app_direct_present_boot_output" "App direct present id: timeline"
+assert_contains "$ts_timeline_app_direct_present_boot_output" "App direct present client kind: typescript"
+assert_contains "$ts_timeline_app_direct_present_boot_output" "App TypeScript renderer: gpu"
+assert_contains "$ts_timeline_app_direct_present_boot_output" "GPU bundle archive path: /orange-gpu.tar.xz"
+assert_contains "$ts_timeline_app_direct_present_boot_output" "App runtime bundle env: SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH"
+assert_contains "$ts_timeline_app_direct_present_boot_output" "App runtime bundle path: /orange-gpu/app-direct-present/runtime-app-timeline-bundle.js"
+assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz
+assert_cpio_entry_absent "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu/app-direct-present/run-shadow-blitz-demo
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz app-direct-present/run-shadow-blitz-demo
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz app-direct-present/shadow-blitz-demo
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz app-direct-present/shadow-system
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz app-direct-present/runtime-app-timeline-bundle.js
+assert_cpio_tar_xz_entry_absent "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz app-direct-present/runtime-app-counter-bundle.js
+assert_cpio_tar_xz_entry_absent "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz shadow-gpu-smoke
+assert_cpio_tar_xz_entry_absent "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz app-direct-present/lib/ld-linux-aarch64.so.1
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz lib/ld-linux-aarch64.so.1
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz lib/libc.so.6
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz lib/libm.so.6
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz lib/libgcc_s.so.1
+assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img" orange-gpu.tar.xz app-direct-present-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "app",\n    "startAppId": "timeline"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-blitz-demo",\n    "runtimeDir": "/shadow-runtime",\n    "systemBinaryPath": "/orange-gpu/app-direct-present/shadow-system",\n    "envAssignments": [\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH",\n        "value": "/orange-gpu/app-direct-present/shadow-blitz-demo"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": true,\n    "frameCapture": {\n      "mode": "first-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-ts-timeline-app-direct-present-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  }\n}\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img.hello-init.json" orange_gpu_mode "app-direct-present"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img.hello-init.json" app_direct_present_app_id timeline
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img.hello-init.json" app_direct_present_client_kind typescript
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img.hello-init.json" app_direct_present_typescript_renderer gpu
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img.hello-init.json" gpu_bundle_archive_path /orange-gpu.tar.xz
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img.hello-init.json" app_direct_present_runtime_bundle_env SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-timeline-app-direct-present.img.hello-init.json" app_direct_present_runtime_bundle_path /orange-gpu/app-direct-present/runtime-app-timeline-bundle.js
 
 rust_bridge_app_direct_touch_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

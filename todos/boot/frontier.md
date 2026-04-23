@@ -38,6 +38,10 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
     - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-ts-counter-app-direct-present-gpu-v3.img.hello-init.json`
     - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/ts-counter-app-direct-present-gpu-v3-primary/recover-traces/status.json`
     - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/ts-counter-app-direct-present-gpu-v3-confirm/recover-traces/status.json`
+  - `ts-runtime-app-matrix`
+    - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-ts-timeline-app-direct-present-gpu-v1.img.hello-init.json`
+    - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/ts-timeline-app-direct-present-gpu-v1-primary/recover-traces/status.json`
+    - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/ts-timeline-app-direct-present-gpu-v1-confirm/recover-traces/status.json`
   - `app-direct-present-touch-counter`
     - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-app-direct-present-touch-counter-v1.img.hello-init.json`
     - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/app-direct-present-touch-counter-v1-primary-0B191JEC203253/recover-traces/status.json`

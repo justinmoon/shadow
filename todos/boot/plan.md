@@ -324,10 +324,15 @@ Related docs:
   - blocked_by:
     - `boot-ts-app-minimal`
     - `boot-touch-rust-counter-boot-proof`
-- [ ] `ts-runtime-app-matrix-proof`
+- [x] `ts-runtime-app-matrix-proof`
   - task_id: boot-ts-runtime-app-matrix-proof
   - priority: 13
   - why next: keep worker-1 on the TypeScript boot lane and prove the direct-present contract is not hard-coded to the first counter demo
+  - result: landed timeline as the second TypeScript app-direct-present proof through the manifest-backed `pixel-shell` selector, real GPU Blitz renderer, and recovered proof contract on the primary/confirm rooted Pixel pair.
+  - proof:
+    - `build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-ts-timeline-app-direct-present-gpu-v1.img.hello-init.json`
+    - `build/pixel/boot/oneshot/ts-timeline-app-direct-present-gpu-v1-primary/recover-traces/status.json`
+    - `build/pixel/boot/oneshot/ts-timeline-app-direct-present-gpu-v1-confirm/recover-traces/status.json`
   - owned paths:
     - `runtime/`
     - `rust/init-wrapper/src/bin/hello-init.rs`

@@ -429,11 +429,17 @@ EOF
         printf 'P6\n2 1\n255\n\xff\x7a\x00\x00\x00\x00'
         exit 0
       elif [[ "$TRACE_MODE" == "app-direct-present-success" ]]; then
-        if [[ "${MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID:-rust-demo}" == "counter" ]]; then
-          printf 'P6\n3 1\n255\n\x0b\x16\x30\x10\x24\x3b\x2f\xb8\xff'
-        else
-          printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'
-        fi
+        case "${MOCK_TRACE_APP_DIRECT_PRESENT_FRAME_APP_ID:-${MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID:-rust-demo}}" in
+          counter)
+            printf 'P6\n3 1\n255\n\x0b\x16\x30\x10\x24\x3b\x2f\xb8\xff'
+            ;;
+          timeline)
+            printf 'P6\n3 1\n255\n\x09\x1f\x31\x0e\x18\x2b\x08\x20\x32'
+            ;;
+          *)
+            printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'
+            ;;
+        esac
         exit 0
       elif [[ "$TRACE_MODE" == "app-direct-present-touch-counter-success" ]]; then
         printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'
@@ -556,12 +562,20 @@ write_recover_context() {
   app_direct_present_runtime_bundle_env=""
   app_direct_present_runtime_bundle_path=""
   app_direct_present_typescript_renderer=""
-  if [[ "$app_direct_present_app_id" == "counter" ]]; then
-    app_direct_present_client_kind=typescript
-    app_direct_present_runtime_bundle_env=SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH
-    app_direct_present_runtime_bundle_path=/orange-gpu/app-direct-present/runtime-app-counter-bundle.js
-    app_direct_present_typescript_renderer=gpu
-  fi
+  case "$app_direct_present_app_id" in
+    counter)
+      app_direct_present_client_kind=typescript
+      app_direct_present_runtime_bundle_env=SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH
+      app_direct_present_runtime_bundle_path=/orange-gpu/app-direct-present/runtime-app-counter-bundle.js
+      app_direct_present_typescript_renderer=gpu
+      ;;
+    timeline)
+      app_direct_present_client_kind=typescript
+      app_direct_present_runtime_bundle_env=SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH
+      app_direct_present_runtime_bundle_path=/orange-gpu/app-direct-present/runtime-app-timeline-bundle.js
+      app_direct_present_typescript_renderer=gpu
+      ;;
+  esac
   app_direct_present_contract_metadata=""
   if [[ "$app_direct_present_metadata_shape" != "legacy" ]]; then
     app_direct_present_contract_metadata="$(cat <<EOF
@@ -1015,6 +1029,63 @@ assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present
 assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/recovered_frame_output_path channels/metadata-compositor-frame.ppm
 assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_probe_summary_app_id counter
 assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
+
+TS_TIMELINE_APP_DIRECT_PRESENT_PARENT="$TMP_DIR/output-ts-timeline-app-direct-present"
+TS_TIMELINE_APP_DIRECT_PRESENT_IMAGE="$TMP_DIR/output-ts-timeline-app-direct-present.img"
+TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT="$TS_TIMELINE_APP_DIRECT_PRESENT_PARENT/recover-traces"
+write_recover_context "$TS_TIMELINE_APP_DIRECT_PRESENT_PARENT" "$TS_TIMELINE_APP_DIRECT_PRESENT_IMAGE" "$RUN_TOKEN" app-direct-present timeline
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=app-direct-present-success \
+  MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID=timeline \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT" >/dev/null
+
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" probe_summary_proves_app_direct_present true
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract_required true
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract_ok true
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" proof_ok true
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_app_id timeline
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_client_kind typescript
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_typescript_renderer gpu
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_runtime_bundle_env SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_runtime_bundle_path /orange-gpu/app-direct-present/runtime-app-timeline-bundle.js
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/app_id timeline
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/client_kind typescript
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/typescript_renderer gpu
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/runtime_bundle_env SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/runtime_bundle_path /orange-gpu/app-direct-present/runtime-app-timeline-bundle.js
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/expected_frame_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/compositor-frame.ppm"
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/probe_summary_frame_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/compositor-frame.ppm"
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/recovered_frame_output_path channels/metadata-compositor-frame.ppm
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_probe_summary_app_id timeline
+assert_json_field "$TS_TIMELINE_APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
+
+TS_TIMELINE_FRAME_MISMATCH_PARENT="$TMP_DIR/output-ts-timeline-app-direct-present-frame-mismatch"
+TS_TIMELINE_FRAME_MISMATCH_IMAGE="$TMP_DIR/output-ts-timeline-app-direct-present-frame-mismatch.img"
+TS_TIMELINE_FRAME_MISMATCH_OUTPUT="$TS_TIMELINE_FRAME_MISMATCH_PARENT/recover-traces"
+write_recover_context "$TS_TIMELINE_FRAME_MISMATCH_PARENT" "$TS_TIMELINE_FRAME_MISMATCH_IMAGE" "$RUN_TOKEN" app-direct-present timeline
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=app-direct-present-success \
+  MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID=timeline \
+  MOCK_TRACE_APP_DIRECT_PRESENT_FRAME_APP_ID=rust-demo \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$TS_TIMELINE_FRAME_MISMATCH_OUTPUT" >/dev/null
+
+assert_json_field "$TS_TIMELINE_FRAME_MISMATCH_OUTPUT/status.json" probe_summary_proves_app_direct_present true
+assert_json_field "$TS_TIMELINE_FRAME_MISMATCH_OUTPUT/status.json" app_direct_present_proof_contract_required true
+assert_json_field "$TS_TIMELINE_FRAME_MISMATCH_OUTPUT/status.json" app_direct_present_proof_contract_ok true
+assert_json_field "$TS_TIMELINE_FRAME_MISMATCH_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present false
+assert_json_field "$TS_TIMELINE_FRAME_MISMATCH_OUTPUT/status.json" proof_ok false
+assert_json_field "$TS_TIMELINE_FRAME_MISMATCH_OUTPUT/status.json" expected_app_direct_present_app_id timeline
+assert_json_field "$TS_TIMELINE_FRAME_MISMATCH_OUTPUT/status.json" metadata_probe_summary_app_id timeline
+assert_json_field "$TS_TIMELINE_FRAME_MISMATCH_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
 
 APP_DIRECT_TOUCH_PARENT="$TMP_DIR/output-app-direct-present-touch-counter"
 APP_DIRECT_TOUCH_IMAGE="$TMP_DIR/output-app-direct-present-touch-counter.img"

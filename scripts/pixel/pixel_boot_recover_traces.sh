@@ -1809,22 +1809,31 @@ summary_last_frame_checksum = (
     else None
 )
 required_gpu_render_samples = {"ff7a00ff"}
-required_app_direct_present_frame_samples = {
-    "17362c",
-    "74d3ae",
-    "f7fafc",
-}
+required_app_direct_present_distinct_color_count = 3
+required_app_direct_present_frame_samples = set()
 if expected_orange_gpu_mode == "app-direct-present-runtime-touch-counter":
     required_app_direct_present_frame_samples = {
         "2a1209",
         "ff8a42",
         "ffe0a6",
     }
+elif expected_app_direct_present_app_id == "rust-demo":
+    required_app_direct_present_frame_samples = {
+        "17362c",
+        "74d3ae",
+        "f7fafc",
+    }
 elif expected_app_direct_present_app_id == "counter":
     required_app_direct_present_frame_samples = {
         "0b1630",
         "10243b",
         "2fb8ff",
+    }
+elif expected_app_direct_present_app_id == "timeline":
+    required_app_direct_present_frame_samples = {
+        "091f31",
+        "0e182b",
+        "082032",
     }
 summary_samples_set = (
     set(sample for sample in summary_color_samples if isinstance(sample, str))
@@ -2014,7 +2023,10 @@ compositor_frame_proves_app_direct_present = (
     and isinstance(compositor_frame_pixel_bytes, int)
     and compositor_frame_pixel_bytes > 0
     and isinstance(compositor_frame_distinct_color_count, int)
-    and compositor_frame_distinct_color_count >= len(required_app_direct_present_frame_samples)
+    and compositor_frame_distinct_color_count >= max(
+        required_app_direct_present_distinct_color_count,
+        len(required_app_direct_present_frame_samples),
+    )
     and required_app_direct_present_frame_samples.issubset(compositor_frame_distinct_color_set)
     and isinstance(compositor_frame_checksum_sha256, str)
     and bool(compositor_frame_checksum_sha256)

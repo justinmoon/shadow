@@ -324,6 +324,15 @@ PY
   fi
 }
 
+app_direct_present_runtime_app_env_prefix() {
+  python3 - "$APP_DIRECT_PRESENT_APP_ID" <<'PY'
+import re
+import sys
+
+print(re.sub(r"[^A-Z0-9]+", "_", sys.argv[1].upper()))
+PY
+}
+
 hello_init_metadata_path() {
   local image_path
   image_path="${1:?hello_init_metadata_path requires an image path}"
@@ -1204,14 +1213,16 @@ stage_app_direct_present_typescript_bundle() {
   local output_dir bundle_json bundle_source_path
   local blitz_package_ref blitz_out_link blitz_stage_dir
   local system_package_ref system_out_link system_stage_dir
+  local runtime_app_env_prefix cache_env_name
   output_dir="${1:?stage_app_direct_present_typescript_bundle requires an output dir}"
+  runtime_app_env_prefix="$(app_direct_present_runtime_app_env_prefix)"
+  cache_env_name="PIXEL_SHELL_${runtime_app_env_prefix}_CACHE_DIR"
 
   bundle_json="$(
-    "$SCRIPT_DIR/runtime_build_artifacts.sh" \
-      --profile single \
-      --app-id app \
-      --input "$APP_DIRECT_PRESENT_TS_INPUT_PATH" \
-      --cache-dir "$APP_DIRECT_PRESENT_TS_CACHE_DIR"
+    env "$cache_env_name=$APP_DIRECT_PRESENT_TS_CACHE_DIR" \
+      "$SCRIPT_DIR/runtime_build_artifacts.sh" \
+        --profile pixel-shell \
+        --include-app "$APP_DIRECT_PRESENT_APP_ID"
   )"
   printf '%s\n' "$bundle_json"
   bundle_source_path="$(
@@ -1220,8 +1231,9 @@ import json
 import sys
 
 data = json.load(sys.stdin)
-print(data["apps"]["app"]["effectiveBundlePath"])
-'
+app_id = sys.argv[1]
+print(data["apps"][app_id]["effectiveBundlePath"])
+' "$APP_DIRECT_PRESENT_APP_ID"
   )"
   [[ -f "$bundle_source_path" ]] || {
     echo "pixel_boot_build_orange_gpu: TypeScript runtime bundle source not found: $bundle_source_path" >&2
