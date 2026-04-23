@@ -19,7 +19,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - a contained vendor HAL probe track that keeps Shadow's Rust API and daemon contract small while evaluating whether Pixel vendor camera code can provide capture without the Android app/framework stack
 - Out of scope:
   - replacing the rooted Pixel shell camera path
-  - frame capture, buffer queueing, ISP programming, or sensor controls
+  - direct Linux-UAPI frame capture, buffer queueing, ISP programming, or sensor controls
   - boot image integration before a read-only Linux probe is truthful
   - broad Android framework adoption or exposing Android camera architecture as Shadow's camera API
   - deep vendor-library reverse engineering before a minimal HAL containment probe proves useful
@@ -60,6 +60,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - the existing provider-service containment seam listed `device@1.1/internal/0` and `device@1.1/internal/1` through `android.hardware.camera.provider.ICameraProvider/internal/0`.
   - runtime dependency evidence includes running `cameraserver` and `android.hardware.camera.provider@2.7-service-google`, Google HWL camera properties, Binder/HwBinder/VndBinder nodes, ION, graphics allocator services, and loaded vendor camera/CamX/gralloc/protobuf/QMI/sensor libraries.
   - the probe did not attempt frame capture; the precise blocker is now the missing contained `camera_module_t`/device-open/native-handle/gralloc shim for direct HAL capture, or choosing provider-service one-frame containment as the smaller next seam.
+- The contained HAL/provider frame probe succeeded on `0B191JEC203253`:
+  - artifact root: `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-hal-api/20260423T220713Z-0B191JEC203253_`
+  - `hal-frame-probe` captured one fixed rear-camera provider-service frame from `device@1.1/internal/0`.
+  - the pulled host proof is `provider-frame.jpg`, an 8080-byte 640x480 JPEG with Pixel 4a EXIF metadata.
+  - `hal-probe.json` reports `frameCapture.ok=true`, `providerServiceFrameCaptured=true`, and `nextFrameCaptureTrack=provider-service-contained`.
+  - direct vendor HAL loading still identifies `QTI Camera HAL`, but direct HAL capture remains lower priority because it needs a contained `camera_module_t`/open/native-handle/gralloc shim.
 - Evidence:
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/runs/camera-linux-api-recon/20260423T201839Z-0B191JEC203253/status.json`
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/runs/camera-linux-api-recon/20260423T201839Z-0B191JEC203253/device-inventory.txt`
@@ -67,6 +73,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-linux-api/20260423T205038Z-0B191JEC203253_/linux-probe.json`
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-hal-api/20260423T213734Z-0B191JEC203253_/status.json`
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-hal-api/20260423T213734Z-0B191JEC203253_/hal-probe.json`
+  - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-hal-api/20260423T220713Z-0B191JEC203253_/status.json`
+  - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-hal-api/20260423T220713Z-0B191JEC203253_/hal-probe.json`
+  - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-hal-api/20260423T220713Z-0B191JEC203253_/provider-frame.jpg`
 
 ## Source-Level Recon
 
@@ -200,9 +209,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Validate `linux-probe` on a rooted Pixel and compare with Android provider camera IDs.
 - [x] Add a HAL dependency/probe task to the queue.
 - [x] Run a contained HAL inventory probe and decide whether direct HAL loading or provider-service containment is the smaller backend.
-- [ ] Run the contained HAL/provider frame probe and decide whether provider-service containment can produce one fixed rear-camera frame.
+- [x] Run the contained HAL/provider frame probe and decide whether provider-service containment can produce one fixed rear-camera frame.
 - [ ] Decide whether a direct Linux capture probe is plausible from Linux media/V4L2/Qualcomm UAPI alone or whether that lane should stay limited to instrumentation.
-- [ ] Choose the first frame-capture track: direct Linux UAPI, contained HAL backend, or both if the probes remain cheap and informative.
+- [x] Choose the first frame-capture track: provider-service-contained HAL backend first; direct Linux UAPI stays instrumentation-only until a narrower acquire/config proof is justified.
 
 ## References
 

@@ -97,6 +97,10 @@ fn main() {
         "open" => make_open_response(&argv),
         "configure" => make_configure_response(&argv),
         "hal-probe" => hal_containment_probe::make_hal_probe_response(&argv),
+        "hal-frame-probe" => make_hal_frame_probe_response("hal-frame-probe", &argv),
+        "hal-provider-frame-probe" => {
+            make_hal_frame_probe_response("hal-provider-frame-probe", &argv)
+        }
         "linux-probe" => linux_camera_probe::make_linux_probe_response(&argv),
         "preview" => make_preview_response(&argv),
         "capture" => make_capture_response(&argv),
@@ -136,6 +140,82 @@ fn make_error(command: &str, argv: &[OsString], error: &str) -> serde_json::Valu
         "argv": argv_strings(argv),
         "error": error,
     })
+}
+
+#[cfg(target_os = "android")]
+fn make_hal_frame_probe_response(command: &str, argv: &[OsString]) -> serde_json::Value {
+    let provider_frame_attempt = make_capture_response(argv);
+    let frame_ok = provider_frame_attempt
+        .get("ok")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true);
+    let bytes_written = provider_frame_attempt
+        .get("bytesWritten")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let frame_captured = frame_ok && bytes_written > 0;
+    let output_path = provider_frame_attempt
+        .get("outputPath")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let post_frame_hal_probe = hal_containment_probe::make_hal_probe_response(&[]);
+
+    json!({
+        "ok": frame_captured,
+        "command": command,
+        "schemaVersion": 1,
+        "pid": std::process::id(),
+        "cwd": current_dir_string(),
+        "argv": argv_strings(argv),
+        "providerFrameAttempt": provider_frame_attempt,
+        "postFrameHalProbe": post_frame_hal_probe,
+        "frameCapture": {
+            "attempted": true,
+            "backend": "provider-service",
+            "ok": frame_captured,
+            "outputPath": output_path,
+            "bytesWritten": bytes_written,
+            "blocker": if frame_captured {
+                serde_json::Value::Null
+            } else {
+                json!(provider_frame_blocker(&provider_frame_attempt))
+            },
+        },
+        "containmentAssessment": {
+            "providerServiceFrameCaptured": frame_captured,
+            "providerServiceRemainsSmallerFrameSeam": true,
+            "directVendorHalCaptureAttempted": false,
+            "directVendorHalRationale": "previous direct HAL loading identified HMI, but direct capture still needs a contained camera_module_t/open/native-handle/gralloc shim",
+            "nextFrameCaptureTrack": if frame_captured {
+                "provider-service-contained"
+            } else {
+                "provider-service-contained-blocker-first"
+            },
+            "shadowFacingProtocol": "Rust-owned helper command/socket API; provider Binder, native handles, gralloc/AHardwareBuffer, fences, and vendor camera code stay behind the backend boundary",
+        },
+    })
+}
+
+#[cfg(target_os = "android")]
+fn provider_frame_blocker(value: &serde_json::Value) -> String {
+    let step = value
+        .get("step")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("provider_frame_capture");
+    let detail = value
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            value
+                .get("status")
+                .and_then(|status| status.get("description"))
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| String::from("capture did not produce a successful JPEG frame"));
+
+    format!("provider-service frame capture failed at {step}: {detail}")
 }
 
 #[cfg(target_os = "android")]

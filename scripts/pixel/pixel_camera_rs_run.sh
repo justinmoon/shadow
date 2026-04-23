@@ -23,7 +23,7 @@ case "$command" in
   linux-probe)
     run_root="$(pixel_dir)/camera-linux-api"
     ;;
-  hal-probe)
+  hal-probe | hal-frame-probe | hal-provider-frame-probe)
     run_root="$(pixel_dir)/camera-hal-api"
     ;;
   *)
@@ -43,6 +43,10 @@ checkpoint_log_path="$run_dir/checkpoints.txt"
 file_output_path="$run_dir/file.txt"
 linux_probe_json_path="$run_dir/linux-probe.json"
 hal_probe_json_path="$run_dir/hal-probe.json"
+frame_output_path="$run_dir/provider-frame.jpg"
+frame_pull_log_path="$run_dir/pull-frame.txt"
+frame_device_path=""
+frame_pulled=false
 
 build_device_command() {
   local quoted=()
@@ -107,7 +111,7 @@ case "$command" in
   linux-probe)
     probe_json_path="$linux_probe_json_path"
     ;;
-  hal-probe)
+  hal-probe | hal-frame-probe | hal-provider-frame-probe)
     probe_json_path="$hal_probe_json_path"
     ;;
 esac
@@ -139,14 +143,56 @@ with open(output_path, "w", encoding="utf-8") as fh:
 PY
 fi
 
+if [[ "$command" == "hal-frame-probe" || "$command" == "hal-provider-frame-probe" ]]; then
+  if [[ -f "$hal_probe_json_path" ]]; then
+    frame_device_path="$(python3 - "$hal_probe_json_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+path = (
+    payload.get("frameCapture", {}).get("outputPath")
+    or payload.get("providerFrameAttempt", {}).get("outputPath")
+    or ""
+)
+if path:
+    print(path)
+PY
+)"
+  fi
+
+  if [[ -n "$frame_device_path" ]]; then
+    quoted_frame_path="$(printf '%q' "$frame_device_path")"
+    pixel_root_shell "$serial" "chmod 0644 $quoted_frame_path" >/dev/null 2>&1 || true
+    if pixel_adb "$serial" shell "[ -f $quoted_frame_path ]" >/dev/null 2>&1; then
+      if pixel_adb "$serial" pull "$frame_device_path" "$frame_output_path" >"$frame_pull_log_path" 2>&1; then
+        frame_pulled=true
+      fi
+    else
+      printf 'missing: %s\n' "$frame_device_path" >"$frame_pull_log_path"
+    fi
+  else
+    printf 'no frame outputPath in %s\n' "$hal_probe_json_path" >"$frame_pull_log_path"
+  fi
+
+  if [[ "$helper_status" -eq 0 && "$frame_pulled" != true ]]; then
+    helper_status=1
+  fi
+fi
+
 pixel_write_status_json "$run_dir/status.json" \
   androidShell="$android_shell_ref" \
   androidPlatform="$android_platform" \
   androidTarget="$android_target" \
   command="$command" \
   deviceBinary="$device_binary" \
+  frameDevicePath="$frame_device_path" \
+  frameOutputPath="$([[ "$frame_pulled" == true ]] && printf '%s' "$frame_output_path" || printf '')" \
+  framePulled="$frame_pulled" \
   helperSucceeded="$([[ "$helper_status" -eq 0 ]] && printf true || printf false)" \
-  halProbeJson="$([[ "$command" == "hal-probe" ]] && printf '%s' "$hal_probe_json_path" || printf '')" \
+  halProbeJson="$([[ "$command" == "hal-probe" || "$command" == "hal-frame-probe" || "$command" == "hal-provider-frame-probe" ]] && printf '%s' "$hal_probe_json_path" || printf '')" \
   linuxProbeJson="$([[ "$command" == "linux-probe" ]] && printf '%s' "$linux_probe_json_path" || printf '')" \
   profile="$profile" \
   runSucceeded="$([[ "$run_status" -eq 0 ]] && printf true || printf false)" \

@@ -211,10 +211,19 @@ Related docs:
     - read relevant Android/Linux source before finalizing the probe contract
     - document first read-only `camera-linux-surface-probe` contract
   - blocked_by: none
-- [ ] `camera-hal-provider-frame-probe`
+- [x] `camera-hal-provider-frame-probe`
   - task_id: boot-camera-hal-provider-frame-probe
   - priority: 13
   - why sidecar: continue the camera worker's HAL/provider context toward the first contained frame proof without blocking app/input/shell work
+  - result:
+    - implemented `hal-frame-probe` as a provider-service-contained JPEG frame proof with HAL containment context
+    - ran `SHADOW_DEVICE_LEASE_FORCE=1 PIXEL_SERIAL=0B191JEC203253 scripts/pixel/pixel_camera_rs_run.sh hal-frame-probe`
+    - captured rear `device@1.1/internal/0` as an 8080-byte 640x480 JPEG through the provider-service seam
+    - chose provider-service-contained capture as the next camera frame track; direct vendor HAL capture remains blocked on a contained `camera_module_t`/open/native-handle/gralloc shim
+  - proof artifacts:
+    - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-hal-api/20260423T220713Z-0B191JEC203253_/status.json`
+    - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-hal-api/20260423T220713Z-0B191JEC203253_/hal-probe.json`
+    - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-hal-api/20260423T220713Z-0B191JEC203253_/provider-frame.jpg`
   - owned paths:
     - `rust/shadow-camera-provider-host/`
     - `scripts/pixel/pixel_camera_rs_run.sh`
