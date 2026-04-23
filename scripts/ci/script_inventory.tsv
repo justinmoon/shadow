@@ -27,6 +27,7 @@ scripts/runtime/generate_app_metadata.py	runtime	Generates checked Rust app meta
 scripts/runtime/generate_sound_demo_fixture.sh	runtime	Private sound demo fixture generator.
 scripts/land.sh	public	Canonical local landing gate.
 scripts/nightly.sh	public	Slow nightly gate that prefers the local Linux canonical path and otherwise dispatches the x86 CI gate remotely.
+scripts/on	public	Short devshell alias entrypoint for the private interactive dispatch controller.
 scripts/ci/operator_cli_smoke.sh	ci	Dry-run smoke coverage for the public just/shadowctl routing surface.
 scripts/ci/overnight_agents_smoke.sh	ci	Fast smoke for the minimal interactive dispatch queue, claim ledger, and landed-branch auto-advance flow.
 scripts/pixel/pixel_build.sh	pixel	Private Pixel build delegate used by rooted device staging.

@@ -10,6 +10,9 @@ read_when:
 This doc covers the private dispatcher behind
 [`scripts/debug/overnight_ctl.py`](../scripts/debug/overnight_ctl.py).
 
+Inside the devshell, use `on` as the entrypoint. It is a thin wrapper over
+`scripts/debug/overnight_ctl.py`.
+
 The UX is intentionally small:
 
 - planner pane/worktree: `/groom`
@@ -96,36 +99,36 @@ Recommended task-card shape:
 Seed or reset a project:
 
 ```sh
-python3 scripts/debug/overnight_ctl.py project-init --project boot --plan todos/boot/plan.md
-python3 scripts/debug/overnight_ctl.py queue-import-plan --project boot
+on project-init --project boot --plan todos/boot/plan.md
+on queue-import-plan --project boot
 ```
 
 Inspect queue and claims:
 
 ```sh
-python3 scripts/debug/overnight_ctl.py interactive-status --project boot
-python3 scripts/debug/overnight_ctl.py interactive-status --project boot --json
+on interactive-status --project boot
+on interactive-status --project boot --json
 ```
 
 Claim or resume from the current worktree:
 
 ```sh
-python3 scripts/debug/overnight_ctl.py interactive-next --project boot --json
+on interactive-next --project boot --json
 ```
 
 Release the current claim explicitly when the branch did not land cleanly:
 
 ```sh
-python3 scripts/debug/overnight_ctl.py interactive-finish --project boot --state done
-python3 scripts/debug/overnight_ctl.py interactive-finish --project boot --state ready
-python3 scripts/debug/overnight_ctl.py interactive-finish --project boot --state blocked
+on interactive-finish --project boot --state done
+on interactive-finish --project boot --state ready
+on interactive-finish --project boot --state blocked
 ```
 
 Adjust the queue directly:
 
 ```sh
-python3 scripts/debug/overnight_ctl.py task-add --project boot --title 'new seam' --path scripts/pixel/ --validation 'just pre-commit'
-python3 scripts/debug/overnight_ctl.py task-state --project boot --task-id boot-new-seam --state ready
+on task-add --project boot --title 'new seam' --path scripts/pixel/ --validation 'just pre-commit'
+on task-state --project boot --task-id boot-new-seam --state ready
 ```
 
 ## Behavior
