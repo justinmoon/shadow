@@ -23,12 +23,11 @@ impl TimelineApp {
 
         match result {
             Ok(outcome) => {
-                self.feed_scope = FeedScope::from(outcome.feed_scope);
-                self.notes = outcome.notes;
-                self.invalidate_route_caches();
+                self.cached_data
+                    .replace_home(FeedScope::from(outcome.feed_scope), outcome.notes);
                 self.sync_routes();
-                self.status = if self.notes.is_empty() {
-                    empty_feed_status(&self.feed_scope)
+                self.status = if self.cached_data.home_notes().is_empty() {
+                    empty_feed_status(self.cached_data.feed_scope())
                 } else {
                     TimelineStatus {
                         tone: Tone::Success,
@@ -43,13 +42,13 @@ impl TimelineApp {
             }
             Err(message) => {
                 eprintln!("{APP_LOG_PREFIX}: refresh_error={message}");
-                self.status = if self.notes.is_empty() {
+                self.status = if self.cached_data.home_notes().is_empty() {
                     TimelineStatus {
                         tone: Tone::Danger,
                         message,
                     }
                 } else {
-                    let count = self.notes.len();
+                    let count = self.cached_data.home_notes().len();
                     TimelineStatus {
                         tone: Tone::Neutral,
                         message: format!(
@@ -73,7 +72,7 @@ impl TimelineApp {
 
         self.status = match result {
             Ok(outcome) => {
-                self.invalidate_route_caches();
+                self.cached_data.invalidate_routes();
                 self.sync_routes();
                 TimelineStatus {
                     tone: Tone::Success,
@@ -100,7 +99,7 @@ impl TimelineApp {
         if self.tasks.thread_sync.finish(task.id()).is_none() {
             return;
         }
-        self.invalidate_route_caches();
+        self.cached_data.invalidate_routes();
         self.sync_routes();
 
         match result {
@@ -145,10 +144,9 @@ impl TimelineApp {
                     short_id(&account.npub),
                     account.source.label()
                 );
-                self.account = Some(account);
+                self.account = Some(account.clone());
                 if let Err(error) = self.reload_feed_from_cache() {
-                    self.notes.clear();
-                    self.feed_scope = FeedScope::unavailable();
+                    self.cached_data = crate::TimelineCachedData::fallback_home(&account);
                     self.status = TimelineStatus {
                         tone: Tone::Danger,
                         message: error,
@@ -156,7 +154,10 @@ impl TimelineApp {
                     return;
                 }
                 self.nsec_input.clear();
-                let has_follows = matches!(self.feed_scope.source, FeedSource::Following { .. });
+                let has_follows = matches!(
+                    self.cached_data.feed_scope().source,
+                    FeedSource::Following { .. }
+                );
                 self.route_stack = vec![if has_follows {
                     crate::Route::Timeline
                 } else {

@@ -1,10 +1,11 @@
-use std::collections::BTreeMap;
 use std::env;
 use std::future;
 
+mod cached_data;
 mod screens;
 mod tasks;
 
+use cached_data::TimelineCachedData;
 use screens::{
     account_screen, explore_screen, note_screen, onboarding_screen, profile_screen, timeline_screen,
 };
@@ -14,13 +15,8 @@ use shadow_sdk::{
         AppWindowEnvironment, AppWindowMetrics, LifecycleState,
     },
     services::nostr::{
-        current_account, get_event,
-        timeline::{
-            load_explore_cache_state, load_home_cache_state_for_account,
-            load_home_feed_scope_for_account, load_note_cache_state, load_profile_cache_state,
-            NostrExploreCacheState, NostrHomeFeedScope, NostrHomeFeedSource, NostrNoteCacheState,
-            NostrProfileCacheState, NostrProfileSummary,
-        },
+        current_account,
+        timeline::{NostrHomeFeedScope, NostrHomeFeedSource},
         NostrAccountSource, NostrAccountSummary, NostrEvent, NOSTR_SERVICE_SOCKET_ENV,
     },
     ui::{self, fork, tokio, worker_raw, MessageProxy, Tone, UiContext, WidgetView},
@@ -201,17 +197,13 @@ struct ReplyDraft {
 #[derive(Clone, Debug)]
 struct TimelineApp {
     account: Option<ActiveAccount>,
+    cached_data: TimelineCachedData,
     config: TimelineConfig,
-    feed_scope: FeedScope,
     filter_text: String,
     follow_input: String,
     metrics: AppWindowMetrics,
     nsec_input: String,
-    notes: Vec<NostrEvent>,
     note_draft: Option<String>,
-    explore_cache: Option<NostrExploreCacheState>,
-    note_caches: BTreeMap<String, NostrNoteCacheState>,
-    profile_caches: BTreeMap<String, NostrProfileCacheState>,
     reply_draft: Option<ReplyDraft>,
     route_stack: Vec<Route>,
     status: TimelineStatus,
@@ -222,61 +214,43 @@ impl TimelineApp {
     fn new(window_env: AppWindowEnvironment, config: TimelineConfig) -> Self {
         let account_result = current_account().map(|account| account.map(ActiveAccount::from));
         let metrics = window_env.metrics();
-        let (account, route_stack, feed_scope, notes, status) = match account_result {
-            Ok(Some(account)) => {
-                match load_home_cache_state_for_account(&account.npub, config.limit)
-                    .map_err(|error| error.to_string())
-                {
-                    Ok(cache) if cache.notes.is_empty() => {
-                        let feed_scope = FeedScope::from(cache.feed_scope);
-                        let status = empty_feed_status(&feed_scope);
-                        (
-                            Some(account),
-                            vec![Route::Timeline],
-                            feed_scope,
-                            Vec::new(),
-                            status,
-                        )
-                    }
-                    Ok(cache) => {
-                        let count = cache.notes.len();
-                        let feed_scope = FeedScope::from(cache.feed_scope);
-                        (
-                            Some(account),
-                            vec![Route::Timeline],
-                            feed_scope,
-                            cache.notes,
-                            TimelineStatus {
-                                tone: Tone::Success,
-                                message: format!(
-                                    "Loaded {count} cached note{} from the shared store.",
-                                    plural_suffix(count)
-                                ),
-                            },
-                        )
-                    }
-                    Err(error) => {
-                        let feed_scope = load_home_feed_scope_for_account(&account.npub)
-                            .map(FeedScope::from)
-                            .unwrap_or_else(|_| FeedScope::no_contacts());
-                        (
-                            Some(account),
-                            vec![Route::Timeline],
-                            feed_scope,
-                            Vec::new(),
-                            TimelineStatus {
-                                tone: Tone::Danger,
-                                message: error,
-                            },
-                        )
-                    }
+        let (account, route_stack, cached_data, status) = match account_result {
+            Ok(Some(account)) => match TimelineCachedData::load_home(&account, config.limit) {
+                Ok(cached_data) if cached_data.home_notes().is_empty() => (
+                    Some(account),
+                    vec![Route::Timeline],
+                    cached_data.clone(),
+                    empty_feed_status(cached_data.feed_scope()),
+                ),
+                Ok(cached_data) => {
+                    let count = cached_data.home_notes().len();
+                    (
+                        Some(account),
+                        vec![Route::Timeline],
+                        cached_data,
+                        TimelineStatus {
+                            tone: Tone::Success,
+                            message: format!(
+                                "Loaded {count} cached note{} from the shared store.",
+                                plural_suffix(count)
+                            ),
+                        },
+                    )
                 }
-            }
+                Err(error) => (
+                    Some(account.clone()),
+                    vec![Route::Timeline],
+                    TimelineCachedData::fallback_home(&account),
+                    TimelineStatus {
+                        tone: Tone::Danger,
+                        message: error,
+                    },
+                ),
+            },
             Ok(None) => (
                 None,
                 vec![Route::Onboarding],
-                FeedScope::unavailable(),
-                Vec::new(),
+                TimelineCachedData::unavailable(),
                 TimelineStatus {
                     tone: Tone::Neutral,
                     message: String::from(
@@ -287,8 +261,7 @@ impl TimelineApp {
             Err(error) => (
                 None,
                 vec![Route::Onboarding],
-                FeedScope::unavailable(),
-                Vec::new(),
+                TimelineCachedData::unavailable(),
                 TimelineStatus {
                     tone: Tone::Danger,
                     message: format!("Could not load the active account: {error}"),
@@ -297,17 +270,13 @@ impl TimelineApp {
         };
         let mut app = Self {
             account,
+            cached_data,
             config,
-            feed_scope,
-            explore_cache: None,
             filter_text: String::new(),
             follow_input: String::new(),
             metrics,
             nsec_input: String::new(),
-            notes,
             note_draft: None,
-            note_caches: BTreeMap::new(),
-            profile_caches: BTreeMap::new(),
             reply_draft: None,
             route_stack,
             status,
@@ -373,11 +342,16 @@ impl TimelineApp {
     }
 
     fn current_followed_pubkeys(&self) -> Vec<String> {
-        self.feed_scope.authors.clone().unwrap_or_default()
+        self.cached_data
+            .feed_scope()
+            .authors
+            .clone()
+            .unwrap_or_default()
     }
 
     fn is_following(&self, pubkey: &str) -> bool {
-        self.feed_scope
+        self.cached_data
+            .feed_scope()
             .authors
             .as_ref()
             .is_some_and(|authors| authors.iter().any(|author| author == pubkey))
@@ -452,12 +426,7 @@ impl TimelineApp {
     }
 
     fn prepare_route(&mut self, route: &Route) {
-        match route {
-            Route::Account | Route::Onboarding | Route::Timeline => {}
-            Route::Explore => self.ensure_explore_loaded(),
-            Route::Note { id } => self.ensure_note_loaded(id),
-            Route::Profile { pubkey } => self.ensure_profile_loaded(pubkey),
-        }
+        self.cached_data.prepare_route(route, self.config.limit);
     }
 
     fn platform_open_reply(&mut self) {
@@ -535,12 +504,14 @@ impl TimelineApp {
         match self.current_route() {
             Route::Timeline => self.visible_notes().into_iter().next().map(|note| note.id),
             Route::Explore => self
+                .cached_data
                 .explore_state()
                 .notes
                 .into_iter()
                 .next()
                 .map(|note| note.id),
             Route::Profile { pubkey } => self
+                .cached_data
                 .profile_state(&pubkey)
                 .notes
                 .into_iter()
@@ -673,34 +644,10 @@ impl TimelineApp {
         }
     }
 
-    fn ensure_explore_loaded(&mut self) {
-        if self.explore_cache.is_some() {
-            return;
-        }
-        self.explore_cache = load_explore_cache_state(self.config.limit.max(24)).ok();
-    }
-
-    fn ensure_profile_loaded(&mut self, pubkey: &str) {
-        if self.profile_caches.contains_key(pubkey) {
-            return;
-        }
-        if let Ok(cache) = load_profile_cache_state(pubkey, self.config.limit.max(24)) {
-            self.profile_caches.insert(pubkey.to_owned(), cache);
-        }
-    }
-
-    fn ensure_note_loaded(&mut self, note_id: &str) {
-        if self.note_caches.contains_key(note_id) {
-            return;
-        }
-        if let Ok(cache) = load_note_cache_state(note_id) {
-            self.note_caches.insert(note_id.to_owned(), cache);
-        }
-    }
-
     fn visible_notes(&self) -> Vec<NostrEvent> {
         let query_text = self.filter_text.trim().to_lowercase();
-        self.notes
+        self.cached_data
+            .home_notes()
             .iter()
             .filter(|note| {
                 query_text.is_empty()
@@ -712,42 +659,22 @@ impl TimelineApp {
             .collect()
     }
 
-    fn note_by_id(&self, id: &str) -> Option<NostrEvent> {
-        self.notes.iter().find(|note| note.id == id).cloned()
-    }
-
     fn cached_note_by_id(&self, id: &str) -> Option<NostrEvent> {
-        self.note_by_id(id).or_else(|| get_event(id).ok().flatten())
+        self.cached_data.cached_note_by_id(id)
     }
 
-    fn explore_state(&self) -> NostrExploreCacheState {
-        self.explore_cache.clone().unwrap_or_default()
+    fn profile_state(
+        &self,
+        pubkey: &str,
+    ) -> shadow_sdk::services::nostr::timeline::NostrProfileCacheState {
+        self.cached_data.profile_state(pubkey)
     }
 
-    fn profile_state(&self, pubkey: &str) -> NostrProfileCacheState {
-        self.profile_caches.get(pubkey).cloned().unwrap_or_else(|| {
-            let notes = self
-                .notes
-                .iter()
-                .filter(|note| note.pubkey == pubkey)
-                .cloned()
-                .collect();
-            NostrProfileCacheState {
-                summary: NostrProfileSummary::default(),
-                notes,
-            }
-        })
-    }
-
-    fn note_state(&self, note_id: &str) -> NostrNoteCacheState {
-        self.note_caches
-            .get(note_id)
-            .cloned()
-            .unwrap_or_else(|| NostrNoteCacheState {
-                note: self.cached_note_by_id(note_id),
-                profile: NostrProfileSummary::default(),
-                thread: shadow_sdk::services::nostr::timeline::NostrThreadContext::default(),
-            })
+    fn note_state(
+        &self,
+        note_id: &str,
+    ) -> shadow_sdk::services::nostr::timeline::NostrNoteCacheState {
+        self.cached_data.note_state(note_id)
     }
 
     fn reply_draft_for(&self, note_id: &str) -> Option<ReplyDraft> {
@@ -762,24 +689,8 @@ impl TimelineApp {
     }
 
     fn reload_feed_from_cache(&mut self) -> Result<(), String> {
-        let Some(account) = self.account.as_ref() else {
-            self.feed_scope = FeedScope::unavailable();
-            self.notes.clear();
-            self.invalidate_route_caches();
-            return Ok(());
-        };
-        let cache = load_home_cache_state_for_account(&account.npub, self.config.limit)
-            .map_err(|error| error.to_string())?;
-        self.feed_scope = FeedScope::from(cache.feed_scope);
-        self.notes = cache.notes;
-        self.invalidate_route_caches();
-        Ok(())
-    }
-
-    fn invalidate_route_caches(&mut self) {
-        self.explore_cache = None;
-        self.note_caches.clear();
-        self.profile_caches.clear();
+        self.cached_data
+            .reload_home(self.account.as_ref(), self.config.limit)
     }
 }
 
@@ -801,7 +712,7 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
         Route::Account => account_screen(
             ui,
             app.account.clone(),
-            app.feed_scope.clone(),
+            app.cached_data.feed_scope().clone(),
             app.follow_input.clone(),
             app.status.clone(),
             task_snapshot.clipboard_write_pending(),
@@ -810,7 +721,7 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
         )
         .boxed(),
         Route::Explore => {
-            let explore = app.explore_state();
+            let explore = app.cached_data.explore_state();
             explore_screen(
                 ui,
                 app.account.clone(),
@@ -834,7 +745,7 @@ fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
         Route::Timeline => timeline_screen(
             ui,
             app.account.clone(),
-            app.feed_scope.clone(),
+            app.cached_data.feed_scope().clone(),
             app.status.clone(),
             app.visible_notes(),
             app.filter_text.clone(),
@@ -1059,11 +970,9 @@ fn log_lifecycle_state(state: &str) {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::{
         app_logic, AccountSource, ActiveAccount, FeedScope, FeedSource, Route, TimelineApp,
-        TimelineConfig, TimelineStatus,
+        TimelineCachedData, TimelineConfig, TimelineStatus,
     };
     use shadow_sdk::{
         app::{AppSafeAreaInsets, AppWindowMetrics},
@@ -1077,12 +986,12 @@ mod tests {
                 npub: String::from("npub-owner"),
                 source: AccountSource::Generated,
             }),
+            cached_data: TimelineCachedData::from_home(FeedScope::no_contacts(), Vec::new()),
             config: TimelineConfig {
                 limit: 20,
                 relay_urls: Vec::new(),
                 sync_on_start: false,
             },
-            feed_scope: FeedScope::no_contacts(),
             filter_text: String::new(),
             follow_input: String::new(),
             metrics: AppWindowMetrics {
@@ -1096,11 +1005,7 @@ mod tests {
                 },
             },
             nsec_input: String::new(),
-            notes: Vec::new(),
             note_draft: None,
-            explore_cache: None,
-            note_caches: BTreeMap::new(),
-            profile_caches: BTreeMap::new(),
             reply_draft: None,
             route_stack: vec![Route::Timeline],
             status: TimelineStatus {
@@ -1161,53 +1066,12 @@ mod tests {
     }
 
     #[test]
-    fn profile_state_falls_back_to_cached_home_notes_without_route_cache() {
-        let mut app = test_app();
-        app.notes.push(test_note("note-1", "npub-alice", "note"));
-
-        let profile = app.profile_state("npub-alice");
-
-        assert_eq!(profile.notes.len(), 1);
-        assert_eq!(profile.notes[0].id, "note-1");
-        assert!(profile.summary.display_name.is_none());
-    }
-
-    #[test]
-    fn note_state_falls_back_to_cached_note_without_route_cache() {
-        let mut app = test_app();
-        app.notes.push(test_note("note-1", "npub-alice", "note"));
-
-        let note = app.note_state("note-1");
-
-        assert_eq!(
-            note.note.as_ref().map(|event| event.id.as_str()),
-            Some("note-1")
-        );
-        assert!(note.profile.display_name.is_none());
-        assert!(note.thread.parent.is_none());
-        assert!(note.thread.replies.is_empty());
-    }
-
-    #[test]
-    fn invalidate_route_caches_clears_route_local_state() {
-        let mut app = test_app();
-        app.explore_cache = Some(Default::default());
-        app.profile_caches
-            .insert(String::from("npub-alice"), Default::default());
-        app.note_caches
-            .insert(String::from("note-1"), Default::default());
-
-        app.invalidate_route_caches();
-
-        assert!(app.explore_cache.is_none());
-        assert!(app.profile_caches.is_empty());
-        assert!(app.note_caches.is_empty());
-    }
-
-    #[test]
     fn platform_route_automation_navigates_across_moved_screens() {
         let mut app = test_app();
-        app.notes.push(test_note("note-1", "npub-alice", "hello"));
+        app.cached_data = TimelineCachedData::from_home(
+            FeedScope::no_contacts(),
+            vec![test_note("note-1", "npub-alice", "hello")],
+        );
 
         app.platform_open_first_visible_note();
         assert_eq!(
@@ -1287,7 +1151,7 @@ mod tests {
     fn app_logic_builds_onboarding_route_without_account() {
         let mut app = test_app();
         app.account = None;
-        app.feed_scope = FeedScope::unavailable();
+        app.cached_data = TimelineCachedData::unavailable();
         app.route_stack = vec![Route::Onboarding];
 
         let _ = app_logic(&mut app);
