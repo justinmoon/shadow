@@ -119,6 +119,7 @@ impl Frame {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Target {
     App(usize),
+    Recent(AppId),
     HomeIndicator,
     PromptAction(usize),
 }
@@ -342,9 +343,7 @@ impl ShellModel {
         self.foreground_app = app_id;
         if let Some(app_id) = app_id {
             self.set_app_running(app_id, true);
-            if let Some(index) = tile_index_for_app(app_id) {
-                self.focused_tile = index;
-            }
+            self.focus_app_tile(app_id);
         }
     }
 
@@ -419,6 +418,7 @@ impl ShellModel {
                 self.pressed_target = self.cursor.and_then(|point| self.hit_test(point));
                 match self.pressed_target {
                     Some(Target::App(index)) => self.focused_tile = index,
+                    Some(Target::Recent(app_id)) => self.focus_app_tile(app_id),
                     Some(Target::PromptAction(index)) => {
                         if let Some(prompt) = self.system_prompt.as_mut() {
                             prompt.focused_action = index;
@@ -449,6 +449,7 @@ impl ShellModel {
         let target = self.hit_test(point);
         match target {
             Some(Target::App(index)) => self.focused_tile = index,
+            Some(Target::Recent(app_id)) => self.focus_app_tile(app_id),
             Some(Target::PromptAction(index)) => {
                 if let Some(prompt) = self.system_prompt.as_mut() {
                     prompt.focused_action = index;
@@ -505,8 +506,14 @@ impl ShellModel {
             Target::App(index) => home_apps().get(index).map(|app| {
                 let app_id = app.id;
                 self.touch_recent(app_id);
+                self.focus_app_tile(app_id);
                 ShellAction::Launch { app_id }
             }),
+            Target::Recent(app_id) => {
+                self.touch_recent(app_id);
+                self.focus_app_tile(app_id);
+                Some(ShellAction::Launch { app_id })
+            }
             Target::HomeIndicator => self.foreground_app.is_some().then_some(ShellAction::Home),
             Target::PromptAction(index) => self
                 .system_prompt
@@ -522,6 +529,12 @@ impl ShellModel {
         self.recent_apps.retain(|candidate| *candidate != app_id);
         self.recent_apps.insert(0, app_id);
         self.recent_apps.truncate(3);
+    }
+
+    fn focus_app_tile(&mut self, app_id: AppId) {
+        if let Some(index) = tile_index_for_app(app_id) {
+            self.focused_tile = index;
+        }
     }
 
     fn hit_test(&self, point: Point) -> Option<Target> {
@@ -550,13 +563,24 @@ impl ShellModel {
                 });
         }
 
-        home_apps()
+        self.recent_apps
             .iter()
+            .copied()
             .enumerate()
-            .find_map(|(index, _)| {
-                app_frame(index)
+            .find_map(|(index, app_id)| {
+                recent_row_frame(index)
                     .contains(point)
-                    .then_some(Target::App(index))
+                    .then_some(Target::Recent(app_id))
+            })
+            .or_else(|| {
+                home_apps()
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, _)| {
+                        app_frame(index)
+                            .contains(point)
+                            .then_some(Target::App(index))
+                    })
             })
             .or_else(|| {
                 home_indicator_frame()
@@ -795,16 +819,53 @@ fn build_recent_apps_panel(
 
     for (index, app_id) in model.recent_apps.iter().copied().enumerate() {
         let app = find_app(app_id).expect("recent app metadata");
-        let row_y = RECENTS_PANEL_Y + 82.0 + index as f32 * 54.0;
-        let row_alpha = if index == 0 { 0.58 } else { 0.42 };
-        let icon_x = RECENTS_PANEL_X + 28.0;
-        let icon_y = row_y + 9.0;
+        let frame = recent_row_frame(index);
+        let target = Target::Recent(app_id);
+        let is_hovered = model.hovered_target == Some(target);
+        let is_pressed = model.pressed_target == Some(target);
+        let is_active = model.last_activated.map(|(target, _)| target) == Some(target);
+        let halo_alpha = if is_pressed {
+            0.18
+        } else if is_active {
+            0.15
+        } else if is_hovered {
+            0.1
+        } else {
+            0.0
+        };
+
+        if halo_alpha > 0.0 {
+            rects.push(RoundedRect::new(
+                frame.x - 4.0,
+                frame.y - 4.0,
+                frame.w + 8.0,
+                frame.h + 8.0,
+                28.0,
+                TEXT_PRIMARY.with_alpha(halo_alpha),
+            ));
+        }
+
+        let row_alpha = if is_pressed {
+            0.74
+        } else if is_active {
+            0.68
+        } else if is_hovered {
+            0.6
+        } else if index == 0 {
+            0.58
+        } else {
+            0.42
+        };
+        let icon_scale = if is_pressed { 0.96 } else { 1.0 };
+        let icon_size = 28.0 * icon_scale;
+        let icon_x = frame.x + 12.0 + (28.0 - icon_size) * 0.5;
+        let icon_y = frame.y + 9.0 + (28.0 - icon_size) * 0.5;
 
         rects.push(RoundedRect::new(
-            RECENTS_PANEL_X + 16.0,
-            row_y,
-            RECENTS_PANEL_WIDTH - 32.0,
-            46.0,
+            frame.x,
+            frame.y,
+            frame.w,
+            frame.h,
             24.0,
             SURFACE_RAISED.with_alpha(row_alpha),
         ));
@@ -831,8 +892,8 @@ fn build_recent_apps_panel(
         });
         texts.push(TextBlock {
             content: app.title.to_string(),
-            left: RECENTS_PANEL_X + 66.0,
-            top: row_y + 8.0,
+            left: frame.x + 50.0,
+            top: frame.y + 8.0,
             width: RECENTS_PANEL_WIDTH - 98.0,
             height: 16.0,
             size: 14.0,
@@ -843,8 +904,8 @@ fn build_recent_apps_panel(
         });
         texts.push(TextBlock {
             content: recent_surface_detail(model, app_id, index).to_string(),
-            left: RECENTS_PANEL_X + 66.0,
-            top: row_y + 25.0,
+            left: frame.x + 50.0,
+            top: frame.y + 25.0,
             width: RECENTS_PANEL_WIDTH - 98.0,
             height: 14.0,
             size: 10.0,
@@ -1138,6 +1199,15 @@ fn app_frame(index: usize) -> Frame {
     }
 }
 
+fn recent_row_frame(index: usize) -> Frame {
+    Frame {
+        x: RECENTS_PANEL_X + 16.0,
+        y: RECENTS_PANEL_Y + 82.0 + index as f32 * 54.0,
+        w: RECENTS_PANEL_WIDTH - 32.0,
+        h: 46.0,
+    }
+}
+
 fn home_indicator_frame() -> Frame {
     Frame {
         x: TOP_CHROME_STRIP_X,
@@ -1282,6 +1352,50 @@ mod tests {
             })
         );
         assert_eq!(shell.focused_tile, 0);
+        assert_eq!(shell.pressed_target, None);
+    }
+
+    #[test]
+    fn touch_tap_recent_row_launches_and_promotes_warm_app() {
+        let mut shell = ShellModel::new();
+        shell.set_app_running(COUNTER_APP_ID, true);
+        shell.set_app_running(TIMELINE_APP_ID, true);
+        let counter_row = recent_row_frame(1);
+
+        assert_eq!(
+            shell.handle(ShellEvent::TouchTap {
+                x: counter_row.x + counter_row.w * 0.5,
+                y: counter_row.y + counter_row.h * 0.5,
+            }),
+            Some(ShellAction::Launch {
+                app_id: COUNTER_APP_ID,
+            })
+        );
+        assert_eq!(shell.recent_apps[0], COUNTER_APP_ID);
+        assert_eq!(shell.focused_tile, tile_index_for_app(COUNTER_APP_ID).unwrap());
+    }
+
+    #[test]
+    fn pointer_click_recent_row_launches_warm_app() {
+        let mut shell = ShellModel::new();
+        shell.set_app_running(COUNTER_APP_ID, true);
+        shell.set_app_running(TIMELINE_APP_ID, true);
+        let timeline_row = recent_row_frame(0);
+        let x = timeline_row.x + timeline_row.w * 0.5;
+        let y = timeline_row.y + timeline_row.h * 0.5;
+
+        assert_eq!(shell.handle(ShellEvent::PointerMoved { x, y }), None);
+        assert_eq!(
+            shell.handle(ShellEvent::PointerButton(PointerButtonState::Pressed)),
+            None
+        );
+        assert_eq!(
+            shell.handle(ShellEvent::PointerButton(PointerButtonState::Released)),
+            Some(ShellAction::Launch {
+                app_id: TIMELINE_APP_ID,
+            })
+        );
+        assert_eq!(shell.focused_tile, tile_index_for_app(TIMELINE_APP_ID).unwrap());
         assert_eq!(shell.pressed_target, None);
     }
 
