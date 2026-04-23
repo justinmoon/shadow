@@ -50,7 +50,6 @@ mapfile -t shell_runtime_source_inputs < <(
   runtime_bundle_cargo_package_source_inputs "$repo/ui/crates/shadow-compositor-guest"
   runtime_bundle_cargo_package_source_inputs "$repo/ui/crates/shadow-ui-core"
   runtime_bundle_cargo_package_source_inputs "$repo/ui/crates/shadow-ui-software"
-  runtime_bundle_cargo_package_source_inputs "$repo/rust/runtime-camera-host"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-sdk"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-system"
   runtime_bundle_cargo_package_source_inputs "$repo/rust/shadow-runtime-protocol"
