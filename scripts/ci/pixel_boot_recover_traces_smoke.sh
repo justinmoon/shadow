@@ -467,11 +467,36 @@ PY
 
 write_recover_context() {
   local parent_dir image_path run_token orange_gpu_mode app_direct_present_app_id
+  local app_direct_present_client_kind app_direct_present_runtime_bundle_env
+  local app_direct_present_runtime_bundle_path app_direct_present_typescript_renderer
+  local app_direct_present_metadata_shape app_direct_present_contract_metadata
   parent_dir="$1"
   image_path="$2"
   run_token="$3"
   orange_gpu_mode="${4:-gpu-render}"
   app_direct_present_app_id="${5:-rust-demo}"
+  app_direct_present_metadata_shape="${6:-current}"
+  app_direct_present_client_kind=rust
+  app_direct_present_runtime_bundle_env=""
+  app_direct_present_runtime_bundle_path=""
+  app_direct_present_typescript_renderer=""
+  if [[ "$app_direct_present_app_id" == "counter" ]]; then
+    app_direct_present_client_kind=typescript
+    app_direct_present_runtime_bundle_env=SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH
+    app_direct_present_runtime_bundle_path=/orange-gpu/app-direct-present/runtime-app-counter-bundle.js
+    app_direct_present_typescript_renderer=gpu
+  fi
+  app_direct_present_contract_metadata=""
+  if [[ "$app_direct_present_metadata_shape" != "legacy" ]]; then
+    app_direct_present_contract_metadata="$(cat <<EOF
+  "app_direct_present_app_id": "$app_direct_present_app_id",
+  "app_direct_present_client_kind": "$app_direct_present_client_kind",
+  "app_direct_present_runtime_bundle_env": "$app_direct_present_runtime_bundle_env",
+  "app_direct_present_runtime_bundle_path": "$app_direct_present_runtime_bundle_path",
+  "app_direct_present_typescript_renderer": "$app_direct_present_typescript_renderer",
+EOF
+)"
+  fi
 
   mkdir -p "$parent_dir"
   cat >"$parent_dir/status.json" <<EOF
@@ -508,7 +533,7 @@ EOF
   "orange_gpu_firmware_helper": true,
   "log_kmsg": true,
   "log_pmsg": true,
-  "app_direct_present_app_id": "$app_direct_present_app_id",
+$app_direct_present_contract_metadata
   "orange_gpu_metadata_stage_breadcrumb": true,
   "metadata_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/stage.txt",
   "metadata_probe_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-stage.txt",
@@ -840,9 +865,16 @@ env \
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" matched_any_correlated_shadow_tags false
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" probe_report_proves_child_success true
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" probe_summary_proves_app_direct_present true
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract_required true
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract_ok true
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" proof_ok true
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_client_kind rust
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" expected_metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/compositor-frame.ppm"
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/app_id rust-demo
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/client_kind rust
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/expected_frame_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/compositor-frame.ppm"
+assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/recovered_frame_output_path channels/metadata-compositor-frame.ppm
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_probe_summary_kind app-direct-present
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_probe_summary_startup_mode app
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_probe_summary_app_id rust-demo
@@ -853,6 +885,26 @@ assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_f
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_height 1
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_pixel_bytes 9
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
+
+LEGACY_APP_DIRECT_PRESENT_PARENT="$TMP_DIR/output-legacy-app-direct-present"
+LEGACY_APP_DIRECT_PRESENT_IMAGE="$TMP_DIR/output-legacy-app-direct-present.img"
+LEGACY_APP_DIRECT_PRESENT_OUTPUT="$LEGACY_APP_DIRECT_PRESENT_PARENT/recover-traces"
+write_recover_context "$LEGACY_APP_DIRECT_PRESENT_PARENT" "$LEGACY_APP_DIRECT_PRESENT_IMAGE" "$RUN_TOKEN" app-direct-present rust-demo legacy
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=app-direct-present-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$LEGACY_APP_DIRECT_PRESENT_OUTPUT" >/dev/null
+
+assert_json_field "$LEGACY_APP_DIRECT_PRESENT_OUTPUT/status.json" probe_summary_proves_app_direct_present true
+assert_json_field "$LEGACY_APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
+assert_json_field "$LEGACY_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract_required false
+assert_json_field "$LEGACY_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract_ok false
+assert_json_field "$LEGACY_APP_DIRECT_PRESENT_OUTPUT/status.json" proof_ok true
+assert_json_field "$LEGACY_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_app_id rust-demo
+assert_json_field "$LEGACY_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_client_kind ""
 
 TS_APP_DIRECT_PRESENT_PARENT="$TMP_DIR/output-ts-app-direct-present"
 TS_APP_DIRECT_PRESENT_IMAGE="$TMP_DIR/output-ts-app-direct-present.img"
@@ -868,9 +920,23 @@ env \
   --output "$TS_APP_DIRECT_PRESENT_OUTPUT" >/dev/null
 
 assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" probe_summary_proves_app_direct_present true
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract_required true
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract_ok true
 assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
 assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" proof_ok true
 assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_app_id counter
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_client_kind typescript
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_typescript_renderer gpu
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_runtime_bundle_env SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_runtime_bundle_path /orange-gpu/app-direct-present/runtime-app-counter-bundle.js
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/app_id counter
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/client_kind typescript
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/typescript_renderer gpu
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/runtime_bundle_env SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/runtime_bundle_path /orange-gpu/app-direct-present/runtime-app-counter-bundle.js
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/expected_frame_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/compositor-frame.ppm"
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/probe_summary_frame_path "/metadata/shadow-hello-init/by-token/$RUN_TOKEN/compositor-frame.ppm"
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" app_direct_present_proof_contract/recovered_frame_output_path channels/metadata-compositor-frame.ppm
 assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_probe_summary_app_id counter
 assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
 

@@ -1419,6 +1419,10 @@ expected_orange_gpu_mode = ""
 expected_orange_gpu_scene = ""
 expected_orange_gpu_firmware_helper = None
 expected_app_direct_present_app_id = "rust-demo"
+expected_app_direct_present_client_kind = ""
+expected_app_direct_present_runtime_bundle_env = ""
+expected_app_direct_present_runtime_bundle_path = ""
+expected_app_direct_present_typescript_renderer = ""
 expected_metadata_compositor_frame_path = ""
 recovered_probe_summary = {}
 recovered_probe_summary_parse_error = None
@@ -1454,6 +1458,30 @@ if source_image_metadata_path:
         app_direct_present_app_id_value = metadata.get("app_direct_present_app_id")
         if isinstance(app_direct_present_app_id_value, str) and app_direct_present_app_id_value:
             expected_app_direct_present_app_id = app_direct_present_app_id_value
+        app_direct_present_client_kind_value = metadata.get("app_direct_present_client_kind")
+        if isinstance(app_direct_present_client_kind_value, str):
+            expected_app_direct_present_client_kind = app_direct_present_client_kind_value
+        app_direct_present_runtime_bundle_env_value = metadata.get(
+            "app_direct_present_runtime_bundle_env"
+        )
+        if isinstance(app_direct_present_runtime_bundle_env_value, str):
+            expected_app_direct_present_runtime_bundle_env = (
+                app_direct_present_runtime_bundle_env_value
+            )
+        app_direct_present_runtime_bundle_path_value = metadata.get(
+            "app_direct_present_runtime_bundle_path"
+        )
+        if isinstance(app_direct_present_runtime_bundle_path_value, str):
+            expected_app_direct_present_runtime_bundle_path = (
+                app_direct_present_runtime_bundle_path_value
+            )
+        app_direct_present_typescript_renderer_value = metadata.get(
+            "app_direct_present_typescript_renderer"
+        )
+        if isinstance(app_direct_present_typescript_renderer_value, str):
+            expected_app_direct_present_typescript_renderer = (
+                app_direct_present_typescript_renderer_value
+            )
         compositor_frame_path_value = metadata.get("metadata_compositor_frame_path")
         if isinstance(compositor_frame_path_value, str):
             expected_metadata_compositor_frame_path = compositor_frame_path_value
@@ -1897,6 +1925,54 @@ compositor_frame_proves_app_direct_present = (
         f"P6\n{compositor_frame_width} {compositor_frame_height}\n255\n".encode("ascii")
     )
 )
+app_direct_present_proof_contract = {
+    "app_id": expected_app_direct_present_app_id,
+    "client_kind": expected_app_direct_present_client_kind,
+    "typescript_renderer": expected_app_direct_present_typescript_renderer,
+    "runtime_bundle_env": expected_app_direct_present_runtime_bundle_env,
+    "runtime_bundle_path": expected_app_direct_present_runtime_bundle_path,
+    "expected_frame_path": expected_metadata_compositor_frame_path,
+    "probe_summary_frame_path": summary_frame_path,
+    "recovered_frame_output_path": recovered_metadata_compositor_frame_output_path,
+}
+app_direct_present_proof_contract_summary = ",".join(
+    [
+        f"app_id={expected_app_direct_present_app_id}",
+        f"client_kind={expected_app_direct_present_client_kind}",
+        f"typescript_renderer={expected_app_direct_present_typescript_renderer}",
+        f"runtime_bundle_env={expected_app_direct_present_runtime_bundle_env}",
+        f"runtime_bundle_path={expected_app_direct_present_runtime_bundle_path}",
+        f"expected_frame_path={expected_metadata_compositor_frame_path}",
+        f"probe_summary_frame_path={summary_frame_path or ''}",
+        f"recovered_frame_output_path={recovered_metadata_compositor_frame_output_path}",
+    ]
+)
+app_direct_present_proof_contract_ok = (
+    expected_orange_gpu_mode != "app-direct-present"
+    or (
+        bool(expected_app_direct_present_app_id)
+        and expected_app_direct_present_client_kind in {"rust", "typescript"}
+        and bool(expected_metadata_compositor_frame_path)
+        and (
+            expected_app_direct_present_client_kind != "typescript"
+            or (
+                expected_app_direct_present_typescript_renderer in {"cpu", "gpu"}
+                and bool(expected_app_direct_present_runtime_bundle_env)
+                and bool(expected_app_direct_present_runtime_bundle_path)
+            )
+        )
+    )
+)
+app_direct_present_proof_contract_required = (
+    expected_orange_gpu_mode == "app-direct-present"
+    and (
+        expected_app_direct_present_app_id != "rust-demo"
+        or bool(expected_app_direct_present_client_kind)
+        or bool(expected_app_direct_present_runtime_bundle_env)
+        or bool(expected_app_direct_present_runtime_bundle_path)
+        or bool(expected_app_direct_present_typescript_renderer)
+    )
+)
 if expected_orange_gpu_mode == "gpu-render":
     proof_ok = probe_summary_proves_gpu_render
 elif expected_orange_gpu_mode == "orange-gpu-loop":
@@ -1905,7 +1981,8 @@ elif expected_orange_gpu_mode == "compositor-scene":
     proof_ok = probe_summary_proves_compositor_scene and compositor_frame_proves_scene
 elif expected_orange_gpu_mode == "app-direct-present":
     proof_ok = (
-        probe_summary_proves_app_direct_present
+        (not app_direct_present_proof_contract_required or app_direct_present_proof_contract_ok)
+        and probe_summary_proves_app_direct_present
         and compositor_frame_proves_app_direct_present
     )
 else:
@@ -1921,6 +1998,10 @@ payload = {
     "probe_summary_proves_orange_gpu_loop": probe_summary_proves_orange_gpu_loop,
     "probe_summary_proves_compositor_scene": probe_summary_proves_compositor_scene,
     "probe_summary_proves_app_direct_present": probe_summary_proves_app_direct_present,
+    "app_direct_present_proof_contract_ok": app_direct_present_proof_contract_ok,
+    "app_direct_present_proof_contract_required": app_direct_present_proof_contract_required,
+    "app_direct_present_proof_contract": app_direct_present_proof_contract,
+    "app_direct_present_proof_contract_summary": app_direct_present_proof_contract_summary,
     "metadata_compositor_frame_proves_scene": compositor_frame_proves_scene,
     "metadata_compositor_frame_proves_app_direct_present": compositor_frame_proves_app_direct_present,
     "serial": serial,
@@ -1939,6 +2020,10 @@ payload = {
     "expected_orange_gpu_scene": expected_orange_gpu_scene,
     "expected_orange_gpu_firmware_helper": expected_orange_gpu_firmware_helper,
     "expected_app_direct_present_app_id": expected_app_direct_present_app_id,
+    "expected_app_direct_present_client_kind": expected_app_direct_present_client_kind,
+    "expected_app_direct_present_runtime_bundle_env": expected_app_direct_present_runtime_bundle_env,
+    "expected_app_direct_present_runtime_bundle_path": expected_app_direct_present_runtime_bundle_path,
+    "expected_app_direct_present_typescript_renderer": expected_app_direct_present_typescript_renderer,
     "expected_metadata_stage_breadcrumb": expected_metadata_stage_breadcrumb,
     "expected_metadata_stage_path": expected_metadata_stage_path,
     "expected_metadata_probe_stage_path": expected_metadata_probe_stage_path,

@@ -161,10 +161,14 @@ Related docs:
     - canonical rooted proof recipe for the app-direct-present successor on the preferred rooted proof pair
   - blocked_by:
     - `finish-inflight-app-direct-present`
-- [ ] `ts-app-direct-present-proof-contract`
+- [x] `ts-app-direct-present-proof-contract`
   - task_id: boot-ts-app-direct-present-proof-contract
   - priority: 12
   - why sidecar: keep worker-1 on the TypeScript boot lane long enough to make the landed TS app proof a durable contract for later shell/app work
+  - result:
+    - promoted TypeScript app proof identity into recovered `status.json`
+    - status now exposes app id, client kind, TypeScript renderer, runtime bundle env/path, expected frame path, and a grouped `app_direct_present_proof_contract`
+    - `frontier.md` now names `touch-counter-gpu` as the next product rung without relying on the legacy queue task
   - owned paths:
     - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
     - `scripts/pixel/pixel_boot_recover_traces.sh`

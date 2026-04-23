@@ -39,10 +39,18 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
     - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/ts-counter-app-direct-present-gpu-v3-primary/recover-traces/status.json`
     - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/ts-counter-app-direct-present-gpu-v3-confirm/recover-traces/status.json`
 - The truth surface is `recover-traces/status.json` plus recovered metadata files, not the top-level one-shot wrapper result.
+- The `ts-app-minimal` proof contract is now explicit in recovered status:
+  - `expected_app_direct_present_app_id`
+  - `expected_app_direct_present_client_kind`
+  - `expected_app_direct_present_typescript_renderer`
+  - `expected_app_direct_present_runtime_bundle_env`
+  - `expected_app_direct_present_runtime_bundle_path`
+  - `expected_metadata_compositor_frame_path`
+  - `app_direct_present_proof_contract`
 - The `app-direct-present` fix was two-part:
   - replace the boot-owned app client shell wrapper with a static Rust launcher
   - stage the Wayland libraries that `winit` loads dynamically and set `LD_LIBRARY_PATH` for the app bundle
-- The next honest product rung on `master` is first input/touch on the same boot-owned render/present path, while the TypeScript app proof contract gets tightened enough for later shell/app work.
+- The next honest product rung on `master` is first input/touch on the same boot-owned render/present path.
 - Stock-init trigger / imported-rc / preflight work is now parked:
   - latest high-signal negative result: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/runs/boot-kgsl-trigger-ladder/20260423T082243Z-09051JEC202061_/matrix-summary.json`
   - treat that seam as fallback evidence, not as a peer execution stream
@@ -63,10 +71,9 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 
 ## Highest-Leverage Next Experiments
 
-1. Tighten the TypeScript app direct-present proof contract so recovered status clearly names the app id, client kind, renderer, runtime bundle, and captured frame path.
-2. Run `touch-counter-gpu` so the first input redraw lands on the same boot-owned render/present path.
-3. Move into `shell-home-static` only after both the first real app lane and the first real input lane are truthful.
-4. Keep direct `std` PID1 and stock-init imported-rc work as fallback discriminators only.
+1. Run `touch-counter-gpu` so the first input redraw lands on the same boot-owned render/present path.
+2. Move into `shell-home-static` only after both the first real app lane and the first real input lane are truthful.
+3. Keep direct `std` PID1 and stock-init imported-rc work as fallback discriminators only.
 
 ## Fast Commands
 
