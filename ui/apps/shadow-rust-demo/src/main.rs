@@ -511,33 +511,14 @@ fn draw_glyph(
 #[cfg(test)]
 mod tests {
     use super::probe_camera_report;
-    use std::sync::{Mutex, OnceLock};
-
-    const CAMERA_ALLOW_MOCK_ENV: &str = "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK";
-    const CAMERA_ENDPOINT_ENV: &str = "SHADOW_RUNTIME_CAMERA_ENDPOINT";
-    const CAMERA_MOCK_QR_PAYLOAD_ENV: &str = "SHADOW_RUNTIME_CAMERA_MOCK_QR_PAYLOAD";
-    const CAMERA_TIMEOUT_MS_ENV: &str = "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS";
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn clear_camera_env() {
-        for key in [
-            CAMERA_ALLOW_MOCK_ENV,
-            CAMERA_ENDPOINT_ENV,
-            CAMERA_MOCK_QR_PAYLOAD_ENV,
-            CAMERA_TIMEOUT_MS_ENV,
-        ] {
-            std::env::remove_var(key);
-        }
-    }
+    use shadow_sdk::services::camera_backend::{
+        clear_test_camera_env, test_camera_env_lock, CAMERA_ALLOW_MOCK_ENV, CAMERA_ENDPOINT_ENV,
+    };
 
     #[test]
     fn probe_uses_the_shared_mock_camera_path() {
-        let _guard = env_lock().lock().expect("env lock");
-        clear_camera_env();
+        let _guard = test_camera_env_lock().lock().expect("env lock");
+        clear_test_camera_env();
         std::env::set_var(CAMERA_ALLOW_MOCK_ENV, "1");
 
         let report = probe_camera_report().expect("mock probe");
@@ -551,8 +532,8 @@ mod tests {
 
     #[test]
     fn probe_surfaces_backend_configuration_errors() {
-        let _guard = env_lock().lock().expect("env lock");
-        clear_camera_env();
+        let _guard = test_camera_env_lock().lock().expect("env lock");
+        clear_test_camera_env();
 
         let error = probe_camera_report().unwrap_err();
         assert!(error.to_string().contains(CAMERA_ENDPOINT_ENV));

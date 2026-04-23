@@ -839,14 +839,14 @@ fn normalize_rotation_degrees(rotation_degrees: u16) -> u16 {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn test_camera_env_lock() -> &'static std::sync::Mutex<()> {
+#[doc(hidden)]
+pub fn test_camera_env_lock() -> &'static std::sync::Mutex<()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
 
-#[cfg(test)]
-pub(crate) fn clear_test_camera_env() {
+#[doc(hidden)]
+pub fn clear_test_camera_env() {
     for key in [
         CAMERA_ALLOW_MOCK_ENV,
         CAMERA_ENDPOINT_ENV,
