@@ -16,6 +16,7 @@ device_log_root="$(pixel_boot_device_log_root)"
 launch_proof_prop="${PIXEL_BOOT_KGSL_PROBE_LAUNCH_PROOF_PROP:-debug.shadow.boot.kgsl.launch=started}"
 second_stage_proof_prop="${PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP:-debug.shadow.boot.kgsl.second_stage=ready}"
 init_script_selection_proof_prop="${PIXEL_BOOT_KGSL_PROBE_INIT_SCRIPT_SELECTION_PROOF_PROP:-init.svc.servicemanager=running}"
+imported_rc_proof_prop="${PIXEL_BOOT_KGSL_PROBE_IMPORTED_RC_PROOF_PROP:-init.svc.adbd=running}"
 control_point_prop="${PIXEL_BOOT_KGSL_PROBE_CONTROL_POINT_PROP:-llk.enable=1}"
 control_point_proof_prop="${PIXEL_BOOT_KGSL_PROBE_CONTROL_POINT_PROOF_PROP:-init.svc.llkd-0=running}"
 kgsl_timeout_secs="${PIXEL_BOOT_KGSL_PROBE_TIMEOUT_SECS:-12}"
@@ -43,6 +44,7 @@ Usage: scripts/pixel/pixel_boot_kgsl_trigger_ladder.sh [--output-dir DIR] [--ser
                                                        [--launch-proof-prop KEY=VALUE]
                                                        [--second-stage-proof-prop KEY=VALUE]
                                                        [--init-script-selection-proof-prop KEY=VALUE]
+                                                       [--imported-rc-proof-prop KEY=VALUE]
                                                        [--control-point-prop KEY=VALUE]
                                                        [--control-point-proof-prop KEY=VALUE]
                                                        [--timeout SECONDS]
@@ -153,6 +155,9 @@ second_stage_proved_cases = [
 init_script_selection_proved_cases = [
     case["case_name"] for case in cases if case.get("init_script_selection_proved_current_boot") is True
 ]
+imported_rc_proved_cases = [
+    case["case_name"] for case in cases if case.get("imported_rc_proved_current_boot") is True
+]
 control_point_proved_cases = [
     case["case_name"] for case in cases if case.get("control_point_proved_current_boot") is True
 ]
@@ -171,18 +176,21 @@ payload = {
     "case_count": len(cases),
     "second_stage_proved_case_count": len(second_stage_proved_cases),
     "init_script_selection_proved_case_count": len(init_script_selection_proved_cases),
+    "imported_rc_proved_case_count": len(imported_rc_proved_cases),
     "control_point_proved_case_count": len(control_point_proved_cases),
     "import_proved_case_count": len(import_proved_cases),
     "helper_launch_case_count": len(helper_launch_cases),
     "kgsl_result_case_count": len(kgsl_result_cases),
     "second_stage_proved_cases": second_stage_proved_cases,
     "init_script_selection_proved_cases": init_script_selection_proved_cases,
+    "imported_rc_proved_cases": imported_rc_proved_cases,
     "control_point_proved_cases": control_point_proved_cases,
     "import_proved_cases": import_proved_cases,
     "helper_launch_cases": helper_launch_cases,
     "kgsl_result_cases": kgsl_result_cases,
     "first_second_stage_proved_case": second_stage_proved_cases[0] if second_stage_proved_cases else "",
     "first_init_script_selection_proved_case": init_script_selection_proved_cases[0] if init_script_selection_proved_cases else "",
+    "first_imported_rc_proved_case": imported_rc_proved_cases[0] if imported_rc_proved_cases else "",
     "first_control_point_proved_case": control_point_proved_cases[0] if control_point_proved_cases else "",
     "first_import_proved_case": import_proved_cases[0] if import_proved_cases else "",
     "first_helper_launch_case": helper_launch_cases[0] if helper_launch_cases else "",
@@ -199,6 +207,7 @@ columns = [
     "ok",
     "second_stage_property_proved_current_boot",
     "init_script_selection_proved_current_boot",
+    "imported_rc_proved_current_boot",
     "control_point_proved_current_boot",
     "import_proved_current_boot",
     "helper_launch_proved_current_boot",
@@ -222,6 +231,7 @@ for case in cases:
                 "true" if case.get("ok") else "false",
                 "true" if case.get("second_stage_property_proved_current_boot") else "false",
                 "true" if case.get("init_script_selection_proved_current_boot") else "false",
+                "true" if case.get("imported_rc_proved_current_boot") else "false",
                 "true" if case.get("control_point_proved_current_boot") else "false",
                 "true" if case.get("import_proved_current_boot") else "false",
                 "true" if case.get("helper_launch_proved_current_boot") else "false",
@@ -266,6 +276,7 @@ run_case() {
     --launch-proof-prop "$launch_proof_prop"
     --second-stage-proof-prop "$second_stage_proof_prop"
     --init-script-selection-proof-prop "$init_script_selection_proof_prop"
+    --imported-rc-proof-prop "$imported_rc_proof_prop"
     --control-point-prop "$control_point_prop"
     --control-point-proof-prop "$control_point_proof_prop"
     --timeout "$kgsl_timeout_secs"
@@ -358,6 +369,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --init-script-selection-proof-prop)
       init_script_selection_proof_prop="${2:?missing value for --init-script-selection-proof-prop}"
+      shift 2
+      ;;
+    --imported-rc-proof-prop)
+      imported_rc_proof_prop="${2:?missing value for --imported-rc-proof-prop}"
       shift 2
       ;;
     --control-point-prop)

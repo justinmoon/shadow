@@ -18,6 +18,7 @@ import_proof_prop="${PIXEL_BOOT_KGSL_PROBE_IMPORT_PROOF_PROP:-debug.shadow.boot.
 launch_proof_prop="${PIXEL_BOOT_KGSL_PROBE_LAUNCH_PROOF_PROP:-debug.shadow.boot.kgsl.launch=started}"
 second_stage_proof_prop="${PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP:-debug.shadow.boot.kgsl.second_stage=ready}"
 init_script_selection_proof_prop="${PIXEL_BOOT_KGSL_PROBE_INIT_SCRIPT_SELECTION_PROOF_PROP:-init.svc.servicemanager=running}"
+imported_rc_proof_prop="${PIXEL_BOOT_KGSL_PROBE_IMPORTED_RC_PROOF_PROP:-init.svc.adbd=running}"
 control_point_prop="${PIXEL_BOOT_KGSL_PROBE_CONTROL_POINT_PROP:-llk.enable=1}"
 control_point_proof_prop="${PIXEL_BOOT_KGSL_PROBE_CONTROL_POINT_PROOF_PROP:-init.svc.llkd-0=running}"
 timeout_secs="${PIXEL_BOOT_KGSL_PROBE_TIMEOUT_SECS:-12}"
@@ -49,6 +50,7 @@ Usage: scripts/pixel/pixel_boot_kgsl_probe.sh [--output-dir DIR] [--serial SERIA
                                              [--launch-proof-prop KEY=VALUE]
                                              [--second-stage-proof-prop KEY=VALUE]
                                              [--init-script-selection-proof-prop KEY=VALUE]
+                                             [--imported-rc-proof-prop KEY=VALUE]
                                              [--control-point-prop KEY=VALUE]
                                              [--control-point-proof-prop KEY=VALUE]
                                              [--timeout SECONDS]
@@ -120,6 +122,7 @@ write_summary_json() {
     "$trigger" \
     "$second_stage_proof_prop" \
     "$init_script_selection_proof_prop" \
+    "$imported_rc_proof_prop" \
     "$control_point_prop" \
     "$control_point_proof_prop" \
     "$launch_proof_prop" \
@@ -150,6 +153,7 @@ from pathlib import Path
     trigger,
     second_stage_proof_prop,
     init_script_selection_proof_prop,
+    imported_rc_proof_prop,
     control_point_prop,
     control_point_proof_prop,
     launch_proof_prop,
@@ -169,7 +173,7 @@ from pathlib import Path
     timeout_secs,
     import_proof_prop,
     helper_dir_name,
-) = sys.argv[1:25]
+) = sys.argv[1:26]
 
 
 def load_json(path_str: str):
@@ -264,6 +268,9 @@ actual_init_script_selection_value = getprop_value(getprop_path, init_script_sel
 init_script_selection_proved_current_boot = (
     actual_init_script_selection_value == init_script_selection_proof_value
 )
+imported_rc_proof_key, imported_rc_proof_value = parse_prop_spec(imported_rc_proof_prop)
+actual_imported_rc_value = getprop_value(getprop_path, imported_rc_proof_key)
+imported_rc_proved_current_boot = actual_imported_rc_value == imported_rc_proof_value
 control_point_proof_key, control_point_proof_value = parse_prop_spec(control_point_proof_prop)
 actual_control_point_value = getprop_value(getprop_path, control_point_proof_key)
 control_point_proved_current_boot = actual_control_point_value == control_point_proof_value
@@ -275,8 +282,10 @@ if helper_launch_proved_current_boot:
         launch_discriminator = "helper-launched-no-kgsl-summary"
 elif import_proved_current_boot:
     launch_discriminator = "import-proved-helper-missing"
+elif imported_rc_proved_current_boot:
+    launch_discriminator = "imported-rc-proved-no-import-proof"
 elif control_point_proved_current_boot:
-    launch_discriminator = "control-point-proved-no-import-proof"
+    launch_discriminator = "control-point-proved-no-imported-rc-proof"
 elif init_script_selection_proved_current_boot:
     launch_discriminator = "init-script-selection-proved-no-control-point"
 elif second_stage_property_proved_current_boot:
@@ -296,6 +305,7 @@ payload = {
     "trigger": trigger,
     "second_stage_proof_prop": second_stage_proof_prop,
     "init_script_selection_proof_prop": init_script_selection_proof_prop,
+    "imported_rc_proof_prop": imported_rc_proof_prop,
     "control_point_prop": control_point_prop,
     "control_point_proof_prop": control_point_proof_prop,
     "import_proof_prop": import_proof_prop,
@@ -318,6 +328,7 @@ payload = {
     "collect_status": collect_status,
     "second_stage_property_proved_current_boot": second_stage_property_proved_current_boot,
     "init_script_selection_proved_current_boot": init_script_selection_proved_current_boot,
+    "imported_rc_proved_current_boot": imported_rc_proved_current_boot,
     "control_point_proved_current_boot": control_point_proved_current_boot,
     "import_proved_current_boot": import_proved_current_boot,
     "helper_launch_proved_current_boot": helper_launch_proved_current_boot,
@@ -416,6 +427,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --init-script-selection-proof-prop)
       init_script_selection_proof_prop="${2:?missing value for --init-script-selection-proof-prop}"
+      shift 2
+      ;;
+    --imported-rc-proof-prop)
+      imported_rc_proof_prop="${2:?missing value for --imported-rc-proof-prop}"
       shift 2
       ;;
     --control-point-prop)
@@ -527,6 +542,7 @@ if [[ "$build_status" -eq 0 ]]; then
   set +e
     PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP="$second_stage_proof_prop" \
     PIXEL_BOOT_KGSL_PROBE_INIT_SCRIPT_SELECTION_PROOF_PROP="$init_script_selection_proof_prop" \
+    PIXEL_BOOT_KGSL_PROBE_IMPORTED_RC_PROOF_PROP="$imported_rc_proof_prop" \
     PIXEL_BOOT_KGSL_PROBE_CONTROL_POINT_PROOF_PROP="$control_point_proof_prop" \
     PIXEL_SERIAL="$serial" "$oneshot_script" "${oneshot_args[@]}" >"$run_log" 2>&1
   run_status="$?"
@@ -554,6 +570,8 @@ if "second_stage_property_proved_current_boot" in payload:
     print(f"Second-stage property proved: {payload['second_stage_property_proved_current_boot']}")
 if "init_script_selection_proved_current_boot" in payload:
     print(f"Init-script-selection proved: {payload['init_script_selection_proved_current_boot']}")
+if "imported_rc_proved_current_boot" in payload:
+    print(f"Imported-rc proved: {payload['imported_rc_proved_current_boot']}")
 if "control_point_proved_current_boot" in payload:
     print(f"Control point proved: {payload['control_point_proved_current_boot']}")
 if "import_proved_current_boot" in payload:
