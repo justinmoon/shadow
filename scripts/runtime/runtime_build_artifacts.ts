@@ -203,10 +203,7 @@ async function main() {
     });
     await Deno.writeTextFile(
       path.resolve(cwd, options.writeEnv),
-      buildEnvScript(sessionConfig, {
-        from: options.bundleRewriteFrom,
-        to: options.bundleRewriteTo,
-      }),
+      buildEnvScript(resolveRuntimeSessionConfigEnvPath(options, cwd)),
     );
   }
 
@@ -637,62 +634,10 @@ function defaultRuntimeAppEntry(
   return entries.find(([appId]) => appId === "counter") ?? entries[0];
 }
 
-function buildEnvScript(
-  sessionConfig: SessionConfig,
-  bundleRewrite: { from: string; to: string },
-): string {
-  const exports: Record<string, string> = {
-    SHADOW_RUNTIME_CASHU_DATA_DIR: sessionConfig.services.cashuDataDir,
-    SHADOW_RUNTIME_NOSTR_DB_PATH: sessionConfig.services.nostrDbPath,
-    SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET:
-      sessionConfig.services.nostrServiceSocket,
-  };
-  if (sessionConfig.runtime.defaultBundlePath) {
-    exports.SHADOW_RUNTIME_APP_BUNDLE_PATH = rewriteBundlePath(
-      sessionConfig.runtime.defaultBundlePath,
-      bundleRewrite,
-    );
-  }
-  if (
-    sessionConfig.profile === "vm-shell" ||
-    sessionConfig.profile === "pixel-shell"
-  ) {
-    exports.SHADOW_SESSION_APP_PROFILE = sessionConfig.profile;
-  }
-
-  if (sessionConfig.system.binaryPath) {
-    exports.SHADOW_SYSTEM_BINARY_PATH = sessionConfig.system.binaryPath;
-  }
-  for (const app of Object.values(sessionConfig.runtime.apps)) {
-    if (!app.bundleEnv) {
-      continue;
-    }
-    exports[app.bundleEnv] = rewriteBundlePath(
-      app.bundlePath,
-      bundleRewrite,
-    );
-  }
-  if (sessionConfig.services.audioBackend) {
-    exports.SHADOW_RUNTIME_AUDIO_BACKEND = sessionConfig.services.audioBackend;
-  }
-  if (sessionConfig.services.camera?.endpoint) {
-    exports.SHADOW_RUNTIME_CAMERA_ENDPOINT =
-      sessionConfig.services.camera.endpoint;
-  }
-  if (
-    sessionConfig.services.camera?.allowMock !== null &&
-    sessionConfig.services.camera?.allowMock !== undefined
-  ) {
-    exports.SHADOW_RUNTIME_CAMERA_ALLOW_MOCK =
-      sessionConfig.services.camera.allowMock ? "1" : "0";
-  }
-  if (typeof sessionConfig.services.camera?.timeoutMs === "number") {
-    exports.SHADOW_RUNTIME_CAMERA_TIMEOUT_MS = String(
-      sessionConfig.services.camera.timeoutMs,
-    );
-  }
-
-  return Object.entries(exports)
+function buildEnvScript(runtimeSessionConfigPath: string): string {
+  return Object.entries({
+    SHADOW_RUNTIME_SESSION_CONFIG: runtimeSessionConfigPath,
+  })
     .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
     .join("\n") + "\n";
 }
@@ -717,16 +662,6 @@ function buildCameraServiceConfig(
     endpoint,
     timeoutMs,
   };
-}
-
-function rewriteBundlePath(
-  value: string,
-  bundleRewrite: { from: string; to: string },
-): string {
-  if (!bundleRewrite.from || !value.startsWith(bundleRewrite.from)) {
-    return value;
-  }
-  return `${bundleRewrite.to}${value.slice(bundleRewrite.from.length)}`;
 }
 
 function guestPath(
@@ -802,6 +737,19 @@ async function removeDirIfExists(dirPath: string) {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function resolveRuntimeSessionConfigEnvPath(
+  options: CliOptions,
+  cwd: string,
+): string {
+  if (!options.writeSessionConfig) {
+    throw new Error("--write-env requires --write-session-config");
+  }
+  if (options.artifactGuestRoot) {
+    return path.posix.join(options.artifactGuestRoot, "session-config.json");
+  }
+  return path.resolve(cwd, options.writeSessionConfig);
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -947,6 +895,9 @@ function parseArgs(args: string[]): CliOptions {
     throw new Error(
       "--bundle-rewrite-from and --bundle-rewrite-to must be paired",
     );
+  }
+  if (options.writeEnv && !options.writeSessionConfig) {
+    throw new Error("--write-env requires --write-session-config");
   }
   if (options.startupAppId && !options.writeSessionConfig) {
     throw new Error("--startup-app-id requires --write-session-config");

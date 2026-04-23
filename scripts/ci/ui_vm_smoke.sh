@@ -17,6 +17,7 @@ HOME_SURFACE_SHOT_PATH="$LOG_DIR/ui-vm-home-surface.ppm"
 VM_SOCKET_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-vm.sock"
 VM_STATE_IMAGE_PATH="$REPO_ROOT/.shadow-vm/shadow-ui-state.img"
 RUNTIME_ARTIFACT_DIR="$(ui_vm_runtime_artifact_dir)"
+RUNTIME_ENV_PATH="$(ui_vm_runtime_env_path)"
 RUNTIME_GUEST_DIR="$(ui_vm_runtime_guest_dir)"
 UI_VM_PREP_TIMEOUT_SECS="${SHADOW_UI_VM_SMOKE_PREP_TIMEOUT:-900}"
 # Fresh worktrees can trigger cold VM artifact preparation before the compositor
@@ -1006,6 +1007,53 @@ for app_id in sorted(expected_apps):
     if not effective_bundle_path.is_file():
         raise SystemExit(
             f"vm-smoke: app {app_id} host bundle does not exist: {effective_bundle_path}"
+        )
+PY
+
+python3 - "$RUNTIME_ENV_PATH" "$VM_OVERRIDE_ROOT" <<'PY'
+import shlex
+import sys
+from pathlib import Path
+
+env_path = Path(sys.argv[1])
+override_root = Path(sys.argv[2])
+env_lines = [line for line in env_path.read_text(encoding="utf-8").splitlines() if line]
+env_assignments = {}
+
+for line in env_lines:
+    if not line.startswith("export ") or "=" not in line:
+        raise SystemExit(f"vm-smoke: invalid runtime overlay env line: {line!r}")
+    key, raw_value = line[len("export "):].split("=", 1)
+    values = shlex.split(raw_value, posix=True)
+    if len(values) != 1:
+        raise SystemExit(f"vm-smoke: invalid runtime overlay env value for {key}: {raw_value!r}")
+    env_assignments[key] = values[0]
+
+expected_values = {
+    "SHADOW_RUNTIME_SESSION_CONFIG": "/opt/shadow-runtime/session-config.json",
+    "SHADOW_RUNTIME_NOSTR_DB_PATH": str(override_root / "runtime-nostr.sqlite3"),
+    "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET": str(override_root / "runtime-nostr.sock"),
+    "SHADOW_RUNTIME_CASHU_DATA_DIR": str(override_root / "runtime-cashu"),
+}
+for key, expected in expected_values.items():
+    actual = env_assignments.get(key)
+    if actual != expected:
+        raise SystemExit(
+            f"vm-smoke: runtime overlay env {key} mismatch: expected {expected!r}, got {actual!r}"
+        )
+
+for forbidden_key in (
+    "SHADOW_SESSION_APP_PROFILE",
+    "SHADOW_SYSTEM_BINARY_PATH",
+    "SHADOW_RUNTIME_APP_BUNDLE_PATH",
+    "SHADOW_RUNTIME_AUDIO_BACKEND",
+    "SHADOW_RUNTIME_CAMERA_ENDPOINT",
+    "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",
+    "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS",
+):
+    if forbidden_key in env_assignments:
+        raise SystemExit(
+            f"vm-smoke: runtime overlay env unexpectedly exports {forbidden_key}"
         )
 PY
 

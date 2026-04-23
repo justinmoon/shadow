@@ -97,8 +97,8 @@ if [[ -n "$bundle_rewrite_from" || -n "$bundle_rewrite_to" ]]; then
     exit 1
   fi
 fi
-if [[ -n "$startup_app_id" && -z "$session_config_out" ]]; then
-  echo "runtime_prepare_host_session_env.sh: --startup-app-id requires --session-config-out" >&2
+if [[ -z "$session_config_out" ]]; then
+  echo "runtime_prepare_host_session_env.sh: --session-config-out is required" >&2
   exit 1
 fi
 
@@ -136,9 +136,7 @@ fi
 if [[ -n "$state_dir_override" ]]; then
   builder_args+=(--state-dir "$state_dir_override")
 fi
-if [[ -n "$session_config_out" ]]; then
-  builder_args+=(--write-session-config "$session_config_out")
-fi
+builder_args+=(--write-session-config "$session_config_out")
 if [[ -n "$startup_app_id" ]]; then
   builder_args+=(--startup-app-id "$startup_app_id")
 fi

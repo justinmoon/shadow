@@ -397,17 +397,14 @@ for app_id in sorted(expected_apps):
         raise SystemExit(f"runtime session config runtime config mismatch for {app_id}")
 
 env_text = env_output_path.read_text(encoding="utf-8")
-if "export SHADOW_SESSION_APP_PROFILE='vm-shell'" not in env_text:
-    raise SystemExit("session env missing SHADOW_SESSION_APP_PROFILE")
-if "export SHADOW_SYSTEM_BINARY_PATH='/tmp/shadow-system'" not in env_text:
-    raise SystemExit("session env missing SHADOW_SYSTEM_BINARY_PATH")
-
-if expected_apps:
-    if "export SHADOW_RUNTIME_APP_BUNDLE_PATH=" not in env_text:
-        raise SystemExit("session env missing SHADOW_RUNTIME_APP_BUNDLE_PATH")
-else:
-    if "export SHADOW_RUNTIME_APP_BUNDLE_PATH=" in env_text:
-        raise SystemExit("session env unexpectedly exports SHADOW_RUNTIME_APP_BUNDLE_PATH")
+env_lines = [line for line in env_text.splitlines() if line]
+expected_env_lines = [
+    "export SHADOW_RUNTIME_SESSION_CONFIG='/opt/shadow-runtime/session-config.json'",
+]
+if env_lines != expected_env_lines:
+    raise SystemExit(
+        f"session env lines mismatch: expected {expected_env_lines!r}, got {env_lines!r}"
+    )
 PY
 }
 
@@ -458,14 +455,14 @@ if camera.get("timeoutMs") != 45000:
     raise SystemExit("runtime session config camera timeout mismatch")
 
 env_text = env_output_path.read_text(encoding="utf-8")
-required_exports = [
-    "export SHADOW_RUNTIME_CAMERA_ENDPOINT='127.0.0.1:37656'",
-    "export SHADOW_RUNTIME_CAMERA_ALLOW_MOCK='1'",
-    "export SHADOW_RUNTIME_CAMERA_TIMEOUT_MS='45000'",
+expected_env_lines = [
+    "export SHADOW_RUNTIME_SESSION_CONFIG='/opt/shadow-runtime/session-config.json'",
 ]
-for export in required_exports:
-    if export not in env_text:
-        raise SystemExit(f"session env missing camera export: {export}")
+env_lines = [line for line in env_text.splitlines() if line]
+if env_lines != expected_env_lines:
+    raise SystemExit(
+        f"session env lines mismatch: expected {expected_env_lines!r}, got {env_lines!r}"
+    )
 PY
 }
 
