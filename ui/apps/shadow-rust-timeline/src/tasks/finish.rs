@@ -1,9 +1,20 @@
-use shadow_sdk::ui::TaskHandle;
+use shadow_sdk::{
+    services::{
+        clipboard::ClipboardWriteRequest,
+        nostr::{
+            timeline::{
+                NostrContactListUpdateRequest, NostrExploreSyncRequest, NostrHomeRefreshRequest,
+                NostrThreadSyncRequest, NostrTimelinePublishRequest,
+            },
+            NostrAccountTask,
+        },
+    },
+    ui::TaskHandle,
+};
 
 use super::{
-    AccountActionOutcome, ExploreSyncOutcome, FollowActionKind, FollowUpdateOutcome, PendingAccountAction,
-    PendingClipboardWrite, PendingExploreSync, PendingFollowUpdate, PendingPublish, PendingRefresh,
-    PendingThreadSync, PublishOutcome, RefreshOutcome, RefreshSource, ThreadSyncOutcome,
+    AccountActionOutcome, ExploreSyncOutcome, FollowActionKind, FollowUpdateOutcome,
+    PublishOutcome, RefreshOutcome, RefreshSource, ThreadSyncOutcome,
 };
 use crate::{
     empty_feed_status, log_preview_text, plural_suffix, short_id, FeedScope, FeedSource,
@@ -13,7 +24,7 @@ use crate::{
 impl TimelineApp {
     pub(crate) fn finish_refresh(
         &mut self,
-        task: TaskHandle<PendingRefresh>,
+        task: TaskHandle<NostrHomeRefreshRequest>,
         result: Result<RefreshOutcome, String>,
     ) {
         if self.tasks.refresh.finish(task.id()).is_none() {
@@ -62,7 +73,7 @@ impl TimelineApp {
 
     pub(crate) fn finish_explore_sync(
         &mut self,
-        task: TaskHandle<PendingExploreSync>,
+        task: TaskHandle<NostrExploreSyncRequest>,
         result: Result<ExploreSyncOutcome, String>,
     ) {
         if self.tasks.explore_sync.finish(task.id()).is_none() {
@@ -92,7 +103,7 @@ impl TimelineApp {
 
     pub(crate) fn finish_thread_sync(
         &mut self,
-        task: TaskHandle<PendingThreadSync>,
+        task: TaskHandle<NostrThreadSyncRequest>,
         result: Result<ThreadSyncOutcome, String>,
     ) {
         if self.tasks.thread_sync.finish(task.id()).is_none() {
@@ -129,7 +140,7 @@ impl TimelineApp {
 
     pub(crate) fn finish_account_action(
         &mut self,
-        task: TaskHandle<PendingAccountAction>,
+        task: TaskHandle<NostrAccountTask>,
         result: Result<AccountActionOutcome, String>,
     ) {
         if self.tasks.account_action.finish(task.id()).is_none() {
@@ -196,7 +207,7 @@ impl TimelineApp {
 
     pub(crate) fn finish_clipboard_write(
         &mut self,
-        task: TaskHandle<PendingClipboardWrite>,
+        task: TaskHandle<ClipboardWriteRequest>,
         result: Result<(), String>,
     ) {
         if self.tasks.clipboard_write.finish(task.id()).is_none() {
@@ -217,7 +228,7 @@ impl TimelineApp {
 
     pub(crate) fn finish_follow_update(
         &mut self,
-        task: TaskHandle<PendingFollowUpdate>,
+        task: TaskHandle<NostrContactListUpdateRequest>,
         result: Result<FollowUpdateOutcome, String>,
     ) {
         let Some(pending) = self.tasks.follow_update.finish(task.id()) else {
@@ -280,7 +291,7 @@ impl TimelineApp {
 
     pub(crate) fn finish_publish(
         &mut self,
-        task: TaskHandle<PendingPublish>,
+        task: TaskHandle<NostrTimelinePublishRequest>,
         result: Result<PublishOutcome, String>,
     ) {
         let Some(pending) = self.tasks.publish.finish(task.id()) else {

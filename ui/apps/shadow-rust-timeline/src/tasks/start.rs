@@ -1,9 +1,15 @@
-use shadow_sdk::services::nostr::timeline::{thread_parent_ids, NostrTimelinePublishRequest};
-
-use super::{
-    FollowActionKind, PendingAccountAction, PendingClipboardWrite, PendingExploreSync,
-    PendingFollowUpdate, PendingRefresh, PendingThreadSync, RefreshSource,
+use shadow_sdk::services::{
+    clipboard::ClipboardWriteRequest,
+    nostr::{
+        timeline::{
+            thread_parent_ids, NostrContactListUpdateRequest, NostrExploreSyncRequest,
+            NostrHomeRefreshRequest, NostrThreadSyncRequest, NostrTimelinePublishRequest,
+        },
+        NostrAccountTask,
+    },
 };
+
+use super::{FollowActionKind, RefreshSource};
 use crate::{socket_available, TimelineApp, TimelineStatus, Tone};
 
 impl TimelineApp {
@@ -26,7 +32,7 @@ impl TimelineApp {
         if self.tasks.refresh.is_pending() {
             return;
         }
-        self.tasks.refresh.start(PendingRefresh {
+        self.tasks.refresh.start(NostrHomeRefreshRequest {
             account_npub: account.npub.clone(),
             limit: self.config.limit,
             relay_urls: self.config.relay_urls.clone(),
@@ -47,7 +53,7 @@ impl TimelineApp {
         if self.tasks.explore_sync.is_pending() {
             return;
         }
-        self.tasks.explore_sync.start(PendingExploreSync {
+        self.tasks.explore_sync.start(NostrExploreSyncRequest {
             limit: self.config.limit.max(24),
             relay_urls: self.config.relay_urls.clone(),
         });
@@ -65,9 +71,7 @@ impl TimelineApp {
         if self.tasks.account_action.is_pending() {
             return;
         }
-        self.tasks
-            .account_action
-            .start(PendingAccountAction::generate());
+        self.tasks.account_action.start(NostrAccountTask::generate());
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Generating a new Nostr account..."),
@@ -88,7 +92,7 @@ impl TimelineApp {
         }
         self.tasks
             .account_action
-            .start(PendingAccountAction::import(nsec.to_owned()));
+            .start(NostrAccountTask::import(nsec.to_owned()));
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Importing the Nostr account from nsec..."),
@@ -102,7 +106,7 @@ impl TimelineApp {
         let Some(note) = self.cached_note_by_id(&note_id) else {
             return;
         };
-        self.tasks.thread_sync.start(PendingThreadSync {
+        self.tasks.thread_sync.start(NostrThreadSyncRequest {
             note_id,
             parent_ids: thread_parent_ids(&note),
             relay_urls: self.config.relay_urls.clone(),
@@ -126,7 +130,7 @@ impl TimelineApp {
         };
         self.tasks
             .clipboard_write
-            .start(PendingClipboardWrite::new(account.npub.clone()));
+            .start(ClipboardWriteRequest::new(account.npub.clone()));
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Copying the active npub to the clipboard..."),
@@ -185,7 +189,7 @@ impl TimelineApp {
             };
             return;
         }
-        self.tasks.follow_update.start(PendingFollowUpdate {
+        self.tasks.follow_update.start(NostrContactListUpdateRequest {
             account_npub: account.npub.clone(),
             action: FollowActionKind::Add { npub },
             relay_urls: self.config.relay_urls.clone(),
@@ -216,7 +220,7 @@ impl TimelineApp {
             };
             return;
         };
-        self.tasks.follow_update.start(PendingFollowUpdate {
+        self.tasks.follow_update.start(NostrContactListUpdateRequest {
             account_npub: account.npub.clone(),
             action: FollowActionKind::Remove { npub },
             relay_urls: self.config.relay_urls.clone(),
