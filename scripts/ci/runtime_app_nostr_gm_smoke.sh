@@ -41,7 +41,25 @@ def unwrap_payload(response):
 
 with tempfile.TemporaryDirectory(prefix="shadow-nostr-gm-") as temp_dir:
     temp_path = Path(temp_dir)
-    db_path = temp_path / "nostr.sqlite3"
+    config_db_path = temp_path / "n.sqlite3"
+    config_socket_path = temp_path / "n.sock"
+    config_log_path = config_socket_path.with_suffix(".log")
+    env_db_path = temp_path / "e.sqlite3"
+    env_socket_path = temp_path / "e.sock"
+    env_log_path = env_socket_path.with_suffix(".log")
+    session_config_path = temp_path / "s.json"
+    session_config_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "services": {
+                    "nostrDbPath": str(config_db_path),
+                    "nostrServiceSocket": str(config_socket_path),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     with running_relay(REPO_ROOT, prefix="shadow-nostr-gm-relay-") as relay:
         prepare_env = os.environ.copy()
@@ -71,7 +89,9 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-gm-") as temp_dir:
             text=True,
             env={
                 **os.environ,
-                "SHADOW_RUNTIME_NOSTR_DB_PATH": str(db_path),
+                "SHADOW_RUNTIME_SESSION_CONFIG": str(session_config_path),
+                "SHADOW_RUNTIME_NOSTR_DB_PATH": str(env_db_path),
+                "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET": str(env_socket_path),
                 "SHADOW_SYSTEM_PROMPT_RESPONSE_ACTION_ID": "allow_once",
             },
         )
@@ -129,6 +149,22 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-gm-") as temp_dir:
                     "runtime-app-nostr-gm-smoke: local relay never observed the GM note\n"
                     f"{relay_dump}",
                 )
+            if not config_db_path.exists():
+                raise SystemExit(
+                    "runtime-app-nostr-gm-smoke: session-config Nostr DB path was never created",
+                )
+            if env_db_path.exists():
+                raise SystemExit(
+                    "runtime-app-nostr-gm-smoke: env override Nostr DB path unexpectedly won",
+                )
+            if not config_log_path.exists():
+                raise SystemExit(
+                    "runtime-app-nostr-gm-smoke: session-config Nostr socket log was never created",
+                )
+            if env_log_path.exists():
+                raise SystemExit(
+                    "runtime-app-nostr-gm-smoke: env override Nostr socket unexpectedly won",
+                )
         finally:
             assert process.stdin is not None
             process.stdin.close()
@@ -139,8 +175,11 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-gm-") as temp_dir:
 
         print(json.dumps({
             "bundlePath": bundle_path,
+            "dbPath": str(config_db_path),
             "relayUrl": relay.url,
             "result": "gm-ok",
+            "sessionConfigPath": str(session_config_path),
+            "socketPath": str(config_socket_path),
             "systemBinaryName": session["systemBinaryName"],
             "systemPackageAttr": session["systemPackageAttr"],
         }, indent=2))

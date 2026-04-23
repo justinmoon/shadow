@@ -45,7 +45,25 @@ def send(process, request):
 
 with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
     temp_path = Path(temp_dir)
-    db_path = temp_path / "nostr.sqlite3"
+    config_db_path = temp_path / "n.sqlite3"
+    config_socket_path = temp_path / "n.sock"
+    config_log_path = config_socket_path.with_suffix(".log")
+    env_db_path = temp_path / "e.sqlite3"
+    env_socket_path = temp_path / "e.sock"
+    env_log_path = env_socket_path.with_suffix(".log")
+    session_config_path = temp_path / "s.json"
+    session_config_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "services": {
+                    "nostrDbPath": str(config_db_path),
+                    "nostrServiceSocket": str(config_socket_path),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     event_lines = build_text_note_events(
         REPO_ROOT,
         ["relay smoke alpha", "relay smoke beta"],
@@ -82,7 +100,11 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
         session = json.loads(session_json)
 
         runtime_env = os.environ.copy()
-        runtime_env["SHADOW_RUNTIME_NOSTR_DB_PATH"] = str(db_path)
+        runtime_env.update({
+            "SHADOW_RUNTIME_SESSION_CONFIG": str(session_config_path),
+            "SHADOW_RUNTIME_NOSTR_DB_PATH": str(env_db_path),
+            "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET": str(env_socket_path),
+        })
         process = subprocess.Popen(
             [session["systemBinaryPath"], "--session", session["bundlePath"]],
             cwd=REPO_ROOT,
@@ -124,6 +146,22 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
                 raise SystemExit(
                     "runtime-app-nostr-timeline-smoke: local relay notes never appeared in timeline",
                 )
+            if not config_db_path.exists():
+                raise SystemExit(
+                    "runtime-app-nostr-timeline-smoke: session-config Nostr DB path was never created",
+                )
+            if env_db_path.exists():
+                raise SystemExit(
+                    "runtime-app-nostr-timeline-smoke: env override Nostr DB path unexpectedly won",
+                )
+            if not config_log_path.exists():
+                raise SystemExit(
+                    "runtime-app-nostr-timeline-smoke: session-config Nostr socket log was never created",
+                )
+            if env_log_path.exists():
+                raise SystemExit(
+                    "runtime-app-nostr-timeline-smoke: env override Nostr socket unexpectedly won",
+                )
 
             if process.stdin is not None:
                 process.stdin.close()
@@ -159,8 +197,11 @@ with tempfile.TemporaryDirectory(prefix="shadow-nostr-timeline-") as temp_dir:
 print(
     json.dumps(
         {
+            "dbPath": str(config_db_path),
             "relayUrl": relay_url,
             "result": "timeline-ok",
+            "sessionConfigPath": str(session_config_path),
+            "socketPath": str(config_socket_path),
         },
         indent=2,
     ),
