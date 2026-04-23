@@ -1,12 +1,16 @@
 use super::{
     load_home_cache_state_for_account, load_home_feed_scope_for_account, load_note_cache_state,
-    load_profile_summary, load_thread_context, thread_parent_ids, NostrHomeFeedSource,
-    NostrTimelinePublishRequest,
+    load_profile_summary, load_thread_context, run_refresh_home_feed_task,
+    run_sync_explore_feed_task, run_sync_thread_task, run_update_contact_list_task,
+    thread_parent_ids, NostrContactListUpdateAction, NostrContactListUpdateRequest,
+    NostrExploreSyncRequest, NostrHomeFeedSource, NostrHomeRefreshRequest,
+    NostrThreadSyncRequest, NostrTimelinePublishRequest,
 };
 use crate::services::nostr::{
     NostrEvent, SqliteNostrService, NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV,
     NOSTR_DB_PATH_ENV, NOSTR_SERVICE_SOCKET_ENV,
 };
+use crate::services::session_config::RUNTIME_SESSION_CONFIG_ENV;
 use crate::services::test_env_lock;
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -33,6 +37,18 @@ fn with_temp_db<T>(f: impl FnOnce() -> T) -> T {
     let _ = fs::remove_file(&db_path);
     let _ = fs::remove_file(&account_path);
     output
+}
+
+fn with_missing_nostr_service_config<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = test_env_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    std::env::remove_var(NOSTR_DB_PATH_ENV);
+    std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
+    std::env::remove_var(NOSTR_ACCOUNT_PATH_ENV);
+    std::env::remove_var(NOSTR_SERVICE_SOCKET_ENV);
+    std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
+    f()
 }
 
 #[test]
@@ -311,6 +327,63 @@ fn timeline_publish_request_helpers_expose_content_and_target() {
     assert_eq!(reply.content(), "reply body");
     assert!(reply.is_reply_to("note-1"));
     assert!(!reply.is_reply_to("note-2"));
+}
+
+#[test]
+fn run_refresh_home_feed_task_stringifies_missing_service_config() {
+    with_missing_nostr_service_config(|| {
+        let error = run_refresh_home_feed_task(NostrHomeRefreshRequest {
+            account_npub: String::from("npub-owner"),
+            limit: 20,
+            relay_urls: Vec::new(),
+        })
+        .expect_err("missing nostr service config should fail");
+
+        assert!(error.contains("shadow nostr service socket is not configured"));
+    });
+}
+
+#[test]
+fn run_sync_explore_feed_task_stringifies_missing_service_config() {
+    with_missing_nostr_service_config(|| {
+        let error = run_sync_explore_feed_task(NostrExploreSyncRequest {
+            limit: 24,
+            relay_urls: Vec::new(),
+        })
+        .expect_err("missing nostr service config should fail");
+
+        assert!(error.contains("shadow nostr service socket is not configured"));
+    });
+}
+
+#[test]
+fn run_sync_thread_task_stringifies_missing_service_config() {
+    with_missing_nostr_service_config(|| {
+        let error = run_sync_thread_task(NostrThreadSyncRequest {
+            note_id: String::from("note-1"),
+            parent_ids: vec![String::from("root-1")],
+            relay_urls: Vec::new(),
+        })
+        .expect_err("missing nostr service config should fail");
+
+        assert!(error.contains("shadow nostr service socket is not configured"));
+    });
+}
+
+#[test]
+fn run_update_contact_list_task_stringifies_missing_service_config() {
+    with_missing_nostr_service_config(|| {
+        let error = run_update_contact_list_task(NostrContactListUpdateRequest {
+            account_npub: String::from("npub-owner"),
+            action: NostrContactListUpdateAction::Add {
+                npub: String::from("npub-follow"),
+            },
+            relay_urls: Vec::new(),
+        })
+        .expect_err("missing nostr service config should fail");
+
+        assert!(error.contains("shadow nostr service socket is not configured"));
+    });
 }
 
 #[test]

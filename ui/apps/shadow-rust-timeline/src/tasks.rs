@@ -7,8 +7,9 @@ use shadow_sdk::{
         nostr::{
             run_account_task,
             timeline::{
-                publish_note_or_reply, refresh_home_feed, sync_explore_feed, sync_thread,
-                update_contact_list, NostrContactListUpdateAction, NostrContactListUpdateOutcome,
+                publish_note_or_reply, run_refresh_home_feed_task, run_sync_explore_feed_task,
+                run_sync_thread_task, run_update_contact_list_task,
+                NostrContactListUpdateAction, NostrContactListUpdateOutcome,
                 NostrContactListUpdateRequest, NostrExploreSyncOutcome, NostrExploreSyncRequest,
                 NostrHomeRefreshOutcome, NostrHomeRefreshRequest, NostrThreadSyncOutcome,
                 NostrThreadSyncRequest, NostrTimelinePublishRequest,
@@ -162,7 +163,7 @@ pub(crate) fn decorate_with_tasks(
     let content = with_task(
         content,
         tasks.explore_sync,
-        |job| sync_explore_feed(job).map_err(|error| error.to_string()),
+        run_sync_explore_feed_task,
         |app: &mut TimelineApp, task: TaskHandle<PendingExploreSync>, result| {
             app.finish_explore_sync(task, result);
         },
@@ -170,7 +171,7 @@ pub(crate) fn decorate_with_tasks(
     let content = with_task(
         content,
         tasks.follow_update,
-        |job| update_contact_list(job).map_err(|error| error.to_string()),
+        run_update_contact_list_task,
         |app: &mut TimelineApp, task: TaskHandle<PendingFollowUpdate>, result| {
             app.finish_follow_update(task, result);
         },
@@ -178,7 +179,7 @@ pub(crate) fn decorate_with_tasks(
     let content = with_task(
         content,
         tasks.thread_sync,
-        |job| sync_thread(job).map_err(|error| error.to_string()),
+        run_sync_thread_task,
         |app: &mut TimelineApp, task: TaskHandle<PendingThreadSync>, result| {
             app.finish_thread_sync(task, result);
         },
@@ -195,7 +196,7 @@ pub(crate) fn decorate_with_tasks(
     with_task(
         content,
         tasks.refresh,
-        |job| refresh_home_feed(job).map_err(|error| error.to_string()),
+        run_refresh_home_feed_task,
         |app: &mut TimelineApp, task: TaskHandle<PendingRefresh>, result| {
             app.finish_refresh(task, result);
         },

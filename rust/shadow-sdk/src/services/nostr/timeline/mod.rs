@@ -218,6 +218,30 @@ impl NostrTimelinePublishRequest {
     }
 }
 
+pub fn run_refresh_home_feed_task(
+    request: NostrHomeRefreshRequest,
+) -> Result<NostrHomeRefreshOutcome, String> {
+    refresh_home_feed(request).map_err(|error| error.to_string())
+}
+
+pub fn run_sync_explore_feed_task(
+    request: NostrExploreSyncRequest,
+) -> Result<NostrExploreSyncOutcome, String> {
+    sync_explore_feed(request).map_err(|error| error.to_string())
+}
+
+pub fn run_sync_thread_task(
+    request: NostrThreadSyncRequest,
+) -> Result<NostrThreadSyncOutcome, String> {
+    sync_thread(request).map_err(|error| error.to_string())
+}
+
+pub fn run_update_contact_list_task(
+    request: NostrContactListUpdateRequest,
+) -> Result<NostrContactListUpdateOutcome, String> {
+    update_contact_list(request).map_err(|error| error.to_string())
+}
+
 #[derive(Debug)]
 pub struct NostrTextNotePublishOutcome {
     pub receipt: super::NostrPublishReceipt,
