@@ -594,7 +594,7 @@ impl TimelineApp {
         }
         self.set_note_draft_content(value);
         self.begin_note_publish();
-        if self.tasks.publish_note_pending() {
+        if self.note_publish_pending() {
             eprintln!("{APP_LOG_PREFIX}: automation_publish_note_success");
         } else {
             eprintln!("{APP_LOG_PREFIX}: automation_publish_note_failed");
@@ -603,7 +603,7 @@ impl TimelineApp {
 
     fn platform_publish_note(&mut self) {
         self.begin_note_publish();
-        if self.tasks.publish_note_pending() {
+        if self.note_publish_pending() {
             eprintln!("{APP_LOG_PREFIX}: automation_publish_note_success");
         } else {
             eprintln!("{APP_LOG_PREFIX}: automation_publish_note_failed");
@@ -622,7 +622,7 @@ impl TimelineApp {
         self.begin_reply_publish();
         if note_id
             .as_ref()
-            .is_some_and(|note_id| self.tasks.publish_reply_pending_for(note_id))
+            .is_some_and(|note_id| self.reply_publish_pending_for(note_id))
         {
             eprintln!("{APP_LOG_PREFIX}: automation_publish_reply_success");
         } else {
@@ -638,7 +638,7 @@ impl TimelineApp {
         self.begin_reply_publish();
         if note_id
             .as_ref()
-            .is_some_and(|note_id| self.tasks.publish_reply_pending_for(note_id))
+            .is_some_and(|note_id| self.reply_publish_pending_for(note_id))
         {
             eprintln!("{APP_LOG_PREFIX}: automation_publish_reply_success");
         } else {
@@ -709,7 +709,7 @@ fn main() -> Result<(), ui::EventLoopError> {
 fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
     let task_snapshot = app.tasks.snapshot();
     let ui = UiContext::shadow_dark(app.metrics);
-    let body = route_screen(ui, app, &task_snapshot);
+    let body = route_screen(ui, app);
 
     let content = ui.screen(body);
     let content = decorate_with_tasks(content, task_snapshot);
@@ -1050,7 +1050,7 @@ mod tests {
 
         app.begin_note_publish();
 
-        assert!(!app.tasks.publish_note_pending());
+        assert!(!app.note_publish_pending());
         assert_eq!(
             app.status.message,
             "Return to Home before publishing the top-level note draft."

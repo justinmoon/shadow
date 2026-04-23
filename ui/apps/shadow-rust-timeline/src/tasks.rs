@@ -79,6 +79,28 @@ impl TimelineTasks {
         }
     }
 
+    pub(crate) fn account_action_pending(&self) -> bool {
+        self.account_action.is_pending()
+    }
+
+    pub(crate) fn clipboard_write_pending(&self) -> bool {
+        self.clipboard_write.is_pending()
+    }
+
+    pub(crate) fn explore_sync_pending(&self) -> bool {
+        self.explore_sync.is_pending()
+    }
+
+    pub(crate) fn pending_follow_update_target(&self) -> Option<&str> {
+        self.follow_update
+            .pending()
+            .map(|pending| follow_update_target(pending.job()))
+    }
+
+    pub(crate) fn publish_pending(&self) -> bool {
+        self.publish.is_pending()
+    }
+
     pub(crate) fn publish_note_pending(&self) -> bool {
         self.publish.pending_matches(PendingPublish::is_note)
     }
@@ -90,22 +112,6 @@ impl TimelineTasks {
     pub(crate) fn follow_update_pending_for(&self, pubkey: &str) -> bool {
         self.follow_update
             .pending_matches(|job| follow_update_target(job) == pubkey)
-    }
-}
-
-impl TimelineTaskSnapshot {
-    pub(crate) fn pending_follow_update_target(&self) -> Option<&str> {
-        self.follow_update
-            .pending()
-            .map(|pending| follow_update_target(pending.job()))
-    }
-
-    pub(crate) fn publish_reply_pending_for(&self, note_id: &str) -> bool {
-        self.publish.pending_matches(|job| job.is_reply_to(note_id))
-    }
-
-    pub(crate) fn publish_note_pending(&self) -> bool {
-        self.publish.pending_matches(PendingPublish::is_note)
     }
 
     pub(crate) fn thread_sync_pending_for(&self, note_id: &str) -> bool {
@@ -198,7 +204,7 @@ mod tests {
     use super::{FollowActionKind, PendingFollowUpdate, TimelineTasks};
 
     #[test]
-    fn follow_update_snapshot_tracks_pending_target() {
+    fn follow_update_helpers_track_pending_target() {
         let mut tasks = TimelineTasks::default();
         assert!(tasks.follow_update.start(PendingFollowUpdate {
             account_npub: String::from("npub-account"),
@@ -208,11 +214,7 @@ mod tests {
             relay_urls: Vec::new(),
         }));
 
-        let snapshot = tasks.snapshot();
-        assert_eq!(
-            snapshot.pending_follow_update_target(),
-            Some("npub-target")
-        );
+        assert_eq!(tasks.pending_follow_update_target(), Some("npub-target"));
         assert!(tasks.follow_update_pending_for("npub-target"));
         assert!(!tasks.follow_update_pending_for("npub-other"));
     }

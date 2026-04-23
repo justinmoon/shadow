@@ -7,6 +7,14 @@ use super::{
 use crate::{socket_available, TimelineApp, TimelineStatus, Tone};
 
 impl TimelineApp {
+    pub(crate) fn account_action_pending(&self) -> bool {
+        self.tasks.account_action_pending()
+    }
+
+    pub(crate) fn clipboard_write_pending(&self) -> bool {
+        self.tasks.clipboard_write_pending()
+    }
+
     pub(crate) fn begin_refresh(&mut self, source: RefreshSource) {
         let Some(account) = self.account.as_ref() else {
             self.status = TimelineStatus {
@@ -47,6 +55,10 @@ impl TimelineApp {
             tone: Tone::Accent,
             message: String::from("Fetching recent relay notes for Explore..."),
         };
+    }
+
+    pub(crate) fn explore_sync_pending(&self) -> bool {
+        self.tasks.explore_sync_pending()
     }
 
     pub(crate) fn begin_account_generate(&mut self) {
@@ -288,6 +300,26 @@ impl TimelineApp {
             tone: Tone::Accent,
             message: String::from("Publishing note through the shared Nostr account..."),
         };
+    }
+
+    pub(crate) fn pending_follow_update_target(&self) -> Option<&str> {
+        self.tasks.pending_follow_update_target()
+    }
+
+    pub(crate) fn publish_pending(&self) -> bool {
+        self.tasks.publish_pending()
+    }
+
+    pub(crate) fn note_publish_pending(&self) -> bool {
+        self.tasks.publish_note_pending()
+    }
+
+    pub(crate) fn reply_publish_pending_for(&self, note_id: &str) -> bool {
+        self.tasks.publish_reply_pending_for(note_id)
+    }
+
+    pub(crate) fn thread_sync_pending_for(&self, note_id: &str) -> bool {
+        self.tasks.thread_sync_pending_for(note_id)
     }
 
     pub(crate) fn follow_update_pending_for(&self, pubkey: &str) -> bool {

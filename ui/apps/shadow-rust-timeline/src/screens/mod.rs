@@ -8,13 +8,9 @@ mod timeline;
 
 use shadow_sdk::ui::{UiContext, WidgetView};
 
-use crate::{tasks::TimelineTaskSnapshot, TimelineApp};
+use crate::TimelineApp;
 
-pub(crate) fn route_screen(
-    ui: UiContext,
-    app: &TimelineApp,
-    task_snapshot: &TimelineTaskSnapshot,
-) -> impl WidgetView<TimelineApp> {
+pub(crate) fn route_screen(ui: UiContext, app: &TimelineApp) -> impl WidgetView<TimelineApp> {
     let socket_ready = crate::socket_available();
     match app.current_route() {
         crate::Route::Account => account::account_screen(
@@ -24,10 +20,8 @@ pub(crate) fn route_screen(
                 feed_scope: app.cached_data.feed_scope().clone(),
                 follow_input: app.follow_input.clone(),
                 status: app.status.clone(),
-                clipboard_pending: task_snapshot.clipboard_write.is_pending(),
-                pending_follow_npub: task_snapshot
-                    .pending_follow_update_target()
-                    .map(str::to_owned),
+                clipboard_pending: app.clipboard_write_pending(),
+                pending_follow_npub: app.pending_follow_update_target().map(str::to_owned),
                 socket_ready,
             },
         )
@@ -43,10 +37,8 @@ pub(crate) fn route_screen(
                     notes: explore.notes,
                     profiles: explore.profiles,
                     socket_ready,
-                    sync_pending: task_snapshot.explore_sync.is_pending(),
-                    pending_follow_npub: task_snapshot
-                        .pending_follow_update_target()
-                        .map(str::to_owned),
+                    sync_pending: app.explore_sync_pending(),
+                    pending_follow_npub: app.pending_follow_update_target().map(str::to_owned),
                 },
             )
             .boxed()
@@ -56,7 +48,7 @@ pub(crate) fn route_screen(
             onboarding::OnboardingScreenProps {
                 nsec_input: app.nsec_input.clone(),
                 status: app.status.clone(),
-                action_pending: task_snapshot.account_action.is_pending(),
+                action_pending: app.account_action_pending(),
             },
         )
         .boxed(),
@@ -69,8 +61,8 @@ pub(crate) fn route_screen(
                 notes: app.visible_notes(),
                 filter_text: app.filter_text.clone(),
                 note_draft: app.note_draft(),
-                publish_blocked: task_snapshot.publish.is_pending(),
-                note_publish_pending: task_snapshot.publish_note_pending(),
+                publish_blocked: app.publish_pending(),
+                note_publish_pending: app.note_publish_pending(),
                 socket_ready,
             },
         )
@@ -85,10 +77,10 @@ pub(crate) fn route_screen(
                     thread: note_state.thread,
                     reply_draft: app.reply_draft_for(&id),
                     status: app.status.clone(),
-                    publish_blocked: task_snapshot.publish.is_pending(),
-                    reply_publish_pending: task_snapshot.publish_reply_pending_for(&id),
+                    publish_blocked: app.publish_pending(),
+                    reply_publish_pending: app.reply_publish_pending_for(&id),
                     thread_sync_available: socket_ready,
-                    thread_sync_pending: task_snapshot.thread_sync_pending_for(&id),
+                    thread_sync_pending: app.thread_sync_pending_for(&id),
                 },
             )
             .boxed()
