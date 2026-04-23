@@ -17,6 +17,7 @@ device_log_root="$(pixel_boot_device_log_root)"
 import_proof_prop="${PIXEL_BOOT_KGSL_PROBE_IMPORT_PROOF_PROP:-debug.shadow.boot.kgsl.import=triggered}"
 launch_proof_prop="${PIXEL_BOOT_KGSL_PROBE_LAUNCH_PROOF_PROP:-debug.shadow.boot.kgsl.launch=started}"
 second_stage_proof_prop="${PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP:-debug.shadow.boot.kgsl.second_stage=ready}"
+init_script_selection_proof_prop="${PIXEL_BOOT_KGSL_PROBE_INIT_SCRIPT_SELECTION_PROOF_PROP:-init.svc.servicemanager=running}"
 control_point_prop="${PIXEL_BOOT_KGSL_PROBE_CONTROL_POINT_PROP:-llk.enable=1}"
 control_point_proof_prop="${PIXEL_BOOT_KGSL_PROBE_CONTROL_POINT_PROOF_PROP:-init.svc.llkd-0=running}"
 timeout_secs="${PIXEL_BOOT_KGSL_PROBE_TIMEOUT_SECS:-12}"
@@ -47,6 +48,7 @@ Usage: scripts/pixel/pixel_boot_kgsl_probe.sh [--output-dir DIR] [--serial SERIA
                                              [--import-proof-prop KEY=VALUE]
                                              [--launch-proof-prop KEY=VALUE]
                                              [--second-stage-proof-prop KEY=VALUE]
+                                             [--init-script-selection-proof-prop KEY=VALUE]
                                              [--control-point-prop KEY=VALUE]
                                              [--control-point-proof-prop KEY=VALUE]
                                              [--timeout SECONDS]
@@ -117,6 +119,7 @@ write_summary_json() {
     "$serial" \
     "$trigger" \
     "$second_stage_proof_prop" \
+    "$init_script_selection_proof_prop" \
     "$control_point_prop" \
     "$control_point_proof_prop" \
     "$launch_proof_prop" \
@@ -146,6 +149,7 @@ from pathlib import Path
     serial,
     trigger,
     second_stage_proof_prop,
+    init_script_selection_proof_prop,
     control_point_prop,
     control_point_proof_prop,
     launch_proof_prop,
@@ -165,7 +169,7 @@ from pathlib import Path
     timeout_secs,
     import_proof_prop,
     helper_dir_name,
-) = sys.argv[1:24]
+) = sys.argv[1:25]
 
 
 def load_json(path_str: str):
@@ -253,6 +257,13 @@ bootreason_indicates_failure = bool((device_status or {}).get("bootreason_indica
 second_stage_proof_key, second_stage_proof_value = parse_prop_spec(second_stage_proof_prop)
 actual_second_stage_value = getprop_value(getprop_path, second_stage_proof_key)
 second_stage_property_proved_current_boot = actual_second_stage_value == second_stage_proof_value
+init_script_selection_proof_key, init_script_selection_proof_value = parse_prop_spec(
+    init_script_selection_proof_prop
+)
+actual_init_script_selection_value = getprop_value(getprop_path, init_script_selection_proof_key)
+init_script_selection_proved_current_boot = (
+    actual_init_script_selection_value == init_script_selection_proof_value
+)
 control_point_proof_key, control_point_proof_value = parse_prop_spec(control_point_proof_prop)
 actual_control_point_value = getprop_value(getprop_path, control_point_proof_key)
 control_point_proved_current_boot = actual_control_point_value == control_point_proof_value
@@ -266,8 +277,10 @@ elif import_proved_current_boot:
     launch_discriminator = "import-proved-helper-missing"
 elif control_point_proved_current_boot:
     launch_discriminator = "control-point-proved-no-import-proof"
+elif init_script_selection_proved_current_boot:
+    launch_discriminator = "init-script-selection-proved-no-control-point"
 elif second_stage_property_proved_current_boot:
-    launch_discriminator = "second-stage-property-proved-no-control-point"
+    launch_discriminator = "second-stage-property-proved-no-init-script-selection-proof"
 elif adb_ready and transport_last_state == "adb" and not bootreason_indicates_failure:
     launch_discriminator = "android-returned-no-second-stage-proof"
 elif bootreason_indicates_failure:
@@ -282,6 +295,7 @@ payload = {
     "serial": serial,
     "trigger": trigger,
     "second_stage_proof_prop": second_stage_proof_prop,
+    "init_script_selection_proof_prop": init_script_selection_proof_prop,
     "control_point_prop": control_point_prop,
     "control_point_proof_prop": control_point_proof_prop,
     "import_proof_prop": import_proof_prop,
@@ -303,6 +317,7 @@ payload = {
     "device_status": device_status,
     "collect_status": collect_status,
     "second_stage_property_proved_current_boot": second_stage_property_proved_current_boot,
+    "init_script_selection_proved_current_boot": init_script_selection_proved_current_boot,
     "control_point_proved_current_boot": control_point_proved_current_boot,
     "import_proved_current_boot": import_proved_current_boot,
     "helper_launch_proved_current_boot": helper_launch_proved_current_boot,
@@ -397,6 +412,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --second-stage-proof-prop)
       second_stage_proof_prop="${2:?missing value for --second-stage-proof-prop}"
+      shift 2
+      ;;
+    --init-script-selection-proof-prop)
+      init_script_selection_proof_prop="${2:?missing value for --init-script-selection-proof-prop}"
       shift 2
       ;;
     --control-point-prop)
@@ -507,6 +526,7 @@ if [[ "$build_status" -eq 0 ]]; then
 
   set +e
     PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP="$second_stage_proof_prop" \
+    PIXEL_BOOT_KGSL_PROBE_INIT_SCRIPT_SELECTION_PROOF_PROP="$init_script_selection_proof_prop" \
     PIXEL_BOOT_KGSL_PROBE_CONTROL_POINT_PROOF_PROP="$control_point_proof_prop" \
     PIXEL_SERIAL="$serial" "$oneshot_script" "${oneshot_args[@]}" >"$run_log" 2>&1
   run_status="$?"
@@ -532,6 +552,8 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
 
 if "second_stage_property_proved_current_boot" in payload:
     print(f"Second-stage property proved: {payload['second_stage_property_proved_current_boot']}")
+if "init_script_selection_proved_current_boot" in payload:
+    print(f"Init-script-selection proved: {payload['init_script_selection_proved_current_boot']}")
 if "control_point_proved_current_boot" in payload:
     print(f"Control point proved: {payload['control_point_proved_current_boot']}")
 if "import_proved_current_boot" in payload:
