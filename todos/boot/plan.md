@@ -71,6 +71,7 @@ Related docs:
 - Keep the current proof contract and observability intact while climbing.
 - Use absolute paths for artifact references in docs.
 - Land small, truthful chunks instead of carrying a second parallel roadmap.
+- Treat ramdisk-only payload staging as a proof-era constraint, not the long-term OS shape; plan a partition-backed payload/root strategy before shell, apps, GPU libraries, fonts, and service stacks make `boot.img` growth the blocker.
 
 ## Ladder To Full Shadow Userspace
 
@@ -103,6 +104,7 @@ Related docs:
   - use `rust-app-minimal` first only if it materially de-risks the boot seam
 - The Rust-demo touch/input rung is signed off; land the first runtime-backed touch/input rung before starting shell interaction work.
 - Keep the direct `std` PID1 seam honest as a regression discriminator while not letting it block the main ladder.
+- Add a planning slice for sustainable payload storage: decide what remains in the boot ramdisk versus what moves to mounted `/vendor`, `/system`, `userdata`, or a Shadow-owned partition image.
 
 ## Next Dispatch Batch
 
@@ -369,6 +371,33 @@ Related docs:
   - blocked_by:
     - `boot-touch-counter-gpu`
 
+## Architecture Backlog
+
+- [ ] `ramdisk-payload-partition-plan`
+  - task_id: boot-ramdisk-payload-partition-plan
+  - state: backlog
+  - priority: 30
+  - why later: ramdisk-only staging is fine for proofs, but real Shadow userspace will outgrow `boot.img` as soon as shell, multiple apps, runtime bundles, GPU/userland libraries, fonts, and service helpers accumulate
+  - owned paths:
+    - `todos/boot/plan.md`
+    - `todos/boot/frontier.md`
+    - `todos/boot/spec-phase1-shadow-at-boot.md`
+    - `scripts/pixel/`
+    - `scripts/lib/pixel_root_boot_common.sh`
+    - `scripts/lib/pixel_runtime_linux_bundle_common.sh`
+  - acceptance:
+    - document the target split between minimal boot ramdisk contents and partition-backed Shadow payloads
+    - compare at least these options without implementing them: mount stock `/vendor` as-is for HAL/GPU/vendor libraries, use a Shadow-owned `system.img` or `userdata` payload area, or flash a matched A/B slot system/vendor payload alongside `boot.img`
+    - define which early-boot responsibilities stay in the Rust PID1 child: mounting partitions, verifying expected payload version, exposing `/vendor` and payload roots, and handing off to the session
+    - identify proof artifact changes needed to show the mounted payload source, version, and fallback path without hiding boot failures
+    - leave implementation tasks only after the plan chooses a first narrow probe
+  - validation:
+    - `python3 scripts/debug/dispatch.py plan-lint --project boot`
+    - no code implementation in this planning slice
+  - blocked_by:
+    - `boot-ts-runtime-app-matrix-proof`
+    - `boot-touch-counter-gpu`
+
 ## Parked / Fallback Seams
 
 - [~] Direct `std` PID1 `lang_start` regression lane.
@@ -461,3 +490,4 @@ queue JSON. Do not claim them.
 - Keep later compositor, app, shell, and service work on the Rust seam only.
 - Delete demo-only wrappers, binaries, and smokes once a product rung fully subsumes them.
 - Camera Linux API recon is parked at a read-only probe contract; do not attempt frame capture until media/V4L2 topology and querycap output prove a candidate path.
+- Do not keep solving size pressure by adding heavy payloads to the ramdisk. Long-term boot should keep the ramdisk minimal and mount partition-backed payloads before launching Shadow userspace.
