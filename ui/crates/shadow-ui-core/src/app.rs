@@ -22,32 +22,15 @@ pub enum AppModel {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TypeScriptAppRuntime {
+pub struct AppRuntimeMetadata {
     pub bundle_env: &'static str,
     pub input_path: &'static str,
     pub cache_dir: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ManifestAppRuntime {
-    pub bundle_env: &'static str,
-    pub input_path: &'static str,
-    pub cache_dir: &'static str,
-}
-
-impl ManifestAppRuntime {
-    pub const fn typescript_runtime(self) -> TypeScriptAppRuntime {
-        TypeScriptAppRuntime {
-            bundle_env: self.bundle_env,
-            input_path: self.input_path,
-            cache_dir: self.cache_dir,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppLaunchModel {
-    TypeScript { runtime: TypeScriptAppRuntime },
+    TypeScript { runtime: AppRuntimeMetadata },
     Rust,
 }
 
@@ -56,7 +39,7 @@ pub type AppLaunchEnv = (&'static str, &'static str);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ManifestAppLaunch {
     TypeScript {
-        runtime: ManifestAppRuntime,
+        runtime: AppRuntimeMetadata,
         launch_env: &'static [AppLaunchEnv],
     },
     Rust {
@@ -101,7 +84,7 @@ impl DemoApp {
 }
 
 impl AppLaunchSpec {
-    pub const fn typescript_runtime(self) -> Option<TypeScriptAppRuntime> {
+    pub const fn typescript_runtime(self) -> Option<AppRuntimeMetadata> {
         match self.model {
             AppLaunchModel::TypeScript { runtime } => Some(runtime),
             AppLaunchModel::Rust => None,
@@ -112,16 +95,14 @@ impl AppLaunchSpec {
 impl ManifestAppLaunch {
     pub const fn model(self) -> AppLaunchModel {
         match self {
-            Self::TypeScript { runtime, .. } => AppLaunchModel::TypeScript {
-                runtime: runtime.typescript_runtime(),
-            },
+            Self::TypeScript { runtime, .. } => AppLaunchModel::TypeScript { runtime },
             Self::Rust { .. } => AppLaunchModel::Rust,
         }
     }
 
-    pub const fn typescript_runtime(self) -> Option<TypeScriptAppRuntime> {
+    pub const fn typescript_runtime(self) -> Option<AppRuntimeMetadata> {
         match self {
-            Self::TypeScript { runtime, .. } => Some(runtime.typescript_runtime()),
+            Self::TypeScript { runtime, .. } => Some(runtime),
             Self::Rust { .. } => None,
         }
     }
@@ -286,7 +267,6 @@ mod tests {
         let ManifestAppLaunch::TypeScript { runtime, launch_env } = app.manifest_launch else {
             panic!("current manifest apps should have TypeScript launch metadata");
         };
-        let runtime = runtime.typescript_runtime();
         assert_eq!(
             launch_spec(app.id),
             Some(AppLaunchSpec {
