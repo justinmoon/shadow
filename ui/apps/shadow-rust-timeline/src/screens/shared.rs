@@ -1,9 +1,6 @@
 use shadow_sdk::{
     services::nostr::{timeline::NostrProfileSummary, NostrEvent},
-    ui::{
-        caption_text, column, eyebrow_text, maybe, panel, prose_text, row, selectable_card,
-        status_chip, AsUnit, Tone, UiContext, WidgetView,
-    },
+    ui::{column, maybe, row, AsUnit, Tone, UiContext, WidgetView},
 };
 
 use crate::{short_id, TimelineApp};
@@ -26,7 +23,6 @@ pub(crate) fn feed_section(
     empty_message: &str,
     notes: Vec<NostrEvent>,
 ) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
     let title = title.to_owned();
     let empty_message = empty_message.to_owned();
     let body = maybe(
@@ -39,33 +35,30 @@ pub(crate) fn feed_section(
             )
             .gap(10.0.px()),
         ),
-        panel(
-            theme,
+        ui.panel(
             column((
-                eyebrow_text(title.clone(), theme),
-                caption_text(empty_message, theme),
+                ui.eyebrow_text(title.clone()),
+                ui.caption_text(empty_message),
             ))
             .gap(6.0.px()),
         ),
     );
 
-    column((eyebrow_text(title, theme), body)).gap(8.0.px())
+    column((ui.eyebrow_text(title), body)).gap(8.0.px())
 }
 
 pub(crate) fn note_card(ui: UiContext, note: NostrEvent) -> impl WidgetView<TimelineApp> {
-    let theme = ui.theme();
     let note_id = note.id.clone();
 
-    selectable_card(
-        theme,
+    ui.selectable_card(
         false,
         column((
             row((
-                caption_text(short_id(&note.pubkey), theme),
-                status_chip(relative_time(note.created_at), Tone::Neutral, theme),
+                ui.caption_text(short_id(&note.pubkey)),
+                ui.status_chip(relative_time(note.created_at), Tone::Neutral),
             ))
             .gap(8.0.px()),
-            prose_text(note.content, 15.0, theme),
+            ui.prose_text(note.content, 15.0),
         ))
         .gap(8.0.px()),
         move |app: &mut TimelineApp| {
