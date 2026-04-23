@@ -4,7 +4,6 @@ let
   lib = nixpkgs.lib;
   guestSystem = builtins.replaceStrings [ "-darwin" ] [ "-linux" ] hostSystem;
   hostIsDarwin = lib.hasSuffix "-darwin" hostSystem;
-  shadowUiVmCiPublicKey = lib.strings.removeSuffix "\n" (builtins.readFile ./keys/shadow-ui-vm-ci.pub);
   requiredSessionBinaries = [ "shadow-compositor" ] ++ requiredBinaryNames;
   requiredSessionBinaryArgs = lib.escapeShellArgs requiredSessionBinaries;
 in
@@ -20,6 +19,8 @@ nixpkgs.lib.nixosSystem {
         logDir = "${stateDir}/log";
         runtimeLibDir = "${stateDir}/runtime-libs";
         runtimeArtifactDir = "/opt/shadow-runtime";
+        sshShareDir = "/mnt/shadow-ui-vm-ssh";
+        sshAuthorizedKeysSource = "${sshShareDir}/authorized_keys";
         sessionLog = "${logDir}/shadow-ui-session.log";
         sessionEnv = "${stateDir}/shadow-ui-session-env.sh";
         runtimeArtifactManifest = "${runtimeArtifactDir}/artifact-manifest.json";
@@ -493,13 +494,34 @@ PY
           extraGroups = [ "wheel" "video" "input" ];
           home = homeDir;
           createHome = true;
-          openssh.authorizedKeys.keys = [
-            shadowUiVmCiPublicKey
-          ];
         };
         security.sudo = {
           enable = true;
           wheelNeedsPassword = false;
+        };
+
+        systemd.services.shadow-ui-install-authorized-keys = {
+          description = "Install Shadow UI VM SSH authorized keys";
+          wantedBy = [ "multi-user.target" ];
+          before = [ "sshd.service" ];
+          after = [ "local-fs.target" ];
+          path = with pkgs; [
+            coreutils
+          ];
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+          };
+          script = ''
+            install -d -m 0700 -o shadow -g shadow ${homeDir}/.ssh
+            if [[ ! -f ${sshAuthorizedKeysSource} ]]; then
+              echo "shadow-ui-vm: missing SSH authorized keys file ${sshAuthorizedKeysSource}" >&2
+              exit 1
+            fi
+            install -m 0600 -o shadow -g shadow \
+              ${sshAuthorizedKeysSource} \
+              ${homeDir}/.ssh/authorized_keys
+          '';
         };
 
         environment.systemPackages =
@@ -605,6 +627,12 @@ PY
               source = ".shadow-vm/runtime-artifacts";
               mountPoint = runtimeArtifactDir;
             }
+            {
+              proto = "9p";
+              tag = "shadow-vm-ssh";
+              source = ".shadow-vm/ssh";
+              mountPoint = sshShareDir;
+            }
           ];
           interfaces = [
             {
@@ -616,6 +644,7 @@ PY
           forwardPorts = [
             {
               from = "host";
+              host.address = "127.0.0.1";
               host.port = sshPort;
               guest.port = 22;
             }

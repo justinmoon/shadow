@@ -70,3 +70,21 @@ shadow_ci_summary_dir() {
 shadow_ci_boot_demo_changed_files() {
   scripts/ci/pixel_boot_demo_check.sh --print-changed-files
 }
+
+shadow_ci_root_master_vm_smoke_inputs_id() {
+  local root_repo target_system master_rev
+  root_repo="$(repo_common_root)"
+  target_system="$(shadow_ci_system)"
+  if [[ "$(git -C "$root_repo" rev-parse --abbrev-ref HEAD 2>/dev/null || true)" != "master" ]]; then
+    return 1
+  fi
+  if [[ -n "$(git -C "$root_repo" status --short 2>/dev/null || true)" ]]; then
+    return 1
+  fi
+  master_rev="$(git -C "$root_repo" rev-parse master 2>/dev/null || true)"
+  if [[ -z "$master_rev" ]]; then
+    return 1
+  fi
+  nix path-info --accept-flake-config --derivation \
+    "git+file://${root_repo}?rev=${master_rev}#packages.${target_system}.vm-smoke-inputs"
+}

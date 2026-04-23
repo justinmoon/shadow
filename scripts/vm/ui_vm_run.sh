@@ -98,8 +98,8 @@ ssh_port = sys.argv[2]
 target_path = pathlib.Path(sys.argv[3])
 script = source_path.read_text(encoding="utf-8")
 rewritten, count = re.subn(
-    r"hostfwd=tcp::\d+-:22,",
-    f"hostfwd=tcp::{ssh_port}-:22,",
+    r"hostfwd=tcp:[^,]+-:22,",
+    f"hostfwd=tcp:127.0.0.1:{ssh_port}-:22,",
     script,
     count=1,
 )

@@ -10,6 +10,12 @@ source "$SCRIPT_DIR/lib/ci_vm_smoke_common.sh"
 REPO_ROOT="$(repo_root)"
 ROOT_REPO="$(vm_smoke_root_repo "$REPO_ROOT")"
 current_inputs_id="$(vm_smoke_inputs_drv_path "$REPO_ROOT")"
+root_master_inputs_id="${SHADOW_VM_SMOKE_ROOT_MASTER_INPUTS_ID:-}"
+
+if [[ -n "$root_master_inputs_id" && "$current_inputs_id" == "$root_master_inputs_id" ]]; then
+  echo "pre-merge: skip vm smoke; logical inputs match root master"
+  exit 0
+fi
 
 if ci_vm_smoke_has_git "$REPO_ROOT" \
   && [[ "$ROOT_REPO" != "$REPO_ROOT" ]] \

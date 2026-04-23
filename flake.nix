@@ -441,7 +441,7 @@
         "runtime"
         "scripts/runtime"
         "scripts/runtime_build_artifacts.sh"
-        "vm"
+        "vm/shadow-ui-vm.nix"
         "rust/Cargo.toml"
         "rust/Cargo.lock"
         "rust/shadow-cashu-host"

@@ -16,7 +16,7 @@ fi
 
 just pre-commit
 boot_demo_changed_files="$(shadow_ci_boot_demo_changed_files)"
-if [[ -n "$boot_demo_changed_files" ]]; then
+if [[ -n "${SHADOW_FORCE_BOOT_DEMO_CHECK:-}" || -n "$boot_demo_changed_files" ]]; then
   boot_demo_mode="run"
 else
   boot_demo_mode="skip"

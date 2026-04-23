@@ -8,6 +8,10 @@ ui_vm_state_dir() {
   printf '%s/.shadow-vm\n' "$(ui_vm_repo_root)"
 }
 
+ui_vm_ssh_share_dir() {
+  printf '%s/ssh\n' "$(ui_vm_state_dir)"
+}
+
 ui_vm_runner_link() {
   printf '%s/ui-vm-runner\n' "$(ui_vm_state_dir)"
 }
@@ -32,19 +36,27 @@ ui_vm_socket_path() {
   printf '%s/shadow-ui-vm.sock\n' "$(ui_vm_state_dir)"
 }
 
-ui_vm_ssh_key_source_path() {
-  printf '%s/vm/keys/shadow-ui-vm-ci\n' "$(ui_vm_repo_root)"
-}
-
 ui_vm_ssh_key_path() {
   printf '%s/shadow-ui-vm-key\n' "$(ui_vm_state_dir)"
 }
 
+ui_vm_ssh_public_key_path() {
+  printf '%s.pub\n' "$(ui_vm_ssh_key_path)"
+}
+
 ui_vm_prepare_ssh_key() {
-  local source_path target_path
-  source_path="$(ui_vm_ssh_key_source_path)"
+  local target_path public_path share_dir
   target_path="$(ui_vm_ssh_key_path)"
-  install -m 0600 "$source_path" "$target_path"
+  public_path="$(ui_vm_ssh_public_key_path)"
+  share_dir="$(ui_vm_ssh_share_dir)"
+  mkdir -p "$share_dir"
+  if [[ ! -f "$target_path" || ! -f "$public_path" ]]; then
+    rm -f "$target_path" "$public_path"
+    ssh-keygen -q -t ed25519 -N "" -C "shadow-ui-vm-ci" -f "$target_path"
+    chmod 0600 "$target_path"
+    chmod 0644 "$public_path"
+  fi
+  install -m 0600 "$public_path" "$share_dir/authorized_keys"
 }
 
 ui_vm_ssh_port() {

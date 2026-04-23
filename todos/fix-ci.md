@@ -89,9 +89,11 @@ Make `pre-merge` and `nightly` fast, cheap, and predictable by moving the main b
 - Implementation status:
   `scripts/pre_merge.sh` and `scripts/nightly.sh` now dispatch to canonical Linux gate scripts on `pika-build` when the local host is not the CI system.
   The Linux gate path is `scripts/ci/linux_pre_merge.sh`, `scripts/ci/linux_nightly.sh`, and `scripts/ci/remote_ci.sh`.
+  The remote executor now syncs tracked files only, so the Linux CI lane matches the repo's Nix source-filter contract instead of consuming raw untracked worktree state.
 - VM runner status:
   `ui-vm-ci` is now available on Linux and Darwin.
   `vm/shadow-ui-vm.nix` now supports Linux/KVM runner mode (`-display none`) instead of being Cocoa-only.
+  VM SSH access now uses a per-worktree generated key under `.shadow-vm/`; the checked-in static CI key was removed, the guest installs authorized keys from a mounted host share, and the SSH forward is bound to `127.0.0.1`.
 - Gitless remote repo support:
   VM smoke cache logic now works without `.git`, and remote sync scrubs stale `.shadow-vm` / `build` state before each run so Nix path evaluation does not trip over leftover sockets.
 - VM smoke fixes found by the migration:
@@ -105,8 +107,11 @@ Make `pre-merge` and `nightly` fast, cheap, and predictable by moving the main b
   latest successful VM smoke summary: `91s` total, `3s` bootstrap, `17s` to ready.
   warm public `just pre-merge` from macOS after the migration: `41.50s`.
   warm public `just nightly` from macOS after the migration: `51.65s`.
+  current public `just pre-merge` on this branch, which forces the boot-demo-owned path because `flake.nix` and multiple `pixel_boot_*` smokes changed: `236.00s`.
+  current public `just nightly` on this branch: `242.05s`.
 - Validation status:
   `just pre-commit` passes locally.
   remote `pre-merge` on `pika-build` passes end-to-end.
   remote `nightly` on `pika-build` passes end-to-end.
   public `just pre-merge` and `just nightly` entrypoints both dispatch to the Linux CI executor and pass from macOS.
+  One follow-up remains in observability: the JSON run summaries on the boot-demo-heavy path currently misreport step-level status even though the public commands return success.

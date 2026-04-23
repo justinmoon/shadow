@@ -793,6 +793,7 @@ PY
 trap 'status=$?; finish "$status"; exit "$status"' EXIT
 
 mkdir -p "$LOG_DIR"
+rm -f "$SHOT_PATH" "$HOME_SURFACE_SHOT_PATH" "$SUMMARY_PATH"
 : >"$RUN_LOG"
 start_seeded_local_relay
 prepare_vm_extra_env
