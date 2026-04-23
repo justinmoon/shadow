@@ -66,6 +66,31 @@ struct PendingSystemPrompt {
     stream: UnixStream,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SwitcherRequestPlan {
+    None,
+    ShowOverlay,
+    FocusRecentAndShowOverlay { app_id: AppId },
+}
+
+fn switcher_request_plan(
+    prompt_active: bool,
+    foreground_app: Option<AppId>,
+    target_app: Option<AppId>,
+) -> SwitcherRequestPlan {
+    if prompt_active {
+        return SwitcherRequestPlan::None;
+    }
+
+    if foreground_app.is_some() {
+        return SwitcherRequestPlan::ShowOverlay;
+    }
+
+    target_app
+        .map(|app_id| SwitcherRequestPlan::FocusRecentAndShowOverlay { app_id })
+        .unwrap_or(SwitcherRequestPlan::None)
+}
+
 pub struct ShadowCompositor {
     pub start_time: std::time::Instant,
     pub socket_name: OsString,
@@ -382,11 +407,7 @@ impl ShadowCompositor {
                 Ok("ok\n".to_string())
             }
             ControlRequest::Switcher => {
-                if self.shell.show_switcher_overlay() {
-                    self.flush_wayland_clients();
-                } else if let Some(app_id) = self.shell.switcher_target_app() {
-                    self.launch_or_focus_app(app_id)?;
-                }
+                self.handle_switcher_request()?;
                 Ok("ok\n".to_string())
             }
             ControlRequest::Prompt { action_id } => {
@@ -421,6 +442,29 @@ impl ShadowCompositor {
                 response.trim()
             );
         });
+    }
+
+    fn handle_switcher_request(&mut self) -> std::io::Result<()> {
+        match switcher_request_plan(
+            self.shell.system_prompt_request().is_some(),
+            self.shell.foreground_app(),
+            self.shell.switcher_target_app(),
+        ) {
+            SwitcherRequestPlan::None => {}
+            SwitcherRequestPlan::ShowOverlay => self.present_switcher_overlay(),
+            SwitcherRequestPlan::FocusRecentAndShowOverlay { app_id } => {
+                self.launch_or_focus_app(app_id)?;
+                self.present_switcher_overlay();
+            }
+        }
+
+        Ok(())
+    }
+
+    fn present_switcher_overlay(&mut self) {
+        if self.shell.show_switcher_overlay() {
+            self.flush_wayland_clients();
+        }
     }
 
     fn handle_control_tap(&mut self, x: i32, y: i32) -> std::io::Result<String> {
@@ -831,7 +875,7 @@ mod session_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::auto_launch_app_id;
+    use super::{auto_launch_app_id, switcher_request_plan, SwitcherRequestPlan};
     use shadow_ui_core::app::{COUNTER_APP_ID, PODCAST_APP_ID, TIMELINE_APP_ID};
     use std::sync::{Mutex, OnceLock};
 
@@ -876,5 +920,31 @@ mod tests {
         with_start_app_env(Some("missing"), || {
             assert_eq!(auto_launch_app_id(), COUNTER_APP_ID);
         });
+    }
+
+    #[test]
+    fn switcher_request_plan_shows_overlay_over_foreground_app() {
+        assert_eq!(
+            switcher_request_plan(false, Some(COUNTER_APP_ID), Some(TIMELINE_APP_ID)),
+            SwitcherRequestPlan::ShowOverlay
+        );
+    }
+
+    #[test]
+    fn switcher_request_plan_foregrounds_latest_recent_before_overlay_from_home() {
+        assert_eq!(
+            switcher_request_plan(false, None, Some(TIMELINE_APP_ID)),
+            SwitcherRequestPlan::FocusRecentAndShowOverlay {
+                app_id: TIMELINE_APP_ID,
+            }
+        );
+    }
+
+    #[test]
+    fn switcher_request_plan_ignores_requests_while_prompt_is_active() {
+        assert_eq!(
+            switcher_request_plan(true, Some(COUNTER_APP_ID), Some(TIMELINE_APP_ID)),
+            SwitcherRequestPlan::None
+        );
     }
 }

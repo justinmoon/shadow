@@ -1781,6 +1781,16 @@ mod tests {
     }
 
     #[test]
+    fn switcher_overlay_defaults_to_latest_non_foreground_recent() {
+        let mut shell = ShellModel::new();
+        shell.set_app_running(COUNTER_APP_ID, true);
+        shell.set_foreground_app(Some(TIMELINE_APP_ID));
+
+        assert!(shell.show_switcher_overlay());
+        assert_eq!(shell.switcher_selection(), Some(COUNTER_APP_ID));
+    }
+
+    #[test]
     fn touch_tap_launches_immediately() {
         let mut shell = ShellModel::new();
         let counter_tile = app_frame(0);
