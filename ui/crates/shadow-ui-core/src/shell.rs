@@ -33,6 +33,12 @@ const RECENTS_PANEL_WIDTH: f32 = 252.0;
 const RECENTS_PANEL_HEIGHT: f32 = CLOCK_CARD_HEIGHT;
 const APP_PANEL_Y: f32 = 420.0;
 const APP_PANEL_HEIGHT: f32 = 640.0;
+const SWITCHER_PANEL_X: f32 = 44.0;
+const SWITCHER_PANEL_Y: f32 = 164.0;
+const SWITCHER_PANEL_WIDTH: f32 = 452.0;
+const SWITCHER_PANEL_HEIGHT: f32 = 346.0;
+const SWITCHER_ROW_HEIGHT: f32 = 54.0;
+const SWITCHER_ROW_GAP: f32 = 12.0;
 const APP_ICON_SIZE: f32 = 96.0;
 const APP_LABEL_HEIGHT: f32 = 24.0;
 const APP_SUBTITLE_HEIGHT: f32 = 18.0;
@@ -121,6 +127,7 @@ enum Target {
     App(usize),
     Recent(AppId),
     HomeIndicator,
+    SwitcherBackdrop,
     PromptAction(usize),
 }
 
@@ -139,6 +146,8 @@ pub struct ShellModel {
     running_apps: Vec<AppId>,
     recent_apps: Vec<AppId>,
     foreground_app: Option<AppId>,
+    switcher_visible: bool,
+    switcher_focus: usize,
     system_prompt: Option<SystemPromptUiState>,
 }
 
@@ -153,6 +162,8 @@ impl Default for ShellModel {
             running_apps: Vec::new(),
             recent_apps: Vec::new(),
             foreground_app: None,
+            switcher_visible: false,
+            switcher_focus: 0,
             system_prompt: None,
         }
     }
@@ -185,7 +196,18 @@ impl ShellModel {
 
     pub fn scene(&mut self, status: &ShellStatus) -> Scene {
         self.trim_expired_flash();
-        let mut scene = self.current_scene(status, true);
+        let mut scene = self.current_scene(status, !self.switcher_overlay_active());
+        if let Some(switcher_scene) = self.switcher_scene() {
+            append_scene(&mut scene, switcher_scene);
+        }
+        if self.switcher_overlay_active() {
+            append_top_chrome_strip(
+                &mut scene.rects,
+                &mut scene.texts,
+                &self.top_chrome_strip_state(status),
+            );
+            append_bottom_navigation_pill(&mut scene.rects, self.bottom_navigation_pill_state());
+        }
         if let Some(prompt_state) = self.system_prompt.as_ref() {
             append_scene(
                 &mut scene,
@@ -205,7 +227,11 @@ impl ShellModel {
     pub fn scene_without_compositor_chrome(&mut self, status: &ShellStatus) -> Scene {
         self.trim_expired_flash();
 
-        self.current_scene(status, false)
+        let mut scene = self.current_scene(status, false);
+        if let Some(switcher_scene) = self.switcher_scene() {
+            append_scene(&mut scene, switcher_scene);
+        }
+        scene
     }
 
     pub fn base_scene(&mut self) -> Scene {
@@ -260,6 +286,10 @@ impl ShellModel {
         let point = Point { x, y };
 
         if self.system_prompt.is_some() {
+            return shell_frame().contains(point);
+        }
+
+        if self.switcher_overlay_active() {
             return shell_frame().contains(point);
         }
 
@@ -335,12 +365,15 @@ impl ShellModel {
             self.recent_apps.retain(|candidate| *candidate != app_id);
             if self.foreground_app == Some(app_id) {
                 self.foreground_app = None;
+                self.dismiss_switcher_overlay();
             }
+            self.switcher_focus = self.normalized_switcher_focus();
         }
     }
 
     pub fn set_foreground_app(&mut self, app_id: Option<AppId>) {
         self.foreground_app = app_id;
+        self.dismiss_switcher_overlay();
         if let Some(app_id) = app_id {
             self.set_app_running(app_id, true);
             self.focus_app_tile(app_id);
@@ -352,6 +385,9 @@ impl ShellModel {
     }
 
     pub fn set_system_prompt(&mut self, request: Option<SystemPromptRequest>) {
+        if request.is_some() {
+            self.dismiss_switcher_overlay();
+        }
         self.system_prompt = request.map(|request| {
             let focused_action = request
                 .actions
@@ -393,6 +429,28 @@ impl ShellModel {
         &self.running_apps
     }
 
+    pub fn show_switcher_overlay(&mut self) -> bool {
+        if self.foreground_app.is_none() || self.system_prompt.is_some() {
+            return false;
+        }
+
+        self.switcher_visible = true;
+        self.switcher_focus = self.default_switcher_focus();
+        self.hovered_target = None;
+        self.pressed_target = None;
+        self.cursor = None;
+        true
+    }
+
+    pub fn switcher_overlay_active(&self) -> bool {
+        self.switcher_visible && self.foreground_app.is_some() && self.system_prompt.is_none()
+    }
+
+    pub fn switcher_scene(&self) -> Option<Scene> {
+        self.switcher_overlay_active()
+            .then(|| self.switcher_scene_only())
+    }
+
     pub fn switcher_target_app(&self) -> Option<AppId> {
         self.recent_apps
             .iter()
@@ -418,7 +476,7 @@ impl ShellModel {
                 self.pressed_target = self.cursor.and_then(|point| self.hit_test(point));
                 match self.pressed_target {
                     Some(Target::App(index)) => self.focused_tile = index,
-                    Some(Target::Recent(app_id)) => self.focus_app_tile(app_id),
+                    Some(Target::Recent(app_id)) => self.focus_recent_target(app_id),
                     Some(Target::PromptAction(index)) => {
                         if let Some(prompt) = self.system_prompt.as_mut() {
                             prompt.focused_action = index;
@@ -449,7 +507,7 @@ impl ShellModel {
         let target = self.hit_test(point);
         match target {
             Some(Target::App(index)) => self.focused_tile = index,
-            Some(Target::Recent(app_id)) => self.focus_app_tile(app_id),
+            Some(Target::Recent(app_id)) => self.focus_recent_target(app_id),
             Some(Target::PromptAction(index)) => {
                 if let Some(prompt) = self.system_prompt.as_mut() {
                     prompt.focused_action = index;
@@ -486,6 +544,24 @@ impl ShellModel {
             return None;
         }
 
+        if self.switcher_overlay_active() {
+            match action {
+                NavAction::Left | NavAction::Up | NavAction::Previous => {
+                    self.cycle_switcher_focus(-1)
+                }
+                NavAction::Right | NavAction::Down | NavAction::Next => {
+                    self.cycle_switcher_focus(1)
+                }
+                NavAction::Activate => {
+                    let app_id = self.switcher_selection()?;
+                    self.focus_recent_target(app_id);
+                    return self.activate_target(Target::Recent(app_id));
+                }
+                NavAction::Home => return self.activate_target(Target::HomeIndicator),
+            }
+            return None;
+        }
+
         match action {
             NavAction::Left => self.focused_tile = move_focus(self.focused_tile, -1, 0),
             NavAction::Right => self.focused_tile = move_focus(self.focused_tile, 1, 0),
@@ -505,16 +581,25 @@ impl ShellModel {
         match target {
             Target::App(index) => home_apps().get(index).map(|app| {
                 let app_id = app.id;
+                self.dismiss_switcher_overlay();
                 self.touch_recent(app_id);
                 self.focus_app_tile(app_id);
                 ShellAction::Launch { app_id }
             }),
             Target::Recent(app_id) => {
+                self.dismiss_switcher_overlay();
                 self.touch_recent(app_id);
-                self.focus_app_tile(app_id);
+                self.focus_recent_target(app_id);
                 Some(ShellAction::Launch { app_id })
             }
-            Target::HomeIndicator => self.foreground_app.is_some().then_some(ShellAction::Home),
+            Target::HomeIndicator => {
+                self.dismiss_switcher_overlay();
+                self.foreground_app.is_some().then_some(ShellAction::Home)
+            }
+            Target::SwitcherBackdrop => {
+                self.dismiss_switcher_overlay();
+                None
+            }
             Target::PromptAction(index) => self
                 .system_prompt
                 .as_ref()
@@ -537,6 +622,17 @@ impl ShellModel {
         }
     }
 
+    fn focus_recent_target(&mut self, app_id: AppId) {
+        self.focus_app_tile(app_id);
+        if let Some(index) = self
+            .recent_apps
+            .iter()
+            .position(|candidate| *candidate == app_id)
+        {
+            self.switcher_focus = index;
+        }
+    }
+
     fn hit_test(&self, point: Point) -> Option<Target> {
         if let Some(prompt) = self.system_prompt.as_ref() {
             return prompt
@@ -549,6 +645,34 @@ impl ShellModel {
                     frame
                         .contains(point.x, point.y)
                         .then_some(Target::PromptAction(index))
+                });
+        }
+
+        if self.switcher_overlay_active() {
+            return self
+                .recent_apps
+                .iter()
+                .copied()
+                .enumerate()
+                .find_map(|(index, app_id)| {
+                    switcher_row_frame(index)
+                        .contains(point)
+                        .then_some(Target::Recent(app_id))
+                })
+                .or_else(|| {
+                    home_indicator_frame()
+                        .contains(point)
+                        .then_some(Target::HomeIndicator)
+                })
+                .or_else(|| {
+                    bottom_navigation_pill_frame()
+                        .contains(point)
+                        .then_some(Target::HomeIndicator)
+                })
+                .or_else(|| {
+                    shell_frame()
+                        .contains(point)
+                        .then_some(Target::SwitcherBackdrop)
                 });
         }
 
@@ -573,14 +697,11 @@ impl ShellModel {
                     .then_some(Target::Recent(app_id))
             })
             .or_else(|| {
-                home_apps()
-                    .iter()
-                    .enumerate()
-                    .find_map(|(index, _)| {
-                        app_frame(index)
-                            .contains(point)
-                            .then_some(Target::App(index))
-                    })
+                home_apps().iter().enumerate().find_map(|(index, _)| {
+                    app_frame(index)
+                        .contains(point)
+                        .then_some(Target::App(index))
+                })
             })
             .or_else(|| {
                 home_indicator_frame()
@@ -600,6 +721,54 @@ impl ShellModel {
                 self.last_activated = None;
             }
         }
+    }
+
+    fn dismiss_switcher_overlay(&mut self) {
+        self.switcher_visible = false;
+        self.hovered_target = None;
+        self.pressed_target = None;
+        self.cursor = None;
+    }
+
+    fn default_switcher_focus(&self) -> usize {
+        self.switcher_target_app()
+            .and_then(|app_id| {
+                self.recent_apps
+                    .iter()
+                    .position(|candidate| *candidate == app_id)
+            })
+            .or_else(|| {
+                self.foreground_app.and_then(|app_id| {
+                    self.recent_apps
+                        .iter()
+                        .position(|candidate| *candidate == app_id)
+                })
+            })
+            .unwrap_or(0)
+    }
+
+    fn normalized_switcher_focus(&self) -> usize {
+        if self.recent_apps.is_empty() {
+            0
+        } else {
+            self.switcher_focus.min(self.recent_apps.len() - 1)
+        }
+    }
+
+    fn cycle_switcher_focus(&mut self, delta: isize) {
+        let len = self.recent_apps.len();
+        if len <= 1 {
+            self.switcher_focus = 0;
+            return;
+        }
+
+        self.switcher_focus = wrap_overlay_index(self.normalized_switcher_focus(), len, delta);
+    }
+
+    fn switcher_selection(&self) -> Option<AppId> {
+        self.recent_apps
+            .get(self.normalized_switcher_focus())
+            .copied()
     }
 
     fn hovered_prompt_action(&self) -> Option<usize> {
@@ -637,6 +806,18 @@ impl ShellModel {
             })
             .or_else(|| find_app_by_str(source_app_id).map(|app| app.title.to_owned()))
             .unwrap_or_else(|| source_app_id.to_owned())
+    }
+
+    fn switcher_scene_only(&self) -> Scene {
+        let mut rects = Vec::new();
+        let mut texts = Vec::new();
+        build_switcher_overlay(&mut rects, &mut texts, self);
+
+        Scene {
+            clear_color: crate::color::Color::rgba(0, 0, 0, 0),
+            rects,
+            texts,
+        }
     }
 }
 
@@ -682,16 +863,20 @@ fn wrap_prompt_index(current: usize, len: usize, delta: isize) -> usize {
     ((current as isize + delta).rem_euclid(len)) as usize
 }
 
+fn wrap_overlay_index(current: usize, len: usize, delta: isize) -> usize {
+    let len = len as isize;
+    if len <= 1 {
+        return 0;
+    }
+    ((current as isize + delta).rem_euclid(len)) as usize
+}
+
 fn append_scene(scene: &mut Scene, overlay: Scene) {
     scene.rects.extend(overlay.rects);
     scene.texts.extend(overlay.texts);
 }
 
-fn build_clock(
-    rects: &mut Vec<RoundedRect>,
-    texts: &mut Vec<TextBlock>,
-    status: &ShellStatus,
-) {
+fn build_clock(rects: &mut Vec<RoundedRect>, texts: &mut Vec<TextBlock>, status: &ShellStatus) {
     rects.push(RoundedRect::new(
         CLOCK_CARD_X,
         CLOCK_CARD_Y,
@@ -768,7 +953,10 @@ fn build_recent_apps_panel(
         content: if model.recent_apps.is_empty() {
             "Launch from home to keep a surface warm.".to_string()
         } else {
-            format!("{} warm surface(s) ready to resume.", model.recent_apps.len())
+            format!(
+                "{} warm surface(s) ready to resume.",
+                model.recent_apps.len()
+            )
         },
         left: RECENTS_PANEL_X + 24.0,
         top: RECENTS_PANEL_Y + 48.0,
@@ -975,6 +1163,204 @@ fn build_panel_header(
         height: 20.0,
         size: 14.0,
         line_height: 18.0,
+        align: TextAlign::Left,
+        weight: TextWeight::Normal,
+        color: TEXT_MUTED,
+    });
+}
+
+fn build_switcher_overlay(
+    rects: &mut Vec<RoundedRect>,
+    texts: &mut Vec<TextBlock>,
+    model: &ShellModel,
+) {
+    let Some(foreground_app_id) = model.foreground_app() else {
+        return;
+    };
+    let foreground_app = find_app(foreground_app_id).expect("foreground app metadata");
+    let selected_index = model.normalized_switcher_focus();
+
+    rects.push(RoundedRect::new(
+        0.0,
+        0.0,
+        WIDTH,
+        HEIGHT,
+        0.0,
+        SURFACE.with_alpha(0.54),
+    ));
+    rects.push(RoundedRect::new(
+        SWITCHER_PANEL_X,
+        SWITCHER_PANEL_Y,
+        SWITCHER_PANEL_WIDTH,
+        SWITCHER_PANEL_HEIGHT,
+        40.0,
+        SURFACE_GLASS.with_alpha(0.92),
+    ));
+    rects.push(RoundedRect::new(
+        SWITCHER_PANEL_X + 24.0,
+        SWITCHER_PANEL_Y + 72.0,
+        SWITCHER_PANEL_WIDTH - 48.0,
+        1.0,
+        0.5,
+        TEXT_PRIMARY.with_alpha(0.12),
+    ));
+
+    texts.push(TextBlock {
+        content: "App switcher".to_string(),
+        left: SWITCHER_PANEL_X + 28.0,
+        top: SWITCHER_PANEL_Y + 24.0,
+        width: SWITCHER_PANEL_WIDTH - 56.0,
+        height: 24.0,
+        size: 22.0,
+        line_height: 26.0,
+        align: TextAlign::Left,
+        weight: TextWeight::Semibold,
+        color: TEXT_PRIMARY,
+    });
+    texts.push(TextBlock {
+        content: if model.recent_apps.len() > 1 {
+            format!(
+                "{} stays live underneath. Pick a warm surface or tap outside to dismiss.",
+                foreground_app.title
+            )
+        } else {
+            format!(
+                "{} is the only warm surface right now. Tap outside to keep it live.",
+                foreground_app.title
+            )
+        },
+        left: SWITCHER_PANEL_X + 28.0,
+        top: SWITCHER_PANEL_Y + 50.0,
+        width: SWITCHER_PANEL_WIDTH - 56.0,
+        height: 18.0,
+        size: 12.0,
+        line_height: 14.0,
+        align: TextAlign::Left,
+        weight: TextWeight::Normal,
+        color: TEXT_MUTED,
+    });
+
+    for (index, app_id) in model.recent_apps.iter().copied().enumerate() {
+        let app = find_app(app_id).expect("recent app metadata");
+        let frame = switcher_row_frame(index);
+        let target = Target::Recent(app_id);
+        let is_selected = selected_index == index;
+        let is_hovered = model.hovered_target == Some(target);
+        let is_pressed = model.pressed_target == Some(target);
+        let is_active = model.last_activated.map(|(target, _)| target) == Some(target);
+
+        let halo_alpha = if is_pressed {
+            0.28
+        } else if is_active {
+            0.24
+        } else if is_selected {
+            0.18
+        } else if is_hovered {
+            0.12
+        } else {
+            0.0
+        };
+
+        if halo_alpha > 0.0 {
+            rects.push(RoundedRect::new(
+                frame.x - 4.0,
+                frame.y - 4.0,
+                frame.w + 8.0,
+                frame.h + 8.0,
+                30.0,
+                TEXT_PRIMARY.with_alpha(halo_alpha),
+            ));
+        }
+
+        rects.push(RoundedRect::new(
+            frame.x,
+            frame.y,
+            frame.w,
+            frame.h,
+            26.0,
+            if is_pressed {
+                SURFACE_RAISED.with_alpha(0.84)
+            } else if is_selected {
+                SURFACE_RAISED.with_alpha(0.72)
+            } else if is_hovered {
+                SURFACE_RAISED.with_alpha(0.64)
+            } else {
+                SURFACE_RAISED.with_alpha(0.52)
+            },
+        ));
+        rects.push(RoundedRect::new(
+            frame.x + 16.0,
+            frame.y + 11.0,
+            32.0,
+            32.0,
+            12.0,
+            app.icon_color,
+        ));
+
+        texts.push(TextBlock {
+            content: app.icon_label.to_string(),
+            left: frame.x + 16.0,
+            top: frame.y + 17.0,
+            width: 32.0,
+            height: 18.0,
+            size: 15.0,
+            line_height: 16.0,
+            align: TextAlign::Center,
+            weight: TextWeight::Bold,
+            color: TEXT_PRIMARY.with_alpha(0.92),
+        });
+        texts.push(TextBlock {
+            content: app.title.to_string(),
+            left: frame.x + 62.0,
+            top: frame.y + 11.0,
+            width: frame.w - 144.0,
+            height: 18.0,
+            size: 15.0,
+            line_height: 18.0,
+            align: TextAlign::Left,
+            weight: if is_selected {
+                TextWeight::Semibold
+            } else {
+                TextWeight::Normal
+            },
+            color: TEXT_PRIMARY,
+        });
+        texts.push(TextBlock {
+            content: recent_surface_detail(model, app_id, index).to_string(),
+            left: frame.x + 62.0,
+            top: frame.y + 31.0,
+            width: frame.w - 144.0,
+            height: 14.0,
+            size: 11.0,
+            line_height: 12.0,
+            align: TextAlign::Left,
+            weight: TextWeight::Normal,
+            color: TEXT_MUTED,
+        });
+        if is_selected {
+            texts.push(TextBlock {
+                content: "Selected".to_string(),
+                left: frame.x + frame.w - 96.0,
+                top: frame.y + 18.0,
+                width: 72.0,
+                height: 16.0,
+                size: 11.0,
+                line_height: 12.0,
+                align: TextAlign::Center,
+                weight: TextWeight::Semibold,
+                color: TEXT_PRIMARY.with_alpha(0.88),
+            });
+        }
+    }
+
+    texts.push(TextBlock {
+        content: "Tap a recent surface to switch. Tap outside the card to stay here.".to_string(),
+        left: SWITCHER_PANEL_X + 28.0,
+        top: SWITCHER_PANEL_Y + SWITCHER_PANEL_HEIGHT - 40.0,
+        width: SWITCHER_PANEL_WIDTH - 56.0,
+        height: 16.0,
+        size: 12.0,
+        line_height: 14.0,
         align: TextAlign::Left,
         weight: TextWeight::Normal,
         color: TEXT_MUTED,
@@ -1208,6 +1594,15 @@ fn recent_row_frame(index: usize) -> Frame {
     }
 }
 
+fn switcher_row_frame(index: usize) -> Frame {
+    Frame {
+        x: SWITCHER_PANEL_X + 24.0,
+        y: SWITCHER_PANEL_Y + 94.0 + index as f32 * (SWITCHER_ROW_HEIGHT + SWITCHER_ROW_GAP),
+        w: SWITCHER_PANEL_WIDTH - 48.0,
+        h: SWITCHER_ROW_HEIGHT,
+    }
+}
+
 fn home_indicator_frame() -> Frame {
     Frame {
         x: TOP_CHROME_STRIP_X,
@@ -1338,6 +1733,54 @@ mod tests {
     }
 
     #[test]
+    fn switcher_overlay_captures_the_full_shell_surface() {
+        let mut shell = ShellModel::new();
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+
+        assert!(shell.show_switcher_overlay());
+        assert!(shell.captures_point(WIDTH * 0.5, HEIGHT * 0.5));
+        assert!(shell.captures_point(APP_VIEWPORT_WIDTH * 0.5, APP_VIEWPORT_Y + 120.0));
+        assert!(shell.switcher_overlay_active());
+    }
+
+    #[test]
+    fn switcher_overlay_tap_outside_dismisses_without_switching() {
+        let mut shell = ShellModel::new();
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+
+        assert!(shell.show_switcher_overlay());
+        assert_eq!(
+            shell.handle(ShellEvent::TouchTap {
+                x: WIDTH * 0.5,
+                y: HEIGHT - 120.0,
+            }),
+            None
+        );
+        assert!(!shell.switcher_overlay_active());
+    }
+
+    #[test]
+    fn switcher_overlay_recent_tap_launches_selected_app_and_dismisses() {
+        let mut shell = ShellModel::new();
+        shell.set_app_running(COUNTER_APP_ID, true);
+        shell.set_foreground_app(Some(TIMELINE_APP_ID));
+        let counter_row = switcher_row_frame(1);
+
+        assert!(shell.show_switcher_overlay());
+        assert_eq!(
+            shell.handle(ShellEvent::TouchTap {
+                x: counter_row.x + counter_row.w * 0.5,
+                y: counter_row.y + counter_row.h * 0.5,
+            }),
+            Some(ShellAction::Launch {
+                app_id: COUNTER_APP_ID,
+            })
+        );
+        assert_eq!(shell.recent_apps[0], COUNTER_APP_ID);
+        assert!(!shell.switcher_overlay_active());
+    }
+
+    #[test]
     fn touch_tap_launches_immediately() {
         let mut shell = ShellModel::new();
         let counter_tile = app_frame(0);
@@ -1372,7 +1815,10 @@ mod tests {
             })
         );
         assert_eq!(shell.recent_apps[0], COUNTER_APP_ID);
-        assert_eq!(shell.focused_tile, tile_index_for_app(COUNTER_APP_ID).unwrap());
+        assert_eq!(
+            shell.focused_tile,
+            tile_index_for_app(COUNTER_APP_ID).unwrap()
+        );
     }
 
     #[test]
@@ -1395,7 +1841,10 @@ mod tests {
                 app_id: TIMELINE_APP_ID,
             })
         );
-        assert_eq!(shell.focused_tile, tile_index_for_app(TIMELINE_APP_ID).unwrap());
+        assert_eq!(
+            shell.focused_tile,
+            tile_index_for_app(TIMELINE_APP_ID).unwrap()
+        );
         assert_eq!(shell.pressed_target, None);
     }
 
@@ -1616,11 +2065,34 @@ mod tests {
             .texts
             .iter()
             .any(|text| text.content == "Latest surface"));
-        assert!(launcher.texts.iter().any(|text| text.content == "Warm in shell"));
+        assert!(launcher
+            .texts
+            .iter()
+            .any(|text| text.content == "Warm in shell"));
         assert!(!launcher
             .texts
             .iter()
             .any(|text| text.content.starts_with("Warm apps:")));
+    }
+
+    #[test]
+    fn switcher_scene_renders_overlay_copy_over_foreground_app() {
+        let mut shell = ShellModel::new();
+        shell.set_app_running(COUNTER_APP_ID, true);
+        shell.set_foreground_app(Some(TIMELINE_APP_ID));
+        assert!(shell.show_switcher_overlay());
+
+        let scene = shell
+            .switcher_scene()
+            .expect("foreground switcher overlay scene");
+
+        assert!(scene
+            .texts
+            .iter()
+            .any(|text| text.content == "App switcher"));
+        assert!(scene.texts.iter().any(|text| text.content == "Selected"));
+        assert!(scene.texts.iter().any(|text| text.content == "Timeline"));
+        assert!(scene.texts.iter().any(|text| text.content == "Counter"));
     }
 
     #[test]

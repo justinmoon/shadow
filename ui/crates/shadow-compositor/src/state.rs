@@ -196,6 +196,13 @@ impl ShadowCompositor {
                 (WIDTH.round() as u32, HEIGHT.round() as u32),
             );
         }
+        if let Some(switcher_scene) = self.shell.switcher_scene() {
+            plan.push_overlay(
+                switcher_scene,
+                self.shell_location(),
+                (WIDTH.round() as u32, HEIGHT.round() as u32),
+            );
+        }
         plan.push_overlay(
             top_chrome_strip_scene(&self.shell.top_chrome_strip_state(status)),
             self.top_chrome_location(),
@@ -375,7 +382,9 @@ impl ShadowCompositor {
                 Ok("ok\n".to_string())
             }
             ControlRequest::Switcher => {
-                if let Some(app_id) = self.shell.switcher_target_app() {
+                if self.shell.show_switcher_overlay() {
+                    self.flush_wayland_clients();
+                } else if let Some(app_id) = self.shell.switcher_target_app() {
                     self.launch_or_focus_app(app_id)?;
                 }
                 Ok("ok\n".to_string())
@@ -670,6 +679,17 @@ impl ShadowCompositor {
                             .collect::<Vec<_>>()
                             .join(",")
                     })
+                    .unwrap_or_default(),
+            ),
+            (
+                "switcher_active",
+                usize::from(self.shell.switcher_overlay_active()).to_string(),
+            ),
+            (
+                "switcher_target_app",
+                self.shell
+                    .switcher_target_app()
+                    .map(|app_id| app_id.as_str().to_string())
                     .unwrap_or_default(),
             ),
         ];

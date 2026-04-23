@@ -8,8 +8,8 @@ use std::{
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
-use shadow_ui_core::control::ControlRequest;
 use shadow_ui_core::app::{self, AppId};
+use shadow_ui_core::control::ControlRequest;
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 use tempfile::TempDir;
 
@@ -216,10 +216,13 @@ fn relaunching_existing_unmapped_app_is_idempotent() {
 }
 
 #[test]
-fn switcher_control_uses_shell_recents_to_pick_previous_app() {
+fn switcher_control_shows_shell_recents_overlay_over_foreground_app() {
     let mut harness = HostSessionHarness::new();
 
-    harness.state.shell.set_app_running(app::RUST_DEMO_APP_ID, true);
+    harness
+        .state
+        .shell
+        .set_app_running(app::RUST_DEMO_APP_ID, true);
     harness.set_foreground_app(app::RUST_TIMELINE_APP_ID);
 
     let response = harness
@@ -228,11 +231,15 @@ fn switcher_control_uses_shell_recents_to_pick_previous_app() {
         .expect("switcher control request");
 
     assert_eq!(response, "ok\n");
-    assert_eq!(harness.state.focused_app, None);
-    assert_eq!(harness.state.shell.foreground_app(), None);
+    assert_eq!(harness.state.focused_app, Some(app::RUST_TIMELINE_APP_ID));
+    assert_eq!(
+        harness.state.shell.foreground_app(),
+        Some(app::RUST_TIMELINE_APP_ID)
+    );
+    assert!(harness.state.shell.switcher_overlay_active());
+    assert!(harness.state.launched_apps.is_empty());
     assert!(harness
         .state
-        .launched_apps
-        .contains_key(&app::RUST_DEMO_APP_ID));
-    assert_eq!(harness.state.launched_apps.len(), 1);
+        .control_state_response()
+        .contains("switcher_active=1\n"));
 }
