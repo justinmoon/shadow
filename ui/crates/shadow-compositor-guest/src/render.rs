@@ -395,6 +395,7 @@ impl ShadowGuestCompositor {
                 }
             }
         }
+        self.schedule_synthetic_touch_after_frame(frame_marker);
     }
 
     pub(crate) fn run_boot_splash(&mut self) {

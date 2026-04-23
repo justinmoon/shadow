@@ -1,4 +1,7 @@
-use std::{fs, time::Instant};
+use std::{
+    fs, thread,
+    time::{Duration, Instant},
+};
 
 use shadow_ui_core::{
     app::AppId,
@@ -351,6 +354,82 @@ impl ShadowGuestCompositor {
             })
             .expect("insert touch source");
         touch::spawn_touch_reader(touch_device, sender);
+    }
+
+    pub(crate) fn insert_synthetic_touch_source(&mut self, event_loop: &mut EventLoop<Self>) {
+        if self.synthetic_tap.is_none() {
+            return;
+        }
+
+        let (sender, receiver) = channel::channel();
+        self.synthetic_tap_sender = Some(sender);
+        event_loop
+            .handle()
+            .insert_source(receiver, |event, _, state| match event {
+                channel::Event::Msg(event) => {
+                    tracing::info!(
+                        "[shadow-guest-compositor] synthetic-touch-observed phase={:?} seq={} normalized={:.3},{:.3}",
+                        event.phase,
+                        event.sequence,
+                        event.normalized_x,
+                        event.normalized_y
+                    );
+                    state.handle_touch_input(event);
+                }
+                channel::Event::Closed => {
+                    tracing::warn!("[shadow-guest-compositor] synthetic-touch-source closed")
+                }
+            })
+            .expect("insert synthetic touch source");
+    }
+
+    pub(crate) fn schedule_synthetic_touch_after_frame(&mut self, frame_marker: &str) {
+        let Some(tap) = self.synthetic_tap else {
+            return;
+        };
+        if self.synthetic_tap_scheduled {
+            return;
+        }
+        let Some(sender) = self.synthetic_tap_sender.clone() else {
+            tracing::warn!("[shadow-guest-compositor] synthetic-touch-schedule missing sender");
+            return;
+        };
+
+        self.synthetic_tap_scheduled = true;
+        tracing::info!(
+            "[shadow-guest-compositor] synthetic-touch-scheduled frame_marker={} delay_ms={} hold_ms={} normalized_millis={},{}",
+            frame_marker,
+            tap.after_first_frame_delay_ms,
+            tap.hold_ms,
+            tap.normalized_x_millis,
+            tap.normalized_y_millis
+        );
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(tap.after_first_frame_delay_ms));
+            let down = touch::synthetic_touch_event(
+                touch::TouchPhase::Down,
+                tap.normalized_x_millis,
+                tap.normalized_y_millis,
+            );
+            tracing::info!(
+                "[shadow-guest-compositor] synthetic-touch-inject phase=Down seq={}",
+                down.sequence
+            );
+            if sender.send(down).is_err() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(tap.hold_ms));
+            let up = touch::synthetic_touch_event(
+                touch::TouchPhase::Up,
+                tap.normalized_x_millis,
+                tap.normalized_y_millis,
+            );
+            tracing::info!(
+                "[shadow-guest-compositor] synthetic-touch-inject phase=Up seq={}",
+                up.sequence
+            );
+            let _ = sender.send(up);
+        });
     }
 
     fn handle_touch_input(&mut self, event: touch::TouchInputEvent) {

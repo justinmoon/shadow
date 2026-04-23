@@ -593,6 +593,8 @@ mod tests {
                 dmabuf_format_profile: DmabufFormatProfile::Default,
                 touch_signal_path: None,
                 touch_latency_trace: false,
+                synthetic_tap: None,
+                exit_after_touch_present: false,
                 frame_snapshot_cache_enabled: false,
                 frame_checksum_enabled: false,
                 frame_artifact_path: runtime_dir.path().join("frame.ppm"),

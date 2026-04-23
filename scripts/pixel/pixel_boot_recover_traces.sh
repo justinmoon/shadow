@@ -1736,9 +1736,51 @@ summary_frame_label_samples = recovered_probe_summary.get("frame_label_samples")
 summary_frame_checksum_samples = recovered_probe_summary.get("frame_checksum_samples_fnv1a64")
 summary_first_frame = recovered_probe_summary.get("first_frame")
 summary_last_frame = recovered_probe_summary.get("last_frame")
+summary_touch_counter_probe = recovered_probe_summary.get("touch_counter_probe")
+summary_touch_counter_probe_ok = recovered_probe_summary.get("touch_counter_probe_ok")
 summary_adapter_backend = (
     summary_adapter.get("backend")
     if isinstance(summary_adapter, dict)
+    else None
+)
+summary_touch_counter_injection = (
+    summary_touch_counter_probe.get("injection")
+    if isinstance(summary_touch_counter_probe, dict)
+    else None
+)
+summary_touch_counter_input_observed = (
+    summary_touch_counter_probe.get("input_observed")
+    if isinstance(summary_touch_counter_probe, dict)
+    else None
+)
+summary_touch_counter_tap_dispatched = (
+    summary_touch_counter_probe.get("tap_dispatched")
+    if isinstance(summary_touch_counter_probe, dict)
+    else None
+)
+summary_touch_counter_counter_incremented = (
+    summary_touch_counter_probe.get("counter_incremented")
+    if isinstance(summary_touch_counter_probe, dict)
+    else None
+)
+summary_touch_counter_post_touch_frame_committed = (
+    summary_touch_counter_probe.get("post_touch_frame_committed")
+    if isinstance(summary_touch_counter_probe, dict)
+    else None
+)
+summary_touch_counter_post_touch_frame_artifact_logged = (
+    summary_touch_counter_probe.get("post_touch_frame_artifact_logged")
+    if isinstance(summary_touch_counter_probe, dict)
+    else None
+)
+summary_touch_counter_touch_latency_present = (
+    summary_touch_counter_probe.get("touch_latency_present")
+    if isinstance(summary_touch_counter_probe, dict)
+    else None
+)
+summary_touch_counter_post_touch_frame_captured = (
+    summary_touch_counter_probe.get("post_touch_frame_captured")
+    if isinstance(summary_touch_counter_probe, dict)
     else None
 )
 summary_kms_present_count = (
@@ -1888,6 +1930,28 @@ probe_summary_proves_app_direct_present = (
     and isinstance(summary_frame_bytes, int)
     and summary_frame_bytes > 0
 )
+probe_summary_proves_app_direct_present_touch_counter = (
+    expected_orange_gpu_mode == "app-direct-present-touch-counter"
+    and expected_orange_gpu_firmware_helper is True
+    and probe_report_proves_child_success
+    and recovered_metadata_probe_summary_present
+    and recovered_probe_summary_parse_error is None
+    and summary_kind == "app-direct-present-touch-counter"
+    and summary_startup_mode == "app"
+    and summary_app_id == "rust-demo"
+    and summary_frame_path == expected_metadata_compositor_frame_path
+    and isinstance(summary_frame_bytes, int)
+    and summary_frame_bytes > 0
+    and summary_touch_counter_probe_ok is True
+    and summary_touch_counter_injection == "synthetic-compositor"
+    and summary_touch_counter_input_observed is True
+    and summary_touch_counter_tap_dispatched is True
+    and summary_touch_counter_counter_incremented is True
+    and summary_touch_counter_post_touch_frame_committed is True
+    and summary_touch_counter_post_touch_frame_artifact_logged is True
+    and summary_touch_counter_touch_latency_present is True
+    and summary_touch_counter_post_touch_frame_captured is True
+)
 compositor_frame_proves_scene = (
     expected_orange_gpu_mode == "compositor-scene"
     and recovered_metadata_compositor_frame_present
@@ -1907,7 +1971,7 @@ compositor_frame_proves_scene = (
     )
 )
 compositor_frame_proves_app_direct_present = (
-    expected_orange_gpu_mode == "app-direct-present"
+    expected_orange_gpu_mode in {"app-direct-present", "app-direct-present-touch-counter"}
     and recovered_metadata_compositor_frame_present
     and recovered_compositor_frame_parse_error is None
     and isinstance(compositor_frame_width, int)
@@ -1985,6 +2049,11 @@ elif expected_orange_gpu_mode == "app-direct-present":
         and probe_summary_proves_app_direct_present
         and compositor_frame_proves_app_direct_present
     )
+elif expected_orange_gpu_mode == "app-direct-present-touch-counter":
+    proof_ok = (
+        probe_summary_proves_app_direct_present_touch_counter
+        and compositor_frame_proves_app_direct_present
+    )
 else:
     proof_ok = matched_any_correlated_shadow_tags or probe_report_proves_child_success
 
@@ -1998,6 +2067,7 @@ payload = {
     "probe_summary_proves_orange_gpu_loop": probe_summary_proves_orange_gpu_loop,
     "probe_summary_proves_compositor_scene": probe_summary_proves_compositor_scene,
     "probe_summary_proves_app_direct_present": probe_summary_proves_app_direct_present,
+    "probe_summary_proves_app_direct_present_touch_counter": probe_summary_proves_app_direct_present_touch_counter,
     "app_direct_present_proof_contract_ok": app_direct_present_proof_contract_ok,
     "app_direct_present_proof_contract_required": app_direct_present_proof_contract_required,
     "app_direct_present_proof_contract": app_direct_present_proof_contract,
@@ -2109,6 +2179,15 @@ payload = {
     "metadata_probe_summary_kind": summary_kind,
     "metadata_probe_summary_startup_mode": summary_startup_mode,
     "metadata_probe_summary_app_id": summary_app_id,
+    "metadata_probe_summary_touch_counter_probe_ok": summary_touch_counter_probe_ok,
+    "metadata_probe_summary_touch_counter_injection": summary_touch_counter_injection,
+    "metadata_probe_summary_touch_counter_input_observed": summary_touch_counter_input_observed,
+    "metadata_probe_summary_touch_counter_tap_dispatched": summary_touch_counter_tap_dispatched,
+    "metadata_probe_summary_touch_counter_counter_incremented": summary_touch_counter_counter_incremented,
+    "metadata_probe_summary_touch_counter_post_touch_frame_committed": summary_touch_counter_post_touch_frame_committed,
+    "metadata_probe_summary_touch_counter_post_touch_frame_artifact_logged": summary_touch_counter_post_touch_frame_artifact_logged,
+    "metadata_probe_summary_touch_counter_touch_latency_present": summary_touch_counter_touch_latency_present,
+    "metadata_probe_summary_touch_counter_post_touch_frame_captured": summary_touch_counter_post_touch_frame_captured,
     "metadata_probe_summary_scene": summary_scene,
     "metadata_probe_summary_frame_path": summary_frame_path,
     "metadata_probe_summary_frame_bytes": summary_frame_bytes,

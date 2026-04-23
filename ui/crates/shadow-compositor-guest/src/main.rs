@@ -30,7 +30,8 @@ use std::{
 };
 
 use config::{
-    DmabufFormatProfile, GuestClientConfig, GuestStartupConfig, StartupAction, TransportRequest,
+    DmabufFormatProfile, GuestClientConfig, GuestStartupConfig, GuestSyntheticTapConfig,
+    StartupAction, TransportRequest,
 };
 use shadow_runtime_protocol::{
     SystemPromptRequest, SystemPromptResponse, SystemPromptSocketResponse,
@@ -195,6 +196,10 @@ struct ShadowGuestCompositor {
     touch_signal_counter: u64,
     touch_signal_path: Option<PathBuf>,
     touch_latency_trace: bool,
+    synthetic_tap: Option<GuestSyntheticTapConfig>,
+    synthetic_tap_sender: Option<channel::Sender<touch::TouchInputEvent>>,
+    synthetic_tap_scheduled: bool,
+    exit_after_touch_present: bool,
     pending_touch_trace: Option<PendingTouchTrace>,
     latest_scroll_benchmark_sample: Option<ScrollBenchmarkSample>,
     pending_scroll_frame_trace: Option<PendingScrollFrameTrace>,
@@ -332,6 +337,10 @@ impl ShadowGuestCompositor {
             touch_signal_counter: 0,
             touch_signal_path: config.touch_signal_path.clone(),
             touch_latency_trace: config.touch_latency_trace,
+            synthetic_tap: config.synthetic_tap,
+            synthetic_tap_sender: None,
+            synthetic_tap_scheduled: false,
+            exit_after_touch_present: config.exit_after_touch_present,
             pending_touch_trace: None,
             latest_scroll_benchmark_sample: None,
             pending_scroll_frame_trace: None,
@@ -377,6 +386,7 @@ impl ShadowGuestCompositor {
             );
         }
         state.insert_touch_source(event_loop);
+        state.insert_synthetic_touch_source(event_loop);
         state.insert_media_key_source(event_loop);
         state.insert_hosted_app_poll_source(event_loop);
         state.insert_shell_frame_retry_source(event_loop);
@@ -497,6 +507,14 @@ impl ShadowGuestCompositor {
                 input_to_present_us,
                 dispatch_to_present_us
             );
+        }
+        if self.exit_after_touch_present {
+            tracing::info!(
+                "[shadow-guest-compositor] touch-present-exit route={} seq={}",
+                trace.route,
+                trace.sequence
+            );
+            self.request_exit();
         }
     }
 

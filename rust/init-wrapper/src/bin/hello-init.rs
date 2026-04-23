@@ -667,6 +667,7 @@ mod linux {
                             "vulkan-offscreen",
                             "compositor-scene",
                             "app-direct-present",
+                            "app-direct-present-touch-counter",
                             "firmware-probe-only",
                         ],
                     ) {
@@ -1138,7 +1139,14 @@ mod linux {
     }
 
     fn orange_gpu_mode_is_app_direct_present(mode: &str) -> bool {
-        mode == "app-direct-present"
+        matches!(
+            mode,
+            "app-direct-present" | "app-direct-present-touch-counter"
+        )
+    }
+
+    fn orange_gpu_mode_is_app_direct_present_touch_counter(mode: &str) -> bool {
+        mode == "app-direct-present-touch-counter"
     }
 
     fn orange_gpu_mode_uses_session_frame_capture(mode: &str) -> bool {
@@ -1751,11 +1759,63 @@ mod linux {
         Some(summary_text)
     }
 
+    #[derive(Default)]
+    struct TouchCounterEvidence {
+        input_observed: bool,
+        tap_dispatched: bool,
+        counter_incremented: bool,
+        post_touch_frame_committed: bool,
+        post_touch_frame_artifact_logged: bool,
+        touch_latency_present: bool,
+        post_touch_frame_captured: bool,
+    }
+
+    impl TouchCounterEvidence {
+        fn ok(&self) -> bool {
+            self.input_observed
+                && self.tap_dispatched
+                && self.counter_incremented
+                && self.post_touch_frame_committed
+                && self.post_touch_frame_artifact_logged
+                && self.touch_latency_present
+                && self.post_touch_frame_captured
+        }
+    }
+
+    fn touch_counter_evidence_from_output(
+        output_text: &str,
+        frame_bytes: u64,
+    ) -> TouchCounterEvidence {
+        let post_touch_frame_index =
+            output_text.find("shadow-rust-demo: frame_committed counter=1");
+        let post_touch_frame_artifact_logged = post_touch_frame_index
+            .and_then(|index| {
+                output_text[index..].find("[shadow-guest-compositor] wrote-frame-artifact")
+            })
+            .is_some();
+        TouchCounterEvidence {
+            input_observed: output_text
+                .contains("[shadow-guest-compositor] touch-input phase=Down")
+                || output_text
+                    .contains("[shadow-guest-compositor] synthetic-touch-observed phase=Down"),
+            tap_dispatched: output_text
+                .contains("[shadow-guest-compositor] touch-app-tap-dispatch"),
+            counter_incremented: output_text
+                .contains("shadow-rust-demo: counter_incremented count=1"),
+            post_touch_frame_committed: post_touch_frame_index.is_some(),
+            post_touch_frame_artifact_logged,
+            touch_latency_present: output_text
+                .contains("[shadow-guest-compositor] touch-latency-present"),
+            post_touch_frame_captured: frame_bytes > 0 && post_touch_frame_artifact_logged,
+        }
+    }
+
     fn record_session_frame_summary(
         runtime: &mut MetadataStageRuntime,
         kind: &str,
         startup_mode: &str,
         app_id: Option<&str>,
+        touch_counter_required: bool,
     ) -> Result<(), &'static str> {
         if !runtime.enabled || runtime.write_failed || !runtime.prepared {
             return Err("metadata-disabled");
@@ -1767,10 +1827,34 @@ mod linux {
         }
 
         let frame_path = runtime.compositor_frame_path.display();
+        let touch_counter_evidence = if touch_counter_required {
+            let output_text =
+                fs::read_to_string(ORANGE_GPU_OUTPUT_PATH).map_err(|_| "output-log-missing")?;
+            Some(touch_counter_evidence_from_output(
+                &output_text,
+                frame_bytes,
+            ))
+        } else {
+            None
+        };
         let mut payload =
             format!("{{\n  \"kind\": \"{kind}\",\n  \"startup_mode\": \"{startup_mode}\",\n");
         if let Some(app_id) = app_id {
             let _ = write!(payload, "  \"app_id\": \"{app_id}\",\n");
+        }
+        if let Some(evidence) = touch_counter_evidence.as_ref() {
+            let _ = write!(
+                payload,
+                "  \"touch_counter_probe\": {{\n    \"injection\": \"synthetic-compositor\",\n    \"input_observed\": {},\n    \"tap_dispatched\": {},\n    \"counter_incremented\": {},\n    \"post_touch_frame_committed\": {},\n    \"post_touch_frame_artifact_logged\": {},\n    \"touch_latency_present\": {},\n    \"post_touch_frame_captured\": {}\n  }},\n  \"touch_counter_probe_ok\": {},\n",
+                evidence.input_observed,
+                evidence.tap_dispatched,
+                evidence.counter_incremented,
+                evidence.post_touch_frame_committed,
+                evidence.post_touch_frame_artifact_logged,
+                evidence.touch_latency_present,
+                evidence.post_touch_frame_captured,
+                evidence.ok()
+            );
         }
         let _ = write!(
             payload,
@@ -1785,6 +1869,14 @@ mod linux {
         {
             runtime.write_failed = true;
             return Err("summary-write-failed");
+        }
+        if touch_counter_required
+            && !touch_counter_evidence
+                .as_ref()
+                .map(TouchCounterEvidence::ok)
+                .unwrap_or(false)
+        {
+            return Err("touch-counter-proof-missing");
         }
         Ok(())
     }
@@ -2362,6 +2454,7 @@ mod linux {
             "vulkan-offscreen" => ("smoke", false, false),
             "compositor-scene" => ("flat-orange", false, false),
             "app-direct-present" => ("flat-orange", false, false),
+            "app-direct-present-touch-counter" => ("flat-orange", false, false),
             _ => ("flat-orange", true, true),
         }
     }
@@ -2825,13 +2918,24 @@ mod linux {
         }
         if watch_result.exit_status == Some(0) && metadata_stage.enabled {
             if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode) {
-                let (summary_kind, startup_mode, app_id, stage_name) =
+                let (summary_kind, startup_mode, app_id, stage_name, touch_counter_required) =
                     if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode) {
                         (
                             "compositor-scene",
                             "shell",
                             None,
                             "compositor-scene-frame-captured",
+                            false,
+                        )
+                    } else if orange_gpu_mode_is_app_direct_present_touch_counter(
+                        &config.orange_gpu_mode,
+                    ) {
+                        (
+                            "app-direct-present-touch-counter",
+                            "app",
+                            Some("rust-demo"),
+                            "app-direct-present-touch-counter-proved",
+                            true,
                         )
                     } else {
                         (
@@ -2839,11 +2943,16 @@ mod linux {
                             "app",
                             Some(config.app_direct_present_app_id.as_str()),
                             "app-direct-present-frame-captured",
+                            false,
                         )
                     };
-                if let Err(reason) =
-                    record_session_frame_summary(metadata_stage, summary_kind, startup_mode, app_id)
-                {
+                if let Err(reason) = record_session_frame_summary(
+                    metadata_stage,
+                    summary_kind,
+                    startup_mode,
+                    app_id,
+                    touch_counter_required,
+                ) {
                     log_line(&format!(
                         "{summary_kind} frame missing or could not be summarized: {reason}"
                     ));

@@ -65,6 +65,8 @@ pub(crate) struct GuestStartupConfig {
     pub(crate) dmabuf_format_profile: DmabufFormatProfile,
     pub(crate) touch_signal_path: Option<PathBuf>,
     pub(crate) touch_latency_trace: bool,
+    pub(crate) synthetic_tap: Option<GuestSyntheticTapConfig>,
+    pub(crate) exit_after_touch_present: bool,
     pub(crate) frame_snapshot_cache_enabled: bool,
     pub(crate) frame_checksum_enabled: bool,
     pub(crate) frame_artifact_path: PathBuf,
@@ -75,6 +77,14 @@ pub(crate) struct GuestStartupConfig {
     pub(crate) keyboard_seat_enabled: bool,
     pub(crate) software_keyboard_enabled: bool,
     pub(crate) background_app_resident_limit: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct GuestSyntheticTapConfig {
+    pub(crate) normalized_x_millis: u16,
+    pub(crate) normalized_y_millis: u16,
+    pub(crate) after_first_frame_delay_ms: u64,
+    pub(crate) hold_ms: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -116,6 +126,8 @@ impl GuestStartupConfig {
             dmabuf_format_profile: DmabufFormatProfile::Default,
             touch_signal_path: None,
             touch_latency_trace: false,
+            synthetic_tap: None,
+            exit_after_touch_present: false,
             frame_snapshot_cache_enabled: false,
             frame_checksum_enabled: false,
             frame_artifact_path: default_frame_artifact_path(),
@@ -577,7 +589,7 @@ impl GuestStartupConfigFile {
         config.startup_action = self.startup.into_startup_action()?;
         config.client = self.client.into_client_config(self.runtime, self.artifacts);
         self.compositor.apply_to(&mut config)?;
-        self.touch.apply_to(&mut config);
+        self.touch.apply_to(&mut config)?;
         self.window.apply_to(&mut config)?;
         Ok(config)
     }
@@ -852,16 +864,60 @@ impl GuestFrameCaptureConfigFile {
 struct GuestTouchConfigFile {
     signal_path: Option<String>,
     latency_trace: Option<bool>,
+    synthetic_tap: Option<GuestSyntheticTapConfigFile>,
+    exit_after_present: Option<bool>,
 }
 
 impl GuestTouchConfigFile {
-    fn apply_to(self, config: &mut GuestStartupConfig) {
+    fn apply_to(self, config: &mut GuestStartupConfig) -> Result<(), ConfigError> {
         if let Some(signal_path) = self.signal_path.as_deref() {
             config.touch_signal_path = non_empty_trimmed(Some(signal_path)).map(PathBuf::from);
         }
         if let Some(touch_latency_trace) = self.latency_trace {
             config.touch_latency_trace = touch_latency_trace;
         }
+        if let Some(synthetic_tap) = self.synthetic_tap {
+            config.synthetic_tap = Some(synthetic_tap.into_config()?);
+        }
+        if let Some(exit_after_touch_present) = self.exit_after_present {
+            config.exit_after_touch_present = exit_after_touch_present;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GuestSyntheticTapConfigFile {
+    normalized_x_millis: Option<u16>,
+    normalized_y_millis: Option<u16>,
+    after_first_frame_delay_ms: Option<u64>,
+    hold_ms: Option<u64>,
+}
+
+impl GuestSyntheticTapConfigFile {
+    fn into_config(self) -> Result<GuestSyntheticTapConfig, ConfigError> {
+        let normalized_x_millis = self.normalized_x_millis.unwrap_or(500);
+        let normalized_y_millis = self.normalized_y_millis.unwrap_or(500);
+        if normalized_x_millis > 1000 {
+            return Err(invalid_session_config_field(
+                "touch.syntheticTap.normalizedXMillis",
+                format!("{normalized_x_millis}: expected 0..1000"),
+            ));
+        }
+        if normalized_y_millis > 1000 {
+            return Err(invalid_session_config_field(
+                "touch.syntheticTap.normalizedYMillis",
+                format!("{normalized_y_millis}: expected 0..1000"),
+            ));
+        }
+
+        Ok(GuestSyntheticTapConfig {
+            normalized_x_millis,
+            normalized_y_millis,
+            after_first_frame_delay_ms: self.after_first_frame_delay_ms.unwrap_or(250),
+            hold_ms: self.hold_ms.unwrap_or(50),
+        })
     }
 }
 

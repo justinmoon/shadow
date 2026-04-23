@@ -38,6 +38,9 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
     - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-ts-counter-app-direct-present-gpu-v3.img.hello-init.json`
     - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/ts-counter-app-direct-present-gpu-v3-primary/recover-traces/status.json`
     - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/ts-counter-app-direct-present-gpu-v3-confirm/recover-traces/status.json`
+  - `app-direct-present-touch-counter`
+    - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-app-direct-present-touch-counter-v1.img.hello-init.json`
+    - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/app-direct-present-touch-counter-v1-primary-0B191JEC203253/recover-traces/status.json`
 - The truth surface is `recover-traces/status.json` plus recovered metadata files, not the top-level one-shot wrapper result.
 - The `ts-app-minimal` proof contract is now explicit in recovered status:
   - `expected_app_direct_present_app_id`
@@ -51,6 +54,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
   - replace the boot-owned app client shell wrapper with a static Rust launcher
   - stage the Wayland libraries that `winit` loads dynamically and set `LD_LIBRARY_PATH` for the app bundle
 - The next honest product rung on `master` is first input/touch on the same boot-owned render/present path.
+- The `app-direct-present-touch-counter` proof uses a compositor-owned synthetic tap in the Rust demo app path and requires recovered metadata showing input observed, tap dispatched, counter incremented, touch-present latency, and a post-touch frame capture.
 - Stock-init trigger / imported-rc / preflight work is now parked:
   - latest high-signal negative result: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/runs/boot-kgsl-trigger-ladder/20260423T082243Z-09051JEC202061_/matrix-summary.json`
   - treat that seam as fallback evidence, not as a peer execution stream
@@ -71,7 +75,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 
 ## Highest-Leverage Next Experiments
 
-1. Run `touch-counter-gpu` so the first input redraw lands on the same boot-owned render/present path.
+1. Run `touch-counter-gpu` so the first runtime-backed input redraw lands on the same boot-owned render/present path.
 2. Move into `shell-home-static` only after both the first real app lane and the first real input lane are truthful.
 3. Keep direct `std` PID1 and stock-init imported-rc work as fallback discriminators only.
 

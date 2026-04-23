@@ -101,7 +101,7 @@ Related docs:
 - Pick the first real app lane after `app-direct-present`.
   - prefer `ts-app-minimal` if it is the shortest path to actual Shadow userspace
   - use `rust-app-minimal` first only if it materially de-risks the boot seam
-- Land one minimal touch/input rung before starting shell interaction work.
+- The Rust-demo touch/input rung is signed off; land the first runtime-backed touch/input rung before starting shell interaction work.
 - Keep the direct `std` PID1 seam honest as a regression discriminator while not letting it block the main ladder.
 
 ## Next Dispatch Batch
@@ -185,6 +185,23 @@ Related docs:
     - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
     - canonical rooted proof recipe only if the proof contract or staged image metadata changes
   - blocked_by: none
+- [x] `touch-rust-counter-boot-proof`
+  - task_id: boot-touch-rust-counter-boot-proof
+  - why sidecar: prove the landed Rust counter touch path inside the boot-owned app/direct-present image without waiting on the TypeScript runtime
+  - result:
+    - added `app-direct-present-touch-counter` as a boot image mode
+    - compositor injects one synthetic tap after the first frame, records touch-present latency, exits after the post-touch present, and recovers the post-touch frame through metadata
+    - recovered proof shows input observed, tap dispatched, counter incremented, post-touch frame committed, post-touch artifact logged, touch latency present, and post-touch frame captured
+  - proof image:
+    - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-app-direct-present-touch-counter-v1.img.hello-init.json`
+  - proof bundle:
+    - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/app-direct-present-touch-counter-v1-primary-0B191JEC203253/recover-traces/status.json`
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - `just pre-commit`
+    - rooted Pixel one-shot on `0B191JEC203253`
+  - blocked_by: none
 - [x] `camera-linux-api-recon`
   - task_id: boot-camera-linux-api-recon
   - why sidecar: identify whether boot-owned userspace has a Linux camera ABI worth pursuing without blocking the app/input/shell ladder
@@ -245,7 +262,7 @@ Related docs:
   - blocked_by: none
 - [ ] `touch-counter-gpu`
   - task_id: boot-touch-counter-gpu
-  - why next: first honest input rung on the real boot-owned render/present path
+  - why next: first runtime-backed input rung on the real boot-owned render/present path
   - owned paths:
     - `scripts/pixel/`
     - `ui/`

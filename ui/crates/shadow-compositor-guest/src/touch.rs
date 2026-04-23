@@ -195,6 +195,23 @@ pub fn spawn_touch_reader(info: TouchDeviceInfo, sender: Sender<TouchInputEvent>
         .expect("spawn touch reader");
 }
 
+pub fn synthetic_touch_event(
+    phase: TouchPhase,
+    normalized_x_millis: u16,
+    normalized_y_millis: u16,
+) -> TouchInputEvent {
+    let wall_msec = wall_millis();
+    TouchInputEvent {
+        sequence: next_touch_sequence(),
+        phase,
+        normalized_x: f64::from(normalized_x_millis.min(1000)) / 1000.0,
+        normalized_y: f64::from(normalized_y_millis.min(1000)) / 1000.0,
+        time_msec: wall_msec as u32,
+        captured_at: Instant::now(),
+        wall_msec,
+    }
+}
+
 pub fn map_normalized_touch_to_frame(
     normalized_x: f64,
     normalized_y: f64,
