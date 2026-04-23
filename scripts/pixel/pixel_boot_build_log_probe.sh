@@ -399,7 +399,7 @@ fi
   cat <<'EOF'
     start shadow-boot-helper
 
-service shadow-boot-helper /system/bin/sh /shadow-boot-helper
+service shadow-boot-helper /system/bin/sh /shadow-boot-helper-launcher
     class late_start
     user root
     group root system shell log
@@ -410,6 +410,21 @@ EOF
 } >"$WORK_DIR/init.shadow.rc"
 chmod 0644 "$WORK_DIR/init.shadow.rc"
 
+cat >"$WORK_DIR/shadow-boot-helper-launcher" <<EOF
+#!/system/bin/sh
+set -eu
+
+preflight_launch_proof_key="${PREFLIGHT_LAUNCH_PROOF_KEY}"
+preflight_launch_proof_value="${PREFLIGHT_LAUNCH_PROOF_VALUE}"
+
+if [ -n "\$preflight_launch_proof_key" ] && [ -n "\$preflight_launch_proof_value" ]; then
+  setprop "\$preflight_launch_proof_key" "\$preflight_launch_proof_value" || true
+fi
+
+exec /system/bin/sh /shadow-boot-helper "\$@"
+EOF
+chmod 0755 "$WORK_DIR/shadow-boot-helper-launcher"
+
 cat >"$WORK_DIR/shadow-boot-helper" <<EOF
 #!/system/bin/sh
 set -eu
@@ -418,8 +433,6 @@ log_root="${DEVICE_LOG_ROOT}"
 log_file="\$log_root/helper.log"
 helper_status_prop_key="${HELPER_STATUS_PROP_KEY}"
 preflight_status_prop_key="${PREFLIGHT_STATUS_PROP_KEY}"
-preflight_launch_proof_key="${PREFLIGHT_LAUNCH_PROOF_KEY}"
-preflight_launch_proof_value="${PREFLIGHT_LAUNCH_PROOF_VALUE}"
 
 timestamp() {
   date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown-time
@@ -524,8 +537,6 @@ preflight_required_missing_labels=""
 preflight_data_mounted=false
 preflight_data_writable=false
 preflight_data_local_tmp_ready=false
-
-setprop "\$preflight_launch_proof_key" "\$preflight_launch_proof_value" || true
 
 mark_preflight_blocked() {
   reason="\$1"
@@ -649,6 +660,7 @@ build_args=(
   --input "$INPUT_IMAGE"
   --output "$OUTPUT_IMAGE"
   --add "init.shadow.rc=$WORK_DIR/init.shadow.rc"
+  --add "shadow-boot-helper-launcher=$WORK_DIR/shadow-boot-helper-launcher"
   --add "shadow-boot-helper=$WORK_DIR/shadow-boot-helper"
   --replace "$PATCH_TARGET=$WORK_DIR/patch-target.patched"
 )

@@ -3185,8 +3185,9 @@ assert_contains "$log_preflight_output" "Build mode: stock-init"
 assert_contains "$log_preflight_output" "Preflight profile: phase1-shell"
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" init.shadow.rc 'setprop debug.shadow.boot.preflight.import triggered'
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" system/etc/ramdisk/build.prop 'debug.shadow.boot.preflight.second_stage=ready'
+assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper-launcher 'setprop "$preflight_launch_proof_key" "$preflight_launch_proof_value"'
+assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper-launcher 'exec /system/bin/sh /shadow-boot-helper "$@"'
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'setprop "$preflight_status_prop_key"'
-assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'setprop "$preflight_launch_proof_key" "$preflight_launch_proof_value"'
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'preflight-summary.txt'
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'runtime-linux-dir'
 
