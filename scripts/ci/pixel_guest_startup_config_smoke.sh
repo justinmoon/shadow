@@ -32,7 +32,7 @@ services_json="$(
     '{"camera":{"endpoint":"127.0.0.1:37656","timeoutMs":45000}}'
 )"
 base_session_env=$'SHADOW_GUEST_START_APP_ID=shell\nSHADOW_GUEST_SHELL_START_APP_ID=timeline\nSHADOW_GUEST_CLIENT=/runtime/alt-client\nSHADOW_GUEST_COMPOSITOR_BIN=/runtime/alt-compositor\nSHADOW_GUEST_COMPOSITOR_BOOT_SPLASH_DRM=1\nSHADOW_GUEST_COMPOSITOR_TOPLEVEL_WIDTH=1080\nSHADOW_GUEST_COMPOSITOR_TOPLEVEL_HEIGHT=2280\nSHADOW_SYSTEM_BINARY_PATH=/runtime/shadow-system\nSHADOW_SESSION_APP_PROFILE=pixel-shell\nSHADOW_RUNTIME_DIR_MODE=0711\nSHADOW_COMPOSITOR_CONTROL_SOCKET_MODE=0666\nSHADOW_TIMELINE_APP_BUNDLE_PATH=/runtime/timeline.js'
-overlay_session_env=$'SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT=2\nSHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE=1\nSHADOW_GUEST_SESSION_CONFIG=/override/guest.json\nSHADOW_RUNTIME_SESSION_CONFIG=/override/runtime.json\nSHADOW_RUNTIME_AUDIO_BACKEND=memory\nSHADOW_RUNTIME_NOSTR_DB_PATH=/override/runtime-nostr.sqlite3\nSHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=/override/runtime-nostr.sock\nSHADOW_RUNTIME_CASHU_DATA_DIR=/override/runtime-cashu'
+overlay_session_env=$'SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT=2\nSHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE=1\nSHADOW_GUEST_SESSION_CONFIG=/override/guest.json\nSHADOW_RUNTIME_SESSION_CONFIG=/override/runtime.json\nSHADOW_RUNTIME_AUDIO_BACKEND=memory\nSHADOW_RUNTIME_NOSTR_DB_PATH=/override/runtime-nostr.sqlite3\nSHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=/override/runtime-nostr.sock\nSHADOW_RUNTIME_CASHU_DATA_DIR=/override/runtime-cashu\nSHADOW_RUNTIME_CAMERA_ENDPOINT=127.0.0.1:9\nSHADOW_RUNTIME_CAMERA_ALLOW_MOCK=0\nSHADOW_RUNTIME_CAMERA_TIMEOUT_MS=1'
 session_env_for_config="$base_session_env"
 while IFS= read -r env_line; do
   [[ -n "$env_line" ]] || continue
@@ -325,6 +325,9 @@ assert overlay_launch_env_lines == [
     "SHADOW_RUNTIME_NOSTR_DB_PATH=/override/runtime-nostr.sqlite3",
     "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=/override/runtime-nostr.sock",
     "SHADOW_RUNTIME_CASHU_DATA_DIR=/override/runtime-cashu",
+    "SHADOW_RUNTIME_CAMERA_ENDPOINT=127.0.0.1:9",
+    "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK=0",
+    "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS=1",
 ], overlay_launch_env_lines
 
 assert run_config["schemaVersion"] == 1, run_config
@@ -355,19 +358,6 @@ assert run_config["session"] == {
         {"key": "SHADOW_COMPOSITOR_CONTROL_SOCKET_MODE", "value": "0666"},
         {"key": "SHADOW_TIMELINE_APP_BUNDLE_PATH", "value": "/runtime/timeline.js"},
         {"key": "SHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE", "value": "1"},
-        {"key": "SHADOW_RUNTIME_AUDIO_BACKEND", "value": "memory"},
-        {
-            "key": "SHADOW_RUNTIME_NOSTR_DB_PATH",
-            "value": "/override/runtime-nostr.sqlite3",
-        },
-        {
-            "key": "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET",
-            "value": "/override/runtime-nostr.sock",
-        },
-        {
-            "key": "SHADOW_RUNTIME_CASHU_DATA_DIR",
-            "value": "/override/runtime-cashu",
-        },
     ],
     "clientEnvOverlayAssignments": [
         {"key": "OVERLAY_CLIENT", "value": "debug"},
@@ -412,7 +402,7 @@ PY
   [[ "$pixel_guest_run_config_frame_artifact_path" == "/tmp/shadow-frame-test.ppm" ]]
   [[ "$pixel_guest_run_config_session_timeout_secs" == "25" ]]
   [[ "$pixel_guest_run_config_session_exit_timeout_secs" == "30" ]]
-  [[ "$pixel_guest_run_config_session_launch_env" == $'SHADOW_GUEST_COMPOSITOR_BIN=/runtime/alt-compositor\nSHADOW_SESSION_APP_PROFILE=pixel-shell\nSHADOW_RUNTIME_DIR_MODE=0711\nSHADOW_COMPOSITOR_CONTROL_SOCKET_MODE=0666\nSHADOW_TIMELINE_APP_BUNDLE_PATH=/runtime/timeline.js\nSHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE=1\nSHADOW_RUNTIME_AUDIO_BACKEND=memory\nSHADOW_RUNTIME_NOSTR_DB_PATH=/override/runtime-nostr.sqlite3\nSHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=/override/runtime-nostr.sock\nSHADOW_RUNTIME_CASHU_DATA_DIR=/override/runtime-cashu' ]]
+  [[ "$pixel_guest_run_config_session_launch_env" == $'SHADOW_GUEST_COMPOSITOR_BIN=/runtime/alt-compositor\nSHADOW_SESSION_APP_PROFILE=pixel-shell\nSHADOW_RUNTIME_DIR_MODE=0711\nSHADOW_COMPOSITOR_CONTROL_SOCKET_MODE=0666\nSHADOW_TIMELINE_APP_BUNDLE_PATH=/runtime/timeline.js\nSHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE=1' ]]
   [[ "$pixel_guest_run_config_client_env_overlay" == $'OVERLAY_CLIENT=debug\nSHADOW_RUNTIME_DEBUG=1' ]]
   [[ "$pixel_guest_run_config_required_markers" == $'required-marker-1\nrequired-marker-2' ]]
   [[ "$pixel_guest_run_config_forbidden_markers" == "forbidden-marker-1" ]]

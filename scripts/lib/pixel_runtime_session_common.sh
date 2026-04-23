@@ -1167,6 +1167,89 @@ def parse_flag(raw_value):
     return value not in {"0", "false", "off"}
 
 
+def filter_env_assignments(assignments, removed_keys):
+    return [
+        assignment
+        for assignment in assignments
+        if assignment["key"] not in removed_keys
+    ]
+
+
+def filter_session_launch_env_services(assignments, services):
+    if services is None:
+        return assignments
+    if not isinstance(services, dict):
+        raise SystemExit("pixel: guest startup config services must be an object")
+
+    filtered = list(assignments)
+
+    if "audioBackend" in services:
+        audio_backend = services.get("audioBackend")
+        if audio_backend is not None and not isinstance(audio_backend, str):
+            raise SystemExit("pixel: services.audioBackend must be a string")
+        filtered = filter_env_assignments(
+            filtered,
+            {"SHADOW_RUNTIME_AUDIO_BACKEND"},
+        )
+
+    if (
+        "nostrDbPath" in services
+        or "nostrServiceSocket" in services
+    ):
+        nostr_db_path = services.get("nostrDbPath")
+        if nostr_db_path is not None and not isinstance(nostr_db_path, str):
+            raise SystemExit("pixel: services.nostrDbPath must be a string")
+        nostr_service_socket = services.get("nostrServiceSocket")
+        if (
+            nostr_service_socket is not None
+            and not isinstance(nostr_service_socket, str)
+        ):
+            raise SystemExit("pixel: services.nostrServiceSocket must be a string")
+        filtered = filter_env_assignments(
+            filtered,
+            {
+                "SHADOW_RUNTIME_NOSTR_DB_PATH",
+                "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET",
+            },
+        )
+
+    if "cashuDataDir" in services:
+        cashu_data_dir = services.get("cashuDataDir")
+        if cashu_data_dir is not None and not isinstance(cashu_data_dir, str):
+            raise SystemExit("pixel: services.cashuDataDir must be a string")
+        filtered = filter_env_assignments(
+            filtered,
+            {"SHADOW_RUNTIME_CASHU_DATA_DIR"},
+        )
+
+    if "camera" in services:
+        camera = services.get("camera")
+        if camera is not None and not isinstance(camera, dict):
+            raise SystemExit("pixel: services.camera must be an object")
+        if isinstance(camera, dict):
+            endpoint = camera.get("endpoint")
+            if endpoint is not None and not isinstance(endpoint, str):
+                raise SystemExit("pixel: services.camera.endpoint must be a string")
+            allow_mock = camera.get("allowMock")
+            if allow_mock is not None and not isinstance(allow_mock, bool):
+                raise SystemExit("pixel: services.camera.allowMock must be a boolean")
+            timeout_ms = camera.get("timeoutMs")
+            if timeout_ms is not None and (
+                isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int)
+            ):
+                raise SystemExit("pixel: services.camera.timeoutMs must be an integer")
+        filtered = filter_env_assignments(
+            filtered,
+            {
+                "SHADOW_RUNTIME_CAMERA_ENDPOINT",
+                "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",
+                "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS",
+            },
+        )
+
+    return filtered
+
+
 output_path = os.environ["PIXEL_GUEST_RUN_CONFIG_OUTPUT_PATH"]
 startup_config_path = os.environ["PIXEL_GUEST_RUN_CONFIG_STARTUP_CONFIG_PATH"]
 if not startup_config_path:
@@ -1182,11 +1265,13 @@ if config.get("schemaVersion") != 1:
 session = {}
 verify = {}
 takeover = {}
+services = config.get("services")
 
 session_launch_env = parse_env_lines(
     "guest session launch env",
     os.environ.get("PIXEL_GUEST_RUN_CONFIG_SESSION_LAUNCH_ENV", ""),
 )
+session_launch_env = filter_session_launch_env_services(session_launch_env, services)
 if session_launch_env:
     session["launchEnvAssignments"] = session_launch_env
 
