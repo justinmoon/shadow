@@ -1058,22 +1058,48 @@ for forbidden_key in (
 PY
 
 session_env_text="$(run_shadowctl ssh -t vm -- cat /var/lib/shadow-ui/shadow-ui-session-env.sh)"
-if [[ "$session_env_text" != *'export SHADOW_RUNTIME_SESSION_CONFIG="/opt/shadow-runtime/session-config.json"'* ]]; then
-  echo "vm-smoke: session env missing SHADOW_RUNTIME_SESSION_CONFIG export" >&2
-  exit 1
-fi
-if [[ "$session_env_text" != *"export SHADOW_RUNTIME_NOSTR_DB_PATH=\"$VM_OVERRIDE_ROOT/runtime-nostr.sqlite3\""* ]]; then
-  echo "vm-smoke: session env missing overridden SHADOW_RUNTIME_NOSTR_DB_PATH export" >&2
-  exit 1
-fi
-if [[ "$session_env_text" != *"export SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=\"$VM_OVERRIDE_ROOT/runtime-nostr.sock\""* ]]; then
-  echo "vm-smoke: session env missing overridden SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET export" >&2
-  exit 1
-fi
-if [[ "$session_env_text" != *"export SHADOW_RUNTIME_CASHU_DATA_DIR=\"$VM_OVERRIDE_ROOT/runtime-cashu\""* ]]; then
-  echo "vm-smoke: session env missing overridden SHADOW_RUNTIME_CASHU_DATA_DIR export" >&2
-  exit 1
-fi
+SESSION_ENV_TEXT="$session_env_text" python3 - <<'PY'
+import os
+import shlex
+
+env_lines = [line for line in os.environ["SESSION_ENV_TEXT"].splitlines() if line]
+env_assignments = {}
+
+for line in env_lines:
+    if not line.startswith("export ") or "=" not in line:
+        raise SystemExit(f"vm-smoke: invalid session env line: {line!r}")
+    key, raw_value = line[len("export "):].split("=", 1)
+    values = shlex.split(raw_value, posix=True)
+    if len(values) != 1:
+        raise SystemExit(
+            f"vm-smoke: invalid session env value for {key}: {raw_value!r}"
+        )
+    env_assignments[key] = values[0]
+
+expected_values = {
+    "SHADOW_RUNTIME_SESSION_CONFIG": "/opt/shadow-runtime/session-config.json",
+}
+for key, expected in expected_values.items():
+    actual = env_assignments.get(key)
+    if actual != expected:
+        raise SystemExit(
+            f"vm-smoke: session env {key} mismatch: expected {expected!r}, got {actual!r}"
+        )
+
+for forbidden_key in (
+    "SHADOW_RUNTIME_NOSTR_DB_PATH",
+    "SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET",
+    "SHADOW_RUNTIME_CASHU_DATA_DIR",
+    "SHADOW_RUNTIME_AUDIO_BACKEND",
+    "SHADOW_RUNTIME_CAMERA_ENDPOINT",
+    "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",
+    "SHADOW_RUNTIME_CAMERA_TIMEOUT_MS",
+):
+    if forbidden_key in env_assignments:
+        raise SystemExit(
+            f"vm-smoke: session env unexpectedly exports {forbidden_key}"
+        )
+PY
 
 echo "vm-smoke: tap counter launcher tile"
 counter_launcher_tap

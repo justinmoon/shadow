@@ -282,6 +282,9 @@ with config_path.open("r", encoding="utf-8") as handle:
 def emit(name: str, value: str) -> None:
     print(f"export {name}={shlex.quote(value)}")
 
+def assign(name: str, value: str) -> None:
+    print(f"{name}={shlex.quote(value)}")
+
 emit("SHADOW_RUNTIME_SESSION_CONFIG", str(config_path))
 emit("SHADOW_SESSION_APP_PROFILE", config["profile"])
 
@@ -291,23 +294,31 @@ if isinstance(binary_path, str) and binary_path:
     emit("SHADOW_SYSTEM_BINARY_PATH", binary_path)
 
 services = config["services"]
-emit("SHADOW_RUNTIME_CASHU_DATA_DIR", services["cashuDataDir"])
-emit("SHADOW_RUNTIME_NOSTR_DB_PATH", services["nostrDbPath"])
-emit("SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET", services["nostrServiceSocket"])
+assign("shadow_session_cashu_data_dir", services["cashuDataDir"])
+assign("shadow_session_nostr_db_path", services["nostrDbPath"])
+assign("shadow_session_nostr_service_socket", services["nostrServiceSocket"])
 audio_backend = services.get("audioBackend")
-if isinstance(audio_backend, str) and audio_backend:
-    emit("SHADOW_RUNTIME_AUDIO_BACKEND", audio_backend)
+assign(
+    "shadow_session_audio_backend",
+    audio_backend if isinstance(audio_backend, str) and audio_backend else "",
+)
 camera = services.get("camera")
+camera_endpoint = ""
+camera_allow_mock = ""
+camera_timeout_ms = ""
 if isinstance(camera, dict):
     endpoint = camera.get("endpoint")
     if isinstance(endpoint, str) and endpoint:
-        emit("SHADOW_RUNTIME_CAMERA_ENDPOINT", endpoint)
+        camera_endpoint = endpoint
     allow_mock = camera.get("allowMock")
     if isinstance(allow_mock, bool):
-        emit("SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "1" if allow_mock else "0")
+        camera_allow_mock = "1" if allow_mock else "0"
     timeout_ms = camera.get("timeoutMs")
     if isinstance(timeout_ms, int) and timeout_ms > 0:
-        emit("SHADOW_RUNTIME_CAMERA_TIMEOUT_MS", str(timeout_ms))
+        camera_timeout_ms = str(timeout_ms)
+assign("shadow_session_camera_endpoint", camera_endpoint)
+assign("shadow_session_camera_allow_mock", camera_allow_mock)
+assign("shadow_session_camera_timeout_ms", camera_timeout_ms)
 
 runtime = config["runtime"]
 default_bundle_path = runtime.get("defaultBundlePath")
@@ -349,12 +360,12 @@ PY
             echo "runtime session config=$SHADOW_RUNTIME_SESSION_CONFIG"
             echo "startup app=$startup_app"
             echo "app launch mode=metadata"
-            echo "runtime nostr db=$SHADOW_RUNTIME_NOSTR_DB_PATH"
-            echo "runtime nostr socket=$SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET"
-            echo "runtime cashu dir=$SHADOW_RUNTIME_CASHU_DATA_DIR"
-            echo "runtime audio backend=''${SHADOW_RUNTIME_AUDIO_BACKEND:-unset}"
-            echo "runtime camera endpoint=''${SHADOW_RUNTIME_CAMERA_ENDPOINT:-unset}"
-            echo "runtime camera allow_mock=''${SHADOW_RUNTIME_CAMERA_ALLOW_MOCK:-unset}"
+            echo "runtime nostr db=$shadow_session_nostr_db_path"
+            echo "runtime nostr socket=$shadow_session_nostr_service_socket"
+            echo "runtime cashu dir=$shadow_session_cashu_data_dir"
+            echo "runtime audio backend=''${shadow_session_audio_backend:-unset}"
+            echo "runtime camera endpoint=''${shadow_session_camera_endpoint:-unset}"
+            echo "runtime camera allow_mock=''${shadow_session_camera_allow_mock:-unset}"
 
             ${shadowUiVmSessionPackage}/bin/shadow-compositor &
             compositor_pid=$!
@@ -439,13 +450,6 @@ PY
               "export SHADOW_RUNTIME_SESSION_CONFIG=\"$SHADOW_RUNTIME_SESSION_CONFIG\"" \
               "export SHADOW_SESSION_APP_PROFILE=\"$SHADOW_SESSION_APP_PROFILE\"" \
               "export SHADOW_RUNTIME_APP_BUNDLE_PATH=\"$runtime_bundle_path\"" \
-              "export SHADOW_RUNTIME_CASHU_DATA_DIR=\"$SHADOW_RUNTIME_CASHU_DATA_DIR\"" \
-              "export SHADOW_RUNTIME_NOSTR_DB_PATH=\"$SHADOW_RUNTIME_NOSTR_DB_PATH\"" \
-              "export SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET=\"$SHADOW_RUNTIME_NOSTR_SERVICE_SOCKET\"" \
-              "export SHADOW_RUNTIME_AUDIO_BACKEND=\"''${SHADOW_RUNTIME_AUDIO_BACKEND:-}\"" \
-              "export SHADOW_RUNTIME_CAMERA_ENDPOINT=\"''${SHADOW_RUNTIME_CAMERA_ENDPOINT:-}\"" \
-              "export SHADOW_RUNTIME_CAMERA_ALLOW_MOCK=\"''${SHADOW_RUNTIME_CAMERA_ALLOW_MOCK:-}\"" \
-              "export SHADOW_RUNTIME_CAMERA_TIMEOUT_MS=\"''${SHADOW_RUNTIME_CAMERA_TIMEOUT_MS:-}\"" \
               "export SHADOW_SYSTEM_BINARY_PATH=\"$system_path\"" \
               "export WAYLAND_DISPLAY=\"$nested_wayland\"" \
               "export SHADOW_COMPOSITOR_CONTROL=\"$control_socket\"" \
