@@ -23,8 +23,14 @@ use crate::{
 };
 
 const PRESS_FLASH: Duration = Duration::from_millis(160);
+const CLOCK_CARD_X: f32 = 20.0;
 const CLOCK_CARD_Y: f32 = 124.0;
+const CLOCK_CARD_WIDTH: f32 = 236.0;
 const CLOCK_CARD_HEIGHT: f32 = 250.0;
+const RECENTS_PANEL_X: f32 = 268.0;
+const RECENTS_PANEL_Y: f32 = CLOCK_CARD_Y;
+const RECENTS_PANEL_WIDTH: f32 = 252.0;
+const RECENTS_PANEL_HEIGHT: f32 = CLOCK_CARD_HEIGHT;
 const APP_PANEL_Y: f32 = 420.0;
 const APP_PANEL_HEIGHT: f32 = 640.0;
 const APP_ICON_SIZE: f32 = 96.0;
@@ -395,13 +401,6 @@ impl ShellModel {
             .find(|app_id| Some(*app_id) != self.foreground_app)
     }
 
-    fn recent_app_titles(&self) -> Vec<&'static str> {
-        self.recent_apps
-            .iter()
-            .filter_map(|app_id| find_app(*app_id).map(|app| app.title))
-            .collect()
-    }
-
     fn app_is_running(&self, app_id: AppId) -> bool {
         self.running_apps.contains(&app_id)
     }
@@ -668,12 +667,11 @@ fn build_clock(
     rects: &mut Vec<RoundedRect>,
     texts: &mut Vec<TextBlock>,
     status: &ShellStatus,
-    recent_titles: Vec<&'static str>,
 ) {
     rects.push(RoundedRect::new(
-        42.0,
+        CLOCK_CARD_X,
         CLOCK_CARD_Y,
-        456.0,
+        CLOCK_CARD_WIDTH,
         CLOCK_CARD_HEIGHT,
         46.0,
         SURFACE_RAISED.with_alpha(0.92),
@@ -681,12 +679,12 @@ fn build_clock(
 
     texts.push(TextBlock {
         content: status.time_label.clone(),
-        left: 66.0,
-        top: 168.0,
-        width: 408.0,
+        left: CLOCK_CARD_X + 20.0,
+        top: 162.0,
+        width: CLOCK_CARD_WIDTH - 40.0,
         height: 90.0,
-        size: 78.0,
-        line_height: 82.0,
+        size: 72.0,
+        line_height: 76.0,
         align: TextAlign::Center,
         weight: TextWeight::Bold,
         color: TEXT_PRIMARY,
@@ -694,27 +692,164 @@ fn build_clock(
 
     texts.push(TextBlock {
         content: status.date_label.clone(),
-        left: 86.0,
-        top: 270.0,
-        width: 368.0,
+        left: CLOCK_CARD_X + 26.0,
+        top: 264.0,
+        width: CLOCK_CARD_WIDTH - 52.0,
         height: 28.0,
-        size: 24.0,
-        line_height: 28.0,
+        size: 22.0,
+        line_height: 26.0,
         align: TextAlign::Center,
         weight: TextWeight::Normal,
         color: TEXT_MUTED,
     });
+}
 
-    if !recent_titles.is_empty() {
+fn recent_surface_detail(model: &ShellModel, app_id: AppId, index: usize) -> &'static str {
+    if model.app_is_foreground(app_id) {
+        "Live now"
+    } else if index == 0 {
+        "Latest surface"
+    } else {
+        "Warm in shell"
+    }
+}
+
+fn build_recent_apps_panel(
+    rects: &mut Vec<RoundedRect>,
+    texts: &mut Vec<TextBlock>,
+    model: &ShellModel,
+) {
+    rects.push(RoundedRect::new(
+        RECENTS_PANEL_X,
+        RECENTS_PANEL_Y,
+        RECENTS_PANEL_WIDTH,
+        RECENTS_PANEL_HEIGHT,
+        46.0,
+        SURFACE_GLASS.with_alpha(0.82),
+    ));
+
+    texts.push(TextBlock {
+        content: "Recents".to_string(),
+        left: RECENTS_PANEL_X + 24.0,
+        top: RECENTS_PANEL_Y + 24.0,
+        width: RECENTS_PANEL_WIDTH - 48.0,
+        height: 22.0,
+        size: 18.0,
+        line_height: 22.0,
+        align: TextAlign::Left,
+        weight: TextWeight::Semibold,
+        color: TEXT_PRIMARY,
+    });
+    texts.push(TextBlock {
+        content: if model.recent_apps.is_empty() {
+            "Launch from home to keep a surface warm.".to_string()
+        } else {
+            format!("{} warm surface(s) ready to resume.", model.recent_apps.len())
+        },
+        left: RECENTS_PANEL_X + 24.0,
+        top: RECENTS_PANEL_Y + 48.0,
+        width: RECENTS_PANEL_WIDTH - 48.0,
+        height: 18.0,
+        size: 12.0,
+        line_height: 14.0,
+        align: TextAlign::Left,
+        weight: TextWeight::Normal,
+        color: TEXT_MUTED,
+    });
+
+    if model.recent_apps.is_empty() {
+        rects.push(RoundedRect::new(
+            RECENTS_PANEL_X + 16.0,
+            RECENTS_PANEL_Y + 86.0,
+            RECENTS_PANEL_WIDTH - 32.0,
+            128.0,
+            24.0,
+            SURFACE.with_alpha(0.18),
+        ));
         texts.push(TextBlock {
-            content: format!("Warm apps: {}", recent_titles.join("  •  ")),
-            left: 78.0,
-            top: 322.0,
-            width: 384.0,
+            content: "No warm apps yet.".to_string(),
+            left: RECENTS_PANEL_X + 36.0,
+            top: RECENTS_PANEL_Y + 128.0,
+            width: RECENTS_PANEL_WIDTH - 72.0,
             height: 22.0,
-            size: 14.0,
-            line_height: 18.0,
+            size: 18.0,
+            line_height: 22.0,
             align: TextAlign::Center,
+            weight: TextWeight::Semibold,
+            color: TEXT_PRIMARY.with_alpha(0.92),
+        });
+        texts.push(TextBlock {
+            content: "Open an app, then come home to park it here.".to_string(),
+            left: RECENTS_PANEL_X + 28.0,
+            top: RECENTS_PANEL_Y + 156.0,
+            width: RECENTS_PANEL_WIDTH - 56.0,
+            height: 18.0,
+            size: 11.0,
+            line_height: 14.0,
+            align: TextAlign::Center,
+            weight: TextWeight::Normal,
+            color: TEXT_MUTED,
+        });
+        return;
+    }
+
+    for (index, app_id) in model.recent_apps.iter().copied().enumerate() {
+        let app = find_app(app_id).expect("recent app metadata");
+        let row_y = RECENTS_PANEL_Y + 82.0 + index as f32 * 54.0;
+        let row_alpha = if index == 0 { 0.58 } else { 0.42 };
+        let icon_x = RECENTS_PANEL_X + 28.0;
+        let icon_y = row_y + 9.0;
+
+        rects.push(RoundedRect::new(
+            RECENTS_PANEL_X + 16.0,
+            row_y,
+            RECENTS_PANEL_WIDTH - 32.0,
+            46.0,
+            24.0,
+            SURFACE_RAISED.with_alpha(row_alpha),
+        ));
+        rects.push(RoundedRect::new(
+            icon_x,
+            icon_y,
+            28.0,
+            28.0,
+            10.0,
+            app.icon_color,
+        ));
+
+        texts.push(TextBlock {
+            content: app.icon_label.to_string(),
+            left: icon_x,
+            top: icon_y + 5.0,
+            width: 28.0,
+            height: 18.0,
+            size: 14.0,
+            line_height: 16.0,
+            align: TextAlign::Center,
+            weight: TextWeight::Bold,
+            color: TEXT_PRIMARY.with_alpha(0.9),
+        });
+        texts.push(TextBlock {
+            content: app.title.to_string(),
+            left: RECENTS_PANEL_X + 66.0,
+            top: row_y + 8.0,
+            width: RECENTS_PANEL_WIDTH - 98.0,
+            height: 16.0,
+            size: 14.0,
+            line_height: 16.0,
+            align: TextAlign::Left,
+            weight: TextWeight::Semibold,
+            color: TEXT_PRIMARY,
+        });
+        texts.push(TextBlock {
+            content: recent_surface_detail(model, app_id, index).to_string(),
+            left: RECENTS_PANEL_X + 66.0,
+            top: row_y + 25.0,
+            width: RECENTS_PANEL_WIDTH - 98.0,
+            height: 14.0,
+            size: 10.0,
+            line_height: 12.0,
+            align: TextAlign::Left,
             weight: TextWeight::Normal,
             color: TEXT_MUTED,
         });
@@ -815,7 +950,8 @@ fn append_home_launcher(
         44.0,
         SURFACE_ACCENT.with_alpha(0.96),
     ));
-    build_clock(rects, texts, status, model.recent_app_titles());
+    build_clock(rects, texts, status);
+    build_recent_apps_panel(rects, texts, model);
     build_panel_header(rects, texts, model);
     build_app_grid(rects, texts, model);
 }
@@ -1308,6 +1444,69 @@ mod tests {
 
         shell.set_foreground_app(Some(COUNTER_APP_ID));
         assert!(shell.home_launcher_scene(&status).is_none());
+    }
+
+    #[test]
+    fn home_launcher_scene_renders_empty_recents_panel() {
+        let mut shell = ShellModel::new();
+        let status = ShellStatus {
+            time_label: "09:41".to_string(),
+            date_label: "Friday, April 18".to_string(),
+            battery_percent: 61,
+            wifi_strength: 2,
+        };
+
+        let launcher = shell
+            .home_launcher_scene(&status)
+            .expect("home launcher scene");
+
+        assert!(launcher.rects.iter().any(|rect| {
+            rect.x == RECENTS_PANEL_X
+                && rect.y == RECENTS_PANEL_Y
+                && rect.width == RECENTS_PANEL_WIDTH
+                && rect.height == RECENTS_PANEL_HEIGHT
+        }));
+        assert!(launcher.texts.iter().any(|text| text.content == "Recents"));
+        assert!(launcher
+            .texts
+            .iter()
+            .any(|text| text.content == "No warm apps yet."));
+        assert!(!launcher
+            .texts
+            .iter()
+            .any(|text| text.content.starts_with("Warm apps:")));
+    }
+
+    #[test]
+    fn home_launcher_scene_lists_recent_surfaces_in_panel() {
+        let mut shell = ShellModel::new();
+        let status = ShellStatus {
+            time_label: "09:41".to_string(),
+            date_label: "Friday, April 18".to_string(),
+            battery_percent: 61,
+            wifi_strength: 2,
+        };
+
+        shell.set_app_running(COUNTER_APP_ID, true);
+        shell.set_app_running(TIMELINE_APP_ID, true);
+
+        let launcher = shell
+            .home_launcher_scene(&status)
+            .expect("home launcher scene");
+
+        assert!(launcher
+            .texts
+            .iter()
+            .any(|text| text.content == "2 warm surface(s) ready to resume."));
+        assert!(launcher
+            .texts
+            .iter()
+            .any(|text| text.content == "Latest surface"));
+        assert!(launcher.texts.iter().any(|text| text.content == "Warm in shell"));
+        assert!(!launcher
+            .texts
+            .iter()
+            .any(|text| text.content.starts_with("Warm apps:")));
     }
 
     #[test]
