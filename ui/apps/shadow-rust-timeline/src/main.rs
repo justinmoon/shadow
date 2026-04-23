@@ -377,6 +377,22 @@ impl TimelineApp {
         self.sync_drafts_after_route_transition(note_draft_policy);
     }
 
+    // Fallible cache transitions still need to settle the visible route before
+    // app-local draft cleanup runs.
+    fn try_transition_route<F>(
+        &mut self,
+        note_draft_policy: NoteDraftRoutePolicy,
+        update: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce(&mut TimelineCachedData, &mut Vec<Route>, usize) -> Result<(), String>,
+    {
+        let limit = self.config.limit;
+        update(&mut self.cached_data, &mut self.route_stack, limit)?;
+        self.sync_drafts_after_route_transition(note_draft_policy);
+        Ok(())
+    }
+
     fn sync_drafts_after_route_transition(&mut self, note_draft_policy: NoteDraftRoutePolicy) {
         if matches!(note_draft_policy, NoteDraftRoutePolicy::Clear) || self.account.is_none() {
             self.note_draft = None;
@@ -696,10 +712,14 @@ impl TimelineApp {
     }
 
     fn reload_feed_from_cache(&mut self) -> Result<(), String> {
-        self.cached_data
-            .reload_home(self.account.as_ref(), self.config.limit)?;
-        self.sync_routes();
-        Ok(())
+        let account = self.account.clone();
+        self.try_transition_route(
+            NoteDraftRoutePolicy::Preserve,
+            move |cached_data, route_stack, limit| {
+                cached_data
+                    .reload_home_and_reconcile_route_stack(route_stack, account.as_ref(), limit)
+            },
+        )
     }
 }
 

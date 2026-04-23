@@ -68,6 +68,19 @@ impl TimelineCachedData {
         Ok(())
     }
 
+    // Cache reloads can invalidate route-local state, so keep the home reload
+    // and visible-route reconciliation in one cache-owned transition.
+    pub(crate) fn reload_home_and_reconcile_route_stack(
+        &mut self,
+        route_stack: &mut Vec<Route>,
+        account: Option<&ActiveAccount>,
+        limit: usize,
+    ) -> Result<(), String> {
+        self.reload_home(account, limit)?;
+        self.reconcile_route_stack(route_stack, account, limit);
+        Ok(())
+    }
+
     pub(crate) fn replace_home(&mut self, feed_scope: FeedScope, home_notes: Vec<NostrEvent>) {
         self.feed_scope = feed_scope;
         self.home_notes = home_notes;
@@ -430,19 +443,22 @@ mod tests {
     }
 
     #[test]
-    fn reload_home_without_account_resets_to_unavailable() {
+    fn reload_home_and_reconcile_route_stack_without_account_resets_to_unavailable_and_onboarding(
+    ) {
         let mut cached_data = TimelineCachedData::from_home(
             FeedScope::no_contacts(),
             vec![test_note("note-1", "npub-alice", "note")],
         );
+        let mut route_stack = vec![Route::Timeline];
         cached_data.explore_cache = Some(Default::default());
 
         cached_data
-            .reload_home(None, 18)
+            .reload_home_and_reconcile_route_stack(&mut route_stack, None, 18)
             .expect("reload without account");
 
         assert_eq!(cached_data.feed_scope(), &FeedScope::unavailable());
         assert!(cached_data.home_notes().is_empty());
         assert!(cached_data.explore_cache.is_none());
+        assert_eq!(route_stack, vec![Route::Onboarding]);
     }
 }
