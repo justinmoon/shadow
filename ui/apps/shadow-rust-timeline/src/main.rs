@@ -402,19 +402,10 @@ impl TimelineApp {
                 .reset_route_stack(&mut self.route_stack, Route::Onboarding, limit);
             return;
         }
-        loop {
-            let should_pop = match self.current_route() {
-                Route::Note { ref id } => self.cached_note_by_id(id).is_none(),
-                _ => false,
-            };
-            if !should_pop || self.route_stack.len() == 1 {
-                break;
-            }
-            self.route_stack.pop();
-        }
-
+        let limit = self.config.limit;
+        self.cached_data
+            .normalize_route_stack(&mut self.route_stack, limit);
         let route = self.current_route();
-        self.hydrate_current_route();
         if self.reply_draft.as_ref().is_some_and(|draft| match route {
             Route::Note { ref id } => {
                 draft.note_id != *id || self.cached_note_by_id(&draft.note_id).is_none()

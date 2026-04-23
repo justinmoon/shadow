@@ -115,6 +115,22 @@ impl TimelineCachedData {
         self.hydrate_current_route(route_stack, limit);
     }
 
+    // Cache refreshes can invalidate note-local screens, so prune stale note
+    // routes before hydrating the route that remains visible.
+    pub(crate) fn normalize_route_stack(&mut self, route_stack: &mut Vec<Route>, limit: usize) {
+        loop {
+            let should_pop = match route_stack.last() {
+                Some(Route::Note { id }) => self.cached_note_by_id(id).is_none(),
+                _ => false,
+            };
+            if !should_pop || route_stack.len() == 1 {
+                break;
+            }
+            route_stack.pop();
+        }
+        self.hydrate_current_route(route_stack, limit);
+    }
+
     pub(crate) fn hydrate_current_route(&mut self, route_stack: &[Route], limit: usize) {
         let route = route_stack.last().cloned().unwrap_or(Route::Timeline);
         self.hydrate_route(&route, limit);
@@ -286,6 +302,67 @@ mod tests {
         cached_data.reset_route_stack(&mut route_stack, Route::Onboarding, 18);
 
         assert_eq!(route_stack, vec![Route::Onboarding]);
+    }
+
+    #[test]
+    fn normalize_route_stack_pops_stale_note_routes_until_non_note_top() {
+        let mut cached_data = TimelineCachedData::from_home(FeedScope::no_contacts(), Vec::new());
+        let mut route_stack = vec![
+            Route::Timeline,
+            Route::Note {
+                id: String::from("missing-note-1"),
+            },
+            Route::Note {
+                id: String::from("missing-note-2"),
+            },
+        ];
+
+        cached_data.normalize_route_stack(&mut route_stack, 18);
+
+        assert_eq!(route_stack, vec![Route::Timeline]);
+    }
+
+    #[test]
+    fn normalize_route_stack_keeps_root_stale_note_route() {
+        let mut cached_data = TimelineCachedData::from_home(FeedScope::no_contacts(), Vec::new());
+        let mut route_stack = vec![Route::Note {
+            id: String::from("missing-note"),
+        }];
+
+        cached_data.normalize_route_stack(&mut route_stack, 18);
+
+        assert_eq!(
+            route_stack,
+            vec![Route::Note {
+                id: String::from("missing-note"),
+            }]
+        );
+    }
+
+    #[test]
+    fn normalize_route_stack_keeps_note_route_when_cached_note_is_available() {
+        let mut cached_data = TimelineCachedData::from_home(
+            FeedScope::no_contacts(),
+            vec![test_note("note-1", "npub-alice", "note")],
+        );
+        let mut route_stack = vec![
+            Route::Timeline,
+            Route::Note {
+                id: String::from("note-1"),
+            },
+        ];
+
+        cached_data.normalize_route_stack(&mut route_stack, 18);
+
+        assert_eq!(
+            route_stack,
+            vec![
+                Route::Timeline,
+                Route::Note {
+                    id: String::from("note-1"),
+                },
+            ]
+        );
     }
 
     #[test]
