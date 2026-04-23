@@ -820,11 +820,14 @@ def vm_processes() -> list[str]:
         return pids
     if process_list.returncode != 0:
         return pids
-    port_marker = f"hostfwd=tcp::{ssh_port()}-:22"
+    port_markers = (
+        f"hostfwd=tcp::{ssh_port()}-:22",
+        f"hostfwd=tcp:127.0.0.1:{ssh_port()}-:22",
+    )
     return [
         line
         for line in process_list.stdout.splitlines()
-        if line.strip() and port_marker in line
+        if line.strip() and any(marker in line for marker in port_markers)
     ]
 
 

@@ -19,7 +19,7 @@ scripts/ci/pixel_boot_collect_logs_smoke.sh	ci	Hermetic smoke for boot-log colle
 scripts/ci/pixel_nix_build_progress_smoke.sh	ci	Fast regression smoke for live stderr progress from pixel_retry_nix_build_print_out_paths.
 scripts/ci/pixel_boot_recover_traces_smoke.sh	ci	Hermetic smoke for post-reboot Android-side boot trace recovery and truthful status semantics.
 scripts/ci/pixel_boot_safety_smoke.sh	ci	Private smoke for experimental boot-script safety rails and slot defaults.
-scripts/ci/remote_ci.sh	ci	Sync-and-dispatch wrapper that runs the canonical Linux CI gates on the configured remote executor.
+scripts/ci/remote_ci.sh	ci	Sync-and-dispatch wrapper that runs the canonical Linux CI gates on the configured remote executor and copies back the current run summaries plus VM smoke artifacts.
 scripts/ci/required_vm_smoke.sh	ci	Required branch-gate VM smoke wrapper with logical-input reuse.
 scripts/ci/vm_smoke_logical_inputs_smoke.sh	ci	Fast regression smoke proving required_vm_smoke skips on matching logical-input derivations without realizing vm-smoke-inputs.
 scripts/runtime/ensure_cashu_test_mint.sh	runtime	Private Cashu host-smoke fixture helper.
@@ -115,7 +115,7 @@ scripts/debug/pixel_shell_scroll_latency_probe.sh	debug	Rooted-Pixel shell scrol
 scripts/debug/pixel_touch_latency_probe.sh	debug	Pixel latency probe exposed as shadowctl debug latency and documented in docs/latency.md.
 scripts/pixel/pixel_verify.sh	pixel	Private rooted-Pixel session verification helper.
 scripts/pixel/pixel_kgsl_cold_matrix.sh	pixel	Private rooted-Pixel cold-boot KGSL timing matrix runner.
-scripts/pre_commit.sh	public	Fast local gate.
+scripts/pre_commit.sh	public	Fast local gate with first-party Rust fmt, runtime TypeScript formatting/script typechecks, and script/docs/operator smokes.
 scripts/pre_merge.sh	public	Required branch gate wrapper that prefers the local Linux canonical path and otherwise dispatches the x86 CI gate remotely.
 scripts/runtime/prepare_podcast_player_demo_assets.sh	runtime	Private podcast host/device smoke fixture helper.
 scripts/runtime/prepare_sound_demo_assets.sh	runtime	Private sound host/device smoke fixture helper.

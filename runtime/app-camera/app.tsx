@@ -292,9 +292,9 @@ function cameraChipShadowId(
   if (!["external", "front", "rear"].includes(camera.lensFacing)) {
     return `camera-${index}`;
   }
-  const hasDuplicateFacing = devices.filter((device) =>
-    device.lensFacing === camera.lensFacing
-  ).length > 1;
+  const hasDuplicateFacing =
+    devices.filter((device) => device.lensFacing === camera.lensFacing).length >
+      1;
   return hasDuplicateFacing
     ? `camera-${camera.lensFacing}-${index}`
     : `camera-${camera.lensFacing}`;
@@ -352,7 +352,9 @@ export function renderApp() {
     previewGeneration += 1;
   }
 
-  function pausePreview(message = "Preview paused. Tap Start Preview when ready.") {
+  function pausePreview(
+    message = "Preview paused. Tap Start Preview when ready.",
+  ) {
     stopPreviewLoop();
     setPreviewEnabled(false);
     setPreviewStatusState({
@@ -377,7 +379,9 @@ export function renderApp() {
       selectedCameraId() === camera.id
     ) {
       try {
-        const receipt = await queueCameraTask(() => capturePreviewFrame({ cameraId: camera.id }));
+        const receipt = await queueCameraTask(() =>
+          capturePreviewFrame({ cameraId: camera.id })
+        );
         if (
           isDisposed ||
           generation !== previewGeneration ||
@@ -394,7 +398,9 @@ export function renderApp() {
         }
         setPreviewStatusState({
           kind: "live",
-          message: receipt.isMock ? "Mock preview active." : "Live preview active.",
+          message: receipt.isMock
+            ? "Mock preview active."
+            : "Live preview active.",
         });
         if (receipt.isMock) {
           return;
@@ -405,7 +411,9 @@ export function renderApp() {
         }
         const message = error instanceof Error ? error.message : String(error);
         logCameraMarker(
-          `camera-preview-error cameraId=${camera.id} message=${JSON.stringify(message)}`,
+          `camera-preview-error cameraId=${camera.id} message=${
+            JSON.stringify(message)
+          }`,
         );
         setPreviewStatusState({
           kind: "error",
@@ -532,7 +540,9 @@ export function renderApp() {
     logCameraMarker(`camera-capture-start cameraId=${camera.id}`);
 
     try {
-      const receipt = await queueCameraTask(() => captureStill({ cameraId: camera.id }));
+      const receipt = await queueCameraTask(() =>
+        captureStill({ cameraId: camera.id })
+      );
       setLastCapture(receipt);
       logCameraMarker(
         `camera-capture-complete cameraId=${receipt.cameraId} isMock=${receipt.isMock} bytes=${receipt.bytes}`,
@@ -546,7 +556,9 @@ export function renderApp() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logCameraMarker(
-        `camera-capture-error cameraId=${camera.id} message=${JSON.stringify(message)}`,
+        `camera-capture-error cameraId=${camera.id} message=${
+          JSON.stringify(message)
+        }`,
       );
       setStatusState({
         kind: "error",
@@ -577,7 +589,9 @@ export function renderApp() {
       data-shadow-preview-kind={previewStatus().kind}
       data-shadow-preview-enabled={String(previewEnabled())}
       data-shadow-preview-camera-id={previewFrame()?.cameraId ?? ""}
-      data-shadow-preview-is-mock={previewFrame() == null ? "" : String(previewFrame()!.isMock)}
+      data-shadow-preview-is-mock={previewFrame() == null
+        ? ""
+        : String(previewFrame()!.isMock)}
       data-shadow-preview-bytes={String(previewFrame()?.bytes ?? "")}
       data-shadow-preview-mime-type={previewFrame()?.mimeType ?? ""}
       data-shadow-status-kind={status().kind}
@@ -640,7 +654,8 @@ export function renderApp() {
           <button
             class="camera-action camera-action-secondary"
             data-shadow-id="preview-toggle"
-            disabled={status().kind === "capturing" || selectedCameraId() == null}
+            disabled={status().kind === "capturing" ||
+              selectedCameraId() == null}
             onClick={() => {
               handlePreviewToggle();
             }}
@@ -665,7 +680,9 @@ export function renderApp() {
         <Show when={selectedCamera() != null}>
           <div class="camera-meta">
             <span>{selectedCamera()?.label}</span>
-            <span>{cameraLensFacingLabel(selectedCamera()?.lensFacing ?? "")}</span>
+            <span>
+              {cameraLensFacingLabel(selectedCamera()?.lensFacing ?? "")}
+            </span>
             <Show when={selectedCamera()?.sensorOrientationDegrees != null}>
               <span>
                 Sensor {selectedCamera()?.sensorOrientationDegrees}deg
@@ -699,7 +716,8 @@ export function renderApp() {
             </Match>
             <Match when={previewFrame() == null}>
               <div class="camera-preview-empty">
-                Live preview will appear here once Shadow starts producing frames.
+                Live preview will appear here once Shadow starts producing
+                frames.
               </div>
             </Match>
           </Switch>

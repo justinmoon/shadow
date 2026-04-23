@@ -17,7 +17,7 @@ process_pids() {
   pids="$(
     ps -Ao pid=,command= \
       | grep -F "microvm@shadow-ui-vm" \
-      | grep -F "hostfwd=tcp::${PROCESS_PORT}-:22" \
+      | grep -E "hostfwd=tcp:(:|127\\.0\\.0\\.1:)${PROCESS_PORT}-:22" \
       | awk '{print $1}'
   )"
   if [[ -n "$pids" ]]; then

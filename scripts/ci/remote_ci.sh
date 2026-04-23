@@ -16,19 +16,20 @@ the canonical Linux gate there.
 EOF
 }
 
-build_rsync_ssh_cmd() {
-  local ssh_cmd="ssh"
-  local opt
-  for opt in "${SSH_OPTS[@]}"; do
-    ssh_cmd+=" $(printf '%q' "$opt")"
-  done
-  printf '%s\n' "$ssh_cmd"
-}
-
 stream_tracked_repo_snapshot() {
   (
     cd "$(repo_root)"
-    git ls-files -z | tar --null --files-from=- --create --file=-
+    python3 - <<'PY' | tar --null --files-from=- --create --file=-
+import os
+import subprocess
+import sys
+
+for path in subprocess.check_output(["git", "ls-files", "-z"]).split(b"\0"):
+    if not path:
+        continue
+    if os.path.lexists(path):
+        sys.stdout.buffer.write(path + b"\0")
+PY
   )
 }
 
@@ -43,25 +44,69 @@ sync_remote_repo() {
     | ssh_retry "$REMOTE_HOST" "mkdir -p $(printf '%q' "$remote_repo_dir") && tar -xf - -C $(printf '%q' "$remote_repo_dir")"
 }
 
+pull_remote_file() {
+  local remote_path="$1"
+  local local_path="$2"
+  mkdir -p "$(dirname "$local_path")"
+  if is_local_host; then
+    cp "$remote_path" "$local_path" >/dev/null 2>&1
+    return 0
+  fi
+  scp_retry "${REMOTE_HOST}:$remote_path" "$local_path" >/dev/null 2>&1
+}
+
+pull_remote_required_artifact() {
+  local remote_path="$1"
+  local local_path="$2"
+  local label="$3"
+  if ! remote_shell "[ -f $(printf '%q' "$remote_path") ]"; then
+    echo "ci: warning: missing ${label} on ${REMOTE_HOST}" >&2
+    return 1
+  fi
+  if ! pull_remote_file "$remote_path" "$local_path"; then
+    echo "ci: warning: failed to pull ${label} from ${REMOTE_HOST}" >&2
+    return 1
+  fi
+}
+
+pull_remote_optional_artifact() {
+  local remote_path="$1"
+  local local_path="$2"
+  if ! remote_shell "[ -f $(printf '%q' "$remote_path") ]"; then
+    return 0
+  fi
+  pull_remote_file "$remote_path" "$local_path"
+}
+
 pull_remote_artifacts() {
   local remote_repo_dir="$1"
-  local ssh_cmd
-  ssh_cmd="$(build_rsync_ssh_cmd)"
-  mkdir -p "$(repo_root)/build"
-  if remote_shell "[ -d $(printf '%q' "$remote_repo_dir")/build/ci ]"; then
-    if ! rsync -az -e "$ssh_cmd" \
-      "${REMOTE_HOST}:$remote_repo_dir/build/ci/" \
-      "$(repo_root)/build/ci/" >/dev/null 2>&1; then
-      echo "ci: warning: failed to pull build/ci artifacts from ${REMOTE_HOST}" >&2
-    fi
+  local local_repo_dir required_failed=0
+  local remote_path local_path file_name
+  local_repo_dir="$(repo_root)"
+
+  pull_remote_required_artifact \
+    "$remote_repo_dir/build/ci/runs/${run_id}-pre-merge.json" \
+    "$local_repo_dir/build/ci/runs/${run_id}-pre-merge.json" \
+    "build/ci/runs/${run_id}-pre-merge.json" || required_failed=1
+
+  if [[ "$remote_gate_script" == "scripts/ci/linux_nightly.sh" ]]; then
+    pull_remote_required_artifact \
+      "$remote_repo_dir/build/ci/runs/${run_id}-nightly.json" \
+      "$local_repo_dir/build/ci/runs/${run_id}-nightly.json" \
+      "build/ci/runs/${run_id}-nightly.json" || required_failed=1
   fi
-  if remote_shell "[ -d $(printf '%q' "$remote_repo_dir")/build/ui-vm ]"; then
-    if ! rsync -az -e "$ssh_cmd" \
-      "${REMOTE_HOST}:$remote_repo_dir/build/ui-vm/" \
-      "$(repo_root)/build/ui-vm/" >/dev/null 2>&1; then
-      echo "ci: warning: failed to pull build/ui-vm artifacts from ${REMOTE_HOST}" >&2
-    fi
-  fi
+
+  for file_name in \
+    ui-vm-smoke.log \
+    ui-vm-smoke-summary.json \
+    ui-vm-smoke.png \
+    ui-vm-home-surface.ppm; do
+    remote_path="$remote_repo_dir/build/ui-vm/$file_name"
+    local_path="$local_repo_dir/build/ui-vm/$file_name"
+    pull_remote_optional_artifact "$remote_path" "$local_path" || true
+  done
+
+  return "$required_failed"
 }
 
 case "${1:-}" in
@@ -109,10 +154,16 @@ EOF
 status=$?
 set -e
 
-pull_remote_artifacts "$remote_repo_dir"
+artifact_status=0
+if ! pull_remote_artifacts "$remote_repo_dir"; then
+  artifact_status=$?
+fi
 
 if (( status != 0 )); then
   echo "ci: remote gate failed on ${REMOTE_HOST}" >&2
+elif (( artifact_status != 0 )); then
+  echo "ci: failed to pull one or more CI artifacts from ${REMOTE_HOST}" >&2
+  status=$artifact_status
 fi
 
 exit "$status"

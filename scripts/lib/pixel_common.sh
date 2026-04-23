@@ -200,8 +200,22 @@ pixel_serial_lock_path() {
   printf '%s/%s.lock\n' "$lock_dir" "$lock_key"
 }
 
+pixel_host_lock_tool() {
+  if command -v lockf >/dev/null 2>&1; then
+    printf 'lockf\n'
+    return 0
+  fi
+  if command -v flock >/dev/null 2>&1; then
+    printf 'flock\n'
+    return 0
+  fi
+
+  echo "pixel_require_host_lock: neither lockf nor flock is available on this host" >&2
+  return 1
+}
+
 pixel_require_host_lock() {
-  local serial script_path script_name lock_path
+  local serial script_path script_name lock_path lock_tool
   serial="${1:?pixel_require_host_lock requires a serial}"
   script_path="${2:?pixel_require_host_lock requires a script path}"
   shift 2
@@ -214,12 +228,28 @@ pixel_require_host_lock() {
 
   lock_path="$(pixel_serial_lock_path "$serial")"
   script_name="$(basename "$script_path")"
-  if ! lockf -st 0 "$lock_path" true 2>/dev/null; then
-    printf '%s: waiting for host lock on Pixel %s\n' "$script_name" "$serial" >&2
-  fi
+  lock_tool="$(pixel_host_lock_tool)"
 
-  exec env PIXEL_HOST_LOCK_HELD_SERIAL="$serial" \
-    lockf "$lock_path" "$script_path" "$@"
+  case "$lock_tool" in
+    lockf)
+      if ! lockf -st 0 "$lock_path" true 2>/dev/null; then
+        printf '%s: waiting for host lock on Pixel %s\n' "$script_name" "$serial" >&2
+      fi
+      exec env PIXEL_HOST_LOCK_HELD_SERIAL="$serial" \
+        lockf "$lock_path" "$script_path" "$@"
+      ;;
+    flock)
+      if ! flock -n "$lock_path" true 2>/dev/null; then
+        printf '%s: waiting for host lock on Pixel %s\n' "$script_name" "$serial" >&2
+      fi
+      exec env PIXEL_HOST_LOCK_HELD_SERIAL="$serial" \
+        flock "$lock_path" "$script_path" "$@"
+      ;;
+    *)
+      echo "pixel_require_host_lock: unsupported host lock tool: $lock_tool" >&2
+      return 1
+      ;;
+  esac
 }
 
 pixel_retryable_nix_build_failure() {

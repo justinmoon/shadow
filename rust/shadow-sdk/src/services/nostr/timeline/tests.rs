@@ -1,7 +1,7 @@
 use super::{
     load_home_cache_state_for_account, load_home_feed_scope_for_account, load_note_cache_state,
-    load_profile_summary, load_thread_context, run_refresh_home_feed_task,
-    run_publish_note_or_reply_task, run_sync_explore_feed_task, run_sync_thread_task,
+    load_profile_summary, load_thread_context, run_publish_note_or_reply_task,
+    run_refresh_home_feed_task, run_sync_explore_feed_task, run_sync_thread_task,
     run_update_contact_list_task, thread_parent_ids, NostrContactListUpdateAction,
     NostrContactListUpdateRequest, NostrExploreSyncRequest, NostrHomeFeedSource,
     NostrHomeRefreshRequest, NostrThreadSyncRequest, NostrTimelinePublishRequest,

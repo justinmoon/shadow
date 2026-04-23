@@ -29,8 +29,6 @@ use camera_aidl::device::{
     StreamConfigurationMode, StreamRotation, StreamType,
 };
 #[cfg(target_os = "android")]
-use camera_metadata::{lens_facing, sensor_orientation_degrees};
-#[cfg(target_os = "android")]
 use camera_aidl::graphics::{BufferUsage, Dataspace, PixelFormat};
 #[cfg(target_os = "android")]
 use camera_aidl::metadata::{
@@ -38,6 +36,8 @@ use camera_aidl::metadata::{
 };
 #[cfg(target_os = "android")]
 use camera_aidl::provider::{self, ICameraProvider, ICameraProviderCallback};
+#[cfg(target_os = "android")]
+use camera_metadata::{lens_facing, sensor_orientation_degrees};
 #[cfg(target_os = "android")]
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -145,7 +145,10 @@ struct CameraListEntry {
     label: String,
     #[serde(rename = "lensFacing")]
     lens_facing: String,
-    #[serde(rename = "sensorOrientationDegrees", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "sensorOrientationDegrees",
+        skip_serializing_if = "Option::is_none"
+    )]
     sensor_orientation_degrees: Option<u16>,
 }
 
@@ -952,7 +955,12 @@ fn make_frame_response(argv: &[OsString], frame_mode: FrameRequestMode) -> serde
     let declared_instances: Vec<String> = match get_declared_instances(interface_name) {
         Ok(instances) => instances,
         Err(status) => {
-            return command_error(frame_mode.command(), argv, "get_declared_instances", &status);
+            return command_error(
+                frame_mode.command(),
+                argv,
+                "get_declared_instances",
+                &status,
+            );
         }
     };
 

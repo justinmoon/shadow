@@ -77,7 +77,10 @@ fn integer_metadata_value(characteristics: &device::CameraMetadata, tag: u32) ->
     let camera_metadata = camera_metadata_fns()?;
     let copied = unsafe {
         (camera_metadata.allocate_copy_camera_metadata_checked)(
-            characteristics.metadata.as_ptr().cast::<CameraMetadataOpaque>(),
+            characteristics
+                .metadata
+                .as_ptr()
+                .cast::<CameraMetadataOpaque>(),
             characteristics.metadata.len(),
         )
     };
@@ -100,9 +103,8 @@ fn integer_entry_value(
     tag: u32,
 ) -> Option<i32> {
     let mut entry = MaybeUninit::<CameraMetadataRoEntry>::zeroed();
-    let status = unsafe {
-        (camera_metadata.find_camera_metadata_ro_entry)(copied, tag, entry.as_mut_ptr())
-    };
+    let status =
+        unsafe { (camera_metadata.find_camera_metadata_ro_entry)(copied, tag, entry.as_mut_ptr()) };
     if status != 0 {
         return None;
     }
@@ -134,16 +136,13 @@ fn integer_entry_value(
 }
 
 fn camera_metadata_fns() -> Option<&'static CameraMetadataFns> {
-    CAMERA_METADATA_FNS.get_or_init(load_camera_metadata_fns).as_ref()
+    CAMERA_METADATA_FNS
+        .get_or_init(load_camera_metadata_fns)
+        .as_ref()
 }
 
 fn load_camera_metadata_fns() -> Option<CameraMetadataFns> {
-    let handle = unsafe {
-        dlopen(
-            c"libcamera_metadata.so".as_ptr(),
-            RTLD_NOW | RTLD_LOCAL,
-        )
-    };
+    let handle = unsafe { dlopen(c"libcamera_metadata.so".as_ptr(), RTLD_NOW | RTLD_LOCAL) };
     if handle.is_null() {
         return None;
     }

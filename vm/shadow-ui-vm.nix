@@ -503,7 +503,7 @@ PY
           isNormalUser = true;
           extraGroups = [ "wheel" "video" "input" ];
           home = homeDir;
-          createHome = true;
+          createHome = false;
         };
         security.sudo = {
           enable = true;

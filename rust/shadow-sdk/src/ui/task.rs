@@ -529,8 +529,14 @@ mod tests {
             visited.lock().expect("visited lock").as_slice(),
             ["first", "second"]
         );
-        assert_eq!(registry.first.pending_job().map(String::as_str), Some("first"));
-        assert_eq!(registry.second.pending_job().map(String::as_str), Some("second"));
+        assert_eq!(
+            registry.first.pending_job().map(String::as_str),
+            Some("first")
+        );
+        assert_eq!(
+            registry.second.pending_job().map(String::as_str),
+            Some("second")
+        );
     }
 
     #[test]
@@ -648,7 +654,9 @@ mod tests {
 
         assert!(plain_snapshot.pending_matches(|job| job == "plain"));
         assert_eq!(
-            bound_snapshot.pending().map(|pending| pending.job().as_str()),
+            bound_snapshot
+                .pending()
+                .map(|pending| pending.job().as_str()),
             Some("bound")
         );
         assert!(bound_snapshot.is_pending());

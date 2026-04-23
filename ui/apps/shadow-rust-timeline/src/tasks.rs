@@ -10,16 +10,14 @@ use shadow_sdk::{
                 run_publish_note_or_reply_task, run_refresh_home_feed_task,
                 run_sync_explore_feed_task, run_sync_thread_task, run_update_contact_list_task,
                 NostrContactListUpdateAction, NostrContactListUpdateOutcome,
-                NostrContactListUpdateRequest, NostrExploreSyncOutcome,
-                NostrExploreSyncRequest, NostrHomeRefreshOutcome, NostrHomeRefreshRequest,
-                NostrThreadSyncOutcome, NostrThreadSyncRequest, NostrTimelinePublishRequest,
+                NostrContactListUpdateRequest, NostrExploreSyncOutcome, NostrExploreSyncRequest,
+                NostrHomeRefreshOutcome, NostrHomeRefreshRequest, NostrThreadSyncOutcome,
+                NostrThreadSyncRequest, NostrTimelinePublishRequest,
             },
             NostrAccountSummary, NostrAccountTask, NostrPublishReceipt,
         },
     },
-    ui::{
-        TaskDecoration, TaskDecorationRegistry, TaskHandle, TaskSlotBinding, WidgetView,
-    },
+    ui::{TaskDecoration, TaskDecorationRegistry, TaskHandle, TaskSlotBinding, WidgetView},
 };
 
 use crate::TimelineApp;
@@ -79,10 +77,7 @@ impl Default for TimelineTasks {
                 run_update_contact_list_task,
                 TimelineApp::finish_follow_update,
             ),
-            publish: TimelineTask::new(
-                run_publish_note_or_reply_task,
-                TimelineApp::finish_publish,
-            ),
+            publish: TimelineTask::new(run_publish_note_or_reply_task, TimelineApp::finish_publish),
             refresh: TimelineTask::new(run_refresh_home_feed_task, TimelineApp::finish_refresh),
             thread_sync: TimelineTask::new(run_sync_thread_task, TimelineApp::finish_thread_sync),
         }
@@ -307,16 +302,12 @@ mod tests {
             tasks.follow_update.pending_job().map(follow_update_target),
             Some("npub-target")
         );
-        assert!(
-            tasks
-                .follow_update
-                .pending_matches(|job| follow_update_target(job) == "npub-target")
-        );
-        assert!(
-            !tasks
-                .follow_update
-                .pending_matches(|job| follow_update_target(job) == "npub-other")
-        );
+        assert!(tasks
+            .follow_update
+            .pending_matches(|job| follow_update_target(job) == "npub-target"));
+        assert!(!tasks
+            .follow_update
+            .pending_matches(|job| follow_update_target(job) == "npub-other"));
     }
 
     #[test]
@@ -374,7 +365,9 @@ mod tests {
             Some(String::from("root-1")),
         ));
         assert!(!reply_tasks.publish.pending_matches(|job| job.is_note()));
-        assert!(reply_tasks.publish.pending_matches(|job| job.is_reply_to("note-1")));
+        assert!(reply_tasks
+            .publish
+            .pending_matches(|job| job.is_reply_to("note-1")));
 
         match reply_tasks
             .publish

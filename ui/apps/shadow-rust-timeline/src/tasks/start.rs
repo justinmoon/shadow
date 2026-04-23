@@ -276,6 +276,8 @@ impl TimelineApp {
     }
 
     pub(crate) fn reply_publish_pending_for(&self, note_id: &str) -> bool {
-        self.tasks.publish.pending_matches(|job| job.is_reply_to(note_id))
+        self.tasks
+            .publish
+            .pending_matches(|job| job.is_reply_to(note_id))
     }
 }

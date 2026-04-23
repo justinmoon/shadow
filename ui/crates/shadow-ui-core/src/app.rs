@@ -222,14 +222,13 @@ mod tests {
 
     use super::{
         app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, home_apps,
-        launch_spec, AppId, AppLaunchModel, AppLaunchSpec, AppModel, DemoApp,
-        ManifestAppLaunch, CAMERA_APP, CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP,
-        CASHU_APP_ID, CASHU_WAYLAND_APP_ID, COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID,
-        DEMO_APPS, PIXEL_SHELL_DEMO_APPS, PODCAST_APP, PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID,
-        RUST_DEMO_APP, RUST_DEMO_APP_ID, RUST_DEMO_WAYLAND_APP_ID, RUST_TIMELINE_APP,
-        RUST_TIMELINE_APP_ID, RUST_TIMELINE_WAYLAND_APP_ID, SESSION_APP_PROFILE_ENV,
-        SHELL_APP_ID, SHELL_WAYLAND_APP_ID, TIMELINE_APP, TIMELINE_APP_ID,
-        TIMELINE_WAYLAND_APP_ID, VM_SHELL_DEMO_APPS,
+        launch_spec, AppId, AppLaunchModel, AppLaunchSpec, AppModel, DemoApp, ManifestAppLaunch,
+        CAMERA_APP, CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP, CASHU_APP_ID,
+        CASHU_WAYLAND_APP_ID, COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, DEMO_APPS,
+        PIXEL_SHELL_DEMO_APPS, PODCAST_APP, PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, RUST_DEMO_APP,
+        RUST_DEMO_APP_ID, RUST_DEMO_WAYLAND_APP_ID, RUST_TIMELINE_APP, RUST_TIMELINE_APP_ID,
+        RUST_TIMELINE_WAYLAND_APP_ID, SESSION_APP_PROFILE_ENV, SHELL_APP_ID, SHELL_WAYLAND_APP_ID,
+        TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID, VM_SHELL_DEMO_APPS,
     };
 
     fn env_lock() -> &'static Mutex<()> {
@@ -267,7 +266,11 @@ mod tests {
     fn assert_current_typescript_app(app: &DemoApp) {
         assert_eq!(app.model, AppModel::TypeScript);
         assert_manifest_launch_compat(app);
-        let ManifestAppLaunch::TypeScript { runtime, launch_env } = app.manifest_launch else {
+        let ManifestAppLaunch::TypeScript {
+            runtime,
+            launch_env,
+        } = app.manifest_launch
+        else {
             panic!("current manifest apps should have TypeScript launch metadata");
         };
         assert_eq!(

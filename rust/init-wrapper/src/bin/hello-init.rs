@@ -1710,9 +1710,8 @@ mod linux {
         }
 
         let frame_path = runtime.compositor_frame_path.display();
-        let mut payload = format!(
-            "{{\n  \"kind\": \"{kind}\",\n  \"startup_mode\": \"{startup_mode}\",\n"
-        );
+        let mut payload =
+            format!("{{\n  \"kind\": \"{kind}\",\n  \"startup_mode\": \"{startup_mode}\",\n");
         if let Some(app_id) = app_id {
             let _ = write!(payload, "  \"app_id\": \"{app_id}\",\n");
         }
@@ -2433,9 +2432,7 @@ mod linux {
         if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode)
             && !config.orange_gpu_metadata_stage_breadcrumb
         {
-            log_line(
-                "session frame modes require orange_gpu_metadata_stage_breadcrumb=true",
-            );
+            log_line("session frame modes require orange_gpu_metadata_stage_breadcrumb=true");
             return false;
         }
         if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode)
@@ -2599,13 +2596,12 @@ mod linux {
             }
 
             if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode) {
-                let session_config_path = if orange_gpu_mode_is_compositor_scene(
-                    &config.orange_gpu_mode,
-                ) {
-                    ORANGE_GPU_COMPOSITOR_STARTUP_CONFIG_PATH
-                } else {
-                    ORANGE_GPU_APP_DIRECT_PRESENT_STARTUP_CONFIG_PATH
-                };
+                let session_config_path =
+                    if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode) {
+                        ORANGE_GPU_COMPOSITOR_STARTUP_CONFIG_PATH
+                    } else {
+                        ORANGE_GPU_APP_DIRECT_PRESENT_STARTUP_CONFIG_PATH
+                    };
                 let mut command = Command::new(ORANGE_GPU_COMPOSITOR_SESSION_PATH);
                 command.env("SHADOW_SESSION_MODE", "guest-ui");
                 command.env("SHADOW_RUNTIME_DIR", ORANGE_GPU_COMPOSITOR_RUNTIME_DIR);
@@ -2733,7 +2729,12 @@ mod linux {
             if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode) {
                 let (summary_kind, startup_mode, app_id, stage_name) =
                     if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode) {
-                        ("compositor-scene", "shell", None, "compositor-scene-frame-captured")
+                        (
+                            "compositor-scene",
+                            "shell",
+                            None,
+                            "compositor-scene-frame-captured",
+                        )
                     } else {
                         (
                             "app-direct-present",
@@ -2742,12 +2743,9 @@ mod linux {
                             "app-direct-present-frame-captured",
                         )
                     };
-                if let Err(reason) = record_session_frame_summary(
-                    metadata_stage,
-                    summary_kind,
-                    startup_mode,
-                    app_id,
-                ) {
+                if let Err(reason) =
+                    record_session_frame_summary(metadata_stage, summary_kind, startup_mode, app_id)
+                {
                     log_line(&format!(
                         "{summary_kind} frame missing or could not be summarized: {reason}"
                     ));

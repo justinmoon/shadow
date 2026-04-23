@@ -328,6 +328,7 @@
         ++ shadowUiWorkspaceMemberTargetPrefixes
         ++ shadowUiRustWorkspaceManifestPrefixes
         ++ shadowUiRustWorkspaceTargetPrefixes
+        ++ shadowRuntimeSdkPrefixes
         ++ [
           "ui/apps/shadow-blitz-demo"
           "ui/crates/shadow-ui-core"

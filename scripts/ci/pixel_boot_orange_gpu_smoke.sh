@@ -358,6 +358,25 @@ assert_command_fails_contains() {
   assert_contains "$(cat "$output_path")" "$expected"
 }
 
+run_shadow_gpu_cli_allow_headless_skip() {
+  local scene="$1"
+  shift
+  local output_path="$TMP_DIR/${scene}.out"
+
+  if "$@" >"$output_path" 2>&1; then
+    cat "$output_path"
+    return 0
+  fi
+
+  if grep -Fq -- 'No suitable graphics adapter found' "$output_path"; then
+    printf '%s cli: explicit host skip because no graphics adapter is present\n' "$scene"
+    return 0
+  fi
+
+  cat "$output_path" >&2
+  exit 1
+}
+
 assert_file_contains() {
   local file_path needle
   file_path="$1"
@@ -2059,12 +2078,22 @@ assert_shadow_gpu_adapter_smoke_cli() {
   local output
 
   output="$(
-    nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
-      --scene adapter-smoke \
-      --allow-non-vulkan \
-      --allow-software \
-      --summary-path "$summary_path"
+    run_shadow_gpu_cli_allow_headless_skip adapter-smoke \
+      nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
+        --scene adapter-smoke \
+        --allow-non-vulkan \
+        --allow-software \
+        --summary-path "$summary_path"
   )"
+
+  if [[ "$output" == *'explicit host skip because no graphics adapter is present'* ]]; then
+    [[ ! -e "$summary_path" ]] || {
+      echo "adapter-smoke unexpectedly wrote a summary on adapterless host skip" >&2
+      exit 1
+    }
+    printf '%s\n' "$output"
+    return 0
+  fi
 
   assert_contains "$output" '"mode": "adapter-smoke"'
   assert_contains "$output" '"scene": "adapter-smoke"'
@@ -2086,12 +2115,22 @@ assert_shadow_gpu_device_request_smoke_cli() {
   local output
 
   output="$(
-    nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
-      --scene device-request-smoke \
-      --allow-non-vulkan \
-      --allow-software \
-      --summary-path "$summary_path"
+    run_shadow_gpu_cli_allow_headless_skip device-request-smoke \
+      nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
+        --scene device-request-smoke \
+        --allow-non-vulkan \
+        --allow-software \
+        --summary-path "$summary_path"
   )"
+
+  if [[ "$output" == *'explicit host skip because no graphics adapter is present'* ]]; then
+    [[ ! -e "$summary_path" ]] || {
+      echo "device-request-smoke unexpectedly wrote a summary on adapterless host skip" >&2
+      exit 1
+    }
+    printf '%s\n' "$output"
+    return 0
+  fi
 
   assert_contains "$output" '"mode": "device-request-smoke"'
   assert_contains "$output" '"scene": "device-request-smoke"'
@@ -2113,12 +2152,22 @@ assert_shadow_gpu_device_smoke_cli() {
   local output
 
   output="$(
-    nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
-      --scene device-smoke \
-      --allow-non-vulkan \
-      --allow-software \
-      --summary-path "$summary_path"
+    run_shadow_gpu_cli_allow_headless_skip device-smoke \
+      nix develop "$REPO_ROOT#runtime" -c cargo run --quiet --manifest-path "$REPO_ROOT/ui/Cargo.toml" -p shadow-gpu-smoke -- \
+        --scene device-smoke \
+        --allow-non-vulkan \
+        --allow-software \
+        --summary-path "$summary_path"
   )"
+
+  if [[ "$output" == *'explicit host skip because no graphics adapter is present'* ]]; then
+    [[ ! -e "$summary_path" ]] || {
+      echo "device-smoke unexpectedly wrote a summary on adapterless host skip" >&2
+      exit 1
+    }
+    printf '%s\n' "$output"
+    return 0
+  fi
 
   assert_contains "$output" '"mode": "device-smoke"'
   assert_contains "$output" '"scene": "device-smoke"'

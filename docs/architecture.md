@@ -83,7 +83,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
    The VM lane now consumes packaged Linux `shadow-compositor` / `shadow-blitz-demo` artifacts built through Nix; `.#ui-vm-ci` is the canonical artifact-consumer runner package.
    The branch gate also resolves a filtered `.#vm-smoke-inputs` derivation so the VM smoke is keyed by logical lane inputs instead of branch/worktree names.
    `just ui-check [suite...]` resolves host-system `checks.<system>.uiCheck*` derivations through the flake instead of running ad hoc cargo commands in a dev shell.
-   `just pre-merge` is now a split gate: `just pre-commit` stays local and cheap, while the canonical heavy lane targets `checks.x86_64-linux.preMergeCheck` plus the Linux/KVM VM smoke on a Linux executor.
+   `just pre-merge` is now a split gate: `just pre-commit` stays local and cheap while still enforcing first-party Rust formatting plus runtime TypeScript formatting/script typechecks, and the canonical heavy lane targets `checks.x86_64-linux.preMergeCheck` plus the Linux/KVM VM smoke on a Linux executor.
    `just nightly` reuses that same x86_64-linux gate, then resolves `legacyPackages.x86_64-linux.ci.pixelBootCheck` plus the Pixel artifact cross-build helpers there.
    Those boot/tooling checks stay in nightly because they exercise private boot-lab tooling rather than the supported operator surface, and the default branch gate now has an explicit CI-system contract instead of inheriting the current host.
    That makes the lane reproducible and cacheable, and it removes the Mac-hosted VM path from the default branch gate.

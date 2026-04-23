@@ -23,6 +23,46 @@ cleanup() {
 }
 trap cleanup EXIT
 
+run_rustfmt_checks() {
+  local manifest_path
+  while IFS= read -r manifest_path; do
+    cargo fmt --manifest-path "$manifest_path" --all --check
+  done <<'EOF'
+ui/Cargo.toml
+rust/Cargo.toml
+rust/init-wrapper/Cargo.toml
+EOF
+
+  cargo fmt --manifest-path rust/drm-rect/Cargo.toml -p drm-rect --check
+  cargo fmt --manifest-path rust/shadow-camera-provider-host/Cargo.toml -p shadow-camera-provider-host --check
+  cargo fmt --manifest-path rust/shadow-linux-audio-spike/Cargo.toml -p shadow-linux-audio-spike --check
+  cargo fmt --manifest-path rust/shadow-session/Cargo.toml -p shadow-session --check
+}
+
+runtime_typescript_paths() {
+  find runtime scripts/runtime -type f \
+    \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) \
+    | sort
+}
+
+run_runtime_deno_fmt_check() {
+  local runtime_ts_files=()
+  while IFS= read -r source_path; do
+    runtime_ts_files+=("$source_path")
+  done < <(runtime_typescript_paths)
+  if ((${#runtime_ts_files[@]})); then
+    deno fmt --check "${runtime_ts_files[@]}"
+  fi
+}
+
+run_runtime_deno_typecheck() {
+  deno check --config deno.json \
+    scripts/runtime/runtime_build_artifacts.ts \
+    scripts/runtime/runtime_compile_solid.ts \
+    scripts/runtime/runtime_prepare_app_bundle.ts \
+    scripts/runtime/runtime_prepare_app_bundle_test.ts
+}
+
 print_success_log() {
   local log_path="$1"
   sed -E '/^error \(ignored\): SQLite database .* is busy$/d' "$log_path"
@@ -65,6 +105,9 @@ wait_parallel_checks() {
 
 scripts/ci/check_script_inventory.py
 scripts/runtime/generate_app_metadata.py --check
+start_parallel_check rustfmt run_rustfmt_checks
+start_parallel_check runtime-deno-fmt run_runtime_deno_fmt_check
+start_parallel_check runtime-deno-check run_runtime_deno_typecheck
 start_parallel_check app-metadata scripts/ci/app_metadata_manifest_smoke.sh
 start_parallel_check operator-cli scripts/ci/operator_cli_smoke.sh
 start_parallel_check pixel-nix-progress scripts/ci/pixel_nix_build_progress_smoke.sh

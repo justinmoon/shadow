@@ -65,7 +65,11 @@ fn main() -> anyhow::Result<()> {
 
     drm_rect::log_line(&format!(
         "trace stage=main-start mode={} stage_label={} hold_secs={} visual={}",
-        if orange_mode { "orange-init" } else { "default" },
+        if orange_mode {
+            "orange-init"
+        } else {
+            "default"
+        },
         stage,
         hold_secs,
         visual

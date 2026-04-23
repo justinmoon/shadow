@@ -29,7 +29,7 @@ Run `./scripts/agent-brief` first thing to get a live context snapshot.
 - `just smoke target=vm` keeps the VM lane local-only, artifact-driven, and free of guest-side Cargo/Rust while still resetting the runtime state image each run.
 - `just run target=vm` / `just stop target=vm` are the public VM session entrypoints. VM inspection/control goes through `sc -t vm <subcommand>`.
 - `scripts/shadowctl` is the target-aware operator CLI behind the public run/stop wrappers, VM diagnostics, and rooted-Pixel shell control recipes; use `-t vm`, `-t pixel`, or a specific Pixel serial as needed.
-- `just pre-commit` runs script inventory, app metadata checks, recursive shell syntax checks, and lightweight operator/docs/justfile checks.
+- `just pre-commit` runs first-party Rust formatting checks, runtime TypeScript formatting plus script typechecks, script inventory, app metadata checks, recursive shell syntax checks, and lightweight operator/docs/justfile checks.
 - `just pre-merge` runs `just pre-commit`, host-system `checks.<system>.preMergeCheck`, and `just smoke target=vm`.
 - `just nightly` runs `just pre-merge`, `just ui-check`, host-system `legacyPackages.<system>.ci.pixelBootCheck`, and the real `hello-init` / `orange-init` cross-builds.
 - `just pixel-ci full` runs the current rooted-Pixel CI lane: timeline lifecycle, camera capture, runtime sound, runtime podcast playback, and the runtime Nostr timeline against a host-local relay over USB on a connected rooted device.

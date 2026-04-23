@@ -168,8 +168,7 @@ fn fill_display_visual_with_pattern(visual: DisplayVisual, duration: Duration) -
         .add_framebuffer(&dumb, 24, 32)
         .context("failed to create framebuffer")?;
 
-    fill_buffer_with_visual(&mut card, &mut dumb, visual)
-        .context("failed to fill dumb buffer")?;
+    fill_buffer_with_visual(&mut card, &mut dumb, visual).context("failed to fill dumb buffer")?;
 
     card.set_crtc(
         crtc_handle,

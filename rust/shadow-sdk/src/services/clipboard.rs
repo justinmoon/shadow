@@ -102,7 +102,8 @@ pub(crate) fn test_env_lock() -> &'static Mutex<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        run_write_text_task, test_env_lock, write_text, ClipboardWriteRequest, CLIPBOARD_MOCK_PATH_ENV,
+        run_write_text_task, test_env_lock, write_text, ClipboardWriteRequest,
+        CLIPBOARD_MOCK_PATH_ENV,
     };
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};

@@ -109,21 +109,32 @@ path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 PY
 }
 
-trap 'status=$?; write_summary "$status"; exit "$status"' EXIT
+main() {
+  local tmp_hello_init tmp_orange_init
 
-run_step preMerge "$SCRIPT_DIR/linux_pre_merge.sh"
-run_step uiCheck scripts/ui_check.sh
-run_step pixelBootCheck nix build --accept-flake-config --no-link -L ".#legacyPackages.${target_system}.ci.pixelBootCheck"
-run_step pixelBootOrangeGpuSmoke scripts/ci/pixel_boot_orange_gpu_smoke.sh
-run_step pixelBootRustBridgeSmoke scripts/ci/pixel_boot_rust_bridge_smoke.sh
-run_step pixelBootRustBridgeRunSmoke scripts/ci/pixel_boot_rust_bridge_run_smoke.sh
+  run_step preMerge "$SCRIPT_DIR/linux_pre_merge.sh"
+  run_step uiCheck scripts/ui_check.sh
+  run_step pixelBootCheck nix build --accept-flake-config --no-link -L ".#legacyPackages.${target_system}.ci.pixelBootCheck"
+  run_step pixelBootOrangeGpuSmoke scripts/ci/pixel_boot_orange_gpu_smoke.sh
+  run_step pixelBootRustBridgeSmoke scripts/ci/pixel_boot_rust_bridge_smoke.sh
+  run_step pixelBootRustBridgeRunSmoke scripts/ci/pixel_boot_rust_bridge_run_smoke.sh
 
-tmp_hello_init="$(mktemp "${TMPDIR:-/tmp}/shadow-hello-init.XXXXXX")"
-rm -f "$tmp_hello_init"
-run_step helloInit scripts/pixel/pixel_build_hello_init.sh --output "$tmp_hello_init"
-rm -f "$tmp_hello_init" "$tmp_hello_init.build-id"
+  tmp_hello_init="$(mktemp "${TMPDIR:-/tmp}/shadow-hello-init.XXXXXX")"
+  rm -f "$tmp_hello_init"
+  run_step helloInit scripts/pixel/pixel_build_hello_init.sh --output "$tmp_hello_init"
+  rm -f "$tmp_hello_init" "$tmp_hello_init.build-id"
 
-tmp_orange_init="$(mktemp "${TMPDIR:-/tmp}/shadow-orange-init.XXXXXX")"
-rm -f "$tmp_orange_init"
-run_step orangeInit scripts/pixel/pixel_build_orange_init.sh --output "$tmp_orange_init"
-rm -f "$tmp_orange_init" "$tmp_orange_init.build-id"
+  tmp_orange_init="$(mktemp "${TMPDIR:-/tmp}/shadow-orange-init.XXXXXX")"
+  rm -f "$tmp_orange_init"
+  run_step orangeInit scripts/pixel/pixel_build_orange_init.sh --output "$tmp_orange_init"
+  rm -f "$tmp_orange_init" "$tmp_orange_init.build-id"
+}
+
+if main; then
+  status=0
+else
+  status=$?
+fi
+
+write_summary "$status"
+exit "$status"

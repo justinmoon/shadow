@@ -55,7 +55,7 @@ write_summary() {
   finished_unix="$(date +%s)"
   vm_smoke_summary_path=""
   if [[ -f build/ui-vm/ui-vm-smoke-summary.json ]]; then
-    vm_smoke_summary_path="$(cd "$(pwd)" && pwd)/build/ui-vm/ui-vm-smoke-summary.json"
+    vm_smoke_summary_path="build/ui-vm/ui-vm-smoke-summary.json"
   fi
   step_dump="$(
     for label in "${!step_secs[@]}"; do
@@ -124,32 +124,41 @@ path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 PY
 }
 
-trap 'status=$?; write_summary "$status"; exit "$status"' EXIT
+main() {
+  if [[ "$skip_pre_commit" != "1" ]]; then
+    run_step preCommit scripts/pre_commit.sh
+  fi
+  run_step preMergeCheck nix build --accept-flake-config --no-link -L ".#checks.${target_system}.preMergeCheck"
 
-if [[ "$skip_pre_commit" != "1" ]]; then
-  run_step preCommit scripts/pre_commit.sh
+  case "$boot_demo_mode" in
+    auto)
+      run_step bootDemo scripts/ci/pixel_boot_demo_check.sh --if-changed
+      ;;
+    run)
+      if [[ -n "$boot_demo_changed_files" ]]; then
+        printf 'pre-merge: boot demo check selected for changed paths:\n%s\n' "$boot_demo_changed_files"
+      else
+        echo "pre-merge: boot demo check forced by caller"
+      fi
+      run_step bootDemo scripts/ci/pixel_boot_demo_check.sh
+      ;;
+    skip)
+      echo "pre-merge: skip boot demo check; branch does not touch demo-owned boot paths"
+      ;;
+    *)
+      echo "pre-merge: unsupported SHADOW_BOOT_DEMO_CHECK_MODE=${boot_demo_mode}" >&2
+      return 2
+      ;;
+  esac
+
+  run_step vmSmoke "$SCRIPT_DIR/required_vm_smoke.sh"
+}
+
+if main; then
+  status=0
+else
+  status=$?
 fi
-run_step preMergeCheck nix build --accept-flake-config --no-link -L ".#checks.${target_system}.preMergeCheck"
 
-case "$boot_demo_mode" in
-  auto)
-    run_step bootDemo scripts/ci/pixel_boot_demo_check.sh --if-changed
-    ;;
-  run)
-    if [[ -n "$boot_demo_changed_files" ]]; then
-      printf 'pre-merge: boot demo check selected for changed paths:\n%s\n' "$boot_demo_changed_files"
-    else
-      echo "pre-merge: boot demo check forced by caller"
-    fi
-    run_step bootDemo scripts/ci/pixel_boot_demo_check.sh
-    ;;
-  skip)
-    echo "pre-merge: skip boot demo check; branch does not touch demo-owned boot paths"
-    ;;
-  *)
-    echo "pre-merge: unsupported SHADOW_BOOT_DEMO_CHECK_MODE=${boot_demo_mode}" >&2
-    exit 2
-    ;;
-esac
-
-run_step vmSmoke "$SCRIPT_DIR/required_vm_smoke.sh"
+write_summary "$status"
+exit "$status"
