@@ -305,8 +305,10 @@ status_path, collect_status_path, image_path, serial, proof_prop, observed_prop,
 device_status = {
     "ok": mode != "second-stage-only",
     "serial": serial,
+    "collect_succeeded": mode != "second-stage-only",
     "collection_succeeded": mode != "second-stage-only",
     "collect_output_dir": str(collect_status_path.rsplit("/", 1)[0]),
+    "failure_stage": "collect" if mode == "second-stage-only" else "",
     "proof_prop": proof_prop,
     "observed_prop": observed_prop,
 }
@@ -3533,6 +3535,13 @@ assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_status block
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_ready false
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_blocked_reason missing-required-paths
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_status_source preflight-summary
+test -f "$PREFLIGHT_OUTPUT/device-run/status.json"
+assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" ok true
+assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" boot_oneshot_ok true
+assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_status blocked
+assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_blocked_reason missing-required-paths
+assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_status_source preflight-summary
+assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_device_status_aligned false
 assert_contains "$(cat "$LOCKF_LOG")" "exec "
 assert_contains "$(cat "$LOCKF_LOG")" "pixel_boot_preflight.sh"
 
@@ -3575,6 +3584,16 @@ assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_p
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_ready false
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_blocked_reason stock-init-import-not-proved
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_status_source second-stage-property-proof
+test -f "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json"
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" ok true
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" failure_stage ""
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" boot_oneshot_ok false
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" boot_oneshot_failure_stage collect
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" collection_succeeded false
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_status blocked
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_blocked_reason stock-init-import-not-proved
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_status_source second-stage-property-proof
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_device_status_aligned true
 
 rm -rf "$KGSL_PROBE_OUTPUT"
 rm -f "$LOCKF_LOG"

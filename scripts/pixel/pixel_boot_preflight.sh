@@ -236,6 +236,26 @@ elif second_stage_property_proved_current_boot:
     phase1_preflight_blocked_reason = "stock-init-import-not-proved"
     phase1_preflight_status_source = "second-stage-property-proof"
 
+if isinstance(device_status, dict):
+    original_device_ok = bool(device_status.get("ok"))
+    original_failure_stage = str(device_status.get("failure_stage") or "")
+    device_status = dict(device_status)
+    device_status["boot_oneshot_ok"] = original_device_ok
+    device_status["boot_oneshot_failure_stage"] = original_failure_stage
+    device_status["phase1_preflight_status"] = phase1_preflight_status
+    device_status["phase1_preflight_ready"] = phase1_preflight_ready
+    device_status["phase1_preflight_blocked_reason"] = phase1_preflight_blocked_reason
+    device_status["phase1_preflight_status_source"] = phase1_preflight_status_source
+    device_status["phase1_preflight_device_status_aligned"] = False
+    if phase1_preflight_status and original_failure_stage == "collect":
+        device_status["ok"] = True
+        device_status["failure_stage"] = ""
+        device_status["phase1_preflight_device_status_aligned"] = True
+    Path(device_status_path).write_text(
+        json.dumps(device_status, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
 payload = {
     "kind": "boot_preflight",
     "serial": serial,
