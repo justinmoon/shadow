@@ -14,39 +14,62 @@ Treat the user's text after `/next` as the primary instruction.
 ## Default Behavior
 
 - `/next` alone:
-  - claim or resume normally
+  - resume an existing claim, or inspect all available tasks before claiming fresh work
+  - choose the best available task for this worker's current context and claim it explicitly
   - start implementing the task
 - `/next ... don't start coding yet`, `/next ... just tell me what I own`, or similar:
   - inspect first
-  - summarize the current claim or the next likely task
+  - summarize the current claim or the available task choices
   - do not start coding until the user says to proceed
 
 ## Loop
 
-1. Ask what this worktree should do.
-   - for normal claim/resume:
-     - `dis interactive-next --json`
+1. Inspect what this worktree should do.
+   - start with:
+     - `dis interactive-status --json`
    - If project inference is ambiguous, rerun with `--project <project>`.
-   - for discussion-only / inspect-first requests:
-     - use `dis interactive-status --json`
-     - explain the current claim or the next available task without claiming a new one unless the user explicitly asked you to
+   - if this worktree already owns an active claim, resume that task
+   - if this worktree has a `landed_clean` claim, release it first:
+     - `dis interactive-finish --project <project> --state done --json`
+     - then inspect status again
+   - for discussion-only / inspect-first requests, explain the current claim or available task choices without claiming a new one unless the user explicitly asked you to
 
-2. Handle the returned action.
+2. Choose fresh work when there is no active claim.
+   - review every task in `available`, not just the first one
+   - prefer work that best uses this worktree's recent context, path knowledge, hardware setup, and previous lane
+   - use priority, critical-path value, and user instructions as tie-breakers
+   - if no available task fits and continuity matters, stop and say `/groom` should add or prioritize the related successor
+
+3. Claim the chosen task explicitly.
+   - run:
+     - `dis interactive-next --task-id <task-id> --json`
+   - if project inference is ambiguous, include `--project <project>`
+   - if the claim races or the selected task is no longer available, inspect status again and choose from the remaining tasks
+
+4. Handle the returned action.
    - `claimed`: this worktree owns a new task; start implementing it
    - `resume`: this worktree already owns a task; keep working
    - `idle`: nothing is currently available; tell the user and suggest `/groom`
 
-3. Implement the task.
+5. Implement the task.
    - read `title`, `paths`, `validation`, `plan_ref`, and `blocked_by`
    - read the relevant plan/doc context
    - work only in the current worktree
 
-4. Finish honestly.
+6. Finish honestly.
    - if the task is ready to land, use the `land` skill
    - if the task is blocked or should go back to queue, use:
      - `dis interactive-finish --project <project> --state blocked`
      - or:
      - `dis interactive-finish --project <project> --state ready`
+
+## Continuity
+
+- The dispatcher is queue-driven. It does not infer the best next task from this worktree's previous research, branch history, or local context.
+- The planner must expose related follow-up tasks in the queue, with priority ahead of unrelated available work, when a specialized worker should continue the same lane.
+- The worker supplies judgement by inspecting all available tasks and explicitly claiming the best fit.
+- When the user asks to continue the previous lane and no related task is available, do not claim unrelated work just to stay busy; tell the user `/groom` should add or prioritize the related successor.
+- At handoff, workers should write the concrete next slice in docs or their final summary, but should not self-expand the queue unless explicitly asked.
 
 ## Rules
 
@@ -55,4 +78,4 @@ Treat the user's text after `/next` as the primary instruction.
 - Do not switch projects silently.
 - Do not stop at queue churn; once you have a task, implement it.
 
-If the current branch moved and landed cleanly on `master`, running `/next` again auto-marks the old claim `done` and advances to the next available task.
+If the current branch moved and landed cleanly on `master`, release the old claim as `done`, then inspect available tasks and choose deliberately.

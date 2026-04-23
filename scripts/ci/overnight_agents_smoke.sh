@@ -43,6 +43,11 @@ cat >todos/alpha.md <<'EOF'
     - `just ui-check core`
   - blocked_by:
     - `first concrete task`
+- [ ] `third independent task`
+  - owned paths:
+    - `docs/`
+  - validation:
+    - `just pre-commit`
 EOF
 
 git add .
@@ -59,14 +64,17 @@ from pathlib import Path
 
 queue = json.loads(Path(".agents/dispatch/state/projects/alpha/queue.json").read_text())
 assert set(queue) == {"project", "tasks"}, queue
-assert len(queue["tasks"]) == 2, queue
-first, second = queue["tasks"]
+assert len(queue["tasks"]) == 3, queue
+first, second, third = queue["tasks"]
 assert first["title"] == "first concrete task", first
 assert first["state"] == "ready", first
 assert first["paths"] == ["runtime/", "ui/"], first
 assert first["validation"] == ["just pre-commit"], first
 assert "blocked_by" not in first, first
 assert second["blocked_by"] == [first["id"]], second
+assert third["title"] == "third independent task", third
+assert third["state"] == "ready", third
+assert "blocked_by" not in third, third
 claims = json.loads(Path(".agents/dispatch/state/projects/alpha/claims.json").read_text())
 assert claims == {"project": "alpha", "claims": {}}, claims
 PY
@@ -105,7 +113,22 @@ subprocess.run(["git", "commit", "-qm", "test: finish first task"], cwd=worker, 
 subprocess.run(["git", "merge", "--ff-only", "alpha-worker"], check=True)
 PY
 
-third_claim="$(python3 "$CTL_PATH" interactive-next --project alpha --worktree "$worker" --json)"
+third_id="$(python3 - <<'PY'
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+queue = json.loads(Path(".agents/dispatch/state/projects/alpha/queue.json").read_text())
+for task in queue["tasks"]:
+    if task["title"] == "third independent task":
+        print(task["id"])
+        break
+else:
+    raise SystemExit("missing third independent task")
+PY
+)"
+third_claim="$(python3 "$CTL_PATH" interactive-next --project alpha --worktree "$worker" --task-id "$third_id" --json)"
 
 python3 - "$third_claim" <<'PY'
 from __future__ import annotations
@@ -115,7 +138,7 @@ import sys
 
 payload = json.loads(sys.argv[1])
 assert payload["action"] == "claimed", payload
-assert payload["task"]["title"] == "second concrete task", payload
+assert payload["task"]["title"] == "third independent task", payload
 PY
 
 python3 "$CTL_PATH" interactive-finish --project alpha --worktree "$worker" --state blocked >/dev/null
@@ -129,6 +152,10 @@ from pathlib import Path
 queue = json.loads(Path(".agents/dispatch/state/projects/alpha/queue.json").read_text())
 claims = json.loads(Path(".agents/dispatch/state/projects/alpha/claims.json").read_text())
 states = {task["title"]: task["state"] for task in queue["tasks"]}
-assert states == {"first concrete task": "done", "second concrete task": "blocked"}, states
+assert states == {
+    "first concrete task": "done",
+    "second concrete task": "ready",
+    "third independent task": "blocked",
+}, states
 assert claims == {"project": "alpha", "claims": {}}, claims
 PY

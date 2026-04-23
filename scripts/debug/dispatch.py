@@ -77,6 +77,15 @@ def available_tasks(queue: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
 
+def unavailable_reason(queue: dict[str, Any], task: dict[str, Any]) -> str:
+    if task.get("state") != "ready":
+        return f"state is {task.get('state', 'backlog')}"
+    blockers = task_unmet_blockers(queue, task)
+    if blockers:
+        return "blocked by " + ", ".join(blockers)
+    return "not available"
+
+
 def resolve_project_id(cwd: Path, common_root: Path, explicit_project: str | None, worktree: Path) -> str:
     if explicit_project:
         return explicit_project
@@ -326,15 +335,25 @@ def cmd_interactive_next(args: argparse.Namespace) -> int:
             elif claim_view["status"] == "stale_task":
                 claims["claims"].pop(str(worktree), None)
             else:
+                if args.task_id and args.task_id != claim["task_id"]:
+                    raise SystemExit(
+                        f"dispatch: worktree already owns {claim['task_id']}; "
+                        f"finish it before claiming {args.task_id}"
+                    )
                 payload = {"action": "resume", "project": project_id, "task": queue_task(queue, claim["task_id"]), "claim": claim_view}
                 dump(payload, as_json=args.json)
                 return 0
         tasks = available_tasks(queue)
-        if not tasks:
+        if args.task_id:
+            task = queue_task(queue, args.task_id)
+            if not task_is_available(queue, task):
+                raise SystemExit(f"dispatch: task {args.task_id!r} is not available: {unavailable_reason(queue, task)}")
+        elif not tasks:
             payload = {"action": "idle", "project": project_id, "counts": state_counts(queue), "availability": availability_counts(queue)}
             dump(payload, as_json=args.json)
             return 0
-        task = tasks[0]
+        else:
+            task = tasks[0]
         task["state"] = "running"
         claims.setdefault("claims", {})[str(worktree)] = {
             "task_id": task["id"],
@@ -409,6 +428,7 @@ def build_parser() -> argparse.ArgumentParser:
     interactive_next = sub.add_parser("interactive-next")
     interactive_next.add_argument("--project")
     interactive_next.add_argument("--worktree")
+    interactive_next.add_argument("--task-id")
     interactive_next.add_argument("--json", action="store_true")
     interactive_next.set_defaults(func=cmd_interactive_next)
 

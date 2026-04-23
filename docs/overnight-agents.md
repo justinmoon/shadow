@@ -52,7 +52,7 @@ Good worker examples:
 Default intent:
 
 - `/groom` alone: inspect and summarize first; do not mutate queue state yet
-- `/next` alone: claim or resume and start work
+- `/next` alone: resume an existing claim, or inspect all available tasks, choose the best fit for this worker, claim it, and start work
 
 ## Files
 
@@ -143,11 +143,19 @@ dis interactive-status --project boot
 dis interactive-status --project boot --json
 ```
 
-Claim or resume from the current worktree:
+Inspect available tasks before choosing work:
 
 ```sh
-dis interactive-next --project boot --json
+dis interactive-status --project boot --json
 ```
+
+Claim a chosen task from the current worktree:
+
+```sh
+dis interactive-next --project boot --task-id boot-specific-task --json
+```
+
+For script compatibility, omitting `--task-id` still claims the highest-priority available task after any resumable or landed-clean existing claim is handled.
 
 Release the current claim explicitly when the branch did not land cleanly:
 
@@ -167,6 +175,8 @@ dis task-state --project boot --task-id boot-new-seam --state ready
 ## Behavior
 
 - `/next` resumes the current worktree claim if one already exists.
-- If that worktree's branch moved and landed cleanly on `master`, `/next` auto-marks the old task `done` and claims the next available task.
+- Workers should inspect all available tasks before claiming fresh work, then claim the chosen task explicitly with `interactive-next --task-id`.
+- Task priority is the scheduler fallback and a planning signal, not a substitute for worker judgement about continuity, path overlap, or recently accumulated context.
+- If direct `interactive-next` sees that the worktree's branch moved and landed cleanly on `master`, it auto-marks the old task `done`. With `--task-id`, it then claims that selected task; without `--task-id`, it falls back to the highest-priority available task.
 - `blocked_by` controls `available` versus `waiting`.
 - `queue-import-plan` refreshes plan-derived tasks and drops stale plan-derived tasks that are no longer in the current plan, while leaving manual tasks alone.
