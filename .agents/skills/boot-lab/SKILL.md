@@ -13,10 +13,10 @@ Your job is to keep devices usable, rooted, assigned, observable, and recoverabl
 
 ## First Minute
 
-- Confirm which serials are in scope. Never touch other attached phones without explicit user approval.
+- Treat attached lab Pixel devices reported by `sc devices` as in scope by default. Ask only before touching non-lab or unknown phones, or when a physical user action is needed.
 - Snapshot the current lab state before planning experiments:
   - `adb devices`
-  - per allowed serial: fingerprint, slot, `sc -t <serial> root-check`
+  - per selected serial: fingerprint, slot, `sc -t <serial> root-check`
   - if relevant: `sc -t <serial> doctor`
 - Name a primary device and a confirmation device.
 - If the task is broad, pair this skill with `orchestrate`.
@@ -159,7 +159,7 @@ Your job is to keep devices usable, rooted, assigned, observable, and recoverabl
 - manual button combos
 - cable or port swaps
 - what was physically visible on screen
-- whether a non-primary device is allowed to be touched
+- whether an attached non-lab or unknown device is allowed to be touched
 
 Ask for hardware help early when the blocker is physical. Do not keep iterating in software while the phone is waiting for a human.
 

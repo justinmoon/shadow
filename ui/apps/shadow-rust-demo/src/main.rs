@@ -13,7 +13,7 @@ use softbuffer::{Context, Surface};
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalSize},
-    event::WindowEvent,
+    event::{ButtonSource, ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowAttributes, WindowId},
 };
@@ -34,6 +34,7 @@ const BACKGROUND_ERROR: u32 = 0x4A2022;
 const TEXT_COLOR: u32 = 0xF7FAFC;
 const ACCENT_SUCCESS: u32 = 0x74D3AE;
 const ACCENT_ERROR: u32 = 0xF2A17F;
+const ACCENT_COUNTER_ACTIVE: u32 = 0xF2D766;
 const PANEL_PADDING_PX: usize = 24;
 const ACCENT_BAR_HEIGHT_PX: usize = 10;
 const FONT_SCALE: usize = 2;
@@ -120,6 +121,7 @@ impl CameraPanelState {
 
 struct App {
     camera_panel: CameraPanelState,
+    counter: CounterProbeState,
     window_env: AppWindowEnvironment,
     window: Option<WindowState>,
 }
@@ -128,6 +130,7 @@ impl App {
     fn new(camera_panel: CameraPanelState, window_env: AppWindowEnvironment) -> Self {
         Self {
             camera_panel,
+            counter: CounterProbeState::default(),
             window_env,
             window: None,
         }
@@ -204,15 +207,77 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 state.window.pre_present_notify();
-                if let Err(error) =
-                    fill_surface(&mut state.surface, state.surface_size, &self.camera_panel)
-                {
+                if let Err(error) = fill_surface(
+                    &mut state.surface,
+                    state.surface_size,
+                    &self.camera_panel,
+                    &self.counter,
+                ) {
                     eprintln!("shadow-rust-demo: failed to draw frame: {error}");
                     event_loop.exit();
                 }
             }
+            WindowEvent::PointerButton {
+                button,
+                state: button_state,
+                position,
+                ..
+            } => {
+                if matches!(button, ButtonSource::Mouse(MouseButton::Left))
+                    && matches!(button_state, ElementState::Pressed)
+                {
+                    self.counter
+                        .increment_from_pointer(position.x as f32, position.y as f32);
+                    state.window.request_redraw();
+                }
+            }
             _ => {}
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CounterProbeInput {
+    x: f32,
+    y: f32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+struct CounterProbeState {
+    count: u32,
+    last_input: Option<CounterProbeInput>,
+}
+
+impl CounterProbeState {
+    fn increment_from_pointer(&mut self, x: f32, y: f32) {
+        self.count = self.count.saturating_add(1);
+        self.last_input = Some(CounterProbeInput { x, y });
+        eprintln!(
+            "shadow-rust-demo: counter_incremented count={} input=pointer x={:.1} y={:.1}",
+            self.count, x, y
+        );
+    }
+
+    fn count(&self) -> u32 {
+        self.count
+    }
+
+    fn accent_color(&self, fallback: u32) -> u32 {
+        if self.count > 0 {
+            ACCENT_COUNTER_ACTIVE
+        } else {
+            fallback
+        }
+    }
+
+    fn lines(&self) -> Vec<String> {
+        let mut lines = vec![format!("touch counter: {}", self.count)];
+        if let Some(input) = self.last_input {
+            lines.push(format!("last pointer: {:.1},{:.1}", input.x, input.y));
+        } else {
+            lines.push(String::from("last pointer: none"));
+        }
+        lines
     }
 }
 
@@ -338,6 +403,7 @@ fn fill_surface(
     surface: &mut Surface<&'static dyn Window, &'static dyn Window>,
     size: PhysicalSize<u32>,
     panel: &CameraPanelState,
+    counter: &CounterProbeState,
 ) -> Result<(), Box<dyn Error>> {
     let mut buffer = surface.buffer_mut()?;
     let pixels = buffer.as_mut();
@@ -355,10 +421,22 @@ fn fill_surface(
         ACCENT_BAR_HEIGHT_PX.min(height),
         panel.accent_color,
     );
+    let badge_width = width.min(128);
+    draw_rect(
+        pixels,
+        width,
+        height,
+        width.saturating_sub(badge_width),
+        0,
+        badge_width,
+        ACCENT_BAR_HEIGHT_PX.min(height),
+        counter.accent_color(panel.accent_color),
+    );
 
     let max_chars = max_characters_per_line(width);
     let mut y = PANEL_PADDING_PX;
-    for line in &panel.lines {
+    let counter_lines = counter.lines();
+    for line in panel.lines.iter().chain(counter_lines.iter()) {
         for wrapped_line in wrap_text(line, max_chars) {
             if y + FONT_HEIGHT_PX > height {
                 break;
@@ -377,8 +455,26 @@ fn fill_surface(
         y += LINE_SPACING_PX / 2;
     }
 
+    let checksum = frame_checksum(pixels);
     buffer.present()?;
+    eprintln!(
+        "shadow-rust-demo: frame_committed counter={} checksum={checksum:016x} size={}x{}",
+        counter.count(),
+        width,
+        height
+    );
     Ok(())
+}
+
+fn frame_checksum(pixels: &[u32]) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for pixel in pixels {
+        for byte in pixel.to_le_bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    hash
 }
 
 fn max_characters_per_line(width: usize) -> usize {
@@ -510,7 +606,7 @@ fn draw_glyph(
 
 #[cfg(test)]
 mod tests {
-    use super::probe_camera_report;
+    use super::{frame_checksum, probe_camera_report, CounterProbeState};
     use shadow_sdk::services::camera_backend::{
         clear_test_camera_env, test_camera_env_lock, CAMERA_ALLOW_MOCK_ENV, CAMERA_ENDPOINT_ENV,
     };
@@ -538,5 +634,29 @@ mod tests {
         let error = probe_camera_report().unwrap_err();
         assert!(error.to_string().contains(CAMERA_ENDPOINT_ENV));
         assert!(error.to_string().contains(CAMERA_ALLOW_MOCK_ENV));
+    }
+
+    #[test]
+    fn counter_probe_records_pointer_input() {
+        let mut counter = CounterProbeState::default();
+        counter.increment_from_pointer(42.0, 84.0);
+
+        assert_eq!(counter.count(), 1);
+        assert_eq!(
+            counter.lines(),
+            vec![
+                String::from("touch counter: 1"),
+                String::from("last pointer: 42.0,84.0")
+            ]
+        );
+    }
+
+    #[test]
+    fn frame_checksum_changes_when_pixels_change() {
+        let mut pixels = vec![0x17362C_u32; 4];
+        let first = frame_checksum(&pixels);
+        pixels[2] = 0xF2D766;
+
+        assert_ne!(first, frame_checksum(&pixels));
     }
 }

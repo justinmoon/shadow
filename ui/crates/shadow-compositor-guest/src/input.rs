@@ -614,6 +614,12 @@ impl ShadowGuestCompositor {
                             );
                             route = Some("app-scroll-stop");
                         } else if under.is_some() {
+                            tracing::info!(
+                                "[shadow-guest-compositor] touch-app-tap-dispatch seq={} x={:.1} y={:.1}",
+                                event.sequence,
+                                position.x,
+                                position.y
+                            );
                             pointer.button(
                                 self,
                                 &ButtonEvent {

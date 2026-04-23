@@ -14,6 +14,12 @@ Use the rooted-Pixel touch latency probe for direct-runtime app latency:
 sc -t <serial> debug latency
 ```
 
+For the Rust direct-app counter probe:
+
+```sh
+PIXEL_TOUCH_LATENCY_APP=rust-counter sc -t <serial> debug latency
+```
+
 Use the rooted-Pixel shell scroll benchmark for the supported hosted shell lane:
 
 ```sh
