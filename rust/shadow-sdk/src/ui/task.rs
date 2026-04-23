@@ -192,6 +192,10 @@ impl<Job> TaskSlot<Job> {
         self.finish(task.id())
     }
 
+    pub fn finish_matches(&mut self, task: &TaskHandle<Job>) -> bool {
+        self.finish(task.id()).is_some()
+    }
+
     pub fn decoration<State, Output>(
         &self,
         run: impl Fn(Job) -> Result<Output, String> + Clone + Send + Sync + 'static,
@@ -271,6 +275,10 @@ impl<State, Job, Output> TaskSlotBinding<State, Job, Output> {
 
     pub fn finish(&mut self, task: TaskHandle<Job>) -> Option<Job> {
         self.slot.finish_handle(task)
+    }
+
+    pub fn finish_matches(&mut self, task: TaskHandle<Job>) -> bool {
+        self.slot.finish_matches(&task)
     }
 
     pub fn decoration(&self) -> TaskDecoration<State>
@@ -388,6 +396,17 @@ mod tests {
         let pending = slot.pending_cloned().expect("pending task");
 
         assert_eq!(slot.finish_handle(pending), Some(String::from("job")));
+        assert!(!slot.is_pending());
+    }
+
+    #[test]
+    fn task_slot_binding_can_finish_matching_handle_as_bool() {
+        let mut slot = TaskSlotBinding::new(run_bound_task, apply_bound_task);
+        assert!(slot.start(String::from("job")));
+
+        let pending = slot.pending_cloned().expect("pending task");
+
+        assert!(slot.finish_matches(pending));
         assert!(!slot.is_pending());
     }
 

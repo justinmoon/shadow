@@ -17,7 +17,7 @@ use shadow_sdk::{
             NostrAccountSummary, NostrAccountTask, NostrPublishReceipt,
         },
     },
-    ui::{with_tasks, TaskHandle, TaskSlotBinding, WidgetView},
+    ui::{with_tasks, TaskSlotBinding, WidgetView},
 };
 
 use crate::TimelineApp;
@@ -38,38 +38,6 @@ pub(crate) type PublishOutcome = NostrPublishReceipt;
 pub(crate) type AccountActionOutcome = NostrAccountSummary;
 
 type TimelineTask<Job, Output> = TaskSlotBinding<TimelineApp, Job, Output>;
-
-macro_rules! timeline_task_bool_methods {
-    ($pending:ident, $start:ident, $finish:ident, $field:ident, $job:ty) => {
-        pub(crate) fn $pending(&self) -> bool {
-            self.$field.is_pending()
-        }
-
-        pub(crate) fn $start(&mut self, job: $job) -> bool {
-            self.$field.start(job)
-        }
-
-        pub(crate) fn $finish(&mut self, task: TaskHandle<$job>) -> bool {
-            self.$field.finish(task).is_some()
-        }
-    };
-}
-
-macro_rules! timeline_task_job_methods {
-    ($pending:ident, $start:ident, $finish:ident, $field:ident, $job:ty) => {
-        pub(crate) fn $pending(&self) -> bool {
-            self.$field.is_pending()
-        }
-
-        pub(crate) fn $start(&mut self, job: $job) -> bool {
-            self.$field.start(job)
-        }
-
-        pub(crate) fn $finish(&mut self, task: TaskHandle<$job>) -> Option<$job> {
-            self.$field.finish(task)
-        }
-    };
-}
 
 #[derive(Clone, Debug)]
 pub(crate) struct TimelineTasks {
@@ -106,56 +74,6 @@ impl Default for TimelineTasks {
 }
 
 impl TimelineTasks {
-    timeline_task_bool_methods!(
-        account_action_pending,
-        start_account_action,
-        finish_account_action,
-        account_action,
-        NostrAccountTask
-    );
-    timeline_task_bool_methods!(
-        clipboard_write_pending,
-        start_clipboard_write,
-        finish_clipboard_write,
-        clipboard_write,
-        ClipboardWriteRequest
-    );
-    timeline_task_bool_methods!(
-        explore_sync_pending,
-        start_explore_sync,
-        finish_explore_sync,
-        explore_sync,
-        NostrExploreSyncRequest
-    );
-    timeline_task_job_methods!(
-        follow_update_pending,
-        start_follow_update,
-        finish_follow_update,
-        follow_update,
-        NostrContactListUpdateRequest
-    );
-    timeline_task_job_methods!(
-        publish_pending,
-        start_publish,
-        finish_publish,
-        publish,
-        NostrTimelinePublishRequest
-    );
-    timeline_task_bool_methods!(
-        refresh_pending,
-        start_refresh,
-        finish_refresh,
-        refresh,
-        NostrHomeRefreshRequest
-    );
-    timeline_task_bool_methods!(
-        thread_sync_pending,
-        start_thread_sync,
-        finish_thread_sync,
-        thread_sync,
-        NostrThreadSyncRequest
-    );
-
     pub(crate) fn pending_follow_update_target(&self) -> Option<&str> {
         self.follow_update
             .pending()
@@ -219,7 +137,7 @@ mod tests {
     #[test]
     fn follow_update_helpers_track_pending_target() {
         let mut tasks = TimelineTasks::default();
-        assert!(tasks.start_follow_update(NostrContactListUpdateRequest {
+        assert!(tasks.follow_update.start(NostrContactListUpdateRequest {
             account_npub: String::from("npub-account"),
             action: FollowActionKind::Add {
                 npub: String::from("npub-target"),
@@ -235,7 +153,7 @@ mod tests {
     #[test]
     fn follow_update_finish_returns_matching_pending_job() {
         let mut tasks = TimelineTasks::default();
-        assert!(tasks.start_follow_update(NostrContactListUpdateRequest {
+        assert!(tasks.follow_update.start(NostrContactListUpdateRequest {
             account_npub: String::from("npub-account"),
             action: FollowActionKind::Remove {
                 npub: String::from("npub-target"),
@@ -248,10 +166,11 @@ mod tests {
             .pending_cloned()
             .expect("pending follow update");
         let finished = tasks
-            .finish_follow_update(pending)
+            .follow_update
+            .finish(pending)
             .expect("matching finished follow update");
 
         assert_eq!(follow_update_target(&finished), "npub-target");
-        assert!(!tasks.follow_update_pending());
+        assert!(!tasks.follow_update.is_pending());
     }
 }
