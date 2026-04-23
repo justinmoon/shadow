@@ -208,6 +208,34 @@ impl TimelineTasks {
         self.publish.finish(task)
     }
 
+    pub(crate) fn account_action_pending(&self) -> bool {
+        self.account_action.is_pending()
+    }
+
+    pub(crate) fn clipboard_write_pending(&self) -> bool {
+        self.clipboard_write.is_pending()
+    }
+
+    pub(crate) fn refresh_pending(&self) -> bool {
+        self.refresh.is_pending()
+    }
+
+    pub(crate) fn explore_sync_pending(&self) -> bool {
+        self.explore_sync.is_pending()
+    }
+
+    pub(crate) fn thread_sync_pending(&self) -> bool {
+        self.thread_sync.is_pending()
+    }
+
+    pub(crate) fn follow_update_pending(&self) -> bool {
+        self.follow_update.is_pending()
+    }
+
+    pub(crate) fn publish_pending(&self) -> bool {
+        self.publish.is_pending()
+    }
+
     pub(crate) fn pending_follow_update_target(&self) -> Option<&str> {
         self.follow_update
             .pending()
@@ -307,7 +335,7 @@ mod tests {
 
         let pending = tasks.refresh.pending_cloned().expect("pending refresh");
         assert!(tasks.finish_refresh(pending));
-        assert!(!tasks.refresh.is_pending());
+        assert!(!tasks.refresh_pending());
     }
 
     #[test]
@@ -328,7 +356,7 @@ mod tests {
             .expect("matching finished follow update");
 
         assert_eq!(follow_update_target(&finished), "npub-target");
-        assert!(!tasks.follow_update.is_pending());
+        assert!(!tasks.follow_update_pending());
     }
 
     #[test]
