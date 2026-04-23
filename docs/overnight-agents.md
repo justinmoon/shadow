@@ -3,9 +3,10 @@ summary: Minimal interactive dispatch queue for user-managed tmux/worktrees via 
 read_when:
   - using the private dispatch queue behind `/groom` and `/next`
   - seeding or resetting the boot or shadow-ui interactive task queue
+  - launching or monitoring overnight multi-agent worker runs
 ---
 
-# Interactive Dispatch
+# Interactive Dispatch And Overnight Runs
 
 This doc covers the private dispatcher behind
 [`scripts/debug/dispatch.py`](../scripts/debug/dispatch.py).
@@ -17,9 +18,13 @@ The UX is intentionally small:
 
 - planner pane/worktree: `/groom`
 - worker pane/worktree: `/next`
+- overnight planner/orchestrator: `/overnight`
 - tmux and worktrees: managed by the human
 
-There is no controller-owned tmux, slot, worktree, worker, or session layer.
+Interactive dispatch itself has no controller-owned tmux, slot, worktree,
+worker, or session layer. The `overnight` skill may launch or resume worker
+sessions, but it still uses the same plan-backed dispatch state and should not
+create a second backlog.
 
 ## Conversational Use
 
@@ -53,6 +58,35 @@ Default intent:
 
 - `/groom` alone: inspect and summarize first; do not mutate queue state yet
 - `/next` alone: resume an existing claim, or inspect all available tasks, choose the best fit for this worker, claim it, and start work
+- `/overnight plan`: inspect plans, worktrees, claims, and propose a launch/resume map without starting workers
+- `/overnight launch`: preflight the plan, map workers to tasks, launch or resume sessions, and monitor progress
+
+## Overnight Runs
+
+`overnight` is a thin orchestrator over `/groom`, `/next`, and `land`.
+
+It should:
+
+- sanity-check the plan before launch
+- keep task definitions in `todos/`
+- reuse existing worker sessions when their lane context is valuable
+- create new worktrees/sessions for unrelated tasks or independent hypotheses
+- launch workers with prompts that tell them to run `/next`, claim explicitly, implement, review, update the plan, land, and repeat only when the next task is a good continuity fit
+- periodically inspect `interactive-status`, worker worktrees, landed commits, blockers, and idle workers
+
+It should not:
+
+- add hidden task definitions to runtime queue JSON
+- bypass `scripts/land.sh`
+- force unrelated work into a context-rich worker just to keep every pane busy
+- overwrite dirty worktrees or stale sessions
+- treat hardware failures or unclear product decisions as reasons to keep blindly launching more work
+
+When choosing sessions, prefer resuming an existing worker if the next task
+continues the worker's recent plan, code, hardware, or debugging context. Prefer
+a new worktree/session if the task starts a different lane, needs an independent
+attempt, or the existing session is dirty, conflicted, stale, or likely to bias
+the work in the wrong direction.
 
 ## Files
 
