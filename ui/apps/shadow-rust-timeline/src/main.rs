@@ -192,6 +192,12 @@ struct ReplyDraft {
     content: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NoteDraftRoutePolicy {
+    Clear,
+    Preserve,
+}
+
 #[derive(Clone, Debug)]
 struct TimelineApp {
     account: Option<ActiveAccount>,
@@ -360,7 +366,21 @@ impl TimelineApp {
         self.route_stack.last().cloned().unwrap_or(Route::Timeline)
     }
 
-    fn prune_stale_reply_draft(&mut self) {
+    // Route mutations and draft retention stay coupled here so callers cannot
+    // forget the app-local cleanup that depends on the new visible route.
+    fn transition_route<F>(&mut self, note_draft_policy: NoteDraftRoutePolicy, update: F)
+    where
+        F: FnOnce(&mut TimelineCachedData, &mut Vec<Route>, usize),
+    {
+        let limit = self.config.limit;
+        update(&mut self.cached_data, &mut self.route_stack, limit);
+        self.sync_drafts_after_route_transition(note_draft_policy);
+    }
+
+    fn sync_drafts_after_route_transition(&mut self, note_draft_policy: NoteDraftRoutePolicy) {
+        if matches!(note_draft_policy, NoteDraftRoutePolicy::Clear) || self.account.is_none() {
+            self.note_draft = None;
+        }
         let route = self.current_route();
         if self.reply_draft.as_ref().is_some_and(|draft| match route {
             Route::Note { ref id } => {
@@ -373,17 +393,15 @@ impl TimelineApp {
     }
 
     fn push_route(&mut self, route: Route) {
-        let limit = self.config.limit;
-        self.cached_data
-            .push_onto_route_stack(&mut self.route_stack, route, limit);
-        self.prune_stale_reply_draft();
+        self.transition_route(NoteDraftRoutePolicy::Preserve, move |cached_data, route_stack, limit| {
+            cached_data.push_onto_route_stack(route_stack, route, limit);
+        });
     }
 
     fn pop_route(&mut self) {
-        let limit = self.config.limit;
-        self.cached_data
-            .pop_route_stack(&mut self.route_stack, limit);
-        self.prune_stale_reply_draft();
+        self.transition_route(NoteDraftRoutePolicy::Preserve, |cached_data, route_stack, limit| {
+            cached_data.pop_route_stack(route_stack, limit);
+        });
     }
 
     fn open_note(&mut self, id: String) {
@@ -407,13 +425,10 @@ impl TimelineApp {
     }
 
     fn sync_routes(&mut self) {
-        if self.account.is_none() {
-            self.note_draft = None;
-        }
-        let limit = self.config.limit;
-        self.cached_data
-            .reconcile_route_stack(&mut self.route_stack, self.account.as_ref(), limit);
-        self.prune_stale_reply_draft();
+        let account = self.account.clone();
+        self.transition_route(NoteDraftRoutePolicy::Preserve, move |cached_data, route_stack, limit| {
+            cached_data.reconcile_route_stack(route_stack, account.as_ref(), limit);
+        });
     }
 
     pub(crate) fn hydrate_current_route(&mut self) {
@@ -478,12 +493,10 @@ impl TimelineApp {
     }
 
     fn platform_open_timeline(&mut self) {
-        self.note_draft = None;
         if self.account.is_some() {
-            let limit = self.config.limit;
-            self.cached_data
-                .reset_route_stack(&mut self.route_stack, Route::Timeline, limit);
-            self.prune_stale_reply_draft();
+            self.transition_route(NoteDraftRoutePolicy::Clear, |cached_data, route_stack, limit| {
+                cached_data.reset_route_stack(route_stack, Route::Timeline, limit);
+            });
             eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_success");
         } else {
             eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_failed");
@@ -1120,6 +1133,17 @@ mod tests {
     }
 
     #[test]
+    fn sync_routes_with_account_keeps_note_draft() {
+        let mut app = test_app();
+        app.note_draft = Some(String::from("hello world"));
+
+        app.sync_routes();
+
+        assert_eq!(app.current_route(), Route::Timeline);
+        assert_eq!(app.note_draft.as_deref(), Some("hello world"));
+    }
+
+    #[test]
     fn note_publish_requires_timeline_route() {
         let mut app = test_app();
         app.open_note_composer();
@@ -1146,6 +1170,25 @@ mod tests {
 
         assert_eq!(app.current_route(), Route::Timeline);
         assert!(app.note_draft.is_none());
+    }
+
+    #[test]
+    fn automation_open_timeline_clears_reply_draft() {
+        let mut app = test_app();
+        app.cached_data = TimelineCachedData::from_home(
+            FeedScope::no_contacts(),
+            vec![test_note("note-1", "npub-alice", "hello")],
+        );
+        app.route_stack = vec![Route::Note {
+            id: String::from("note-1"),
+        }];
+        app.open_reply_composer(String::from("note-1"));
+        app.set_reply_draft_content(String::from("draft reply"));
+
+        app.platform_open_timeline();
+
+        assert_eq!(app.current_route(), Route::Timeline);
+        assert!(app.reply_draft.is_none());
     }
 
     #[test]
