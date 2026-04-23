@@ -12,18 +12,30 @@ use shadow_sdk::{
 use super::shared::{feed_section, profile_title, relative_time};
 use crate::{short_id, ReplyDraft, TimelineApp, TimelineStatus};
 
-pub(crate) fn note_screen(
-    ui: UiContext,
-    note: Option<NostrEvent>,
-    profile: NostrProfileSummary,
-    thread: NostrThreadContext,
-    reply_draft: Option<ReplyDraft>,
-    status: TimelineStatus,
-    publish_blocked: bool,
-    reply_publish_pending: bool,
-    thread_sync_available: bool,
-    thread_sync_pending: bool,
-) -> impl WidgetView<TimelineApp> {
+pub(super) struct NoteScreenProps {
+    pub(super) note: Option<NostrEvent>,
+    pub(super) profile: NostrProfileSummary,
+    pub(super) thread: NostrThreadContext,
+    pub(super) reply_draft: Option<ReplyDraft>,
+    pub(super) status: TimelineStatus,
+    pub(super) publish_blocked: bool,
+    pub(super) reply_publish_pending: bool,
+    pub(super) thread_sync_available: bool,
+    pub(super) thread_sync_pending: bool,
+}
+
+pub(crate) fn note_screen(ui: UiContext, props: NoteScreenProps) -> impl WidgetView<TimelineApp> {
+    let NoteScreenProps {
+        note,
+        profile,
+        thread,
+        reply_draft,
+        status,
+        publish_blocked,
+        reply_publish_pending,
+        thread_sync_available,
+        thread_sync_pending,
+    } = props;
     let body = match note {
         Some(note) => {
             let note_id = note.id.clone();
@@ -163,9 +175,7 @@ pub(crate) fn note_screen(
             ui.panel(
                 column((
                     ui.eyebrow_text("Unavailable"),
-                    ui.caption_text(
-                        "Refresh the timeline or go back to pick another note.",
-                    ),
+                    ui.caption_text("Refresh the timeline or go back to pick another note."),
                 ))
                 .gap(6.0.px()),
             ),
@@ -196,13 +206,11 @@ fn reply_sheet(
     column((
         ui.eyebrow_text("Reply draft"),
         ui.headline_text("Compose reply"),
-        ui.caption_text(
-            format!(
-                "Replying to {}  •  {}",
-                short_id(&note.pubkey),
-                short_id(&note_id)
-            ),
-        ),
+        ui.caption_text(format!(
+            "Replying to {}  •  {}",
+            short_id(&note.pubkey),
+            short_id(&note_id)
+        )),
         ui.body_text(note_preview),
         ui.multiline_editor(
             draft.content,
@@ -234,9 +242,7 @@ fn reply_sheet(
         ))
         .gap(10.0.px())
         .main_axis_alignment(MainAxisAlignment::Start),
-        ui.caption_text(
-            "This uses the shared account and the OS-owned signer approval prompt.",
-        ),
+        ui.caption_text("This uses the shared account and the OS-owned signer approval prompt."),
     ))
     .gap(10.0.px())
 }

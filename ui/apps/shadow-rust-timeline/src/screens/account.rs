@@ -5,16 +5,29 @@ use shadow_sdk::ui::{
 
 use crate::{short_id, ActiveAccount, FeedScope, TimelineApp, TimelineStatus};
 
+pub(super) struct AccountScreenProps {
+    pub(super) account: Option<ActiveAccount>,
+    pub(super) feed_scope: FeedScope,
+    pub(super) follow_input: String,
+    pub(super) status: TimelineStatus,
+    pub(super) clipboard_pending: bool,
+    pub(super) follow_pending: bool,
+    pub(super) socket_ready: bool,
+}
+
 pub(crate) fn account_screen(
     ui: UiContext,
-    account: Option<ActiveAccount>,
-    feed_scope: FeedScope,
-    follow_input: String,
-    status: TimelineStatus,
-    clipboard_pending: bool,
-    follow_pending: bool,
-    socket_ready: bool,
+    props: AccountScreenProps,
 ) -> impl WidgetView<TimelineApp> {
+    let AccountScreenProps {
+        account,
+        feed_scope,
+        follow_input,
+        status,
+        clipboard_pending,
+        follow_pending,
+        socket_ready,
+    } = props;
     match account {
         Some(account) => column((
             ui.top_bar_with_back(

@@ -6,9 +6,7 @@ mod screens;
 mod tasks;
 
 use cached_data::TimelineCachedData;
-use screens::{
-    account_screen, explore_screen, note_screen, onboarding_screen, profile_screen, timeline_screen,
-};
+use screens::route_screen;
 use shadow_sdk::{
     app::{
         current_lifecycle_state, spawn_platform_request_listener, AppWindowDefaults,
@@ -711,87 +709,7 @@ fn main() -> Result<(), ui::EventLoopError> {
 fn app_logic(app: &mut TimelineApp) -> impl WidgetView<TimelineApp> {
     let task_snapshot = app.tasks.snapshot();
     let ui = UiContext::shadow_dark(app.metrics);
-    let route = app.current_route();
-
-    let body = match route {
-        Route::Account => account_screen(
-            ui,
-            app.account.clone(),
-            app.cached_data.feed_scope().clone(),
-            app.follow_input.clone(),
-            app.status.clone(),
-            task_snapshot.clipboard_write.is_pending(),
-            task_snapshot.follow_update.is_pending(),
-            socket_available(),
-        )
-        .boxed(),
-        Route::Explore => {
-            let explore = app.cached_data.explore_state();
-            explore_screen(
-                ui,
-                app.account.clone(),
-                app.current_followed_pubkeys(),
-                app.status.clone(),
-                explore.notes,
-                explore.profiles,
-                socket_available(),
-                task_snapshot.explore_sync.is_pending(),
-                task_snapshot.follow_update.is_pending(),
-            )
-            .boxed()
-        }
-        Route::Onboarding => onboarding_screen(
-            ui,
-            app.nsec_input.clone(),
-            app.status.clone(),
-            task_snapshot.account_action.is_pending(),
-        )
-        .boxed(),
-        Route::Timeline => timeline_screen(
-            ui,
-            app.account.clone(),
-            app.cached_data.feed_scope().clone(),
-            app.status.clone(),
-            app.visible_notes(),
-            app.filter_text.clone(),
-            app.note_draft(),
-            task_snapshot.publish.is_pending(),
-            task_snapshot.publish_note_pending(),
-            socket_available(),
-        )
-        .boxed(),
-        Route::Note { id } => {
-            let note_state = app.note_state(&id);
-            note_screen(
-                ui,
-                note_state.note,
-                note_state.profile,
-                note_state.thread,
-                app.reply_draft_for(&id),
-                app.status.clone(),
-                task_snapshot.publish.is_pending(),
-                task_snapshot.publish_reply_pending_for(&id),
-                socket_available(),
-                task_snapshot.thread_sync_pending_for(&id),
-            )
-            .boxed()
-        }
-        Route::Profile { pubkey } => {
-            let profile_state = app.profile_state(&pubkey);
-            profile_screen(
-                ui,
-                app.account.clone(),
-                pubkey.clone(),
-                profile_state.summary,
-                profile_state.notes,
-                app.status.clone(),
-                app.is_following(&pubkey),
-                app.follow_update_pending_for(&pubkey),
-                socket_available(),
-            )
-            .boxed()
-        }
-    };
+    let body = route_screen(ui, app, &task_snapshot);
 
     let content = ui.screen(body);
     let content = decorate_with_tasks(content, task_snapshot);
@@ -1168,7 +1086,8 @@ mod tests {
         app.account = None;
         app.route_stack = vec![Route::Timeline];
 
-        app.reload_feed_from_cache().expect("reload without account");
+        app.reload_feed_from_cache()
+            .expect("reload without account");
 
         assert_eq!(app.current_route(), Route::Onboarding);
     }

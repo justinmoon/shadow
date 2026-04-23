@@ -3,25 +3,39 @@ use std::collections::BTreeSet;
 use shadow_sdk::{
     services::nostr::{timeline::NostrExploreProfileEntry, NostrEvent},
     ui::{
-        column, maybe, row, ActionButtonState, AsUnit, FlexExt, MainAxisAlignment, Tone,
-        UiContext, WidgetView,
+        column, maybe, row, ActionButtonState, AsUnit, FlexExt, MainAxisAlignment, Tone, UiContext,
+        WidgetView,
     },
 };
 
 use super::shared::{feed_section, profile_title, relative_time};
 use crate::{plural_suffix, short_id, ActiveAccount, TimelineApp, TimelineStatus};
 
+pub(super) struct ExploreScreenProps {
+    pub(super) account: Option<ActiveAccount>,
+    pub(super) followed_pubkeys: Vec<String>,
+    pub(super) status: TimelineStatus,
+    pub(super) notes: Vec<NostrEvent>,
+    pub(super) profiles: Vec<NostrExploreProfileEntry>,
+    pub(super) socket_ready: bool,
+    pub(super) sync_pending: bool,
+    pub(super) follow_pending: bool,
+}
+
 pub(crate) fn explore_screen(
     ui: UiContext,
-    account: Option<ActiveAccount>,
-    followed_pubkeys: Vec<String>,
-    status: TimelineStatus,
-    notes: Vec<NostrEvent>,
-    profiles: Vec<NostrExploreProfileEntry>,
-    socket_ready: bool,
-    sync_pending: bool,
-    follow_pending: bool,
+    props: ExploreScreenProps,
 ) -> impl WidgetView<TimelineApp> {
+    let ExploreScreenProps {
+        account,
+        followed_pubkeys,
+        status,
+        notes,
+        profiles,
+        socket_ready,
+        sync_pending,
+        follow_pending,
+    } = props;
     let note_count = notes.len();
     column((
         ui.top_bar_with_back(
@@ -146,7 +160,8 @@ fn explore_profile_card(
     let follow_control = if is_active_account {
         ui.status_chip("active account", Tone::Neutral).boxed()
     } else if !socket_ready {
-        ui.status_chip("relay engine unavailable", Tone::Neutral).boxed()
+        ui.status_chip("relay engine unavailable", Tone::Neutral)
+            .boxed()
     } else if is_following {
         ui.secondary_button_state(
             "Following",
@@ -191,13 +206,11 @@ fn explore_profile_card(
             ))
             .gap(10.0.px())
             .main_axis_alignment(MainAxisAlignment::Start),
-            ui.caption_text(
-                format!(
-                    "{} recent note{} cached from this author.",
-                    profile.note_count,
-                    plural_suffix(profile.note_count)
-                ),
-            ),
+            ui.caption_text(format!(
+                "{} recent note{} cached from this author.",
+                profile.note_count,
+                plural_suffix(profile.note_count)
+            )),
             ui.body_text(profile.latest_note_preview),
             row((
                 ui.secondary_button("Open profile", move |app: &mut TimelineApp| {

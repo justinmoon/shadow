@@ -1,15 +1,22 @@
-use shadow_sdk::ui::{
-    column, AsUnit, MainAxisAlignment, UiContext, WidgetView,
-};
+use shadow_sdk::ui::{column, AsUnit, MainAxisAlignment, UiContext, WidgetView};
 
 use crate::{TimelineApp, TimelineStatus};
 
+pub(super) struct OnboardingScreenProps {
+    pub(super) nsec_input: String,
+    pub(super) status: TimelineStatus,
+    pub(super) action_pending: bool,
+}
+
 pub(crate) fn onboarding_screen(
     ui: UiContext,
-    nsec_input: String,
-    status: TimelineStatus,
-    action_pending: bool,
+    props: OnboardingScreenProps,
 ) -> impl WidgetView<TimelineApp> {
+    let OnboardingScreenProps {
+        nsec_input,
+        status,
+        action_pending,
+    } = props;
     column((
         ui.top_bar(
             "Shadow Nostr",
@@ -41,13 +48,11 @@ pub(crate) fn onboarding_screen(
                 .main_axis_alignment(MainAxisAlignment::Start),
                 column((
                     ui.status_chip(status.message, status.tone),
-                    ui.caption_text(
-                        if action_pending {
-                            "Waiting for the shared Nostr service..."
-                        } else {
-                            "Stored in the shared Nostr service once created."
-                        },
-                    ),
+                    ui.caption_text(if action_pending {
+                        "Waiting for the shared Nostr service..."
+                    } else {
+                        "Stored in the shared Nostr service once created."
+                    }),
                 ))
                 .gap(8.0.px()),
             ))

@@ -1,26 +1,41 @@
 use shadow_sdk::{
     services::nostr::NostrEvent,
     ui::{
-        column, maybe, row, ActionButtonState, AsUnit, FlexExt, MainAxisAlignment, Tone,
-        UiContext, WidgetView,
+        column, maybe, row, ActionButtonState, AsUnit, FlexExt, MainAxisAlignment, Tone, UiContext,
+        WidgetView,
     },
 };
 
 use super::shared::{feed_section, home_feed_empty_message};
 use crate::{plural_suffix, ActiveAccount, FeedScope, RefreshSource, TimelineApp, TimelineStatus};
 
+pub(super) struct TimelineScreenProps {
+    pub(super) account: Option<ActiveAccount>,
+    pub(super) feed_scope: FeedScope,
+    pub(super) status: TimelineStatus,
+    pub(super) notes: Vec<NostrEvent>,
+    pub(super) filter_text: String,
+    pub(super) note_draft: Option<String>,
+    pub(super) publish_blocked: bool,
+    pub(super) note_publish_pending: bool,
+    pub(super) socket_ready: bool,
+}
+
 pub(crate) fn timeline_screen(
     ui: UiContext,
-    account: Option<ActiveAccount>,
-    feed_scope: FeedScope,
-    status: TimelineStatus,
-    notes: Vec<NostrEvent>,
-    filter_text: String,
-    note_draft: Option<String>,
-    publish_blocked: bool,
-    note_publish_pending: bool,
-    socket_ready: bool,
+    props: TimelineScreenProps,
 ) -> impl WidgetView<TimelineApp> {
+    let TimelineScreenProps {
+        account,
+        feed_scope,
+        status,
+        notes,
+        filter_text,
+        note_draft,
+        publish_blocked,
+        note_publish_pending,
+        socket_ready,
+    } = props;
     let note_count = notes.len();
     let compose_open = note_draft.is_some();
     let composer = note_draft.map(|draft| {
@@ -35,11 +50,7 @@ pub(crate) fn timeline_screen(
 
     ui.with_sheet(
         column((
-            ui.top_bar(
-                "Shadow Nostr",
-                "Timeline",
-                Some(feed_scope.detail_text()),
-            ),
+            ui.top_bar("Shadow Nostr", "Timeline", Some(feed_scope.detail_text())),
             controls_section(
                 ui,
                 account,
@@ -130,14 +141,12 @@ fn controls_section(
             .gap(10.0.px())
             .main_axis_alignment(MainAxisAlignment::Start),
             row((
-                ui.status_chip(
-                    feed_scope.chip_label(),
-                    Tone::Neutral,
-                ),
+                ui.status_chip(feed_scope.chip_label(), Tone::Neutral),
                 ui.status_chip(status.message.clone(), status.tone),
-                ui.caption_text(
-                    format!("{note_count} note{} visible", plural_suffix(note_count)),
-                ),
+                ui.caption_text(format!(
+                    "{note_count} note{} visible",
+                    plural_suffix(note_count)
+                )),
             ))
             .gap(10.0.px()),
         ))

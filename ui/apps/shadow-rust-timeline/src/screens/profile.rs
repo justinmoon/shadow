@@ -6,17 +6,31 @@ use shadow_sdk::{
 use super::shared::{feed_section, profile_metadata_status, profile_title};
 use crate::{plural_suffix, short_id, ActiveAccount, RefreshSource, TimelineApp, TimelineStatus};
 
+pub(super) struct ProfileScreenProps {
+    pub(super) account: Option<ActiveAccount>,
+    pub(super) pubkey: String,
+    pub(super) profile: NostrProfileSummary,
+    pub(super) notes: Vec<NostrEvent>,
+    pub(super) status: TimelineStatus,
+    pub(super) is_following: bool,
+    pub(super) follow_pending: bool,
+    pub(super) socket_ready: bool,
+}
+
 pub(crate) fn profile_screen(
     ui: UiContext,
-    account: Option<ActiveAccount>,
-    pubkey: String,
-    profile: NostrProfileSummary,
-    notes: Vec<NostrEvent>,
-    status: TimelineStatus,
-    is_following: bool,
-    follow_pending: bool,
-    socket_ready: bool,
+    props: ProfileScreenProps,
 ) -> impl WidgetView<TimelineApp> {
+    let ProfileScreenProps {
+        account,
+        pubkey,
+        profile,
+        notes,
+        status,
+        is_following,
+        follow_pending,
+        socket_ready,
+    } = props;
     let metadata_status = profile_metadata_status(&profile);
     let note_count = notes.len();
     let follow_button = account.filter(|account| account.npub != pubkey).map(|_| {
@@ -77,9 +91,10 @@ pub(crate) fn profile_screen(
                 row((
                     ui.status_chip(metadata_status.0, metadata_status.1),
                     ui.status_chip(status.message, status.tone),
-                    ui.caption_text(
-                        format!("{note_count} note{} cached", plural_suffix(note_count)),
-                    ),
+                    ui.caption_text(format!(
+                        "{note_count} note{} cached",
+                        plural_suffix(note_count)
+                    )),
                 ))
                 .gap(10.0.px()),
                 ui.primary_button("Refresh", |app: &mut TimelineApp| {
