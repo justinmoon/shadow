@@ -347,19 +347,7 @@ impl TimelineApp {
     }
 
     fn current_followed_pubkeys(&self) -> Vec<String> {
-        self.cached_data
-            .feed_scope()
-            .authors
-            .clone()
-            .unwrap_or_default()
-    }
-
-    fn is_following(&self, pubkey: &str) -> bool {
-        self.cached_data
-            .feed_scope()
-            .authors
-            .as_ref()
-            .is_some_and(|authors| authors.iter().any(|author| author == pubkey))
+        self.cached_data.followed_pubkeys()
     }
 
     fn current_route(&self) -> Route {
@@ -409,15 +397,21 @@ impl TimelineApp {
     }
 
     fn push_route(&mut self, route: Route) {
-        self.transition_route(NoteDraftRoutePolicy::Preserve, move |cached_data, route_stack, limit| {
-            cached_data.push_onto_route_stack(route_stack, route, limit);
-        });
+        self.transition_route(
+            NoteDraftRoutePolicy::Preserve,
+            move |cached_data, route_stack, limit| {
+                cached_data.push_onto_route_stack(route_stack, route, limit);
+            },
+        );
     }
 
     fn pop_route(&mut self) {
-        self.transition_route(NoteDraftRoutePolicy::Preserve, |cached_data, route_stack, limit| {
-            cached_data.pop_route_stack(route_stack, limit);
-        });
+        self.transition_route(
+            NoteDraftRoutePolicy::Preserve,
+            |cached_data, route_stack, limit| {
+                cached_data.pop_route_stack(route_stack, limit);
+            },
+        );
     }
 
     fn open_note(&mut self, id: String) {
@@ -442,9 +436,12 @@ impl TimelineApp {
 
     fn sync_routes(&mut self) {
         let account = self.account.clone();
-        self.transition_route(NoteDraftRoutePolicy::Preserve, move |cached_data, route_stack, limit| {
-            cached_data.reconcile_route_stack(route_stack, account.as_ref(), limit);
-        });
+        self.transition_route(
+            NoteDraftRoutePolicy::Preserve,
+            move |cached_data, route_stack, limit| {
+                cached_data.reconcile_route_stack(route_stack, account.as_ref(), limit);
+            },
+        );
     }
 
     pub(crate) fn hydrate_current_route(&mut self) {
@@ -510,9 +507,12 @@ impl TimelineApp {
 
     fn platform_open_timeline(&mut self) {
         if self.account.is_some() {
-            self.transition_route(NoteDraftRoutePolicy::Clear, |cached_data, route_stack, limit| {
-                cached_data.reset_route_stack(route_stack, Route::Timeline, limit);
-            });
+            self.transition_route(
+                NoteDraftRoutePolicy::Clear,
+                |cached_data, route_stack, limit| {
+                    cached_data.reset_route_stack(route_stack, Route::Timeline, limit);
+                },
+            );
             eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_success");
         } else {
             eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_failed");
@@ -524,25 +524,8 @@ impl TimelineApp {
     }
 
     fn first_visible_note_id_for_route(&self) -> Option<String> {
-        match self.current_route() {
-            Route::Timeline => self.visible_notes().into_iter().next().map(|note| note.id),
-            Route::Explore => self
-                .cached_data
-                .explore_state()
-                .notes
-                .into_iter()
-                .next()
-                .map(|note| note.id),
-            Route::Profile { pubkey } => self
-                .cached_data
-                .profile_state(&pubkey)
-                .notes
-                .into_iter()
-                .next()
-                .map(|note| note.id),
-            Route::Note { id } => Some(id),
-            Route::Account | Route::Onboarding => None,
-        }
+        self.cached_data
+            .first_note_id_for_route(&self.current_route(), &self.filter_text)
     }
 
     fn platform_open_first_visible_note(&mut self) {
@@ -567,7 +550,7 @@ impl TimelineApp {
             };
             return;
         };
-        let Some(note) = self.note_state(&id).note else {
+        let Some(note) = self.cached_data.note_screen_data(&id).note else {
             eprintln!("{APP_LOG_PREFIX}: automation_open_note_profile_failed");
             self.status = TimelineStatus {
                 tone: Tone::Danger,
@@ -667,37 +650,8 @@ impl TimelineApp {
         }
     }
 
-    fn visible_notes(&self) -> Vec<NostrEvent> {
-        let query_text = self.filter_text.trim().to_lowercase();
-        self.cached_data
-            .home_notes()
-            .iter()
-            .filter(|note| {
-                query_text.is_empty()
-                    || note.content.to_lowercase().contains(&query_text)
-                    || note.pubkey.to_lowercase().contains(&query_text)
-                    || note.id.to_lowercase().contains(&query_text)
-            })
-            .cloned()
-            .collect()
-    }
-
     fn cached_note_by_id(&self, id: &str) -> Option<NostrEvent> {
         self.cached_data.cached_note_by_id(id)
-    }
-
-    fn profile_state(
-        &self,
-        pubkey: &str,
-    ) -> shadow_sdk::services::nostr::timeline::NostrProfileCacheState {
-        self.cached_data.profile_state(pubkey)
-    }
-
-    fn note_state(
-        &self,
-        note_id: &str,
-    ) -> shadow_sdk::services::nostr::timeline::NostrNoteCacheState {
-        self.cached_data.note_state(note_id)
     }
 
     fn reply_draft_for(&self, note_id: &str) -> Option<ReplyDraft> {
@@ -716,8 +670,11 @@ impl TimelineApp {
         self.try_transition_route(
             NoteDraftRoutePolicy::Preserve,
             move |cached_data, route_stack, limit| {
-                cached_data
-                    .reload_home_and_reconcile_route_stack(route_stack, account.as_ref(), limit)
+                cached_data.reload_home_and_reconcile_route_stack(
+                    route_stack,
+                    account.as_ref(),
+                    limit,
+                )
             },
         )
     }

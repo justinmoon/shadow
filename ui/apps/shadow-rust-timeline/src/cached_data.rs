@@ -5,13 +5,45 @@ use shadow_sdk::services::nostr::{
     timeline::{
         load_explore_cache_state, load_home_cache_state_for_account,
         load_home_feed_scope_for_account, load_note_cache_state, load_profile_cache_state,
-        NostrExploreCacheState, NostrNoteCacheState, NostrProfileCacheState, NostrProfileSummary,
-        NostrThreadContext,
+        NostrExploreCacheState, NostrExploreProfileEntry, NostrNoteCacheState,
+        NostrProfileCacheState, NostrProfileSummary, NostrThreadContext,
     },
     NostrEvent,
 };
 
 use crate::{ActiveAccount, FeedScope, Route};
+
+#[derive(Clone, Debug)]
+pub(crate) struct AccountScreenData {
+    pub(crate) feed_scope: FeedScope,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ExploreScreenData {
+    pub(crate) followed_pubkeys: Vec<String>,
+    pub(crate) notes: Vec<NostrEvent>,
+    pub(crate) profiles: Vec<NostrExploreProfileEntry>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TimelineScreenData {
+    pub(crate) feed_scope: FeedScope,
+    pub(crate) notes: Vec<NostrEvent>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct NoteScreenData {
+    pub(crate) note: Option<NostrEvent>,
+    pub(crate) profile: NostrProfileSummary,
+    pub(crate) thread: NostrThreadContext,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ProfileScreenData {
+    pub(crate) profile: NostrProfileSummary,
+    pub(crate) notes: Vec<NostrEvent>,
+    pub(crate) is_following: bool,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct TimelineCachedData {
@@ -219,6 +251,78 @@ impl TimelineCachedData {
             })
     }
 
+    // Screen data selectors only compose already-hydrated cache state. They do
+    // not fetch or hydrate implicitly, so route rendering can treat them as
+    // safe inline reads.
+    pub(crate) fn account_screen_data(&self) -> AccountScreenData {
+        AccountScreenData {
+            feed_scope: self.feed_scope.clone(),
+        }
+    }
+
+    pub(crate) fn explore_screen_data(&self) -> ExploreScreenData {
+        let explore = self.explore_state();
+        ExploreScreenData {
+            followed_pubkeys: self.followed_pubkeys(),
+            notes: explore.notes,
+            profiles: explore.profiles,
+        }
+    }
+
+    pub(crate) fn timeline_screen_data(&self, filter_text: &str) -> TimelineScreenData {
+        TimelineScreenData {
+            feed_scope: self.feed_scope.clone(),
+            notes: self.filtered_home_notes(filter_text),
+        }
+    }
+
+    pub(crate) fn note_screen_data(&self, note_id: &str) -> NoteScreenData {
+        let note_state = self.note_state(note_id);
+        NoteScreenData {
+            note: note_state.note,
+            profile: note_state.profile,
+            thread: note_state.thread,
+        }
+    }
+
+    pub(crate) fn profile_screen_data(&self, pubkey: &str) -> ProfileScreenData {
+        let profile_state = self.profile_state(pubkey);
+        ProfileScreenData {
+            profile: profile_state.summary,
+            notes: profile_state.notes,
+            is_following: self.is_following(pubkey),
+        }
+    }
+
+    pub(crate) fn first_note_id_for_route(
+        &self,
+        route: &Route,
+        timeline_filter_text: &str,
+    ) -> Option<String> {
+        match route {
+            Route::Timeline => self
+                .timeline_screen_data(timeline_filter_text)
+                .notes
+                .into_iter()
+                .next()
+                .map(|note| note.id),
+            Route::Explore => self
+                .explore_screen_data()
+                .notes
+                .into_iter()
+                .next()
+                .map(|note| note.id),
+            Route::Profile { pubkey } => self
+                .profile_screen_data(pubkey)
+                .notes
+                .into_iter()
+                .next()
+                .map(|note| note.id),
+            Route::Note { id } => Some(id.clone()),
+            Route::Account | Route::Onboarding => None,
+        }
+    }
+
     fn hydrate_explore_route(&mut self, limit: usize) {
         if self.explore_cache.is_some() {
             return;
@@ -246,6 +350,31 @@ impl TimelineCachedData {
 
     fn note_by_id(&self, id: &str) -> Option<NostrEvent> {
         self.home_notes.iter().find(|note| note.id == id).cloned()
+    }
+
+    pub(crate) fn followed_pubkeys(&self) -> Vec<String> {
+        self.feed_scope.authors.clone().unwrap_or_default()
+    }
+
+    fn is_following(&self, pubkey: &str) -> bool {
+        self.feed_scope
+            .authors
+            .as_ref()
+            .is_some_and(|authors| authors.iter().any(|author| author == pubkey))
+    }
+
+    fn filtered_home_notes(&self, filter_text: &str) -> Vec<NostrEvent> {
+        let query_text = filter_text.trim().to_lowercase();
+        self.home_notes
+            .iter()
+            .filter(|note| {
+                query_text.is_empty()
+                    || note.content.to_lowercase().contains(&query_text)
+                    || note.pubkey.to_lowercase().contains(&query_text)
+                    || note.id.to_lowercase().contains(&query_text)
+            })
+            .cloned()
+            .collect()
     }
 }
 
@@ -307,6 +436,73 @@ mod tests {
         assert!(note.profile.display_name.is_none());
         assert!(note.thread.parent.is_none());
         assert!(note.thread.replies.is_empty());
+    }
+
+    #[test]
+    fn timeline_screen_data_filters_cached_home_notes() {
+        let cached_data = TimelineCachedData::from_home(
+            FeedScope::no_contacts(),
+            vec![
+                test_note("note-1", "npub-alice", "hello world"),
+                test_note("note-2", "npub-bob", "goodbye"),
+            ],
+        );
+
+        let timeline = cached_data.timeline_screen_data("alice");
+
+        assert_eq!(timeline.notes.len(), 1);
+        assert_eq!(timeline.notes[0].id, "note-1");
+    }
+
+    #[test]
+    fn explore_screen_data_uses_cached_follow_list() {
+        let cached_data = TimelineCachedData::from_home(
+            FeedScope::following(
+                vec![String::from("npub-bob"), String::from("npub-alice")],
+                2,
+            ),
+            Vec::new(),
+        );
+
+        let explore = cached_data.explore_screen_data();
+
+        assert_eq!(
+            explore.followed_pubkeys,
+            vec![String::from("npub-alice"), String::from("npub-bob")]
+        );
+    }
+
+    #[test]
+    fn first_note_id_for_profile_route_uses_profile_screen_selector() {
+        let cached_data = TimelineCachedData::from_home(
+            FeedScope::following(vec![String::from("npub-alice")], 1),
+            vec![
+                test_note("note-1", "npub-alice", "hello"),
+                test_note("note-2", "npub-bob", "ignored"),
+            ],
+        );
+
+        let note_id = cached_data.first_note_id_for_route(
+            &Route::Profile {
+                pubkey: String::from("npub-alice"),
+            },
+            "",
+        );
+
+        assert_eq!(note_id.as_deref(), Some("note-1"));
+    }
+
+    #[test]
+    fn profile_screen_data_marks_followed_profiles() {
+        let cached_data = TimelineCachedData::from_home(
+            FeedScope::following(vec![String::from("npub-alice")], 1),
+            vec![test_note("note-1", "npub-alice", "hello")],
+        );
+
+        let profile = cached_data.profile_screen_data("npub-alice");
+
+        assert!(profile.is_following);
+        assert_eq!(profile.notes.len(), 1);
     }
 
     #[test]
@@ -443,8 +639,8 @@ mod tests {
     }
 
     #[test]
-    fn reload_home_and_reconcile_route_stack_without_account_resets_to_unavailable_and_onboarding(
-    ) {
+    fn reload_home_and_reconcile_route_stack_without_account_resets_to_unavailable_and_onboarding()
+    {
         let mut cached_data = TimelineCachedData::from_home(
             FeedScope::no_contacts(),
             vec![test_note("note-1", "npub-alice", "note")],
