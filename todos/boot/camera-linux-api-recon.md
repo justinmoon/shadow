@@ -6,7 +6,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 - Decide whether a boot-owned Linux camera library is plausible on Pixel 4a without depending on Android `cameraserver` or the Android camera provider service.
 - Preserve the current Android camera path as the supported product path while this stays a boot-side reconnaissance lane.
-- Evaluate both a direct Linux kernel-UAPI path and a contained vendor HAL path before attempting boot image integration.
+- Resume the Rust-boot camera path and make the next serious attempt through a Rust-owned direct-HAL backend that can run from the Shadow boot setup.
+- Use rooted-Android camera artifacts only as comparison data; do not spend more camera project work proving the Android provider-service path unless it directly explains a boot-HAL blocker.
 
 ## Scope
 
@@ -17,12 +18,13 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - Pixel 4a Qualcomm kernel camera UAPI and driver source relevant to Linux probing
   - a read-only Linux media/V4L2/Qualcomm-UAPI probe plan with exact nodes, ioctls, outputs, and artifact paths
   - a contained vendor HAL probe track that keeps Shadow's Rust API and daemon contract small while evaluating whether Pixel vendor camera code can provide capture without the Android app/framework stack
+  - a Rust-boot direct-HAL probe that loads the Pixel vendor camera HAL from the Shadow boot environment, not rooted Android
 - Out of scope:
   - replacing the rooted Pixel shell camera path
-  - direct Linux-UAPI frame capture, buffer queueing, ISP programming, or sensor controls
-  - boot image integration before a read-only Linux probe is truthful
+  - more Android provider-service capture proofs unless they answer a specific direct-HAL boot blocker
+  - direct Linux-UAPI frame capture, buffer queueing, ISP programming, or sensor controls until the HAL path proves blocked
   - broad Android framework adoption or exposing Android camera architecture as Shadow's camera API
-  - deep vendor-library reverse engineering before a minimal HAL containment probe proves useful
+  - depending on Android `cameraserver`, `android.hardware.camera.provider*`, Java Camera2, or app-framework camera APIs for the target boot camera stack
 
 ## Current Findings
 
@@ -65,7 +67,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `hal-frame-probe` captured one fixed rear-camera provider-service frame from `device@1.1/internal/0`.
   - the pulled host proof is `provider-frame.jpg`, an 8080-byte 640x480 JPEG with Pixel 4a EXIF metadata.
   - `hal-probe.json` reports `frameCapture.ok=true`, `providerServiceFrameCaptured=true`, and `nextFrameCaptureTrack=provider-service-contained`.
-  - direct vendor HAL loading still identifies `QTI Camera HAL`, but direct HAL capture remains lower priority because it needs a contained `camera_module_t`/open/native-handle/gralloc shim.
+  - this is now treated as a reference proof only: it proves the physical sensor/HAL path can produce a frame, but it is not the target boot architecture because it runs inside rooted Android and relies on provider-service machinery.
+- Direction correction:
+  - the Android provider-service frame proof is not the target architecture.
+  - the real project goal is a Rust-owned boot camera backend that talks directly to the vendor HAL from the Shadow boot userspace.
+  - acceptable Android-derived pieces are limited compatibility pieces needed by the vendor HAL itself: Bionic/linker behavior, vendor/system library mounting, read-only property compatibility, native handles, gralloc or dma-buf allocation, sync fences, and required device nodes.
+  - unacceptable target dependencies are `cameraserver`, `android.hardware.camera.provider*`, servicemanager as the camera API, Android app framework, Java Camera2, and the rooted-Android shell runtime.
 - Evidence:
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/runs/camera-linux-api-recon/20260423T201839Z-0B191JEC203253/status.json`
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/runs/camera-linux-api-recon/20260423T201839Z-0B191JEC203253/device-inventory.txt`
@@ -99,11 +106,13 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## Approach
 
-- Keep Android camera support untouched until Linux probing has its own reliable evidence.
-- Evaluate two backend tracks in parallel:
-  - direct Linux kernel UAPI: read-only discovery first, then only narrowly scoped session/acquire probes if the evidence supports it
-  - contained vendor HAL: inventory dependency closure, prove whether the Pixel HAL/provider can be loaded or talked to from a small native daemon, then attempt one constrained frame
-- Keep Shadow's camera-facing API Rust-owned in both tracks. Android Binder, HAL structs, native handles, gralloc/AHardwareBuffer, and vendor libraries must stay behind one narrow backend boundary.
+- Keep Android camera support untouched; it remains a product fallback and a comparison artifact, not the boot target.
+- Prioritize a direct vendor-HAL boot backend:
+  - Rust owns the Shadow-facing API and the camera daemon/probe lifecycle.
+  - A tiny C ABI shim may expose `hw_module_t`, `camera_module_t`, `camera3_device_t`, callback vtables, native handles, and stream/request structs to Rust.
+  - Vendor HAL code and Android-compatible glue stay behind one backend boundary.
+  - No target path may call the Android provider service or `cameraserver`.
+- Keep the direct Linux kernel-UAPI track as instrumentation unless direct HAL capture proves impossible or unbounded.
 - Start the Linux track with read-only kernel ABI discovery:
   - media controller device info/topology
   - V4L2 node capabilities
@@ -119,23 +128,74 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 ## Parallel HAL Probe Track
 
-- Goal: determine whether Pixel 4a's vendor camera HAL can be used as a contained backend without making Shadow depend on the Android app/framework camera stack.
-- Next queued slice: `boot-camera-hal-provider-frame-probe` in [plan.md](./plan.md). This should continue from the landed HAL containment result and attempt one contained rear-camera frame through the smallest provider/HAL seam, or produce the exact dependency/blocker artifact.
-- Preferred containment shape:
+- Goal: make Pixel 4a's vendor camera HAL usable from Shadow's Rust boot setup without Android `cameraserver`, the Android camera provider service, or the Android app/framework stack.
+- Rooted-Android provider-service results are now reference data only:
+  - they prove the sensor/HAL path can produce a real frame on this device
+  - they identify vendor libraries, properties, gralloc, native handles, fences, and running services that a boot-HAL probe must replace, stub, or prove unnecessary
+  - they should not be extended into the target architecture
+- Preferred target shape:
   - Rust-owned Shadow camera trait/API
-  - one small native camera daemon or helper with a narrow command protocol
-  - optional C/C++ FFI shim for HAL structs, callbacks, native handles, and linker details
-  - vendor HAL/provider code treated as an implementation detail behind that daemon
-- First HAL questions:
+  - one small boot-runnable Rust camera daemon or probe binary with a narrow command protocol
+  - tiny C/C++ FFI shim for HAL structs, callbacks, native handles, stream configuration, and camera3 request dispatch
+  - vendor HAL code treated as an implementation detail behind that daemon
+  - minimal Android compatibility capsule only where the vendor HAL absolutely requires it
+- First direct-HAL questions:
   - can a native helper direct-load or otherwise instantiate `/vendor/lib64/hw/camera.sm6150.so` and the Google/Qualcomm camera HAL components on the rooted Pixel? Initial answer: direct load succeeds and exposes the standard `HMI` module record.
-  - which dependencies are required at runtime: Bionic linker namespaces, Android properties, vendor services, gralloc/AHardwareBuffer, sync fences, Binder/HIDL/AIDL libraries, SELinux labels, or camera provider process state?
-  - if direct-load is brittle, is talking to the existing provider service a smaller and more reliable contained backend? Initial answer: provider-service containment is still the smaller first-frame seam because the Rust Binder helper can already list cameras and has existing capture plumbing.
-- First HAL proof artifacts should mirror the Linux probe lane under `build/pixel/camera-linux-api/<timestamp>-<serial>/` or a sibling `camera-hal-api` run root, with `hal-probe.json`, `device-output.txt`, and `status.json`.
-- Success criterion for the HAL probe:
-  - list cameras through the contained backend
-  - identify the minimal dependency closure
-  - either capture one fixed rear-camera frame or report the exact missing dependency/blocker
-  - keep the Shadow-facing protocol independent of Android camera API details
+  - can the same `HMI` load happen from the Shadow boot image with vendor/system/APEX library paths mounted and no Android provider process?
+  - can Rust call `camera_module_t` enough to enumerate/open the rear camera without servicemanager or `cameraserver`?
+  - what exact compatibility surface is required at runtime: Bionic linker namespaces, read-only Android properties, vendor services, gralloc/native-handle allocation, sync fences, Binder/HIDL libraries, SELinux labels, or device node ownership?
+  - can we configure one still/JPEG or YUV stream and submit one request with a boot-owned buffer?
+
+## Next Beefy Step: Rust-Boot Direct HAL Frame Probe
+
+- Proposed task id: `boot-camera-rust-hal-frame-probe`.
+- Goal: boot the Pixel into the Shadow/Rust boot setup and run a boot-owned Rust helper that talks directly to `/vendor/lib64/hw/camera.sm6150.so`, then either writes one rear-camera frame or produces a precise blocker bundle.
+- This is the next camera task to add/prioritize with `/groom`; do not spend the next camera slice on more rooted-Android provider capture.
+- Target command shape:
+  - `SHADOW_DEVICE_LEASE_FORCE=1 PIXEL_SERIAL=<serial> scripts/pixel/pixel_boot_camera_hal_probe.sh`
+  - the script builds/stages a boot image or boot-owned userspace payload, boots the Pixel through the existing boot proof path, runs the HAL probe from Shadow init/userspace, and recovers artifacts.
+- Owned implementation paths:
+  - new or existing Rust boot probe binary under `rust/`, preferably a narrow `shadow-camera-hal-boot-probe` or equivalent module rather than extending the Android provider helper
+  - tiny native shim for `hw_module_t`, `camera_module_t`, `camera3_device_t`, callback ops, stream configuration, native handles, fences, and request submission
+  - boot staging/recovery script under `scripts/pixel/`
+  - proof artifacts under `build/pixel/camera-boot-hal/<timestamp>-<serial>/`
+- Explicit non-goals:
+  - no Android `ICameraProvider`
+  - no `cameraserver`
+  - no Java/Camera2/app-framework camera path
+  - no rooted-Android shell as the execution environment
+  - no broad Android userspace import beyond a measured allowlist needed by the vendor HAL
+- Stage gates:
+  - `stage=link`: boot environment mounts the required vendor/system/APEX library roots and direct-loads the HAL with `android_dlopen_ext` or an equivalent boot linker strategy.
+  - `stage=hmi`: parse `HMI` and validate `id=camera`, module versions, methods pointer, and `camera_module_t` prefix.
+  - `stage=module`: call safe module-level entry points such as camera count/info with a C shim and record every property/library/device/service access attempt.
+  - `stage=open`: open rear camera `0` through `module->methods->open` and classify the first missing dependency if it fails.
+  - `stage=configure`: configure one conservative stream, initially JPEG BLOB only if native-handle/gralloc is available; otherwise YUV or HAL-supported minimal output if source evidence says it is simpler.
+  - `stage=request`: allocate/import one boot-owned output buffer, submit one capture request, wait on fences/callbacks, and recover `first-frame.jpg` or raw frame plus metadata.
+- Compatibility capsule to build only as evidence requires:
+  - Bionic/linker namespace behavior sufficient to load `/vendor/lib64/hw/camera.sm6150.so`, Google camera HAL libraries, Qualcomm CamX/CHI libraries, `libcamera_metadata.so`, `libhardware.so`, and gralloc dependencies.
+  - read-only Android property compatibility backed by captured `getprop` data and explicit defaults; record every property key the HAL reads.
+  - `/dev/media*`, `/dev/video*`, `/dev/v4l-subdev*`, `/dev/ion` or dma-heap, fence/sync devices, and any vendor DSP/sensor nodes the HAL opens.
+  - gralloc/native-handle strategy: either load the vendor gralloc HAL behind the same shim or create a minimal dma-buf/native-handle path if the camera HAL accepts it.
+  - Binder/HIDL service access must be treated as a blocker unless it can be replaced by a tiny contained compatibility service; do not silently start Android servicemanager or camera provider.
+- JSON output:
+  - `schemaVersion`, `stage`, `ok`, `serial`, kernel release, boot mode, process credentials, mount roots, and dynamic linker mode.
+  - `halLoad` with namespace/path attempts, unresolved libraries/symbols, and loaded library delta.
+  - `module` with parsed `HMI`, camera count/info results, and exact failing HAL status codes.
+  - `compat` with property reads, file opens, device-node opens, service/binder attempts, gralloc/native-handle allocation, fence usage, and SELinux/permission notes.
+  - `capture` with selected camera, stream config, buffer descriptor/native handle shape, request metadata source, callback/fence events, output path, bytes written, and blocker category.
+  - `blocker` with one of `linker`, `missing-library`, `missing-symbol`, `property`, `device-node`, `permission`, `binder-service`, `gralloc-native-handle`, `sync-fence`, `hal-open`, `hal-configure`, `hal-request`, or `unknown`.
+- Proof artifacts:
+  - `build/pixel/camera-boot-hal/<timestamp>-<serial>/status.json`
+  - `build/pixel/camera-boot-hal/<timestamp>-<serial>/boot-hal-probe.json`
+  - `build/pixel/camera-boot-hal/<timestamp>-<serial>/device-output.txt`
+  - `build/pixel/camera-boot-hal/<timestamp>-<serial>/dmesg.txt`
+  - `build/pixel/camera-boot-hal/<timestamp>-<serial>/ld-debug.txt` when linker diagnostics are available
+  - `build/pixel/camera-boot-hal/<timestamp>-<serial>/first-frame.jpg` or `first-frame.raw` only when a frame is actually produced
+- Success criteria:
+  - minimum success: the probe runs from Shadow/Rust boot userspace, not rooted Android, and reaches the deepest honest stage with a precise blocker.
+  - target success: one rear-camera frame captured through direct vendor HAL calls from the Rust boot environment.
+  - the artifact must prove `cameraserver` and `android.hardware.camera.provider*` were not the camera API for the run.
 
 ## First Runnable Probe Contract
 
@@ -210,8 +270,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Add a HAL dependency/probe task to the queue.
 - [x] Run a contained HAL inventory probe and decide whether direct HAL loading or provider-service containment is the smaller backend.
 - [x] Run the contained HAL/provider frame probe and decide whether provider-service containment can produce one fixed rear-camera frame.
-- [ ] Decide whether a direct Linux capture probe is plausible from Linux media/V4L2/Qualcomm UAPI alone or whether that lane should stay limited to instrumentation.
-- [x] Choose the first frame-capture track: provider-service-contained HAL backend first; direct Linux UAPI stays instrumentation-only until a narrower acquire/config proof is justified.
+- [x] Correct the project direction: rooted-Android provider capture is reference data, not the target camera architecture.
+- [ ] Groom/claim `boot-camera-rust-hal-frame-probe`.
+- [ ] Build the Rust-boot direct-HAL probe through the stage gates above.
+- [ ] Decide whether a direct Linux capture probe is plausible from Linux media/V4L2/Qualcomm UAPI alone or whether that lane should stay limited to instrumentation after the direct-HAL blocker is known.
 
 ## References
 
