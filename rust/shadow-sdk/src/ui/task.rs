@@ -485,6 +485,55 @@ mod tests {
     }
 
     #[test]
+    fn task_decoration_registry_supports_bound_task_slots() {
+        struct Registry {
+            visited: Arc<Mutex<Vec<&'static str>>>,
+            first: TaskSlotBinding<(), String, usize>,
+            second: TaskSlotBinding<(), String, usize>,
+        }
+
+        fn first(registry: &Registry) -> TaskDecoration<()> {
+            registry
+                .visited
+                .lock()
+                .expect("first visit lock")
+                .push("first");
+            registry.first.decoration()
+        }
+
+        fn second(registry: &Registry) -> TaskDecoration<()> {
+            registry
+                .visited
+                .lock()
+                .expect("second visit lock")
+                .push("second");
+            registry.second.decoration()
+        }
+
+        let mut first_binding = TaskSlotBinding::new(run_bound_task, apply_bound_task);
+        let mut second_binding = TaskSlotBinding::new(run_bound_task, apply_bound_task);
+        assert!(first_binding.start(String::from("first")));
+        assert!(second_binding.start(String::from("second")));
+
+        let visited = Arc::new(Mutex::new(Vec::new()));
+        let registry = Registry {
+            visited: Arc::clone(&visited),
+            first: first_binding,
+            second: second_binding,
+        };
+        let decorations = TaskDecorationRegistry::new([first, second]);
+
+        let _ = decorations.apply(label("content"), &registry);
+
+        assert_eq!(
+            visited.lock().expect("visited lock").as_slice(),
+            ["first", "second"]
+        );
+        assert_eq!(registry.first.pending_job().map(String::as_str), Some("first"));
+        assert_eq!(registry.second.pending_job().map(String::as_str), Some("second"));
+    }
+
+    #[test]
     fn task_slot_rejects_overlap_and_finishes_by_id() {
         let mut slot = TaskSlot::new();
         assert!(slot.start(String::from("first")));

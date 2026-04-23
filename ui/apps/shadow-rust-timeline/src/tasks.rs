@@ -17,7 +17,9 @@ use shadow_sdk::{
             NostrAccountSummary, NostrAccountTask, NostrPublishReceipt,
         },
     },
-    ui::{with_tasks, TaskGroupSnapshot, TaskHandle, TaskSlotBinding, WidgetView},
+    ui::{
+        TaskDecoration, TaskDecorationRegistry, TaskHandle, TaskSlotBinding, WidgetView,
+    },
 };
 
 use crate::TimelineApp;
@@ -49,6 +51,17 @@ pub(crate) struct TimelineTasks {
     pub(crate) refresh: TimelineTask<NostrHomeRefreshRequest, RefreshOutcome>,
     pub(crate) thread_sync: TimelineTask<NostrThreadSyncRequest, ThreadSyncOutcome>,
 }
+
+const TASK_DECORATIONS: TaskDecorationRegistry<TimelineApp, TimelineTasks, 7> =
+    TaskDecorationRegistry::new([
+        decorate_account_action_task,
+        decorate_clipboard_write_task,
+        decorate_explore_sync_task,
+        decorate_follow_update_task,
+        decorate_thread_sync_task,
+        decorate_publish_task,
+        decorate_refresh_task,
+    ]);
 
 impl Default for TimelineTasks {
     fn default() -> Self {
@@ -216,37 +229,35 @@ pub(crate) fn decorate_with_tasks(
     content: impl WidgetView<TimelineApp>,
     tasks: &TimelineTasks,
 ) -> impl WidgetView<TimelineApp> {
-    let (
-        account_action,
-        clipboard_write,
-        explore_sync,
-        follow_update,
-        thread_sync,
-        publish,
-        refresh,
-    ) = (
-        &tasks.account_action,
-        &tasks.clipboard_write,
-        &tasks.explore_sync,
-        &tasks.follow_update,
-        &tasks.thread_sync,
-        &tasks.publish,
-        &tasks.refresh,
-    )
-        .snapshot_group();
+    TASK_DECORATIONS.apply(content, tasks)
+}
 
-    with_tasks(
-        content,
-        [
-            account_action.decoration(),
-            clipboard_write.decoration(),
-            explore_sync.decoration(),
-            follow_update.decoration(),
-            thread_sync.decoration(),
-            publish.decoration(),
-            refresh.decoration(),
-        ],
-    )
+fn decorate_account_action_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    tasks.account_action.decoration()
+}
+
+fn decorate_clipboard_write_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    tasks.clipboard_write.decoration()
+}
+
+fn decorate_explore_sync_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    tasks.explore_sync.decoration()
+}
+
+fn decorate_follow_update_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    tasks.follow_update.decoration()
+}
+
+fn decorate_thread_sync_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    tasks.thread_sync.decoration()
+}
+
+fn decorate_publish_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    tasks.publish.decoration()
+}
+
+fn decorate_refresh_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    tasks.refresh.decoration()
 }
 
 #[cfg(test)]
