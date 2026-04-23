@@ -3305,6 +3305,8 @@ assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper-laun
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'setprop "$preflight_status_prop_key"'
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'preflight-summary.txt'
 assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'runtime-linux-dir'
+assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'record_preflight_path system-launcher true file /data/local/tmp/shadow-runtime-gnu/run-shadow-system'
+assert_cpio_entry_contains "$LOG_PREFLIGHT_OUTPUT_IMAGE" shadow-boot-helper 'record_preflight_path guest-client-launcher true file /data/local/tmp/shadow-runtime-gnu/run-shadow-blitz-demo'
 
 kgsl_probe_build_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

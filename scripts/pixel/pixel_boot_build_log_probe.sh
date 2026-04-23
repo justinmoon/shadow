@@ -34,6 +34,8 @@ PREFLIGHT_IMPORT_PROOF_KEY=""
 PREFLIGHT_IMPORT_PROOF_VALUE=""
 PREFLIGHT_LAUNCH_PROOF_KEY=""
 PREFLIGHT_LAUNCH_PROOF_VALUE=""
+PHASE1_STARTUP_CONFIG_PATH=""
+PHASE1_REQUIRED_PATH_RECORDS_PATH=""
 
 usage() {
   cat <<'EOF'
@@ -389,6 +391,58 @@ if [[ "$PREFLIGHT_PROFILE" == "phase1-shell" ]]; then
     "$PREFLIGHT_SECOND_STAGE_PROOF_KEY" \
     "$PREFLIGHT_SECOND_STAGE_PROOF_VALUE"
   RAMDISK_PROP_PATH="$WORK_DIR/ramdisk-build.prop.modified"
+
+  PHASE1_STARTUP_CONFIG_PATH="$WORK_DIR/phase1-startup-config.json"
+  PHASE1_REQUIRED_PATH_RECORDS_PATH="$WORK_DIR/phase1-required-path-records.sh"
+  pixel_write_guest_ui_startup_config \
+    "$PHASE1_STARTUP_CONFIG_PATH" \
+    "$(pixel_runtime_dir)" \
+    "$(pixel_guest_client_dst)" \
+    "" \
+    "" \
+    "" \
+    "" \
+    "" \
+    "" \
+    "off" \
+    ""
+  PIXEL_PHASE1_REQUIRED_PATHS_TSV="$(
+    pixel_guest_startup_phase1_required_paths_tsv "$PHASE1_STARTUP_CONFIG_PATH"
+  )" \
+    python3 - "$PHASE1_REQUIRED_PATH_RECORDS_PATH" <<'PY'
+from pathlib import Path
+import os
+import shlex
+import sys
+
+
+record_lines = []
+for raw_line in os.environ.get("PIXEL_PHASE1_REQUIRED_PATHS_TSV", "").splitlines():
+    if not raw_line:
+        continue
+    try:
+        label, kind, path = raw_line.split("\t", 2)
+    except ValueError as error:
+        raise SystemExit(
+            f"pixel_boot_build_log_probe: malformed phase1 required path entry: {raw_line!r}"
+        ) from error
+    record_lines.append(
+        "record_preflight_path "
+        + " ".join(
+            (
+                shlex.quote(label),
+                "true",
+                shlex.quote(kind),
+                shlex.quote(path),
+            )
+        )
+    )
+
+payload = "\n".join(record_lines)
+if payload:
+    payload += "\n"
+Path(sys.argv[1]).write_text(payload, encoding="utf-8")
+PY
 fi
 
 {
@@ -603,10 +657,7 @@ else
 fi
 
 printf '# label\trequired\tkind\texists\tpath\n' >"\$preflight_checks"
-record_preflight_path runtime-linux-dir true dir "$(pixel_runtime_linux_dir)"
-record_preflight_path system-launcher true file "$(pixel_system_launcher_dst)"
-record_preflight_path compositor-launcher true file "$(pixel_runtime_compositor_launcher_dst)"
-record_preflight_path guest-client-launcher true file "$(pixel_guest_client_dst)"
+$(cat "$PHASE1_REQUIRED_PATH_RECORDS_PATH")
 record_preflight_path runtime-dir false dir "$(pixel_runtime_dir)"
 record_preflight_path runtime-app-bundle false file "$(pixel_runtime_app_bundle_dst)"
 record_preflight_path runtime-session-config false file "$(pixel_runtime_session_config_path)"

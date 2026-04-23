@@ -688,6 +688,84 @@ pixel_guest_session_overlay_passthrough_env_lines() {
   done <<< "$lines"
 }
 
+pixel_phase1_required_paths_json() {
+  PIXEL_PHASE1_RUNTIME_LINUX_DIR="$(pixel_runtime_linux_dir)" \
+  PIXEL_PHASE1_SYSTEM_LAUNCHER_PATH="$(pixel_system_launcher_dst)" \
+  PIXEL_PHASE1_COMPOSITOR_LAUNCHER_PATH="$(pixel_runtime_compositor_launcher_dst)" \
+  PIXEL_PHASE1_GUEST_CLIENT_LAUNCHER_PATH="$(pixel_guest_client_dst)" \
+    python3 - <<'PY'
+import json
+import os
+
+
+required_paths = [
+    {
+        "kind": "dir",
+        "label": "runtime-linux-dir",
+        "path": os.environ["PIXEL_PHASE1_RUNTIME_LINUX_DIR"],
+    },
+    {
+        "kind": "file",
+        "label": "system-launcher",
+        "path": os.environ["PIXEL_PHASE1_SYSTEM_LAUNCHER_PATH"],
+    },
+    {
+        "kind": "file",
+        "label": "compositor-launcher",
+        "path": os.environ["PIXEL_PHASE1_COMPOSITOR_LAUNCHER_PATH"],
+    },
+    {
+        "kind": "file",
+        "label": "guest-client-launcher",
+        "path": os.environ["PIXEL_PHASE1_GUEST_CLIENT_LAUNCHER_PATH"],
+    },
+]
+
+print(json.dumps(required_paths, separators=(",", ":"), sort_keys=True))
+PY
+}
+
+pixel_guest_startup_phase1_required_paths_tsv() {
+  local startup_config_path="${1:?pixel_guest_startup_phase1_required_paths_tsv requires a config path}"
+
+  python3 - "$startup_config_path" <<'PY'
+import json
+import sys
+
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    config = json.load(handle)
+
+if config.get("schemaVersion") != 1:
+    raise SystemExit(
+        "pixel: unsupported guest startup config schema version: "
+        f"{config.get('schemaVersion')!r}"
+    )
+
+phase1 = config.get("phase1")
+if not isinstance(phase1, dict):
+    raise SystemExit("pixel: guest startup config missing phase1 object")
+
+required_paths = phase1.get("requiredPaths")
+if not isinstance(required_paths, list):
+    raise SystemExit("pixel: guest startup config missing phase1.requiredPaths")
+
+for item in required_paths:
+    if not isinstance(item, dict):
+        raise SystemExit("pixel: guest startup config phase1.requiredPaths entries must be objects")
+    label = item.get("label")
+    kind = item.get("kind")
+    path = item.get("path")
+    if not isinstance(label, str) or not label:
+        raise SystemExit("pixel: guest startup config phase1.requiredPaths.label must be a non-empty string")
+    if kind not in {"file", "dir", "any"}:
+        raise SystemExit("pixel: guest startup config phase1.requiredPaths.kind must be file, dir, or any")
+    if not isinstance(path, str) or not path:
+        raise SystemExit("pixel: guest startup config phase1.requiredPaths.path must be a non-empty string")
+    print(f"{label}\t{kind}\t{path}")
+PY
+}
+
 pixel_write_guest_ui_startup_config() {
   local output_path="$1"
   local runtime_dir="$2"
@@ -715,6 +793,7 @@ pixel_write_guest_ui_startup_config() {
   PIXEL_GUEST_STARTUP_FRAME_ARTIFACT_PATH="$frame_artifact_path" \
   PIXEL_GUEST_STARTUP_FRAME_CAPTURE_MODE="$frame_capture_mode" \
   PIXEL_GUEST_STARTUP_SERVICES_JSON="$guest_services_json" \
+  PIXEL_GUEST_STARTUP_PHASE1_REQUIRED_PATHS_JSON="$(pixel_phase1_required_paths_json)" \
     python3 - <<'PY'
 import json
 import os
@@ -772,6 +851,36 @@ def parse_services_json(raw_value):
     if not isinstance(services, dict):
         raise SystemExit("pixel: guest startup services json must decode to an object")
     return services
+
+
+def parse_phase1_required_paths_json(raw_value):
+    value = raw_value.strip()
+    if not value:
+        return None
+    try:
+        required_paths = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"pixel: invalid phase1 required paths json: {error}") from error
+    if required_paths is None:
+        return None
+    if not isinstance(required_paths, list):
+        raise SystemExit("pixel: phase1 required paths json must decode to a list")
+
+    parsed = []
+    for item in required_paths:
+        if not isinstance(item, dict):
+            raise SystemExit("pixel: phase1 required paths entries must be objects")
+        label = item.get("label")
+        kind = item.get("kind")
+        path = item.get("path")
+        if not isinstance(label, str) or not label:
+            raise SystemExit("pixel: phase1 required path label must be a non-empty string")
+        if kind not in {"file", "dir", "any"}:
+            raise SystemExit("pixel: phase1 required path kind must be file, dir, or any")
+        if not isinstance(path, str) or not path:
+            raise SystemExit("pixel: phase1 required path path must be a non-empty string")
+        parsed.append({"label": label, "kind": kind, "path": path})
+    return parsed
 
 
 def append_env_assignment(assignments, key, value):
@@ -888,6 +997,9 @@ session_env = {key: value for key, value in session_env_lines}
 frame_capture_mode = os.environ.get("PIXEL_GUEST_STARTUP_FRAME_CAPTURE_MODE", "off").strip()
 frame_artifact_path = os.environ.get("PIXEL_GUEST_STARTUP_FRAME_ARTIFACT_PATH", "").strip()
 services = parse_services_json(os.environ.get("PIXEL_GUEST_STARTUP_SERVICES_JSON", ""))
+phase1_required_paths = parse_phase1_required_paths_json(
+    os.environ.get("PIXEL_GUEST_STARTUP_PHASE1_REQUIRED_PATHS_JSON", "")
+)
 
 if frame_capture_mode not in {"publish", "request", "off"}:
     raise SystemExit(
@@ -1054,6 +1166,8 @@ if touch:
     config["touch"] = touch
 if window:
     config["window"] = window
+if phase1_required_paths:
+    config["phase1"] = {"requiredPaths": phase1_required_paths}
 
 with open(output_path, "w", encoding="utf-8") as handle:
     json.dump(config, handle, indent=2)

@@ -303,6 +303,30 @@ assert data["services"] == {
     "nostrDbPath": "/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3",
     "nostrServiceSocket": "/data/local/tmp/shadow-runtime/runtime-nostr.sock",
 }, data
+assert data["phase1"] == {
+    "requiredPaths": [
+        {
+            "kind": "dir",
+            "label": "runtime-linux-dir",
+            "path": "/data/local/tmp/shadow-runtime-gnu",
+        },
+        {
+            "kind": "file",
+            "label": "system-launcher",
+            "path": "/data/local/tmp/shadow-runtime-gnu/run-shadow-system",
+        },
+        {
+            "kind": "file",
+            "label": "compositor-launcher",
+            "path": "/data/local/tmp/shadow-runtime-gnu/run-shadow-compositor-guest",
+        },
+        {
+            "kind": "file",
+            "label": "guest-client-launcher",
+            "path": "/data/local/tmp/shadow-runtime-gnu/run-shadow-blitz-demo",
+        },
+    ]
+}, data
 service_env_keys = {
     "SHADOW_RUNTIME_AUDIO_BACKEND",
     "SHADOW_RUNTIME_NOSTR_DB_PATH",
@@ -359,6 +383,7 @@ assert run_config["services"] == {
     "nostrDbPath": "/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3",
     "nostrServiceSocket": "/data/local/tmp/shadow-runtime/runtime-nostr.sock",
 }, run_config
+assert run_config["phase1"] == data["phase1"], run_config
 assert run_config["compositor"]["frameCapture"] == {
     "mode": "first-frame",
     "artifactPath": "/tmp/shadow-frame-test.ppm",
