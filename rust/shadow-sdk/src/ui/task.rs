@@ -4,6 +4,7 @@ use xilem::{AnyWidgetView, WidgetView};
 
 type TaskDecorationFn<State> =
     dyn FnOnce(Box<AnyWidgetView<State>>) -> Box<AnyWidgetView<State>> + Send + Sync;
+type TaskDecorationFactory<State, Registry> = fn(&Registry) -> TaskDecoration<State>;
 
 // Type-erase heterogeneous task wrappers so apps can apply them as one list.
 pub struct TaskDecoration<State> {
@@ -24,6 +25,28 @@ impl<State> TaskDecoration<State> {
 
     pub fn apply(self, content: Box<AnyWidgetView<State>>) -> Box<AnyWidgetView<State>> {
         (self.decorate)(content)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct TaskDecorationRegistry<State, Registry, const N: usize> {
+    decorate: [TaskDecorationFactory<State, Registry>; N],
+}
+
+impl<State, Registry, const N: usize> TaskDecorationRegistry<State, Registry, N> {
+    pub const fn new(decorate: [TaskDecorationFactory<State, Registry>; N]) -> Self {
+        Self { decorate }
+    }
+
+    pub fn apply(
+        &self,
+        content: impl WidgetView<State>,
+        registry: &Registry,
+    ) -> Box<AnyWidgetView<State>>
+    where
+        State: Send + Sync + 'static,
+    {
+        apply_task_decorations(content, self.decorate.iter().map(|decorate| decorate(registry)))
     }
 }
 
@@ -163,7 +186,45 @@ fn next_task_id() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{TaskSlot, TaskSnapshot};
+    use std::sync::{Arc, Mutex};
+
+    use xilem::view::label;
+
+    use super::{TaskDecoration, TaskDecorationRegistry, TaskSlot, TaskSnapshot};
+
+    #[test]
+    fn task_decoration_registry_invokes_factories_in_order() {
+        struct Registry {
+            visited: Arc<Mutex<Vec<&'static str>>>,
+        }
+
+        fn first(registry: &Registry) -> TaskDecoration<()> {
+            registry.visited.lock().expect("first visit lock").push("first");
+            TaskDecoration::new(|content| content)
+        }
+
+        fn second(registry: &Registry) -> TaskDecoration<()> {
+            registry
+                .visited
+                .lock()
+                .expect("second visit lock")
+                .push("second");
+            TaskDecoration::new(|content| content)
+        }
+
+        let visited = Arc::new(Mutex::new(Vec::new()));
+        let registry = Registry {
+            visited: Arc::clone(&visited),
+        };
+        let decorations = TaskDecorationRegistry::new([first, second]);
+
+        let _ = decorations.apply(label("content"), &registry);
+
+        assert_eq!(
+            visited.lock().expect("visited lock").as_slice(),
+            ["first", "second"]
+        );
+    }
 
     #[test]
     fn task_slot_rejects_overlap_and_finishes_by_id() {

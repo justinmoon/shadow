@@ -17,7 +17,7 @@ use shadow_sdk::{
             NostrAccountSummary, NostrAccountTask, NostrPublishReceipt,
         },
     },
-    ui::{task_decoration, with_tasks, TaskHandle, TaskSlot, WidgetView},
+    ui::{task_decoration, TaskDecoration, TaskDecorationRegistry, TaskHandle, TaskSlot, WidgetView},
 };
 
 use crate::TimelineApp;
@@ -47,6 +47,17 @@ pub(crate) struct TimelineTasks {
     refresh: TaskSlot<NostrHomeRefreshRequest>,
     thread_sync: TaskSlot<NostrThreadSyncRequest>,
 }
+
+const TASK_DECORATIONS: TaskDecorationRegistry<TimelineApp, TimelineTasks, 7> =
+    TaskDecorationRegistry::new([
+        decorate_account_action_task,
+        decorate_clipboard_write_task,
+        decorate_explore_sync_task,
+        decorate_follow_update_task,
+        decorate_thread_sync_task,
+        decorate_publish_task,
+        decorate_refresh_task,
+    ]);
 
 impl TimelineTasks {
     pub(crate) fn account_action_pending(&self) -> bool {
@@ -95,64 +106,81 @@ pub(crate) fn decorate_with_tasks(
     content: impl WidgetView<TimelineApp>,
     tasks: &TimelineTasks,
 ) -> impl WidgetView<TimelineApp> {
-    with_tasks(
-        content,
-        [
-            task_decoration(
-                tasks.account_action.pending_cloned(),
-                run_account_task,
-                |app: &mut TimelineApp, task: TaskHandle<NostrAccountTask>, result| {
-                    app.finish_account_action(task, result);
-                },
-            ),
-            task_decoration(
-                tasks.clipboard_write.pending_cloned(),
-                run_write_text_task,
-                |app: &mut TimelineApp, task: TaskHandle<ClipboardWriteRequest>, result| {
-                    app.finish_clipboard_write(task, result);
-                },
-            ),
-            task_decoration(
-                tasks.explore_sync.pending_cloned(),
-                run_sync_explore_feed_task,
-                |app: &mut TimelineApp, task: TaskHandle<NostrExploreSyncRequest>, result| {
-                    app.finish_explore_sync(task, result);
-                },
-            ),
-            task_decoration(
-                tasks.follow_update.pending_cloned(),
-                run_update_contact_list_task,
-                |app: &mut TimelineApp, task: TaskHandle<NostrContactListUpdateRequest>, result| {
-                    app.finish_follow_update(task, result);
-                },
-            ),
-            task_decoration(
-                tasks.thread_sync.pending_cloned(),
-                run_sync_thread_task,
-                |app: &mut TimelineApp, task: TaskHandle<NostrThreadSyncRequest>, result| {
-                    app.finish_thread_sync(task, result);
-                },
-            ),
-            task_decoration(
-                tasks.publish.pending_cloned(),
-                run_publish,
-                |app: &mut TimelineApp, task: TaskHandle<NostrTimelinePublishRequest>, result| {
-                    app.finish_publish(task, result);
-                },
-            ),
-            task_decoration(
-                tasks.refresh.pending_cloned(),
-                run_refresh_home_feed_task,
-                |app: &mut TimelineApp, task: TaskHandle<NostrHomeRefreshRequest>, result| {
-                    app.finish_refresh(task, result);
-                },
-            ),
-        ],
-    )
+    TASK_DECORATIONS.apply(content, tasks)
 }
 
 fn run_publish(job: NostrTimelinePublishRequest) -> Result<PublishOutcome, String> {
     publish_note_or_reply(job).map_err(|error| error.to_string())
+}
+
+fn decorate_account_action_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    task_decoration(
+        tasks.account_action.pending_cloned(),
+        run_account_task,
+        |app: &mut TimelineApp, task: TaskHandle<NostrAccountTask>, result| {
+            app.finish_account_action(task, result);
+        },
+    )
+}
+
+fn decorate_clipboard_write_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    task_decoration(
+        tasks.clipboard_write.pending_cloned(),
+        run_write_text_task,
+        |app: &mut TimelineApp, task: TaskHandle<ClipboardWriteRequest>, result| {
+            app.finish_clipboard_write(task, result);
+        },
+    )
+}
+
+fn decorate_explore_sync_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    task_decoration(
+        tasks.explore_sync.pending_cloned(),
+        run_sync_explore_feed_task,
+        |app: &mut TimelineApp, task: TaskHandle<NostrExploreSyncRequest>, result| {
+            app.finish_explore_sync(task, result);
+        },
+    )
+}
+
+fn decorate_follow_update_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    task_decoration(
+        tasks.follow_update.pending_cloned(),
+        run_update_contact_list_task,
+        |app: &mut TimelineApp, task: TaskHandle<NostrContactListUpdateRequest>, result| {
+            app.finish_follow_update(task, result);
+        },
+    )
+}
+
+fn decorate_thread_sync_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    task_decoration(
+        tasks.thread_sync.pending_cloned(),
+        run_sync_thread_task,
+        |app: &mut TimelineApp, task: TaskHandle<NostrThreadSyncRequest>, result| {
+            app.finish_thread_sync(task, result);
+        },
+    )
+}
+
+fn decorate_publish_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    task_decoration(
+        tasks.publish.pending_cloned(),
+        run_publish,
+        |app: &mut TimelineApp, task: TaskHandle<NostrTimelinePublishRequest>, result| {
+            app.finish_publish(task, result);
+        },
+    )
+}
+
+fn decorate_refresh_task(tasks: &TimelineTasks) -> TaskDecoration<TimelineApp> {
+    task_decoration(
+        tasks.refresh.pending_cloned(),
+        run_refresh_home_feed_task,
+        |app: &mut TimelineApp, task: TaskHandle<NostrHomeRefreshRequest>, result| {
+            app.finish_refresh(task, result);
+        },
+    )
 }
 
 fn follow_update_target(job: &NostrContactListUpdateRequest) -> &str {
