@@ -71,6 +71,16 @@ Living plan. Revise it as the camera bring-up path changes.
   - a boot staging/recovery script under `scripts/pixel/`
   - proof artifacts under `build/pixel/camera-boot-hal/<timestamp>-<serial>/`
 
+## Current Boot HAL Result
+
+- `boot-camera-rust-hal-frame-probe` landed the first Shadow/Rust boot-owned camera HAL probe.
+- Hardware proof: `build/pixel/camera-boot-hal/20260423T232422Z-0B191JEC203253/`.
+- The probe ran from Shadow boot userspace and recovered `status.json`, `boot-hal-probe.json`, `device-output.txt`, and `dmesg.txt`.
+- Android camera API use was false for `ICameraProvider`, `cameraserver`, Java Camera2, and rooted-Android shell camera APIs. The rooted Android shell was used only after reboot for trace recovery.
+- Deepest stage reached: `link`.
+- Current precise blocker: `/vendor/lib64/hw/camera.sm6150.so` is not visible in the Shadow boot namespace.
+- Next task: `boot-camera-vendor-linker-stage` should stage or mount the minimal vendor/system/APEX/linker roots, rerun `camera-hal-link-probe`, and advance to `hmi`/`module` or record the next exact linker/library/property/device-node blocker.
+
 ## Direct HAL Stage Gates
 
 - `stage=link`: mount the required vendor/system/APEX library roots and direct-load the HAL with `android_dlopen_ext` or an equivalent boot linker strategy.
@@ -138,7 +148,8 @@ Living plan. Revise it as the camera bring-up path changes.
 - [x] Run contained HAL inventory probe.
 - [x] Run contained HAL/provider frame probe.
 - [x] Correct project direction: provider capture is reference data, not target architecture.
-- [ ] Implement `boot-camera-rust-hal-frame-probe` from Shadow boot userspace.
+- [x] Implement `boot-camera-rust-hal-frame-probe` from Shadow boot userspace.
+- [ ] Stage or mount the minimal vendor/system/APEX/linker roots needed to advance direct HAL probing past `link`.
 - [ ] Decide whether direct Linux capture deserves more work after direct-HAL blockers are known.
 
 ## References

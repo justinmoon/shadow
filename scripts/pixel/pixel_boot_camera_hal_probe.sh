@@ -1,0 +1,404 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=./pixel_common.sh
+source "$SCRIPT_DIR/lib/pixel_common.sh"
+ensure_bootimg_shell "$@"
+
+OUTPUT_DIR=""
+DRY_RUN=0
+ADB_TIMEOUT_SECS="${PIXEL_BOOT_CAMERA_HAL_ADB_TIMEOUT_SECS:-240}"
+BOOT_TIMEOUT_SECS="${PIXEL_BOOT_CAMERA_HAL_BOOT_TIMEOUT_SECS:-180}"
+HOLD_SECS="${PIXEL_BOOT_CAMERA_HAL_HOLD_SECS:-2}"
+WATCHDOG_TIMEOUT_SECS="${PIXEL_BOOT_CAMERA_HAL_WATCHDOG_TIMEOUT_SECS:-45}"
+ORIGINAL_ARGS=("$@")
+
+serial=""
+run_token=""
+image_path=""
+status_path=""
+build_output_path=""
+oneshot_output_path=""
+oneshot_stderr_path=""
+oneshot_dir=""
+recover_dir=""
+probe_json_path=""
+device_output_path=""
+dmesg_path=""
+failure_stage=""
+build_succeeded=false
+oneshot_attempted=false
+oneshot_status=""
+probe_summary_present=false
+frame_captured=false
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/pixel/pixel_boot_camera_hal_probe.sh [--output DIR]
+                                                    [--adb-timeout SECONDS]
+                                                    [--boot-timeout SECONDS]
+                                                    [--hold-secs SECONDS]
+                                                    [--watchdog-timeout SECONDS]
+                                                    [--dry-run]
+
+Build and one-shot boot the Rust-owned Shadow boot camera HAL probe. The probe
+directly attempts /vendor/lib64/hw/camera.sm6150.so from hello-init userspace and
+recovers the durable metadata bundle after Android returns.
+EOF
+}
+
+bool_word() {
+  if [[ "$1" == "1" || "$1" == "true" ]]; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
+safe_path_component() {
+  tr -c 'A-Za-z0-9._-' '_' <<<"$1" | sed 's/_$//'
+}
+
+resolve_serial_for_mode() {
+  if [[ "$DRY_RUN" == "1" && -n "${PIXEL_SERIAL:-}" ]]; then
+    printf '%s\n' "$PIXEL_SERIAL"
+    return 0
+  fi
+
+  pixel_resolve_serial
+}
+
+prepare_output_dir() {
+  local safe_serial
+
+  if [[ -z "$OUTPUT_DIR" ]]; then
+    safe_serial="$(safe_path_component "$serial")"
+    OUTPUT_DIR="$(pixel_dir)/camera-boot-hal/$(pixel_timestamp)-$safe_serial"
+  fi
+
+  if [[ -e "$OUTPUT_DIR" ]] && find "$OUTPUT_DIR" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+    echo "pixel_boot_camera_hal_probe: output dir must be empty or absent: $OUTPUT_DIR" >&2
+    exit 1
+  fi
+
+  if [[ "$DRY_RUN" != "1" ]]; then
+    mkdir -p "$OUTPUT_DIR"
+  fi
+}
+
+default_run_token() {
+  local safe_serial token
+  safe_serial="$(safe_path_component "$serial")"
+  token="camera-hal-$(date -u +%Y%m%dT%H%M%SZ)-$safe_serial"
+  printf '%.63s\n' "$token"
+}
+
+copy_if_present() {
+  local source_path destination_path placeholder
+  source_path="$1"
+  destination_path="$2"
+  placeholder="$3"
+
+  if [[ -s "$source_path" ]]; then
+    cp "$source_path" "$destination_path"
+  else
+    printf '%s\n' "$placeholder" >"$destination_path"
+  fi
+}
+
+write_blocker_probe_json() {
+  local reason
+  reason="$1"
+  python3 - "$probe_json_path" "$run_token" "$reason" <<'PY'
+import json
+import sys
+
+output, run_token, reason = sys.argv[1:4]
+payload = {
+    "schemaVersion": 1,
+    "kind": "camera-boot-hal-probe",
+    "mode": "camera-hal-link-probe",
+    "runToken": run_token,
+    "halPath": "/vendor/lib64/hw/camera.sm6150.so",
+    "androidCameraApiUse": {
+        "ICameraProvider": False,
+        "cameraserver": False,
+        "javaCamera2": False,
+        "rootedAndroidShellCameraApi": False,
+        "rootedAndroidShellRecoveryOnly": True,
+    },
+    "frameCapture": {"attempted": False, "captured": False, "artifactPath": None},
+    "blockerStage": "recover",
+    "blocker": reason,
+}
+with open(output, "w", encoding="utf-8") as fh:
+    json.dump(payload, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+}
+
+write_status_json() {
+  local exit_code ok
+  exit_code="${1:-1}"
+  ok=false
+  if [[ "$exit_code" -eq 0 ]]; then
+    ok=true
+  fi
+
+  [[ -n "$status_path" ]] || return 0
+
+  python3 - \
+    "$status_path" \
+    "$ok" \
+    "$serial" \
+    "$OUTPUT_DIR" \
+    "$run_token" \
+    "$image_path" \
+    "$build_output_path" \
+    "$oneshot_output_path" \
+    "$oneshot_stderr_path" \
+    "$oneshot_dir" \
+    "$recover_dir" \
+    "$probe_json_path" \
+    "$device_output_path" \
+    "$dmesg_path" \
+    "$failure_stage" \
+    "$build_succeeded" \
+    "$oneshot_attempted" \
+    "$oneshot_status" \
+    "$probe_summary_present" \
+    "$frame_captured" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+(
+    output,
+    ok,
+    serial,
+    output_dir,
+    run_token,
+    image_path,
+    build_output_path,
+    oneshot_output_path,
+    oneshot_stderr_path,
+    oneshot_dir,
+    recover_dir,
+    probe_json_path,
+    device_output_path,
+    dmesg_path,
+    failure_stage,
+    build_succeeded,
+    oneshot_attempted,
+    oneshot_status,
+    probe_summary_present,
+    frame_captured,
+) = sys.argv[1:21]
+
+probe = {}
+probe_path = Path(probe_json_path)
+if probe_path.is_file():
+    try:
+        probe = json.loads(probe_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        probe = {"parseError": str(exc)}
+
+recover_status_path = Path(recover_dir) / "status.json" if recover_dir else None
+oneshot_status_path = Path(oneshot_dir) / "status.json" if oneshot_dir else None
+
+payload = {
+    "kind": "camera_boot_hal_probe_run",
+    "ok": ok == "true",
+    "proof_ok": probe_summary_present == "true",
+    "serial": serial,
+    "output_dir": output_dir,
+    "run_token": run_token,
+    "image": image_path,
+    "build_output_path": build_output_path,
+    "oneshot_output_path": oneshot_output_path,
+    "oneshot_stderr_path": oneshot_stderr_path,
+    "oneshot_dir": oneshot_dir,
+    "oneshot_status_path": str(oneshot_status_path) if oneshot_status_path else "",
+    "oneshot_status": int(oneshot_status) if oneshot_status not in ("", None) else None,
+    "recover_dir": recover_dir,
+    "recover_status_path": str(recover_status_path) if recover_status_path else "",
+    "boot_hal_probe_json": probe_json_path,
+    "device_output_path": device_output_path,
+    "dmesg_path": dmesg_path,
+    "failure_stage": failure_stage,
+    "build_succeeded": build_succeeded == "true",
+    "oneshot_attempted": oneshot_attempted == "true",
+    "probe_summary_present": probe_summary_present == "true",
+    "frame_captured": frame_captured == "true",
+    "blocker_stage": probe.get("blockerStage", ""),
+    "blocker": probe.get("blocker", ""),
+    "android_camera_api_use": probe.get("androidCameraApiUse", {}),
+}
+if probe:
+    payload["probe"] = probe
+
+with open(output, "w", encoding="utf-8") as fh:
+    json.dump(payload, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+}
+
+finish() {
+  local exit_code=$?
+  trap - EXIT
+  write_status_json "$exit_code"
+  exit "$exit_code"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output)
+      OUTPUT_DIR="${2:?missing value for --output}"
+      shift 2
+      ;;
+    --adb-timeout)
+      ADB_TIMEOUT_SECS="${2:?missing value for --adb-timeout}"
+      shift 2
+      ;;
+    --boot-timeout)
+      BOOT_TIMEOUT_SECS="${2:?missing value for --boot-timeout}"
+      shift 2
+      ;;
+    --hold-secs)
+      HOLD_SECS="${2:?missing value for --hold-secs}"
+      shift 2
+      ;;
+    --watchdog-timeout)
+      WATCHDOG_TIMEOUT_SECS="${2:?missing value for --watchdog-timeout}"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "pixel_boot_camera_hal_probe: unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+for numeric_value in "$ADB_TIMEOUT_SECS" "$BOOT_TIMEOUT_SECS" "$HOLD_SECS" "$WATCHDOG_TIMEOUT_SECS"; do
+  if [[ ! "$numeric_value" =~ ^[0-9]+$ ]]; then
+    echo "pixel_boot_camera_hal_probe: timeout and hold values must be integers" >&2
+    exit 1
+  fi
+done
+
+serial="$(resolve_serial_for_mode)"
+pixel_prepare_dirs
+prepare_output_dir
+
+run_token="${PIXEL_BOOT_CAMERA_HAL_RUN_TOKEN:-$(default_run_token)}"
+image_path="$OUTPUT_DIR/camera-boot-hal.img"
+status_path="$OUTPUT_DIR/status.json"
+build_output_path="$OUTPUT_DIR/build-output.txt"
+oneshot_output_path="$OUTPUT_DIR/oneshot-output.txt"
+oneshot_stderr_path="$OUTPUT_DIR/oneshot-stderr.txt"
+oneshot_dir="$OUTPUT_DIR/oneshot"
+recover_dir="$oneshot_dir/recover-traces"
+probe_json_path="$OUTPUT_DIR/boot-hal-probe.json"
+device_output_path="$OUTPUT_DIR/device-output.txt"
+dmesg_path="$OUTPUT_DIR/dmesg.txt"
+
+if [[ "$DRY_RUN" == "1" ]]; then
+  cat <<EOF
+pixel_boot_camera_hal_probe: dry-run
+serial=$serial
+output_dir=$OUTPUT_DIR
+run_token=$run_token
+image=$image_path
+adb_timeout_secs=$ADB_TIMEOUT_SECS
+boot_timeout_secs=$BOOT_TIMEOUT_SECS
+hold_secs=$HOLD_SECS
+watchdog_timeout_secs=$WATCHDOG_TIMEOUT_SECS
+build_command=$SCRIPT_DIR/pixel/pixel_boot_build_orange_gpu.sh --output "$image_path" --orange-gpu-mode camera-hal-link-probe --orange-gpu-metadata-stage-breadcrumb true --run-token "$run_token"
+run_command=$SCRIPT_DIR/pixel/pixel_boot_oneshot.sh --image "$image_path" --output "$oneshot_dir" --skip-collect --recover-traces-after --no-wait-boot-completed
+EOF
+  exit 0
+fi
+
+trap finish EXIT
+
+if ! "$SCRIPT_DIR/pixel/pixel_boot_build_orange_gpu.sh" \
+  --output "$image_path" \
+  --orange-gpu-mode camera-hal-link-probe \
+  --orange-gpu-metadata-stage-breadcrumb true \
+  --hold-secs "$HOLD_SECS" \
+  --orange-gpu-watchdog-timeout-secs "$WATCHDOG_TIMEOUT_SECS" \
+  --reboot-target bootloader \
+  --run-token "$run_token" \
+  --dev-mount tmpfs \
+  --mount-dev true \
+  --mount-proc true \
+  --mount-sys true \
+  >"$build_output_path" 2>&1; then
+  failure_stage="build"
+  write_blocker_probe_json "failed to build camera HAL boot probe image"
+  exit 1
+fi
+build_succeeded=true
+
+oneshot_attempted=true
+set +e
+PIXEL_SERIAL="$serial" \
+  "$SCRIPT_DIR/pixel/pixel_boot_oneshot.sh" \
+    --image "$image_path" \
+    --output "$oneshot_dir" \
+    --adb-timeout "$ADB_TIMEOUT_SECS" \
+    --boot-timeout "$BOOT_TIMEOUT_SECS" \
+    --skip-collect \
+    --recover-traces-after \
+    --no-wait-boot-completed \
+    >"$oneshot_output_path" 2>"$oneshot_stderr_path"
+oneshot_status=$?
+set -e
+
+if [[ -s "$recover_dir/channels/metadata-probe-summary.json" ]]; then
+  cp "$recover_dir/channels/metadata-probe-summary.json" "$probe_json_path"
+  probe_summary_present=true
+else
+  failure_stage="${failure_stage:-recover-summary}"
+  write_blocker_probe_json "metadata probe summary was not recovered from the boot run"
+fi
+
+copy_if_present \
+  "$recover_dir/channels/metadata-probe-report.txt" \
+  "$device_output_path" \
+  "metadata probe report was not recovered"
+copy_if_present \
+  "$recover_dir/channels/kernel-current-best-effort.txt" \
+  "$dmesg_path" \
+  "kernel log was not recovered"
+
+frame_captured="$(
+  python3 - "$probe_json_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+frame = payload.get("frameCapture", {})
+print("true" if isinstance(frame, dict) and frame.get("captured") is True else "false")
+PY
+)"
+
+if [[ "$probe_summary_present" == "true" ]]; then
+  printf 'Recovered camera boot HAL probe: %s\n' "$probe_json_path"
+  printf 'Run status: %s\n' "$status_path"
+  exit 0
+fi
+
+printf 'Camera boot HAL probe did not recover a summary; see %s\n' "$status_path" >&2
+exit 1

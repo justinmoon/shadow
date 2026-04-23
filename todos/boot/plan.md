@@ -273,10 +273,20 @@ Related docs:
     - write `build/pixel/camera-hal-api/<timestamp>-<serial>/{hal-probe.json,device-output.txt,status.json}` or an equally explicit blocker bundle
     - document whether the next frame-capture track should stay provider-service-contained, return to direct vendor HAL loading, or split into a separate Linux-only instrumentation lane
   - blocked_by: none
-- [ ] `camera-rust-hal-frame-probe`
+- [x] `camera-rust-hal-frame-probe`
   - task_id: boot-camera-rust-hal-frame-probe
   - priority: 11
   - why next: keep worker-3 on the camera/HAL context and move from rooted-Android reference capture to the real Shadow boot direct-HAL path
+  - result:
+    - implemented Rust-owned `camera-hal-link-probe` inside `hello-init` and canonical `scripts/pixel/pixel_boot_camera_hal_probe.sh`
+    - one-shot booted `0B191JEC203253` into the Shadow/Rust setup and recovered a boot HAL summary
+    - proved the run used no Android `ICameraProvider`, `cameraserver`, Java Camera2, or rooted-Android shell camera API; Android root was recovery-only
+    - reached `stage=link` and recorded the precise blocker: `/vendor/lib64/hw/camera.sm6150.so` is not visible in Shadow boot userspace
+  - proof artifacts:
+    - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-boot-hal/20260423T232422Z-0B191JEC203253/status.json`
+    - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-boot-hal/20260423T232422Z-0B191JEC203253/boot-hal-probe.json`
+    - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-boot-hal/20260423T232422Z-0B191JEC203253/device-output.txt`
+    - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-boot-hal/20260423T232422Z-0B191JEC203253/dmesg.txt`
   - owned paths:
     - `rust/`
     - `scripts/pixel/`
@@ -294,6 +304,26 @@ Related docs:
     - `just pre-commit`
   - blocked_by:
     - `boot-camera-hal-provider-frame-probe`
+- [ ] `camera-boot-vendor-linker-stage`
+  - task_id: boot-camera-vendor-linker-stage
+  - priority: 11
+  - why next: the Rust boot camera probe is now truthful and blocks at `link`; advancing requires making the vendor HAL and its linker/library roots visible without importing the Android camera service stack
+  - owned paths:
+    - `rust/init-wrapper/`
+    - `scripts/pixel/`
+    - `scripts/ci/`
+    - `todos/boot/camera-linux-api-recon.md`
+    - `todos/boot/plan.md`
+  - acceptance:
+    - stage or mount the minimal vendor/system/APEX/linker roots needed for `/vendor/lib64/hw/camera.sm6150.so` from Shadow boot userspace
+    - keep the compatibility surface explicit and HAL-facing; do not start or depend on Android `ICameraProvider`, `cameraserver`, Java Camera2, or rooted Android shell camera APIs
+    - rerun `camera-hal-link-probe` and advance to `hmi` or `module`, or record the next exact linker/library/property/device-node blocker
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_tooling_smoke.sh`
+    - `SHADOW_DEVICE_LEASE_FORCE=1 PIXEL_SERIAL=<serial> scripts/pixel/pixel_boot_camera_hal_probe.sh`
+  - blocked_by:
+    - `boot-camera-rust-hal-frame-probe`
 - [x] `touch-counter-gpu`
   - task_id: boot-touch-counter-gpu
   - priority: 12

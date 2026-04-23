@@ -105,7 +105,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--hello-init-mode direct|rust-bridge]
                                                     [--prelude none|orange-init]
                                                     [--prelude-hold-secs N]
-                                                    [--orange-gpu-mode gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter]
+                                                    [--orange-gpu-mode gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter]
                                                     [--orange-gpu-launch-delay-secs N]
                                                     [--orange-gpu-parent-probe-attempts N]
                                                     [--orange-gpu-parent-probe-interval-secs N]
@@ -428,7 +428,7 @@ orange_gpu_mode_uses_visible_checkpoints() {
   fi
 
   case "$ORANGE_GPU_MODE" in
-    firmware-probe-only|timeout-control-smoke|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke)
+    firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke)
       return 0
       ;;
     *)
@@ -729,10 +729,10 @@ assert_orange_gpu_mode_word() {
   value="${1:?assert_orange_gpu_mode_word requires a value}"
 
   case "$value" in
-    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)
+    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)
       ;;
     *)
-      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, orange-gpu-loop, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, firmware-probe-only, timeout-control-smoke, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-firmware-helper-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, vulkan-offscreen, compositor-scene, app-direct-present, app-direct-present-touch-counter, or app-direct-present-runtime-touch-counter: $value" >&2
+      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, orange-gpu-loop, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, firmware-probe-only, timeout-control-smoke, camera-hal-link-probe, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-firmware-helper-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, vulkan-offscreen, compositor-scene, app-direct-present, app-direct-present-touch-counter, or app-direct-present-runtime-touch-counter: $value" >&2
       exit 1
       ;;
   esac
@@ -872,7 +872,7 @@ rust_bridge_supports_orange_gpu_mode() {
   value="${1:?rust_bridge_supports_orange_gpu_mode requires a value}"
 
   case "$value" in
-    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)
+    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)
       return 0
       ;;
     *)
@@ -1901,6 +1901,10 @@ if [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" && "$OR
   echo "pixel_boot_build_orange_gpu: c-kgsl-open-readonly-firmware-helper-smoke requires --orange-gpu-metadata-stage-breadcrumb true so helper progress survives recovery" >&2
   exit 1
 fi
+if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" && "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: camera-hal-link-probe requires --orange-gpu-metadata-stage-breadcrumb true so HAL link evidence survives recovery" >&2
+  exit 1
+fi
 if [[ "$ORANGE_GPU_MODE" =~ ^(compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ && "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: $ORANGE_GPU_MODE requires --orange-gpu-metadata-stage-breadcrumb true so the captured frame survives recovery" >&2
   exit 1
@@ -1991,8 +1995,16 @@ if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   fi
 else
   if [[ -z "$HELLO_INIT_BINARY" ]]; then
-    HELLO_INIT_BINARY="$(default_hello_init_binary)"
-    "$SCRIPT_DIR/pixel/pixel_build_hello_init.sh" --output "$HELLO_INIT_BINARY"
+    if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
+      HELLO_INIT_BINARY="$(default_rust_hello_init_binary)"
+      build_or_copy_rust_hello_init_binary \
+        "$(default_rust_hello_init_package_ref)" \
+        "$HELLO_INIT_BINARY" \
+        "$(default_rust_hello_init_binary_name)"
+    else
+      HELLO_INIT_BINARY="$(default_hello_init_binary)"
+      "$SCRIPT_DIR/pixel/pixel_build_hello_init.sh" --output "$HELLO_INIT_BINARY"
+    fi
   fi
 fi
 
@@ -2009,7 +2021,11 @@ if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   assert_rust_hello_variant "$HELLO_INIT_BINARY"
   assert_rust_hello_variant "$HELLO_INIT_RUST_SHIM_BINARY"
 else
-  assert_hello_variant "$HELLO_INIT_BINARY"
+  if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
+    assert_rust_hello_variant "$HELLO_INIT_BINARY"
+  else
+    assert_hello_variant "$HELLO_INIT_BINARY"
+  fi
 fi
 
 if [[ "$ORANGE_GPU_MODE" == "compositor-scene" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
@@ -2168,6 +2184,8 @@ elif [[ "$ORANGE_GPU_MODE" == "firmware-probe-only" ]]; then
   printf 'Payload contract: hello-init runs the owned userspace firmware preflight only, paints a firmware checkpoint pattern, and exits before any KGSL open\n'
 elif [[ "$ORANGE_GPU_MODE" == "timeout-control-smoke" ]]; then
   printf 'Payload contract: hello-init proves the timeout-classifier repaint path by painting the firmware checkpoint, then intentionally hanging before any KGSL open\n'
+elif [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
+  printf 'Payload contract: rust hello-init directly probes /vendor/lib64/hw/camera.sm6150.so from Shadow boot userspace and persists link/HMI/module/open blockers under %s\n' "$(metadata_probe_summary_path_for_token "$RUN_TOKEN")"
 elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-smoke" ]]; then
   printf 'Payload contract: hello-init directly opens /dev/kgsl-3d0 read-only in the owned child process before any staged Rust bundle exec\n'
 elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" ]]; then

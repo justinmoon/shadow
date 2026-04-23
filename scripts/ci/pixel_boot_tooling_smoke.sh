@@ -13,6 +13,7 @@ PROBE_RUN_TOKEN="tooling-run-token-42"
 STOCK_BOOT_IMAGE="$TMP_DIR/stock-boot.img"
 ONESHOT_OUTPUT="$TMP_DIR/oneshot-output"
 FLASH_RUN_OUTPUT="$TMP_DIR/flash-run-output"
+CAMERA_HAL_PROBE_OUTPUT="$TMP_DIR/camera-hal-probe-output"
 ONESHOT_ADB_LOGCAT_PROOF_OUTPUT="$TMP_DIR/oneshot-adb-logcat-proof-output"
 ONESHOT_ADB_DEVICE_PATH_PROOF_OUTPUT="$TMP_DIR/oneshot-adb-device-path-proof-output"
 ONESHOT_ADB_PS_PROOF_OUTPUT="$TMP_DIR/oneshot-adb-ps-proof-output"
@@ -2415,6 +2416,33 @@ assert_contains "$flash_run_output" "activate_target=true"
 
 if [[ -e "$FLASH_RUN_OUTPUT" ]]; then
   echo "pixel_boot_tooling_smoke: flash-run dry-run should not create the output dir" >&2
+  exit 1
+fi
+
+camera_hal_probe_dry_run_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 PIXEL_SERIAL=TESTSERIAL \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_camera_hal_probe.sh" \
+      --dry-run \
+      --output "$CAMERA_HAL_PROBE_OUTPUT" \
+      --adb-timeout 55 \
+      --boot-timeout 65 \
+      --hold-secs 3 \
+      --watchdog-timeout 35
+)"
+
+assert_contains "$camera_hal_probe_dry_run_output" "pixel_boot_camera_hal_probe: dry-run"
+assert_contains "$camera_hal_probe_dry_run_output" "serial=TESTSERIAL"
+assert_contains "$camera_hal_probe_dry_run_output" "output_dir=$CAMERA_HAL_PROBE_OUTPUT"
+assert_contains "$camera_hal_probe_dry_run_output" "run_token=camera-hal-"
+assert_contains "$camera_hal_probe_dry_run_output" "adb_timeout_secs=55"
+assert_contains "$camera_hal_probe_dry_run_output" "boot_timeout_secs=65"
+assert_contains "$camera_hal_probe_dry_run_output" "hold_secs=3"
+assert_contains "$camera_hal_probe_dry_run_output" "watchdog_timeout_secs=35"
+assert_contains "$camera_hal_probe_dry_run_output" "camera-hal-link-probe"
+assert_contains "$camera_hal_probe_dry_run_output" "pixel_boot_oneshot.sh"
+
+if [[ -e "$CAMERA_HAL_PROBE_OUTPUT" ]]; then
+  echo "pixel_boot_tooling_smoke: camera HAL probe dry-run should not create the output dir" >&2
   exit 1
 fi
 

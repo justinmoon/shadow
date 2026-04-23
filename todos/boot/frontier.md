@@ -86,9 +86,10 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 
 1. Run `boot-shell-session-first-proof`: boot into the real Shadow shell/home session from the Rust boot seam, not another isolated app-direct proof.
 2. Run `boot-payload-partition-first-probe` in parallel so full shell/app payloads stop depending on ramdisk growth.
-3. After shell boots, run `boot-shell-launch-ts-app`: launch a TypeScript app from shell and capture shell/app/return-home proof.
-4. Then run `boot-shell-interaction-proof` and `boot-persistent-shell-control` so the session becomes interactive and long-running.
-5. Keep camera and sound as sidecars until the shell/app loop exists; keep direct `std` PID1 and stock-init imported-rc as fallback discriminators only.
+3. Run `boot-camera-vendor-linker-stage` opportunistically as the camera sidecar so the Rust boot HAL probe can advance past the current `/vendor/lib64/hw/camera.sm6150.so` visibility blocker.
+4. After shell boots, run `boot-shell-launch-ts-app`: launch a TypeScript app from shell and capture shell/app/return-home proof.
+5. Then run `boot-shell-interaction-proof` and `boot-persistent-shell-control` so the session becomes interactive and long-running.
+6. Keep camera and sound as sidecars until the shell/app loop exists; keep direct `std` PID1 and stock-init imported-rc as fallback discriminators only.
 
 ## Fast Commands
 

@@ -84,6 +84,7 @@ scripts/pixel/pixel_boot_build_ramdisk_prop_probe.sh	pixel	Private stock-init su
 scripts/pixel/pixel_boot_build_second_stage_rc_probe.sh	pixel	Private stock-init sunfish boot image builder that retargets the primary second-stage init rc path through /second_stage_resources.
 scripts/pixel/pixel_boot_build_log_probe.sh	pixel	Private sunfish boot image builder that injects a log-probe or preflight-report boot helper.
 scripts/pixel/pixel_boot_collect_logs.sh	pixel	Private host-side collector for experimental Shadow boot helper logs and preflight summaries.
+scripts/pixel/pixel_boot_camera_hal_probe.sh	pixel	Private Shadow boot camera HAL probe runner that builds, one-shot boots, and recovers Rust-owned direct-HAL evidence.
 scripts/pixel/pixel_boot_recover_traces.sh	pixel	Private host-side collector for post-reboot Android boot trace recovery behind sc debug boot-lab-recover-traces.
 scripts/pixel/pixel_boot_flash.sh	pixel	Private sunfish custom boot image flash helper for the active slot.
 scripts/pixel/pixel_boot_flash_run.sh	pixel	Private flashed-slot boot-lab runner that composes flash, collect, and optional recovery.
