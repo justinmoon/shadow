@@ -16,6 +16,7 @@ trigger="${PIXEL_BOOT_KGSL_PROBE_TRIGGER:-post-fs-data}"
 device_log_root="$(pixel_boot_device_log_root)"
 import_proof_prop="${PIXEL_BOOT_KGSL_PROBE_IMPORT_PROOF_PROP:-debug.shadow.boot.kgsl.import=triggered}"
 launch_proof_prop="${PIXEL_BOOT_KGSL_PROBE_LAUNCH_PROOF_PROP:-debug.shadow.boot.kgsl.launch=started}"
+second_stage_proof_prop="${PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP:-debug.shadow.boot.kgsl.second_stage=ready}"
 timeout_secs="${PIXEL_BOOT_KGSL_PROBE_TIMEOUT_SECS:-12}"
 patch_target_override="${PIXEL_BOOT_KGSL_PROBE_PATCH_TARGET:-}"
 wait_ready_secs="${PIXEL_BOOT_KGSL_PROBE_WAIT_READY_SECS:-120}"
@@ -43,6 +44,7 @@ Usage: scripts/pixel/pixel_boot_kgsl_probe.sh [--output-dir DIR] [--serial SERIA
                                              [--device-log-root PATH]
                                              [--import-proof-prop KEY=VALUE]
                                              [--launch-proof-prop KEY=VALUE]
+                                             [--second-stage-proof-prop KEY=VALUE]
                                              [--timeout SECONDS]
                                              [--patch-target ENTRY]
                                              [--wait-ready SECONDS]
@@ -110,6 +112,7 @@ write_summary_json() {
     "$summary_path" \
     "$serial" \
     "$trigger" \
+    "$second_stage_proof_prop" \
     "$launch_proof_prop" \
     "$input_image" \
     "$image_path" \
@@ -123,10 +126,12 @@ write_summary_json() {
     "$device_run_dir" \
     "$device_status_path" \
     "$collect_status_path" \
+    "$device_run_dir/collect/getprop.txt" \
     "$timeout_secs" \
     "$import_proof_prop" \
     "$helper_dir_name" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -134,6 +139,7 @@ from pathlib import Path
     summary_path,
     serial,
     trigger,
+    second_stage_proof_prop,
     launch_proof_prop,
     input_image,
     image_path,
@@ -147,10 +153,11 @@ from pathlib import Path
     device_run_dir,
     device_status_path,
     collect_status_path,
+    getprop_path,
     timeout_secs,
     import_proof_prop,
     helper_dir_name,
-) = sys.argv[1:20]
+) = sys.argv[1:22]
 
 
 def load_json(path_str: str):
@@ -171,6 +178,29 @@ def load_kv(path: Path):
         key, value = line.split("=", 1)
         payload[key] = value
     return payload
+
+
+def parse_prop_spec(spec: str):
+    if "=" not in spec:
+        return "", ""
+    key, value = spec.split("=", 1)
+    return key, value
+
+
+def getprop_value(path_str: str, key: str):
+    if not key:
+        return ""
+    path = Path(path_str)
+    if not path.exists():
+        return ""
+
+    pattern = re.compile(r"^\[(?P<key>.+?)\]: \[(?P<value>.*)\]$")
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            match = pattern.match(line.rstrip("\n"))
+            if match and match.group("key") == key:
+                return match.group("value")
+    return ""
 
 
 device_status = load_json(device_status_path)
@@ -212,6 +242,9 @@ kgsl_timed_out = kgsl_result == "timeout"
 transport_last_state = str((device_status or {}).get("transport_last_state") or "")
 adb_ready = bool((device_status or {}).get("adb_ready"))
 bootreason_indicates_failure = bool((device_status or {}).get("bootreason_indicates_failure"))
+second_stage_proof_key, second_stage_proof_value = parse_prop_spec(second_stage_proof_prop)
+actual_second_stage_value = getprop_value(getprop_path, second_stage_proof_key)
+second_stage_property_proved_current_boot = actual_second_stage_value == second_stage_proof_value
 
 if helper_launch_proved_current_boot:
     if kgsl_result:
@@ -220,19 +253,22 @@ if helper_launch_proved_current_boot:
         launch_discriminator = "helper-launched-no-kgsl-summary"
 elif import_proved_current_boot:
     launch_discriminator = "import-proved-helper-missing"
+elif second_stage_property_proved_current_boot:
+    launch_discriminator = "second-stage-property-proved-no-import-proof"
 elif adb_ready and transport_last_state == "adb" and not bootreason_indicates_failure:
-    launch_discriminator = "android-returned-no-import-proof"
+    launch_discriminator = "android-returned-no-second-stage-proof"
 elif bootreason_indicates_failure:
-    launch_discriminator = "bootreason-failure-before-import-proof"
+    launch_discriminator = "bootreason-failure-before-second-stage-proof"
 elif transport_last_state == "fastboot":
-    launch_discriminator = "fastboot-return-before-import-proof"
+    launch_discriminator = "fastboot-return-before-second-stage-proof"
 else:
-    launch_discriminator = "no-import-proof"
+    launch_discriminator = "no-second-stage-proof"
 
 payload = {
     "kind": "boot_kgsl_probe",
     "serial": serial,
     "trigger": trigger,
+    "second_stage_proof_prop": second_stage_proof_prop,
     "import_proof_prop": import_proof_prop,
     "launch_proof_prop": launch_proof_prop,
     "input_image": input_image,
@@ -251,6 +287,7 @@ payload = {
     "collect_status_path": collect_status_path,
     "device_status": device_status,
     "collect_status": collect_status,
+    "second_stage_property_proved_current_boot": second_stage_property_proved_current_boot,
     "import_proved_current_boot": import_proved_current_boot,
     "helper_launch_proved_current_boot": helper_launch_proved_current_boot,
     "helper_proved_current_boot": helper_proved_current_boot,
@@ -342,6 +379,10 @@ while [[ $# -gt 0 ]]; do
       launch_proof_prop="${2:?missing value for --launch-proof-prop}"
       shift 2
       ;;
+    --second-stage-proof-prop)
+      second_stage_proof_prop="${2:?missing value for --second-stage-proof-prop}"
+      shift 2
+      ;;
     --timeout)
       timeout_secs="${2:?missing value for --timeout}"
       shift 2
@@ -398,6 +439,7 @@ build_args=(
   --device-log-root "$device_log_root"
   --import-proof-prop "$import_proof_prop"
   --launch-proof-prop "$launch_proof_prop"
+  --second-stage-proof-prop "$second_stage_proof_prop"
   --timeout "$timeout_secs"
 )
 if [[ -n "$input_image" ]]; then
@@ -461,6 +503,8 @@ import sys
 with open(sys.argv[1], "r", encoding="utf-8") as fh:
     payload = json.load(fh)
 
+if "second_stage_property_proved_current_boot" in payload:
+    print(f"Second-stage property proved: {payload['second_stage_property_proved_current_boot']}")
 if "import_proved_current_boot" in payload:
     print(f"Import proved current boot: {payload['import_proved_current_boot']}")
 if "helper_launch_proved_current_boot" in payload:

@@ -14,6 +14,7 @@ key_path="${AVB_TEST_KEY_PATH:-}"
 default_serial="${PIXEL_SERIAL:-}"
 device_log_root="$(pixel_boot_device_log_root)"
 launch_proof_prop="${PIXEL_BOOT_KGSL_PROBE_LAUNCH_PROOF_PROP:-debug.shadow.boot.kgsl.launch=started}"
+second_stage_proof_prop="${PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP:-debug.shadow.boot.kgsl.second_stage=ready}"
 kgsl_timeout_secs="${PIXEL_BOOT_KGSL_PROBE_TIMEOUT_SECS:-12}"
 patch_target_override="${PIXEL_BOOT_KGSL_PROBE_PATCH_TARGET:-}"
 wait_ready_secs="${PIXEL_BOOT_KGSL_PROBE_WAIT_READY_SECS:-120}"
@@ -37,6 +38,7 @@ Usage: scripts/pixel/pixel_boot_kgsl_trigger_ladder.sh [--output-dir DIR] [--ser
                                                        [--trigger EXPR]...
                                                        [--device-log-root PATH]
                                                        [--launch-proof-prop KEY=VALUE]
+                                                       [--second-stage-proof-prop KEY=VALUE]
                                                        [--timeout SECONDS]
                                                        [--patch-target ENTRY]
                                                        [--wait-ready SECONDS]
@@ -139,6 +141,9 @@ for path_str in case_json_paths:
     with path.open("r", encoding="utf-8") as fh:
         cases.append(json.load(fh))
 
+second_stage_proved_cases = [
+    case["case_name"] for case in cases if case.get("second_stage_property_proved_current_boot") is True
+]
 import_proved_cases = [case["case_name"] for case in cases if case.get("import_proved_current_boot") is True]
 helper_launch_cases = [case["case_name"] for case in cases if case.get("helper_launch_proved_current_boot") is True]
 kgsl_result_cases = [case["case_name"] for case in cases if case.get("kgsl_result")]
@@ -152,12 +157,15 @@ payload = {
     "kgsl_timeout_secs": int(kgsl_timeout_secs),
     "output_dir": output_dir,
     "case_count": len(cases),
+    "second_stage_proved_case_count": len(second_stage_proved_cases),
     "import_proved_case_count": len(import_proved_cases),
     "helper_launch_case_count": len(helper_launch_cases),
     "kgsl_result_case_count": len(kgsl_result_cases),
+    "second_stage_proved_cases": second_stage_proved_cases,
     "import_proved_cases": import_proved_cases,
     "helper_launch_cases": helper_launch_cases,
     "kgsl_result_cases": kgsl_result_cases,
+    "first_second_stage_proved_case": second_stage_proved_cases[0] if second_stage_proved_cases else "",
     "first_import_proved_case": import_proved_cases[0] if import_proved_cases else "",
     "first_helper_launch_case": helper_launch_cases[0] if helper_launch_cases else "",
     "first_kgsl_result_case": kgsl_result_cases[0] if kgsl_result_cases else "",
@@ -171,6 +179,7 @@ columns = [
     "case_name",
     "trigger",
     "ok",
+    "second_stage_property_proved_current_boot",
     "import_proved_current_boot",
     "helper_launch_proved_current_boot",
     "helper_proved_current_boot",
@@ -191,6 +200,7 @@ for case in cases:
                 str(case.get("case_name") or ""),
                 str(case.get("trigger") or ""),
                 "true" if case.get("ok") else "false",
+                "true" if case.get("second_stage_property_proved_current_boot") else "false",
                 "true" if case.get("import_proved_current_boot") else "false",
                 "true" if case.get("helper_launch_proved_current_boot") else "false",
                 "true" if case.get("helper_proved_current_boot") else "false",
@@ -232,6 +242,7 @@ run_case() {
     --trigger "$trigger_value"
     --device-log-root "$device_log_root"
     --launch-proof-prop "$launch_proof_prop"
+    --second-stage-proof-prop "$second_stage_proof_prop"
     --timeout "$kgsl_timeout_secs"
     --wait-ready "$wait_ready_secs"
     --adb-timeout "$adb_timeout_secs"
@@ -314,6 +325,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --launch-proof-prop)
       launch_proof_prop="${2:?missing value for --launch-proof-prop}"
+      shift 2
+      ;;
+    --second-stage-proof-prop)
+      second_stage_proof_prop="${2:?missing value for --second-stage-proof-prop}"
       shift 2
       ;;
     --timeout)

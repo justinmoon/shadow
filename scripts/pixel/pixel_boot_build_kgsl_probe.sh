@@ -16,9 +16,11 @@ DEVICE_LOG_ROOT="$(pixel_boot_device_log_root)"
 PATCH_TARGET_OVERRIDE="${PIXEL_BOOT_KGSL_PROBE_PATCH_TARGET:-}"
 IMPORT_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_IMPORT_PROOF_PROP:-debug.shadow.boot.kgsl.import=triggered}"
 LAUNCH_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_LAUNCH_PROOF_PROP:-debug.shadow.boot.kgsl.launch=started}"
+SECOND_STAGE_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_SECOND_STAGE_PROOF_PROP:-debug.shadow.boot.kgsl.second_stage=ready}"
 RESULT_PROP_KEY="${PIXEL_BOOT_KGSL_PROBE_RESULT_PROP_KEY:-debug.shadow.boot.kgsl.result}"
 HELPER_STATUS_PROP_KEY="${PIXEL_BOOT_KGSL_PROBE_HELPER_STATUS_PROP_KEY:-debug.shadow.boot.kgsl.helper}"
 TIMEOUT_SECS="${PIXEL_BOOT_KGSL_PROBE_TIMEOUT_SECS:-12}"
+RAMDISK_PROP_ENTRY="system/etc/ramdisk/build.prop"
 KEEP_WORK_DIR=0
 WORK_DIR=""
 PATCH_TARGET=""
@@ -26,6 +28,9 @@ IMPORT_PROOF_KEY=""
 IMPORT_PROOF_VALUE=""
 LAUNCH_PROOF_KEY=""
 LAUNCH_PROOF_VALUE=""
+SECOND_STAGE_PROOF_KEY=""
+SECOND_STAGE_PROOF_VALUE=""
+RAMDISK_PROP_PATH=""
 
 usage() {
   cat <<'EOF'
@@ -34,6 +39,7 @@ Usage: scripts/pixel/pixel_boot_build_kgsl_probe.sh [--input PATH] [--key PATH] 
                                                     [--patch-target ENTRY]
                                                     [--import-proof-prop KEY=VALUE]
                                                     [--launch-proof-prop KEY=VALUE]
+                                                    [--second-stage-proof-prop KEY=VALUE]
                                                     [--result-prop-key KEY]
                                                     [--helper-status-prop-key KEY]
                                                     [--timeout SECONDS]
@@ -130,11 +136,52 @@ parse_import_proof_prop() {
   validate_property_value "$IMPORT_PROOF_VALUE" "import proof property value"
 }
 
+parse_second_stage_proof_prop() {
+  [[ "$SECOND_STAGE_PROOF_PROP" == *=* ]] || {
+    echo "pixel_boot_build_kgsl_probe: --second-stage-proof-prop must use KEY=VALUE" >&2
+    exit 1
+  }
+
+  SECOND_STAGE_PROOF_KEY="${SECOND_STAGE_PROOF_PROP%%=*}"
+  SECOND_STAGE_PROOF_VALUE="${SECOND_STAGE_PROOF_PROP#*=}"
+  [[ -n "$SECOND_STAGE_PROOF_KEY" && -n "$SECOND_STAGE_PROOF_VALUE" ]] || {
+    echo "pixel_boot_build_kgsl_probe: --second-stage-proof-prop requires a non-empty key and value" >&2
+    exit 1
+  }
+
+  validate_property_key "$SECOND_STAGE_PROOF_KEY" "second-stage proof property key"
+  validate_property_value "$SECOND_STAGE_PROOF_VALUE" "second-stage proof property value"
+}
+
 validate_timeout_secs() {
   [[ "$TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]] || {
     echo "pixel_boot_build_kgsl_probe: --timeout must be a positive integer" >&2
     exit 1
   }
+}
+
+append_ramdisk_prop_probe() {
+  local input_path output_path property_key property_value
+  input_path="${1:?append_ramdisk_prop_probe requires an input path}"
+  output_path="${2:?append_ramdisk_prop_probe requires an output path}"
+  property_key="${3:?append_ramdisk_prop_probe requires a property key}"
+  property_value="${4:?append_ramdisk_prop_probe requires a property value}"
+
+  python3 - "$input_path" "$output_path" "$property_key" "$property_value" <<'PY'
+from pathlib import Path
+import sys
+
+input_path = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+property_key = sys.argv[3]
+property_value = sys.argv[4]
+
+payload = input_path.read_text(encoding="utf-8")
+if payload and not payload.endswith("\n"):
+    payload += "\n"
+payload += f"{property_key}={property_value}\n"
+output_path.write_text(payload, encoding="utf-8")
+PY
 }
 
 detect_patch_target() {
@@ -242,6 +289,10 @@ while [[ $# -gt 0 ]]; do
       LAUNCH_PROOF_PROP="${2:?missing value for --launch-proof-prop}"
       shift 2
       ;;
+    --second-stage-proof-prop)
+      SECOND_STAGE_PROOF_PROP="${2:?missing value for --second-stage-proof-prop}"
+      shift 2
+      ;;
     --result-prop-key)
       RESULT_PROP_KEY="${2:?missing value for --result-prop-key}"
       shift 2
@@ -291,6 +342,7 @@ validate_device_log_root
 validate_patch_target_override
 parse_import_proof_prop
 parse_launch_proof_prop
+parse_second_stage_proof_prop
 validate_property_key "$RESULT_PROP_KEY" "result property key"
 validate_property_key "$HELPER_STATUS_PROP_KEY" "helper status property key"
 validate_timeout_secs
@@ -309,6 +361,15 @@ PATCH_TARGET="$(detect_patch_target "$WORK_DIR/ramdisk.cpio" "$PATCH_TARGET_OVER
 python3 "$SCRIPT_DIR/lib/cpio_edit.py" \
   --input "$WORK_DIR/ramdisk.cpio" \
   --extract "$PATCH_TARGET=$WORK_DIR/patch-target.stock"
+python3 "$SCRIPT_DIR/lib/cpio_edit.py" \
+  --input "$WORK_DIR/ramdisk.cpio" \
+  --extract "$RAMDISK_PROP_ENTRY=$WORK_DIR/ramdisk-build.prop.stock"
+append_ramdisk_prop_probe \
+  "$WORK_DIR/ramdisk-build.prop.stock" \
+  "$WORK_DIR/ramdisk-build.prop.modified" \
+  "$SECOND_STAGE_PROOF_KEY" \
+  "$SECOND_STAGE_PROOF_VALUE"
+RAMDISK_PROP_PATH="$WORK_DIR/ramdisk-build.prop.modified"
 
 if grep -Fxq 'import /init.shadow.rc' "$WORK_DIR/patch-target.stock"; then
   cp "$WORK_DIR/patch-target.stock" "$WORK_DIR/patch-target.patched"
@@ -543,13 +604,15 @@ fi
   --output "$OUTPUT_IMAGE" \
   --add "init.shadow.rc=$WORK_DIR/init.shadow.rc" \
   --add "shadow-boot-helper=$WORK_DIR/shadow-boot-helper" \
-  --replace "$PATCH_TARGET=$WORK_DIR/patch-target.patched"
+  --replace "$PATCH_TARGET=$WORK_DIR/patch-target.patched" \
+  --replace "$RAMDISK_PROP_ENTRY=$RAMDISK_PROP_PATH"
 
 printf 'Wrote kgsl-probe boot image: %s\n' "$OUTPUT_IMAGE"
 printf 'Trigger: %s\n' "$TRIGGER"
 printf 'Timeout: %ss\n' "$TIMEOUT_SECS"
 printf 'Device log root: %s\n' "$DEVICE_LOG_ROOT"
 printf 'Patch target: %s\n' "$PATCH_TARGET"
+printf 'Second-stage proof prop: %s\n' "$SECOND_STAGE_PROOF_PROP"
 printf 'Launch proof prop: %s\n' "$LAUNCH_PROOF_PROP"
 printf 'Result prop key: %s\n' "$RESULT_PROP_KEY"
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
