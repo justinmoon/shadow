@@ -157,6 +157,11 @@ dis queue-import-plan --project boot
 `queue-import-plan` indexes the plan and persists assignment state only. It does
 not copy task definitions into runtime JSON.
 
+Workers should not run `queue-import-plan` from an unlanded implementation
+branch. The landing flow lints and imports all checked-in dispatch plans from
+the root `master` checkout after a successful fast-forward, so shared runtime
+assignment state follows the landed `todos/` truth.
+
 Inspect queue and claims:
 
 ```sh
@@ -204,3 +209,4 @@ compatibility path for old live tasks that have not yet moved into `todos/`.
 - If direct `interactive-next` sees that the worktree's branch moved and landed cleanly on `master`, it auto-marks the old task `done`. With `--task-id`, it then claims that selected task; without `--task-id`, it falls back to the highest-priority available task.
 - `blocked_by` controls `available` versus `waiting`.
 - `queue-import-plan` refreshes plan-derived task definitions and persists assignment state only, while preserving legacy runtime-defined tasks until they are moved into `todos/`.
+- `scripts/land.sh` runs post-merge dispatch plan lint/import from root `master`; workers still need to fast-forward their local worktree before `/next` can see newly landed task cards.

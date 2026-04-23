@@ -18,6 +18,29 @@ require_clean_tree() {
   fi
 }
 
+sync_dispatch_plans_from_root() {
+  local project_file
+  local project_id
+
+  if [[ "$ROOT_IS_BARE" == "true" ]]; then
+    echo "land: skipping dispatch plan sync for bare root repo"
+    return 0
+  fi
+  if [[ ! -d "$ROOT_REPO/.agents/dispatch/projects" ]]; then
+    return 0
+  fi
+
+  echo "land: linting dispatch plans from root master"
+  (cd "$ROOT_REPO" && python3 scripts/debug/dispatch.py plan-lint --all)
+
+  echo "land: importing dispatch plans from root master"
+  for project_file in "$ROOT_REPO"/.agents/dispatch/projects/*.json; do
+    [[ -e "$project_file" ]] || return 0
+    project_id="$(basename "$project_file" .json)"
+    (cd "$ROOT_REPO" && python3 scripts/debug/dispatch.py queue-import-plan --project "$project_id")
+  done
+}
+
 REPO_ROOT="$(repo_root)"
 COMMON_GIT_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
 ROOT_REPO="$(cd "$COMMON_GIT_DIR/.." && pwd)"
@@ -76,5 +99,7 @@ if [[ "$ROOT_IS_BARE" == "true" ]]; then
 else
   git -C "$ROOT_REPO" merge --ff-only "$BRANCH"
 fi
+
+sync_dispatch_plans_from_root
 
 echo "land: merged $BRANCH into root master"

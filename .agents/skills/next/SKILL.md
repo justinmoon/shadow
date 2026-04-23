@@ -68,7 +68,15 @@ Treat the user's text after `/next` as the primary instruction.
    - wait for blocking review results with minutes-scale timeouts, integrate relevant fixes, then rerun the affected validation
    - if a reviewer finds a real issue that should not be fixed in the current task, document it clearly and ask `/groom` to add or prioritize the follow-up
 
-7. Finish honestly.
+7. Sanity-check the plan before landing.
+   - review the relevant `todos/` plan for the current project/lane
+   - if material work remains, make sure the plan reflects what comes next with at least a few concrete task cards when appropriate
+   - new or updated task cards should have `task_id`, owned paths, validation, and blockers
+   - keep this lightweight; do not build a fully featured roadmap and do not groom unrelated lanes
+   - run `dis plan-lint --project <project>` after changing task cards
+   - do not run `queue-import-plan` from an unlanded worker branch; the landing script imports from root `master` after merge
+
+8. Finish honestly.
    - if the task is ready to land, use the `land` skill
    - after a successful land, make sure this worktree's claim is marked `done` before starting another task:
      - if `/next` later reports the old claim as `landed_clean`, run `dis interactive-finish --project <project> --state done --json`
