@@ -62,6 +62,7 @@ RC_PROBE_INLINE_OUTPUT_IMAGE="$TMP_DIR/rc-probe-inline-stock-init.img"
 RAMDISK_PROP_PROBE_OUTPUT_IMAGE="$TMP_DIR/ramdisk-prop-probe-stock-init.img"
 SECOND_STAGE_RC_PROBE_OUTPUT_IMAGE="$TMP_DIR/second-stage-rc-probe-stock-init.img"
 PREFLIGHT_OUTPUT="$TMP_DIR/boot-preflight-output"
+PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT="$TMP_DIR/boot-preflight-second-stage-blocked-output"
 PREFLIGHT_CONFLICT_OUTPUT="$TMP_DIR/boot-preflight-conflict-output"
 PREFLIGHT_LEASE_COMMON_ROOT="$TMP_DIR/preflight-lease-common-root"
 RC_TRIGGER_LADDER_OUTPUT="$TMP_DIR/rc-trigger-ladder-output"
@@ -262,6 +263,7 @@ image=""
 output=""
 proof_prop=""
 observed_prop=""
+mode="${MOCK_PREFLIGHT_ONESHOT_MODE:-helper-blocked}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -291,30 +293,42 @@ mkdir -p "$output/collect"
 cat >"$output/collect/getprop.txt" <<'GPROPS'
 [debug.shadow.boot.preflight.second_stage]: [ready]
 GPROPS
-python3 - "$output/status.json" "$output/collect/status.json" "$image" "${PIXEL_SERIAL:-TESTSERIAL}" "$proof_prop" "$observed_prop" <<'PY'
+python3 - "$output/status.json" "$output/collect/status.json" "$image" "${PIXEL_SERIAL:-TESTSERIAL}" "$proof_prop" "$observed_prop" "$mode" <<'PY'
 import json
 import sys
 
-status_path, collect_status_path, image_path, serial, proof_prop, observed_prop = sys.argv[1:7]
+status_path, collect_status_path, image_path, serial, proof_prop, observed_prop, mode = sys.argv[1:8]
 
 device_status = {
-    "ok": True,
+    "ok": mode != "second-stage-only",
     "serial": serial,
-    "collection_succeeded": True,
+    "collection_succeeded": mode != "second-stage-only",
     "collect_output_dir": str(collect_status_path.rsplit("/", 1)[0]),
     "proof_prop": proof_prop,
     "observed_prop": observed_prop,
 }
-collect_status = {
-    "collection_succeeded": True,
-    "observed_property_matched": bool(observed_prop),
-    "preflight_summary_present": True,
-    "preflight_checks_present": True,
-    "preflight_profile": "phase1-shell",
-    "preflight_status": "blocked",
-    "preflight_ready": False,
-    "preflight_blocked_reason": "missing-required-paths",
-}
+if mode == "second-stage-only":
+    collect_status = {
+        "collection_succeeded": False,
+        "observed_property_matched": False,
+        "preflight_summary_present": False,
+        "preflight_checks_present": False,
+        "preflight_profile": "",
+        "preflight_status": "",
+        "preflight_ready": False,
+        "preflight_blocked_reason": "",
+    }
+else:
+    collect_status = {
+        "collection_succeeded": True,
+        "observed_property_matched": bool(observed_prop),
+        "preflight_summary_present": True,
+        "preflight_checks_present": True,
+        "preflight_profile": "phase1-shell",
+        "preflight_status": "blocked",
+        "preflight_ready": False,
+        "preflight_blocked_reason": "missing-required-paths",
+    }
 with open(status_path, "w", encoding="utf-8") as fh:
     json.dump(device_status, fh, indent=2, sort_keys=True)
     fh.write("\n")
@@ -323,6 +337,9 @@ with open(collect_status_path, "w", encoding="utf-8") as fh:
     fh.write("\n")
 PY
 printf 'mock preflight oneshot for %s\n' "$image"
+if [[ "$mode" == "second-stage-only" ]]; then
+  exit 1
+fi
 EOF
 chmod 0755 "$PREFLIGHT_ONESHOT_MOCK"
 
@@ -3407,6 +3424,9 @@ preflight_output="$(
       --recover-traces-after
 )"
 assert_contains "$preflight_output" "Boot preflight output: $PREFLIGHT_OUTPUT"
+assert_contains "$preflight_output" "Phase-1 preflight status: blocked"
+assert_contains "$preflight_output" "Phase-1 preflight blocked reason: missing-required-paths"
+assert_contains "$preflight_output" "Phase-1 preflight source: preflight-summary"
 assert_contains "$preflight_output" "Preflight status: blocked"
 test -f "$PREFLIGHT_OUTPUT/summary.json"
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" kind boot_preflight
@@ -3421,8 +3441,52 @@ assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_profile phase1-shel
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_status blocked
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_ready false
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_blocked_reason missing-required-paths
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_status blocked
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_ready false
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_blocked_reason missing-required-paths
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_status_source preflight-summary
 assert_contains "$(cat "$LOCKF_LOG")" "exec "
 assert_contains "$(cat "$LOCKF_LOG")" "pixel_boot_preflight.sh"
+
+rm -rf "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT"
+rm -f "$LOCKF_LOG"
+preflight_second_stage_blocked_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    SHADOW_REPO_COMMON_ROOT="$PREFLIGHT_LEASE_COMMON_ROOT-second-stage" \
+    PIXEL_SERIAL=TESTSERIAL \
+    MOCK_LOCKF_LOG="$LOCKF_LOG" \
+    MOCK_PREFLIGHT_ONESHOT_MODE=second-stage-only \
+    PIXEL_BOOT_PREFLIGHT_BUILD_SCRIPT="$PREFLIGHT_BUILD_MOCK" \
+    PIXEL_BOOT_PREFLIGHT_ONESHOT_SCRIPT="$PREFLIGHT_ONESHOT_MOCK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_preflight.sh" \
+      --serial TESTSERIAL \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output-dir "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT" \
+      --trigger post-fs-data \
+      --patch-target init.recovery.rc \
+      --adb-timeout 45 \
+      --boot-timeout 60 \
+      --recover-traces-after
+)"
+assert_contains "$preflight_second_stage_blocked_output" "Boot preflight output: $PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT"
+assert_contains "$preflight_second_stage_blocked_output" "Import proved current boot: false"
+assert_contains "$preflight_second_stage_blocked_output" "Helper launch proved current boot: false"
+assert_contains "$preflight_second_stage_blocked_output" "Phase-1 preflight status: blocked"
+assert_contains "$preflight_second_stage_blocked_output" "Phase-1 preflight blocked reason: stock-init-import-not-proved"
+assert_contains "$preflight_second_stage_blocked_output" "Phase-1 preflight source: second-stage-property-proof"
+test -f "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json"
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" kind boot_preflight
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" ok true
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" second_stage_property_proved_current_boot true
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" import_proved_current_boot false
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" helper_launch_proved_current_boot false
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_status blocked
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_ready false
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_blocked_reason stock-init-import-not-proved
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_status_source second-stage-property-proof
 
 rm -rf "$KGSL_PROBE_OUTPUT"
 rm -f "$LOCKF_LOG"

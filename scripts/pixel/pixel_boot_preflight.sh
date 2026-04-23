@@ -51,7 +51,7 @@ Usage: scripts/pixel/pixel_boot_preflight.sh [--output-dir DIR] [--serial SERIAL
 
 Build a stock-init boot-helper preflight image, one-shot boot it, and summarize
 whether the imported rc ran on the current boot, whether the helper launched, and
-whether preflight is ready.
+whether phase-1 preflight is ready or blocked.
 EOF
 }
 
@@ -188,6 +188,10 @@ second_stage_property_proved_current_boot = False
 preflight_status = ""
 preflight_ready = False
 preflight_blocked_reason = ""
+phase1_preflight_status = ""
+phase1_preflight_ready = False
+phase1_preflight_blocked_reason = ""
+phase1_preflight_status_source = ""
 
 if isinstance(collect_status, dict):
     import_proved_current_boot = bool(collect_status.get("collection_succeeded"))
@@ -210,6 +214,27 @@ second_stage_proof_key, second_stage_proof_value = parse_prop_spec(second_stage_
 if second_stage_proof_key:
     actual_second_stage_value = getprop_value(getprop_path, second_stage_proof_key)
     second_stage_property_proved_current_boot = actual_second_stage_value == second_stage_proof_value
+
+if preflight_status == "ready":
+    phase1_preflight_status = "ready"
+    phase1_preflight_ready = True
+    phase1_preflight_status_source = "preflight-summary"
+elif preflight_status == "blocked":
+    phase1_preflight_status = "blocked"
+    phase1_preflight_blocked_reason = preflight_blocked_reason or "boot-helper-preflight-blocked"
+    phase1_preflight_status_source = "preflight-summary"
+elif helper_launch_proved_current_boot:
+    phase1_preflight_status = "blocked"
+    phase1_preflight_blocked_reason = "boot-helper-preflight-status-missing"
+    phase1_preflight_status_source = "helper-launch-proof"
+elif import_proved_current_boot:
+    phase1_preflight_status = "blocked"
+    phase1_preflight_blocked_reason = "boot-helper-launch-not-proved"
+    phase1_preflight_status_source = "import-proof"
+elif second_stage_property_proved_current_boot:
+    phase1_preflight_status = "blocked"
+    phase1_preflight_blocked_reason = "stock-init-import-not-proved"
+    phase1_preflight_status_source = "second-stage-property-proof"
 
 payload = {
     "kind": "boot_preflight",
@@ -241,9 +266,13 @@ payload = {
     "preflight_status": preflight_status,
     "preflight_ready": preflight_ready,
     "preflight_blocked_reason": preflight_blocked_reason,
+    "phase1_preflight_status": phase1_preflight_status,
+    "phase1_preflight_ready": phase1_preflight_ready,
+    "phase1_preflight_blocked_reason": phase1_preflight_blocked_reason,
+    "phase1_preflight_status_source": phase1_preflight_status_source,
 }
 payload["ok"] = payload["dry_run"] or (
-    payload["build_succeeded"] and payload["run_succeeded"] and payload["import_proved_current_boot"]
+    payload["build_succeeded"] and bool(payload["phase1_preflight_status"])
 )
 
 Path(summary_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -399,6 +428,10 @@ with open(sys.argv[2], "r", encoding="utf-8") as fh:
 preflight_status = payload.get("preflight_status", "")
 preflight_ready = payload.get("preflight_ready")
 blocked_reason = payload.get("preflight_blocked_reason", "")
+phase1_preflight_status = summary.get("phase1_preflight_status", "")
+phase1_preflight_ready = summary.get("phase1_preflight_ready")
+phase1_preflight_blocked_reason = summary.get("phase1_preflight_blocked_reason", "")
+phase1_preflight_status_source = summary.get("phase1_preflight_status_source", "")
 second_stage_proved = bool(summary.get("second_stage_property_proved_current_boot"))
 import_proved = bool(payload.get("collection_succeeded"))
 helper_launch_proved = bool(payload.get("observed_property_matched"))
@@ -415,6 +448,14 @@ if not helper_launch_proved:
 print(f"Second-stage property proved: {str(second_stage_proved).lower()}")
 print(f"Import proved current boot: {str(import_proved).lower()}")
 print(f"Helper launch proved current boot: {str(helper_launch_proved).lower()}")
+if phase1_preflight_status:
+    print(f"Phase-1 preflight status: {phase1_preflight_status}")
+if phase1_preflight_ready is not None:
+    print(f"Phase-1 preflight ready: {str(bool(phase1_preflight_ready)).lower()}")
+if phase1_preflight_blocked_reason:
+    print(f"Phase-1 preflight blocked reason: {phase1_preflight_blocked_reason}")
+if phase1_preflight_status_source:
+    print(f"Phase-1 preflight source: {phase1_preflight_status_source}")
 if preflight_status:
     print(f"Preflight status: {preflight_status}")
 if preflight_ready is not None:
@@ -423,11 +464,25 @@ if blocked_reason:
     print(f"Preflight blocked reason: {blocked_reason}")
 PY
 fi
+summary_ok="$(
+  python3 - "$summary_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+print("true" if payload.get("ok") else "false")
+PY
+)"
 
 if [[ "$dry_run" == "1" ]]; then
   exit 0
 fi
 if [[ "$build_status" -ne 0 ]]; then
   exit "$build_status"
+fi
+if [[ "$summary_ok" == "true" ]]; then
+  exit 0
 fi
 exit "$run_status"
