@@ -56,7 +56,8 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 - The `app-direct-present` fix was two-part:
   - replace the boot-owned app client shell wrapper with a static Rust launcher
   - stage the Wayland libraries that `winit` loads dynamically and set `LD_LIBRARY_PATH` for the app bundle
-- The next honest product rung on `master` is the first static shell/home surface on top of the proven runtime app and input path.
+- The next honest product rung on `master` is a real boot-owned shell session on top of the proven runtime app and input path.
+- A static shell frame is not enough unless it is attached to the real session contract: no dummy client product path, no one-frame-only success contract, no automatic success reboot, and recovered metadata showing session readiness.
 - The `app-direct-present-touch-counter` proof uses a compositor-owned synthetic tap in the Rust demo app path and requires recovered metadata showing input observed, tap dispatched, counter incremented, touch-present latency, and a post-touch frame capture.
 - The `touch-counter-gpu` proof uses the same compositor-owned synthetic tap on the TypeScript runtime `counter` app and requires recovered metadata showing input observed, tap dispatched, `counter_incremented`, post-touch commit, touch-present latency, and a post-touch frame capture.
 - Stock-init trigger / imported-rc / preflight work is now parked:
@@ -79,10 +80,11 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 
 ## Highest-Leverage Next Experiments
 
-1. Move into `shell-home-static` now that both the first real app lane and the first runtime-backed input lane are truthful.
-2. Run `ts-runtime-app-matrix-proof` if the TS worker is free, so app direct-present is not counter-demo-specific.
-3. Run `boot-camera-rust-hal-frame-probe` as the camera sidecar; provider-service capture is reference evidence only.
-4. Keep direct `std` PID1 and stock-init imported-rc work as fallback discriminators only.
+1. Run `boot-shell-session-first-proof`: boot into the real Shadow shell/home session from the Rust boot seam, not another isolated app-direct proof.
+2. Run `boot-payload-partition-first-probe` in parallel so full shell/app payloads stop depending on ramdisk growth.
+3. After shell boots, run `boot-shell-launch-ts-app`: launch a TypeScript app from shell and capture shell/app/return-home proof.
+4. Then run `boot-shell-interaction-proof` and `boot-persistent-shell-control` so the session becomes interactive and long-running.
+5. Keep camera and sound as sidecars until the shell/app loop exists; keep direct `std` PID1 and stock-init imported-rc as fallback discriminators only.
 
 ## Fast Commands
 

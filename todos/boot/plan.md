@@ -80,31 +80,33 @@ Related docs:
   - `orange-gpu-loop`
   - `compositor-scene`
   - `app-direct-present`
-- Next product rungs:
   - `ts-app-minimal`
-  - first minimal Shadow runtime / TypeScript app rung on the boot-owned seam
   - `touch-counter-gpu`
-  - prove one minimal input-driven redraw on the real boot-owned render/present path
-  - `rust-app-minimal`
-  - secondary isolation rung; raise priority only if the TS runtime obscures bootstrap bugs
-  - `shell-home-static`
+- Next product rungs:
+  - `shell-session-first-proof`
+  - boot into the real Shadow shell/home session from the Rust boot seam, not a one-frame dummy shell proof
   - `shell-launch-ts-app`
-  - `shell-launch-rust-app`
+  - launch a TypeScript app from the boot-owned shell and return home
   - `shell-interaction`
-  - selected service spikes required for a usable shell
+  - drive home/app navigation through touch or control, not direct app-only proofs
+  - `persistent-shell-control`
+  - keep the rust-booted shell alive and make the session diagnosable without treating timeout as failure
+  - `payload-partition-first-probe`
+  - move heavy Shadow payloads out of the ramdisk before shell/app/service growth hard-blocks image size
+  - selected service spikes only after the shell/app loop exists
     - audio output
-    - storage / networking / control seams as needed
-  - decide whether direct `std` PID1 still matters for the shipping architecture or stays a parked non-goal
+    - storage / networking / control seams
+    - camera only through the direct-HAL sidecar once it has a boot-owned frame path
+  - `rust-app-minimal` stays parked unless TypeScript shell launch hides a boot/runtime boundary bug
 
 ## Immediate Milestones
 
-- Land `app-direct-present` on current `master` truth.
-- Pick the first real app lane after `app-direct-present`.
-  - prefer `ts-app-minimal` if it is the shortest path to actual Shadow userspace
-  - use `rust-app-minimal` first only if it materially de-risks the boot seam
-- The Rust-demo and runtime-backed TypeScript touch/input rungs are signed off; start shell/home work from this proof surface rather than adding another counter-specific rung.
+- Stop adding proof-only app rungs after the current TypeScript matrix lands.
+- Move directly to a boot-owned shell session that borrows the rooted Pixel shell startup shape but runs from the Rust boot seam.
+- Treat a single static shell frame as insufficient unless it is attached to the real session contract: no dummy client, no `exitOnFirstFrame` product path, no automatic success reboot, and a durable recovered readiness proof.
+- Run the partition-backed payload probe in parallel; if shell staging hits image-size pressure, the payload probe becomes the blocker instead of adding more ramdisk hacks.
 - Keep the direct `std` PID1 seam honest as a regression discriminator while not letting it block the main ladder.
-- Add a planning slice for sustainable payload storage: decide what remains in the boot ramdisk versus what moves to mounted `/vendor`, `/system`, `userdata`, or a Shadow-owned partition image.
+- Keep camera and sound as sidecars until boot-owned shell/home can launch at least one app.
 
 ## Next Dispatch Batch
 
@@ -345,10 +347,10 @@ Related docs:
     - canonical rooted proof recipe if image metadata or app selection changes
   - blocked_by:
     - `boot-ts-app-direct-present-proof-contract`
-- [ ] `ramdisk-payload-partition-plan`
-  - task_id: boot-ramdisk-payload-partition-plan
-  - priority: 9
-  - why now: ramdisk growth is becoming a cross-cutting blocker for shell, apps, runtime bundles, GPU/userland libraries, fonts, and service helpers; plan the partition-backed payload/root split before more workers encode proof-only ramdisk assumptions
+- [ ] `payload-partition-first-probe`
+  - task_id: boot-payload-partition-first-probe
+  - priority: 8
+  - why now: ramdisk growth is already a cross-cutting blocker for shell, apps, runtime bundles, GPU/userland libraries, fonts, and service helpers; stop designing new product rungs around proof-only ramdisk staging
   - owned paths:
     - `todos/boot/plan.md`
     - `todos/boot/frontier.md`
@@ -357,19 +359,20 @@ Related docs:
     - `scripts/lib/pixel_root_boot_common.sh`
     - `scripts/lib/pixel_runtime_linux_bundle_common.sh`
   - acceptance:
-    - document the target split between minimal boot ramdisk contents and partition-backed Shadow payloads
-    - compare at least these options without implementing them: mount stock `/vendor` as-is for HAL/GPU/vendor libraries, use a Shadow-owned `system.img` or `userdata` payload area, or flash a matched A/B slot system/vendor payload alongside `boot.img`
-    - define which early-boot responsibilities stay in the Rust PID1 child: mounting partitions, verifying expected payload version, exposing `/vendor` and payload roots, and handing off to the session
-    - identify proof artifact changes needed to show the mounted payload source, version, and fallback path without hiding boot failures
-    - leave implementation tasks only after the plan chooses a first narrow probe
+    - choose the first partition-backed payload strategy and implement the smallest boot-owned mount/stage probe, not just a paper plan
+    - compare options only enough to justify the first probe: stock `/vendor` as-is for HAL/GPU/vendor libraries, Shadow-owned `system.img` or `userdata` payload area, or matched A/B slot system/vendor payload alongside `boot.img`
+    - keep the boot ramdisk minimal: Rust PID1 shim/child, mount/version checks, recovery metadata, and enough code to hand off to mounted Shadow payloads
+    - recovered proof identifies payload source, payload version/fingerprint, mounted roots, fallback path, and exact blocker if the first mount strategy fails
+    - create follow-up implementation cards only for the chosen path, not another broad architecture backlog
   - validation:
     - `python3 scripts/debug/dispatch.py plan-lint --project boot`
-    - no code implementation in this planning slice
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh` if boot image staging changes
+    - canonical rooted proof recipe for the first mounted payload probe if the boot image contract changes
   - blocked_by: none
 - [ ] `sound-boot-owned-probe`
   - task_id: boot-sound-boot-owned-probe
-  - priority: 16
-  - why sidecar: keep audio available as an independent boot-owned service probe without stealing the camera, touch, or TypeScript continuity lanes
+  - priority: 30
+  - why later: audio matters, but it should not steal workers from the booted shell/app loop unless it becomes the first user-visible blocker after the OS skeleton is alive
   - owned paths:
     - `runtime/app-sound-smoke/`
     - `rust/shadow-system/src/services/audio.rs`
@@ -383,24 +386,90 @@ Related docs:
   - validation:
     - `scripts/ci/runtime_app_sound_smoke.sh`
     - `just pixel-ci sound` if the implementation touches rooted-Pixel audio behavior
-  - blocked_by: none
-- [ ] `shell-home-static`
-  - task_id: boot-shell-home-static
-  - priority: 18
-  - why after app + input: shell work should sit on top of the first truthful app lane and the first truthful input lane
+  - blocked_by:
+    - `boot-shell-launch-ts-app`
+- [ ] `shell-session-first-proof`
+  - task_id: boot-shell-session-first-proof
+  - priority: 7
+  - why now: app, runtime, GPU, compositor, and input are proven enough; the next critical path is booting into the real Shadow shell session instead of another isolated proof demo
   - owned paths:
     - `ui/`
+    - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `rust/shadow-system/`
+    - `scripts/pixel/`
+    - `scripts/lib/pixel_runtime_session_common.sh`
+    - `todos/boot/`
+  - acceptance:
+    - add a boot-owned shell/session mode that reuses the rooted Pixel shell startup contract where possible: shell app id, `shadow-session`, `shadow-compositor-guest`, `shadow-system`, TypeScript runtime bundle envs, GPU shell flags, and real shell runtime dirs
+    - remove the dummy shell client and one-frame-only contract from the product path; a frame capture is allowed as proof, but the session must be configured as a real shell session
+    - recovered metadata proves shell startup, shell home frame, touch readiness, session process identity, compositor control socket path when available, and whether the session remained alive instead of auto-rebooting on success
+    - if the first attempt is blocked by boot image size, mount roots, missing runtime assets, or session lifetime semantics, land the exact blocker and point at `boot-payload-partition-first-probe` or the narrow lifetime fix
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - canonical rooted proof recipe for the first real shell-session artifact on the preferred rooted proof pair
+  - blocked_by:
+    - `boot-touch-counter-gpu`
+- [ ] `shell-launch-ts-app`
+  - task_id: boot-shell-launch-ts-app
+  - priority: 8
+  - why next: the first booted OS proof is not complete until shell launches an app through the shell/app lifecycle, not app-direct-present
+  - owned paths:
+    - `ui/`
+    - `runtime/`
     - `rust/shadow-system/`
     - `scripts/pixel/`
     - `todos/boot/`
   - acceptance:
-    - a static Shadow home/shell surface appears from the boot-owned seam and preserves the current recovered proof contract
+    - rust-booted shell launches at least one TypeScript app, preferably `counter` first and `timeline` if the current matrix has landed cleanly
+    - recovered proof distinguishes shell-owned launch from app-direct-present: shell home frame, launch request or startup app id, app tracked/mapped, app frame captured, and return-home frame if supported
+    - no camera, sound, or network requirement unless the selected app explicitly needs it; use counter as the default product-path proof when external services would slow the rung
   - validation:
     - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
     - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
-    - canonical rooted proof recipe for the first static shell/home artifact on the preferred rooted proof pair
+    - canonical rooted proof recipe for shell launching a TypeScript app on the preferred rooted proof pair
   - blocked_by:
-    - `boot-touch-counter-gpu`
+    - `boot-shell-session-first-proof`
+- [ ] `shell-interaction-proof`
+  - task_id: boot-shell-interaction-proof
+  - priority: 9
+  - why next: after shell can launch an app, prove the OS is interactive by driving home/app navigation through input or the shell control path
+  - owned paths:
+    - `ui/`
+    - `runtime/`
+    - `scripts/pixel/`
+    - `todos/boot/`
+  - acceptance:
+    - one synthetic or real touch/control sequence starts at shell home, launches or focuses an app, and returns home
+    - recovered metadata proves input/control observed, shell state changed, app state changed when applicable, and a post-interaction frame was captured
+    - preserve the direct app touch counter as a regression discriminator, but do not make another counter-only app-direct proof the product milestone
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - canonical rooted proof recipe for shell interaction on the preferred rooted proof pair
+  - blocked_by:
+    - `boot-shell-launch-ts-app`
+- [ ] `persistent-shell-control`
+  - task_id: boot-persistent-shell-control
+  - priority: 10
+  - why next: a booted OS should stay alive; the proof harness must stop treating a healthy shell as a timeout or immediate reboot case
+  - owned paths:
+    - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `rust/shadow-session/`
+    - `ui/crates/shadow-compositor-guest/`
+    - `scripts/pixel/`
+    - `todos/boot/`
+  - acceptance:
+    - define and implement the first non-rebooting success mode for rust-booted shell sessions
+    - watchdog behavior distinguishes healthy long-running shell from stuck boot; timeout classification remains available for failures
+    - recovered or live proof shows session health, shell frame availability, and the safest operator recovery path when Android userspace is not running
+    - if external control is impossible in the current rust-boot environment, land the exact missing transport/control requirement as the next blocker instead of falling back to app-direct demos
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - canonical rooted proof recipe for a held shell session plus documented recovery
+  - blocked_by:
+    - `boot-shell-launch-ts-app`
 
 ## Parked / Fallback Seams
 
