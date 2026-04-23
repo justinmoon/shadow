@@ -6,7 +6,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 
 - Decide whether a boot-owned Linux camera library is plausible on Pixel 4a without depending on Android `cameraserver` or the Android camera provider service.
 - Preserve the current Android camera path as the supported product path while this stays a boot-side reconnaissance lane.
-- Identify the first Linux-only probe contract before attempting capture, app, or runtime integration.
+- Evaluate both a direct Linux kernel-UAPI path and a contained vendor HAL path before attempting boot image integration.
 
 ## Scope
 
@@ -16,11 +16,13 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - AOSP camera HAL interface source relevant to the current Android provider path
   - Pixel 4a Qualcomm kernel camera UAPI and driver source relevant to Linux probing
   - a read-only Linux media/V4L2/Qualcomm-UAPI probe plan with exact nodes, ioctls, outputs, and artifact paths
+  - a contained vendor HAL probe track that keeps Shadow's Rust API and daemon contract small while evaluating whether Pixel vendor camera code can provide capture without the Android app/framework stack
 - Out of scope:
   - replacing the rooted Pixel shell camera path
   - frame capture, buffer queueing, ISP programming, or sensor controls
   - boot image integration before a read-only Linux probe is truthful
-  - Camera HAL reimplementation or vendor-library reverse engineering
+  - broad Android framework adoption or exposing Android camera architecture as Shadow's camera API
+  - deep vendor-library reverse engineering before a minimal HAL containment probe proves useful
 
 ## Current Findings
 
@@ -45,6 +47,9 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
   - `linux-probe.json` reports `ok=true`, `interpretation=topology-visible`, and 28 successful ioctl calls.
   - Qualcomm `CAM_QUERY_CAP` succeeded for CPAS, ISP, CSIPHY, actuator, both sensors, EEPROM, OIS, JPEG, FD, and LRME without invoking acquire/start/config/request/buffer ioctls.
   - `/dev/video1` `cam-req-mgr` remained intentionally skipped for direct open; `/dev/video2` `cam_sync` returned `EALREADY` on open and was recorded as data.
+- Current working thesis:
+  - a pure Rust/Linux kernel-UAPI camera stack remains valuable to evaluate, but it is likely to become a large Qualcomm request-manager, sensor, ISP, buffer, and sync reimplementation project
+  - a contained HAL backend is probably the faster path to a working Pixel 4a camera if its Android dependencies can be isolated behind a small Shadow-owned Rust-facing daemon contract
 - Evidence:
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/runs/camera-linux-api-recon/20260423T201839Z-0B191JEC203253/status.json`
   - `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/runs/camera-linux-api-recon/20260423T201839Z-0B191JEC203253/device-inventory.txt`
@@ -74,7 +79,11 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 ## Approach
 
 - Keep Android camera support untouched until Linux probing has its own reliable evidence.
-- Start with read-only kernel ABI discovery:
+- Evaluate two backend tracks in parallel:
+  - direct Linux kernel UAPI: read-only discovery first, then only narrowly scoped session/acquire probes if the evidence supports it
+  - contained vendor HAL: inventory dependency closure, prove whether the Pixel HAL/provider can be loaded or talked to from a small native daemon, then attempt one constrained frame
+- Keep Shadow's camera-facing API Rust-owned in both tracks. Android Binder, HAL structs, native handles, gralloc/AHardwareBuffer, and vendor libraries must stay behind one narrow backend boundary.
+- Start the Linux track with read-only kernel ABI discovery:
   - media controller device info/topology
   - V4L2 node capabilities
   - V4L2 subdevice capabilities
@@ -86,6 +95,25 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Probe `/dev/video1` conservatively:
   - default path records sysfs/media identity and skips private request-manager controls
   - any direct open of `cam-req-mgr` must be short-lived, last in the probe, and reported with `EALREADY`/`EBUSY`/`EACCES` as an expected outcome when Android owns the stack
+
+## Parallel HAL Probe Track
+
+- Goal: determine whether Pixel 4a's vendor camera HAL can be used as a contained backend without making Shadow depend on the Android app/framework camera stack.
+- Preferred containment shape:
+  - Rust-owned Shadow camera trait/API
+  - one small native camera daemon or helper with a narrow command protocol
+  - optional C/C++ FFI shim for HAL structs, callbacks, native handles, and linker details
+  - vendor HAL/provider code treated as an implementation detail behind that daemon
+- First HAL questions:
+  - can a native helper direct-load or otherwise instantiate `/vendor/lib64/hw/camera.sm6150.so` and the Google/Qualcomm camera HAL components on the rooted Pixel?
+  - which dependencies are required at runtime: Bionic linker namespaces, Android properties, vendor services, gralloc/AHardwareBuffer, sync fences, Binder/HIDL/AIDL libraries, SELinux labels, or camera provider process state?
+  - if direct-load is brittle, is talking to the existing provider service a smaller and more reliable contained backend?
+- First HAL proof artifacts should mirror the Linux probe lane under `build/pixel/camera-linux-api/<timestamp>-<serial>/` or a sibling `camera-hal-api` run root, with `hal-probe.json`, `device-output.txt`, and `status.json`.
+- Success criterion for the HAL probe:
+  - list cameras through the contained backend
+  - identify the minimal dependency closure
+  - either capture one fixed rear-camera frame or report the exact missing dependency/blocker
+  - keep the Shadow-facing protocol independent of Android camera API details
 
 ## First Runnable Probe Contract
 
@@ -157,7 +185,10 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Define first Linux-only probe contract from source plus device inventory.
 - [x] Implement `linux-probe` as the next narrow code slice.
 - [x] Validate `linux-probe` on a rooted Pixel and compare with Android provider camera IDs.
-- [ ] Decide whether a capture probe is plausible from Linux media/V4L2 alone or whether this lane should stay blocked behind vendor camera HAL behavior.
+- [ ] Add a HAL dependency/probe task to the queue.
+- [ ] Run a contained HAL inventory probe and decide whether direct HAL loading or provider-service containment is the smaller backend.
+- [ ] Decide whether a direct Linux capture probe is plausible from Linux media/V4L2/Qualcomm UAPI alone or whether that lane should stay limited to instrumentation.
+- [ ] Choose the first frame-capture track: direct Linux UAPI, contained HAL backend, or both if the probes remain cheap and informative.
 
 ## References
 
@@ -185,3 +216,4 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - The source-level correction is that Linux recon is not plain media/V4L2. The useful public ABI is media topology plus Qualcomm private `VIDIOC_CAM_CONTROL` query-cap payloads, with strict no-acquire/no-start/no-config limits.
 - The implemented probe is still discovery-only. Successful query-cap proves the kernel surface is reachable from rooted userspace; it does not prove Linux-only capture because capture still requires sessions, request-manager links, buffers, sync objects, sensor power/config packets, and likely vendor HAL policy.
 - A Linux-only camera library should probably start as a separate internal module under `rust/shadow-camera-provider-host` or a new narrow `rust/shadow-linux-camera-probe` binary, then graduate only if the discovery probe identifies a real capture path.
+- A HAL-backed path should start as a quarantined backend, not as Shadow adopting Android camera architecture. The acceptable shape is a small Rust-facing daemon/helper that hides Android/HAL details and can later be swapped or retired if direct Linux capture becomes viable.
