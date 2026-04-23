@@ -82,6 +82,44 @@ impl TimelineCachedData {
         &self.home_notes
     }
 
+    // Route-local cache reads stay synchronous here so app-level navigation can
+    // transition the visible stack without repeating hydrate calls at each site.
+    pub(crate) fn push_onto_route_stack(
+        &mut self,
+        route_stack: &mut Vec<Route>,
+        route: Route,
+        limit: usize,
+    ) {
+        if route_stack.last() == Some(&route) {
+            return;
+        }
+        route_stack.push(route);
+        self.hydrate_current_route(route_stack, limit);
+    }
+
+    pub(crate) fn pop_route_stack(&mut self, route_stack: &mut Vec<Route>, limit: usize) {
+        if route_stack.len() > 1 {
+            route_stack.pop();
+        }
+        self.hydrate_current_route(route_stack, limit);
+    }
+
+    pub(crate) fn reset_route_stack(
+        &mut self,
+        route_stack: &mut Vec<Route>,
+        route: Route,
+        limit: usize,
+    ) {
+        route_stack.clear();
+        route_stack.push(route);
+        self.hydrate_current_route(route_stack, limit);
+    }
+
+    pub(crate) fn hydrate_current_route(&mut self, route_stack: &[Route], limit: usize) {
+        let route = route_stack.last().cloned().unwrap_or(Route::Timeline);
+        self.hydrate_route(&route, limit);
+    }
+
     // Route-local cache reads stay explicit: hydrate the active route up front,
     // then render from the cached state without hidden work.
     pub(crate) fn hydrate_route(&mut self, route: &Route, limit: usize) {
@@ -170,7 +208,7 @@ impl TimelineCachedData {
 #[cfg(test)]
 mod tests {
     use super::TimelineCachedData;
-    use crate::FeedScope;
+    use crate::{FeedScope, Route};
     use shadow_sdk::services::nostr::NostrEvent;
 
     fn test_note(id: &str, pubkey: &str, content: &str) -> NostrEvent {
@@ -218,6 +256,36 @@ mod tests {
         assert!(note.profile.display_name.is_none());
         assert!(note.thread.parent.is_none());
         assert!(note.thread.replies.is_empty());
+    }
+
+    #[test]
+    fn push_onto_route_stack_skips_duplicate_top_route() {
+        let mut cached_data = TimelineCachedData::from_home(FeedScope::no_contacts(), Vec::new());
+        let mut route_stack = vec![Route::Timeline];
+
+        cached_data.push_onto_route_stack(&mut route_stack, Route::Timeline, 18);
+
+        assert_eq!(route_stack, vec![Route::Timeline]);
+    }
+
+    #[test]
+    fn pop_route_stack_keeps_root_route() {
+        let mut cached_data = TimelineCachedData::from_home(FeedScope::no_contacts(), Vec::new());
+        let mut route_stack = vec![Route::Timeline];
+
+        cached_data.pop_route_stack(&mut route_stack, 18);
+
+        assert_eq!(route_stack, vec![Route::Timeline]);
+    }
+
+    #[test]
+    fn reset_route_stack_replaces_existing_stack() {
+        let mut cached_data = TimelineCachedData::from_home(FeedScope::no_contacts(), Vec::new());
+        let mut route_stack = vec![Route::Timeline, Route::Account];
+
+        cached_data.reset_route_stack(&mut route_stack, Route::Onboarding, 18);
+
+        assert_eq!(route_stack, vec![Route::Onboarding]);
     }
 
     #[test]

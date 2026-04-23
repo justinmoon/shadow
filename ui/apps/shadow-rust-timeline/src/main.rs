@@ -361,20 +361,17 @@ impl TimelineApp {
     }
 
     fn push_route(&mut self, route: Route) {
-        if self.route_stack.last() == Some(&route) {
-            return;
-        }
         self.reply_draft = None;
-        self.route_stack.push(route);
-        self.hydrate_current_route();
+        let limit = self.config.limit;
+        self.cached_data
+            .push_onto_route_stack(&mut self.route_stack, route, limit);
     }
 
     fn pop_route(&mut self) {
         self.reply_draft = None;
-        if self.route_stack.len() > 1 {
-            self.route_stack.pop();
-        }
-        self.hydrate_current_route();
+        let limit = self.config.limit;
+        self.cached_data
+            .pop_route_stack(&mut self.route_stack, limit);
     }
 
     fn open_note(&mut self, id: String) {
@@ -400,7 +397,9 @@ impl TimelineApp {
     fn sync_routes(&mut self) {
         if self.account.is_none() {
             self.note_draft = None;
-            self.route_stack = vec![Route::Onboarding];
+            let limit = self.config.limit;
+            self.cached_data
+                .reset_route_stack(&mut self.route_stack, Route::Onboarding, limit);
             return;
         }
         loop {
@@ -415,7 +414,7 @@ impl TimelineApp {
         }
 
         let route = self.current_route();
-        self.cached_data.hydrate_route(&route, self.config.limit);
+        self.hydrate_current_route();
         if self.reply_draft.as_ref().is_some_and(|draft| match route {
             Route::Note { ref id } => {
                 draft.note_id != *id || self.cached_note_by_id(&draft.note_id).is_none()
@@ -427,8 +426,9 @@ impl TimelineApp {
     }
 
     pub(crate) fn hydrate_current_route(&mut self) {
-        let route = self.current_route();
-        self.cached_data.hydrate_route(&route, self.config.limit);
+        let limit = self.config.limit;
+        self.cached_data
+            .hydrate_current_route(&self.route_stack, limit);
     }
 
     fn platform_open_reply(&mut self) {
@@ -490,8 +490,9 @@ impl TimelineApp {
         self.note_draft = None;
         self.reply_draft = None;
         if self.account.is_some() {
-            self.route_stack = vec![Route::Timeline];
-            self.hydrate_current_route();
+            let limit = self.config.limit;
+            self.cached_data
+                .reset_route_stack(&mut self.route_stack, Route::Timeline, limit);
             eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_success");
         } else {
             eprintln!("{APP_LOG_PREFIX}: automation_open_timeline_failed");
