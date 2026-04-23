@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CTL_PATH="$REPO_ROOT/scripts/debug/overnight_ctl.py"
+CTL_PATH="$REPO_ROOT/scripts/debug/dispatch.py"
 COMMON_PATH="$REPO_ROOT/scripts/lib/overnight_common.py"
 
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/dispatch-smoke.XXXXXX")"
@@ -11,7 +11,7 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 repo="$tmpdir/repo"
 mkdir -p "$repo/scripts/debug" "$repo/scripts/lib" "$repo/todos" "$repo/.agents/dispatch/projects"
-ln -s "$CTL_PATH" "$repo/scripts/debug/overnight_ctl.py"
+ln -s "$CTL_PATH" "$repo/scripts/debug/dispatch.py"
 ln -s "$COMMON_PATH" "$repo/scripts/lib/overnight_common.py"
 
 cd "$repo"

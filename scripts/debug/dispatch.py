@@ -368,7 +368,7 @@ def cmd_interactive_finish(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="overnight_ctl.py")
+    parser = argparse.ArgumentParser(prog="dispatch.py")
     sub = parser.add_subparsers(dest="command", required=True)
 
     init_parser = sub.add_parser("project-init")

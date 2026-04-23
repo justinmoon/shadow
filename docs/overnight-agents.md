@@ -8,10 +8,10 @@ read_when:
 # Interactive Dispatch
 
 This doc covers the private dispatcher behind
-[`scripts/debug/overnight_ctl.py`](../scripts/debug/overnight_ctl.py).
+[`scripts/debug/dispatch.py`](../scripts/debug/dispatch.py).
 
-Inside the devshell, use `on` as the entrypoint. It is a thin wrapper over
-`scripts/debug/overnight_ctl.py`.
+Inside the devshell, use `dis` as the entrypoint. It is a thin wrapper over
+`scripts/debug/dispatch.py`.
 
 The UX is intentionally small:
 
@@ -99,36 +99,36 @@ Recommended task-card shape:
 Seed or reset a project:
 
 ```sh
-on project-init --project boot --plan todos/boot/plan.md
-on queue-import-plan --project boot
+dis project-init --project boot --plan todos/boot/plan.md
+dis queue-import-plan --project boot
 ```
 
 Inspect queue and claims:
 
 ```sh
-on interactive-status --project boot
-on interactive-status --project boot --json
+dis interactive-status --project boot
+dis interactive-status --project boot --json
 ```
 
 Claim or resume from the current worktree:
 
 ```sh
-on interactive-next --project boot --json
+dis interactive-next --project boot --json
 ```
 
 Release the current claim explicitly when the branch did not land cleanly:
 
 ```sh
-on interactive-finish --project boot --state done
-on interactive-finish --project boot --state ready
-on interactive-finish --project boot --state blocked
+dis interactive-finish --project boot --state done
+dis interactive-finish --project boot --state ready
+dis interactive-finish --project boot --state blocked
 ```
 
 Adjust the queue directly:
 
 ```sh
-on task-add --project boot --title 'new seam' --path scripts/pixel/ --validation 'just pre-commit'
-on task-state --project boot --task-id boot-new-seam --state ready
+dis task-add --project boot --title 'new seam' --path scripts/pixel/ --validation 'just pre-commit'
+dis task-state --project boot --task-id boot-new-seam --state ready
 ```
 
 ## Behavior

@@ -12,19 +12,19 @@ The human owns tmux and worktrees. Your job is only to keep the queue truthful s
 ## Loop
 
 1. Read current state.
-   - `on interactive-status --json`
+   - `dis interactive-status --json`
    - If project inference is ambiguous, rerun with `--project boot` or `--project shadow-ui`.
 
 2. Read the plan.
    - Open the configured `plan_path`.
    - Re-import plan task cards when the plan changed:
-     - `on queue-import-plan --project <project>`
+     - `dis queue-import-plan --project <project>`
 
 3. Clean up stale claims.
    - `landed_clean`: release as `done`
    - missing or abandoned worktree: release as `ready` or `blocked`
    - use:
-     - `on interactive-finish --project <project> --worktree <path> --state <state>`
+     - `dis interactive-finish --project <project> --worktree <path> --state <state>`
 
 4. Groom the queue.
    - add small concrete tasks with `task-add`

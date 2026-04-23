@@ -12,7 +12,7 @@ The current worktree is the worker identity. There are no controller-managed slo
 ## Loop
 
 1. Ask what this worktree should do.
-   - `on interactive-next --json`
+   - `dis interactive-next --json`
    - If project inference is ambiguous, rerun with `--project <project>`.
 
 2. Handle the returned action.
@@ -28,9 +28,9 @@ The current worktree is the worker identity. There are no controller-managed slo
 4. Finish honestly.
    - if the task is ready to land, use the `land` skill
    - if the task is blocked or should go back to queue, use:
-     - `on interactive-finish --project <project> --state blocked`
+     - `dis interactive-finish --project <project> --state blocked`
      - or:
-     - `on interactive-finish --project <project> --state ready`
+     - `dis interactive-finish --project <project> --state ready`
 
 ## Rules
 
