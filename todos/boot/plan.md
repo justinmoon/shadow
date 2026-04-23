@@ -214,6 +214,11 @@ Related docs:
   - `scripts/pixel/pixel_kgsl_matrix.sh` now batches rooted KGSL falsification cases into one summary artifact
   - `scripts/ci/pixel_boot_recover_traces_smoke.sh` and `scripts/ci/pixel_boot_tooling_smoke.sh` cover those additions
   - the latest high-signal boot-owned bundle is [`build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_`](../../build/pixel/boot/oneshot/20260421T223433Z-09051JEC202061_), which recovered the decisive `_request_firmware` stack
+  - Stream A stock-init KGSL trigger ladder result on 2026-04-23:
+    - `pixel_boot_build_kgsl_probe.sh` now sets a separate import proof (`debug.shadow.boot.kgsl.import=triggered`) before `start shadow-boot-helper`, and `pixel_boot_kgsl_probe.sh` / `pixel_boot_kgsl_trigger_ladder.sh` now surface `import_proved_current_boot`, `helper_launch_proved_current_boot`, and `launch_discriminator`
+    - the first real split-proof run on `09051JEC202061` wrote [`matrix-summary.json`](../../build/pixel/runs/boot-kgsl-trigger-ladder/20260423T042615Z-09051JEC202061_/matrix-summary.json) and returned adb on slot `_b` for every default trigger (`post-fs-data`, `pd_mapper`, `qseecom-service`, `gpu`, `sys.boot_completed=1`)
+    - that matrix reported `import_proved_case_count=0`, `helper_launch_case_count=0`, `kgsl_result_case_count=0`, and `surviving_discriminator=android-returned-no-import-proof`
+    - every case still had blank import/helper proof properties plus no helper dir or recovered shadow tags for the current boot, so the truthful Stream A bottleneck is now the imported stock-init rc seam itself rather than “the KGSL helper is merely launching too early”
 - Current stream map on 2026-04-21:
   - Stream A (`../boot`): KGSL / raw Vulkan critical path
   - Stream B (`boot-2`): boot-helper autostart and preflight before the first frame
@@ -224,6 +229,7 @@ Related docs:
   - `11151JEC200472`: Stream A confirmation lane, rooted and healthy, but still transport-confounded for guarded `adb reboot bootloader` probes; use carefully for boot-owned runs until that path is fixed or bypassed
   - `0B191JEC203253`: Stream B rooted sidecar lane; also available for Stream C validation when explicitly idle
   - `06241JEC200520`: Stream D rooted sidecar / spare lane; verify root state with `sc -t 06241JEC200520 root-check` before reassigning it
+  - 2026-04-23 note: the stock-init KGSL trigger ladder on `09051JEC202061` again left the phone adb-visible on slot `_b` with Magisk root inactive, so start the next session with `sc -t 09051JEC202061 root-check` and a Magisk activation pass if rooted follow-up work is needed
 - Handoff rule:
   - keep Stream A on the KGSL-open seam until one new discriminator lands
   - keep Stream B on boot-helper autostart and preflight work; it may use recovery/evidence support, but it must not drift into second-guessing the GPU ladder
@@ -239,8 +245,9 @@ Related docs:
 - Do not broaden to `orange-gpu`, compositor, runtime, or shell until that happens.
 - Near-term pivot inside Stream A:
   - stop spending the primary loop on more direct-PID1 timeout-color variants
-  - use the stock-init helper / `rc` trigger ladder as the next discriminator for “too early in boot” vs “fundamentally bad open path”
-  - if that later-launch seam still reboots to bootloader, plan a minimal kernel-facing zap/PAS diagnostic lane
+  - stop varying stock-init triggers on `09051JEC202061`; the full default trigger ladder now collapses to `android-returned-no-import-proof`
+  - treat the imported stock-init rc seam itself as the surviving Stream A discriminator until one run proves import or helper launch on the current boot
+  - once that init-proof seam is no longer the variable, either borrow a stronger proof surface from Stream B or plan the minimal kernel-facing zap/PAS diagnostic lane
 
 ### Stream B: boot-helper autostart / preflight (`boot-2`)
 

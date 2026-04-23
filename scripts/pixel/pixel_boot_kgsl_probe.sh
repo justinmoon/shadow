@@ -14,6 +14,7 @@ key_path="${AVB_TEST_KEY_PATH:-}"
 default_serial="${PIXEL_SERIAL:-}"
 trigger="${PIXEL_BOOT_KGSL_PROBE_TRIGGER:-post-fs-data}"
 device_log_root="$(pixel_boot_device_log_root)"
+import_proof_prop="${PIXEL_BOOT_KGSL_PROBE_IMPORT_PROOF_PROP:-debug.shadow.boot.kgsl.import=triggered}"
 launch_proof_prop="${PIXEL_BOOT_KGSL_PROBE_LAUNCH_PROOF_PROP:-debug.shadow.boot.kgsl.launch=started}"
 timeout_secs="${PIXEL_BOOT_KGSL_PROBE_TIMEOUT_SECS:-12}"
 patch_target_override="${PIXEL_BOOT_KGSL_PROBE_PATCH_TARGET:-}"
@@ -40,6 +41,7 @@ Usage: scripts/pixel/pixel_boot_kgsl_probe.sh [--output-dir DIR] [--serial SERIA
                                              [--input PATH] [--key PATH]
                                              [--trigger EXPR]
                                              [--device-log-root PATH]
+                                             [--import-proof-prop KEY=VALUE]
                                              [--launch-proof-prop KEY=VALUE]
                                              [--timeout SECONDS]
                                              [--patch-target ENTRY]
@@ -122,6 +124,7 @@ write_summary_json() {
     "$device_status_path" \
     "$collect_status_path" \
     "$timeout_secs" \
+    "$import_proof_prop" \
     "$helper_dir_name" <<'PY'
 import json
 import sys
@@ -145,8 +148,9 @@ from pathlib import Path
     device_status_path,
     collect_status_path,
     timeout_secs,
+    import_proof_prop,
     helper_dir_name,
-) = sys.argv[1:19]
+) = sys.argv[1:20]
 
 
 def load_json(path_str: str):
@@ -171,7 +175,18 @@ def load_kv(path: Path):
 
 device_status = load_json(device_status_path)
 collect_status = load_json(collect_status_path)
-helper_proved_current_boot = bool((collect_status or {}).get("collection_succeeded"))
+import_proved_current_boot = bool((collect_status or {}).get("collection_succeeded"))
+helper_launch_proved_current_boot = bool((collect_status or {}).get("observed_property_matched"))
+if not helper_launch_proved_current_boot:
+    helper_launch_proved_current_boot = (
+        bool((collect_status or {}).get("helper_dir_present"))
+        and bool((collect_status or {}).get("helper_dir_pulled"))
+        and bool((collect_status or {}).get("helper_status_present"))
+        and bool((collect_status or {}).get("matched_current_boot"))
+        and bool((collect_status or {}).get("matched_current_slot"))
+        and bool((collect_status or {}).get("matched_expected_slot"))
+    )
+helper_proved_current_boot = helper_launch_proved_current_boot
 helper_dir = Path(device_run_dir) / "collect" / "device" / helper_dir_name
 kgsl_summary_path = helper_dir / "kgsl-probe-summary.txt"
 kgsl_stage_path = helper_dir / "kgsl-probe-stage.txt"
@@ -194,11 +209,31 @@ kgsl_result = kgsl_summary.get("result", "")
 kgsl_device_exists = kgsl_summary.get("kgsl_device_exists", "")
 kgsl_open_succeeded = kgsl_result == "open-ok"
 kgsl_timed_out = kgsl_result == "timeout"
+transport_last_state = str((device_status or {}).get("transport_last_state") or "")
+adb_ready = bool((device_status or {}).get("adb_ready"))
+bootreason_indicates_failure = bool((device_status or {}).get("bootreason_indicates_failure"))
+
+if helper_launch_proved_current_boot:
+    if kgsl_result:
+        launch_discriminator = "helper-launched-kgsl-outcome"
+    else:
+        launch_discriminator = "helper-launched-no-kgsl-summary"
+elif import_proved_current_boot:
+    launch_discriminator = "import-proved-helper-missing"
+elif adb_ready and transport_last_state == "adb" and not bootreason_indicates_failure:
+    launch_discriminator = "android-returned-no-import-proof"
+elif bootreason_indicates_failure:
+    launch_discriminator = "bootreason-failure-before-import-proof"
+elif transport_last_state == "fastboot":
+    launch_discriminator = "fastboot-return-before-import-proof"
+else:
+    launch_discriminator = "no-import-proof"
 
 payload = {
     "kind": "boot_kgsl_probe",
     "serial": serial,
     "trigger": trigger,
+    "import_proof_prop": import_proof_prop,
     "launch_proof_prop": launch_proof_prop,
     "input_image": input_image,
     "image_path": image_path,
@@ -216,7 +251,31 @@ payload = {
     "collect_status_path": collect_status_path,
     "device_status": device_status,
     "collect_status": collect_status,
+    "import_proved_current_boot": import_proved_current_boot,
+    "helper_launch_proved_current_boot": helper_launch_proved_current_boot,
     "helper_proved_current_boot": helper_proved_current_boot,
+    "launch_discriminator": launch_discriminator,
+    "proof_property_key": str((collect_status or {}).get("proof_property_key") or ""),
+    "proof_property_expected": str((collect_status or {}).get("proof_property_expected") or ""),
+    "proof_property_actual": str((collect_status or {}).get("proof_property_actual") or ""),
+    "proof_property_matched": bool((collect_status or {}).get("proof_property_matched")),
+    "observed_property_key": str((collect_status or {}).get("observed_property_key") or ""),
+    "observed_property_expected": str((collect_status or {}).get("observed_property_expected") or ""),
+    "observed_property_actual": str((collect_status or {}).get("observed_property_actual") or ""),
+    "observed_property_matched": bool((collect_status or {}).get("observed_property_matched")),
+    "helper_dir_present": bool((collect_status or {}).get("helper_dir_present")),
+    "helper_dir_pulled": bool((collect_status or {}).get("helper_dir_pulled")),
+    "helper_status_present": bool((collect_status or {}).get("helper_status_present")),
+    "matched_current_boot": bool((collect_status or {}).get("matched_current_boot")),
+    "matched_current_slot": bool((collect_status or {}).get("matched_current_slot")),
+    "matched_expected_slot": bool((collect_status or {}).get("matched_expected_slot")),
+    "live_matches_expected_slot": bool((collect_status or {}).get("live_matches_expected_slot")),
+    "adb_ready": adb_ready,
+    "boot_completed": bool((device_status or {}).get("boot_completed")),
+    "transport_last_state": transport_last_state,
+    "transport_first_fastboot_elapsed_secs": str((device_status or {}).get("transport_first_fastboot_elapsed_secs") or ""),
+    "transport_first_adb_elapsed_secs": str((device_status or {}).get("transport_first_adb_elapsed_secs") or ""),
+    "bootreason_indicates_failure": bootreason_indicates_failure,
     "kgsl_timeout_secs": int(timeout_secs),
     "kgsl_summary_path": str(kgsl_summary_path),
     "kgsl_summary_present": kgsl_summary_path.exists(),
@@ -237,6 +296,9 @@ payload = {
     "bootreason_sys_boot_reason": str((device_status or {}).get("bootreason_sys_boot_reason") or ""),
     "fastboot_auto_reboot_attempted": bool((device_status or {}).get("fastboot_auto_reboot_attempted")),
     "fastboot_auto_reboot_succeeded": bool((device_status or {}).get("fastboot_auto_reboot_succeeded")),
+    "recover_traces_succeeded": bool((device_status or {}).get("recover_traces_succeeded")),
+    "recover_traces_proof_ok": bool((device_status or {}).get("recover_traces_proof_ok")),
+    "recover_traces_matched_any_shadow_tags": bool((device_status or {}).get("recover_traces_matched_any_shadow_tags")),
 }
 payload["ok"] = payload["dry_run"] or (
     payload["build_succeeded"] and payload["run_succeeded"] and payload["helper_proved_current_boot"]
@@ -270,6 +332,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --device-log-root)
       device_log_root="${2:?missing value for --device-log-root}"
+      shift 2
+      ;;
+    --import-proof-prop)
+      import_proof_prop="${2:?missing value for --import-proof-prop}"
       shift 2
       ;;
     --launch-proof-prop)
@@ -330,6 +396,7 @@ build_args=(
   --output "$image_path"
   --trigger "$trigger"
   --device-log-root "$device_log_root"
+  --import-proof-prop "$import_proof_prop"
   --launch-proof-prop "$launch_proof_prop"
   --timeout "$timeout_secs"
 )
@@ -361,7 +428,8 @@ if [[ "$build_status" -eq 0 ]]; then
     --wait-ready "$wait_ready_secs"
     --adb-timeout "$adb_timeout_secs"
     --boot-timeout "$boot_timeout_secs"
-    --proof-prop "$launch_proof_prop"
+    --proof-prop "$import_proof_prop"
+    --observed-prop "$launch_proof_prop"
   )
   if [[ "$recover_traces_after" == "1" ]]; then
     oneshot_args+=(--recover-traces-after)
@@ -393,6 +461,12 @@ import sys
 with open(sys.argv[1], "r", encoding="utf-8") as fh:
     payload = json.load(fh)
 
+if "import_proved_current_boot" in payload:
+    print(f"Import proved current boot: {payload['import_proved_current_boot']}")
+if "helper_launch_proved_current_boot" in payload:
+    print(f"Helper launch proved current boot: {payload['helper_launch_proved_current_boot']}")
+if payload.get("launch_discriminator"):
+    print(f"Launch discriminator: {payload['launch_discriminator']}")
 if payload.get("kgsl_result"):
     print(f"KGSL result: {payload['kgsl_result']}")
 if payload.get("kgsl_stage"):
@@ -408,4 +482,19 @@ fi
 if [[ "$build_status" -ne 0 ]]; then
   exit "$build_status"
 fi
-exit "$run_status"
+if python3 - "$summary_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+raise SystemExit(0 if payload.get("ok") else 1)
+PY
+then
+  exit 0
+fi
+if [[ "$run_status" -ne 0 ]]; then
+  exit "$run_status"
+fi
+exit 1

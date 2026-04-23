@@ -68,6 +68,7 @@ PREFLIGHT_LEASE_COMMON_ROOT="$TMP_DIR/preflight-lease-common-root"
 RC_TRIGGER_LADDER_OUTPUT="$TMP_DIR/rc-trigger-ladder-output"
 KGSL_PROBE_OUTPUT="$TMP_DIR/boot-kgsl-probe-output"
 KGSL_TRIGGER_LADDER_OUTPUT="$TMP_DIR/boot-kgsl-trigger-ladder-output"
+KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT="$TMP_DIR/boot-kgsl-trigger-ladder-negative-output"
 PREFLIGHT_BUILD_MOCK="$TMP_DIR/mock-preflight-build.sh"
 PREFLIGHT_ONESHOT_MOCK="$TMP_DIR/mock-preflight-oneshot.sh"
 KGSL_PROBE_BUILD_MOCK="$TMP_DIR/mock-kgsl-probe-build.sh"
@@ -384,6 +385,8 @@ set -euo pipefail
 
 image=""
 output=""
+proof_prop=""
+observed_prop=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -393,6 +396,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --output)
       output="$2"
+      shift 2
+      ;;
+    --proof-prop)
+      proof_prop="$2"
+      shift 2
+      ;;
+    --observed-prop)
+      observed_prop="$2"
       shift 2
       ;;
     *)
@@ -420,24 +431,76 @@ INNER
 printf 'stack\n' >"$helper_dir/kgsl-probe-stack.txt"
 
 mkdir -p "$output/collect"
-python3 - "$output/status.json" "$output/collect/status.json" "$image" "${PIXEL_SERIAL:-TESTSERIAL}" <<'PY'
+python3 - \
+  "$output/status.json" \
+  "$output/collect/status.json" \
+  "$image" \
+  "${PIXEL_SERIAL:-TESTSERIAL}" \
+  "$proof_prop" \
+  "$observed_prop" \
+  "${MOCK_KGSL_IMPORT_PROOF_MATCHED:-1}" \
+  "${MOCK_KGSL_HELPER_LAUNCH_MATCHED:-1}" <<'PY'
 import json
 import sys
 
-status_path, collect_status_path, image_path, serial = sys.argv[1:5]
+(
+    status_path,
+    collect_status_path,
+    image_path,
+    serial,
+    proof_prop,
+    observed_prop,
+    import_proof_matched,
+    helper_launch_matched,
+) = sys.argv[1:9]
+
+
+def parse_prop_spec(spec: str):
+    if "=" not in spec:
+        return "", ""
+    return spec.split("=", 1)
+
+
+proof_key, proof_expected = parse_prop_spec(proof_prop)
+observed_key, observed_expected = parse_prop_spec(observed_prop)
+import_matched = import_proof_matched == "1"
+helper_matched = helper_launch_matched == "1"
 
 device_status = {
     "ok": True,
     "serial": serial,
     "collection_succeeded": True,
     "collect_output_dir": str(collect_status_path.rsplit("/", 1)[0]),
+    "adb_ready": True,
+    "boot_completed": False,
+    "transport_last_state": "adb",
+    "transport_first_adb_elapsed_secs": 17,
+    "transport_first_fastboot_elapsed_secs": 0,
     "failure_stage": "bootreason",
     "bootreason_sys_boot_reason": "bootloader",
     "fastboot_auto_reboot_attempted": True,
     "fastboot_auto_reboot_succeeded": True,
+    "recover_traces_succeeded": True,
+    "recover_traces_proof_ok": False,
+    "recover_traces_matched_any_shadow_tags": False,
 }
 collect_status = {
-    "collection_succeeded": True,
+    "collection_succeeded": import_matched,
+    "proof_property_key": proof_key,
+    "proof_property_expected": proof_expected,
+    "proof_property_actual": proof_expected if import_matched else "",
+    "proof_property_matched": import_matched,
+    "observed_property_key": observed_key,
+    "observed_property_expected": observed_expected,
+    "observed_property_actual": observed_expected if helper_matched else "",
+    "observed_property_matched": helper_matched,
+    "helper_dir_present": helper_matched,
+    "helper_dir_pulled": helper_matched,
+    "helper_status_present": helper_matched,
+    "matched_current_boot": helper_matched,
+    "matched_current_slot": helper_matched,
+    "matched_expected_slot": True,
+    "live_matches_expected_slot": True,
 }
 with open(status_path, "w", encoding="utf-8") as fh:
     json.dump(device_status, fh, indent=2, sort_keys=True)
@@ -3512,11 +3575,18 @@ kgsl_probe_output="$(
       --recover-traces-after
 )"
 assert_contains "$kgsl_probe_output" "Boot KGSL probe output: $KGSL_PROBE_OUTPUT"
+assert_contains "$kgsl_probe_output" "Import proved current boot: True"
+assert_contains "$kgsl_probe_output" "Helper launch proved current boot: True"
+assert_contains "$kgsl_probe_output" "Launch discriminator: helper-launched-kgsl-outcome"
 assert_contains "$kgsl_probe_output" "KGSL result: timeout"
 assert_contains "$kgsl_probe_output" "KGSL wchan: request_firmware"
 assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" kind boot_kgsl_probe
 assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" ok true
+assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" import_proof_prop debug.shadow.boot.kgsl.import=triggered
+assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" import_proved_current_boot true
+assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" helper_launch_proved_current_boot true
 assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" helper_proved_current_boot true
+assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" launch_discriminator helper-launched-kgsl-outcome
 assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" kgsl_result timeout
 assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" kgsl_wchan request_firmware
 assert_json_field "$KGSL_PROBE_OUTPUT/summary.json" bootreason_sys_boot_reason bootloader
@@ -3547,10 +3617,47 @@ test -f "$KGSL_TRIGGER_LADDER_OUTPUT/cases.tsv"
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" kind boot_kgsl_trigger_ladder
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" ok true
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" case_count 2
+assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" import_proved_case_count 2
+assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" helper_launch_case_count 2
+assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" surviving_discriminator helper-launched-kgsl-outcome
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/kgsl_result timeout
+assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/0/import_proved_current_boot true
 assert_json_field "$KGSL_TRIGGER_LADDER_OUTPUT/matrix-summary.json" cases/1/helper_proved_current_boot true
-assert_contains "$(cat "$KGSL_TRIGGER_LADDER_OUTPUT/matrix.tsv")" $'01-post-fs-data\tpost-fs-data\ttrue\ttrue\ttimeout'
+assert_contains "$(cat "$KGSL_TRIGGER_LADDER_OUTPUT/matrix.tsv")" $'01-post-fs-data\tpost-fs-data\ttrue\ttrue\ttrue\ttrue\thelper-launched-kgsl-outcome\ttimeout'
 assert_contains "$(cat "$KGSL_TRIGGER_LADDER_OUTPUT/cases.tsv")" $'02-property-init.svc.gpu-running\tTESTSERIAL\tproperty:init.svc.gpu=running'
+
+rm -rf "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT"
+set +e
+kgsl_trigger_ladder_negative_output="$(
+  env \
+    PATH="$MOCK_BIN:$PATH" \
+    SHADOW_BOOTIMG_SHELL=1 \
+    PIXEL_SERIAL=TESTSERIAL \
+    PIXEL_HOST_LOCK_HELD_SERIAL=TESTSERIAL \
+    MOCK_KGSL_IMPORT_PROOF_MATCHED=1 \
+    MOCK_KGSL_HELPER_LAUNCH_MATCHED=0 \
+    PIXEL_BOOT_KGSL_PROBE_BUILD_SCRIPT="$KGSL_PROBE_BUILD_MOCK" \
+    PIXEL_BOOT_KGSL_PROBE_ONESHOT_SCRIPT="$KGSL_PROBE_ONESHOT_MOCK" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_kgsl_trigger_ladder.sh" \
+      --serial TESTSERIAL \
+      --input "$BOOT_BUILD_INPUT" \
+      --key "$AVB_KEY_PATH" \
+      --output-dir "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT" \
+      --timeout 12 \
+      --trigger property:init.svc.gpu=running
+)"
+kgsl_trigger_ladder_negative_status="$?"
+set -e
+test "$kgsl_trigger_ladder_negative_status" -eq 1
+assert_contains "$kgsl_trigger_ladder_negative_output" "KGSL trigger ladder output: $KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT"
+assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" kind boot_kgsl_trigger_ladder
+assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" ok false
+assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" import_proved_case_count 1
+assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" helper_launch_case_count 0
+assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" surviving_discriminator import-proved-helper-missing
+assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" cases/0/import_proved_current_boot true
+assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" cases/0/helper_launch_proved_current_boot false
+assert_json_field "$KGSL_TRIGGER_LADDER_NEGATIVE_OUTPUT/matrix-summary.json" cases/0/launch_discriminator import-proved-helper-missing
 
 prepare_cached_tmpfs_gpu_bundle
 install_tmpfs_gpu_smoke_mocks

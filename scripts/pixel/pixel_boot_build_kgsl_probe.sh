@@ -14,6 +14,7 @@ OUTPUT_IMAGE="${PIXEL_BOOT_KGSL_PROBE_IMAGE:-}"
 TRIGGER="${PIXEL_BOOT_KGSL_PROBE_TRIGGER:-post-fs-data}"
 DEVICE_LOG_ROOT="$(pixel_boot_device_log_root)"
 PATCH_TARGET_OVERRIDE="${PIXEL_BOOT_KGSL_PROBE_PATCH_TARGET:-}"
+IMPORT_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_IMPORT_PROOF_PROP:-debug.shadow.boot.kgsl.import=triggered}"
 LAUNCH_PROOF_PROP="${PIXEL_BOOT_KGSL_PROBE_LAUNCH_PROOF_PROP:-debug.shadow.boot.kgsl.launch=started}"
 RESULT_PROP_KEY="${PIXEL_BOOT_KGSL_PROBE_RESULT_PROP_KEY:-debug.shadow.boot.kgsl.result}"
 HELPER_STATUS_PROP_KEY="${PIXEL_BOOT_KGSL_PROBE_HELPER_STATUS_PROP_KEY:-debug.shadow.boot.kgsl.helper}"
@@ -21,6 +22,8 @@ TIMEOUT_SECS="${PIXEL_BOOT_KGSL_PROBE_TIMEOUT_SECS:-12}"
 KEEP_WORK_DIR=0
 WORK_DIR=""
 PATCH_TARGET=""
+IMPORT_PROOF_KEY=""
+IMPORT_PROOF_VALUE=""
 LAUNCH_PROOF_KEY=""
 LAUNCH_PROOF_VALUE=""
 
@@ -29,6 +32,7 @@ usage() {
 Usage: scripts/pixel/pixel_boot_build_kgsl_probe.sh [--input PATH] [--key PATH] [--output PATH]
                                                     [--trigger EXPR] [--device-log-root PATH]
                                                     [--patch-target ENTRY]
+                                                    [--import-proof-prop KEY=VALUE]
                                                     [--launch-proof-prop KEY=VALUE]
                                                     [--result-prop-key KEY]
                                                     [--helper-status-prop-key KEY]
@@ -107,6 +111,23 @@ parse_launch_proof_prop() {
 
   validate_property_key "$LAUNCH_PROOF_KEY" "launch proof property key"
   validate_property_value "$LAUNCH_PROOF_VALUE" "launch proof property value"
+}
+
+parse_import_proof_prop() {
+  [[ "$IMPORT_PROOF_PROP" == *=* ]] || {
+    echo "pixel_boot_build_kgsl_probe: --import-proof-prop must use KEY=VALUE" >&2
+    exit 1
+  }
+
+  IMPORT_PROOF_KEY="${IMPORT_PROOF_PROP%%=*}"
+  IMPORT_PROOF_VALUE="${IMPORT_PROOF_PROP#*=}"
+  [[ -n "$IMPORT_PROOF_KEY" && -n "$IMPORT_PROOF_VALUE" ]] || {
+    echo "pixel_boot_build_kgsl_probe: --import-proof-prop requires a non-empty key and value" >&2
+    exit 1
+  }
+
+  validate_property_key "$IMPORT_PROOF_KEY" "import proof property key"
+  validate_property_value "$IMPORT_PROOF_VALUE" "import proof property value"
 }
 
 validate_timeout_secs() {
@@ -213,6 +234,10 @@ while [[ $# -gt 0 ]]; do
       PATCH_TARGET_OVERRIDE="${2:?missing value for --patch-target}"
       shift 2
       ;;
+    --import-proof-prop)
+      IMPORT_PROOF_PROP="${2:?missing value for --import-proof-prop}"
+      shift 2
+      ;;
     --launch-proof-prop)
       LAUNCH_PROOF_PROP="${2:?missing value for --launch-proof-prop}"
       shift 2
@@ -264,6 +289,7 @@ EOF
 validate_literal_trigger
 validate_device_log_root
 validate_patch_target_override
+parse_import_proof_prop
 parse_launch_proof_prop
 validate_property_key "$RESULT_PROP_KEY" "result property key"
 validate_property_key "$HELPER_STATUS_PROP_KEY" "helper status property key"
@@ -296,6 +322,7 @@ chmod 0644 "$WORK_DIR/patch-target.patched"
 
 cat >"$WORK_DIR/init.shadow.rc" <<EOF
 on ${TRIGGER}
+    setprop ${IMPORT_PROOF_KEY} ${IMPORT_PROOF_VALUE}
     start shadow-boot-helper
 
 service shadow-boot-helper /system/bin/sh /shadow-boot-helper

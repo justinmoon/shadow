@@ -127,6 +127,7 @@ write_matrix_outputs() {
   python3 - "$summary_path" "$table_path" "$matrix_dir" "$serial" "$input_image" "$kgsl_timeout_secs" "${case_json_paths[@]}" <<'PY'
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 summary_path, table_path, output_dir, serial, input_image, kgsl_timeout_secs, *case_json_paths = sys.argv[1:]
@@ -138,6 +139,11 @@ for path_str in case_json_paths:
     with path.open("r", encoding="utf-8") as fh:
         cases.append(json.load(fh))
 
+import_proved_cases = [case["case_name"] for case in cases if case.get("import_proved_current_boot") is True]
+helper_launch_cases = [case["case_name"] for case in cases if case.get("helper_launch_proved_current_boot") is True]
+kgsl_result_cases = [case["case_name"] for case in cases if case.get("kgsl_result")]
+discriminator_counts = Counter(str(case.get("launch_discriminator") or "unknown") for case in cases)
+
 payload = {
     "kind": "boot_kgsl_trigger_ladder",
     "ok": all(case.get("ok") is True for case in cases),
@@ -146,6 +152,17 @@ payload = {
     "kgsl_timeout_secs": int(kgsl_timeout_secs),
     "output_dir": output_dir,
     "case_count": len(cases),
+    "import_proved_case_count": len(import_proved_cases),
+    "helper_launch_case_count": len(helper_launch_cases),
+    "kgsl_result_case_count": len(kgsl_result_cases),
+    "import_proved_cases": import_proved_cases,
+    "helper_launch_cases": helper_launch_cases,
+    "kgsl_result_cases": kgsl_result_cases,
+    "first_import_proved_case": import_proved_cases[0] if import_proved_cases else "",
+    "first_helper_launch_case": helper_launch_cases[0] if helper_launch_cases else "",
+    "first_kgsl_result_case": kgsl_result_cases[0] if kgsl_result_cases else "",
+    "discriminator_case_counts": dict(sorted(discriminator_counts.items())),
+    "surviving_discriminator": next(iter(discriminator_counts)) if len(discriminator_counts) == 1 else "",
     "cases": cases,
 }
 Path(summary_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -154,10 +171,15 @@ columns = [
     "case_name",
     "trigger",
     "ok",
+    "import_proved_current_boot",
+    "helper_launch_proved_current_boot",
     "helper_proved_current_boot",
+    "launch_discriminator",
     "kgsl_result",
     "kgsl_stage",
     "kgsl_wchan",
+    "adb_ready",
+    "transport_last_state",
     "failure_stage",
     "bootreason_sys_boot_reason",
 ]
@@ -169,10 +191,15 @@ for case in cases:
                 str(case.get("case_name") or ""),
                 str(case.get("trigger") or ""),
                 "true" if case.get("ok") else "false",
+                "true" if case.get("import_proved_current_boot") else "false",
+                "true" if case.get("helper_launch_proved_current_boot") else "false",
                 "true" if case.get("helper_proved_current_boot") else "false",
+                str(case.get("launch_discriminator") or ""),
                 str(case.get("kgsl_result") or ""),
                 str(case.get("kgsl_stage") or ""),
                 str(case.get("kgsl_wchan") or ""),
+                str(case.get("adb_ready") if case.get("adb_ready") is not None else ""),
+                str(case.get("transport_last_state") or ""),
                 str(case.get("failure_stage") or ""),
                 str(case.get("bootreason_sys_boot_reason") or ""),
             ]
@@ -346,9 +373,12 @@ case_index=0
 matrix_status=0
 for trigger_value in "${triggers[@]}"; do
   case_index=$((case_index + 1))
-  if ! run_case "$case_index" "$trigger_value"; then
+  if run_case "$case_index" "$trigger_value"; then
+    :
+  else
+    case_status="$?"
     if [[ "$matrix_status" -eq 0 ]]; then
-      matrix_status="$?"
+      matrix_status="$case_status"
     fi
   fi
 done
