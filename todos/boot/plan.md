@@ -136,9 +136,18 @@ Related docs:
     - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
     - canonical rooted proof recipe on the primary/confirm device pair
   - blocked_by: none
-- [ ] `ts-app-minimal`
+- [x] `ts-app-minimal`
   - task_id: boot-ts-app-minimal
   - why next: default first real app lane unless the runtime itself becomes the blocker
+  - result:
+    - landed TypeScript `counter` app direct-present support in `c9c848e`
+    - staged `shadow-system`, `shadow-blitz-demo`, and `runtime-app-counter-bundle.js` into the boot-owned app-direct-present bundle
+    - recovered primary and confirmation proofs both report `proof_ok=true`
+  - proof image:
+    - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/shadow-boot-orange-gpu-rust-bridge-default-ts-counter-app-direct-present-gpu-v3.img.hello-init.json`
+  - proof bundles:
+    - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/ts-counter-app-direct-present-gpu-v3-primary/recover-traces/status.json`
+    - `/Users/justin/code/shadow/worktrees/worker-1/build/pixel/boot/oneshot/ts-counter-app-direct-present-gpu-v3-confirm/recover-traces/status.json`
   - owned paths:
     - `runtime/`
     - `rust/shadow-system/`
@@ -152,6 +161,26 @@ Related docs:
     - canonical rooted proof recipe for the app-direct-present successor on the preferred rooted proof pair
   - blocked_by:
     - `finish-inflight-app-direct-present`
+- [ ] `ts-app-direct-present-proof-contract`
+  - task_id: boot-ts-app-direct-present-proof-contract
+  - priority: 12
+  - why sidecar: keep worker-1 on the TypeScript boot lane long enough to make the landed TS app proof a durable contract for later shell/app work
+  - owned paths:
+    - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
+    - `scripts/pixel/pixel_boot_recover_traces.sh`
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - `todos/boot/plan.md`
+    - `todos/boot/frontier.md`
+  - acceptance:
+    - recovered proof status explicitly distinguishes TypeScript app id, client kind, renderer, runtime bundle, and captured frame path
+    - docs/frontier identify `ts-app-minimal` as signed off and name the next product rung without relying on the old legacy queue task
+    - if no code change is needed, land the minimal docs/contract cleanup that makes the proof contract unambiguous for the next worker
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - canonical rooted proof recipe only if the proof contract or staged image metadata changes
+  - blocked_by: none
 - [x] `camera-linux-api-recon`
   - task_id: boot-camera-linux-api-recon
   - why sidecar: identify whether boot-owned userspace has a Linux camera ABI worth pursuing without blocking the app/input/shell ladder
@@ -181,6 +210,25 @@ Related docs:
     - study rooted Pixel Linux camera device/driver surface outside Android APIs
     - read relevant Android/Linux source before finalizing the probe contract
     - document first read-only `camera-linux-surface-probe` contract
+  - blocked_by: none
+- [ ] `camera-hal-provider-frame-probe`
+  - task_id: boot-camera-hal-provider-frame-probe
+  - priority: 13
+  - why sidecar: continue the camera worker's HAL/provider context toward the first contained frame proof without blocking app/input/shell work
+  - owned paths:
+    - `rust/shadow-camera-provider-host/`
+    - `scripts/pixel/pixel_camera_rs_run.sh`
+    - `scripts/lib/pixel_camera_runtime_common.sh`
+    - `todos/boot/camera-linux-api-recon.md`
+    - `todos/boot/plan.md`
+  - acceptance:
+    - implement the next contained HAL/provider-service probe that attempts one fixed rear-camera frame, or lands a precise blocker artifact explaining the missing dependency
+    - prefer the existing provider-service containment seam if it remains smaller than direct vendor HAL session bring-up
+    - keep Shadow-facing camera protocol Rust-owned and do not expose Android camera details beyond the backend boundary
+  - validation:
+    - run the new HAL/provider frame probe on a rooted Pixel with `SHADOW_DEVICE_LEASE_FORCE=1`
+    - write `build/pixel/camera-hal-api/<timestamp>-<serial>/{hal-probe.json,device-output.txt,status.json}` or an equally explicit blocker bundle
+    - document whether the next frame-capture track should stay provider-service-contained, return to direct vendor HAL loading, or split into a separate Linux-only instrumentation lane
   - blocked_by: none
 - [ ] `touch-counter-gpu`
   - task_id: boot-touch-counter-gpu

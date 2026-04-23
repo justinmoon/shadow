@@ -111,6 +111,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 ## Parallel HAL Probe Track
 
 - Goal: determine whether Pixel 4a's vendor camera HAL can be used as a contained backend without making Shadow depend on the Android app/framework camera stack.
+- Next queued slice: `boot-camera-hal-provider-frame-probe` in [plan.md](./plan.md). This should continue from the landed HAL containment result and attempt one contained rear-camera frame through the smallest provider/HAL seam, or produce the exact dependency/blocker artifact.
 - Preferred containment shape:
   - Rust-owned Shadow camera trait/API
   - one small native camera daemon or helper with a narrow command protocol
@@ -199,6 +200,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Validate `linux-probe` on a rooted Pixel and compare with Android provider camera IDs.
 - [x] Add a HAL dependency/probe task to the queue.
 - [x] Run a contained HAL inventory probe and decide whether direct HAL loading or provider-service containment is the smaller backend.
+- [ ] Run the contained HAL/provider frame probe and decide whether provider-service containment can produce one fixed rear-camera frame.
 - [ ] Decide whether a direct Linux capture probe is plausible from Linux media/V4L2/Qualcomm UAPI alone or whether that lane should stay limited to instrumentation.
 - [ ] Choose the first frame-capture track: direct Linux UAPI, contained HAL backend, or both if the probes remain cheap and informative.
 
