@@ -4,7 +4,10 @@ let
   lib = nixpkgs.lib;
   guestSystem = builtins.replaceStrings [ "-darwin" ] [ "-linux" ] hostSystem;
   hostIsDarwin = lib.hasSuffix "-darwin" hostSystem;
-  requiredSessionBinaries = [ "shadow-compositor" ] ++ requiredBinaryNames;
+  vmCompositorProcessName = "shadow-compositor";
+  vmProcessNameRegex = processName: "(^|/)${processName}($|[[:space:]])";
+  vmCompositorProcessRegex = vmProcessNameRegex vmCompositorProcessName;
+  requiredSessionBinaries = [ vmCompositorProcessName ] ++ requiredBinaryNames;
   requiredSessionBinaryArgs = lib.escapeShellArgs requiredSessionBinaries;
 in
 nixpkgs.lib.nixosSystem {
@@ -370,7 +373,7 @@ PY
             echo "runtime camera endpoint=''${shadow_session_camera_endpoint:-unset}"
             echo "runtime camera allow_mock=''${shadow_session_camera_allow_mock:-unset}"
 
-            ${shadowUiVmSessionPackage}/bin/shadow-compositor &
+            ${shadowUiVmSessionPackage}/bin/${vmCompositorProcessName} &
             compositor_pid=$!
 
             cleanup() {
@@ -552,7 +555,7 @@ PY
               runtime_dir="/run/user/$uid"
               process_snapshot="$(ps -eo args=)"
               if grep -Fq '/bin/cage --' <<<"$process_snapshot" \
-                && grep -Eq '(^|/)shadow-compositor($| )' <<<"$process_snapshot" \
+                && grep -Eq ${lib.escapeShellArg vmCompositorProcessRegex} <<<"$process_snapshot" \
                 && ! command -v cargo >/dev/null 2>&1 \
                 && ! command -v rustc >/dev/null 2>&1 \
                 && [[ -S "$runtime_dir/shadow-control.sock" ]]; then

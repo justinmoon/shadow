@@ -429,10 +429,27 @@ def load_manifest_app_binary_names(
 APP_MANIFEST = load_app_manifest()
 SHELL_APP_ID = manifest_shell_id(APP_MANIFEST)
 VM_APP_BINARY_NAMES = load_manifest_app_binary_names(APP_MANIFEST, profile="vm-shell")
+VM_COMPOSITOR_PROCESS_NAMES = ("shadow-compositor",)
+VM_PROCESS_NAMES = (*VM_COMPOSITOR_PROCESS_NAMES, *VM_APP_BINARY_NAMES)
 SUPPORTED_SESSION_APPS_BY_TARGET = {
     "pixel": load_supported_session_apps(APP_MANIFEST, profile="pixel-shell", model="typescript"),
     "vm": load_supported_session_apps(APP_MANIFEST, profile="vm-shell"),
 }
+
+
+def process_name_regex_source(process_names: tuple[str, ...]) -> str:
+    names = tuple(dict.fromkeys(name for name in process_names if name))
+    if not names:
+        return r"a\A"
+    choices = "|".join(re.escape(name) for name in names)
+    return rf"(^|[\s/])(?:{choices})($|[\s])"
+
+
+VM_COMPOSITOR_PROCESS_NAME_RE = re.compile(process_name_regex_source(VM_COMPOSITOR_PROCESS_NAMES))
+
+
+def matches_vm_compositor_process_name(line: str) -> bool:
+    return VM_COMPOSITOR_PROCESS_NAME_RE.search(line) is not None
 
 
 def supported_session_apps(target_kind: str) -> tuple[str, ...]:
@@ -824,7 +841,7 @@ def running_apps(process_lines: list[str]) -> list[str]:
     apps: list[str] = []
     for line in process_lines:
         for name in VM_APP_BINARY_NAMES:
-            if f" {name}" in f" {line}" or name in line:
+            if re.search(process_name_regex_source((name,)), line):
                 apps.append(name)
     return sorted(set(apps))
 
@@ -974,8 +991,10 @@ def _qmp_read_message(client: socket.socket) -> dict[str, Any]:
 
 def vm_status_payload() -> dict[str, Any]:
     local_processes = vm_processes()
-    vm_process_names = ("shadow-compositor", *VM_APP_BINARY_NAMES)
-    vm_process_names_json = json.dumps(vm_process_names)
+    vm_process_name_re_json = json.dumps(process_name_regex_source(VM_PROCESS_NAMES))
+    vm_compositor_process_name_re_json = json.dumps(
+        process_name_regex_source(VM_COMPOSITOR_PROCESS_NAMES)
+    )
     payload: dict[str, Any] = {
         "kind": "vm",
         "target": "vm",
@@ -997,12 +1016,14 @@ control_socket="${runtime_dir}/shadow-control.sock"
 python3 - <<'PY'
 import json
 import pathlib
+import re
 import subprocess
 
 runtime_dir = pathlib.Path("/run/user/1000")
 session_log = pathlib.Path("/var/lib/shadow-ui/log/shadow-ui-session.log")
 control_socket = runtime_dir / "shadow-control.sock"
-process_names = __VM_PROCESS_NAMES_JSON__
+process_name_re = re.compile(__VM_PROCESS_NAME_RE_JSON__)
+compositor_process_name_re = re.compile(__VM_COMPOSITOR_PROCESS_NAME_RE_JSON__)
 
 def cmd(*argv):
     result = subprocess.run(argv, text=True, capture_output=True, check=False)
@@ -1016,7 +1037,7 @@ for line in cmd("systemctl", "show", "shadow-ui-smoke.service", "-p", "ActiveSta
 
 process_lines = []
 for line in cmd("ps", "-eo", "pid=,comm=,args=")[1].splitlines():
-    if not any(name in line for name in process_names):
+    if not process_name_re.search(line):
         continue
     if "python3 - <<'PY'" in line:
         continue
@@ -1031,13 +1052,18 @@ payload = {
     "runtime_dir": str(runtime_dir),
     "wayland_sockets": sorted(path.name for path in runtime_dir.glob("wayland-*") if path.is_socket()),
     "control_socket_exists": control_socket.exists(),
+    "compositor_running": any(compositor_process_name_re.search(line) for line in process_lines),
     "processes": process_lines,
     "session_log_tail": log_tail,
 }
 print(json.dumps(payload))
 PY
 """
-    remote_script = remote_script.replace("__VM_PROCESS_NAMES_JSON__", vm_process_names_json)
+    remote_script = remote_script.replace("__VM_PROCESS_NAME_RE_JSON__", vm_process_name_re_json)
+    remote_script = remote_script.replace(
+        "__VM_COMPOSITOR_PROCESS_NAME_RE_JSON__",
+        vm_compositor_process_name_re_json,
+    )
 
     remote = run_remote(remote_script, check=False)
     payload["remote"] = {
@@ -1051,7 +1077,7 @@ PY
         payload["remote"]["running_apps"] = running_apps(remote_processes)
         payload["remote"]["ui_ready"] = bool(
             payload["remote"].get("control_socket_exists")
-            and "shadow-composit" in "\n".join(remote_processes)
+            and payload["remote"].get("compositor_running")
         )
     return payload
 
@@ -1109,13 +1135,16 @@ def diagnose_vm(payload: dict[str, Any]) -> list[str]:
                 f"VM artifact share is {payload['local']['artifact_share']}, not {expected_artifact_share}."
             )
 
-    processes = "\n".join(remote.get("processes", []))
     if not remote.get("control_socket_exists"):
         issues.append("Compositor control socket is missing.")
     if not remote.get("wayland_sockets"):
         issues.append("No Wayland sockets are present in the guest runtime dir.")
-    if "shadow-compositor" not in processes and remote.get("ui_ready"):
-        issues.append("Control socket exists but shadow-compositor is not visible in the guest process list.")
+    if remote.get("control_socket_exists") and not any(
+        matches_vm_compositor_process_name(line)
+        for line in remote.get("processes", [])
+        if isinstance(line, str)
+    ):
+        issues.append("Control socket exists but no VM compositor process is visible in the guest process list.")
     return issues
 
 
@@ -2184,6 +2213,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     log_file = f"/var/lib/shadow-ui/log/{package}.log"
     session_env_file = "/var/lib/shadow-ui/shadow-ui-session-env.sh"
     mode = "background" if args.background else "foreground"
+    compositor_process_name_re_json = json.dumps(
+        process_name_regex_source(VM_COMPOSITOR_PROCESS_NAMES)
+    )
     env_assignments = []
     for item in args.env:
         if "=" not in item:
@@ -2203,9 +2235,29 @@ log_file={shlex.quote(log_file)}
 
 load_session_env_from_process() {{
   local session_pid
-  session_pid="$(pgrep -o -f 'shadow-compositor' || true)"
+  session_pid="$(python3 - <<'PY'
+import re
+import subprocess
+
+process_name_re = re.compile({compositor_process_name_re_json})
+result = subprocess.run(
+    ["ps", "-eo", "pid=,comm=,args="],
+    text=True,
+    capture_output=True,
+    check=False,
+)
+if result.returncode == 0:
+    for line in result.stdout.splitlines():
+        if "python3 - <<'PY'" in line:
+            continue
+        if not process_name_re.search(line):
+            continue
+        print(line.strip().split(None, 1)[0])
+        break
+PY
+  )"
   if [[ -z "$session_pid" ]]; then
-    echo "shadowctl: could not find a running shadow-compositor" >&2
+    echo "shadowctl: could not find a running VM compositor process" >&2
     exit 1
   fi
 
