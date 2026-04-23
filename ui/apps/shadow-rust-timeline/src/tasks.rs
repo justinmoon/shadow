@@ -17,7 +17,7 @@ use shadow_sdk::{
             NostrAccountSummary, NostrAccountTask, NostrPublishReceipt,
         },
     },
-    ui::{with_tasks, TaskSlotBinding, WidgetView},
+    ui::{with_tasks, TaskHandle, TaskSlotBinding, WidgetView},
 };
 
 use crate::TimelineApp;
@@ -168,6 +168,46 @@ impl TimelineTasks {
             .start(NostrTimelinePublishRequest::note(content, relay_urls))
     }
 
+    pub(crate) fn finish_refresh(&mut self, task: TaskHandle<NostrHomeRefreshRequest>) -> bool {
+        self.refresh.finish_matches(task)
+    }
+
+    pub(crate) fn finish_explore_sync(
+        &mut self,
+        task: TaskHandle<NostrExploreSyncRequest>,
+    ) -> bool {
+        self.explore_sync.finish_matches(task)
+    }
+
+    pub(crate) fn finish_account_action(&mut self, task: TaskHandle<NostrAccountTask>) -> bool {
+        self.account_action.finish_matches(task)
+    }
+
+    pub(crate) fn finish_thread_sync(&mut self, task: TaskHandle<NostrThreadSyncRequest>) -> bool {
+        self.thread_sync.finish_matches(task)
+    }
+
+    pub(crate) fn finish_clipboard_write(
+        &mut self,
+        task: TaskHandle<ClipboardWriteRequest>,
+    ) -> bool {
+        self.clipboard_write.finish_matches(task)
+    }
+
+    pub(crate) fn finish_follow_update(
+        &mut self,
+        task: TaskHandle<NostrContactListUpdateRequest>,
+    ) -> Option<NostrContactListUpdateRequest> {
+        self.follow_update.finish(task)
+    }
+
+    pub(crate) fn finish_publish(
+        &mut self,
+        task: TaskHandle<NostrTimelinePublishRequest>,
+    ) -> Option<NostrTimelinePublishRequest> {
+        self.publish.finish(task)
+    }
+
     pub(crate) fn pending_follow_update_target(&self) -> Option<&str> {
         self.follow_update
             .pending()
@@ -261,6 +301,16 @@ mod tests {
     }
 
     #[test]
+    fn refresh_finish_helper_clears_matching_pending_task() {
+        let mut tasks = TimelineTasks::default();
+        assert!(tasks.start_refresh(String::from("npub-account"), 42, Vec::new()));
+
+        let pending = tasks.refresh.pending_cloned().expect("pending refresh");
+        assert!(tasks.finish_refresh(pending));
+        assert!(!tasks.refresh.is_pending());
+    }
+
+    #[test]
     fn follow_update_finish_returns_matching_pending_job() {
         let mut tasks = TimelineTasks::default();
         assert!(tasks.start_follow_remove(
@@ -274,8 +324,7 @@ mod tests {
             .pending_cloned()
             .expect("pending follow update");
         let finished = tasks
-            .follow_update
-            .finish(pending)
+            .finish_follow_update(pending)
             .expect("matching finished follow update");
 
         assert_eq!(follow_update_target(&finished), "npub-target");

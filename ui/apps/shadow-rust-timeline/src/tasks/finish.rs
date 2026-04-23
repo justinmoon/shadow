@@ -27,7 +27,7 @@ impl TimelineApp {
         task: TaskHandle<NostrHomeRefreshRequest>,
         result: Result<RefreshOutcome, String>,
     ) {
-        if !self.tasks.refresh.finish_matches(task) {
+        if !self.tasks.finish_refresh(task) {
             return;
         }
 
@@ -76,7 +76,7 @@ impl TimelineApp {
         task: TaskHandle<NostrExploreSyncRequest>,
         result: Result<ExploreSyncOutcome, String>,
     ) {
-        if !self.tasks.explore_sync.finish_matches(task) {
+        if !self.tasks.finish_explore_sync(task) {
             return;
         }
 
@@ -106,7 +106,7 @@ impl TimelineApp {
         task: TaskHandle<NostrThreadSyncRequest>,
         result: Result<ThreadSyncOutcome, String>,
     ) {
-        if !self.tasks.thread_sync.finish_matches(task) {
+        if !self.tasks.finish_thread_sync(task) {
             return;
         }
         self.cached_data.invalidate_routes();
@@ -143,7 +143,7 @@ impl TimelineApp {
         task: TaskHandle<NostrAccountTask>,
         result: Result<AccountActionOutcome, String>,
     ) {
-        if !self.tasks.account_action.finish_matches(task) {
+        if !self.tasks.finish_account_action(task) {
             return;
         }
 
@@ -210,7 +210,7 @@ impl TimelineApp {
         task: TaskHandle<ClipboardWriteRequest>,
         result: Result<(), String>,
     ) {
-        if !self.tasks.clipboard_write.finish_matches(task) {
+        if !self.tasks.finish_clipboard_write(task) {
             return;
         }
 
@@ -231,7 +231,7 @@ impl TimelineApp {
         task: TaskHandle<NostrContactListUpdateRequest>,
         result: Result<FollowUpdateOutcome, String>,
     ) {
-        let Some(pending) = self.tasks.follow_update.finish(task) else {
+        let Some(pending) = self.tasks.finish_follow_update(task) else {
             return;
         };
         let action = pending.action;
@@ -294,7 +294,7 @@ impl TimelineApp {
         task: TaskHandle<NostrTimelinePublishRequest>,
         result: Result<PublishOutcome, String>,
     ) {
-        let Some(pending) = self.tasks.publish.finish(task) else {
+        let Some(pending) = self.tasks.finish_publish(task) else {
             return;
         };
         let publish_preview = log_preview_text(pending.content());
