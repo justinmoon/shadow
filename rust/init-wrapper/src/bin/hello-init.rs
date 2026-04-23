@@ -11,7 +11,7 @@ mod linux {
     use std::ffi::{CStr, CString};
     use std::fmt::Write as _;
     use std::fs::{self, File, OpenOptions};
-    use std::io::{self, Read, Write};
+    use std::io::{self, BufReader, BufWriter, Read, Write};
     use std::os::unix::ffi::OsStringExt;
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
@@ -115,6 +115,10 @@ mod linux {
         orange_gpu_firmware_helper: bool,
         orange_gpu_timeout_action: String,
         orange_gpu_watchdog_timeout_secs: u32,
+        orange_gpu_bundle_archive_path: String,
+        app_direct_present_app_id: String,
+        app_direct_present_runtime_bundle_env: String,
+        app_direct_present_runtime_bundle_path: String,
         hold_seconds: u32,
         prelude_hold_seconds: u32,
         reboot_target: String,
@@ -144,6 +148,10 @@ mod linux {
                 orange_gpu_firmware_helper: false,
                 orange_gpu_timeout_action: "reboot".to_string(),
                 orange_gpu_watchdog_timeout_secs: 0,
+                orange_gpu_bundle_archive_path: String::new(),
+                app_direct_present_app_id: "rust-demo".to_string(),
+                app_direct_present_runtime_bundle_env: String::new(),
+                app_direct_present_runtime_bundle_path: String::new(),
                 hold_seconds: DEFAULT_HOLD_SECONDS,
                 prelude_hold_seconds: 0,
                 reboot_target: "bootloader".to_string(),
@@ -707,6 +715,20 @@ mod linux {
                     if let Some(parsed) = parse_u32(value) {
                         config.orange_gpu_watchdog_timeout_secs = parsed;
                     }
+                }
+                "orange_gpu_bundle_archive_path" | "orange-gpu-bundle-archive-path" => {
+                    config.orange_gpu_bundle_archive_path = value.trim().to_string();
+                }
+                "app_direct_present_app_id" | "app-direct-present-app-id" => {
+                    config.app_direct_present_app_id = value.trim().to_string();
+                }
+                "app_direct_present_runtime_bundle_env"
+                | "app-direct-present-runtime-bundle-env" => {
+                    config.app_direct_present_runtime_bundle_env = value.trim().to_string();
+                }
+                "app_direct_present_runtime_bundle_path"
+                | "app-direct-present-runtime-bundle-path" => {
+                    config.app_direct_present_runtime_bundle_path = value.trim().to_string();
                 }
                 "hold_seconds" | "hold_secs" => {
                     if let Some(parsed) = parse_u32(value) {
@@ -1921,10 +1943,36 @@ mod linux {
 
     fn ensure_orange_gpu_runtime_dirs() -> io::Result<()> {
         ensure_directory(Path::new(ORANGE_GPU_ROOT), 0o755)?;
+        ensure_directory(Path::new(ORANGE_GPU_COMPOSITOR_RUNTIME_DIR), 0o755)?;
         ensure_directory(Path::new(ORANGE_GPU_HOME), 0o755)?;
         ensure_directory(Path::new(ORANGE_GPU_CACHE_HOME), 0o755)?;
         ensure_directory(Path::new(ORANGE_GPU_CONFIG_HOME), 0o755)?;
         ensure_directory(Path::new(ORANGE_GPU_MESA_CACHE_DIR), 0o755)?;
+        Ok(())
+    }
+
+    fn expand_orange_gpu_bundle_archive(config: &Config) -> io::Result<()> {
+        if config.orange_gpu_bundle_archive_path.is_empty() {
+            return Ok(());
+        }
+
+        let source_path = Path::new(&config.orange_gpu_bundle_archive_path);
+        let temp_tar_path = Path::new(ORANGE_GPU_COMPOSITOR_RUNTIME_DIR)
+            .join(format!("orange-gpu-bundle.{}.tar", process::id()));
+        let input = File::open(source_path)?;
+        let output = File::create(&temp_tar_path)?;
+        let mut reader = BufReader::new(input);
+        let mut writer = BufWriter::new(output);
+        lzma_rs::xz_decompress(&mut reader, &mut writer)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        writer.flush()?;
+        drop(writer);
+
+        ensure_directory(Path::new(ORANGE_GPU_ROOT), 0o755)?;
+        let tar_input = File::open(&temp_tar_path)?;
+        let mut archive = tar::Archive::new(tar_input);
+        archive.unpack(ORANGE_GPU_ROOT)?;
+        let _ = fs::remove_file(&temp_tar_path);
         Ok(())
     }
 
@@ -2501,6 +2549,12 @@ mod linux {
         if ensure_orange_gpu_runtime_dirs().is_err() {
             return 1;
         }
+        if let Err(error) = expand_orange_gpu_bundle_archive(config) {
+            log_line(&format!(
+                "failed to expand orange-gpu bundle archive: {error}"
+            ));
+            return 1;
+        }
 
         if config.orange_gpu_launch_delay_secs > 0 {
             sleep_seconds(config.orange_gpu_launch_delay_secs);
@@ -2656,6 +2710,15 @@ mod linux {
                     "RUST_LOG",
                     "shadow_session=info,shadow_compositor_guest=info,smithay=warn",
                 );
+                if !orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode)
+                    && !config.app_direct_present_runtime_bundle_env.is_empty()
+                    && !config.app_direct_present_runtime_bundle_path.is_empty()
+                {
+                    command.env(
+                        &config.app_direct_present_runtime_bundle_env,
+                        &config.app_direct_present_runtime_bundle_path,
+                    );
+                }
                 command
             } else {
                 let (scene, summary_needed, _) = scene_for_mode(&config.orange_gpu_mode);
@@ -2774,7 +2837,7 @@ mod linux {
                         (
                             "app-direct-present",
                             "app",
-                            Some("rust-demo"),
+                            Some(config.app_direct_present_app_id.as_str()),
                             "app-direct-present-frame-captured",
                         )
                     };
@@ -2924,6 +2987,7 @@ mod linux {
         ensure_char_device(Path::new("/dev/dri/renderD128"), 0o600, 226, 128)?;
         if config.dri_bootstrap == "sunfish-card0-renderD128-kgsl3d0" {
             ensure_char_device(Path::new("/dev/kgsl-3d0"), 0o666, 508, 0)?;
+            ensure_char_device(Path::new("/dev/ion"), 0o666, 10, 63)?;
         }
         Ok(())
     }

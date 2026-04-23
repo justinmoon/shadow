@@ -1418,6 +1418,7 @@ expected_durable_logging = {"kmsg": None, "pmsg": None}
 expected_orange_gpu_mode = ""
 expected_orange_gpu_scene = ""
 expected_orange_gpu_firmware_helper = None
+expected_app_direct_present_app_id = "rust-demo"
 expected_metadata_compositor_frame_path = ""
 recovered_probe_summary = {}
 recovered_probe_summary_parse_error = None
@@ -1450,6 +1451,9 @@ if source_image_metadata_path:
         orange_gpu_firmware_helper_value = metadata.get("orange_gpu_firmware_helper")
         if isinstance(orange_gpu_firmware_helper_value, bool):
             expected_orange_gpu_firmware_helper = orange_gpu_firmware_helper_value
+        app_direct_present_app_id_value = metadata.get("app_direct_present_app_id")
+        if isinstance(app_direct_present_app_id_value, str) and app_direct_present_app_id_value:
+            expected_app_direct_present_app_id = app_direct_present_app_id_value
         compositor_frame_path_value = metadata.get("metadata_compositor_frame_path")
         if isinstance(compositor_frame_path_value, str):
             expected_metadata_compositor_frame_path = compositor_frame_path_value
@@ -1740,6 +1744,12 @@ required_app_direct_present_frame_samples = {
     "74d3ae",
     "f7fafc",
 }
+if expected_app_direct_present_app_id == "counter":
+    required_app_direct_present_frame_samples = {
+        "0b1630",
+        "10243b",
+        "2fb8ff",
+    }
 summary_samples_set = (
     set(sample for sample in summary_color_samples if isinstance(sample, str))
     if isinstance(summary_color_samples, list)
@@ -1845,7 +1855,7 @@ probe_summary_proves_app_direct_present = (
     and recovered_probe_summary_parse_error is None
     and summary_kind == "app-direct-present"
     and summary_startup_mode == "app"
-    and summary_app_id == "rust-demo"
+    and summary_app_id == expected_app_direct_present_app_id
     and summary_frame_path == expected_metadata_compositor_frame_path
     and isinstance(summary_frame_bytes, int)
     and summary_frame_bytes > 0
@@ -1928,6 +1938,7 @@ payload = {
     "expected_orange_gpu_mode": expected_orange_gpu_mode,
     "expected_orange_gpu_scene": expected_orange_gpu_scene,
     "expected_orange_gpu_firmware_helper": expected_orange_gpu_firmware_helper,
+    "expected_app_direct_present_app_id": expected_app_direct_present_app_id,
     "expected_metadata_stage_breadcrumb": expected_metadata_stage_breadcrumb,
     "expected_metadata_stage_path": expected_metadata_stage_path,
     "expected_metadata_probe_stage_path": expected_metadata_probe_stage_path,

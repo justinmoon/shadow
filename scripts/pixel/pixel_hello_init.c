@@ -1781,12 +1781,18 @@ static int bootstrap_tmpfs_dri_runtime(const struct hello_init_config *config) {
     ) {
         return -1;
     }
+    if (
+        strcmp(config->dri_bootstrap, "sunfish-card0-renderD128-kgsl3d0") == 0 &&
+        ensure_char_device("/dev/ion", 0666, 10U, 63U) != 0
+    ) {
+        return -1;
+    }
 
     if (strcmp(config->dri_bootstrap, "sunfish-card0-renderD128-kgsl3d0") == 0) {
         log_stage(
             "<6>",
             "tmpfs-coldboot-complete",
-            "mode=%s card0=226:0 renderD128=226:128 kgsl3d0=508:0",
+            "mode=%s card0=226:0 renderD128=226:128 kgsl3d0=508:0 ion=10:63",
             config->dri_bootstrap
         );
     } else {

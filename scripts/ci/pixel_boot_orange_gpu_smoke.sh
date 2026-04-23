@@ -17,6 +17,7 @@ SHADOW_COMPOSITOR_OUTPUT="$TMP_DIR/shadow-compositor-guest"
 APP_DIRECT_PRESENT_LAUNCHER_OUTPUT="$TMP_DIR/app-direct-present-launcher"
 GPU_BUNDLE_DIR="$TMP_DIR/gpu-bundle"
 APP_DIRECT_PRESENT_BUNDLE_DIR="$TMP_DIR/app-direct-present-bundle"
+TS_APP_DIRECT_PRESENT_BUNDLE_DIR="$TMP_DIR/ts-app-direct-present-bundle"
 BAD_LOADER_BUNDLE_DIR="$TMP_DIR/bad-loader-bundle"
 BAD_BINARY_BUNDLE_DIR="$TMP_DIR/bad-binary-bundle"
 OUTPUT_IMAGE="$TMP_DIR/orange-gpu-boot.img"
@@ -34,6 +35,7 @@ mkdir -p \
   "$GPU_BUNDLE_DIR/lib" \
   "$GPU_BUNDLE_DIR/share/vulkan/icd.d" \
   "$APP_DIRECT_PRESENT_BUNDLE_DIR/lib" \
+  "$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/lib" \
   "$BAD_LOADER_BUNDLE_DIR/lib" \
   "$BAD_LOADER_BUNDLE_DIR/share/vulkan/icd.d" \
   "$BAD_BINARY_BUNDLE_DIR/lib" \
@@ -112,6 +114,17 @@ chmod 0755 "$APP_DIRECT_PRESENT_BUNDLE_DIR/lib/ld-linux-aarch64.so.1"
 printf 'ELF_LIBC_AARCH64\n' >"$APP_DIRECT_PRESENT_BUNDLE_DIR/lib/libc.so.6"
 printf 'ELF_LIBM_AARCH64\n' >"$APP_DIRECT_PRESENT_BUNDLE_DIR/lib/libm.so.6"
 printf 'ELF_LIBGCC_S_AARCH64\n' >"$APP_DIRECT_PRESENT_BUNDLE_DIR/lib/libgcc_s.so.1"
+
+printf 'ELF_BLITZ_AARCH64\n' >"$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/shadow-blitz-demo"
+chmod 0755 "$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/shadow-blitz-demo"
+printf 'ELF_SHADOW_SYSTEM_AARCH64\n' >"$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/shadow-system"
+chmod 0755 "$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/shadow-system"
+printf 'console.error("counter bundle")\n' >"$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/runtime-app-counter-bundle.js"
+printf 'ELF_RUNTIME_LOADER_AARCH64\n' >"$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/lib/ld-linux-aarch64.so.1"
+chmod 0755 "$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/lib/ld-linux-aarch64.so.1"
+printf 'ELF_LIBC_AARCH64\n' >"$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/lib/libc.so.6"
+printf 'ELF_LIBM_AARCH64\n' >"$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/lib/libm.so.6"
+printf 'ELF_LIBGCC_S_AARCH64\n' >"$TS_APP_DIRECT_PRESENT_BUNDLE_DIR/lib/libgcc_s.so.1"
 
 printf 'ELF_BINARY_AARCH64\n' >"$GPU_BUNDLE_DIR/shadow-gpu-smoke"
 chmod 0755 "$GPU_BUNDLE_DIR/shadow-gpu-smoke"
@@ -313,6 +326,8 @@ if grep -aFq -- 'ELF_LOADER_AARCH64' "$target" 2>/dev/null; then
   printf '%s: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), static-pie linked, not stripped\n' "$target"
 elif grep -aFq -- 'ELF_BINARY_AARCH64' "$target" 2>/dev/null; then
   printf '%s: ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), dynamically linked, interpreter /orange-gpu/lib/ld-linux-aarch64.so.1, not stripped\n' "$target"
+elif grep -aFq -- 'ELF_BLITZ_AARCH64' "$target" 2>/dev/null || grep -aFq -- 'ELF_SHADOW_SYSTEM_AARCH64' "$target" 2>/dev/null; then
+  printf '%s: ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), dynamically linked, interpreter /orange-gpu/app-direct-present/lib/ld-linux-aarch64.so.1, not stripped\n' "$target"
 elif grep -aFq -- 'shadow-owned-init-role:orange-init' "$target" 2>/dev/null; then
   printf '%s: ELF 64-bit LSB executable, ARM aarch64, statically linked\n' "$target"
 elif grep -aFq -- 'shadow-owned-init-role:hello-init' "$target" 2>/dev/null; then
@@ -494,6 +509,99 @@ archive_path, entry_name = sys.argv[1:3]
 entries = {entry.name for entry in read_cpio(Path(archive_path)).without_trailer()}
 if entry_name in entries:
     raise SystemExit(f"unexpected cpio entry present: {entry_name}")
+PY
+}
+
+assert_cpio_tar_xz_entry_present() {
+  local archive_path cpio_entry tar_entry
+  archive_path="$1"
+  cpio_entry="$2"
+  tar_entry="$3"
+
+  PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$archive_path" "$cpio_entry" "$tar_entry" <<'PY'
+from pathlib import Path
+import io
+import sys
+import tarfile
+
+from cpio_edit import read_cpio
+
+archive_path, cpio_entry, tar_entry = sys.argv[1:4]
+entries = {
+    entry.name: entry.data
+    for entry in read_cpio(Path(archive_path)).without_trailer()
+}
+payload = entries.get(cpio_entry)
+if payload is None:
+    raise SystemExit(f"missing cpio entry: {cpio_entry}")
+with tarfile.open(fileobj=io.BytesIO(payload), mode="r:xz") as archive:
+    names = {member.name.removeprefix("./") for member in archive.getmembers()}
+if tar_entry not in names:
+    raise SystemExit(f"missing tar.xz entry: {tar_entry}")
+PY
+}
+
+assert_cpio_tar_xz_entry_absent() {
+  local archive_path cpio_entry tar_entry
+  archive_path="$1"
+  cpio_entry="$2"
+  tar_entry="$3"
+
+  PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$archive_path" "$cpio_entry" "$tar_entry" <<'PY'
+from pathlib import Path
+import io
+import sys
+import tarfile
+
+from cpio_edit import read_cpio
+
+archive_path, cpio_entry, tar_entry = sys.argv[1:4]
+entries = {
+    entry.name: entry.data
+    for entry in read_cpio(Path(archive_path)).without_trailer()
+}
+payload = entries.get(cpio_entry)
+if payload is None:
+    raise SystemExit(f"missing cpio entry: {cpio_entry}")
+with tarfile.open(fileobj=io.BytesIO(payload), mode="r:xz") as archive:
+    names = {member.name.removeprefix("./") for member in archive.getmembers()}
+if tar_entry in names:
+    raise SystemExit(f"unexpected tar.xz entry present: {tar_entry}")
+PY
+}
+
+assert_cpio_tar_xz_entry_equals() {
+  local archive_path cpio_entry tar_entry expected_data
+  archive_path="$1"
+  cpio_entry="$2"
+  tar_entry="$3"
+  expected_data="$4"
+
+  PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$archive_path" "$cpio_entry" "$tar_entry" "$expected_data" <<'PY'
+from pathlib import Path
+import io
+import sys
+import tarfile
+
+from cpio_edit import read_cpio
+
+archive_path, cpio_entry, tar_entry, expected_data = sys.argv[1:5]
+entries = {
+    entry.name: entry.data
+    for entry in read_cpio(Path(archive_path)).without_trailer()
+}
+payload = entries.get(cpio_entry)
+if payload is None:
+    raise SystemExit(f"missing cpio entry: {cpio_entry}")
+with tarfile.open(fileobj=io.BytesIO(payload), mode="r:xz") as archive:
+    members = {member.name.removeprefix("./"): member for member in archive.getmembers()}
+    member = members.get(tar_entry)
+    if member is None:
+        raise SystemExit(f"missing tar.xz entry: {tar_entry}")
+    extracted = archive.extractfile(member)
+    data = b"" if extracted is None else extracted.read()
+if data != expected_data.encode("utf-8"):
+    raise SystemExit(f"unexpected tar.xz entry contents for {tar_entry}: {data!r}")
 PY
 }
 
@@ -2256,6 +2364,8 @@ assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"c-kg
 assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"raw-kgsl-getproperties-smoke"'
 assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"function_graph\n"'
 assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"parent-probe-result=skipped"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'ensure_char_device(Path::new("/dev/ion"), 0o666, 10, 63)'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'ensure_char_device("/dev/ion", 0666, 10U, 63U)'
 assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" 'code-orange-'
 assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" '"solid-red"'
 assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" '"solid-blue"'
@@ -3464,18 +3574,81 @@ assert_contains "$rust_bridge_app_direct_present_boot_output" "Orange GPU mode: 
 assert_contains "$rust_bridge_app_direct_present_boot_output" "Payload contract: hello-init launches /orange-gpu/shadow-session in app-only direct-present mode for rust-demo"
 assert_contains "$rust_bridge_app_direct_present_boot_output" "GPU proof: app-owned rust-demo surface imported and presented with no shell through the Rust boot seam"
 assert_contains "$rust_bridge_app_direct_present_boot_output" "Metadata compositor frame path: /metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/compositor-frame.ppm"
-assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/shadow-session
-assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/shadow-compositor-guest
-assert_cpio_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/run-shadow-rust-demo $'MOCK_AARCH64_STATIC_APP_DIRECT_PRESENT_LAUNCHER\nshadow-app-direct-present-launcher-role:static-loader-exec\n'
-assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/shadow-rust-demo
-assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/lib/ld-linux-aarch64.so.1
-assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/lib/libc.so.6
-assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/lib/libm.so.6
-assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present/lib/libgcc_s.so.1
-assert_cpio_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/app-direct-present-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "app",\n    "startAppId": "rust-demo"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-rust-demo",\n    "runtimeDir": "/shadow-runtime",\n    "envAssignments": [\n      {\n        "key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",\n        "value": "1"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": true,\n    "frameCapture": {\n      "mode": "first-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  }\n}\n'
+assert_contains "$rust_bridge_app_direct_present_boot_output" "GPU bundle archive path: /orange-gpu.tar.xz"
+assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz
+assert_cpio_entry_absent "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu/shadow-session
+assert_cpio_tar_xz_entry_absent "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz shadow-gpu-smoke
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz shadow-session
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz shadow-compositor-guest
+assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz app-direct-present/run-shadow-rust-demo $'MOCK_AARCH64_STATIC_APP_DIRECT_PRESENT_LAUNCHER\nshadow-app-direct-present-launcher-role:static-loader-exec\n'
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz app-direct-present/shadow-rust-demo
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz app-direct-present/lib/ld-linux-aarch64.so.1
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz app-direct-present/lib/libc.so.6
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz app-direct-present/lib/libm.so.6
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz app-direct-present/lib/libgcc_s.so.1
+assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz app-direct-present-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "app",\n    "startAppId": "rust-demo"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-rust-demo",\n    "runtimeDir": "/shadow-runtime",\n    "envAssignments": [\n      {\n        "key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",\n        "value": "1"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": true,\n    "frameCapture": {\n      "mode": "first-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  }\n}\n'
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img.hello-init.json" orange_gpu_mode "app-direct-present"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img.hello-init.json" metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/compositor-frame.ppm"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img.hello-init.json" metadata_probe_summary_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/probe-summary.json"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img.hello-init.json" app_direct_present_app_id rust-demo
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img.hello-init.json" app_direct_present_client_kind rust
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img.hello-init.json" gpu_bundle_archive_path /orange-gpu.tar.xz
+
+ts_app_direct_present_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_APP_ID=counter \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_BUNDLE_DIR="$TS_APP_DIRECT_PRESENT_BUNDLE_DIR" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_BIN="$APP_DIRECT_PRESENT_LAUNCHER_OUTPUT" \
+    PIXEL_SHADOW_SESSION_BIN="$SHADOW_SESSION_OUTPUT" \
+    PIXEL_SHADOW_COMPOSITOR_GUEST_BIN="$SHADOW_COMPOSITOR_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
+      --rust-shim "$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --firmware-dir "$GPU_FIRMWARE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" \
+      --hello-init-mode rust-bridge \
+      --orange-gpu-mode app-direct-present \
+      --orange-gpu-firmware-helper true \
+      --orange-gpu-metadata-stage-breadcrumb true \
+      --firmware-bootstrap ramdisk-lib-firmware \
+      --run-token orange-gpu-rust-bridge-ts-app-direct-present-run-token \
+      --hold-secs 9 \
+      --mount-sys true
+)"
+
+assert_contains "$ts_app_direct_present_boot_output" "Orange GPU mode: app-direct-present"
+assert_contains "$ts_app_direct_present_boot_output" "Payload contract: hello-init launches /orange-gpu/shadow-session in app-only direct-present mode for counter"
+assert_contains "$ts_app_direct_present_boot_output" "GPU proof: app-owned counter surface imported and presented with no shell through the Rust boot seam"
+assert_contains "$ts_app_direct_present_boot_output" "App direct present id: counter"
+assert_contains "$ts_app_direct_present_boot_output" "App direct present client kind: typescript"
+assert_contains "$ts_app_direct_present_boot_output" "App TypeScript renderer: gpu"
+assert_contains "$ts_app_direct_present_boot_output" "GPU bundle archive path: /orange-gpu.tar.xz"
+assert_contains "$ts_app_direct_present_boot_output" "App runtime bundle env: SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH"
+assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu.tar.xz
+assert_cpio_entry_absent "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu/app-direct-present/run-shadow-blitz-demo
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu.tar.xz app-direct-present/run-shadow-blitz-demo
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu.tar.xz app-direct-present/shadow-blitz-demo
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu.tar.xz app-direct-present/shadow-system
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu.tar.xz app-direct-present/runtime-app-counter-bundle.js
+assert_cpio_tar_xz_entry_absent "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu.tar.xz shadow-gpu-smoke
+assert_cpio_tar_xz_entry_absent "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu.tar.xz app-direct-present/lib/ld-linux-aarch64.so.1
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu.tar.xz lib/ld-linux-aarch64.so.1
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu.tar.xz lib/libc.so.6
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu.tar.xz lib/libm.so.6
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu.tar.xz lib/libgcc_s.so.1
+assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img" orange-gpu.tar.xz app-direct-present-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "app",\n    "startAppId": "counter"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-blitz-demo",\n    "runtimeDir": "/shadow-runtime",\n    "systemBinaryPath": "/orange-gpu/app-direct-present/shadow-system",\n    "envAssignments": [\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH",\n        "value": "/orange-gpu/app-direct-present/shadow-blitz-demo"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": true,\n    "frameCapture": {\n      "mode": "first-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-ts-app-direct-present-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  }\n}\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img.hello-init.json" orange_gpu_mode "app-direct-present"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img.hello-init.json" app_direct_present_app_id counter
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img.hello-init.json" app_direct_present_client_kind typescript
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img.hello-init.json" app_direct_present_typescript_renderer gpu
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img.hello-init.json" gpu_bundle_archive_path /orange-gpu.tar.xz
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img.hello-init.json" app_direct_present_runtime_bundle_env SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-ts-app-direct-present.img.hello-init.json" app_direct_present_runtime_bundle_path /orange-gpu/app-direct-present/runtime-app-counter-bundle.js
 
 assert_command_fails_contains "rust-bridge orange-gpu images currently require --rust-child-profile hello" \
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

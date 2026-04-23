@@ -7,8 +7,9 @@ use std::{
 
 use shadow_compositor_common::launch::{app_launch_env_value, first_env_value};
 use shadow_ui_core::{
-    app::{launch_spec, AppId},
+    app::{launch_spec, AppId, AppLaunchSpec},
     control,
+    scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX},
 };
 
 use crate::ShadowGuestCompositor;
@@ -41,10 +42,6 @@ pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Resul
         state.control_socket_path.as_os_str(),
     )?;
     command
-        .env("SHADOW_APP_TITLE", app.window_title)
-        .env("SHADOW_APP_WAYLAND_APP_ID", app.wayland_app_id)
-        .env("SHADOW_APP_WAYLAND_INSTANCE_NAME", app.id.as_str())
-        .env("SHADOW_APP_LIFECYCLE_STATE", "foreground")
         .env(
             control::APP_PLATFORM_CONTROL_ENV,
             control::platform_control_socket_path(
@@ -65,6 +62,7 @@ pub fn launch_app(state: &mut ShadowGuestCompositor, app_id: AppId) -> io::Resul
                 app_id,
             ),
         );
+    apply_app_window_env(&mut command, app);
     if let Some(runtime_bundle_path) = runtime_bundle_path {
         command.env("SHADOW_RUNTIME_APP_BUNDLE_PATH", runtime_bundle_path);
     }
@@ -88,6 +86,34 @@ fn apply_software_keyboard_policy(command: &mut Command, enabled: bool) {
         "SHADOW_BLITZ_SOFTWARE_KEYBOARD",
         if enabled { "1" } else { "0" },
     );
+}
+
+fn apply_app_window_env(command: &mut Command, app: AppLaunchSpec) {
+    command
+        .env("SHADOW_APP_TITLE", app.window_title)
+        .env("SHADOW_APP_WAYLAND_APP_ID", app.wayland_app_id)
+        .env("SHADOW_APP_WAYLAND_INSTANCE_NAME", app.id.as_str())
+        .env(
+            "SHADOW_APP_SURFACE_WIDTH",
+            runtime_surface_width().to_string(),
+        )
+        .env(
+            "SHADOW_APP_SURFACE_HEIGHT",
+            runtime_surface_height().to_string(),
+        )
+        .env("SHADOW_APP_SAFE_AREA_LEFT", "0")
+        .env("SHADOW_APP_SAFE_AREA_TOP", "0")
+        .env("SHADOW_APP_SAFE_AREA_RIGHT", "0")
+        .env("SHADOW_APP_SAFE_AREA_BOTTOM", "0")
+        .env("SHADOW_APP_LIFECYCLE_STATE", "foreground");
+}
+
+fn runtime_surface_width() -> u32 {
+    APP_VIEWPORT_WIDTH_PX
+}
+
+fn runtime_surface_height() -> u32 {
+    APP_VIEWPORT_HEIGHT_PX
 }
 
 fn configure_guest_client_command(
@@ -117,9 +143,16 @@ fn configure_guest_client_command(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_software_keyboard_policy, configure_guest_client_command};
+    use super::{
+        apply_app_window_env, apply_software_keyboard_policy, configure_guest_client_command,
+        runtime_surface_height, runtime_surface_width,
+    };
     use crate::config::GuestClientConfig;
-    use shadow_ui_core::control;
+    use shadow_ui_core::{
+        app::{AppId, AppLaunchModel, AppLaunchSpec},
+        control,
+        scene::{APP_VIEWPORT_HEIGHT_PX, APP_VIEWPORT_WIDTH_PX},
+    };
     use std::{
         ffi::{OsStr, OsString},
         path::PathBuf,
@@ -199,5 +232,51 @@ mod tests {
             env_value(&command, "SHADOW_BLITZ_SOFTWARE_KEYBOARD"),
             Some(OsString::from("0"))
         );
+    }
+
+    #[test]
+    fn apply_app_window_env_seeds_runtime_window_metrics() {
+        let mut command = Command::new("env");
+        let app = AppLaunchSpec {
+            id: AppId::new("counter"),
+            binary_name: "shadow-blitz-demo",
+            wayland_app_id: "dev.shadow.counter",
+            window_title: "Shadow Counter",
+            model: AppLaunchModel::Rust,
+            launch_env: &[],
+        };
+
+        apply_app_window_env(&mut command, app);
+
+        assert_eq!(
+            env_value(&command, "SHADOW_APP_TITLE"),
+            Some(OsString::from("Shadow Counter"))
+        );
+        assert_eq!(
+            env_value(&command, "SHADOW_APP_WAYLAND_APP_ID"),
+            Some(OsString::from("dev.shadow.counter"))
+        );
+        assert_eq!(
+            env_value(&command, "SHADOW_APP_SURFACE_WIDTH"),
+            Some(OsString::from(APP_VIEWPORT_WIDTH_PX.to_string()))
+        );
+        assert_eq!(
+            env_value(&command, "SHADOW_APP_SURFACE_HEIGHT"),
+            Some(OsString::from(APP_VIEWPORT_HEIGHT_PX.to_string()))
+        );
+        assert_eq!(
+            env_value(&command, "SHADOW_APP_SAFE_AREA_TOP"),
+            Some(OsString::from("0"))
+        );
+        assert_eq!(
+            env_value(&command, "SHADOW_APP_LIFECYCLE_STATE"),
+            Some(OsString::from("foreground"))
+        );
+    }
+
+    #[test]
+    fn runtime_surface_dimensions_match_shell_viewport() {
+        assert_eq!(runtime_surface_width(), APP_VIEWPORT_WIDTH_PX);
+        assert_eq!(runtime_surface_height(), APP_VIEWPORT_HEIGHT_PX);
     }
 }

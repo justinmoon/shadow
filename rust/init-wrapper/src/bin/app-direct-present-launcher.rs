@@ -16,6 +16,9 @@ const DEFAULT_HOME: &str = "/orange-gpu/app-direct-present/home";
 const DEFAULT_CACHE_HOME: &str = "/orange-gpu/app-direct-present/home/.cache";
 const DEFAULT_CONFIG_HOME: &str = "/orange-gpu/app-direct-present/home/.config";
 const CAMERA_ALLOW_MOCK_ENV: &str = "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK";
+const APP_BINARY_PATH_ENV: &str = "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH";
+const LOADER_PATH_ENV: &str = "SHADOW_APP_DIRECT_PRESENT_LOADER_PATH";
+const LIBRARY_PATH_ENV: &str = "SHADOW_APP_DIRECT_PRESENT_LIBRARY_PATH";
 
 fn main() {
     if let Err(error) = exec_app() {
@@ -28,7 +31,10 @@ fn exec_app() -> io::Result<()> {
     let home = env_or_default("HOME", DEFAULT_HOME);
     let cache_home = env_or_default("XDG_CACHE_HOME", DEFAULT_CACHE_HOME);
     let config_home = env_or_default("XDG_CONFIG_HOME", DEFAULT_CONFIG_HOME);
-    let library_env = prepend_env_path("LD_LIBRARY_PATH", LIBRARY_PATH);
+    let loader_path = env_or_default(LOADER_PATH_ENV, LOADER_PATH);
+    let library_path = env_or_default(LIBRARY_PATH_ENV, LIBRARY_PATH);
+    let app_binary_path = env_or_default(APP_BINARY_PATH_ENV, APP_BINARY_PATH);
+    let library_env = prepend_env_path("LD_LIBRARY_PATH", &library_path.to_string_lossy());
 
     fs::create_dir_all(Path::new(&home))?;
     fs::create_dir_all(Path::new(&cache_home))?;
@@ -36,14 +42,16 @@ fn exec_app() -> io::Result<()> {
 
     eprintln!("[shadow-app-direct-present-launcher] {ROLE_SENTINEL} bundle_root={BUNDLE_ROOT}");
     eprintln!(
-        "[shadow-app-direct-present-launcher] exec loader={LOADER_PATH} app={APP_BINARY_PATH}"
+        "[shadow-app-direct-present-launcher] exec loader={} app={}",
+        loader_path.to_string_lossy(),
+        app_binary_path.to_string_lossy(),
     );
 
-    let mut command = Command::new(LOADER_PATH);
+    let mut command = Command::new(loader_path);
     command
         .arg("--library-path")
-        .arg(LIBRARY_PATH)
-        .arg(APP_BINARY_PATH)
+        .arg(&library_path)
+        .arg(app_binary_path)
         .args(env::args_os().skip(1))
         .env("HOME", home)
         .env("XDG_CACHE_HOME", cache_home)

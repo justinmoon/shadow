@@ -2394,6 +2394,10 @@
           vm-smoke-inputs = mkVmSmokeInputsFor pkgs;
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          shadow-blitz-demo-aarch64-linux-gnu-cpu =
+            mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform {
+              features = [ "cpu" ];
+            };
           shadow-blitz-demo-aarch64-linux-gnu-gpu =
             mkShadowBlitzDemoFor pkgs.pkgsCross.aarch64-multiplatform {
               features = [ "gpu" ];

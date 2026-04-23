@@ -64,7 +64,8 @@ COMPOSITOR_SCENE_RUNTIME_DIR="/shadow-runtime"
 APP_DIRECT_PRESENT_STARTUP_CONFIG_NAME="app-direct-present-startup.json"
 APP_DIRECT_PRESENT_STARTUP_CONFIG_PATH="/orange-gpu/app-direct-present-startup.json"
 APP_DIRECT_PRESENT_RUNTIME_DIR="/shadow-runtime"
-APP_DIRECT_PRESENT_APP_ID="rust-demo"
+APP_DIRECT_PRESENT_APP_ID="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_APP_ID:-rust-demo}"
+APP_DIRECT_PRESENT_CLIENT_KIND=""
 APP_DIRECT_PRESENT_BUNDLE_DIR_NAME="app-direct-present"
 APP_DIRECT_PRESENT_BUNDLE_ROOT_PATH="/orange-gpu/app-direct-present"
 APP_DIRECT_PRESENT_BINARY_NAME="shadow-rust-demo"
@@ -72,6 +73,18 @@ APP_DIRECT_PRESENT_BINARY_PATH="/orange-gpu/app-direct-present/shadow-rust-demo"
 APP_DIRECT_PRESENT_CLIENT_LAUNCHER_NAME="run-shadow-rust-demo"
 APP_DIRECT_PRESENT_CLIENT_PATH="/orange-gpu/app-direct-present/run-shadow-rust-demo"
 APP_DIRECT_PRESENT_STAGE_LOADER_PATH="/orange-gpu/app-direct-present/lib/ld-linux-aarch64.so.1"
+APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH="/orange-gpu/app-direct-present/lib"
+APP_DIRECT_PRESENT_SYSTEM_BINARY_NAME=""
+APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH=""
+APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV=""
+APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME=""
+APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH=""
+APP_DIRECT_PRESENT_TS_INPUT_PATH=""
+APP_DIRECT_PRESENT_TS_CACHE_DIR=""
+APP_DIRECT_PRESENT_TS_RENDERER="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_TS_RENDERER:-gpu}"
+ORANGE_GPU_BUNDLE_ARCHIVE_NAME="orange-gpu.tar.xz"
+ORANGE_GPU_BUNDLE_ARCHIVE_PATH="/orange-gpu.tar.xz"
+STAGED_GPU_BUNDLE_ARCHIVE=""
 METADATA_SUFFIX=".hello-init.json"
 DEFAULT_RUST_CHILD_ENTRY="hello-init-child"
 
@@ -232,6 +245,78 @@ default_gpu_bundle_dir() {
 
 default_app_direct_present_client_launcher_binary() {
   printf '%s\n' "${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_DEFAULT_BIN:-$(pixel_artifact_path app-direct-present-launcher)}"
+}
+
+resolve_app_direct_present_metadata() {
+  local app_metadata
+
+  if [[ "$APP_DIRECT_PRESENT_APP_ID" == "rust-demo" ]]; then
+    APP_DIRECT_PRESENT_CLIENT_KIND="rust"
+    APP_DIRECT_PRESENT_BINARY_NAME="shadow-rust-demo"
+    APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV=""
+    APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME=""
+    APP_DIRECT_PRESENT_TS_INPUT_PATH=""
+  else
+    app_metadata="$(
+      python3 - "$(repo_root)/runtime/apps.json" "$APP_DIRECT_PRESENT_APP_ID" <<'PY'
+import json
+import sys
+
+manifest_path, requested_app_id = sys.argv[1:3]
+with open(manifest_path, "r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+for app in manifest.get("apps", []):
+    if app.get("id") != requested_app_id:
+        continue
+    if app.get("model") != "typescript":
+        raise SystemExit(f"unsupported app-direct-present app model for {requested_app_id}: {app.get('model')}")
+    runtime = app.get("runtime") or {}
+    print(app.get("binaryName", ""))
+    print(runtime.get("bundleEnv", ""))
+    print(runtime.get("bundleFilename", ""))
+    print(runtime.get("inputPath", ""))
+    raise SystemExit(0)
+
+raise SystemExit(f"unknown app-direct-present app id: {requested_app_id}")
+PY
+    )"
+    APP_DIRECT_PRESENT_CLIENT_KIND="typescript"
+    APP_DIRECT_PRESENT_BINARY_NAME="$(sed -n '1p' <<<"$app_metadata")"
+    APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV="$(sed -n '2p' <<<"$app_metadata")"
+    APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME="$(sed -n '3p' <<<"$app_metadata")"
+    APP_DIRECT_PRESENT_TS_INPUT_PATH="$(sed -n '4p' <<<"$app_metadata")"
+  fi
+
+  [[ -n "$APP_DIRECT_PRESENT_BINARY_NAME" ]] || {
+    echo "pixel_boot_build_orange_gpu: missing app-direct-present binary name for $APP_DIRECT_PRESENT_APP_ID" >&2
+    exit 1
+  }
+
+  APP_DIRECT_PRESENT_BINARY_PATH="$APP_DIRECT_PRESENT_BUNDLE_ROOT_PATH/$APP_DIRECT_PRESENT_BINARY_NAME"
+  APP_DIRECT_PRESENT_CLIENT_LAUNCHER_NAME="run-$APP_DIRECT_PRESENT_BINARY_NAME"
+  APP_DIRECT_PRESENT_CLIENT_PATH="$APP_DIRECT_PRESENT_BUNDLE_ROOT_PATH/$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_NAME"
+
+  if [[ "$APP_DIRECT_PRESENT_CLIENT_KIND" == "typescript" ]]; then
+    case "$APP_DIRECT_PRESENT_TS_RENDERER" in
+      cpu|gpu)
+        ;;
+      *)
+        echo "pixel_boot_build_orange_gpu: unsupported app-direct-present TypeScript renderer: $APP_DIRECT_PRESENT_TS_RENDERER" >&2
+        exit 1
+        ;;
+    esac
+    [[ -n "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" && -n "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME" && -n "$APP_DIRECT_PRESENT_TS_INPUT_PATH" ]] || {
+      echo "pixel_boot_build_orange_gpu: incomplete TypeScript app metadata for $APP_DIRECT_PRESENT_APP_ID" >&2
+      exit 1
+    }
+    APP_DIRECT_PRESENT_SYSTEM_BINARY_NAME="shadow-system"
+    APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH="$APP_DIRECT_PRESENT_BUNDLE_ROOT_PATH/$APP_DIRECT_PRESENT_SYSTEM_BINARY_NAME"
+    APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH="$APP_DIRECT_PRESENT_BUNDLE_ROOT_PATH/$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME"
+    APP_DIRECT_PRESENT_TS_CACHE_DIR="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_TS_CACHE_DIR:-build/runtime/boot-app-direct-present-$APP_DIRECT_PRESENT_APP_ID}"
+    APP_DIRECT_PRESENT_STAGE_LOADER_PATH="$PAYLOAD_IMAGE_PATH/lib/ld-linux-aarch64.so.1"
+    APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH="$PAYLOAD_IMAGE_PATH/lib"
+  fi
 }
 
 hello_init_metadata_path() {
@@ -852,6 +937,16 @@ EOF
   if [[ "$FIRMWARE_BOOTSTRAP" != "none" ]]; then
     printf 'firmware_bootstrap=%s\n' "$FIRMWARE_BOOTSTRAP" >>"$output_path"
   fi
+  if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
+    printf 'orange_gpu_bundle_archive_path=%s\n' "$ORANGE_GPU_BUNDLE_ARCHIVE_PATH" >>"$output_path"
+  fi
+  if [[ "$ORANGE_GPU_MODE" == "app-direct-present" ]]; then
+    printf 'app_direct_present_app_id=%s\n' "$APP_DIRECT_PRESENT_APP_ID" >>"$output_path"
+    if [[ -n "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" ]]; then
+      printf 'app_direct_present_runtime_bundle_env=%s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" >>"$output_path"
+      printf 'app_direct_present_runtime_bundle_path=%s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH" >>"$output_path"
+    fi
+  fi
   printf 'dri_bootstrap=%s\n' "$DRI_BOOTSTRAP" >>"$output_path"
 }
 
@@ -915,6 +1010,11 @@ render_app_direct_present_startup_config() {
     "$APP_DIRECT_PRESENT_RUNTIME_DIR" \
     "$APP_DIRECT_PRESENT_CLIENT_PATH" \
     "$APP_DIRECT_PRESENT_APP_ID" \
+    "$APP_DIRECT_PRESENT_CLIENT_KIND" \
+    "$APP_DIRECT_PRESENT_BINARY_PATH" \
+    "$APP_DIRECT_PRESENT_STAGE_LOADER_PATH" \
+    "$APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH" \
+    "$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH" \
     "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" <<'PY'
 import json
 import sys
@@ -925,19 +1025,56 @@ from pathlib import Path
     runtime_dir,
     client_path,
     app_id,
+    client_kind,
+    app_binary_path,
+    stage_loader_path,
+    stage_library_path,
+    system_binary_path,
     frame_artifact_path,
-) = sys.argv[1:6]
+) = sys.argv[1:11]
+env_assignments = []
+if client_kind == "rust":
+    env_assignments.append({"key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "value": "1"})
+elif client_kind == "typescript":
+    env_assignments.extend(
+        [
+            {
+                "key": "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH",
+                "value": app_binary_path,
+            },
+            {
+                "key": "SHADOW_APP_DIRECT_PRESENT_LOADER_PATH",
+                "value": stage_loader_path,
+            },
+            {
+                "key": "SHADOW_APP_DIRECT_PRESENT_LIBRARY_PATH",
+                "value": stage_library_path,
+            },
+            {
+                "key": "SHADOW_SYSTEM_STAGE_LOADER_PATH",
+                "value": stage_loader_path,
+            },
+            {
+                "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",
+                "value": stage_library_path,
+            },
+        ]
+    )
+else:
+    raise SystemExit(f"unsupported app-direct-present client kind: {client_kind}")
+client = {
+    "appClientPath": client_path,
+    "runtimeDir": runtime_dir,
+}
+if system_binary_path:
+    client["systemBinaryPath"] = system_binary_path
+if env_assignments:
+    client["envAssignments"] = env_assignments
+client["lingerMs"] = 500
 payload = {
     "schemaVersion": 1,
     "startup": {"mode": "app", "startAppId": app_id},
-    "client": {
-        "appClientPath": client_path,
-        "runtimeDir": runtime_dir,
-        "envAssignments": [
-            {"key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "value": "1"},
-        ],
-        "lingerMs": 500,
-    },
+    "client": client,
     "compositor": {
         "transport": "direct",
         "enableDrm": True,
@@ -973,24 +1110,149 @@ stage_app_direct_present_runtime_libs() {
   fill_linux_bundle_runtime_deps "$output_dir"
 }
 
+stage_app_direct_present_rust_bundle() {
+  local output_dir app_package_ref app_out_link
+  output_dir="${1:?stage_app_direct_present_rust_bundle requires an output dir}"
+
+  app_package_ref="$(repo_root)#packages.${PIXEL_GUEST_BUILD_SYSTEM:-aarch64-linux}.shadow-rust-demo"
+  app_out_link="$(pixel_dir)/shadow-rust-demo-aarch64-linux-result"
+  stage_system_linux_bundle \
+    "$app_package_ref" \
+    "$app_out_link" \
+    "$output_dir" \
+    "$APP_DIRECT_PRESENT_BINARY_NAME"
+  stage_app_direct_present_runtime_libs "$app_out_link" "$output_dir"
+}
+
+strip_staged_elf_files() {
+  local bundle_dir path
+  bundle_dir="${1:?strip_staged_elf_files requires a bundle dir}"
+
+  command -v llvm-strip >/dev/null 2>&1 || return 0
+  while IFS= read -r path; do
+    [[ -f "$path" ]] || continue
+    is_elf_file "$path" || continue
+    chmod u+w "$path" 2>/dev/null || true
+    llvm-strip "$path" 2>/dev/null || true
+  done < <(find "$bundle_dir" -type f -print)
+}
+
+strip_app_direct_present_elf_files() {
+  strip_staged_elf_files "${1:?strip_app_direct_present_elf_files requires a bundle dir}"
+}
+
+merge_app_direct_present_typescript_runtime_libs() {
+  local bundle_dir app_lib_dir root_lib_dir
+  bundle_dir="${1:?merge_app_direct_present_typescript_runtime_libs requires a bundle dir}"
+
+  [[ "$APP_DIRECT_PRESENT_CLIENT_KIND" == "typescript" ]] || return 0
+
+  app_lib_dir="$bundle_dir/$APP_DIRECT_PRESENT_BUNDLE_DIR_NAME/lib"
+  root_lib_dir="$bundle_dir/lib"
+  if [[ ! -d "$app_lib_dir" ]] || [[ -z "$(find "$app_lib_dir" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+    echo "pixel_boot_build_orange_gpu: app-direct-present TypeScript library dir missing from staged bundle" >&2
+    exit 1
+  fi
+
+  mkdir -p "$root_lib_dir"
+  chmod -R u+w "$root_lib_dir" 2>/dev/null || true
+  cp -R "$app_lib_dir"/. "$root_lib_dir"/
+  chmod -R u+w "$app_lib_dir" 2>/dev/null || true
+  rm -rf "$app_lib_dir"
+}
+
+prune_app_direct_present_diagnostic_payloads() {
+  local bundle_dir
+  bundle_dir="${1:?prune_app_direct_present_diagnostic_payloads requires a bundle dir}"
+
+  rm -f "$bundle_dir/shadow-gpu-smoke"
+}
+
+archive_app_direct_present_gpu_bundle() {
+  local bundle_dir archive_path
+  bundle_dir="${1:?archive_app_direct_present_gpu_bundle requires a bundle dir}"
+  archive_path="${2:?archive_app_direct_present_gpu_bundle requires an archive path}"
+
+  mkdir -p "$(dirname "$archive_path")"
+  tar -C "$bundle_dir" -cf - . | xz -9 -e -c >"$archive_path"
+  chmod 0644 "$archive_path"
+}
+
+stage_app_direct_present_typescript_bundle() {
+  local output_dir bundle_json bundle_source_path
+  local blitz_package_ref blitz_out_link blitz_stage_dir
+  local system_package_ref system_out_link system_stage_dir
+  output_dir="${1:?stage_app_direct_present_typescript_bundle requires an output dir}"
+
+  bundle_json="$(
+    "$SCRIPT_DIR/runtime_build_artifacts.sh" \
+      --profile single \
+      --app-id app \
+      --input "$APP_DIRECT_PRESENT_TS_INPUT_PATH" \
+      --cache-dir "$APP_DIRECT_PRESENT_TS_CACHE_DIR"
+  )"
+  printf '%s\n' "$bundle_json"
+  bundle_source_path="$(
+    printf '%s\n' "$bundle_json" | python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+print(data["apps"]["app"]["effectiveBundlePath"])
+'
+  )"
+  [[ -f "$bundle_source_path" ]] || {
+    echo "pixel_boot_build_orange_gpu: TypeScript runtime bundle source not found: $bundle_source_path" >&2
+    exit 1
+  }
+
+  blitz_package_ref="$(repo_root)#packages.${PIXEL_GUEST_BUILD_SYSTEM:-aarch64-linux}.shadow-blitz-demo-aarch64-linux-gnu-$APP_DIRECT_PRESENT_TS_RENDERER"
+  blitz_out_link="$(pixel_dir)/shadow-blitz-demo-aarch64-linux-gnu-$APP_DIRECT_PRESENT_TS_RENDERER-result"
+  blitz_stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/shadow-app-direct-present-blitz.XXXXXX")"
+  system_package_ref="$(repo_root)#packages.${PIXEL_GUEST_BUILD_SYSTEM:-aarch64-linux}.shadow-system"
+  system_out_link="$(pixel_dir)/shadow-system-aarch64-linux-gnu-result"
+  system_stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/shadow-app-direct-present-system.XXXXXX")"
+
+  stage_system_linux_bundle \
+    "$blitz_package_ref" \
+    "$blitz_out_link" \
+    "$blitz_stage_dir" \
+    "$APP_DIRECT_PRESENT_BINARY_NAME"
+  stage_app_direct_present_runtime_libs "$blitz_out_link" "$blitz_stage_dir"
+
+  stage_system_linux_bundle \
+    "$system_package_ref" \
+    "$system_out_link" \
+    "$system_stage_dir" \
+    "$APP_DIRECT_PRESENT_SYSTEM_BINARY_NAME"
+
+  rm -rf "$output_dir"
+  mkdir -p "$output_dir"
+  cp -R "$blitz_stage_dir"/. "$output_dir"/
+  chmod -R u+w "$output_dir" 2>/dev/null || true
+  cp "$system_stage_dir/$APP_DIRECT_PRESENT_SYSTEM_BINARY_NAME" "$output_dir/$APP_DIRECT_PRESENT_SYSTEM_BINARY_NAME"
+  mkdir -p "$output_dir/lib" "$output_dir/etc"
+  cp -R "$system_stage_dir/lib"/. "$output_dir/lib"/
+  cp -R "$system_stage_dir/etc"/. "$output_dir/etc"/
+  cp "$bundle_source_path" "$output_dir/$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME"
+  chmod 0644 "$output_dir/$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME"
+  strip_app_direct_present_elf_files "$output_dir"
+  rm -rf "$blitz_stage_dir" "$system_stage_dir"
+}
+
 stage_app_direct_present_client_bundle() {
   local output_dir
   local client_bundle_dir
-  local app_package_ref
-  local app_out_link
 
   output_dir="${1:?stage_app_direct_present_client_bundle requires an output dir}"
   client_bundle_dir="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_BUNDLE_DIR:-}"
 
   if [[ -z "$client_bundle_dir" ]]; then
-    app_package_ref="$(repo_root)#packages.${PIXEL_GUEST_BUILD_SYSTEM:-aarch64-linux}.shadow-rust-demo"
-    app_out_link="$(pixel_dir)/shadow-rust-demo-aarch64-linux-result"
-    stage_system_linux_bundle \
-      "$app_package_ref" \
-      "$app_out_link" \
-      "$output_dir" \
-      "$APP_DIRECT_PRESENT_BINARY_NAME"
-    stage_app_direct_present_runtime_libs "$app_out_link" "$output_dir"
+    if [[ "$APP_DIRECT_PRESENT_CLIENT_KIND" == "typescript" ]]; then
+      stage_app_direct_present_typescript_bundle "$output_dir"
+    else
+      stage_app_direct_present_rust_bundle "$output_dir"
+    fi
     client_bundle_dir="$output_dir"
   fi
 
@@ -1028,13 +1290,25 @@ stage_app_direct_present_client_bundle() {
     echo "pixel_boot_build_orange_gpu: app-direct-present client binary missing from staged bundle" >&2
     exit 1
   }
-  [[ -f "$output_dir/lib/$(basename "$APP_DIRECT_PRESENT_STAGE_LOADER_PATH")" ]] || {
-    echo "pixel_boot_build_orange_gpu: app-direct-present stage loader missing from staged bundle" >&2
-    exit 1
-  }
-  if [[ ! -d "$output_dir/lib" ]] || [[ -z "$(find "$output_dir/lib" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
-    echo "pixel_boot_build_orange_gpu: app-direct-present library dir missing from staged bundle" >&2
-    exit 1
+  if [[ "$APP_DIRECT_PRESENT_CLIENT_KIND" == "typescript" ]]; then
+    [[ -f "$output_dir/$APP_DIRECT_PRESENT_SYSTEM_BINARY_NAME" ]] || {
+      echo "pixel_boot_build_orange_gpu: app-direct-present TypeScript system binary missing from staged bundle" >&2
+      exit 1
+    }
+    [[ -f "$output_dir/$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME" ]] || {
+      echo "pixel_boot_build_orange_gpu: app-direct-present TypeScript runtime bundle missing from staged bundle" >&2
+      exit 1
+    }
+  fi
+  if [[ "$APP_DIRECT_PRESENT_STAGE_LOADER_PATH" == "$APP_DIRECT_PRESENT_BUNDLE_ROOT_PATH/"* ]]; then
+    [[ -f "$output_dir/lib/$(basename "$APP_DIRECT_PRESENT_STAGE_LOADER_PATH")" ]] || {
+      echo "pixel_boot_build_orange_gpu: app-direct-present stage loader missing from staged bundle" >&2
+      exit 1
+    }
+    if [[ ! -d "$output_dir/lib" ]] || [[ -z "$(find "$output_dir/lib" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+      echo "pixel_boot_build_orange_gpu: app-direct-present library dir missing from staged bundle" >&2
+      exit 1
+    fi
   fi
 }
 
@@ -1114,7 +1388,14 @@ write_metadata() {
     "$(metadata_probe_report_path_for_token "$RUN_TOKEN")" \
     "$(metadata_probe_timeout_class_path_for_token "$RUN_TOKEN")" \
     "$(metadata_probe_summary_path_for_token "$RUN_TOKEN")" \
-    "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" <<'PY'
+    "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" \
+    "$ORANGE_GPU_BUNDLE_ARCHIVE_PATH" \
+    "$STAGED_GPU_BUNDLE_ARCHIVE" \
+    "$APP_DIRECT_PRESENT_APP_ID" \
+    "$APP_DIRECT_PRESENT_CLIENT_KIND" \
+    "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" \
+    "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH" \
+    "$APP_DIRECT_PRESENT_TS_RENDERER" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1160,6 +1441,13 @@ from pathlib import Path
     metadata_probe_timeout_class_path,
     metadata_probe_summary_path,
     metadata_compositor_frame_path,
+    orange_gpu_bundle_archive_path,
+    staged_gpu_bundle_archive,
+    app_direct_present_app_id,
+    app_direct_present_client_kind,
+    app_direct_present_runtime_bundle_env,
+    app_direct_present_runtime_bundle_path,
+    app_direct_present_typescript_renderer,
 ) = sys.argv[1:]
 
 
@@ -1180,6 +1468,9 @@ payload_json = {
     "orange_gpu_timeout_action": orange_gpu_timeout_action,
     "orange_gpu_watchdog_timeout_secs": int(orange_gpu_watchdog_timeout_secs),
     "gpu_bundle_dir": bundle_dir,
+    "gpu_bundle_archive_path": (
+        orange_gpu_bundle_archive_path if staged_gpu_bundle_archive else ""
+    ),
     "hold_seconds": int(hold_seconds),
     "prelude": prelude,
     "prelude_hold_seconds": int(prelude_hold_seconds),
@@ -1240,6 +1531,15 @@ payload_json = {
         else ""
     ),
 }
+if orange_gpu_mode == "app-direct-present":
+    payload_json["app_direct_present_app_id"] = app_direct_present_app_id
+    payload_json["app_direct_present_client_kind"] = app_direct_present_client_kind
+    payload_json["app_direct_present_runtime_bundle_env"] = app_direct_present_runtime_bundle_env
+    payload_json["app_direct_present_runtime_bundle_path"] = app_direct_present_runtime_bundle_path
+    if app_direct_present_client_kind == "typescript":
+        payload_json["app_direct_present_typescript_renderer"] = (
+            app_direct_present_typescript_renderer
+        )
 
 Path(metadata_path).write_text(
     json.dumps(payload_json, indent=2, sort_keys=True) + "\n",
@@ -1519,6 +1819,10 @@ fi
 assert_safe_word reboot-target "$REBOOT_TARGET" 31
 assert_prelude_word "$PRELUDE"
 assert_orange_gpu_mode_word "$ORANGE_GPU_MODE"
+if [[ "$ORANGE_GPU_MODE" == "app-direct-present" ]]; then
+  assert_safe_word app-direct-present-app-id "$APP_DIRECT_PRESENT_APP_ID" 64
+  resolve_app_direct_present_metadata
+fi
 if [[ "$PRELUDE" == "none" && "$PRELUDE_HOLD_SECS" != "0" ]]; then
   echo "pixel_boot_build_orange_gpu: prelude hold seconds must be 0 when prelude is none" >&2
   exit 1
@@ -1723,12 +2027,20 @@ if [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
 elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" ]]; then
   APP_DIRECT_PRESENT_STARTUP_CONFIG="$WORK_DIR/$APP_DIRECT_PRESENT_STARTUP_CONFIG_NAME"
   stage_app_direct_present_client_bundle "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_BUNDLE_DIR_NAME"
+  merge_app_direct_present_typescript_runtime_libs "$STAGED_GPU_BUNDLE_DIR"
+  prune_app_direct_present_diagnostic_payloads "$STAGED_GPU_BUNDLE_DIR"
   render_app_direct_present_startup_config "$APP_DIRECT_PRESENT_STARTUP_CONFIG"
   cp "$SHADOW_SESSION_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-session"
   chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-session"
   cp "$SHADOW_COMPOSITOR_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
   chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
   cp "$APP_DIRECT_PRESENT_STARTUP_CONFIG" "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_STARTUP_CONFIG_NAME"
+fi
+
+strip_staged_elf_files "$STAGED_GPU_BUNDLE_DIR"
+if [[ "$ORANGE_GPU_MODE" == "app-direct-present" ]]; then
+  STAGED_GPU_BUNDLE_ARCHIVE="$WORK_DIR/$ORANGE_GPU_BUNDLE_ARCHIVE_NAME"
+  archive_app_direct_present_gpu_bundle "$STAGED_GPU_BUNDLE_DIR" "$STAGED_GPU_BUNDLE_ARCHIVE"
 fi
 
 STAGED_GPU_FIRMWARE_DIR=""
@@ -1769,7 +2081,11 @@ if [[ "$PRELUDE" == "orange-init" ]]; then
   build_args+=(--add "orange-init=$ORANGE_INIT_BINARY")
 fi
 
-append_tree_add_specs "$STAGED_GPU_BUNDLE_DIR" "$PAYLOAD_ROOT" build_args
+if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
+  build_args+=(--add "$ORANGE_GPU_BUNDLE_ARCHIVE_NAME=$STAGED_GPU_BUNDLE_ARCHIVE")
+else
+  append_tree_add_specs "$STAGED_GPU_BUNDLE_DIR" "$PAYLOAD_ROOT" build_args
+fi
 if [[ "$FIRMWARE_BOOTSTRAP" == "ramdisk-lib-firmware" ]]; then
   build_args+=(--add "lib=$STAGED_GPU_FIRMWARE_PARENT_DIR")
   append_tree_add_specs "$STAGED_GPU_FIRMWARE_DIR" "lib/firmware" build_args
@@ -1810,7 +2126,7 @@ elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-pid1-smoke" ]]; then
 elif [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
   printf 'Payload contract: hello-init launches /orange-gpu/shadow-session in shell-only compositor mode and requires a durable captured frame under %s\n' "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")"
 elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" ]]; then
-  printf 'Payload contract: hello-init launches /orange-gpu/shadow-session in app-only direct-present mode for rust-demo and requires a durable captured frame under %s\n' "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")"
+  printf 'Payload contract: hello-init launches /orange-gpu/shadow-session in app-only direct-present mode for %s and requires a durable captured frame under %s\n' "$APP_DIRECT_PRESENT_APP_ID" "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")"
 elif [[ "$ORANGE_GPU_MODE" == "raw-kgsl-open-readonly-smoke" ]]; then
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle in strict raw KGSL read-only open mode from %s\n' "$PAYLOAD_IMAGE_PATH"
 elif [[ "$ORANGE_GPU_MODE" == "raw-kgsl-getproperties-smoke" ]]; then
@@ -1841,6 +2157,10 @@ fi
 printf 'Payload root: %s\n' "$PAYLOAD_IMAGE_PATH"
 printf 'GPU bundle dir: %s\n' "$GPU_BUNDLE_DIR"
 printf 'GPU bundle staged dir: %s\n' "$STAGED_GPU_BUNDLE_DIR"
+if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
+  printf 'GPU bundle archive path: %s\n' "$ORANGE_GPU_BUNDLE_ARCHIVE_PATH"
+  printf 'GPU bundle staged archive: %s\n' "$STAGED_GPU_BUNDLE_ARCHIVE"
+fi
 printf 'Hello-init mode: %s\n' "$HELLO_INIT_MODE"
 if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   printf 'Rust shim path: /system/bin/init\n'
@@ -1850,7 +2170,9 @@ if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   printf 'Rust child path: /%s\n' "$HELLO_INIT_RUST_CHILD_ENTRY"
   printf 'Rust child binary: %s\n' "$HELLO_INIT_BINARY"
 fi
-printf 'GPU exec path: %s/shadow-gpu-smoke\n' "$PAYLOAD_IMAGE_PATH"
+if [[ "$ORANGE_GPU_MODE" != "app-direct-present" ]]; then
+  printf 'GPU exec path: %s/shadow-gpu-smoke\n' "$PAYLOAD_IMAGE_PATH"
+fi
 printf 'GPU loader path: %s/lib/ld-linux-aarch64.so.1\n' "$PAYLOAD_IMAGE_PATH"
 printf 'Orange GPU mode: %s\n' "$ORANGE_GPU_MODE"
 if [[ "$ORANGE_GPU_MODE" == "bundle-smoke" ]]; then
@@ -1896,7 +2218,7 @@ elif [[ "$ORANGE_GPU_MODE" == "vulkan-offscreen" ]]; then
 elif [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
   printf 'GPU proof: compositor-owned shell home frame captured durably through the Rust boot seam\n'
 elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" ]]; then
-  printf 'GPU proof: app-owned rust-demo surface imported and presented with no shell through the Rust boot seam\n'
+  printf 'GPU proof: app-owned %s surface imported and presented with no shell through the Rust boot seam\n' "$APP_DIRECT_PRESENT_APP_ID"
 else
   printf 'GPU scene: %s\n' "$(gpu_scene_value)"
 fi
@@ -1959,8 +2281,16 @@ elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" ]]; then
   printf 'Compositor session path: %s\n' "$COMPOSITOR_SCENE_SESSION_PATH"
   printf 'Compositor binary path: %s\n' "$COMPOSITOR_SCENE_COMPOSITOR_PATH"
   printf 'Compositor startup config path: %s\n' "$APP_DIRECT_PRESENT_STARTUP_CONFIG_PATH"
+  printf 'App direct present id: %s\n' "$APP_DIRECT_PRESENT_APP_ID"
+  printf 'App direct present client kind: %s\n' "$APP_DIRECT_PRESENT_CLIENT_KIND"
   printf 'App client path: %s\n' "$APP_DIRECT_PRESENT_CLIENT_PATH"
   printf 'App binary path: %s\n' "$APP_DIRECT_PRESENT_BINARY_PATH"
+  if [[ "$APP_DIRECT_PRESENT_CLIENT_KIND" == "typescript" ]]; then
+    printf 'App TypeScript renderer: %s\n' "$APP_DIRECT_PRESENT_TS_RENDERER"
+    printf 'App runtime bundle env: %s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV"
+    printf 'App runtime bundle path: %s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH"
+    printf 'App system binary path: %s\n' "$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH"
+  fi
 fi
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
   printf 'Kept orange-gpu workdir: %s\n' "$WORK_DIR"

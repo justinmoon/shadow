@@ -340,11 +340,12 @@ EOF
 EOF
         exit 0
       elif [[ "$TRACE_MODE" == "app-direct-present-success" ]]; then
+        trace_app_id="${MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID:-rust-demo}"
         cat <<EOF
 {
   "kind": "app-direct-present",
   "startup_mode": "app",
-  "app_id": "rust-demo",
+  "app_id": "$trace_app_id",
   "frame_path": "/metadata/shadow-hello-init/by-token/$TRACE_RUN_TOKEN/compositor-frame.ppm",
   "frame_bytes": 20
 }
@@ -358,7 +359,11 @@ EOF
         printf 'P6\n2 1\n255\n\xff\x7a\x00\x00\x00\x00'
         exit 0
       elif [[ "$TRACE_MODE" == "app-direct-present-success" ]]; then
-        printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'
+        if [[ "${MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID:-rust-demo}" == "counter" ]]; then
+          printf 'P6\n3 1\n255\n\x0b\x16\x30\x10\x24\x3b\x2f\xb8\xff'
+        else
+          printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'
+        fi
         exit 0
       fi
       exit 3
@@ -461,11 +466,12 @@ PY
 }
 
 write_recover_context() {
-  local parent_dir image_path run_token orange_gpu_mode
+  local parent_dir image_path run_token orange_gpu_mode app_direct_present_app_id
   parent_dir="$1"
   image_path="$2"
   run_token="$3"
   orange_gpu_mode="${4:-gpu-render}"
+  app_direct_present_app_id="${5:-rust-demo}"
 
   mkdir -p "$parent_dir"
   cat >"$parent_dir/status.json" <<EOF
@@ -502,6 +508,7 @@ EOF
   "orange_gpu_firmware_helper": true,
   "log_kmsg": true,
   "log_pmsg": true,
+  "app_direct_present_app_id": "$app_direct_present_app_id",
   "orange_gpu_metadata_stage_breadcrumb": true,
   "metadata_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/stage.txt",
   "metadata_probe_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-stage.txt",
@@ -846,6 +853,26 @@ assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_f
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_height 1
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_pixel_bytes 9
 assert_json_field "$APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
+
+TS_APP_DIRECT_PRESENT_PARENT="$TMP_DIR/output-ts-app-direct-present"
+TS_APP_DIRECT_PRESENT_IMAGE="$TMP_DIR/output-ts-app-direct-present.img"
+TS_APP_DIRECT_PRESENT_OUTPUT="$TS_APP_DIRECT_PRESENT_PARENT/recover-traces"
+write_recover_context "$TS_APP_DIRECT_PRESENT_PARENT" "$TS_APP_DIRECT_PRESENT_IMAGE" "$RUN_TOKEN" app-direct-present counter
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=app-direct-present-success \
+  MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID=counter \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$TS_APP_DIRECT_PRESENT_OUTPUT" >/dev/null
+
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" probe_summary_proves_app_direct_present true
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" proof_ok true
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" expected_app_direct_present_app_id counter
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_probe_summary_app_id counter
+assert_json_field "$TS_APP_DIRECT_PRESENT_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
 
 ROOT_TIMEOUT_PARENT="$TMP_DIR/output-root-timeout"
 ROOT_TIMEOUT_IMAGE="$TMP_DIR/output-root-timeout.img"
