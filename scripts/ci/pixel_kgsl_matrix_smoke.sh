@@ -52,8 +52,12 @@ assert_json_field "$TMP_DIR/matrix/matrix-summary.json" "case_count" "3"
 assert_json_field "$TMP_DIR/matrix/matrix-summary.json" "success_count" "3"
 assert_json_field "$TMP_DIR/matrix/matrix-summary.json" "cases/0/dry_run" "true"
 assert_json_field "$TMP_DIR/matrix/matrix-summary.json" "cases/0/before_holder_scan/holder_count" "0"
-assert_json_field "$TMP_DIR/matrix/matrix-summary.json" "cases/1/service_mode" "display-stopped"
-assert_json_field "$TMP_DIR/matrix/matrix-summary.json" "cases/2/service_mode" "display-stopped-keep-allocator"
+assert_json_field "$TMP_DIR/matrix/matrix-summary.json" "cases/1/service_mode" "default"
+assert_json_field "$TMP_DIR/matrix/matrix-summary.json" "cases/1/takeover_display_service_profile_name" "default"
+assert_json_field "$TMP_DIR/matrix/matrix-summary.json" "cases/1/takeover_display_service_profile/name" "default"
+assert_json_field "$TMP_DIR/matrix/matrix-summary.json" "cases/2/service_mode" "keep-allocator"
+assert_json_field "$TMP_DIR/matrix/matrix-summary.json" "cases/2/takeover_display_service_profile_name" "keep-allocator"
+assert_json_field "$TMP_DIR/matrix/matrix-summary.json" "cases/2/takeover_display_service_profile/name" "keep-allocator"
 
-grep -Fq $'case\tserial\tservice_mode\tscene\tprofile\texit_status\tsuccess\tkgsl_device_opened\tbefore_holders\tafter_holders' \
+grep -Fq $'case\tserial\tservice_mode\ttakeover_display_service_profile_name\tscene\tprofile\texit_status\tsuccess\tkgsl_device_opened\tbefore_holders\tafter_holders' \
   "$TMP_DIR/matrix/matrix.tsv"

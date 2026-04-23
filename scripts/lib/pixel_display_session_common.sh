@@ -238,6 +238,23 @@ print(
 PY
 }
 
+pixel_takeover_display_service_profile_json_from_name() {
+  local profile_name="${1:?pixel_takeover_display_service_profile_json_from_name requires a profile name}"
+
+  case "$profile_name" in
+    default)
+      pixel_takeover_display_service_profile_json_from_stop_allocator 1
+      ;;
+    keep-allocator)
+      pixel_takeover_display_service_profile_json_from_stop_allocator 0
+      ;;
+    *)
+      printf 'pixel: unsupported display service profile name: %s\n' "$profile_name" >&2
+      return 1
+      ;;
+  esac
+}
+
 pixel_takeover_display_service_profile_json_from_env() {
   if [[ -n "${PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON-}" ]]; then
     printf '%s\n' "$PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON"
@@ -374,6 +391,12 @@ elif field in {"name", "restoreBootanim"}:
 else:
     raise SystemExit(f"pixel: unsupported display service profile field: {field}")
 PY
+}
+
+pixel_takeover_display_service_profile_name() {
+  local profile_json="${1:-}"
+
+  pixel_takeover_display_service_profile_field "$profile_json" name
 }
 
 pixel_takeover_display_service_stop_description() {

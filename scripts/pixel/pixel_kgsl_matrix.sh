@@ -30,6 +30,10 @@ Manifest format:
 
 Supported service modes:
   android-running
+  keep-allocator
+  default
+
+Legacy aliases still accepted:
   display-stopped-keep-allocator
   display-stopped
 EOF
@@ -110,8 +114,8 @@ generate_default_manifest() {
   cat >"$target_path" <<EOF
 # case_name	serial	service_mode	scene	profile
 baseline	$serial	android-running	$scene	$profile
-display-stopped-keep-allocator	$serial	display-stopped-keep-allocator	$scene	$profile
-display-stopped	$serial	display-stopped	$scene	$profile
+display-stopped-keep-allocator	$serial	keep-allocator	$scene	$profile
+display-stopped	$serial	default	$scene	$profile
 EOF
 }
 
@@ -158,25 +162,23 @@ EOF
 }
 
 apply_service_mode() {
-  local serial service_mode
+  local serial service_mode takeover_display_service_profile_json
   serial="${1:?apply_service_mode requires a serial}"
   service_mode="${2:?apply_service_mode requires a service mode}"
+  takeover_display_service_profile_json="${3:-}"
 
   case "$service_mode" in
     android-running)
       return 0
       ;;
-    display-stopped-keep-allocator)
+    keep-allocator|default|display-stopped-keep-allocator|display-stopped)
       if [[ "$dry_run" == "1" ]]; then
         return 0
       fi
-      pixel_root_shell "$serial" "$(pixel_takeover_stop_services_script 0)" >/dev/null
-      ;;
-    display-stopped)
-      if [[ "$dry_run" == "1" ]]; then
-        return 0
-      fi
-      pixel_root_shell "$serial" "$(pixel_takeover_stop_services_script 1)" >/dev/null
+      pixel_root_shell \
+        "$serial" \
+        "$(pixel_takeover_stop_services_script_for_profile "$takeover_display_service_profile_json")" \
+        >/dev/null
       ;;
     *)
       echo "pixel_kgsl_matrix: unsupported service mode: $service_mode" >&2
@@ -186,19 +188,19 @@ apply_service_mode() {
 }
 
 service_mode_ok() {
-  local serial service_mode
+  local serial service_mode takeover_display_service_profile_json
   serial="${1:?service_mode_ok requires a serial}"
   service_mode="${2:?service_mode_ok requires a service mode}"
+  takeover_display_service_profile_json="${3:-}"
 
   case "$service_mode" in
     android-running)
       pixel_display_services_running "$serial"
       ;;
-    display-stopped-keep-allocator)
-      pixel_display_services_stopped_keep_allocator "$serial"
-      ;;
-    display-stopped)
-      pixel_display_services_stopped "$serial"
+    keep-allocator|default|display-stopped-keep-allocator|display-stopped)
+      pixel_display_services_stopped_for_profile \
+        "$serial" \
+        "$takeover_display_service_profile_json"
       ;;
     *)
       return 1
@@ -207,19 +209,50 @@ service_mode_ok() {
 }
 
 restore_android_display_services() {
-  local serial
+  local serial takeover_display_service_profile_json
   serial="${1:?restore_android_display_services requires a serial}"
+  takeover_display_service_profile_json="${2:-}"
 
   if [[ "$dry_run" == "1" ]]; then
     return 0
   fi
 
-  pixel_root_shell "$serial" "$(pixel_takeover_start_services_script)" >/dev/null || return 1
+  if [[ -z "$takeover_display_service_profile_json" ]]; then
+    pixel_wait_for_condition 20 1 pixel_display_services_running "$serial"
+    return
+  fi
+
+  pixel_root_shell \
+    "$serial" \
+    "$(pixel_takeover_start_services_script_for_profile "$takeover_display_service_profile_json")" \
+    >/dev/null || return 1
   pixel_wait_for_condition 20 1 pixel_display_services_running "$serial"
 }
 
+service_mode_takeover_display_service_profile_json() {
+  local service_mode
+  service_mode="${1:?service_mode_takeover_display_service_profile_json requires a service mode}"
+
+  case "$service_mode" in
+    android-running)
+      printf '\n'
+      ;;
+    default|display-stopped)
+      pixel_takeover_display_service_profile_json_from_name default
+      ;;
+    keep-allocator|display-stopped-keep-allocator)
+      pixel_takeover_display_service_profile_json_from_name keep-allocator
+      ;;
+    *)
+      echo "pixel_kgsl_matrix: unsupported service mode: $service_mode" >&2
+      return 2
+      ;;
+  esac
+}
+
 write_case_json() {
-  local case_name serial service_mode scene profile case_dir case_log case_exit_status
+  local case_name serial service_mode scene profile takeover_display_service_profile_json
+  local case_dir case_log case_exit_status
   local setup_ok restore_ok before_scan_path before_scan_stderr after_scan_path after_scan_stderr
   local device_run_dir status_path output_path dry_run_word
 
@@ -228,19 +261,20 @@ write_case_json() {
   service_mode="${3:?write_case_json requires service_mode}"
   scene="${4:?write_case_json requires scene}"
   profile="${5:?write_case_json requires profile}"
-  case_dir="${6:?write_case_json requires case_dir}"
-  case_log="${7:?write_case_json requires case_log}"
-  case_exit_status="${8:?write_case_json requires case_exit_status}"
-  setup_ok="${9:?write_case_json requires setup_ok}"
-  restore_ok="${10:?write_case_json requires restore_ok}"
-  before_scan_path="${11:?write_case_json requires before_scan_path}"
-  before_scan_stderr="${12:?write_case_json requires before_scan_stderr}"
-  after_scan_path="${13:?write_case_json requires after_scan_path}"
-  after_scan_stderr="${14:?write_case_json requires after_scan_stderr}"
-  device_run_dir="${15:?write_case_json requires device_run_dir}"
-  status_path="${16:?write_case_json requires status_path}"
-  output_path="${17:?write_case_json requires output_path}"
-  dry_run_word="${18:?write_case_json requires dry_run_word}"
+  takeover_display_service_profile_json="${6:-}"
+  case_dir="${7:?write_case_json requires case_dir}"
+  case_log="${8:?write_case_json requires case_log}"
+  case_exit_status="${9:?write_case_json requires case_exit_status}"
+  setup_ok="${10:?write_case_json requires setup_ok}"
+  restore_ok="${11:?write_case_json requires restore_ok}"
+  before_scan_path="${12:?write_case_json requires before_scan_path}"
+  before_scan_stderr="${13:?write_case_json requires before_scan_stderr}"
+  after_scan_path="${14:?write_case_json requires after_scan_path}"
+  after_scan_stderr="${15:?write_case_json requires after_scan_stderr}"
+  device_run_dir="${16:?write_case_json requires device_run_dir}"
+  status_path="${17:?write_case_json requires status_path}"
+  output_path="${18:?write_case_json requires output_path}"
+  dry_run_word="${19:?write_case_json requires dry_run_word}"
 
   python3 - \
     "$case_name" \
@@ -248,6 +282,7 @@ write_case_json() {
     "$service_mode" \
     "$scene" \
     "$profile" \
+    "$takeover_display_service_profile_json" \
     "$case_dir" \
     "$case_log" \
     "$case_exit_status" \
@@ -297,6 +332,7 @@ def parse_holder_scan(path_raw: str):
     service_mode,
     scene,
     profile,
+    takeover_display_service_profile_json,
     case_dir,
     case_log,
     case_exit_status,
@@ -310,12 +346,16 @@ def parse_holder_scan(path_raw: str):
     status_path,
     output_path,
     dry_run_word,
-) = sys.argv[1:19]
+) = sys.argv[1:20]
 
 status_payload = None
 status_file = Path(status_path)
 if status_file.is_file():
     status_payload = json.loads(status_file.read_text(encoding="utf-8"))
+
+takeover_display_service_profile = None
+if takeover_display_service_profile_json:
+    takeover_display_service_profile = json.loads(takeover_display_service_profile_json)
 
 payload = {
     "case": case_name,
@@ -323,6 +363,10 @@ payload = {
     "service_mode": service_mode,
     "scene": scene,
     "profile": profile,
+    "takeover_display_service_profile": takeover_display_service_profile,
+    "takeover_display_service_profile_name": (
+        (takeover_display_service_profile or {}).get("name")
+    ),
     "case_dir": case_dir,
     "case_log": case_log,
     "device_run_dir": device_run_dir,
@@ -356,6 +400,7 @@ PY
 
 run_case() {
   local case_name serial service_mode scene profile
+  local takeover_display_service_profile_json=""
   local case_slug case_dir case_log case_json case_run_dir status_path
   local before_scan_path before_scan_stderr after_scan_path after_scan_stderr
   local setup_ok=false restore_ok=false case_exit_status=0
@@ -380,9 +425,17 @@ run_case() {
   rm -rf "$case_dir"
   mkdir -p "$case_dir"
 
+  takeover_display_service_profile_json="$(
+    service_mode_takeover_display_service_profile_json "$service_mode"
+  )"
+
   {
     printf '[kgsl-matrix] case=%s serial=%s service_mode=%s scene=%s profile=%s dry_run=%s\n' \
       "$case_name" "$serial" "$service_mode" "$scene" "$profile" "$dry_run"
+    if [[ -n "$takeover_display_service_profile_json" ]]; then
+      printf '[kgsl-matrix] takeover_display_service_profile_name=%s\n' \
+        "$(pixel_takeover_display_service_profile_name "$takeover_display_service_profile_json")"
+    fi
 
     if [[ "$dry_run" != "1" ]]; then
       pixel_adb "$serial" get-state >/dev/null
@@ -390,8 +443,9 @@ run_case() {
 
     capture_holder_scan "$serial" "$before_scan_path" "$before_scan_stderr" || true
 
-    if apply_service_mode "$serial" "$service_mode"; then
-      if [[ "$dry_run" == "1" ]] || service_mode_ok "$serial" "$service_mode"; then
+    if apply_service_mode "$serial" "$service_mode" "$takeover_display_service_profile_json"; then
+      if [[ "$dry_run" == "1" ]] \
+        || service_mode_ok "$serial" "$service_mode" "$takeover_display_service_profile_json"; then
         setup_ok=true
       fi
     fi
@@ -415,7 +469,7 @@ run_case() {
     fi
     printf '[kgsl-matrix] case_exit_status=%s\n' "$case_exit_status"
 
-    if restore_android_display_services "$serial"; then
+    if restore_android_display_services "$serial" "$takeover_display_service_profile_json"; then
       restore_ok=true
     fi
     printf '[kgsl-matrix] restore_ok=%s\n' "$restore_ok"
@@ -429,6 +483,7 @@ run_case() {
     "$service_mode" \
     "$scene" \
     "$profile" \
+    "$takeover_display_service_profile_json" \
     "$case_dir" \
     "$case_log" \
     "$case_exit_status" \
@@ -490,7 +545,9 @@ payload = {
 }
 summary_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-lines = ["case\tserial\tservice_mode\tscene\tprofile\texit_status\tsuccess\tkgsl_device_opened\tbefore_holders\tafter_holders"]
+lines = [
+    "case\tserial\tservice_mode\ttakeover_display_service_profile_name\tscene\tprofile\texit_status\tsuccess\tkgsl_device_opened\tbefore_holders\tafter_holders"
+]
 for case in cases:
     lines.append(
         "\t".join(
@@ -498,6 +555,7 @@ for case in cases:
                 case["case"],
                 case["serial"],
                 case["service_mode"],
+                str(case.get("takeover_display_service_profile_name") or ""),
                 case["scene"],
                 case["profile"],
                 str(case["exit_status"]),
