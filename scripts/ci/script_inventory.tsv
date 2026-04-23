@@ -10,6 +10,7 @@ scripts/ci/pixel_boot_hello_init_smoke.sh	ci	Hermetic smoke for the owned-usersp
 scripts/ci/pixel_boot_demo_check.sh	ci	Dedicated host-side gate for private boot demo seams, including real demo cross-builds and changed-file reporting for remote CI dispatch.
 scripts/ci/pixel_boot_orange_gpu_smoke.sh	ci	Hermetic smoke for the private orange-gpu boot seam that stages a boot-owned shadow-gpu-smoke bundle under /orange-gpu.
 scripts/ci/pixel_boot_orange_init_smoke.sh	ci	Hermetic smoke for the private orange-init boot seam that keeps hello-init as PID 1 and injects /orange-init into the ramdisk.
+scripts/ci/pixel_boot_preflight_smoke.sh	ci	Hermetic smoke for boot preflight summary, import-proof fallback, helper-launch fallback, and second-stage fallback contracts.
 scripts/ci/pixel_boot_rust_bridge_run_smoke.sh	ci	Hermetic smoke for the private rust-bridge build+oneshot runner that keeps build/run logs and a summary bundle together.
 scripts/ci/pixel_boot_rust_bridge_smoke.sh	ci	Hermetic smoke for the Rust bridge repack helper that swaps in the no_std PID1 shim plus a full Rust hello-init child and cloned metadata.
 scripts/ci/pixel_boot_tooling_smoke.sh	ci	Hermetic smoke for shared stock-boot resolution plus boot-lab oneshot and flash-run dry-run semantics.
