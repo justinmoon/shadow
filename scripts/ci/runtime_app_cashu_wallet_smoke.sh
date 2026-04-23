@@ -167,11 +167,33 @@ def attr(html_text: str, name: str) -> str:
     return html.unescape(match.group(1))
 
 
-def start_runtime(session, wallet_data_dir: Path, *, qr_payload=None):
+def write_session_config(session_config_path: Path, wallet_data_dir: Path) -> None:
+    session_config_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "services": {
+                    "camera": {
+                        "allowMock": True,
+                    },
+                    "cashuDataDir": str(wallet_data_dir),
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def start_runtime(session, session_config_path: Path, *, legacy_wallet_data_dir: Path, qr_payload=None):
     runtime_env = os.environ.copy()
-    runtime_env["SHADOW_RUNTIME_CASHU_DATA_DIR"] = str(wallet_data_dir)
+    runtime_env["SHADOW_RUNTIME_SESSION_CONFIG"] = str(session_config_path)
+    runtime_env["SHADOW_RUNTIME_CASHU_DATA_DIR"] = str(legacy_wallet_data_dir)
+    runtime_env["SHADOW_RUNTIME_CAMERA_ALLOW_MOCK"] = "0"
+    runtime_env["SHADOW_RUNTIME_CAMERA_ENDPOINT"] = "127.0.0.1:1"
+    runtime_env.pop("SHADOW_RUNTIME_CAMERA_MOCK_QR_PAYLOAD", None)
     if qr_payload is not None:
-        runtime_env["SHADOW_RUNTIME_CAMERA_ALLOW_MOCK"] = "1"
         runtime_env["SHADOW_RUNTIME_CAMERA_MOCK_QR_PAYLOAD"] = qr_payload
     return subprocess.Popen(
         [session["systemBinaryPath"], "--session", session["bundlePath"]],
@@ -273,8 +295,16 @@ max_inputs = 1000
 
         wallet_data_dir = temp_path / "wallet"
         wallet_data_dir.mkdir(parents=True, exist_ok=True)
+        session_config_path = temp_path / "session-config.json"
+        legacy_wallet_data_dir = temp_path / "wallet-env-override"
+        write_session_config(session_config_path, wallet_data_dir)
 
-        process = start_runtime(session, wallet_data_dir, qr_payload=mint_url)
+        process = start_runtime(
+            session,
+            session_config_path,
+            legacy_wallet_data_dir=legacy_wallet_data_dir,
+            qr_payload=mint_url,
+        )
         try:
             initial_html = render(process)
             if "Shadow Cashu" not in initial_html or "Wallet" not in initial_html:
@@ -337,7 +367,21 @@ max_inputs = 1000
         finally:
             stop_runtime(process)
 
-        process = start_runtime(session, wallet_data_dir, qr_payload=sent_token)
+        if not (wallet_data_dir / "wallet.redb").is_file() or not (wallet_data_dir / "mnemonic.txt").is_file():
+            raise SystemExit(
+                "runtime-app-cashu-wallet-smoke: session-config Cashu data dir did not receive wallet state",
+            )
+        if legacy_wallet_data_dir.exists():
+            raise SystemExit(
+                "runtime-app-cashu-wallet-smoke: legacy Cashu env data dir was used instead of session config",
+            )
+
+        process = start_runtime(
+            session,
+            session_config_path,
+            legacy_wallet_data_dir=legacy_wallet_data_dir,
+            qr_payload=sent_token,
+        )
         try:
             wait_for_html(
                 process,
@@ -359,7 +403,12 @@ max_inputs = 1000
         finally:
             stop_runtime(process)
 
-        process = start_runtime(session, wallet_data_dir, qr_payload=sent_token)
+        process = start_runtime(
+            session,
+            session_config_path,
+            legacy_wallet_data_dir=legacy_wallet_data_dir,
+            qr_payload=sent_token,
+        )
         try:
             click(process, "cashu-scan-qr")
             wait_for_html(
@@ -385,7 +434,12 @@ max_inputs = 1000
         finally:
             stop_runtime(process)
 
-        process = start_runtime(session, wallet_data_dir, qr_payload=invoice_2)
+        process = start_runtime(
+            session,
+            session_config_path,
+            legacy_wallet_data_dir=legacy_wallet_data_dir,
+            qr_payload=invoice_2,
+        )
         try:
             click(process, "cashu-scan-qr")
             paid_invoice_html = wait_for_html(
@@ -404,7 +458,12 @@ max_inputs = 1000
         finally:
             stop_runtime(process)
 
-        process = start_runtime(session, wallet_data_dir, qr_payload=UNSUPPORTED_QR_PAYLOAD)
+        process = start_runtime(
+            session,
+            session_config_path,
+            legacy_wallet_data_dir=legacy_wallet_data_dir,
+            qr_payload=UNSUPPORTED_QR_PAYLOAD,
+        )
         try:
             click(process, "cashu-scan-qr")
             unsupported_html = wait_for_html(
