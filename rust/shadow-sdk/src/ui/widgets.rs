@@ -15,7 +15,10 @@ use xilem::{AnyWidgetView, Color, FontWeight, InsertNewline, WidgetView};
 
 use crate::app::AppWindowMetrics;
 
-use super::{task::TaskHandle, theme::Theme};
+use super::{
+    task::{apply_task_decorations, TaskDecoration, TaskHandle},
+    theme::Theme,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
@@ -431,6 +434,29 @@ where
         move |task: TaskHandle<Job>| run(task.into_job()),
         apply,
     )
+}
+
+pub fn task_decoration<State, Job, Output>(
+    task: Option<TaskHandle<Job>>,
+    run: impl Fn(Job) -> Result<Output, String> + Clone + Send + Sync + 'static,
+    apply: impl Fn(&mut State, TaskHandle<Job>, Result<Output, String>) + Clone + Send + Sync + 'static,
+) -> TaskDecoration<State>
+where
+    State: Send + Sync + 'static,
+    Job: Clone + Send + Sync + 'static,
+    Output: Debug + Send + 'static,
+{
+    TaskDecoration::new(move |content| with_task(content, task, run, apply).boxed())
+}
+
+pub fn with_tasks<State>(
+    content: impl WidgetView<State>,
+    decorations: impl IntoIterator<Item = TaskDecoration<State>>,
+) -> Box<AnyWidgetView<State>>
+where
+    State: Send + Sync + 'static,
+{
+    apply_task_decorations(content, decorations)
 }
 
 fn tone_colors(tone: Tone, theme: Theme) -> (Color, Color) {

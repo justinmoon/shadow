@@ -17,7 +17,7 @@ use shadow_sdk::{
             NostrAccountSummary, NostrAccountTask, NostrPublishReceipt,
         },
     },
-    ui::{with_task, TaskHandle, TaskSlot, WidgetView},
+    ui::{task_decoration, with_tasks, TaskHandle, TaskSlot, WidgetView},
 };
 
 use crate::TimelineApp;
@@ -144,62 +144,59 @@ pub(crate) fn decorate_with_tasks(
     content: impl WidgetView<TimelineApp>,
     tasks: TimelineTaskSnapshot,
 ) -> impl WidgetView<TimelineApp> {
-    let content = with_task(
+    with_tasks(
         content,
-        tasks.account_action,
-        run_account_task,
-        |app: &mut TimelineApp, task: TaskHandle<PendingAccountAction>, result| {
-            app.finish_account_action(task, result);
-        },
-    );
-    let content = with_task(
-        content,
-        tasks.clipboard_write,
-        run_write_text_task,
-        |app: &mut TimelineApp, task: TaskHandle<PendingClipboardWrite>, result| {
-            app.finish_clipboard_write(task, result);
-        },
-    );
-    let content = with_task(
-        content,
-        tasks.explore_sync,
-        run_sync_explore_feed_task,
-        |app: &mut TimelineApp, task: TaskHandle<PendingExploreSync>, result| {
-            app.finish_explore_sync(task, result);
-        },
-    );
-    let content = with_task(
-        content,
-        tasks.follow_update,
-        run_update_contact_list_task,
-        |app: &mut TimelineApp, task: TaskHandle<PendingFollowUpdate>, result| {
-            app.finish_follow_update(task, result);
-        },
-    );
-    let content = with_task(
-        content,
-        tasks.thread_sync,
-        run_sync_thread_task,
-        |app: &mut TimelineApp, task: TaskHandle<PendingThreadSync>, result| {
-            app.finish_thread_sync(task, result);
-        },
-    );
-    let content = with_task(
-        content,
-        tasks.publish,
-        run_publish,
-        |app: &mut TimelineApp, task: TaskHandle<PendingPublish>, result| {
-            app.finish_publish(task, result);
-        },
-    );
-
-    with_task(
-        content,
-        tasks.refresh,
-        run_refresh_home_feed_task,
-        |app: &mut TimelineApp, task: TaskHandle<PendingRefresh>, result| {
-            app.finish_refresh(task, result);
-        },
+        [
+            task_decoration(
+                tasks.account_action,
+                run_account_task,
+                |app: &mut TimelineApp, task: TaskHandle<PendingAccountAction>, result| {
+                    app.finish_account_action(task, result);
+                },
+            ),
+            task_decoration(
+                tasks.clipboard_write,
+                run_write_text_task,
+                |app: &mut TimelineApp, task: TaskHandle<PendingClipboardWrite>, result| {
+                    app.finish_clipboard_write(task, result);
+                },
+            ),
+            task_decoration(
+                tasks.explore_sync,
+                run_sync_explore_feed_task,
+                |app: &mut TimelineApp, task: TaskHandle<PendingExploreSync>, result| {
+                    app.finish_explore_sync(task, result);
+                },
+            ),
+            task_decoration(
+                tasks.follow_update,
+                run_update_contact_list_task,
+                |app: &mut TimelineApp, task: TaskHandle<PendingFollowUpdate>, result| {
+                    app.finish_follow_update(task, result);
+                },
+            ),
+            task_decoration(
+                tasks.thread_sync,
+                run_sync_thread_task,
+                |app: &mut TimelineApp, task: TaskHandle<PendingThreadSync>, result| {
+                    app.finish_thread_sync(task, result);
+                },
+            ),
+            task_decoration(
+                tasks.publish,
+                run_publish,
+                |app: &mut TimelineApp, task: TaskHandle<PendingPublish>, result| {
+                    app.finish_publish(task, result);
+                },
+            ),
+            task_decoration(
+                tasks.refresh,
+                run_refresh_home_feed_task,
+                |app: &mut TimelineApp, task: TaskHandle<PendingRefresh>, result| {
+                    app.finish_refresh(task, result);
+                },
+            ),
+        ],
     )
 }
 

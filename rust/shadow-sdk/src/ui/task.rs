@@ -1,5 +1,46 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use xilem::{AnyWidgetView, WidgetView};
+
+type TaskDecorationFn<State> =
+    dyn FnOnce(Box<AnyWidgetView<State>>) -> Box<AnyWidgetView<State>> + Send + Sync;
+
+// Type-erase heterogeneous task wrappers so apps can apply them as one list.
+pub struct TaskDecoration<State> {
+    decorate: Box<TaskDecorationFn<State>>,
+}
+
+impl<State> TaskDecoration<State> {
+    pub fn new(
+        decorate: impl FnOnce(Box<AnyWidgetView<State>>) -> Box<AnyWidgetView<State>>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        Self {
+            decorate: Box::new(decorate),
+        }
+    }
+
+    pub fn apply(self, content: Box<AnyWidgetView<State>>) -> Box<AnyWidgetView<State>> {
+        (self.decorate)(content)
+    }
+}
+
+pub fn apply_task_decorations<State>(
+    content: impl WidgetView<State>,
+    decorations: impl IntoIterator<Item = TaskDecoration<State>>,
+) -> Box<AnyWidgetView<State>>
+where
+    State: Send + Sync + 'static,
+{
+    decorations
+        .into_iter()
+        .fold(content.boxed(), |content, decoration| {
+            decoration.apply(content)
+        })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskHandle<Job> {
     id: u64,
