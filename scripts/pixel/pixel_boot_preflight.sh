@@ -179,6 +179,46 @@ def getprop_value(path_str: str, key: str):
     return ""
 
 
+def phase1_recovery_notes(blocked_reason: str, missing_labels_csv: str):
+    if blocked_reason != "missing-required-paths":
+        return []
+
+    label_notes = {
+        "runtime-linux-dir": (
+            "Run sc -t pixel stage shell to recreate "
+            "/data/local/tmp/shadow-runtime-gnu before rerunning phase-1 preflight."
+        ),
+        "system-launcher": (
+            "Run sc -t pixel stage shell to restage "
+            "/data/local/tmp/shadow-runtime-gnu/run-shadow-system before rerunning phase-1 preflight."
+        ),
+        "compositor-launcher": (
+            "Run sc -t pixel stage shell to restage "
+            "/data/local/tmp/shadow-runtime-gnu/run-shadow-compositor-guest before rerunning phase-1 preflight."
+        ),
+        "guest-client-launcher": (
+            "Run sc -t pixel stage shell to restage "
+            "/data/local/tmp/shadow-runtime-gnu/run-shadow-blitz-demo before rerunning phase-1 preflight."
+        ),
+    }
+
+    notes = []
+    for raw_label in missing_labels_csv.split(","):
+        label = raw_label.strip()
+        if not label:
+            continue
+        notes.append(
+            label_notes.get(
+                label,
+                (
+                    f"Restage the owning phase-1 artifact for missing label {label!r} "
+                    "and confirm it now exists in phase1.requiredPaths before rerunning phase-1 preflight."
+                ),
+            )
+        )
+    return notes
+
+
 device_status = load_json(device_status_path)
 collect_status = load_json(collect_status_path)
 helper_proved_current_boot = False
@@ -194,6 +234,7 @@ phase1_preflight_ready = False
 phase1_preflight_blocked_reason = ""
 phase1_preflight_status_source = ""
 phase1_preflight_required_missing_labels = ""
+phase1_preflight_recovery_notes = []
 
 if isinstance(collect_status, dict):
     import_proved_current_boot = bool(collect_status.get("collection_succeeded"))
@@ -241,6 +282,10 @@ elif second_stage_property_proved_current_boot:
 
 if phase1_preflight_status == "blocked" and phase1_preflight_blocked_reason == "missing-required-paths":
     phase1_preflight_required_missing_labels = preflight_required_missing_labels
+    phase1_preflight_recovery_notes = phase1_recovery_notes(
+        phase1_preflight_blocked_reason,
+        phase1_preflight_required_missing_labels,
+    )
 
 if isinstance(device_status, dict):
     original_device_ok = bool(device_status.get("ok"))
@@ -253,6 +298,7 @@ if isinstance(device_status, dict):
     device_status["phase1_preflight_blocked_reason"] = phase1_preflight_blocked_reason
     device_status["phase1_preflight_status_source"] = phase1_preflight_status_source
     device_status["phase1_preflight_required_missing_labels"] = phase1_preflight_required_missing_labels
+    device_status["phase1_preflight_recovery_notes"] = phase1_preflight_recovery_notes
     device_status["phase1_preflight_device_status_aligned"] = False
     if phase1_preflight_status and original_failure_stage == "collect":
         device_status["ok"] = True
@@ -299,6 +345,7 @@ payload = {
     "phase1_preflight_blocked_reason": phase1_preflight_blocked_reason,
     "phase1_preflight_status_source": phase1_preflight_status_source,
     "phase1_preflight_required_missing_labels": phase1_preflight_required_missing_labels,
+    "phase1_preflight_recovery_notes": phase1_preflight_recovery_notes,
 }
 payload["ok"] = payload["dry_run"] or (
     payload["build_succeeded"] and bool(payload["phase1_preflight_status"])
@@ -462,6 +509,7 @@ phase1_preflight_ready = summary.get("phase1_preflight_ready")
 phase1_preflight_blocked_reason = summary.get("phase1_preflight_blocked_reason", "")
 phase1_preflight_status_source = summary.get("phase1_preflight_status_source", "")
 phase1_preflight_required_missing_labels = summary.get("phase1_preflight_required_missing_labels", "")
+phase1_preflight_recovery_notes = summary.get("phase1_preflight_recovery_notes", [])
 second_stage_proved = bool(summary.get("second_stage_property_proved_current_boot"))
 import_proved = bool(payload.get("collection_succeeded"))
 helper_launch_proved = bool(payload.get("observed_property_matched"))
@@ -488,6 +536,8 @@ if phase1_preflight_status_source:
     print(f"Phase-1 preflight source: {phase1_preflight_status_source}")
 if phase1_preflight_required_missing_labels:
     print(f"Phase-1 required missing labels: {phase1_preflight_required_missing_labels}")
+for note in phase1_preflight_recovery_notes:
+    print(f"Phase-1 recovery note: {note}")
 if preflight_status:
     print(f"Preflight status: {preflight_status}")
 if preflight_ready is not None:

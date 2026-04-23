@@ -1362,6 +1362,38 @@ if actual != expected:
 PY
 }
 
+assert_json_array_length() {
+  local json_path key_path expected_length
+  json_path="$1"
+  key_path="$2"
+  expected_length="$3"
+
+  python3 - "$json_path" "$key_path" "$expected_length" <<'PY'
+import json
+import sys
+
+json_path, key_path, expected_length_raw = sys.argv[1:4]
+expected_length = int(expected_length_raw)
+
+with open(json_path, "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+actual = payload
+for part in key_path.split("/"):
+    if isinstance(actual, list):
+        actual = actual[int(part)]
+    else:
+        actual = actual[part]
+
+if not isinstance(actual, list):
+    raise SystemExit(f"unexpected non-list at {key_path!r}: {actual!r}")
+if len(actual) != expected_length:
+    raise SystemExit(
+        f"unexpected array length for {key_path!r}: actual={len(actual)!r} expected={expected_length!r}"
+    )
+PY
+}
+
 assert_json_field_one_of() {
   local json_path key_path
   json_path="$1"
@@ -3542,6 +3574,8 @@ assert_contains "$preflight_output" "Phase-1 preflight status: blocked"
 assert_contains "$preflight_output" "Phase-1 preflight blocked reason: missing-required-paths"
 assert_contains "$preflight_output" "Phase-1 preflight source: preflight-summary"
 assert_contains "$preflight_output" "Phase-1 required missing labels: system-launcher,guest-client-launcher"
+assert_contains "$preflight_output" "Phase-1 recovery note: Run sc -t pixel stage shell to restage /data/local/tmp/shadow-runtime-gnu/run-shadow-system before rerunning phase-1 preflight."
+assert_contains "$preflight_output" "Phase-1 recovery note: Run sc -t pixel stage shell to restage /data/local/tmp/shadow-runtime-gnu/run-shadow-blitz-demo before rerunning phase-1 preflight."
 assert_contains "$preflight_output" "Preflight status: blocked"
 test -f "$PREFLIGHT_OUTPUT/summary.json"
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" kind boot_preflight
@@ -3562,6 +3596,9 @@ assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_ready false
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_blocked_reason missing-required-paths
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_status_source preflight-summary
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_required_missing_labels system-launcher,guest-client-launcher
+assert_json_array_length "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_recovery_notes 2
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_recovery_notes/0 "Run sc -t pixel stage shell to restage /data/local/tmp/shadow-runtime-gnu/run-shadow-system before rerunning phase-1 preflight."
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_recovery_notes/1 "Run sc -t pixel stage shell to restage /data/local/tmp/shadow-runtime-gnu/run-shadow-blitz-demo before rerunning phase-1 preflight."
 test -f "$PREFLIGHT_OUTPUT/device-run/status.json"
 assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" ok true
 assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" boot_oneshot_ok true
@@ -3569,6 +3606,9 @@ assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_st
 assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_blocked_reason missing-required-paths
 assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_status_source preflight-summary
 assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_required_missing_labels system-launcher,guest-client-launcher
+assert_json_array_length "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_recovery_notes 2
+assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_recovery_notes/0 "Run sc -t pixel stage shell to restage /data/local/tmp/shadow-runtime-gnu/run-shadow-system before rerunning phase-1 preflight."
+assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_recovery_notes/1 "Run sc -t pixel stage shell to restage /data/local/tmp/shadow-runtime-gnu/run-shadow-blitz-demo before rerunning phase-1 preflight."
 assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_device_status_aligned false
 assert_contains "$(cat "$LOCKF_LOG")" "exec "
 assert_contains "$(cat "$LOCKF_LOG")" "pixel_boot_preflight.sh"
@@ -3613,6 +3653,7 @@ assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_p
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_blocked_reason stock-init-import-not-proved
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_status_source second-stage-property-proof
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_required_missing_labels ""
+assert_json_array_length "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_recovery_notes 0
 test -f "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json"
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" ok true
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" failure_stage ""
@@ -3623,6 +3664,7 @@ assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_blocked_reason stock-init-import-not-proved
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_status_source second-stage-property-proof
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_required_missing_labels ""
+assert_json_array_length "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_recovery_notes 0
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_device_status_aligned true
 
 rm -rf "$KGSL_PROBE_OUTPUT"
