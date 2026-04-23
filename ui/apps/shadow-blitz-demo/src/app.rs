@@ -17,14 +17,13 @@ use blitz_shell::{
 };
 use serde::Serialize;
 use shadow_runtime_protocol::AppPlatformRequest;
+use shadow_sdk::app::{platform_control_socket_path, spawn_platform_request_listener};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Condvar, Mutex};
 use std::{env, path::PathBuf, thread, time::Duration};
 
 #[cfg(target_os = "linux")]
 use std::{ffi::CString, io, os::unix::ffi::OsStrExt, path::Path};
-#[cfg(unix)]
-use std::{io::Read, os::unix::net::UnixListener};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -44,8 +43,6 @@ const APP_WAYLAND_APP_ID_ENV: &str = "SHADOW_APP_WAYLAND_APP_ID";
 #[cfg(target_os = "linux")]
 const APP_WAYLAND_INSTANCE_NAME_ENV: &str = "SHADOW_APP_WAYLAND_INSTANCE_NAME";
 const BLITZ_APP_TITLE_ENV: &str = "SHADOW_BLITZ_APP_TITLE";
-const APP_PLATFORM_CONTROL_SOCKET_ENV: &str = "SHADOW_APP_PLATFORM_CONTROL_SOCKET";
-const BLITZ_PLATFORM_CONTROL_SOCKET_ENV: &str = "SHADOW_BLITZ_PLATFORM_CONTROL_SOCKET";
 const BLITZ_UNDECORATED_ENV: &str = "SHADOW_BLITZ_UNDECORATED";
 #[cfg(target_os = "linux")]
 const BLITZ_WAYLAND_APP_ID_ENV: &str = "SHADOW_BLITZ_WAYLAND_APP_ID";
@@ -394,21 +391,26 @@ impl BlitzApplication {
         if self.runtime_platform_control_thread_started {
             return;
         }
-        let Some(path) = env::var_os(APP_PLATFORM_CONTROL_SOCKET_ENV)
-            .or_else(|| env::var_os(BLITZ_PLATFORM_CONTROL_SOCKET_ENV))
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-        else {
+        let Some(path) = platform_control_socket_path() else {
             return;
         };
 
-        self.runtime_platform_control_thread_started = true;
-        let proxy = self.proxy.clone();
         runtime_log(format!(
             "platform-control-thread-start path={}",
             path.display()
         ));
-        thread::spawn(move || run_platform_control_thread(proxy, path));
+        let proxy = self.proxy.clone();
+        match spawn_platform_request_listener(move |request| {
+            handle_platform_request(&proxy, request)
+        }) {
+            Ok(_listener) => {
+                self.runtime_platform_control_thread_started = true;
+            }
+            Err(error) => runtime_log(format!(
+                "platform-control-thread-bind-failed path={} error={error}",
+                path.display()
+            )),
+        }
     }
 
     fn maybe_resume_deferred_window(&mut self, window_id: WindowId, event: &WindowEvent) {
@@ -828,93 +830,43 @@ impl PlatformControlResponse {
     }
 }
 
-#[cfg(unix)]
-fn run_platform_control_thread(proxy: BlitzShellProxy, path: PathBuf) {
-    if path.exists() {
-        let _ = std::fs::remove_file(&path);
-    }
-
-    let listener = match UnixListener::bind(&path) {
-        Ok(listener) => listener,
-        Err(error) => {
-            runtime_log(format!(
-                "platform-control-thread-bind-failed path={} error={error}",
-                path.display()
-            ));
-            return;
+fn handle_platform_request(proxy: &BlitzShellProxy, request: AppPlatformRequest) -> String {
+    let response = PlatformControlResponse::new();
+    let event = match &request {
+        AppPlatformRequest::Media { action } => Some(RuntimeEmbedderEvent::PlatformAudioControl {
+            action: *action,
+            response: response.clone(),
+        }),
+        AppPlatformRequest::Lifecycle { state } => {
+            Some(RuntimeEmbedderEvent::PlatformLifecycleChange {
+                state: *state,
+                response: response.clone(),
+            })
         }
+        AppPlatformRequest::Automation { .. } => None,
+    };
+    let handled = if let Some(event) = event {
+        proxy.send_event(BlitzShellEvent::embedder_event(event));
+        response.wait(Duration::from_secs(5)).unwrap_or(false)
+    } else {
+        false
     };
 
-    for stream in listener.incoming() {
-        let mut stream = match stream {
-            Ok(stream) => stream,
-            Err(error) => {
-                runtime_log(format!("platform-control-accept-failed error={error}"));
-                continue;
-            }
-        };
-
-        let mut request = String::new();
-        if let Err(error) = stream.read_to_string(&mut request) {
-            let _ = std::io::Write::write_all(
-                &mut stream,
-                format!("error=read-failed {error}\n").as_bytes(),
-            );
-            continue;
+    match request {
+        AppPlatformRequest::Media { action } => format!(
+            "ok\nhandled={}\naction={}\n",
+            if handled { 1 } else { 0 },
+            action.as_str()
+        ),
+        AppPlatformRequest::Lifecycle { state } => format!(
+            "ok\nhandled={}\nstate={}\n",
+            if handled { 1 } else { 0 },
+            state.as_str()
+        ),
+        AppPlatformRequest::Automation { action, .. } => {
+            format!("ok\nhandled=0\nreason=unsupported-request\nrequest=automation:{action}\n")
         }
-
-        let response = PlatformControlResponse::new();
-        let Some(request) = AppPlatformRequest::parse_line(&request) else {
-            let _ =
-                std::io::Write::write_all(&mut stream, b"ok\nhandled=0\nreason=invalid-action\n");
-            continue;
-        };
-        let event = match &request {
-            AppPlatformRequest::Media { action } => {
-                (Some(RuntimeEmbedderEvent::PlatformAudioControl {
-                    action: *action,
-                    response: response.clone(),
-                }))
-            }
-            AppPlatformRequest::Lifecycle { state } => {
-                (Some(RuntimeEmbedderEvent::PlatformLifecycleChange {
-                    state: *state,
-                    response: response.clone(),
-                }))
-            }
-            AppPlatformRequest::Automation { .. } => None,
-        };
-        let handled = if let Some(event) = event {
-            proxy.send_event(BlitzShellEvent::embedder_event(event));
-            response.wait(Duration::from_secs(5)).unwrap_or(false)
-        } else {
-            false
-        };
-        let response_body = match request {
-            AppPlatformRequest::Media { action } => format!(
-                "ok\nhandled={}\naction={}\n",
-                if handled { 1 } else { 0 },
-                action.as_str()
-            ),
-            AppPlatformRequest::Lifecycle { state } => format!(
-                "ok\nhandled={}\nstate={}\n",
-                if handled { 1 } else { 0 },
-                state.as_str()
-            ),
-            AppPlatformRequest::Automation { action, .. } => {
-                format!("ok\nhandled=0\nreason=unsupported-request\nrequest=automation:{action}\n")
-            }
-        };
-        let _ = std::io::Write::write_all(&mut stream, response_body.as_bytes());
     }
-}
-
-#[cfg(not(unix))]
-fn run_platform_control_thread(_proxy: BlitzShellProxy, path: PathBuf) {
-    runtime_log(format!(
-        "platform-control-thread-unsupported path={}",
-        path.display()
-    ));
 }
 
 #[cfg(target_os = "linux")]
