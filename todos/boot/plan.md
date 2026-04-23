@@ -1088,6 +1088,7 @@ Related docs:
   - Stream C typed phase-1 required-path contract result on 2026-04-23:
     - `pixel_write_guest_ui_startup_config` now emits the boot-critical staged payload contract under `phase1.requiredPaths` in the typed startup config instead of leaving those paths as boot-helper-only literals
     - `pixel_boot_build_log_probe.sh --preflight-profile phase1-shell` now materializes its required-path checks from that typed startup contract before generating `/shadow-boot-helper`
+    - `pixel_boot_preflight.sh` now lifts helper-emitted `preflight_required_missing_labels` into top-level `summary.json` / `device-run/status.json` as `phase1_preflight_required_missing_labels`, so callers no longer need to descend into nested collect payloads to name the missing phase-1 artifacts
     - `scripts/ci/pixel_guest_startup_config_smoke.sh` and `scripts/ci/pixel_boot_tooling_smoke.sh` cover the new typed required-path seam
   - Stream A stronger import-proof surface result on 2026-04-23:
     - `pixel_boot_build_kgsl_probe.sh` now injects `debug.shadow.boot.kgsl.second_stage=ready` through the preserved `/system/etc/ramdisk/build.prop` seam, and `pixel_boot_kgsl_probe.sh` / `pixel_boot_kgsl_trigger_ladder.sh` now surface `second_stage_property_proved_current_boot` plus the stronger `second-stage-property-proved-no-import-proof` discriminator

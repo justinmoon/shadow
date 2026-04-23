@@ -323,6 +323,7 @@ if mode == "second-stage-only":
         "preflight_status": "",
         "preflight_ready": False,
         "preflight_blocked_reason": "",
+        "preflight_required_missing_labels": "",
     }
 else:
     collect_status = {
@@ -334,6 +335,7 @@ else:
         "preflight_status": "blocked",
         "preflight_ready": False,
         "preflight_blocked_reason": "missing-required-paths",
+        "preflight_required_missing_labels": "system-launcher,guest-client-launcher",
     }
 with open(status_path, "w", encoding="utf-8") as fh:
     json.dump(device_status, fh, indent=2, sort_keys=True)
@@ -3529,6 +3531,7 @@ assert_contains "$preflight_output" "Boot preflight output: $PREFLIGHT_OUTPUT"
 assert_contains "$preflight_output" "Phase-1 preflight status: blocked"
 assert_contains "$preflight_output" "Phase-1 preflight blocked reason: missing-required-paths"
 assert_contains "$preflight_output" "Phase-1 preflight source: preflight-summary"
+assert_contains "$preflight_output" "Phase-1 required missing labels: system-launcher,guest-client-launcher"
 assert_contains "$preflight_output" "Preflight status: blocked"
 test -f "$PREFLIGHT_OUTPUT/summary.json"
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" kind boot_preflight
@@ -3543,16 +3546,19 @@ assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_profile phase1-shel
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_status blocked
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_ready false
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_blocked_reason missing-required-paths
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" preflight_required_missing_labels system-launcher,guest-client-launcher
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_status blocked
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_ready false
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_blocked_reason missing-required-paths
 assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_status_source preflight-summary
+assert_json_field "$PREFLIGHT_OUTPUT/summary.json" phase1_preflight_required_missing_labels system-launcher,guest-client-launcher
 test -f "$PREFLIGHT_OUTPUT/device-run/status.json"
 assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" ok true
 assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" boot_oneshot_ok true
 assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_status blocked
 assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_blocked_reason missing-required-paths
 assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_status_source preflight-summary
+assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_required_missing_labels system-launcher,guest-client-launcher
 assert_json_field "$PREFLIGHT_OUTPUT/device-run/status.json" phase1_preflight_device_status_aligned false
 assert_contains "$(cat "$LOCKF_LOG")" "exec "
 assert_contains "$(cat "$LOCKF_LOG")" "pixel_boot_preflight.sh"
@@ -3596,6 +3602,7 @@ assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_p
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_ready false
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_blocked_reason stock-init-import-not-proved
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_status_source second-stage-property-proof
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/summary.json" phase1_preflight_required_missing_labels ""
 test -f "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json"
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" ok true
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" failure_stage ""
@@ -3605,6 +3612,7 @@ assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_status blocked
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_blocked_reason stock-init-import-not-proved
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_status_source second-stage-property-proof
+assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_required_missing_labels ""
 assert_json_field "$PREFLIGHT_SECOND_STAGE_BLOCKED_OUTPUT/device-run/status.json" phase1_preflight_device_status_aligned true
 
 rm -rf "$KGSL_PROBE_OUTPUT"

@@ -188,10 +188,12 @@ second_stage_property_proved_current_boot = False
 preflight_status = ""
 preflight_ready = False
 preflight_blocked_reason = ""
+preflight_required_missing_labels = ""
 phase1_preflight_status = ""
 phase1_preflight_ready = False
 phase1_preflight_blocked_reason = ""
 phase1_preflight_status_source = ""
+phase1_preflight_required_missing_labels = ""
 
 if isinstance(collect_status, dict):
     import_proved_current_boot = bool(collect_status.get("collection_succeeded"))
@@ -209,6 +211,7 @@ if isinstance(collect_status, dict):
     preflight_status = str(collect_status.get("preflight_status") or "")
     preflight_ready = bool(collect_status.get("preflight_ready"))
     preflight_blocked_reason = str(collect_status.get("preflight_blocked_reason") or "")
+    preflight_required_missing_labels = str(collect_status.get("preflight_required_missing_labels") or "")
 
 second_stage_proof_key, second_stage_proof_value = parse_prop_spec(second_stage_proof_prop)
 if second_stage_proof_key:
@@ -236,6 +239,9 @@ elif second_stage_property_proved_current_boot:
     phase1_preflight_blocked_reason = "stock-init-import-not-proved"
     phase1_preflight_status_source = "second-stage-property-proof"
 
+if phase1_preflight_status == "blocked" and phase1_preflight_blocked_reason == "missing-required-paths":
+    phase1_preflight_required_missing_labels = preflight_required_missing_labels
+
 if isinstance(device_status, dict):
     original_device_ok = bool(device_status.get("ok"))
     original_failure_stage = str(device_status.get("failure_stage") or "")
@@ -246,6 +252,7 @@ if isinstance(device_status, dict):
     device_status["phase1_preflight_ready"] = phase1_preflight_ready
     device_status["phase1_preflight_blocked_reason"] = phase1_preflight_blocked_reason
     device_status["phase1_preflight_status_source"] = phase1_preflight_status_source
+    device_status["phase1_preflight_required_missing_labels"] = phase1_preflight_required_missing_labels
     device_status["phase1_preflight_device_status_aligned"] = False
     if phase1_preflight_status and original_failure_stage == "collect":
         device_status["ok"] = True
@@ -286,10 +293,12 @@ payload = {
     "preflight_status": preflight_status,
     "preflight_ready": preflight_ready,
     "preflight_blocked_reason": preflight_blocked_reason,
+    "preflight_required_missing_labels": preflight_required_missing_labels,
     "phase1_preflight_status": phase1_preflight_status,
     "phase1_preflight_ready": phase1_preflight_ready,
     "phase1_preflight_blocked_reason": phase1_preflight_blocked_reason,
     "phase1_preflight_status_source": phase1_preflight_status_source,
+    "phase1_preflight_required_missing_labels": phase1_preflight_required_missing_labels,
 }
 payload["ok"] = payload["dry_run"] or (
     payload["build_succeeded"] and bool(payload["phase1_preflight_status"])
@@ -452,6 +461,7 @@ phase1_preflight_status = summary.get("phase1_preflight_status", "")
 phase1_preflight_ready = summary.get("phase1_preflight_ready")
 phase1_preflight_blocked_reason = summary.get("phase1_preflight_blocked_reason", "")
 phase1_preflight_status_source = summary.get("phase1_preflight_status_source", "")
+phase1_preflight_required_missing_labels = summary.get("phase1_preflight_required_missing_labels", "")
 second_stage_proved = bool(summary.get("second_stage_property_proved_current_boot"))
 import_proved = bool(payload.get("collection_succeeded"))
 helper_launch_proved = bool(payload.get("observed_property_matched"))
@@ -476,6 +486,8 @@ if phase1_preflight_blocked_reason:
     print(f"Phase-1 preflight blocked reason: {phase1_preflight_blocked_reason}")
 if phase1_preflight_status_source:
     print(f"Phase-1 preflight source: {phase1_preflight_status_source}")
+if phase1_preflight_required_missing_labels:
+    print(f"Phase-1 required missing labels: {phase1_preflight_required_missing_labels}")
 if preflight_status:
     print(f"Preflight status: {preflight_status}")
 if preflight_ready is not None:

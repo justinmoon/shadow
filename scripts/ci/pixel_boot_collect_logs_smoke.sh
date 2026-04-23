@@ -298,6 +298,7 @@ assert_json_field "$SUCCESS_OUTPUT/status.json" preflight_status blocked
 assert_json_field "$SUCCESS_OUTPUT/status.json" preflight_ready false
 assert_json_field "$SUCCESS_OUTPUT/status.json" preflight_blocked_reason missing-required-paths
 assert_json_field "$SUCCESS_OUTPUT/status.json" preflight_missing_required_count 2
+assert_json_field "$SUCCESS_OUTPUT/status.json" preflight_required_missing_labels system-launcher,guest-client-launcher
 
 PULL_FAILURE_OUTPUT="$TMP_DIR/output-pull-failure"
 assert_failure env \
