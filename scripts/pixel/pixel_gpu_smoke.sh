@@ -34,6 +34,9 @@ status_path="$run_dir/status.json"
 summary_path="$run_dir/summary.json"
 ppm_path="$run_dir/shadow-gpu-smoke.ppm"
 takeover_display="${PIXEL_GPU_SMOKE_TAKEOVER_DISPLAY-}"
+stop_allocator="${PIXEL_TAKEOVER_STOP_ALLOCATOR:-1}"
+takeover_display_service_profile_json=""
+takeover_display_service_profile_name=""
 present_kms_requested=false
 services_stopped=false
 android_restored=false
@@ -67,7 +70,10 @@ quote_args() {
 
 restore_android_display() {
   printf '[gpu-smoke] restoring Android display services\n' | tee -a "$checkpoint_log_path"
-  if pixel_restore_android_best_effort "$serial" 30; then
+  if (
+    export PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON="$takeover_display_service_profile_json"
+    pixel_restore_android_best_effort "$serial" 30
+  ); then
     android_restored=true
     printf '[gpu-smoke] Android display services restored\n' | tee -a "$checkpoint_log_path"
     return 0
@@ -75,6 +81,12 @@ restore_android_display() {
 
   printf '[gpu-smoke] Android display restore failed\n' | tee -a "$checkpoint_log_path"
   return 1
+}
+
+display_services_stopped_condition() {
+  pixel_display_services_stopped_for_profile \
+    "$serial" \
+    "$takeover_display_service_profile_json"
 }
 
 cleanup() {
@@ -141,14 +153,33 @@ printf '[gpu-smoke] present_kms=%s takeover_display=%s\n' \
   "$present_kms_requested" "$takeover_display" | tee -a "$checkpoint_log_path"
 
 if [[ "$takeover_display" == "1" ]]; then
-  printf '[gpu-smoke] stopping Android display services\n' | tee -a "$checkpoint_log_path"
-  pixel_root_shell "$serial" "$(pixel_takeover_stop_services_script)" >/dev/null
-  if ! pixel_wait_for_condition 15 1 pixel_display_services_stopped "$serial"; then
-    echo "pixel_gpu_smoke: Android display services did not stop cleanly" >&2
+  if [[ -n "${PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON-}" ]]; then
+    takeover_display_service_profile_json="$PIXEL_TAKEOVER_DISPLAY_SERVICE_PROFILE_JSON"
+  else
+    takeover_display_service_profile_json="$(
+      pixel_takeover_display_service_profile_json_from_stop_allocator "$stop_allocator"
+    )"
+  fi
+  takeover_display_service_profile_name="$(
+    pixel_takeover_display_service_profile_name "$takeover_display_service_profile_json"
+  )"
+  printf '[gpu-smoke] takeover_display_service_profile_name=%s\n' \
+    "$takeover_display_service_profile_name" | tee -a "$checkpoint_log_path"
+  printf '[gpu-smoke] applying %s\n' \
+    "$(pixel_takeover_display_service_stop_description "$takeover_display_service_profile_json")" \
+    | tee -a "$checkpoint_log_path"
+  pixel_root_shell \
+    "$serial" \
+    "$(pixel_takeover_stop_services_script_for_profile "$takeover_display_service_profile_json")" \
+    >/dev/null
+  if ! pixel_wait_for_condition 15 1 display_services_stopped_condition; then
+    echo "pixel_gpu_smoke: Android display services did not stop cleanly for profile $takeover_display_service_profile_name" >&2
     exit 1
   fi
   services_stopped=true
-  printf '[gpu-smoke] Android display services stopped\n' | tee -a "$checkpoint_log_path"
+  printf '[gpu-smoke] %s\n' \
+    "$(pixel_takeover_display_service_stop_description "$takeover_display_service_profile_json")" \
+    | tee -a "$checkpoint_log_path"
 fi
 
 cat >"$device_command_path" <<EOF
@@ -197,7 +228,7 @@ if [[ "$takeover_display" == "1" ]]; then
 fi
 
 set +e
-python3 - "$status_path" "$serial" "$device_dir" "$summary_path" "$ppm_path" "$run_status" "$summary_pulled" "$ppm_pulled" "$present_kms_requested" "$takeover_display" "$android_restored" <<'PY'
+python3 - "$status_path" "$serial" "$device_dir" "$summary_path" "$ppm_path" "$run_status" "$summary_pulled" "$ppm_pulled" "$present_kms_requested" "$takeover_display" "$android_restored" "$takeover_display_service_profile_name" "$takeover_display_service_profile_json" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -214,11 +245,18 @@ from pathlib import Path
     present_kms_requested_raw,
     takeover_display_raw,
     android_restored_raw,
-) = sys.argv[1:12]
+    takeover_display_service_profile_name_raw,
+    takeover_display_service_profile_json_raw,
+) = sys.argv[1:14]
 summary_path = Path(summary_path_raw)
 ppm_path = Path(ppm_path_raw)
 run_status = int(run_status_raw)
 present_kms_requested = present_kms_requested_raw == "true"
+takeover_display_service_profile = None
+if takeover_display_service_profile_json_raw:
+    takeover_display_service_profile = json.loads(
+        takeover_display_service_profile_json_raw
+    )
 summary_payload = None
 summary_error = None
 strict_invariants_ok = False
@@ -275,6 +313,9 @@ payload = {
     "presentKmsRequested": present_kms_requested,
     "presentKmsOk": present_kms_ok,
     "takeoverDisplay": takeover_display_raw == "1",
+    "takeoverDisplayServiceProfile": takeover_display_service_profile,
+    "takeoverDisplayServiceProfileName": takeover_display_service_profile_name_raw
+    or None,
     "summaryError": summary_error,
     "summary": summary_payload,
 }

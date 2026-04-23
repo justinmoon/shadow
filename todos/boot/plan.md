@@ -1091,6 +1091,9 @@ Related docs:
   - the supported rooted guest-run config now carries `takeover.displayServiceProfile`, a typed description of the current display takeover stop set, preserved allocator set, restore order, bootanim policy, and SELinux restore toggles
   - `pixel_guest_ui_drm.sh` and `pixel_restore_android.sh` now consume that typed profile as the source of truth for the supported rooted display-takeover lane, while the old `stopAllocator` boolean remains only as a derived compatibility alias
   - `pixel_kgsl_matrix.sh` now resolves rooted takeover cases through the same typed `default` / `keep-allocator` display-service profiles, threads the selected profile through stop/verify/restore, and records the resolved profile in `matrix-summary.json` while still accepting the old service-mode aliases
+- Rooted gpu-smoke takeover-profile result on 2026-04-23:
+  - `pixel_gpu_smoke.sh` now resolves the same typed rooted display-takeover profile before `--present-kms` runs, uses the profile-specific stop/verify/restore helpers, and records the resolved profile in `status.json`
+  - `PIXEL_TAKEOVER_STOP_ALLOCATOR` remains only as the compatibility alias that derives the default rooted `takeover.displayServiceProfile` when callers do not provide explicit profile JSON
 - Observability uplift on 2026-04-21:
   - `pixel_boot_recover_traces.sh` now records a rooted `kgsl-holder-scan` current-boot channel and a `kernel-current-best-effort` channel that prefers rooted `dmesg` over `logcat -b kernel`
   - `pixel_tmpfs_dev_gpu_smoke.sh` now emits `kgsl-holder-scan.tsv` and parsed holder metadata in `status.json`, so rooted controls can prove whether KGSL was already warm/open under Android
