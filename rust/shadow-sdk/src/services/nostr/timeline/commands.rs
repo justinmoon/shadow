@@ -1,14 +1,14 @@
 use super::{
     super::{
-        publish, sync, NostrError, NostrHostError, NostrPublishRequest, NostrQuery,
-        NostrSyncRequest,
+        publish, sync, NostrError, NostrHostError, NostrPublishReceipt, NostrPublishRequest,
+        NostrQuery, NostrSyncRequest,
     },
     load_cached_home_notes, load_contact_references_for_account, load_explore_notes,
     load_home_feed_scope_for_account, NostrContactListUpdateAction, NostrContactListUpdateOutcome,
     NostrContactListUpdateRequest, NostrExploreSyncOutcome, NostrExploreSyncRequest,
     NostrHomeRefreshOutcome, NostrHomeRefreshRequest, NostrReplyPublishOutcome,
     NostrReplyPublishRequest, NostrTextNotePublishOutcome, NostrTextNotePublishRequest,
-    NostrThreadSyncOutcome, NostrThreadSyncRequest,
+    NostrThreadSyncOutcome, NostrThreadSyncRequest, NostrTimelinePublishRequest,
 };
 
 pub fn refresh_home_feed(
@@ -244,6 +244,19 @@ pub fn publish_reply(
     })?;
 
     Ok(NostrReplyPublishOutcome { receipt })
+}
+
+pub fn publish_note_or_reply(
+    request: NostrTimelinePublishRequest,
+) -> Result<NostrPublishReceipt, NostrError> {
+    match request {
+        NostrTimelinePublishRequest::Note(request) => {
+            publish_text_note(request).map(|outcome| outcome.receipt)
+        }
+        NostrTimelinePublishRequest::Reply(request) => {
+            publish_reply(request).map(|outcome| outcome.receipt)
+        }
+    }
 }
 
 pub fn publish_text_note(

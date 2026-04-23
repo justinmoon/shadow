@@ -1,6 +1,7 @@
 use super::{
     load_home_cache_state_for_account, load_home_feed_scope_for_account, load_note_cache_state,
     load_profile_summary, load_thread_context, thread_parent_ids, NostrHomeFeedSource,
+    NostrTimelinePublishRequest,
 };
 use crate::services::nostr::{
     NostrEvent, SqliteNostrService, NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV,
@@ -288,6 +289,28 @@ fn load_note_cache_state_reads_note_profile_and_thread() {
         assert_eq!(cache.thread.replies.len(), 1);
         assert_eq!(cache.thread.replies[0].id, "reply");
     });
+}
+
+#[test]
+fn timeline_publish_request_helpers_expose_content_and_target() {
+    let note = NostrTimelinePublishRequest::note(
+        String::from("top-level note"),
+        vec![String::from("wss://relay.example")],
+    );
+    assert!(note.is_note());
+    assert_eq!(note.content(), "top-level note");
+    assert!(!note.is_reply_to("note-1"));
+
+    let reply = NostrTimelinePublishRequest::reply(
+        String::from("reply body"),
+        vec![String::from("wss://relay.example")],
+        String::from("note-1"),
+        Some(String::from("root-1")),
+    );
+    assert!(!reply.is_note());
+    assert_eq!(reply.content(), "reply body");
+    assert!(reply.is_reply_to("note-1"));
+    assert!(!reply.is_reply_to("note-2"));
 }
 
 #[test]

@@ -1,11 +1,8 @@
-use shadow_sdk::services::nostr::timeline::{
-    thread_parent_ids, NostrReplyPublishRequest, NostrTextNotePublishRequest,
-};
+use shadow_sdk::services::nostr::timeline::{thread_parent_ids, NostrTimelinePublishRequest};
 
 use super::{
     AccountActionKind, FollowActionKind, PendingAccountAction, PendingClipboardWrite,
-    PendingExploreSync, PendingFollowUpdate, PendingPublish, PendingPublishRequest,
-    PendingPublishTarget, PendingRefresh, PendingThreadSync, RefreshSource,
+    PendingExploreSync, PendingFollowUpdate, PendingRefresh, PendingThreadSync, RefreshSource,
 };
 use crate::{socket_available, TimelineApp, TimelineStatus, Tone};
 
@@ -242,17 +239,12 @@ impl TimelineApp {
             };
             return;
         };
-        self.tasks.publish.start(PendingPublish {
-            target: PendingPublishTarget::Reply {
-                note_id: note.id.clone(),
-            },
-            request: PendingPublishRequest::Reply(NostrReplyPublishRequest {
-                content: content.to_owned(),
-                relay_urls: self.config.relay_urls.clone(),
-                reply_to_event_id: note.id.clone(),
-                root_event_id: note.root_event_id.clone().or_else(|| Some(note.id)),
-            }),
-        });
+        self.tasks.publish.start(NostrTimelinePublishRequest::reply(
+            content.to_owned(),
+            self.config.relay_urls.clone(),
+            note.id.clone(),
+            note.root_event_id.clone().or_else(|| Some(note.id)),
+        ));
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Publishing reply through the shared Nostr account..."),
@@ -290,13 +282,10 @@ impl TimelineApp {
             };
             return;
         }
-        self.tasks.publish.start(PendingPublish {
-            target: PendingPublishTarget::Note,
-            request: PendingPublishRequest::Note(NostrTextNotePublishRequest {
-                content: content.to_owned(),
-                relay_urls: self.config.relay_urls.clone(),
-            }),
-        });
+        self.tasks.publish.start(NostrTimelinePublishRequest::note(
+            content.to_owned(),
+            self.config.relay_urls.clone(),
+        ));
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Publishing note through the shared Nostr account..."),

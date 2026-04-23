@@ -8,8 +8,8 @@ pub use cache::{
     thread_parent_ids,
 };
 pub use commands::{
-    publish_reply, publish_text_note, refresh_home_feed, sync_explore_feed, sync_thread,
-    update_contact_list,
+    publish_note_or_reply, publish_reply, publish_text_note, refresh_home_feed, sync_explore_feed,
+    sync_thread, update_contact_list,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +169,53 @@ pub struct NostrReplyPublishOutcome {
 pub struct NostrTextNotePublishRequest {
     pub content: String,
     pub relay_urls: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum NostrTimelinePublishRequest {
+    Note(NostrTextNotePublishRequest),
+    Reply(NostrReplyPublishRequest),
+}
+
+impl NostrTimelinePublishRequest {
+    pub fn note(content: String, relay_urls: Vec<String>) -> Self {
+        Self::Note(NostrTextNotePublishRequest {
+            content,
+            relay_urls,
+        })
+    }
+
+    pub fn reply(
+        content: String,
+        relay_urls: Vec<String>,
+        reply_to_event_id: String,
+        root_event_id: Option<String>,
+    ) -> Self {
+        Self::Reply(NostrReplyPublishRequest {
+            content,
+            relay_urls,
+            reply_to_event_id,
+            root_event_id,
+        })
+    }
+
+    pub fn content(&self) -> &str {
+        match self {
+            Self::Note(request) => &request.content,
+            Self::Reply(request) => &request.content,
+        }
+    }
+
+    pub fn is_note(&self) -> bool {
+        matches!(self, Self::Note(_))
+    }
+
+    pub fn is_reply_to(&self, note_id: &str) -> bool {
+        matches!(
+            self,
+            Self::Reply(request) if request.reply_to_event_id == note_id
+        )
+    }
 }
 
 #[derive(Debug)]

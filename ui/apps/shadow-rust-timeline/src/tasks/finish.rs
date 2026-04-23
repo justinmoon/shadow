@@ -2,9 +2,8 @@ use shadow_sdk::ui::TaskHandle;
 
 use super::{
     ExploreSyncOutcome, FollowActionKind, FollowUpdateOutcome, PendingAccountAction,
-    PendingClipboardWrite, PendingExploreSync, PendingFollowUpdate, PendingPublish,
-    PendingPublishRequest, PendingPublishTarget, PendingRefresh, PendingThreadSync, PublishOutcome,
-    RefreshOutcome, RefreshSource, ThreadSyncOutcome,
+    PendingClipboardWrite, PendingExploreSync, PendingFollowUpdate, PendingPublish, PendingRefresh,
+    PendingThreadSync, PublishOutcome, RefreshOutcome, RefreshSource, ThreadSyncOutcome,
 };
 use crate::{
     empty_feed_status, log_preview_text, plural_suffix, short_id, FeedScope, FeedSource,
@@ -285,10 +284,7 @@ impl TimelineApp {
         let Some(pending) = self.tasks.publish.finish(task.id()) else {
             return;
         };
-        let publish_preview = match &pending.request {
-            PendingPublishRequest::Note(request) => log_preview_text(&request.content),
-            PendingPublishRequest::Reply(request) => log_preview_text(&request.content),
-        };
+        let publish_preview = log_preview_text(pending.content());
 
         match result {
             Ok(outcome) => {
@@ -299,33 +295,30 @@ impl TimelineApp {
                     };
                     return;
                 }
-                let (publish_label, status_suffix) = match pending.target {
-                    PendingPublishTarget::Note => {
-                        self.note_draft = None;
-                        self.route_stack = vec![crate::Route::Timeline];
-                        self.open_note(outcome.receipt.event.id.clone());
-                        self.sync_routes();
-                        ("note", " Opened the published note.")
-                    }
-                    PendingPublishTarget::Reply { .. } => {
-                        self.reply_draft = None;
-                        self.sync_routes();
-                        ("reply", "")
-                    }
+                let (publish_label, status_suffix) = if pending.is_note() {
+                    self.note_draft = None;
+                    self.route_stack = vec![crate::Route::Timeline];
+                    self.open_note(outcome.event.id.clone());
+                    self.sync_routes();
+                    ("note", " Opened the published note.")
+                } else {
+                    self.reply_draft = None;
+                    self.sync_routes();
+                    ("reply", "")
                 };
-                let relay_count = outcome.receipt.published_relays.len();
-                let suffix = if outcome.receipt.failed_relays.is_empty() {
+                let relay_count = outcome.published_relays.len();
+                let suffix = if outcome.failed_relays.is_empty() {
                     String::new()
                 } else {
                     format!(
                         "; {} relay{} failed",
-                        outcome.receipt.failed_relays.len(),
-                        plural_suffix(outcome.receipt.failed_relays.len())
+                        outcome.failed_relays.len(),
+                        plural_suffix(outcome.failed_relays.len())
                     )
                 };
                 eprintln!(
                     "{APP_LOG_PREFIX}: publish_result=success preview={publish_preview} published_relays={relay_count} failed_relays={}",
-                    outcome.receipt.failed_relays.len()
+                    outcome.failed_relays.len()
                 );
                 self.status = TimelineStatus {
                     tone: Tone::Success,

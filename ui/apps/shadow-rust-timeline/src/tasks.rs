@@ -6,11 +6,11 @@ use shadow_sdk::{
     services::nostr::{
         generate_account, import_account_nsec,
         timeline::{
-            publish_reply, publish_text_note, refresh_home_feed, sync_explore_feed, sync_thread,
+            publish_note_or_reply, refresh_home_feed, sync_explore_feed, sync_thread,
             update_contact_list, NostrContactListUpdateAction, NostrContactListUpdateOutcome,
             NostrContactListUpdateRequest, NostrExploreSyncOutcome, NostrExploreSyncRequest,
-            NostrHomeRefreshOutcome, NostrHomeRefreshRequest, NostrReplyPublishRequest,
-            NostrTextNotePublishRequest, NostrThreadSyncOutcome, NostrThreadSyncRequest,
+            NostrHomeRefreshOutcome, NostrHomeRefreshRequest, NostrThreadSyncOutcome,
+            NostrThreadSyncRequest, NostrTimelinePublishRequest,
         },
         NostrPublishReceipt,
     },
@@ -35,11 +35,8 @@ pub(crate) type RefreshOutcome = NostrHomeRefreshOutcome;
 pub(crate) type ExploreSyncOutcome = NostrExploreSyncOutcome;
 pub(crate) type ThreadSyncOutcome = NostrThreadSyncOutcome;
 pub(crate) type FollowUpdateOutcome = NostrContactListUpdateOutcome;
-
-#[derive(Debug)]
-pub(crate) struct PublishOutcome {
-    pub(crate) receipt: NostrPublishReceipt,
-}
+pub(crate) type PendingPublish = NostrTimelinePublishRequest;
+pub(crate) type PublishOutcome = NostrPublishReceipt;
 
 #[derive(Clone, Debug)]
 pub(crate) enum AccountActionKind {
@@ -55,24 +52,6 @@ pub(crate) struct PendingAccountAction {
 #[derive(Clone, Debug)]
 pub(crate) struct PendingClipboardWrite {
     pub(crate) text: String,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct PendingPublish {
-    pub(crate) target: PendingPublishTarget,
-    pub(crate) request: PendingPublishRequest,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum PendingPublishTarget {
-    Note,
-    Reply { note_id: String },
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum PendingPublishRequest {
-    Note(NostrTextNotePublishRequest),
-    Reply(NostrReplyPublishRequest),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -113,18 +92,13 @@ impl TimelineTasks {
     pub(crate) fn publish_note_pending(&self) -> bool {
         self.publish
             .pending()
-            .is_some_and(|pending| matches!(pending.job().target, PendingPublishTarget::Note))
+            .is_some_and(|pending| pending.job().is_note())
     }
 
     pub(crate) fn publish_reply_pending_for(&self, note_id: &str) -> bool {
-        self.publish.pending().is_some_and(|pending| {
-            matches!(
-                pending.job().target,
-                PendingPublishTarget::Reply {
-                    note_id: ref pending_note_id
-                } if pending_note_id == note_id
-            )
-        })
+        self.publish
+            .pending()
+            .is_some_and(|pending| pending.job().is_reply_to(note_id))
     }
 
     pub(crate) fn follow_update_pending_for(&self, pubkey: &str) -> bool {
@@ -160,21 +134,13 @@ impl TimelineTaskSnapshot {
     }
 
     pub(crate) fn publish_reply_pending_for(&self, note_id: &str) -> bool {
-        self.publish.as_ref().is_some_and(|job| {
-            matches!(
-                job.job().target,
-                PendingPublishTarget::Reply {
-                    note_id: ref pending_note_id
-                }
-                    if pending_note_id == note_id
-            )
-        })
+        self.publish
+            .as_ref()
+            .is_some_and(|job| job.job().is_reply_to(note_id))
     }
 
     pub(crate) fn publish_note_pending(&self) -> bool {
-        self.publish
-            .as_ref()
-            .is_some_and(|job| matches!(job.job().target, PendingPublishTarget::Note))
+        self.publish.as_ref().is_some_and(|job| job.job().is_note())
     }
 
     pub(crate) fn thread_sync_pending_for(&self, note_id: &str) -> bool {
@@ -263,15 +229,5 @@ fn run_clipboard_write(job: PendingClipboardWrite) -> Result<(), String> {
 }
 
 fn run_publish(job: PendingPublish) -> Result<PublishOutcome, String> {
-    let receipt = match job.request {
-        PendingPublishRequest::Note(request) => {
-            publish_text_note(request).map(|outcome| outcome.receipt)
-        }
-        PendingPublishRequest::Reply(request) => {
-            publish_reply(request).map(|outcome| outcome.receipt)
-        }
-    }
-    .map_err(|error| error.to_string())?;
-
-    Ok(PublishOutcome { receipt })
+    publish_note_or_reply(job).map_err(|error| error.to_string())
 }
