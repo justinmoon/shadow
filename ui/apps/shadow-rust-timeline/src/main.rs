@@ -409,15 +409,10 @@ impl TimelineApp {
     fn sync_routes(&mut self) {
         if self.account.is_none() {
             self.note_draft = None;
-            let limit = self.config.limit;
-            self.cached_data
-                .reset_route_stack(&mut self.route_stack, Route::Onboarding, limit);
-            self.prune_stale_reply_draft();
-            return;
         }
         let limit = self.config.limit;
         self.cached_data
-            .normalize_route_stack(&mut self.route_stack, limit);
+            .reconcile_route_stack(&mut self.route_stack, self.account.as_ref(), limit);
         self.prune_stale_reply_draft();
     }
 
@@ -1109,6 +1104,19 @@ mod tests {
 
         assert_eq!(app.current_route(), Route::Timeline);
         assert!(app.reply_draft.is_none());
+    }
+
+    #[test]
+    fn sync_routes_without_account_clears_note_draft_and_resets_to_onboarding() {
+        let mut app = test_app();
+        app.account = None;
+        app.note_draft = Some(String::from("hello world"));
+        app.route_stack = vec![Route::Timeline];
+
+        app.sync_routes();
+
+        assert_eq!(app.current_route(), Route::Onboarding);
+        assert!(app.note_draft.is_none());
     }
 
     #[test]

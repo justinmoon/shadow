@@ -115,9 +115,25 @@ impl TimelineCachedData {
         self.hydrate_current_route(route_stack, limit);
     }
 
+    // Account-aware route reconciliation stays inside the cache boundary so
+    // refresh paths do not duplicate auth-loss resets and stale note pruning.
+    pub(crate) fn reconcile_route_stack(
+        &mut self,
+        route_stack: &mut Vec<Route>,
+        account: Option<&ActiveAccount>,
+        limit: usize,
+    ) {
+        if account.is_none() {
+            self.reset_route_stack(route_stack, Route::Onboarding, limit);
+            return;
+        }
+        self.prune_stale_note_routes(route_stack);
+        self.hydrate_current_route(route_stack, limit);
+    }
+
     // Cache refreshes can invalidate note-local screens, so prune stale note
     // routes before hydrating the route that remains visible.
-    pub(crate) fn normalize_route_stack(&mut self, route_stack: &mut Vec<Route>, limit: usize) {
+    fn prune_stale_note_routes(&self, route_stack: &mut Vec<Route>) {
         loop {
             let should_pop = match route_stack.last() {
                 Some(Route::Note { id }) => self.cached_note_by_id(id).is_none(),
@@ -128,7 +144,6 @@ impl TimelineCachedData {
             }
             route_stack.pop();
         }
-        self.hydrate_current_route(route_stack, limit);
     }
 
     pub(crate) fn hydrate_current_route(&mut self, route_stack: &[Route], limit: usize) {
@@ -224,8 +239,15 @@ impl TimelineCachedData {
 #[cfg(test)]
 mod tests {
     use super::TimelineCachedData;
-    use crate::{FeedScope, Route};
+    use crate::{AccountSource, ActiveAccount, FeedScope, Route};
     use shadow_sdk::services::nostr::NostrEvent;
+
+    fn test_account() -> ActiveAccount {
+        ActiveAccount {
+            npub: String::from("npub-owner"),
+            source: AccountSource::Generated,
+        }
+    }
 
     fn test_note(id: &str, pubkey: &str, content: &str) -> NostrEvent {
         NostrEvent {
@@ -305,8 +327,19 @@ mod tests {
     }
 
     #[test]
-    fn normalize_route_stack_pops_stale_note_routes_until_non_note_top() {
+    fn reconcile_route_stack_without_account_resets_to_onboarding() {
         let mut cached_data = TimelineCachedData::from_home(FeedScope::no_contacts(), Vec::new());
+        let mut route_stack = vec![Route::Timeline, Route::Account];
+
+        cached_data.reconcile_route_stack(&mut route_stack, None, 18);
+
+        assert_eq!(route_stack, vec![Route::Onboarding]);
+    }
+
+    #[test]
+    fn reconcile_route_stack_with_account_pops_stale_note_routes_until_non_note_top() {
+        let mut cached_data = TimelineCachedData::from_home(FeedScope::no_contacts(), Vec::new());
+        let account = test_account();
         let mut route_stack = vec![
             Route::Timeline,
             Route::Note {
@@ -317,19 +350,20 @@ mod tests {
             },
         ];
 
-        cached_data.normalize_route_stack(&mut route_stack, 18);
+        cached_data.reconcile_route_stack(&mut route_stack, Some(&account), 18);
 
         assert_eq!(route_stack, vec![Route::Timeline]);
     }
 
     #[test]
-    fn normalize_route_stack_keeps_root_stale_note_route() {
+    fn reconcile_route_stack_with_account_keeps_root_stale_note_route() {
         let mut cached_data = TimelineCachedData::from_home(FeedScope::no_contacts(), Vec::new());
+        let account = test_account();
         let mut route_stack = vec![Route::Note {
             id: String::from("missing-note"),
         }];
 
-        cached_data.normalize_route_stack(&mut route_stack, 18);
+        cached_data.reconcile_route_stack(&mut route_stack, Some(&account), 18);
 
         assert_eq!(
             route_stack,
@@ -340,11 +374,12 @@ mod tests {
     }
 
     #[test]
-    fn normalize_route_stack_keeps_note_route_when_cached_note_is_available() {
+    fn reconcile_route_stack_with_account_keeps_note_route_when_cached_note_is_available() {
         let mut cached_data = TimelineCachedData::from_home(
             FeedScope::no_contacts(),
             vec![test_note("note-1", "npub-alice", "note")],
         );
+        let account = test_account();
         let mut route_stack = vec![
             Route::Timeline,
             Route::Note {
@@ -352,7 +387,7 @@ mod tests {
             },
         ];
 
-        cached_data.normalize_route_stack(&mut route_stack, 18);
+        cached_data.reconcile_route_stack(&mut route_stack, Some(&account), 18);
 
         assert_eq!(
             route_stack,
@@ -363,6 +398,17 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn reconcile_route_stack_with_account_keeps_existing_non_note_route() {
+        let mut cached_data = TimelineCachedData::from_home(FeedScope::no_contacts(), Vec::new());
+        let account = test_account();
+        let mut route_stack = vec![Route::Onboarding];
+
+        cached_data.reconcile_route_stack(&mut route_stack, Some(&account), 18);
+
+        assert_eq!(route_stack, vec![Route::Onboarding]);
     }
 
     #[test]
