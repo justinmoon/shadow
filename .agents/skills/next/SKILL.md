@@ -70,6 +70,12 @@ Treat the user's text after `/next` as the primary instruction.
 
 7. Finish honestly.
    - if the task is ready to land, use the `land` skill
+   - after a successful land, make sure this worktree's claim is marked `done` before starting another task:
+     - if `/next` later reports the old claim as `landed_clean`, run `dis interactive-finish --project <project> --state done --json`
+     - if you are explicitly closing out after confirming the landed commit, run `dis interactive-finish --project <project> --state done --json`
+   - when helpful for future workers, add concise completion notes before marking done:
+     - update the relevant `todos/` task card with `result`, proof artifact paths, blocker details, or the next recommended slice
+     - keep notes factual and short; do not duplicate full command logs when artifact paths are enough
    - if the task is blocked or should go back to queue, use:
      - `dis interactive-finish --project <project> --state blocked`
      - or:
