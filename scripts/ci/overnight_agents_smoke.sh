@@ -31,19 +31,22 @@ cat >todos/alpha.md <<'EOF'
 ## Next Dispatch Batch
 
 - [ ] `first concrete task`
+  - task_id: alpha-first-concrete-task
   - owned paths:
     - `runtime/`
     - `ui/`
   - validation:
     - `just pre-commit`
 - [ ] `second concrete task`
+  - task_id: alpha-second-concrete-task
   - owned paths:
     - `ui/`
   - validation:
     - `just ui-check core`
   - blocked_by:
-    - `first concrete task`
+    - `alpha-first-concrete-task`
 - [ ] `third independent task`
+  - task_id: alpha-third-independent-task
   - owned paths:
     - `docs/`
   - validation:
@@ -54,29 +57,80 @@ git add .
 git commit -qm "test: seed interactive dispatch smoke repo"
 
 python3 "$CTL_PATH" project-init --project alpha --plan todos/alpha.md >/dev/null
+python3 "$CTL_PATH" plan-lint --project alpha >/dev/null
 python3 "$CTL_PATH" queue-import-plan --project alpha >/dev/null
 
 python3 - <<'PY'
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
-queue = json.loads(Path(".agents/dispatch/state/projects/alpha/queue.json").read_text())
-assert set(queue) == {"project", "tasks"}, queue
+queue_state = json.loads(Path(".agents/dispatch/state/projects/alpha/queue.json").read_text())
+assert queue_state == {"project": "alpha", "task_states": {}}, queue_state
+
+status = json.loads(subprocess.check_output([
+    "python3",
+    "scripts/debug/dispatch.py",
+    "interactive-status",
+    "--project",
+    "alpha",
+    "--json",
+], text=True))
+queue = status["queue"]
 assert len(queue["tasks"]) == 3, queue
 first, second, third = queue["tasks"]
+assert first["id"] == "alpha-first-concrete-task", first
 assert first["title"] == "first concrete task", first
 assert first["state"] == "ready", first
 assert first["paths"] == ["runtime/", "ui/"], first
 assert first["validation"] == ["just pre-commit"], first
 assert "blocked_by" not in first, first
-assert second["blocked_by"] == [first["id"]], second
+assert second["id"] == "alpha-second-concrete-task", second
+assert second["blocked_by"] == ["alpha-first-concrete-task"], second
+assert third["id"] == "alpha-third-independent-task", third
 assert third["title"] == "third independent task", third
 assert third["state"] == "ready", third
 assert "blocked_by" not in third, third
 claims = json.loads(Path(".agents/dispatch/state/projects/alpha/claims.json").read_text())
 assert claims == {"project": "alpha", "claims": {}}, claims
+PY
+
+python3 - <<'PY'
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+plan = Path("todos/alpha.md")
+text = plan.read_text(encoding="utf-8")
+plan.write_text(text.replace("- [ ] `third independent task`", "- [x] `third independent task`"), encoding="utf-8")
+subprocess.run(["python3", "scripts/debug/dispatch.py", "queue-import-plan", "--project", "alpha"], check=True, stdout=subprocess.DEVNULL)
+status = json.loads(subprocess.check_output([
+    "python3",
+    "scripts/debug/dispatch.py",
+    "interactive-status",
+    "--project",
+    "alpha",
+    "--json",
+], text=True))
+states = {task["id"]: task["state"] for task in status["queue"]["tasks"]}
+assert states["alpha-third-independent-task"] == "done", states
+
+plan.write_text(text, encoding="utf-8")
+subprocess.run(["python3", "scripts/debug/dispatch.py", "queue-import-plan", "--project", "alpha"], check=True, stdout=subprocess.DEVNULL)
+status = json.loads(subprocess.check_output([
+    "python3",
+    "scripts/debug/dispatch.py",
+    "interactive-status",
+    "--project",
+    "alpha",
+    "--json",
+], text=True))
+states = {task["id"]: task["state"] for task in status["queue"]["tasks"]}
+assert states["alpha-third-independent-task"] == "ready", states
 PY
 
 worker="$tmpdir/alpha-worker"
@@ -113,21 +167,7 @@ subprocess.run(["git", "commit", "-qm", "test: finish first task"], cwd=worker, 
 subprocess.run(["git", "merge", "--ff-only", "alpha-worker"], check=True)
 PY
 
-third_id="$(python3 - <<'PY'
-from __future__ import annotations
-
-import json
-from pathlib import Path
-
-queue = json.loads(Path(".agents/dispatch/state/projects/alpha/queue.json").read_text())
-for task in queue["tasks"]:
-    if task["title"] == "third independent task":
-        print(task["id"])
-        break
-else:
-    raise SystemExit("missing third independent task")
-PY
-)"
+third_id="alpha-third-independent-task"
 third_claim="$(python3 "$CTL_PATH" interactive-next --project alpha --worktree "$worker" --task-id "$third_id" --json)"
 
 python3 - "$third_claim" <<'PY'
@@ -151,11 +191,10 @@ from pathlib import Path
 
 queue = json.loads(Path(".agents/dispatch/state/projects/alpha/queue.json").read_text())
 claims = json.loads(Path(".agents/dispatch/state/projects/alpha/claims.json").read_text())
-states = {task["title"]: task["state"] for task in queue["tasks"]}
+states = queue["task_states"]
 assert states == {
-    "first concrete task": "done",
-    "second concrete task": "ready",
-    "third independent task": "blocked",
+    "alpha-first-concrete-task": "done",
+    "alpha-third-independent-task": "blocked",
 }, states
 assert claims == {"project": "alpha", "claims": {}}, claims
 PY

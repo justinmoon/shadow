@@ -66,27 +66,52 @@ Runtime state, shared across worktrees:
 - `.agents/dispatch/state/projects/<project>/queue.json`
 - `.agents/dispatch/state/projects/<project>/claims.json`
 
-## Queue Shape
+## Plan-Backed Tasks
 
-`queue.json` is intentionally small:
+Task definitions live in `todos/`, not in runtime JSON. Dispatch materializes task
+definitions from the configured project plan on every status/claim operation.
+
+Recommended task-card shape:
+
+```md
+- [ ] `finish-inflight-app-direct-present`
+  - task_id: boot-finish-inflight-app-direct-present
+  - priority: 11
+  - owned paths:
+    - `scripts/pixel/`
+    - `todos/boot/`
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+  - blocked_by: none
+```
+
+`task_id` is the canonical identity that claims and dependencies point at. If a
+legacy card does not have `task_id`, dispatch falls back to a generated slug,
+but new task cards should always include `task_id`.
+
+`blocked_by:` may name either task ids or human titles. Prefer task ids for
+durability.
+
+## Runtime State
+
+`queue.json` is assignment state only. It does not duplicate plan-owned task
+definitions, and it only stores plan-task states that differ from the current
+plan default:
 
 ```json
 {
   "project": "boot",
-  "tasks": [
-    {
-      "id": "boot-finish-inflight-app-direct-present",
-      "title": "finish-inflight-app-direct-present",
-      "state": "ready",
-      "priority": 11,
-      "plan_ref": "todos/boot/plan.md:99",
-      "paths": ["scripts/pixel/", "todos/boot/"],
-      "validation": ["scripts/ci/pixel_boot_orange_gpu_smoke.sh"],
-      "blocked_by": []
-    }
-  ]
+  "task_states": {
+    "boot-finish-inflight-app-direct-present": "done",
+    "boot-ts-app-minimal": "running"
+  }
 }
 ```
+
+Entries omitted from `task_states` derive from the plan checkbox, section, or
+explicit `state:` field. Older manually added tasks can temporarily appear under
+`legacy_tasks` until they are moved into `todos/`. Do not add new work that way
+unless you are preserving an old live claim.
 
 `claims.json` maps worktree path to the one task that worktree currently owns:
 
@@ -103,29 +128,21 @@ Runtime state, shared across worktrees:
 }
 ```
 
-## Markdown Task Cards
+## Markdown Task Discovery
 
-`queue-import-plan` only imports unchecked checklist items that are either:
+Dispatch discovers checklist items that are either under `## Next Dispatch Batch`
+or explicitly shaped like task cards with `task_id:`, `owned paths:`,
+`validation:`, or `blocked_by:`.
 
-- under `## Next Dispatch Batch`, or
-- explicitly shaped like task cards with these subfields:
-  - `owned paths:`
-  - `validation:`
-  - `blocked_by:`
+Unchecked cards default to `ready` under `## Next Dispatch Batch` and `backlog`
+elsewhere. Checked cards default to `done`; `[~]` cards default to `blocked`.
+Runtime state can override unchecked defaults, while checked, `[~]`, and
+explicit `state:` cards reset stale runtime overrides except for active
+`running` claims.
 
-Recommended task-card shape:
-
-```md
-- [ ] `finish-inflight-app-direct-present`
-  - owned paths:
-    - `scripts/pixel/`
-    - `todos/boot/`
-  - validation:
-    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
-  - blocked_by: none
-```
-
-`blocked_by:` may name either task ids or human titles. Import resolves titles to ids.
+`just pre-commit` runs `dis plan-lint --all` to catch malformed task cards,
+duplicate or invalid task ids, ambiguous title blockers, and unresolved
+blockers before dispatch state depends on them.
 
 ## Commands
 
@@ -133,8 +150,12 @@ Seed or reset a project:
 
 ```sh
 dis project-init --project boot --plan todos/boot/plan.md
+dis plan-lint --project boot
 dis queue-import-plan --project boot
 ```
+
+`queue-import-plan` indexes the plan and persists assignment state only. It does
+not copy task definitions into runtime JSON.
 
 Inspect queue and claims:
 
@@ -165,12 +186,15 @@ dis interactive-finish --project boot --state ready
 dis interactive-finish --project boot --state blocked
 ```
 
-Adjust the queue directly:
+Adjust assignment state directly:
 
 ```sh
-dis task-add --project boot --title 'new seam' --path scripts/pixel/ --validation 'just pre-commit'
 dis task-state --project boot --task-id boot-new-seam --state ready
 ```
+
+To add new work, edit the relevant `todos/` file with a task card and run
+`dis queue-import-plan --project <project>`. `task-add` remains only as a
+compatibility path for old live tasks that have not yet moved into `todos/`.
 
 ## Behavior
 
@@ -179,4 +203,4 @@ dis task-state --project boot --task-id boot-new-seam --state ready
 - Task priority is the scheduler fallback and a planning signal, not a substitute for worker judgement about continuity, path overlap, or recently accumulated context.
 - If direct `interactive-next` sees that the worktree's branch moved and landed cleanly on `master`, it auto-marks the old task `done`. With `--task-id`, it then claims that selected task; without `--task-id`, it falls back to the highest-priority available task.
 - `blocked_by` controls `available` versus `waiting`.
-- `queue-import-plan` refreshes plan-derived tasks and drops stale plan-derived tasks that are no longer in the current plan, while leaving manual tasks alone.
+- `queue-import-plan` refreshes plan-derived task definitions and persists assignment state only, while preserving legacy runtime-defined tasks until they are moved into `todos/`.

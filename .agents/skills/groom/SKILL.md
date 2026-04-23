@@ -31,7 +31,9 @@ Treat the user's text after `/groom` as the primary instruction. `/groom` is a c
 
 2. Read the plan.
    - Open the configured `plan_path`.
+   - Treat `todos/` task cards with `task_id` as the canonical work definition.
    - Re-import plan task cards only when the user explicitly wants queue mutation or asks for reimport:
+     - `dis plan-lint --project <project>`
      - `dis queue-import-plan --project <project>`
 
 3. Clean up stale claims.
@@ -43,9 +45,11 @@ Treat the user's text after `/groom` as the primary instruction. `/groom` is a c
 4. Groom the queue.
    - when discussing only:
      - propose concrete tasks, blockers, and sequencing in plain language
-     - do not run `task-add` or `task-state`
+     - do not edit `todos/` or run queue-changing commands
    - when explicitly asked to mutate:
-     - add small concrete tasks with `task-add`
+     - add or update small concrete task cards in the configured `todos/` plan
+     - run `dis plan-lint --project <project>` before importing
+     - run `dis queue-import-plan --project <project>` to refresh assignment state
      - change queue truth with `task-state`
      - encode dependency order with `blocked_by`
 
@@ -73,5 +77,6 @@ When the user asks how to break a blocker into parallel work, prefer explicit pa
 - Do not create tmux panes or worktrees.
 - Do not auto-launch hidden workers.
 - Keep the queue small.
+- Use `task-add` only for old live claims that cannot yet be represented in `todos/`.
 - Prefer narrow write scopes and one clear validation shape per task.
 - For boot, keep the Stream A critical path explicit; do not pretend parallelism exists when it does not.

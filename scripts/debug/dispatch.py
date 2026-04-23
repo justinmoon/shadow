@@ -29,6 +29,7 @@ from overnight_common import (  # noqa: E402
     load_project,
     load_queue,
     locked_file,
+    materialize_plan_queue,
     next_task_id,
     parse_plan_checklist,
     project_def_path,
@@ -61,6 +62,14 @@ def dump(payload: dict[str, Any], *, as_json: bool) -> None:
         print(f"resume {payload['task']['id']}")
         return
     print(json.dumps(payload, indent=2))
+
+
+def public_task(task: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in task.items() if not key.startswith("_")}
+
+
+def public_queue(queue: dict[str, Any]) -> dict[str, Any]:
+    return {"project": queue.get("project"), "tasks": [public_task(task) for task in queue.get("tasks", [])]}
 
 
 def state_counts(queue: dict[str, Any]) -> dict[str, int]:
@@ -99,10 +108,10 @@ def resolve_project_id(cwd: Path, common_root: Path, explicit_project: str | Non
 
 
 @contextmanager
-def locked_project(common_root: Path, project_id: str) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+def locked_project(common_root: Path, project_id: str, cwd: Path | None = None) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
     ensure_runtime_layout(common_root, project_id)
     with locked_file(project_lock_path(common_root, project_id)):
-        queue = load_queue(common_root, project_id)
+        queue = load_queue(common_root, project_id, cwd)
         claims = load_claims(common_root, project_id)
         yield queue, claims
         save_queue(common_root, project_id, queue)
@@ -147,13 +156,13 @@ def claim_sync_status(common_root: Path, queue: dict[str, Any], worktree_text: s
 
 def status_payload(cwd: Path, common_root: Path, project_id: str) -> dict[str, Any]:
     project = load_project(cwd, project_id)
-    queue = load_queue(common_root, project_id)
+    queue = load_queue(common_root, project_id, cwd)
     claims = load_claims(common_root, project_id)
     claims_view = [claim_sync_status(common_root, queue, worktree, claim) for worktree, claim in sorted(claims.get("claims", {}).items())]
     return {
         "project": project_id,
         "plan_path": project["plan_path"],
-        "queue": queue,
+        "queue": public_queue(queue),
         "counts": state_counts(queue),
         "availability": availability_counts(queue),
         "available": [
@@ -228,54 +237,37 @@ def cmd_queue_import_plan(args: argparse.Namespace) -> int:
     common_root = repo_common_root(cwd)
     project = load_project(cwd, args.project)
     plan_path = (repo_root(cwd) / project["plan_path"]).resolve()
-    imported = parse_plan_checklist(plan_path)
-    title_path = f"{project['plan_path']}:"
-    with locked_project(common_root, args.project) as (queue, claims):
-        title_to_id = {task["title"]: task["id"] for task in queue.get("tasks", [])}
-        staged: list[dict[str, Any]] = []
-        for item in imported:
-            item_id = title_to_id.get(item["title"]) or next_task_id(queue["tasks"] + staged, args.project, item["title"])
-            title_to_id[item["title"]] = item_id
-            staged.append({"id": item_id, "title": item["title"]})
-        desired_by_id: dict[str, dict[str, Any]] = {}
-        for order, item in enumerate(imported, start=1):
-            task_id = title_to_id[item["title"]]
-            ready = "next dispatch batch" in item["section"].lower()
-            task: dict[str, Any] = {
-                "id": task_id,
-                "title": item["title"],
-                "state": "ready" if ready else "backlog",
-                "priority": (10 if ready else 100) + order,
-                "plan_ref": f"{project['plan_path']}:{item['line']}",
-                "paths": item.get("paths", []),
-                "validation": item.get("validation", []),
-            }
-            blockers = resolve_blockers(queue, item.get("blocked_by", []), title_to_id)
-            if blockers:
-                task["blocked_by"] = blockers
-            desired_by_id[task_id] = task
-        claimed_ids = {claim["task_id"] for claim in claims.get("claims", {}).values()}
-        next_tasks: list[dict[str, Any]] = []
-        for existing in queue.get("tasks", []):
-            desired = desired_by_id.pop(existing["id"], None)
-            plan_owned = str(existing.get("plan_ref") or "").startswith(title_path)
-            if desired:
-                desired["state"] = existing["state"] if existing["state"] in {"running", "done", "blocked"} else desired["state"]
-                next_tasks.append(desired)
-            elif plan_owned and existing["id"] not in claimed_ids and existing.get("state") != "running":
-                continue
-            else:
-                next_tasks.append(existing)
-        next_tasks.extend(sorted(desired_by_id.values(), key=lambda task: (task["priority"], task["title"])))
-        queue["tasks"] = next_tasks
-    print(f"imported {len(imported)} task cards from {project['plan_path']}")
+    imported_count = len(parse_plan_checklist(plan_path))
+    # Loading and saving materializes the plan-backed queue and persists state only.
+    with locked_project(common_root, args.project, cwd):
+        pass
+    print(f"indexed {imported_count} task cards from {project['plan_path']}")
+    return 0
+
+
+def cmd_plan_lint(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    if args.project and args.all:
+        raise SystemExit("dispatch: pass either --project or --all, not both")
+    project_ids = [args.project] if args.project else discover_project_ids(cwd)
+    if not project_ids:
+        raise SystemExit("dispatch: no dispatch projects found")
+
+    for project_id in project_ids:
+        project = load_project(cwd, project_id)
+        plan_path = (repo_root(cwd) / project["plan_path"]).resolve()
+        items = parse_plan_checklist(plan_path)
+        queue = materialize_plan_queue(cwd, project_id, empty_queue(project_id))
+        generated_ids = sum(1 for item in items if not str(item.get("task_id") or "").strip())
+        suffix = f", {generated_ids} generated ids" if generated_ids else ""
+        print(f"dispatch plan lint: {project_id}: ok ({len(queue.get('tasks', []))} tasks{suffix})")
     return 0
 
 
 def cmd_task_add(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
     common_root = repo_common_root(cwd)
-    with locked_project(common_root, args.project) as (queue, _claims):
+    with locked_project(common_root, args.project, cwd) as (queue, _claims):
         if any(task["title"] == args.title for task in queue.get("tasks", [])):
             raise SystemExit(f"dispatch: task title already exists: {args.title}")
         task_id = args.task_id or next_task_id(queue["tasks"], args.project, args.title)
@@ -288,20 +280,21 @@ def cmd_task_add(args: argparse.Namespace) -> int:
             "plan_ref": args.plan_ref,
             "paths": args.path or [],
             "validation": args.validation or [],
+            "source": "legacy",
         }
         if blockers:
             task["blocked_by"] = blockers
         queue.setdefault("tasks", []).append(task)
-    dump(task, as_json=args.json)
+    dump(public_task(task), as_json=args.json)
     return 0
 
 
 def cmd_task_state(args: argparse.Namespace) -> int:
     common_root = repo_common_root()
-    with locked_project(common_root, args.project) as (queue, _claims):
+    with locked_project(common_root, args.project, Path.cwd()) as (queue, _claims):
         task = queue_task(queue, args.task_id)
         task["state"] = args.state
-    dump(task, as_json=args.json)
+    dump(public_task(task), as_json=args.json)
     return 0
 
 
@@ -325,7 +318,7 @@ def cmd_interactive_next(args: argparse.Namespace) -> int:
     if not worktree.exists():
         raise SystemExit(f"dispatch: missing worktree {worktree}")
     project_id = resolve_project_id(cwd, common_root, args.project, worktree)
-    with locked_project(common_root, project_id) as (queue, claims):
+    with locked_project(common_root, project_id, cwd) as (queue, claims):
         claim = claim_record(claims, worktree)
         if claim:
             claim_view = claim_sync_status(common_root, queue, str(worktree), claim)
@@ -340,7 +333,12 @@ def cmd_interactive_next(args: argparse.Namespace) -> int:
                         f"dispatch: worktree already owns {claim['task_id']}; "
                         f"finish it before claiming {args.task_id}"
                     )
-                payload = {"action": "resume", "project": project_id, "task": queue_task(queue, claim["task_id"]), "claim": claim_view}
+                payload = {
+                    "action": "resume",
+                    "project": project_id,
+                    "task": public_task(queue_task(queue, claim["task_id"])),
+                    "claim": claim_view,
+                }
                 dump(payload, as_json=args.json)
                 return 0
         tasks = available_tasks(queue)
@@ -363,7 +361,7 @@ def cmd_interactive_next(args: argparse.Namespace) -> int:
         payload = {
             "action": "claimed",
             "project": project_id,
-            "task": task,
+            "task": public_task(task),
             "claim": claim_sync_status(common_root, queue, str(worktree), claims["claims"][str(worktree)]),
         }
     dump(payload, as_json=args.json)
@@ -375,7 +373,7 @@ def cmd_interactive_finish(args: argparse.Namespace) -> int:
     common_root = repo_common_root(cwd)
     worktree = Path(args.worktree or cwd).resolve()
     project_id = resolve_project_id(cwd, common_root, args.project, worktree)
-    with locked_project(common_root, project_id) as (queue, claims):
+    with locked_project(common_root, project_id, cwd) as (queue, claims):
         claim = claim_record(claims, worktree)
         if not claim:
             raise SystemExit(f"dispatch: no claim for worktree {worktree}")
@@ -398,6 +396,11 @@ def build_parser() -> argparse.ArgumentParser:
     import_parser = sub.add_parser("queue-import-plan")
     import_parser.add_argument("--project", required=True)
     import_parser.set_defaults(func=cmd_queue_import_plan)
+
+    lint_parser = sub.add_parser("plan-lint")
+    lint_parser.add_argument("--project")
+    lint_parser.add_argument("--all", action="store_true")
+    lint_parser.set_defaults(func=cmd_plan_lint)
 
     task_add = sub.add_parser("task-add")
     task_add.add_argument("--project", required=True)

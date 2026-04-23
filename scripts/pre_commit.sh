@@ -105,6 +105,7 @@ wait_parallel_checks() {
 
 scripts/ci/check_script_inventory.py
 scripts/runtime/generate_app_metadata.py --check
+python3 scripts/debug/dispatch.py plan-lint --all
 start_parallel_check rustfmt run_rustfmt_checks
 start_parallel_check runtime-deno-fmt run_runtime_deno_fmt_check
 start_parallel_check runtime-deno-check run_runtime_deno_typecheck

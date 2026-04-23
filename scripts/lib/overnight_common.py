@@ -12,6 +12,9 @@ import tempfile
 from pathlib import Path
 from typing import Any, Iterator
 
+VALID_TASK_STATES = {"backlog", "ready", "running", "done", "blocked"}
+TASK_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
 
 def run(
     args: list[str],
@@ -143,7 +146,7 @@ def save_project(cwd: Path | None, project_id: str, payload: dict[str, Any]) -> 
 
 
 def empty_queue(project_id: str) -> dict[str, Any]:
-    return {"project": project_id, "tasks": []}
+    return {"project": project_id, "task_states": {}}
 
 
 def normalize_task(task: dict[str, Any]) -> dict[str, Any]:
@@ -159,29 +162,167 @@ def normalize_task(task: dict[str, Any]) -> dict[str, Any]:
     blockers = [str(item).strip() for item in task.get("blocked_by") or [] if str(item).strip()]
     if blockers:
         normalized["blocked_by"] = blockers
-    if normalized["state"] not in {"backlog", "ready", "running", "done", "blocked"}:
+    if normalized["state"] not in VALID_TASK_STATES:
         normalized["state"] = "backlog"
     return normalized
 
 
-def normalize_queue(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return {
+def normalize_task_state(value: Any) -> str:
+    state = str(value or "backlog").strip()
+    return state if state in VALID_TASK_STATES else "backlog"
+
+
+def normalize_queue_state(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    task_states: dict[str, str] = {}
+    legacy_by_id: dict[str, dict[str, Any]] = {}
+
+    for task_id, state in (payload.get("task_states") or {}).items():
+        task_id = str(task_id).strip()
+        if task_id:
+            task_states[task_id] = normalize_task_state(state)
+
+    # Backward compatibility for pre-plan-backed queue.json files.
+    for task in payload.get("tasks") or []:
+        normalized = normalize_task(task)
+        if not normalized["id"] or not normalized["title"]:
+            continue
+        task_states[normalized["id"]] = normalized["state"]
+        legacy_by_id[normalized["id"]] = normalized
+
+    for task in payload.get("legacy_tasks") or []:
+        normalized = normalize_task(task)
+        if not normalized["id"] or not normalized["title"]:
+            continue
+        task_states.setdefault(normalized["id"], normalized["state"])
+        legacy_by_id[normalized["id"]] = normalized
+
+    payload_out: dict[str, Any] = {
         "project": payload.get("project", project_id),
-        "tasks": [
-            normalize_task(task)
-            for task in payload.get("tasks", [])
-            if str(task.get("id", "")).strip() and str(task.get("title", "")).strip()
-        ],
+        "task_states": task_states,
     }
+    if legacy_by_id:
+        payload_out["legacy_tasks"] = list(legacy_by_id.values())
+    return payload_out
 
 
-def load_queue(common_root: Path, project_id: str) -> dict[str, Any]:
+def plan_default_state(item: dict[str, Any]) -> str:
+    if item.get("state") in VALID_TASK_STATES:
+        return item["state"]
+    mark = str(item.get("mark", " ")).strip().lower()
+    if mark == "x":
+        return "done"
+    if mark == "~":
+        return "blocked"
+    return "ready" if "next dispatch batch" in str(item.get("section", "")).lower() else "backlog"
+
+
+def plan_state_is_explicit(item: dict[str, Any]) -> bool:
+    mark = str(item.get("mark", " ")).strip().lower()
+    return item.get("state") in VALID_TASK_STATES or mark in {"x", "~"}
+
+
+def resolve_plan_blockers(tasks: list[dict[str, Any]], blockers: list[str]) -> list[str]:
+    known_ids = {task["id"] for task in tasks}
+    title_to_ids: dict[str, list[str]] = {}
+    for task in tasks:
+        title_to_ids.setdefault(task["title"], []).append(task["id"])
+    resolved: list[str] = []
+    for blocker in blockers:
+        if blocker in title_to_ids:
+            title_ids = title_to_ids[blocker]
+            if len(title_ids) > 1:
+                raise SystemExit(f"dispatch: ambiguous blocker title {blocker!r}; use task_id instead")
+            resolved.append(title_ids[0])
+            continue
+        if blocker in known_ids:
+            resolved.append(blocker)
+            continue
+        raise SystemExit(f"dispatch: unknown blocker {blocker!r}")
+    return list(dict.fromkeys(resolved))
+
+
+def materialize_plan_queue(cwd: Path | None, project_id: str, state_payload: dict[str, Any]) -> dict[str, Any]:
+    project = load_project(cwd, project_id)
+    plan_path = (repo_root(cwd) / project["plan_path"]).resolve()
+    imported = parse_plan_checklist(plan_path)
+    legacy_tasks = [normalize_task(task) for task in state_payload.get("legacy_tasks") or []]
+    legacy_title_to_id = {task["title"]: task["id"] for task in legacy_tasks if task.get("title") and task.get("id")}
+
+    staged: list[dict[str, Any]] = []
+    taken_ids: set[str] = set()
+    for item in imported:
+        task_id = str(item.get("task_id") or "").strip()
+        if not task_id:
+            task_id = legacy_title_to_id.get(item["title"], "")
+        if not task_id:
+            task_id = next_task_id(staged, project_id, item["title"])
+        if not TASK_ID_RE.fullmatch(task_id):
+            raise SystemExit(f"dispatch: invalid task id {task_id!r} in {project['plan_path']}:{item['line']}")
+        if task_id in taken_ids:
+            raise SystemExit(f"dispatch: duplicate task id {task_id!r} in {project['plan_path']}")
+        taken_ids.add(task_id)
+        staged.append({"id": task_id, "title": item["title"]})
+
+    tasks: list[dict[str, Any]] = []
+    overrides = state_payload.get("task_states", {})
+    for order, item in enumerate(imported, start=1):
+        task_id = staged[order - 1]["id"]
+        default_state = plan_default_state(item)
+        override_state = overrides.get(task_id)
+        if override_state == "running" or (override_state and not plan_state_is_explicit(item)):
+            state = override_state
+        else:
+            state = default_state
+        task: dict[str, Any] = {
+            "id": task_id,
+            "title": item["title"],
+            "state": state,
+            "priority": int(item.get("priority", (10 if "next dispatch batch" in item["section"].lower() else 100) + order)),
+            "plan_ref": f"{project['plan_path']}:{item['line']}",
+            "paths": item.get("paths", []),
+            "validation": item.get("validation", []),
+            "source": "plan",
+            "_default_state": default_state,
+        }
+        blockers = resolve_plan_blockers(staged, item.get("blocked_by", []))
+        if blockers:
+            task["blocked_by"] = blockers
+        tasks.append(task)
+
+    plan_ids = {task["id"] for task in tasks}
+    for legacy in legacy_tasks:
+        if legacy["id"] in plan_ids:
+            continue
+        legacy["state"] = overrides.get(legacy["id"], legacy["state"])
+        legacy["source"] = "legacy"
+        tasks.append(legacy)
+
+    return {"project": project_id, "tasks": tasks}
+
+
+def load_queue(common_root: Path, project_id: str, cwd: Path | None = None) -> dict[str, Any]:
     ensure_runtime_layout(common_root, project_id)
-    return normalize_queue(project_id, load_json(queue_path(common_root, project_id), empty_queue(project_id)))
+    state_payload = normalize_queue_state(project_id, load_json(queue_path(common_root, project_id), empty_queue(project_id)))
+    return materialize_plan_queue(cwd, project_id, state_payload)
 
 
 def save_queue(common_root: Path, project_id: str, payload: dict[str, Any]) -> None:
-    write_json(queue_path(common_root, project_id), normalize_queue(project_id, payload))
+    task_states: dict[str, str] = {}
+    legacy_tasks: list[dict[str, Any]] = []
+    for task in payload.get("tasks", []):
+        normalized = normalize_task(task)
+        if not normalized["id"]:
+            continue
+        if task.get("source") == "plan":
+            default_state = str(task.get("_default_state") or "")
+            if normalized["state"] != default_state:
+                task_states[normalized["id"]] = normalized["state"]
+        elif task.get("source") == "legacy":
+            legacy_tasks.append(normalized)
+    state_payload: dict[str, Any] = {"project": project_id, "task_states": task_states}
+    if legacy_tasks:
+        state_payload["legacy_tasks"] = legacy_tasks
+    write_json(queue_path(common_root, project_id), state_payload)
 
 
 def empty_claims(project_id: str) -> dict[str, Any]:
@@ -285,6 +426,7 @@ def availability_counts(queue: dict[str, Any]) -> dict[str, int]:
 
 def parse_plan_checklist(plan_path: Path) -> list[dict[str, Any]]:
     field_names = {"owned paths": "paths", "validation": "validation", "blocked_by": "blocked_by"}
+    scalar_field_names = {"task_id": "task_id", "task id": "task_id", "priority": "priority", "state": "state"}
 
     def strip_ticks(value: str) -> str:
         text = value.strip()
@@ -304,20 +446,25 @@ def parse_plan_checklist(plan_path: Path) -> list[dict[str, Any]]:
             index += 1
             continue
 
-        match = re.match(r"^(?P<indent>\s*)[-*]\s+\[\s\]\s+(?P<title>.+?)\s*$", raw_line)
+        match = re.match(r"^(?P<indent>\s*)[-*]\s+\[(?P<mark>[ xX~])\]\s+(?P<title>.+?)\s*$", raw_line)
         if not match:
             index += 1
             continue
 
         indent = len(match.group("indent"))
-        item: dict[str, Any] = {"line": index + 1, "section": section, "title": strip_ticks(match.group("title"))}
+        item: dict[str, Any] = {
+            "line": index + 1,
+            "section": section,
+            "mark": match.group("mark"),
+            "title": strip_ticks(match.group("title")),
+        }
         active_field: str | None = None
         sub_index = index + 1
         while sub_index < len(lines):
             sub_line = lines[sub_index].rstrip()
             if re.match(r"^(#+)\s+(.*)$", sub_line):
                 break
-            sibling = re.match(r"^(?P<indent>\s*)[-*]\s+\[\s\]\s+(?P<title>.+?)\s*$", sub_line)
+            sibling = re.match(r"^(?P<indent>\s*)[-*]\s+\[[ xX~]\]\s+(?P<title>.+?)\s*$", sub_line)
             if sibling and len(sibling.group("indent")) <= indent:
                 break
             if not sub_line.strip():
@@ -333,6 +480,24 @@ def parse_plan_checklist(plan_path: Path) -> list[dict[str, Any]]:
                     item.setdefault(active_field, []).append(rest)
                 sub_index += 1
                 continue
+            scalar_match = re.match(r"^-\s+(task_id|task id|priority|state):\s*(.*)$", stripped)
+            if scalar_match:
+                active_field = None
+                field = scalar_field_names[scalar_match.group(1)]
+                value = strip_ticks(scalar_match.group(2))
+                if field == "priority":
+                    try:
+                        item[field] = int(value)
+                    except ValueError:
+                        raise SystemExit(f"dispatch: invalid priority {value!r} in {plan_path}:{sub_index + 1}") from None
+                elif field == "state":
+                    if value not in VALID_TASK_STATES:
+                        raise SystemExit(f"dispatch: invalid state {value!r} in {plan_path}:{sub_index + 1}")
+                    item[field] = value
+                elif value:
+                    item[field] = value
+                sub_index += 1
+                continue
             if re.match(r"^-\s+[^:]+:\s*(.*)$", stripped):
                 active_field = None
                 sub_index += 1
@@ -345,7 +510,11 @@ def parse_plan_checklist(plan_path: Path) -> list[dict[str, Any]]:
             active_field = None
             sub_index += 1
 
-        if "next dispatch batch" in section.lower() or any(item.get(field) for field in field_names.values()):
+        if (
+            "next dispatch batch" in section.lower()
+            or item.get("task_id")
+            or any(item.get(field) for field in field_names.values())
+        ):
             items.append(item)
         index = sub_index
     return items

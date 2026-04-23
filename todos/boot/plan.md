@@ -107,6 +107,7 @@ Related docs:
 ## Next Dispatch Batch
 
 - [x] `finish-inflight-app-direct-present`
+  - task_id: boot-finish-inflight-app-direct-present
   - why first: this is the current in-flight seam and it blocks every downstream product rung
   - result: signed off in `/Users/justin/code/shadow/worktrees/worker-1`
   - proof image:
@@ -136,6 +137,7 @@ Related docs:
     - canonical rooted proof recipe on the primary/confirm device pair
   - blocked_by: none
 - [ ] `ts-app-minimal`
+  - task_id: boot-ts-app-minimal
   - why next: default first real app lane unless the runtime itself becomes the blocker
   - owned paths:
     - `runtime/`
@@ -151,6 +153,7 @@ Related docs:
   - blocked_by:
     - `finish-inflight-app-direct-present`
 - [x] `camera-linux-api-recon`
+  - task_id: boot-camera-linux-api-recon
   - why sidecar: identify whether boot-owned userspace has a Linux camera ABI worth pursuing without blocking the app/input/shell ladder
   - result:
     - created [camera-linux-api-recon.md](./camera-linux-api-recon.md)
@@ -180,6 +183,7 @@ Related docs:
     - document first read-only `camera-linux-surface-probe` contract
   - blocked_by: none
 - [ ] `touch-counter-gpu`
+  - task_id: boot-touch-counter-gpu
   - why next: first honest input rung on the real boot-owned render/present path
   - owned paths:
     - `scripts/pixel/`
@@ -195,6 +199,7 @@ Related docs:
   - blocked_by:
     - `ts-app-minimal`
 - [ ] `shell-home-static`
+  - task_id: boot-shell-home-static
   - why after app + input: shell work should sit on top of the first truthful app lane and the first truthful input lane
   - owned paths:
     - `ui/`
