@@ -1,8 +1,8 @@
 use shadow_sdk::services::nostr::timeline::{thread_parent_ids, NostrTimelinePublishRequest};
 
 use super::{
-    AccountActionKind, FollowActionKind, PendingAccountAction, PendingClipboardWrite,
-    PendingExploreSync, PendingFollowUpdate, PendingRefresh, PendingThreadSync, RefreshSource,
+    FollowActionKind, PendingAccountAction, PendingClipboardWrite, PendingExploreSync,
+    PendingFollowUpdate, PendingRefresh, PendingThreadSync, RefreshSource,
 };
 use crate::{socket_available, TimelineApp, TimelineStatus, Tone};
 
@@ -53,9 +53,9 @@ impl TimelineApp {
         if self.tasks.account_action.is_pending() {
             return;
         }
-        self.tasks.account_action.start(PendingAccountAction {
-            kind: AccountActionKind::Generate,
-        });
+        self.tasks
+            .account_action
+            .start(PendingAccountAction::generate());
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Generating a new Nostr account..."),
@@ -74,11 +74,9 @@ impl TimelineApp {
             };
             return;
         }
-        self.tasks.account_action.start(PendingAccountAction {
-            kind: AccountActionKind::Import {
-                nsec: nsec.to_owned(),
-            },
-        });
+        self.tasks
+            .account_action
+            .start(PendingAccountAction::import(nsec.to_owned()));
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Importing the Nostr account from nsec..."),
@@ -114,9 +112,9 @@ impl TimelineApp {
             };
             return;
         };
-        self.tasks.clipboard_write.start(PendingClipboardWrite {
-            text: account.npub.clone(),
-        });
+        self.tasks
+            .clipboard_write
+            .start(PendingClipboardWrite::new(account.npub.clone()));
         self.status = TimelineStatus {
             tone: Tone::Accent,
             message: String::from("Copying the active npub to the clipboard..."),

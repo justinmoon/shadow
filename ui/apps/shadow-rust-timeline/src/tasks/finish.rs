@@ -1,7 +1,7 @@
 use shadow_sdk::ui::TaskHandle;
 
 use super::{
-    ExploreSyncOutcome, FollowActionKind, FollowUpdateOutcome, PendingAccountAction,
+    AccountActionOutcome, ExploreSyncOutcome, FollowActionKind, FollowUpdateOutcome, PendingAccountAction,
     PendingClipboardWrite, PendingExploreSync, PendingFollowUpdate, PendingPublish, PendingRefresh,
     PendingThreadSync, PublishOutcome, RefreshOutcome, RefreshSource, ThreadSyncOutcome,
 };
@@ -130,7 +130,7 @@ impl TimelineApp {
     pub(crate) fn finish_account_action(
         &mut self,
         task: TaskHandle<PendingAccountAction>,
-        result: Result<crate::ActiveAccount, String>,
+        result: Result<AccountActionOutcome, String>,
     ) {
         if self.tasks.account_action.finish(task.id()).is_none() {
             return;
@@ -138,6 +138,7 @@ impl TimelineApp {
 
         match result {
             Ok(account) => {
+                let account = crate::ActiveAccount::from(account);
                 let message = format!(
                     "Account ready: {} ({})",
                     short_id(&account.npub),

@@ -2,22 +2,24 @@ mod finish;
 mod start;
 
 use shadow_sdk::{
-    services::clipboard::write_text as write_clipboard_text,
-    services::nostr::{
-        generate_account, import_account_nsec,
-        timeline::{
-            publish_note_or_reply, refresh_home_feed, sync_explore_feed, sync_thread,
-            update_contact_list, NostrContactListUpdateAction, NostrContactListUpdateOutcome,
-            NostrContactListUpdateRequest, NostrExploreSyncOutcome, NostrExploreSyncRequest,
-            NostrHomeRefreshOutcome, NostrHomeRefreshRequest, NostrThreadSyncOutcome,
-            NostrThreadSyncRequest, NostrTimelinePublishRequest,
+    services::{
+        clipboard::{run_write_text_task, ClipboardWriteRequest},
+        nostr::{
+            run_account_task,
+            timeline::{
+                publish_note_or_reply, refresh_home_feed, sync_explore_feed, sync_thread,
+                update_contact_list, NostrContactListUpdateAction, NostrContactListUpdateOutcome,
+                NostrContactListUpdateRequest, NostrExploreSyncOutcome, NostrExploreSyncRequest,
+                NostrHomeRefreshOutcome, NostrHomeRefreshRequest, NostrThreadSyncOutcome,
+                NostrThreadSyncRequest, NostrTimelinePublishRequest,
+            },
+            NostrAccountSummary, NostrAccountTask, NostrPublishReceipt,
         },
-        NostrPublishReceipt,
     },
     ui::{with_task, TaskHandle, TaskSlot, WidgetView},
 };
 
-use crate::{ActiveAccount, TimelineApp};
+use crate::TimelineApp;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum RefreshSource {
@@ -37,22 +39,9 @@ pub(crate) type ThreadSyncOutcome = NostrThreadSyncOutcome;
 pub(crate) type FollowUpdateOutcome = NostrContactListUpdateOutcome;
 pub(crate) type PendingPublish = NostrTimelinePublishRequest;
 pub(crate) type PublishOutcome = NostrPublishReceipt;
-
-#[derive(Clone, Debug)]
-pub(crate) enum AccountActionKind {
-    Generate,
-    Import { nsec: String },
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct PendingAccountAction {
-    pub(crate) kind: AccountActionKind,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct PendingClipboardWrite {
-    pub(crate) text: String,
-}
+pub(crate) type AccountActionOutcome = NostrAccountSummary;
+pub(crate) type PendingAccountAction = NostrAccountTask;
+pub(crate) type PendingClipboardWrite = ClipboardWriteRequest;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TimelineTasks {
@@ -157,7 +146,7 @@ pub(crate) fn decorate_with_tasks(
     let content = with_task(
         content,
         tasks.account_action,
-        run_account_action,
+        run_account_task,
         |app: &mut TimelineApp, task: TaskHandle<PendingAccountAction>, result| {
             app.finish_account_action(task, result);
         },
@@ -165,7 +154,7 @@ pub(crate) fn decorate_with_tasks(
     let content = with_task(
         content,
         tasks.clipboard_write,
-        run_clipboard_write,
+        run_write_text_task,
         |app: &mut TimelineApp, task: TaskHandle<PendingClipboardWrite>, result| {
             app.finish_clipboard_write(task, result);
         },
@@ -211,21 +200,6 @@ pub(crate) fn decorate_with_tasks(
             app.finish_refresh(task, result);
         },
     )
-}
-
-fn run_account_action(job: PendingAccountAction) -> Result<ActiveAccount, String> {
-    match job.kind {
-        AccountActionKind::Generate => generate_account()
-            .map(ActiveAccount::from)
-            .map_err(|error| error.to_string()),
-        AccountActionKind::Import { nsec } => import_account_nsec(nsec)
-            .map(ActiveAccount::from)
-            .map_err(|error| error.to_string()),
-    }
-}
-
-fn run_clipboard_write(job: PendingClipboardWrite) -> Result<(), String> {
-    write_clipboard_text(job.text).map_err(|error| error.to_string())
 }
 
 fn run_publish(job: PendingPublish) -> Result<PublishOutcome, String> {

@@ -51,6 +51,31 @@ impl From<NostrHostError> for NostrError {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NostrAccountTask {
+    Generate,
+    Import { nsec: String },
+}
+
+impl NostrAccountTask {
+    pub const fn generate() -> Self {
+        Self::Generate
+    }
+
+    pub fn import(nsec: impl Into<String>) -> Self {
+        Self::Import { nsec: nsec.into() }
+    }
+}
+
+pub fn run_account_task(task: NostrAccountTask) -> Result<NostrAccountSummary, String> {
+    match task {
+        NostrAccountTask::Generate => generate_account().map_err(|error| error.to_string()),
+        NostrAccountTask::Import { nsec } => {
+            import_account_nsec(nsec).map_err(|error| error.to_string())
+        }
+    }
+}
+
 pub fn query(query: NostrQuery) -> Result<Vec<NostrEvent>, NostrError> {
     if ipc::service_socket_path().is_some() {
         return ipc::query(query).map_err(NostrError::from);
@@ -119,8 +144,9 @@ pub fn sync(request: NostrSyncRequest) -> Result<NostrSyncReceipt, NostrError> {
 mod tests {
     use super::{
         count, current_account, generate_account, get_event, import_account_nsec, query,
-        NostrAccountSource, NostrEvent, NostrQuery, SqliteNostrService, NOSTR_ACCOUNT_NSEC_ENV,
-        NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV, NOSTR_SERVICE_SOCKET_ENV,
+        run_account_task, NostrAccountSource, NostrAccountTask, NostrEvent, NostrQuery,
+        SqliteNostrService, NOSTR_ACCOUNT_NSEC_ENV, NOSTR_ACCOUNT_PATH_ENV, NOSTR_DB_PATH_ENV,
+        NOSTR_SERVICE_SOCKET_ENV,
     };
     use nostr::prelude::{Keys, ToBech32};
     use std::fs;
@@ -246,6 +272,20 @@ mod tests {
     }
 
     #[test]
+    fn run_account_task_uses_shared_sdk_task_surface() {
+        with_temp_db(|| {
+            let generated = run_account_task(NostrAccountTask::generate())
+                .expect("generate account through task helper");
+            assert_eq!(generated.source, NostrAccountSource::Generated);
+
+            let current = current_account()
+                .expect("read current generated account")
+                .expect("generated account");
+            assert_eq!(current, generated);
+        });
+    }
+
+    #[test]
     fn current_account_prefers_env_seeded_override() {
         with_temp_db(|| {
             let keys = Keys::generate();
@@ -265,6 +305,18 @@ mod tests {
             );
 
             std::env::remove_var(NOSTR_ACCOUNT_NSEC_ENV);
+        });
+    }
+
+    #[test]
+    fn run_account_task_stringifies_import_errors() {
+        with_temp_db(|| {
+            let direct_error = import_account_nsec("not-a-secret")
+                .expect_err("reject invalid nsec directly")
+                .to_string();
+            let task_error = run_account_task(NostrAccountTask::import("not-a-secret"))
+                .expect_err("reject invalid nsec through task helper");
+            assert_eq!(task_error, direct_error);
         });
     }
 }
