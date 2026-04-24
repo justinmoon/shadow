@@ -2263,8 +2263,8 @@ if [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "shell-sess
     exit 1
   fi
   resolve_app_direct_present_metadata
-  if [[ "$ORANGE_GPU_MODE" =~ ^(shell-session|shell-session-runtime-touch-counter)$ && "$APP_DIRECT_PRESENT_CLIENT_KIND" != "typescript" ]]; then
-    echo "pixel_boot_build_orange_gpu: shell-session currently requires a hosted TypeScript app id, got $APP_DIRECT_PRESENT_APP_ID ($APP_DIRECT_PRESENT_CLIENT_KIND)" >&2
+  if [[ "$ORANGE_GPU_MODE" == "shell-session-runtime-touch-counter" && "$APP_DIRECT_PRESENT_CLIENT_KIND" != "typescript" ]]; then
+    echo "pixel_boot_build_orange_gpu: shell-session-runtime-touch-counter requires a hosted TypeScript app id, got $APP_DIRECT_PRESENT_APP_ID ($APP_DIRECT_PRESENT_CLIENT_KIND)" >&2
     exit 1
   fi
 fi

@@ -4226,10 +4226,14 @@ assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-touch-co
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-touch-counter.img.hello-init.json" app_direct_present_runtime_bundle_path /orange-gpu/app-direct-present/runtime-app-counter-bundle.js
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-touch-counter.img.hello-init.json" metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-shell-session-touch-counter-run-token/compositor-frame.ppm"
 
-assert_command_fails_contains "shell-session currently requires a hosted TypeScript app id, got rust-demo (rust)" \
+shell_session_rust_demo_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     PIXEL_ORANGE_GPU_SHELL_START_APP_ID=rust-demo \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_BUNDLE_DIR="$APP_DIRECT_PRESENT_BUNDLE_DIR" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_BIN="$APP_DIRECT_PRESENT_LAUNCHER_OUTPUT" \
+    PIXEL_SHADOW_SESSION_BIN="$SHADOW_SESSION_OUTPUT" \
+    PIXEL_SHADOW_COMPOSITOR_GUEST_DYNAMIC_BIN="$SHADOW_COMPOSITOR_DYNAMIC_OUTPUT" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
       --input "$BOOT_BUILD_INPUT" \
       --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
@@ -4238,13 +4242,37 @@ assert_command_fails_contains "shell-session currently requires a hosted TypeScr
       --gpu-bundle "$GPU_BUNDLE_DIR" \
       --firmware-dir "$GPU_FIRMWARE_DIR" \
       --key "$AVB_KEY_PATH" \
-      --output "$TMP_DIR/should-fail-shell-session-rust-app.img" \
+      --output "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" \
       --hello-init-mode rust-bridge \
       --orange-gpu-mode shell-session \
       --orange-gpu-firmware-helper true \
       --orange-gpu-metadata-stage-breadcrumb true \
       --firmware-bootstrap ramdisk-lib-firmware \
+      --run-token orange-gpu-rust-bridge-shell-session-rust-demo-run-token \
+      --hold-secs 9 \
       --mount-sys true
+)"
+
+assert_contains "$shell_session_rust_demo_boot_output" "Orange GPU mode: shell-session"
+assert_contains "$shell_session_rust_demo_boot_output" "Payload contract: hello-init launches /orange-gpu/shadow-session in shell-session mode, starts rust-demo from the shell"
+assert_contains "$shell_session_rust_demo_boot_output" "GPU proof: shell-owned rust-demo app launch frame captured durably through the Rust boot seam"
+assert_contains "$shell_session_rust_demo_boot_output" "Shell session start app id: rust-demo"
+assert_contains "$shell_session_rust_demo_boot_output" "App direct present client kind: rust"
+assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz shadow-session
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz shadow-compositor-guest
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz app-direct-present/run-shadow-rust-demo
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz app-direct-present/shadow-rust-demo
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz app-direct-present/lib/ld-linux-aarch64.so.1
+assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz shell-session-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "shell",\n    "shellStartAppId": "rust-demo"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-rust-demo",\n    "runtimeDir": "/shadow-runtime",\n    "envAssignments": [\n      {\n        "key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",\n        "value": "1"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "gpuShell": true,\n    "strictGpuResident": true,\n    "dmabufGlobalEnabled": false,\n    "dmabufFeedbackEnabled": true,\n    "exitOnFirstFrame": true,\n    "frameCapture": {\n      "mode": "every-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-shell-session-rust-demo-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  }\n}\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" orange_gpu_mode "shell-session"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" shell_session_start_app_id rust-demo
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" app_direct_present_app_id rust-demo
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" app_direct_present_client_kind rust
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" app_direct_present_runtime_bundle_env ""
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" app_direct_present_runtime_bundle_path ""
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" gpu_bundle_archive_path /orange-gpu.tar.xz
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-shell-session-rust-demo-run-token/compositor-frame.ppm"
 
 runtime_touch_counter_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

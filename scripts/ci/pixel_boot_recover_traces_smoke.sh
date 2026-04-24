@@ -582,7 +582,14 @@ EOF
         printf 'P6\n2 1\n255\n\xff\x7a\x00\x00\x00\x00'
         exit 0
       elif [[ "$TRACE_MODE" == "shell-session-success" ]]; then
-        printf 'P6\n3 1\n255\n\x30\x16\x0b\xff\xb8\x2f\xff\xda\x89'
+        case "${MOCK_TRACE_APP_DIRECT_PRESENT_FRAME_APP_ID:-${MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID:-counter}}" in
+          rust-demo)
+            printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'
+            ;;
+          *)
+            printf 'P6\n3 1\n255\n\x30\x16\x0b\xff\xb8\x2f\xff\xda\x89'
+            ;;
+        esac
         exit 0
       elif [[ "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" ]]; then
         printf 'P6\n3 1\n255\n\x1b\x12\x08\x18\x16\x16\xee\xec\xec'
@@ -1383,6 +1390,31 @@ assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_
 assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_height 1
 assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_pixel_bytes 9
 assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
+
+SHELL_SESSION_RUST_PARENT="$TMP_DIR/output-shell-session-rust-demo"
+SHELL_SESSION_RUST_IMAGE="$TMP_DIR/output-shell-session-rust-demo.img"
+SHELL_SESSION_RUST_OUTPUT="$SHELL_SESSION_RUST_PARENT/recover-traces"
+write_recover_context "$SHELL_SESSION_RUST_PARENT" "$SHELL_SESSION_RUST_IMAGE" "$RUN_TOKEN" shell-session rust-demo
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=shell-session-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID=rust-demo \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$SHELL_SESSION_RUST_OUTPUT" >/dev/null
+
+assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" probe_summary_proves_shell_session true
+assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" app_direct_present_proof_contract_required true
+assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" app_direct_present_proof_contract_ok true
+assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
+assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" proof_ok true
+assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" expected_shell_session_start_app_id rust-demo
+assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" expected_app_direct_present_client_kind rust
+assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" expected_app_direct_present_runtime_bundle_env ""
+assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" metadata_probe_summary_kind shell-session
+assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" metadata_probe_summary_app_id rust-demo
+assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
 
 SHELL_TOUCH_PARENT="$TMP_DIR/output-shell-session-runtime-touch-counter"
 SHELL_TOUCH_IMAGE="$TMP_DIR/output-shell-session-runtime-touch-counter.img"
