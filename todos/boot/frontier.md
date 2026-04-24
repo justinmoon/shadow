@@ -92,9 +92,9 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 
 ## Highest-Leverage Next Experiments
 
-1. Continue from the partition-backed shell proofs: `ss-timeline-logical-r1-20260424052405` proved shell-launched TypeScript `timeline` with the GPU renderer, and `ss-rust-demo-logical-r2-20260424055521` proved shell-launched Rust `rust-demo` with SHM frames imported into the GPU shell scanout path.
-2. Fold in worker-2's manual touch path against the partition-backed shell image so the demo becomes interactive instead of only first-frame/proof driven.
-3. Fold real touch/control into the `--orange-gpu-timeout-action hold` path, which now leaves the compositor/app stack running for a configured live observation window before automatic recovery.
+1. Continue from the partition-backed shell proofs: `ss-timeline-logical-r1-20260424052405` proved shell-launched TypeScript `timeline` with the GPU renderer, `ss-touch-input-logical-r1-20260424064945` proved TypeScript counter interaction with `/dev/input/event2` bootstrapped and synthetic touch dispatch, and `ss-rust-demo-logical-r2-20260424055521` proved shell-launched Rust `rust-demo` with SHM frames imported into the GPU shell scanout path.
+2. Fold manual/physical touch into the `--orange-gpu-timeout-action hold` window now that Rust PID1 can create the sunfish touch node and the compositor reports `touch-ready`.
+3. Promote the held logical shell recipe into a supported operator entrypoint once real touch/control can recover or exit cleanly.
 4. Run `boot-camera-vendor-linker-stage` opportunistically as the camera sidecar so the Rust boot HAL probe can advance past the current `/vendor/lib64/hw/camera.sm6150.so` visibility blocker.
 5. Keep camera and sound as sidecars until the shell/app loop exists; keep direct `std` PID1 and stock-init imported-rc as fallback discriminators only.
 
