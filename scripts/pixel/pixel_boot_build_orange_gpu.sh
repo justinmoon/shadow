@@ -102,7 +102,9 @@ APP_DIRECT_PRESENT_TS_RENDERER="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_TS_RENDERE
 APP_DIRECT_PRESENT_MANUAL_TOUCH="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_MANUAL_TOUCH:-false}"
 ORANGE_GPU_BUNDLE_ARCHIVE_NAME="orange-gpu.tar.xz"
 ORANGE_GPU_BUNDLE_ARCHIVE_PATH="/orange-gpu.tar.xz"
+ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE="${PIXEL_ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE:-ramdisk}"
 STAGED_GPU_BUNDLE_ARCHIVE=""
+EXTERNAL_GPU_BUNDLE_ARCHIVE=""
 STAGED_GPU_BUNDLE_DIR=""
 PAYLOAD_PROBE_STRATEGY="metadata-shadow-payload-v1"
 PAYLOAD_PROBE_SOURCE="${PIXEL_BOOT_PAYLOAD_SOURCE:-metadata}"
@@ -133,6 +135,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--orange-gpu-firmware-helper true|false]
                                                     [--orange-gpu-timeout-action reboot|panic]
                                                     [--orange-gpu-watchdog-timeout-secs N]
+                                                    [--orange-gpu-bundle-archive-source ramdisk|shadow-logical-partition]
                                                     [--payload-probe-source metadata|shadow-logical-partition]
                                                     [--payload-probe-root PATH]
                                                     [--payload-probe-manifest-path PATH]
@@ -418,6 +421,14 @@ metadata_compositor_frame_path_for_token() {
 
 payload_partition_probe_mode() {
   [[ "$ORANGE_GPU_MODE" == "payload-partition-probe" ]]
+}
+
+orange_gpu_bundle_archive_from_shadow_logical() {
+  [[ "$ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE" == "shadow-logical-partition" ]]
+}
+
+payload_probe_config_enabled() {
+  payload_partition_probe_mode || orange_gpu_bundle_archive_from_shadow_logical
 }
 
 payload_probe_root_for_token() {
@@ -930,6 +941,20 @@ assert_timeout_action_word() {
   esac
 }
 
+assert_bundle_archive_source_word() {
+  local value
+  value="${1:?assert_bundle_archive_source_word requires a value}"
+
+  case "$value" in
+    ramdisk|shadow-logical-partition)
+      ;;
+    *)
+      echo "pixel_boot_build_orange_gpu: unsupported orange-gpu-bundle-archive-source value: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
 assert_hello_init_mode_word() {
   local value
   value="${1:?assert_hello_init_mode_word requires a value}"
@@ -1025,7 +1050,7 @@ EOF
   if [[ "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT" == "true" ]]; then
     printf 'orange_gpu_metadata_prune_token_root=%s\n' "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT" >>"$output_path"
   fi
-  if payload_partition_probe_mode; then
+  if payload_probe_config_enabled; then
     printf 'payload_probe_strategy=%s\n' "$PAYLOAD_PROBE_STRATEGY" >>"$output_path"
     printf 'payload_probe_source=%s\n' "$PAYLOAD_PROBE_SOURCE" >>"$output_path"
     printf 'payload_probe_root=%s\n' "$(payload_probe_root_for_token "$RUN_TOKEN")" >>"$output_path"
@@ -1690,7 +1715,9 @@ write_metadata() {
     "$(metadata_probe_summary_path_for_token "$RUN_TOKEN")" \
     "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" \
     "$ORANGE_GPU_BUNDLE_ARCHIVE_PATH" \
+    "$ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE" \
     "$STAGED_GPU_BUNDLE_ARCHIVE" \
+    "$EXTERNAL_GPU_BUNDLE_ARCHIVE" \
     "$SHELL_SESSION_START_APP_ID" \
     "$APP_DIRECT_PRESENT_APP_ID" \
     "$APP_DIRECT_PRESENT_CLIENT_KIND" \
@@ -1751,7 +1778,9 @@ from pathlib import Path
     metadata_probe_summary_path,
     metadata_compositor_frame_path,
     orange_gpu_bundle_archive_path,
+    orange_gpu_bundle_archive_source,
     staged_gpu_bundle_archive,
+    external_gpu_bundle_archive,
     shell_session_start_app_id,
     app_direct_present_app_id,
     app_direct_present_client_kind,
@@ -1788,6 +1817,10 @@ payload_json = {
     "gpu_bundle_archive_path": (
         orange_gpu_bundle_archive_path if staged_gpu_bundle_archive else ""
     ),
+    "gpu_bundle_archive_source": (
+        orange_gpu_bundle_archive_source if staged_gpu_bundle_archive else ""
+    ),
+    "gpu_bundle_archive_host_path": external_gpu_bundle_archive,
     "hold_seconds": int(hold_seconds),
     "prelude": prelude,
     "prelude_hold_seconds": int(prelude_hold_seconds),
@@ -1881,7 +1914,7 @@ if orange_gpu_mode in {
         payload_json["app_direct_present_typescript_renderer"] = (
             app_direct_present_typescript_renderer
         )
-if orange_gpu_mode == "payload-partition-probe":
+if orange_gpu_mode == "payload-partition-probe" or orange_gpu_bundle_archive_source == "shadow-logical-partition":
     payload_json["payload_probe_strategy"] = "metadata-shadow-payload-v1"
     payload_json["payload_probe_source"] = payload_probe_source
     payload_json["payload_probe_root"] = payload_probe_root
@@ -2078,6 +2111,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --orange-gpu-watchdog-timeout-secs)
       ORANGE_GPU_WATCHDOG_TIMEOUT_SECS="${2:?missing value for --orange-gpu-watchdog-timeout-secs}"
+      shift 2
+      ;;
+    --orange-gpu-bundle-archive-source)
+      ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE="${2:?missing value for --orange-gpu-bundle-archive-source}"
       shift 2
       ;;
     --payload-probe-root)
@@ -2296,6 +2333,7 @@ if [[ ! "$CAMERA_HAL_CAMERA_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
 fi
 assert_bool_word app-direct-present-manual-touch "$APP_DIRECT_PRESENT_MANUAL_TOUCH"
 assert_bool_word orange-gpu-metadata-prune-token-root "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT"
+assert_bundle_archive_source_word "$ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE"
 
 if [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" && "$MOUNT_SYS" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: c-kgsl-open-readonly-firmware-helper-smoke requires --mount-sys true so hello-init can service /sys/class/firmware requests" >&2
@@ -2364,17 +2402,31 @@ if [[ "$INPUT_BOOTSTRAP" != "none" && "$MOUNT_SYS" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: input-bootstrap requires --mount-sys true so hello-init can discover /sys/class/input devices" >&2
   exit 1
 fi
-if [[ "$ORANGE_GPU_MODE" == "payload-partition-probe" && "$PAYLOAD_PROBE_SOURCE" == "shadow-logical-partition" && "$MOUNT_SYS" != "true" ]]; then
+if [[ "$ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE" == "shadow-logical-partition" ]]; then
+  PAYLOAD_PROBE_SOURCE="shadow-logical-partition"
+  PAYLOAD_PROBE_ROOT="${PAYLOAD_PROBE_ROOT:-/shadow-payload}"
+  PAYLOAD_PROBE_MANIFEST_PATH="${PAYLOAD_PROBE_MANIFEST_PATH:-/shadow-payload/manifest.env}"
+  ORANGE_GPU_BUNDLE_ARCHIVE_PATH="/shadow-payload/extra-payloads/$ORANGE_GPU_BUNDLE_ARCHIVE_NAME"
+fi
+if [[ "$ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE" == "shadow-logical-partition" && "$HELLO_INIT_MODE" != "rust-bridge" ]]; then
+  echo "pixel_boot_build_orange_gpu: orange-gpu-bundle-archive-source shadow-logical-partition requires --hello-init-mode rust-bridge because logical payload mounting is implemented in Rust hello-init" >&2
+  exit 1
+fi
+if [[ "$ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE" == "shadow-logical-partition" && "$ORANGE_GPU_MODE" != "shell-session" && "$ORANGE_GPU_MODE" != "shell-session-held" && "$ORANGE_GPU_MODE" != "shell-session-runtime-touch-counter" && "$ORANGE_GPU_MODE" != "app-direct-present" && "$ORANGE_GPU_MODE" != "app-direct-present-runtime-touch-counter" ]]; then
+  echo "pixel_boot_build_orange_gpu: orange-gpu-bundle-archive-source shadow-logical-partition currently requires an archived shell/app mode" >&2
+  exit 1
+fi
+if [[ "$PAYLOAD_PROBE_SOURCE" == "shadow-logical-partition" && "$MOUNT_SYS" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: payload-probe-source shadow-logical-partition requires --mount-sys true so hello-init can discover the super block device" >&2
   exit 1
 fi
-if [[ "$ORANGE_GPU_MODE" == "payload-partition-probe" && "$PAYLOAD_PROBE_SOURCE" == "shadow-logical-partition" ]]; then
+if [[ "$PAYLOAD_PROBE_SOURCE" == "shadow-logical-partition" ]]; then
   if [[ "$(payload_probe_root_for_token "$RUN_TOKEN")" != "/shadow-payload" || "$(payload_probe_manifest_path_for_token "$RUN_TOKEN")" != "/shadow-payload/manifest.env" ]]; then
     echo "pixel_boot_build_orange_gpu: payload-probe-source shadow-logical-partition requires --payload-probe-root /shadow-payload and --payload-probe-manifest-path /shadow-payload/manifest.env" >&2
     exit 1
   fi
 fi
-if [[ "$ORANGE_GPU_MODE" == "payload-partition-probe" && "$PAYLOAD_PROBE_SOURCE" == "metadata" && "$(payload_probe_root_for_token "$RUN_TOKEN")" == "/shadow-payload" ]]; then
+if [[ "$PAYLOAD_PROBE_SOURCE" == "metadata" && "$(payload_probe_root_for_token "$RUN_TOKEN")" == "/shadow-payload" ]]; then
   echo "pixel_boot_build_orange_gpu: /shadow-payload requires --payload-probe-source shadow-logical-partition" >&2
   exit 1
 fi
@@ -2621,6 +2673,11 @@ if orange_gpu_mode_uses_ramdisk_gpu_bundle; then
   if [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "shell-session-held" || "$ORANGE_GPU_MODE" == "shell-session-runtime-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
     STAGED_GPU_BUNDLE_ARCHIVE="$WORK_DIR/$ORANGE_GPU_BUNDLE_ARCHIVE_NAME"
     archive_app_direct_present_gpu_bundle "$STAGED_GPU_BUNDLE_DIR" "$STAGED_GPU_BUNDLE_ARCHIVE"
+    if orange_gpu_bundle_archive_from_shadow_logical; then
+      EXTERNAL_GPU_BUNDLE_ARCHIVE="$OUTPUT_IMAGE.$ORANGE_GPU_BUNDLE_ARCHIVE_NAME"
+      cp "$STAGED_GPU_BUNDLE_ARCHIVE" "$EXTERNAL_GPU_BUNDLE_ARCHIVE"
+      chmod 0644 "$EXTERNAL_GPU_BUNDLE_ARCHIVE"
+    fi
   fi
 fi
 
@@ -2674,7 +2731,9 @@ if [[ "$PRELUDE" == "orange-init" ]]; then
 fi
 
 if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
-  build_args+=(--add "$ORANGE_GPU_BUNDLE_ARCHIVE_NAME=$STAGED_GPU_BUNDLE_ARCHIVE")
+  if [[ "$ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE" == "ramdisk" ]]; then
+    build_args+=(--add "$ORANGE_GPU_BUNDLE_ARCHIVE_NAME=$STAGED_GPU_BUNDLE_ARCHIVE")
+  fi
 elif [[ -n "$STAGED_GPU_BUNDLE_DIR" ]]; then
   append_tree_add_specs "$STAGED_GPU_BUNDLE_DIR" "$PAYLOAD_ROOT" build_args
 fi
@@ -2784,8 +2843,12 @@ else
   printf 'GPU bundle staged dir: %s\n' "$STAGED_GPU_BUNDLE_DIR"
 fi
 if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
+  printf 'GPU bundle archive source: %s\n' "$ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE"
   printf 'GPU bundle archive path: %s\n' "$ORANGE_GPU_BUNDLE_ARCHIVE_PATH"
   printf 'GPU bundle staged archive: %s\n' "$STAGED_GPU_BUNDLE_ARCHIVE"
+  if [[ -n "$EXTERNAL_GPU_BUNDLE_ARCHIVE" ]]; then
+    printf 'GPU bundle external archive: %s\n' "$EXTERNAL_GPU_BUNDLE_ARCHIVE"
+  fi
 fi
 printf 'Hello-init mode: %s\n' "$HELLO_INIT_MODE"
 if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
@@ -2904,7 +2967,7 @@ if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" ]]; then
   printf 'Metadata probe report path: %s\n' "$(metadata_probe_report_path_for_token "$RUN_TOKEN")"
   printf 'Metadata probe timeout class path: %s\n' "$(metadata_probe_timeout_class_path_for_token "$RUN_TOKEN")"
   printf 'Metadata probe summary path: %s\n' "$(metadata_probe_summary_path_for_token "$RUN_TOKEN")"
-  if payload_partition_probe_mode; then
+  if payload_probe_config_enabled; then
     printf 'Metadata payload root: %s\n' "$(payload_probe_root_for_token "$RUN_TOKEN")"
     printf 'Metadata payload manifest path: %s\n' "$(payload_probe_manifest_path_for_token "$RUN_TOKEN")"
   fi

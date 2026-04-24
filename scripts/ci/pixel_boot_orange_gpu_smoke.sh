@@ -2507,6 +2507,8 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'probe_timeou
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'metadata_probe_fingerprint_path'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'metadata_probe_report_path'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'metadata_probe_timeout_class_path'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_stage_metadata_payload.sh" 'ORIGINAL_ARGS=("$@")'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_stage_metadata_payload.sh" 'pixel_require_host_lock "$serial" "$0" "${ORIGINAL_ARGS[@]}"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"metadata-stage-write"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"parent-probe-start"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"parent-probe-result=exit-%d"'
@@ -4178,6 +4180,56 @@ assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session.img.hell
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session.img.hello-init.json" app_direct_present_runtime_bundle_env SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session.img.hello-init.json" app_direct_present_runtime_bundle_path /orange-gpu/app-direct-present/runtime-app-counter-bundle.js
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session.img.hello-init.json" metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-shell-session-run-token/compositor-frame.ppm"
+
+shell_session_shadow_logical_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    PIXEL_ORANGE_GPU_SHELL_START_APP_ID=counter \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_BUNDLE_DIR="$TS_APP_DIRECT_PRESENT_BUNDLE_DIR" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_BIN="$APP_DIRECT_PRESENT_LAUNCHER_OUTPUT" \
+    PIXEL_SHADOW_SESSION_BIN="$SHADOW_SESSION_OUTPUT" \
+    PIXEL_SHADOW_COMPOSITOR_GUEST_DYNAMIC_BIN="$SHADOW_COMPOSITOR_DYNAMIC_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
+      --rust-shim "$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --firmware-dir "$GPU_FIRMWARE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img" \
+      --hello-init-mode rust-bridge \
+      --orange-gpu-mode shell-session \
+      --orange-gpu-bundle-archive-source shadow-logical-partition \
+      --orange-gpu-firmware-helper true \
+      --orange-gpu-metadata-stage-breadcrumb true \
+      --firmware-bootstrap ramdisk-lib-firmware \
+      --run-token orange-gpu-rust-bridge-shell-session-shadow-logical-run-token \
+      --hold-secs 9 \
+      --mount-sys true
+)"
+
+assert_contains "$shell_session_shadow_logical_boot_output" "GPU bundle archive source: shadow-logical-partition"
+assert_contains "$shell_session_shadow_logical_boot_output" "GPU bundle archive path: /shadow-payload/extra-payloads/orange-gpu.tar.xz"
+assert_contains "$shell_session_shadow_logical_boot_output" "GPU bundle external archive: $TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img.orange-gpu.tar.xz"
+assert_contains "$shell_session_shadow_logical_boot_output" "Metadata payload root: /shadow-payload"
+assert_contains "$shell_session_shadow_logical_boot_output" "Metadata payload manifest path: /shadow-payload/manifest.env"
+assert_cpio_entry_absent "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img" orange-gpu.tar.xz
+assert_cpio_entry_absent "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img" orange-gpu/shadow-session
+assert_cpio_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img" shadow-init.cfg "payload_probe_source=shadow-logical-partition"
+assert_cpio_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img" shadow-init.cfg "payload_probe_root=/shadow-payload"
+assert_cpio_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img" shadow-init.cfg "orange_gpu_bundle_archive_path=/shadow-payload/extra-payloads/orange-gpu.tar.xz"
+[[ -f "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img.orange-gpu.tar.xz" ]] || {
+  echo "pixel_boot_orange_gpu_smoke: expected external gpu bundle archive" >&2
+  exit 1
+}
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img.hello-init.json" orange_gpu_mode "shell-session"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img.hello-init.json" gpu_bundle_archive_source "shadow-logical-partition"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img.hello-init.json" gpu_bundle_archive_path /shadow-payload/extra-payloads/orange-gpu.tar.xz
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img.hello-init.json" gpu_bundle_archive_host_path "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img.orange-gpu.tar.xz"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img.hello-init.json" payload_probe_source "shadow-logical-partition"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img.hello-init.json" payload_probe_root "/shadow-payload"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img.hello-init.json" payload_probe_manifest_path "/shadow-payload/manifest.env"
 
 shell_session_held_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

@@ -39,12 +39,12 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Build and run first shell-home frame proof on a Pixel.
 - [x] Add shell-start-app proof for TypeScript `counter`.
 - [x] Fold in synthetic runtime touch proof for shell-launched TypeScript `counter`.
-- [~] Keep the current ramdisk shell-session bundle working while worker-2 brings up the larger payload partition.
-- [ ] Move the shell-session runtime bundle onto the larger payload partition once that lands; do not use `/metadata` as the intermediate payload store.
+- [x] Keep the current ramdisk shell-session bundle working while worker-2 brings up the larger payload partition.
+- [x] Move the shell-session runtime bundle onto the larger payload partition once that lands; do not use `/metadata` as the intermediate payload store.
 - [x] Add persistent/held shell mode with a clear recovery path.
 - [~] Add broader app coverage from the shell: TypeScript `timeline` hardware proof is covered; Rust `rust-demo` hardware launch reaches the app but still needs a strict-GPU app-composition path.
 - [ ] Fold in manual/real touch plumbing from `worker-2` if it helps interaction.
-- [ ] Confirm the larger-partition-backed shell/app path on hardware and record proof artifacts.
+- [x] Confirm the larger-partition-backed shell/app path on hardware and record proof artifacts.
 
 ## Implementation Notes
 
@@ -62,3 +62,6 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Hardware proof on `06241JEC200520`: `build/pixel/runs/boot-shell-session/ss-held-r1-20260424042557/device-run/recover-traces/status.json` proved `shell-session-held` with GPU shell, shell-launched TypeScript `counter`, durable app-frame metadata, `probe_report_proves_child_timeout=true`, `probe_summary_proves_shell_session_held=true`, and `metadata_compositor_frame_proves_shell_session_app=true`. The generic one-shot helper collection timed out, but recovered metadata proof was `proof_ok=true` and the device returned to rooted Android.
 - Hardware proof on `06241JEC200520`: `build/pixel/runs/boot-shell-session/ss-timeline-r3-20260424050459/device-run/recover-traces-rerun/status.json` proved `shell-session` with GPU shell, shell-launched TypeScript `timeline`, GPU TypeScript renderer, durable app-frame metadata, shell session summary, and app-specific frame colors. The timeline app now includes simple hex background fallbacks so the boot renderer does not fall through transparent when it ignores gradient backgrounds.
 - Hardware finding on `06241JEC200520`: `build/pixel/runs/boot-shell-session/ss-rust-demo-r1-20260424043704/device-run/recover-traces/status.json` launched Rust `rust-demo`, mapped and tracked the surface, and observed a committed app frame, but strict GPU-resident mode rejected the SHM app composition path at `VelloImageRenderer::render_to_vec`. This is the current Rust-app blocker for the final GPU shell path; do not hide it by landing a CPU-crossing proof as final.
+- The shell/session builder now supports `--orange-gpu-bundle-archive-source shadow-logical-partition`: it keeps the Rust PID1 shim/config/firmware in the boot ramdisk, writes a sibling `orange-gpu.tar.xz` for host staging, points `orange_gpu_bundle_archive_path` at `/shadow-payload/extra-payloads/orange-gpu.tar.xz`, and Rust PID1 mounts the logical payload partition before expanding the compositor/runtime/app bundle into `/orange-gpu`.
+- Hardware proof on `06241JEC200520`: `build/pixel/runs/boot-shell-session/ss-timeline-logical-r1-20260424052405/device-run/recover-traces/status.json` proved `shell-session` with GPU shell, shell-launched TypeScript `timeline`, GPU TypeScript renderer, and the compositor/runtime/app archive staged from `shadow_payload_a` instead of the ramdisk. Recovered proof was `proof_ok=true`, `probe_summary_proves_shell_session=true`, `metadata_compositor_frame_proves_shell_session_app=true`, and the archive staging output recorded `Payload source: shadow-logical-partition`, `Remote payload root: /shadow-payload`.
+- Staging note: `scripts/pixel/pixel_boot_stage_metadata_payload.sh` now preserves its original argv across the host-lock re-exec. Without that, parsed `--source shadow-logical-partition` / `--extra-payload ...` options silently fell back to metadata defaults after taking the lock.

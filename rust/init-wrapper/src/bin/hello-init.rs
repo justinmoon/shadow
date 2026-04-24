@@ -3742,6 +3742,12 @@ mod linux {
         Ok(())
     }
 
+    fn orange_gpu_bundle_archive_needs_shadow_logical_payload(config: &Config) -> bool {
+        !config.orange_gpu_bundle_archive_path.is_empty()
+            && Path::new(&config.orange_gpu_bundle_archive_path)
+                .starts_with(SHADOW_PAYLOAD_MOUNT_PATH)
+    }
+
     fn set_orange_gpu_env(
         command: &mut Command,
         probe_stage_path: Option<&Path>,
@@ -4436,6 +4442,25 @@ mod linux {
             log_line("payload-partition-probe /shadow-payload requires payload_probe_source=shadow-logical-partition");
             return false;
         }
+        if orange_gpu_bundle_archive_needs_shadow_logical_payload(config) {
+            if config.payload_probe_source != PAYLOAD_PROBE_LOGICAL_SOURCE {
+                log_line("orange_gpu_bundle_archive_path under /shadow-payload requires payload_probe_source=shadow-logical-partition");
+                return false;
+            }
+            if !config.mount_sys {
+                log_line(
+                    "orange_gpu_bundle_archive_path under /shadow-payload requires mount_sys=true",
+                );
+                return false;
+            }
+            if config.payload_probe_root != SHADOW_PAYLOAD_MOUNT_PATH
+                || config.payload_probe_manifest_path
+                    != format!("{SHADOW_PAYLOAD_MOUNT_PATH}/manifest.env")
+            {
+                log_line("orange_gpu_bundle_archive_path under /shadow-payload requires root=/shadow-payload manifest=/shadow-payload/manifest.env");
+                return false;
+            }
+        }
         true
     }
 
@@ -4665,6 +4690,27 @@ mod linux {
     ) -> i32 {
         if ensure_orange_gpu_runtime_dirs().is_err() {
             return 1;
+        }
+        if orange_gpu_bundle_archive_needs_shadow_logical_payload(config) {
+            match prepare_shadow_logical_payload_root(config, Path::new(SHADOW_PAYLOAD_MOUNT_PATH))
+            {
+                Ok(true) => {
+                    if metadata_stage.prepared {
+                        write_payload_probe_stage(
+                            Some(&metadata_stage.probe_stage_path),
+                            Some("orange-gpu-bundle"),
+                            "shadow-logical-mounted",
+                        );
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    log_line(&format!(
+                        "failed to mount shadow logical payload for orange-gpu bundle: {error}"
+                    ));
+                    return 1;
+                }
+            }
         }
         if let Err(error) = expand_orange_gpu_bundle_archive(config) {
             log_line(&format!(

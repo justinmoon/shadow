@@ -481,10 +481,20 @@ Related docs:
     - rooted Pixel one-shot with real payload archive staged under `/shadow-payload`
   - blocked_by:
     - `boot-payload-metadata-rooted-proof`
-- [ ] `payload-metadata-shell-bundle-probe`
+- [x] `payload-metadata-shell-bundle-probe`
   - task_id: boot-payload-metadata-shell-bundle-probe
   - priority: 9
   - why next: once the logical payload root is proven, move one minimal shell/session payload slice behind the mounted manifest instead of expanding `boot.img`
+  - result: moved the full shell-session compositor/runtime/TypeScript app archive out of the boot ramdisk and onto the Shadow logical payload partition. `pixel_boot_build_orange_gpu.sh --orange-gpu-bundle-archive-source shadow-logical-partition` now writes a sibling `orange-gpu.tar.xz` for staging, configures Rust PID1 to read `/shadow-payload/extra-payloads/orange-gpu.tar.xz`, and keeps the boot ramdisk to PID1/config/firmware/control-plane pieces. Rust PID1 mounts `/shadow-payload` before expanding the archive into `/orange-gpu`.
+  - hardware:
+    - run token: `ss-timeline-logical-r1-20260424052405`
+    - image: `build/pixel/runs/boot-shell-session/ss-timeline-logical-r1-20260424052405/shell-session-timeline-logical.img`
+    - staged archive: `build/pixel/runs/boot-shell-session/ss-timeline-logical-r1-20260424052405/shell-session-timeline-logical.img.orange-gpu.tar.xz`
+    - stage output: `build/pixel/runs/boot-shell-session/ss-timeline-logical-r1-20260424052405/payload-stage-logical/`
+    - recover status: `build/pixel/runs/boot-shell-session/ss-timeline-logical-r1-20260424052405/device-run/recover-traces/status.json`
+    - proof fields: `proof_ok=true`, `probe_summary_proves_shell_session=true`, `metadata_compositor_frame_proves_shell_session_app=true`, `expected_payload_probe_source=shadow-logical-partition`, `expected_payload_probe_root=/shadow-payload`.
+  - notes:
+    - `scripts/pixel/pixel_boot_stage_metadata_payload.sh` now preserves original argv across host-lock re-exec; without that, non-env `--source` and `--extra-payload` arguments were lost after lock acquisition.
   - owned paths:
     - `scripts/pixel/`
     - `scripts/lib/pixel_runtime_linux_bundle_common.sh`

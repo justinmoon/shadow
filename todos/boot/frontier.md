@@ -92,12 +92,11 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 
 ## Highest-Leverage Next Experiments
 
-1. Run `boot-shell-session-first-proof`: boot into the real Shadow shell/home session from the Rust boot seam, not another isolated app-direct proof.
-2. Replace ramdisk-heavy shell/session staging with the proven `/shadow-payload` logical partition lane; `/metadata` remains only the durable breadcrumb/control-plane surface.
-3. Run `boot-camera-vendor-linker-stage` opportunistically as the camera sidecar so the Rust boot HAL probe can advance past the current `/vendor/lib64/hw/camera.sm6150.so` visibility blocker.
-4. After shell boots, run `boot-shell-launch-ts-app`: launch a TypeScript app from shell and capture shell/app/return-home proof.
-5. Then run `boot-shell-interaction-proof` and `boot-persistent-shell-control` so the session becomes interactive and long-running.
-6. Keep camera and sound as sidecars until the shell/app loop exists; keep direct `std` PID1 and stock-init imported-rc as fallback discriminators only.
+1. Continue from the partition-backed shell proof: `ss-timeline-logical-r1-20260424052405` booted Rust PID1, mounted `/shadow-payload`, expanded `/shadow-payload/extra-payloads/orange-gpu.tar.xz`, launched the GPU shell, and proved shell-launched TypeScript `timeline` with `proof_ok=true`.
+2. Fold in worker-2's manual touch path against the partition-backed shell image so the demo becomes interactive instead of only first-frame/proof driven.
+3. Fix the Rust app strict-GPU blocker: `rust-demo` currently reaches mapped/committed app frames but strict GPU shell rejects the SHM CPU composition/readback path.
+4. Run `boot-camera-vendor-linker-stage` opportunistically as the camera sidecar so the Rust boot HAL probe can advance past the current `/vendor/lib64/hw/camera.sm6150.so` visibility blocker.
+5. Keep camera and sound as sidecars until the shell/app loop exists; keep direct `std` PID1 and stock-init imported-rc as fallback discriminators only.
 
 ## Fast Commands
 

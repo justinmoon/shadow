@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=./pixel_common.sh
 source "$SCRIPT_DIR/lib/pixel_common.sh"
 
+ORIGINAL_ARGS=("$@")
 RUN_TOKEN="${PIXEL_HELLO_INIT_RUN_TOKEN:-${PIXEL_ORANGE_GPU_RUN_TOKEN:-}}"
 PAYLOAD_VERSION="${PIXEL_BOOT_PAYLOAD_VERSION:-shadow-payload-probe-v1}"
 PAYLOAD_LABEL="${PIXEL_BOOT_PAYLOAD_LABEL:-metadata-partition-probe}"
@@ -387,7 +388,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 serial="$(pixel_resolve_serial)"
-pixel_require_host_lock "$serial" "$0" "$@"
+pixel_require_host_lock "$serial" "$0" "${ORIGINAL_ARGS[@]}"
 root_id="$(pixel_root_id "$serial" 2>/dev/null || true)"
 if [[ -z "$root_id" ]]; then
   echo "pixel_boot_stage_metadata_payload: root shell unavailable on $serial" >&2
