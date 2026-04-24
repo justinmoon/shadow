@@ -12,6 +12,10 @@ use blitz_traits::{
     shell::{ColorScheme, DummyShellProvider, Viewport},
 };
 use shadow_runtime_protocol::{AppLifecycleState, RuntimeAudioControlAction};
+use shadow_sdk::app::{
+    APP_LIFECYCLE_STATE_ENV, SAFE_AREA_BOTTOM_ENV, SAFE_AREA_LEFT_ENV, SAFE_AREA_RIGHT_ENV,
+    SAFE_AREA_TOP_ENV, SURFACE_HEIGHT_ENV, SURFACE_WIDTH_ENV,
+};
 
 use crate::{log::runtime_log, runtime_document::RuntimeDocument, runtime_session::RuntimeSession};
 
@@ -34,7 +38,9 @@ impl HostedRuntimeApp {
     ) -> Result<Self, String> {
         let width = width.max(1);
         let height = height.max(1);
-        let runtime_session = RuntimeSession::spawn_explicit(host_binary_path, bundle_path)?;
+        let runtime_env = hosted_runtime_env(width, height, client_env_assignments);
+        let runtime_session =
+            RuntimeSession::spawn_explicit_with_env(host_binary_path, bundle_path, &runtime_env)?;
         let mut document = RuntimeDocument::from_runtime_session_with_client_env(
             runtime_session,
             client_env_assignments,
@@ -157,6 +163,25 @@ impl HostedRuntimeApp {
     }
 }
 
+fn hosted_runtime_env(
+    width: u32,
+    height: u32,
+    client_env_assignments: &[(String, String)],
+) -> Vec<(String, String)> {
+    let mut env = client_env_assignments.to_vec();
+    env.push((SURFACE_WIDTH_ENV.to_string(), width.to_string()));
+    env.push((SURFACE_HEIGHT_ENV.to_string(), height.to_string()));
+    env.push((SAFE_AREA_LEFT_ENV.to_string(), "0".to_string()));
+    env.push((SAFE_AREA_TOP_ENV.to_string(), "0".to_string()));
+    env.push((SAFE_AREA_RIGHT_ENV.to_string(), "0".to_string()));
+    env.push((SAFE_AREA_BOTTOM_ENV.to_string(), "0".to_string()));
+    env.push((
+        APP_LIFECYCLE_STATE_ENV.to_string(),
+        "foreground".to_string(),
+    ));
+    env
+}
+
 fn hosted_gpu_profile_enabled() -> bool {
     std::env::var_os("SHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE").is_some()
 }
@@ -207,5 +232,48 @@ fn pointer_event(
         buttons,
         mods: Default::default(),
         details: Default::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        hosted_runtime_env, APP_LIFECYCLE_STATE_ENV, SAFE_AREA_BOTTOM_ENV, SAFE_AREA_LEFT_ENV,
+        SAFE_AREA_RIGHT_ENV, SAFE_AREA_TOP_ENV, SURFACE_HEIGHT_ENV, SURFACE_WIDTH_ENV,
+    };
+
+    fn has_env(env: &[(String, String)], key: &str, value: &str) -> bool {
+        env.iter().any(|(candidate_key, candidate_value)| {
+            candidate_key == key && candidate_value == value
+        })
+    }
+
+    #[test]
+    fn hosted_runtime_env_preserves_client_assignments_and_sets_window_state() {
+        let env = hosted_runtime_env(
+            320,
+            240,
+            &[
+                (
+                    "SHADOW_SYSTEM_STAGE_LOADER_PATH".to_string(),
+                    "/orange-gpu/lib/ld-linux-aarch64.so.1".to_string(),
+                ),
+                ("CUSTOM_FLAG".to_string(), "1".to_string()),
+            ],
+        );
+
+        assert!(has_env(
+            &env,
+            "SHADOW_SYSTEM_STAGE_LOADER_PATH",
+            "/orange-gpu/lib/ld-linux-aarch64.so.1"
+        ));
+        assert!(has_env(&env, "CUSTOM_FLAG", "1"));
+        assert!(has_env(&env, SURFACE_WIDTH_ENV, "320"));
+        assert!(has_env(&env, SURFACE_HEIGHT_ENV, "240"));
+        assert!(has_env(&env, SAFE_AREA_LEFT_ENV, "0"));
+        assert!(has_env(&env, SAFE_AREA_TOP_ENV, "0"));
+        assert!(has_env(&env, SAFE_AREA_RIGHT_ENV, "0"));
+        assert!(has_env(&env, SAFE_AREA_BOTTOM_ENV, "0"));
+        assert!(has_env(&env, APP_LIFECYCLE_STATE_ENV, "foreground"));
     }
 }

@@ -1418,6 +1418,7 @@ expected_durable_logging = {"kmsg": None, "pmsg": None}
 expected_orange_gpu_mode = ""
 expected_orange_gpu_scene = ""
 expected_orange_gpu_firmware_helper = None
+expected_shell_session_start_app_id = ""
 expected_app_direct_present_app_id = "rust-demo"
 expected_app_direct_present_client_kind = ""
 expected_app_direct_present_runtime_bundle_env = ""
@@ -1455,6 +1456,9 @@ if source_image_metadata_path:
         orange_gpu_firmware_helper_value = metadata.get("orange_gpu_firmware_helper")
         if isinstance(orange_gpu_firmware_helper_value, bool):
             expected_orange_gpu_firmware_helper = orange_gpu_firmware_helper_value
+        shell_session_start_app_id_value = metadata.get("shell_session_start_app_id")
+        if isinstance(shell_session_start_app_id_value, str):
+            expected_shell_session_start_app_id = shell_session_start_app_id_value
         app_direct_present_app_id_value = metadata.get("app_direct_present_app_id")
         if isinstance(app_direct_present_app_id_value, str) and app_direct_present_app_id_value:
             expected_app_direct_present_app_id = app_direct_present_app_id_value
@@ -1738,6 +1742,8 @@ summary_first_frame = recovered_probe_summary.get("first_frame")
 summary_last_frame = recovered_probe_summary.get("last_frame")
 summary_touch_counter_probe = recovered_probe_summary.get("touch_counter_probe")
 summary_touch_counter_probe_ok = recovered_probe_summary.get("touch_counter_probe_ok")
+summary_shell_session_probe = recovered_probe_summary.get("shell_session_probe")
+summary_shell_session_probe_ok = recovered_probe_summary.get("shell_session_probe_ok")
 summary_adapter_backend = (
     summary_adapter.get("backend")
     if isinstance(summary_adapter, dict)
@@ -1781,6 +1787,46 @@ summary_touch_counter_touch_latency_present = (
 summary_touch_counter_post_touch_frame_captured = (
     summary_touch_counter_probe.get("post_touch_frame_captured")
     if isinstance(summary_touch_counter_probe, dict)
+    else None
+)
+summary_shell_session_shell_mode_enabled = (
+    summary_shell_session_probe.get("shell_mode_enabled")
+    if isinstance(summary_shell_session_probe, dict)
+    else None
+)
+summary_shell_session_home_frame_done = (
+    summary_shell_session_probe.get("home_frame_done")
+    if isinstance(summary_shell_session_probe, dict)
+    else None
+)
+summary_shell_session_start_app_requested = (
+    summary_shell_session_probe.get("start_app_requested")
+    if isinstance(summary_shell_session_probe, dict)
+    else None
+)
+summary_shell_session_app_launch_mode_logged = (
+    summary_shell_session_probe.get("app_launch_mode_logged")
+    if isinstance(summary_shell_session_probe, dict)
+    else None
+)
+summary_shell_session_mapped_window = (
+    summary_shell_session_probe.get("mapped_window")
+    if isinstance(summary_shell_session_probe, dict)
+    else None
+)
+summary_shell_session_surface_app_tracked = (
+    summary_shell_session_probe.get("surface_app_tracked")
+    if isinstance(summary_shell_session_probe, dict)
+    else None
+)
+summary_shell_session_app_frame_artifact_logged = (
+    summary_shell_session_probe.get("app_frame_artifact_logged")
+    if isinstance(summary_shell_session_probe, dict)
+    else None
+)
+summary_shell_session_app_frame_captured = (
+    summary_shell_session_probe.get("app_frame_captured")
+    if isinstance(summary_shell_session_probe, dict)
     else None
 )
 summary_kms_present_count = (
@@ -1932,6 +1978,28 @@ probe_summary_proves_compositor_scene = (
     and isinstance(summary_frame_bytes, int)
     and summary_frame_bytes > 0
 )
+probe_summary_proves_shell_session = (
+    expected_orange_gpu_mode == "shell-session"
+    and expected_orange_gpu_firmware_helper is True
+    and probe_report_proves_child_success
+    and recovered_metadata_probe_summary_present
+    and recovered_probe_summary_parse_error is None
+    and summary_kind == "shell-session"
+    and summary_startup_mode == "shell"
+    and summary_app_id == expected_shell_session_start_app_id
+    and summary_frame_path == expected_metadata_compositor_frame_path
+    and isinstance(summary_frame_bytes, int)
+    and summary_frame_bytes > 0
+    and summary_shell_session_probe_ok is True
+    and summary_shell_session_shell_mode_enabled is True
+    and summary_shell_session_home_frame_done is True
+    and summary_shell_session_start_app_requested is True
+    and summary_shell_session_app_launch_mode_logged is True
+    and summary_shell_session_mapped_window is True
+    and summary_shell_session_surface_app_tracked is True
+    and summary_shell_session_app_frame_artifact_logged is True
+    and summary_shell_session_app_frame_captured is True
+)
 probe_summary_proves_app_direct_present = (
     expected_orange_gpu_mode == "app-direct-present"
     and expected_orange_gpu_firmware_helper is True
@@ -2007,9 +2075,28 @@ compositor_frame_proves_scene = (
         f"P6\n{compositor_frame_width} {compositor_frame_height}\n255\n".encode("ascii")
     )
 )
+compositor_frame_proves_shell_session_app = (
+    expected_orange_gpu_mode == "shell-session"
+    and recovered_metadata_compositor_frame_present
+    and recovered_compositor_frame_parse_error is None
+    and isinstance(compositor_frame_width, int)
+    and compositor_frame_width > 0
+    and isinstance(compositor_frame_height, int)
+    and compositor_frame_height > 0
+    and isinstance(compositor_frame_pixel_bytes, int)
+    and compositor_frame_pixel_bytes > 0
+    and isinstance(compositor_frame_distinct_color_count, int)
+    and compositor_frame_distinct_color_count >= 3
+    and isinstance(compositor_frame_checksum_sha256, str)
+    and bool(compositor_frame_checksum_sha256)
+    and summary_frame_bytes == compositor_frame_pixel_bytes + len(
+        f"P6\n{compositor_frame_width} {compositor_frame_height}\n255\n".encode("ascii")
+    )
+)
 compositor_frame_proves_app_direct_present = (
     expected_orange_gpu_mode
     in {
+        "shell-session",
         "app-direct-present",
         "app-direct-present-touch-counter",
         "app-direct-present-runtime-touch-counter",
@@ -2058,7 +2145,7 @@ app_direct_present_proof_contract_summary = ",".join(
 )
 app_direct_present_proof_contract_ok = (
     expected_orange_gpu_mode
-    not in {"app-direct-present", "app-direct-present-runtime-touch-counter"}
+    not in {"shell-session", "app-direct-present", "app-direct-present-runtime-touch-counter"}
     or (
         bool(expected_app_direct_present_app_id)
         and expected_app_direct_present_client_kind in {"rust", "typescript"}
@@ -2075,7 +2162,7 @@ app_direct_present_proof_contract_ok = (
 )
 app_direct_present_proof_contract_required = (
     expected_orange_gpu_mode
-    in {"app-direct-present", "app-direct-present-runtime-touch-counter"}
+    in {"shell-session", "app-direct-present", "app-direct-present-runtime-touch-counter"}
     and (
         expected_app_direct_present_app_id != "rust-demo"
         or bool(expected_app_direct_present_client_kind)
@@ -2090,6 +2177,13 @@ elif expected_orange_gpu_mode == "orange-gpu-loop":
     proof_ok = probe_summary_proves_orange_gpu_loop
 elif expected_orange_gpu_mode == "compositor-scene":
     proof_ok = probe_summary_proves_compositor_scene and compositor_frame_proves_scene
+elif expected_orange_gpu_mode == "shell-session":
+    proof_ok = (
+        app_direct_present_proof_contract_ok
+        and probe_summary_proves_shell_session
+        and compositor_frame_proves_shell_session_app
+        and compositor_frame_proves_app_direct_present
+    )
 elif expected_orange_gpu_mode == "app-direct-present":
     proof_ok = (
         (not app_direct_present_proof_contract_required or app_direct_present_proof_contract_ok)
@@ -2119,6 +2213,7 @@ payload = {
     "probe_summary_proves_gpu_render": probe_summary_proves_gpu_render,
     "probe_summary_proves_orange_gpu_loop": probe_summary_proves_orange_gpu_loop,
     "probe_summary_proves_compositor_scene": probe_summary_proves_compositor_scene,
+    "probe_summary_proves_shell_session": probe_summary_proves_shell_session,
     "probe_summary_proves_app_direct_present": probe_summary_proves_app_direct_present,
     "probe_summary_proves_app_direct_present_touch_counter": probe_summary_proves_app_direct_present_touch_counter,
     "probe_summary_proves_app_direct_present_runtime_touch_counter": probe_summary_proves_app_direct_present_runtime_touch_counter,
@@ -2126,8 +2221,9 @@ payload = {
     "app_direct_present_proof_contract_required": app_direct_present_proof_contract_required,
     "app_direct_present_proof_contract": app_direct_present_proof_contract,
     "app_direct_present_proof_contract_summary": app_direct_present_proof_contract_summary,
-    "metadata_compositor_frame_proves_scene": compositor_frame_proves_scene,
-    "metadata_compositor_frame_proves_app_direct_present": compositor_frame_proves_app_direct_present,
+        "metadata_compositor_frame_proves_scene": compositor_frame_proves_scene,
+        "metadata_compositor_frame_proves_shell_session_app": compositor_frame_proves_shell_session_app,
+        "metadata_compositor_frame_proves_app_direct_present": compositor_frame_proves_app_direct_present,
     "serial": serial,
     "output_dir": str(status_output.parent),
     "shadow_tag_regex": shadow_tag_regex,
@@ -2143,6 +2239,7 @@ payload = {
     "expected_orange_gpu_mode": expected_orange_gpu_mode,
     "expected_orange_gpu_scene": expected_orange_gpu_scene,
     "expected_orange_gpu_firmware_helper": expected_orange_gpu_firmware_helper,
+    "expected_shell_session_start_app_id": expected_shell_session_start_app_id,
     "expected_app_direct_present_app_id": expected_app_direct_present_app_id,
     "expected_app_direct_present_client_kind": expected_app_direct_present_client_kind,
     "expected_app_direct_present_runtime_bundle_env": expected_app_direct_present_runtime_bundle_env,
@@ -2242,6 +2339,15 @@ payload = {
     "metadata_probe_summary_touch_counter_post_touch_frame_artifact_logged": summary_touch_counter_post_touch_frame_artifact_logged,
     "metadata_probe_summary_touch_counter_touch_latency_present": summary_touch_counter_touch_latency_present,
     "metadata_probe_summary_touch_counter_post_touch_frame_captured": summary_touch_counter_post_touch_frame_captured,
+    "metadata_probe_summary_shell_session_probe_ok": summary_shell_session_probe_ok,
+    "metadata_probe_summary_shell_session_shell_mode_enabled": summary_shell_session_shell_mode_enabled,
+    "metadata_probe_summary_shell_session_home_frame_done": summary_shell_session_home_frame_done,
+    "metadata_probe_summary_shell_session_start_app_requested": summary_shell_session_start_app_requested,
+    "metadata_probe_summary_shell_session_app_launch_mode_logged": summary_shell_session_app_launch_mode_logged,
+    "metadata_probe_summary_shell_session_mapped_window": summary_shell_session_mapped_window,
+    "metadata_probe_summary_shell_session_surface_app_tracked": summary_shell_session_surface_app_tracked,
+    "metadata_probe_summary_shell_session_app_frame_artifact_logged": summary_shell_session_app_frame_artifact_logged,
+    "metadata_probe_summary_shell_session_app_frame_captured": summary_shell_session_app_frame_captured,
     "metadata_probe_summary_scene": summary_scene,
     "metadata_probe_summary_frame_path": summary_frame_path,
     "metadata_probe_summary_frame_bytes": summary_frame_bytes,

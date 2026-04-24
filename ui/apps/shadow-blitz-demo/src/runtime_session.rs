@@ -45,7 +45,7 @@ impl RuntimeSession {
         match (host_binary_path, bundle_path) {
             (None, None) => Ok(None),
             (Some(host_binary_path), Some(bundle_path)) => {
-                Self::spawn(host_binary_path, bundle_path).map(Some)
+                Self::spawn(host_binary_path, bundle_path, &[]).map(Some)
             }
             _ => Err(format!(
                 "runtime session requires both {SYSTEM_BINARY_PATH_ENV} and {RUNTIME_APP_BUNDLE_PATH_ENV}"
@@ -110,18 +110,35 @@ impl RuntimeSession {
         host_binary_path: String,
         bundle_path: String,
     ) -> Result<Self, String> {
-        Self::spawn(host_binary_path, bundle_path)
+        Self::spawn(host_binary_path, bundle_path, &[])
     }
 
-    fn spawn(host_binary_path: String, bundle_path: String) -> Result<Self, String> {
-        let stage_loader_path = env::var(SYSTEM_STAGE_LOADER_PATH_ENV).ok();
-        let stage_library_path = env::var(SYSTEM_STAGE_LIBRARY_PATH_ENV).ok();
+    pub(crate) fn spawn_explicit_with_env(
+        host_binary_path: String,
+        bundle_path: String,
+        extra_env_assignments: &[(String, String)],
+    ) -> Result<Self, String> {
+        Self::spawn(host_binary_path, bundle_path, extra_env_assignments)
+    }
+
+    fn spawn(
+        host_binary_path: String,
+        bundle_path: String,
+        extra_env_assignments: &[(String, String)],
+    ) -> Result<Self, String> {
+        let stage_loader_path = env::var(SYSTEM_STAGE_LOADER_PATH_ENV)
+            .ok()
+            .or_else(|| env_assignment(extra_env_assignments, SYSTEM_STAGE_LOADER_PATH_ENV));
+        let stage_library_path = env::var(SYSTEM_STAGE_LIBRARY_PATH_ENV)
+            .ok()
+            .or_else(|| env_assignment(extra_env_assignments, SYSTEM_STAGE_LIBRARY_PATH_ENV));
         runtime_log(format!(
-            "runtime-session-spawn host_binary={} bundle={} stage_loader={} stage_library={}",
+            "runtime-session-spawn host_binary={} bundle={} stage_loader={} stage_library={} extra_env={}",
             host_binary_path,
             bundle_path,
             stage_loader_path.as_deref().unwrap_or("none"),
             stage_library_path.as_deref().unwrap_or("none"),
+            extra_env_assignments.len(),
         ));
 
         let mut command = match stage_loader_path {
@@ -137,6 +154,9 @@ impl RuntimeSession {
         };
         for key in SYSTEM_CLEAN_ENV {
             command.env_remove(key);
+        }
+        for (key, value) in extra_env_assignments {
+            command.env(key, value);
         }
         let mut child = command
             .arg("--session")
@@ -206,6 +226,14 @@ impl RuntimeSession {
     }
 }
 
+fn env_assignment(assignments: &[(String, String)], key: &str) -> Option<String> {
+    assignments
+        .iter()
+        .rev()
+        .find_map(|(candidate, value)| (candidate == key).then(|| value.clone()))
+        .filter(|value| !value.is_empty())
+}
+
 fn session_request_name(request: &SessionRequest) -> &'static str {
     match request {
         SessionRequest::Render => "render",
@@ -227,7 +255,10 @@ impl Drop for RuntimeSession {
 
 #[cfg(test)]
 mod tests {
-    use super::{SYSTEM_CLEAN_ENV, SYSTEM_STAGE_LIBRARY_PATH_ENV, SYSTEM_STAGE_LOADER_PATH_ENV};
+    use super::{
+        env_assignment, SYSTEM_CLEAN_ENV, SYSTEM_STAGE_LIBRARY_PATH_ENV,
+        SYSTEM_STAGE_LOADER_PATH_ENV,
+    };
 
     #[test]
     fn system_clean_env_keeps_stage_loader_settings_for_nested_services() {
@@ -238,6 +269,30 @@ mod tests {
         assert!(
             !SYSTEM_CLEAN_ENV.contains(&SYSTEM_STAGE_LIBRARY_PATH_ENV),
             "runtime host must inherit the stage library path for nested shadow-system spawns",
+        );
+    }
+
+    #[test]
+    fn extra_env_assignments_can_supply_stage_loader_settings() {
+        let assignments = vec![
+            (SYSTEM_STAGE_LOADER_PATH_ENV.to_string(), String::new()),
+            (
+                SYSTEM_STAGE_LOADER_PATH_ENV.to_string(),
+                "/orange-gpu/lib/ld-linux-aarch64.so.1".to_string(),
+            ),
+            (
+                SYSTEM_STAGE_LIBRARY_PATH_ENV.to_string(),
+                "/orange-gpu/lib".to_string(),
+            ),
+        ];
+
+        assert_eq!(
+            env_assignment(&assignments, SYSTEM_STAGE_LOADER_PATH_ENV).as_deref(),
+            Some("/orange-gpu/lib/ld-linux-aarch64.so.1")
+        );
+        assert_eq!(
+            env_assignment(&assignments, SYSTEM_STAGE_LIBRARY_PATH_ENV).as_deref(),
+            Some("/orange-gpu/lib")
         );
     }
 }

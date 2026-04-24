@@ -8,6 +8,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const GUEST_RUNTIME_CLIENT_BIN: &str = "/shadow-blitz-demo";
+const GUEST_COMPOSITOR_LOADER_ENV: &str = "SHADOW_GUEST_COMPOSITOR_LOADER";
+const GUEST_COMPOSITOR_LIBRARY_PATH_ENV: &str = "SHADOW_GUEST_COMPOSITOR_LIBRARY_PATH";
 
 fn log_stdio(message: &str) {
     let line = format!("[shadow-session] {message}\n");
@@ -147,6 +149,29 @@ fn run_command(mut command: Command, label: &str) -> ! {
     }
 }
 
+fn build_compositor_command_with_loader(
+    compositor_bin: &str,
+    loader: Option<&str>,
+    library_path: Option<&str>,
+) -> Command {
+    let Some(loader) = loader.filter(|value| !value.is_empty()) else {
+        return Command::new(compositor_bin);
+    };
+
+    let mut command = Command::new(loader);
+    if let Some(library_path) = library_path.filter(|value| !value.is_empty()) {
+        command.arg("--library-path").arg(library_path);
+    }
+    command.arg(compositor_bin);
+    command
+}
+
+fn build_compositor_command(compositor_bin: &str) -> Command {
+    let loader = env::var(GUEST_COMPOSITOR_LOADER_ENV).ok();
+    let library_path = env::var(GUEST_COMPOSITOR_LIBRARY_PATH_ENV).ok();
+    build_compositor_command_with_loader(compositor_bin, loader.as_deref(), library_path.as_deref())
+}
+
 fn prepare_guest_runtime_dir() -> Result<&'static str, String> {
     let runtime_dir =
         env::var("SHADOW_RUNTIME_DIR").unwrap_or_else(|_| "/shadow-runtime".to_string());
@@ -193,7 +218,12 @@ fn run_guest_ui() -> ! {
         .unwrap_or_else(|_| "/shadow-compositor-guest".into());
     let guest_client =
         env::var("SHADOW_GUEST_CLIENT").unwrap_or_else(|_| GUEST_RUNTIME_CLIENT_BIN.into());
-    let mut command = Command::new(&compositor_bin);
+    let mut command = build_compositor_command(&compositor_bin);
+    if let Ok(loader) = env::var(GUEST_COMPOSITOR_LOADER_ENV) {
+        if !loader.is_empty() {
+            log_line(&format!("launching {compositor_bin} via {loader}"));
+        }
+    }
     // Command inherits the current process environment by default, so only
     // set the values this wrapper owns: runtime-dir overrides plus defaults.
     command
@@ -224,10 +254,12 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::ensure_directory_mode;
+    use super::{build_compositor_command_with_loader, ensure_directory_mode};
+    use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
+    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_temp_dir() -> PathBuf {
@@ -248,5 +280,43 @@ mod tests {
         assert_eq!(mode, 0o700);
 
         fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    fn command_args(command: &Command) -> Vec<OsString> {
+        command.get_args().map(|arg| arg.to_os_string()).collect()
+    }
+
+    #[test]
+    fn compositor_command_runs_binary_directly_without_loader() {
+        let command =
+            build_compositor_command_with_loader("/orange-gpu/shadow-compositor-guest", None, None);
+
+        assert_eq!(
+            command.get_program(),
+            OsStr::new("/orange-gpu/shadow-compositor-guest")
+        );
+        assert!(command_args(&command).is_empty());
+    }
+
+    #[test]
+    fn compositor_command_can_run_dynamic_binary_through_staged_loader() {
+        let command = build_compositor_command_with_loader(
+            "/orange-gpu/shadow-compositor-guest",
+            Some("/orange-gpu/lib/ld-linux-aarch64.so.1"),
+            Some("/orange-gpu/lib"),
+        );
+
+        assert_eq!(
+            command.get_program(),
+            OsStr::new("/orange-gpu/lib/ld-linux-aarch64.so.1")
+        );
+        assert_eq!(
+            command_args(&command),
+            vec![
+                OsString::from("--library-path"),
+                OsString::from("/orange-gpu/lib"),
+                OsString::from("/orange-gpu/shadow-compositor-guest"),
+            ]
+        );
     }
 }

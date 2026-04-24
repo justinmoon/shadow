@@ -12,7 +12,7 @@ mod linux {
     use std::fmt::Write as _;
     use std::fs::{self, File, OpenOptions};
     use std::io::{self, BufReader, BufWriter, Read, Write};
-    use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
     use std::os::unix::io::AsRawFd;
     use std::path::{Path, PathBuf};
@@ -34,7 +34,11 @@ mod linux {
     const ORANGE_GPU_BINARY_PATH: &str = "/orange-gpu/shadow-gpu-smoke";
     const ORANGE_GPU_LOADER_PATH: &str = "/orange-gpu/lib/ld-linux-aarch64.so.1";
     const ORANGE_GPU_LIBRARY_PATH: &str = "/orange-gpu/lib";
+    const ORANGE_GPU_DRI_DRIVER_PATH: &str = "/orange-gpu/lib/dri";
     const ORANGE_GPU_ICD_PATH: &str = "/orange-gpu/share/vulkan/icd.d/freedreno_icd.aarch64.json";
+    const ORANGE_GPU_EGL_VENDOR_LIBRARY_DIRS: &str = "/orange-gpu/share/glvnd/egl_vendor.d";
+    const ORANGE_GPU_XKB_CONFIG_EXTRA_PATH: &str = "/orange-gpu/etc/xkb";
+    const ORANGE_GPU_XKB_CONFIG_ROOT: &str = "/orange-gpu/share/X11/xkb";
     const ORANGE_GPU_HOME: &str = "/orange-gpu/home";
     const ORANGE_GPU_CACHE_HOME: &str = "/orange-gpu/home/.cache";
     const ORANGE_GPU_CONFIG_HOME: &str = "/orange-gpu/home/.config";
@@ -43,6 +47,8 @@ mod linux {
     const ORANGE_GPU_COMPOSITOR_BINARY_PATH: &str = "/orange-gpu/shadow-compositor-guest";
     const ORANGE_GPU_COMPOSITOR_STARTUP_CONFIG_PATH: &str =
         "/orange-gpu/compositor-scene-startup.json";
+    const ORANGE_GPU_SHELL_SESSION_STARTUP_CONFIG_PATH: &str =
+        "/orange-gpu/shell-session-startup.json";
     const ORANGE_GPU_APP_DIRECT_PRESENT_STARTUP_CONFIG_PATH: &str =
         "/orange-gpu/app-direct-present-startup.json";
     const ORANGE_GPU_COMPOSITOR_RUNTIME_DIR: &str = "/shadow-runtime";
@@ -83,15 +89,25 @@ mod linux {
     const METADATA_BY_TOKEN_ROOT: &str = "/metadata/shadow-hello-init/by-token";
     const METADATA_SYSFS_BLOCK_ROOT: &str = "/sys/class/block";
     const METADATA_PARTNAME: &str = "metadata";
+    const METADATA_PREPARE_RETRY_ATTEMPTS: u32 = 10;
+    const METADATA_PREPARE_RETRY_SLEEP_SECS: u32 = 1;
     const GPU_BACKEND_ENV: &str = "WGPU_BACKEND";
     const VK_ICD_FILENAMES_ENV: &str = "VK_ICD_FILENAMES";
     const MESA_DRIVER_OVERRIDE_ENV: &str = "MESA_LOADER_DRIVER_OVERRIDE";
     const TU_DEBUG_ENV: &str = "TU_DEBUG";
     const LD_LIBRARY_PATH_ENV: &str = "LD_LIBRARY_PATH";
+    const LIBGL_DRIVERS_PATH_ENV: &str = "LIBGL_DRIVERS_PATH";
+    const EGL_VENDOR_LIBRARY_DIRS_ENV: &str = "__EGL_VENDOR_LIBRARY_DIRS";
     const HOME_ENV: &str = "HOME";
     const XDG_CACHE_HOME_ENV: &str = "XDG_CACHE_HOME";
     const XDG_CONFIG_HOME_ENV: &str = "XDG_CONFIG_HOME";
+    const XKB_CONFIG_EXTRA_PATH_ENV: &str = "XKB_CONFIG_EXTRA_PATH";
+    const XKB_CONFIG_ROOT_ENV: &str = "XKB_CONFIG_ROOT";
     const MESA_SHADER_CACHE_ENV: &str = "MESA_SHADER_CACHE_DIR";
+    const GUEST_COMPOSITOR_LOADER_ENV: &str = "SHADOW_GUEST_COMPOSITOR_LOADER";
+    const GUEST_COMPOSITOR_LIBRARY_PATH_ENV: &str = "SHADOW_GUEST_COMPOSITOR_LIBRARY_PATH";
+    const SYSTEM_STAGE_LOADER_PATH_ENV: &str = "SHADOW_SYSTEM_STAGE_LOADER_PATH";
+    const SYSTEM_STAGE_LIBRARY_PATH_ENV: &str = "SHADOW_SYSTEM_STAGE_LIBRARY_PATH";
     const GPU_SMOKE_STAGE_PATH_ENV: &str = "SHADOW_GPU_SMOKE_STAGE_PATH";
     const GPU_SMOKE_STAGE_PREFIX_ENV: &str = "SHADOW_GPU_SMOKE_STAGE_PREFIX";
 
@@ -134,12 +150,14 @@ mod linux {
         orange_gpu_parent_probe_attempts: u32,
         orange_gpu_parent_probe_interval_secs: u32,
         orange_gpu_metadata_stage_breadcrumb: bool,
+        orange_gpu_metadata_prune_token_root: bool,
         orange_gpu_firmware_helper: bool,
         orange_gpu_timeout_action: String,
         orange_gpu_watchdog_timeout_secs: u32,
         orange_gpu_bundle_archive_path: String,
         camera_hal_camera_id: String,
         camera_hal_call_open: bool,
+        shell_session_start_app_id: String,
         app_direct_present_app_id: String,
         app_direct_present_runtime_bundle_env: String,
         app_direct_present_runtime_bundle_path: String,
@@ -171,12 +189,14 @@ mod linux {
                 orange_gpu_parent_probe_attempts: 0,
                 orange_gpu_parent_probe_interval_secs: 0,
                 orange_gpu_metadata_stage_breadcrumb: false,
+                orange_gpu_metadata_prune_token_root: false,
                 orange_gpu_firmware_helper: false,
                 orange_gpu_timeout_action: "reboot".to_string(),
                 orange_gpu_watchdog_timeout_secs: 0,
                 orange_gpu_bundle_archive_path: String::new(),
                 camera_hal_camera_id: CAMERA_BOOT_HAL_CAMERA_ID.to_string(),
                 camera_hal_call_open: false,
+                shell_session_start_app_id: "counter".to_string(),
                 app_direct_present_app_id: "rust-demo".to_string(),
                 app_direct_present_runtime_bundle_env: String::new(),
                 app_direct_present_runtime_bundle_path: String::new(),
@@ -750,6 +770,7 @@ mod linux {
                             "vulkan-device-smoke",
                             "vulkan-offscreen",
                             "compositor-scene",
+                            "shell-session",
                             "app-direct-present",
                             "app-direct-present-touch-counter",
                             "app-direct-present-runtime-touch-counter",
@@ -787,6 +808,11 @@ mod linux {
                         config.orange_gpu_metadata_stage_breadcrumb = parsed;
                     }
                 }
+                "orange_gpu_metadata_prune_token_root" | "orange-gpu-metadata-prune-token-root" => {
+                    if let Some(parsed) = parse_bool(value) {
+                        config.orange_gpu_metadata_prune_token_root = parsed;
+                    }
+                }
                 "orange_gpu_firmware_helper" | "orange-gpu-firmware-helper" => {
                     if let Some(parsed) = parse_bool(value) {
                         config.orange_gpu_firmware_helper = parsed;
@@ -819,6 +845,9 @@ mod linux {
                     if let Some(parsed) = parse_bool(value) {
                         config.camera_hal_call_open = parsed;
                     }
+                }
+                "shell_session_start_app_id" | "shell-session-start-app-id" => {
+                    config.shell_session_start_app_id = value.trim().to_string();
                 }
                 "app_direct_present_app_id" | "app-direct-present-app-id" => {
                     config.app_direct_present_app_id = value.trim().to_string();
@@ -1252,6 +1281,10 @@ mod linux {
         mode == "compositor-scene"
     }
 
+    fn orange_gpu_mode_is_shell_session(mode: &str) -> bool {
+        mode == "shell-session"
+    }
+
     fn orange_gpu_mode_is_app_direct_present(mode: &str) -> bool {
         matches!(
             mode,
@@ -1273,7 +1306,9 @@ mod linux {
     }
 
     fn orange_gpu_mode_uses_session_frame_capture(mode: &str) -> bool {
-        orange_gpu_mode_is_compositor_scene(mode) || orange_gpu_mode_is_app_direct_present(mode)
+        orange_gpu_mode_is_compositor_scene(mode)
+            || orange_gpu_mode_is_shell_session(mode)
+            || orange_gpu_mode_is_app_direct_present(mode)
     }
 
     fn orange_gpu_mode_uses_visible_checkpoints(mode: &str, checkpoint_name: &str) -> bool {
@@ -2555,6 +2590,61 @@ mod linux {
         }
     }
 
+    #[derive(Default)]
+    struct ShellSessionEvidence {
+        shell_mode_enabled: bool,
+        home_frame_done: bool,
+        start_app_requested: bool,
+        app_launch_mode_logged: bool,
+        mapped_window: bool,
+        surface_app_tracked: bool,
+        app_frame_artifact_logged: bool,
+        app_frame_captured: bool,
+    }
+
+    impl ShellSessionEvidence {
+        fn ok(&self) -> bool {
+            self.shell_mode_enabled
+                && self.home_frame_done
+                && self.start_app_requested
+                && self.app_launch_mode_logged
+                && self.mapped_window
+                && self.surface_app_tracked
+                && self.app_frame_artifact_logged
+                && self.app_frame_captured
+        }
+    }
+
+    fn shell_session_evidence_from_output(
+        output_text: &str,
+        frame_bytes: u64,
+        app_id: &str,
+    ) -> ShellSessionEvidence {
+        let start_app_needle = format!("[shadow-guest-compositor] shell-start-app-id={app_id}");
+        let app_launch_needle = format!("[shadow-guest-compositor] app-launch-mode app={app_id}");
+        let mapped_window_needle = format!("[shadow-guest-compositor] mapped-window app={app_id}");
+        let surface_tracked_needle =
+            format!("[shadow-guest-compositor] surface-app-tracked app={app_id}");
+        let start_app_index = output_text.find(&start_app_needle);
+        let app_frame_artifact_logged = start_app_index
+            .and_then(|index| {
+                output_text[index..].find("[shadow-guest-compositor] wrote-frame-artifact")
+            })
+            .is_some();
+        ShellSessionEvidence {
+            shell_mode_enabled: output_text
+                .contains("[shadow-guest-compositor] shell-mode enabled"),
+            home_frame_done: output_text
+                .contains("[shadow-guest-compositor] shell-startup-home-frame-done"),
+            start_app_requested: start_app_index.is_some(),
+            app_launch_mode_logged: output_text.contains(&app_launch_needle),
+            mapped_window: output_text.contains(&mapped_window_needle),
+            surface_app_tracked: output_text.contains(&surface_tracked_needle),
+            app_frame_artifact_logged,
+            app_frame_captured: frame_bytes > 0 && app_frame_artifact_logged,
+        }
+    }
+
     fn record_session_frame_summary(
         runtime: &mut MetadataStageRuntime,
         kind: &str,
@@ -2572,13 +2662,28 @@ mod linux {
         }
 
         let frame_path = runtime.compositor_frame_path.display();
-        let touch_counter_evidence = if let Some(profile) = touch_counter_profile.as_ref() {
-            let output_text =
-                fs::read_to_string(ORANGE_GPU_OUTPUT_PATH).map_err(|_| "output-log-missing")?;
+        let output_text = if touch_counter_profile.is_some() || kind == "shell-session" {
+            Some(fs::read_to_string(ORANGE_GPU_OUTPUT_PATH).map_err(|_| "output-log-missing")?)
+        } else {
+            None
+        };
+        let touch_counter_evidence = if let Some(profile) = touch_counter_profile {
             Some(touch_counter_evidence_from_output(
-                &output_text,
+                output_text.as_deref().unwrap_or(""),
                 frame_bytes,
-                *profile,
+                profile,
+            ))
+        } else {
+            None
+        };
+        let shell_session_evidence = if kind == "shell-session" {
+            let Some(app_id) = app_id else {
+                return Err("shell-session-app-id-missing");
+            };
+            Some(shell_session_evidence_from_output(
+                output_text.as_deref().unwrap_or(""),
+                frame_bytes,
+                app_id,
             ))
         } else {
             None
@@ -2587,6 +2692,21 @@ mod linux {
             format!("{{\n  \"kind\": \"{kind}\",\n  \"startup_mode\": \"{startup_mode}\",\n");
         if let Some(app_id) = app_id {
             let _ = write!(payload, "  \"app_id\": \"{app_id}\",\n");
+        }
+        if let Some(evidence) = shell_session_evidence.as_ref() {
+            let _ = write!(
+                payload,
+                "  \"shell_session_probe\": {{\n    \"shell_mode_enabled\": {},\n    \"home_frame_done\": {},\n    \"start_app_requested\": {},\n    \"app_launch_mode_logged\": {},\n    \"mapped_window\": {},\n    \"surface_app_tracked\": {},\n    \"app_frame_artifact_logged\": {},\n    \"app_frame_captured\": {}\n  }},\n  \"shell_session_probe_ok\": {},\n",
+                evidence.shell_mode_enabled,
+                evidence.home_frame_done,
+                evidence.start_app_requested,
+                evidence.app_launch_mode_logged,
+                evidence.mapped_window,
+                evidence.surface_app_tracked,
+                evidence.app_frame_artifact_logged,
+                evidence.app_frame_captured,
+                evidence.ok()
+            );
         }
         if let Some(evidence) = touch_counter_evidence.as_ref() {
             let injection = touch_counter_profile
@@ -2627,6 +2747,14 @@ mod linux {
                 .unwrap_or(false)
         {
             return Err("touch-counter-proof-missing");
+        }
+        if kind == "shell-session"
+            && !shell_session_evidence
+                .as_ref()
+                .map(ShellSessionEvidence::ok)
+                .unwrap_or(false)
+        {
+            return Err("shell-session-proof-missing");
         }
         Ok(())
     }
@@ -2706,21 +2834,41 @@ mod linux {
         )
     }
 
-    fn prepare_metadata_stage_runtime(runtime: &mut MetadataStageRuntime, config: &Config) {
-        if !runtime.enabled || runtime.prepared {
-            return;
+    fn prune_metadata_token_root(config: &Config) -> io::Result<()> {
+        if !config.orange_gpu_metadata_prune_token_root || config.run_token.is_empty() {
+            return Ok(());
         }
+        let root = Path::new(METADATA_BY_TOKEN_ROOT);
+        let entries = match fs::read_dir(root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_name().as_bytes() == config.run_token.as_bytes() {
+                continue;
+            }
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                fs::remove_dir_all(&path)?;
+            } else {
+                fs::remove_file(&path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn try_prepare_metadata_stage_runtime(
+        runtime: &mut MetadataStageRuntime,
+        config: &Config,
+    ) -> io::Result<()> {
         discover_metadata_block_identity_from_sysfs(runtime, config);
-        if bootstrap_tmpfs_metadata_block_runtime(runtime, config).is_err() {
-            runtime.write_failed = true;
-            return;
-        }
-        if ensure_directory(Path::new(METADATA_MOUNT_PATH), 0o755).is_err() {
-            runtime.write_failed = true;
-            return;
-        }
+        bootstrap_tmpfs_metadata_block_runtime(runtime, config)?;
+        ensure_directory(Path::new(METADATA_MOUNT_PATH), 0o755)?;
         let mount_flags = (libc::MS_NOATIME | libc::MS_NODEV | libc::MS_NOSUID) as libc::c_ulong;
-        let mounted = mount_fs(
+        mount_fs(
             METADATA_DEVICE_PATH,
             METADATA_MOUNT_PATH,
             "ext4",
@@ -2735,36 +2883,38 @@ mod linux {
                 mount_flags,
                 Some(""),
             )
-        });
-        if mounted.is_err() {
-            runtime.write_failed = true;
+        })?;
+        ensure_directory(Path::new(METADATA_ROOT), 0o755)?;
+        sync_directory(Path::new(METADATA_MOUNT_PATH))?;
+        ensure_directory(Path::new(METADATA_BY_TOKEN_ROOT), 0o755)?;
+        sync_directory(Path::new(METADATA_ROOT))?;
+        prune_metadata_token_root(config)?;
+        ensure_directory(&runtime.stage_dir, 0o755)?;
+        sync_directory(Path::new(METADATA_BY_TOKEN_ROOT))?;
+        Ok(())
+    }
+
+    fn prepare_metadata_stage_runtime(runtime: &mut MetadataStageRuntime, config: &Config) {
+        if !runtime.enabled || runtime.prepared {
             return;
         }
-        if ensure_directory(Path::new(METADATA_ROOT), 0o755).is_err() {
-            runtime.write_failed = true;
-            return;
+        for attempt in 1..=METADATA_PREPARE_RETRY_ATTEMPTS {
+            match try_prepare_metadata_stage_runtime(runtime, config) {
+                Ok(()) => {
+                    runtime.prepared = true;
+                    return;
+                }
+                Err(error) => {
+                    append_wrapper_log(&format!(
+                        "metadata stage prepare attempt {attempt}/{METADATA_PREPARE_RETRY_ATTEMPTS} failed: {error}"
+                    ));
+                    if attempt < METADATA_PREPARE_RETRY_ATTEMPTS {
+                        sleep_seconds(METADATA_PREPARE_RETRY_SLEEP_SECS);
+                    }
+                }
+            }
         }
-        if sync_directory(Path::new(METADATA_MOUNT_PATH)).is_err() {
-            runtime.write_failed = true;
-            return;
-        }
-        if ensure_directory(Path::new(METADATA_BY_TOKEN_ROOT), 0o755).is_err() {
-            runtime.write_failed = true;
-            return;
-        }
-        if sync_directory(Path::new(METADATA_ROOT)).is_err() {
-            runtime.write_failed = true;
-            return;
-        }
-        if ensure_directory(&runtime.stage_dir, 0o755).is_err() {
-            runtime.write_failed = true;
-            return;
-        }
-        if sync_directory(Path::new(METADATA_BY_TOKEN_ROOT)).is_err() {
-            runtime.write_failed = true;
-            return;
-        }
-        runtime.prepared = true;
+        runtime.write_failed = true;
     }
 
     fn redirect_output(path: &str) -> io::Result<(Stdio, Stdio)> {
@@ -2842,12 +2992,19 @@ mod linux {
     ) {
         command.env(GPU_BACKEND_ENV, "vulkan");
         command.env(LD_LIBRARY_PATH_ENV, ORANGE_GPU_LIBRARY_PATH);
+        command.env(LIBGL_DRIVERS_PATH_ENV, ORANGE_GPU_DRI_DRIVER_PATH);
         command.env(VK_ICD_FILENAMES_ENV, ORANGE_GPU_ICD_PATH);
+        command.env(
+            EGL_VENDOR_LIBRARY_DIRS_ENV,
+            ORANGE_GPU_EGL_VENDOR_LIBRARY_DIRS,
+        );
         command.env(MESA_DRIVER_OVERRIDE_ENV, "kgsl");
         command.env(TU_DEBUG_ENV, "noconform");
         command.env(HOME_ENV, ORANGE_GPU_HOME);
         command.env(XDG_CACHE_HOME_ENV, ORANGE_GPU_CACHE_HOME);
         command.env(XDG_CONFIG_HOME_ENV, ORANGE_GPU_CONFIG_HOME);
+        command.env(XKB_CONFIG_EXTRA_PATH_ENV, ORANGE_GPU_XKB_CONFIG_EXTRA_PATH);
+        command.env(XKB_CONFIG_ROOT_ENV, ORANGE_GPU_XKB_CONFIG_ROOT);
         command.env(MESA_SHADER_CACHE_ENV, ORANGE_GPU_MESA_CACHE_DIR);
         if let Some(path) = probe_stage_path {
             command.env(GPU_SMOKE_STAGE_PATH_ENV, path);
@@ -3284,6 +3441,7 @@ mod linux {
             "vulkan-device-smoke" => ("device-smoke", false, false),
             "vulkan-offscreen" => ("smoke", false, false),
             "compositor-scene" => ("flat-orange", false, false),
+            "shell-session" => ("flat-orange", false, false),
             "app-direct-present" => ("flat-orange", false, false),
             "app-direct-present-touch-counter" => ("flat-orange", false, false),
             "app-direct-present-runtime-touch-counter" => ("flat-orange", false, false),
@@ -3620,6 +3778,8 @@ mod linux {
                 let session_config_path =
                     if orange_gpu_mode_is_compositor_scene(&config.orange_gpu_mode) {
                         ORANGE_GPU_COMPOSITOR_STARTUP_CONFIG_PATH
+                    } else if orange_gpu_mode_is_shell_session(&config.orange_gpu_mode) {
+                        ORANGE_GPU_SHELL_SESSION_STARTUP_CONFIG_PATH
                     } else {
                         ORANGE_GPU_APP_DIRECT_PRESENT_STARTUP_CONFIG_PATH
                     };
@@ -3638,6 +3798,10 @@ mod linux {
                     );
                 }
                 command.env("SHADOW_GUEST_COMPOSITOR_ENABLE_DRM", "1");
+                if orange_gpu_mode_is_shell_session(&config.orange_gpu_mode) {
+                    command.env(GUEST_COMPOSITOR_LOADER_ENV, ORANGE_GPU_LOADER_PATH);
+                    command.env(GUEST_COMPOSITOR_LIBRARY_PATH_ENV, ORANGE_GPU_LIBRARY_PATH);
+                }
                 command.env(
                     "RUST_LOG",
                     "shadow_session=info,shadow_compositor_guest=info,smithay=warn",
@@ -3650,6 +3814,8 @@ mod linux {
                         &config.app_direct_present_runtime_bundle_env,
                         &config.app_direct_present_runtime_bundle_path,
                     );
+                    command.env(SYSTEM_STAGE_LOADER_PATH_ENV, ORANGE_GPU_LOADER_PATH);
+                    command.env(SYSTEM_STAGE_LIBRARY_PATH_ENV, ORANGE_GPU_LIBRARY_PATH);
                 }
                 command
             } else {
@@ -3764,6 +3930,14 @@ mod linux {
                             "shell",
                             None,
                             "compositor-scene-frame-captured",
+                            None,
+                        )
+                    } else if orange_gpu_mode_is_shell_session(&config.orange_gpu_mode) {
+                        (
+                            "shell-session",
+                            "shell",
+                            Some(config.shell_session_start_app_id.as_str()),
+                            "shell-session-app-frame-captured",
                             None,
                         )
                     } else if orange_gpu_mode_is_app_direct_present_runtime_touch_counter(
@@ -4306,7 +4480,7 @@ mod linux {
         }
 
         append_wrapper_log(&format!(
-            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
+            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_metadata_prune_token_root={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
             config.payload,
             config.prelude,
             config.orange_gpu_mode,
@@ -4314,6 +4488,7 @@ mod linux {
             config.orange_gpu_parent_probe_attempts,
             config.orange_gpu_parent_probe_interval_secs,
             bool_word(config.orange_gpu_metadata_stage_breadcrumb),
+            bool_word(config.orange_gpu_metadata_prune_token_root),
             bool_word(config.orange_gpu_firmware_helper),
             config.orange_gpu_timeout_action,
             config.orange_gpu_watchdog_timeout_secs,

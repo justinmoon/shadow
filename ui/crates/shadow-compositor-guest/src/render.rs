@@ -96,6 +96,7 @@ impl ShadowGuestCompositor {
                 })
             })
             .flatten();
+        let shell_frame_app_id = focused_hosted_app.or_else(|| app_frame.and(self.focused_app));
         let shell_stats = if let Some(app_id) = focused_hosted_app {
             let (shell_surface, hosted_apps) = (&mut self.shell_surface, &mut self.hosted_apps);
             let hosted_app = hosted_apps
@@ -183,7 +184,7 @@ impl ShadowGuestCompositor {
 
             self.record_touch_present(frame_marker);
             self.record_scroll_frame_present(frame_marker);
-            if self.exit_on_first_frame {
+            if self.should_exit_after_presented_frame(shell_frame_app_id) {
                 self.request_exit();
             }
             if self.drm_enabled && !presented {
@@ -339,7 +340,7 @@ impl ShadowGuestCompositor {
         self.record_touch_present(frame_marker);
         self.record_scroll_frame_present(frame_marker);
 
-        if self.exit_on_first_frame {
+        if self.should_exit_after_presented_frame(None) {
             self.request_exit();
         }
 
@@ -495,7 +496,7 @@ impl ShadowGuestCompositor {
                 self.last_frame_size = Some((size.w.max(0) as u32, size.h.max(0) as u32));
                 tracing::info!("[shadow-guest-compositor] presented-frame");
                 self.record_touch_present("presented-dmabuf-direct");
-                if self.exit_on_first_frame {
+                if self.should_exit_after_presented_frame(None) {
                     self.request_exit();
                 }
                 buffer.release();
@@ -530,7 +531,7 @@ impl ShadowGuestCompositor {
                         }
                         tracing::info!("[shadow-guest-compositor] presented-frame");
                         self.record_touch_present("captured-dmabuf-frame");
-                        if self.exit_on_first_frame {
+                        if self.should_exit_after_presented_frame(None) {
                             self.request_exit();
                         }
                     } else {

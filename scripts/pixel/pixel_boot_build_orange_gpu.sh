@@ -22,6 +22,7 @@ ORANGE_INIT_BINARY="${PIXEL_ORANGE_INIT_BIN:-}"
 GPU_BUNDLE_DIR="${PIXEL_ORANGE_GPU_BUNDLE_DIR:-}"
 SHADOW_SESSION_BINARY="${PIXEL_SHADOW_SESSION_BIN:-}"
 SHADOW_COMPOSITOR_BINARY="${PIXEL_SHADOW_COMPOSITOR_GUEST_BIN:-}"
+SHADOW_COMPOSITOR_DYNAMIC_BINARY="${PIXEL_SHADOW_COMPOSITOR_GUEST_DYNAMIC_BIN:-}"
 APP_DIRECT_PRESENT_CLIENT_LAUNCHER_BINARY="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_BIN:-}"
 KEY_PATH="${AVB_TEST_KEY_PATH:-}"
 OUTPUT_IMAGE="${PIXEL_BOOT_ORANGE_GPU_IMAGE:-}"
@@ -34,6 +35,7 @@ ORANGE_GPU_LAUNCH_DELAY_SECS="${PIXEL_ORANGE_GPU_LAUNCH_DELAY_SECS:-0}"
 ORANGE_GPU_PARENT_PROBE_ATTEMPTS="${PIXEL_ORANGE_GPU_PARENT_PROBE_ATTEMPTS:-0}"
 ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS="${PIXEL_ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS:-0}"
 ORANGE_GPU_METADATA_STAGE_BREADCRUMB="${PIXEL_ORANGE_GPU_METADATA_STAGE_BREADCRUMB:-false}"
+ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT="${PIXEL_ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT:-false}"
 ORANGE_GPU_FIRMWARE_HELPER="${PIXEL_ORANGE_GPU_FIRMWARE_HELPER:-false}"
 ORANGE_GPU_TIMEOUT_ACTION="${PIXEL_ORANGE_GPU_TIMEOUT_ACTION:-reboot}"
 ORANGE_GPU_WATCHDOG_TIMEOUT_SECS="${PIXEL_ORANGE_GPU_WATCHDOG_TIMEOUT_SECS:-0}"
@@ -58,6 +60,7 @@ KEEP_WORK_DIR=0
 WORK_DIR=""
 COMPOSITOR_SCENE_STARTUP_CONFIG=""
 APP_DIRECT_PRESENT_STARTUP_CONFIG=""
+SHELL_SESSION_STARTUP_CONFIG=""
 CONFIG_ENTRY="shadow-init.cfg"
 PAYLOAD_ROOT="orange-gpu"
 PAYLOAD_IMAGE_PATH="/orange-gpu"
@@ -70,6 +73,9 @@ COMPOSITOR_SCENE_RUNTIME_DIR="/shadow-runtime"
 APP_DIRECT_PRESENT_STARTUP_CONFIG_NAME="app-direct-present-startup.json"
 APP_DIRECT_PRESENT_STARTUP_CONFIG_PATH="/orange-gpu/app-direct-present-startup.json"
 APP_DIRECT_PRESENT_RUNTIME_DIR="/shadow-runtime"
+SHELL_SESSION_STARTUP_CONFIG_NAME="shell-session-startup.json"
+SHELL_SESSION_STARTUP_CONFIG_PATH="/orange-gpu/shell-session-startup.json"
+SHELL_SESSION_START_APP_ID="${PIXEL_ORANGE_GPU_SHELL_START_APP_ID:-${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_APP_ID:-counter}}"
 if [[ -n "${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_APP_ID+x}" ]]; then
   APP_DIRECT_PRESENT_APP_ID_EXPLICIT=1
 else
@@ -112,11 +118,12 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--hello-init-mode direct|rust-bridge]
                                                     [--prelude none|orange-init]
                                                     [--prelude-hold-secs N]
-                                                    [--orange-gpu-mode gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter]
+                                                    [--orange-gpu-mode gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter]
                                                     [--orange-gpu-launch-delay-secs N]
                                                     [--orange-gpu-parent-probe-attempts N]
                                                     [--orange-gpu-parent-probe-interval-secs N]
                                                     [--orange-gpu-metadata-stage-breadcrumb true|false]
+                                                    [--orange-gpu-metadata-prune-token-root true|false]
                                                     [--orange-gpu-firmware-helper true|false]
                                                     [--orange-gpu-timeout-action reboot|panic]
                                                     [--orange-gpu-watchdog-timeout-secs N]
@@ -155,7 +162,8 @@ Vulkan physical-device-count-query smoke, a strict raw Vulkan physical-device-co
 smoke, a strict Vulkan raw adapter-enumeration-count smoke, a strict Vulkan
 adapter-enumeration smoke, a strict Vulkan adapter smoke, a strict Vulkan
 device-request smoke, a strict Vulkan device/buffer smoke, a strict Vulkan
-offscreen render path, a compositor-owned shell scene, an app-owned
+offscreen render path, a compositor-owned shell scene, a shell-owned app
+session, an app-owned
 direct-present scene with no shell, or the no-Vulkan bundle-exec smoke path.
 EOF
 }
@@ -609,6 +617,22 @@ assert_static_device_binary() {
   fi
 }
 
+assert_dynamic_linux_device_binary() {
+  local binary_path label file_output
+  binary_path="${1:?assert_dynamic_linux_device_binary requires a binary path}"
+  label="${2:?assert_dynamic_linux_device_binary requires a label}"
+
+  file_output="$(file "$binary_path")"
+  if [[ "$file_output" != *"ARM aarch64"* ]]; then
+    echo "pixel_boot_build_orange_gpu: expected an arm64 $label binary, got: $file_output" >&2
+    exit 1
+  fi
+  if [[ "$file_output" != *"dynamically linked"* ]]; then
+    echo "pixel_boot_build_orange_gpu: expected a dynamically linked $label binary, got: $file_output" >&2
+    exit 1
+  fi
+}
+
 assert_app_direct_present_client_launcher_variant() {
   local binary_path
   binary_path="${1:?assert_app_direct_present_client_launcher_variant requires a binary path}"
@@ -646,6 +670,18 @@ build_or_copy_linux_static_device_binary() {
   binary_name="${3:?build_or_copy_linux_static_device_binary requires a binary name}"
 
   build_or_copy_static_device_binary \
+    "$(linux_device_package_ref_for_attr "$attr")" \
+    "$destination" \
+    "$binary_name"
+}
+
+build_or_copy_linux_dynamic_device_binary() {
+  local attr destination binary_name
+  attr="${1:?build_or_copy_linux_dynamic_device_binary requires an attr}"
+  destination="${2:?build_or_copy_linux_dynamic_device_binary requires a destination}"
+  binary_name="${3:?build_or_copy_linux_dynamic_device_binary requires a binary name}"
+
+  build_or_copy_rust_hello_init_binary \
     "$(linux_device_package_ref_for_attr "$attr")" \
     "$destination" \
     "$binary_name"
@@ -747,10 +783,10 @@ assert_orange_gpu_mode_word() {
   value="${1:?assert_orange_gpu_mode_word requires a value}"
 
   case "$value" in
-    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)
+    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)
       ;;
     *)
-      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, orange-gpu-loop, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, firmware-probe-only, timeout-control-smoke, camera-hal-link-probe, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-firmware-helper-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, vulkan-offscreen, compositor-scene, app-direct-present, app-direct-present-touch-counter, or app-direct-present-runtime-touch-counter: $value" >&2
+      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, orange-gpu-loop, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, firmware-probe-only, timeout-control-smoke, camera-hal-link-probe, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-firmware-helper-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, vulkan-offscreen, compositor-scene, shell-session, app-direct-present, app-direct-present-touch-counter, or app-direct-present-runtime-touch-counter: $value" >&2
       exit 1
       ;;
   esac
@@ -904,7 +940,7 @@ rust_bridge_supports_orange_gpu_mode() {
   value="${1:?rust_bridge_supports_orange_gpu_mode requires a value}"
 
   case "$value" in
-    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)
+    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)
       return 0
       ;;
     *)
@@ -948,6 +984,9 @@ EOF
   fi
   if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" ]]; then
     printf 'orange_gpu_metadata_stage_breadcrumb=%s\n' "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" >>"$output_path"
+  fi
+  if [[ "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT" == "true" ]]; then
+    printf 'orange_gpu_metadata_prune_token_root=%s\n' "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT" >>"$output_path"
   fi
   if [[ "$ORANGE_GPU_FIRMWARE_HELPER" == "true" ]]; then
     printf 'orange_gpu_firmware_helper=%s\n' "$ORANGE_GPU_FIRMWARE_HELPER" >>"$output_path"
@@ -993,7 +1032,10 @@ EOF
     printf 'camera_hal_camera_id=%s\n' "$CAMERA_HAL_CAMERA_ID" >>"$output_path"
     printf 'camera_hal_call_open=%s\n' "$CAMERA_HAL_CALL_OPEN" >>"$output_path"
   fi
-  if [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
+  if [[ "$ORANGE_GPU_MODE" == "shell-session" ]]; then
+    printf 'shell_session_start_app_id=%s\n' "$SHELL_SESSION_START_APP_ID" >>"$output_path"
+  fi
+  if [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
     printf 'app_direct_present_app_id=%s\n' "$APP_DIRECT_PRESENT_APP_ID" >>"$output_path"
     if [[ -n "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" ]]; then
       printf 'app_direct_present_runtime_bundle_env=%s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" >>"$output_path"
@@ -1171,6 +1213,102 @@ if interactive_touch_mode:
     if touch_counter_mode:
         touch["exitAfterPresent"] = True
     payload["touch"] = touch
+Path(output_path).write_text(
+    json.dumps(payload, indent=2, sort_keys=False) + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
+render_shell_session_startup_config() {
+  local output_path
+  output_path="${1:?render_shell_session_startup_config requires an output path}"
+
+  python3 - \
+    "$output_path" \
+    "$APP_DIRECT_PRESENT_RUNTIME_DIR" \
+    "$APP_DIRECT_PRESENT_CLIENT_PATH" \
+    "$SHELL_SESSION_START_APP_ID" \
+    "$APP_DIRECT_PRESENT_CLIENT_KIND" \
+    "$APP_DIRECT_PRESENT_BINARY_PATH" \
+    "$APP_DIRECT_PRESENT_STAGE_LOADER_PATH" \
+    "$APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH" \
+    "$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH" \
+    "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+(
+    output_path,
+    runtime_dir,
+    client_path,
+    start_app_id,
+    client_kind,
+    app_binary_path,
+    stage_loader_path,
+    stage_library_path,
+    system_binary_path,
+    frame_artifact_path,
+) = sys.argv[1:11]
+env_assignments = []
+if client_kind == "rust":
+    env_assignments.append({"key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "value": "1"})
+elif client_kind == "typescript":
+    env_assignments.extend(
+        [
+            {
+                "key": "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH",
+                "value": app_binary_path,
+            },
+            {
+                "key": "SHADOW_APP_DIRECT_PRESENT_LOADER_PATH",
+                "value": stage_loader_path,
+            },
+            {
+                "key": "SHADOW_APP_DIRECT_PRESENT_LIBRARY_PATH",
+                "value": stage_library_path,
+            },
+            {
+                "key": "SHADOW_SYSTEM_STAGE_LOADER_PATH",
+                "value": stage_loader_path,
+            },
+            {
+                "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",
+                "value": stage_library_path,
+            },
+        ]
+    )
+else:
+    raise SystemExit(f"unsupported shell-session client kind: {client_kind}")
+client = {
+    "appClientPath": client_path,
+    "runtimeDir": runtime_dir,
+}
+if system_binary_path:
+    client["systemBinaryPath"] = system_binary_path
+if env_assignments:
+    client["envAssignments"] = env_assignments
+client["lingerMs"] = 500
+payload = {
+    "schemaVersion": 1,
+    "startup": {"mode": "shell", "shellStartAppId": start_app_id},
+    "client": client,
+    "compositor": {
+        "transport": "direct",
+        "enableDrm": True,
+        "gpuShell": True,
+        "strictGpuResident": True,
+        "dmabufGlobalEnabled": False,
+        "dmabufFeedbackEnabled": True,
+        "exitOnFirstFrame": True,
+        "frameCapture": {
+            "mode": "every-frame",
+            "artifactPath": frame_artifact_path,
+            "checksum": True,
+        },
+    },
+}
 Path(output_path).write_text(
     json.dumps(payload, indent=2, sort_keys=False) + "\n",
     encoding="utf-8",
@@ -1448,6 +1586,7 @@ write_metadata() {
     "$ORANGE_GPU_PARENT_PROBE_ATTEMPTS" \
     "$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS" \
     "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" \
+    "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT" \
     "$ORANGE_GPU_FIRMWARE_HELPER" \
     "$ORANGE_GPU_TIMEOUT_ACTION" \
     "$ORANGE_GPU_WATCHDOG_TIMEOUT_SECS" \
@@ -1482,6 +1621,7 @@ write_metadata() {
     "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" \
     "$ORANGE_GPU_BUNDLE_ARCHIVE_PATH" \
     "$STAGED_GPU_BUNDLE_ARCHIVE" \
+    "$SHELL_SESSION_START_APP_ID" \
     "$APP_DIRECT_PRESENT_APP_ID" \
     "$APP_DIRECT_PRESENT_CLIENT_KIND" \
     "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" \
@@ -1504,6 +1644,7 @@ from pathlib import Path
     orange_gpu_parent_probe_attempts,
     orange_gpu_parent_probe_interval_secs,
     orange_gpu_metadata_stage_breadcrumb,
+    orange_gpu_metadata_prune_token_root,
     orange_gpu_firmware_helper,
     orange_gpu_timeout_action,
     orange_gpu_watchdog_timeout_secs,
@@ -1538,6 +1679,7 @@ from pathlib import Path
     metadata_compositor_frame_path,
     orange_gpu_bundle_archive_path,
     staged_gpu_bundle_archive,
+    shell_session_start_app_id,
     app_direct_present_app_id,
     app_direct_present_client_kind,
     app_direct_present_runtime_bundle_env,
@@ -1560,6 +1702,9 @@ payload_json = {
     "orange_gpu_parent_probe_attempts": int(orange_gpu_parent_probe_attempts),
     "orange_gpu_parent_probe_interval_secs": int(orange_gpu_parent_probe_interval_secs),
     "orange_gpu_metadata_stage_breadcrumb": parse_bool(orange_gpu_metadata_stage_breadcrumb),
+    "orange_gpu_metadata_prune_token_root": parse_bool(
+        orange_gpu_metadata_prune_token_root
+    ),
     "orange_gpu_firmware_helper": parse_bool(orange_gpu_firmware_helper),
     "orange_gpu_timeout_action": orange_gpu_timeout_action,
     "orange_gpu_watchdog_timeout_secs": int(orange_gpu_watchdog_timeout_secs),
@@ -1629,6 +1774,7 @@ payload_json = {
         and orange_gpu_mode
         in {
             "compositor-scene",
+            "shell-session",
             "app-direct-present",
             "app-direct-present-touch-counter",
             "app-direct-present-runtime-touch-counter",
@@ -1636,7 +1782,13 @@ payload_json = {
         else ""
     ),
 }
-if orange_gpu_mode in {"app-direct-present", "app-direct-present-runtime-touch-counter"}:
+if orange_gpu_mode == "shell-session":
+    payload_json["shell_session_start_app_id"] = shell_session_start_app_id
+if orange_gpu_mode in {
+    "shell-session",
+    "app-direct-present",
+    "app-direct-present-runtime-touch-counter",
+}:
     payload_json["app_direct_present_app_id"] = app_direct_present_app_id
     payload_json["app_direct_present_client_kind"] = app_direct_present_client_kind
     payload_json["app_direct_present_runtime_bundle_env"] = app_direct_present_runtime_bundle_env
@@ -1825,6 +1977,10 @@ while [[ $# -gt 0 ]]; do
       ORANGE_GPU_METADATA_STAGE_BREADCRUMB="${2:?missing value for --orange-gpu-metadata-stage-breadcrumb}"
       shift 2
       ;;
+    --orange-gpu-metadata-prune-token-root)
+      ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT="${2:?missing value for --orange-gpu-metadata-prune-token-root}"
+      shift 2
+      ;;
     --orange-gpu-firmware-helper)
       ORANGE_GPU_FIRMWARE_HELPER="${2:?missing value for --orange-gpu-firmware-helper}"
       shift 2
@@ -1992,7 +2148,11 @@ assert_orange_gpu_mode_word "$ORANGE_GPU_MODE"
 if [[ "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" && "$APP_DIRECT_PRESENT_APP_ID_EXPLICIT" == "0" ]]; then
   APP_DIRECT_PRESENT_APP_ID=counter
 fi
-if [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
+if [[ "$ORANGE_GPU_MODE" == "shell-session" ]]; then
+  assert_safe_word shell-session-start-app-id "$SHELL_SESSION_START_APP_ID" 64
+  APP_DIRECT_PRESENT_APP_ID="$SHELL_SESSION_START_APP_ID"
+fi
+if [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
   assert_safe_word app-direct-present-app-id "$APP_DIRECT_PRESENT_APP_ID" 64
   if [[ "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" && "$APP_DIRECT_PRESENT_APP_ID" != "rust-demo" ]]; then
     echo "pixel_boot_build_orange_gpu: app-direct-present-touch-counter requires app-direct-present app id rust-demo" >&2
@@ -2003,6 +2163,10 @@ if [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-d
     exit 1
   fi
   resolve_app_direct_present_metadata
+  if [[ "$ORANGE_GPU_MODE" == "shell-session" && "$APP_DIRECT_PRESENT_CLIENT_KIND" != "typescript" ]]; then
+    echo "pixel_boot_build_orange_gpu: shell-session currently requires a hosted TypeScript app id, got $APP_DIRECT_PRESENT_APP_ID ($APP_DIRECT_PRESENT_CLIENT_KIND)" >&2
+    exit 1
+  fi
 fi
 if [[ "$PRELUDE" == "none" && "$PRELUDE_HOLD_SECS" != "0" ]]; then
   echo "pixel_boot_build_orange_gpu: prelude hold seconds must be 0 when prelude is none" >&2
@@ -2028,6 +2192,7 @@ if [[ ! "$CAMERA_HAL_CAMERA_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
   exit 1
 fi
 assert_bool_word app-direct-present-manual-touch "$APP_DIRECT_PRESENT_MANUAL_TOUCH"
+assert_bool_word orange-gpu-metadata-prune-token-root "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT"
 
 if [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" && "$MOUNT_SYS" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: c-kgsl-open-readonly-firmware-helper-smoke requires --mount-sys true so hello-init can service /sys/class/firmware requests" >&2
@@ -2051,11 +2216,11 @@ if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
     exit 1
   fi
 fi
-if [[ "$ORANGE_GPU_MODE" =~ ^(compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ && "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" != "true" ]]; then
+if [[ "$ORANGE_GPU_MODE" =~ ^(compositor-scene|shell-session|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ && "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: $ORANGE_GPU_MODE requires --orange-gpu-metadata-stage-breadcrumb true so the captured frame survives recovery" >&2
   exit 1
 fi
-if [[ "$ORANGE_GPU_MODE" =~ ^(compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ && "$ORANGE_GPU_FIRMWARE_HELPER" != "true" ]]; then
+if [[ "$ORANGE_GPU_MODE" =~ ^(compositor-scene|shell-session|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ && "$ORANGE_GPU_FIRMWARE_HELPER" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: $ORANGE_GPU_MODE requires --orange-gpu-firmware-helper true so the session stays on the signed-off GPU seam" >&2
   exit 1
 fi
@@ -2218,7 +2383,7 @@ if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
   fi
 fi
 
-if [[ "$ORANGE_GPU_MODE" == "compositor-scene" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
+if [[ "$ORANGE_GPU_MODE" == "compositor-scene" || "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
   if [[ -z "$SHADOW_SESSION_BINARY" ]]; then
     SHADOW_SESSION_BINARY="$(pixel_artifact_path shadow-session)"
     build_or_copy_linux_static_device_binary \
@@ -2226,23 +2391,38 @@ if [[ "$ORANGE_GPU_MODE" == "compositor-scene" || "$ORANGE_GPU_MODE" == "app-dir
       "$SHADOW_SESSION_BINARY" \
       "shadow-session"
   fi
-  if [[ -z "$SHADOW_COMPOSITOR_BINARY" ]]; then
-    SHADOW_COMPOSITOR_BINARY="$(pixel_artifact_path shadow-compositor-guest)"
-    build_or_copy_linux_static_device_binary \
-      "shadow-compositor-guest-device" \
-      "$SHADOW_COMPOSITOR_BINARY" \
-      "shadow-compositor-guest"
-  fi
   [[ -f "$SHADOW_SESSION_BINARY" ]] || {
     echo "pixel_boot_build_orange_gpu: shadow-session binary not found: $SHADOW_SESSION_BINARY" >&2
     exit 1
   }
-  [[ -f "$SHADOW_COMPOSITOR_BINARY" ]] || {
-    echo "pixel_boot_build_orange_gpu: shadow-compositor-guest binary not found: $SHADOW_COMPOSITOR_BINARY" >&2
-    exit 1
-  }
   assert_static_device_binary "$SHADOW_SESSION_BINARY" "shadow-session"
-  assert_static_device_binary "$SHADOW_COMPOSITOR_BINARY" "shadow-compositor-guest"
+  if [[ "$ORANGE_GPU_MODE" == "shell-session" ]]; then
+    if [[ -z "$SHADOW_COMPOSITOR_DYNAMIC_BINARY" ]]; then
+      SHADOW_COMPOSITOR_DYNAMIC_BINARY="$(pixel_artifact_path shadow-compositor-guest-gnu)"
+      build_or_copy_linux_dynamic_device_binary \
+        "shadow-compositor-guest-aarch64-linux-gnu" \
+        "$SHADOW_COMPOSITOR_DYNAMIC_BINARY" \
+        "shadow-compositor-guest"
+    fi
+    [[ -f "$SHADOW_COMPOSITOR_DYNAMIC_BINARY" ]] || {
+      echo "pixel_boot_build_orange_gpu: dynamic shadow-compositor-guest binary not found: $SHADOW_COMPOSITOR_DYNAMIC_BINARY" >&2
+      exit 1
+    }
+    assert_dynamic_linux_device_binary "$SHADOW_COMPOSITOR_DYNAMIC_BINARY" "shadow-compositor-guest"
+  else
+    if [[ -z "$SHADOW_COMPOSITOR_BINARY" ]]; then
+      SHADOW_COMPOSITOR_BINARY="$(pixel_artifact_path shadow-compositor-guest)"
+      build_or_copy_linux_static_device_binary \
+        "shadow-compositor-guest-device" \
+        "$SHADOW_COMPOSITOR_BINARY" \
+        "shadow-compositor-guest"
+    fi
+    [[ -f "$SHADOW_COMPOSITOR_BINARY" ]] || {
+      echo "pixel_boot_build_orange_gpu: shadow-compositor-guest binary not found: $SHADOW_COMPOSITOR_BINARY" >&2
+      exit 1
+    }
+    assert_static_device_binary "$SHADOW_COMPOSITOR_BINARY" "shadow-compositor-guest"
+  fi
 fi
 
 if [[ "$PRELUDE" == "orange-init" ]]; then
@@ -2292,6 +2472,17 @@ elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app
   cp "$SHADOW_COMPOSITOR_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
   chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
   cp "$APP_DIRECT_PRESENT_STARTUP_CONFIG" "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_STARTUP_CONFIG_NAME"
+elif [[ "$ORANGE_GPU_MODE" == "shell-session" ]]; then
+  SHELL_SESSION_STARTUP_CONFIG="$WORK_DIR/$SHELL_SESSION_STARTUP_CONFIG_NAME"
+  stage_app_direct_present_client_bundle "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_BUNDLE_DIR_NAME"
+  merge_app_direct_present_typescript_runtime_libs "$STAGED_GPU_BUNDLE_DIR"
+  prune_app_direct_present_diagnostic_payloads "$STAGED_GPU_BUNDLE_DIR"
+  render_shell_session_startup_config "$SHELL_SESSION_STARTUP_CONFIG"
+  cp "$SHADOW_SESSION_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-session"
+  chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-session"
+  cp "$SHADOW_COMPOSITOR_DYNAMIC_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
+  chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
+  cp "$SHELL_SESSION_STARTUP_CONFIG" "$STAGED_GPU_BUNDLE_DIR/$SHELL_SESSION_STARTUP_CONFIG_NAME"
 fi
 if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" && -n "$CAMERA_HAL_BIONIC_PROBE_BINARY" ]]; then
   cp "$CAMERA_HAL_BIONIC_PROBE_BINARY" "$STAGED_GPU_BUNDLE_DIR/camera-hal-bionic-probe"
@@ -2299,7 +2490,7 @@ if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" && -n "$CAMERA_HAL_BIONIC_PR
 fi
 
 strip_staged_elf_files "$STAGED_GPU_BUNDLE_DIR"
-if [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
+if [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
   STAGED_GPU_BUNDLE_ARCHIVE="$WORK_DIR/$ORANGE_GPU_BUNDLE_ARCHIVE_NAME"
   archive_app_direct_present_gpu_bundle "$STAGED_GPU_BUNDLE_DIR" "$STAGED_GPU_BUNDLE_ARCHIVE"
 fi
@@ -2411,6 +2602,8 @@ elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-pid1-smoke" ]]; then
   printf 'Payload contract: hello-init directly opens /dev/kgsl-3d0 read-only in PID 1 before any fork or staged Rust bundle exec\n'
 elif [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
   printf 'Payload contract: hello-init launches /orange-gpu/shadow-session in shell-only compositor mode and requires a durable captured frame under %s\n' "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")"
+elif [[ "$ORANGE_GPU_MODE" == "shell-session" ]]; then
+  printf 'Payload contract: hello-init launches /orange-gpu/shadow-session in shell-session mode, starts %s from the shell, and requires a durable captured app frame under %s\n' "$SHELL_SESSION_START_APP_ID" "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")"
 elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" ]]; then
   printf 'Payload contract: hello-init launches /orange-gpu/shadow-session in app-only direct-present mode for %s and requires a durable captured frame under %s\n' "$APP_DIRECT_PRESENT_APP_ID" "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")"
 elif [[ "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" ]]; then
@@ -2460,7 +2653,7 @@ if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   printf 'Rust child path: /%s\n' "$HELLO_INIT_RUST_CHILD_ENTRY"
   printf 'Rust child binary: %s\n' "$HELLO_INIT_BINARY"
 fi
-if [[ "$ORANGE_GPU_MODE" != "app-direct-present" && "$ORANGE_GPU_MODE" != "app-direct-present-touch-counter" && "$ORANGE_GPU_MODE" != "app-direct-present-runtime-touch-counter" ]]; then
+if [[ "$ORANGE_GPU_MODE" != "compositor-scene" && "$ORANGE_GPU_MODE" != "shell-session" && "$ORANGE_GPU_MODE" != "app-direct-present" && "$ORANGE_GPU_MODE" != "app-direct-present-touch-counter" && "$ORANGE_GPU_MODE" != "app-direct-present-runtime-touch-counter" ]]; then
   printf 'GPU exec path: %s/shadow-gpu-smoke\n' "$PAYLOAD_IMAGE_PATH"
 fi
 printf 'GPU loader path: %s/lib/ld-linux-aarch64.so.1\n' "$PAYLOAD_IMAGE_PATH"
@@ -2517,6 +2710,8 @@ elif [[ "$ORANGE_GPU_MODE" == "vulkan-offscreen" ]]; then
   printf 'GPU proof: strict Vulkan offscreen render\n'
 elif [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
   printf 'GPU proof: compositor-owned shell home frame captured durably through the Rust boot seam\n'
+elif [[ "$ORANGE_GPU_MODE" == "shell-session" ]]; then
+  printf 'GPU proof: shell-owned %s app launch frame captured durably through the Rust boot seam\n' "$SHELL_SESSION_START_APP_ID"
 elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" ]]; then
   printf 'GPU proof: app-owned %s surface imported and presented with no shell through the Rust boot seam\n' "$APP_DIRECT_PRESENT_APP_ID"
 elif [[ "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" ]]; then
@@ -2540,6 +2735,7 @@ printf 'Orange GPU launch delay seconds: %s\n' "$ORANGE_GPU_LAUNCH_DELAY_SECS"
 printf 'Orange GPU parent probe attempts: %s\n' "$ORANGE_GPU_PARENT_PROBE_ATTEMPTS"
 printf 'Orange GPU parent probe interval seconds: %s\n' "$ORANGE_GPU_PARENT_PROBE_INTERVAL_SECS"
 printf 'Orange GPU metadata stage breadcrumb: %s\n' "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB"
+printf 'Orange GPU metadata prune token root: %s\n' "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT"
 printf 'Orange GPU firmware helper: %s\n' "$ORANGE_GPU_FIRMWARE_HELPER"
 printf 'Orange GPU timeout action: %s\n' "$ORANGE_GPU_TIMEOUT_ACTION"
 printf 'Orange GPU watchdog timeout seconds: %s\n' "$ORANGE_GPU_WATCHDOG_TIMEOUT_SECS"
@@ -2553,7 +2749,7 @@ if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" ]]; then
   printf 'Metadata probe report path: %s\n' "$(metadata_probe_report_path_for_token "$RUN_TOKEN")"
   printf 'Metadata probe timeout class path: %s\n' "$(metadata_probe_timeout_class_path_for_token "$RUN_TOKEN")"
   printf 'Metadata probe summary path: %s\n' "$(metadata_probe_summary_path_for_token "$RUN_TOKEN")"
-  if [[ "$ORANGE_GPU_MODE" == "compositor-scene" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
+  if [[ "$ORANGE_GPU_MODE" == "compositor-scene" || "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
     printf 'Metadata compositor frame path: %s\n' "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")"
   fi
 fi
@@ -2594,6 +2790,21 @@ if [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
   printf 'Compositor session path: %s\n' "$COMPOSITOR_SCENE_SESSION_PATH"
   printf 'Compositor binary path: %s\n' "$COMPOSITOR_SCENE_COMPOSITOR_PATH"
   printf 'Compositor startup config path: %s\n' "$COMPOSITOR_SCENE_STARTUP_CONFIG_PATH"
+elif [[ "$ORANGE_GPU_MODE" == "shell-session" ]]; then
+  printf 'Compositor session path: %s\n' "$COMPOSITOR_SCENE_SESSION_PATH"
+  printf 'Compositor binary path: %s\n' "$COMPOSITOR_SCENE_COMPOSITOR_PATH"
+  printf 'Compositor startup config path: %s\n' "$SHELL_SESSION_STARTUP_CONFIG_PATH"
+  printf 'Shell session start app id: %s\n' "$SHELL_SESSION_START_APP_ID"
+  printf 'App direct present id: %s\n' "$APP_DIRECT_PRESENT_APP_ID"
+  printf 'App direct present client kind: %s\n' "$APP_DIRECT_PRESENT_CLIENT_KIND"
+  printf 'App client path: %s\n' "$APP_DIRECT_PRESENT_CLIENT_PATH"
+  printf 'App binary path: %s\n' "$APP_DIRECT_PRESENT_BINARY_PATH"
+  if [[ "$APP_DIRECT_PRESENT_CLIENT_KIND" == "typescript" ]]; then
+    printf 'App TypeScript renderer: %s\n' "$APP_DIRECT_PRESENT_TS_RENDERER"
+    printf 'App runtime bundle env: %s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV"
+    printf 'App runtime bundle path: %s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH"
+    printf 'App system binary path: %s\n' "$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH"
+  fi
 elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
   printf 'Compositor session path: %s\n' "$COMPOSITOR_SCENE_SESSION_PATH"
   printf 'Compositor binary path: %s\n' "$COMPOSITOR_SCENE_COMPOSITOR_PATH"

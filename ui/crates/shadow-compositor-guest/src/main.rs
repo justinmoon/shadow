@@ -175,6 +175,7 @@ struct ShadowGuestCompositor {
     pub(crate) control_socket_path: PathBuf,
     pending_system_prompt: Option<PendingSystemPrompt>,
     exit_on_first_frame: bool,
+    first_frame_exit_app_id: Option<AppId>,
     exit_on_client_disconnect: bool,
     exit_on_first_dma_buffer: bool,
     boot_splash_drm: bool,
@@ -216,6 +217,12 @@ impl ShadowGuestCompositor {
         let display_handle = display.handle();
         let loop_signal = event_loop.get_signal();
         let shell_enabled = config.startup_action.shell_enabled();
+        let first_frame_exit_app_id = match config.startup_action {
+            StartupAction::Shell {
+                start_app_id: Some(app_id),
+            } => Some(app_id),
+            _ => None,
+        };
         let exit_on_client_disconnect = config.exit_on_client_disconnect;
         let dmabuf_formats = Self::supported_dmabuf_formats(config.dmabuf_format_profile);
         let mut dmabuf_state = DmabufState::new();
@@ -316,6 +323,7 @@ impl ShadowGuestCompositor {
             control_socket_path,
             pending_system_prompt: None,
             exit_on_first_frame: config.exit_on_first_frame,
+            first_frame_exit_app_id,
             exit_on_client_disconnect,
             exit_on_first_dma_buffer: config.exit_on_first_dma_buffer,
             boot_splash_drm: config.boot_splash_drm,
@@ -581,6 +589,17 @@ impl ShadowGuestCompositor {
     pub(crate) fn request_exit(&mut self) {
         self.exit_requested = true;
         self.loop_signal.stop();
+    }
+
+    pub(crate) fn should_exit_after_presented_frame(
+        &self,
+        app_frame_app_id: Option<AppId>,
+    ) -> bool {
+        self.exit_on_first_frame
+            && self
+                .first_frame_exit_app_id
+                .map(|required_app_id| app_frame_app_id == Some(required_app_id))
+                .unwrap_or(true)
     }
 
     fn ensure_kms_display_with_timeout(

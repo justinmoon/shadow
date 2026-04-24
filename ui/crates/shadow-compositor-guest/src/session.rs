@@ -529,7 +529,10 @@ mod tests {
         sync::{Mutex, MutexGuard, OnceLock},
     };
 
-    use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
+    use smithay::reexports::{
+        calloop::EventLoop,
+        wayland_server::{protocol::wl_shm, Display},
+    };
     use tempfile::TempDir;
 
     use super::*;
@@ -557,6 +560,20 @@ mod tests {
         }
 
         fn with_background_limit(background_app_resident_limit: usize) -> Self {
+            Self::with_startup_action(
+                StartupAction::App {
+                    app_id: app::RUST_DEMO_APP_ID,
+                },
+                false,
+                background_app_resident_limit,
+            )
+        }
+
+        fn with_startup_action(
+            startup_action: StartupAction,
+            exit_on_first_frame: bool,
+            background_app_resident_limit: usize,
+        ) -> Self {
             let env_guard = env_lock().lock().unwrap_or_else(|error| error.into_inner());
             let runtime_dir = TempDir::new().expect("temp runtime dir");
             let client_runtime_dir = runtime_dir.path().join("client-runtime");
@@ -569,9 +586,7 @@ mod tests {
 
             let client_path = write_stub_client(runtime_dir.path());
             let config = GuestStartupConfig {
-                startup_action: StartupAction::App {
-                    app_id: app::RUST_DEMO_APP_ID,
-                },
+                startup_action,
                 client: GuestClientConfig {
                     app_client_path: client_path.to_string_lossy().into_owned(),
                     runtime_dir: client_runtime_dir,
@@ -582,7 +597,7 @@ mod tests {
                 },
                 transport: TransportRequest::Direct,
                 exit_on_client_disconnect: false,
-                exit_on_first_frame: false,
+                exit_on_first_frame,
                 exit_on_first_dma_buffer: false,
                 boot_splash_drm: false,
                 drm_enabled: false,
@@ -655,6 +670,52 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&script_path, permissions).expect("stub client permissions");
         script_path
+    }
+
+    #[test]
+    fn shell_start_app_defers_first_frame_exit_until_app_frame_is_available() {
+        let mut harness = GuestSessionHarness::with_startup_action(
+            StartupAction::Shell {
+                start_app_id: Some(app::COUNTER_APP_ID),
+            },
+            true,
+            3,
+        );
+
+        assert!(!harness.state.should_exit_after_presented_frame(None));
+
+        harness.set_foreground_app(app::COUNTER_APP_ID);
+
+        assert!(!harness.state.should_exit_after_presented_frame(None));
+
+        harness.state.app_frames.insert(
+            app::COUNTER_APP_ID,
+            crate::kms::CapturedFrame {
+                width: 1,
+                height: 1,
+                stride: 4,
+                format: wl_shm::Format::Xrgb8888,
+                pixels: vec![0, 0, 0, 0],
+            },
+        );
+
+        assert!(harness
+            .state
+            .should_exit_after_presented_frame(Some(app::COUNTER_APP_ID)));
+        assert!(!harness
+            .state
+            .should_exit_after_presented_frame(Some(app::RUST_DEMO_APP_ID)));
+    }
+
+    #[test]
+    fn shell_without_start_app_exits_on_first_shell_frame() {
+        let harness = GuestSessionHarness::with_startup_action(
+            StartupAction::Shell { start_app_id: None },
+            true,
+            3,
+        );
+
+        assert!(harness.state.should_exit_after_presented_frame(None));
     }
 
     #[test]
