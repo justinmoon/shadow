@@ -31,6 +31,9 @@ search_roots=(
   /apex/com.android.runtime/lib64
 )
 
+# The collector starts broad so alternate research profiles can be built from
+# one capsule. The required set below is the proven vnd-sm-core-binder-node
+# runtime seam used by the default Wi-Fi scan probe.
 initial_files=(
   /apex/com.android.runtime/bin/linker64
   /apex/com.android.runtime/lib64/bionic/libc.so
@@ -156,6 +159,14 @@ required_files=(
   /linkerconfig/ld.config.txt
   /system/bin/toybox
   /vendor/bin/cnss-daemon
+  /vendor/bin/modem_svc
+  /vendor/bin/pd-mapper
+  /vendor/bin/pm-proxy
+  /vendor/bin/pm-service
+  /vendor/bin/qrtr-ns
+  /vendor/bin/rmt_storage
+  /vendor/bin/tftp_server
+  /vendor/bin/vndservicemanager
   /vendor/bin/hw/wpa_supplicant
   /vendor/etc/wifi/wpa_supplicant.conf
 )
@@ -177,8 +188,8 @@ safe_path_component() {
 }
 
 resolve_serial_for_mode() {
-  if [[ "$DRY_RUN" == "1" && -n "${PIXEL_SERIAL:-}" ]]; then
-    printf '%s\n' "$PIXEL_SERIAL"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '%s\n' "${PIXEL_SERIAL:-dry-run}"
     return 0
   fi
 
@@ -208,8 +219,7 @@ device_shell_quote() {
 adb_shell_root() {
   local command_text
   command_text="${1:?adb_shell_root requires a command}"
-  timeout "$ADB_TIMEOUT_SECS" adb -s "$serial" shell \
-    "/debug_ramdisk/su 0 sh -c $(device_shell_quote "$command_text")" </dev/null
+  pixel_root_shell_timeout "$ADB_TIMEOUT_SECS" "$serial" "$command_text"
 }
 
 host_path_for_device_path() {
@@ -246,9 +256,7 @@ pull_file() {
   rm -f "$tmp_path"
   if timeout "$ADB_TIMEOUT_SECS" adb -s "$serial" pull "$device_path" "$tmp_path" >/dev/null 2>&1; then
     mv "$tmp_path" "$host_path"
-  elif timeout "$ADB_TIMEOUT_SECS" adb -s "$serial" shell \
-      "/debug_ramdisk/su 0 sh -c $(device_shell_quote "cat $(device_shell_quote "$device_path")")" \
-      >"$tmp_path" </dev/null; then
+  elif adb_shell_root "cat $(device_shell_quote "$device_path")" >"$tmp_path"; then
     mv "$tmp_path" "$host_path"
   else
     rm -f "$tmp_path"

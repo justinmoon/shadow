@@ -50,6 +50,11 @@ RUN_TOKEN="${PIXEL_HELLO_INIT_RUN_TOKEN:-${PIXEL_ORANGE_GPU_RUN_TOKEN:-}}"
 DRI_BOOTSTRAP="${PIXEL_ORANGE_GPU_DRI_BOOTSTRAP:-}"
 INPUT_BOOTSTRAP="${PIXEL_ORANGE_GPU_INPUT_BOOTSTRAP:-none}"
 WIFI_BOOTSTRAP="${PIXEL_ORANGE_GPU_WIFI_BOOTSTRAP:-none}"
+if [[ -n "${PIXEL_ORANGE_GPU_WIFI_HELPER_PROFILE+x}" ]]; then
+  WIFI_HELPER_PROFILE_EXPLICIT=1
+else
+  WIFI_HELPER_PROFILE_EXPLICIT=0
+fi
 WIFI_HELPER_PROFILE="${PIXEL_ORANGE_GPU_WIFI_HELPER_PROFILE:-full}"
 WIFI_SUPPLICANT_PROBE="${PIXEL_ORANGE_GPU_WIFI_SUPPLICANT_PROBE:-true}"
 FIRMWARE_BOOTSTRAP="${PIXEL_ORANGE_GPU_FIRMWARE_BOOTSTRAP:-none}"
@@ -1165,7 +1170,7 @@ EOF
   if [[ "$WIFI_BOOTSTRAP" != "none" ]]; then
     printf 'wifi_bootstrap=%s\n' "$WIFI_BOOTSTRAP" >>"$output_path"
   fi
-  if [[ "$WIFI_HELPER_PROFILE" != "full" ]]; then
+  if [[ "$WIFI_BOOTSTRAP" == "sunfish-wlan0" || "$WIFI_HELPER_PROFILE_EXPLICIT" == "1" ]]; then
     printf 'wifi_helper_profile=%s\n' "$WIFI_HELPER_PROFILE" >>"$output_path"
   fi
   if [[ "$WIFI_SUPPLICANT_PROBE" != "true" ]]; then
@@ -2894,6 +2899,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --wifi-helper-profile)
       WIFI_HELPER_PROFILE="${2:?missing value for --wifi-helper-profile}"
+      WIFI_HELPER_PROFILE_EXPLICIT=1
       shift 2
       ;;
     --wifi-supplicant-probe)
@@ -3146,6 +3152,9 @@ case "$WIFI_BOOTSTRAP" in
     exit 1
     ;;
 esac
+if [[ "$WIFI_BOOTSTRAP" == "sunfish-wlan0" && "$WIFI_HELPER_PROFILE_EXPLICIT" == "0" ]]; then
+  WIFI_HELPER_PROFILE="vnd-sm-core-binder-node"
+fi
 case "$WIFI_HELPER_PROFILE" in
   full|no-service-managers|no-pm|no-modem-svc|no-rfs-storage|no-pd-mapper|no-cnss|qrtr-only|qrtr-pd|qrtr-pd-tftp|qrtr-pd-rfs|qrtr-pd-rfs-cnss|qrtr-pd-rfs-modem|qrtr-pd-rfs-modem-cnss|qrtr-pd-rfs-modem-pm|qrtr-pd-rfs-modem-pm-cnss|aidl-sm-core|vnd-sm-core|vnd-sm-core-binder-node|all-sm-core|none) ;;
   *)

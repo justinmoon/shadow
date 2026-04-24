@@ -240,7 +240,7 @@ mod linux {
                 input_bootstrap: "none".to_string(),
                 firmware_bootstrap: "none".to_string(),
                 wifi_bootstrap: "none".to_string(),
-                wifi_helper_profile: "full".to_string(),
+                wifi_helper_profile: "vnd-sm-core-binder-node".to_string(),
                 wifi_supplicant_probe: true,
                 mount_dev: true,
                 mount_proc: true,
@@ -2990,15 +2990,21 @@ mod linux {
         let mut lines = Vec::new();
         for line in text.lines() {
             let trimmed = line.trim_start();
-            let mut redacted_line = None;
+            let mut redacted_line = redact_wpa_network_command_line(line, trimmed);
             for key in [
                 "address=",
                 "bssid=",
                 "ssid=",
+                "psk=",
+                "password=",
+                "passphrase=",
                 "uuid=",
                 "p2p_device_address=",
                 "ip_address=",
             ] {
+                if redacted_line.is_some() {
+                    break;
+                }
                 if let Some(value) = trimmed.strip_prefix(key) {
                     if !value.is_empty() {
                         let indent_len = line.len() - trimmed.len();
@@ -3015,6 +3021,25 @@ mod linux {
             output.push('\n');
         }
         output
+    }
+
+    fn redact_wpa_network_command_line(line: &str, trimmed: &str) -> Option<String> {
+        let mut parts = trimmed.split_whitespace();
+        if parts.next()? != "SET_NETWORK" {
+            return None;
+        }
+        let network_id = parts.next()?;
+        let field = parts.next()?;
+        if !matches!(field, "ssid" | "psk" | "password" | "passphrase") {
+            return None;
+        }
+        let indent_len = line.len() - trimmed.len();
+        Some(format!(
+            "{}SET_NETWORK {} {} <redacted>",
+            &line[..indent_len],
+            network_id,
+            field
+        ))
     }
 
     fn redact_mac_like_tokens(text: &str) -> String {
@@ -3189,15 +3214,29 @@ mod linux {
             .to_string()
     }
 
+    fn wpa_ctrl_command_label(command: &str) -> String {
+        let redacted = redact_wifi_sensitive_text(command.trim());
+        if redacted.is_empty() {
+            return "<empty>".to_string();
+        }
+        if redacted.chars().count() <= 160 {
+            return redacted;
+        }
+        let mut truncated = redacted.chars().take(160).collect::<String>();
+        truncated.push_str("<truncated>");
+        truncated
+    }
+
     fn wpa_ctrl_command_result_json(
         socket_path: &Path,
         command: &str,
         timeout: Duration,
     ) -> String {
+        let command_label = wpa_ctrl_command_label(command);
         let client_path = format!(
             "/data/vendor/wifi/wpa/sockets/shadow-wpa-{}-{}",
             process::id(),
-            command
+            command_label
                 .chars()
                 .filter(|ch| ch.is_ascii_alphanumeric())
                 .collect::<String>()
@@ -3210,7 +3249,7 @@ mod linux {
             Err(error) => {
                 return format!(
                     "{{\"command\":{},\"ok\":false,\"error\":{}}}",
-                    json_string(command),
+                    json_string(&command_label),
                     json_string(&format!("bind {client_path:?}: {error}"))
                 )
             }
@@ -3223,13 +3262,13 @@ mod linux {
         let result = if let Err(error) = socket.connect(socket_path) {
             format!(
                 "{{\"command\":{},\"ok\":false,\"error\":{}}}",
-                json_string(command),
+                json_string(&command_label),
                 json_string(&format!("connect {socket_path:?}: {error}"))
             )
         } else if let Err(error) = socket.send(command.as_bytes()) {
             format!(
                 "{{\"command\":{},\"ok\":false,\"error\":{}}}",
-                json_string(command),
+                json_string(&command_label),
                 json_string(&format!("send: {error}"))
             )
         } else {
@@ -3245,14 +3284,14 @@ mod linux {
                     };
                     format!(
                         "{{\"command\":{},\"ok\":{},\"response\":{}}}",
-                        json_string(command),
+                        json_string(&command_label),
                         bool_word(ok),
                         json_string(&wifi_command_text(response.as_bytes(), 8192))
                     )
                 }
                 Err(error) => format!(
                     "{{\"command\":{},\"ok\":false,\"error\":{}}}",
-                    json_string(command),
+                    json_string(&command_label),
                     json_string(&format!("recv: {error}"))
                 ),
             }
