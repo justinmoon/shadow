@@ -168,7 +168,7 @@ PROP
       elif [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
         printf 'parent-probe-result=exit-0\n'
         exit 0
-      elif [[ "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-success" || "$TRACE_MODE" == "app-direct-present-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" || "$TRACE_MODE" == "payload-partition-success" ]]; then
+      elif [[ "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "shell-session-held-success" || "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-success" || "$TRACE_MODE" == "app-direct-present-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" || "$TRACE_MODE" == "payload-partition-success" ]]; then
         printf 'parent-probe-result=exit-0\n'
         exit 0
       fi
@@ -190,6 +190,9 @@ PROP
       elif [[ "$TRACE_MODE" == "shell-session-success" ]]; then
         printf 'orange-gpu-payload:shell-session-app-frame-captured\n'
         exit 0
+      elif [[ "$TRACE_MODE" == "shell-session-held-success" ]]; then
+        printf 'orange-gpu-payload:shell-session-held-watchdog-proved\n'
+        exit 0
       elif [[ "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" ]]; then
         printf 'orange-gpu-payload:shell-session-runtime-touch-counter-proved\n'
         exit 0
@@ -209,7 +212,7 @@ PROP
       exit 3
       ;;
     *"/metadata/shadow-hello-init/by-token/"*"/probe-fingerprint.txt"* )
-      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" || "$TRACE_MODE" == "orange-gpu-loop-success" || "$TRACE_MODE" == "compositor-scene-success" || "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-success" || "$TRACE_MODE" == "app-direct-present-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" || "$TRACE_MODE" == "payload-partition-success" ]]; then
+      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" || "$TRACE_MODE" == "orange-gpu-loop-success" || "$TRACE_MODE" == "compositor-scene-success" || "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "shell-session-held-success" || "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-success" || "$TRACE_MODE" == "app-direct-present-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" || "$TRACE_MODE" == "payload-partition-success" ]]; then
         printf 'path=/dev/kgsl-3d0 present=true kind=char mode=666 uid=1000 gid=1000 major=508 minor=0\n'
         exit 0
       fi
@@ -264,6 +267,16 @@ child_timed_out=false
 child_completed=true
 exit_status=0
 wchan=
+EOF
+        exit 0
+      elif [[ "$TRACE_MODE" == "shell-session-held-success" ]]; then
+        cat <<EOF
+probe_label=orange-gpu-payload
+observed_probe_stage=orange-gpu-payload:shell-session-held-watchdog-proved
+child_timed_out=true
+child_completed=false
+exit_status=
+wchan=do_wait
 EOF
         exit 0
       elif [[ "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" ]]; then
@@ -409,6 +422,29 @@ EOF
         cat <<EOF
 {
   "kind": "shell-session",
+  "startup_mode": "shell",
+  "app_id": "$trace_app_id",
+  "shell_session_probe": {
+    "shell_mode_enabled": true,
+    "home_frame_done": true,
+    "start_app_requested": true,
+    "app_launch_mode_logged": true,
+    "mapped_window": true,
+    "surface_app_tracked": true,
+    "app_frame_artifact_logged": true,
+    "app_frame_captured": true
+  },
+  "shell_session_probe_ok": true,
+  "frame_path": "/metadata/shadow-hello-init/by-token/$TRACE_RUN_TOKEN/compositor-frame.ppm",
+  "frame_bytes": 20
+}
+EOF
+        exit 0
+      elif [[ "$TRACE_MODE" == "shell-session-held-success" ]]; then
+        trace_app_id="${MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID:-counter}"
+        cat <<EOF
+{
+  "kind": "shell-session-held",
   "startup_mode": "shell",
   "app_id": "$trace_app_id",
   "shell_session_probe": {
@@ -581,7 +617,7 @@ EOF
       if [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
         printf 'P6\n2 1\n255\n\xff\x7a\x00\x00\x00\x00'
         exit 0
-      elif [[ "$TRACE_MODE" == "shell-session-success" ]]; then
+      elif [[ "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "shell-session-held-success" ]]; then
         case "${MOCK_TRACE_APP_DIRECT_PRESENT_FRAME_APP_ID:-${MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID:-counter}}" in
           rust-demo)
             printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'
@@ -783,7 +819,7 @@ EOF
   "metadata_compositor_frame_path": "/metadata/shadow-hello-init/by-token/$run_token/compositor-frame.ppm"
 }
 EOF
-  elif [[ "$orange_gpu_mode" == "shell-session" || "$orange_gpu_mode" == "shell-session-runtime-touch-counter" ]]; then
+  elif [[ "$orange_gpu_mode" == "shell-session" || "$orange_gpu_mode" == "shell-session-held" || "$orange_gpu_mode" == "shell-session-runtime-touch-counter" ]]; then
     cat >"$image_path.hello-init.json" <<EOF
 {
   "kind": "hello_init_build",
@@ -1393,6 +1429,35 @@ assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_
 assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_height 1
 assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_pixel_bytes 9
 assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
+
+SHELL_SESSION_HELD_PARENT="$TMP_DIR/output-shell-session-held"
+SHELL_SESSION_HELD_IMAGE="$TMP_DIR/output-shell-session-held.img"
+SHELL_SESSION_HELD_OUTPUT="$SHELL_SESSION_HELD_PARENT/recover-traces"
+write_recover_context "$SHELL_SESSION_HELD_PARENT" "$SHELL_SESSION_HELD_IMAGE" "$RUN_TOKEN" shell-session-held counter
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=shell-session-held-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID=counter \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$SHELL_SESSION_HELD_OUTPUT" >/dev/null
+
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" probe_report_proves_child_success false
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" probe_report_proves_child_timeout true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" probe_summary_proves_shell_session_held true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" app_direct_present_proof_contract_required true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" app_direct_present_proof_contract_ok true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" proof_ok true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" expected_shell_session_start_app_id counter
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_report_timed_out true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_report_child_completed false
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_kind shell-session-held
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_startup_mode shell
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_app_id counter
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_shell_session_probe_ok true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
 
 SHELL_SESSION_TIMELINE_PARENT="$TMP_DIR/output-shell-session-timeline"
 SHELL_SESSION_TIMELINE_IMAGE="$TMP_DIR/output-shell-session-timeline.img"

@@ -29,7 +29,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Prefer `counter` for the first shell-launched TypeScript app because it avoids network/service dependencies.
 - Preserve the metadata/recover-traces truth surface and add shell-specific readiness fields.
 - Treat the landed `/metadata/shadow-payload/by-token/<run_token>` probe as a small control/proof surface only; it is not large enough for product shell/session payloads.
-- Consume worker-2's larger payload partition once it lands; until then keep payload-size-sensitive work on the current ramdisk path and avoid designing around `/metadata`.
+- Do not prototype runtime payload delivery on `/metadata`; it is about 10 MB and only useful for manifests, breadcrumbs, and recovered proof.
+- Consume worker-2's larger payload partition once it lands; until then keep behavior work on the current ramdisk path and keep payload-size-sensitive changes isolated.
 
 ## Steps
 
@@ -39,8 +40,8 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Add shell-start-app proof for TypeScript `counter`.
 - [x] Fold in synthetic runtime touch proof for shell-launched TypeScript `counter`.
 - [~] Keep the current ramdisk shell-session bundle working while worker-2 brings up the larger payload partition.
-- [ ] Move the shell-session runtime bundle onto the larger payload partition once that lands.
-- [ ] Add persistent/held shell mode with a clear recovery path.
+- [ ] Move the shell-session runtime bundle onto the larger payload partition once that lands; do not use `/metadata` as the intermediate payload store.
+- [~] Add persistent/held shell mode with a clear recovery path: `shell-session-held` host builder/recovery proof is covered; hardware proof remains.
 - [~] Add broader app coverage from the shell: Rust `rust-demo` and TypeScript `timeline` staging/proof smokes are covered; hardware proof remains.
 - [ ] Fold in manual/real touch plumbing from `worker-2` if it helps interaction.
 - [ ] Confirm the larger-partition-backed shell/app path on hardware and record proof artifacts.
@@ -58,3 +59,4 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - `payload-partition-first-probe` landed on master as a metadata-backed manifest probe, but `/metadata` is only about 10 MB. Use it for breadcrumbs/manifests/proof, not for the real runtime/compositor/app bundle. Worker-2 owns the larger new-partition lane; consume that when available.
 - `shell-session` can now stage and launch Rust `rust-demo` through the shell path. The touch-counter shell proof stays TypeScript-only because its evidence contract is tied to hosted runtime counter events.
 - `shell-session` now has host/recovery proof coverage for non-counter TypeScript `timeline` as well as `counter`, so the shell app path is no longer counter-only at the script/proof-contract layer.
+- `shell-session-held` disables first-frame exit and treats the PID1 watchdog timeout as success only when recovered metadata proves the shell, launched app, app frame, and timeout report. This is a host-smoke proof so far; the hardware run still needs to be captured.

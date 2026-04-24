@@ -797,6 +797,7 @@ mod linux {
                             "vulkan-offscreen",
                             "compositor-scene",
                             "shell-session",
+                            "shell-session-held",
                             "shell-session-runtime-touch-counter",
                             "app-direct-present",
                             "app-direct-present-touch-counter",
@@ -1906,8 +1907,12 @@ mod linux {
     fn orange_gpu_mode_is_shell_session(mode: &str) -> bool {
         matches!(
             mode,
-            "shell-session" | "shell-session-runtime-touch-counter"
+            "shell-session" | "shell-session-held" | "shell-session-runtime-touch-counter"
         )
+    }
+
+    fn orange_gpu_mode_is_shell_session_held(mode: &str) -> bool {
+        mode == "shell-session-held"
     }
 
     fn orange_gpu_mode_is_shell_session_runtime_touch_counter(mode: &str) -> bool {
@@ -3412,7 +3417,7 @@ mod linux {
         let frame_path = runtime.compositor_frame_path.display();
         let shell_summary_kind = matches!(
             kind,
-            "shell-session" | "shell-session-runtime-touch-counter"
+            "shell-session" | "shell-session-held" | "shell-session-runtime-touch-counter"
         );
         let output_text = if touch_counter_profile.is_some() || shell_summary_kind {
             Some(fs::read_to_string(ORANGE_GPU_OUTPUT_PATH).map_err(|_| "output-log-missing")?)
@@ -4194,6 +4199,7 @@ mod linux {
             "vulkan-offscreen" => ("smoke", false, false),
             "compositor-scene" => ("flat-orange", false, false),
             "shell-session" => ("flat-orange", false, false),
+            "shell-session-held" => ("flat-orange", false, false),
             "app-direct-present" => ("flat-orange", false, false),
             "app-direct-present-touch-counter" => ("flat-orange", false, false),
             "app-direct-present-runtime-touch-counter" => ("flat-orange", false, false),
@@ -4947,6 +4953,16 @@ mod linux {
                 watchdog_timeout,
             );
         }
+        if orange_gpu_mode_is_shell_session_held(&config.orange_gpu_mode) && !watch_result.timed_out
+        {
+            log_line("held shell-session exited before the watchdog proof window");
+            let _ = run_orange_gpu_checkpoint(
+                config,
+                "child-exit-nonzero",
+                ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+            );
+            return 125;
+        }
         if watch_result.exit_status == Some(0) && metadata_stage.enabled {
             if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode) {
                 let (summary_kind, startup_mode, app_id, stage_name, touch_counter_profile) =
@@ -5106,6 +5122,29 @@ mod linux {
         }
 
         if watch_result.timed_out {
+            if orange_gpu_mode_is_shell_session_held(&config.orange_gpu_mode)
+                && metadata_stage.enabled
+            {
+                let summary_kind = "shell-session-held";
+                if let Err(reason) = record_session_frame_summary(
+                    metadata_stage,
+                    summary_kind,
+                    "shell",
+                    Some(config.shell_session_start_app_id.as_str()),
+                    None,
+                ) {
+                    log_line(&format!(
+                        "{summary_kind} watchdog proof missing or could not be summarized: {reason}"
+                    ));
+                } else {
+                    write_payload_probe_stage(
+                        probe_stage_path.as_deref(),
+                        probe_stage_prefix.as_deref(),
+                        "shell-session-held-watchdog-proved",
+                    );
+                    return 0;
+                }
+            }
             let timeout_classification = classify_orange_gpu_timeout(config, metadata_stage);
             let _ = run_orange_gpu_checkpoint(
                 config,

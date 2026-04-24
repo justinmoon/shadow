@@ -1730,6 +1730,12 @@ probe_report_proves_child_success = (
     and recovered_metadata_probe_report_timed_out == "false"
     and probe_report_child_exit_status == 0
 )
+probe_report_proves_child_timeout = (
+    recovered_metadata_probe_report_present
+    and not probe_report_child_completed
+    and recovered_metadata_probe_report_timed_out == "true"
+    and probe_report_child_exit_status is None
+)
 if recovered_metadata_probe_summary_present and recovered_metadata_probe_summary_output_path:
     summary_path = channel_status_path.parent / recovered_metadata_probe_summary_output_path
     if summary_path.exists():
@@ -1905,7 +1911,7 @@ if expected_orange_gpu_mode == "shell-session-runtime-touch-counter":
         "181616",
         "eeecec",
     }
-elif expected_orange_gpu_mode == "shell-session" and expected_app_direct_present_app_id == "counter":
+elif expected_orange_gpu_mode in {"shell-session", "shell-session-held"} and expected_app_direct_present_app_id == "counter":
     required_app_direct_present_frame_samples = {
         "30160b",
         "ffb82f",
@@ -2039,6 +2045,28 @@ probe_summary_proves_shell_session = (
     and recovered_metadata_probe_summary_present
     and recovered_probe_summary_parse_error is None
     and summary_kind == "shell-session"
+    and summary_startup_mode == "shell"
+    and summary_app_id == expected_shell_session_start_app_id
+    and summary_frame_path == expected_metadata_compositor_frame_path
+    and isinstance(summary_frame_bytes, int)
+    and summary_frame_bytes > 0
+    and summary_shell_session_probe_ok is True
+    and summary_shell_session_shell_mode_enabled is True
+    and summary_shell_session_home_frame_done is True
+    and summary_shell_session_start_app_requested is True
+    and summary_shell_session_app_launch_mode_logged is True
+    and summary_shell_session_mapped_window is True
+    and summary_shell_session_surface_app_tracked is True
+    and summary_shell_session_app_frame_artifact_logged is True
+    and summary_shell_session_app_frame_captured is True
+)
+probe_summary_proves_shell_session_held = (
+    expected_orange_gpu_mode == "shell-session-held"
+    and expected_orange_gpu_firmware_helper is True
+    and probe_report_proves_child_timeout
+    and recovered_metadata_probe_summary_present
+    and recovered_probe_summary_parse_error is None
+    and summary_kind == "shell-session-held"
     and summary_startup_mode == "shell"
     and summary_app_id == expected_shell_session_start_app_id
     and summary_frame_path == expected_metadata_compositor_frame_path
@@ -2259,7 +2287,8 @@ compositor_frame_proves_scene = (
     )
 )
 compositor_frame_proves_shell_session_app = (
-    expected_orange_gpu_mode in {"shell-session", "shell-session-runtime-touch-counter"}
+    expected_orange_gpu_mode
+    in {"shell-session", "shell-session-held", "shell-session-runtime-touch-counter"}
     and recovered_metadata_compositor_frame_present
     and recovered_compositor_frame_parse_error is None
     and isinstance(compositor_frame_width, int)
@@ -2280,6 +2309,7 @@ compositor_frame_proves_app_direct_present = (
     expected_orange_gpu_mode
     in {
         "shell-session",
+        "shell-session-held",
         "shell-session-runtime-touch-counter",
         "app-direct-present",
         "app-direct-present-touch-counter",
@@ -2331,6 +2361,7 @@ app_direct_present_proof_contract_ok = (
     expected_orange_gpu_mode
     not in {
         "shell-session",
+        "shell-session-held",
         "shell-session-runtime-touch-counter",
         "app-direct-present",
         "app-direct-present-runtime-touch-counter",
@@ -2353,6 +2384,7 @@ app_direct_present_proof_contract_required = (
     expected_orange_gpu_mode
     in {
         "shell-session",
+        "shell-session-held",
         "shell-session-runtime-touch-counter",
         "app-direct-present",
         "app-direct-present-runtime-touch-counter",
@@ -2375,6 +2407,13 @@ elif expected_orange_gpu_mode == "shell-session":
     proof_ok = (
         app_direct_present_proof_contract_ok
         and probe_summary_proves_shell_session
+        and compositor_frame_proves_shell_session_app
+        and compositor_frame_proves_app_direct_present
+    )
+elif expected_orange_gpu_mode == "shell-session-held":
+    proof_ok = (
+        app_direct_present_proof_contract_ok
+        and probe_summary_proves_shell_session_held
         and compositor_frame_proves_shell_session_app
         and compositor_frame_proves_app_direct_present
     )
@@ -2413,10 +2452,12 @@ payload = {
     "proof_ok": proof_ok,
     "matched_correlated_trace": matched_any_correlated_shadow_tags,
     "probe_report_proves_child_success": probe_report_proves_child_success,
+    "probe_report_proves_child_timeout": probe_report_proves_child_timeout,
     "probe_summary_proves_gpu_render": probe_summary_proves_gpu_render,
     "probe_summary_proves_orange_gpu_loop": probe_summary_proves_orange_gpu_loop,
     "probe_summary_proves_compositor_scene": probe_summary_proves_compositor_scene,
     "probe_summary_proves_shell_session": probe_summary_proves_shell_session,
+    "probe_summary_proves_shell_session_held": probe_summary_proves_shell_session_held,
     "probe_summary_proves_shell_session_runtime_touch_counter": probe_summary_proves_shell_session_runtime_touch_counter,
     "probe_summary_proves_app_direct_present": probe_summary_proves_app_direct_present,
     "probe_summary_proves_app_direct_present_touch_counter": probe_summary_proves_app_direct_present_touch_counter,
