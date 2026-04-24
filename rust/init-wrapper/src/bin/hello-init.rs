@@ -1919,6 +1919,11 @@ mod linux {
         mode == "shell-session-runtime-touch-counter"
     }
 
+    fn orange_gpu_config_is_held_runtime_touch_counter(config: &Config) -> bool {
+        orange_gpu_mode_is_shell_session_held(&config.orange_gpu_mode)
+            && config.shell_session_start_app_id == "counter"
+    }
+
     fn orange_gpu_mode_is_app_direct_present(mode: &str) -> bool {
         matches!(
             mode,
@@ -5184,12 +5189,27 @@ mod linux {
                 && metadata_stage.enabled
             {
                 let summary_kind = "shell-session-held";
+                let touch_counter_profile =
+                    if orange_gpu_config_is_held_runtime_touch_counter(config) {
+                        let injection = if config.app_direct_present_manual_touch {
+                            "physical-touch"
+                        } else {
+                            "synthetic-compositor"
+                        };
+                        Some(TouchCounterEvidenceProfile::runtime_counter(
+                            injection,
+                            "wrote-frame-artifact frame_marker=hosted-touch-",
+                            "[shadow-guest-compositor] touch-latency-present",
+                        ))
+                    } else {
+                        None
+                    };
                 if let Err(reason) = record_session_frame_summary(
                     metadata_stage,
                     summary_kind,
                     "shell",
                     Some(config.shell_session_start_app_id.as_str()),
-                    None,
+                    touch_counter_profile,
                 ) {
                     log_line(&format!(
                         "{summary_kind} watchdog proof missing or could not be summarized: {reason}"

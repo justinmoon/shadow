@@ -458,6 +458,17 @@ EOF
     "app_frame_captured": true
   },
   "shell_session_probe_ok": true,
+  "touch_counter_probe": {
+    "injection": "synthetic-compositor",
+    "input_observed": true,
+    "tap_dispatched": true,
+    "counter_incremented": true,
+    "post_touch_frame_committed": true,
+    "post_touch_frame_artifact_logged": true,
+    "touch_latency_present": true,
+    "post_touch_frame_captured": true
+  },
+  "touch_counter_probe_ok": true,
   "frame_path": "/metadata/shadow-hello-init/by-token/$TRACE_RUN_TOKEN/compositor-frame.ppm",
   "frame_bytes": 20
 }
@@ -626,7 +637,11 @@ EOF
             printf 'P6\n3 1\n255\n\x31\x1f\x09\x2b\x18\x0e\x32\x20\x08'
             ;;
           *)
-            printf 'P6\n3 1\n255\n\x30\x16\x0b\xff\xb8\x2f\xff\xda\x89'
+            if [[ "$TRACE_MODE" == "shell-session-held-success" ]]; then
+              printf 'P6\n3 1\n255\n\x1b\x12\x08\x18\x16\x16\xee\xec\xec'
+            else
+              printf 'P6\n3 1\n255\n\x30\x16\x0b\xff\xb8\x2f\xff\xda\x89'
+            fi
             ;;
         esac
         exit 0
@@ -1446,6 +1461,8 @@ env \
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" probe_report_proves_child_success false
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" probe_report_proves_child_timeout true
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" probe_summary_proves_shell_session_held true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" shell_session_held_requires_touch_counter true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" probe_summary_proves_shell_session_held_touch_counter true
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" app_direct_present_proof_contract_required true
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" app_direct_present_proof_contract_ok true
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
@@ -1457,6 +1474,11 @@ assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summar
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_startup_mode shell
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_app_id counter
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_shell_session_probe_ok true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_touch_counter_probe_ok true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_touch_counter_injection synthetic-compositor
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_touch_counter_counter_incremented true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_touch_counter_touch_latency_present true
+assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_touch_counter_post_touch_frame_captured true
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
 
 SHELL_SESSION_TIMELINE_PARENT="$TMP_DIR/output-shell-session-timeline"

@@ -1905,13 +1905,16 @@ summary_last_frame_checksum = (
 required_gpu_render_samples = {"ff7a00ff"}
 required_app_direct_present_distinct_color_count = 3
 required_app_direct_present_frame_samples = set()
-if expected_orange_gpu_mode == "shell-session-runtime-touch-counter":
+if expected_orange_gpu_mode == "shell-session-runtime-touch-counter" or (
+    expected_orange_gpu_mode == "shell-session-held"
+    and expected_app_direct_present_app_id == "counter"
+):
     required_app_direct_present_frame_samples = {
         "1b1208",
         "181616",
         "eeecec",
     }
-elif expected_orange_gpu_mode in {"shell-session", "shell-session-held"} and expected_app_direct_present_app_id == "counter":
+elif expected_orange_gpu_mode == "shell-session" and expected_app_direct_present_app_id == "counter":
     required_app_direct_present_frame_samples = {
         "30160b",
         "ffb82f",
@@ -2086,6 +2089,24 @@ expected_touch_counter_injection = (
     "physical-touch"
     if expected_app_direct_present_manual_touch
     else "synthetic-compositor"
+)
+shell_session_held_requires_touch_counter = (
+    expected_orange_gpu_mode == "shell-session-held"
+    and expected_shell_session_start_app_id == "counter"
+    and expected_app_direct_present_client_kind == "typescript"
+)
+probe_summary_proves_shell_session_held_touch_counter = (
+    shell_session_held_requires_touch_counter
+    and probe_summary_proves_shell_session_held
+    and summary_touch_counter_probe_ok is True
+    and summary_touch_counter_injection == expected_touch_counter_injection
+    and summary_touch_counter_input_observed is True
+    and summary_touch_counter_tap_dispatched is True
+    and summary_touch_counter_counter_incremented is True
+    and summary_touch_counter_post_touch_frame_committed is True
+    and summary_touch_counter_post_touch_frame_artifact_logged is True
+    and summary_touch_counter_touch_latency_present is True
+    and summary_touch_counter_post_touch_frame_captured is True
 )
 probe_summary_proves_shell_session_runtime_touch_counter = (
     expected_orange_gpu_mode == "shell-session-runtime-touch-counter"
@@ -2420,6 +2441,10 @@ elif expected_orange_gpu_mode == "shell-session-held":
     proof_ok = (
         app_direct_present_proof_contract_ok
         and probe_summary_proves_shell_session_held
+        and (
+            not shell_session_held_requires_touch_counter
+            or probe_summary_proves_shell_session_held_touch_counter
+        )
         and compositor_frame_proves_shell_session_app
         and (
             not shell_session_requires_app_direct_frame_samples
@@ -2470,6 +2495,7 @@ payload = {
     "probe_summary_proves_compositor_scene": probe_summary_proves_compositor_scene,
     "probe_summary_proves_shell_session": probe_summary_proves_shell_session,
     "probe_summary_proves_shell_session_held": probe_summary_proves_shell_session_held,
+    "probe_summary_proves_shell_session_held_touch_counter": probe_summary_proves_shell_session_held_touch_counter,
     "probe_summary_proves_shell_session_runtime_touch_counter": probe_summary_proves_shell_session_runtime_touch_counter,
     "probe_summary_proves_app_direct_present": probe_summary_proves_app_direct_present,
     "probe_summary_proves_app_direct_present_touch_counter": probe_summary_proves_app_direct_present_touch_counter,
@@ -2480,6 +2506,7 @@ payload = {
     "app_direct_present_proof_contract": app_direct_present_proof_contract,
     "app_direct_present_proof_contract_summary": app_direct_present_proof_contract_summary,
     "shell_session_requires_app_direct_frame_samples": shell_session_requires_app_direct_frame_samples,
+    "shell_session_held_requires_touch_counter": shell_session_held_requires_touch_counter,
         "metadata_compositor_frame_proves_scene": compositor_frame_proves_scene,
         "metadata_compositor_frame_proves_shell_session_app": compositor_frame_proves_shell_session_app,
         "metadata_compositor_frame_proves_app_direct_present": compositor_frame_proves_app_direct_present,
