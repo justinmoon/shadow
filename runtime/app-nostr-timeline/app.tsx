@@ -26,7 +26,7 @@ type FeedSource = "cached" | "empty";
 const DEFAULT_RELAY_URLS = ["wss://relay.primal.net/", "wss://relay.damus.io/"];
 const DEFAULT_LIMIT = 12;
 const SHELL_STYLE =
-  'width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;overflow-y:auto;padding:24px 24px 40px;gap:20px;background:radial-gradient(circle at top, rgba(56, 189, 248, 0.16), transparent 36%),linear-gradient(180deg, #020617 0%, #082032 45%, #0f172a 100%);color:#e2e8f0;font:500 16px/1.45 "Google Sans","Roboto","Droid Sans","Noto Sans","DejaVu Sans",sans-serif;box-sizing:border-box';
+  'width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;overflow-y:auto;padding:24px 24px 40px;gap:20px;background:radial-gradient(circle at top, rgba(56, 189, 248, 0.16), transparent 36%),linear-gradient(180deg, #020617 0%, #082032 45%, #0f172a 100%);background:#082032;color:#e2e8f0;font:500 16px/1.45 "Google Sans","Roboto","Droid Sans","Noto Sans","DejaVu Sans",sans-serif;box-sizing:border-box';
 const HERO_STYLE =
   "width:100%;display:flex;flex-direction:column;gap:18px;padding:6px 4px 4px";
 const EYEBROW_STYLE =
@@ -36,10 +36,10 @@ const TITLE_STYLE =
 const SUBTITLE_STYLE = "margin:0;color:#bfdbfe;font-size:24px;line-height:1.3";
 const TOOLBAR_STYLE = "display:flex;flex-wrap:wrap;gap:14px";
 const INFO_NOTE_STYLE =
-  "margin:0;padding:18px 20px;border-radius:24px;background:rgba(8, 47, 73, 0.34);border:1px solid rgba(125, 211, 252, 0.14);color:#cbd5e1;font-size:18px;line-height:1.35";
+  "margin:0;padding:18px 20px;border-radius:24px;background:rgba(8, 47, 73, 0.34);background:#0e182b;border:1px solid rgba(125, 211, 252, 0.14);color:#cbd5e1;font-size:18px;line-height:1.35";
 const FEED_STYLE = "width:100%;display:flex;flex-direction:column;gap:16px";
 const FEED_EMPTY_STYLE =
-  "width:100%;margin:0;padding:28px 22px;border-radius:28px;background:rgba(2, 6, 23, 0.68);color:#bfdbfe;font-size:24px";
+  "width:100%;margin:0;padding:28px 22px;border-radius:28px;background:rgba(2, 6, 23, 0.68);background:#091f31;color:#bfdbfe;font-size:24px";
 const NOTE_STYLE =
   "width:100%;display:flex;flex-direction:column;gap:12px;padding:24px;border-radius:28px;background:rgba(248, 250, 252, 0.96);color:#0f172a;box-shadow:0 18px 44px rgba(0, 0, 0, 0.22)";
 const NOTE_META_STYLE =
@@ -65,6 +65,7 @@ body {
 
 body {
   min-height: 100vh;
+  background-color: #082032;
   background:
     radial-gradient(circle at top, rgba(56, 189, 248, 0.16), transparent 36%),
     linear-gradient(180deg, #020617 0%, #082032 45%, #0f172a 100%);

@@ -623,7 +623,7 @@ EOF
             printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'
             ;;
           timeline)
-            printf 'P6\n3 1\n255\n\x09\x1f\x31\x0e\x18\x2b\x08\x20\x32'
+            printf 'P6\n3 1\n255\n\x31\x1f\x09\x2b\x18\x0e\x32\x20\x08'
             ;;
           *)
             printf 'P6\n3 1\n255\n\x30\x16\x0b\xff\xb8\x2f\xff\xda\x89'
@@ -639,7 +639,7 @@ EOF
             printf 'P6\n3 1\n255\n\x0b\x16\x30\x10\x24\x3b\x2f\xb8\xff'
             ;;
           timeline)
-            printf 'P6\n3 1\n255\n\x09\x1f\x31\x0e\x18\x2b\x08\x20\x32'
+            printf 'P6\n3 1\n255\n\x31\x1f\x09\x2b\x18\x0e\x32\x20\x08'
             ;;
           *)
             printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'

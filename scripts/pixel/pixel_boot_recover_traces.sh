@@ -1937,9 +1937,9 @@ elif expected_app_direct_present_app_id == "counter":
     }
 elif expected_app_direct_present_app_id == "timeline":
     required_app_direct_present_frame_samples = {
-        "091f31",
-        "0e182b",
-        "082032",
+        "311f09",
+        "2b180e",
+        "322008",
     }
 summary_samples_set = (
     set(sample for sample in summary_color_samples if isinstance(sample, str))

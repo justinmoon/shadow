@@ -42,7 +42,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [~] Keep the current ramdisk shell-session bundle working while worker-2 brings up the larger payload partition.
 - [ ] Move the shell-session runtime bundle onto the larger payload partition once that lands; do not use `/metadata` as the intermediate payload store.
 - [x] Add persistent/held shell mode with a clear recovery path.
-- [~] Add broader app coverage from the shell: Rust `rust-demo` and TypeScript `timeline` staging/proof smokes are covered; hardware proof remains.
+- [~] Add broader app coverage from the shell: TypeScript `timeline` hardware proof is covered; Rust `rust-demo` hardware launch reaches the app but still needs a strict-GPU app-composition path.
 - [ ] Fold in manual/real touch plumbing from `worker-2` if it helps interaction.
 - [ ] Confirm the larger-partition-backed shell/app path on hardware and record proof artifacts.
 
@@ -60,3 +60,5 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - `shell-session` can now stage and launch Rust `rust-demo` through the shell path. The touch-counter shell proof stays TypeScript-only because its evidence contract is tied to hosted runtime counter events.
 - `shell-session` now has host/recovery proof coverage for non-counter TypeScript `timeline` as well as `counter`, so the shell app path is no longer counter-only at the script/proof-contract layer.
 - Hardware proof on `06241JEC200520`: `build/pixel/runs/boot-shell-session/ss-held-r1-20260424042557/device-run/recover-traces/status.json` proved `shell-session-held` with GPU shell, shell-launched TypeScript `counter`, durable app-frame metadata, `probe_report_proves_child_timeout=true`, `probe_summary_proves_shell_session_held=true`, and `metadata_compositor_frame_proves_shell_session_app=true`. The generic one-shot helper collection timed out, but recovered metadata proof was `proof_ok=true` and the device returned to rooted Android.
+- Hardware proof on `06241JEC200520`: `build/pixel/runs/boot-shell-session/ss-timeline-r3-20260424050459/device-run/recover-traces-rerun/status.json` proved `shell-session` with GPU shell, shell-launched TypeScript `timeline`, GPU TypeScript renderer, durable app-frame metadata, shell session summary, and app-specific frame colors. The timeline app now includes simple hex background fallbacks so the boot renderer does not fall through transparent when it ignores gradient backgrounds.
+- Hardware finding on `06241JEC200520`: `build/pixel/runs/boot-shell-session/ss-rust-demo-r1-20260424043704/device-run/recover-traces/status.json` launched Rust `rust-demo`, mapped and tracked the surface, and observed a committed app frame, but strict GPU-resident mode rejected the SHM app composition path at `VelloImageRenderer::render_to_vec`. This is the current Rust-app blocker for the final GPU shell path; do not hide it by landing a CPU-crossing proof as final.
