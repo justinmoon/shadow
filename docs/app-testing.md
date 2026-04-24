@@ -55,3 +55,5 @@ This is the right abstraction. The suite should describe the product slice under
 - For VM work, start with `just run target=vm app=<id>` and `just smoke target=vm`.
 - For rooted Pixel bring-up, use `just pixel-stage <suite>` until staging is stable, then `just pixel-run <suite>` for fast reruns, and `just pixel-ci <suite>` before claiming the lane is green.
 - Every rooted-Pixel lane should leave behind a run directory under `build/pixel/runs/ci/` or the relevant smoke directory with logs and a machine-readable summary.
+- `sound` additionally writes `audio-proof.json` and `audio-spike-summary.json` in its `build/pixel/drm-guest/<run>/` directory. The lane is green only when the Linux ALSA helper proves file-backed playback on a non-proxy PCM route.
+- For manual audible sound checks, keep the same lane but raise the helper gain, for example `PIXEL_RUNTIME_AUDIO_SPIKE_GAIN=0.35 just pixel-ci sound --target <serial> --run-only`. The CI default is intentionally quieter.
