@@ -39,7 +39,7 @@ asset = json.loads(os.environ["ASSET_JSON"])
 print(asset["source"]["path"])
 PY
 )"
-fake_linux_spike_binary="$REPO_ROOT/scripts/runtime/runtime_audio_linux_spike_fake.sh"
+fake_audio_bridge_binary="$REPO_ROOT/scripts/runtime/runtime_audio_linux_spike_fake.sh"
 
 cd "$REPO_ROOT"
 session_json="$(
@@ -56,7 +56,7 @@ url_session_json="$(
 )"
 
 ASSET_SOURCE_PATH="$asset_source_path" \
-FAKE_LINUX_SPIKE_BINARY="$fake_linux_spike_binary" \
+FAKE_AUDIO_BRIDGE_BINARY="$fake_audio_bridge_binary" \
 FILE_SESSION_JSON="$session_json" \
 URL_SESSION_JSON="$url_session_json" \
 URL_SOURCE_URL="$url_source_url" \
@@ -70,7 +70,7 @@ import time
 file_session = json.loads(os.environ["FILE_SESSION_JSON"])
 url_session = json.loads(os.environ["URL_SESSION_JSON"])
 asset_source_path = os.environ["ASSET_SOURCE_PATH"]
-fake_linux_spike_binary = os.environ["FAKE_LINUX_SPIKE_BINARY"]
+fake_audio_bridge_binary = os.environ["FAKE_AUDIO_BRIDGE_BINARY"]
 url_source_url = os.environ["URL_SOURCE_URL"]
 
 def run_scenario(
@@ -259,7 +259,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         file_session,
         {
             "SHADOW_RUNTIME_SESSION_CONFIG": session_config_path,
-            "SHADOW_RUNTIME_AUDIO_BACKEND": "linux_spike",
+            "SHADOW_RUNTIME_AUDIO_BACKEND": "linux_bridge",
         },
         f"Source:</span> file / {asset_source_path}",
     )
@@ -268,7 +268,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             "runtime-app-sound-smoke (config_memory_overrides_env): expected memory backend label"
         )
 
-    file_capture_path = os.path.join(tmp_dir, "linux-spike-file.json")
+    file_capture_path = os.path.join(tmp_dir, "linux-bridge-file.json")
     captured_results = {}
 
     def expect_gain(capture):
@@ -295,7 +295,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             and int(start_ms) >= 1_000
         )
 
-    def verify_file_linux_spike(dispatch_and_wait, wait_for_capture):
+    def verify_file_linux_bridge(dispatch_and_wait, wait_for_capture):
         wait_for_capture(expect_gain, "initial play gain")
         dispatch_and_wait("seek-forward", "Seeked forward by one second.")
         wait_for_capture(expect_seek, "seek startMs")
@@ -308,51 +308,51 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             and capture.get("url") == url_source_url
         )
 
-    def verify_url_linux_spike(_dispatch_and_wait, wait_for_capture):
+    def verify_url_linux_bridge(_dispatch_and_wait, wait_for_capture):
         captured_results["url"] = wait_for_capture(
             expect_url_capture,
             "url source handoff",
         )
 
-    url_capture_path = os.path.join(tmp_dir, "linux-spike-url.json")
-    linux_spike_url = run_scenario(
-        "linux_spike_url",
+    url_capture_path = os.path.join(tmp_dir, "linux-bridge-url.json")
+    linux_bridge_url = run_scenario(
+        "linux_bridge_url",
         url_session,
         {
-            "SHADOW_RUNTIME_AUDIO_BACKEND": "linux_spike",
-            "SHADOW_RUNTIME_AUDIO_SPIKE_BINARY": fake_linux_spike_binary,
+            "SHADOW_RUNTIME_AUDIO_BACKEND": "linux_bridge",
+            "SHADOW_RUNTIME_AUDIO_BRIDGE_BINARY": fake_audio_bridge_binary,
             "SHADOW_AUDIO_SPIKE_TEST_OUTPUT": url_capture_path,
             "SHADOW_AUDIO_SPIKE_TEST_SLEEP_SECS": "0.2",
         },
         f"Source:</span> url / {url_source_url}",
         url_capture_path,
-        verify_url_linux_spike,
+        verify_url_linux_bridge,
     )
-    if "Backend:</span> linux_spike" not in linux_spike_url["backend_fragment"]:
+    if "Backend:</span> linux_bridge" not in linux_bridge_url["backend_fragment"]:
         raise SystemExit(
-            "runtime-app-sound-smoke (linux_spike_url): expected linux_spike backend label"
+            "runtime-app-sound-smoke (linux_bridge_url): expected linux_bridge backend label"
         )
-    linux_spike = run_scenario(
-        "linux_spike",
+    linux_bridge = run_scenario(
+        "linux_bridge",
         file_session,
         {
-            "SHADOW_RUNTIME_AUDIO_BACKEND": "linux_spike",
-            "SHADOW_RUNTIME_AUDIO_SPIKE_BINARY": fake_linux_spike_binary,
+            "SHADOW_RUNTIME_AUDIO_BACKEND": "linux_bridge",
+            "SHADOW_RUNTIME_AUDIO_BRIDGE_BINARY": fake_audio_bridge_binary,
             "SHADOW_AUDIO_SPIKE_TEST_OUTPUT": file_capture_path,
             "SHADOW_AUDIO_SPIKE_TEST_SLEEP_SECS": "5",
         },
         f"Source:</span> file / {asset_source_path}",
         file_capture_path,
-        verify_file_linux_spike,
+        verify_file_linux_bridge,
     )
-    if "Backend:</span> linux_spike" not in linux_spike["backend_fragment"]:
+    if "Backend:</span> linux_bridge" not in linux_bridge["backend_fragment"]:
         raise SystemExit(
-            "runtime-app-sound-smoke (linux_spike): expected linux_spike backend label"
+            "runtime-app-sound-smoke (linux_bridge): expected linux_bridge backend label"
         )
     url_capture = captured_results.get("url")
     if url_capture is None:
         raise SystemExit(
-            "runtime-app-sound-smoke (linux_spike_url): missing captured url handoff"
+            "runtime-app-sound-smoke (linux_bridge_url): missing captured url handoff"
         )
 
 print(json.dumps({
@@ -360,6 +360,6 @@ print(json.dumps({
     "systemBinaryName": file_session["systemBinaryName"],
     "bundlePath": file_session["bundlePath"],
     "result": "sound-audio-api-ok",
-    "linuxSpikeProtocolGuard": "ok",
+    "linuxBridgeProtocolGuard": "ok",
 }, indent=2))
 PY

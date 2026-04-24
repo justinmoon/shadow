@@ -164,14 +164,14 @@ try:
             "nix",
             "build",
             "--accept-flake-config",
-            ".#shadow-linux-audio-spike",
+            ".#shadow-audio-bridge",
             "--no-link",
             "--print-out-paths",
         ],
         cwd=REPO_ROOT,
         text=True,
     ).strip()
-    helper_binary_path = Path(helper_prefix) / "bin" / "shadow-linux-audio-spike"
+    helper_binary_path = Path(helper_prefix) / "bin" / "shadow-audio-bridge"
 
     session_json = subprocess.check_output(
         [str(RUNTIME_SCRIPT_DIR / "runtime_prepare_host_session.sh")],
@@ -209,8 +209,8 @@ try:
             {
                 "SHADOW_AUDIO_SPIKE_SUMMARY_PATH": str(summary_path),
                 "SHADOW_AUDIO_SPIKE_VALIDATE_ONLY": "1",
-                "SHADOW_RUNTIME_AUDIO_BACKEND": "linux_spike",
-                "SHADOW_RUNTIME_AUDIO_SPIKE_BINARY": str(helper_binary_path),
+                "SHADOW_RUNTIME_AUDIO_BACKEND": "linux_bridge",
+                "SHADOW_RUNTIME_AUDIO_BRIDGE_BINARY": str(helper_binary_path),
             }
         )
 
@@ -311,7 +311,7 @@ try:
         try:
             initial = send_ok({"op": "render"})
             play_target_id = f"play-{episode['id']}"
-            playing_html = dispatch_and_wait(play_target_id, "Backend:</span> linux_spike")
+            playing_html = dispatch_and_wait(play_target_id, "Backend:</span> linux_bridge")
 
             deadline = time.time() + 10
             while time.time() < deadline and not summary_path.exists():
@@ -338,9 +338,9 @@ try:
             raise SystemExit(
                 "runtime-app-podcast-player-url-smoke: initial render missing headline"
             )
-        if "Backend:</span> linux_spike" not in playing_html:
+        if "Backend:</span> linux_bridge" not in playing_html:
             raise SystemExit(
-                "runtime-app-podcast-player-url-smoke: expected linux_spike backend"
+                "runtime-app-podcast-player-url-smoke: expected linux_bridge backend"
             )
         if f"Source:</span> {source_url}" not in playing_html:
             raise SystemExit(

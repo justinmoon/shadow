@@ -3,6 +3,14 @@ name = "shadow-linux-audio-spike"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "shadow-audio-bridge"
+path = "src/main.rs"
+
+[[bin]]
+name = "shadow-linux-audio-spike"
+path = "src/main.rs"
+
 [dependencies]
 alsa = "0.9.1"
 libc = "0.2"

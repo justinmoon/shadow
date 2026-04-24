@@ -271,7 +271,7 @@ The compositor hit-tests touches against the shell UI and app surfaces, routing 
 
 **Level: Linux ALSA**
 
-Audio playback goes through ALSA via the `alsa` crate (`rust/shadow-linux-audio-spike/`).
+Audio playback goes through ALSA via the shared `shadow-audio-bridge` binary, currently built from `rust/shadow-linux-audio-spike/` while the old spike name remains a compatibility alias.
 
 - Discovers playback PCM devices from `/proc/asound/pcm`
 - Priority-ranks devices (device 0, 13, 17 preferred on the Pixel 4a's Qualcomm codec)
@@ -280,7 +280,7 @@ Audio playback goes through ALSA via the `alsa` crate (`rust/shadow-linux-audio-
   - `SEC_TDM_RX_0 Audio Mixer MultiMedia1/5/8`
   - `Main AMP Enable Switch`, `R Main AMP Enable Switch`
 
-The audio spike binary runs as a separate process. The runtime extension (`runtime-audio-host`) manages player instances and delegates to the spike binary for actual playback. Apps use `Shadow.os.audio.createPlayer()`, `.play()`, `.pause()`, etc.
+The audio bridge binary runs as a separate process. The runtime extension (`runtime-audio-host`) manages player instances and delegates to the bridge binary for actual playback. Apps use `Shadow.os.audio.createPlayer()`, `.play()`, `.pause()`, etc.
 
 Sources can be tone synthesis (sine wave at configurable frequency) or file decoding (MP3/WAV via the Symphonia codec library).
 

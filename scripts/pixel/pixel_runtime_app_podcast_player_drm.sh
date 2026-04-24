@@ -58,6 +58,7 @@ SHADOW_BLITZ_SURFACE_WIDTH=$panel_width
 SHADOW_BLITZ_SURFACE_HEIGHT=$panel_height
 SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=play-00
 SHADOW_RUNTIME_AUDIO_BACKEND=${PIXEL_RUNTIME_AUDIO_LEGACY_CONFLICT_BACKEND:-memory}
+SHADOW_RUNTIME_AUDIO_BRIDGE_GAIN=${PIXEL_RUNTIME_AUDIO_SPIKE_GAIN:-0.03}
 SHADOW_RUNTIME_AUDIO_SPIKE_GAIN=${PIXEL_RUNTIME_AUDIO_SPIKE_GAIN:-0.03}
 EOF
   )
@@ -70,7 +71,7 @@ fi
 required_markers=$(
   cat <<EOF
 runtime-event-dispatched source=auto type=click target=play-00
-[shadow-runtime-podcast-player] command=play episode=00 state=playing backend=linux_spike source=$primary_episode_path
+[shadow-runtime-podcast-player] command=play episode=00 state=playing backend=linux_bridge source=$primary_episode_path
 EOF
 )
 if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS-}" ]]; then

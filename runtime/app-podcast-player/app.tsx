@@ -407,7 +407,7 @@ export default function renderApp() {
   );
   const [busy, setBusy] = createSignal<CommandKind | null>(null);
   const [message, setMessage] = createSignal(
-    "Pick an episode. The current Pixel backend uses the Linux audio spike.",
+    "Pick an episode. The current Pixel backend uses the Linux audio bridge.",
   );
   const [error, setError] = createSignal<string | null>(null);
 

@@ -50,6 +50,7 @@ SHADOW_BLITZ_SURFACE_WIDTH=$panel_width
 SHADOW_BLITZ_SURFACE_HEIGHT=$panel_height
 SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET=play
 SHADOW_RUNTIME_AUDIO_BACKEND=${PIXEL_RUNTIME_AUDIO_LEGACY_CONFLICT_BACKEND:-memory}
+SHADOW_RUNTIME_AUDIO_BRIDGE_GAIN=${PIXEL_RUNTIME_AUDIO_SPIKE_GAIN:-0.03}
 SHADOW_RUNTIME_AUDIO_SPIKE_GAIN=${PIXEL_RUNTIME_AUDIO_SPIKE_GAIN:-0.03}
 SHADOW_AUDIO_SPIKE_SUMMARY_PATH=$audio_summary_device_path
 EOF
@@ -63,7 +64,7 @@ fi
 required_markers=$(
   cat <<EOF
 runtime-event-dispatched source=auto type=click target=play
-[shadow-runtime-audio-smoke] command=play state=playing backend=linux_spike source_kind=file source=$source_path_in_bundle
+[shadow-runtime-audio-smoke] command=play state=playing backend=linux_bridge source_kind=file source=$source_path_in_bundle
 EOF
 )
 if [[ -n "${PIXEL_RUNTIME_APP_EXTRA_REQUIRED_MARKERS-}" ]]; then

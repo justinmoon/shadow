@@ -304,7 +304,7 @@ pixel_runtime_app_services_json() {
   local audio_backend=""
 
   if [[ "${PIXEL_RUNTIME_ENABLE_LINUX_AUDIO:-0}" == "1" ]]; then
-    audio_backend="linux_spike"
+    audio_backend="linux_bridge"
   fi
 
   pixel_runtime_default_services_json 0 "$audio_backend"
@@ -314,7 +314,7 @@ pixel_runtime_shell_services_json() {
   local audio_backend=""
 
   if [[ "${PIXEL_SHELL_ENABLE_LINUX_AUDIO:-1}" == "1" ]]; then
-    audio_backend="linux_spike"
+    audio_backend="linux_bridge"
   fi
 
   pixel_runtime_default_services_json 1 "$audio_backend"

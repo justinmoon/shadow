@@ -99,11 +99,11 @@ if [[ "$runtime_app_services_json" != '{"nostrDbPath":"/data/local/tmp/shadow-ru
   echo "pixel_guest_startup_config_smoke: runtime-app services json mismatch" >&2
   exit 1
 fi
-if [[ "$(PIXEL_RUNTIME_ENABLE_LINUX_AUDIO=1 pixel_runtime_app_services_json)" != '{"audioBackend":"linux_spike","nostrDbPath":"/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3","nostrServiceSocket":"/data/local/tmp/shadow-runtime/runtime-nostr.sock"}' ]]; then
+if [[ "$(PIXEL_RUNTIME_ENABLE_LINUX_AUDIO=1 pixel_runtime_app_services_json)" != '{"audioBackend":"linux_bridge","nostrDbPath":"/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3","nostrServiceSocket":"/data/local/tmp/shadow-runtime/runtime-nostr.sock"}' ]]; then
   echo "pixel_guest_startup_config_smoke: runtime-app audio services json mismatch" >&2
   exit 1
 fi
-if [[ "$shell_services_json" != '{"audioBackend":"linux_spike","cashuDataDir":"/data/local/tmp/shadow-runtime/cashu","nostrDbPath":"/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3","nostrServiceSocket":"/data/local/tmp/shadow-runtime/runtime-nostr.sock"}' ]]; then
+if [[ "$shell_services_json" != '{"audioBackend":"linux_bridge","cashuDataDir":"/data/local/tmp/shadow-runtime/cashu","nostrDbPath":"/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3","nostrServiceSocket":"/data/local/tmp/shadow-runtime/runtime-nostr.sock"}' ]]; then
   echo "pixel_guest_startup_config_smoke: shell services json mismatch" >&2
   exit 1
 fi
@@ -302,7 +302,7 @@ assert data["client"]["envAssignments"] == [
     },
 ], data
 assert data["services"] == {
-    "audioBackend": "linux_spike",
+    "audioBackend": "linux_bridge",
     "camera": {
         "endpoint": "127.0.0.1:37656",
         "timeoutMs": 45000,
@@ -382,7 +382,7 @@ assert "startupConfigPath" not in run_config, run_config
 assert run_config["startup"] == {"mode": "shell", "shellStartAppId": "timeline"}, run_config
 assert run_config["client"]["appClientPath"] == "/runtime/alt-client", run_config
 assert run_config["services"] == {
-    "audioBackend": "linux_spike",
+    "audioBackend": "linux_bridge",
     "camera": {
         "endpoint": "127.0.0.1:37656",
         "timeoutMs": 45000,

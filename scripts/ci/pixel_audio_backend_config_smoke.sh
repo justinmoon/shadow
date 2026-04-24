@@ -86,7 +86,7 @@ with open(run_config_path, encoding="utf-8") as handle:
     run_config = json.load(handle)
 
 assert startup["services"] == {
-    "audioBackend": "linux_spike",
+    "audioBackend": "linux_bridge",
     "nostrDbPath": "/data/local/tmp/shadow-runtime/runtime-nostr.sqlite3",
     "nostrServiceSocket": "/data/local/tmp/shadow-runtime/runtime-nostr.sock",
 }, startup
@@ -94,7 +94,7 @@ assert not any(
     assignment["key"] == "SHADOW_RUNTIME_AUDIO_BACKEND"
     for assignment in startup["client"]["envAssignments"]
 ), startup
-assert run_config["services"]["audioBackend"] == "linux_spike", run_config
+assert run_config["services"]["audioBackend"] == "linux_bridge", run_config
 assert not any(
     assignment["key"] == "SHADOW_RUNTIME_AUDIO_BACKEND"
     for assignment in run_config["client"]["envAssignments"]

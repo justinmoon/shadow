@@ -14,6 +14,10 @@ use shadow_sdk::services::session_config;
 
 const AUDIO_BACKEND_ENV: &str = "SHADOW_RUNTIME_AUDIO_BACKEND";
 const AUDIO_BUNDLE_DIR_ENV: &str = "SHADOW_RUNTIME_BUNDLE_DIR";
+const AUDIO_BRIDGE_BINARY_ENV: &str = "SHADOW_RUNTIME_AUDIO_BRIDGE_BINARY";
+const AUDIO_BRIDGE_GAIN_ENV: &str = "SHADOW_RUNTIME_AUDIO_BRIDGE_GAIN";
+const AUDIO_BRIDGE_STAGE_LIBRARY_PATH_ENV: &str = "SHADOW_RUNTIME_AUDIO_BRIDGE_STAGE_LIBRARY_PATH";
+const AUDIO_BRIDGE_STAGE_LOADER_PATH_ENV: &str = "SHADOW_RUNTIME_AUDIO_BRIDGE_STAGE_LOADER_PATH";
 const AUDIO_SPIKE_BINARY_ENV: &str = "SHADOW_RUNTIME_AUDIO_SPIKE_BINARY";
 const AUDIO_SPIKE_GAIN_ENV: &str = "SHADOW_RUNTIME_AUDIO_SPIKE_GAIN";
 const AUDIO_SPIKE_STAGE_LIBRARY_PATH_ENV: &str = "SHADOW_RUNTIME_AUDIO_SPIKE_STAGE_LIBRARY_PATH";
@@ -134,7 +138,7 @@ impl AudioHostService {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum AudioBackend {
     Memory,
-    LinuxSpike { binary_path: String },
+    LinuxBridge { binary_path: String },
 }
 
 impl AudioBackend {
@@ -143,20 +147,20 @@ impl AudioBackend {
 
         match value.as_str() {
             "memory" => Ok(Self::Memory),
-            "linux_spike" => {
-                let binary_path = std::env::var(AUDIO_SPIKE_BINARY_ENV)
-                    .ok()
-                    .map(|value| value.trim().to_owned())
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| {
-                        format!(
-                            "shadow-system audio: {AUDIO_SPIKE_BINARY_ENV} is required for linux_spike backend"
-                        )
-                    })?;
-                Ok(Self::LinuxSpike { binary_path })
+            "linux_bridge" | "linux_spike" => {
+                let binary_path = first_nonempty_env(&[
+                    AUDIO_BRIDGE_BINARY_ENV,
+                    AUDIO_SPIKE_BINARY_ENV,
+                ])
+                .ok_or_else(|| {
+                    format!(
+                        "shadow-system audio: {AUDIO_BRIDGE_BINARY_ENV} is required for linux_bridge backend"
+                    )
+                })?;
+                Ok(Self::LinuxBridge { binary_path })
             }
             _ => Err(format!(
-                "shadow-system audio: unsupported backend '{value}', expected memory or linux_spike"
+                "shadow-system audio: unsupported backend '{value}', expected memory or linux_bridge"
             )),
         }
     }
@@ -164,9 +168,18 @@ impl AudioBackend {
     fn name(&self) -> &'static str {
         match self {
             Self::Memory => "memory",
-            Self::LinuxSpike { .. } => "linux_spike",
+            Self::LinuxBridge { .. } => "linux_bridge",
         }
     }
+}
+
+fn first_nonempty_env(names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    })
 }
 
 fn configured_audio_backend_value() -> Result<String, String> {
@@ -197,8 +210,8 @@ impl AudioPlayer {
     fn new(id: u32, source: AudioSource, backend: &AudioBackend) -> Self {
         let runtime = match backend {
             AudioBackend::Memory => PlayerRuntime::Memory(MemoryPlayerRuntime::default()),
-            AudioBackend::LinuxSpike { .. } => {
-                PlayerRuntime::LinuxSpike(LinuxSpikePlayerRuntime::default())
+            AudioBackend::LinuxBridge { .. } => {
+                PlayerRuntime::LinuxBridge(LinuxBridgePlayerRuntime::default())
             }
         };
         Self {
@@ -283,7 +296,7 @@ impl AudioPlayer {
 #[derive(Debug)]
 enum PlayerRuntime {
     Memory(MemoryPlayerRuntime),
-    LinuxSpike(LinuxSpikePlayerRuntime),
+    LinuxBridge(LinuxBridgePlayerRuntime),
 }
 
 impl PlayerRuntime {
@@ -296,7 +309,7 @@ impl PlayerRuntime {
     ) -> Result<(), JsErrorBox> {
         match self {
             Self::Memory(runtime) => runtime.play(source, last_error),
-            Self::LinuxSpike(runtime) => runtime.play(source, backend, volume, last_error),
+            Self::LinuxBridge(runtime) => runtime.play(source, backend, volume, last_error),
         }
     }
 
@@ -307,42 +320,42 @@ impl PlayerRuntime {
     ) -> Result<(), JsErrorBox> {
         match self {
             Self::Memory(runtime) => runtime.pause(source, last_error),
-            Self::LinuxSpike(runtime) => runtime.pause(source, last_error),
+            Self::LinuxBridge(runtime) => runtime.pause(source, last_error),
         }
     }
 
     fn stop(&mut self, last_error: &mut Option<String>) -> Result<(), JsErrorBox> {
         match self {
             Self::Memory(runtime) => runtime.stop(last_error),
-            Self::LinuxSpike(runtime) => runtime.stop(last_error),
+            Self::LinuxBridge(runtime) => runtime.stop(last_error),
         }
     }
 
     fn release(&mut self, last_error: &mut Option<String>) -> Result<(), JsErrorBox> {
         match self {
             Self::Memory(runtime) => runtime.release(last_error),
-            Self::LinuxSpike(runtime) => runtime.release(last_error),
+            Self::LinuxBridge(runtime) => runtime.release(last_error),
         }
     }
 
     fn reconcile(&mut self, source: &AudioSource, last_error: &mut Option<String>) {
         match self {
             Self::Memory(runtime) => runtime.reconcile(source),
-            Self::LinuxSpike(runtime) => runtime.reconcile(source, last_error),
+            Self::LinuxBridge(runtime) => runtime.reconcile(source, last_error),
         }
     }
 
     fn state(&self) -> PlayerState {
         match self {
             Self::Memory(runtime) => runtime.state,
-            Self::LinuxSpike(runtime) => runtime.state,
+            Self::LinuxBridge(runtime) => runtime.state,
         }
     }
 
     fn position(&self, source: &AudioSource) -> Duration {
         match self {
             Self::Memory(runtime) => runtime.position(source),
-            Self::LinuxSpike(runtime) => runtime.position(source),
+            Self::LinuxBridge(runtime) => runtime.position(source),
         }
     }
 
@@ -356,7 +369,7 @@ impl PlayerRuntime {
     ) -> Result<(), JsErrorBox> {
         match self {
             Self::Memory(runtime) => runtime.seek(source, position, last_error),
-            Self::LinuxSpike(runtime) => {
+            Self::LinuxBridge(runtime) => {
                 runtime.seek(source, backend, position, volume, last_error)
             }
         }
@@ -374,7 +387,7 @@ impl PlayerRuntime {
                 *last_error = None;
                 Ok(())
             }
-            Self::LinuxSpike(runtime) => runtime.set_volume(source, backend, volume, last_error),
+            Self::LinuxBridge(runtime) => runtime.set_volume(source, backend, volume, last_error),
         }
     }
 }
@@ -507,14 +520,14 @@ impl MemoryPlayerRuntime {
 }
 
 #[derive(Debug)]
-struct LinuxSpikePlayerRuntime {
+struct LinuxBridgePlayerRuntime {
     child: Option<Child>,
     elapsed_before_pause: Duration,
     started_at: Option<Instant>,
     state: PlayerState,
 }
 
-impl Default for LinuxSpikePlayerRuntime {
+impl Default for LinuxBridgePlayerRuntime {
     fn default() -> Self {
         Self {
             child: None,
@@ -525,7 +538,7 @@ impl Default for LinuxSpikePlayerRuntime {
     }
 }
 
-impl LinuxSpikePlayerRuntime {
+impl LinuxBridgePlayerRuntime {
     fn play(
         &mut self,
         source: &AudioSource,
@@ -617,7 +630,7 @@ impl LinuxSpikePlayerRuntime {
                 self.child = None;
                 self.started_at = None;
                 eprintln!(
-                    "shadow-system-audio linux-spike-exit success={} status={}",
+                    "shadow-system-audio linux-bridge-exit success={} status={}",
                     status.success(),
                     status
                 );
@@ -627,14 +640,14 @@ impl LinuxSpikePlayerRuntime {
                     *last_error = None;
                 } else {
                     self.state = PlayerState::Error;
-                    *last_error = Some(format!("linux spike helper exited with status {status}"));
+                    *last_error = Some(format!("linux audio bridge exited with status {status}"));
                 }
             }
             Err(error) => {
                 self.child = None;
                 self.started_at = None;
                 self.state = PlayerState::Error;
-                *last_error = Some(format!("audio.getStatus wait linux spike helper: {error}"));
+                *last_error = Some(format!("audio.getStatus wait linux audio bridge: {error}"));
             }
         }
     }
@@ -749,31 +762,28 @@ impl LinuxSpikePlayerRuntime {
         volume: f32,
     ) -> Result<Child, JsErrorBox> {
         let binary_path = match backend {
-            AudioBackend::LinuxSpike { binary_path } => binary_path.as_str(),
+            AudioBackend::LinuxBridge { binary_path } => binary_path.as_str(),
             AudioBackend::Memory => {
                 return Err(JsErrorBox::generic(
-                    "audio.play requested linux spike playback on memory backend",
+                    "audio.play requested linux bridge playback on memory backend",
                 ))
             }
         };
-        let stage_loader_path = env::var(AUDIO_SPIKE_STAGE_LOADER_PATH_ENV)
-            .ok()
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty());
-        let stage_library_path = env::var(AUDIO_SPIKE_STAGE_LIBRARY_PATH_ENV)
-            .ok()
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty());
-        let configured_gain = env::var(AUDIO_SPIKE_GAIN_ENV)
-            .ok()
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
+        let stage_loader_path = first_nonempty_env(&[
+            AUDIO_BRIDGE_STAGE_LOADER_PATH_ENV,
+            AUDIO_SPIKE_STAGE_LOADER_PATH_ENV,
+        ]);
+        let stage_library_path = first_nonempty_env(&[
+            AUDIO_BRIDGE_STAGE_LIBRARY_PATH_ENV,
+            AUDIO_SPIKE_STAGE_LIBRARY_PATH_ENV,
+        ]);
+        let configured_gain = first_nonempty_env(&[AUDIO_BRIDGE_GAIN_ENV, AUDIO_SPIKE_GAIN_ENV])
             .and_then(|value| value.parse::<f32>().ok())
             .unwrap_or(1.0);
         let resolved_gain = (configured_gain * volume).max(0.0);
         let start_ms = duration_to_millis_u32(start_position);
         eprintln!(
-            "shadow-system-audio linux-spike-config binary={} loader={} library_path={} base_gain={} player_volume={} resolved_gain={} start_ms={}",
+            "shadow-system-audio linux-bridge-config binary={} loader={} library_path={} base_gain={} player_volume={} resolved_gain={} start_ms={}",
             binary_path,
             stage_loader_path.as_deref().unwrap_or("none"),
             stage_library_path.as_deref().unwrap_or("none"),
@@ -820,7 +830,7 @@ impl LinuxSpikePlayerRuntime {
         }
         let child = command.spawn().map_err(|error| {
             JsErrorBox::generic(format!(
-                "audio.play spawn linux spike helper binary={} loader={} library_path={}: {error}",
+                "audio.play spawn linux audio bridge binary={} loader={} library_path={}: {error}",
                 binary_path,
                 stage_loader_path.as_deref().unwrap_or("none"),
                 stage_library_path.as_deref().unwrap_or("none"),
@@ -829,7 +839,7 @@ impl LinuxSpikePlayerRuntime {
         match source {
             AudioSource::Tone(source) => {
                 eprintln!(
-                    "shadow-system-audio linux-spike-spawn binary={} kind=tone duration_ms={} frequency_hz={} start_ms={} volume={} pid={}",
+                    "shadow-system-audio linux-bridge-spawn binary={} kind=tone duration_ms={} frequency_hz={} start_ms={} volume={} pid={}",
                     binary_path,
                     source.duration_ms,
                     source.frequency_hz,
@@ -840,7 +850,7 @@ impl LinuxSpikePlayerRuntime {
             }
             AudioSource::File(source) => {
                 eprintln!(
-                    "shadow-system-audio linux-spike-spawn binary={} kind=file duration_ms={} path={} start_ms={} volume={} pid={}",
+                    "shadow-system-audio linux-bridge-spawn binary={} kind=file duration_ms={} path={} start_ms={} volume={} pid={}",
                     binary_path,
                     source.duration_ms,
                     source.path,
@@ -851,7 +861,7 @@ impl LinuxSpikePlayerRuntime {
             }
             AudioSource::Url(source) => {
                 eprintln!(
-                    "shadow-system-audio linux-spike-spawn binary={} kind=url duration_ms={} url={} start_ms={} volume={} pid={}",
+                    "shadow-system-audio linux-bridge-spawn binary={} kind=url duration_ms={} url={} start_ms={} volume={} pid={}",
                     binary_path,
                     source.duration_ms,
                     source.url,
@@ -873,17 +883,17 @@ impl LinuxSpikePlayerRuntime {
             Ok(Some(_)) => {}
             Ok(None) => {
                 child.kill().map_err(|error| {
-                    JsErrorBox::generic(format!("{context} kill linux spike helper: {error}"))
+                    JsErrorBox::generic(format!("{context} kill linux audio bridge: {error}"))
                 })?;
             }
             Err(error) => {
                 return Err(JsErrorBox::generic(format!(
-                    "{context} poll linux spike helper: {error}"
+                    "{context} poll linux audio bridge: {error}"
                 )));
             }
         }
         child.wait().map_err(|error| {
-            JsErrorBox::generic(format!("{context} wait linux spike helper: {error}"))
+            JsErrorBox::generic(format!("{context} wait linux audio bridge: {error}"))
         })?;
         self.started_at = None;
         Ok(())
@@ -1297,7 +1307,7 @@ pub fn init_extension() -> Extension {
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioBackend, AUDIO_BACKEND_ENV, AUDIO_SPIKE_BINARY_ENV};
+    use super::{AudioBackend, AUDIO_BACKEND_ENV, AUDIO_BRIDGE_BINARY_ENV, AUDIO_SPIKE_BINARY_ENV};
     use crate::services::test_env_lock;
     use shadow_sdk::services::session_config::RUNTIME_SESSION_CONFIG_ENV;
     use std::fs;
@@ -1321,6 +1331,7 @@ mod tests {
 
         std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
         std::env::remove_var(AUDIO_BACKEND_ENV);
+        std::env::remove_var(AUDIO_BRIDGE_BINARY_ENV);
         std::env::remove_var(AUDIO_SPIKE_BINARY_ENV);
         let _ = fs::remove_dir_all(&temp_dir);
         output
@@ -1335,7 +1346,7 @@ mod tests {
                 }
             }"#,
             || {
-                std::env::set_var(AUDIO_BACKEND_ENV, "linux_spike");
+                std::env::set_var(AUDIO_BACKEND_ENV, "linux_bridge");
 
                 assert_eq!(
                     AudioBackend::from_env().expect("resolve backend"),
@@ -1346,21 +1357,21 @@ mod tests {
     }
 
     #[test]
-    fn audio_backend_uses_session_config_linux_spike_before_env() {
+    fn audio_backend_uses_session_config_linux_bridge_before_env() {
         with_temp_session_config(
             r#"{
                 "services": {
-                    "audioBackend": "linux_spike"
+                    "audioBackend": "linux_bridge"
                 }
             }"#,
             || {
                 std::env::set_var(AUDIO_BACKEND_ENV, "memory");
-                std::env::set_var(AUDIO_SPIKE_BINARY_ENV, "/tmp/runtime-audio-spike");
+                std::env::set_var(AUDIO_BRIDGE_BINARY_ENV, "/tmp/runtime-audio-bridge");
 
                 assert_eq!(
                     AudioBackend::from_env().expect("resolve backend"),
-                    AudioBackend::LinuxSpike {
-                        binary_path: String::from("/tmp/runtime-audio-spike"),
+                    AudioBackend::LinuxBridge {
+                        binary_path: String::from("/tmp/runtime-audio-bridge"),
                     }
                 );
             },
@@ -1373,12 +1384,34 @@ mod tests {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
+        std::env::set_var(AUDIO_BACKEND_ENV, "linux_bridge");
+        std::env::set_var(AUDIO_BRIDGE_BINARY_ENV, "/tmp/runtime-audio-bridge-env");
+
+        assert_eq!(
+            AudioBackend::from_env().expect("resolve backend"),
+            AudioBackend::LinuxBridge {
+                binary_path: String::from("/tmp/runtime-audio-bridge-env"),
+            }
+        );
+
+        std::env::remove_var(AUDIO_BACKEND_ENV);
+        std::env::remove_var(AUDIO_BRIDGE_BINARY_ENV);
+        std::env::remove_var(AUDIO_SPIKE_BINARY_ENV);
+    }
+
+    #[test]
+    fn audio_backend_accepts_legacy_linux_spike_env() {
+        let _guard = test_env_lock()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        std::env::remove_var(RUNTIME_SESSION_CONFIG_ENV);
+        std::env::remove_var(AUDIO_BRIDGE_BINARY_ENV);
         std::env::set_var(AUDIO_BACKEND_ENV, "linux_spike");
         std::env::set_var(AUDIO_SPIKE_BINARY_ENV, "/tmp/runtime-audio-spike-env");
 
         assert_eq!(
             AudioBackend::from_env().expect("resolve backend"),
-            AudioBackend::LinuxSpike {
+            AudioBackend::LinuxBridge {
                 binary_path: String::from("/tmp/runtime-audio-spike-env"),
             }
         );

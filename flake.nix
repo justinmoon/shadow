@@ -353,7 +353,7 @@
           binaryNames = builtins.map (app: app.binaryName or "") vmApps;
         in
           lib.unique (builtins.filter (name: name != "") binaryNames);
-      shadowLinuxAudioSpikeSrc = repoSourceFromPrefixes [
+      shadowAudioBridgeSrc = repoSourceFromPrefixes [
         "rust/shadow-linux-audio-spike"
       ];
       shadowBlitzDemoSrc = repoSourceFromPrefixes (
@@ -1382,11 +1382,11 @@
           meta.mainProgram = "shadow-system";
           postInstall = mkStripShadowStoreReferencesPostInstall cross;
         });
-      mkShadowLinuxAudioSpikeFor = cross:
+      mkShadowAudioBridgeFor = cross:
         cross.rustPlatform.buildRustPackage {
-          pname = "shadow-linux-audio-spike";
+          pname = "shadow-audio-bridge";
           version = "0.1.0";
-          src = shadowLinuxAudioSpikeSrc;
+          src = shadowAudioBridgeSrc;
           cargoRoot = "rust/shadow-linux-audio-spike";
           buildAndTestSubdir = "rust/shadow-linux-audio-spike";
           cargoLock.lockFile = ./rust/shadow-linux-audio-spike/Cargo.lock;
@@ -1395,7 +1395,7 @@
           CARGO_BUILD_TARGET = cross.stdenv.hostPlatform.config;
           nativeBuildInputs = [ cross.buildPackages.pkg-config ];
           buildInputs = [ cross.alsa-lib ];
-          meta.mainProgram = "shadow-linux-audio-spike";
+          meta.mainProgram = "shadow-audio-bridge";
         };
       mkShadowCameraProviderHostFor = cross:
         cross.rustPlatform.buildRustPackage {
@@ -2332,14 +2332,22 @@
           };
         in
         {
+          shadow-audio-bridge =
+            if pkgs.stdenv.isLinux then
+              mkShadowAudioBridgeFor pkgs
+            else
+              mkUnavailablePackage pkgs "shadow-audio-bridge-unavailable"
+                "shadow-audio-bridge is only available on Linux hosts";
+          shadow-audio-bridge-aarch64-linux-gnu =
+            mkShadowAudioBridgeFor pkgs.pkgsCross.aarch64-multiplatform;
           shadow-linux-audio-spike =
             if pkgs.stdenv.isLinux then
-              mkShadowLinuxAudioSpikeFor pkgs
+              mkShadowAudioBridgeFor pkgs
             else
               mkUnavailablePackage pkgs "shadow-linux-audio-spike-unavailable"
                 "shadow-linux-audio-spike is only available on Linux hosts";
           shadow-linux-audio-spike-aarch64-linux-gnu =
-            mkShadowLinuxAudioSpikeFor pkgs.pkgsCross.aarch64-multiplatform;
+            mkShadowAudioBridgeFor pkgs.pkgsCross.aarch64-multiplatform;
           shadow-camera-provider-host = mkShadowCameraProviderHostFor pkgs;
           shadow-system = mkShadowSystemFor pkgs;
           shadow-system-aarch64-linux-gnu =
