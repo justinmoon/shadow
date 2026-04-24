@@ -101,6 +101,7 @@ scripts/pixel/pixel_boot_preflight.sh	pixel	Private stock-init boot-helper prefl
 scripts/pixel/pixel_boot_rc_trigger_ladder.sh	pixel	Private stock-init trigger ladder runner that builds rc-probe images and drives the one-shot proof-property loop.
 scripts/pixel/pixel_boot_recover.sh	pixel	Private sunfish recovery helper that switches back to the known-good slot after an experimental boot.
 scripts/pixel/pixel_boot_restore.sh	pixel	Private sunfish stock boot image rollback helper.
+scripts/pixel/pixel_boot_wifi_probe.sh	pixel	Private Shadow boot Wi-Fi probe runner that collects rooted Android Wi-Fi assets, builds a boot image, one-shot boots it, and recovers scan proof.
 scripts/pixel/pixel_boot_unpack.sh	pixel	Private sunfish boot image unpack/inspection helper.
 scripts/pixel/pixel_boot_build_init_symlink_probe.sh	pixel	Private stock-init boot image builder that restores /init as a symlink to init.stock.
 scripts/pixel/pixel_boot_build_hello_init.sh	pixel	Private owned-userspace boot image builder that preserves /init and replaces system/bin/init with hello-init plus a tiny ramdisk config.
@@ -157,6 +158,10 @@ scripts/lib/session_apps.sh	lib	Shared shell loader for supported session app id
 scripts/lib/ci_common.sh	lib	Shared CI system, run-id, boot-demo selection, and remote executor path helpers.
 scripts/lib/shadow_common.sh	lib	Shared repo/bootstrap shell helper library.
 scripts/lib/ci_vm_smoke_common.sh	lib	Shared VM smoke logical-input and success-cache helper library.
+scripts/pixel/pixel_build_shadow_property_shim.sh	pixel	Private Android bionic property/log LD_PRELOAD shim builder for Pixel boot Wi-Fi probes.
+scripts/pixel/pixel_wifi_collect_boot_assets.sh	pixel	Private rooted-Pixel collector for Shadow boot Wi-Fi module and firmware assets.
+scripts/pixel/pixel_wifi_collect_capsule.sh	pixel	Private rooted-Pixel collector for Shadow boot Wi-Fi linker capsules.
+scripts/pixel/shadow_property_shim.c	pixel	Tiny Android bionic property/log shim source for Pixel Wi-Fi helper probes.
 scripts/shadowctl	public	Primary target-aware Shadow development CLI.
 scripts/ci/timeline_sync_defaults_smoke.sh	ci	Static smoke for timeline sync defaults and generated runtime env.
 scripts/ui_check.sh	public	UI formatting/test/compile gate with optional suite selection.

@@ -50,16 +50,22 @@ RUN_TOKEN="${PIXEL_HELLO_INIT_RUN_TOKEN:-${PIXEL_ORANGE_GPU_RUN_TOKEN:-}}"
 DRI_BOOTSTRAP="${PIXEL_ORANGE_GPU_DRI_BOOTSTRAP:-}"
 INPUT_BOOTSTRAP="${PIXEL_ORANGE_GPU_INPUT_BOOTSTRAP:-none}"
 WIFI_BOOTSTRAP="${PIXEL_ORANGE_GPU_WIFI_BOOTSTRAP:-none}"
+WIFI_HELPER_PROFILE="${PIXEL_ORANGE_GPU_WIFI_HELPER_PROFILE:-full}"
+WIFI_SUPPLICANT_PROBE="${PIXEL_ORANGE_GPU_WIFI_SUPPLICANT_PROBE:-true}"
 FIRMWARE_BOOTSTRAP="${PIXEL_ORANGE_GPU_FIRMWARE_BOOTSTRAP:-none}"
 GPU_FIRMWARE_DIR="${PIXEL_ORANGE_GPU_FIRMWARE_DIR:-}"
 INPUT_MODULE_DIR="${PIXEL_ORANGE_GPU_INPUT_MODULE_DIR:-}"
 WIFI_MODULE_DIR="${PIXEL_ORANGE_GPU_WIFI_MODULE_DIR:-}"
-CAMERA_LINKER_CAPSULE_DIR="${PIXEL_CAMERA_LINKER_CAPSULE_DIR:-}"
+CAMERA_LINKER_CAPSULE_DIR="${PIXEL_CAMERA_LINKER_CAPSULE_DIR:-${PIXEL_WIFI_LINKER_CAPSULE_DIR:-}}"
 CAMERA_HAL_BIONIC_PROBE_BINARY="${PIXEL_CAMERA_HAL_BIONIC_PROBE_BINARY:-}"
+SHADOW_PROPERTY_SHIM_BINARY="${PIXEL_SHADOW_PROPERTY_SHIM_BINARY:-}"
 CAMERA_HAL_CAMERA_ID="${PIXEL_CAMERA_HAL_CAMERA_ID:-0}"
 CAMERA_HAL_CALL_OPEN="${PIXEL_CAMERA_HAL_CALL_OPEN:-false}"
 KEEP_WORK_DIR=0
 WORK_DIR=""
+STAGED_HELLO_INIT_BINARY=""
+STAGED_HELLO_INIT_RUST_SHIM_BINARY=""
+STAGED_CAMERA_LINKER_VENDOR_DIR=""
 COMPOSITOR_SCENE_STARTUP_CONFIG=""
 APP_DIRECT_PRESENT_STARTUP_CONFIG=""
 SHELL_SESSION_STARTUP_CONFIG=""
@@ -150,6 +156,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--payload-probe-root PATH]
                                                     [--payload-probe-manifest-path PATH]
                                                     [--camera-linker-capsule DIR]
+                                                    [--wifi-linker-capsule DIR]
                                                     [--camera-hal-bionic-probe PATH]
                                                     [--camera-hal-camera-id ID]
                                                     [--camera-hal-call-open true|false]
@@ -165,6 +172,8 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--input-bootstrap none|sunfish-touch-event2]
                                                     [--input-module-dir DIR]
                                                     [--wifi-bootstrap none|sunfish-wlan0]
+                                                    [--wifi-helper-profile full|no-service-managers|no-pm|no-modem-svc|no-rfs-storage|no-pd-mapper|no-cnss|qrtr-only|qrtr-pd|qrtr-pd-tftp|qrtr-pd-rfs|qrtr-pd-rfs-cnss|qrtr-pd-rfs-modem|qrtr-pd-rfs-modem-cnss|qrtr-pd-rfs-modem-pm|qrtr-pd-rfs-modem-pm-cnss|aidl-sm-core|vnd-sm-core|vnd-sm-core-binder-node|all-sm-core|none]
+                                                    [--wifi-supplicant-probe true|false]
                                                     [--wifi-module-dir DIR]
                                                     [--firmware-bootstrap none|ramdisk-lib-firmware]
                                                     [--firmware-dir DIR]
@@ -297,6 +306,10 @@ default_gpu_bundle_dir() {
 
 default_camera_hal_bionic_probe_binary() {
   printf '%s\n' "$(pixel_artifact_path camera-hal-bionic-probe)"
+}
+
+default_shadow_property_shim_binary() {
+  printf '%s\n' "$(pixel_artifact_path shadow-property-shim)"
 }
 
 default_app_direct_present_client_launcher_binary() {
@@ -692,6 +705,16 @@ build_or_copy_rust_hello_init_binary() {
   )"
   cp "$store_path/bin/$binary_name" "$destination"
   chmod 0755 "$destination"
+}
+
+stage_boot_executable() {
+  local source_path destination_path
+  source_path="${1:?stage_boot_executable requires a source path}"
+  destination_path="${2:?stage_boot_executable requires a destination path}"
+
+  mkdir -p "$(dirname "$destination_path")"
+  cp "$source_path" "$destination_path"
+  chmod 0755 "$destination_path"
 }
 
 assert_static_device_binary() {
@@ -1141,6 +1164,12 @@ EOF
   fi
   if [[ "$WIFI_BOOTSTRAP" != "none" ]]; then
     printf 'wifi_bootstrap=%s\n' "$WIFI_BOOTSTRAP" >>"$output_path"
+  fi
+  if [[ "$WIFI_HELPER_PROFILE" != "full" ]]; then
+    printf 'wifi_helper_profile=%s\n' "$WIFI_HELPER_PROFILE" >>"$output_path"
+  fi
+  if [[ "$WIFI_SUPPLICANT_PROBE" != "true" ]]; then
+    printf 'wifi_supplicant_probe=%s\n' "$WIFI_SUPPLICANT_PROBE" >>"$output_path"
   fi
   if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
     printf 'orange_gpu_bundle_archive_path=%s\n' "$ORANGE_GPU_BUNDLE_ARCHIVE_PATH" >>"$output_path"
@@ -2348,6 +2377,8 @@ write_metadata() {
     "$INPUT_MODULE_DIR" \
     "${STAGED_INPUT_MODULE_DIR:-}" \
     "$WIFI_BOOTSTRAP" \
+    "$WIFI_HELPER_PROFILE" \
+    "$WIFI_SUPPLICANT_PROBE" \
     "$WIFI_MODULE_DIR" \
     "${STAGED_WIFI_MODULE_DIR:-}" \
     "$FIRMWARE_BOOTSTRAP" \
@@ -2414,6 +2445,8 @@ from pathlib import Path
     input_module_dir,
     input_module_staged_dir,
     wifi_bootstrap,
+    wifi_helper_profile,
+    wifi_supplicant_probe,
     wifi_module_dir,
     wifi_module_staged_dir,
     firmware_bootstrap,
@@ -2493,6 +2526,8 @@ payload_json = {
     "input_module_dir": input_module_dir,
     "input_module_staged_dir": input_module_staged_dir,
     "wifi_bootstrap": wifi_bootstrap,
+    "wifi_helper_profile": wifi_helper_profile,
+    "wifi_supplicant_probe": parse_bool(wifi_supplicant_probe),
     "wifi_module_dir": wifi_module_dir,
     "wifi_module_staged_dir": wifi_module_staged_dir,
     "firmware_bootstrap": firmware_bootstrap,
@@ -2582,18 +2617,29 @@ Path(metadata_path).write_text(
 PY
 }
 
+append_array_values() {
+  local array_name assignment value
+  array_name="${1:?append_array_values requires an array name}"
+  shift
+  assignment="$array_name+=("
+  for value in "$@"; do
+    assignment+=" $(printf '%q' "$value")"
+  done
+  assignment+=" )"
+  eval "$assignment"
+}
+
 append_tree_add_specs() {
   local host_root archive_root build_args_name
   host_root="${1:?append_tree_add_specs requires a host root}"
   archive_root="${2:?append_tree_add_specs requires an archive root}"
   build_args_name="${3:?append_tree_add_specs requires a build-args array name}"
-  local -n build_args_ref="$build_args_name"
   local relative_path
 
-  build_args_ref+=(--add "$archive_root=$host_root")
+  append_array_values "$build_args_name" --add "$archive_root=$host_root"
   while IFS= read -r relative_path; do
     [[ -n "$relative_path" ]] || continue
-    build_args_ref+=(--add "$archive_root/$relative_path=$host_root/$relative_path")
+    append_array_values "$build_args_name" --add "$archive_root/$relative_path=$host_root/$relative_path"
   done < <(
     cd "$host_root"
     find . -mindepth 1 -print | sed 's#^\./##' | LC_ALL=C sort
@@ -2605,13 +2651,12 @@ append_tree_upsert_specs() {
   host_root="${1:?append_tree_upsert_specs requires a host root}"
   archive_root="${2:?append_tree_upsert_specs requires an archive root}"
   build_args_name="${3:?append_tree_upsert_specs requires a build-args array name}"
-  local -n build_args_ref="$build_args_name"
   local relative_path
 
-  build_args_ref+=(--upsert "$archive_root=$host_root")
+  append_array_values "$build_args_name" --upsert "$archive_root=$host_root"
   while IFS= read -r relative_path; do
     [[ -n "$relative_path" ]] || continue
-    build_args_ref+=(--upsert "$archive_root/$relative_path=$host_root/$relative_path")
+    append_array_values "$build_args_name" --upsert "$archive_root/$relative_path=$host_root/$relative_path"
   done < <(
     cd "$host_root"
     find . -mindepth 1 -print | sed 's#^\./##' | LC_ALL=C sort
@@ -2847,6 +2892,14 @@ while [[ $# -gt 0 ]]; do
       WIFI_BOOTSTRAP="${2:?missing value for --wifi-bootstrap}"
       shift 2
       ;;
+    --wifi-helper-profile)
+      WIFI_HELPER_PROFILE="${2:?missing value for --wifi-helper-profile}"
+      shift 2
+      ;;
+    --wifi-supplicant-probe)
+      WIFI_SUPPLICANT_PROBE="${2:?missing value for --wifi-supplicant-probe}"
+      shift 2
+      ;;
     --wifi-module-dir)
       WIFI_MODULE_DIR="${2:?missing value for --wifi-module-dir}"
       shift 2
@@ -2861,6 +2914,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --camera-linker-capsule)
       CAMERA_LINKER_CAPSULE_DIR="${2:?missing value for --camera-linker-capsule}"
+      shift 2
+      ;;
+    --wifi-linker-capsule)
+      CAMERA_LINKER_CAPSULE_DIR="${2:?missing value for --wifi-linker-capsule}"
       shift 2
       ;;
     --camera-hal-bionic-probe)
@@ -3017,6 +3074,7 @@ assert_bool_word app-direct-present-manual-touch "$APP_DIRECT_PRESENT_MANUAL_TOU
 assert_bool_word orange-gpu-enable-linux-audio "$ORANGE_GPU_ENABLE_LINUX_AUDIO"
 assert_bool_word orange-gpu-metadata-prune-token-root "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT"
 assert_bundle_archive_source_word "$ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE"
+assert_bool_word wifi-supplicant-probe "$WIFI_SUPPLICANT_PROBE"
 
 if [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" && "$MOUNT_SYS" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: c-kgsl-open-readonly-firmware-helper-smoke requires --mount-sys true so hello-init can service /sys/class/firmware requests" >&2
@@ -3039,12 +3097,12 @@ if [[ "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" && "$ORANGE_GPU_METADATA_
   exit 1
 fi
 if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
-  if [[ "$ORANGE_GPU_MODE" != "camera-hal-link-probe" ]]; then
-    echo "pixel_boot_build_orange_gpu: --camera-linker-capsule is only supported with camera-hal-link-probe" >&2
+  if [[ "$ORANGE_GPU_MODE" != "camera-hal-link-probe" && "$ORANGE_GPU_MODE" != "wifi-linux-surface-probe" ]]; then
+    echo "pixel_boot_build_orange_gpu: linker capsule is only supported with camera-hal-link-probe or wifi-linux-surface-probe" >&2
     exit 1
   fi
   if [[ ! -d "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
-    echo "pixel_boot_build_orange_gpu: camera linker capsule dir not found: $CAMERA_LINKER_CAPSULE_DIR" >&2
+    echo "pixel_boot_build_orange_gpu: linker capsule dir not found: $CAMERA_LINKER_CAPSULE_DIR" >&2
     exit 1
   fi
 fi
@@ -3085,6 +3143,13 @@ case "$WIFI_BOOTSTRAP" in
   none|sunfish-wlan0) ;;
   *)
     echo "pixel_boot_build_orange_gpu: wifi bootstrap must be none or sunfish-wlan0: $WIFI_BOOTSTRAP" >&2
+    exit 1
+    ;;
+esac
+case "$WIFI_HELPER_PROFILE" in
+  full|no-service-managers|no-pm|no-modem-svc|no-rfs-storage|no-pd-mapper|no-cnss|qrtr-only|qrtr-pd|qrtr-pd-tftp|qrtr-pd-rfs|qrtr-pd-rfs-cnss|qrtr-pd-rfs-modem|qrtr-pd-rfs-modem-cnss|qrtr-pd-rfs-modem-pm|qrtr-pd-rfs-modem-pm-cnss|aidl-sm-core|vnd-sm-core|vnd-sm-core-binder-node|all-sm-core|none) ;;
+  *)
+    echo "pixel_boot_build_orange_gpu: wifi helper profile is not recognized: $WIFI_HELPER_PROFILE" >&2
     exit 1
     ;;
 esac
@@ -3269,6 +3334,13 @@ else
   fi
 fi
 
+STAGED_HELLO_INIT_BINARY="$WORK_DIR/hello-init"
+stage_boot_executable "$HELLO_INIT_BINARY" "$STAGED_HELLO_INIT_BINARY"
+if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
+  STAGED_HELLO_INIT_RUST_SHIM_BINARY="$WORK_DIR/hello-init-rust-shim"
+  stage_boot_executable "$HELLO_INIT_RUST_SHIM_BINARY" "$STAGED_HELLO_INIT_RUST_SHIM_BINARY"
+fi
+
 if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
   if [[ -z "$CAMERA_HAL_BIONIC_PROBE_BINARY" && -z "${MOCK_BOOT_RAMDISK:-}" ]]; then
     CAMERA_HAL_BIONIC_PROBE_BINARY="$(default_camera_hal_bionic_probe_binary)"
@@ -3281,6 +3353,20 @@ if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
       exit 1
     }
     chmod 0755 "$CAMERA_HAL_BIONIC_PROBE_BINARY" 2>/dev/null || true
+  fi
+fi
+if [[ "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" && -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
+  if [[ -z "$SHADOW_PROPERTY_SHIM_BINARY" && -z "${MOCK_BOOT_RAMDISK:-}" ]]; then
+    SHADOW_PROPERTY_SHIM_BINARY="$(default_shadow_property_shim_binary)"
+    "$SCRIPT_DIR/pixel/pixel_build_shadow_property_shim.sh" \
+      --output "$SHADOW_PROPERTY_SHIM_BINARY"
+  fi
+  if [[ -n "$SHADOW_PROPERTY_SHIM_BINARY" ]]; then
+    [[ -f "$SHADOW_PROPERTY_SHIM_BINARY" ]] || {
+      echo "pixel_boot_build_orange_gpu: shadow property shim not found: $SHADOW_PROPERTY_SHIM_BINARY" >&2
+      exit 1
+    }
+    chmod 0755 "$SHADOW_PROPERTY_SHIM_BINARY" 2>/dev/null || true
   fi
 fi
 
@@ -3463,10 +3549,10 @@ build_args=(
 )
 
 if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
-  build_args+=(--replace "system/bin/init=$HELLO_INIT_RUST_SHIM_BINARY")
-  build_args+=(--add "$HELLO_INIT_RUST_CHILD_ENTRY=$HELLO_INIT_BINARY")
+  build_args+=(--replace "system/bin/init=$STAGED_HELLO_INIT_RUST_SHIM_BINARY")
+  build_args+=(--add "$HELLO_INIT_RUST_CHILD_ENTRY=$STAGED_HELLO_INIT_BINARY")
 else
-  build_args+=(--replace "system/bin/init=$HELLO_INIT_BINARY")
+  build_args+=(--replace "system/bin/init=$STAGED_HELLO_INIT_BINARY")
 fi
 
 if [[ "$PRELUDE" == "orange-init" ]]; then
@@ -3489,7 +3575,18 @@ fi
 if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
   for capsule_root in vendor system system_ext apex linkerconfig; do
     if [[ -e "$CAMERA_LINKER_CAPSULE_DIR/$capsule_root" ]]; then
-      append_tree_upsert_specs "$CAMERA_LINKER_CAPSULE_DIR/$capsule_root" "$capsule_root" build_args
+      capsule_root_dir="$CAMERA_LINKER_CAPSULE_DIR/$capsule_root"
+      if [[ "$capsule_root" == "vendor" && -n "$SHADOW_PROPERTY_SHIM_BINARY" ]]; then
+        STAGED_CAMERA_LINKER_VENDOR_DIR="$WORK_DIR/camera-linker-vendor"
+        rm -rf "$STAGED_CAMERA_LINKER_VENDOR_DIR"
+        mkdir -p "$STAGED_CAMERA_LINKER_VENDOR_DIR"
+        cp -Rp "$capsule_root_dir"/. "$STAGED_CAMERA_LINKER_VENDOR_DIR"/
+        mkdir -p "$STAGED_CAMERA_LINKER_VENDOR_DIR/lib64"
+        cp "$SHADOW_PROPERTY_SHIM_BINARY" "$STAGED_CAMERA_LINKER_VENDOR_DIR/lib64/libshadowprop.so"
+        chmod 0755 "$STAGED_CAMERA_LINKER_VENDOR_DIR/lib64/libshadowprop.so" 2>/dev/null || true
+        capsule_root_dir="$STAGED_CAMERA_LINKER_VENDOR_DIR"
+      fi
+      append_tree_upsert_specs "$capsule_root_dir" "$capsule_root" build_args
     fi
   done
 fi
@@ -3612,7 +3709,11 @@ if ! payload_partition_probe_mode; then
   printf 'GPU loader path: %s/lib/ld-linux-aarch64.so.1\n' "$PAYLOAD_IMAGE_PATH"
 fi
 if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
-  printf 'Camera linker capsule dir: %s\n' "$CAMERA_LINKER_CAPSULE_DIR"
+  if [[ "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" ]]; then
+    printf 'Wi-Fi linker capsule dir: %s\n' "$CAMERA_LINKER_CAPSULE_DIR"
+  else
+    printf 'Camera linker capsule dir: %s\n' "$CAMERA_LINKER_CAPSULE_DIR"
+  fi
 fi
 if [[ -n "$CAMERA_HAL_BIONIC_PROBE_BINARY" ]]; then
   printf 'Camera HAL bionic probe: %s\n' "$CAMERA_HAL_BIONIC_PROBE_BINARY"
@@ -3759,6 +3860,8 @@ if [[ "$INPUT_BOOTSTRAP" != "none" ]]; then
 fi
 printf 'Wi-Fi bootstrap: %s\n' "$WIFI_BOOTSTRAP"
 if [[ "$WIFI_BOOTSTRAP" != "none" ]]; then
+  printf 'Wi-Fi helper profile: %s\n' "$WIFI_HELPER_PROFILE"
+  printf 'Wi-Fi supplicant probe: %s\n' "$WIFI_SUPPLICANT_PROBE"
   printf 'Wi-Fi module dir: %s\n' "$WIFI_MODULE_DIR"
   printf 'Wi-Fi module staged dir: %s\n' "$STAGED_WIFI_MODULE_DIR"
 fi

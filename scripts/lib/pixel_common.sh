@@ -480,18 +480,24 @@ pixel_su_candidates() {
   printf '%s\n' "su"
 }
 
-pixel_root_id() {
-  local serial su_bin output status
+pixel_resolve_su_bin() {
+  local serial su_bin output status had_errexit
   serial="$1"
+  had_errexit=0
+  [[ $- == *e* ]] && had_errexit=1
 
   while IFS= read -r su_bin; do
     [[ -n "$su_bin" ]] || continue
     set +e
     output="$(pixel_adb "$serial" shell "$su_bin 0 sh -c id" 2>/dev/null | tr -d '\r')"
     status="$?"
-    set -e
+    if [[ "$had_errexit" == "1" ]]; then
+      set -e
+    else
+      set +e
+    fi
     if [[ "$status" -eq 0 && -n "$output" ]]; then
-      printf '%s\n' "$output"
+      printf '%s\n' "$su_bin"
       return 0
     fi
   done < <(pixel_su_candidates)
@@ -499,20 +505,40 @@ pixel_root_id() {
   return 1
 }
 
+pixel_root_id() {
+  local serial su_bin output
+  serial="$1"
+
+  su_bin="$(pixel_resolve_su_bin "$serial")" || return 1
+  output="$(pixel_adb "$serial" shell "$su_bin 0 sh -c id" 2>/dev/null | tr -d '\r')"
+  [[ -n "$output" ]] || return 1
+  printf '%s\n' "$output"
+  return 0
+}
+
+pixel_root_shell_preserve_errexit() {
+  if [[ "${1:-}" == "1" ]]; then
+    set -e
+  else
+    set +e
+  fi
+}
+
 pixel_root_shell() {
-  local serial command su_bin
+  local serial command su_bin status had_errexit
   serial="$1"
   shift
   command="$1"
+  had_errexit=0
+  [[ $- == *e* ]] && had_errexit=1
 
-  while IFS= read -r su_bin; do
-    [[ -n "$su_bin" ]] || continue
-    if printf '%s\n' "$command" | pixel_adb "$serial" shell "$su_bin" 0 sh; then
-      return 0
-    fi
-  done < <(pixel_su_candidates)
+  su_bin="$(pixel_resolve_su_bin "$serial")" || return 1
+  set +e
+  printf '%s\n' "$command" | pixel_adb "$serial" shell "$su_bin" 0 sh
+  status="$?"
+  pixel_root_shell_preserve_errexit "$had_errexit"
 
-  return 1
+  return "$status"
 }
 
 pixel_root_shell_timeout() {
@@ -524,25 +550,13 @@ pixel_root_shell_timeout() {
   had_errexit=0
   [[ $- == *e* ]] && had_errexit=1
 
-  while IFS= read -r su_bin; do
-    [[ -n "$su_bin" ]] || continue
-    set +e
-    printf '%s\n' "$command" | timeout "$timeout_secs" adb -s "$serial" shell "$su_bin" 0 sh
-    status="$?"
-    if [[ "$had_errexit" == "1" ]]; then
-      set -e
-    else
-      set +e
-    fi
-    if [[ "$status" -eq 0 ]]; then
-      return 0
-    fi
-    if [[ "$status" -eq 124 ]]; then
-      return 124
-    fi
-  done < <(pixel_su_candidates)
+  su_bin="$(pixel_resolve_su_bin "$serial")" || return 1
+  set +e
+  printf '%s\n' "$command" | timeout "$timeout_secs" adb -s "$serial" shell "$su_bin" 0 sh
+  status="$?"
+  pixel_root_shell_preserve_errexit "$had_errexit"
 
-  return 1
+  return "$status"
 }
 
 pixel_restore_android_best_effort() {

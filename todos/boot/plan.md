@@ -57,6 +57,18 @@ Related docs:
   - rooted Pixel Linux inventory found `/dev/media*`, `/dev/video1` `cam-req-mgr`, `/dev/video2` `cam_sync`, and Qualcomm `/dev/v4l-subdev*` nodes
   - source-level recon shows this is media topology plus Qualcomm private `VIDIOC_CAM_CONTROL` query-cap UAPI, not a generic UVC/V4L2 capture surface
   - next allowed camera step is the read-only `camera-linux-surface-probe` contract in [camera-linux-api-recon.md](./camera-linux-api-recon.md), not capture, request-manager sessions, `CAM_ACQUIRE_DEV`, `CAM_START_DEV`, `CAM_CONFIG_DEV`, or runtime integration
+- Wi-Fi remains a research sidecar until the boot-owned shell path needs networking:
+  - product scope is normal Linux IP networking for Shadow apps, not a one-off ping: association, IP configuration, DNS, route, time sanity, and ordinary sockets for runtime service hosts
+  - current proven Pixel 4a `sunfish` scan seam does not depend on Android init, `hwservicemanager`, or the framework `servicemanager`
+  - latest minimal scan proof: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/wifi-boot/20260424T225752Z-0B191JEC203253-vnd-sm-core-binder-node-scan/status.json`
+  - exact scan surface is `/dev/vndbinder` plus `vndservicemanager` for the Qualcomm PM/CNSS helper graph, a `/dev/binder` node only so vendor `wpa_supplicant` can initialize its AIDL `ProcessState`, and the property shim that fakes supplicant service publication
+  - helper contract processes are `vndservicemanager`, `qrtr-ns`, `rmt_storage`, `tftp_server`, `modem_svc`, `pd-mapper`, `pm-service`, `pm-proxy`, and `cnss-daemon`; the scan proof then starts vendor `wpa_supplicant` separately
+  - there is no Android Wi-Fi framework, `wificond`, rooted Android shell Wi-Fi API, system `servicemanager`, or `hwservicemanager`
+  - supporting a small service-manager program is acceptable because vendor chipsets are a distributed system and need a name registry to talk to each other; `vndservicemanager` is a tiny, maintainable registry, not the Android init system
+  - do not bake Qualcomm CNSS assumptions into core Shadow design; contain this as the Pixel 4a module/firmware/helper recipe so future Pixels can swap a different chip-specific module behind the same proof shape
+  - keep chip bring-up separate from product networking: Pixel 4a owns Qualcomm CNSS/PM assets, while WPA control, DHCP/static IP, DNS, routing, time, status, and app sockets should be reusable across Pixel targets
+  - BusyBox `udhcpc` or another small DHCP tool is acceptable for rapid hardware prototyping, but the shippable direction is a Shadow-owned Rust network manager with its own DHCP/rtnetlink control and clearer failure reporting
+  - Wi-Fi probes must prune stale `/metadata/shadow-hello-init/by-token` entries before writing summaries; the previous 0-byte/empty summary failures were `/metadata` ENOSPC, not a recovery parser regression
 - The top-level one-shot wrapper can still end at `fastboot-return-auto-rebooted`. Treat `recover-traces/status.json` as truth.
 - The stock-init trigger / imported-rc / preflight seams are no longer peer execution streams:
   - latest negative proof: `/Users/justin/code/shadow/worktrees/rust-boot/build/pixel/runs/boot-kgsl-trigger-ladder/20260423T082243Z-09051JEC202061_/matrix-summary.json`
@@ -517,6 +529,134 @@ Related docs:
   - blocked_by:
     - `boot-payload-userdata-dm-default-key-proof`
     - `boot-shell-session-first-proof`
+- [x] `wifi-linux-surface-probe`
+  - task_id: boot-wifi-linux-surface-probe
+  - priority: 14
+  - why now: Wi-Fi is the first network service requested for the Rust boot path; start at the Linux/vendor surface before adding WPA association policy
+  - result:
+    - added Rust-owned `wifi-linux-surface-probe` mode with durable recovered summary metadata
+    - added optional `sunfish-wlan0` bootstrap that can stage/load `wlan.ko`, service firmware requests from ramdisk, and create `/dev/wlan`
+    - proved scan readiness of the boot-owned Pixel 4a Wi-Fi stack through firmware load, `wlan0` activation, vendor `wpa_supplicant` control socket `PING`, `SCAN`, and redacted `SCAN_RESULTS`; association/IP remains the next proof
+    - narrowed the Android-facing surface to no Android init, no `hwservicemanager`, no framework `servicemanager`, `vndservicemanager` only as the vendor Binder name registry, and a `/dev/binder` device node for vendor supplicant AIDL startup
+    - fixed the misleading empty-summary failure mode by enabling per-run `/metadata` token-root pruning in the Wi-Fi probe wrapper
+    - added checked-in collection/runner automation for Wi-Fi boot assets and the vendor/system/APEX linker capsule
+    - latest proof: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/wifi-boot/20260424T225752Z-0B191JEC203253-vnd-sm-core-binder-node-scan/wifi-probe.json`
+    - latest runner status: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/wifi-boot/20260424T225752Z-0B191JEC203253-vnd-sm-core-binder-node-scan/status.json`
+    - latest recovered status: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/wifi-boot/20260424T225752Z-0B191JEC203253-vnd-sm-core-binder-node-scan/oneshot-0B191JEC203253/recover-traces/status.json`
+  - source notes:
+    - sunfish device config loads `wlan.ko`, starts `cnss-daemon`, and runs `/vendor/bin/hw/wpa_supplicant` over NL80211
+    - sunfish `init.hardware.rc` starts `/vendor/bin/pm-service` and `/vendor/bin/pm-proxy`; AOSP `vndservicemanager.rc` is `/vendor/bin/vndservicemanager /dev/vndbinder`
+    - Android root inventory shows `wlan0`, `wlan1`, and `p2p0` under `18800000.qcom,icnss`, plus `/dev/wlan` major 486 minor 0
+    - AOSP/external `wpa_supplicant_8` and sunfish device sources show that association should stay on the vendor supplicant/NL80211 path rather than a new Linux Wi-Fi API
+  - owned paths:
+    - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
+    - `scripts/pixel/pixel_boot_wifi_probe.sh`
+    - `scripts/pixel/pixel_wifi_collect_boot_assets.sh`
+    - `scripts/pixel/pixel_wifi_collect_capsule.sh`
+    - `scripts/pixel/pixel_build_shadow_property_shim.sh`
+    - `scripts/pixel/shadow_property_shim.c`
+    - `todos/boot/plan.md`
+  - acceptance:
+    - recovered proof records whether `/sys/class/net/wlan0`, `/dev/wlan`, `/sys/module/wlan`, `/sys/kernel/wlan`, and `/proc/net/wireless` are visible in Shadow boot userspace
+    - no Android Wi-Fi framework, `wificond`, or rooted Android shell Wi-Fi API is used as the product API
+    - next blocker clearly distinguishes missing module/firmware/bootstrap from missing WPA/nl80211 association logic
+  - validation:
+    - `cargo check --manifest-path rust/init-wrapper/Cargo.toml --bin hello-init`
+    - `bash -n scripts/pixel/pixel_boot_build_orange_gpu.sh`
+    - rooted Pixel one-shot on the primary free device, with confirmation if the first proof reaches `surfaceReady=true`
+  - blocked_by: none
+- [ ] `wifi-association-proof`
+  - task_id: boot-wifi-association-proof
+  - priority: 15
+  - why next: scan proves the device, firmware, driver, and vendor supplicant path; the next Wi-Fi rung is AP association using a deliberate non-logged credential source
+  - owned paths:
+    - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
+    - `scripts/pixel/`
+    - `todos/boot/plan.md`
+  - acceptance:
+    - recovered proof records `wpa_state=COMPLETED`, selected network identity without secrets, redacted BSSID, and a clear blocker if association fails
+    - no plaintext network credentials appear in git, recovered summaries, command logs, or shell traces
+    - if credentials are not available, the proof records a clean blocked state after scan
+  - validation:
+    - rooted Pixel one-shot on the primary Wi-Fi device after credentials are intentionally supplied through a non-logged local source
+  - blocked_by: none
+- [ ] `wifi-ip-dns-time-proof`
+  - task_id: boot-wifi-ip-dns-time-proof
+  - priority: 16
+  - why next: apps need a normal IP stack, not just 802.11 association
+  - owned paths:
+    - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
+    - `scripts/pixel/pixel_boot_wifi_probe.sh`
+    - `todos/boot/plan.md`
+  - acceptance:
+    - recovered proof records IPv4 address/prefix, default route, gateway reachability, public IP reachability, DNS resolver state, DNS lookup, and wall-clock sanity
+    - prototype may stage a small DHCP client such as BusyBox `udhcpc`; product plan remains Rust-owned DHCP/rtnetlink inside Shadow networking code
+    - no Android `netd`, Android `IpClient`, Android Wi-Fi framework, `wificond`, or rooted Android shell Wi-Fi API is used for network configuration
+  - validation:
+    - rooted Pixel one-shot on the primary Wi-Fi device with association credentials supplied through the same non-logged path
+  - blocked_by:
+    - `wifi-association-proof`
+- [ ] `wifi-runtime-network-proof`
+  - task_id: boot-wifi-runtime-network-proof
+  - priority: 17
+  - why next: Shadow runtime service hosts must see the boot-owned Wi-Fi route as ordinary Linux networking
+  - owned paths:
+    - `scripts/lib/pixel_runtime_linux_bundle_common.sh`
+    - `scripts/lib/pixel_runtime_session_common.sh`
+    - `scripts/runtime/runtime_build_artifacts.ts`
+    - `runtime/apps.json`
+    - `todos/boot/plan.md`
+  - acceptance:
+    - a boot-owned or rooted-Pixel runtime process resolves DNS and opens TCP over Wi-Fi without USB reverse, Android networking APIs, or host-local tunnel assumptions
+    - runtime/session config has a clear network-readiness status so networked apps can fail early instead of hanging on missing DNS/route/time
+    - DHCP-provided DNS replaces hard-coded resolver assumptions where the Pixel runtime bundle needs resolver state
+  - validation:
+    - a bounded runtime-network smoke that records DNS lookup, TCP connect, and HTTP or WebSocket success over Wi-Fi
+  - blocked_by:
+    - `wifi-ip-dns-time-proof`
+- [ ] `wifi-app-network-smokes`
+  - task_id: boot-wifi-app-network-smokes
+  - priority: 18
+  - why next: Nostr, Cashu, and podcast need product-level socket proof, not just a system ping
+  - owned paths:
+    - `scripts/ci/pixel_ci.sh`
+    - `scripts/ci/pixel_runtime_app_nostr_timeline_local_smoke.sh`
+    - `scripts/ci/runtime_app_cashu_wallet_smoke.sh`
+    - `scripts/ci/runtime_app_podcast_player_url_smoke.sh`
+    - `scripts/pixel/`
+    - `runtime/apps.json`
+    - `todos/boot/plan.md`
+  - acceptance:
+    - Nostr timeline syncs from a LAN relay over Wi-Fi and persists notes in the configured SQLite cache without `adb reverse`
+    - Cashu wallet talks to a LAN fake mint over Wi-Fi and completes the existing wallet smoke shape without a USB tunnel
+    - podcast URL playback fetches media from a LAN HTTP server over Wi-Fi and reaches the existing `linux_spike` validation summary
+    - app metadata or session config can express network requirements so offline-capable apps and network-required apps get different readiness behavior
+  - validation:
+    - one Wi-Fi runtime smoke per app family, composed through the existing Pixel suite model rather than a new public command surface
+  - blocked_by:
+    - `wifi-runtime-network-proof`
+- [ ] `shadow-networkd-product-seam`
+  - task_id: boot-shadow-networkd-product-seam
+  - priority: 19
+  - why later: once association/IP/app traffic are proven, move networking out of PID1 probe code and into a maintainable Shadow service
+  - owned paths:
+    - `rust/`
+    - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
+    - `scripts/pixel/pixel_boot_wifi_probe.sh`
+    - `scripts/lib/pixel_runtime_session_common.sh`
+    - `todos/boot/plan.md`
+  - acceptance:
+    - PID1 only brings up the device-specific chip recipe and starts a small Shadow network manager
+    - the network manager owns association policy, DHCP/static IP, DNS, route, time sanity, status, and redacted observability
+    - Pixel 4a Qualcomm helper details stay in a device profile; Pixel 10 can provide a different Wi-Fi chip recipe without changing the app-facing networking contract
+  - validation:
+    - previous Wi-Fi association, IP/DNS/time, runtime, and app-network smokes still pass through the product service seam
+  - blocked_by:
+    - `wifi-app-network-smokes`
 - [ ] `sound-boot-owned-probe`
   - task_id: boot-sound-boot-owned-probe
   - priority: 30
