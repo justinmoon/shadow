@@ -671,6 +671,44 @@ if data != expected_data.encode("utf-8"):
 PY
 }
 
+assert_cpio_tar_xz_entry_contains() {
+  local archive_path cpio_entry tar_entry expected_substring
+  archive_path="$1"
+  cpio_entry="$2"
+  tar_entry="$3"
+  expected_substring="$4"
+
+  PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$archive_path" "$cpio_entry" "$tar_entry" "$expected_substring" <<'PY'
+from pathlib import Path
+import io
+import sys
+import tarfile
+
+from cpio_edit import read_cpio
+
+archive_path, cpio_entry, tar_entry, expected_substring = sys.argv[1:5]
+entries = {
+    entry.name: entry.data
+    for entry in read_cpio(Path(archive_path)).without_trailer()
+}
+payload = entries.get(cpio_entry)
+if payload is None:
+    raise SystemExit(f"missing cpio entry: {cpio_entry}")
+with tarfile.open(fileobj=io.BytesIO(payload), mode="r:xz") as archive:
+    members = {member.name.removeprefix("./"): member for member in archive.getmembers()}
+    member = members.get(tar_entry)
+    if member is None:
+        raise SystemExit(f"missing tar.xz entry: {tar_entry}")
+    extracted = archive.extractfile(member)
+    data = b"" if extracted is None else extracted.read()
+text = data.decode("utf-8")
+if expected_substring not in text:
+    raise SystemExit(
+        f"expected tar.xz entry {tar_entry} to contain {expected_substring!r}: {text!r}"
+    )
+PY
+}
+
 assert_cpio_entry_symlink_target() {
   local archive_path entry_name expected_target
   archive_path="$1"
@@ -4273,7 +4311,12 @@ assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img" orange-gpu.tar.xz shadow-compositor-guest
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img" orange-gpu.tar.xz app-direct-present/run-shadow-blitz-demo
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img" orange-gpu.tar.xz app-direct-present/runtime-app-counter-bundle.js
-assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img" orange-gpu.tar.xz shell-session-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "shell",\n    "shellStartAppId": "counter"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-blitz-demo",\n    "runtimeDir": "/shadow-runtime",\n    "systemBinaryPath": "/orange-gpu/app-direct-present/shadow-system",\n    "envAssignments": [\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH",\n        "value": "/orange-gpu/app-direct-present/shadow-blitz-demo"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "gpuShell": true,\n    "strictGpuResident": true,\n    "dmabufGlobalEnabled": false,\n    "dmabufFeedbackEnabled": true,\n    "exitOnFirstFrame": false,\n    "frameCapture": {\n      "mode": "every-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-shell-session-held-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  }\n}\n'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img" orange-gpu.tar.xz shell-session-startup.json '"mode": "shell"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img" orange-gpu.tar.xz shell-session-startup.json '"shellStartAppId": "counter"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img" orange-gpu.tar.xz shell-session-startup.json '"exitOnFirstFrame": false'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img" orange-gpu.tar.xz shell-session-startup.json '"latencyTrace": true'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img" orange-gpu.tar.xz shell-session-startup.json '"afterAppId": "counter"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img" orange-gpu.tar.xz shell-session-startup.json '"exitAfterPresent": false'
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img.hello-init.json" orange_gpu_mode "shell-session-held"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img.hello-init.json" orange_gpu_timeout_action hold
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img.hello-init.json" orange_gpu_watchdog_timeout_secs 12

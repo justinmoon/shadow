@@ -1392,7 +1392,9 @@ payload = {
         },
     },
 }
-if touch_counter_mode:
+if touch_counter_mode or (
+    held_mode and client_kind == "typescript" and start_app_id == "counter"
+):
     touch = {"latencyTrace": True}
     if not manual_touch_mode:
         touch["syntheticTap"] = {
@@ -1402,7 +1404,7 @@ if touch_counter_mode:
             "holdMs": 50,
             "afterAppId": start_app_id,
         }
-    touch["exitAfterPresent"] = True
+    touch["exitAfterPresent"] = touch_counter_mode
     payload["touch"] = touch
 Path(output_path).write_text(
     json.dumps(payload, indent=2, sort_keys=False) + "\n",
