@@ -1000,6 +1000,9 @@ EOF
       printf 'app_direct_present_runtime_bundle_path=%s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH" >>"$output_path"
     fi
   fi
+  if [[ "$APP_DIRECT_PRESENT_MANUAL_TOUCH" == "true" && "$ORANGE_GPU_MODE" =~ ^(app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ ]]; then
+    printf 'app_direct_present_manual_touch=%s\n' "$APP_DIRECT_PRESENT_MANUAL_TOUCH" >>"$output_path"
+  fi
   printf 'dri_bootstrap=%s\n' "$DRI_BOOTSTRAP" >>"$output_path"
 }
 
@@ -2083,6 +2086,14 @@ if [[ "$ORANGE_GPU_FIRMWARE_HELPER" == "true" && "$MOUNT_SYS" != "true" ]]; then
 fi
 if [[ "$INPUT_BOOTSTRAP" != "none" && "$MOUNT_SYS" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: input-bootstrap requires --mount-sys true so hello-init can discover /sys/class/input devices" >&2
+  exit 1
+fi
+if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" && "$MOUNT_DEV" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: input-bootstrap sunfish-touch-event2 requires --mount-dev true so hello-init can create /dev/input/event* from sysfs" >&2
+  exit 1
+fi
+if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" && "$DEV_MOUNT" != "tmpfs" ]]; then
+  echo "pixel_boot_build_orange_gpu: input-bootstrap sunfish-touch-event2 requires --dev-mount tmpfs so hello-init owns /dev/input/event* creation" >&2
   exit 1
 fi
 if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" && "$FIRMWARE_BOOTSTRAP" != "ramdisk-lib-firmware" ]]; then

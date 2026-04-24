@@ -143,6 +143,7 @@ mod linux {
         app_direct_present_app_id: String,
         app_direct_present_runtime_bundle_env: String,
         app_direct_present_runtime_bundle_path: String,
+        app_direct_present_manual_touch: bool,
         hold_seconds: u32,
         prelude_hold_seconds: u32,
         reboot_target: String,
@@ -179,6 +180,7 @@ mod linux {
                 app_direct_present_app_id: "rust-demo".to_string(),
                 app_direct_present_runtime_bundle_env: String::new(),
                 app_direct_present_runtime_bundle_path: String::new(),
+                app_direct_present_manual_touch: false,
                 hold_seconds: DEFAULT_HOLD_SECONDS,
                 prelude_hold_seconds: 0,
                 reboot_target: "bootloader".to_string(),
@@ -828,6 +830,11 @@ mod linux {
                 "app_direct_present_runtime_bundle_path"
                 | "app-direct-present-runtime-bundle-path" => {
                     config.app_direct_present_runtime_bundle_path = value.trim().to_string();
+                }
+                "app_direct_present_manual_touch" | "app-direct-present-manual-touch" => {
+                    if let Some(parsed) = parse_bool(value) {
+                        config.app_direct_present_manual_touch = parsed;
+                    }
                 }
                 "hold_seconds" | "hold_secs" => {
                     if let Some(parsed) = parse_u32(value) {
@@ -2491,22 +2498,25 @@ mod linux {
 
     #[derive(Clone, Copy)]
     struct TouchCounterEvidenceProfile {
+        injection: &'static str,
         counter_incremented_needle: &'static str,
         post_touch_frame_marker_needle: &'static str,
         post_touch_frame_committed_needle: &'static str,
     }
 
     impl TouchCounterEvidenceProfile {
-        fn rust_counter() -> Self {
+        fn rust_counter(injection: &'static str) -> Self {
             Self {
+                injection,
                 counter_incremented_needle: "shadow-rust-demo: counter_incremented count=1",
                 post_touch_frame_marker_needle: "shadow-rust-demo: frame_committed counter=1",
                 post_touch_frame_committed_needle: "shadow-rust-demo: frame_committed counter=1",
             }
         }
 
-        fn runtime_counter() -> Self {
+        fn runtime_counter(injection: &'static str) -> Self {
             Self {
+                injection,
                 counter_incremented_needle: "[shadow-runtime-counter] counter_incremented count=2",
                 post_touch_frame_marker_needle:
                     "[shadow-runtime-counter] counter_incremented count=2",
@@ -2562,13 +2572,13 @@ mod linux {
         }
 
         let frame_path = runtime.compositor_frame_path.display();
-        let touch_counter_evidence = if let Some(profile) = touch_counter_profile {
+        let touch_counter_evidence = if let Some(profile) = touch_counter_profile.as_ref() {
             let output_text =
                 fs::read_to_string(ORANGE_GPU_OUTPUT_PATH).map_err(|_| "output-log-missing")?;
             Some(touch_counter_evidence_from_output(
                 &output_text,
                 frame_bytes,
-                profile,
+                *profile,
             ))
         } else {
             None
@@ -2579,9 +2589,13 @@ mod linux {
             let _ = write!(payload, "  \"app_id\": \"{app_id}\",\n");
         }
         if let Some(evidence) = touch_counter_evidence.as_ref() {
+            let injection = touch_counter_profile
+                .map(|profile| profile.injection)
+                .unwrap_or("unknown");
             let _ = write!(
                 payload,
-                "  \"touch_counter_probe\": {{\n    \"injection\": \"synthetic-compositor\",\n    \"input_observed\": {},\n    \"tap_dispatched\": {},\n    \"counter_incremented\": {},\n    \"post_touch_frame_committed\": {},\n    \"post_touch_frame_artifact_logged\": {},\n    \"touch_latency_present\": {},\n    \"post_touch_frame_captured\": {}\n  }},\n  \"touch_counter_probe_ok\": {},\n",
+                "  \"touch_counter_probe\": {{\n    \"injection\": \"{}\",\n    \"input_observed\": {},\n    \"tap_dispatched\": {},\n    \"counter_incremented\": {},\n    \"post_touch_frame_committed\": {},\n    \"post_touch_frame_artifact_logged\": {},\n    \"touch_latency_present\": {},\n    \"post_touch_frame_captured\": {}\n  }},\n  \"touch_counter_probe_ok\": {},\n",
+                injection,
                 evidence.input_observed,
                 evidence.tap_dispatched,
                 evidence.counter_incremented,
@@ -3755,22 +3769,32 @@ mod linux {
                     } else if orange_gpu_mode_is_app_direct_present_runtime_touch_counter(
                         &config.orange_gpu_mode,
                     ) {
+                        let injection = if config.app_direct_present_manual_touch {
+                            "physical-touch"
+                        } else {
+                            "synthetic-compositor"
+                        };
                         (
                             "app-direct-present-runtime-touch-counter",
                             "app",
                             Some("counter"),
                             "app-direct-present-runtime-touch-counter-proved",
-                            Some(TouchCounterEvidenceProfile::runtime_counter()),
+                            Some(TouchCounterEvidenceProfile::runtime_counter(injection)),
                         )
                     } else if orange_gpu_mode_is_app_direct_present_touch_counter(
                         &config.orange_gpu_mode,
                     ) {
+                        let injection = if config.app_direct_present_manual_touch {
+                            "physical-touch"
+                        } else {
+                            "synthetic-compositor"
+                        };
                         (
                             "app-direct-present-touch-counter",
                             "app",
                             Some("rust-demo"),
                             "app-direct-present-touch-counter-proved",
-                            Some(TouchCounterEvidenceProfile::rust_counter()),
+                            Some(TouchCounterEvidenceProfile::rust_counter(injection)),
                         )
                     } else {
                         (
@@ -4021,11 +4045,36 @@ mod linux {
     }
 
     fn bootstrap_tmpfs_input_runtime(config: &Config) -> io::Result<()> {
-        if !config.mount_dev
-            || config.dev_mount != "tmpfs"
-            || config.input_bootstrap != "sunfish-touch-event2"
-        {
+        if config.input_bootstrap != "sunfish-touch-event2" {
             return Ok(());
+        }
+        if !config.mount_sys {
+            append_wrapper_log(
+                "input-bootstrap-invalid-config mode=sunfish-touch-event2 reason=mount_sys_false",
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "sunfish touch input bootstrap requires mount_sys=true",
+            ));
+        }
+        if !config.mount_dev {
+            append_wrapper_log(
+                "input-bootstrap-invalid-config mode=sunfish-touch-event2 reason=mount_dev_false",
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "sunfish touch input bootstrap requires mount_dev=true",
+            ));
+        }
+        if config.dev_mount != "tmpfs" {
+            append_wrapper_log(&format!(
+                "input-bootstrap-invalid-config mode=sunfish-touch-event2 reason=dev_mount_{}",
+                config.dev_mount
+            ));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "sunfish touch input bootstrap requires dev_mount=tmpfs",
+            ));
         }
 
         ensure_directory(Path::new("/dev/input"), 0o755)?;
@@ -4257,7 +4306,7 @@ mod linux {
         }
 
         append_wrapper_log(&format!(
-            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
+            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
             config.payload,
             config.prelude,
             config.orange_gpu_mode,
@@ -4268,6 +4317,7 @@ mod linux {
             bool_word(config.orange_gpu_firmware_helper),
             config.orange_gpu_timeout_action,
             config.orange_gpu_watchdog_timeout_secs,
+            bool_word(config.app_direct_present_manual_touch),
             config.hold_seconds,
             config.prelude_hold_seconds,
             config.reboot_target,

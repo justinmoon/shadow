@@ -508,6 +508,33 @@ if entries[entry_name] != expected_data.encode("utf-8"):
 PY
 }
 
+assert_cpio_entry_contains() {
+  local archive_path entry_name expected_data
+  archive_path="$1"
+  entry_name="$2"
+  expected_data="$3"
+
+  PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$archive_path" "$entry_name" "$expected_data" <<'PY'
+from pathlib import Path
+import sys
+
+from cpio_edit import read_cpio
+
+archive_path, entry_name, expected_data = sys.argv[1:4]
+entries = {
+    entry.name: entry.data
+    for entry in read_cpio(Path(archive_path)).without_trailer()
+}
+
+if entry_name not in entries:
+    raise SystemExit(f"missing cpio entry: {entry_name}")
+if expected_data.encode("utf-8") not in entries[entry_name]:
+    raise SystemExit(
+        f"cpio entry {entry_name} does not contain expected data: {expected_data!r}"
+    )
+PY
+}
+
 assert_cpio_entry_present() {
   local archive_path entry_name
   archive_path="$1"
@@ -2647,6 +2674,12 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'firmware_bootstrap='
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_INPUT_MODULE_DIR:-'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--input-module-dir'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'input-bootstrap sunfish-touch-event2 requires --mount-dev true'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'input-bootstrap sunfish-touch-event2 requires --dev-mount tmpfs'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'app_direct_present_manual_touch'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"physical-touch"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'profile.injection'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'sunfish touch input bootstrap requires dev_mount=tmpfs'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Prelude: %s\\n' \"\$PRELUDE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU mode: %s\\n' \"\$ORANGE_GPU_MODE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU launch delay seconds: %s\\n' \"\$ORANGE_GPU_LAUNCH_DELAY_SECS\""
@@ -2923,6 +2956,45 @@ INPUT_MODULE_DIR="$TMP_DIR/input-modules"
 mkdir -p "$INPUT_MODULE_DIR"
 printf 'heatmap-module\n' >"$INPUT_MODULE_DIR/heatmap.ko"
 printf 'ftm5-module\n' >"$INPUT_MODULE_DIR/ftm5.ko"
+
+assert_command_fails_contains \
+  "input-bootstrap sunfish-touch-event2 requires --dev-mount tmpfs" \
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-input-bootstrap-devtmpfs-rejected.img" \
+      --orange-gpu-mode c-kgsl-open-readonly-smoke \
+      --dev-mount devtmpfs \
+      --mount-sys true \
+      --firmware-bootstrap ramdisk-lib-firmware \
+      --firmware-dir "$GPU_FIRMWARE_DIR" \
+      --input-bootstrap sunfish-touch-event2 \
+      --input-module-dir "$INPUT_MODULE_DIR"
+
+assert_command_fails_contains \
+  "input-bootstrap sunfish-touch-event2 requires --mount-dev true" \
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-input-bootstrap-mount-dev-rejected.img" \
+      --orange-gpu-mode c-kgsl-open-readonly-smoke \
+      --dev-mount tmpfs \
+      --mount-dev false \
+      --mount-sys true \
+      --firmware-bootstrap ramdisk-lib-firmware \
+      --firmware-dir "$GPU_FIRMWARE_DIR" \
+      --input-bootstrap sunfish-touch-event2 \
+      --input-module-dir "$INPUT_MODULE_DIR"
 
 c_kgsl_firmware_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -3958,6 +4030,7 @@ manual_runtime_touch_counter_boot_output="$(
 )"
 
 assert_contains "$manual_runtime_touch_counter_boot_output" "GPU proof: app-owned TypeScript counter surface increments from physical touch and presents a post-touch frame through the Rust boot seam"
+assert_cpio_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter-manual.img" shadow-init.cfg $'app_direct_present_manual_touch=true\n'
 assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter-manual.img" orange-gpu.tar.xz app-direct-present-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "app",\n    "startAppId": "counter"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-blitz-demo",\n    "runtimeDir": "/shadow-runtime",\n    "systemBinaryPath": "/orange-gpu/app-direct-present/shadow-system",\n    "envAssignments": [\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH",\n        "value": "/orange-gpu/app-direct-present/shadow-blitz-demo"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      },\n      {\n        "key": "SHADOW_BLITZ_TOUCH_ANYWHERE_TARGET",\n        "value": "counter"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": false,\n    "frameCapture": {\n      "mode": "every-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-runtime-touch-counter-manual-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  },\n  "touch": {\n    "latencyTrace": true,\n    "exitAfterPresent": true\n  }\n}\n'
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter-manual.img.hello-init.json" app_direct_present_manual_touch "true"
 
