@@ -1232,6 +1232,24 @@ assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_compositor_frame_he
 assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_compositor_frame_pixel_bytes 9
 assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
 
+SHELL_TOUCH_MISMATCH_PARENT="$TMP_DIR/output-shell-session-runtime-touch-counter-mismatch"
+SHELL_TOUCH_MISMATCH_IMAGE="$TMP_DIR/output-shell-session-runtime-touch-counter-mismatch.img"
+SHELL_TOUCH_MISMATCH_OUTPUT="$SHELL_TOUCH_MISMATCH_PARENT/recover-traces"
+write_recover_context "$SHELL_TOUCH_MISMATCH_PARENT" "$SHELL_TOUCH_MISMATCH_IMAGE" "$RUN_TOKEN" shell-session-runtime-touch-counter timeline
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=shell-session-runtime-touch-counter-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$SHELL_TOUCH_MISMATCH_OUTPUT" >/dev/null
+
+assert_json_field "$SHELL_TOUCH_MISMATCH_OUTPUT/status.json" probe_summary_proves_shell_session_runtime_touch_counter false
+assert_json_field "$SHELL_TOUCH_MISMATCH_OUTPUT/status.json" metadata_probe_summary_app_id counter
+assert_json_field "$SHELL_TOUCH_MISMATCH_OUTPUT/status.json" expected_shell_session_start_app_id timeline
+assert_json_field "$SHELL_TOUCH_MISMATCH_OUTPUT/status.json" expected_app_direct_present_app_id timeline
+assert_json_field "$SHELL_TOUCH_MISMATCH_OUTPUT/status.json" proof_ok false
+
 APP_DIRECT_PRESENT_PARENT="$TMP_DIR/output-app-direct-present"
 APP_DIRECT_PRESENT_IMAGE="$TMP_DIR/output-app-direct-present.img"
 APP_DIRECT_PRESENT_OUTPUT="$APP_DIRECT_PRESENT_PARENT/recover-traces"

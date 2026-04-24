@@ -2063,6 +2063,8 @@ probe_summary_proves_shell_session_runtime_touch_counter = (
     and recovered_probe_summary_parse_error is None
     and summary_kind == "shell-session-runtime-touch-counter"
     and summary_startup_mode == "shell"
+    and summary_app_id == expected_shell_session_start_app_id
+    and summary_app_id == expected_app_direct_present_app_id
     and summary_app_id == "counter"
     and summary_frame_path == expected_metadata_compositor_frame_path
     and isinstance(summary_frame_bytes, int)

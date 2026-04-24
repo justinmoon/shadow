@@ -187,12 +187,13 @@ impl ShadowGuestCompositor {
                 }
             }
 
-            self.record_touch_present(frame_marker);
-            self.record_scroll_frame_present(frame_marker);
-            if self.should_exit_after_presented_frame(shell_frame_app_id) {
-                self.request_exit();
-            }
-            if self.drm_enabled && !presented {
+            if !self.drm_enabled || presented {
+                self.record_touch_present(frame_marker);
+                self.record_scroll_frame_present(frame_marker);
+                if self.should_exit_after_presented_frame(shell_frame_app_id) {
+                    self.request_exit();
+                }
+            } else {
                 self.schedule_shell_frame_retry();
             }
             return;
@@ -356,11 +357,13 @@ impl ShadowGuestCompositor {
             }
         }
 
-        self.record_touch_present(frame_marker);
-        self.record_scroll_frame_present(frame_marker);
+        if !self.drm_enabled || presented {
+            self.record_touch_present(frame_marker);
+            self.record_scroll_frame_present(frame_marker);
 
-        if self.should_exit_after_presented_frame(app_frame_app_id) {
-            self.request_exit();
+            if self.should_exit_after_presented_frame(app_frame_app_id) {
+                self.request_exit();
+            }
         }
 
         presented
@@ -413,7 +416,8 @@ impl ShadowGuestCompositor {
                     self.frame_artifact_written = true;
                     let checksum = checksum.unwrap_or_else(|| kms::frame_view_checksum(frame));
                     tracing::info!(
-                        "[shadow-guest-compositor] wrote-frame-artifact path={} checksum={checksum:016x} size={}x{}",
+                        "[shadow-guest-compositor] wrote-frame-artifact frame_marker={} path={} checksum={checksum:016x} size={}x{}",
+                        frame_marker,
                         self.frame_artifact_path.display(),
                         frame.width,
                         frame.height

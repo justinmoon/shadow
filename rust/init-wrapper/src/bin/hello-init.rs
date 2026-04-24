@@ -2687,6 +2687,7 @@ mod linux {
         tap_dispatched_needle: &'static str,
         counter_incremented_needle: &'static str,
         post_touch_frame_marker_needle: &'static str,
+        post_touch_frame_artifact_needle: &'static str,
         post_touch_frame_committed_needle: &'static str,
     }
 
@@ -2697,19 +2698,24 @@ mod linux {
                 tap_dispatched_needle: "[shadow-guest-compositor] touch-app-tap-dispatch",
                 counter_incremented_needle: "shadow-rust-demo: counter_incremented count=1",
                 post_touch_frame_marker_needle: "shadow-rust-demo: frame_committed counter=1",
+                post_touch_frame_artifact_needle: "[shadow-guest-compositor] wrote-frame-artifact",
                 post_touch_frame_committed_needle: "shadow-rust-demo: frame_committed counter=1",
             }
         }
 
-        fn runtime_counter(injection: &'static str) -> Self {
+        fn runtime_counter(
+            injection: &'static str,
+            post_touch_frame_artifact: &'static str,
+            post_touch_frame_presented: &'static str,
+        ) -> Self {
             Self {
                 injection,
                 tap_dispatched_needle: "route=app-tap",
                 counter_incremented_needle: "[shadow-runtime-counter] counter_incremented count=2",
                 post_touch_frame_marker_needle:
                     "[shadow-runtime-counter] counter_incremented count=2",
-                post_touch_frame_committed_needle:
-                    "[shadow-guest-compositor] touch-latency-present",
+                post_touch_frame_artifact_needle: post_touch_frame_artifact,
+                post_touch_frame_committed_needle: post_touch_frame_presented,
             }
         }
     }
@@ -2720,14 +2726,15 @@ mod linux {
         profile: TouchCounterEvidenceProfile,
     ) -> TouchCounterEvidence {
         let post_touch_frame_index = output_text.find(profile.post_touch_frame_marker_needle);
-        let post_touch_frame_committed = post_touch_frame_index
+        let post_touch_frame_artifact_index = post_touch_frame_index.and_then(|index| {
+            output_text[index..]
+                .find(profile.post_touch_frame_artifact_needle)
+                .map(|offset| index + offset)
+        });
+        let post_touch_frame_committed = post_touch_frame_artifact_index
             .map(|index| output_text[index..].contains(profile.post_touch_frame_committed_needle))
             .unwrap_or(false);
-        let post_touch_frame_artifact_logged = post_touch_frame_index
-            .and_then(|index| {
-                output_text[index..].find("[shadow-guest-compositor] wrote-frame-artifact")
-            })
-            .is_some();
+        let post_touch_frame_artifact_logged = post_touch_frame_artifact_index.is_some();
         TouchCounterEvidence {
             input_observed: output_text
                 .contains("[shadow-guest-compositor] touch-input phase=Down")
@@ -4324,7 +4331,11 @@ mod linux {
                                 "shell",
                                 Some("counter"),
                                 "shell-session-runtime-touch-counter-proved",
-                                Some(TouchCounterEvidenceProfile::runtime_counter(injection)),
+                                Some(TouchCounterEvidenceProfile::runtime_counter(
+                                    injection,
+                                    "wrote-frame-artifact frame_marker=hosted-touch-",
+                                    "[shadow-guest-compositor] touch-latency-present",
+                                )),
                             )
                         } else {
                             (
@@ -4348,7 +4359,11 @@ mod linux {
                             "app",
                             Some("counter"),
                             "app-direct-present-runtime-touch-counter-proved",
-                            Some(TouchCounterEvidenceProfile::runtime_counter(injection)),
+                            Some(TouchCounterEvidenceProfile::runtime_counter(
+                                injection,
+                                "[shadow-guest-compositor] wrote-frame-artifact",
+                                "[shadow-guest-compositor] touch-latency-present",
+                            )),
                         )
                     } else if orange_gpu_mode_is_app_direct_present_touch_counter(
                         &config.orange_gpu_mode,
