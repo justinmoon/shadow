@@ -325,24 +325,6 @@ impl ShadowGuestCompositor {
     }
 
     pub(crate) fn insert_touch_source(&mut self, event_loop: &mut EventLoop<Self>) {
-        let touch_device = match touch::detect_touch_device() {
-            Ok(device) => device,
-            Err(error) => {
-                tracing::warn!("[shadow-guest-compositor] touch-unavailable: {error}");
-                return;
-            }
-        };
-
-        tracing::info!(
-            "[shadow-guest-compositor] touch-ready device={} name={} range={}..={}x{}..={}",
-            touch_device.path.display(),
-            touch_device.name,
-            touch_device.x_min,
-            touch_device.x_max,
-            touch_device.y_min,
-            touch_device.y_max
-        );
-
         let (sender, receiver) = channel::channel();
         event_loop
             .handle()
@@ -353,7 +335,7 @@ impl ShadowGuestCompositor {
                 }
             })
             .expect("insert touch source");
-        touch::spawn_touch_reader(touch_device, sender);
+        touch::spawn_touch_source(sender);
     }
 
     pub(crate) fn insert_synthetic_touch_source(&mut self, event_loop: &mut EventLoop<Self>) {

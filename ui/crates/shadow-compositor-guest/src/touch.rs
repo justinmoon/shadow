@@ -5,7 +5,7 @@ use std::{
     process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
     thread,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -195,6 +195,47 @@ pub fn spawn_touch_reader(info: TouchDeviceInfo, sender: Sender<TouchInputEvent>
         .expect("spawn touch reader");
 }
 
+pub fn spawn_touch_source(sender: Sender<TouchInputEvent>) {
+    thread::Builder::new()
+        .name(String::from("shadow-guest-touch-detect"))
+        .spawn(move || {
+            let mut attempts = 0_u64;
+            loop {
+                attempts = attempts.saturating_add(1);
+                match detect_touch_device() {
+                    Ok(touch_device) => {
+                        tracing::info!(
+                            "[shadow-guest-compositor] touch-ready device={} name={} range={}..={}x{}..={} attempts={}",
+                            touch_device.path.display(),
+                            touch_device.name,
+                            touch_device.x_min,
+                            touch_device.x_max,
+                            touch_device.y_min,
+                            touch_device.y_max,
+                            attempts
+                        );
+                        spawn_touch_reader(touch_device, sender);
+                        return;
+                    }
+                    Err(error) => {
+                        if attempts == 1 {
+                            tracing::warn!(
+                                "[shadow-guest-compositor] touch-unavailable: {error}; retrying"
+                            );
+                        } else if attempts % 10 == 0 {
+                            tracing::warn!(
+                                "[shadow-guest-compositor] touch-unavailable-retry attempts={} error={error}",
+                                attempts
+                            );
+                        }
+                    }
+                }
+                thread::sleep(TOUCH_DETECT_RETRY_INTERVAL);
+            }
+        })
+        .expect("spawn touch detector");
+}
+
 pub fn synthetic_touch_event(
     phase: TouchPhase,
     normalized_x_millis: u16,
@@ -356,6 +397,7 @@ fn run_touch_reader(info: TouchDeviceInfo, sender: Sender<TouchInputEvent>) -> R
 
 const INPUT_EVENT_SIZE: usize = 24;
 const MAX_TOUCH_SLOTS: usize = 10;
+const TOUCH_DETECT_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 const EV_SYN: u16 = 0x00;
 const EV_ABS: u16 = 0x03;
 const SYN_REPORT: u16 = 0x00;

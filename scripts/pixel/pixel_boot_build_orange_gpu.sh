@@ -46,8 +46,10 @@ LOG_KMSG="${PIXEL_HELLO_INIT_LOG_KMSG:-true}"
 LOG_PMSG="${PIXEL_HELLO_INIT_LOG_PMSG:-true}"
 RUN_TOKEN="${PIXEL_HELLO_INIT_RUN_TOKEN:-${PIXEL_ORANGE_GPU_RUN_TOKEN:-}}"
 DRI_BOOTSTRAP="${PIXEL_ORANGE_GPU_DRI_BOOTSTRAP:-}"
+INPUT_BOOTSTRAP="${PIXEL_ORANGE_GPU_INPUT_BOOTSTRAP:-none}"
 FIRMWARE_BOOTSTRAP="${PIXEL_ORANGE_GPU_FIRMWARE_BOOTSTRAP:-none}"
 GPU_FIRMWARE_DIR="${PIXEL_ORANGE_GPU_FIRMWARE_DIR:-}"
+INPUT_MODULE_DIR="${PIXEL_ORANGE_GPU_INPUT_MODULE_DIR:-}"
 CAMERA_LINKER_CAPSULE_DIR="${PIXEL_CAMERA_LINKER_CAPSULE_DIR:-}"
 CAMERA_HAL_BIONIC_PROBE_BINARY="${PIXEL_CAMERA_HAL_BIONIC_PROBE_BINARY:-}"
 CAMERA_HAL_CAMERA_ID="${PIXEL_CAMERA_HAL_CAMERA_ID:-0}"
@@ -91,6 +93,7 @@ APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH=""
 APP_DIRECT_PRESENT_TS_INPUT_PATH=""
 APP_DIRECT_PRESENT_TS_CACHE_DIR=""
 APP_DIRECT_PRESENT_TS_RENDERER="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_TS_RENDERER:-gpu}"
+APP_DIRECT_PRESENT_MANUAL_TOUCH="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_MANUAL_TOUCH:-false}"
 ORANGE_GPU_BUNDLE_ARCHIVE_NAME="orange-gpu.tar.xz"
 ORANGE_GPU_BUNDLE_ARCHIVE_PATH="/orange-gpu.tar.xz"
 STAGED_GPU_BUNDLE_ARCHIVE=""
@@ -130,8 +133,11 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--log-kmsg true|false]
                                                     [--log-pmsg true|false]
                                                     [--dri-bootstrap none|sunfish-card0-renderD128|sunfish-card0-renderD128-kgsl3d0]
+                                                    [--input-bootstrap none|sunfish-touch-event2]
+                                                    [--input-module-dir DIR]
                                                     [--firmware-bootstrap none|ramdisk-lib-firmware]
                                                     [--firmware-dir DIR]
+                                                    [--app-direct-present-manual-touch true|false]
                                                     [--keep-work-dir]
 
 Build a private stock-kernel sunfish boot.img whose real first-stage userspace is
@@ -809,6 +815,20 @@ assert_dri_bootstrap_word() {
   esac
 }
 
+assert_input_bootstrap_word() {
+  local value
+  value="${1:?assert_input_bootstrap_word requires a value}"
+
+  case "$value" in
+    none|sunfish-touch-event2)
+      ;;
+    *)
+      echo "pixel_boot_build_orange_gpu: unsupported input-bootstrap value: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
 assert_firmware_bootstrap_word() {
   local value
   value="${1:?assert_firmware_bootstrap_word requires a value}"
@@ -963,6 +983,9 @@ EOF
   if [[ "$FIRMWARE_BOOTSTRAP" != "none" ]]; then
     printf 'firmware_bootstrap=%s\n' "$FIRMWARE_BOOTSTRAP" >>"$output_path"
   fi
+  if [[ "$INPUT_BOOTSTRAP" != "none" ]]; then
+    printf 'input_bootstrap=%s\n' "$INPUT_BOOTSTRAP" >>"$output_path"
+  fi
   if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
     printf 'orange_gpu_bundle_archive_path=%s\n' "$ORANGE_GPU_BUNDLE_ARCHIVE_PATH" >>"$output_path"
   fi
@@ -1046,7 +1069,8 @@ render_app_direct_present_startup_config() {
     "$APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH" \
     "$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH" \
     "$ORANGE_GPU_MODE" \
-    "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" <<'PY'
+    "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" \
+    "$APP_DIRECT_PRESENT_MANUAL_TOUCH" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1063,11 +1087,14 @@ from pathlib import Path
     system_binary_path,
     orange_gpu_mode,
     frame_artifact_path,
-) = sys.argv[1:12]
+    manual_touch_value,
+) = sys.argv[1:13]
 touch_counter_mode = orange_gpu_mode in {
     "app-direct-present-touch-counter",
     "app-direct-present-runtime-touch-counter",
 }
+manual_touch_mode = manual_touch_value.lower() in {"1", "true", "yes", "on"}
+interactive_touch_mode = touch_counter_mode or manual_touch_mode
 env_assignments = []
 if client_kind == "rust":
     env_assignments.append({"key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK", "value": "1"})
@@ -1096,6 +1123,13 @@ elif client_kind == "typescript":
             },
         ]
     )
+    if orange_gpu_mode == "app-direct-present-runtime-touch-counter":
+        env_assignments.append(
+            {
+                "key": "SHADOW_BLITZ_TOUCH_ANYWHERE_TARGET",
+                "value": app_id,
+            }
+        )
 else:
     raise SystemExit(f"unsupported app-direct-present client kind: {client_kind}")
 client = {
@@ -1114,25 +1148,26 @@ payload = {
     "compositor": {
         "transport": "direct",
         "enableDrm": True,
-        "exitOnFirstFrame": not touch_counter_mode,
+        "exitOnFirstFrame": not interactive_touch_mode,
         "frameCapture": {
-            "mode": "every-frame" if touch_counter_mode else "first-frame",
+            "mode": "every-frame" if interactive_touch_mode else "first-frame",
             "artifactPath": frame_artifact_path,
             "checksum": True,
         },
     },
 }
-if touch_counter_mode:
-    payload["touch"] = {
-        "latencyTrace": True,
-        "syntheticTap": {
+if interactive_touch_mode:
+    touch = {"latencyTrace": True}
+    if touch_counter_mode and not manual_touch_mode:
+        touch["syntheticTap"] = {
             "normalizedXMillis": 500,
             "normalizedYMillis": 500,
             "afterFirstFrameDelayMs": 250,
             "holdMs": 50,
-        },
-        "exitAfterPresent": True,
-    }
+        }
+    if touch_counter_mode:
+        touch["exitAfterPresent"] = True
+    payload["touch"] = touch
 Path(output_path).write_text(
     json.dumps(payload, indent=2, sort_keys=False) + "\n",
     encoding="utf-8",
@@ -1427,6 +1462,9 @@ write_metadata() {
     "$LOG_KMSG" \
     "$LOG_PMSG" \
     "$DRI_BOOTSTRAP" \
+    "$INPUT_BOOTSTRAP" \
+    "$INPUT_MODULE_DIR" \
+    "${STAGED_INPUT_MODULE_DIR:-}" \
     "$FIRMWARE_BOOTSTRAP" \
     "$GPU_FIRMWARE_DIR" \
     "${STAGED_GPU_FIRMWARE_DIR:-}" \
@@ -1445,7 +1483,8 @@ write_metadata() {
     "$APP_DIRECT_PRESENT_CLIENT_KIND" \
     "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" \
     "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH" \
-    "$APP_DIRECT_PRESENT_TS_RENDERER" <<'PY'
+    "$APP_DIRECT_PRESENT_TS_RENDERER" \
+    "$APP_DIRECT_PRESENT_MANUAL_TOUCH" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1479,6 +1518,9 @@ from pathlib import Path
     log_kmsg,
     log_pmsg,
     dri_bootstrap,
+    input_bootstrap,
+    input_module_dir,
+    input_module_staged_dir,
     firmware_bootstrap,
     gpu_firmware_dir,
     gpu_firmware_staged_dir,
@@ -1498,6 +1540,7 @@ from pathlib import Path
     app_direct_present_runtime_bundle_env,
     app_direct_present_runtime_bundle_path,
     app_direct_present_typescript_renderer,
+    app_direct_present_manual_touch,
 ) = sys.argv[1:]
 
 
@@ -1538,6 +1581,9 @@ payload_json = {
     "log_kmsg": parse_bool(log_kmsg),
     "log_pmsg": parse_bool(log_pmsg),
     "dri_bootstrap": dri_bootstrap,
+    "input_bootstrap": input_bootstrap,
+    "input_module_dir": input_module_dir,
+    "input_module_staged_dir": input_module_staged_dir,
     "firmware_bootstrap": firmware_bootstrap,
     "gpu_firmware_dir": gpu_firmware_dir,
     "gpu_firmware_staged_dir": gpu_firmware_staged_dir,
@@ -1592,6 +1638,9 @@ if orange_gpu_mode in {"app-direct-present", "app-direct-present-runtime-touch-c
     payload_json["app_direct_present_client_kind"] = app_direct_present_client_kind
     payload_json["app_direct_present_runtime_bundle_env"] = app_direct_present_runtime_bundle_env
     payload_json["app_direct_present_runtime_bundle_path"] = app_direct_present_runtime_bundle_path
+    payload_json["app_direct_present_manual_touch"] = parse_bool(
+        app_direct_present_manual_touch
+    )
     if app_direct_present_client_kind == "typescript":
         payload_json["app_direct_present_typescript_renderer"] = (
             app_direct_present_typescript_renderer
@@ -1647,6 +1696,22 @@ stage_gpu_firmware_tree() {
 
   mkdir -p "$staged_dir"
   cp -R "$source_dir"/. "$staged_dir"/
+}
+
+stage_input_module_tree() {
+  local source_dir staged_dir module
+  source_dir="${1:?stage_input_module_tree requires a source dir}"
+  staged_dir="${2:?stage_input_module_tree requires a staged dir}"
+
+  mkdir -p "$staged_dir"
+  for module in heatmap.ko ftm5.ko; do
+    [[ -f "$source_dir/$module" ]] || {
+      echo "pixel_boot_build_orange_gpu: input module dir missing $module: $source_dir" >&2
+      exit 1
+    }
+    cp "$source_dir/$module" "$staged_dir/$module"
+    chmod 0644 "$staged_dir/$module"
+  done
 }
 
 stage_gpu_bundle() {
@@ -1805,6 +1870,14 @@ while [[ $# -gt 0 ]]; do
       DRI_BOOTSTRAP="${2:?missing value for --dri-bootstrap}"
       shift 2
       ;;
+    --input-bootstrap)
+      INPUT_BOOTSTRAP="${2:?missing value for --input-bootstrap}"
+      shift 2
+      ;;
+    --input-module-dir)
+      INPUT_MODULE_DIR="${2:?missing value for --input-module-dir}"
+      shift 2
+      ;;
     --firmware-bootstrap)
       FIRMWARE_BOOTSTRAP="${2:?missing value for --firmware-bootstrap}"
       shift 2
@@ -1827,6 +1900,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --camera-hal-call-open)
       CAMERA_HAL_CALL_OPEN="${2:?missing value for --camera-hal-call-open}"
+      shift 2
+      ;;
+    --app-direct-present-manual-touch)
+      APP_DIRECT_PRESENT_MANUAL_TOUCH="${2:?missing value for --app-direct-present-manual-touch}"
       shift 2
       ;;
     --keep-work-dir)
@@ -1947,6 +2024,7 @@ if [[ ! "$CAMERA_HAL_CAMERA_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
   echo "pixel_boot_build_orange_gpu: camera HAL camera id must be a non-empty safe token: $CAMERA_HAL_CAMERA_ID" >&2
   exit 1
 fi
+assert_bool_word app-direct-present-manual-touch "$APP_DIRECT_PRESENT_MANUAL_TOUCH"
 
 if [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" && "$MOUNT_SYS" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: c-kgsl-open-readonly-firmware-helper-smoke requires --mount-sys true so hello-init can service /sys/class/firmware requests" >&2
@@ -2003,6 +2081,22 @@ if [[ "$ORANGE_GPU_FIRMWARE_HELPER" == "true" && "$MOUNT_SYS" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: orange-gpu-firmware-helper requires --mount-sys true" >&2
   exit 1
 fi
+if [[ "$INPUT_BOOTSTRAP" != "none" && "$MOUNT_SYS" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: input-bootstrap requires --mount-sys true so hello-init can discover /sys/class/input devices" >&2
+  exit 1
+fi
+if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" && "$FIRMWARE_BOOTSTRAP" != "ramdisk-lib-firmware" ]]; then
+  echo "pixel_boot_build_orange_gpu: input-bootstrap sunfish-touch-event2 requires --firmware-bootstrap ramdisk-lib-firmware so hello-init can service touch firmware" >&2
+  exit 1
+fi
+if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" && -z "$INPUT_MODULE_DIR" ]]; then
+  echo "pixel_boot_build_orange_gpu: input-bootstrap sunfish-touch-event2 requires --input-module-dir with heatmap.ko and ftm5.ko" >&2
+  exit 1
+fi
+if [[ "$INPUT_BOOTSTRAP" == "none" && -n "$INPUT_MODULE_DIR" ]]; then
+  echo "pixel_boot_build_orange_gpu: input-module-dir requires --input-bootstrap sunfish-touch-event2" >&2
+  exit 1
+fi
 if [[ "$ORANGE_GPU_FIRMWARE_HELPER" == "true" && "$FIRMWARE_BOOTSTRAP" != "ramdisk-lib-firmware" ]]; then
   echo "pixel_boot_build_orange_gpu: orange-gpu-firmware-helper requires --firmware-bootstrap ramdisk-lib-firmware" >&2
   exit 1
@@ -2015,6 +2109,10 @@ if [[ "$FIRMWARE_BOOTSTRAP" != "none" && -z "$GPU_FIRMWARE_DIR" ]]; then
   echo "pixel_boot_build_orange_gpu: firmware-bootstrap requires --firmware-dir" >&2
   exit 1
 fi
+if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" && -n "$GPU_FIRMWARE_DIR" && ! -f "$GPU_FIRMWARE_DIR/ftm5_fw.ftb" ]]; then
+  echo "pixel_boot_build_orange_gpu: input-bootstrap sunfish-touch-event2 requires ftm5_fw.ftb in --firmware-dir" >&2
+  exit 1
+fi
 if [[ -z "$DRI_BOOTSTRAP" ]]; then
   if [[ "$PRELUDE" == "orange-init" && "$ORANGE_GPU_MODE" == "bundle-smoke" ]]; then
     DRI_BOOTSTRAP="sunfish-card0-renderD128"
@@ -2025,6 +2123,7 @@ if [[ -z "$DRI_BOOTSTRAP" ]]; then
   fi
 fi
 assert_dri_bootstrap_word "$DRI_BOOTSTRAP"
+assert_input_bootstrap_word "$INPUT_BOOTSTRAP"
 if [[ -z "$RUN_TOKEN" ]]; then
   RUN_TOKEN="$(generate_run_token)"
 fi
@@ -2156,7 +2255,7 @@ fi
 
 assert_gpu_bundle_variant "$GPU_BUNDLE_DIR"
 STAGED_GPU_BUNDLE_DIR="$WORK_DIR/orange-gpu-bundle"
-STAGED_GPU_FIRMWARE_PARENT_DIR=""
+STAGED_LIB_PARENT_DIR=""
 stage_gpu_bundle "$GPU_BUNDLE_DIR" "$STAGED_GPU_BUNDLE_DIR"
 assert_gpu_bundle_variant "$STAGED_GPU_BUNDLE_DIR"
 if [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
@@ -2195,6 +2294,7 @@ if [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-d
 fi
 
 STAGED_GPU_FIRMWARE_DIR=""
+STAGED_INPUT_MODULE_DIR=""
 if [[ "$FIRMWARE_BOOTSTRAP" == "ramdisk-lib-firmware" ]]; then
   [[ -d "$GPU_FIRMWARE_DIR" ]] || {
     echo "pixel_boot_build_orange_gpu: firmware dir not found: $GPU_FIRMWARE_DIR" >&2
@@ -2204,10 +2304,20 @@ if [[ "$FIRMWARE_BOOTSTRAP" == "ramdisk-lib-firmware" ]]; then
     echo "pixel_boot_build_orange_gpu: firmware dir is empty: $GPU_FIRMWARE_DIR" >&2
     exit 1
   fi
-  STAGED_GPU_FIRMWARE_PARENT_DIR="$WORK_DIR/lib-dir"
-  STAGED_GPU_FIRMWARE_DIR="$WORK_DIR/lib-firmware"
-  mkdir -p "$STAGED_GPU_FIRMWARE_PARENT_DIR"
+  STAGED_LIB_PARENT_DIR="$WORK_DIR/lib-dir"
+  STAGED_GPU_FIRMWARE_DIR="$STAGED_LIB_PARENT_DIR/firmware"
+  mkdir -p "$STAGED_LIB_PARENT_DIR"
   stage_gpu_firmware_tree "$GPU_FIRMWARE_DIR" "$STAGED_GPU_FIRMWARE_DIR"
+fi
+if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" ]]; then
+  [[ -d "$INPUT_MODULE_DIR" ]] || {
+    echo "pixel_boot_build_orange_gpu: input module dir not found: $INPUT_MODULE_DIR" >&2
+    exit 1
+  }
+  STAGED_LIB_PARENT_DIR="${STAGED_LIB_PARENT_DIR:-$WORK_DIR/lib-dir}"
+  STAGED_INPUT_MODULE_DIR="$STAGED_LIB_PARENT_DIR/modules"
+  mkdir -p "$STAGED_LIB_PARENT_DIR"
+  stage_input_module_tree "$INPUT_MODULE_DIR" "$STAGED_INPUT_MODULE_DIR"
 fi
 
 CONFIG_PATH="$WORK_DIR/$CONFIG_ENTRY"
@@ -2237,8 +2347,10 @@ if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
 else
   append_tree_add_specs "$STAGED_GPU_BUNDLE_DIR" "$PAYLOAD_ROOT" build_args
 fi
+if [[ -n "$STAGED_LIB_PARENT_DIR" ]]; then
+  build_args+=(--add "lib=$STAGED_LIB_PARENT_DIR")
+fi
 if [[ "$FIRMWARE_BOOTSTRAP" == "ramdisk-lib-firmware" ]]; then
-  build_args+=(--add "lib=$STAGED_GPU_FIRMWARE_PARENT_DIR")
   append_tree_add_specs "$STAGED_GPU_FIRMWARE_DIR" "lib/firmware" build_args
 fi
 if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
@@ -2247,6 +2359,9 @@ if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
       append_tree_upsert_specs "$CAMERA_LINKER_CAPSULE_DIR/$capsule_root" "$capsule_root" build_args
     fi
   done
+fi
+if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" ]]; then
+  append_tree_add_specs "$STAGED_INPUT_MODULE_DIR" "lib/modules" build_args
 fi
 
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
@@ -2394,9 +2509,17 @@ elif [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
 elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" ]]; then
   printf 'GPU proof: app-owned %s surface imported and presented with no shell through the Rust boot seam\n' "$APP_DIRECT_PRESENT_APP_ID"
 elif [[ "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" ]]; then
-  printf 'GPU proof: app-owned rust-demo surface increments from injected touch and presents a post-touch frame through the Rust boot seam\n'
+  if [[ "$APP_DIRECT_PRESENT_MANUAL_TOUCH" == "true" ]]; then
+    printf 'GPU proof: app-owned rust-demo surface increments from physical touch and presents a post-touch frame through the Rust boot seam\n'
+  else
+    printf 'GPU proof: app-owned rust-demo surface increments from injected touch and presents a post-touch frame through the Rust boot seam\n'
+  fi
 elif [[ "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
-  printf 'GPU proof: app-owned TypeScript counter surface increments from injected touch and presents a post-touch frame through the Rust boot seam\n'
+  if [[ "$APP_DIRECT_PRESENT_MANUAL_TOUCH" == "true" ]]; then
+    printf 'GPU proof: app-owned TypeScript counter surface increments from physical touch and presents a post-touch frame through the Rust boot seam\n'
+  else
+    printf 'GPU proof: app-owned TypeScript counter surface increments from injected touch and presents a post-touch frame through the Rust boot seam\n'
+  fi
 else
   printf 'GPU scene: %s\n' "$(gpu_scene_value)"
 fi
@@ -2450,6 +2573,11 @@ if [[ "$FIRMWARE_BOOTSTRAP" != "none" ]]; then
   printf 'GPU firmware staged dir: %s\n' "$STAGED_GPU_FIRMWARE_DIR"
 fi
 printf 'DRI bootstrap: %s\n' "$DRI_BOOTSTRAP"
+printf 'Input bootstrap: %s\n' "$INPUT_BOOTSTRAP"
+if [[ "$INPUT_BOOTSTRAP" != "none" ]]; then
+  printf 'Input module dir: %s\n' "$INPUT_MODULE_DIR"
+  printf 'Input module staged dir: %s\n' "$STAGED_INPUT_MODULE_DIR"
+fi
 printf 'Metadata path: %s\n' "$(hello_init_metadata_path "$OUTPUT_IMAGE")"
 if [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
   printf 'Compositor session path: %s\n' "$COMPOSITOR_SCENE_SESSION_PATH"
@@ -2469,6 +2597,7 @@ elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app
     printf 'App runtime bundle path: %s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH"
     printf 'App system binary path: %s\n' "$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH"
   fi
+  printf 'App direct present manual touch: %s\n' "$APP_DIRECT_PRESENT_MANUAL_TOUCH"
 fi
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
   printf 'Kept orange-gpu workdir: %s\n' "$WORK_DIR"

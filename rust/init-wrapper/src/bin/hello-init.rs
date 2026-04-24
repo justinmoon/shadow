@@ -14,6 +14,7 @@ mod linux {
     use std::io::{self, BufReader, BufWriter, Read, Write};
     use std::os::unix::ffi::OsStringExt;
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+    use std::os::unix::io::AsRawFd;
     use std::path::{Path, PathBuf};
     use std::process::{self, Child, Command, Stdio};
     use std::sync::{
@@ -117,6 +118,7 @@ mod linux {
         ("a615_zap.mdt", "a615-zap-mdt"),
         ("a615_zap.b02", "a615-zap-b02"),
     ];
+    const SUNFISH_TOUCH_MODULES: [&str; 2] = ["heatmap.ko", "ftm5.ko"];
 
     static LOG_KMSG_ENABLED: AtomicBool = AtomicBool::new(true);
     static LOG_PMSG_ENABLED: AtomicBool = AtomicBool::new(true);
@@ -147,6 +149,7 @@ mod linux {
         run_token: String,
         dev_mount: String,
         dri_bootstrap: String,
+        input_bootstrap: String,
         firmware_bootstrap: String,
         mount_dev: bool,
         mount_proc: bool,
@@ -182,6 +185,7 @@ mod linux {
                 run_token: String::new(),
                 dev_mount: "devtmpfs".to_string(),
                 dri_bootstrap: "none".to_string(),
+                input_bootstrap: "none".to_string(),
                 firmware_bootstrap: "none".to_string(),
                 mount_dev: true,
                 mount_proc: true,
@@ -863,6 +867,11 @@ mod linux {
                         config.dri_bootstrap = parsed;
                     }
                 }
+                "input_bootstrap" => {
+                    if let Some(parsed) = parse_allowed(value, &["none", "sunfish-touch-event2"]) {
+                        config.input_bootstrap = parsed;
+                    }
+                }
                 "firmware_bootstrap" => {
                     if let Some(parsed) = parse_allowed(value, &["none", "ramdisk-lib-firmware"]) {
                         config.firmware_bootstrap = parsed;
@@ -1006,6 +1015,10 @@ mod linux {
         let dir = File::open(parent)?;
         dir.sync_all()?;
         Ok(())
+    }
+
+    fn sync_directory(path: &Path) -> io::Result<()> {
+        File::open(path)?.sync_all()
     }
 
     fn write_metadata_stage(runtime: &mut MetadataStageRuntime, value: &str) {
@@ -2713,10 +2726,27 @@ mod linux {
             runtime.write_failed = true;
             return;
         }
-        if ensure_directory(Path::new(METADATA_ROOT), 0o755).is_err()
-            || ensure_directory(Path::new(METADATA_BY_TOKEN_ROOT), 0o755).is_err()
-            || ensure_directory(&runtime.stage_dir, 0o755).is_err()
-        {
+        if ensure_directory(Path::new(METADATA_ROOT), 0o755).is_err() {
+            runtime.write_failed = true;
+            return;
+        }
+        if sync_directory(Path::new(METADATA_MOUNT_PATH)).is_err() {
+            runtime.write_failed = true;
+            return;
+        }
+        if ensure_directory(Path::new(METADATA_BY_TOKEN_ROOT), 0o755).is_err() {
+            runtime.write_failed = true;
+            return;
+        }
+        if sync_directory(Path::new(METADATA_ROOT)).is_err() {
+            runtime.write_failed = true;
+            return;
+        }
+        if ensure_directory(&runtime.stage_dir, 0o755).is_err() {
+            runtime.write_failed = true;
+            return;
+        }
+        if sync_directory(Path::new(METADATA_BY_TOKEN_ROOT)).is_err() {
             runtime.write_failed = true;
             return;
         }
@@ -2867,6 +2897,65 @@ mod linux {
         io::copy(&mut firmware_file, &mut data_file)?;
         loading_file.write_all(b"0")?;
         Ok(())
+    }
+
+    fn ramdisk_firmware_path(filename: &str) -> Option<PathBuf> {
+        if filename.is_empty() || filename.contains('/') || filename.contains("..") {
+            return None;
+        }
+        Some(Path::new("/lib/firmware").join(filename))
+    }
+
+    fn service_available_ramdisk_firmware_requests(serviced: &mut Vec<String>) {
+        let Ok(entries) = fs::read_dir(FIRMWARE_CLASS_ROOT) else {
+            return;
+        };
+
+        for entry in entries.flatten() {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            if serviced.iter().any(|value| value == &filename) {
+                continue;
+            }
+            let Some(firmware_path) = ramdisk_firmware_path(&filename) else {
+                continue;
+            };
+            if !firmware_path.is_file() {
+                continue;
+            }
+            match service_firmware_request_from_ramdisk(&filename) {
+                Ok(()) => {
+                    serviced.push(filename.clone());
+                    append_wrapper_log(&format!("firmware-helper-ramdisk-ok filename={filename}"));
+                }
+                Err(error) => {
+                    append_wrapper_log(&format!(
+                        "firmware-helper-ramdisk-failed filename={} error={}",
+                        filename, error
+                    ));
+                }
+            }
+        }
+    }
+
+    fn run_ramdisk_firmware_any_helper_loop(stop: Arc<AtomicBool>, label: &'static str) {
+        let deadline = Instant::now() + Duration::from_secs(FIRMWARE_HELPER_TIMEOUT_SECONDS);
+        let mut serviced = Vec::new();
+        append_wrapper_log(&format!("{label}-firmware-helper-waiting"));
+
+        while !stop.load(Ordering::Relaxed) && Instant::now() < deadline {
+            service_available_ramdisk_firmware_requests(&mut serviced);
+            thread::sleep(Duration::from_millis(FIRMWARE_HELPER_POLL_MILLIS));
+        }
+
+        let outcome = if stop.load(Ordering::Relaxed) {
+            "stopped"
+        } else {
+            "timeout"
+        };
+        append_wrapper_log(&format!(
+            "{label}-firmware-helper-{outcome} serviced={}",
+            serviced.join(",")
+        ));
     }
 
     fn run_ramdisk_firmware_helper_loop(
@@ -3873,6 +3962,163 @@ mod linux {
         Ok(())
     }
 
+    fn insert_kernel_module_from_path(path: &Path) -> io::Result<()> {
+        let params = CString::new("").unwrap();
+        let file = File::open(path)?;
+        let rc =
+            unsafe { libc::syscall(libc::SYS_finit_module, file.as_raw_fd(), params.as_ptr(), 0) };
+        if rc == 0 {
+            return Ok(());
+        }
+
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EEXIST) {
+            return Ok(());
+        }
+        if error.raw_os_error() != Some(libc::ENOSYS) {
+            return Err(error);
+        }
+
+        let module = fs::read(path)?;
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_init_module,
+                module.as_ptr(),
+                module.len(),
+                params.as_ptr(),
+            )
+        };
+        if rc == 0 {
+            Ok(())
+        } else {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EEXIST) {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
+    }
+
+    fn load_sunfish_touch_modules() -> io::Result<()> {
+        for module in SUNFISH_TOUCH_MODULES {
+            let module_path = Path::new("/lib/modules").join(module);
+            append_wrapper_log(&format!(
+                "input-bootstrap-module-loading module={} path={}",
+                module,
+                module_path.display()
+            ));
+            insert_kernel_module_from_path(&module_path).map_err(|error| {
+                append_wrapper_log(&format!(
+                    "input-bootstrap-module-failed module={} error={}",
+                    module, error
+                ));
+                error
+            })?;
+            append_wrapper_log(&format!("input-bootstrap-module-ready module={module}"));
+        }
+        Ok(())
+    }
+
+    fn bootstrap_tmpfs_input_runtime(config: &Config) -> io::Result<()> {
+        if !config.mount_dev
+            || config.dev_mount != "tmpfs"
+            || config.input_bootstrap != "sunfish-touch-event2"
+        {
+            return Ok(());
+        }
+
+        ensure_directory(Path::new("/dev/input"), 0o755)?;
+        if !Path::new("/lib/firmware/ftm5_fw.ftb").is_file() {
+            append_wrapper_log("input-bootstrap-firmware-missing path=/lib/firmware/ftm5_fw.ftb");
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "missing sunfish touch firmware",
+            ));
+        }
+
+        let firmware_stop = Arc::new(AtomicBool::new(false));
+        let firmware_helper = {
+            let thread_stop = Arc::clone(&firmware_stop);
+            thread::spawn(move || run_ramdisk_firmware_any_helper_loop(thread_stop, "input"))
+        };
+        if let Err(error) = load_sunfish_touch_modules() {
+            firmware_stop.store(true, Ordering::Relaxed);
+            let _ = firmware_helper.join();
+            return Err(error);
+        }
+
+        for attempt in 1..=120 {
+            if let Some((event_name, major, minor)) = find_sunfish_touch_event()? {
+                let device_path = Path::new("/dev/input").join(&event_name);
+                ensure_char_device(&device_path, 0o660, major, minor)?;
+                append_wrapper_log(&format!(
+                    "input-bootstrap-ready mode={} device={} major={} minor={} attempts={}",
+                    config.input_bootstrap, event_name, major, minor, attempt
+                ));
+                firmware_stop.store(true, Ordering::Relaxed);
+                let _ = firmware_helper.join();
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        firmware_stop.store(true, Ordering::Relaxed);
+        let _ = firmware_helper.join();
+        append_wrapper_log(&format!(
+            "input-bootstrap-timeout mode={} waited_ms=12000",
+            config.input_bootstrap
+        ));
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "sunfish touch input event did not appear",
+        ))
+    }
+
+    fn find_sunfish_touch_event() -> io::Result<Option<(String, u64, u64)>> {
+        let entries = match fs::read_dir("/sys/class/input") {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+
+        for entry in entries {
+            let entry = entry?;
+            let event_name = entry.file_name();
+            let Some(event_name) = event_name.to_str() else {
+                continue;
+            };
+            if !event_name.starts_with("event") {
+                continue;
+            }
+
+            let event_path = entry.path();
+            let device_path = event_path.join("device");
+            let name = read_trimmed(&device_path.join("name")).unwrap_or_default();
+            let properties = read_trimmed(&device_path.join("properties")).unwrap_or_default();
+            if name != "fts" || properties != "2" {
+                continue;
+            }
+
+            let dev = read_trimmed(&event_path.join("dev"))?;
+            let Some((major, minor)) = parse_major_minor(&dev) else {
+                continue;
+            };
+            return Ok(Some((event_name.to_string(), major, minor)));
+        }
+
+        Ok(None)
+    }
+
+    fn read_trimmed(path: &Path) -> io::Result<String> {
+        Ok(fs::read_to_string(path)?.trim().to_string())
+    }
+
+    fn parse_major_minor(value: &str) -> Option<(u64, u64)> {
+        let (major, minor) = value.trim().split_once(':')?;
+        Some((major.parse().ok()?, minor.parse().ok()?))
+    }
+
     fn raw_reboot(cmd: libc::c_int, arg: Option<&str>) -> io::Result<()> {
         let arg_c = arg.map(|value| CString::new(value).unwrap());
         let arg_ptr = arg_c
@@ -4000,6 +4246,9 @@ mod linux {
                 process::exit(1);
             }
         }
+        if bootstrap_tmpfs_input_runtime(&config).is_err() {
+            process::exit(1);
+        }
         if bootstrap_tmpfs_dri_runtime(&config).is_err() {
             process::exit(1);
         }
@@ -4008,7 +4257,7 @@ mod linux {
         }
 
         append_wrapper_log(&format!(
-            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} firmware_bootstrap={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
+            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
             config.payload,
             config.prelude,
             config.orange_gpu_mode,
@@ -4025,6 +4274,7 @@ mod linux {
             run_token_or_unset(&config),
             config.dev_mount,
             config.dri_bootstrap,
+            config.input_bootstrap,
             config.firmware_bootstrap,
             bool_word(config.mount_dev),
             bool_word(config.mount_proc),

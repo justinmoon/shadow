@@ -2645,6 +2645,8 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_parent_probe_interval_secs='
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'orange_gpu_metadata_stage_breadcrumb='
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'firmware_bootstrap='
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_INPUT_MODULE_DIR:-'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--input-module-dir'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Prelude: %s\\n' \"\$PRELUDE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU mode: %s\\n' \"\$ORANGE_GPU_MODE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU launch delay seconds: %s\\n' \"\$ORANGE_GPU_LAUNCH_DELAY_SECS\""
@@ -2670,6 +2672,8 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Derived success postlude: %s\\n' \"\$(success_postlude_value)\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Visible checkpoint hold seconds: %s\\n' \"\$(checkpoint_hold_seconds_value)\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_DRI_BOOTSTRAP:-'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'PIXEL_ORANGE_GPU_INPUT_BOOTSTRAP:-none'
+assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--app-direct-present-manual-touch'
 
 default_orange_gpu_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -2914,6 +2918,11 @@ printf 'sqe-firmware\n' >"$GPU_FIRMWARE_DIR/a630_sqe.fw"
 printf 'gmu-firmware\n' >"$GPU_FIRMWARE_DIR/a618_gmu.bin"
 printf 'zap-metadata\n' >"$GPU_FIRMWARE_DIR/a615_zap.mdt"
 printf 'zap-segment\n' >"$GPU_FIRMWARE_DIR/a615_zap.b02"
+printf 'fts-firmware\n' >"$GPU_FIRMWARE_DIR/ftm5_fw.ftb"
+INPUT_MODULE_DIR="$TMP_DIR/input-modules"
+mkdir -p "$INPUT_MODULE_DIR"
+printf 'heatmap-module\n' >"$INPUT_MODULE_DIR/heatmap.ko"
+printf 'ftm5-module\n' >"$INPUT_MODULE_DIR/ftm5.ko"
 
 c_kgsl_firmware_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -2953,12 +2962,48 @@ assert_cpio_entry_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img" lib/firm
 assert_cpio_entry_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img" lib/firmware/a618_gmu.bin $'gmu-firmware\n'
 assert_cpio_entry_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img" lib/firmware/a615_zap.mdt $'zap-metadata\n'
 assert_cpio_entry_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img" lib/firmware/a615_zap.b02 $'zap-segment\n'
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img" lib/firmware/ftm5_fw.ftb $'fts-firmware\n'
 assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" orange_gpu_mode "c-kgsl-open-readonly-smoke"
 assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" firmware_bootstrap "ramdisk-lib-firmware"
 assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" gpu_firmware_dir "$GPU_FIRMWARE_DIR"
 assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" success_postlude "none"
 assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" checkpoint_hold_seconds "1"
 assert_json_field_equals "$TMP_DIR/orange-gpu-c-kgsl-firmware-boot.img.hello-init.json" orange_gpu_watchdog_timeout_secs "12"
+
+input_bootstrap_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-input-bootstrap-boot.img" \
+      --hold-secs 7 \
+      --prelude orange-init \
+      --prelude-hold-secs 2 \
+      --orange-gpu-mode c-kgsl-open-readonly-smoke \
+      --orange-gpu-watchdog-timeout-secs 12 \
+      --reboot-target bootloader \
+      --run-token orange-gpu-input-bootstrap-run-token \
+      --dev-mount tmpfs \
+      --log-kmsg false \
+      --log-pmsg false \
+      --firmware-bootstrap ramdisk-lib-firmware \
+      --firmware-dir "$GPU_FIRMWARE_DIR" \
+      --input-bootstrap sunfish-touch-event2 \
+      --input-module-dir "$INPUT_MODULE_DIR"
+)"
+
+assert_contains "$input_bootstrap_output" "Input bootstrap: sunfish-touch-event2"
+assert_contains "$input_bootstrap_output" "Input module dir: $INPUT_MODULE_DIR"
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-input-bootstrap-boot.img" shadow-init.cfg $'# Generated by pixel_boot_build_orange_gpu.sh\npayload=orange-gpu\norange_gpu_mode=c-kgsl-open-readonly-smoke\nhold_seconds=7\nreboot_target=bootloader\nrun_token=orange-gpu-input-bootstrap-run-token\norange_gpu_watchdog_timeout_secs=12\nprelude=orange-init\nprelude_hold_seconds=2\ndev_mount=tmpfs\nlog_kmsg=false\nlog_pmsg=false\nfirmware_bootstrap=ramdisk-lib-firmware\ninput_bootstrap=sunfish-touch-event2\ndri_bootstrap=sunfish-card0-renderD128-kgsl3d0\n'
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-input-bootstrap-boot.img" lib/modules/heatmap.ko $'heatmap-module\n'
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-input-bootstrap-boot.img" lib/modules/ftm5.ko $'ftm5-module\n'
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-input-bootstrap-boot.img" lib/firmware/ftm5_fw.ftb $'fts-firmware\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-input-bootstrap-boot.img.hello-init.json" input_bootstrap "sunfish-touch-event2"
+assert_json_field_equals "$TMP_DIR/orange-gpu-input-bootstrap-boot.img.hello-init.json" input_module_dir "$INPUT_MODULE_DIR"
 
 firmware_probe_only_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -3875,7 +3920,7 @@ assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img" orange-gpu.tar.xz shadow-session
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img" orange-gpu.tar.xz shadow-compositor-guest
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img" orange-gpu.tar.xz lib/ld-linux-aarch64.so.1
-assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img" orange-gpu.tar.xz app-direct-present-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "app",\n    "startAppId": "counter"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-blitz-demo",\n    "runtimeDir": "/shadow-runtime",\n    "systemBinaryPath": "/orange-gpu/app-direct-present/shadow-system",\n    "envAssignments": [\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH",\n        "value": "/orange-gpu/app-direct-present/shadow-blitz-demo"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": false,\n    "frameCapture": {\n      "mode": "every-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-runtime-touch-counter-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  },\n  "touch": {\n    "latencyTrace": true,\n    "syntheticTap": {\n      "normalizedXMillis": 500,\n      "normalizedYMillis": 500,\n      "afterFirstFrameDelayMs": 250,\n      "holdMs": 50\n    },\n    "exitAfterPresent": true\n  }\n}\n'
+assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img" orange-gpu.tar.xz app-direct-present-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "app",\n    "startAppId": "counter"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-blitz-demo",\n    "runtimeDir": "/shadow-runtime",\n    "systemBinaryPath": "/orange-gpu/app-direct-present/shadow-system",\n    "envAssignments": [\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH",\n        "value": "/orange-gpu/app-direct-present/shadow-blitz-demo"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      },\n      {\n        "key": "SHADOW_BLITZ_TOUCH_ANYWHERE_TARGET",\n        "value": "counter"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": false,\n    "frameCapture": {\n      "mode": "every-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-runtime-touch-counter-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  },\n  "touch": {\n    "latencyTrace": true,\n    "syntheticTap": {\n      "normalizedXMillis": 500,\n      "normalizedYMillis": 500,\n      "afterFirstFrameDelayMs": 250,\n      "holdMs": 50\n    },\n    "exitAfterPresent": true\n  }\n}\n'
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img.hello-init.json" orange_gpu_mode "app-direct-present-runtime-touch-counter"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img.hello-init.json" app_direct_present_app_id counter
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img.hello-init.json" app_direct_present_client_kind typescript
@@ -3884,6 +3929,37 @@ assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img.hello-init.json" app_direct_present_runtime_bundle_env SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img.hello-init.json" app_direct_present_runtime_bundle_path /orange-gpu/app-direct-present/runtime-app-counter-bundle.js
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter.img.hello-init.json" metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-runtime-touch-counter-run-token/compositor-frame.ppm"
+
+manual_runtime_touch_counter_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_BUNDLE_DIR="$TS_APP_DIRECT_PRESENT_BUNDLE_DIR" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_BIN="$APP_DIRECT_PRESENT_LAUNCHER_OUTPUT" \
+    PIXEL_SHADOW_SESSION_BIN="$SHADOW_SESSION_OUTPUT" \
+    PIXEL_SHADOW_COMPOSITOR_GUEST_BIN="$SHADOW_COMPOSITOR_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
+      --rust-shim "$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --firmware-dir "$GPU_FIRMWARE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter-manual.img" \
+      --hello-init-mode rust-bridge \
+      --orange-gpu-mode app-direct-present-runtime-touch-counter \
+      --app-direct-present-manual-touch true \
+      --orange-gpu-firmware-helper true \
+      --orange-gpu-metadata-stage-breadcrumb true \
+      --firmware-bootstrap ramdisk-lib-firmware \
+      --run-token orange-gpu-rust-bridge-runtime-touch-counter-manual-run-token \
+      --hold-secs 9 \
+      --mount-sys true
+)"
+
+assert_contains "$manual_runtime_touch_counter_boot_output" "GPU proof: app-owned TypeScript counter surface increments from physical touch and presents a post-touch frame through the Rust boot seam"
+assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter-manual.img" orange-gpu.tar.xz app-direct-present-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "app",\n    "startAppId": "counter"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-blitz-demo",\n    "runtimeDir": "/shadow-runtime",\n    "systemBinaryPath": "/orange-gpu/app-direct-present/shadow-system",\n    "envAssignments": [\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH",\n        "value": "/orange-gpu/app-direct-present/shadow-blitz-demo"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      },\n      {\n        "key": "SHADOW_BLITZ_TOUCH_ANYWHERE_TARGET",\n        "value": "counter"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": false,\n    "frameCapture": {\n      "mode": "every-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-runtime-touch-counter-manual-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  },\n  "touch": {\n    "latencyTrace": true,\n    "exitAfterPresent": true\n  }\n}\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-runtime-touch-counter-manual.img.hello-init.json" app_direct_present_manual_touch "true"
 
 ts_timeline_app_direct_present_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
