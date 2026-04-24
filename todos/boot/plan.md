@@ -91,8 +91,8 @@ Related docs:
   - drive home/app navigation through touch or control, not direct app-only proofs
   - `persistent-shell-control`
   - keep the rust-booted shell alive and make the session diagnosable without treating timeout as failure
-  - `payload-partition-first-probe`
-  - move heavy Shadow payloads out of the ramdisk before shell/app/service growth hard-blocks image size
+  - `payload-metadata-rooted-proof`
+  - prove the chosen `/metadata/shadow-payload` root on hardware before moving heavy Shadow payloads out of the ramdisk
   - selected service spikes only after the shell/app loop exists
     - audio output
     - storage / networking / control seams
@@ -104,7 +104,7 @@ Related docs:
 - Stop adding proof-only app rungs after the current TypeScript matrix lands.
 - Move directly to a boot-owned shell session that borrows the rooted Pixel shell startup shape but runs from the Rust boot seam.
 - Treat a single static shell frame as insufficient unless it is attached to the real session contract: no dummy client, no `exitOnFirstFrame` product path, no automatic success reboot, and a durable recovered readiness proof.
-- Run the partition-backed payload probe in parallel; if shell staging hits image-size pressure, the payload probe becomes the blocker instead of adding more ramdisk hacks.
+- Run the metadata-backed payload hardware proof in parallel; if shell staging hits image-size pressure, the payload root becomes the blocker instead of adding more ramdisk hacks.
 - Keep the direct `std` PID1 seam honest as a regression discriminator while not letting it block the main ladder.
 - Keep camera and sound as sidecars until boot-owned shell/home can launch at least one app.
 
@@ -382,10 +382,21 @@ Related docs:
     - canonical rooted proof recipe if image metadata or app selection changes
   - blocked_by:
     - `boot-ts-app-direct-present-proof-contract`
-- [ ] `payload-partition-first-probe`
+- [x] `payload-partition-first-probe`
   - task_id: boot-payload-partition-first-probe
   - priority: 8
   - why now: ramdisk growth is already a cross-cutting blocker for shell, apps, runtime bundles, GPU/userland libraries, fonts, and service helpers; stop designing new product rungs around proof-only ramdisk staging
+  - result: chose a Shadow-owned `/metadata/shadow-payload/by-token/<run_token>` payload root as the first partition-backed payload strategy, added a `payload-partition-probe` boot mode, a rooted staging helper for `manifest.env` plus `payload.txt`, and recover-traces proof fields for source, version/fingerprint, mounted roots, fallback path, and exact blocker.
+  - proof:
+    - `scripts/pixel/pixel_boot_stage_metadata_payload.sh --dry-run --run-token payload-partition-probe-run-token`
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - rooted hardware proof remains the next follow-up; this task landed the contract and local proof plumbing.
+  - rooted proof recipe:
+    - stage: `PIXEL_SERIAL=<serial> scripts/pixel/pixel_boot_stage_metadata_payload.sh --run-token payload-partition-probe-v1`
+    - build: `PIXEL_HELLO_INIT_RUN_TOKEN=payload-partition-probe-v1 scripts/pixel/pixel_boot_build_orange_gpu.sh --input <stock-boot.img> --init <hello-init> --key <avb-key.pem> --output build/pixel/boot/payload-partition-probe-v1.img --hello-init-mode rust-bridge --rust-shim-mode exec --orange-gpu-mode payload-partition-probe --orange-gpu-metadata-stage-breadcrumb true`
+    - run/recover: `SHADOW_DEVICE_LEASE_FORCE=1 PIXEL_SERIAL=<serial> scripts/shadowctl -t <serial> debug boot-lab-rust-bridge-run --input build/pixel/boot/payload-partition-probe-v1.img --shim-mode exec --skip-collect --recover-traces-after --no-wait-boot-completed`
+    - expected: `recover-traces/status.json` has `expected_orange_gpu_mode=payload-partition-probe`, `probe_summary_proves_payload_partition=true`, `proof_ok=true`, and `metadata_probe_summary_payload_root=/metadata/shadow-payload/by-token/payload-partition-probe-v1`.
   - owned paths:
     - `todos/boot/plan.md`
     - `todos/boot/frontier.md`
@@ -404,6 +415,49 @@ Related docs:
     - `scripts/ci/pixel_boot_orange_gpu_smoke.sh` if boot image staging changes
     - canonical rooted proof recipe for the first mounted payload probe if the boot image contract changes
   - blocked_by: none
+- [ ] `payload-metadata-rooted-proof`
+  - task_id: boot-payload-metadata-rooted-proof
+  - priority: 8
+  - why next: prove the chosen `/metadata/shadow-payload` contract on hardware before moving large shell/runtime bundles out of the ramdisk
+  - owned paths:
+    - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `scripts/pixel/pixel_boot_stage_metadata_payload.sh`
+    - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
+    - `scripts/pixel/pixel_boot_recover_traces.sh`
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - `todos/boot/`
+  - acceptance:
+    - run the canonical rooted proof recipe with a fresh run token on a rooted Pixel
+    - recovered status proves `probe_summary_proves_payload_partition=true` and `proof_ok=true`, or lands a precise blocker from the metadata mount/stage/probe summary
+    - if the proof works on one device, repeat on the confirmation device only if the failure mode would affect payload strategy selection
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - canonical rooted proof recipe above
+  - blocked_by:
+    - `boot-payload-partition-first-probe`
+- [ ] `payload-metadata-shell-bundle-probe`
+  - task_id: boot-payload-metadata-shell-bundle-probe
+  - priority: 9
+  - why next: once the metadata payload root is proven, move one minimal shell/session payload slice behind the mounted manifest instead of expanding `boot.img`
+  - owned paths:
+    - `scripts/pixel/`
+    - `scripts/lib/pixel_runtime_linux_bundle_common.sh`
+    - `scripts/lib/pixel_runtime_session_common.sh`
+    - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `todos/boot/`
+  - acceptance:
+    - stage a small manifest-versioned shell/session payload bundle under `/metadata/shadow-payload/by-token/<run_token>`
+    - boot-owned userspace reads the manifest and hands off to the mounted payload root without adding that bundle to the ramdisk
+    - recovered metadata identifies bundle version/fingerprint, executable handoff path, and the exact blocker if handoff fails
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - rooted proof after `boot-payload-metadata-rooted-proof`
+  - blocked_by:
+    - `boot-payload-metadata-rooted-proof`
+    - `boot-shell-session-first-proof`
 - [ ] `sound-boot-owned-probe`
   - task_id: boot-sound-boot-owned-probe
   - priority: 30

@@ -8,6 +8,7 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 mod linux {
+    use sha2::{Digest, Sha256};
     use std::ffi::{CStr, CString};
     use std::fmt::Write as _;
     use std::fs::{self, File, OpenOptions};
@@ -91,6 +92,12 @@ mod linux {
     const METADATA_PARTNAME: &str = "metadata";
     const METADATA_PREPARE_RETRY_ATTEMPTS: u32 = 10;
     const METADATA_PREPARE_RETRY_SLEEP_SECS: u32 = 1;
+    const PAYLOAD_PROBE_STRATEGY: &str = "metadata-shadow-payload-v1";
+    const PAYLOAD_PROBE_SOURCE: &str = "metadata";
+    const PAYLOAD_PROBE_METADATA_BY_TOKEN_ROOT: &str = "/metadata/shadow-payload/by-token";
+    const PAYLOAD_PROBE_MANIFEST_NAME: &str = "manifest.env";
+    const PAYLOAD_PROBE_DEFAULT_MARKER_NAME: &str = "payload.txt";
+    const PAYLOAD_PROBE_FALLBACK_PATH: &str = "/orange-gpu";
     const GPU_BACKEND_ENV: &str = "WGPU_BACKEND";
     const VK_ICD_FILENAMES_ENV: &str = "VK_ICD_FILENAMES";
     const MESA_DRIVER_OVERRIDE_ENV: &str = "MESA_LOADER_DRIVER_OVERRIDE";
@@ -155,6 +162,11 @@ mod linux {
         orange_gpu_timeout_action: String,
         orange_gpu_watchdog_timeout_secs: u32,
         orange_gpu_bundle_archive_path: String,
+        payload_probe_strategy: String,
+        payload_probe_source: String,
+        payload_probe_root: String,
+        payload_probe_manifest_path: String,
+        payload_probe_fallback_path: String,
         camera_hal_camera_id: String,
         camera_hal_call_open: bool,
         shell_session_start_app_id: String,
@@ -194,6 +206,11 @@ mod linux {
                 orange_gpu_timeout_action: "reboot".to_string(),
                 orange_gpu_watchdog_timeout_secs: 0,
                 orange_gpu_bundle_archive_path: String::new(),
+                payload_probe_strategy: PAYLOAD_PROBE_STRATEGY.to_string(),
+                payload_probe_source: PAYLOAD_PROBE_SOURCE.to_string(),
+                payload_probe_root: String::new(),
+                payload_probe_manifest_path: String::new(),
+                payload_probe_fallback_path: PAYLOAD_PROBE_FALLBACK_PATH.to_string(),
                 camera_hal_camera_id: CAMERA_BOOT_HAL_CAMERA_ID.to_string(),
                 camera_hal_call_open: false,
                 shell_session_start_app_id: "counter".to_string(),
@@ -775,6 +792,7 @@ mod linux {
                             "app-direct-present-touch-counter",
                             "app-direct-present-runtime-touch-counter",
                             "firmware-probe-only",
+                            "payload-partition-probe",
                         ],
                     ) {
                         Some(parsed) => {
@@ -830,6 +848,21 @@ mod linux {
                 }
                 "orange_gpu_bundle_archive_path" | "orange-gpu-bundle-archive-path" => {
                     config.orange_gpu_bundle_archive_path = value.trim().to_string();
+                }
+                "payload_probe_strategy" | "payload-probe-strategy" => {
+                    config.payload_probe_strategy = value.trim().to_string();
+                }
+                "payload_probe_source" | "payload-probe-source" => {
+                    config.payload_probe_source = value.trim().to_string();
+                }
+                "payload_probe_root" | "payload-probe-root" => {
+                    config.payload_probe_root = value.trim().to_string();
+                }
+                "payload_probe_manifest_path" | "payload-probe-manifest-path" => {
+                    config.payload_probe_manifest_path = value.trim().to_string();
+                }
+                "payload_probe_fallback_path" | "payload-probe-fallback-path" => {
+                    config.payload_probe_fallback_path = value.trim().to_string();
                 }
                 "camera_hal_camera_id" | "camera-hal-camera-id" => {
                     let trimmed = value.trim();
@@ -1742,12 +1775,121 @@ mod linux {
         }
     }
 
+    fn json_string_array(values: &[String]) -> String {
+        let mut payload = String::new();
+        payload.push('[');
+        for (index, value) in values.iter().enumerate() {
+            if index > 0 {
+                payload.push_str(", ");
+            }
+            payload.push_str(&json_string(value));
+        }
+        payload.push(']');
+        payload
+    }
+
     fn json_pointer(ptr: *mut libc::c_void) -> String {
         if ptr.is_null() {
             "null".to_string()
         } else {
             json_string(&format!("0x{:x}", ptr as usize))
         }
+    }
+
+    #[derive(Default)]
+    struct PayloadProbeManifest {
+        schema: String,
+        payload_source: String,
+        payload_version: String,
+        payload_fingerprint: String,
+        payload_root: String,
+        payload_marker: String,
+    }
+
+    fn payload_probe_root_path(config: &Config) -> PathBuf {
+        if !config.payload_probe_root.is_empty() {
+            return PathBuf::from(&config.payload_probe_root);
+        }
+        Path::new(PAYLOAD_PROBE_METADATA_BY_TOKEN_ROOT).join(&config.run_token)
+    }
+
+    fn payload_probe_manifest_path(config: &Config, payload_root: &Path) -> PathBuf {
+        if !config.payload_probe_manifest_path.is_empty() {
+            return PathBuf::from(&config.payload_probe_manifest_path);
+        }
+        payload_root.join(PAYLOAD_PROBE_MANIFEST_NAME)
+    }
+
+    fn payload_probe_marker_path(payload_root: &Path, manifest: &PayloadProbeManifest) -> PathBuf {
+        let marker = if manifest.payload_marker.is_empty() {
+            PAYLOAD_PROBE_DEFAULT_MARKER_NAME
+        } else {
+            manifest.payload_marker.as_str()
+        };
+        let marker_path = Path::new(marker);
+        if marker_path.is_absolute() {
+            marker_path.to_path_buf()
+        } else {
+            payload_root.join(marker_path)
+        }
+    }
+
+    fn read_payload_probe_manifest(path: &Path) -> Result<PayloadProbeManifest, String> {
+        let text = fs::read_to_string(path).map_err(|error| format!("manifest-read:{error}"))?;
+        let mut manifest = PayloadProbeManifest::default();
+        for raw_line in text.lines() {
+            let line = raw_line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let value = value.trim().to_string();
+            match key.trim() {
+                "schema" => manifest.schema = value,
+                "payload_source" | "source" => manifest.payload_source = value,
+                "payload_version" | "version" => manifest.payload_version = value,
+                "payload_fingerprint" | "fingerprint" => manifest.payload_fingerprint = value,
+                "payload_root" | "root" => manifest.payload_root = value,
+                "payload_marker" | "marker" => manifest.payload_marker = value,
+                _ => {}
+            }
+        }
+        if manifest.schema != PAYLOAD_PROBE_STRATEGY {
+            return Err(format!("unsupported-schema:{}", manifest.schema));
+        }
+        if manifest.payload_source.is_empty() {
+            manifest.payload_source = PAYLOAD_PROBE_SOURCE.to_string();
+        }
+        if manifest.payload_version.is_empty() {
+            return Err("missing-payload-version".to_string());
+        }
+        if manifest.payload_fingerprint.is_empty() {
+            return Err("missing-payload-fingerprint".to_string());
+        }
+        Ok(manifest)
+    }
+
+    fn sha256_file_fingerprint(path: &Path) -> Result<String, String> {
+        let mut file = File::open(path).map_err(|error| format!("marker-open:{error}"))?;
+        let mut hasher = Sha256::new();
+        let mut buffer = [0_u8; 8192];
+        loop {
+            let count = file
+                .read(&mut buffer)
+                .map_err(|error| format!("marker-read:{error}"))?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+        }
+        let digest = hasher.finalize();
+        let mut hex = String::with_capacity(64);
+        for byte in digest {
+            let _ = write!(&mut hex, "{byte:02x}");
+        }
+        Ok(format!("sha256:{hex}"))
     }
 
     fn c_string_from_ptr(ptr: *const libc::c_char) -> Option<String> {
@@ -3627,7 +3769,224 @@ mod linux {
             log_line("camera-hal-link-probe requires orange_gpu_metadata_stage_breadcrumb=true");
             return false;
         }
+        if config.orange_gpu_mode == "payload-partition-probe"
+            && !config.orange_gpu_metadata_stage_breadcrumb
+        {
+            log_line("payload-partition-probe requires orange_gpu_metadata_stage_breadcrumb=true");
+            return false;
+        }
+        if config.orange_gpu_mode == "payload-partition-probe" && config.run_token.is_empty() {
+            log_line("payload-partition-probe requires run_token");
+            return false;
+        }
+        if config.orange_gpu_mode == "payload-partition-probe"
+            && config.payload_probe_strategy != PAYLOAD_PROBE_STRATEGY
+        {
+            log_line("payload-partition-probe requires payload_probe_strategy=metadata-shadow-payload-v1");
+            return false;
+        }
+        if config.orange_gpu_mode == "payload-partition-probe"
+            && config.payload_probe_source != PAYLOAD_PROBE_SOURCE
+        {
+            log_line("payload-partition-probe requires payload_probe_source=metadata");
+            return false;
+        }
         true
+    }
+
+    fn run_payload_partition_probe(
+        config: &Config,
+        metadata_stage: &mut MetadataStageRuntime,
+    ) -> i32 {
+        let probe_stage_path =
+            if metadata_stage.enabled && metadata_stage.prepared && !metadata_stage.write_failed {
+                Some(metadata_stage.probe_stage_path.clone())
+            } else {
+                None
+            };
+        let probe_stage_prefix = Some("payload-partition-probe".to_string());
+        write_payload_probe_stage(
+            probe_stage_path.as_deref(),
+            probe_stage_prefix.as_deref(),
+            "start",
+        );
+
+        let payload_root = payload_probe_root_path(config);
+        let manifest_path = payload_probe_manifest_path(config, &payload_root);
+        let fallback_path = if config.payload_probe_fallback_path.is_empty() {
+            PAYLOAD_PROBE_FALLBACK_PATH
+        } else {
+            config.payload_probe_fallback_path.as_str()
+        };
+        let mut mounted_roots = Vec::new();
+        if metadata_stage.prepared {
+            mounted_roots.push(METADATA_MOUNT_PATH.to_string());
+        }
+
+        let payload_root_present = payload_root.is_dir();
+        let manifest_present = manifest_path.is_file();
+        let mut manifest = PayloadProbeManifest {
+            payload_source: config.payload_probe_source.clone(),
+            ..PayloadProbeManifest::default()
+        };
+        let mut marker_path = payload_root.join(PAYLOAD_PROBE_DEFAULT_MARKER_NAME);
+        let mut marker_fingerprint = String::new();
+        let mut payload_fingerprint_verified = false;
+        let mut marker_present = false;
+        let mut ok = false;
+        let mut blocker = "none".to_string();
+        let mut blocker_detail = String::new();
+
+        if !metadata_stage.prepared {
+            blocker = "metadata-stage-unprepared".to_string();
+            blocker_detail = "metadata partition was not mounted for the payload probe".to_string();
+        } else if config.payload_probe_strategy != PAYLOAD_PROBE_STRATEGY {
+            blocker = "payload-probe-strategy-unsupported".to_string();
+            blocker_detail = config.payload_probe_strategy.clone();
+        } else if config.payload_probe_source != PAYLOAD_PROBE_SOURCE {
+            blocker = "payload-probe-source-unsupported".to_string();
+            blocker_detail = config.payload_probe_source.clone();
+        } else if !payload_root_present {
+            blocker = "payload-root-missing".to_string();
+            blocker_detail = payload_root.display().to_string();
+        } else if !manifest_present {
+            blocker = "payload-manifest-missing".to_string();
+            blocker_detail = manifest_path.display().to_string();
+        } else {
+            match read_payload_probe_manifest(&manifest_path) {
+                Ok(parsed_manifest) => {
+                    marker_path = payload_probe_marker_path(&payload_root, &parsed_manifest);
+                    manifest = parsed_manifest;
+                    if manifest.payload_root.is_empty() {
+                        manifest.payload_root = payload_root.display().to_string();
+                    }
+                    if manifest.payload_root != payload_root.display().to_string() {
+                        blocker = "payload-root-mismatch".to_string();
+                        blocker_detail = format!(
+                            "manifest={} expected={}",
+                            manifest.payload_root,
+                            payload_root.display()
+                        );
+                    } else if marker_path.is_absolute() && !marker_path.starts_with(&payload_root) {
+                        blocker = "payload-marker-outside-root".to_string();
+                        blocker_detail = marker_path.display().to_string();
+                    } else if !marker_path.is_file() {
+                        blocker = "payload-marker-missing".to_string();
+                        blocker_detail = marker_path.display().to_string();
+                    } else {
+                        marker_present = true;
+                        match sha256_file_fingerprint(&marker_path) {
+                            Ok(fingerprint) => {
+                                marker_fingerprint = fingerprint;
+                                if marker_fingerprint != manifest.payload_fingerprint {
+                                    blocker = "payload-marker-fingerprint-mismatch".to_string();
+                                    blocker_detail = format!(
+                                        "manifest={} actual={}",
+                                        manifest.payload_fingerprint, marker_fingerprint
+                                    );
+                                } else {
+                                    payload_fingerprint_verified = true;
+                                    ok = true;
+                                }
+                            }
+                            Err(reason) => {
+                                blocker = "payload-marker-fingerprint-read-failed".to_string();
+                                blocker_detail = reason;
+                            }
+                        }
+                    }
+                }
+                Err(reason) => {
+                    blocker = "payload-manifest-invalid".to_string();
+                    blocker_detail = reason;
+                }
+            }
+        }
+
+        let stage = if ok {
+            "payload-mounted"
+        } else {
+            "payload-blocked"
+        };
+        write_payload_probe_stage(
+            probe_stage_path.as_deref(),
+            probe_stage_prefix.as_deref(),
+            stage,
+        );
+
+        let status = if ok { 0 } else { 1 };
+        let summary = format!(
+            concat!(
+                "{{\n",
+                "  \"kind\": \"payload-partition-probe\",\n",
+                "  \"ok\": {},\n",
+                "  \"payload_strategy\": {},\n",
+                "  \"payload_source\": {},\n",
+                "  \"payload_root\": {},\n",
+                "  \"payload_manifest_path\": {},\n",
+                "  \"payload_marker_path\": {},\n",
+                "  \"payload_version\": {},\n",
+                "  \"payload_fingerprint\": {},\n",
+                "  \"payload_marker_fingerprint\": {},\n",
+                "  \"payload_fingerprint_verified\": {},\n",
+                "  \"mounted_roots\": {},\n",
+                "  \"fallback_path\": {},\n",
+                "  \"blocker\": {},\n",
+                "  \"blocker_detail\": {},\n",
+                "  \"metadata_stage_prepared\": {},\n",
+                "  \"payload_root_present\": {},\n",
+                "  \"manifest_present\": {},\n",
+                "  \"marker_present\": {}\n",
+                "}}\n"
+            ),
+            bool_word(ok),
+            json_string(&config.payload_probe_strategy),
+            json_string(&manifest.payload_source),
+            json_string(&payload_root.display().to_string()),
+            json_string(&manifest_path.display().to_string()),
+            json_string(&marker_path.display().to_string()),
+            json_string(&manifest.payload_version),
+            json_string(&manifest.payload_fingerprint),
+            json_string(&marker_fingerprint),
+            bool_word(payload_fingerprint_verified),
+            json_string_array(&mounted_roots),
+            json_string(fallback_path),
+            json_string(&blocker),
+            json_string(&blocker_detail),
+            bool_word(metadata_stage.prepared),
+            bool_word(payload_root_present),
+            bool_word(manifest_present),
+            bool_word(marker_present),
+        );
+        if write_atomic_text_file(
+            &metadata_stage.temp_probe_summary_path,
+            &metadata_stage.probe_summary_path,
+            &summary,
+        )
+        .is_err()
+        {
+            metadata_stage.write_failed = true;
+            return 1;
+        }
+
+        let probe_result = ChildWatchResult {
+            completed: true,
+            timed_out: false,
+            waited_seconds: 0,
+            exit_status: Some(status),
+            signal: None,
+            raw_wait_status: 0,
+        };
+        write_probe_report(
+            metadata_stage,
+            "payload-partition-probe",
+            probe_stage_path.as_deref(),
+            &probe_result,
+            None,
+            false,
+            0,
+        );
+        status
     }
 
     fn run_orange_gpu_payload(
@@ -3647,6 +4006,10 @@ mod linux {
 
         if config.orange_gpu_launch_delay_secs > 0 {
             sleep_seconds(config.orange_gpu_launch_delay_secs);
+        }
+
+        if config.orange_gpu_mode == "payload-partition-probe" {
+            return run_payload_partition_probe(config, metadata_stage);
         }
 
         if metadata_stage.prepared {
@@ -4480,7 +4843,7 @@ mod linux {
         }
 
         append_wrapper_log(&format!(
-            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_metadata_prune_token_root={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
+            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_metadata_prune_token_root={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} payload_probe_strategy={} payload_probe_source={} payload_probe_root={} payload_probe_manifest_path={} payload_probe_fallback_path={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
             config.payload,
             config.prelude,
             config.orange_gpu_mode,
@@ -4492,6 +4855,11 @@ mod linux {
             bool_word(config.orange_gpu_firmware_helper),
             config.orange_gpu_timeout_action,
             config.orange_gpu_watchdog_timeout_secs,
+            config.payload_probe_strategy,
+            config.payload_probe_source,
+            config.payload_probe_root,
+            config.payload_probe_manifest_path,
+            config.payload_probe_fallback_path,
             bool_word(config.app_direct_present_manual_touch),
             config.hold_seconds,
             config.prelude_hold_seconds,

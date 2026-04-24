@@ -12,6 +12,8 @@ Use these documents for the current owned-userspace boot plan instead:
 
 Keep the rest of this file only as historical context for the abandoned stock-init `/data` helper approach.
 
+Current note: the active owned-userspace path does not use this historical `/data` helper as the first payload store. The first live partition-backed probe is `/metadata/shadow-payload/by-token/<run_token>` with a manifest, payload marker, fingerprint, mounted-root proof, and `/orange-gpu` fallback recorded in recovered metadata.
+
 ## Objective
 
 Boot a physical Pixel 4a from a custom `boot.img` and reach the existing Shadow shell/home automatically, with no manual rooted takeover after boot.

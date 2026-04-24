@@ -89,6 +89,7 @@ scripts/pixel/pixel_build_camera_hal_bionic_probe.sh	pixel	Private Android/bioni
 scripts/pixel/pixel_camera_hal_bionic_probe.c	data	C source for the tiny Android/bionic camera HAL dlopen/HMI probe helper.
 scripts/pixel/pixel_camera_hal_collect_capsule.sh	pixel	Private rooted-Pixel collector for Shadow boot camera HAL linker capsules.
 scripts/pixel/pixel_boot_recover_traces.sh	pixel	Private host-side collector for post-reboot Android boot trace recovery behind sc debug boot-lab-recover-traces.
+scripts/pixel/pixel_boot_stage_metadata_payload.sh	pixel	Private rooted-Pixel staging helper for the metadata-backed boot payload partition probe.
 scripts/pixel/pixel_boot_flash.sh	pixel	Private sunfish custom boot image flash helper for the active slot.
 scripts/pixel/pixel_boot_flash_run.sh	pixel	Private flashed-slot boot-lab runner that composes flash, collect, and optional recovery.
 scripts/pixel/pixel_boot_rust_bridge_run.sh	pixel	Private rust-bridge boot-lab runner that composes the Rust bridge repack step with the standard one-shot delegate.

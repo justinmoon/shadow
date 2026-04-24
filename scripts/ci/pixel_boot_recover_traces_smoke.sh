@@ -168,7 +168,7 @@ PROP
       elif [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
         printf 'parent-probe-result=exit-0\n'
         exit 0
-      elif [[ "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "app-direct-present-success" || "$TRACE_MODE" == "app-direct-present-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" ]]; then
+      elif [[ "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "app-direct-present-success" || "$TRACE_MODE" == "app-direct-present-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" || "$TRACE_MODE" == "payload-partition-success" ]]; then
         printf 'parent-probe-result=exit-0\n'
         exit 0
       fi
@@ -199,11 +199,14 @@ PROP
       elif [[ "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" ]]; then
         printf 'orange-gpu-payload:app-direct-present-runtime-touch-counter-proved\n'
         exit 0
+      elif [[ "$TRACE_MODE" == "payload-partition-success" ]]; then
+        printf 'payload-partition-probe:payload-mounted\n'
+        exit 0
       fi
       exit 3
       ;;
     *"/metadata/shadow-hello-init/by-token/"*"/probe-fingerprint.txt"* )
-      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" || "$TRACE_MODE" == "orange-gpu-loop-success" || "$TRACE_MODE" == "compositor-scene-success" || "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "app-direct-present-success" || "$TRACE_MODE" == "app-direct-present-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" ]]; then
+      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" || "$TRACE_MODE" == "orange-gpu-loop-success" || "$TRACE_MODE" == "compositor-scene-success" || "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "app-direct-present-success" || "$TRACE_MODE" == "app-direct-present-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" || "$TRACE_MODE" == "payload-partition-success" ]]; then
         printf 'path=/dev/kgsl-3d0 present=true kind=char mode=666 uid=1000 gid=1000 major=508 minor=0\n'
         exit 0
       fi
@@ -284,6 +287,16 @@ EOF
         cat <<EOF
 probe_label=orange-gpu-payload
 observed_probe_stage=orange-gpu-payload:app-direct-present-runtime-touch-counter-proved
+child_timed_out=false
+child_completed=true
+exit_status=0
+wchan=
+EOF
+        exit 0
+      elif [[ "$TRACE_MODE" == "payload-partition-success" ]]; then
+        cat <<EOF
+probe_label=payload-partition-probe
+observed_probe_stage=payload-partition-probe:payload-mounted
 child_timed_out=false
 child_completed=true
 exit_status=0
@@ -454,6 +467,29 @@ EOF
   "touch_counter_probe_ok": true,
   "frame_path": "/metadata/shadow-hello-init/by-token/$TRACE_RUN_TOKEN/compositor-frame.ppm",
   "frame_bytes": 20
+}
+EOF
+        exit 0
+      elif [[ "$TRACE_MODE" == "payload-partition-success" ]]; then
+        cat <<EOF
+{
+  "kind": "payload-partition-probe",
+  "ok": true,
+  "payload_strategy": "metadata-shadow-payload-v1",
+  "payload_source": "metadata",
+  "payload_root": "/metadata/shadow-payload/by-token/$TRACE_RUN_TOKEN",
+  "payload_manifest_path": "/metadata/shadow-payload/by-token/$TRACE_RUN_TOKEN/manifest.env",
+  "payload_marker_path": "/metadata/shadow-payload/by-token/$TRACE_RUN_TOKEN/payload.txt",
+  "payload_version": "shadow-payload-probe-v1",
+  "payload_fingerprint": "sha256:payloadfingerprint",
+  "payload_marker_fingerprint": "sha256:payloadfingerprint",
+  "payload_fingerprint_verified": true,
+  "mounted_roots": [
+    "/metadata"
+  ],
+  "fallback_path": "/orange-gpu",
+  "blocker": "none",
+  "blocker_detail": ""
 }
 EOF
         exit 0
@@ -711,6 +747,28 @@ EOF
   "metadata_probe_report_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-report.txt",
   "metadata_probe_timeout_class_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-timeout-class.txt",
   "metadata_probe_summary_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-summary.json"
+}
+EOF
+  elif [[ "$orange_gpu_mode" == "payload-partition-probe" ]]; then
+    cat >"$image_path.hello-init.json" <<EOF
+{
+  "kind": "hello_init_build",
+  "run_token": "$run_token",
+  "orange_gpu_mode": "payload-partition-probe",
+  "orange_gpu_metadata_stage_breadcrumb": true,
+  "log_kmsg": true,
+  "log_pmsg": true,
+  "metadata_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/stage.txt",
+  "metadata_probe_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-stage.txt",
+  "metadata_probe_fingerprint_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-fingerprint.txt",
+  "metadata_probe_report_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-report.txt",
+  "metadata_probe_timeout_class_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-timeout-class.txt",
+  "metadata_probe_summary_path": "/metadata/shadow-hello-init/by-token/$run_token/probe-summary.json",
+  "payload_probe_strategy": "metadata-shadow-payload-v1",
+  "payload_probe_source": "metadata",
+  "payload_probe_root": "/metadata/shadow-payload/by-token/$run_token",
+  "payload_probe_manifest_path": "/metadata/shadow-payload/by-token/$run_token/manifest.env",
+  "payload_probe_fallback_path": "/orange-gpu"
 }
 EOF
   else
@@ -972,6 +1030,59 @@ assert_json_field "$LOOP_OUTPUT/status.json" metadata_probe_summary_present_kms 
 assert_json_field "$LOOP_OUTPUT/status.json" metadata_probe_summary_adapter_backend Vulkan
 assert_json_field "$LOOP_OUTPUT/status.json" metadata_probe_summary_kms_present/present_count 11
 assert_json_field "$LOOP_OUTPUT/status.json" metadata_probe_summary_kms_present/hold_secs 3
+
+PAYLOAD_PARTITION_PARENT="$TMP_DIR/output-payload-partition"
+PAYLOAD_PARTITION_IMAGE="$TMP_DIR/output-payload-partition.img"
+PAYLOAD_PARTITION_OUTPUT="$PAYLOAD_PARTITION_PARENT/recover-traces"
+write_recover_context "$PAYLOAD_PARTITION_PARENT" "$PAYLOAD_PARTITION_IMAGE" "$RUN_TOKEN" payload-partition-probe
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=payload-partition-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$PAYLOAD_PARTITION_OUTPUT" >/dev/null
+
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" expected_orange_gpu_mode payload-partition-probe
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" expected_payload_probe_strategy metadata-shadow-payload-v1
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" expected_payload_probe_source metadata
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" expected_payload_probe_root "/metadata/shadow-payload/by-token/$RUN_TOKEN"
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" expected_payload_probe_manifest_path "/metadata/shadow-payload/by-token/$RUN_TOKEN/manifest.env"
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" expected_payload_probe_fallback_path /orange-gpu
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" probe_summary_proves_payload_partition true
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" proof_ok true
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_kind payload-partition-probe
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_ok true
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_payload_strategy metadata-shadow-payload-v1
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_payload_source metadata
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_payload_root "/metadata/shadow-payload/by-token/$RUN_TOKEN"
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_payload_manifest_path "/metadata/shadow-payload/by-token/$RUN_TOKEN/manifest.env"
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_payload_marker_path "/metadata/shadow-payload/by-token/$RUN_TOKEN/payload.txt"
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_payload_version shadow-payload-probe-v1
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_payload_fingerprint sha256:payloadfingerprint
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_payload_marker_fingerprint sha256:payloadfingerprint
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_payload_fingerprint_verified true
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_payload_mounted_roots/0 /metadata
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_payload_fallback_path /orange-gpu
+assert_json_field "$PAYLOAD_PARTITION_OUTPUT/status.json" metadata_probe_summary_payload_blocker none
+
+PAYLOAD_PARTITION_WRONG_TOKEN_PARENT="$TMP_DIR/output-payload-partition-wrong-token"
+PAYLOAD_PARTITION_WRONG_TOKEN_IMAGE="$TMP_DIR/output-payload-partition-wrong-token.img"
+PAYLOAD_PARTITION_WRONG_TOKEN_OUTPUT="$PAYLOAD_PARTITION_WRONG_TOKEN_PARENT/recover-traces"
+write_recover_context "$PAYLOAD_PARTITION_WRONG_TOKEN_PARENT" "$PAYLOAD_PARTITION_WRONG_TOKEN_IMAGE" "$RUN_TOKEN" payload-partition-probe
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=payload-partition-success \
+  MOCK_TRACE_RUN_TOKEN=wrong-payload-token \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$PAYLOAD_PARTITION_WRONG_TOKEN_OUTPUT" >/dev/null
+
+assert_json_field "$PAYLOAD_PARTITION_WRONG_TOKEN_OUTPUT/status.json" expected_orange_gpu_mode payload-partition-probe
+assert_json_field "$PAYLOAD_PARTITION_WRONG_TOKEN_OUTPUT/status.json" probe_summary_proves_payload_partition false
+assert_json_field "$PAYLOAD_PARTITION_WRONG_TOKEN_OUTPUT/status.json" proof_ok false
+assert_json_field "$PAYLOAD_PARTITION_WRONG_TOKEN_OUTPUT/status.json" expected_payload_probe_root "/metadata/shadow-payload/by-token/$RUN_TOKEN"
+assert_json_field "$PAYLOAD_PARTITION_WRONG_TOKEN_OUTPUT/status.json" metadata_probe_summary_payload_root /metadata/shadow-payload/by-token/wrong-payload-token
 
 COMPOSITOR_PARENT="$TMP_DIR/output-compositor-scene"
 COMPOSITOR_IMAGE="$TMP_DIR/output-compositor-scene.img"

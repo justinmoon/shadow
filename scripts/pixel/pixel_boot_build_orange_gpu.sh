@@ -103,6 +103,10 @@ APP_DIRECT_PRESENT_MANUAL_TOUCH="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_MANUAL_TO
 ORANGE_GPU_BUNDLE_ARCHIVE_NAME="orange-gpu.tar.xz"
 ORANGE_GPU_BUNDLE_ARCHIVE_PATH="/orange-gpu.tar.xz"
 STAGED_GPU_BUNDLE_ARCHIVE=""
+STAGED_GPU_BUNDLE_DIR=""
+PAYLOAD_PROBE_STRATEGY="metadata-shadow-payload-v1"
+PAYLOAD_PROBE_SOURCE="metadata"
+PAYLOAD_PROBE_FALLBACK_PATH="/orange-gpu"
 METADATA_SUFFIX=".hello-init.json"
 DEFAULT_RUST_CHILD_ENTRY="hello-init-child"
 
@@ -118,7 +122,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--hello-init-mode direct|rust-bridge]
                                                     [--prelude none|orange-init]
                                                     [--prelude-hold-secs N]
-                                                    [--orange-gpu-mode gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter]
+                                                    [--orange-gpu-mode gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter|payload-partition-probe]
                                                     [--orange-gpu-launch-delay-secs N]
                                                     [--orange-gpu-parent-probe-attempts N]
                                                     [--orange-gpu-parent-probe-interval-secs N]
@@ -405,6 +409,26 @@ metadata_compositor_frame_path_for_token() {
   local run_token
   run_token="${1:?metadata_compositor_frame_path_for_token requires a run token}"
   printf '/metadata/shadow-hello-init/by-token/%s/compositor-frame.ppm\n' "$run_token"
+}
+
+payload_partition_probe_mode() {
+  [[ "$ORANGE_GPU_MODE" == "payload-partition-probe" ]]
+}
+
+payload_probe_root_for_token() {
+  local run_token
+  run_token="${1:?payload_probe_root_for_token requires a run token}"
+  printf '/metadata/shadow-payload/by-token/%s\n' "$run_token"
+}
+
+payload_probe_manifest_path_for_token() {
+  local run_token
+  run_token="${1:?payload_probe_manifest_path_for_token requires a run token}"
+  printf '%s/manifest.env\n' "$(payload_probe_root_for_token "$run_token")"
+}
+
+orange_gpu_mode_uses_ramdisk_gpu_bundle() {
+  ! payload_partition_probe_mode
 }
 
 gpu_scene_value() {
@@ -783,10 +807,10 @@ assert_orange_gpu_mode_word() {
   value="${1:?assert_orange_gpu_mode_word requires a value}"
 
   case "$value" in
-    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)
+    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter|payload-partition-probe)
       ;;
     *)
-      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, orange-gpu-loop, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, firmware-probe-only, timeout-control-smoke, camera-hal-link-probe, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-firmware-helper-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, vulkan-offscreen, compositor-scene, shell-session, app-direct-present, app-direct-present-touch-counter, or app-direct-present-runtime-touch-counter: $value" >&2
+      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, orange-gpu-loop, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, firmware-probe-only, timeout-control-smoke, camera-hal-link-probe, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-firmware-helper-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, vulkan-offscreen, compositor-scene, shell-session, app-direct-present, app-direct-present-touch-counter, app-direct-present-runtime-touch-counter, or payload-partition-probe: $value" >&2
       exit 1
       ;;
   esac
@@ -940,7 +964,7 @@ rust_bridge_supports_orange_gpu_mode() {
   value="${1:?rust_bridge_supports_orange_gpu_mode requires a value}"
 
   case "$value" in
-    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)
+    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter|payload-partition-probe)
       return 0
       ;;
     *)
@@ -987,6 +1011,13 @@ EOF
   fi
   if [[ "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT" == "true" ]]; then
     printf 'orange_gpu_metadata_prune_token_root=%s\n' "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT" >>"$output_path"
+  fi
+  if payload_partition_probe_mode; then
+    printf 'payload_probe_strategy=%s\n' "$PAYLOAD_PROBE_STRATEGY" >>"$output_path"
+    printf 'payload_probe_source=%s\n' "$PAYLOAD_PROBE_SOURCE" >>"$output_path"
+    printf 'payload_probe_root=%s\n' "$(payload_probe_root_for_token "$RUN_TOKEN")" >>"$output_path"
+    printf 'payload_probe_manifest_path=%s\n' "$(payload_probe_manifest_path_for_token "$RUN_TOKEN")" >>"$output_path"
+    printf 'payload_probe_fallback_path=%s\n' "$PAYLOAD_PROBE_FALLBACK_PATH" >>"$output_path"
   fi
   if [[ "$ORANGE_GPU_FIRMWARE_HELPER" == "true" ]]; then
     printf 'orange_gpu_firmware_helper=%s\n' "$ORANGE_GPU_FIRMWARE_HELPER" >>"$output_path"
@@ -1800,6 +1831,13 @@ if orange_gpu_mode in {
         payload_json["app_direct_present_typescript_renderer"] = (
             app_direct_present_typescript_renderer
         )
+if orange_gpu_mode == "payload-partition-probe":
+    payload_root = f"/metadata/shadow-payload/by-token/{run_token}"
+    payload_json["payload_probe_strategy"] = "metadata-shadow-payload-v1"
+    payload_json["payload_probe_source"] = "metadata"
+    payload_json["payload_probe_root"] = payload_root
+    payload_json["payload_probe_manifest_path"] = f"{payload_root}/manifest.env"
+    payload_json["payload_probe_fallback_path"] = "/orange-gpu"
 
 Path(metadata_path).write_text(
     json.dumps(payload_json, indent=2, sort_keys=True) + "\n",
@@ -2206,6 +2244,10 @@ if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" && "$ORANGE_GPU_METADATA_STA
   echo "pixel_boot_build_orange_gpu: camera-hal-link-probe requires --orange-gpu-metadata-stage-breadcrumb true so HAL link evidence survives recovery" >&2
   exit 1
 fi
+if [[ "$ORANGE_GPU_MODE" == "payload-partition-probe" && "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: payload-partition-probe requires --orange-gpu-metadata-stage-breadcrumb true so mounted payload evidence survives recovery" >&2
+  exit 1
+fi
 if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
   if [[ "$ORANGE_GPU_MODE" != "camera-hal-link-probe" ]]; then
     echo "pixel_boot_build_orange_gpu: --camera-linker-capsule is only supported with camera-hal-link-probe" >&2
@@ -2228,6 +2270,10 @@ assert_bool_word orange-gpu-metadata-stage-breadcrumb "$ORANGE_GPU_METADATA_STAG
 assert_bool_word orange-gpu-firmware-helper "$ORANGE_GPU_FIRMWARE_HELPER"
 assert_timeout_action_word "$ORANGE_GPU_TIMEOUT_ACTION"
 assert_hello_init_mode_word "$HELLO_INIT_MODE"
+if payload_partition_probe_mode && [[ "$HELLO_INIT_MODE" != "rust-bridge" ]]; then
+  echo "pixel_boot_build_orange_gpu: payload-partition-probe requires --hello-init-mode rust-bridge because the payload verifier is implemented in Rust hello-init" >&2
+  exit 1
+fi
 assert_rust_shim_mode_word "$HELLO_INIT_RUST_SHIM_MODE"
 assert_rust_child_profile_word "$HELLO_INIT_RUST_CHILD_PROFILE"
 assert_rust_bridge_supported_config
@@ -2293,6 +2339,8 @@ if [[ -z "$DRI_BOOTSTRAP" ]]; then
   if [[ "$PRELUDE" == "orange-init" && "$ORANGE_GPU_MODE" == "bundle-smoke" ]]; then
     DRI_BOOTSTRAP="sunfish-card0-renderD128"
   elif [[ "$ORANGE_GPU_MODE" == "bundle-smoke" ]]; then
+    DRI_BOOTSTRAP="none"
+  elif payload_partition_probe_mode; then
     DRI_BOOTSTRAP="none"
   else
     DRI_BOOTSTRAP="sunfish-card0-renderD128-kgsl3d0"
@@ -2439,60 +2487,62 @@ if [[ "$PRELUDE" == "orange-init" ]]; then
   assert_orange_variant "$ORANGE_INIT_BINARY"
 fi
 
-if [[ -z "$GPU_BUNDLE_DIR" ]]; then
-  GPU_BUNDLE_DIR="$(default_gpu_bundle_dir)"
-  "$SCRIPT_DIR/pixel/pixel_prepare_gpu_smoke_bundle.sh" >/dev/null
-fi
-
-assert_gpu_bundle_variant "$GPU_BUNDLE_DIR"
-STAGED_GPU_BUNDLE_DIR="$WORK_DIR/orange-gpu-bundle"
 STAGED_LIB_PARENT_DIR=""
-stage_gpu_bundle "$GPU_BUNDLE_DIR" "$STAGED_GPU_BUNDLE_DIR"
-assert_gpu_bundle_variant "$STAGED_GPU_BUNDLE_DIR"
-if [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
-  COMPOSITOR_SCENE_DUMMY_CLIENT="$WORK_DIR/$(basename "$COMPOSITOR_SCENE_DUMMY_CLIENT_PATH")"
-  COMPOSITOR_SCENE_STARTUP_CONFIG="$WORK_DIR/$COMPOSITOR_SCENE_STARTUP_CONFIG_NAME"
-  render_compositor_scene_startup_config "$COMPOSITOR_SCENE_STARTUP_CONFIG"
-  render_compositor_scene_dummy_client "$COMPOSITOR_SCENE_DUMMY_CLIENT"
-  cp "$SHADOW_SESSION_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-session"
-  chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-session"
-  cp "$SHADOW_COMPOSITOR_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
-  chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
-  cp "$COMPOSITOR_SCENE_DUMMY_CLIENT" "$STAGED_GPU_BUNDLE_DIR/$(basename "$COMPOSITOR_SCENE_DUMMY_CLIENT_PATH")"
-  chmod 0755 "$STAGED_GPU_BUNDLE_DIR/$(basename "$COMPOSITOR_SCENE_DUMMY_CLIENT_PATH")"
-  cp "$COMPOSITOR_SCENE_STARTUP_CONFIG" "$STAGED_GPU_BUNDLE_DIR/$COMPOSITOR_SCENE_STARTUP_CONFIG_NAME"
-elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
-  APP_DIRECT_PRESENT_STARTUP_CONFIG="$WORK_DIR/$APP_DIRECT_PRESENT_STARTUP_CONFIG_NAME"
-  stage_app_direct_present_client_bundle "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_BUNDLE_DIR_NAME"
-  merge_app_direct_present_typescript_runtime_libs "$STAGED_GPU_BUNDLE_DIR"
-  prune_app_direct_present_diagnostic_payloads "$STAGED_GPU_BUNDLE_DIR"
-  render_app_direct_present_startup_config "$APP_DIRECT_PRESENT_STARTUP_CONFIG"
-  cp "$SHADOW_SESSION_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-session"
-  chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-session"
-  cp "$SHADOW_COMPOSITOR_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
-  chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
-  cp "$APP_DIRECT_PRESENT_STARTUP_CONFIG" "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_STARTUP_CONFIG_NAME"
-elif [[ "$ORANGE_GPU_MODE" == "shell-session" ]]; then
-  SHELL_SESSION_STARTUP_CONFIG="$WORK_DIR/$SHELL_SESSION_STARTUP_CONFIG_NAME"
-  stage_app_direct_present_client_bundle "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_BUNDLE_DIR_NAME"
-  merge_app_direct_present_typescript_runtime_libs "$STAGED_GPU_BUNDLE_DIR"
-  prune_app_direct_present_diagnostic_payloads "$STAGED_GPU_BUNDLE_DIR"
-  render_shell_session_startup_config "$SHELL_SESSION_STARTUP_CONFIG"
-  cp "$SHADOW_SESSION_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-session"
-  chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-session"
-  cp "$SHADOW_COMPOSITOR_DYNAMIC_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
-  chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
-  cp "$SHELL_SESSION_STARTUP_CONFIG" "$STAGED_GPU_BUNDLE_DIR/$SHELL_SESSION_STARTUP_CONFIG_NAME"
-fi
-if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" && -n "$CAMERA_HAL_BIONIC_PROBE_BINARY" ]]; then
-  cp "$CAMERA_HAL_BIONIC_PROBE_BINARY" "$STAGED_GPU_BUNDLE_DIR/camera-hal-bionic-probe"
-  chmod 0755 "$STAGED_GPU_BUNDLE_DIR/camera-hal-bionic-probe"
-fi
+if orange_gpu_mode_uses_ramdisk_gpu_bundle; then
+  if [[ -z "$GPU_BUNDLE_DIR" ]]; then
+    GPU_BUNDLE_DIR="$(default_gpu_bundle_dir)"
+    "$SCRIPT_DIR/pixel/pixel_prepare_gpu_smoke_bundle.sh" >/dev/null
+  fi
 
-strip_staged_elf_files "$STAGED_GPU_BUNDLE_DIR"
-if [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
-  STAGED_GPU_BUNDLE_ARCHIVE="$WORK_DIR/$ORANGE_GPU_BUNDLE_ARCHIVE_NAME"
-  archive_app_direct_present_gpu_bundle "$STAGED_GPU_BUNDLE_DIR" "$STAGED_GPU_BUNDLE_ARCHIVE"
+  assert_gpu_bundle_variant "$GPU_BUNDLE_DIR"
+  STAGED_GPU_BUNDLE_DIR="$WORK_DIR/orange-gpu-bundle"
+  stage_gpu_bundle "$GPU_BUNDLE_DIR" "$STAGED_GPU_BUNDLE_DIR"
+  assert_gpu_bundle_variant "$STAGED_GPU_BUNDLE_DIR"
+  if [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
+    COMPOSITOR_SCENE_DUMMY_CLIENT="$WORK_DIR/$(basename "$COMPOSITOR_SCENE_DUMMY_CLIENT_PATH")"
+    COMPOSITOR_SCENE_STARTUP_CONFIG="$WORK_DIR/$COMPOSITOR_SCENE_STARTUP_CONFIG_NAME"
+    render_compositor_scene_startup_config "$COMPOSITOR_SCENE_STARTUP_CONFIG"
+    render_compositor_scene_dummy_client "$COMPOSITOR_SCENE_DUMMY_CLIENT"
+    cp "$SHADOW_SESSION_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-session"
+    chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-session"
+    cp "$SHADOW_COMPOSITOR_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
+    chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
+    cp "$COMPOSITOR_SCENE_DUMMY_CLIENT" "$STAGED_GPU_BUNDLE_DIR/$(basename "$COMPOSITOR_SCENE_DUMMY_CLIENT_PATH")"
+    chmod 0755 "$STAGED_GPU_BUNDLE_DIR/$(basename "$COMPOSITOR_SCENE_DUMMY_CLIENT_PATH")"
+    cp "$COMPOSITOR_SCENE_STARTUP_CONFIG" "$STAGED_GPU_BUNDLE_DIR/$COMPOSITOR_SCENE_STARTUP_CONFIG_NAME"
+  elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
+    APP_DIRECT_PRESENT_STARTUP_CONFIG="$WORK_DIR/$APP_DIRECT_PRESENT_STARTUP_CONFIG_NAME"
+    stage_app_direct_present_client_bundle "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_BUNDLE_DIR_NAME"
+    merge_app_direct_present_typescript_runtime_libs "$STAGED_GPU_BUNDLE_DIR"
+    prune_app_direct_present_diagnostic_payloads "$STAGED_GPU_BUNDLE_DIR"
+    render_app_direct_present_startup_config "$APP_DIRECT_PRESENT_STARTUP_CONFIG"
+    cp "$SHADOW_SESSION_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-session"
+    chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-session"
+    cp "$SHADOW_COMPOSITOR_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
+    chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
+    cp "$APP_DIRECT_PRESENT_STARTUP_CONFIG" "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_STARTUP_CONFIG_NAME"
+  elif [[ "$ORANGE_GPU_MODE" == "shell-session" ]]; then
+    SHELL_SESSION_STARTUP_CONFIG="$WORK_DIR/$SHELL_SESSION_STARTUP_CONFIG_NAME"
+    stage_app_direct_present_client_bundle "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_BUNDLE_DIR_NAME"
+    merge_app_direct_present_typescript_runtime_libs "$STAGED_GPU_BUNDLE_DIR"
+    prune_app_direct_present_diagnostic_payloads "$STAGED_GPU_BUNDLE_DIR"
+    render_shell_session_startup_config "$SHELL_SESSION_STARTUP_CONFIG"
+    cp "$SHADOW_SESSION_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-session"
+    chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-session"
+    cp "$SHADOW_COMPOSITOR_DYNAMIC_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
+    chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
+    cp "$SHELL_SESSION_STARTUP_CONFIG" "$STAGED_GPU_BUNDLE_DIR/$SHELL_SESSION_STARTUP_CONFIG_NAME"
+  fi
+  if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" && -n "$CAMERA_HAL_BIONIC_PROBE_BINARY" ]]; then
+    cp "$CAMERA_HAL_BIONIC_PROBE_BINARY" "$STAGED_GPU_BUNDLE_DIR/camera-hal-bionic-probe"
+    chmod 0755 "$STAGED_GPU_BUNDLE_DIR/camera-hal-bionic-probe"
+  fi
+
+  strip_staged_elf_files "$STAGED_GPU_BUNDLE_DIR"
+  if [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
+    STAGED_GPU_BUNDLE_ARCHIVE="$WORK_DIR/$ORANGE_GPU_BUNDLE_ARCHIVE_NAME"
+    archive_app_direct_present_gpu_bundle "$STAGED_GPU_BUNDLE_DIR" "$STAGED_GPU_BUNDLE_ARCHIVE"
+  fi
 fi
 
 STAGED_GPU_FIRMWARE_DIR=""
@@ -2546,7 +2596,7 @@ fi
 
 if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
   build_args+=(--add "$ORANGE_GPU_BUNDLE_ARCHIVE_NAME=$STAGED_GPU_BUNDLE_ARCHIVE")
-else
+elif [[ -n "$STAGED_GPU_BUNDLE_DIR" ]]; then
   append_tree_add_specs "$STAGED_GPU_BUNDLE_DIR" "$PAYLOAD_ROOT" build_args
 fi
 if [[ -n "$STAGED_LIB_PARENT_DIR" ]]; then
@@ -2594,6 +2644,8 @@ elif [[ "$ORANGE_GPU_MODE" == "timeout-control-smoke" ]]; then
   printf 'Payload contract: hello-init proves the timeout-classifier repaint path by painting the firmware checkpoint, then intentionally hanging before any KGSL open\n'
 elif [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
   printf 'Payload contract: rust hello-init directly probes /vendor/lib64/hw/camera.sm6150.so from Shadow boot userspace and persists link/HMI/module/open blockers under %s\n' "$(metadata_probe_summary_path_for_token "$RUN_TOKEN")"
+elif [[ "$ORANGE_GPU_MODE" == "payload-partition-probe" ]]; then
+  printf 'Payload contract: hello-init mounts /metadata and probes Shadow-owned payload manifest at %s\n' "$(payload_probe_manifest_path_for_token "$RUN_TOKEN")"
 elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-smoke" ]]; then
   printf 'Payload contract: hello-init directly opens /dev/kgsl-3d0 read-only in the owned child process before any staged Rust bundle exec\n'
 elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" ]]; then
@@ -2637,9 +2689,17 @@ elif [[ "$ORANGE_GPU_MODE" == "vulkan-offscreen" ]]; then
 else
   printf 'Payload contract: hello-init executes the staged shadow-gpu-smoke bundle from %s\n' "$PAYLOAD_IMAGE_PATH"
 fi
-printf 'Payload root: %s\n' "$PAYLOAD_IMAGE_PATH"
-printf 'GPU bundle dir: %s\n' "$GPU_BUNDLE_DIR"
-printf 'GPU bundle staged dir: %s\n' "$STAGED_GPU_BUNDLE_DIR"
+if payload_partition_probe_mode; then
+  printf 'Payload root: %s\n' "$(payload_probe_root_for_token "$RUN_TOKEN")"
+  printf 'Metadata payload strategy: %s\n' "$PAYLOAD_PROBE_STRATEGY"
+  printf 'Metadata payload source: %s\n' "$PAYLOAD_PROBE_SOURCE"
+  printf 'Metadata payload manifest path: %s\n' "$(payload_probe_manifest_path_for_token "$RUN_TOKEN")"
+  printf 'Payload fallback path: %s\n' "$PAYLOAD_PROBE_FALLBACK_PATH"
+else
+  printf 'Payload root: %s\n' "$PAYLOAD_IMAGE_PATH"
+  printf 'GPU bundle dir: %s\n' "$GPU_BUNDLE_DIR"
+  printf 'GPU bundle staged dir: %s\n' "$STAGED_GPU_BUNDLE_DIR"
+fi
 if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
   printf 'GPU bundle archive path: %s\n' "$ORANGE_GPU_BUNDLE_ARCHIVE_PATH"
   printf 'GPU bundle staged archive: %s\n' "$STAGED_GPU_BUNDLE_ARCHIVE"
@@ -2653,10 +2713,12 @@ if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   printf 'Rust child path: /%s\n' "$HELLO_INIT_RUST_CHILD_ENTRY"
   printf 'Rust child binary: %s\n' "$HELLO_INIT_BINARY"
 fi
-if [[ "$ORANGE_GPU_MODE" != "compositor-scene" && "$ORANGE_GPU_MODE" != "shell-session" && "$ORANGE_GPU_MODE" != "app-direct-present" && "$ORANGE_GPU_MODE" != "app-direct-present-touch-counter" && "$ORANGE_GPU_MODE" != "app-direct-present-runtime-touch-counter" ]]; then
+if [[ "$ORANGE_GPU_MODE" != "compositor-scene" && "$ORANGE_GPU_MODE" != "shell-session" && "$ORANGE_GPU_MODE" != "app-direct-present" && "$ORANGE_GPU_MODE" != "app-direct-present-touch-counter" && "$ORANGE_GPU_MODE" != "app-direct-present-runtime-touch-counter" && "$ORANGE_GPU_MODE" != "payload-partition-probe" ]]; then
   printf 'GPU exec path: %s/shadow-gpu-smoke\n' "$PAYLOAD_IMAGE_PATH"
 fi
-printf 'GPU loader path: %s/lib/ld-linux-aarch64.so.1\n' "$PAYLOAD_IMAGE_PATH"
+if ! payload_partition_probe_mode; then
+  printf 'GPU loader path: %s/lib/ld-linux-aarch64.so.1\n' "$PAYLOAD_IMAGE_PATH"
+fi
 if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
   printf 'Camera linker capsule dir: %s\n' "$CAMERA_LINKER_CAPSULE_DIR"
 fi
@@ -2726,6 +2788,8 @@ elif [[ "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; the
   else
     printf 'GPU proof: app-owned TypeScript counter surface increments from injected touch and presents a post-touch frame through the Rust boot seam\n'
   fi
+elif payload_partition_probe_mode; then
+  printf 'GPU scene: none\n'
 else
   printf 'GPU scene: %s\n' "$(gpu_scene_value)"
 fi
@@ -2749,6 +2813,10 @@ if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" ]]; then
   printf 'Metadata probe report path: %s\n' "$(metadata_probe_report_path_for_token "$RUN_TOKEN")"
   printf 'Metadata probe timeout class path: %s\n' "$(metadata_probe_timeout_class_path_for_token "$RUN_TOKEN")"
   printf 'Metadata probe summary path: %s\n' "$(metadata_probe_summary_path_for_token "$RUN_TOKEN")"
+  if payload_partition_probe_mode; then
+    printf 'Metadata payload root: %s\n' "$(payload_probe_root_for_token "$RUN_TOKEN")"
+    printf 'Metadata payload manifest path: %s\n' "$(payload_probe_manifest_path_for_token "$RUN_TOKEN")"
+  fi
   if [[ "$ORANGE_GPU_MODE" == "compositor-scene" || "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
     printf 'Metadata compositor frame path: %s\n' "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")"
   fi

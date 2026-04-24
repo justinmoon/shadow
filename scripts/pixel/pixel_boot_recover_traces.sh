@@ -1425,6 +1425,11 @@ expected_app_direct_present_runtime_bundle_env = ""
 expected_app_direct_present_runtime_bundle_path = ""
 expected_app_direct_present_typescript_renderer = ""
 expected_metadata_compositor_frame_path = ""
+expected_payload_probe_strategy = ""
+expected_payload_probe_source = ""
+expected_payload_probe_root = ""
+expected_payload_probe_manifest_path = ""
+expected_payload_probe_fallback_path = ""
 recovered_probe_summary = {}
 recovered_probe_summary_parse_error = None
 recovered_compositor_frame_parse_error = None
@@ -1489,6 +1494,21 @@ if source_image_metadata_path:
         compositor_frame_path_value = metadata.get("metadata_compositor_frame_path")
         if isinstance(compositor_frame_path_value, str):
             expected_metadata_compositor_frame_path = compositor_frame_path_value
+        payload_probe_strategy_value = metadata.get("payload_probe_strategy")
+        if isinstance(payload_probe_strategy_value, str):
+            expected_payload_probe_strategy = payload_probe_strategy_value
+        payload_probe_source_value = metadata.get("payload_probe_source")
+        if isinstance(payload_probe_source_value, str):
+            expected_payload_probe_source = payload_probe_source_value
+        payload_probe_root_value = metadata.get("payload_probe_root")
+        if isinstance(payload_probe_root_value, str):
+            expected_payload_probe_root = payload_probe_root_value
+        payload_probe_manifest_path_value = metadata.get("payload_probe_manifest_path")
+        if isinstance(payload_probe_manifest_path_value, str):
+            expected_payload_probe_manifest_path = payload_probe_manifest_path_value
+        payload_probe_fallback_path_value = metadata.get("payload_probe_fallback_path")
+        if isinstance(payload_probe_fallback_path_value, str):
+            expected_payload_probe_fallback_path = payload_probe_fallback_path_value
 
 def parse_ppm_artifact(path: Path):
     data = path.read_bytes()
@@ -1727,10 +1747,24 @@ summary_color_samples = recovered_probe_summary.get("distinct_color_samples_rgba
 summary_adapter = recovered_probe_summary.get("adapter")
 summary_mode = recovered_probe_summary.get("mode")
 summary_kind = recovered_probe_summary.get("kind")
+summary_ok = recovered_probe_summary.get("ok")
 summary_startup_mode = recovered_probe_summary.get("startup_mode")
 summary_app_id = recovered_probe_summary.get("app_id")
 summary_frame_path = recovered_probe_summary.get("frame_path")
 summary_frame_bytes = recovered_probe_summary.get("frame_bytes")
+summary_payload_strategy = recovered_probe_summary.get("payload_strategy")
+summary_payload_source = recovered_probe_summary.get("payload_source")
+summary_payload_root = recovered_probe_summary.get("payload_root")
+summary_payload_manifest_path = recovered_probe_summary.get("payload_manifest_path")
+summary_payload_marker_path = recovered_probe_summary.get("payload_marker_path")
+summary_payload_version = recovered_probe_summary.get("payload_version")
+summary_payload_fingerprint = recovered_probe_summary.get("payload_fingerprint")
+summary_payload_marker_fingerprint = recovered_probe_summary.get("payload_marker_fingerprint")
+summary_payload_fingerprint_verified = recovered_probe_summary.get("payload_fingerprint_verified")
+summary_payload_mounted_roots = recovered_probe_summary.get("mounted_roots")
+summary_payload_fallback_path = recovered_probe_summary.get("fallback_path")
+summary_payload_blocker = recovered_probe_summary.get("blocker")
+summary_payload_blocker_detail = recovered_probe_summary.get("blocker_detail")
 summary_target_duration_secs = recovered_probe_summary.get("target_duration_secs")
 summary_frame_interval_millis = recovered_probe_summary.get("frame_interval_millis")
 summary_frames_rendered = recovered_probe_summary.get("frames_rendered")
@@ -2057,6 +2091,37 @@ probe_summary_proves_app_direct_present_runtime_touch_counter = (
     and summary_touch_counter_touch_latency_present is True
     and summary_touch_counter_post_touch_frame_captured is True
 )
+probe_summary_proves_payload_partition = (
+    expected_orange_gpu_mode == "payload-partition-probe"
+    and recovered_metadata_probe_summary_present
+    and recovered_probe_summary_parse_error is None
+    and summary_kind == "payload-partition-probe"
+    and summary_ok is True
+    and expected_payload_probe_strategy == "metadata-shadow-payload-v1"
+    and expected_payload_probe_source == "metadata"
+    and isinstance(expected_payload_probe_root, str)
+    and expected_payload_probe_root.startswith("/metadata/shadow-payload/by-token/")
+    and expected_payload_probe_manifest_path == f"{expected_payload_probe_root}/manifest.env"
+    and expected_payload_probe_fallback_path == "/orange-gpu"
+    and summary_payload_strategy == expected_payload_probe_strategy
+    and summary_payload_source == expected_payload_probe_source
+    and isinstance(summary_payload_root, str)
+    and summary_payload_root == expected_payload_probe_root
+    and isinstance(summary_payload_manifest_path, str)
+    and summary_payload_manifest_path == expected_payload_probe_manifest_path
+    and isinstance(summary_payload_marker_path, str)
+    and summary_payload_marker_path == f"{expected_payload_probe_root}/payload.txt"
+    and isinstance(summary_payload_version, str)
+    and bool(summary_payload_version)
+    and isinstance(summary_payload_fingerprint, str)
+    and summary_payload_fingerprint.startswith("sha256:")
+    and summary_payload_marker_fingerprint == summary_payload_fingerprint
+    and summary_payload_fingerprint_verified is True
+    and isinstance(summary_payload_mounted_roots, list)
+    and "/metadata" in summary_payload_mounted_roots
+    and summary_payload_fallback_path == expected_payload_probe_fallback_path
+    and summary_payload_blocker == "none"
+)
 compositor_frame_proves_scene = (
     expected_orange_gpu_mode == "compositor-scene"
     and recovered_metadata_compositor_frame_present
@@ -2201,6 +2266,8 @@ elif expected_orange_gpu_mode == "app-direct-present-runtime-touch-counter":
         and probe_summary_proves_app_direct_present_runtime_touch_counter
         and compositor_frame_proves_app_direct_present
     )
+elif expected_orange_gpu_mode == "payload-partition-probe":
+    proof_ok = probe_summary_proves_payload_partition
 else:
     proof_ok = matched_any_correlated_shadow_tags or probe_report_proves_child_success
 
@@ -2217,6 +2284,7 @@ payload = {
     "probe_summary_proves_app_direct_present": probe_summary_proves_app_direct_present,
     "probe_summary_proves_app_direct_present_touch_counter": probe_summary_proves_app_direct_present_touch_counter,
     "probe_summary_proves_app_direct_present_runtime_touch_counter": probe_summary_proves_app_direct_present_runtime_touch_counter,
+    "probe_summary_proves_payload_partition": probe_summary_proves_payload_partition,
     "app_direct_present_proof_contract_ok": app_direct_present_proof_contract_ok,
     "app_direct_present_proof_contract_required": app_direct_present_proof_contract_required,
     "app_direct_present_proof_contract": app_direct_present_proof_contract,
@@ -2253,6 +2321,11 @@ payload = {
     "expected_metadata_probe_timeout_class_path": expected_metadata_probe_timeout_class_path,
     "expected_metadata_probe_summary_path": expected_metadata_probe_summary_path,
     "expected_metadata_compositor_frame_path": expected_metadata_compositor_frame_path,
+    "expected_payload_probe_strategy": expected_payload_probe_strategy,
+    "expected_payload_probe_source": expected_payload_probe_source,
+    "expected_payload_probe_root": expected_payload_probe_root,
+    "expected_payload_probe_manifest_path": expected_payload_probe_manifest_path,
+    "expected_payload_probe_fallback_path": expected_payload_probe_fallback_path,
     "metadata_stage_present": recovered_metadata_stage_present,
     "metadata_stage_value": recovered_metadata_stage_value,
     "metadata_stage_actual_access_mode": recovered_metadata_stage_actual_access_mode,
@@ -2328,8 +2401,22 @@ payload = {
     "metadata_probe_summary_stderr_path": recovered_metadata_probe_summary_stderr_path,
     "metadata_probe_summary_parse_error": recovered_probe_summary_parse_error,
     "metadata_probe_summary_kind": summary_kind,
+    "metadata_probe_summary_ok": summary_ok,
     "metadata_probe_summary_startup_mode": summary_startup_mode,
     "metadata_probe_summary_app_id": summary_app_id,
+    "metadata_probe_summary_payload_strategy": summary_payload_strategy,
+    "metadata_probe_summary_payload_source": summary_payload_source,
+    "metadata_probe_summary_payload_root": summary_payload_root,
+    "metadata_probe_summary_payload_manifest_path": summary_payload_manifest_path,
+    "metadata_probe_summary_payload_marker_path": summary_payload_marker_path,
+    "metadata_probe_summary_payload_version": summary_payload_version,
+    "metadata_probe_summary_payload_fingerprint": summary_payload_fingerprint,
+    "metadata_probe_summary_payload_marker_fingerprint": summary_payload_marker_fingerprint,
+    "metadata_probe_summary_payload_fingerprint_verified": summary_payload_fingerprint_verified,
+    "metadata_probe_summary_payload_mounted_roots": summary_payload_mounted_roots,
+    "metadata_probe_summary_payload_fallback_path": summary_payload_fallback_path,
+    "metadata_probe_summary_payload_blocker": summary_payload_blocker,
+    "metadata_probe_summary_payload_blocker_detail": summary_payload_blocker_detail,
     "metadata_probe_summary_touch_counter_probe_ok": summary_touch_counter_probe_ok,
     "metadata_probe_summary_touch_counter_injection": summary_touch_counter_injection,
     "metadata_probe_summary_touch_counter_input_observed": summary_touch_counter_input_observed,

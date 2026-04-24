@@ -49,6 +49,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
     - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/rt-touch-v1-0905-20260423230353/orange-gpu.img.hello-init.json`
     - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/rt-touch-v1-0905-20260423230353/run-adb-recover/recover-traces/status.json`
 - The truth surface is `recover-traces/status.json` plus recovered metadata files, not the top-level one-shot wrapper result.
+- The first partition-backed payload strategy is now chosen: `payload-partition-probe` mounts `/metadata`, reads `/metadata/shadow-payload/by-token/<run_token>/manifest.env`, verifies a small payload marker/fingerprint, and records a durable `payload-partition-probe` summary. Rooted hardware proof is the next payload-specific rung.
 - The `ts-app-minimal` proof contract is now explicit in recovered status:
   - `expected_app_direct_present_app_id`
   - `expected_app_direct_present_client_kind`
@@ -85,7 +86,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 ## Highest-Leverage Next Experiments
 
 1. Run `boot-shell-session-first-proof`: boot into the real Shadow shell/home session from the Rust boot seam, not another isolated app-direct proof.
-2. Run `boot-payload-partition-first-probe` in parallel so full shell/app payloads stop depending on ramdisk growth.
+2. Run `boot-payload-metadata-rooted-proof` in parallel so the chosen `/metadata/shadow-payload` root is hardware-proven before full shell/app payloads depend on it.
 3. Run `boot-camera-vendor-linker-stage` opportunistically as the camera sidecar so the Rust boot HAL probe can advance past the current `/vendor/lib64/hw/camera.sm6150.so` visibility blocker.
 4. After shell boots, run `boot-shell-launch-ts-app`: launch a TypeScript app from shell and capture shell/app/return-home proof.
 5. Then run `boot-shell-interaction-proof` and `boot-persistent-shell-control` so the session becomes interactive and long-running.
