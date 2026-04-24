@@ -191,6 +191,7 @@ mod linux {
         dri_bootstrap: String,
         input_bootstrap: String,
         firmware_bootstrap: String,
+        wifi_bootstrap: String,
         mount_dev: bool,
         mount_proc: bool,
         mount_sys: bool,
@@ -235,6 +236,7 @@ mod linux {
                 dri_bootstrap: "none".to_string(),
                 input_bootstrap: "none".to_string(),
                 firmware_bootstrap: "none".to_string(),
+                wifi_bootstrap: "none".to_string(),
                 mount_dev: true,
                 mount_proc: true,
                 mount_sys: true,
@@ -718,6 +720,7 @@ mod linux {
                             mode.as_str(),
                             "timeout-control-smoke"
                                 | "camera-hal-link-probe"
+                                | "wifi-linux-surface-probe"
                                 | "c-kgsl-open-readonly-smoke"
                                 | "c-kgsl-open-readonly-firmware-helper-smoke"
                         ) {
@@ -780,6 +783,7 @@ mod linux {
                             "raw-vulkan-instance-smoke",
                             "timeout-control-smoke",
                             "camera-hal-link-probe",
+                            "wifi-linux-surface-probe",
                             "c-kgsl-open-readonly-smoke",
                             "c-kgsl-open-readonly-firmware-helper-smoke",
                             "c-kgsl-open-readonly-pid1-smoke",
@@ -955,6 +959,11 @@ mod linux {
                 "firmware_bootstrap" => {
                     if let Some(parsed) = parse_allowed(value, &["none", "ramdisk-lib-firmware"]) {
                         config.firmware_bootstrap = parsed;
+                    }
+                }
+                "wifi_bootstrap" => {
+                    if let Some(parsed) = parse_allowed(value, &["none", "sunfish-wlan0"]) {
+                        config.wifi_bootstrap = parsed;
                     }
                 }
                 "mount_proc" => {
@@ -2584,6 +2593,178 @@ mod linux {
         write_atomic_text_file(&temp_path, Path::new(ORANGE_GPU_SUMMARY_PATH), summary)
     }
 
+    fn wifi_boot_path_status_json(path: &str) -> String {
+        camera_boot_hal_path_status_json(path)
+    }
+
+    fn read_trimmed_file(path: &str, max_bytes: usize) -> Option<String> {
+        fs::read(path).ok().map(|bytes| {
+            String::from_utf8_lossy(&bytes[..bytes.len().min(max_bytes)])
+                .trim()
+                .to_string()
+        })
+    }
+
+    fn read_dir_names(path: &str, max_entries: usize) -> Vec<String> {
+        let mut names = Vec::new();
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.flatten().take(max_entries) {
+                names.push(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+        names.sort();
+        names
+    }
+
+    fn json_string_array(values: &[String]) -> String {
+        format!(
+            "[{}]",
+            values
+                .iter()
+                .map(|value| json_string(value))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }
+
+    fn wifi_interface_json(iface: &str) -> String {
+        let root = format!("/sys/class/net/{iface}");
+        let present = Path::new(&root).exists();
+        let device_link = fs::read_link(format!("{root}/device"))
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        format!(
+            concat!(
+                "{{\"name\":{},\"present\":{},\"operstate\":{},\"address\":{},",
+                "\"ifindex\":{},\"type\":{},\"uevent\":{},\"deviceLink\":{}}}"
+            ),
+            json_string(iface),
+            bool_word(present),
+            json_optional_string(read_trimmed_file(&format!("{root}/operstate"), 128)),
+            json_optional_string(read_trimmed_file(&format!("{root}/address"), 128)),
+            json_optional_string(read_trimmed_file(&format!("{root}/ifindex"), 64)),
+            json_optional_string(read_trimmed_file(&format!("{root}/type"), 64)),
+            json_optional_string(read_trimmed_file(&format!("{root}/uevent"), 1024)),
+            json_string(&device_link)
+        )
+    }
+
+    fn write_wifi_boot_summary(summary: &str) -> io::Result<()> {
+        let temp_path = Path::new(ORANGE_GPU_ROOT).join(".wifi-linux-surface-summary.json.tmp");
+        write_atomic_text_file(&temp_path, Path::new(ORANGE_GPU_SUMMARY_PATH), summary)
+    }
+
+    fn run_wifi_linux_surface_probe_internal(
+        config: &Config,
+        probe_stage_path: Option<&Path>,
+        probe_stage_prefix: Option<&str>,
+    ) -> i32 {
+        write_payload_probe_stage(probe_stage_path, probe_stage_prefix, "wifi-surface-start");
+
+        let path_statuses = [
+            "/sys/class/net/wlan0",
+            "/sys/class/net/wlan1",
+            "/sys/class/net/p2p0",
+            "/sys/module/wlan",
+            "/sys/kernel/wlan",
+            "/sys/kernel/debug/wlan0",
+            "/dev/wlan",
+            "/proc/net/wireless",
+            "/lib/modules/wlan.ko",
+            "/lib/firmware/wlan/qca_cld/WCNSS_qcom_cfg.ini",
+            "/lib/firmware/wlanmdsp.mbn",
+            "/lib/firmware/wlan/qca_cld",
+        ]
+        .iter()
+        .map(|path| wifi_boot_path_status_json(path))
+        .collect::<Vec<_>>()
+        .join(",\n    ");
+        let net_interfaces = ["wlan0", "wlan1", "p2p0"]
+            .iter()
+            .map(|iface| wifi_interface_json(iface))
+            .collect::<Vec<_>>()
+            .join(",\n    ");
+        let sys_module_wlan = read_dir_names("/sys/module/wlan", 64);
+        let sys_kernel_wlan = read_dir_names("/sys/kernel/wlan", 64);
+        let debug_wlan0 = read_dir_names("/sys/kernel/debug/wlan0", 64);
+        let proc_wireless = read_file_excerpt("/proc/net/wireless", 4096);
+        let blocker = if !Path::new("/sys/class/net/wlan0").exists() {
+            "wlan0 is not visible in Shadow boot userspace"
+        } else if !Path::new("/dev/wlan").exists() {
+            "wlan0 exists but /dev/wlan vendor control node is missing"
+        } else {
+            ""
+        };
+        let stage = if blocker.is_empty() {
+            "surface-ready"
+        } else {
+            "surface-blocked"
+        };
+        write_payload_probe_stage(probe_stage_path, probe_stage_prefix, stage);
+
+        let summary = format!(
+            concat!(
+                "{{\n",
+                "  \"schemaVersion\": 1,\n",
+                "  \"kind\": \"wifi-linux-surface-probe\",\n",
+                "  \"mode\": \"wifi-linux-surface-probe\",\n",
+                "  \"pid\": {},\n",
+                "  \"runToken\": {},\n",
+                "  \"mounts\": {{\"dev\": {}, \"proc\": {}, \"sys\": {}, \"devMount\": {}}},\n",
+                "  \"wifiBootstrap\": {},\n",
+                "  \"androidWifiApiUse\": {{\"WifiManager\": false, \"wificond\": false, \"wpaSupplicantService\": false, \"rootedAndroidShellWifiApi\": false, \"rootedAndroidShellRecoveryOnly\": true}},\n",
+                "  \"pathStatus\": [\n    {}\n  ],\n",
+                "  \"interfaces\": [\n    {}\n  ],\n",
+                "  \"sysModuleWlanEntries\": {},\n",
+                "  \"sysKernelWlanEntries\": {},\n",
+                "  \"debugWlan0Entries\": {},\n",
+                "  \"procNetWireless\": {},\n",
+                "  \"surfaceReady\": {},\n",
+                "  \"blockerStage\": {},\n",
+                "  \"blocker\": {},\n",
+                "  \"nextStep\": {}\n",
+                "}}\n"
+            ),
+            process::id(),
+            json_string(run_token_or_unset(config)),
+            bool_word(config.mount_dev),
+            bool_word(config.mount_proc),
+            bool_word(config.mount_sys),
+            json_string(&config.dev_mount),
+            json_string(&config.wifi_bootstrap),
+            path_statuses,
+            net_interfaces,
+            json_string_array(&sys_module_wlan),
+            json_string_array(&sys_kernel_wlan),
+            json_string_array(&debug_wlan0),
+            json_string(&proc_wireless),
+            bool_word(blocker.is_empty()),
+            json_string(stage),
+            json_string(blocker),
+            json_string(if blocker.is_empty() {
+                "run a contained WPA association probe against wlan0 using nl80211 or the vendor supplicant binary"
+            } else {
+                "stage/load wlan.ko plus the minimal qca_cld firmware/config roots, then rerun this probe"
+            })
+        );
+
+        match write_wifi_boot_summary(&summary) {
+            Ok(()) => {
+                if blocker.is_empty() {
+                    0
+                } else {
+                    2
+                }
+            }
+            Err(error) => {
+                log_line(&format!(
+                    "failed to write wifi linux surface summary: {error}"
+                ));
+                1
+            }
+        }
+    }
+
     fn run_camera_hal_bionic_probe_helper(
         config: &Config,
         probe_stage_path: Option<&Path>,
@@ -3114,8 +3295,14 @@ mod linux {
         append_path_fingerprint_line(&mut payload, "/dev/media1");
         append_path_fingerprint_line(&mut payload, "/dev/v4l-subdev0");
         append_path_fingerprint_line(&mut payload, "/dev/v4l-subdev16");
+        append_path_fingerprint_line(&mut payload, "/dev/wlan");
+        append_path_fingerprint_line(&mut payload, "/sys/class/net/wlan0");
+        append_path_fingerprint_line(&mut payload, "/sys/class/net/p2p0");
+        append_path_fingerprint_line(&mut payload, "/sys/module/wlan");
+        append_path_fingerprint_line(&mut payload, "/sys/kernel/wlan");
         append_path_fingerprint_line(&mut payload, ORANGE_GPU_ICD_PATH);
         append_file_excerpt(&mut payload, "/proc/mounts", 1024);
+        append_file_excerpt(&mut payload, "/proc/net/wireless", 1024);
         append_file_excerpt(&mut payload, ORANGE_GPU_ICD_PATH, 512);
 
         if write_atomic_text_file(
@@ -4074,6 +4261,11 @@ mod linux {
                 probe_stage_path.as_deref(),
                 probe_stage_prefix.as_deref(),
             ),
+            "wifi-linux-surface-probe" => run_wifi_linux_surface_probe_internal(
+                config,
+                probe_stage_path.as_deref(),
+                probe_stage_prefix.as_deref(),
+            ),
             "c-kgsl-open-readonly-smoke" => run_c_kgsl_open_readonly_smoke_internal(
                 config,
                 probe_stage_path.as_deref(),
@@ -4405,6 +4597,12 @@ mod linux {
             && !config.orange_gpu_metadata_stage_breadcrumb
         {
             log_line("camera-hal-link-probe requires orange_gpu_metadata_stage_breadcrumb=true");
+            return false;
+        }
+        if config.orange_gpu_mode == "wifi-linux-surface-probe"
+            && !config.orange_gpu_metadata_stage_breadcrumb
+        {
+            log_line("wifi-linux-surface-probe requires orange_gpu_metadata_stage_breadcrumb=true");
             return false;
         }
         if config.orange_gpu_mode == "payload-partition-probe"
@@ -4832,6 +5030,7 @@ mod linux {
             config.orange_gpu_mode.as_str(),
             "timeout-control-smoke"
                 | "camera-hal-link-probe"
+                | "wifi-linux-surface-probe"
                 | "c-kgsl-open-readonly-smoke"
                 | "c-kgsl-open-readonly-firmware-helper-smoke"
         );
@@ -5392,6 +5591,26 @@ mod linux {
         Ok(())
     }
 
+    fn load_sunfish_wifi_modules() -> io::Result<()> {
+        for module in ["wlan.ko"] {
+            let module_path = Path::new("/lib/modules").join(module);
+            append_wrapper_log(&format!(
+                "wifi-bootstrap-module-loading module={} path={}",
+                module,
+                module_path.display()
+            ));
+            insert_kernel_module_from_path(&module_path).map_err(|error| {
+                append_wrapper_log(&format!(
+                    "wifi-bootstrap-module-failed module={} error={}",
+                    module, error
+                ));
+                error
+            })?;
+            append_wrapper_log(&format!("wifi-bootstrap-module-ready module={module}"));
+        }
+        Ok(())
+    }
+
     fn bootstrap_tmpfs_input_runtime(config: &Config) -> io::Result<()> {
         if config.input_bootstrap != "sunfish-touch-event2" {
             return Ok(());
@@ -5469,6 +5688,78 @@ mod linux {
         Err(io::Error::new(
             io::ErrorKind::TimedOut,
             "sunfish touch input event did not appear",
+        ))
+    }
+
+    fn bootstrap_tmpfs_wifi_runtime(config: &Config) -> io::Result<()> {
+        if config.wifi_bootstrap != "sunfish-wlan0" {
+            return Ok(());
+        }
+        if !config.mount_sys {
+            append_wrapper_log(
+                "wifi-bootstrap-invalid-config mode=sunfish-wlan0 reason=mount_sys_false",
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "sunfish wifi bootstrap requires mount_sys=true",
+            ));
+        }
+        if !config.mount_dev {
+            append_wrapper_log(
+                "wifi-bootstrap-invalid-config mode=sunfish-wlan0 reason=mount_dev_false",
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "sunfish wifi bootstrap requires mount_dev=true",
+            ));
+        }
+        if config.dev_mount != "tmpfs" {
+            append_wrapper_log(&format!(
+                "wifi-bootstrap-invalid-config mode=sunfish-wlan0 reason=dev_mount_{}",
+                config.dev_mount
+            ));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "sunfish wifi bootstrap requires dev_mount=tmpfs",
+            ));
+        }
+        if !Path::new("/lib/modules/wlan.ko").is_file() {
+            append_wrapper_log("wifi-bootstrap-module-missing path=/lib/modules/wlan.ko");
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "missing sunfish wlan.ko",
+            ));
+        }
+
+        let firmware_stop = Arc::new(AtomicBool::new(false));
+        let firmware_helper = {
+            let thread_stop = Arc::clone(&firmware_stop);
+            thread::spawn(move || run_ramdisk_firmware_any_helper_loop(thread_stop, "wifi"))
+        };
+        let load_result = load_sunfish_wifi_modules();
+        firmware_stop.store(true, Ordering::Relaxed);
+        let _ = firmware_helper.join();
+        load_result?;
+
+        for attempt in 1..=120 {
+            if Path::new("/sys/class/net/wlan0").exists() {
+                ensure_char_device(Path::new("/dev/wlan"), 0o666, 486, 0)?;
+                append_wrapper_log(&format!(
+                    "wifi-bootstrap-ready mode={} interface=wlan0 device=/dev/wlan major=486 minor=0 attempts={}",
+                    config.wifi_bootstrap, attempt
+                ));
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        append_wrapper_log(&format!(
+            "wifi-bootstrap-timeout mode={} waited_ms=12000",
+            config.wifi_bootstrap
+        ));
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "sunfish wlan0 did not appear",
         ))
     }
 
@@ -5652,9 +5943,12 @@ mod linux {
         if bootstrap_tmpfs_camera_runtime(&config).is_err() {
             process::exit(1);
         }
+        if bootstrap_tmpfs_wifi_runtime(&config).is_err() {
+            process::exit(1);
+        }
 
         append_wrapper_log(&format!(
-            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_metadata_prune_token_root={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} payload_probe_strategy={} payload_probe_source={} payload_probe_root={} payload_probe_manifest_path={} payload_probe_fallback_path={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
+            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_metadata_prune_token_root={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} payload_probe_strategy={} payload_probe_source={} payload_probe_root={} payload_probe_manifest_path={} payload_probe_fallback_path={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} wifi_bootstrap={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
             config.payload,
             config.prelude,
             config.orange_gpu_mode,
@@ -5680,6 +5974,7 @@ mod linux {
             config.dri_bootstrap,
             config.input_bootstrap,
             config.firmware_bootstrap,
+            config.wifi_bootstrap,
             bool_word(config.mount_dev),
             bool_word(config.mount_proc),
             bool_word(config.mount_sys),

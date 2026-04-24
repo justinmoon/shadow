@@ -49,9 +49,11 @@ LOG_PMSG="${PIXEL_HELLO_INIT_LOG_PMSG:-true}"
 RUN_TOKEN="${PIXEL_HELLO_INIT_RUN_TOKEN:-${PIXEL_ORANGE_GPU_RUN_TOKEN:-}}"
 DRI_BOOTSTRAP="${PIXEL_ORANGE_GPU_DRI_BOOTSTRAP:-}"
 INPUT_BOOTSTRAP="${PIXEL_ORANGE_GPU_INPUT_BOOTSTRAP:-none}"
+WIFI_BOOTSTRAP="${PIXEL_ORANGE_GPU_WIFI_BOOTSTRAP:-none}"
 FIRMWARE_BOOTSTRAP="${PIXEL_ORANGE_GPU_FIRMWARE_BOOTSTRAP:-none}"
 GPU_FIRMWARE_DIR="${PIXEL_ORANGE_GPU_FIRMWARE_DIR:-}"
 INPUT_MODULE_DIR="${PIXEL_ORANGE_GPU_INPUT_MODULE_DIR:-}"
+WIFI_MODULE_DIR="${PIXEL_ORANGE_GPU_WIFI_MODULE_DIR:-}"
 CAMERA_LINKER_CAPSULE_DIR="${PIXEL_CAMERA_LINKER_CAPSULE_DIR:-}"
 CAMERA_HAL_BIONIC_PROBE_BINARY="${PIXEL_CAMERA_HAL_BIONIC_PROBE_BINARY:-}"
 CAMERA_HAL_CAMERA_ID="${PIXEL_CAMERA_HAL_CAMERA_ID:-0}"
@@ -134,7 +136,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--hello-init-mode direct|rust-bridge]
                                                     [--prelude none|orange-init]
                                                     [--prelude-hold-secs N]
-                                                    [--orange-gpu-mode gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|shell-session-held|shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter|payload-partition-probe]
+                                                    [--orange-gpu-mode gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|wifi-linux-surface-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|shell-session-held|shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter|payload-partition-probe]
                                                     [--orange-gpu-launch-delay-secs N]
                                                     [--orange-gpu-parent-probe-attempts N]
                                                     [--orange-gpu-parent-probe-interval-secs N]
@@ -162,6 +164,8 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--dri-bootstrap none|sunfish-card0-renderD128|sunfish-card0-renderD128-kgsl3d0]
                                                     [--input-bootstrap none|sunfish-touch-event2]
                                                     [--input-module-dir DIR]
+                                                    [--wifi-bootstrap none|sunfish-wlan0]
+                                                    [--wifi-module-dir DIR]
                                                     [--firmware-bootstrap none|ramdisk-lib-firmware]
                                                     [--firmware-dir DIR]
                                                     [--app-direct-present-manual-touch true|false]
@@ -543,7 +547,7 @@ orange_gpu_mode_uses_visible_checkpoints() {
   fi
 
   case "$ORANGE_GPU_MODE" in
-    firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke)
+    firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|wifi-linux-surface-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke)
       return 0
       ;;
     *)
@@ -872,10 +876,10 @@ assert_orange_gpu_mode_word() {
   value="${1:?assert_orange_gpu_mode_word requires a value}"
 
   case "$value" in
-    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|shell-session-held|shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter|payload-partition-probe)
+    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|wifi-linux-surface-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|shell-session-held|shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter|payload-partition-probe)
       ;;
     *)
-      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, orange-gpu-loop, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, firmware-probe-only, timeout-control-smoke, camera-hal-link-probe, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-firmware-helper-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, vulkan-offscreen, compositor-scene, shell-session, shell-session-held, shell-session-runtime-touch-counter, app-direct-present, app-direct-present-touch-counter, app-direct-present-runtime-touch-counter, or payload-partition-probe: $value" >&2
+      echo "pixel_boot_build_orange_gpu: orange gpu mode must be gpu-render, orange-gpu-loop, bundle-smoke, vulkan-instance-smoke, raw-vulkan-instance-smoke, firmware-probe-only, timeout-control-smoke, camera-hal-link-probe, wifi-linux-surface-probe, c-kgsl-open-readonly-smoke, c-kgsl-open-readonly-firmware-helper-smoke, c-kgsl-open-readonly-pid1-smoke, raw-kgsl-open-readonly-smoke, raw-kgsl-getproperties-smoke, raw-vulkan-physical-device-count-query-exit-smoke, raw-vulkan-physical-device-count-query-no-destroy-smoke, raw-vulkan-physical-device-count-query-smoke, raw-vulkan-physical-device-count-smoke, vulkan-enumerate-adapters-count-smoke, vulkan-enumerate-adapters-smoke, vulkan-adapter-smoke, vulkan-device-request-smoke, vulkan-device-smoke, vulkan-offscreen, compositor-scene, shell-session, shell-session-held, shell-session-runtime-touch-counter, app-direct-present, app-direct-present-touch-counter, app-direct-present-runtime-touch-counter, or payload-partition-probe: $value" >&2
       exit 1
       ;;
   esac
@@ -1043,7 +1047,7 @@ rust_bridge_supports_orange_gpu_mode() {
   value="${1:?rust_bridge_supports_orange_gpu_mode requires a value}"
 
   case "$value" in
-    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|shell-session-held|shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter|payload-partition-probe)
+    gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|wifi-linux-surface-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|shell-session-held|shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter|payload-partition-probe)
       return 0
       ;;
     *)
@@ -1134,6 +1138,9 @@ EOF
   fi
   if [[ "$INPUT_BOOTSTRAP" != "none" ]]; then
     printf 'input_bootstrap=%s\n' "$INPUT_BOOTSTRAP" >>"$output_path"
+  fi
+  if [[ "$WIFI_BOOTSTRAP" != "none" ]]; then
+    printf 'wifi_bootstrap=%s\n' "$WIFI_BOOTSTRAP" >>"$output_path"
   fi
   if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
     printf 'orange_gpu_bundle_archive_path=%s\n' "$ORANGE_GPU_BUNDLE_ARCHIVE_PATH" >>"$output_path"
@@ -2340,6 +2347,9 @@ write_metadata() {
     "$INPUT_BOOTSTRAP" \
     "$INPUT_MODULE_DIR" \
     "${STAGED_INPUT_MODULE_DIR:-}" \
+    "$WIFI_BOOTSTRAP" \
+    "$WIFI_MODULE_DIR" \
+    "${STAGED_WIFI_MODULE_DIR:-}" \
     "$FIRMWARE_BOOTSTRAP" \
     "$GPU_FIRMWARE_DIR" \
     "${STAGED_GPU_FIRMWARE_DIR:-}" \
@@ -2403,6 +2413,9 @@ from pathlib import Path
     input_bootstrap,
     input_module_dir,
     input_module_staged_dir,
+    wifi_bootstrap,
+    wifi_module_dir,
+    wifi_module_staged_dir,
     firmware_bootstrap,
     gpu_firmware_dir,
     gpu_firmware_staged_dir,
@@ -2479,6 +2492,9 @@ payload_json = {
     "input_bootstrap": input_bootstrap,
     "input_module_dir": input_module_dir,
     "input_module_staged_dir": input_module_staged_dir,
+    "wifi_bootstrap": wifi_bootstrap,
+    "wifi_module_dir": wifi_module_dir,
+    "wifi_module_staged_dir": wifi_module_staged_dir,
     "firmware_bootstrap": firmware_bootstrap,
     "gpu_firmware_dir": gpu_firmware_dir,
     "gpu_firmware_staged_dir": gpu_firmware_staged_dir,
@@ -2620,6 +2636,22 @@ stage_input_module_tree() {
   for module in heatmap.ko ftm5.ko; do
     [[ -f "$source_dir/$module" ]] || {
       echo "pixel_boot_build_orange_gpu: input module dir missing $module: $source_dir" >&2
+      exit 1
+    }
+    cp "$source_dir/$module" "$staged_dir/$module"
+    chmod 0644 "$staged_dir/$module"
+  done
+}
+
+stage_wifi_module_tree() {
+  local source_dir staged_dir module
+  source_dir="${1:?stage_wifi_module_tree requires a source dir}"
+  staged_dir="${2:?stage_wifi_module_tree requires a staged dir}"
+
+  mkdir -p "$staged_dir"
+  for module in wlan.ko; do
+    [[ -f "$source_dir/$module" ]] || {
+      echo "pixel_boot_build_orange_gpu: wifi module dir missing $module: $source_dir" >&2
       exit 1
     }
     cp "$source_dir/$module" "$staged_dir/$module"
@@ -2811,6 +2843,14 @@ while [[ $# -gt 0 ]]; do
       INPUT_MODULE_DIR="${2:?missing value for --input-module-dir}"
       shift 2
       ;;
+    --wifi-bootstrap)
+      WIFI_BOOTSTRAP="${2:?missing value for --wifi-bootstrap}"
+      shift 2
+      ;;
+    --wifi-module-dir)
+      WIFI_MODULE_DIR="${2:?missing value for --wifi-module-dir}"
+      shift 2
+      ;;
     --firmware-bootstrap)
       FIRMWARE_BOOTSTRAP="${2:?missing value for --firmware-bootstrap}"
       shift 2
@@ -2994,6 +3034,10 @@ if [[ "$ORANGE_GPU_MODE" == "payload-partition-probe" && "$ORANGE_GPU_METADATA_S
   echo "pixel_boot_build_orange_gpu: payload-partition-probe requires --orange-gpu-metadata-stage-breadcrumb true so mounted payload evidence survives recovery" >&2
   exit 1
 fi
+if [[ "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" && "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi-linux-surface-probe requires --orange-gpu-metadata-stage-breadcrumb true so Linux Wi-Fi surface evidence survives recovery" >&2
+  exit 1
+fi
 if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
   if [[ "$ORANGE_GPU_MODE" != "camera-hal-link-probe" ]]; then
     echo "pixel_boot_build_orange_gpu: --camera-linker-capsule is only supported with camera-hal-link-probe" >&2
@@ -3037,6 +3081,13 @@ if [[ "$HELLO_INIT_MODE" == "rust-bridge" && "$HELLO_INIT_RUST_CHILD_PROFILE" !=
   exit 1
 fi
 assert_firmware_bootstrap_word "$FIRMWARE_BOOTSTRAP"
+case "$WIFI_BOOTSTRAP" in
+  none|sunfish-wlan0) ;;
+  *)
+    echo "pixel_boot_build_orange_gpu: wifi bootstrap must be none or sunfish-wlan0: $WIFI_BOOTSTRAP" >&2
+    exit 1
+    ;;
+esac
 if [[ "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" == "true" && "$MOUNT_DEV" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: orange gpu metadata stage breadcrumb requires mount-dev=true" >&2
   exit 1
@@ -3095,6 +3146,30 @@ if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" && -z "$INPUT_MODULE_DIR" ]];
 fi
 if [[ "$INPUT_BOOTSTRAP" == "none" && -n "$INPUT_MODULE_DIR" ]]; then
   echo "pixel_boot_build_orange_gpu: input-module-dir requires --input-bootstrap sunfish-touch-event2" >&2
+  exit 1
+fi
+if [[ "$WIFI_BOOTSTRAP" != "none" && "$MOUNT_SYS" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi-bootstrap requires --mount-sys true so hello-init can discover /sys/class/net/wlan0" >&2
+  exit 1
+fi
+if [[ "$WIFI_BOOTSTRAP" == "sunfish-wlan0" && "$MOUNT_DEV" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi-bootstrap sunfish-wlan0 requires --mount-dev true so hello-init can create /dev/wlan" >&2
+  exit 1
+fi
+if [[ "$WIFI_BOOTSTRAP" == "sunfish-wlan0" && "$DEV_MOUNT" != "tmpfs" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi-bootstrap sunfish-wlan0 requires --dev-mount tmpfs so hello-init owns /dev/wlan creation" >&2
+  exit 1
+fi
+if [[ "$WIFI_BOOTSTRAP" == "sunfish-wlan0" && "$FIRMWARE_BOOTSTRAP" != "ramdisk-lib-firmware" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi-bootstrap sunfish-wlan0 requires --firmware-bootstrap ramdisk-lib-firmware so hello-init can service WLAN firmware" >&2
+  exit 1
+fi
+if [[ "$WIFI_BOOTSTRAP" == "sunfish-wlan0" && -z "$WIFI_MODULE_DIR" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi-bootstrap sunfish-wlan0 requires --wifi-module-dir with wlan.ko" >&2
+  exit 1
+fi
+if [[ "$WIFI_BOOTSTRAP" == "none" && -n "$WIFI_MODULE_DIR" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi-module-dir requires --wifi-bootstrap sunfish-wlan0" >&2
   exit 1
 fi
 if [[ "$ORANGE_GPU_FIRMWARE_HELPER" == "true" && "$FIRMWARE_BOOTSTRAP" != "ramdisk-lib-firmware" ]]; then
@@ -3161,7 +3236,7 @@ if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   fi
 else
   if [[ -z "$HELLO_INIT_BINARY" ]]; then
-    if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
+    if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" || "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" ]]; then
       HELLO_INIT_BINARY="$(default_rust_hello_init_binary)"
       build_or_copy_rust_hello_init_binary \
         "$(default_rust_hello_init_package_ref)" \
@@ -3187,7 +3262,7 @@ if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   assert_rust_hello_variant "$HELLO_INIT_BINARY"
   assert_rust_hello_variant "$HELLO_INIT_RUST_SHIM_BINARY"
 else
-  if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
+  if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" || "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" ]]; then
     assert_rust_hello_variant "$HELLO_INIT_BINARY"
   else
     assert_hello_variant "$HELLO_INIT_BINARY"
@@ -3340,6 +3415,7 @@ fi
 
 STAGED_GPU_FIRMWARE_DIR=""
 STAGED_INPUT_MODULE_DIR=""
+STAGED_WIFI_MODULE_DIR=""
 if [[ "$FIRMWARE_BOOTSTRAP" == "ramdisk-lib-firmware" ]]; then
   [[ -d "$GPU_FIRMWARE_DIR" ]] || {
     echo "pixel_boot_build_orange_gpu: firmware dir not found: $GPU_FIRMWARE_DIR" >&2
@@ -3363,6 +3439,16 @@ if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" ]]; then
   STAGED_INPUT_MODULE_DIR="$STAGED_LIB_PARENT_DIR/modules"
   mkdir -p "$STAGED_LIB_PARENT_DIR"
   stage_input_module_tree "$INPUT_MODULE_DIR" "$STAGED_INPUT_MODULE_DIR"
+fi
+if [[ "$WIFI_BOOTSTRAP" == "sunfish-wlan0" ]]; then
+  [[ -d "$WIFI_MODULE_DIR" ]] || {
+    echo "pixel_boot_build_orange_gpu: wifi module dir not found: $WIFI_MODULE_DIR" >&2
+    exit 1
+  }
+  STAGED_LIB_PARENT_DIR="${STAGED_LIB_PARENT_DIR:-$WORK_DIR/lib-dir}"
+  STAGED_WIFI_MODULE_DIR="$STAGED_LIB_PARENT_DIR/modules"
+  mkdir -p "$STAGED_LIB_PARENT_DIR"
+  stage_wifi_module_tree "$WIFI_MODULE_DIR" "$STAGED_WIFI_MODULE_DIR"
 fi
 
 CONFIG_PATH="$WORK_DIR/$CONFIG_ENTRY"
@@ -3407,8 +3493,8 @@ if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
     fi
   done
 fi
-if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" ]]; then
-  append_tree_add_specs "$STAGED_INPUT_MODULE_DIR" "lib/modules" build_args
+if [[ -n "${STAGED_INPUT_MODULE_DIR:-}" || -n "${STAGED_WIFI_MODULE_DIR:-}" ]]; then
+  append_tree_add_specs "${STAGED_INPUT_MODULE_DIR:-$STAGED_WIFI_MODULE_DIR}" "lib/modules" build_args
 fi
 
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
@@ -3442,6 +3528,8 @@ elif [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
   printf 'Payload contract: rust hello-init directly probes /vendor/lib64/hw/camera.sm6150.so from Shadow boot userspace and persists link/HMI/module/open blockers under %s\n' "$(metadata_probe_summary_path_for_token "$RUN_TOKEN")"
 elif [[ "$ORANGE_GPU_MODE" == "payload-partition-probe" ]]; then
   printf 'Payload contract: hello-init mounts /metadata and probes Shadow-owned payload manifest at %s\n' "$(payload_probe_manifest_path_for_token "$RUN_TOKEN")"
+elif [[ "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" ]]; then
+  printf 'Payload contract: rust hello-init directly inventories the Linux wlan0/nl80211/vendor-node surface from Shadow boot userspace and persists blockers under %s\n' "$(metadata_probe_summary_path_for_token "$RUN_TOKEN")"
 elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-smoke" ]]; then
   printf 'Payload contract: hello-init directly opens /dev/kgsl-3d0 read-only in the owned child process before any staged Rust bundle exec\n'
 elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" ]]; then
@@ -3668,6 +3756,11 @@ printf 'Input bootstrap: %s\n' "$INPUT_BOOTSTRAP"
 if [[ "$INPUT_BOOTSTRAP" != "none" ]]; then
   printf 'Input module dir: %s\n' "$INPUT_MODULE_DIR"
   printf 'Input module staged dir: %s\n' "$STAGED_INPUT_MODULE_DIR"
+fi
+printf 'Wi-Fi bootstrap: %s\n' "$WIFI_BOOTSTRAP"
+if [[ "$WIFI_BOOTSTRAP" != "none" ]]; then
+  printf 'Wi-Fi module dir: %s\n' "$WIFI_MODULE_DIR"
+  printf 'Wi-Fi module staged dir: %s\n' "$STAGED_WIFI_MODULE_DIR"
 fi
 printf 'Metadata path: %s\n' "$(hello_init_metadata_path "$OUTPUT_IMAGE")"
 if [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
