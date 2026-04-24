@@ -85,6 +85,7 @@ pub(crate) struct GuestSyntheticTapConfig {
     pub(crate) normalized_y_millis: u16,
     pub(crate) after_first_frame_delay_ms: u64,
     pub(crate) hold_ms: u64,
+    pub(crate) after_app_id: Option<AppId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -893,6 +894,7 @@ struct GuestSyntheticTapConfigFile {
     normalized_y_millis: Option<u16>,
     after_first_frame_delay_ms: Option<u64>,
     hold_ms: Option<u64>,
+    after_app_id: Option<String>,
 }
 
 impl GuestSyntheticTapConfigFile {
@@ -917,6 +919,11 @@ impl GuestSyntheticTapConfigFile {
             normalized_y_millis,
             after_first_frame_delay_ms: self.after_first_frame_delay_ms.unwrap_or(250),
             hold_ms: self.hold_ms.unwrap_or(50),
+            after_app_id: self
+                .after_app_id
+                .as_deref()
+                .map(|value| parse_config_app_id("touch.syntheticTap.afterAppId", value))
+                .transpose()?,
         })
     }
 }
@@ -1016,7 +1023,10 @@ mod tests {
     use shadow_ui_core::app::{CAMERA_APP_ID, TIMELINE_APP_ID};
     use tempfile::TempDir;
 
-    use super::{DmabufFormatProfile, GuestStartupConfig, StartupAction, TransportRequest};
+    use super::{
+        DmabufFormatProfile, GuestStartupConfig, GuestSyntheticTapConfig, StartupAction,
+        TransportRequest,
+    };
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1314,7 +1324,14 @@ mod tests {
   },
   "touch": {
     "signalPath": "/tmp/touch.signal",
-    "latencyTrace": true
+    "latencyTrace": true,
+    "syntheticTap": {
+      "normalizedXMillis": 500,
+      "normalizedYMillis": 500,
+      "afterFirstFrameDelayMs": 250,
+      "holdMs": 50,
+      "afterAppId": "timeline"
+    }
   },
   "compositor": {
     "transport": "direct",
@@ -1392,6 +1409,16 @@ mod tests {
                     Some(PathBuf::from("/tmp/touch.signal"))
                 );
                 assert!(config.touch_latency_trace);
+                assert_eq!(
+                    config.synthetic_tap,
+                    Some(GuestSyntheticTapConfig {
+                        normalized_x_millis: 500,
+                        normalized_y_millis: 500,
+                        after_first_frame_delay_ms: 250,
+                        hold_ms: 50,
+                        after_app_id: Some(TIMELINE_APP_ID),
+                    })
+                );
                 assert!(config.frame_snapshot_cache_enabled);
                 assert!(config.frame_checksum_enabled);
                 assert_eq!(config.frame_artifact_path, PathBuf::from("/tmp/frame.ppm"));

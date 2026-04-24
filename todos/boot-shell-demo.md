@@ -35,7 +35,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [x] Add shell-session boot mode and host smoke coverage.
 - [x] Build and run first shell-home frame proof on a Pixel.
 - [x] Add shell-start-app proof for TypeScript `counter`.
-- [ ] Fold in manual/real touch plumbing from `worker-2` if it helps interaction.
+- [~] Fold in manual/real touch plumbing from `worker-2` if it helps interaction.
 - [ ] Add persistent/held shell mode with a clear recovery path.
 - [ ] Confirm on a second Pixel and record proof artifacts.
 
@@ -48,4 +48,5 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - First dynamic shell run proved a GPU shell/home frame, but app-frame exit initially stopped on the home frame. The compositor now defers `exitOnFirstFrame` until the shell-started app has produced the presented frame.
 - `/metadata` filled up with old boot-token artifacts and Android root could not delete the boot-created unlabeled directories under SELinux. The boot image builder now has an explicit lab option, `--orange-gpu-metadata-prune-token-root true`, so owned PID1 can reclaim the proof area before writing a fresh token.
 - Hardware proof on `06241JEC200520`: `build/pixel/runs/boot-shell-session/ss-appframe-metrics-r1-20260424014239/device-run/recover-traces-rerun/status.json` proved the shell log path for `counter`; recovery now also requires the captured frame to match the app-specific frame fingerprint before `proof_ok=true`.
+- Added `shell-session-runtime-touch-counter` as the next proof rung: shell launches TypeScript `counter`, synthetic tap waits for the counter app frame before firing, and recovery requires shell evidence plus runtime counter/touch/post-frame evidence. Physical-touch hardware proof is still pending.
 - If ramdisk/payload size or staging fragility keeps returning, promote `payload-partition-first-probe` from `todos/boot/plan.md` into this branch: keep boot ramdisk minimal and mount a partition-backed Shadow payload with recovered payload source/version/fingerprint proof.

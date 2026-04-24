@@ -365,10 +365,19 @@ impl ShadowGuestCompositor {
             .expect("insert synthetic touch source");
     }
 
-    pub(crate) fn schedule_synthetic_touch_after_frame(&mut self, frame_marker: &str) {
+    pub(crate) fn schedule_synthetic_touch_after_frame(
+        &mut self,
+        frame_marker: &str,
+        app_id: Option<AppId>,
+    ) {
         let Some(tap) = self.synthetic_tap else {
             return;
         };
+        if let Some(required_app_id) = tap.after_app_id {
+            if app_id != Some(required_app_id) {
+                return;
+            }
+        }
         if self.synthetic_tap_scheduled {
             return;
         }

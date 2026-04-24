@@ -788,6 +788,7 @@ mod linux {
                             "vulkan-offscreen",
                             "compositor-scene",
                             "shell-session",
+                            "shell-session-runtime-touch-counter",
                             "app-direct-present",
                             "app-direct-present-touch-counter",
                             "app-direct-present-runtime-touch-counter",
@@ -1315,7 +1316,14 @@ mod linux {
     }
 
     fn orange_gpu_mode_is_shell_session(mode: &str) -> bool {
-        mode == "shell-session"
+        matches!(
+            mode,
+            "shell-session" | "shell-session-runtime-touch-counter"
+        )
+    }
+
+    fn orange_gpu_mode_is_shell_session_runtime_touch_counter(mode: &str) -> bool {
+        mode == "shell-session-runtime-touch-counter"
     }
 
     fn orange_gpu_mode_is_app_direct_present(mode: &str) -> bool {
@@ -2804,7 +2812,11 @@ mod linux {
         }
 
         let frame_path = runtime.compositor_frame_path.display();
-        let output_text = if touch_counter_profile.is_some() || kind == "shell-session" {
+        let shell_summary_kind = matches!(
+            kind,
+            "shell-session" | "shell-session-runtime-touch-counter"
+        );
+        let output_text = if touch_counter_profile.is_some() || shell_summary_kind {
             Some(fs::read_to_string(ORANGE_GPU_OUTPUT_PATH).map_err(|_| "output-log-missing")?)
         } else {
             None
@@ -2818,7 +2830,7 @@ mod linux {
         } else {
             None
         };
-        let shell_session_evidence = if kind == "shell-session" {
+        let shell_session_evidence = if shell_summary_kind {
             let Some(app_id) = app_id else {
                 return Err("shell-session-app-id-missing");
             };
@@ -2890,7 +2902,7 @@ mod linux {
         {
             return Err("touch-counter-proof-missing");
         }
-        if kind == "shell-session"
+        if shell_summary_kind
             && !shell_session_evidence
                 .as_ref()
                 .map(ShellSessionEvidence::ok)
@@ -4296,13 +4308,30 @@ mod linux {
                             None,
                         )
                     } else if orange_gpu_mode_is_shell_session(&config.orange_gpu_mode) {
-                        (
-                            "shell-session",
-                            "shell",
-                            Some(config.shell_session_start_app_id.as_str()),
-                            "shell-session-app-frame-captured",
-                            None,
-                        )
+                        if orange_gpu_mode_is_shell_session_runtime_touch_counter(
+                            &config.orange_gpu_mode,
+                        ) {
+                            let injection = if config.app_direct_present_manual_touch {
+                                "physical-touch"
+                            } else {
+                                "synthetic-compositor"
+                            };
+                            (
+                                "shell-session-runtime-touch-counter",
+                                "shell",
+                                Some("counter"),
+                                "shell-session-runtime-touch-counter-proved",
+                                Some(TouchCounterEvidenceProfile::runtime_counter(injection)),
+                            )
+                        } else {
+                            (
+                                "shell-session",
+                                "shell",
+                                Some(config.shell_session_start_app_id.as_str()),
+                                "shell-session-app-frame-captured",
+                                None,
+                            )
+                        }
                     } else if orange_gpu_mode_is_app_direct_present_runtime_touch_counter(
                         &config.orange_gpu_mode,
                     ) {

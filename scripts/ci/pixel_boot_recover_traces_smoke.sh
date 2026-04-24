@@ -168,7 +168,7 @@ PROP
       elif [[ "$TRACE_MODE" == "compositor-scene-success" ]]; then
         printf 'parent-probe-result=exit-0\n'
         exit 0
-      elif [[ "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "app-direct-present-success" || "$TRACE_MODE" == "app-direct-present-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" || "$TRACE_MODE" == "payload-partition-success" ]]; then
+      elif [[ "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-success" || "$TRACE_MODE" == "app-direct-present-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" || "$TRACE_MODE" == "payload-partition-success" ]]; then
         printf 'parent-probe-result=exit-0\n'
         exit 0
       fi
@@ -190,6 +190,9 @@ PROP
       elif [[ "$TRACE_MODE" == "shell-session-success" ]]; then
         printf 'orange-gpu-payload:shell-session-app-frame-captured\n'
         exit 0
+      elif [[ "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" ]]; then
+        printf 'orange-gpu-payload:shell-session-runtime-touch-counter-proved\n'
+        exit 0
       elif [[ "$TRACE_MODE" == "app-direct-present-success" ]]; then
         printf 'orange-gpu-payload:app-direct-present-frame-captured\n'
         exit 0
@@ -206,7 +209,7 @@ PROP
       exit 3
       ;;
     *"/metadata/shadow-hello-init/by-token/"*"/probe-fingerprint.txt"* )
-      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" || "$TRACE_MODE" == "orange-gpu-loop-success" || "$TRACE_MODE" == "compositor-scene-success" || "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "app-direct-present-success" || "$TRACE_MODE" == "app-direct-present-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" || "$TRACE_MODE" == "payload-partition-success" ]]; then
+      if [[ "$TRACE_MODE" == "matched" || "$TRACE_MODE" == "token-only" || "$TRACE_MODE" == "probe-only-success" || "$TRACE_MODE" == "orange-gpu-loop-success" || "$TRACE_MODE" == "compositor-scene-success" || "$TRACE_MODE" == "shell-session-success" || "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-success" || "$TRACE_MODE" == "app-direct-present-touch-counter-success" || "$TRACE_MODE" == "app-direct-present-runtime-touch-counter-success" || "$TRACE_MODE" == "payload-partition-success" ]]; then
         printf 'path=/dev/kgsl-3d0 present=true kind=char mode=666 uid=1000 gid=1000 major=508 minor=0\n'
         exit 0
       fi
@@ -257,6 +260,16 @@ EOF
         cat <<EOF
 probe_label=orange-gpu-payload
 observed_probe_stage=orange-gpu-payload:shell-session-app-frame-captured
+child_timed_out=false
+child_completed=true
+exit_status=0
+wchan=
+EOF
+        exit 0
+      elif [[ "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" ]]; then
+        cat <<EOF
+probe_label=orange-gpu-payload
+observed_probe_stage=orange-gpu-payload:shell-session-runtime-touch-counter-proved
 child_timed_out=false
 child_completed=true
 exit_status=0
@@ -414,6 +427,39 @@ EOF
 }
 EOF
         exit 0
+      elif [[ "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" ]]; then
+        cat <<EOF
+{
+  "kind": "shell-session-runtime-touch-counter",
+  "startup_mode": "shell",
+  "app_id": "counter",
+  "shell_session_probe": {
+    "shell_mode_enabled": true,
+    "home_frame_done": true,
+    "start_app_requested": true,
+    "app_launch_mode_logged": true,
+    "mapped_window": true,
+    "surface_app_tracked": true,
+    "app_frame_artifact_logged": true,
+    "app_frame_captured": true
+  },
+  "shell_session_probe_ok": true,
+  "touch_counter_probe": {
+    "injection": "synthetic-compositor",
+    "input_observed": true,
+    "tap_dispatched": true,
+    "counter_incremented": true,
+    "post_touch_frame_committed": true,
+    "post_touch_frame_artifact_logged": true,
+    "touch_latency_present": true,
+    "post_touch_frame_captured": true
+  },
+  "touch_counter_probe_ok": true,
+  "frame_path": "/metadata/shadow-hello-init/by-token/$TRACE_RUN_TOKEN/compositor-frame.ppm",
+  "frame_bytes": 20
+}
+EOF
+        exit 0
       elif [[ "$TRACE_MODE" == "app-direct-present-success" ]]; then
         trace_app_id="${MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID:-rust-demo}"
         cat <<EOF
@@ -502,6 +548,9 @@ EOF
         exit 0
       elif [[ "$TRACE_MODE" == "shell-session-success" ]]; then
         printf 'P6\n3 1\n255\n\x0b\x16\x30\x10\x24\x3b\x2f\xb8\xff'
+        exit 0
+      elif [[ "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" ]]; then
+        printf 'P6\n3 1\n255\n\x2a\x12\x09\xff\x8a\x42\xff\xe0\xa6'
         exit 0
       elif [[ "$TRACE_MODE" == "app-direct-present-success" ]]; then
         case "${MOCK_TRACE_APP_DIRECT_PRESENT_FRAME_APP_ID:-${MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID:-rust-demo}}" in
@@ -689,12 +738,12 @@ EOF
   "metadata_compositor_frame_path": "/metadata/shadow-hello-init/by-token/$run_token/compositor-frame.ppm"
 }
 EOF
-  elif [[ "$orange_gpu_mode" == "shell-session" ]]; then
+  elif [[ "$orange_gpu_mode" == "shell-session" || "$orange_gpu_mode" == "shell-session-runtime-touch-counter" ]]; then
     cat >"$image_path.hello-init.json" <<EOF
 {
   "kind": "hello_init_build",
   "run_token": "$run_token",
-  "orange_gpu_mode": "shell-session",
+  "orange_gpu_mode": "$orange_gpu_mode",
   "orange_gpu_firmware_helper": true,
   "shell_session_start_app_id": "$app_direct_present_app_id",
   "log_kmsg": true,
@@ -1144,6 +1193,44 @@ assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_
 assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_height 1
 assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_pixel_bytes 9
 assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
+
+SHELL_TOUCH_PARENT="$TMP_DIR/output-shell-session-runtime-touch-counter"
+SHELL_TOUCH_IMAGE="$TMP_DIR/output-shell-session-runtime-touch-counter.img"
+SHELL_TOUCH_OUTPUT="$SHELL_TOUCH_PARENT/recover-traces"
+write_recover_context "$SHELL_TOUCH_PARENT" "$SHELL_TOUCH_IMAGE" "$RUN_TOKEN" shell-session-runtime-touch-counter counter
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=shell-session-runtime-touch-counter-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID=counter \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$SHELL_TOUCH_OUTPUT" >/dev/null
+
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" matched_any_correlated_shadow_tags false
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" probe_report_proves_child_success true
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" probe_summary_proves_shell_session_runtime_touch_counter true
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" app_direct_present_proof_contract_required true
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" app_direct_present_proof_contract_ok true
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_compositor_frame_proves_shell_session_app true
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" proof_ok true
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" expected_shell_session_start_app_id counter
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" expected_app_direct_present_client_kind typescript
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" expected_app_direct_present_runtime_bundle_env SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_probe_summary_kind shell-session-runtime-touch-counter
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_probe_summary_startup_mode shell
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_probe_summary_app_id counter
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_probe_summary_shell_session_probe_ok true
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_probe_summary_touch_counter_probe_ok true
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_probe_summary_touch_counter_injection synthetic-compositor
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_probe_summary_touch_counter_counter_incremented true
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_probe_summary_touch_counter_touch_latency_present true
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_probe_summary_touch_counter_post_touch_frame_captured true
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_compositor_frame_width 3
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_compositor_frame_height 1
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_compositor_frame_pixel_bytes 9
+assert_json_field "$SHELL_TOUCH_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
 
 APP_DIRECT_PRESENT_PARENT="$TMP_DIR/output-app-direct-present"
 APP_DIRECT_PRESENT_IMAGE="$TMP_DIR/output-app-direct-present.img"

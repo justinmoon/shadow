@@ -5,6 +5,7 @@ use std::{
 
 use chrono::Local;
 use shadow_ui_core::{
+    app::AppId,
     scene::{HEIGHT, WIDTH},
     shell::ShellStatus,
 };
@@ -142,7 +143,11 @@ impl ShadowGuestCompositor {
             if debug_cpu_frame_requested {
                 match kms::capture_dmabuf_frame(&dmabuf) {
                     Ok(frame) => {
-                        self.record_frame_view(frame.view(), frame_marker);
+                        self.record_frame_view_for_app(
+                            frame.view(),
+                            frame_marker,
+                            shell_frame_app_id,
+                        );
                         if self.frame_snapshot_cache_enabled {
                             self.last_published_frame = Some(frame);
                         }
@@ -199,8 +204,12 @@ impl ShadowGuestCompositor {
             stride: render_width * 4,
             pixels: &pixels,
         };
-        let presented =
-            self.publish_frame_view_with_timeout(frame, frame_marker, Duration::from_secs(2));
+        let presented = self.publish_frame_view_with_timeout_for_app(
+            frame,
+            frame_marker,
+            Duration::from_secs(2),
+            shell_frame_app_id,
+        );
         self.shell_surface.restore_pixels(pixels);
         if self.drm_enabled && !presented {
             self.schedule_shell_frame_retry();
@@ -317,7 +326,17 @@ impl ShadowGuestCompositor {
         frame_marker: &str,
         kms_timeout: Duration,
     ) -> bool {
-        self.record_frame_view(frame, frame_marker);
+        self.publish_frame_view_with_timeout_for_app(frame, frame_marker, kms_timeout, None)
+    }
+
+    fn publish_frame_view_with_timeout_for_app(
+        &mut self,
+        frame: kms::CapturedFrameView<'_>,
+        frame_marker: &str,
+        kms_timeout: Duration,
+        app_frame_app_id: Option<AppId>,
+    ) -> bool {
+        self.record_frame_view_for_app(frame, frame_marker, app_frame_app_id);
         if self.frame_snapshot_cache_enabled {
             self.last_published_frame = Some(kms::copy_frame_view(frame, wl_shm::Format::Xrgb8888));
         }
@@ -340,7 +359,7 @@ impl ShadowGuestCompositor {
         self.record_touch_present(frame_marker);
         self.record_scroll_frame_present(frame_marker);
 
-        if self.should_exit_after_presented_frame(None) {
+        if self.should_exit_after_presented_frame(app_frame_app_id) {
             self.request_exit();
         }
 
@@ -348,6 +367,15 @@ impl ShadowGuestCompositor {
     }
 
     fn record_frame_view(&mut self, frame: kms::CapturedFrameView<'_>, frame_marker: &str) {
+        self.record_frame_view_for_app(frame, frame_marker, None);
+    }
+
+    fn record_frame_view_for_app(
+        &mut self,
+        frame: kms::CapturedFrameView<'_>,
+        frame_marker: &str,
+        app_frame_app_id: Option<AppId>,
+    ) {
         self.last_frame_size = Some((frame.width, frame.height));
         let checksum = (self.frame_checksum_enabled || self.frame_artifacts_enabled)
             .then(|| kms::frame_view_checksum(frame));
@@ -396,7 +424,7 @@ impl ShadowGuestCompositor {
                 }
             }
         }
-        self.schedule_synthetic_touch_after_frame(frame_marker);
+        self.schedule_synthetic_touch_after_frame(frame_marker, app_frame_app_id);
     }
 
     pub(crate) fn run_boot_splash(&mut self) {
