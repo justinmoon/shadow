@@ -35,6 +35,9 @@ const CLICK_CANCEL_DISTANCE_PX: f32 = 8.0;
 const SOFT_KEYBOARD_TARGET_PREFIX: &str = "__shadow_keyboard__";
 const SOFT_KEYBOARD_SPACER_HEIGHT_PX: u32 = 360;
 const AUTO_CLICK_TARGET_ENV: &str = "SHADOW_BLITZ_RUNTIME_AUTO_CLICK_TARGET";
+const AUTO_POLL_TARGET_ENV: &str = "SHADOW_BLITZ_RUNTIME_AUTO_POLL_TARGET";
+const AUTO_POLL_INTERVAL_MS_ENV: &str = "SHADOW_BLITZ_RUNTIME_AUTO_POLL_INTERVAL_MS";
+const DEFAULT_AUTO_POLL_INTERVAL_MS: u64 = 500;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ShadowTarget {
@@ -53,6 +56,7 @@ pub struct RuntimeDocument {
     last_touch_signal_token: Option<String>,
     runtime_session: Option<RuntimeSession>,
     pending_runtime_event: Option<RuntimeDispatchEvent>,
+    auto_poll_target_id: Option<String>,
     touch_anywhere_target_id: Option<String>,
     armed_pointer_target_id: Option<String>,
     armed_pointer_press_position: Option<(f32, f32)>,
@@ -62,6 +66,7 @@ pub struct RuntimeDocument {
     should_exit: bool,
     timer_started: bool,
     touch_signal_timer_started: bool,
+    auto_poll_timer_started: bool,
     redraw_requested: bool,
     activate_on_pointer_down: bool,
     soft_keyboard_enabled: bool,
@@ -124,6 +129,8 @@ impl RuntimeDocument {
         let frame_nodes = FrameNodes::resolve(&inner);
         let pending_runtime_event =
             auto_click_event(runtime_session.is_some(), client_env_assignments);
+        let auto_poll_target_id =
+            auto_poll_target(runtime_session.is_some(), client_env_assignments);
         let mut document = Self {
             inner,
             payload,
@@ -136,6 +143,7 @@ impl RuntimeDocument {
                 .map(PathBuf::from),
             last_touch_signal_token: None,
             pending_runtime_event,
+            auto_poll_target_id,
             runtime_session,
             touch_anywhere_target_id: env::var("SHADOW_BLITZ_TOUCH_ANYWHERE_TARGET")
                 .ok()
@@ -148,6 +156,7 @@ impl RuntimeDocument {
             should_exit: false,
             timer_started: false,
             touch_signal_timer_started: false,
+            auto_poll_timer_started: false,
             redraw_requested: false,
             activate_on_pointer_down: env::var_os("SHADOW_BLITZ_TOUCH_ACTIVATE_ON_DOWN").is_some(),
             soft_keyboard_enabled: software_keyboard_enabled(),
@@ -941,6 +950,23 @@ impl RuntimeDocument {
         );
     }
 
+    fn ensure_auto_poll_timer_started(&mut self, task_context: Option<&Context<'_>>) {
+        if self.auto_poll_timer_started || self.auto_poll_target_id.is_none() {
+            return;
+        }
+        let Some(task_context) = task_context else {
+            return;
+        };
+
+        self.auto_poll_timer_started = true;
+        spawn_repeating_timer(
+            self.timer_tx.clone(),
+            task_context.waker().clone(),
+            auto_poll_interval(),
+            RuntimeTimerEvent::AutoPollTarget,
+        );
+    }
+
     fn handle_timer_event(&mut self, event: RuntimeTimerEvent) -> bool {
         match event {
             RuntimeTimerEvent::RequestExit => {
@@ -949,6 +975,30 @@ impl RuntimeDocument {
                 false
             }
             RuntimeTimerEvent::CheckTouchSignal => self.handle_touch_signal_tick(),
+            RuntimeTimerEvent::AutoPollTarget => self.handle_auto_poll_tick(),
+        }
+    }
+
+    fn handle_auto_poll_tick(&mut self) -> bool {
+        let Some(target_id) = self.auto_poll_target_id.clone() else {
+            return false;
+        };
+        let runtime_event = RuntimeDispatchEvent {
+            target_id,
+            event_type: String::from("click"),
+            value: None,
+            checked: None,
+            selection: None,
+            pointer: None,
+            keyboard: None,
+        };
+
+        match self.dispatch_runtime_event(runtime_event, "auto-poll") {
+            Ok(did_update) => did_update,
+            Err(error) => {
+                eprintln!("[shadow-runtime-demo] runtime-event-error: {error}");
+                false
+            }
         }
     }
 
@@ -1228,6 +1278,7 @@ impl Document for RuntimeDocument {
         let task_context = task_context.as_ref();
         self.ensure_exit_timer_started(task_context);
         self.ensure_touch_signal_timer_started(task_context);
+        self.ensure_auto_poll_timer_started(task_context);
 
         let mut changed = false;
         if let Some(event) = self.pending_runtime_event.take() {
@@ -1312,6 +1363,7 @@ struct DebugOverlayState {
 enum RuntimeTimerEvent {
     RequestExit,
     CheckTouchSignal,
+    AutoPollTarget,
 }
 
 fn spawn_timer(
@@ -1349,6 +1401,11 @@ fn optional_duration_from_env(key: &str) -> Option<Duration> {
     }
 
     value.parse::<u64>().ok().map(Duration::from_millis)
+}
+
+fn auto_poll_interval() -> Duration {
+    optional_duration_from_env(AUTO_POLL_INTERVAL_MS_ENV)
+        .unwrap_or_else(|| Duration::from_millis(DEFAULT_AUTO_POLL_INTERVAL_MS))
 }
 
 fn debug_overlay_enabled() -> bool {
@@ -1976,6 +2033,27 @@ fn auto_click_event(
     })
 }
 
+fn auto_poll_target(
+    runtime_session_enabled: bool,
+    client_env_assignments: &[(String, String)],
+) -> Option<String> {
+    if !runtime_session_enabled {
+        return None;
+    }
+
+    if let Some(target_id) = client_env_assignments
+        .iter()
+        .rev()
+        .find_map(|(key, value)| (key == AUTO_POLL_TARGET_ENV).then_some(value))
+    {
+        return (!target_id.is_empty()).then(|| target_id.clone());
+    }
+
+    env::var(AUTO_POLL_TARGET_ENV)
+        .ok()
+        .filter(|value| !value.is_empty())
+}
+
 fn truncate_debug(value: &str, max_chars: usize) -> String {
     let mut chars = value.chars();
     let truncated: String = chars.by_ref().take(max_chars).collect();
@@ -2027,8 +2105,9 @@ mod tests {
     };
 
     use super::{
-        auto_click_event, runtime_surface_size_from_env, software_keyboard_enabled,
-        RuntimeDocument, RuntimeDocumentPayload, RuntimeTextInputPayload, AUTO_CLICK_TARGET_ENV,
+        auto_click_event, auto_poll_target, runtime_surface_size_from_env,
+        software_keyboard_enabled, RuntimeDocument, RuntimeDocumentPayload,
+        RuntimeTextInputPayload, AUTO_CLICK_TARGET_ENV, AUTO_POLL_TARGET_ENV,
         LEGACY_SURFACE_HEIGHT_ENV, LEGACY_SURFACE_WIDTH_ENV, SURFACE_HEIGHT_ENV, SURFACE_WIDTH_ENV,
     };
     use crate::runtime_session::RuntimeSelectionEvent;
@@ -2525,6 +2604,18 @@ mod tests {
         with_env_var(AUTO_CLICK_TARGET_ENV, Some("capture"), || {
             let assignments = vec![(AUTO_CLICK_TARGET_ENV.to_string(), String::new())];
             assert!(auto_click_event(true, &assignments).is_none());
+        });
+    }
+
+    #[test]
+    fn auto_poll_target_prefers_client_env_assignments() {
+        let _guard = test_guard();
+        with_env_var(AUTO_POLL_TARGET_ENV, Some("wrong"), || {
+            let assignments = vec![(AUTO_POLL_TARGET_ENV.to_string(), String::from("refresh"))];
+            assert_eq!(
+                auto_poll_target(true, &assignments).as_deref(),
+                Some("refresh")
+            );
         });
     }
 

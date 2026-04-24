@@ -61,6 +61,8 @@ sync_remote_tree() {
     --exclude=artifacts \
     --exclude=build \
     --exclude=worktrees \
+    --exclude=rust/target \
+    --exclude=rust/target/** \
     --exclude=rust/*/target \
     --exclude=rust/*/target/** \
     -cf - \
@@ -69,14 +71,9 @@ sync_remote_tree() {
     justfile \
     runtime \
     scripts \
-    rust/Cargo.toml \
-    rust/Cargo.lock \
-    rust/shadow-linux-audio-spike \
-    rust/shadow-sdk \
-    rust/shadow-system \
-    rust/shadow-runtime-protocol \
-    rust/vendor \
-    | remote_ssh "mkdir -p $(printf '%q' "$dir") && rm -rf $(printf '%q' "$dir/runtime") $(printf '%q' "$dir/rust") $(printf '%q' "$dir/scripts") $(printf '%q' "$dir/flake.nix") $(printf '%q' "$dir/flake.lock") $(printf '%q' "$dir/justfile") && tar -xf - -C $(printf '%q' "$dir")"
+    rust \
+    ui/crates/shadow-ui-core/src/scene.rs \
+    | remote_ssh "mkdir -p $(printf '%q' "$dir") && rm -rf $(printf '%q' "$dir/runtime") $(printf '%q' "$dir/rust") $(printf '%q' "$dir/scripts") $(printf '%q' "$dir/ui") $(printf '%q' "$dir/flake.nix") $(printf '%q' "$dir/flake.lock") $(printf '%q' "$dir/justfile") && tar -xf - -C $(printf '%q' "$dir")"
 }
 
 run_remote_smoke() {
