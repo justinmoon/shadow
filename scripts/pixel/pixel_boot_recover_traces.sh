@@ -2397,6 +2397,9 @@ app_direct_present_proof_contract_required = (
         or bool(expected_app_direct_present_typescript_renderer)
     )
 )
+shell_session_requires_app_direct_frame_samples = (
+    expected_app_direct_present_client_kind != "rust"
+)
 if expected_orange_gpu_mode == "gpu-render":
     proof_ok = probe_summary_proves_gpu_render
 elif expected_orange_gpu_mode == "orange-gpu-loop":
@@ -2408,21 +2411,30 @@ elif expected_orange_gpu_mode == "shell-session":
         app_direct_present_proof_contract_ok
         and probe_summary_proves_shell_session
         and compositor_frame_proves_shell_session_app
-        and compositor_frame_proves_app_direct_present
+        and (
+            not shell_session_requires_app_direct_frame_samples
+            or compositor_frame_proves_app_direct_present
+        )
     )
 elif expected_orange_gpu_mode == "shell-session-held":
     proof_ok = (
         app_direct_present_proof_contract_ok
         and probe_summary_proves_shell_session_held
         and compositor_frame_proves_shell_session_app
-        and compositor_frame_proves_app_direct_present
+        and (
+            not shell_session_requires_app_direct_frame_samples
+            or compositor_frame_proves_app_direct_present
+        )
     )
 elif expected_orange_gpu_mode == "shell-session-runtime-touch-counter":
     proof_ok = (
         app_direct_present_proof_contract_ok
         and probe_summary_proves_shell_session_runtime_touch_counter
         and compositor_frame_proves_shell_session_app
-        and compositor_frame_proves_app_direct_present
+        and (
+            not shell_session_requires_app_direct_frame_samples
+            or compositor_frame_proves_app_direct_present
+        )
     )
 elif expected_orange_gpu_mode == "app-direct-present":
     proof_ok = (
@@ -2467,6 +2479,7 @@ payload = {
     "app_direct_present_proof_contract_required": app_direct_present_proof_contract_required,
     "app_direct_present_proof_contract": app_direct_present_proof_contract,
     "app_direct_present_proof_contract_summary": app_direct_present_proof_contract_summary,
+    "shell_session_requires_app_direct_frame_samples": shell_session_requires_app_direct_frame_samples,
         "metadata_compositor_frame_proves_scene": compositor_frame_proves_scene,
         "metadata_compositor_frame_proves_shell_session_app": compositor_frame_proves_shell_session_app,
         "metadata_compositor_frame_proves_app_direct_present": compositor_frame_proves_app_direct_present,

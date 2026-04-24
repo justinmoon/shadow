@@ -1475,6 +1475,7 @@ env \
 assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" probe_summary_proves_shell_session true
 assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" app_direct_present_proof_contract_required true
 assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" app_direct_present_proof_contract_ok true
+assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" shell_session_requires_app_direct_frame_samples true
 assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
 assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" proof_ok true
 assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" expected_shell_session_start_app_id timeline
@@ -1500,6 +1501,7 @@ env \
 assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" probe_summary_proves_shell_session true
 assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" app_direct_present_proof_contract_required true
 assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" app_direct_present_proof_contract_ok true
+assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" shell_session_requires_app_direct_frame_samples false
 assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
 assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" proof_ok true
 assert_json_field "$SHELL_SESSION_RUST_OUTPUT/status.json" expected_shell_session_start_app_id rust-demo

@@ -92,9 +92,9 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 
 ## Highest-Leverage Next Experiments
 
-1. Continue from the partition-backed shell proof: `ss-timeline-logical-r1-20260424052405` booted Rust PID1, mounted `/shadow-payload`, expanded `/shadow-payload/extra-payloads/orange-gpu.tar.xz`, launched the GPU shell, and proved shell-launched TypeScript `timeline` with `proof_ok=true`.
+1. Continue from the partition-backed shell proofs: `ss-timeline-logical-r1-20260424052405` proved shell-launched TypeScript `timeline` with the GPU renderer, and `ss-rust-demo-logical-r2-20260424055521` proved shell-launched Rust `rust-demo` with SHM frames imported into the GPU shell scanout path.
 2. Fold in worker-2's manual touch path against the partition-backed shell image so the demo becomes interactive instead of only first-frame/proof driven.
-3. Fix the Rust app strict-GPU blocker: `rust-demo` currently reaches mapped/committed app frames but strict GPU shell rejects the SHM CPU composition/readback path.
+3. Turn the one-shot proof path into the first non-rebooting held session that leaves the compositor/app stack running long enough for operator interaction.
 4. Run `boot-camera-vendor-linker-stage` opportunistically as the camera sidecar so the Rust boot HAL probe can advance past the current `/vendor/lib64/hw/camera.sm6150.so` visibility blocker.
 5. Keep camera and sound as sidecars until the shell/app loop exists; keep direct `std` PID1 and stock-init imported-rc as fallback discriminators only.
 

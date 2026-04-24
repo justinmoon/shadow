@@ -4,7 +4,7 @@ use anyrender_vello::VelloImageRenderer;
 use ash::ext;
 use font8x8::{UnicodeFonts, BASIC_FONTS};
 use kurbo::{Affine, Rect, RoundedRect};
-use peniko::Fill;
+use peniko::{Blob, Fill, ImageAlphaType, ImageBrush, ImageData, ImageFormat};
 use shadow_blitz_demo::hosted_runtime::HostedRuntimeApp;
 use shadow_ui_core::{
     color::Color,
@@ -13,7 +13,7 @@ use shadow_ui_core::{
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use std::sync::Once;
 
-use crate::{gpu_scanout::VulkanScanoutChain, kms::ScanoutFormatCandidate};
+use crate::{gpu_scanout::VulkanScanoutChain, kms::ScanoutFormatCandidate, shell::AppFrame};
 
 pub struct GpuShellRenderer {
     width: u32,
@@ -131,6 +131,39 @@ impl GpuShellRenderer {
             })
             .context("failed to render hosted shell frame into GPU scanout")
     }
+
+    pub fn render_with_shm_app(
+        &mut self,
+        scene: &Scene,
+        app_frame: AppFrame<'_>,
+        viewport_x: u32,
+        viewport_y: u32,
+        viewport_width: u32,
+        viewport_height: u32,
+    ) -> Result<Dmabuf> {
+        let width = self.width;
+        let height = self.height;
+        let app_image = app_frame_image(app_frame)?;
+        let scanout = self
+            .scanout
+            .as_mut()
+            .ok_or_else(|| anyhow!("gpu scanout not configured for shm shell render"))?;
+        scanout
+            .render(&mut self.renderer, |painter| {
+                paint_scene(painter, scene, width, height);
+                paint_app_image(
+                    painter,
+                    &app_image,
+                    app_frame.width,
+                    app_frame.height,
+                    viewport_x,
+                    viewport_y,
+                    viewport_width,
+                    viewport_height,
+                );
+            })
+            .context("failed to render shm app shell frame into GPU scanout")
+    }
 }
 
 fn note_gpu_shell_readback(strict_gpu_resident: bool) {
@@ -176,6 +209,79 @@ pub(crate) fn paint_scene(painter: &mut impl PaintScene, scene: &Scene, width: u
     for text in &scene.texts {
         draw_text_block(painter, text);
     }
+}
+
+fn paint_app_image(
+    painter: &mut impl PaintScene,
+    image: &ImageBrush,
+    app_width: u32,
+    app_height: u32,
+    viewport_x: u32,
+    viewport_y: u32,
+    viewport_width: u32,
+    viewport_height: u32,
+) {
+    if app_width == 0 || app_height == 0 || viewport_width == 0 || viewport_height == 0 {
+        return;
+    }
+    let transform = Affine::translate((viewport_x as f64, viewport_y as f64))
+        * Affine::scale_non_uniform(
+            viewport_width as f64 / app_width as f64,
+            viewport_height as f64 / app_height as f64,
+        );
+    let rect = Rect::new(0.0, 0.0, app_width as f64, app_height as f64);
+    painter.fill(
+        Fill::NonZero,
+        transform,
+        Paint::Image(image.as_ref()),
+        None,
+        &rect,
+    );
+}
+
+fn app_frame_image(app_frame: AppFrame<'_>) -> Result<ImageBrush> {
+    let width = app_frame.width as usize;
+    let height = app_frame.height as usize;
+    let stride = app_frame.stride as usize;
+    let row_bytes = width
+        .checked_mul(4)
+        .ok_or_else(|| anyhow!("shm app frame row size overflow"))?;
+    let expected_len = stride
+        .checked_mul(height)
+        .ok_or_else(|| anyhow!("shm app frame size overflow"))?;
+    if app_frame.pixels.len() < expected_len {
+        return Err(anyhow!(
+            "shm app frame buffer too short: len={} expected={expected_len}",
+            app_frame.pixels.len()
+        ));
+    }
+
+    let mut pixels = vec![0_u8; row_bytes * height];
+    for row in 0..height {
+        let source_start = row * stride;
+        let source_end = source_start + row_bytes;
+        let target_start = row * row_bytes;
+        let target_end = target_start + row_bytes;
+        pixels[target_start..target_end]
+            .copy_from_slice(&app_frame.pixels[source_start..source_end]);
+    }
+
+    if matches!(
+        app_frame.format,
+        smithay::reexports::wayland_server::protocol::wl_shm::Format::Xrgb8888
+    ) {
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel[3] = 0xff;
+        }
+    }
+
+    Ok(ImageBrush::new(ImageData {
+        data: Blob::from(pixels),
+        format: ImageFormat::Bgra8,
+        alpha_type: ImageAlphaType::Alpha,
+        width: app_frame.width,
+        height: app_frame.height,
+    }))
 }
 
 fn fill_rect(painter: &mut impl PaintScene, rect: Rect, color: Color) {

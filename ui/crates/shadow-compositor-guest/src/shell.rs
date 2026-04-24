@@ -120,6 +120,31 @@ impl GuestShellSurface {
     ) -> Result<ShellRenderStats> {
         let mut stats = ShellRenderStats::default();
         self.presentable_dmabuf = None;
+        if let Some(app_frame) = app_frame {
+            if let ShellRenderer::Gpu(renderer) = &mut self.renderer {
+                if renderer.has_scanout() {
+                    let Some((viewport_x, viewport_y, viewport_width, viewport_height)) =
+                        viewport_bounds(self.width, self.height)
+                    else {
+                        return Ok(stats);
+                    };
+                    let scene_render_start = Instant::now();
+                    let scaled_scene = scale_scene(scene, self.width, self.height);
+                    self.presentable_dmabuf = Some(renderer.render_with_shm_app(
+                        &scaled_scene,
+                        app_frame,
+                        viewport_x,
+                        viewport_y,
+                        viewport_width,
+                        viewport_height,
+                    )?);
+                    stats.scene_render = scene_render_start.elapsed();
+                    self.last_scene_key = None;
+                    self.last_frame_had_app = true;
+                    return Ok(stats);
+                }
+            }
+        }
         if app_frame.is_none() {
             if let ShellRenderer::Gpu(renderer) = &mut self.renderer {
                 if renderer.has_scanout() {

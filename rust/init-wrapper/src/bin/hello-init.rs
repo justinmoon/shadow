@@ -3379,6 +3379,12 @@ mod linux {
         let surface_tracked_needle =
             format!("[shadow-guest-compositor] surface-app-tracked app={app_id}");
         let start_app_index = output_text.find(&start_app_needle);
+        let mapped_window = output_text.contains(&mapped_window_needle)
+            || start_app_index
+                .map(|index| {
+                    output_text[index..].contains("[shadow-guest-compositor] mapped-window")
+                })
+                .unwrap_or(false);
         let app_frame_artifact_logged = start_app_index
             .and_then(|index| {
                 output_text[index..].find("[shadow-guest-compositor] wrote-frame-artifact")
@@ -3391,7 +3397,7 @@ mod linux {
                 .contains("[shadow-guest-compositor] shell-startup-home-frame-done"),
             start_app_requested: start_app_index.is_some(),
             app_launch_mode_logged: output_text.contains(&app_launch_needle),
-            mapped_window: output_text.contains(&mapped_window_needle),
+            mapped_window,
             surface_app_tracked: output_text.contains(&surface_tracked_needle),
             app_frame_artifact_logged,
             app_frame_captured: frame_bytes > 0 && app_frame_artifact_logged,

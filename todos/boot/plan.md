@@ -495,6 +495,7 @@ Related docs:
     - proof fields: `proof_ok=true`, `probe_summary_proves_shell_session=true`, `metadata_compositor_frame_proves_shell_session_app=true`, `expected_payload_probe_source=shadow-logical-partition`, `expected_payload_probe_root=/shadow-payload`.
   - notes:
     - `scripts/pixel/pixel_boot_stage_metadata_payload.sh` now preserves original argv across host-lock re-exec; without that, non-env `--source` and `--extra-payload` arguments were lost after lock acquisition.
+    - Follow-up Rust app proof: `ss-rust-demo-logical-r2-20260424055521` staged the same logical-payload shell bundle shape, launched `rust-demo` from the GPU shell, imported the Rust SHM frame as a GPU image, and produced recovered proof at `build/pixel/runs/boot-shell-session/ss-rust-demo-logical-r2-20260424055521/device-run/recover-traces-after-proof-rule/status.json` with `proof_ok=true`, `probe_summary_proves_shell_session=true`, `metadata_probe_summary_shell_session_app_frame_captured=true`, and `metadata_compositor_frame_proves_shell_session_app=true`.
   - owned paths:
     - `scripts/pixel/`
     - `scripts/lib/pixel_runtime_linux_bundle_common.sh`
