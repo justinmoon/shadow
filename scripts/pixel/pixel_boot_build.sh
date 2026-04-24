@@ -20,6 +20,7 @@ WORK_DIR=""
 declare -a RENAME_SPECS=()
 declare -a ADD_SPECS=()
 declare -a REPLACE_SPECS=()
+declare -a UPSERT_SPECS=()
 declare -a APPEND_CMDLINE_TOKENS=()
 
 usage() {
@@ -27,6 +28,7 @@ usage() {
 Usage: scripts/pixel/pixel_boot_build.sh [--input PATH] [--wrapper PATH] [--key PATH] [--output PATH]
                                          [--wrapper-mode standard|minimal]
                                          [--rename OLD=NEW] [--add ENTRY=HOST_PATH] [--replace ENTRY=HOST_PATH]
+                                         [--upsert ENTRY=HOST_PATH]
                                          [--append-cmdline TOKEN]
                                          [--stock-init]
                                          [--keep-work-dir]
@@ -144,6 +146,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --replace)
       REPLACE_SPECS+=("${2:?missing value for --replace}")
+      shift 2
+      ;;
+    --upsert)
+      UPSERT_SPECS+=("${2:?missing value for --upsert}")
       shift 2
       ;;
     --append-cmdline)
@@ -271,6 +277,12 @@ fi
 if ((${#REPLACE_SPECS[@]})); then
   for spec in "${REPLACE_SPECS[@]}"; do
     cpio_args+=(--replace "$spec")
+  done
+fi
+
+if ((${#UPSERT_SPECS[@]})); then
+  for spec in "${UPSERT_SPECS[@]}"; do
+    cpio_args+=(--upsert "$spec")
   done
 fi
 

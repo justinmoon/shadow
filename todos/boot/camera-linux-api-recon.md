@@ -79,14 +79,38 @@ Living plan. Revise it as the camera bring-up path changes.
 - Android camera API use was false for `ICameraProvider`, `cameraserver`, Java Camera2, and rooted-Android shell camera APIs. The rooted Android shell was used only after reboot for trace recovery.
 - Deepest stage reached: `link`.
 - Current precise blocker: `/vendor/lib64/hw/camera.sm6150.so` is not visible in the Shadow boot namespace.
-- Next task: `boot-camera-vendor-linker-stage` should stage or mount the minimal vendor/system/APEX/linker roots, rerun `camera-hal-link-probe`, and advance to `hmi`/`module` or record the next exact linker/library/property/device-node blocker.
+- `boot-camera-vendor-linker-stage` staged a minimal vendor/system/APEX/linker capsule into the Rust boot image and added a contained Android/bionic helper as the HAL dynamic-linker boundary.
+- Hardware proof: `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-boot-hal/20260424T011956Z-11151JEC200472/`.
+- Deepest boot-owned direct-HAL stage reached: `open`.
+- Latest proof:
+  - `linkerRuntime=bionic-helper`
+  - `link.ok=true` through `/apex/com.android.runtime/bin/linker64`
+  - `hmi.ok=true`, `id=camera`, `name=QTI Camera HAL`, `author=Qualcomm Technologies, Inc.`
+  - `module.ok=true`, methods pointer present, `get_number_of_cameras` and `get_camera_info` pointers present
+  - `moduleEntryPointsCalled=false` by default because isolated testing showed `get_number_of_cameras()` can SIGABRT in a minimal context
+  - `open.ready=true`, but `camera_module_t.open` is not invoked yet
+- Full component staging is too large for the Pixel 4a boot partition: a 110 MB component capsule produced an 87,379,968 byte image against a 67,108,864 byte maximum. Keep component-heavy staging for a partition-backed payload/root strategy.
+- `boot-camera-hal-open-probe` added an opt-in `camera_module_t.open` path in the bionic helper plus Rust boot config for `camera_hal_call_open` and `camera_hal_camera_id`.
+- Latest open proof: `/Users/justin/code/shadow/worktrees/worker-3/build/pixel/camera-boot-hal/20260424T014052Z-11151JEC200472/`.
+- Camera node bootstrap is now active for the boot-owned HAL probe:
+  - `/dev/ion`
+  - `/dev/video0`, `/dev/video1`, `/dev/video2`, `/dev/video32`, `/dev/video33`, `/dev/video34`
+  - `/dev/media0`, `/dev/media1`
+  - `/dev/v4l-subdev0..16`
+- Deepest boot-owned direct-HAL stage remains `open`, but the blocker moved from missing tmpfs device nodes to a contained `camera_module_t.open("0")` hang/kill:
+  - `lastProgress=module:open:0`
+  - helper child ended with signal 9 after the inner timeout
+  - `pathStatus` proves the camera/media nodes exist in boot userspace
+  - no `ICameraProvider`, `cameraserver`, Java Camera2, or rooted-Android camera API was used
+- Rooted Android reference with the same direct helper and `--call-open true` SIGABRTed at `module:open:0` while Android's provider owned `/dev/video1`; logcat showed CamX failing to open the request-manager node with `Operation already in progress`.
+- Current precise blocker: instrument `camera_module_t.open` after device-node bootstrap to capture CamX/KMD open attempts, thread state, and missing boot services or kernel interfaces, then make `open` return before attempting stream configuration or frame capture.
 
 ## Direct HAL Stage Gates
 
 - `stage=link`: mount the required vendor/system/APEX library roots and direct-load the HAL with `android_dlopen_ext` or an equivalent boot linker strategy.
-- `stage=hmi`: parse `HMI` and validate `id=camera`, module versions, methods pointer, and `camera_module_t` prefix.
-- `stage=module`: call safe module-level entry points such as camera count/info through the C shim, while recording property/library/device/service access attempts.
-- `stage=open`: open rear camera `0` through `module->methods->open` and classify the first missing dependency if it fails.
+- `stage=hmi`: parse `HMI` and validate `id=camera`, module versions, methods pointer, and `camera_module_t` prefix. This is proven through the boot-owned bionic helper.
+- `stage=module`: read module prefix and function pointer presence only by default. Module entrypoints such as camera count/info are not safe until isolated because `get_number_of_cameras()` SIGABRTs in the current minimal context.
+- `stage=open`: open rear camera `0` through `module->methods->open` in a contained child, always recover a summary on abort/timeout, and classify the first missing dependency if it fails. Rear `0` currently reaches `module:open:0` and then hangs until killed.
 - `stage=configure`: configure one conservative output stream, initially JPEG BLOB if native-handle/gralloc is available; otherwise use the simplest HAL-supported output backed by evidence.
 - `stage=request`: allocate or import one boot-owned output buffer, submit one capture request, wait on fences/callbacks, and recover `first-frame.jpg` or `first-frame.raw`.
 
@@ -149,7 +173,13 @@ Living plan. Revise it as the camera bring-up path changes.
 - [x] Run contained HAL/provider frame probe.
 - [x] Correct project direction: provider capture is reference data, not target architecture.
 - [x] Implement `boot-camera-rust-hal-frame-probe` from Shadow boot userspace.
-- [ ] Stage or mount the minimal vendor/system/APEX/linker roots needed to advance direct HAL probing past `link`.
+- [x] Stage the minimal vendor/system/APEX/linker roots needed to advance direct HAL probing past `link`.
+- [x] Add a contained bionic helper so Rust boot can load the vendor HAL without importing cameraserver/provider machinery.
+- [x] Prove `link`/`HMI`/module-prefix reachability from Rust boot setup on Pixel 4a.
+- [x] Add an isolated `camera_module_t.open` probe for rear camera `0`, with abort/timeout-safe summaries.
+- [x] Bootstrap the Pixel 4a camera/media device nodes in the Rust boot tmpfs `/dev`.
+- [ ] Instrument and unblock the `camera_module_t.open("0")` hang after camera node bootstrap.
+- [ ] Extend the open probe to front camera `1` after rear `0` has a classified non-hanging result.
 - [ ] Decide whether direct Linux capture deserves more work after direct-HAL blockers are known.
 
 ## References

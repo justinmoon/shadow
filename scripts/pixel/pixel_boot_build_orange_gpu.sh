@@ -48,6 +48,10 @@ RUN_TOKEN="${PIXEL_HELLO_INIT_RUN_TOKEN:-${PIXEL_ORANGE_GPU_RUN_TOKEN:-}}"
 DRI_BOOTSTRAP="${PIXEL_ORANGE_GPU_DRI_BOOTSTRAP:-}"
 FIRMWARE_BOOTSTRAP="${PIXEL_ORANGE_GPU_FIRMWARE_BOOTSTRAP:-none}"
 GPU_FIRMWARE_DIR="${PIXEL_ORANGE_GPU_FIRMWARE_DIR:-}"
+CAMERA_LINKER_CAPSULE_DIR="${PIXEL_CAMERA_LINKER_CAPSULE_DIR:-}"
+CAMERA_HAL_BIONIC_PROBE_BINARY="${PIXEL_CAMERA_HAL_BIONIC_PROBE_BINARY:-}"
+CAMERA_HAL_CAMERA_ID="${PIXEL_CAMERA_HAL_CAMERA_ID:-0}"
+CAMERA_HAL_CALL_OPEN="${PIXEL_CAMERA_HAL_CALL_OPEN:-false}"
 KEEP_WORK_DIR=0
 WORK_DIR=""
 COMPOSITOR_SCENE_STARTUP_CONFIG=""
@@ -113,6 +117,10 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--orange-gpu-firmware-helper true|false]
                                                     [--orange-gpu-timeout-action reboot|panic]
                                                     [--orange-gpu-watchdog-timeout-secs N]
+                                                    [--camera-linker-capsule DIR]
+                                                    [--camera-hal-bionic-probe PATH]
+                                                    [--camera-hal-camera-id ID]
+                                                    [--camera-hal-call-open true|false]
                                                     [--reboot-target TARGET]
                                                     [--run-token TOKEN]
                                                     [--dev-mount devtmpfs|tmpfs]
@@ -246,6 +254,10 @@ default_orange_init_binary() {
 
 default_gpu_bundle_dir() {
   printf '%s\n' "$(pixel_artifact_path shadow-gpu-smoke-gnu)"
+}
+
+default_camera_hal_bionic_probe_binary() {
+  printf '%s\n' "$(pixel_artifact_path camera-hal-bionic-probe)"
 }
 
 default_app_direct_present_client_launcher_binary() {
@@ -954,6 +966,10 @@ EOF
   if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
     printf 'orange_gpu_bundle_archive_path=%s\n' "$ORANGE_GPU_BUNDLE_ARCHIVE_PATH" >>"$output_path"
   fi
+  if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
+    printf 'camera_hal_camera_id=%s\n' "$CAMERA_HAL_CAMERA_ID" >>"$output_path"
+    printf 'camera_hal_call_open=%s\n' "$CAMERA_HAL_CALL_OPEN" >>"$output_path"
+  fi
   if [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
     printf 'app_direct_present_app_id=%s\n' "$APP_DIRECT_PRESENT_APP_ID" >>"$output_path"
     if [[ -n "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" ]]; then
@@ -1606,6 +1622,24 @@ append_tree_add_specs() {
   )
 }
 
+append_tree_upsert_specs() {
+  local host_root archive_root build_args_name
+  host_root="${1:?append_tree_upsert_specs requires a host root}"
+  archive_root="${2:?append_tree_upsert_specs requires an archive root}"
+  build_args_name="${3:?append_tree_upsert_specs requires a build-args array name}"
+  local -n build_args_ref="$build_args_name"
+  local relative_path
+
+  build_args_ref+=(--upsert "$archive_root=$host_root")
+  while IFS= read -r relative_path; do
+    [[ -n "$relative_path" ]] || continue
+    build_args_ref+=(--upsert "$archive_root/$relative_path=$host_root/$relative_path")
+  done < <(
+    cd "$host_root"
+    find . -mindepth 1 -print | sed 's#^\./##' | LC_ALL=C sort
+  )
+}
+
 stage_gpu_firmware_tree() {
   local source_dir staged_dir
   source_dir="${1:?stage_gpu_firmware_tree requires a source dir}"
@@ -1779,6 +1813,22 @@ while [[ $# -gt 0 ]]; do
       GPU_FIRMWARE_DIR="${2:?missing value for --firmware-dir}"
       shift 2
       ;;
+    --camera-linker-capsule)
+      CAMERA_LINKER_CAPSULE_DIR="${2:?missing value for --camera-linker-capsule}"
+      shift 2
+      ;;
+    --camera-hal-bionic-probe)
+      CAMERA_HAL_BIONIC_PROBE_BINARY="${2:?missing value for --camera-hal-bionic-probe}"
+      shift 2
+      ;;
+    --camera-hal-camera-id)
+      CAMERA_HAL_CAMERA_ID="${2:?missing value for --camera-hal-camera-id}"
+      shift 2
+      ;;
+    --camera-hal-call-open)
+      CAMERA_HAL_CALL_OPEN="${2:?missing value for --camera-hal-call-open}"
+      shift 2
+      ;;
     --keep-work-dir)
       KEEP_WORK_DIR=1
       shift
@@ -1892,6 +1942,11 @@ assert_bool_word mount-proc "$MOUNT_PROC"
 assert_bool_word mount-sys "$MOUNT_SYS"
 assert_bool_word log-kmsg "$LOG_KMSG"
 assert_bool_word log-pmsg "$LOG_PMSG"
+assert_bool_word camera-hal-call-open "$CAMERA_HAL_CALL_OPEN"
+if [[ ! "$CAMERA_HAL_CAMERA_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "pixel_boot_build_orange_gpu: camera HAL camera id must be a non-empty safe token: $CAMERA_HAL_CAMERA_ID" >&2
+  exit 1
+fi
 
 if [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" && "$MOUNT_SYS" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: c-kgsl-open-readonly-firmware-helper-smoke requires --mount-sys true so hello-init can service /sys/class/firmware requests" >&2
@@ -1904,6 +1959,16 @@ fi
 if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" && "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: camera-hal-link-probe requires --orange-gpu-metadata-stage-breadcrumb true so HAL link evidence survives recovery" >&2
   exit 1
+fi
+if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
+  if [[ "$ORANGE_GPU_MODE" != "camera-hal-link-probe" ]]; then
+    echo "pixel_boot_build_orange_gpu: --camera-linker-capsule is only supported with camera-hal-link-probe" >&2
+    exit 1
+  fi
+  if [[ ! -d "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
+    echo "pixel_boot_build_orange_gpu: camera linker capsule dir not found: $CAMERA_LINKER_CAPSULE_DIR" >&2
+    exit 1
+  fi
 fi
 if [[ "$ORANGE_GPU_MODE" =~ ^(compositor-scene|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ && "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: $ORANGE_GPU_MODE requires --orange-gpu-metadata-stage-breadcrumb true so the captured frame survives recovery" >&2
@@ -2028,6 +2093,21 @@ else
   fi
 fi
 
+if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
+  if [[ -z "$CAMERA_HAL_BIONIC_PROBE_BINARY" && -z "${MOCK_BOOT_RAMDISK:-}" ]]; then
+    CAMERA_HAL_BIONIC_PROBE_BINARY="$(default_camera_hal_bionic_probe_binary)"
+    "$SCRIPT_DIR/pixel/pixel_build_camera_hal_bionic_probe.sh" \
+      --output "$CAMERA_HAL_BIONIC_PROBE_BINARY"
+  fi
+  if [[ -n "$CAMERA_HAL_BIONIC_PROBE_BINARY" ]]; then
+    [[ -f "$CAMERA_HAL_BIONIC_PROBE_BINARY" ]] || {
+      echo "pixel_boot_build_orange_gpu: camera HAL bionic probe binary not found: $CAMERA_HAL_BIONIC_PROBE_BINARY" >&2
+      exit 1
+    }
+    chmod 0755 "$CAMERA_HAL_BIONIC_PROBE_BINARY" 2>/dev/null || true
+  fi
+fi
+
 if [[ "$ORANGE_GPU_MODE" == "compositor-scene" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
   if [[ -z "$SHADOW_SESSION_BINARY" ]]; then
     SHADOW_SESSION_BINARY="$(pixel_artifact_path shadow-session)"
@@ -2103,6 +2183,10 @@ elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app
   chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
   cp "$APP_DIRECT_PRESENT_STARTUP_CONFIG" "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_STARTUP_CONFIG_NAME"
 fi
+if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" && -n "$CAMERA_HAL_BIONIC_PROBE_BINARY" ]]; then
+  cp "$CAMERA_HAL_BIONIC_PROBE_BINARY" "$STAGED_GPU_BUNDLE_DIR/camera-hal-bionic-probe"
+  chmod 0755 "$STAGED_GPU_BUNDLE_DIR/camera-hal-bionic-probe"
+fi
 
 strip_staged_elf_files "$STAGED_GPU_BUNDLE_DIR"
 if [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
@@ -2156,6 +2240,13 @@ fi
 if [[ "$FIRMWARE_BOOTSTRAP" == "ramdisk-lib-firmware" ]]; then
   build_args+=(--add "lib=$STAGED_GPU_FIRMWARE_PARENT_DIR")
   append_tree_add_specs "$STAGED_GPU_FIRMWARE_DIR" "lib/firmware" build_args
+fi
+if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
+  for capsule_root in vendor system system_ext apex linkerconfig; do
+    if [[ -e "$CAMERA_LINKER_CAPSULE_DIR/$capsule_root" ]]; then
+      append_tree_upsert_specs "$CAMERA_LINKER_CAPSULE_DIR/$capsule_root" "$capsule_root" build_args
+    fi
+  done
 fi
 
 if [[ "$KEEP_WORK_DIR" == "1" ]]; then
@@ -2247,6 +2338,16 @@ if [[ "$ORANGE_GPU_MODE" != "app-direct-present" && "$ORANGE_GPU_MODE" != "app-d
   printf 'GPU exec path: %s/shadow-gpu-smoke\n' "$PAYLOAD_IMAGE_PATH"
 fi
 printf 'GPU loader path: %s/lib/ld-linux-aarch64.so.1\n' "$PAYLOAD_IMAGE_PATH"
+if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
+  printf 'Camera linker capsule dir: %s\n' "$CAMERA_LINKER_CAPSULE_DIR"
+fi
+if [[ -n "$CAMERA_HAL_BIONIC_PROBE_BINARY" ]]; then
+  printf 'Camera HAL bionic probe: %s\n' "$CAMERA_HAL_BIONIC_PROBE_BINARY"
+fi
+if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
+  printf 'Camera HAL camera id: %s\n' "$CAMERA_HAL_CAMERA_ID"
+  printf 'Camera HAL call open: %s\n' "$CAMERA_HAL_CALL_OPEN"
+fi
 printf 'Orange GPU mode: %s\n' "$ORANGE_GPU_MODE"
 if [[ "$ORANGE_GPU_MODE" == "bundle-smoke" ]]; then
   printf 'Bundle exec mode: bundle-smoke\n'

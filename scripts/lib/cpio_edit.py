@@ -248,6 +248,7 @@ def process_archive(
     archive: CpioArchive,
     rename_map: Dict[str, str],
     replace_map: Dict[str, Path],
+    upsert_map: Dict[str, Path],
     remove_set: Sequence[str],
     add_map: Dict[str, Path],
 ) -> CpioArchive:
@@ -281,6 +282,16 @@ def process_archive(
             replacement.devminor = new_entry.devminor
             new_entry = replacement
 
+        if target_name in upsert_map:
+            source_path = upsert_map.pop(target_name)
+            replacement = build_entry_from_path(target_name, source_path, new_entry.ino)
+            replacement.uid = new_entry.uid
+            replacement.gid = new_entry.gid
+            replacement.nlink = new_entry.nlink
+            replacement.devmajor = new_entry.devmajor
+            replacement.devminor = new_entry.devminor
+            new_entry = replacement
+
         updated_entries.append(new_entry)
 
     if remaining_renames:
@@ -289,6 +300,14 @@ def process_archive(
 
     next_ino = archive.next_inode()
     for name, path in add_map.items():
+        if name in final_names:
+            raise ValueError(f"duplicate archive entry '{name}'")
+        entry = build_entry_from_path(name, path, next_ino)
+        next_ino += 1
+        updated_entries.append(entry)
+        final_names.add(name)
+
+    for name, path in upsert_map.items():
         if name in final_names:
             raise ValueError(f"duplicate archive entry '{name}'")
         entry = build_entry_from_path(name, path, next_ino)
@@ -338,6 +357,12 @@ def main(argv: Sequence[str]) -> int:
         help="replace entry contents with file, e.g. init=new_init.bin",
     )
     parser.add_argument(
+        "--upsert",
+        action="append",
+        default=[],
+        help="add entry if missing or replace contents if present, e.g. path=local/path",
+    )
+    parser.add_argument(
         "--remove",
         action="append",
         default=[],
@@ -364,6 +389,11 @@ def main(argv: Sequence[str]) -> int:
         if args.replace
         else {}
     )
+    upsert_map = (
+        {key: Path(value) for key, value in parse_mapping(args.upsert).items()}
+        if args.upsert
+        else {}
+    )
     add_map = (
         {key: Path(value) for key, value in parse_mapping(args.add).items()}
         if args.add
@@ -380,7 +410,7 @@ def main(argv: Sequence[str]) -> int:
         extract_archive_entries(archive, extract_map)
 
     if args.output is None:
-        if rename_map or replace_map or args.remove or add_map:
+        if rename_map or replace_map or upsert_map or args.remove or add_map:
             raise ValueError("--output is required when modifying the cpio archive")
         return 0
 
@@ -388,6 +418,7 @@ def main(argv: Sequence[str]) -> int:
         archive=archive,
         rename_map=rename_map,
         replace_map=replace_map,
+        upsert_map=upsert_map,
         remove_set=args.remove,
         add_map=add_map,
     )

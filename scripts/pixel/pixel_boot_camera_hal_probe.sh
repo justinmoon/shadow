@@ -12,6 +12,11 @@ ADB_TIMEOUT_SECS="${PIXEL_BOOT_CAMERA_HAL_ADB_TIMEOUT_SECS:-240}"
 BOOT_TIMEOUT_SECS="${PIXEL_BOOT_CAMERA_HAL_BOOT_TIMEOUT_SECS:-180}"
 HOLD_SECS="${PIXEL_BOOT_CAMERA_HAL_HOLD_SECS:-2}"
 WATCHDOG_TIMEOUT_SECS="${PIXEL_BOOT_CAMERA_HAL_WATCHDOG_TIMEOUT_SECS:-45}"
+CAMERA_LINKER_CAPSULE_MODE="${PIXEL_BOOT_CAMERA_HAL_LINKER_CAPSULE_MODE:-auto}"
+CAMERA_LINKER_CAPSULE_DIR="${PIXEL_CAMERA_LINKER_CAPSULE_DIR:-}"
+CAMERA_LINKER_CAPSULE_INCLUDE_COMPONENTS="${PIXEL_BOOT_CAMERA_HAL_LINKER_CAPSULE_INCLUDE_COMPONENTS:-false}"
+CAMERA_HAL_CAMERA_ID="${PIXEL_BOOT_CAMERA_HAL_CAMERA_ID:-${PIXEL_CAMERA_HAL_CAMERA_ID:-0}}"
+CAMERA_HAL_CALL_OPEN="${PIXEL_BOOT_CAMERA_HAL_CALL_OPEN:-${PIXEL_CAMERA_HAL_CALL_OPEN:-false}}"
 ORIGINAL_ARGS=("$@")
 
 serial=""
@@ -26,8 +31,10 @@ recover_dir=""
 probe_json_path=""
 device_output_path=""
 dmesg_path=""
+capsule_output_path=""
 failure_stage=""
 build_succeeded=false
+capsule_collected=false
 oneshot_attempted=false
 oneshot_status=""
 probe_summary_present=false
@@ -40,6 +47,11 @@ Usage: scripts/pixel/pixel_boot_camera_hal_probe.sh [--output DIR]
                                                     [--boot-timeout SECONDS]
                                                     [--hold-secs SECONDS]
                                                     [--watchdog-timeout SECONDS]
+                                                    [--camera-id ID]
+                                                    [--camera-hal-call-open true|false]
+                                                    [--camera-linker-capsule DIR]
+                                                    [--camera-linker-capsule-components true|false]
+                                                    [--no-camera-linker-capsule]
                                                     [--dry-run]
 
 Build and one-shot boot the Rust-owned Shadow boot camera HAL probe. The probe
@@ -54,6 +66,20 @@ bool_word() {
   else
     printf 'false\n'
   fi
+}
+
+validate_bool_arg() {
+  local label value
+  label="$1"
+  value="$2"
+  case "$value" in
+    true|false)
+      ;;
+    *)
+      echo "pixel_boot_camera_hal_probe: $label must be true or false: $value" >&2
+      exit 1
+      ;;
+  esac
 }
 
 safe_path_component() {
@@ -163,8 +189,14 @@ write_status_json() {
     "$probe_json_path" \
     "$device_output_path" \
     "$dmesg_path" \
+    "$CAMERA_HAL_CAMERA_ID" \
+    "$CAMERA_HAL_CALL_OPEN" \
+    "$CAMERA_LINKER_CAPSULE_DIR" \
+    "$CAMERA_LINKER_CAPSULE_INCLUDE_COMPONENTS" \
+    "$capsule_output_path" \
     "$failure_stage" \
     "$build_succeeded" \
+    "$capsule_collected" \
     "$oneshot_attempted" \
     "$oneshot_status" \
     "$probe_summary_present" \
@@ -188,13 +220,19 @@ from pathlib import Path
     probe_json_path,
     device_output_path,
     dmesg_path,
+    camera_hal_camera_id,
+    camera_hal_call_open,
+    camera_linker_capsule_dir,
+    camera_linker_capsule_include_components,
+    capsule_output_path,
     failure_stage,
     build_succeeded,
+    capsule_collected,
     oneshot_attempted,
     oneshot_status,
     probe_summary_present,
     frame_captured,
-) = sys.argv[1:21]
+) = sys.argv[1:27]
 
 probe = {}
 probe_path = Path(probe_json_path)
@@ -226,8 +264,14 @@ payload = {
     "boot_hal_probe_json": probe_json_path,
     "device_output_path": device_output_path,
     "dmesg_path": dmesg_path,
+    "camera_hal_camera_id": camera_hal_camera_id,
+    "camera_hal_call_open": camera_hal_call_open == "true",
+    "camera_linker_capsule_dir": camera_linker_capsule_dir,
+    "camera_linker_capsule_include_components": camera_linker_capsule_include_components == "true",
+    "capsule_output_path": capsule_output_path,
     "failure_stage": failure_stage,
     "build_succeeded": build_succeeded == "true",
+    "capsule_collected": capsule_collected == "true",
     "oneshot_attempted": oneshot_attempted == "true",
     "probe_summary_present": probe_summary_present == "true",
     "frame_captured": frame_captured == "true",
@@ -273,6 +317,28 @@ while [[ $# -gt 0 ]]; do
       WATCHDOG_TIMEOUT_SECS="${2:?missing value for --watchdog-timeout}"
       shift 2
       ;;
+    --camera-id)
+      CAMERA_HAL_CAMERA_ID="${2:?missing value for --camera-id}"
+      shift 2
+      ;;
+    --camera-hal-call-open)
+      CAMERA_HAL_CALL_OPEN="${2:?missing value for --camera-hal-call-open}"
+      shift 2
+      ;;
+    --camera-linker-capsule)
+      CAMERA_LINKER_CAPSULE_DIR="${2:?missing value for --camera-linker-capsule}"
+      CAMERA_LINKER_CAPSULE_MODE="provided"
+      shift 2
+      ;;
+    --camera-linker-capsule-components)
+      CAMERA_LINKER_CAPSULE_INCLUDE_COMPONENTS="${2:?missing value for --camera-linker-capsule-components}"
+      shift 2
+      ;;
+    --no-camera-linker-capsule)
+      CAMERA_LINKER_CAPSULE_MODE="none"
+      CAMERA_LINKER_CAPSULE_DIR=""
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -295,6 +361,12 @@ for numeric_value in "$ADB_TIMEOUT_SECS" "$BOOT_TIMEOUT_SECS" "$HOLD_SECS" "$WAT
     exit 1
   fi
 done
+validate_bool_arg camera-linker-capsule-components "$CAMERA_LINKER_CAPSULE_INCLUDE_COMPONENTS"
+validate_bool_arg camera-hal-call-open "$CAMERA_HAL_CALL_OPEN"
+if [[ ! "$CAMERA_HAL_CAMERA_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "pixel_boot_camera_hal_probe: camera id must be a non-empty safe token: $CAMERA_HAL_CAMERA_ID" >&2
+  exit 1
+fi
 
 serial="$(resolve_serial_for_mode)"
 pixel_prepare_dirs
@@ -311,8 +383,18 @@ recover_dir="$oneshot_dir/recover-traces"
 probe_json_path="$OUTPUT_DIR/boot-hal-probe.json"
 device_output_path="$OUTPUT_DIR/device-output.txt"
 dmesg_path="$OUTPUT_DIR/dmesg.txt"
+capsule_output_path="$OUTPUT_DIR/camera-linker-capsule-output.txt"
+if [[ "$CAMERA_LINKER_CAPSULE_MODE" == "auto" ]]; then
+  CAMERA_LINKER_CAPSULE_DIR="$OUTPUT_DIR/camera-linker-capsule"
+fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
+  dry_run_capsule_command=disabled
+  dry_run_build_command="$SCRIPT_DIR/pixel/pixel_boot_build_orange_gpu.sh --output \"$image_path\" --orange-gpu-mode camera-hal-link-probe --orange-gpu-metadata-stage-breadcrumb true --run-token \"$run_token\" --camera-hal-camera-id \"$CAMERA_HAL_CAMERA_ID\" --camera-hal-call-open $CAMERA_HAL_CALL_OPEN"
+  if [[ "$CAMERA_LINKER_CAPSULE_MODE" != "none" ]]; then
+    dry_run_capsule_command="$SCRIPT_DIR/pixel/pixel_camera_hal_collect_capsule.sh --output \"$CAMERA_LINKER_CAPSULE_DIR\" --include-camera-components $CAMERA_LINKER_CAPSULE_INCLUDE_COMPONENTS"
+    dry_run_build_command+=" --camera-linker-capsule \"$CAMERA_LINKER_CAPSULE_DIR\""
+  fi
   cat <<EOF
 pixel_boot_camera_hal_probe: dry-run
 serial=$serial
@@ -323,7 +405,13 @@ adb_timeout_secs=$ADB_TIMEOUT_SECS
 boot_timeout_secs=$BOOT_TIMEOUT_SECS
 hold_secs=$HOLD_SECS
 watchdog_timeout_secs=$WATCHDOG_TIMEOUT_SECS
-build_command=$SCRIPT_DIR/pixel/pixel_boot_build_orange_gpu.sh --output "$image_path" --orange-gpu-mode camera-hal-link-probe --orange-gpu-metadata-stage-breadcrumb true --run-token "$run_token"
+camera_id=$CAMERA_HAL_CAMERA_ID
+camera_hal_call_open=$CAMERA_HAL_CALL_OPEN
+camera_linker_capsule_mode=$CAMERA_LINKER_CAPSULE_MODE
+camera_linker_capsule_dir=$CAMERA_LINKER_CAPSULE_DIR
+camera_linker_capsule_include_components=$CAMERA_LINKER_CAPSULE_INCLUDE_COMPONENTS
+capsule_command=$dry_run_capsule_command
+build_command=$dry_run_build_command
 run_command=$SCRIPT_DIR/pixel/pixel_boot_oneshot.sh --image "$image_path" --output "$oneshot_dir" --skip-collect --recover-traces-after --no-wait-boot-completed
 EOF
   exit 0
@@ -331,19 +419,46 @@ fi
 
 trap finish EXIT
 
-if ! "$SCRIPT_DIR/pixel/pixel_boot_build_orange_gpu.sh" \
-  --output "$image_path" \
-  --orange-gpu-mode camera-hal-link-probe \
-  --orange-gpu-metadata-stage-breadcrumb true \
-  --hold-secs "$HOLD_SECS" \
-  --orange-gpu-watchdog-timeout-secs "$WATCHDOG_TIMEOUT_SECS" \
-  --reboot-target bootloader \
-  --run-token "$run_token" \
-  --dev-mount tmpfs \
-  --mount-dev true \
-  --mount-proc true \
-  --mount-sys true \
-  >"$build_output_path" 2>&1; then
+if [[ "$CAMERA_LINKER_CAPSULE_MODE" != "none" ]]; then
+  if [[ "$CAMERA_LINKER_CAPSULE_MODE" == "auto" ]]; then
+    if ! PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel/pixel_camera_hal_collect_capsule.sh" \
+      --output "$CAMERA_LINKER_CAPSULE_DIR" \
+      --include-camera-components "$CAMERA_LINKER_CAPSULE_INCLUDE_COMPONENTS" \
+      --adb-timeout "$ADB_TIMEOUT_SECS" \
+      >"$capsule_output_path" 2>&1; then
+      failure_stage="collect-camera-linker-capsule"
+      write_blocker_probe_json "failed to collect camera HAL linker capsule from rooted Android"
+      exit 1
+    fi
+    capsule_collected=true
+  elif [[ ! -d "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
+    failure_stage="camera-linker-capsule"
+    write_blocker_probe_json "camera HAL linker capsule directory was not found"
+    exit 1
+  fi
+fi
+
+build_args=(
+  "$SCRIPT_DIR/pixel/pixel_boot_build_orange_gpu.sh"
+  --output "$image_path"
+  --orange-gpu-mode camera-hal-link-probe
+  --orange-gpu-metadata-stage-breadcrumb true
+  --hold-secs "$HOLD_SECS"
+  --orange-gpu-watchdog-timeout-secs "$WATCHDOG_TIMEOUT_SECS"
+  --reboot-target bootloader
+  --run-token "$run_token"
+  --dev-mount tmpfs
+  --mount-dev true
+  --mount-proc true
+  --mount-sys true
+  --camera-hal-camera-id "$CAMERA_HAL_CAMERA_ID"
+  --camera-hal-call-open "$CAMERA_HAL_CALL_OPEN"
+)
+if [[ "$CAMERA_LINKER_CAPSULE_MODE" != "none" ]]; then
+  build_args+=(--camera-linker-capsule "$CAMERA_LINKER_CAPSULE_DIR")
+fi
+
+if ! "${build_args[@]}" >"$build_output_path" 2>&1; then
   failure_stage="build"
   write_blocker_probe_json "failed to build camera HAL boot probe image"
   exit 1

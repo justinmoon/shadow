@@ -52,6 +52,24 @@ mod linux {
     const ORANGE_GPU_PROBE_OUTPUT_PATH: &str = "/orange-gpu/probe-output.log";
     const CAMERA_HAL_PATH: &str = "/vendor/lib64/hw/camera.sm6150.so";
     const CAMERA_BOOT_HAL_CAMERA_ID: &str = "0";
+    const CAMERA_HAL_BIONIC_PROBE_PATH: &str = "/orange-gpu/camera-hal-bionic-probe";
+    const CAMERA_HAL_BIONIC_LINKER_PATH: &str = "/apex/com.android.runtime/bin/linker64";
+    const CAMERA_HAL_BIONIC_PROBE_SUMMARY_PATH: &str =
+        "/orange-gpu/camera-hal-bionic-probe-summary.json";
+    const CAMERA_HAL_BIONIC_PROBE_OUTPUT_PATH: &str =
+        "/orange-gpu/camera-hal-bionic-probe-output.log";
+    const CAMERA_HAL_BIONIC_LIBRARY_PATH: &str = concat!(
+        "/vendor/lib64/hw:",
+        "/vendor/lib64:",
+        "/vendor/lib64/camera:",
+        "/vendor/lib64/camera/components:",
+        "/odm/lib64:",
+        "/system/lib64:",
+        "/system_ext/lib64:",
+        "/apex/com.android.vndk.v33/lib64:",
+        "/apex/com.android.runtime/lib64/bionic:",
+        "/apex/com.android.runtime/lib64"
+    );
     const FIRMWARE_CLASS_ROOT: &str = "/sys/class/firmware";
     const TRACEFS_ROOT: &str = "/sys/kernel/tracing";
     const TRACEFS_TRACE_PATH: &str = "/sys/kernel/tracing/trace";
@@ -118,6 +136,8 @@ mod linux {
         orange_gpu_timeout_action: String,
         orange_gpu_watchdog_timeout_secs: u32,
         orange_gpu_bundle_archive_path: String,
+        camera_hal_camera_id: String,
+        camera_hal_call_open: bool,
         app_direct_present_app_id: String,
         app_direct_present_runtime_bundle_env: String,
         app_direct_present_runtime_bundle_path: String,
@@ -151,6 +171,8 @@ mod linux {
                 orange_gpu_timeout_action: "reboot".to_string(),
                 orange_gpu_watchdog_timeout_secs: 0,
                 orange_gpu_bundle_archive_path: String::new(),
+                camera_hal_camera_id: CAMERA_BOOT_HAL_CAMERA_ID.to_string(),
+                camera_hal_call_open: false,
                 app_direct_present_app_id: "rust-demo".to_string(),
                 app_direct_present_runtime_bundle_env: String::new(),
                 app_direct_present_runtime_bundle_path: String::new(),
@@ -776,6 +798,21 @@ mod linux {
                 }
                 "orange_gpu_bundle_archive_path" | "orange-gpu-bundle-archive-path" => {
                     config.orange_gpu_bundle_archive_path = value.trim().to_string();
+                }
+                "camera_hal_camera_id" | "camera-hal-camera-id" => {
+                    let trimmed = value.trim();
+                    if !trimmed.is_empty()
+                        && trimmed.bytes().all(|byte| {
+                            byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
+                        })
+                    {
+                        config.camera_hal_camera_id = trimmed.to_string();
+                    }
+                }
+                "camera_hal_call_open" | "camera-hal-call-open" => {
+                    if let Some(parsed) = parse_bool(value) {
+                        config.camera_hal_call_open = parsed;
+                    }
                 }
                 "app_direct_present_app_id" | "app-direct-present-app-id" => {
                     config.app_direct_present_app_id = value.trim().to_string();
@@ -1744,6 +1781,115 @@ mod linux {
         write_atomic_text_file(&temp_path, Path::new(ORANGE_GPU_SUMMARY_PATH), summary)
     }
 
+    fn run_camera_hal_bionic_probe_helper(
+        config: &Config,
+        probe_stage_path: Option<&Path>,
+        probe_stage_prefix: Option<&str>,
+        stages: &mut Vec<String>,
+    ) -> Option<i32> {
+        if !Path::new(CAMERA_HAL_BIONIC_PROBE_PATH).is_file()
+            || !Path::new(CAMERA_HAL_BIONIC_LINKER_PATH).is_file()
+        {
+            return None;
+        }
+
+        push_camera_boot_hal_stage(
+            stages,
+            probe_stage_path,
+            probe_stage_prefix,
+            "link",
+            "bionic-helper-start",
+            CAMERA_HAL_BIONIC_PROBE_PATH,
+        );
+        remove_file_best_effort(CAMERA_HAL_BIONIC_PROBE_SUMMARY_PATH);
+        remove_file_best_effort(CAMERA_HAL_BIONIC_PROBE_OUTPUT_PATH);
+
+        let mut command = Command::new(CAMERA_HAL_BIONIC_LINKER_PATH);
+        command.arg(CAMERA_HAL_BIONIC_PROBE_PATH);
+        command.arg("--output");
+        command.arg(CAMERA_HAL_BIONIC_PROBE_SUMMARY_PATH);
+        command.arg("--run-token");
+        command.arg(run_token_or_unset(config));
+        command.arg("--camera-id");
+        command.arg(&config.camera_hal_camera_id);
+        command.arg("--dev-mount");
+        command.arg(&config.dev_mount);
+        command.arg("--mount-dev");
+        command.arg(bool_word(config.mount_dev));
+        command.arg("--mount-proc");
+        command.arg(bool_word(config.mount_proc));
+        command.arg("--mount-sys");
+        command.arg(bool_word(config.mount_sys));
+        command.arg("--call-open");
+        command.arg(bool_word(config.camera_hal_call_open));
+        command.arg("--child-timeout-secs");
+        command.arg(
+            resolve_watchdog_timeout(config)
+                .saturating_sub(10)
+                .max(1)
+                .to_string(),
+        );
+        command.env(LD_LIBRARY_PATH_ENV, CAMERA_HAL_BIONIC_LIBRARY_PATH);
+        command.env("ANDROID_ROOT", "/system");
+        command.env("ANDROID_DATA", "/data");
+        command.env("LD_CONFIG_FILE", "/linkerconfig/ld.config.txt");
+        if let Ok((stdout, stderr)) = redirect_output(CAMERA_HAL_BIONIC_PROBE_OUTPUT_PATH) {
+            command.stdout(stdout);
+            command.stderr(stderr);
+        }
+
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                log_line(&format!(
+                    "camera HAL bionic helper failed to spawn: {error}"
+                ));
+                return None;
+            }
+        };
+        let watch_result = match wait_for_child_with_watchdog(
+            &mut child,
+            "camera-hal-bionic-probe",
+            1,
+            resolve_watchdog_timeout(config),
+            None,
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                log_line(&format!("camera HAL bionic helper wait failed: {error}"));
+                return None;
+            }
+        };
+        if watch_result.timed_out {
+            log_line("camera HAL bionic helper timed out before writing a summary");
+            return None;
+        }
+        if watch_result.exit_status != Some(0) {
+            log_line(&format!(
+                "camera HAL bionic helper exited nonzero: {:?}",
+                watch_result.exit_status
+            ));
+        }
+
+        match fs::read_to_string(CAMERA_HAL_BIONIC_PROBE_SUMMARY_PATH) {
+            Ok(summary) => match write_camera_boot_hal_summary(&summary) {
+                Ok(()) => Some(0),
+                Err(error) => {
+                    log_line(&format!(
+                        "failed to persist camera HAL bionic helper summary: {error}"
+                    ));
+                    Some(1)
+                }
+            },
+            Err(error) => {
+                log_line(&format!(
+                    "camera HAL bionic helper did not write a readable summary: {error}"
+                ));
+                None
+            }
+        }
+    }
+
     fn run_camera_hal_link_probe_internal(
         config: &Config,
         probe_stage_path: Option<&Path>,
@@ -1797,6 +1943,14 @@ mod linux {
             "start",
             CAMERA_HAL_PATH,
         );
+        if let Some(status) = run_camera_hal_bionic_probe_helper(
+            config,
+            probe_stage_path,
+            probe_stage_prefix,
+            &mut stages,
+        ) {
+            return status;
+        }
 
         let hal_metadata = fs::metadata(CAMERA_HAL_PATH);
         let hal_file_visible = match &hal_metadata {
@@ -1973,7 +2127,7 @@ mod linux {
                         open_json = format!(
                             "{{\"attempted\":false,\"ok\":false,\"ready\":{},\"cameraId\":{},\"blocker\":{}}}",
                             bool_word(open_ready),
-                            json_string(CAMERA_BOOT_HAL_CAMERA_ID),
+                            json_string(&config.camera_hal_camera_id),
                             json_string("first boot probe stops before invoking camera_module_t.open; next slice must own close/error recovery plus native buffer, fence, and gralloc policy")
                         );
                         blocker_stage = "open";
@@ -2060,7 +2214,7 @@ mod linux {
             process::id(),
             json_string(run_token_or_unset(config)),
             json_string(CAMERA_HAL_PATH),
-            json_string(CAMERA_BOOT_HAL_CAMERA_ID),
+            json_string(&config.camera_hal_camera_id),
             bool_word(config.mount_dev),
             bool_word(config.mount_proc),
             bool_word(config.mount_sys),
@@ -2148,6 +2302,14 @@ mod linux {
         append_path_fingerprint_line(&mut payload, "/dev/dri/renderD128");
         append_path_fingerprint_line(&mut payload, "/dev/dma_heap/system");
         append_path_fingerprint_line(&mut payload, "/dev/ion");
+        append_path_fingerprint_line(&mut payload, "/dev/video0");
+        append_path_fingerprint_line(&mut payload, "/dev/video1");
+        append_path_fingerprint_line(&mut payload, "/dev/video2");
+        append_path_fingerprint_line(&mut payload, "/dev/video32");
+        append_path_fingerprint_line(&mut payload, "/dev/media0");
+        append_path_fingerprint_line(&mut payload, "/dev/media1");
+        append_path_fingerprint_line(&mut payload, "/dev/v4l-subdev0");
+        append_path_fingerprint_line(&mut payload, "/dev/v4l-subdev16");
         append_path_fingerprint_line(&mut payload, ORANGE_GPU_ICD_PATH);
         append_file_excerpt(&mut payload, "/proc/mounts", 1024);
         append_file_excerpt(&mut payload, ORANGE_GPU_ICD_PATH, 512);
@@ -3685,6 +3847,32 @@ mod linux {
         Ok(())
     }
 
+    fn bootstrap_tmpfs_camera_runtime(config: &Config) -> io::Result<()> {
+        if !config.mount_dev
+            || config.dev_mount != "tmpfs"
+            || config.orange_gpu_mode != "camera-hal-link-probe"
+        {
+            return Ok(());
+        }
+
+        let video_nodes = [(0, 0), (1, 1), (2, 2), (32, 32), (33, 33), (34, 34)];
+        for (index, minor) in video_nodes {
+            ensure_char_device(Path::new(&format!("/dev/video{index}")), 0o660, 81, minor)?;
+        }
+        ensure_char_device(Path::new("/dev/media0"), 0o660, 247, 0)?;
+        ensure_char_device(Path::new("/dev/media1"), 0o660, 247, 1)?;
+        for index in 0..=16 {
+            ensure_char_device(
+                Path::new(&format!("/dev/v4l-subdev{index}")),
+                0o660,
+                81,
+                128 + index,
+            )?;
+        }
+        ensure_char_device(Path::new("/dev/ion"), 0o666, 10, 63)?;
+        Ok(())
+    }
+
     fn raw_reboot(cmd: libc::c_int, arg: Option<&str>) -> io::Result<()> {
         let arg_c = arg.map(|value| CString::new(value).unwrap());
         let arg_ptr = arg_c
@@ -3813,6 +4001,9 @@ mod linux {
             }
         }
         if bootstrap_tmpfs_dri_runtime(&config).is_err() {
+            process::exit(1);
+        }
+        if bootstrap_tmpfs_camera_runtime(&config).is_err() {
             process::exit(1);
         }
 

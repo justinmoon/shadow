@@ -22,6 +22,8 @@ EOF
 printf '#!/system/bin/sh\necho wrapper\n' >"$TMP_DIR/input/init-wrapper"
 chmod 0755 "$TMP_DIR/input/init-wrapper"
 printf 'import /init.shadow.rc\n' >"$TMP_DIR/input/init.shadow.rc"
+printf 'upserted-init\n' >"$TMP_DIR/input/init-upsert"
+printf 'new-upsert-entry\n' >"$TMP_DIR/input/new-upsert-entry"
 cat >"$TMP_DIR/input/init.recovery.sunfish.rc.patched" <<'EOF'
 import /init.shadow.rc
 
@@ -94,6 +96,27 @@ assert entries["init"].data.startswith(b"#!/system/bin/sh")
 assert entries["system/etc/init/hw/init.rc"].data == b"import /init.recovery.sunfish.rc\n"
 assert entries["init.recovery.sunfish.rc"].data.startswith(b"import /init.shadow.rc\n")
 assert stat.S_IMODE(entries["init"].mode) == 0o755
+PY
+
+python3 "$REPO_ROOT/scripts/lib/cpio_edit.py" \
+  --input "$TMP_DIR/input/ramdisk.cpio" \
+  --output "$TMP_DIR/output/ramdisk.upsert.cpio" \
+  --upsert "init=$TMP_DIR/input/init-upsert" \
+  --upsert "vendor/etc/new-upsert-entry=$TMP_DIR/input/new-upsert-entry"
+
+PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$TMP_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+from cpio_edit import read_cpio
+
+tmp_dir = Path(sys.argv[1])
+archive = read_cpio(tmp_dir / "output/ramdisk.upsert.cpio")
+entries = {entry.name: entry for entry in archive.without_trailer()}
+
+assert entries["init"].data == b"upserted-init\n"
+assert entries["vendor/etc/new-upsert-entry"].data == b"new-upsert-entry\n"
+assert entries["system/etc/init/hw/init.rc"].data == b"import /init.recovery.sunfish.rc\n"
 PY
 
 set +e
