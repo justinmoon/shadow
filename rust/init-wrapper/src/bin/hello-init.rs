@@ -2684,6 +2684,7 @@ mod linux {
     #[derive(Clone, Copy)]
     struct TouchCounterEvidenceProfile {
         injection: &'static str,
+        tap_dispatched_needle: &'static str,
         counter_incremented_needle: &'static str,
         post_touch_frame_marker_needle: &'static str,
         post_touch_frame_committed_needle: &'static str,
@@ -2693,6 +2694,7 @@ mod linux {
         fn rust_counter(injection: &'static str) -> Self {
             Self {
                 injection,
+                tap_dispatched_needle: "[shadow-guest-compositor] touch-app-tap-dispatch",
                 counter_incremented_needle: "shadow-rust-demo: counter_incremented count=1",
                 post_touch_frame_marker_needle: "shadow-rust-demo: frame_committed counter=1",
                 post_touch_frame_committed_needle: "shadow-rust-demo: frame_committed counter=1",
@@ -2702,10 +2704,12 @@ mod linux {
         fn runtime_counter(injection: &'static str) -> Self {
             Self {
                 injection,
+                tap_dispatched_needle: "route=app-tap",
                 counter_incremented_needle: "[shadow-runtime-counter] counter_incremented count=2",
                 post_touch_frame_marker_needle:
                     "[shadow-runtime-counter] counter_incremented count=2",
-                post_touch_frame_committed_needle: "[shadow-guest-compositor] committed-window",
+                post_touch_frame_committed_needle:
+                    "[shadow-guest-compositor] touch-latency-present",
             }
         }
     }
@@ -2729,8 +2733,7 @@ mod linux {
                 .contains("[shadow-guest-compositor] touch-input phase=Down")
                 || output_text
                     .contains("[shadow-guest-compositor] synthetic-touch-observed phase=Down"),
-            tap_dispatched: output_text
-                .contains("[shadow-guest-compositor] touch-app-tap-dispatch"),
+            tap_dispatched: output_text.contains(profile.tap_dispatched_needle),
             counter_incremented: output_text.contains(profile.counter_incremented_needle),
             post_touch_frame_committed,
             post_touch_frame_artifact_logged,

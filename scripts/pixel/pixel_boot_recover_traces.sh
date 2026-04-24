@@ -1895,10 +1895,19 @@ summary_last_frame_checksum = (
 required_gpu_render_samples = {"ff7a00ff"}
 required_app_direct_present_distinct_color_count = 3
 required_app_direct_present_frame_samples = set()
-if expected_orange_gpu_mode in {
-    "shell-session-runtime-touch-counter",
-    "app-direct-present-runtime-touch-counter",
-}:
+if expected_orange_gpu_mode == "shell-session-runtime-touch-counter":
+    required_app_direct_present_frame_samples = {
+        "1b1208",
+        "181616",
+        "eeecec",
+    }
+elif expected_orange_gpu_mode == "shell-session" and expected_app_direct_present_app_id == "counter":
+    required_app_direct_present_frame_samples = {
+        "30160b",
+        "ffb82f",
+        "ffda89",
+    }
+elif expected_orange_gpu_mode == "app-direct-present-runtime-touch-counter":
     required_app_direct_present_frame_samples = {
         "2a1209",
         "ff8a42",

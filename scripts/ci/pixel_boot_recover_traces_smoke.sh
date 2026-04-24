@@ -547,10 +547,10 @@ EOF
         printf 'P6\n2 1\n255\n\xff\x7a\x00\x00\x00\x00'
         exit 0
       elif [[ "$TRACE_MODE" == "shell-session-success" ]]; then
-        printf 'P6\n3 1\n255\n\x0b\x16\x30\x10\x24\x3b\x2f\xb8\xff'
+        printf 'P6\n3 1\n255\n\x30\x16\x0b\xff\xb8\x2f\xff\xda\x89'
         exit 0
       elif [[ "$TRACE_MODE" == "shell-session-runtime-touch-counter-success" ]]; then
-        printf 'P6\n3 1\n255\n\x2a\x12\x09\xff\x8a\x42\xff\xe0\xa6'
+        printf 'P6\n3 1\n255\n\x1b\x12\x08\x18\x16\x16\xee\xec\xec'
         exit 0
       elif [[ "$TRACE_MODE" == "app-direct-present-success" ]]; then
         case "${MOCK_TRACE_APP_DIRECT_PRESENT_FRAME_APP_ID:-${MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID:-rust-demo}}" in
