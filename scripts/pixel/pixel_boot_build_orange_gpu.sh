@@ -100,6 +100,11 @@ APP_DIRECT_PRESENT_TS_INPUT_PATH=""
 APP_DIRECT_PRESENT_TS_CACHE_DIR=""
 APP_DIRECT_PRESENT_TS_RENDERER="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_TS_RENDERER:-gpu}"
 APP_DIRECT_PRESENT_MANUAL_TOUCH="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_MANUAL_TOUCH:-false}"
+ORANGE_GPU_ENABLE_LINUX_AUDIO="${PIXEL_ORANGE_GPU_ENABLE_LINUX_AUDIO:-false}"
+ORANGE_GPU_AUDIO_PACKAGE_REF="$(repo_root)#packages.${PIXEL_GUEST_BUILD_SYSTEM:-aarch64-linux}.shadow-audio-bridge-aarch64-linux-gnu"
+ORANGE_GPU_AUDIO_OUT_LINK="$(pixel_dir)/shadow-audio-bridge-aarch64-linux-gnu-result"
+ORANGE_GPU_AUDIO_BINARY_NAME="shadow-audio-bridge"
+ORANGE_GPU_AUDIO_BINARY_PATH="$PAYLOAD_IMAGE_PATH/$ORANGE_GPU_AUDIO_BINARY_NAME"
 ORANGE_GPU_BUNDLE_ARCHIVE_NAME="orange-gpu.tar.xz"
 ORANGE_GPU_BUNDLE_ARCHIVE_PATH="/orange-gpu.tar.xz"
 ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE="${PIXEL_ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE:-ramdisk}"
@@ -1182,6 +1187,9 @@ render_app_direct_present_startup_config() {
     "$APP_DIRECT_PRESENT_STAGE_LOADER_PATH" \
     "$APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH" \
     "$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH" \
+    "$ORANGE_GPU_ENABLE_LINUX_AUDIO" \
+    "$ORANGE_GPU_AUDIO_BINARY_PATH" \
+    "$APP_DIRECT_PRESENT_BUNDLE_ROOT_PATH" \
     "$ORANGE_GPU_MODE" \
     "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" \
     "$APP_DIRECT_PRESENT_MANUAL_TOUCH" <<'PY'
@@ -1199,10 +1207,13 @@ from pathlib import Path
     stage_loader_path,
     stage_library_path,
     system_binary_path,
+    enable_audio_value,
+    audio_bridge_binary_path,
+    runtime_bundle_dir,
     orange_gpu_mode,
     frame_artifact_path,
     manual_touch_value,
-) = sys.argv[1:13]
+) = sys.argv[1:16]
 touch_counter_mode = orange_gpu_mode in {
     "app-direct-present-touch-counter",
     "app-direct-present-runtime-touch-counter",
@@ -1244,6 +1255,29 @@ elif client_kind == "typescript":
                 "value": app_id,
             }
         )
+    if enable_audio_value == "true":
+        env_assignments.extend(
+            [
+                {
+                    "key": "SHADOW_RUNTIME_AUDIO_BRIDGE_BINARY",
+                    "value": audio_bridge_binary_path,
+                },
+                {
+                    "key": "SHADOW_RUNTIME_AUDIO_BRIDGE_STAGE_LOADER_PATH",
+                    "value": stage_loader_path,
+                },
+                {
+                    "key": "SHADOW_RUNTIME_AUDIO_BRIDGE_STAGE_LIBRARY_PATH",
+                    "value": stage_library_path,
+                },
+                {"key": "ALSA_CONFIG_PATH", "value": "/orange-gpu/share/alsa/alsa.conf"},
+                {"key": "ALSA_CONFIG_DIR", "value": "/orange-gpu/share/alsa"},
+                {"key": "ALSA_CONFIG_UCM", "value": "/orange-gpu/share/alsa/ucm"},
+                {"key": "ALSA_CONFIG_UCM2", "value": "/orange-gpu/share/alsa/ucm2"},
+                {"key": "ALSA_PLUGIN_DIR", "value": "/orange-gpu/lib/alsa-lib"},
+                {"key": "SHADOW_RUNTIME_BUNDLE_DIR", "value": runtime_bundle_dir},
+            ]
+        )
 else:
     raise SystemExit(f"unsupported app-direct-present client kind: {client_kind}")
 client = {
@@ -1282,6 +1316,8 @@ if interactive_touch_mode:
     if touch_counter_mode:
         touch["exitAfterPresent"] = True
     payload["touch"] = touch
+if enable_audio_value == "true":
+    payload["services"] = {"audioBackend": "linux_bridge"}
 Path(output_path).write_text(
     json.dumps(payload, indent=2, sort_keys=False) + "\n",
     encoding="utf-8",
@@ -1303,6 +1339,9 @@ render_shell_session_startup_config() {
     "$APP_DIRECT_PRESENT_STAGE_LOADER_PATH" \
     "$APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH" \
     "$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH" \
+    "$ORANGE_GPU_ENABLE_LINUX_AUDIO" \
+    "$ORANGE_GPU_AUDIO_BINARY_PATH" \
+    "$APP_DIRECT_PRESENT_BUNDLE_ROOT_PATH" \
     "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" \
     "$ORANGE_GPU_MODE" \
     "$APP_DIRECT_PRESENT_MANUAL_TOUCH" <<'PY'
@@ -1320,10 +1359,13 @@ from pathlib import Path
     stage_loader_path,
     stage_library_path,
     system_binary_path,
+    enable_audio_value,
+    audio_bridge_binary_path,
+    runtime_bundle_dir,
     frame_artifact_path,
     orange_gpu_mode,
     manual_touch_value,
-) = sys.argv[1:13]
+) = sys.argv[1:16]
 touch_counter_mode = orange_gpu_mode == "shell-session-runtime-touch-counter"
 held_mode = orange_gpu_mode == "shell-session-held"
 manual_touch_mode = manual_touch_value.lower() in {"1", "true", "yes", "on"}
@@ -1361,6 +1403,29 @@ elif client_kind == "typescript":
                 "key": "SHADOW_BLITZ_TOUCH_ANYWHERE_TARGET",
                 "value": start_app_id,
             }
+        )
+    if enable_audio_value == "true":
+        env_assignments.extend(
+            [
+                {
+                    "key": "SHADOW_RUNTIME_AUDIO_BRIDGE_BINARY",
+                    "value": audio_bridge_binary_path,
+                },
+                {
+                    "key": "SHADOW_RUNTIME_AUDIO_BRIDGE_STAGE_LOADER_PATH",
+                    "value": stage_loader_path,
+                },
+                {
+                    "key": "SHADOW_RUNTIME_AUDIO_BRIDGE_STAGE_LIBRARY_PATH",
+                    "value": stage_library_path,
+                },
+                {"key": "ALSA_CONFIG_PATH", "value": "/orange-gpu/share/alsa/alsa.conf"},
+                {"key": "ALSA_CONFIG_DIR", "value": "/orange-gpu/share/alsa"},
+                {"key": "ALSA_CONFIG_UCM", "value": "/orange-gpu/share/alsa/ucm"},
+                {"key": "ALSA_CONFIG_UCM2", "value": "/orange-gpu/share/alsa/ucm2"},
+                {"key": "ALSA_PLUGIN_DIR", "value": "/orange-gpu/lib/alsa-lib"},
+                {"key": "SHADOW_RUNTIME_BUNDLE_DIR", "value": runtime_bundle_dir},
+            ]
         )
 else:
     raise SystemExit(f"unsupported shell-session client kind: {client_kind}")
@@ -1406,6 +1471,8 @@ if touch_counter_mode or (
         }
     touch["exitAfterPresent"] = touch_counter_mode
     payload["touch"] = touch
+if enable_audio_value == "true":
+    payload["services"] = {"audioBackend": "linux_bridge"}
 Path(output_path).write_text(
     json.dumps(payload, indent=2, sort_keys=False) + "\n",
     encoding="utf-8",
@@ -1428,6 +1495,26 @@ stage_app_direct_present_runtime_libs() {
     libxkbcommon.so.0 \
     libffi.so.8
   fill_linux_bundle_runtime_deps "$output_dir"
+}
+
+stage_orange_gpu_audio_bridge_bundle() {
+  local bundle_dir
+  bundle_dir="${1:?stage_orange_gpu_audio_bridge_bundle requires a bundle dir}"
+
+  [[ "$ORANGE_GPU_ENABLE_LINUX_AUDIO" == "true" ]] || return 0
+  if [[ "$APP_DIRECT_PRESENT_CLIENT_KIND" != "typescript" ]]; then
+    echo "pixel_boot_build_orange_gpu: Linux audio bridge boot packaging requires a TypeScript runtime app, got $APP_DIRECT_PRESENT_CLIENT_KIND" >&2
+    exit 1
+  fi
+
+  pixel_retry_nix_build nix build --accept-flake-config "$ORANGE_GPU_AUDIO_PACKAGE_REF" --out-link "$ORANGE_GPU_AUDIO_OUT_LINK"
+  cp "$ORANGE_GPU_AUDIO_OUT_LINK/bin/$ORANGE_GPU_AUDIO_BINARY_NAME" "$bundle_dir/$ORANGE_GPU_AUDIO_BINARY_NAME"
+  chmod 0755 "$bundle_dir/$ORANGE_GPU_AUDIO_BINARY_NAME"
+  append_runtime_closure_from_package_ref "$ORANGE_GPU_AUDIO_PACKAGE_REF"
+  fill_linux_bundle_runtime_deps "$bundle_dir"
+  copy_closure_dir_into_bundle "share/alsa" "$bundle_dir/share/alsa"
+  mkdir -p "$bundle_dir/lib/alsa-lib"
+  copy_closure_dir_into_bundle "lib/alsa-lib" "$bundle_dir/lib/alsa-lib" optional
 }
 
 stage_app_direct_present_rust_bundle() {
@@ -2334,6 +2421,7 @@ if [[ ! "$CAMERA_HAL_CAMERA_ID" =~ ^[A-Za-z0-9._-]+$ ]]; then
   exit 1
 fi
 assert_bool_word app-direct-present-manual-touch "$APP_DIRECT_PRESENT_MANUAL_TOUCH"
+assert_bool_word orange-gpu-enable-linux-audio "$ORANGE_GPU_ENABLE_LINUX_AUDIO"
 assert_bool_word orange-gpu-metadata-prune-token-root "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT"
 assert_bundle_archive_source_word "$ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE"
 
@@ -2651,6 +2739,7 @@ if orange_gpu_mode_uses_ramdisk_gpu_bundle; then
     APP_DIRECT_PRESENT_STARTUP_CONFIG="$WORK_DIR/$APP_DIRECT_PRESENT_STARTUP_CONFIG_NAME"
     stage_app_direct_present_client_bundle "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_BUNDLE_DIR_NAME"
     merge_app_direct_present_typescript_runtime_libs "$STAGED_GPU_BUNDLE_DIR"
+    stage_orange_gpu_audio_bridge_bundle "$STAGED_GPU_BUNDLE_DIR"
     prune_app_direct_present_diagnostic_payloads "$STAGED_GPU_BUNDLE_DIR"
     render_app_direct_present_startup_config "$APP_DIRECT_PRESENT_STARTUP_CONFIG"
     cp "$SHADOW_SESSION_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-session"
@@ -2662,6 +2751,7 @@ if orange_gpu_mode_uses_ramdisk_gpu_bundle; then
     SHELL_SESSION_STARTUP_CONFIG="$WORK_DIR/$SHELL_SESSION_STARTUP_CONFIG_NAME"
     stage_app_direct_present_client_bundle "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_BUNDLE_DIR_NAME"
     merge_app_direct_present_typescript_runtime_libs "$STAGED_GPU_BUNDLE_DIR"
+    stage_orange_gpu_audio_bridge_bundle "$STAGED_GPU_BUNDLE_DIR"
     prune_app_direct_present_diagnostic_payloads "$STAGED_GPU_BUNDLE_DIR"
     render_shell_session_startup_config "$SHELL_SESSION_STARTUP_CONFIG"
     cp "$SHADOW_SESSION_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-session"
@@ -3036,6 +3126,7 @@ elif [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "shell-se
     printf 'App runtime bundle env: %s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV"
     printf 'App runtime bundle path: %s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH"
     printf 'App system binary path: %s\n' "$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH"
+    printf 'App Linux audio bridge enabled: %s\n' "$ORANGE_GPU_ENABLE_LINUX_AUDIO"
   fi
   if [[ "$ORANGE_GPU_MODE" == "shell-session-runtime-touch-counter" ]]; then
     printf 'App direct present manual touch: %s\n' "$APP_DIRECT_PRESENT_MANUAL_TOUCH"
@@ -3053,6 +3144,7 @@ elif [[ "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app
     printf 'App runtime bundle env: %s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV"
     printf 'App runtime bundle path: %s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH"
     printf 'App system binary path: %s\n' "$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH"
+    printf 'App Linux audio bridge enabled: %s\n' "$ORANGE_GPU_ENABLE_LINUX_AUDIO"
   fi
   printf 'App direct present manual touch: %s\n' "$APP_DIRECT_PRESENT_MANUAL_TOUCH"
 fi
