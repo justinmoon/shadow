@@ -111,8 +111,8 @@ pub const RUST_DEMO_APP: DemoApp = DemoApp {
     model: RUST_DEMO_MODEL,
     icon_label: "RS",
     title: "Rust Demo",
-    subtitle: "Native VM window",
-    lifecycle_hint: "VM-only Rust window that proves the native binary launch path.",
+    subtitle: "Native Rust window",
+    lifecycle_hint: "Native Rust window that proves the binary launch path on VM and rust boot.",
     binary_name: "shadow-rust-demo",
     wayland_app_id: RUST_DEMO_WAYLAND_APP_ID,
     window_title: RUST_DEMO_WINDOW_TITLE,
@@ -166,3 +166,5 @@ pub const PIXEL_SHELL_DEMO_APPS: [DemoApp; 5] = [
     PODCAST_APP,
     CASHU_APP,
 ];
+
+pub const BOOT_SHELL_DEMO_APPS: [DemoApp; 3] = [COUNTER_APP, TIMELINE_APP, RUST_DEMO_APP];

@@ -310,19 +310,31 @@ fn android_curated_font_paths() -> Vec<PathBuf> {
         "NotoColorEmoji.ttf",
     ];
 
-    let font_dir = env::var("SHADOW_BLITZ_FONT_DIR")
+    let mut font_dirs: Vec<PathBuf> = env::var("SHADOW_BLITZ_FONT_DIR")
         .ok()
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/system/fonts"));
-
-    let mut font_paths = Vec::new();
-    for name in FONT_NAMES {
-        let path = font_dir.join(name);
-        if path.is_file() {
-            font_paths.push(path);
+        .into_iter()
+        .collect();
+    for fallback in ["/orange-gpu/system/fonts", "/system/fonts"] {
+        let path = PathBuf::from(fallback);
+        if !font_dirs.iter().any(|candidate| candidate == &path) {
+            font_dirs.push(path);
         }
     }
 
-    font_paths
+    for font_dir in font_dirs {
+        let mut font_paths = Vec::new();
+        for name in FONT_NAMES {
+            let path = font_dir.join(name);
+            if path.is_file() {
+                font_paths.push(path);
+            }
+        }
+        if !font_paths.is_empty() {
+            return font_paths;
+        }
+    }
+
+    Vec::new()
 }

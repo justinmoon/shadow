@@ -558,6 +558,8 @@ struct GuestStartupConfigFile {
     #[serde(default)]
     client: GuestClientConfigFile,
     #[serde(default)]
+    session: GuestSessionConfigFile,
+    #[serde(default)]
     compositor: GuestCompositorConfigFile,
     #[serde(default)]
     touch: GuestTouchConfigFile,
@@ -586,6 +588,7 @@ impl GuestStartupConfigFile {
                 ));
             }
         }
+        self.session.apply_launch_env_assignments();
         let mut config = GuestStartupConfig::defaults();
         config.startup_action = self.startup.into_startup_action()?;
         config.client = self.client.into_client_config(self.runtime, self.artifacts);
@@ -683,6 +686,20 @@ struct GuestClientConfigFile {
     env_assignments: Option<Vec<GuestEnvAssignmentFile>>,
     exit_on_configure: Option<bool>,
     linger_ms: Option<u64>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GuestSessionConfigFile {
+    launch_env_assignments: Option<Vec<GuestEnvAssignmentFile>>,
+}
+
+impl GuestSessionConfigFile {
+    fn apply_launch_env_assignments(self) {
+        for assignment in self.launch_env_assignments.unwrap_or_default() {
+            unsafe { env::set_var(assignment.key, assignment.value) };
+        }
+    }
 }
 
 impl GuestClientConfigFile {
@@ -1067,6 +1084,7 @@ mod tests {
             ("SHADOW_GUEST_CLIENT_EXIT_ON_CONFIGURE", None),
             ("SHADOW_GUEST_CLIENT_LINGER_MS", None),
             ("SHADOW_BLITZ_SOFTWARE_KEYBOARD", None),
+            ("SHADOW_SESSION_APP_PROFILE", None),
             ("SHADOW_GUEST_COMPOSITOR_BACKGROUND_APP_LIMIT", None),
         ];
         updates_with_defaults.extend(updates);
@@ -1434,7 +1452,7 @@ mod tests {
     }
 
     #[test]
-    fn config_can_ignore_host_only_sections_in_session_config_file() {
+    fn config_applies_session_launch_env_and_ignores_other_host_sections() {
         let temp_dir = TempDir::new().expect("temp dir");
         let session_config_path = temp_dir.path().join("session-config.json");
         fs::write(
@@ -1487,6 +1505,10 @@ mod tests {
                 assert_eq!(
                     config.client.runtime_dir,
                     PathBuf::from("/data/local/tmp/pixel-runtime")
+                );
+                assert_eq!(
+                    std::env::var("SHADOW_SESSION_APP_PROFILE").as_deref(),
+                    Ok("pixel-shell")
                 );
             },
         );

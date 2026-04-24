@@ -6,7 +6,9 @@ use std::{
 use chrono::Local;
 use shadow_ui_core::{
     app::AppId,
-    scene::{HEIGHT, WIDTH},
+    scene::{
+        APP_VIEWPORT_HEIGHT, APP_VIEWPORT_WIDTH, APP_VIEWPORT_X, APP_VIEWPORT_Y, HEIGHT, WIDTH,
+    },
     shell::ShellStatus,
 };
 use smithay::{
@@ -98,6 +100,7 @@ impl ShadowGuestCompositor {
             })
             .flatten();
         let shell_frame_app_id = focused_hosted_app.or_else(|| app_frame.and(self.focused_app));
+        let _ = self.shell_surface.take_presentable_dmabuf();
         let shell_stats = if let Some(app_id) = focused_hosted_app {
             let (shell_surface, hosted_apps) = (&mut self.shell_surface, &mut self.hosted_apps);
             let hosted_app = hosted_apps
@@ -143,6 +146,9 @@ impl ShadowGuestCompositor {
             if debug_cpu_frame_requested {
                 match kms::capture_dmabuf_frame(&dmabuf) {
                     Ok(frame) => {
+                        if let Some(app_id) = focused_hosted_app {
+                            log_hosted_post_compose_probe(frame.view(), frame_marker, app_id);
+                        }
                         self.record_frame_view_for_app(
                             frame.view(),
                             frame_marker,
@@ -205,6 +211,9 @@ impl ShadowGuestCompositor {
             stride: render_width * 4,
             pixels: &pixels,
         };
+        if let Some(app_id) = focused_hosted_app {
+            log_hosted_post_compose_probe(frame, frame_marker, app_id);
+        }
         let presented = self.publish_frame_view_with_timeout_for_app(
             frame,
             frame_marker,
@@ -647,5 +656,138 @@ impl ShadowGuestCompositor {
         );
         self.space.refresh();
         self.flush_wayland_clients();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FrameRegionSummary {
+    sampled: u64,
+    non_dark: u64,
+    alpha_nonzero: u64,
+    avg_luma: u8,
+    max_luma: u8,
+    checksum: u64,
+}
+
+fn log_hosted_post_compose_probe(
+    frame: kms::CapturedFrameView<'_>,
+    frame_marker: &str,
+    app_id: AppId,
+) {
+    if !gpu_profile_enabled() {
+        return;
+    }
+    let Some((x, y, width, height)) = scaled_app_viewport_bounds(frame.width, frame.height) else {
+        tracing::warn!(
+            "[shadow-guest-compositor] hosted-post-compose-summary app={} frame_marker={frame_marker} unavailable frame={}x{}",
+            app_id.as_str(),
+            frame.width,
+            frame.height
+        );
+        return;
+    };
+    let summary = summarize_bgra_frame_region(frame, x, y, width, height);
+    tracing::info!(
+        "[shadow-guest-compositor] hosted-post-compose-summary app={} frame_marker={frame_marker} frame={}x{} viewport={}x{}+{},{} sampled={} non_dark={} alpha_nonzero={} avg_luma={} max_luma={} checksum={:016x}",
+        app_id.as_str(),
+        frame.width,
+        frame.height,
+        width,
+        height,
+        x,
+        y,
+        summary.sampled,
+        summary.non_dark,
+        summary.alpha_nonzero,
+        summary.avg_luma,
+        summary.max_luma,
+        summary.checksum
+    );
+}
+
+fn gpu_profile_enabled() -> bool {
+    std::env::var_os("SHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE").is_some()
+}
+
+fn scaled_app_viewport_bounds(frame_width: u32, frame_height: u32) -> Option<(u32, u32, u32, u32)> {
+    if frame_width == 0 || frame_height == 0 {
+        return None;
+    }
+
+    let scale_x = frame_width as f32 / WIDTH;
+    let scale_y = frame_height as f32 / HEIGHT;
+    let x = (APP_VIEWPORT_X * scale_x).max(0.0).round() as u32;
+    let y = (APP_VIEWPORT_Y * scale_y).max(0.0).round() as u32;
+    let width = (APP_VIEWPORT_WIDTH * scale_x).max(0.0).round() as u32;
+    let height = (APP_VIEWPORT_HEIGHT * scale_y).max(0.0).round() as u32;
+
+    if x >= frame_width || y >= frame_height {
+        return None;
+    }
+
+    Some((
+        x,
+        y,
+        width.min(frame_width.saturating_sub(x)),
+        height.min(frame_height.saturating_sub(y)),
+    ))
+}
+
+fn summarize_bgra_frame_region(
+    frame: kms::CapturedFrameView<'_>,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> FrameRegionSummary {
+    if width == 0 || height == 0 {
+        return FrameRegionSummary::default();
+    }
+
+    let stride = frame.stride as usize;
+    let mut sampled = 0_u64;
+    let mut non_dark = 0_u64;
+    let mut alpha_nonzero = 0_u64;
+    let mut luma_total = 0_u64;
+    let mut max_luma = 0_u8;
+    let mut checksum = 0xcbf29ce484222325_u64;
+
+    for row in y as usize..(y + height) as usize {
+        let row_start = row * stride + x as usize * 4;
+        let row_end = row_start + width as usize * 4;
+        let Some(row_pixels) = frame.pixels.get(row_start..row_end) else {
+            break;
+        };
+        for pixel in row_pixels.chunks_exact(4) {
+            for byte in pixel {
+                checksum ^= u64::from(*byte);
+                checksum = checksum.wrapping_mul(0x100000001b3);
+            }
+            let alpha = pixel[3];
+            let luma =
+                ((u16::from(pixel[0]) + u16::from(pixel[1]) + u16::from(pixel[2])) / 3) as u8;
+            sampled += 1;
+            luma_total += u64::from(luma);
+            max_luma = max_luma.max(luma);
+            if alpha > 0 {
+                alpha_nonzero += 1;
+            }
+            if alpha > 0 && luma > 24 {
+                non_dark += 1;
+            }
+        }
+    }
+
+    FrameRegionSummary {
+        sampled,
+        non_dark,
+        alpha_nonzero,
+        avg_luma: if sampled == 0 {
+            0
+        } else {
+            (luma_total / sampled).min(u64::from(u8::MAX)) as u8
+        },
+        max_luma,
+        checksum,
     }
 }

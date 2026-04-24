@@ -30,12 +30,15 @@ impl HostedAppState {
                 ),
             )
         })?;
-        let bundle_path = std::env::var(runtime.bundle_env).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("missing runtime bundle env {}", runtime.bundle_env),
-            )
-        })?;
+        let bundle_path = std::env::var(runtime.bundle_env)
+            .ok()
+            .or_else(|| client_env_assignment(client_config, runtime.bundle_env))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("missing runtime bundle env {}", runtime.bundle_env),
+                )
+            })?;
         let host_binary_path = client_config
             .system_binary_path
             .as_ref()
@@ -95,4 +98,13 @@ impl HostedAppState {
     pub fn poll(&mut self) -> io::Result<bool> {
         self.app.poll().map_err(io::Error::other)
     }
+}
+
+fn client_env_assignment(client_config: &GuestClientConfig, key: &str) -> Option<String> {
+    client_config
+        .env_assignments
+        .iter()
+        .rev()
+        .find_map(|(candidate, value)| (candidate == key).then(|| value.clone()))
+        .filter(|value| !value.is_empty())
 }

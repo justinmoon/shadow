@@ -6,7 +6,7 @@ import {
   prepareRuntimeAppBundle,
 } from "./runtime_prepare_app_bundle.ts";
 
-type Profile = "single" | "vm-shell" | "pixel-shell";
+type Profile = "single" | "vm-shell" | "pixel-shell" | "boot-shell-demo";
 type ShellProfile = Exclude<Profile, "single">;
 type AppModel = "typescript" | "rust";
 
@@ -218,7 +218,7 @@ async function buildSpecs(
   if (profile === "single") {
     if (options.includeAppIds.length > 0) {
       throw new Error(
-        "--include-app is only valid with vm-shell and pixel-shell profiles",
+        "--include-app is only valid with shell profiles",
       );
     }
     const defaults = await defaultSingleAppSpec(cwd);
@@ -386,6 +386,9 @@ function profileEnv(profile: Profile, suffix: string): string | null {
   }
   if (profile === "vm-shell") {
     return Deno.env.get(`SHADOW_VM_SHELL_${suffix}`) ?? null;
+  }
+  if (profile === "boot-shell-demo") {
+    return Deno.env.get(`BOOT_SHELL_DEMO_${suffix}`) ?? null;
   }
   return null;
 }
@@ -909,7 +912,10 @@ function parseArgs(args: string[]): CliOptions {
 }
 
 function parseProfile(value: string): Profile {
-  if (value === "single" || value === "vm-shell" || value === "pixel-shell") {
+  if (
+    value === "single" || value === "vm-shell" || value === "pixel-shell" ||
+    value === "boot-shell-demo"
+  ) {
     return value;
   }
   throw new Error(`unsupported profile: ${value}`);

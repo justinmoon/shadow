@@ -39,7 +39,7 @@ for app in manifest.get("apps", []):
     if profile:
         if profile not in profiles:
             continue
-    elif not profiles & {"vm-shell", "pixel-shell"}:
+    elif not profiles & {"vm-shell", "pixel-shell", "boot-shell-demo"}:
         continue
     if model_filter and app.get("model") != model_filter:
         continue
@@ -58,7 +58,7 @@ PY
 shadow_load_session_apps() {
   local profile="${1:-${SHADOW_SESSION_APP_PROFILE:-}}"
   local model_filter="typescript"
-  if [[ "$profile" == "vm-shell" ]]; then
+  if [[ "$profile" == "vm-shell" || "$profile" == "boot-shell-demo" ]]; then
     model_filter=""
   fi
   shadow_load_manifest_apps "$profile" "$model_filter" 1

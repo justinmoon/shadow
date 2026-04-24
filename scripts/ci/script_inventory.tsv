@@ -85,6 +85,7 @@ scripts/pixel/pixel_boot_build_second_stage_rc_probe.sh	pixel	Private stock-init
 scripts/pixel/pixel_boot_build_log_probe.sh	pixel	Private sunfish boot image builder that injects a log-probe or preflight-report boot helper.
 scripts/pixel/pixel_boot_collect_logs.sh	pixel	Private host-side collector for experimental Shadow boot helper logs and preflight summaries.
 scripts/pixel/pixel_boot_camera_hal_probe.sh	pixel	Private Shadow boot camera HAL probe runner that builds, one-shot boots, and recovers Rust-owned direct-HAL evidence.
+scripts/pixel/pixel_boot_full_shadow_demo.sh	pixel	Private rust-booted full Shadow shell demo runner with logical payload staging and held observation.
 scripts/pixel/pixel_build_camera_hal_bionic_probe.sh	pixel	Private Android/bionic arm64 helper builder for Shadow boot camera HAL probes.
 scripts/pixel/pixel_camera_hal_bionic_probe.c	data	C source for the tiny Android/bionic camera HAL dlopen/HMI probe helper.
 scripts/pixel/pixel_camera_hal_collect_capsule.sh	pixel	Private rooted-Pixel collector for Shadow boot camera HAL linker capsules.

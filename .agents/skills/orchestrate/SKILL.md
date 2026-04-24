@@ -24,8 +24,8 @@ Follow the repo instructions first. In this repo, landing to `master` goes throu
 - Treat subagents as durable workers. Do not kill one just because it is slow, a wait timed out, or you found another way forward.
 - For nontrivial chunks, default to at least one worker and at least one reviewer.
 - Add more workers or reviewers when the seam is broad enough to justify it.
-- Prefer strong subagents for architectural work: `gpt-5.4` with `xhigh` reasoning by default.
-- Use `gpt-5.4` with `high` reasoning for simpler or more mechanical subtasks.
+- Prefer strong subagents for architectural work: `gpt-5.5` with `xhigh` reasoning by default.
+- Use `gpt-5.5` with `high` reasoning for simpler or more mechanical subtasks.
 
 ## Roles
 

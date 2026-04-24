@@ -582,13 +582,11 @@ impl ShellModel {
             Target::App(index) => home_apps().get(index).map(|app| {
                 let app_id = app.id;
                 self.dismiss_switcher_overlay();
-                self.touch_recent(app_id);
                 self.focus_app_tile(app_id);
                 ShellAction::Launch { app_id }
             }),
             Target::Recent(app_id) => {
                 self.dismiss_switcher_overlay();
-                self.touch_recent(app_id);
                 self.focus_recent_target(app_id);
                 Some(ShellAction::Launch { app_id })
             }
@@ -1760,11 +1758,12 @@ mod tests {
     }
 
     #[test]
-    fn switcher_overlay_recent_tap_launches_selected_app_and_dismisses() {
+    fn switcher_overlay_recent_tap_requests_selected_app_and_dismisses() {
         let mut shell = ShellModel::new();
         shell.set_app_running(COUNTER_APP_ID, true);
         shell.set_foreground_app(Some(TIMELINE_APP_ID));
         let counter_row = switcher_row_frame(1);
+        let recents_before = shell.recent_apps.clone();
 
         assert!(shell.show_switcher_overlay());
         assert_eq!(
@@ -1776,7 +1775,7 @@ mod tests {
                 app_id: COUNTER_APP_ID,
             })
         );
-        assert_eq!(shell.recent_apps[0], COUNTER_APP_ID);
+        assert_eq!(shell.recent_apps, recents_before);
         assert!(!shell.switcher_overlay_active());
     }
 
@@ -1809,11 +1808,12 @@ mod tests {
     }
 
     #[test]
-    fn touch_tap_recent_row_launches_and_promotes_warm_app() {
+    fn touch_tap_recent_row_requests_warm_app_without_promoting_until_success() {
         let mut shell = ShellModel::new();
         shell.set_app_running(COUNTER_APP_ID, true);
         shell.set_app_running(TIMELINE_APP_ID, true);
         let counter_row = recent_row_frame(1);
+        let recents_before = shell.recent_apps.clone();
 
         assert_eq!(
             shell.handle(ShellEvent::TouchTap {
@@ -1824,7 +1824,7 @@ mod tests {
                 app_id: COUNTER_APP_ID,
             })
         );
-        assert_eq!(shell.recent_apps[0], COUNTER_APP_ID);
+        assert_eq!(shell.recent_apps, recents_before);
         assert_eq!(
             shell.focused_tile,
             tile_index_for_app(COUNTER_APP_ID).unwrap()
@@ -1856,6 +1856,26 @@ mod tests {
             tile_index_for_app(TIMELINE_APP_ID).unwrap()
         );
         assert_eq!(shell.pressed_target, None);
+    }
+
+    #[test]
+    fn launch_request_does_not_add_failed_app_to_recents() {
+        let mut shell = ShellModel::new();
+        let counter_tile = app_frame(0);
+
+        assert_eq!(
+            shell.handle(ShellEvent::TouchTap {
+                x: counter_tile.x + counter_tile.w * 0.5,
+                y: counter_tile.y + counter_tile.h * 0.5,
+            }),
+            Some(ShellAction::Launch {
+                app_id: COUNTER_APP_ID
+            })
+        );
+        assert!(shell.recent_apps.is_empty());
+
+        shell.set_foreground_app(Some(COUNTER_APP_ID));
+        assert_eq!(shell.recent_apps, vec![COUNTER_APP_ID]);
     }
 
     #[test]

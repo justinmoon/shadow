@@ -29,7 +29,7 @@ Options:
 
 Examples:
   scripts/overnight/launch-planner --mode plan
-  scripts/overnight/launch-planner --project boot --mode launch -- --model gpt-5.4
+  scripts/overnight/launch-planner --project boot --mode launch -- --model gpt-5.5
 EOF
 }
 

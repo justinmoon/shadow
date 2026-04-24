@@ -21,13 +21,15 @@
         "inputPath": "runtime/app-counter/app.tsx",
         "cacheDirs": {
           "vm-shell": "build/runtime/app-counter-host",
-          "pixel-shell": "build/runtime/pixel-shell-counter"
+          "pixel-shell": "build/runtime/pixel-shell-counter",
+          "boot-shell-demo": "build/runtime/boot-shell-demo-counter"
         },
         "config": null
       },
       "profiles": [
         "vm-shell",
-        "pixel-shell"
+        "pixel-shell",
+        "boot-shell-demo"
       ],
       "ui": {
         "iconColor": "ICON_CYAN"
@@ -77,7 +79,8 @@
         "inputPath": "runtime/app-nostr-timeline/app.tsx",
         "cacheDirs": {
           "vm-shell": "build/runtime/app-nostr-timeline-host",
-          "pixel-shell": "build/runtime/pixel-shell-timeline"
+          "pixel-shell": "build/runtime/pixel-shell-timeline",
+          "boot-shell-demo": "build/runtime/boot-shell-demo-timeline"
         },
         "configEnv": "SHADOW_RUNTIME_APP_TIMELINE_CONFIG_JSON",
         "config": {
@@ -87,7 +90,8 @@
       },
       "profiles": [
         "vm-shell",
-        "pixel-shell"
+        "pixel-shell",
+        "boot-shell-demo"
       ],
       "ui": {
         "iconColor": "ICON_ORANGE"
@@ -156,8 +160,8 @@
       "model": "rust",
       "title": "Rust Demo",
       "iconLabel": "RS",
-      "subtitle": "Native VM window",
-      "lifecycleHint": "VM-only Rust window that proves the native binary launch path.",
+      "subtitle": "Native Rust window",
+      "lifecycleHint": "Native Rust window that proves the binary launch path on VM and rust boot.",
       "binaryName": "shadow-rust-demo",
       "waylandAppId": "dev.shadow.rust-demo",
       "windowTitle": "Shadow Rust Demo",
@@ -165,7 +169,8 @@
         "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK": "1"
       },
       "profiles": [
-        "vm-shell"
+        "vm-shell",
+        "boot-shell-demo"
       ],
       "ui": {
         "iconColor": "ICON_PURPLE"

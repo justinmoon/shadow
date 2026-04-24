@@ -98,7 +98,7 @@ You are not alone in the codebase. Do not revert unrelated edits. Keep changes
 inside the claimed task's owned paths unless you find a clear dependency and
 explain it.
 
-Before landing: run the task validation, use at least one blocking gpt-5.4 xhigh
+Before landing: run the task validation, use at least one blocking gpt-5.5 xhigh
 review subagent for substantive changes, update the relevant todos plan with
 result/proof/blocker notes and sane next task cards if material work remains,
 then use the land skill. After landing, mark the claim done and run /next again

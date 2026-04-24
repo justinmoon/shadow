@@ -18,6 +18,8 @@ use crate::{hosted, launch};
 
 use super::{ShadowGuestCompositor, WaylandTransport};
 
+const HOSTED_TYPESCRIPT_APPS_ENV: &str = "SHADOW_GUEST_HOSTED_TYPESCRIPT_APPS";
+
 impl ShadowGuestCompositor {
     pub(crate) fn control_runtime_dir(&self) -> &Path {
         self.control_socket_path
@@ -266,9 +268,19 @@ impl ShadowGuestCompositor {
 
     fn should_host_app(&self, app_id: AppId) -> bool {
         self.shell_enabled
+            && self.hosted_typescript_apps_enabled()
             && app::launch_spec(app_id)
                 .and_then(|spec| spec.typescript_runtime())
                 .is_some()
+    }
+
+    fn hosted_typescript_apps_enabled(&self) -> bool {
+        hosted_typescript_apps_flag_enabled(
+            std::env::var(HOSTED_TYPESCRIPT_APPS_ENV).ok().as_deref(),
+        ) || hosted_typescript_apps_flag_enabled(client_env_assignment(
+            &self.client_config,
+            HOSTED_TYPESCRIPT_APPS_ENV,
+        ))
     }
 
     fn focus_hosted_app(&mut self, app_id: AppId, frame_marker: &str) {
@@ -519,6 +531,25 @@ impl ShadowGuestCompositor {
     }
 }
 
+fn hosted_typescript_apps_flag_enabled(value: Option<&str>) -> bool {
+    matches!(
+        value.map(str::trim),
+        Some("1") | Some("true") | Some("on") | Some("yes")
+    )
+}
+
+fn client_env_assignment<'a>(
+    client_config: &'a crate::config::GuestClientConfig,
+    key: &str,
+) -> Option<&'a str> {
+    client_config
+        .env_assignments
+        .iter()
+        .rev()
+        .find_map(|(candidate, value)| (candidate == key).then_some(value.as_str()))
+        .filter(|value| !value.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -551,6 +582,7 @@ mod tests {
         _event_loop: EventLoop<'static, ShadowGuestCompositor>,
         _runtime_dir: TempDir,
         previous_xdg_runtime_dir: Option<OsString>,
+        previous_hosted_typescript_apps: Option<OsString>,
         _env_guard: MutexGuard<'static, ()>,
     }
 
@@ -580,8 +612,10 @@ mod tests {
             fs::create_dir_all(&client_runtime_dir).expect("client runtime dir");
 
             let previous_xdg_runtime_dir = std::env::var_os("XDG_RUNTIME_DIR");
+            let previous_hosted_typescript_apps = std::env::var_os(HOSTED_TYPESCRIPT_APPS_ENV);
             unsafe {
                 std::env::set_var("XDG_RUNTIME_DIR", runtime_dir.path());
+                std::env::remove_var(HOSTED_TYPESCRIPT_APPS_ENV);
             }
 
             let client_path = write_stub_client(runtime_dir.path());
@@ -632,6 +666,7 @@ mod tests {
                 _event_loop: event_loop,
                 _runtime_dir: runtime_dir,
                 previous_xdg_runtime_dir,
+                previous_hosted_typescript_apps,
                 _env_guard: env_guard,
             }
         }
@@ -658,6 +693,14 @@ mod tests {
                     std::env::remove_var("XDG_RUNTIME_DIR");
                 },
             }
+            match self.previous_hosted_typescript_apps.take() {
+                Some(value) => unsafe {
+                    std::env::set_var(HOSTED_TYPESCRIPT_APPS_ENV, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(HOSTED_TYPESCRIPT_APPS_ENV);
+                },
+            }
         }
     }
 
@@ -670,6 +713,57 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&script_path, permissions).expect("stub client permissions");
         script_path
+    }
+
+    #[test]
+    fn shell_typescript_apps_do_not_host_by_default() {
+        let harness = GuestSessionHarness::with_startup_action(
+            StartupAction::Shell {
+                start_app_id: Some(app::COUNTER_APP_ID),
+            },
+            false,
+            3,
+        );
+
+        assert!(!harness.state.should_host_app(app::COUNTER_APP_ID));
+        assert!(!harness.state.should_host_app(app::RUST_DEMO_APP_ID));
+    }
+
+    #[test]
+    fn shell_typescript_apps_can_opt_into_hosted_mode_with_env() {
+        let harness = GuestSessionHarness::with_startup_action(
+            StartupAction::Shell {
+                start_app_id: Some(app::COUNTER_APP_ID),
+            },
+            false,
+            3,
+        );
+
+        unsafe {
+            std::env::set_var(HOSTED_TYPESCRIPT_APPS_ENV, "1");
+        }
+
+        assert!(harness.state.should_host_app(app::COUNTER_APP_ID));
+        assert!(!harness.state.should_host_app(app::RUST_DEMO_APP_ID));
+    }
+
+    #[test]
+    fn shell_typescript_apps_can_opt_into_hosted_mode_with_client_config() {
+        let mut harness = GuestSessionHarness::with_startup_action(
+            StartupAction::Shell {
+                start_app_id: Some(app::COUNTER_APP_ID),
+            },
+            false,
+            3,
+        );
+        harness
+            .state
+            .client_config
+            .env_assignments
+            .push((HOSTED_TYPESCRIPT_APPS_ENV.to_string(), "true".to_string()));
+
+        assert!(harness.state.should_host_app(app::COUNTER_APP_ID));
+        assert!(!harness.state.should_host_app(app::RUST_DEMO_APP_ID));
     }
 
     #[test]

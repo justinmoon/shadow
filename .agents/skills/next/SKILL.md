@@ -58,7 +58,7 @@ Treat the user's text after `/next` as the primary instruction.
 
 6. Review before landing.
    - for any substantive code, script, hardware, or architecture/doc change, spawn at least one blocking review subagent before landing
-   - use model `gpt-5.4` with reasoning effort `xhigh`
+   - use model `gpt-5.5` with reasoning effort `xhigh`
    - for complex or risky changes, use multiple reviewers with distinct perspectives, chosen by worker judgement:
      - correctness / edge cases
      - validation / test coverage

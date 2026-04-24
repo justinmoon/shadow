@@ -76,6 +76,7 @@ APP_DIRECT_PRESENT_RUNTIME_DIR="/shadow-runtime"
 SHELL_SESSION_STARTUP_CONFIG_NAME="shell-session-startup.json"
 SHELL_SESSION_STARTUP_CONFIG_PATH="/orange-gpu/shell-session-startup.json"
 SHELL_SESSION_START_APP_ID="${PIXEL_ORANGE_GPU_SHELL_START_APP_ID:-${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_APP_ID:-counter}}"
+SHELL_SESSION_APP_PROFILE="${PIXEL_ORANGE_GPU_SHELL_SESSION_APP_PROFILE:-}"
 if [[ -n "${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_APP_ID+x}" ]]; then
   APP_DIRECT_PRESENT_APP_ID_EXPLICIT=1
 else
@@ -105,6 +106,8 @@ ORANGE_GPU_AUDIO_PACKAGE_REF="$(repo_root)#packages.${PIXEL_GUEST_BUILD_SYSTEM:-
 ORANGE_GPU_AUDIO_OUT_LINK="$(pixel_dir)/shadow-audio-bridge-aarch64-linux-gnu-result"
 ORANGE_GPU_AUDIO_BINARY_NAME="shadow-audio-bridge"
 ORANGE_GPU_AUDIO_BINARY_PATH="$PAYLOAD_IMAGE_PATH/$ORANGE_GPU_AUDIO_BINARY_NAME"
+SHELL_SESSION_EXTRA_APP_IDS="${PIXEL_ORANGE_GPU_SHELL_SESSION_EXTRA_APP_IDS:-}"
+SHELL_SESSION_EXTRA_ENV_ASSIGNMENTS=()
 ORANGE_GPU_BUNDLE_ARCHIVE_NAME="orange-gpu.tar.xz"
 ORANGE_GPU_BUNDLE_ARCHIVE_PATH="/orange-gpu.tar.xz"
 ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE="${PIXEL_ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE:-ramdisk}"
@@ -162,6 +165,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--firmware-bootstrap none|ramdisk-lib-firmware]
                                                     [--firmware-dir DIR]
                                                     [--app-direct-present-manual-touch true|false]
+                                                    [--shell-session-extra-app-ids IDS]
                                                     [--keep-work-dir]
 
 Build a private stock-kernel sunfish boot.img whose real first-stage userspace is
@@ -374,6 +378,38 @@ import sys
 
 print(re.sub(r"[^A-Z0-9]+", "_", sys.argv[1].upper()))
 PY
+}
+
+runtime_build_profile_for_shell_session() {
+  if [[ -n "$SHELL_SESSION_APP_PROFILE" ]]; then
+    printf '%s\n' "$SHELL_SESSION_APP_PROFILE"
+  else
+    printf 'pixel-shell\n'
+  fi
+}
+
+runtime_cache_env_name_for_profile() {
+  local profile app_env_prefix profile_env_prefix
+  profile="${1:?runtime_cache_env_name_for_profile requires a profile}"
+  app_env_prefix="${2:?runtime_cache_env_name_for_profile requires an app env prefix}"
+
+  case "$profile" in
+    pixel-shell)
+      profile_env_prefix="PIXEL_SHELL"
+      ;;
+    boot-shell-demo)
+      profile_env_prefix="BOOT_SHELL_DEMO"
+      ;;
+    vm-shell)
+      profile_env_prefix="SHADOW_VM_SHELL"
+      ;;
+    *)
+      echo "pixel_boot_build_orange_gpu: unsupported shell runtime build profile: $profile" >&2
+      exit 1
+      ;;
+  esac
+
+  printf '%s_%s_CACHE_DIR\n' "$profile_env_prefix" "$app_env_prefix"
 }
 
 hello_init_metadata_path() {
@@ -1108,6 +1144,9 @@ EOF
   fi
   if [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "shell-session-held" || "$ORANGE_GPU_MODE" == "shell-session-runtime-touch-counter" ]]; then
     printf 'shell_session_start_app_id=%s\n' "$SHELL_SESSION_START_APP_ID" >>"$output_path"
+    if [[ -n "$SHELL_SESSION_APP_PROFILE" ]]; then
+      printf 'shell_session_app_profile=%s\n' "$SHELL_SESSION_APP_PROFILE" >>"$output_path"
+    fi
   fi
   if [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "shell-session-held" || "$ORANGE_GPU_MODE" == "shell-session-runtime-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
     printf 'app_direct_present_app_id=%s\n' "$APP_DIRECT_PRESENT_APP_ID" >>"$output_path"
@@ -1116,7 +1155,7 @@ EOF
       printf 'app_direct_present_runtime_bundle_path=%s\n' "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH" >>"$output_path"
     fi
   fi
-  if [[ "$APP_DIRECT_PRESENT_MANUAL_TOUCH" == "true" && "$ORANGE_GPU_MODE" =~ ^(shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ ]]; then
+  if [[ "$APP_DIRECT_PRESENT_MANUAL_TOUCH" == "true" && "$ORANGE_GPU_MODE" =~ ^(shell-session-held|shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ ]]; then
     printf 'app_direct_present_manual_touch=%s\n' "$APP_DIRECT_PRESENT_MANUAL_TOUCH" >>"$output_path"
   fi
   printf 'dri_bootstrap=%s\n' "$DRI_BOOTSTRAP" >>"$output_path"
@@ -1170,6 +1209,61 @@ render_compositor_scene_dummy_client() {
 #!/system/bin/sh
 exit 0
 EOF
+  chmod 0755 "$output_path"
+}
+
+render_shell_session_rust_app_launcher() {
+  local output_path loader_path library_path app_binary_path
+  output_path="${1:?render_shell_session_rust_app_launcher requires an output path}"
+  loader_path="${2:?render_shell_session_rust_app_launcher requires a loader path}"
+  library_path="${3:?render_shell_session_rust_app_launcher requires a library path}"
+  app_binary_path="${4:?render_shell_session_rust_app_launcher requires an app binary path}"
+
+  python3 - \
+    "$output_path" \
+    "$loader_path" \
+    "$library_path" \
+    "$app_binary_path" \
+    "$APP_DIRECT_PRESENT_BUNDLE_ROOT_PATH" <<'PY'
+import shlex
+import sys
+from pathlib import Path
+
+output_path, loader_path, library_path, app_binary_path, bundle_root = sys.argv[1:6]
+home = f"{bundle_root}/home"
+cache_home = f"{home}/.cache"
+config_home = f"{home}/.config"
+
+script = f"""#!/system/bin/sh
+set -eu
+if [ -z "${{HOME:-}}" ]; then
+  HOME={shlex.quote(home)}
+  export HOME
+fi
+if [ -z "${{XDG_CACHE_HOME:-}}" ]; then
+  XDG_CACHE_HOME={shlex.quote(cache_home)}
+  export XDG_CACHE_HOME
+fi
+if [ -z "${{XDG_CONFIG_HOME:-}}" ]; then
+  XDG_CONFIG_HOME={shlex.quote(config_home)}
+  export XDG_CONFIG_HOME
+fi
+mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" 2>/dev/null || true
+if [ -z "${{SHADOW_RUNTIME_CAMERA_ALLOW_MOCK:-}}" ]; then
+  SHADOW_RUNTIME_CAMERA_ALLOW_MOCK=1
+  export SHADOW_RUNTIME_CAMERA_ALLOW_MOCK
+fi
+if [ -n "${{LD_LIBRARY_PATH:-}}" ]; then
+  LD_LIBRARY_PATH={shlex.quote(library_path)}:"$LD_LIBRARY_PATH"
+else
+  LD_LIBRARY_PATH={shlex.quote(library_path)}
+fi
+export LD_LIBRARY_PATH
+exec {shlex.quote(loader_path)} --library-path {shlex.quote(library_path)} {shlex.quote(app_binary_path)} "$@"
+"""
+
+Path(output_path).write_text(script, encoding="utf-8")
+PY
   chmod 0755 "$output_path"
 }
 
@@ -1326,8 +1420,24 @@ PY
 }
 
 render_shell_session_startup_config() {
-  local output_path
+  local output_path extra_env_json
   output_path="${1:?render_shell_session_startup_config requires an output path}"
+  extra_env_json="$(
+    printf '%s\n' "${SHELL_SESSION_EXTRA_ENV_ASSIGNMENTS[@]}" | python3 -c '
+import json
+import sys
+
+entries = []
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    if not line:
+        continue
+    key, _, value = line.partition("=")
+    if key:
+        entries.append({"key": key, "value": value})
+print(json.dumps(entries, separators=(",", ":")))
+'
+  )"
 
   python3 - \
     "$output_path" \
@@ -1344,7 +1454,9 @@ render_shell_session_startup_config() {
     "$APP_DIRECT_PRESENT_BUNDLE_ROOT_PATH" \
     "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" \
     "$ORANGE_GPU_MODE" \
-    "$APP_DIRECT_PRESENT_MANUAL_TOUCH" <<'PY'
+    "$APP_DIRECT_PRESENT_MANUAL_TOUCH" \
+    "$SHELL_SESSION_APP_PROFILE" \
+    "$extra_env_json" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1365,7 +1477,9 @@ from pathlib import Path
     frame_artifact_path,
     orange_gpu_mode,
     manual_touch_value,
-) = sys.argv[1:16]
+    session_app_profile,
+    extra_env_json,
+) = sys.argv[1:18]
 touch_counter_mode = orange_gpu_mode == "shell-session-runtime-touch-counter"
 held_mode = orange_gpu_mode == "shell-session-held"
 manual_touch_mode = manual_touch_value.lower() in {"1", "true", "yes", "on"}
@@ -1429,6 +1543,7 @@ elif client_kind == "typescript":
         )
 else:
     raise SystemExit(f"unsupported shell-session client kind: {client_kind}")
+env_assignments.extend(json.loads(extra_env_json or "[]"))
 client = {
     "appClientPath": client_path,
     "runtimeDir": runtime_dir,
@@ -1447,7 +1562,7 @@ payload = {
         "enableDrm": True,
         "gpuShell": True,
         "strictGpuResident": True,
-        "dmabufGlobalEnabled": False,
+        "dmabufGlobalEnabled": True,
         "dmabufFeedbackEnabled": True,
         "exitOnFirstFrame": not touch_counter_mode and not held_mode,
         "frameCapture": {
@@ -1457,6 +1572,15 @@ payload = {
         },
     },
 }
+if session_app_profile:
+    payload["session"] = {
+        "launchEnvAssignments": [
+            {
+                "key": "SHADOW_SESSION_APP_PROFILE",
+                "value": session_app_profile,
+            }
+        ]
+    }
 if touch_counter_mode or (
     held_mode and client_kind == "typescript" and start_app_id == "counter"
 ):
@@ -1477,6 +1601,106 @@ Path(output_path).write_text(
     json.dumps(payload, indent=2, sort_keys=False) + "\n",
     encoding="utf-8",
 )
+PY
+}
+
+assert_startup_client_paths_staged() {
+  local bundle_dir startup_config
+  bundle_dir="${1:?assert_startup_client_paths_staged requires a bundle dir}"
+  startup_config="${2:?assert_startup_client_paths_staged requires a startup config}"
+
+  python3 - "$bundle_dir" "$startup_config" "$PAYLOAD_IMAGE_PATH" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+bundle_dir = Path(sys.argv[1])
+startup_config = Path(sys.argv[2])
+payload_image_path = sys.argv[3].rstrip("/")
+prefix = f"{payload_image_path}/"
+payload = json.loads(startup_config.read_text(encoding="utf-8"))
+client = payload.get("client") or {}
+paths = []
+
+def append_path(label, value):
+    if isinstance(value, str) and value:
+        paths.append((label, value))
+
+append_path("client.appClientPath", client.get("appClientPath"))
+for index, assignment in enumerate(client.get("envAssignments") or []):
+    if not isinstance(assignment, dict):
+        continue
+    key = assignment.get("key")
+    if isinstance(key, str) and key.startswith("SHADOW_APP_CLIENT_"):
+        append_path(f"client.envAssignments[{index}].{key}", assignment.get("value"))
+
+missing = []
+for label, image_path in paths:
+    if not image_path.startswith(prefix):
+        continue
+    candidate = bundle_dir / image_path[len(prefix):]
+    if not candidate.is_file():
+        missing.append(f"{label}={image_path} missing {candidate}")
+    elif not os.access(candidate, os.X_OK):
+        missing.append(f"{label}={image_path} not executable at {candidate}")
+
+if missing:
+    raise SystemExit(
+        "pixel_boot_build_orange_gpu: startup client path is not staged:\n"
+        + "\n".join(missing)
+    )
+PY
+}
+
+assert_built_boot_image_init_payload() {
+  local unpack_dir ramdisk_cpio
+
+  [[ "$HELLO_INIT_MODE" == "rust-bridge" ]] || return 0
+  [[ -z "${MOCK_BOOT_RAMDISK:-}" ]] || return 0
+
+  unpack_dir="$WORK_DIR/output-unpacked"
+  ramdisk_cpio="$WORK_DIR/output-ramdisk.cpio"
+  rm -rf "$unpack_dir"
+  bootimg_unpack_to_dir "$OUTPUT_IMAGE" "$unpack_dir"
+  bootimg_decompress_ramdisk "$unpack_dir/out/ramdisk" "$ramdisk_cpio" >/dev/null
+
+  PYTHONPATH="$SCRIPT_DIR/lib" python3 - \
+    "$ramdisk_cpio" \
+    "system/bin/init=$HELLO_INIT_RUST_SHIM_BINARY" \
+    "$HELLO_INIT_RUST_CHILD_ENTRY=$HELLO_INIT_BINARY" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+from cpio_edit import read_cpio
+
+ramdisk_cpio = Path(sys.argv[1])
+entries = {entry.name: entry for entry in read_cpio(ramdisk_cpio).without_trailer()}
+errors = []
+
+for spec in sys.argv[2:]:
+    entry_name, _, source_raw = spec.partition("=")
+    source_path = Path(source_raw)
+    entry = entries.get(entry_name)
+    if entry is None:
+        errors.append(f"{entry_name}: missing from built ramdisk")
+        continue
+    source = source_path.read_bytes()
+    if entry.data != source:
+        entry_hash = hashlib.sha256(entry.data).hexdigest()
+        source_hash = hashlib.sha256(source).hexdigest()
+        errors.append(
+            f"{entry_name}: built ramdisk content does not match {source_path} "
+            f"(ramdisk size={len(entry.data)} sha256={entry_hash}; "
+            f"source size={len(source)} sha256={source_hash})"
+        )
+
+if errors:
+    raise SystemExit(
+        "pixel_boot_build_orange_gpu: built rust-bridge init payload mismatch:\n"
+        + "\n".join(errors)
+    )
 PY
 }
 
@@ -1589,15 +1813,16 @@ stage_app_direct_present_typescript_bundle() {
   local output_dir bundle_json bundle_source_path
   local blitz_package_ref blitz_out_link blitz_stage_dir
   local system_package_ref system_out_link system_stage_dir
-  local runtime_app_env_prefix cache_env_name
+  local runtime_app_env_prefix cache_env_name runtime_profile
   output_dir="${1:?stage_app_direct_present_typescript_bundle requires an output dir}"
   runtime_app_env_prefix="$(app_direct_present_runtime_app_env_prefix)"
-  cache_env_name="PIXEL_SHELL_${runtime_app_env_prefix}_CACHE_DIR"
+  runtime_profile="$(runtime_build_profile_for_shell_session)"
+  cache_env_name="$(runtime_cache_env_name_for_profile "$runtime_profile" "$runtime_app_env_prefix")"
 
   bundle_json="$(
     env "$cache_env_name=$APP_DIRECT_PRESENT_TS_CACHE_DIR" \
       "$SCRIPT_DIR/runtime_build_artifacts.sh" \
-        --profile pixel-shell \
+        --profile "$runtime_profile" \
         --include-app "$APP_DIRECT_PRESENT_APP_ID"
   )"
   printf '%s\n' "$bundle_json"
@@ -1648,6 +1873,330 @@ print(data["apps"][app_id]["effectiveBundlePath"])
   chmod 0644 "$output_dir/$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME"
   strip_app_direct_present_elf_files "$output_dir"
   rm -rf "$blitz_stage_dir" "$system_stage_dir"
+}
+
+append_shell_session_env_assignment() {
+  local key value
+  key="${1:?append_shell_session_env_assignment requires a key}"
+  value="${2:?append_shell_session_env_assignment requires a value}"
+  SHELL_SESSION_EXTRA_ENV_ASSIGNMENTS+=("$key=$value")
+}
+
+append_shell_session_typescript_client_env_assignments() {
+  append_shell_session_env_assignment \
+    "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH" \
+    "$APP_DIRECT_PRESENT_BINARY_PATH"
+  append_shell_session_env_assignment \
+    "SHADOW_APP_DIRECT_PRESENT_LOADER_PATH" \
+    "$APP_DIRECT_PRESENT_STAGE_LOADER_PATH"
+  append_shell_session_env_assignment \
+    "SHADOW_APP_DIRECT_PRESENT_LIBRARY_PATH" \
+    "$APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH"
+  append_shell_session_env_assignment \
+    "SHADOW_SYSTEM_STAGE_LOADER_PATH" \
+    "$APP_DIRECT_PRESENT_STAGE_LOADER_PATH"
+  append_shell_session_env_assignment \
+    "SHADOW_SYSTEM_STAGE_LIBRARY_PATH" \
+    "$APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH"
+  append_shell_session_env_assignment \
+    "SHADOW_SYSTEM_BINARY_PATH" \
+    "$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH"
+}
+
+runtime_app_metadata_for_id() {
+  local app_id
+  app_id="${1:?runtime_app_metadata_for_id requires an app id}"
+  python3 - "$(repo_root)/runtime/apps.json" "$app_id" <<'PY'
+import json
+import sys
+
+manifest_path, requested_app_id = sys.argv[1:3]
+with open(manifest_path, "r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+for app in manifest.get("apps", []):
+    if app.get("id") != requested_app_id:
+        continue
+    runtime = app.get("runtime") or {}
+    print(app.get("model", ""))
+    print(app.get("binaryName", ""))
+    print(runtime.get("bundleEnv", ""))
+    print(runtime.get("bundleFilename", ""))
+    print(runtime.get("inputPath", ""))
+    raise SystemExit(0)
+
+raise SystemExit(f"unknown app id: {requested_app_id}")
+PY
+}
+
+app_client_env_key_for_id() {
+  local app_id suffix
+  app_id="${1:?app_client_env_key_for_id requires an app id}"
+  suffix="$(printf '%s\n' "$app_id" | tr '[:lower:]-.' '[:upper:]__')"
+  printf 'SHADOW_APP_CLIENT_%s\n' "$suffix"
+}
+
+stage_shell_session_typescript_runtime_bundle() {
+  local app_id output_dir app_metadata model bundle_env bundle_name input_path
+  local runtime_app_env_prefix cache_env_name cache_dir bundle_json bundle_source_path
+  local runtime_profile
+  app_id="${1:?stage_shell_session_typescript_runtime_bundle requires an app id}"
+  output_dir="${2:?stage_shell_session_typescript_runtime_bundle requires an output dir}"
+
+  app_metadata="$(runtime_app_metadata_for_id "$app_id")"
+  model="$(sed -n '1p' <<<"$app_metadata")"
+  bundle_env="$(sed -n '3p' <<<"$app_metadata")"
+  bundle_name="$(sed -n '4p' <<<"$app_metadata")"
+  input_path="$(sed -n '5p' <<<"$app_metadata")"
+  if [[ "$model" != "typescript" || -z "$bundle_env" || -z "$bundle_name" || -z "$input_path" ]]; then
+    echo "pixel_boot_build_orange_gpu: shell-session extra app must be TypeScript here: $app_id" >&2
+    exit 1
+  fi
+  if [[ "$APP_DIRECT_PRESENT_CLIENT_KIND" == "rust" ]]; then
+    stage_shell_session_typescript_client_bundle "$app_id" "$output_dir"
+    return 0
+  fi
+
+  runtime_app_env_prefix="$(printf '%s\n' "$bundle_env" | sed -E 's/^SHADOW_RUNTIME_APP_//; s/_BUNDLE_PATH$//')"
+  runtime_profile="$(runtime_build_profile_for_shell_session)"
+  cache_env_name="$(runtime_cache_env_name_for_profile "$runtime_profile" "$runtime_app_env_prefix")"
+  cache_dir="${PIXEL_ORANGE_GPU_SHELL_EXTRA_TS_CACHE_ROOT:-build/runtime/boot-shell-extra}/$app_id"
+  bundle_json="$(
+    env "$cache_env_name=$cache_dir" \
+      "$SCRIPT_DIR/runtime_build_artifacts.sh" \
+        --profile "$runtime_profile" \
+        --include-app "$app_id"
+  )"
+  printf '%s\n' "$bundle_json"
+  bundle_source_path="$(
+    printf '%s\n' "$bundle_json" | python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+app_id = sys.argv[1]
+print(data["apps"][app_id]["effectiveBundlePath"])
+' "$app_id"
+  )"
+  [[ -f "$bundle_source_path" ]] || {
+    echo "pixel_boot_build_orange_gpu: TypeScript runtime bundle source not found: $bundle_source_path" >&2
+    exit 1
+  }
+  cp "$bundle_source_path" "$output_dir/$bundle_name"
+  chmod 0644 "$output_dir/$bundle_name"
+  append_shell_session_env_assignment "$bundle_env" "$APP_DIRECT_PRESENT_BUNDLE_ROOT_PATH/$bundle_name"
+}
+
+stage_shell_session_typescript_client_bundle() {
+  local app_id output_dir ts_stage_dir client_env_key app_lib_dir root_lib_dir
+  local save_app_id save_client_kind save_binary_name save_runtime_env save_runtime_name
+  local save_ts_input save_runtime_path save_binary_path save_launcher_name save_client_path
+  local save_stage_loader_path save_stage_library_path save_system_binary_name save_system_binary_path
+  local save_ts_cache_dir
+  app_id="${1:?stage_shell_session_typescript_client_bundle requires an app id}"
+  output_dir="${2:?stage_shell_session_typescript_client_bundle requires an output dir}"
+
+  save_app_id="$APP_DIRECT_PRESENT_APP_ID"
+  save_client_kind="$APP_DIRECT_PRESENT_CLIENT_KIND"
+  save_binary_name="$APP_DIRECT_PRESENT_BINARY_NAME"
+  save_runtime_env="$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV"
+  save_runtime_name="$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME"
+  save_ts_input="$APP_DIRECT_PRESENT_TS_INPUT_PATH"
+  save_runtime_path="$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH"
+  save_binary_path="$APP_DIRECT_PRESENT_BINARY_PATH"
+  save_launcher_name="$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_NAME"
+  save_client_path="$APP_DIRECT_PRESENT_CLIENT_PATH"
+  save_stage_loader_path="$APP_DIRECT_PRESENT_STAGE_LOADER_PATH"
+  save_stage_library_path="$APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH"
+  save_system_binary_name="$APP_DIRECT_PRESENT_SYSTEM_BINARY_NAME"
+  save_system_binary_path="$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH"
+  save_ts_cache_dir="$APP_DIRECT_PRESENT_TS_CACHE_DIR"
+
+  APP_DIRECT_PRESENT_APP_ID="$app_id"
+  resolve_app_direct_present_metadata
+  if [[ "$APP_DIRECT_PRESENT_CLIENT_KIND" != "typescript" ]]; then
+    echo "pixel_boot_build_orange_gpu: shell-session extra app must be TypeScript here: $app_id" >&2
+    exit 1
+  fi
+  APP_DIRECT_PRESENT_TS_CACHE_DIR="${PIXEL_ORANGE_GPU_SHELL_EXTRA_TS_CACHE_ROOT:-build/runtime/boot-shell-extra}/$app_id"
+
+  ts_stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/shadow-shell-extra-ts.XXXXXX")"
+  stage_app_direct_present_client_bundle "$ts_stage_dir"
+  chmod -R u+w "$output_dir" 2>/dev/null || true
+  cp -R "$ts_stage_dir"/. "$output_dir"/
+  rm -rf "$ts_stage_dir"
+
+  app_lib_dir="$output_dir/lib"
+  root_lib_dir="$(dirname "$output_dir")/lib"
+  if [[ -d "$app_lib_dir" ]]; then
+    mkdir -p "$root_lib_dir"
+    cp -R "$app_lib_dir"/. "$root_lib_dir"/
+  fi
+
+  append_shell_session_env_assignment \
+    "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" \
+    "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH"
+  client_env_key="$(app_client_env_key_for_id "$app_id")"
+  append_shell_session_env_assignment "$client_env_key" "$APP_DIRECT_PRESENT_CLIENT_PATH"
+  append_shell_session_typescript_client_env_assignments
+
+  APP_DIRECT_PRESENT_APP_ID="$save_app_id"
+  APP_DIRECT_PRESENT_CLIENT_KIND="$save_client_kind"
+  APP_DIRECT_PRESENT_BINARY_NAME="$save_binary_name"
+  APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV="$save_runtime_env"
+  APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME="$save_runtime_name"
+  APP_DIRECT_PRESENT_TS_INPUT_PATH="$save_ts_input"
+  APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH="$save_runtime_path"
+  APP_DIRECT_PRESENT_BINARY_PATH="$save_binary_path"
+  APP_DIRECT_PRESENT_CLIENT_LAUNCHER_NAME="$save_launcher_name"
+  APP_DIRECT_PRESENT_CLIENT_PATH="$save_client_path"
+  APP_DIRECT_PRESENT_STAGE_LOADER_PATH="$save_stage_loader_path"
+  APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH="$save_stage_library_path"
+  APP_DIRECT_PRESENT_SYSTEM_BINARY_NAME="$save_system_binary_name"
+  APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH="$save_system_binary_path"
+  APP_DIRECT_PRESENT_TS_CACHE_DIR="$save_ts_cache_dir"
+}
+
+stage_shell_session_rust_app_bundle() {
+  local app_id output_dir rust_stage_dir client_env_key
+  local rust_binary_name rust_binary_path rust_launcher_name rust_client_path
+  local rust_stage_loader_path rust_stage_library_path
+  local save_app_id save_client_kind save_binary_name save_runtime_env save_runtime_name
+  local save_ts_input save_runtime_path save_binary_path save_launcher_name save_client_path
+  local save_stage_loader_path save_stage_library_path save_system_binary_name save_system_binary_path
+  local save_ts_cache_dir
+  app_id="${1:?stage_shell_session_rust_app_bundle requires an app id}"
+  output_dir="${2:?stage_shell_session_rust_app_bundle requires an output dir}"
+
+  save_app_id="$APP_DIRECT_PRESENT_APP_ID"
+  save_client_kind="$APP_DIRECT_PRESENT_CLIENT_KIND"
+  save_binary_name="$APP_DIRECT_PRESENT_BINARY_NAME"
+  save_runtime_env="$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV"
+  save_runtime_name="$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME"
+  save_ts_input="$APP_DIRECT_PRESENT_TS_INPUT_PATH"
+  save_runtime_path="$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH"
+  save_binary_path="$APP_DIRECT_PRESENT_BINARY_PATH"
+  save_launcher_name="$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_NAME"
+  save_client_path="$APP_DIRECT_PRESENT_CLIENT_PATH"
+  save_stage_loader_path="$APP_DIRECT_PRESENT_STAGE_LOADER_PATH"
+  save_stage_library_path="$APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH"
+  save_system_binary_name="$APP_DIRECT_PRESENT_SYSTEM_BINARY_NAME"
+  save_system_binary_path="$APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH"
+  save_ts_cache_dir="$APP_DIRECT_PRESENT_TS_CACHE_DIR"
+
+  APP_DIRECT_PRESENT_APP_ID="$app_id"
+  resolve_app_direct_present_metadata
+  if [[ "$APP_DIRECT_PRESENT_CLIENT_KIND" != "rust" ]]; then
+    echo "pixel_boot_build_orange_gpu: shell-session extra app must be Rust here: $app_id" >&2
+    exit 1
+  fi
+  rust_binary_name="$APP_DIRECT_PRESENT_BINARY_NAME"
+  rust_binary_path="$APP_DIRECT_PRESENT_BINARY_PATH"
+  rust_launcher_name="$APP_DIRECT_PRESENT_CLIENT_LAUNCHER_NAME"
+  rust_client_path="$APP_DIRECT_PRESENT_CLIENT_PATH"
+  rust_stage_loader_path="$APP_DIRECT_PRESENT_STAGE_LOADER_PATH"
+  rust_stage_library_path="$APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH"
+  if [[ "$save_client_kind" == "typescript" ]]; then
+    rust_stage_loader_path="$save_stage_loader_path"
+    rust_stage_library_path="$save_stage_library_path"
+  fi
+
+  if [[ ! -f "$output_dir/$rust_binary_name" ]]; then
+    rust_stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/shadow-shell-extra-rust.XXXXXX")"
+    stage_app_direct_present_rust_bundle "$rust_stage_dir"
+    chmod -R u+w "$output_dir" 2>/dev/null || true
+    cp -R "$rust_stage_dir"/. "$output_dir"/
+    rm -rf "$rust_stage_dir"
+  fi
+  [[ -f "$output_dir/$rust_binary_name" ]] || {
+    echo "pixel_boot_build_orange_gpu: shell-session Rust app binary missing from staged bundle: $rust_binary_name" >&2
+    exit 1
+  }
+  render_shell_session_rust_app_launcher \
+    "$output_dir/$rust_launcher_name" \
+    "$rust_stage_loader_path" \
+    "$rust_stage_library_path" \
+    "$rust_binary_path"
+  client_env_key="$(app_client_env_key_for_id "$app_id")"
+  append_shell_session_env_assignment "$client_env_key" "$rust_client_path"
+
+  APP_DIRECT_PRESENT_APP_ID="$save_app_id"
+  APP_DIRECT_PRESENT_CLIENT_KIND="$save_client_kind"
+  APP_DIRECT_PRESENT_BINARY_NAME="$save_binary_name"
+  APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV="$save_runtime_env"
+  APP_DIRECT_PRESENT_RUNTIME_BUNDLE_NAME="$save_runtime_name"
+  APP_DIRECT_PRESENT_TS_INPUT_PATH="$save_ts_input"
+  APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH="$save_runtime_path"
+  APP_DIRECT_PRESENT_BINARY_PATH="$save_binary_path"
+  APP_DIRECT_PRESENT_CLIENT_LAUNCHER_NAME="$save_launcher_name"
+  APP_DIRECT_PRESENT_CLIENT_PATH="$save_client_path"
+  APP_DIRECT_PRESENT_STAGE_LOADER_PATH="$save_stage_loader_path"
+  APP_DIRECT_PRESENT_STAGE_LIBRARY_PATH="$save_stage_library_path"
+  APP_DIRECT_PRESENT_SYSTEM_BINARY_NAME="$save_system_binary_name"
+  APP_DIRECT_PRESENT_SYSTEM_BINARY_PATH="$save_system_binary_path"
+  APP_DIRECT_PRESENT_TS_CACHE_DIR="$save_ts_cache_dir"
+}
+
+stage_shell_session_extra_app_bundles() {
+  local output_dir csv app_id app_metadata model
+  output_dir="${1:?stage_shell_session_extra_app_bundles requires an output dir}"
+  csv="${SHELL_SESSION_EXTRA_APP_IDS//,/ }"
+  for app_id in $csv; do
+    [[ -n "$app_id" ]] || continue
+    [[ "$app_id" != "$APP_DIRECT_PRESENT_APP_ID" ]] || continue
+    app_metadata="$(runtime_app_metadata_for_id "$app_id")"
+    model="$(sed -n '1p' <<<"$app_metadata")"
+    case "$model" in
+      typescript)
+        stage_shell_session_typescript_runtime_bundle "$app_id" "$output_dir"
+        ;;
+      rust)
+        stage_shell_session_rust_app_bundle "$app_id" "$output_dir"
+        ;;
+      *)
+        echo "pixel_boot_build_orange_gpu: unsupported shell-session extra app model for $app_id: $model" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+boot_gpu_bundle_needs_curated_android_fonts() {
+  local csv app_id app_metadata model
+
+  if [[ "$APP_DIRECT_PRESENT_CLIENT_KIND" == "typescript" ]]; then
+    return 0
+  fi
+
+  case "$ORANGE_GPU_MODE" in
+    shell-session|shell-session-held|shell-session-runtime-touch-counter)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  csv="${SHELL_SESSION_EXTRA_APP_IDS//,/ }"
+  for app_id in $csv; do
+    [[ -n "$app_id" ]] || continue
+    [[ "$app_id" != "$APP_DIRECT_PRESENT_APP_ID" ]] || continue
+    app_metadata="$(runtime_app_metadata_for_id "$app_id")"
+    model="$(sed -n '1p' <<<"$app_metadata")"
+    if [[ "$model" == "typescript" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+stage_boot_gpu_bundle_curated_android_fonts() {
+  local bundle_dir
+  bundle_dir="${1:?stage_boot_gpu_bundle_curated_android_fonts requires a bundle dir}"
+
+  if boot_gpu_bundle_needs_curated_android_fonts; then
+    stage_runtime_bundle_android_fonts "$bundle_dir"
+  fi
 }
 
 stage_app_direct_present_client_bundle() {
@@ -2290,6 +2839,10 @@ while [[ $# -gt 0 ]]; do
       APP_DIRECT_PRESENT_MANUAL_TOUCH="${2:?missing value for --app-direct-present-manual-touch}"
       shift 2
       ;;
+    --shell-session-extra-app-ids)
+      SHELL_SESSION_EXTRA_APP_IDS="${2:?missing value for --shell-session-extra-app-ids}"
+      shift 2
+      ;;
     --keep-work-dir)
       KEEP_WORK_DIR=1
       shift
@@ -2741,24 +3294,32 @@ if orange_gpu_mode_uses_ramdisk_gpu_bundle; then
     merge_app_direct_present_typescript_runtime_libs "$STAGED_GPU_BUNDLE_DIR"
     stage_orange_gpu_audio_bridge_bundle "$STAGED_GPU_BUNDLE_DIR"
     prune_app_direct_present_diagnostic_payloads "$STAGED_GPU_BUNDLE_DIR"
+    stage_boot_gpu_bundle_curated_android_fonts "$STAGED_GPU_BUNDLE_DIR"
     render_app_direct_present_startup_config "$APP_DIRECT_PRESENT_STARTUP_CONFIG"
     cp "$SHADOW_SESSION_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-session"
     chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-session"
     cp "$SHADOW_COMPOSITOR_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
     chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
     cp "$APP_DIRECT_PRESENT_STARTUP_CONFIG" "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_STARTUP_CONFIG_NAME"
+    assert_startup_client_paths_staged "$STAGED_GPU_BUNDLE_DIR" "$APP_DIRECT_PRESENT_STARTUP_CONFIG"
   elif [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "shell-session-held" || "$ORANGE_GPU_MODE" == "shell-session-runtime-touch-counter" ]]; then
     SHELL_SESSION_STARTUP_CONFIG="$WORK_DIR/$SHELL_SESSION_STARTUP_CONFIG_NAME"
     stage_app_direct_present_client_bundle "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_BUNDLE_DIR_NAME"
+    if [[ "$APP_DIRECT_PRESENT_CLIENT_KIND" == "typescript" && -n "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" ]]; then
+      append_shell_session_env_assignment "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH"
+    fi
+    stage_shell_session_extra_app_bundles "$STAGED_GPU_BUNDLE_DIR/$APP_DIRECT_PRESENT_BUNDLE_DIR_NAME"
     merge_app_direct_present_typescript_runtime_libs "$STAGED_GPU_BUNDLE_DIR"
     stage_orange_gpu_audio_bridge_bundle "$STAGED_GPU_BUNDLE_DIR"
     prune_app_direct_present_diagnostic_payloads "$STAGED_GPU_BUNDLE_DIR"
+    stage_boot_gpu_bundle_curated_android_fonts "$STAGED_GPU_BUNDLE_DIR"
     render_shell_session_startup_config "$SHELL_SESSION_STARTUP_CONFIG"
     cp "$SHADOW_SESSION_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-session"
     chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-session"
     cp "$SHADOW_COMPOSITOR_DYNAMIC_BINARY" "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
     chmod 0755 "$STAGED_GPU_BUNDLE_DIR/shadow-compositor-guest"
     cp "$SHELL_SESSION_STARTUP_CONFIG" "$STAGED_GPU_BUNDLE_DIR/$SHELL_SESSION_STARTUP_CONFIG_NAME"
+    assert_startup_client_paths_staged "$STAGED_GPU_BUNDLE_DIR" "$SHELL_SESSION_STARTUP_CONFIG"
   fi
   if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" && -n "$CAMERA_HAL_BIONIC_PROBE_BINARY" ]]; then
     cp "$CAMERA_HAL_BIONIC_PROBE_BINARY" "$STAGED_GPU_BUNDLE_DIR/camera-hal-bionic-probe"
@@ -2855,6 +3416,7 @@ if [[ "$KEEP_WORK_DIR" == "1" ]]; then
 fi
 
 "$SCRIPT_DIR/pixel/pixel_boot_build.sh" "${build_args[@]}"
+assert_built_boot_image_init_payload
 write_metadata
 
 printf 'Owned userspace mode: orange-gpu\n'

@@ -22,7 +22,7 @@ VALID_ICON_COLORS = {
     "ICON_PURPLE",
 }
 VALID_APP_MODELS = {"typescript", "rust"}
-VALID_PROFILES = {"vm-shell", "pixel-shell"}
+VALID_PROFILES = {"vm-shell", "pixel-shell", "boot-shell-demo"}
 ENV_KEY_PATTERN = re.compile(r"[A-Z][A-Z0-9_]*")
 RESERVED_LAUNCH_ENV_KEYS = frozenset(
     {
@@ -282,6 +282,7 @@ def generate_apps_rust(manifest: dict[str, Any]) -> str:
     app_const_names: list[str] = []
     vm_shell_app_const_names: list[str] = []
     pixel_shell_app_const_names: list[str] = []
+    boot_shell_demo_app_const_names: list[str] = []
     for app in apps:
         app_id = app["id"]
         model = app["model"]
@@ -294,6 +295,8 @@ def generate_apps_rust(manifest: dict[str, Any]) -> str:
             vm_shell_app_const_names.append(app_const)
         if "pixel-shell" in profiles and model == "typescript":
             pixel_shell_app_const_names.append(app_const)
+        if "boot-shell-demo" in profiles:
+            boot_shell_demo_app_const_names.append(app_const)
         lines.extend(
             [
                 f"pub const {id_const}: AppId = AppId::new({rust_str(app_id)});",
@@ -321,6 +324,7 @@ def generate_apps_rust(manifest: dict[str, Any]) -> str:
     lines.extend(rust_app_array("DEMO_APPS", app_const_names))
     lines.extend(rust_app_array("VM_SHELL_DEMO_APPS", vm_shell_app_const_names))
     lines.extend(rust_app_array("PIXEL_SHELL_DEMO_APPS", pixel_shell_app_const_names))
+    lines.extend(rust_app_array("BOOT_SHELL_DEMO_APPS", boot_shell_demo_app_const_names))
     return rustfmt_source("\n".join(lines))
 
 

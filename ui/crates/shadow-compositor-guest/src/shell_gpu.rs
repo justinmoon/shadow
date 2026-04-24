@@ -114,6 +114,18 @@ impl GpuShellRenderer {
     ) -> Result<Dmabuf> {
         let width = self.width;
         let height = self.height;
+        if self.scanout.is_none() {
+            return Err(anyhow!(
+                "gpu scanout not configured for hosted shell render"
+            ));
+        }
+        self.log_hosted_pre_compose_probe(
+            hosted_app,
+            viewport_x,
+            viewport_y,
+            viewport_width,
+            viewport_height,
+        );
         let scanout = self
             .scanout
             .as_mut()
@@ -130,6 +142,60 @@ impl GpuShellRenderer {
                 );
             })
             .context("failed to render hosted shell frame into GPU scanout")
+    }
+
+    fn log_hosted_pre_compose_probe(
+        &mut self,
+        hosted_app: &mut HostedRuntimeApp,
+        viewport_x: u32,
+        viewport_y: u32,
+        viewport_width: u32,
+        viewport_height: u32,
+    ) {
+        if !gpu_profile_enabled() {
+            return;
+        }
+        if viewport_width == 0 || viewport_height == 0 {
+            return;
+        }
+
+        self.renderer.render_to_vec(
+            |painter| {
+                hosted_app.paint_into(
+                    painter,
+                    viewport_width,
+                    viewport_height,
+                    viewport_x,
+                    viewport_y,
+                );
+            },
+            &mut self.pixels,
+        );
+        swizzle_rgba_to_bgra(&mut self.pixels);
+        let summary = summarize_bgra_region(
+            &self.pixels,
+            self.width,
+            self.height,
+            viewport_x,
+            viewport_y,
+            viewport_width,
+            viewport_height,
+        );
+        tracing::info!(
+            "[shadow-guest-compositor] hosted-pre-compose-summary render={}x{} viewport={}x{}+{},{} sampled={} non_dark={} alpha_nonzero={} avg_luma={} max_luma={} checksum={:016x}",
+            self.width,
+            self.height,
+            viewport_width,
+            viewport_height,
+            viewport_x,
+            viewport_y,
+            summary.sampled,
+            summary.non_dark,
+            summary.alpha_nonzero,
+            summary.avg_luma,
+            summary.max_luma,
+            summary.checksum
+        );
     }
 
     pub fn render_with_shm_app(
@@ -463,4 +529,89 @@ fn swizzle_rgba_to_xrgb(buffer: &mut [u8]) {
         pixel.swap(0, 2);
         pixel[3] = 0xFF;
     }
+}
+
+fn swizzle_rgba_to_bgra(buffer: &mut [u8]) {
+    for pixel in buffer.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct BgraRegionSummary {
+    sampled: u64,
+    non_dark: u64,
+    alpha_nonzero: u64,
+    avg_luma: u8,
+    max_luma: u8,
+    checksum: u64,
+}
+
+fn summarize_bgra_region(
+    pixels: &[u8],
+    frame_width: u32,
+    frame_height: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> BgraRegionSummary {
+    if frame_width == 0 || frame_height == 0 || width == 0 || height == 0 {
+        return BgraRegionSummary::default();
+    }
+
+    let x = x.min(frame_width);
+    let y = y.min(frame_height);
+    let width = width.min(frame_width.saturating_sub(x));
+    let height = height.min(frame_height.saturating_sub(y));
+    let stride = frame_width as usize * 4;
+    let mut sampled = 0_u64;
+    let mut non_dark = 0_u64;
+    let mut alpha_nonzero = 0_u64;
+    let mut luma_total = 0_u64;
+    let mut max_luma = 0_u8;
+    let mut checksum = 0xcbf29ce484222325_u64;
+
+    for row in y as usize..(y + height) as usize {
+        let row_start = row * stride + x as usize * 4;
+        let row_end = row_start + width as usize * 4;
+        let Some(row_pixels) = pixels.get(row_start..row_end) else {
+            break;
+        };
+        for pixel in row_pixels.chunks_exact(4) {
+            for byte in pixel {
+                checksum ^= u64::from(*byte);
+                checksum = checksum.wrapping_mul(0x100000001b3);
+            }
+            let alpha = pixel[3];
+            let luma =
+                ((u16::from(pixel[0]) + u16::from(pixel[1]) + u16::from(pixel[2])) / 3) as u8;
+            sampled += 1;
+            luma_total += u64::from(luma);
+            max_luma = max_luma.max(luma);
+            if alpha > 0 {
+                alpha_nonzero += 1;
+            }
+            if alpha > 0 && luma > 24 {
+                non_dark += 1;
+            }
+        }
+    }
+
+    BgraRegionSummary {
+        sampled,
+        non_dark,
+        alpha_nonzero,
+        avg_luma: if sampled == 0 {
+            0
+        } else {
+            (luma_total / sampled).min(u64::from(u8::MAX)) as u8
+        },
+        max_luma,
+        checksum,
+    }
+}
+
+fn gpu_profile_enabled() -> bool {
+    std::env::var_os("SHADOW_GUEST_COMPOSITOR_GPU_PROFILE_TRACE").is_some()
 }

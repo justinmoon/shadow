@@ -163,6 +163,7 @@ pub use self::generated_manifest_launch::*;
 enum SessionAppProfile {
     VmShell,
     PixelShell,
+    BootShellDemo,
 }
 
 impl SessionAppProfile {
@@ -170,6 +171,7 @@ impl SessionAppProfile {
         match std::env::var(SESSION_APP_PROFILE_ENV).ok()?.trim() {
             "vm-shell" => Some(Self::VmShell),
             "pixel-shell" => Some(Self::PixelShell),
+            "boot-shell-demo" => Some(Self::BootShellDemo),
             _ => None,
         }
     }
@@ -179,6 +181,7 @@ fn visible_apps() -> &'static [DemoApp] {
     match SessionAppProfile::from_env() {
         Some(SessionAppProfile::VmShell) => &VM_SHELL_DEMO_APPS,
         Some(SessionAppProfile::PixelShell) => &PIXEL_SHELL_DEMO_APPS,
+        Some(SessionAppProfile::BootShellDemo) => &BOOT_SHELL_DEMO_APPS,
         None => &DEMO_APPS,
     }
 }
@@ -223,12 +226,13 @@ mod tests {
     use super::{
         app_id_from_wayland_app_id, binary_name_for, find_app, find_app_by_str, home_apps,
         launch_spec, AppId, AppLaunchModel, AppLaunchSpec, AppModel, DemoApp, ManifestAppLaunch,
-        CAMERA_APP, CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP, CASHU_APP_ID,
-        CASHU_WAYLAND_APP_ID, COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID, DEMO_APPS,
-        PIXEL_SHELL_DEMO_APPS, PODCAST_APP, PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID, RUST_DEMO_APP,
-        RUST_DEMO_APP_ID, RUST_DEMO_WAYLAND_APP_ID, RUST_TIMELINE_APP, RUST_TIMELINE_APP_ID,
-        RUST_TIMELINE_WAYLAND_APP_ID, SESSION_APP_PROFILE_ENV, SHELL_APP_ID, SHELL_WAYLAND_APP_ID,
-        TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID, VM_SHELL_DEMO_APPS,
+        BOOT_SHELL_DEMO_APPS, CAMERA_APP, CAMERA_APP_ID, CAMERA_WAYLAND_APP_ID, CASHU_APP,
+        CASHU_APP_ID, CASHU_WAYLAND_APP_ID, COUNTER_APP, COUNTER_APP_ID, COUNTER_WAYLAND_APP_ID,
+        DEMO_APPS, PIXEL_SHELL_DEMO_APPS, PODCAST_APP, PODCAST_APP_ID, PODCAST_WAYLAND_APP_ID,
+        RUST_DEMO_APP, RUST_DEMO_APP_ID, RUST_DEMO_WAYLAND_APP_ID, RUST_TIMELINE_APP,
+        RUST_TIMELINE_APP_ID, RUST_TIMELINE_WAYLAND_APP_ID, SESSION_APP_PROFILE_ENV, SHELL_APP_ID,
+        SHELL_WAYLAND_APP_ID, TIMELINE_APP, TIMELINE_APP_ID, TIMELINE_WAYLAND_APP_ID,
+        VM_SHELL_DEMO_APPS,
     };
 
     fn env_lock() -> &'static Mutex<()> {
@@ -421,7 +425,7 @@ mod tests {
             assert_eq!(find_app_by_str("rust-demo"), Some(&RUST_DEMO_APP));
             assert_eq!(binary_name_for(RUST_DEMO_APP_ID), Some("shadow-rust-demo"));
             assert_eq!(app.icon_label, "RS");
-            assert!(app.lifecycle_hint.contains("native binary launch path"));
+            assert!(app.lifecycle_hint.contains("binary launch path"));
             assert_eq!(app.model, AppModel::Rust);
             assert_manifest_launch_compat(app);
             assert_eq!(
@@ -538,6 +542,19 @@ mod tests {
             assert!(home_apps().iter().all(|app| app.id != RUST_TIMELINE_APP_ID));
             assert_eq!(find_app(RUST_DEMO_APP_ID), None);
             assert_eq!(find_app(RUST_TIMELINE_APP_ID), None);
+        });
+    }
+
+    #[test]
+    fn boot_shell_demo_profile_contains_staged_demo_mix() {
+        with_session_profile(Some("boot-shell-demo"), || {
+            assert_eq!(home_apps(), &BOOT_SHELL_DEMO_APPS);
+            assert_eq!(home_apps().len(), 3);
+            assert!(home_apps().iter().any(|app| app.id == COUNTER_APP_ID));
+            assert!(home_apps().iter().any(|app| app.id == TIMELINE_APP_ID));
+            assert!(home_apps().iter().any(|app| app.id == RUST_DEMO_APP_ID));
+            assert!(home_apps().iter().all(|app| app.id != CAMERA_APP_ID));
+            assert_eq!(find_app(RUST_DEMO_APP_ID), Some(&RUST_DEMO_APP));
         });
     }
 

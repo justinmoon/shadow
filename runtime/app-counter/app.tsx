@@ -15,11 +15,11 @@ const STACK_STYLE =
   "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;width:100%;max-width:320px";
 const CARD_STYLE =
   "width:280px;height:280px;display:flex;flex-direction:column;justify-content:space-between;padding:22px;box-sizing:border-box";
-const ACCENT_STYLE = "width:100%;height:44px";
+const ACCENT_STYLE = "display:block;width:100%;height:44px";
 const ROW_STYLE =
   "display:flex;align-items:center;justify-content:center;gap:14px;width:100%";
-const DOT_STYLE = "width:44px;height:44px";
-const FOOT_STYLE = "width:100%;height:22px";
+const DOT_STYLE = "display:block;width:44px;height:44px";
+const FOOT_STYLE = "display:block;width:100%;height:22px";
 
 function shellStyle(active: boolean) {
   return `${SHELL_STYLE};background:${active ? "#2a1209" : "#0b1630"}`;
