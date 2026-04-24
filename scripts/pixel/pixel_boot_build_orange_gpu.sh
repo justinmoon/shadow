@@ -133,7 +133,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--orange-gpu-metadata-stage-breadcrumb true|false]
                                                     [--orange-gpu-metadata-prune-token-root true|false]
                                                     [--orange-gpu-firmware-helper true|false]
-                                                    [--orange-gpu-timeout-action reboot|panic]
+                                                    [--orange-gpu-timeout-action reboot|panic|hold]
                                                     [--orange-gpu-watchdog-timeout-secs N]
                                                     [--orange-gpu-bundle-archive-source ramdisk|shadow-logical-partition]
                                                     [--payload-probe-source metadata|shadow-logical-partition]
@@ -932,7 +932,7 @@ assert_timeout_action_word() {
   value="${1:?assert_timeout_action_word requires a value}"
 
   case "$value" in
-    reboot|panic)
+    reboot|panic|hold)
       ;;
     *)
       echo "pixel_boot_build_orange_gpu: unsupported orange-gpu-timeout-action value: $value" >&2
@@ -2372,6 +2372,10 @@ fi
 assert_bool_word orange-gpu-metadata-stage-breadcrumb "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB"
 assert_bool_word orange-gpu-firmware-helper "$ORANGE_GPU_FIRMWARE_HELPER"
 assert_timeout_action_word "$ORANGE_GPU_TIMEOUT_ACTION"
+if [[ "$ORANGE_GPU_TIMEOUT_ACTION" == "hold" && "$HELLO_INIT_MODE" != "rust-bridge" ]]; then
+  echo "pixel_boot_build_orange_gpu: --orange-gpu-timeout-action hold requires --hello-init-mode rust-bridge" >&2
+  exit 1
+fi
 assert_hello_init_mode_word "$HELLO_INIT_MODE"
 if payload_partition_probe_mode && [[ "$HELLO_INIT_MODE" != "rust-bridge" ]]; then
   echo "pixel_boot_build_orange_gpu: payload-partition-probe requires --hello-init-mode rust-bridge because the payload verifier is implemented in Rust hello-init" >&2
@@ -2921,7 +2925,11 @@ elif [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
 elif [[ "$ORANGE_GPU_MODE" == "shell-session" ]]; then
   printf 'GPU proof: shell-owned %s app launch frame captured durably through the Rust boot seam\n' "$SHELL_SESSION_START_APP_ID"
 elif [[ "$ORANGE_GPU_MODE" == "shell-session-held" ]]; then
-  printf 'GPU proof: shell-owned %s app launch remains live until watchdog recovery and leaves durable shell/app frame evidence through the Rust boot seam\n' "$SHELL_SESSION_START_APP_ID"
+  if [[ "$ORANGE_GPU_TIMEOUT_ACTION" == "hold" ]]; then
+    printf 'GPU proof: shell-owned %s app launch remains live after watchdog proof for the configured observation window and leaves durable shell/app frame evidence through the Rust boot seam\n' "$SHELL_SESSION_START_APP_ID"
+  else
+    printf 'GPU proof: shell-owned %s app launch remains live until watchdog recovery and leaves durable shell/app frame evidence through the Rust boot seam\n' "$SHELL_SESSION_START_APP_ID"
+  fi
 elif [[ "$ORANGE_GPU_MODE" == "shell-session-runtime-touch-counter" ]]; then
   if [[ "$APP_DIRECT_PRESENT_MANUAL_TOUCH" == "true" ]]; then
     printf 'GPU proof: shell-owned TypeScript counter launch increments from physical touch and presents a post-touch frame through the Rust boot seam\n'

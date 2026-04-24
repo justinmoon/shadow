@@ -4252,6 +4252,7 @@ shell_session_held_boot_output="$(
       --orange-gpu-mode shell-session-held \
       --orange-gpu-firmware-helper true \
       --orange-gpu-metadata-stage-breadcrumb true \
+      --orange-gpu-timeout-action hold \
       --orange-gpu-watchdog-timeout-secs 12 \
       --firmware-bootstrap ramdisk-lib-firmware \
       --run-token orange-gpu-rust-bridge-shell-session-held-run-token \
@@ -4261,7 +4262,8 @@ shell_session_held_boot_output="$(
 
 assert_contains "$shell_session_held_boot_output" "Orange GPU mode: shell-session-held"
 assert_contains "$shell_session_held_boot_output" "Payload contract: hello-init launches /orange-gpu/shadow-session in held shell-session mode, starts counter from the shell"
-assert_contains "$shell_session_held_boot_output" "GPU proof: shell-owned counter app launch remains live until watchdog recovery"
+assert_contains "$shell_session_held_boot_output" "GPU proof: shell-owned counter app launch remains live after watchdog proof for the configured observation window"
+assert_contains "$shell_session_held_boot_output" "Orange GPU timeout action: hold"
 assert_contains "$shell_session_held_boot_output" "Orange GPU watchdog timeout seconds: 12"
 assert_contains "$shell_session_held_boot_output" "Compositor startup config path: /orange-gpu/shell-session-startup.json"
 assert_contains "$shell_session_held_boot_output" "Shell session start app id: counter"
@@ -4273,6 +4275,7 @@ assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img" orange-gpu.tar.xz app-direct-present/runtime-app-counter-bundle.js
 assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img" orange-gpu.tar.xz shell-session-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "shell",\n    "shellStartAppId": "counter"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-blitz-demo",\n    "runtimeDir": "/shadow-runtime",\n    "systemBinaryPath": "/orange-gpu/app-direct-present/shadow-system",\n    "envAssignments": [\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH",\n        "value": "/orange-gpu/app-direct-present/shadow-blitz-demo"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_APP_DIRECT_PRESENT_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LOADER_PATH",\n        "value": "/orange-gpu/lib/ld-linux-aarch64.so.1"\n      },\n      {\n        "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",\n        "value": "/orange-gpu/lib"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "gpuShell": true,\n    "strictGpuResident": true,\n    "dmabufGlobalEnabled": false,\n    "dmabufFeedbackEnabled": true,\n    "exitOnFirstFrame": false,\n    "frameCapture": {\n      "mode": "every-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-shell-session-held-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  }\n}\n'
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img.hello-init.json" orange_gpu_mode "shell-session-held"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img.hello-init.json" orange_gpu_timeout_action hold
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img.hello-init.json" orange_gpu_watchdog_timeout_secs 12
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img.hello-init.json" shell_session_start_app_id counter
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-held.img.hello-init.json" app_direct_present_app_id counter

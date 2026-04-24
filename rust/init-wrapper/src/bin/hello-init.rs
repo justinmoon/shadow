@@ -848,7 +848,7 @@ mod linux {
                     }
                 }
                 "orange_gpu_timeout_action" | "orange-gpu-timeout-action" => {
-                    if let Some(parsed) = parse_allowed(value, &["reboot", "panic"]) {
+                    if let Some(parsed) = parse_allowed(value, &["reboot", "panic", "hold"]) {
                         config.orange_gpu_timeout_action = parsed;
                     }
                 }
@@ -2650,6 +2650,7 @@ mod linux {
             "camera-hal-bionic-probe",
             1,
             resolve_watchdog_timeout(config),
+            true,
             None,
         ) {
             Ok(result) => result,
@@ -4136,6 +4137,7 @@ mod linux {
                 "orange-gpu-parent-probe",
                 ORANGE_GPU_CHILD_WATCH_POLL_SECONDS,
                 ORANGE_GPU_WATCHDOG_GRACE_SECONDS,
+                true,
                 None,
             ) {
                 Ok(result) => result,
@@ -4234,6 +4236,7 @@ mod linux {
         label: &str,
         poll_seconds: u32,
         timeout_seconds: u32,
+        kill_on_timeout: bool,
         mut observer: Option<&mut dyn FnMut(u32, u32, u32)>,
     ) -> io::Result<ChildWatchResult> {
         let mut result = ChildWatchResult::default();
@@ -4258,15 +4261,17 @@ mod linux {
                         if let Some(observer) = observer.as_mut() {
                             observer(child.id(), result.waited_seconds, timeout_seconds);
                         }
-                        let _ = child.kill();
-                        let status = child.wait()?;
-                        result.completed = true;
-                        result.exit_status = status.code();
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::process::ExitStatusExt;
-                            result.signal = status.signal();
-                            result.raw_wait_status = status.into_raw();
+                        if kill_on_timeout {
+                            let _ = child.kill();
+                            let status = child.wait()?;
+                            result.completed = true;
+                            result.exit_status = status.code();
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::process::ExitStatusExt;
+                                result.signal = status.signal();
+                                result.raw_wait_status = status.into_raw();
+                            }
                         }
                         log_line(&format!(
                             "{label} timed out after {} second(s)",
@@ -4973,6 +4978,7 @@ mod linux {
             "orange-gpu-payload",
             ORANGE_GPU_CHILD_WATCH_POLL_SECONDS,
             watchdog_timeout,
+            config.orange_gpu_timeout_action != "hold",
             Some(&mut timeout_observer),
         ) {
             Ok(result) => result,
@@ -5194,6 +5200,12 @@ mod linux {
                         probe_stage_prefix.as_deref(),
                         "shell-session-held-watchdog-proved",
                     );
+                    if config.orange_gpu_timeout_action == "hold" {
+                        log_line(
+                            "held shell-session proof recorded; holding boot-owned session for operator observation",
+                        );
+                        hold_for_observation(config.hold_seconds);
+                    }
                     return 0;
                 }
             }
