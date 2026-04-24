@@ -415,10 +415,20 @@ Related docs:
     - `scripts/ci/pixel_boot_orange_gpu_smoke.sh` if boot image staging changes
     - canonical rooted proof recipe for the first mounted payload probe if the boot image contract changes
   - blocked_by: none
-- [ ] `payload-metadata-rooted-proof`
+- [x] `payload-metadata-rooted-proof`
   - task_id: boot-payload-metadata-rooted-proof
   - priority: 8
   - why next: prove the chosen `/metadata/shadow-payload` contract on hardware before moving large shell/runtime bundles out of the ramdisk
+  - result: `/metadata` is proven as a small control-plane and recovery partition, not as the real payload byte store. Hardware showed `/metadata` is ~10 MiB total, while the compressed real payload archive containing compositor/session/blitz/system/GPU-driver/app bundle artifacts is 106 MiB and 1.0 GiB expanded. The follow-up `/data/local/tmp/shadow-payload/by-token/<run_token>` proof staged that 106 MiB archive successfully, but boot-owned PID1 could not mount raw `userdata` as f2fs: recovered blocker `userdata-mount-failed`, detail `userdata-mount-f2fs:Invalid argument (os error 22)`.
+  - hardware evidence:
+    - run token: `data-payload-hw-20260424T032531Z-0905`
+    - image: `build/pixel/boot/data-payload-hw-20260424T032531Z-0905.img`
+    - recover status: `build/pixel/boot/oneshot/data-payload-hw-20260424T032531Z-0905-09051JEC202061/recover-traces/status.json`
+    - staged real payload: `/data/local/tmp/shadow-payload/by-token/data-payload-hw-20260424T032531Z-0905/extra-payloads/shadow-real-payload.tar.xz`
+  - Android source/lab conclusion:
+    - sunfish fstab marks `/data` as `f2fs` with `latemount,fileencryption=ice,keydirectory=/metadata/vold/metadata_encryption,checkpoint=fs`
+    - live Android mounts `/data` from `/dev/block/dm-41`, whose dm table is `default-key, AES-256-XTS - 8:15 0`
+    - AOSP vold `fscrypt_mount_metadata_encrypted()` reads the metadata key, creates `dm-default-key` device `userdata`, then mounts f2fs; the raw `/dev/block/by-name/userdata` device is not the mountable payload root
   - owned paths:
     - `rust/init-wrapper/src/bin/hello-init.rs`
     - `scripts/pixel/pixel_boot_stage_metadata_payload.sh`
@@ -437,10 +447,44 @@ Related docs:
     - canonical rooted proof recipe above
   - blocked_by:
     - `boot-payload-partition-first-probe`
+- [x] `payload-userdata-dm-default-key-proof`
+  - task_id: boot-payload-userdata-dm-default-key-proof
+  - priority: 9
+  - why next: `/data` has enough capacity for real Shadow payload bytes, but boot-owned userspace must either reproduce Android's metadata-encrypted `dm-default-key` mapping or decide that a custom partition is cheaper and safer
+  - result: chose the custom partition path. Android source confirmed `/data` depends on vold metadata encryption plus Keystore/Keymaster-backed key retrieval, while the custom dynamic partition avoids that stack. Implemented and hardware-proved a Shadow-owned ext4 logical partition in `super` named `shadow_payload_<slot>`, mounted read-only by boot-owned Rust PID1 at `/shadow-payload`.
+  - hardware evidence:
+    - uniform run token: `shadow-logical-uniform-20260424T001500Z`
+    - image: `build/pixel/boot/shadow-logical-uniform-20260424T001500Z.img`
+    - recover status: `build/pixel/boot/oneshot/shadow-logical-uniform-20260424T001500Z-09051JEC202061/recover-traces/status.json`
+    - proof fields: `proof_ok=true`, `probe_summary_proves_payload_partition=true`, `metadata_probe_summary_payload_source=shadow-logical-partition`, `metadata_probe_summary_payload_root=/shadow-payload`, `metadata_probe_summary_payload_mounted_roots=["/metadata","/shadow-payload"]`, `metadata_probe_summary_payload_shadow_logical_mount_error=""`, `metadata_probe_summary_payload_blocker=none`
+  - lab state:
+    - all four attached Pixel 4a test devices now have a 256 MiB ext4 `shadow_payload_<active-slot>` logical partition
+    - each partition has the same `/shadow-payload/manifest.env`, `/shadow-payload/payload.txt`, and `extra-payloads/shadow-real-payload.tar.xz`
+    - archive checksum on each device: `6be33a280d75d919ca1c917fa28a8bc599f0c35fc0326579a77a8d6ae8a6bab9`
+  - Android source conclusion:
+    - AOSP vold `MetadataCrypt.cpp` creates the `/data` `dm-default-key` device from a key retrieved through `/metadata/vold/metadata_encryption`
+    - AOSP `KeyStorage.cpp` decrypts stored keys through Keystore/Keymaster when `auth.usesKeystore()`
+    - reproducing that in PID1 is the wrong dependency for a boot-owned payload store
+  - owned paths:
+    - `rust/init-wrapper/src/bin/hello-init.rs`
+    - `scripts/pixel/pixel_boot_stage_metadata_payload.sh`
+    - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
+    - `scripts/pixel/pixel_boot_recover_traces.sh`
+    - `todos/boot/`
+  - acceptance:
+    - either boot-owned PID1 creates/uses a `dm-default-key` userdata mapping and verifies the staged `/data/local/tmp/shadow-payload/by-token/<run_token>/payload.txt`
+    - or lands a precise blocker explaining which Android vold/keymaster/dm target dependency makes `/data` a bad boot-owned payload store
+    - if `/data` is rejected, provide a usable custom-partition lane with host staging, PID1 mount, recovered proof, and real payload capacity evidence
+  - validation:
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - rooted Pixel one-shot with real payload archive staged under `/shadow-payload`
+  - blocked_by:
+    - `boot-payload-metadata-rooted-proof`
 - [ ] `payload-metadata-shell-bundle-probe`
   - task_id: boot-payload-metadata-shell-bundle-probe
   - priority: 9
-  - why next: once the metadata payload root is proven, move one minimal shell/session payload slice behind the mounted manifest instead of expanding `boot.img`
+  - why next: once the logical payload root is proven, move one minimal shell/session payload slice behind the mounted manifest instead of expanding `boot.img`
   - owned paths:
     - `scripts/pixel/`
     - `scripts/lib/pixel_runtime_linux_bundle_common.sh`
@@ -448,15 +492,15 @@ Related docs:
     - `rust/init-wrapper/src/bin/hello-init.rs`
     - `todos/boot/`
   - acceptance:
-    - stage a small manifest-versioned shell/session payload bundle under `/metadata/shadow-payload/by-token/<run_token>`
+    - stage a small manifest-versioned shell/session payload bundle under `/shadow-payload`
     - boot-owned userspace reads the manifest and hands off to the mounted payload root without adding that bundle to the ramdisk
     - recovered metadata identifies bundle version/fingerprint, executable handoff path, and the exact blocker if handoff fails
   - validation:
     - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
     - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
-    - rooted proof after `boot-payload-metadata-rooted-proof`
+    - rooted proof after `boot-payload-userdata-dm-default-key-proof`
   - blocked_by:
-    - `boot-payload-metadata-rooted-proof`
+    - `boot-payload-userdata-dm-default-key-proof`
     - `boot-shell-session-first-proof`
 - [ ] `sound-boot-owned-probe`
   - task_id: boot-sound-boot-owned-probe

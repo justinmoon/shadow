@@ -516,23 +516,58 @@ EOF
 }
 EOF
         exit 0
-      elif [[ "$TRACE_MODE" == "payload-partition-success" ]]; then
+      elif [[ "$TRACE_MODE" == "payload-partition-success" || "$TRACE_MODE" == "payload-partition-data-success" || "$TRACE_MODE" == "payload-partition-data-missing-mount" || "$TRACE_MODE" == "payload-partition-shadow-logical-success" || "$TRACE_MODE" == "payload-partition-shadow-logical-missing-mount" ]]; then
+        payload_root="/metadata/shadow-payload/by-token/$TRACE_RUN_TOKEN"
+        payload_manifest_path="$payload_root/manifest.env"
+        payload_marker_path="$payload_root/payload.txt"
+        mounted_roots_json='[
+    "/metadata"
+  ]'
+        userdata_mount_error=""
+        shadow_logical_mount_error=""
+        payload_source="metadata"
+        if [[ "$TRACE_MODE" == "payload-partition-data-success" || "$TRACE_MODE" == "payload-partition-data-missing-mount" ]]; then
+          payload_root="/data/local/tmp/shadow-payload/by-token/$TRACE_RUN_TOKEN"
+          payload_manifest_path="/metadata/shadow-payload/by-token/$TRACE_RUN_TOKEN/manifest.env"
+          payload_marker_path="$payload_root/payload.txt"
+          if [[ "$TRACE_MODE" == "payload-partition-data-success" ]]; then
+            mounted_roots_json='[
+    "/metadata",
+    "/data"
+  ]'
+          else
+            userdata_mount_error="userdata-mount-f2fs:Invalid argument (os error 22)"
+          fi
+        elif [[ "$TRACE_MODE" == "payload-partition-shadow-logical-success" || "$TRACE_MODE" == "payload-partition-shadow-logical-missing-mount" ]]; then
+          payload_source="shadow-logical-partition"
+          payload_root="/shadow-payload"
+          payload_manifest_path="/shadow-payload/manifest.env"
+          payload_marker_path="/shadow-payload/payload.txt"
+          if [[ "$TRACE_MODE" == "payload-partition-shadow-logical-success" ]]; then
+            mounted_roots_json='[
+    "/metadata",
+    "/shadow-payload"
+  ]'
+          else
+            shadow_logical_mount_error="shadow-logical-dm:lp-partition-missing:shadow_payload_a"
+          fi
+        fi
         cat <<EOF
 {
   "kind": "payload-partition-probe",
   "ok": true,
   "payload_strategy": "metadata-shadow-payload-v1",
-  "payload_source": "metadata",
-  "payload_root": "/metadata/shadow-payload/by-token/$TRACE_RUN_TOKEN",
-  "payload_manifest_path": "/metadata/shadow-payload/by-token/$TRACE_RUN_TOKEN/manifest.env",
-  "payload_marker_path": "/metadata/shadow-payload/by-token/$TRACE_RUN_TOKEN/payload.txt",
+  "payload_source": "$payload_source",
+  "payload_root": "$payload_root",
+  "payload_manifest_path": "$payload_manifest_path",
+  "payload_marker_path": "$payload_marker_path",
   "payload_version": "shadow-payload-probe-v1",
   "payload_fingerprint": "sha256:payloadfingerprint",
   "payload_marker_fingerprint": "sha256:payloadfingerprint",
   "payload_fingerprint_verified": true,
-  "mounted_roots": [
-    "/metadata"
-  ],
+  "mounted_roots": $mounted_roots_json,
+  "userdata_mount_error": "$userdata_mount_error",
+  "shadow_logical_mount_error": "$shadow_logical_mount_error",
   "fallback_path": "/orange-gpu",
   "blocker": "none",
   "blocker_detail": ""
@@ -1132,6 +1167,161 @@ assert_json_field "$PAYLOAD_PARTITION_WRONG_TOKEN_OUTPUT/status.json" probe_summ
 assert_json_field "$PAYLOAD_PARTITION_WRONG_TOKEN_OUTPUT/status.json" proof_ok false
 assert_json_field "$PAYLOAD_PARTITION_WRONG_TOKEN_OUTPUT/status.json" expected_payload_probe_root "/metadata/shadow-payload/by-token/$RUN_TOKEN"
 assert_json_field "$PAYLOAD_PARTITION_WRONG_TOKEN_OUTPUT/status.json" metadata_probe_summary_payload_root /metadata/shadow-payload/by-token/wrong-payload-token
+
+PAYLOAD_PARTITION_DATA_PARENT="$TMP_DIR/output-payload-partition-data"
+PAYLOAD_PARTITION_DATA_IMAGE="$TMP_DIR/output-payload-partition-data.img"
+PAYLOAD_PARTITION_DATA_OUTPUT="$PAYLOAD_PARTITION_DATA_PARENT/recover-traces"
+write_recover_context "$PAYLOAD_PARTITION_DATA_PARENT" "$PAYLOAD_PARTITION_DATA_IMAGE" "$RUN_TOKEN" payload-partition-probe
+python3 - "$PAYLOAD_PARTITION_DATA_IMAGE.hello-init.json" "$RUN_TOKEN" <<'PY'
+import json
+import sys
+
+metadata_path, run_token = sys.argv[1:3]
+payload = json.loads(open(metadata_path, encoding="utf-8").read())
+payload["payload_probe_root"] = f"/data/local/tmp/shadow-payload/by-token/{run_token}"
+payload["payload_probe_manifest_path"] = f"/metadata/shadow-payload/by-token/{run_token}/manifest.env"
+with open(metadata_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=payload-partition-data-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$PAYLOAD_PARTITION_DATA_OUTPUT" >/dev/null
+
+assert_json_field "$PAYLOAD_PARTITION_DATA_OUTPUT/status.json" expected_payload_probe_root "/data/local/tmp/shadow-payload/by-token/$RUN_TOKEN"
+assert_json_field "$PAYLOAD_PARTITION_DATA_OUTPUT/status.json" expected_payload_probe_manifest_path "/metadata/shadow-payload/by-token/$RUN_TOKEN/manifest.env"
+assert_json_field "$PAYLOAD_PARTITION_DATA_OUTPUT/status.json" metadata_probe_summary_payload_mounted_roots/0 /metadata
+assert_json_field "$PAYLOAD_PARTITION_DATA_OUTPUT/status.json" metadata_probe_summary_payload_mounted_roots/1 /data
+assert_json_field "$PAYLOAD_PARTITION_DATA_OUTPUT/status.json" probe_summary_proves_payload_partition true
+assert_json_field "$PAYLOAD_PARTITION_DATA_OUTPUT/status.json" proof_ok true
+
+PAYLOAD_PARTITION_DATA_MISSING_MOUNT_PARENT="$TMP_DIR/output-payload-partition-data-missing-mount"
+PAYLOAD_PARTITION_DATA_MISSING_MOUNT_IMAGE="$TMP_DIR/output-payload-partition-data-missing-mount.img"
+PAYLOAD_PARTITION_DATA_MISSING_MOUNT_OUTPUT="$PAYLOAD_PARTITION_DATA_MISSING_MOUNT_PARENT/recover-traces"
+write_recover_context "$PAYLOAD_PARTITION_DATA_MISSING_MOUNT_PARENT" "$PAYLOAD_PARTITION_DATA_MISSING_MOUNT_IMAGE" "$RUN_TOKEN" payload-partition-probe
+python3 - "$PAYLOAD_PARTITION_DATA_MISSING_MOUNT_IMAGE.hello-init.json" "$RUN_TOKEN" <<'PY'
+import json
+import sys
+
+metadata_path, run_token = sys.argv[1:3]
+payload = json.loads(open(metadata_path, encoding="utf-8").read())
+payload["payload_probe_root"] = f"/data/local/tmp/shadow-payload/by-token/{run_token}"
+payload["payload_probe_manifest_path"] = f"/metadata/shadow-payload/by-token/{run_token}/manifest.env"
+with open(metadata_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=payload-partition-data-missing-mount \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$PAYLOAD_PARTITION_DATA_MISSING_MOUNT_OUTPUT" >/dev/null
+
+assert_json_field "$PAYLOAD_PARTITION_DATA_MISSING_MOUNT_OUTPUT/status.json" metadata_probe_summary_payload_mounted_roots/0 /metadata
+assert_json_field "$PAYLOAD_PARTITION_DATA_MISSING_MOUNT_OUTPUT/status.json" metadata_probe_summary_payload_userdata_mount_error "userdata-mount-f2fs:Invalid argument (os error 22)"
+assert_json_field "$PAYLOAD_PARTITION_DATA_MISSING_MOUNT_OUTPUT/status.json" probe_summary_proves_payload_partition false
+assert_json_field "$PAYLOAD_PARTITION_DATA_MISSING_MOUNT_OUTPUT/status.json" proof_ok false
+
+PAYLOAD_PARTITION_SHADOW_LOGICAL_PARENT="$TMP_DIR/output-payload-partition-shadow-logical"
+PAYLOAD_PARTITION_SHADOW_LOGICAL_IMAGE="$TMP_DIR/output-payload-partition-shadow-logical.img"
+PAYLOAD_PARTITION_SHADOW_LOGICAL_OUTPUT="$PAYLOAD_PARTITION_SHADOW_LOGICAL_PARENT/recover-traces"
+write_recover_context "$PAYLOAD_PARTITION_SHADOW_LOGICAL_PARENT" "$PAYLOAD_PARTITION_SHADOW_LOGICAL_IMAGE" "$RUN_TOKEN" payload-partition-probe
+python3 - "$PAYLOAD_PARTITION_SHADOW_LOGICAL_IMAGE.hello-init.json" <<'PY'
+import json
+import sys
+
+metadata_path = sys.argv[1]
+payload = json.loads(open(metadata_path, encoding="utf-8").read())
+payload["payload_probe_source"] = "shadow-logical-partition"
+payload["payload_probe_root"] = "/shadow-payload"
+payload["payload_probe_manifest_path"] = "/shadow-payload/manifest.env"
+with open(metadata_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=payload-partition-shadow-logical-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$PAYLOAD_PARTITION_SHADOW_LOGICAL_OUTPUT" >/dev/null
+
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_OUTPUT/status.json" expected_payload_probe_source shadow-logical-partition
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_OUTPUT/status.json" expected_payload_probe_root /shadow-payload
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_OUTPUT/status.json" expected_payload_probe_manifest_path /shadow-payload/manifest.env
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_OUTPUT/status.json" metadata_probe_summary_payload_source shadow-logical-partition
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_OUTPUT/status.json" metadata_probe_summary_payload_mounted_roots/0 /metadata
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_OUTPUT/status.json" metadata_probe_summary_payload_mounted_roots/1 /shadow-payload
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_OUTPUT/status.json" metadata_probe_summary_payload_shadow_logical_mount_error ""
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_OUTPUT/status.json" probe_summary_proves_payload_partition true
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_OUTPUT/status.json" proof_ok true
+
+PAYLOAD_PARTITION_SHADOW_LOGICAL_MISSING_MOUNT_PARENT="$TMP_DIR/output-payload-partition-shadow-logical-missing-mount"
+PAYLOAD_PARTITION_SHADOW_LOGICAL_MISSING_MOUNT_IMAGE="$TMP_DIR/output-payload-partition-shadow-logical-missing-mount.img"
+PAYLOAD_PARTITION_SHADOW_LOGICAL_MISSING_MOUNT_OUTPUT="$PAYLOAD_PARTITION_SHADOW_LOGICAL_MISSING_MOUNT_PARENT/recover-traces"
+write_recover_context "$PAYLOAD_PARTITION_SHADOW_LOGICAL_MISSING_MOUNT_PARENT" "$PAYLOAD_PARTITION_SHADOW_LOGICAL_MISSING_MOUNT_IMAGE" "$RUN_TOKEN" payload-partition-probe
+python3 - "$PAYLOAD_PARTITION_SHADOW_LOGICAL_MISSING_MOUNT_IMAGE.hello-init.json" <<'PY'
+import json
+import sys
+
+metadata_path = sys.argv[1]
+payload = json.loads(open(metadata_path, encoding="utf-8").read())
+payload["payload_probe_source"] = "shadow-logical-partition"
+payload["payload_probe_root"] = "/shadow-payload"
+payload["payload_probe_manifest_path"] = "/shadow-payload/manifest.env"
+with open(metadata_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=payload-partition-shadow-logical-missing-mount \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$PAYLOAD_PARTITION_SHADOW_LOGICAL_MISSING_MOUNT_OUTPUT" >/dev/null
+
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_MISSING_MOUNT_OUTPUT/status.json" metadata_probe_summary_payload_mounted_roots/0 /metadata
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_MISSING_MOUNT_OUTPUT/status.json" metadata_probe_summary_payload_shadow_logical_mount_error "shadow-logical-dm:lp-partition-missing:shadow_payload_a"
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_MISSING_MOUNT_OUTPUT/status.json" probe_summary_proves_payload_partition false
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_MISSING_MOUNT_OUTPUT/status.json" proof_ok false
+
+PAYLOAD_PARTITION_SHADOW_LOGICAL_WRONG_SOURCE_PARENT="$TMP_DIR/output-payload-partition-shadow-logical-wrong-source"
+PAYLOAD_PARTITION_SHADOW_LOGICAL_WRONG_SOURCE_IMAGE="$TMP_DIR/output-payload-partition-shadow-logical-wrong-source.img"
+PAYLOAD_PARTITION_SHADOW_LOGICAL_WRONG_SOURCE_OUTPUT="$PAYLOAD_PARTITION_SHADOW_LOGICAL_WRONG_SOURCE_PARENT/recover-traces"
+write_recover_context "$PAYLOAD_PARTITION_SHADOW_LOGICAL_WRONG_SOURCE_PARENT" "$PAYLOAD_PARTITION_SHADOW_LOGICAL_WRONG_SOURCE_IMAGE" "$RUN_TOKEN" payload-partition-probe
+python3 - "$PAYLOAD_PARTITION_SHADOW_LOGICAL_WRONG_SOURCE_IMAGE.hello-init.json" <<'PY'
+import json
+import sys
+
+metadata_path = sys.argv[1]
+payload = json.loads(open(metadata_path, encoding="utf-8").read())
+payload["payload_probe_source"] = "metadata"
+payload["payload_probe_root"] = "/shadow-payload"
+payload["payload_probe_manifest_path"] = "/shadow-payload/manifest.env"
+with open(metadata_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=payload-partition-shadow-logical-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$PAYLOAD_PARTITION_SHADOW_LOGICAL_WRONG_SOURCE_OUTPUT" >/dev/null
+
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_WRONG_SOURCE_OUTPUT/status.json" expected_payload_probe_source metadata
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_WRONG_SOURCE_OUTPUT/status.json" expected_payload_probe_root /shadow-payload
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_WRONG_SOURCE_OUTPUT/status.json" probe_summary_proves_payload_partition false
+assert_json_field "$PAYLOAD_PARTITION_SHADOW_LOGICAL_WRONG_SOURCE_OUTPUT/status.json" proof_ok false
 
 COMPOSITOR_PARENT="$TMP_DIR/output-compositor-scene"
 COMPOSITOR_IMAGE="$TMP_DIR/output-compositor-scene.img"

@@ -49,7 +49,14 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
     - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/rt-touch-v1-0905-20260423230353/orange-gpu.img.hello-init.json`
     - `/Users/justin/code/shadow/worktrees/worker-2/build/pixel/boot/oneshot/rt-touch-v1-0905-20260423230353/run-adb-recover/recover-traces/status.json`
 - The truth surface is `recover-traces/status.json` plus recovered metadata files, not the top-level one-shot wrapper result.
-- The first partition-backed payload strategy is now chosen: `payload-partition-probe` mounts `/metadata`, reads `/metadata/shadow-payload/by-token/<run_token>/manifest.env`, verifies a small payload marker/fingerprint, and records a durable `payload-partition-probe` summary. Rooted hardware proof is the next payload-specific rung.
+- Payload storage truth: `/metadata` is control-plane only. Hardware showed `/metadata` is ~10 MiB total, while the real compressed compositor/session/blitz/system/GPU-driver/app payload archive is 106 MiB and 1.0 GiB expanded.
+- `/data` has enough capacity and Android-side staging works, but boot-owned PID1 cannot mount raw `userdata` directly. Sunfish fstab uses `fileencryption=ice` with keys under `/metadata/vold/metadata_encryption`; live Android mounts `/data` from dm device `userdata` (`dm-default-key, AES-256-XTS - 8:15 0`). The current recovered blocker is `userdata-mount-failed` / `userdata-mount-f2fs:Invalid argument (os error 22)` from `build/pixel/boot/oneshot/data-payload-hw-20260424T032531Z-0905-09051JEC202061/recover-traces/status.json`.
+- The payload decision is now a custom logical partition in `super`, not `/data`: every lab Pixel has a 256 MiB ext4 `shadow_payload_<active-slot>` dynamic partition with the same `shadow-logical-uniform-20260424T001500Z` manifest and the 106 MiB real payload archive.
+- Boot-owned Rust PID1 can parse Android liblp metadata from `super`, validate geometry/header/table SHA-256 checksums, create a read-only dm-linear mapping for `shadow_payload_<slot>`, mount it at `/shadow-payload`, and verify `/shadow-payload/manifest.env` plus `payload.txt`.
+- Current hardware proof:
+  - image: `build/pixel/boot/shadow-logical-uniform-20260424T001500Z.img`
+  - recover status: `build/pixel/boot/oneshot/shadow-logical-uniform-20260424T001500Z-09051JEC202061/recover-traces/status.json`
+  - proof fields: `proof_ok=true`, `probe_summary_proves_payload_partition=true`, `metadata_probe_summary_payload_source=shadow-logical-partition`, `metadata_probe_summary_payload_root=/shadow-payload`, `metadata_probe_summary_payload_mounted_roots=["/metadata","/shadow-payload"]`, and empty `metadata_probe_summary_payload_shadow_logical_mount_error`.
 - The `ts-app-minimal` proof contract is now explicit in recovered status:
   - `expected_app_direct_present_app_id`
   - `expected_app_direct_present_client_kind`
@@ -86,7 +93,7 @@ Use this file as the shortest truthful snapshot of the current boot-owned seam.
 ## Highest-Leverage Next Experiments
 
 1. Run `boot-shell-session-first-proof`: boot into the real Shadow shell/home session from the Rust boot seam, not another isolated app-direct proof.
-2. Run `boot-payload-metadata-rooted-proof` in parallel so the chosen `/metadata/shadow-payload` root is hardware-proven before full shell/app payloads depend on it.
+2. Replace ramdisk-heavy shell/session staging with the proven `/shadow-payload` logical partition lane; `/metadata` remains only the durable breadcrumb/control-plane surface.
 3. Run `boot-camera-vendor-linker-stage` opportunistically as the camera sidecar so the Rust boot HAL probe can advance past the current `/vendor/lib64/hw/camera.sm6150.so` visibility blocker.
 4. After shell boots, run `boot-shell-launch-ts-app`: launch a TypeScript app from shell and capture shell/app/return-home proof.
 5. Then run `boot-shell-interaction-proof` and `boot-persistent-shell-control` so the session becomes interactive and long-running.

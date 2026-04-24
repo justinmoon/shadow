@@ -1766,6 +1766,10 @@ summary_payload_fingerprint = recovered_probe_summary.get("payload_fingerprint")
 summary_payload_marker_fingerprint = recovered_probe_summary.get("payload_marker_fingerprint")
 summary_payload_fingerprint_verified = recovered_probe_summary.get("payload_fingerprint_verified")
 summary_payload_mounted_roots = recovered_probe_summary.get("mounted_roots")
+summary_payload_userdata_mount_error = recovered_probe_summary.get("userdata_mount_error")
+summary_payload_shadow_logical_mount_error = recovered_probe_summary.get(
+    "shadow_logical_mount_error"
+)
 summary_payload_fallback_path = recovered_probe_summary.get("fallback_path")
 summary_payload_blocker = recovered_probe_summary.get("blocker")
 summary_payload_blocker_detail = recovered_probe_summary.get("blocker_detail")
@@ -2145,6 +2149,59 @@ probe_summary_proves_app_direct_present_runtime_touch_counter = (
     and summary_touch_counter_touch_latency_present is True
     and summary_touch_counter_post_touch_frame_captured is True
 )
+payload_probe_root_is_metadata = isinstance(
+    expected_payload_probe_root, str
+) and expected_payload_probe_root.startswith("/metadata/shadow-payload/by-token/")
+payload_probe_root_is_data = isinstance(
+    expected_payload_probe_root, str
+) and expected_payload_probe_root.startswith("/data/local/tmp/shadow-payload/by-token/")
+payload_probe_root_is_shadow_logical = (
+    isinstance(expected_payload_probe_root, str)
+    and expected_payload_probe_root == "/shadow-payload"
+)
+payload_probe_source_matches_root = (
+    (
+        expected_payload_probe_source == "metadata"
+        and (payload_probe_root_is_metadata or payload_probe_root_is_data)
+    )
+    or (
+        expected_payload_probe_source == "shadow-logical-partition"
+        and payload_probe_root_is_shadow_logical
+    )
+)
+expected_metadata_payload_manifest_path = (
+    f"/metadata/shadow-payload/by-token/{expected_run_token}/manifest.env"
+)
+payload_probe_manifest_path_matches_root = (
+    payload_probe_root_is_metadata
+    and expected_payload_probe_manifest_path == f"{expected_payload_probe_root}/manifest.env"
+)
+payload_probe_manifest_path_matches_control_plane = (
+    payload_probe_root_is_data
+    and bool(expected_run_token)
+    and expected_payload_probe_manifest_path == expected_metadata_payload_manifest_path
+)
+payload_probe_manifest_path_matches_shadow_logical = (
+    payload_probe_root_is_shadow_logical
+    and expected_payload_probe_manifest_path == "/shadow-payload/manifest.env"
+)
+payload_probe_mount_roots_proven = (
+    isinstance(summary_payload_mounted_roots, list)
+    and "/metadata" in summary_payload_mounted_roots
+    and (
+        payload_probe_root_is_metadata
+        or (
+            payload_probe_root_is_data
+            and "/data" in summary_payload_mounted_roots
+            and summary_payload_userdata_mount_error in ("", None)
+        )
+        or (
+            payload_probe_root_is_shadow_logical
+            and "/shadow-payload" in summary_payload_mounted_roots
+            and summary_payload_shadow_logical_mount_error in ("", None)
+        )
+    )
+)
 probe_summary_proves_payload_partition = (
     expected_orange_gpu_mode == "payload-partition-probe"
     and recovered_metadata_probe_summary_present
@@ -2152,10 +2209,18 @@ probe_summary_proves_payload_partition = (
     and summary_kind == "payload-partition-probe"
     and summary_ok is True
     and expected_payload_probe_strategy == "metadata-shadow-payload-v1"
-    and expected_payload_probe_source == "metadata"
-    and isinstance(expected_payload_probe_root, str)
-    and expected_payload_probe_root.startswith("/metadata/shadow-payload/by-token/")
-    and expected_payload_probe_manifest_path == f"{expected_payload_probe_root}/manifest.env"
+    and expected_payload_probe_source in ("metadata", "shadow-logical-partition")
+    and payload_probe_source_matches_root
+    and (
+        payload_probe_root_is_metadata
+        or payload_probe_root_is_data
+        or payload_probe_root_is_shadow_logical
+    )
+    and (
+        payload_probe_manifest_path_matches_root
+        or payload_probe_manifest_path_matches_control_plane
+        or payload_probe_manifest_path_matches_shadow_logical
+    )
     and expected_payload_probe_fallback_path == "/orange-gpu"
     and summary_payload_strategy == expected_payload_probe_strategy
     and summary_payload_source == expected_payload_probe_source
@@ -2171,8 +2236,7 @@ probe_summary_proves_payload_partition = (
     and summary_payload_fingerprint.startswith("sha256:")
     and summary_payload_marker_fingerprint == summary_payload_fingerprint
     and summary_payload_fingerprint_verified is True
-    and isinstance(summary_payload_mounted_roots, list)
-    and "/metadata" in summary_payload_mounted_roots
+    and payload_probe_mount_roots_proven
     and summary_payload_fallback_path == expected_payload_probe_fallback_path
     and summary_payload_blocker == "none"
 )
@@ -2487,6 +2551,8 @@ payload = {
     "metadata_probe_summary_payload_marker_fingerprint": summary_payload_marker_fingerprint,
     "metadata_probe_summary_payload_fingerprint_verified": summary_payload_fingerprint_verified,
     "metadata_probe_summary_payload_mounted_roots": summary_payload_mounted_roots,
+    "metadata_probe_summary_payload_userdata_mount_error": summary_payload_userdata_mount_error,
+    "metadata_probe_summary_payload_shadow_logical_mount_error": summary_payload_shadow_logical_mount_error,
     "metadata_probe_summary_payload_fallback_path": summary_payload_fallback_path,
     "metadata_probe_summary_payload_blocker": summary_payload_blocker,
     "metadata_probe_summary_payload_blocker_detail": summary_payload_blocker_detail,

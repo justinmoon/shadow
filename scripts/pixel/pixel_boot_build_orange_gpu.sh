@@ -105,7 +105,9 @@ ORANGE_GPU_BUNDLE_ARCHIVE_PATH="/orange-gpu.tar.xz"
 STAGED_GPU_BUNDLE_ARCHIVE=""
 STAGED_GPU_BUNDLE_DIR=""
 PAYLOAD_PROBE_STRATEGY="metadata-shadow-payload-v1"
-PAYLOAD_PROBE_SOURCE="metadata"
+PAYLOAD_PROBE_SOURCE="${PIXEL_BOOT_PAYLOAD_SOURCE:-metadata}"
+PAYLOAD_PROBE_ROOT="${PIXEL_BOOT_PAYLOAD_ROOT:-}"
+PAYLOAD_PROBE_MANIFEST_PATH="${PIXEL_BOOT_PAYLOAD_MANIFEST_PATH:-}"
 PAYLOAD_PROBE_FALLBACK_PATH="/orange-gpu"
 METADATA_SUFFIX=".hello-init.json"
 DEFAULT_RUST_CHILD_ENTRY="hello-init-child"
@@ -131,6 +133,9 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--orange-gpu-firmware-helper true|false]
                                                     [--orange-gpu-timeout-action reboot|panic]
                                                     [--orange-gpu-watchdog-timeout-secs N]
+                                                    [--payload-probe-source metadata|shadow-logical-partition]
+                                                    [--payload-probe-root PATH]
+                                                    [--payload-probe-manifest-path PATH]
                                                     [--camera-linker-capsule DIR]
                                                     [--camera-hal-bionic-probe PATH]
                                                     [--camera-hal-camera-id ID]
@@ -418,12 +423,20 @@ payload_partition_probe_mode() {
 payload_probe_root_for_token() {
   local run_token
   run_token="${1:?payload_probe_root_for_token requires a run token}"
+  if [[ -n "$PAYLOAD_PROBE_ROOT" ]]; then
+    printf '%s\n' "$PAYLOAD_PROBE_ROOT"
+    return 0
+  fi
   printf '/metadata/shadow-payload/by-token/%s\n' "$run_token"
 }
 
 payload_probe_manifest_path_for_token() {
   local run_token
   run_token="${1:?payload_probe_manifest_path_for_token requires a run token}"
+  if [[ -n "$PAYLOAD_PROBE_MANIFEST_PATH" ]]; then
+    printf '%s\n' "$PAYLOAD_PROBE_MANIFEST_PATH"
+    return 0
+  fi
   printf '%s/manifest.env\n' "$(payload_probe_root_for_token "$run_token")"
 }
 
@@ -1683,7 +1696,10 @@ write_metadata() {
     "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_ENV" \
     "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH" \
     "$APP_DIRECT_PRESENT_TS_RENDERER" \
-    "$APP_DIRECT_PRESENT_MANUAL_TOUCH" <<'PY'
+    "$APP_DIRECT_PRESENT_MANUAL_TOUCH" \
+    "$PAYLOAD_PROBE_SOURCE" \
+    "$(payload_probe_root_for_token "$RUN_TOKEN")" \
+    "$(payload_probe_manifest_path_for_token "$RUN_TOKEN")" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1742,6 +1758,9 @@ from pathlib import Path
     app_direct_present_runtime_bundle_path,
     app_direct_present_typescript_renderer,
     app_direct_present_manual_touch,
+    payload_probe_source,
+    payload_probe_root,
+    payload_probe_manifest_path,
 ) = sys.argv[1:]
 
 
@@ -1860,11 +1879,10 @@ if orange_gpu_mode in {
             app_direct_present_typescript_renderer
         )
 if orange_gpu_mode == "payload-partition-probe":
-    payload_root = f"/metadata/shadow-payload/by-token/{run_token}"
     payload_json["payload_probe_strategy"] = "metadata-shadow-payload-v1"
-    payload_json["payload_probe_source"] = "metadata"
-    payload_json["payload_probe_root"] = payload_root
-    payload_json["payload_probe_manifest_path"] = f"{payload_root}/manifest.env"
+    payload_json["payload_probe_source"] = payload_probe_source
+    payload_json["payload_probe_root"] = payload_probe_root
+    payload_json["payload_probe_manifest_path"] = payload_probe_manifest_path
     payload_json["payload_probe_fallback_path"] = "/orange-gpu"
 
 Path(metadata_path).write_text(
@@ -2057,6 +2075,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --orange-gpu-watchdog-timeout-secs)
       ORANGE_GPU_WATCHDOG_TIMEOUT_SECS="${2:?missing value for --orange-gpu-watchdog-timeout-secs}"
+      shift 2
+      ;;
+    --payload-probe-root)
+      PAYLOAD_PROBE_ROOT="${2:?missing value for --payload-probe-root}"
+      shift 2
+      ;;
+    --payload-probe-source)
+      PAYLOAD_PROBE_SOURCE="${2:?missing value for --payload-probe-source}"
+      shift 2
+      ;;
+    --payload-probe-manifest-path)
+      PAYLOAD_PROBE_MANIFEST_PATH="${2:?missing value for --payload-probe-manifest-path}"
       shift 2
       ;;
     --reboot-target)
@@ -2329,6 +2359,20 @@ if [[ "$ORANGE_GPU_FIRMWARE_HELPER" == "true" && "$MOUNT_SYS" != "true" ]]; then
 fi
 if [[ "$INPUT_BOOTSTRAP" != "none" && "$MOUNT_SYS" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: input-bootstrap requires --mount-sys true so hello-init can discover /sys/class/input devices" >&2
+  exit 1
+fi
+if [[ "$ORANGE_GPU_MODE" == "payload-partition-probe" && "$PAYLOAD_PROBE_SOURCE" == "shadow-logical-partition" && "$MOUNT_SYS" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: payload-probe-source shadow-logical-partition requires --mount-sys true so hello-init can discover the super block device" >&2
+  exit 1
+fi
+if [[ "$ORANGE_GPU_MODE" == "payload-partition-probe" && "$PAYLOAD_PROBE_SOURCE" == "shadow-logical-partition" ]]; then
+  if [[ "$(payload_probe_root_for_token "$RUN_TOKEN")" != "/shadow-payload" || "$(payload_probe_manifest_path_for_token "$RUN_TOKEN")" != "/shadow-payload/manifest.env" ]]; then
+    echo "pixel_boot_build_orange_gpu: payload-probe-source shadow-logical-partition requires --payload-probe-root /shadow-payload and --payload-probe-manifest-path /shadow-payload/manifest.env" >&2
+    exit 1
+  fi
+fi
+if [[ "$ORANGE_GPU_MODE" == "payload-partition-probe" && "$PAYLOAD_PROBE_SOURCE" == "metadata" && "$(payload_probe_root_for_token "$RUN_TOKEN")" == "/shadow-payload" ]]; then
+  echo "pixel_boot_build_orange_gpu: /shadow-payload requires --payload-probe-source shadow-logical-partition" >&2
   exit 1
 fi
 if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" && "$MOUNT_DEV" != "true" ]]; then
@@ -2726,7 +2770,7 @@ fi
 if payload_partition_probe_mode; then
   printf 'Payload root: %s\n' "$(payload_probe_root_for_token "$RUN_TOKEN")"
   printf 'Metadata payload strategy: %s\n' "$PAYLOAD_PROBE_STRATEGY"
-  printf 'Metadata payload source: %s\n' "$PAYLOAD_PROBE_SOURCE"
+  printf 'Payload source: %s\n' "$PAYLOAD_PROBE_SOURCE"
   printf 'Metadata payload manifest path: %s\n' "$(payload_probe_manifest_path_for_token "$RUN_TOKEN")"
   printf 'Payload fallback path: %s\n' "$PAYLOAD_PROBE_FALLBACK_PATH"
 else
