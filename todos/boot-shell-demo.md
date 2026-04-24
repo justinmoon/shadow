@@ -41,7 +41,7 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - [~] Keep the current ramdisk shell-session bundle working while worker-2 brings up the larger payload partition.
 - [ ] Move the shell-session runtime bundle onto the larger payload partition once that lands.
 - [ ] Add persistent/held shell mode with a clear recovery path.
-- [~] Add broader app coverage from the shell: Rust `rust-demo` staging/proof smokes are covered; non-counter TypeScript and hardware proof remain.
+- [~] Add broader app coverage from the shell: Rust `rust-demo` and TypeScript `timeline` staging/proof smokes are covered; hardware proof remains.
 - [ ] Fold in manual/real touch plumbing from `worker-2` if it helps interaction.
 - [ ] Confirm the larger-partition-backed shell/app path on hardware and record proof artifacts.
 
@@ -57,3 +57,4 @@ Living plan. Revise it as we learn. Do not treat this as a fixed contract.
 - Hardware proof on `06241JEC200520`: `build/pixel/runs/boot-shell-session/ss-touch-counter-r4-20260424033300/device-run/recover-traces/status.json` proved `shell-session-runtime-touch-counter` with GPU shell, shell-launched TypeScript `counter`, synthetic compositor tap gated on the counter app frame, runtime counter increment, successful post-touch present, and a recovered post-touch shell frame fingerprint. Physical-touch hardware proof is still pending.
 - `payload-partition-first-probe` landed on master as a metadata-backed manifest probe, but `/metadata` is only about 10 MB. Use it for breadcrumbs/manifests/proof, not for the real runtime/compositor/app bundle. Worker-2 owns the larger new-partition lane; consume that when available.
 - `shell-session` can now stage and launch Rust `rust-demo` through the shell path. The touch-counter shell proof stays TypeScript-only because its evidence contract is tied to hosted runtime counter events.
+- `shell-session` now has host/recovery proof coverage for non-counter TypeScript `timeline` as well as `counter`, so the shell app path is no longer counter-only at the script/proof-contract layer.

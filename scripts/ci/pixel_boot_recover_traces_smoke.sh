@@ -586,6 +586,9 @@ EOF
           rust-demo)
             printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'
             ;;
+          timeline)
+            printf 'P6\n3 1\n255\n\x09\x1f\x31\x0e\x18\x2b\x08\x20\x32'
+            ;;
           *)
             printf 'P6\n3 1\n255\n\x30\x16\x0b\xff\xb8\x2f\xff\xda\x89'
             ;;
@@ -1390,6 +1393,31 @@ assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_
 assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_height 1
 assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_pixel_bytes 9
 assert_json_field "$SHELL_SESSION_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
+
+SHELL_SESSION_TIMELINE_PARENT="$TMP_DIR/output-shell-session-timeline"
+SHELL_SESSION_TIMELINE_IMAGE="$TMP_DIR/output-shell-session-timeline.img"
+SHELL_SESSION_TIMELINE_OUTPUT="$SHELL_SESSION_TIMELINE_PARENT/recover-traces"
+write_recover_context "$SHELL_SESSION_TIMELINE_PARENT" "$SHELL_SESSION_TIMELINE_IMAGE" "$RUN_TOKEN" shell-session timeline
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=shell-session-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID=timeline \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$SHELL_SESSION_TIMELINE_OUTPUT" >/dev/null
+
+assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" probe_summary_proves_shell_session true
+assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" app_direct_present_proof_contract_required true
+assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" app_direct_present_proof_contract_ok true
+assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" metadata_compositor_frame_proves_app_direct_present true
+assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" proof_ok true
+assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" expected_shell_session_start_app_id timeline
+assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" expected_app_direct_present_client_kind typescript
+assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" expected_app_direct_present_runtime_bundle_env SHADOW_RUNTIME_APP_TIMELINE_BUNDLE_PATH
+assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" metadata_probe_summary_kind shell-session
+assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" metadata_probe_summary_app_id timeline
+assert_json_field "$SHELL_SESSION_TIMELINE_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
 
 SHELL_SESSION_RUST_PARENT="$TMP_DIR/output-shell-session-rust-demo"
 SHELL_SESSION_RUST_IMAGE="$TMP_DIR/output-shell-session-rust-demo.img"
