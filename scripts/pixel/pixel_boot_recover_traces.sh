@@ -125,6 +125,44 @@ flag_enabled() {
   [[ "$(bool_word "$1")" == "true" ]]
 }
 
+run_token_is_safe() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ ]]
+}
+
+device_shell_quote() {
+  local value
+  value="${1-}"
+  printf "'%s'" "${value//\'/\'\\\'\'}"
+}
+
+metadata_device_path_or_empty() {
+  local path leaf expected
+  path="${1-}"
+  leaf="${2:?metadata_device_path_or_empty requires a leaf name}"
+  [[ -n "$EXPECTED_RUN_TOKEN" ]] || return 0
+  expected="/metadata/shadow-hello-init/by-token/$EXPECTED_RUN_TOKEN/$leaf"
+  if [[ "$path" == "$expected" ]]; then
+    printf '%s\n' "$path"
+  fi
+}
+
+sanitize_expected_metadata_paths() {
+  [[ "$EXPECTED_METADATA_STAGE_BREADCRUMB" == "true" ]] || return 0
+  EXPECTED_METADATA_STAGE_PATH="$(metadata_device_path_or_empty "$EXPECTED_METADATA_STAGE_PATH" stage.txt)"
+  EXPECTED_METADATA_PROBE_STAGE_PATH="$(metadata_device_path_or_empty "$EXPECTED_METADATA_PROBE_STAGE_PATH" probe-stage.txt)"
+  EXPECTED_METADATA_PROBE_FINGERPRINT_PATH="$(metadata_device_path_or_empty "$EXPECTED_METADATA_PROBE_FINGERPRINT_PATH" probe-fingerprint.txt)"
+  EXPECTED_METADATA_PROBE_REPORT_PATH="$(metadata_device_path_or_empty "$EXPECTED_METADATA_PROBE_REPORT_PATH" probe-report.txt)"
+  EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH="$(metadata_device_path_or_empty "$EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH" probe-timeout-class.txt)"
+  EXPECTED_METADATA_PROBE_SUMMARY_PATH="$(metadata_device_path_or_empty "$EXPECTED_METADATA_PROBE_SUMMARY_PATH" probe-summary.json)"
+  EXPECTED_METADATA_COMPOSITOR_FRAME_PATH="$(metadata_device_path_or_empty "$EXPECTED_METADATA_COMPOSITOR_FRAME_PATH" compositor-frame.ppm)"
+}
+
+metadata_cat_command() {
+  local quoted_path
+  quoted_path="$(device_shell_quote "${1:?metadata_cat_command requires a device path}")"
+  printf 'if [ -f %s ]; then cat %s; else exit 3; fi\n' "$quoted_path" "$quoted_path"
+}
+
 recovery_runs_dir() {
   printf '%s/%s\n' "$(pixel_boot_dir)" "$RECOVERY_ROOT_NAME"
 }
@@ -405,13 +443,27 @@ discover_expected_run_token() {
   fi
 
   if [[ -n "$EXPECTED_RUN_TOKEN" ]]; then
+    if ! run_token_is_safe "$EXPECTED_RUN_TOKEN"; then
+      EXPECTED_RUN_TOKEN=""
+      EXPECTED_RUN_TOKEN_SOURCE="env:invalid-token"
+      sanitize_expected_metadata_paths
+      return 0
+    fi
     EXPECTED_RUN_TOKEN_SOURCE="env:PIXEL_HELLO_INIT_RUN_TOKEN"
+    sanitize_expected_metadata_paths
     return 0
   fi
 
   if [[ -n "$metadata_token" ]]; then
+    if ! run_token_is_safe "$metadata_token"; then
+      EXPECTED_RUN_TOKEN=""
+      EXPECTED_RUN_TOKEN_SOURCE="image-metadata:invalid-token"
+      sanitize_expected_metadata_paths
+      return 0
+    fi
     EXPECTED_RUN_TOKEN="$metadata_token"
     EXPECTED_RUN_TOKEN_SOURCE="image-metadata"
+    sanitize_expected_metadata_paths
     return 0
   fi
 
@@ -484,7 +536,7 @@ EOF
     return 0
   fi
 
-  command="if [ -f $EXPECTED_METADATA_STAGE_PATH ]; then cat $EXPECTED_METADATA_STAGE_PATH; else exit 3; fi"
+  command="$(metadata_cat_command "$EXPECTED_METADATA_STAGE_PATH")"
   run_result="$(run_device_command "root" "$command" "$output_path" "$stderr_path")"
   exit_code="${run_result%%$'\t'*}"
   actual_access_mode="${run_result#*$'\t'}"
@@ -543,7 +595,7 @@ EOF
     return 0
   fi
 
-  command="if [ -f $EXPECTED_METADATA_PROBE_STAGE_PATH ]; then cat $EXPECTED_METADATA_PROBE_STAGE_PATH; else exit 3; fi"
+  command="$(metadata_cat_command "$EXPECTED_METADATA_PROBE_STAGE_PATH")"
   run_result="$(run_device_command "root" "$command" "$output_path" "$stderr_path")"
   exit_code="${run_result%%$'\t'*}"
   actual_access_mode="${run_result#*$'\t'}"
@@ -600,7 +652,7 @@ EOF
     return 0
   fi
 
-  command="if [ -f $EXPECTED_METADATA_PROBE_FINGERPRINT_PATH ]; then cat $EXPECTED_METADATA_PROBE_FINGERPRINT_PATH; else exit 3; fi"
+  command="$(metadata_cat_command "$EXPECTED_METADATA_PROBE_FINGERPRINT_PATH")"
   run_result="$(run_device_command "root" "$command" "$output_path" "$stderr_path")"
   exit_code="${run_result%%$'\t'*}"
   actual_access_mode="${run_result#*$'\t'}"
@@ -658,7 +710,7 @@ EOF
     return 0
   fi
 
-  command="if [ -f $EXPECTED_METADATA_PROBE_REPORT_PATH ]; then cat $EXPECTED_METADATA_PROBE_REPORT_PATH; else exit 3; fi"
+  command="$(metadata_cat_command "$EXPECTED_METADATA_PROBE_REPORT_PATH")"
   run_result="$(run_device_command "root" "$command" "$output_path" "$stderr_path")"
   exit_code="${run_result%%$'\t'*}"
   actual_access_mode="${run_result#*$'\t'}"
@@ -737,7 +789,7 @@ EOF
     return 0
   fi
 
-  command="if [ -f $EXPECTED_METADATA_PROBE_SUMMARY_PATH ]; then cat $EXPECTED_METADATA_PROBE_SUMMARY_PATH; else exit 3; fi"
+  command="$(metadata_cat_command "$EXPECTED_METADATA_PROBE_SUMMARY_PATH")"
   run_result="$(run_device_command "root" "$command" "$output_path" "$stderr_path")"
   exit_code="${run_result%%$'\t'*}"
   actual_access_mode="${run_result#*$'\t'}"
@@ -784,7 +836,7 @@ EOF
     return 0
   fi
 
-  command="if [ -f $EXPECTED_METADATA_COMPOSITOR_FRAME_PATH ]; then cat $EXPECTED_METADATA_COMPOSITOR_FRAME_PATH; else exit 3; fi"
+  command="$(metadata_cat_command "$EXPECTED_METADATA_COMPOSITOR_FRAME_PATH")"
   run_result="$(run_device_command "root" "$command" "$output_path" "$stderr_path")"
   exit_code="${run_result%%$'\t'*}"
   actual_access_mode="${run_result#*$'\t'}"
@@ -840,7 +892,7 @@ EOF
     return 0
   fi
 
-  command="if [ -f $EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH ]; then cat $EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH; else exit 3; fi"
+  command="$(metadata_cat_command "$EXPECTED_METADATA_PROBE_TIMEOUT_CLASS_PATH")"
   run_result="$(run_device_command "root" "$command" "$output_path" "$stderr_path")"
   exit_code="${run_result%%$'\t'*}"
   actual_access_mode="${run_result#*$'\t'}"

@@ -4175,7 +4175,6 @@ mod linux {
                 "-c/data/vendor/wifi/wpa/wpa_supplicant.conf",
                 "-O/data/vendor/wifi/wpa/sockets",
                 "-puse_p2p_group_interface=1",
-                "-dd",
             ],
             probe_stage_path,
             probe_stage_prefix,
@@ -4218,7 +4217,7 @@ mod linux {
                 "wifi-runtime-wpa-supplicant-socket-missing",
             );
             let child_pid = child.id();
-            let cleanup = stop_wifi_child_json(&mut child);
+            let cleanup = stop_wifi_runtime_child_json(&mut child);
             return WifiRuntimeNetworkStart {
                 json: format!(
                     concat!(
@@ -4272,7 +4271,7 @@ mod linux {
             "wifi-runtime-association-done",
         );
         let Some(network_id) = association.network_id else {
-            let cleanup = stop_wifi_child_json(&mut child);
+            let cleanup = stop_wifi_runtime_child_json(&mut child);
             return WifiRuntimeNetworkStart {
                 json: format!(
                     concat!(
@@ -4298,7 +4297,7 @@ mod linux {
         };
         if !association.completed {
             let association_cleanup = wifi_association_cleanup_json(socket_path, network_id);
-            let child_cleanup = stop_wifi_child_json(&mut child);
+            let child_cleanup = stop_wifi_runtime_child_json(&mut child);
             return WifiRuntimeNetworkStart {
                 json: format!(
                     concat!(
@@ -4328,7 +4327,7 @@ mod linux {
         let busybox_path = Path::new(&config.wifi_dhcp_client_path);
         if !busybox_path.is_file() {
             let association_cleanup = wifi_association_cleanup_json(socket_path, network_id);
-            let child_cleanup = stop_wifi_child_json(&mut child);
+            let child_cleanup = stop_wifi_runtime_child_json(&mut child);
             return WifiRuntimeNetworkStart {
                 json: format!(
                     concat!(
@@ -4345,7 +4344,7 @@ mod linux {
         let script_path = Path::new("/orange-gpu/udhcpc-script");
         if let Err(error) = write_udhcpc_script(script_path, &config.wifi_dhcp_client_path) {
             let association_cleanup = wifi_association_cleanup_json(socket_path, network_id);
-            let child_cleanup = stop_wifi_child_json(&mut child);
+            let child_cleanup = stop_wifi_runtime_child_json(&mut child);
             return WifiRuntimeNetworkStart {
                 json: format!(
                     concat!(
@@ -4411,7 +4410,7 @@ mod linux {
         let relay_connect = tcp_connect_probe("relay.damus.io", 443);
         let fallback_connect = tcp_connect_probe("1.1.1.1", 53);
         let supplicant_liveness = wifi_child_liveness_json(&mut child);
-        let connected = relay_connect.connected;
+        let connected = relay_connect.connected || fallback_connect.connected;
         let completed = dhcp_success
             && ipv4_address
             && default_route
@@ -4427,7 +4426,7 @@ mod linux {
         if !completed {
             let post_dhcp_cleanup = wifi_ip_state_cleanup_json(busybox_path);
             let association_cleanup = wifi_association_cleanup_json(socket_path, network_id);
-            let child_cleanup = stop_wifi_child_json(&mut child);
+            let child_cleanup = stop_wifi_runtime_child_json(&mut child);
             return WifiRuntimeNetworkStart {
                 json: format!(
                     concat!(
@@ -4516,7 +4515,7 @@ mod linux {
         let ip_cleanup = wifi_ip_state_cleanup_json(&network.busybox_path);
         let association_cleanup =
             wifi_association_cleanup_json(&network.socket_path, network.network_id);
-        let child_cleanup = stop_wifi_child_json(&mut network.child);
+        let child_cleanup = stop_wifi_runtime_child_json(&mut network.child);
         format!(
             "{{\"attempted\":true,\"reason\":{},\"ipCleanup\":{},\"associationCleanup\":{},\"childCleanup\":{}}}",
             json_string(reason),
@@ -4524,6 +4523,31 @@ mod linux {
             association_cleanup,
             child_cleanup
         )
+    }
+
+    fn remove_wifi_helper_log_json(name: &str) -> String {
+        let output_path = format!("/orange-gpu/wifi-helper-{name}.log");
+        match fs::remove_file(&output_path) {
+            Ok(()) => format!(
+                "{{\"attempted\":true,\"removed\":true,\"path\":{}}}",
+                json_string(&output_path)
+            ),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => format!(
+                "{{\"attempted\":true,\"removed\":false,\"missing\":true,\"path\":{}}}",
+                json_string(&output_path)
+            ),
+            Err(error) => format!(
+                "{{\"attempted\":true,\"removed\":false,\"missing\":false,\"path\":{},\"error\":{}}}",
+                json_string(&output_path),
+                json_string(&error.to_string())
+            ),
+        }
+    }
+
+    fn stop_wifi_runtime_child_json(child: &mut Child) -> String {
+        let child_cleanup = stop_wifi_child_json(child);
+        let log_cleanup = remove_wifi_helper_log_json("wpa_supplicant");
+        format!("{{\"child\":{},\"log\":{}}}", child_cleanup, log_cleanup)
     }
 
     fn stop_wifi_runtime_network(

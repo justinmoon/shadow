@@ -72,7 +72,7 @@ Related docs:
     - result: rust-booted `shell-session-held` launched the TypeScript `timeline` app over boot-owned Wi-Fi and the frame shows `Fetched 12 notes, imported 12.` from public relays
   - association/IP credentials are staged as root-only one-shot metadata files, read and unlinked by PID 1 only after the supplicant socket is usable, and represented in artifacts only by length/hash/kind metadata
   - the IP proof currently uses static BusyBox `udhcpc` as a prototype DHCP client, requires the DHCP command to succeed in the current run, clears stale wlan0 IPv4/default-route/DNS state before and after the proof, and proves DNS plus outbound TCP
-  - runtime Wi-Fi is now stricter than the one-shot IP proof: configured wall-clock set must succeed, DHCP must provide DNS, the default route must exist, `relay.damus.io:443` must connect by hostname, and `wpa_supplicant` must still be alive before Shadow launches apps
+  - runtime Wi-Fi is now stricter than the one-shot IP proof: configured wall-clock set must succeed, DHCP must provide DNS, the default route must exist, outbound TCP must work without depending on one public relay host, and `wpa_supplicant` must still be alive before Shadow launches apps
   - do not bake Qualcomm CNSS assumptions into core Shadow design; contain this as the Pixel 4a module/firmware/helper recipe so future Pixels can swap a different chip-specific module behind the same proof shape
   - keep chip bring-up separate from product networking: Pixel 4a owns Qualcomm CNSS/PM assets, while WPA control, DHCP/static IP, DNS, routing, time, status, and app sockets should be reusable across Pixel targets
   - BusyBox `udhcpc` or another small DHCP tool is acceptable for rapid hardware prototyping, but the shippable direction is a Shadow-owned Rust network manager with its own DHCP/rtnetlink control and clearer failure reporting
@@ -651,7 +651,7 @@ Related docs:
     - `todos/boot/plan.md`
   - acceptance:
     - Nostr public-relay timeline demo is proven on Pixel 4a boot userspace: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/runs/boot-full-shadow-demo/full-shadow-demo-20260425T034946Z/analysis/metadata-compositor-frame.png`
-    - Nostr timeline syncs from public or LAN relays over Wi-Fi and persists notes in the configured SQLite cache without `adb reverse`
+    - remaining Nostr work is suite coverage: promote the public-relay proof into a bounded Pixel CI smoke and record the configured SQLite cache evidence without `adb reverse`
     - Cashu wallet talks to a LAN fake mint over Wi-Fi and completes the existing wallet smoke shape without a USB tunnel
     - podcast URL playback fetches media from a LAN HTTP server over Wi-Fi and reaches the existing `linux_spike` validation summary
     - app metadata or session config can express network requirements so offline-capable apps and network-required apps get different readiness behavior

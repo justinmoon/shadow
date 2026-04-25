@@ -251,6 +251,11 @@ done
 
 validate_run_token
 
+if bool_true "$wifi_enabled" && [[ "$reuse_image" == "1" ]]; then
+  echo "pixel_boot_full_shadow_demo: --reuse-image is disabled for --wifi runs; rebuild so Wi-Fi runtime config and clock match this run" >&2
+  exit 64
+fi
+
 if [[ ! "$hold_secs" =~ ^[0-9]+$ || ! "$watchdog_secs" =~ ^[0-9]+$ ]]; then
   echo "pixel_boot_full_shadow_demo: hold/watchdog seconds must be integers" >&2
   exit 64
@@ -392,6 +397,7 @@ if bool_true "$wifi_enabled"; then
     --wifi-bootstrap sunfish-wlan0
     --wifi-helper-profile "$wifi_helper_profile"
     --wifi-runtime-network true
+    --wifi-runtime-clock-unix-secs "$(date +%s)"
     --wifi-credentials-path "$wifi_credentials_device_path"
     --wifi-dhcp-client "$wifi_dhcp_client_binary"
     --wifi-module-dir "$wifi_assets_dir/modules"
