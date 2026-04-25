@@ -425,6 +425,16 @@ check_output_case \
   "$SHADOWCTL_SCRIPT" stage --dry-run -t TESTSERIAL sound
 
 check_output_case \
+  shadowctl_pixel_product_flash \
+  0 \
+  "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s --run-token product-test-token --slot inactive --wifi-credentials /tmp/wifi.env' "$SCRIPT_DIR/pixel/pixel_product_flash.sh")" \
+  "" \
+  "$SHADOWCTL_SCRIPT" -t TESTSERIAL product flash --dry-run \
+    --run-token product-test-token \
+    --slot inactive \
+    --wifi-credentials /tmp/wifi.env
+
+check_output_case \
   shadowctl_pixel_debug_latency \
   0 \
   "$(printf 'env=PIXEL_SERIAL=TESTSERIAL\ncommand=%s' "$SCRIPT_DIR/debug/pixel_touch_latency_probe.sh")" \

@@ -804,6 +804,40 @@ def pixel_debug_command(
     raise SystemExit(f"shadowctl: unsupported Pixel debug tool {tool!r}; expected one of {supported}")
 
 
+def pixel_product_command(
+    target: TargetRef,
+    *,
+    args: argparse.Namespace,
+) -> tuple[list[str | pathlib.Path], list[tuple[str, str]]]:
+    if args.product_command != "flash":
+        raise SystemExit(f"shadowctl: unsupported product command {args.product_command!r}")
+
+    command: list[str | pathlib.Path] = [repo_root() / "scripts/pixel/pixel_product_flash.sh"]
+    if args.run_token:
+        command.extend(["--run-token", args.run_token])
+    if args.output_root:
+        command.extend(["--output-root", args.output_root])
+    if args.slot:
+        command.extend(["--slot", args.slot])
+    if args.wifi:
+        command.append("--wifi")
+    if args.wifi_credentials:
+        command.extend(["--wifi-credentials", args.wifi_credentials])
+    if args.wifi_assets:
+        command.extend(["--wifi-assets", args.wifi_assets])
+    if args.wifi_linker_capsule:
+        command.extend(["--wifi-linker-capsule", args.wifi_linker_capsule])
+    if args.wifi_dhcp_client:
+        command.extend(["--wifi-dhcp-client", args.wifi_dhcp_client])
+    if args.allow_active_slot:
+        command.append("--allow-active-slot")
+    if args.reuse_image:
+        command.append("--reuse-image")
+    if args.build_only:
+        command.append("--build-only")
+    return command, [("PIXEL_SERIAL", target.serial or target.id)]
+
+
 def vm_processes() -> list[str]:
     try:
         result = run_local(["pgrep", "-f", "microvm@shadow-ui-vm"], check=False)
@@ -1370,6 +1404,7 @@ def synthetic_target_for_dry_run(
         "root-patch",
         "root-stage",
         "run",
+        "product",
         "stage",
         "stop",
     }:
@@ -2186,6 +2221,11 @@ def cmd_pixel_debug(args: argparse.Namespace) -> int:
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
 
 
+def cmd_pixel_product(args: argparse.Namespace) -> int:
+    command, env = pixel_product_command(args.target_ref, args=args)
+    return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
+
+
 def cmd_root_prep(args: argparse.Namespace) -> int:
     command, env = script_command("pixel/pixel_root_prep.sh")
     return run_local_script(command, env_assignments=env, dry_run=args.dry_run)
@@ -2469,6 +2509,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  sc -t vm open timeline\n"
             "  sc -t pixel open camera\n"
             "  sc -t pixel prep-settings\n"
+            "  sc -t pixel product flash\n"
             "  sc -t pixel debug runtime-drm-gpu-probe --profile vulkan_kgsl_first\n"
             "  sc -t pixel ci camera\n"
             "  sc -t pixel debug latency\n"
@@ -2775,6 +2816,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Suite to stage. Defaults to full.",
     )
     stage.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
+
+    product = add_command(
+        subparsers,
+        "product",
+        "Build or flash product-mode Pixel images.",
+        cmd_pixel_product,
+        supported_target_kinds=("pixel",),
+        parents=(target_parser,),
+    )
+    product_subparsers = product.add_subparsers(dest="product_command", required=True)
+    product_flash = product_subparsers.add_parser(
+        "flash",
+        help="Build and persistently flash a conference-ready Shadow product image.",
+    )
+    product_flash.add_argument("--run-token", help="Stable token for the product image and payload.")
+    product_flash.add_argument("--output-root", help="Host output root for product flash artifacts.")
+    product_flash.add_argument(
+        "--slot",
+        choices=("inactive", "active", "a", "b"),
+        help="Slot to flash. Defaults to inactive.",
+    )
+    product_flash.add_argument("--wifi", action="store_true", help="Enable product Wi-Fi runtime.")
+    product_flash.add_argument("--wifi-credentials", help="Host file to stage as product Wi-Fi credentials.")
+    product_flash.add_argument("--wifi-assets", help="Wi-Fi modules/firmware asset directory.")
+    product_flash.add_argument("--wifi-linker-capsule", help="Wi-Fi linker capsule directory.")
+    product_flash.add_argument("--wifi-dhcp-client", help="Static aarch64 busybox used for DHCP.")
+    product_flash.add_argument(
+        "--allow-active-slot",
+        action="store_true",
+        help="Allow overwriting the currently running Android slot.",
+    )
+    product_flash.add_argument("--reuse-image", action="store_true", help="Reuse an existing image/payload pair.")
+    product_flash.add_argument("--build-only", action="store_true", help="Build the product image without staging or flashing.")
+    product_flash.add_argument("--dry-run", action="store_true", help="Print the delegated command without running it.")
 
     debug = add_command(
         subparsers,

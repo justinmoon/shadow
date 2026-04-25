@@ -52,6 +52,8 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
   - `sc -t pixel frame`
   - `sc -t pixel ci <subset>`
   - `sc -t pixel stage <subset>`
+  - `just product-flash target=pixel [--wifi-credentials <file>]`
+  - `sc -t pixel product flash [--wifi-credentials <file>]`
   - `just pixel-ci <subset>`
 - For suite staging, run-only semantics, and the contract for adding app-specific validation lanes, read [App testing](app-testing.md).
 - `just pixel-ci`, `just pixel-stage`, and `just pixel-run` are thin convenience wrappers around `shadowctl` Pixel CI commands.
@@ -66,6 +68,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
   - `sc -t pixel ota-sideload`
   - `just stop target=pixel`
 - The supported rooted-Pixel product surface is shell/home plus app launch, not every historical direct-runtime, GPU probe, or one-off device-debug path.
+- The persistent product boot lane is `just product-flash`, which delegates to `sc -t pixel product flash` and prepares the inactive A/B slot while leaving the current Android slot as the recovery lane.
 
 ### Shared CLI
 

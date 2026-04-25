@@ -34,6 +34,7 @@ help:
 	'  dis interactive-status --project boot  # interactive dispatch queue CLI in devshell' \
 	'' \
 	'Pixel CI and setup:' \
+	'  just product-flash target=pixel [--wifi-credentials FILE]  # conference-ready persistent Shadow boot' \
 	'  just pixel-prep-settings   # convenience wrapper around sc prep-settings' \
 	'  sc -t pixel ci [quick|shell|timeline|camera|cashu|nostr|sound|audio|podcast|runtime|full]' \
 	'  sc -t pixel stage <suite>' \
@@ -96,6 +97,20 @@ pixel-run *args='':
 		exec scripts/shadowctl ci --run-only --dry-run {{args}}; \
 	fi; \
 	exec scripts/shadowctl ci --run-only {{args}}
+
+# Build and persistently flash a product-mode Shadow boot image.
+product-flash *args='':
+	@target_arg="${PIXEL_SERIAL:-pixel}"; pass_args=(); \
+	for arg in {{args}}; do \
+		case "$arg" in \
+			target=*) target_arg="${arg#target=}" ;; \
+			*) pass_args+=("$arg") ;; \
+		esac; \
+	done; \
+	if [ -n "${SHADOWCTL_JUST_DRY_RUN:-}" ]; then \
+		exec scripts/shadowctl -t "$target_arg" product flash --dry-run "${pass_args[@]}"; \
+	fi; \
+	exec scripts/shadowctl -t "$target_arg" product flash "${pass_args[@]}"
 
 # Apply non-root Android convenience settings for a dedicated Pixel test device
 pixel-prep-settings:

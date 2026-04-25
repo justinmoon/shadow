@@ -131,7 +131,7 @@ Acceptance:
 
 ### 5. Product Flash Command
 
-[ ] Add a public `just product-flash ...` command that calls `sc -t pixel product flash ...`.
+[x] Add a public `just product-flash ...` command that calls `sc -t pixel product flash ...`.
 
 Behavior:
 
@@ -218,3 +218,4 @@ Acceptance:
 - Product runtime software seam is implemented. Hardware kill/restart validation remains in the Part 1 hardware product run item.
 - Power-button work starts in `shadow-compositor-guest`: extend the existing input-device key reader, then add a KMS display power toggle with DPMS/CRTC fallback.
 - Power-button software path is implemented in the guest compositor. Hardware screen off/on validation remains in the Part 1 hardware product run item.
+- Product flash command software seam is implemented: `just product-flash` delegates to `sc -t pixel product flash`, builds product shell-home startup with all current apps staged, stages the logical payload on the same concrete A/B slot that will be flashed, and refuses active-slot payload writes unless explicitly allowed.

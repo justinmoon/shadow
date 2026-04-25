@@ -3357,7 +3357,11 @@ if [[ "$ORANGE_GPU_MODE" =~ ^(shell-session-runtime-touch-counter|app-direct-pre
 fi
 if [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "shell-session-held" || "$ORANGE_GPU_MODE" == "shell-session-runtime-touch-counter" ]]; then
   assert_safe_word shell-session-start-app-id "$SHELL_SESSION_START_APP_ID" 64
-  APP_DIRECT_PRESENT_APP_ID="$SHELL_SESSION_START_APP_ID"
+  if [[ "$SHELL_SESSION_START_APP_ID" != "shell" ]]; then
+    APP_DIRECT_PRESENT_APP_ID="$SHELL_SESSION_START_APP_ID"
+  elif [[ "$APP_DIRECT_PRESENT_APP_ID_EXPLICIT" == "0" ]]; then
+    APP_DIRECT_PRESENT_APP_ID="rust-demo"
+  fi
 fi
 if [[ "$ORANGE_GPU_MODE" == "shell-session" || "$ORANGE_GPU_MODE" == "shell-session-held" || "$ORANGE_GPU_MODE" == "shell-session-runtime-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present" || "$ORANGE_GPU_MODE" == "app-direct-present-touch-counter" || "$ORANGE_GPU_MODE" == "app-direct-present-runtime-touch-counter" ]]; then
   assert_safe_word app-direct-present-app-id "$APP_DIRECT_PRESENT_APP_ID" 64

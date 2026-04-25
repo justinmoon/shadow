@@ -14,6 +14,7 @@ PAYLOAD_ROOT="${PIXEL_BOOT_PAYLOAD_ROOT:-}"
 MANIFEST_ROOT="${PIXEL_BOOT_PAYLOAD_MANIFEST_ROOT:-}"
 OUTPUT_DIR="${PIXEL_BOOT_PAYLOAD_STAGE_DIR:-}"
 SHADOW_LOGICAL_SIZE_MIB="${PIXEL_BOOT_SHADOW_LOGICAL_SIZE_MIB:-256}"
+REQUESTED_SLOT="${PIXEL_BOOT_PAYLOAD_SLOT:-active}"
 SETUP_SHADOW_LOGICAL=1
 EXTRA_PAYLOAD_PATHS=()
 DRY_RUN=0
@@ -25,6 +26,7 @@ Usage: scripts/pixel/pixel_boot_stage_metadata_payload.sh [--serial SERIAL]
                                                         [--version VERSION]
                                                         [--label LABEL]
                                                         [--source SOURCE]
+                                                        [--slot active|inactive|a|b|_a|_b]
                                                         [--payload-root PATH]
                                                         [--manifest-root PATH]
                                                         [--shadow-logical-size-mib N]
@@ -158,11 +160,44 @@ device_slot_suffix() {
   esac
 }
 
+resolve_slot_suffix() {
+  local serial requested current
+  serial="${1:?resolve_slot_suffix requires a serial}"
+  requested="${2:?resolve_slot_suffix requires a requested slot}"
+  current="$(device_slot_suffix "$serial")"
+
+  case "$requested" in
+    active)
+      printf '%s\n' "$current"
+      ;;
+    inactive)
+      case "$current" in
+        _a) printf '_b\n' ;;
+        _b) printf '_a\n' ;;
+        *)
+          echo "pixel_boot_stage_metadata_payload: unable to invert active slot suffix: $current" >&2
+          return 1
+          ;;
+      esac
+      ;;
+    a|_a)
+      printf '_a\n'
+      ;;
+    b|_b)
+      printf '_b\n'
+      ;;
+    *)
+      echo "pixel_boot_stage_metadata_payload: unsupported --slot $requested; expected active, inactive, a, b, _a, or _b" >&2
+      return 1
+      ;;
+  esac
+}
+
 stage_shadow_logical_partition() {
   local serial slot_suffix partition_name size_bytes remote_tmp
   serial="${1:?stage_shadow_logical_partition requires a serial}"
   remote_tmp="${2:?stage_shadow_logical_partition requires remote tmp}"
-  slot_suffix="$(device_slot_suffix "$serial")"
+  slot_suffix="$(resolve_slot_suffix "$serial" "$REQUESTED_SLOT")"
   partition_name="shadow_payload$slot_suffix"
   size_bytes=$((SHADOW_LOGICAL_SIZE_MIB * 1024 * 1024))
 
@@ -231,6 +266,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --source)
       PAYLOAD_SOURCE="${2:?missing value for --source}"
+      shift 2
+      ;;
+    --slot)
+      REQUESTED_SLOT="${2:?missing value for --slot}"
       shift 2
       ;;
     --payload-root)
@@ -396,6 +435,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
   printf 'Manifest root: %s\n' "$MANIFEST_ROOT"
   printf 'Payload version: %s\n' "$PAYLOAD_VERSION"
   printf 'Payload source: %s\n' "$PAYLOAD_SOURCE"
+  printf 'Requested slot: %s\n' "$REQUESTED_SLOT"
   printf 'Shadow logical setup: %s\n' "$SETUP_SHADOW_LOGICAL"
   printf 'Shadow logical size MiB: %s\n' "$SHADOW_LOGICAL_SIZE_MIB"
   printf 'Payload fingerprint: %s\n' "$PAYLOAD_FINGERPRINT"
@@ -426,7 +466,7 @@ shadow_logical_partition=""
 if [[ "$PAYLOAD_SOURCE" == "shadow-logical-partition" && "$SETUP_SHADOW_LOGICAL" == "1" ]]; then
   shadow_logical_partition="$(stage_shadow_logical_partition "$serial" "$REMOTE_TMP")"
 elif [[ "$PAYLOAD_SOURCE" == "shadow-logical-partition" ]]; then
-  shadow_logical_partition="shadow_payload$(device_slot_suffix "$serial")"
+  shadow_logical_partition="shadow_payload$(resolve_slot_suffix "$serial" "$REQUESTED_SLOT")"
   pixel_root_shell "$serial" "
 set -eu
 block='/dev/block/mapper/$shadow_logical_partition'
@@ -471,6 +511,7 @@ printf 'Payload root: %s\n' "$PAYLOAD_ROOT"
 printf 'Manifest root: %s\n' "$MANIFEST_ROOT"
 printf 'Payload version: %s\n' "$PAYLOAD_VERSION"
 printf 'Payload source: %s\n' "$PAYLOAD_SOURCE"
+printf 'Requested slot: %s\n' "$REQUESTED_SLOT"
 if [[ -n "$shadow_logical_partition" ]]; then
   printf 'Shadow logical partition: %s\n' "$shadow_logical_partition"
   printf 'Shadow logical size MiB: %s\n' "$SHADOW_LOGICAL_SIZE_MIB"

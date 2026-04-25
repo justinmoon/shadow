@@ -2957,6 +2957,7 @@ product_boot_profile_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
     PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_APP_ID=rust-demo \
+    PIXEL_ORANGE_GPU_SHELL_START_APP_ID=shell \
     PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_BUNDLE_DIR="$APP_DIRECT_PRESENT_BUNDLE_DIR" \
     PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_BIN="$APP_DIRECT_PRESENT_LAUNCHER_OUTPUT" \
     PIXEL_SHADOW_SESSION_BIN="$SHADOW_SESSION_OUTPUT" \
@@ -2987,10 +2988,13 @@ assert_cpio_entry_contains "$TMP_DIR/orange-gpu-product-profile.img" shadow-init
 assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" boot_mode "product"
 assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" hello_init_mode "rust-bridge"
 assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" orange_gpu_mode "shell-session"
+assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" shell_session_start_app_id shell
+assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" app_direct_present_app_id rust-demo
 assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" orange_gpu_metadata_stage_breadcrumb "false"
 assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" orange_gpu_watchdog_timeout_secs "0"
 assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" metadata_compositor_frame_path ""
 assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-product-profile.img" orange-gpu.tar.xz shell-session-startup.json '"exitOnFirstFrame": false'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-product-profile.img" orange-gpu.tar.xz shell-session-startup.json '"shellStartAppId": "shell"'
 assert_cpio_tar_xz_entry_not_contains "$TMP_DIR/orange-gpu-product-profile.img" orange-gpu.tar.xz shell-session-startup.json '"frameCapture"'
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-product-profile.img" orange-gpu.tar.xz shadow-session
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-product-profile.img" orange-gpu.tar.xz shadow-compositor-guest
