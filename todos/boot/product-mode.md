@@ -54,7 +54,7 @@ Goal: one command prepares a Pixel that can be carried around unplugged, boots t
 
 ### 1. Refactor First, Preserve Lab
 
-[ ] Move `rust/init-wrapper/src/bin/hello-init.rs` into a small binary plus library modules.
+[x] Move `rust/init-wrapper/src/bin/hello-init.rs` into a small binary plus library modules.
 
 Initial module boundaries:
 
@@ -208,6 +208,7 @@ Acceptance:
 ## Implementation Notes
 
 - Sibling worktrees are actively changing `hello-init.rs` for demo app, camera, and Wi-Fi work. The module split should happen before adding much product behavior.
+- Module split landed as a behavior-preserving first seam. Product behavior starts with boot profile parsing next.
 - Camera remains lab/probe-only for the first product seam.
 - The current full-demo runner is useful as a source of payload/profile requirements, but product success must not depend on held observation or recovered proof artifacts.
 - Settings app Wi-Fi and live shell status are product-quality improvements, but they should not block the conference demo.
