@@ -1,7 +1,8 @@
 // Copyright 2024 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-use masonry::core::{ArcStr, NewWidget, Properties};
+use masonry::core::{ArcStr, NewWidget, Properties, StyleProperty};
+use masonry::parley::style::FontStack;
 use masonry::properties::{
     CaretColor, ContentColor, DisabledContentColor, PlaceholderColor, SelectionColor,
     UnfocusedSelectionColor,
@@ -86,6 +87,7 @@ where
         text_alignment: TextAlign::default(),
         insert_newline: InsertNewline::default(),
         disabled: false,
+        font: FontStack::List(std::borrow::Cow::Borrowed(&[])),
         // Since we don't support setting the word wrapping, we can default to
         // not clipping
         clip: true,
@@ -104,6 +106,7 @@ pub struct TextInput<State, Action> {
     text_alignment: TextAlign,
     insert_newline: InsertNewline,
     disabled: bool,
+    font: FontStack<'static>,
     clip: bool,
     // TODO: add more attributes of `masonry::widgets::TextInput`
 }
@@ -166,6 +169,12 @@ impl<State: 'static, Action: 'static> TextInput<State, Action> {
         self
     }
 
+    /// Set the [font stack](FontStack) this text input will use.
+    pub fn font(mut self, font: impl Into<FontStack<'static>>) -> Self {
+        self.font = font.into();
+        self
+    }
+
     /// Configures how this text area handles the user pressing Enter <kbd>↵</kbd>.
     ///
     /// See also [`on_enter`](Self::on_enter), which provides a callback for enter
@@ -219,6 +228,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
         // TODO: Maybe we want a shared TextArea View?
         let text_area = widgets::TextArea::new_editable(&self.contents)
             .with_text_alignment(self.text_alignment)
+            .with_style(StyleProperty::FontStack(self.font.clone()))
             .with_insert_newline(self.insert_newline);
 
         // TODO - Replace this with properties on the TextInput view
@@ -295,6 +305,12 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
 
         if prev.text_alignment != self.text_alignment {
             widgets::TextArea::set_text_alignment(&mut text_area, self.text_alignment);
+        }
+        if prev.font != self.font {
+            widgets::TextArea::insert_style(
+                &mut text_area,
+                StyleProperty::FontStack(self.font.clone()),
+            );
         }
         if prev.insert_newline != self.insert_newline {
             widgets::TextArea::set_insert_newline(&mut text_area, self.insert_newline);

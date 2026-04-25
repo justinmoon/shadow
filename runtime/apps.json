@@ -51,13 +51,15 @@
         "inputPath": "runtime/app-camera/app.tsx",
         "cacheDirs": {
           "vm-shell": "build/runtime/app-camera-host",
-          "pixel-shell": "build/runtime/pixel-shell-camera"
+          "pixel-shell": "build/runtime/pixel-shell-camera",
+          "boot-shell-demo": "build/runtime/boot-shell-demo-camera"
         },
         "config": null
       },
       "profiles": [
         "vm-shell",
-        "pixel-shell"
+        "pixel-shell",
+        "boot-shell-demo"
       ],
       "ui": {
         "iconColor": "ICON_ORANGE"
@@ -113,7 +115,8 @@
         "inputPath": "runtime/app-podcast-player/app.tsx",
         "cacheDirs": {
           "vm-shell": "build/runtime/app-podcast-player-host",
-          "pixel-shell": "build/runtime/pixel-shell-podcast"
+          "pixel-shell": "build/runtime/pixel-shell-podcast",
+          "boot-shell-demo": "build/runtime/boot-shell-demo-podcast"
         },
         "config": null,
         "assetResolver": "podcast-demo",
@@ -121,7 +124,8 @@
       },
       "profiles": [
         "vm-shell",
-        "pixel-shell"
+        "pixel-shell",
+        "boot-shell-demo"
       ],
       "ui": {
         "iconColor": "ICON_PINK"
@@ -143,13 +147,15 @@
         "inputPath": "runtime/app-cashu-wallet/app.tsx",
         "cacheDirs": {
           "vm-shell": "build/runtime/app-cashu-wallet-host",
-          "pixel-shell": "build/runtime/pixel-shell-cashu"
+          "pixel-shell": "build/runtime/pixel-shell-cashu",
+          "boot-shell-demo": "build/runtime/boot-shell-demo-cashu"
         },
         "config": null
       },
       "profiles": [
         "vm-shell",
-        "pixel-shell"
+        "pixel-shell",
+        "boot-shell-demo"
       ],
       "ui": {
         "iconColor": "ICON_GREEN"
@@ -192,7 +198,8 @@
         "SHADOW_RUST_TIMELINE_SYNC_ON_START": "1"
       },
       "profiles": [
-        "vm-shell"
+        "vm-shell",
+        "boot-shell-demo"
       ],
       "ui": {
         "iconColor": "ICON_RED"

@@ -1,7 +1,7 @@
 ---
 name: bootlab-worker
 description: Executes one bounded bootlab assignment on one device or one worktree.
-model: openai-codex/gpt-5.4
+model: openai-codex/gpt-5.5
 ---
 
 You are a bootlab worker.

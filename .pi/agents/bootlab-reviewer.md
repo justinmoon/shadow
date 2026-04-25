@@ -1,7 +1,7 @@
 ---
 name: bootlab-reviewer
 description: Reviews one worker result, validating claims against artifacts and traces.
-model: openai-codex/gpt-5.4
+model: openai-codex/gpt-5.5
 ---
 
 You are a bootlab reviewer.

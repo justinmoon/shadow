@@ -549,12 +549,16 @@ mod tests {
     fn boot_shell_demo_profile_contains_staged_demo_mix() {
         with_session_profile(Some("boot-shell-demo"), || {
             assert_eq!(home_apps(), &BOOT_SHELL_DEMO_APPS);
-            assert_eq!(home_apps().len(), 3);
+            assert_eq!(home_apps().len(), 7);
             assert!(home_apps().iter().any(|app| app.id == COUNTER_APP_ID));
+            assert!(home_apps().iter().any(|app| app.id == CAMERA_APP_ID));
             assert!(home_apps().iter().any(|app| app.id == TIMELINE_APP_ID));
+            assert!(home_apps().iter().any(|app| app.id == PODCAST_APP_ID));
+            assert!(home_apps().iter().any(|app| app.id == CASHU_APP_ID));
             assert!(home_apps().iter().any(|app| app.id == RUST_DEMO_APP_ID));
-            assert!(home_apps().iter().all(|app| app.id != CAMERA_APP_ID));
+            assert!(home_apps().iter().any(|app| app.id == RUST_TIMELINE_APP_ID));
             assert_eq!(find_app(RUST_DEMO_APP_ID), Some(&RUST_DEMO_APP));
+            assert_eq!(find_app(RUST_TIMELINE_APP_ID), Some(&RUST_TIMELINE_APP));
         });
     }
 

@@ -167,4 +167,12 @@ pub const PIXEL_SHELL_DEMO_APPS: [DemoApp; 5] = [
     CASHU_APP,
 ];
 
-pub const BOOT_SHELL_DEMO_APPS: [DemoApp; 3] = [COUNTER_APP, TIMELINE_APP, RUST_DEMO_APP];
+pub const BOOT_SHELL_DEMO_APPS: [DemoApp; 7] = [
+    COUNTER_APP,
+    CAMERA_APP,
+    TIMELINE_APP,
+    PODCAST_APP,
+    CASHU_APP,
+    RUST_DEMO_APP,
+    RUST_TIMELINE_APP,
+];

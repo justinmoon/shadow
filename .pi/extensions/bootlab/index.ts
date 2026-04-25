@@ -18,7 +18,7 @@ import {
 	workerHasOpenProcess,
 } from "./state.ts";
 
-const DEFAULT_BOOTLAB_MODEL = "openai-codex/gpt-5.4";
+const DEFAULT_BOOTLAB_MODEL = "openai-codex/gpt-5.5";
 const DEFAULT_BOOTLAB_THINKING = "xhigh";
 const ResultSchema = Type.Union(
 	[

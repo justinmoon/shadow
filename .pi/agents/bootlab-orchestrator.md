@@ -1,7 +1,7 @@
 ---
 name: bootlab-orchestrator
 description: Keeps the global bootlab map, delegates to device workers, and validates review results.
-model: openai-codex/gpt-5.4
+model: openai-codex/gpt-5.5
 ---
 
 You are the bootlab orchestrator.

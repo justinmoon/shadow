@@ -11,6 +11,7 @@ const ROLE_SENTINEL: &str = "shadow-app-direct-present-launcher-role:static-load
 const BUNDLE_ROOT: &str = "/orange-gpu/app-direct-present";
 const LOADER_PATH: &str = "/orange-gpu/app-direct-present/lib/ld-linux-aarch64.so.1";
 const LIBRARY_PATH: &str = "/orange-gpu/app-direct-present/lib";
+const ORANGE_GPU_LIBRARY_PATH: &str = "/orange-gpu/lib";
 const APP_BINARY_PATH: &str = "/orange-gpu/app-direct-present/shadow-rust-demo";
 const DEFAULT_HOME: &str = "/orange-gpu/app-direct-present/home";
 const DEFAULT_CACHE_HOME: &str = "/orange-gpu/app-direct-present/home/.cache";
@@ -34,7 +35,10 @@ fn exec_app() -> io::Result<()> {
     let loader_path = env_or_default(LOADER_PATH_ENV, LOADER_PATH);
     let library_path = env_or_default(LIBRARY_PATH_ENV, LIBRARY_PATH);
     let app_binary_path = env_or_default(APP_BINARY_PATH_ENV, APP_BINARY_PATH);
-    let library_env = prepend_env_path("LD_LIBRARY_PATH", &library_path.to_string_lossy());
+    let library_env = append_env_path_if_missing(
+        prepend_env_path("LD_LIBRARY_PATH", &library_path.to_string_lossy()),
+        ORANGE_GPU_LIBRARY_PATH,
+    );
 
     fs::create_dir_all(Path::new(&home))?;
     fs::create_dir_all(Path::new(&cache_home))?;
@@ -46,11 +50,15 @@ fn exec_app() -> io::Result<()> {
         loader_path.to_string_lossy(),
         app_binary_path.to_string_lossy(),
     );
+    eprintln!(
+        "[shadow-app-direct-present-launcher] loader library_path={}",
+        library_env.to_string_lossy(),
+    );
 
     let mut command = Command::new(loader_path);
     command
         .arg("--library-path")
-        .arg(&library_path)
+        .arg(&library_env)
         .arg(app_binary_path)
         .args(env::args_os().skip(1))
         .env("HOME", home)
@@ -82,4 +90,15 @@ fn prepend_env_path(key: &str, prefix: &str) -> OsString {
         }
         _ => OsString::from(prefix),
     }
+}
+
+fn append_env_path_if_missing(mut value: OsString, suffix: &str) -> OsString {
+    if env::split_paths(value.as_os_str()).any(|path| path == Path::new(suffix)) {
+        return value;
+    }
+    if !value.as_os_str().is_empty() {
+        value.push(":");
+    }
+    value.push(suffix);
+    value
 }

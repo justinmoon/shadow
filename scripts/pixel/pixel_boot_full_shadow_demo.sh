@@ -30,8 +30,10 @@ else
   extra_apps_explicit=0
 fi
 manual_touch="${MANUAL_TOUCH:-0}"
+enable_linux_audio="${PIXEL_ORANGE_GPU_ENABLE_LINUX_AUDIO:-}"
 dry_run=0
 reuse_image=0
+build_only=0
 
 usage() {
   cat <<'EOF'
@@ -49,13 +51,15 @@ Usage: scripts/pixel/pixel_boot_full_shadow_demo.sh [--serial SERIAL]
                                                     [--wifi-dhcp-client BIN]
                                                     [--manual-touch]
                                                     [--reuse-image]
+                                                    [--build-only]
                                                     [--dry-run]
 
 Build and run the current rust-booted Shadow shell demo:
   - GPU shell compositor
   - logical payload partition bundle
-  - TypeScript counter and timeline
-  - Rust rust-demo
+  - TypeScript counter, camera, timeline, podcast, and cashu apps
+  - Rust rust-demo and rust-timeline apps
+  - Linux audio bridge when Podcast is included with a TypeScript start app
   - sunfish touch bootstrap
   - held observation window after watchdog proof
 EOF
@@ -76,7 +80,7 @@ first_existing_dir() {
 default_boot_shell_demo_extra_apps() {
   local app start_app
   start_app="${1:?default_boot_shell_demo_extra_apps requires a start app}"
-  local -a apps=(counter timeline rust-demo)
+  local -a apps=(counter camera timeline podcast cashu rust-demo rust-timeline)
   local -a extras=()
 
   for app in "${apps[@]}"; do
@@ -86,6 +90,20 @@ default_boot_shell_demo_extra_apps() {
 
   local IFS=,
   printf '%s\n' "${extras[*]}"
+}
+
+demo_app_list_contains() {
+  local csv needle
+  needle="${1:?demo_app_list_contains requires an app id}"
+  csv="${2:-}"
+  [[ ",$csv," == *",$needle,"* ]]
+}
+
+start_app_supports_linux_audio_bundle() {
+  case "$1" in
+    rust-demo|rust-timeline) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 bool_true() {
@@ -174,6 +192,20 @@ EOF
 
 trap cleanup_wifi_credentials_best_effort EXIT
 
+normalize_bool_word() {
+  local name value
+  name="${1:?normalize_bool_word requires a name}"
+  value="${2:?normalize_bool_word requires a value}"
+  case "$value" in
+    1|true|yes|on) printf 'true\n' ;;
+    0|false|no|off) printf 'false\n' ;;
+    *)
+      echo "pixel_boot_full_shadow_demo: $name must be true or false, got: $value" >&2
+      exit 64
+      ;;
+  esac
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --serial)
@@ -233,6 +265,10 @@ while [[ $# -gt 0 ]]; do
       reuse_image=1
       shift
       ;;
+    --build-only)
+      build_only=1
+      shift
+      ;;
     --dry-run)
       dry_run=1
       shift
@@ -265,7 +301,23 @@ if [[ "$extra_apps_explicit" != "1" ]]; then
   extra_apps="$(default_boot_shell_demo_extra_apps "$start_app")"
 fi
 
-if [[ -z "$serial" && "$dry_run" != "1" ]]; then
+if [[ -z "$enable_linux_audio" ]]; then
+  if { [[ "$start_app" == "podcast" ]] || demo_app_list_contains podcast "$extra_apps"; } \
+    && start_app_supports_linux_audio_bundle "$start_app"; then
+    enable_linux_audio=true
+  else
+    enable_linux_audio=false
+  fi
+else
+  enable_linux_audio="$(normalize_bool_word PIXEL_ORANGE_GPU_ENABLE_LINUX_AUDIO "$enable_linux_audio")"
+fi
+
+if [[ "$enable_linux_audio" == "true" ]] && ! start_app_supports_linux_audio_bundle "$start_app"; then
+  echo "pixel_boot_full_shadow_demo: Linux audio bridge packaging currently requires a TypeScript start app, got: $start_app" >&2
+  exit 64
+fi
+
+if [[ -z "$serial" && "$dry_run" != "1" && "$build_only" != "1" ]]; then
   serial="$(pixel_resolve_serial)"
 fi
 
@@ -426,9 +478,21 @@ boot_cmd=(
   --recover-traces-after
 )
 
+build_full_shadow_demo_image() {
+  echo "building full Shadow demo image..."
+  env \
+    PIXEL_GUEST_BUILD_SYSTEM="${PIXEL_GUEST_BUILD_SYSTEM:-aarch64-linux}" \
+    PIXEL_ORANGE_GPU_ENABLE_LINUX_AUDIO="$enable_linux_audio" \
+    PIXEL_ORANGE_GPU_SHELL_SESSION_APP_PROFILE=boot-shell-demo \
+    PIXEL_ORANGE_GPU_SHELL_START_APP_ID="$start_app" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_APP_ID="$start_app" \
+    "${build_cmd[@]}"
+}
+
 if [[ "$dry_run" == "1" ]]; then
   printf 'pixel_boot_full_shadow_demo: dry-run\n'
   printf 'run_token=%s\nrun_dir=%s\nimage=%s\npayload=%s\n' "$run_token" "$run_dir" "$image" "$payload"
+  printf 'start_app=%s\nextra_apps=%s\nenable_linux_audio=%s\nmanual_touch=%s\n' "$start_app" "$extra_apps" "$enable_linux_audio" "$manual_touch_arg"
   printf 'firmware_dir=%s\ninput_module_dir=%s\n' "$effective_firmware_dir" "$input_module_dir"
   if bool_true "$wifi_enabled"; then
     printf 'wifi_enabled=true\nwifi_assets_dir=%s\nwifi_linker_capsule_dir=%s\nwifi_dhcp_client=%s\nwifi_credentials_device_path=%s\n' \
@@ -440,6 +504,7 @@ if [[ "$dry_run" == "1" ]]; then
   printf 'build_command=%q' env
   printf ' %q' \
     "PIXEL_GUEST_BUILD_SYSTEM=${PIXEL_GUEST_BUILD_SYSTEM:-aarch64-linux}" \
+    "PIXEL_ORANGE_GPU_ENABLE_LINUX_AUDIO=$enable_linux_audio" \
     "PIXEL_ORANGE_GPU_SHELL_SESSION_APP_PROFILE=boot-shell-demo" \
     "PIXEL_ORANGE_GPU_SHELL_START_APP_ID=$start_app" \
     "PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_APP_ID=$start_app"
@@ -447,12 +512,26 @@ if [[ "$dry_run" == "1" ]]; then
   printf '\n'
   printf 'stage_command=%q' env
   printf ' %q' "PIXEL_SERIAL=${serial:-SERIAL}"
+  printf ' %q' "SHADOW_DEVICE_LEASE_FORCE=1"
   printf ' %q' "${stage_cmd[@]}"
   printf '\n'
   printf 'boot_command=%q' env
   printf ' %q' "PIXEL_SERIAL=${serial:-SERIAL}"
+  printf ' %q' "SHADOW_DEVICE_LEASE_FORCE=1"
   printf ' %q' "${boot_cmd[@]}"
   printf '\n'
+  exit 0
+fi
+
+if [[ "$build_only" == "1" ]]; then
+  printf 'pixel_boot_full_shadow_demo: build-only\n'
+  printf 'run_token=%s\nrun_dir=%s\nimage=%s\npayload=%s\n' "$run_token" "$run_dir" "$image" "$payload"
+  printf 'start_app=%s\nextra_apps=%s\nenable_linux_audio=%s\nmanual_touch=%s\n' "$start_app" "$extra_apps" "$enable_linux_audio" "$manual_touch_arg"
+  if [[ "$needs_build" == "1" ]]; then
+    build_full_shadow_demo_image
+  else
+    echo "reusing image: $image"
+  fi
   exit 0
 fi
 
@@ -462,6 +541,7 @@ echo "run_dir: $run_dir"
 echo "start_app: $start_app"
 echo "extra_apps: $extra_apps"
 echo "manual_touch: $manual_touch_arg"
+echo "enable_linux_audio: $enable_linux_audio"
 if bool_true "$wifi_enabled"; then
   echo "wifi: enabled"
   echo "wifi_assets: $wifi_assets_dir"
@@ -475,13 +555,7 @@ scripts/shadowctl lease acquire "$serial" \
   --ttl 7200
 
 if [[ "$needs_build" == "1" ]]; then
-  echo "building full Shadow demo image..."
-  env \
-    PIXEL_GUEST_BUILD_SYSTEM="${PIXEL_GUEST_BUILD_SYSTEM:-aarch64-linux}" \
-    PIXEL_ORANGE_GPU_SHELL_SESSION_APP_PROFILE=boot-shell-demo \
-    PIXEL_ORANGE_GPU_SHELL_START_APP_ID="$start_app" \
-    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_APP_ID="$start_app" \
-    "${build_cmd[@]}"
+  build_full_shadow_demo_image
 else
   echo "reusing image: $image"
 fi
@@ -489,7 +563,7 @@ fi
 echo
 echo "staging logical payload..."
 rm -rf "$stage_dir" "$device_output"
-env PIXEL_SERIAL="$serial" "${stage_cmd[@]}"
+env PIXEL_SERIAL="$serial" SHADOW_DEVICE_LEASE_FORCE=1 "${stage_cmd[@]}"
 
 if bool_true "$wifi_enabled"; then
   echo
@@ -499,9 +573,9 @@ fi
 
 echo
 echo "booting full Shadow demo..."
-echo "$start_app should be visible first; use home/pill to switch apps during the held window."
+echo "$start_app should be visible first; use home/pill to switch apps, then launch Camera, Timeline, Podcast, Cashu, Rust Demo, and Rust Timeline."
 boot_status=0
-env PIXEL_SERIAL="$serial" "${boot_cmd[@]}" || boot_status=$?
+env PIXEL_SERIAL="$serial" SHADOW_DEVICE_LEASE_FORCE=1 "${boot_cmd[@]}" || boot_status=$?
 
 status="$device_output/recover-traces/status.json"
 if [[ ! -f "$status" ]]; then
@@ -527,14 +601,30 @@ jq '{
   metadata_probe_stage_value
 }' "$status"
 
+demo_ready=0
+if jq -e '
+  .proof_ok == true
+  or (
+    .expected_orange_gpu_mode == "shell-session-held"
+    and .probe_summary_proves_shell_session_held == true
+    and .metadata_probe_summary_shell_session_app_frame_captured == true
+  )
+' "$status" >/dev/null; then
+  demo_ready=1
+fi
+
 echo
 echo "frame:"
 echo "  $device_output/recover-traces/channels/metadata-compositor-frame.ppm"
 echo
 echo "release lease when finished:"
 echo "  scripts/shadowctl lease release \"$serial\" --force"
-if [[ "$boot_status" != "0" ]]; then
+if [[ "$boot_status" != "0" && "$demo_ready" != "1" ]]; then
   echo
   echo "boot/recovery command exited with status $boot_status" >&2
   exit "$boot_status"
+fi
+if [[ "$boot_status" != "0" ]]; then
+  echo
+  echo "boot/recovery command exited with status $boot_status, but recovered shell-session evidence is sufficient for the manual demo lane"
 fi

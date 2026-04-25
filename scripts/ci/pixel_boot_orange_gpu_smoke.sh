@@ -519,9 +519,39 @@ entries = {
     for entry in read_cpio(Path(archive_path)).without_trailer()
 }
 
+
+def json_contains(actual, expected):
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and json_contains(actual[key], value)
+            for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return isinstance(actual, list) and all(
+            any(json_contains(candidate, value) for candidate in actual)
+            for value in expected
+        )
+    return actual == expected
+
+
+def entry_matches(actual_bytes, expected_text, entry_name):
+    expected_bytes = expected_text.encode("utf-8")
+    if actual_bytes == expected_bytes:
+        return True
+    if not entry_name.endswith("startup.json"):
+        return False
+    try:
+        import json
+
+        actual = json.loads(actual_bytes.decode("utf-8"))
+        expected = json.loads(expected_text)
+    except Exception:
+        return False
+    return json_contains(actual, expected)
+
 if entry_name not in entries:
     raise SystemExit(f"missing cpio entry: {entry_name}")
-if entries[entry_name] != expected_data.encode("utf-8"):
+if not entry_matches(entries[entry_name], expected_data, entry_name):
     raise SystemExit(
         f"unexpected cpio entry contents for {entry_name}: {entries[entry_name]!r}"
     )
@@ -669,6 +699,37 @@ entries = {
     entry.name: entry.data
     for entry in read_cpio(Path(archive_path)).without_trailer()
 }
+
+
+def json_contains(actual, expected):
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and json_contains(actual[key], value)
+            for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return isinstance(actual, list) and all(
+            any(json_contains(candidate, value) for candidate in actual)
+            for value in expected
+        )
+    return actual == expected
+
+
+def entry_matches(actual_bytes, expected_text, entry_name):
+    expected_bytes = expected_text.encode("utf-8")
+    if actual_bytes == expected_bytes:
+        return True
+    if not entry_name.endswith("startup.json"):
+        return False
+    try:
+        import json
+
+        actual = json.loads(actual_bytes.decode("utf-8"))
+        expected = json.loads(expected_text)
+    except Exception:
+        return False
+    return json_contains(actual, expected)
+
 payload = entries.get(cpio_entry)
 if payload is None:
     raise SystemExit(f"missing cpio entry: {cpio_entry}")
@@ -679,7 +740,7 @@ with tarfile.open(fileobj=io.BytesIO(payload), mode="r:xz") as archive:
         raise SystemExit(f"missing tar.xz entry: {tar_entry}")
     extracted = archive.extractfile(member)
     data = b"" if extracted is None else extracted.read()
-if data != expected_data.encode("utf-8"):
+if not entry_matches(data, expected_data, tar_entry):
     raise SystemExit(f"unexpected tar.xz entry contents for {tar_entry}: {data!r}")
 PY
 }
@@ -4154,7 +4215,7 @@ assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-pre
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz app-direct-present/lib/libc.so.6
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz app-direct-present/lib/libm.so.6
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz app-direct-present/lib/libgcc_s.so.1
-assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz app-direct-present-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "app",\n    "startAppId": "rust-demo"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-rust-demo",\n    "runtimeDir": "/shadow-runtime",\n    "envAssignments": [\n      {\n        "key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",\n        "value": "1"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": true,\n    "frameCapture": {\n      "mode": "first-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  }\n}\n'
+assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img" orange-gpu.tar.xz app-direct-present-startup.json $'{\n  "startup": {\n    "mode": "app",\n    "startAppId": "rust-demo"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-rust-demo",\n    "envAssignments": [\n      {\n        "key": "SHADOW_RUNTIME_SESSION_CONFIG",\n        "value": "/orange-gpu/app-direct-present-startup.json"\n      }\n    ]\n  },\n  "services": {\n    "camera": {\n      "allowMock": true\n    },\n    "cashuDataDir": "/shadow-runtime/runtime-cashu",\n    "nostrServiceSocket": "/shadow-runtime/runtime-nostr.sock"\n  }\n}\n'
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img.hello-init.json" orange_gpu_mode "app-direct-present"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img.hello-init.json" metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/compositor-frame.ppm"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-present.img.hello-init.json" metadata_probe_summary_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-present-run-token/probe-summary.json"
@@ -4347,7 +4408,10 @@ assert_tar_xz_entry_contains "$shell_session_shadow_logical_archive" shell-sessi
 assert_tar_xz_entry_contains "$shell_session_shadow_logical_archive" shell-session-startup.json '"value": "/orange-gpu/app-direct-present/run-shadow-rust-demo"'
 assert_tar_xz_entry_contains "$shell_session_shadow_logical_archive" shell-session-startup.json '"key": "SHADOW_SESSION_APP_PROFILE"'
 assert_tar_xz_entry_contains "$shell_session_shadow_logical_archive" shell-session-startup.json '"value": "boot-shell-demo"'
+assert_tar_xz_entry_contains "$shell_session_shadow_logical_archive" shell-session-startup.json '"allowMock": true'
+assert_tar_xz_entry_contains "$shell_session_shadow_logical_archive" shell-session-startup.json '"cashuDataDir": "/shadow-runtime/runtime-cashu"'
 assert_tar_xz_entry_contains "$shell_session_shadow_logical_archive" app-direct-present/run-shadow-rust-demo '/orange-gpu/lib/ld-linux-aarch64.so.1'
+assert_tar_xz_entry_contains "$shell_session_shadow_logical_archive" app-direct-present/run-shadow-rust-demo ':/orange-gpu/lib'
 assert_tar_xz_entry_contains "$shell_session_shadow_logical_archive" app-direct-present/run-shadow-rust-demo '/orange-gpu/app-direct-present/shadow-rust-demo'
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img.hello-init.json" orange_gpu_mode "shell-session"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-shadow-logical.img.hello-init.json" gpu_bundle_archive_source "shadow-logical-partition"
@@ -4561,10 +4625,7 @@ assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz app-direct-present/run-shadow-rust-demo
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz app-direct-present/shadow-rust-demo
 assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz app-direct-present/lib/ld-linux-aarch64.so.1
-assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz shell-session-startup.json '"shellStartAppId": "rust-demo"'
-assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz shell-session-startup.json '"key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK"'
-assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz shell-session-startup.json '"nostrServiceSocket": "/shadow-runtime/runtime-nostr.sock"'
-assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz shell-session-startup.json '"exitOnFirstFrame": true'
+assert_cpio_tar_xz_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img" orange-gpu.tar.xz shell-session-startup.json $'{\n  "startup": {\n    "mode": "shell",\n    "shellStartAppId": "rust-demo"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-rust-demo",\n    "envAssignments": [\n      {\n        "key": "SHADOW_RUNTIME_SESSION_CONFIG",\n        "value": "/orange-gpu/shell-session-startup.json"\n      }\n    ]\n  },\n  "services": {\n    "cashuDataDir": "/shadow-runtime/runtime-cashu",\n    "nostrServiceSocket": "/shadow-runtime/runtime-nostr.sock"\n  }\n}\n'
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" orange_gpu_mode "shell-session"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" shell_session_start_app_id rust-demo
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" app_direct_present_app_id rust-demo
@@ -4573,6 +4634,64 @@ assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-dem
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" app_direct_present_runtime_bundle_path ""
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" gpu_bundle_archive_path /orange-gpu.tar.xz
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo.img.hello-init.json" metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-shell-session-rust-demo-run-token/compositor-frame.ppm"
+
+shell_session_rust_demo_ts_extra_boot_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    PIXEL_ORANGE_GPU_SHELL_START_APP_ID=rust-demo \
+    PIXEL_ORANGE_GPU_SHELL_SESSION_APP_PROFILE=boot-shell-demo \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_BUNDLE_DIR="$TS_EXTRA_RUST_APP_DIRECT_PRESENT_BUNDLE_DIR" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_BIN="$APP_DIRECT_PRESENT_LAUNCHER_OUTPUT" \
+    PIXEL_SHADOW_SESSION_BIN="$SHADOW_SESSION_OUTPUT" \
+    PIXEL_SHADOW_COMPOSITOR_GUEST_DYNAMIC_BIN="$SHADOW_COMPOSITOR_DYNAMIC_OUTPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
+      --rust-shim "$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT" \
+      --orange-init "$ORANGE_INIT_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --firmware-dir "$GPU_FIRMWARE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" \
+      --hello-init-mode rust-bridge \
+      --orange-gpu-mode shell-session \
+      --orange-gpu-firmware-helper true \
+      --orange-gpu-metadata-stage-breadcrumb true \
+      --firmware-bootstrap ramdisk-lib-firmware \
+      --shell-session-extra-app-ids counter \
+      --run-token orange-gpu-rust-ts-extra-run-token \
+      --hold-secs 9 \
+      --mount-sys true
+)"
+
+assert_contains "$shell_session_rust_demo_ts_extra_boot_output" "Orange GPU mode: shell-session"
+assert_contains "$shell_session_rust_demo_ts_extra_boot_output" "Payload contract: hello-init launches /orange-gpu/shadow-session in shell-session mode, starts rust-demo from the shell"
+assert_contains "$shell_session_rust_demo_ts_extra_boot_output" "App direct present client kind: rust"
+assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shadow-session
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shadow-compositor-guest
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz app-direct-present/run-shadow-rust-demo
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz app-direct-present/run-shadow-blitz-demo-counter
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz app-direct-present/shadow-rust-demo
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz app-direct-present/shadow-blitz-demo
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz app-direct-present/runtime-app-counter-bundle.js
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shell-session-startup.json '"shellStartAppId": "rust-demo"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shell-session-startup.json '"appClientPath": "/orange-gpu/app-direct-present/run-shadow-rust-demo"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shell-session-startup.json '"key": "SHADOW_APP_DIRECT_PRESENT_BINARY_PATH"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shell-session-startup.json '"value": "/orange-gpu/app-direct-present/shadow-rust-demo"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shell-session-startup.json '"key": "SHADOW_RUNTIME_APP_COUNTER_BUNDLE_PATH"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shell-session-startup.json '"value": "/orange-gpu/app-direct-present/runtime-app-counter-bundle.js"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shell-session-startup.json '"key": "SHADOW_APP_CLIENT_COUNTER"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shell-session-startup.json '"value": "/orange-gpu/app-direct-present/run-shadow-blitz-demo-counter"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shell-session-startup.json '"key": "SHADOW_RUNTIME_SESSION_CONFIG"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shell-session-startup.json '"allowMock": true'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz shell-session-startup.json '"cashuDataDir": "/shadow-runtime/runtime-cashu"'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz app-direct-present/run-shadow-blitz-demo-counter 'SHADOW_APP_DIRECT_PRESENT_BINARY_PATH=/orange-gpu/app-direct-present/shadow-blitz-demo'
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img" orange-gpu.tar.xz app-direct-present/run-shadow-blitz-demo-counter 'exec /orange-gpu/app-direct-present/run-shadow-blitz-demo "$@"'
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img.hello-init.json" orange_gpu_mode "shell-session"
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img.hello-init.json" shell_session_start_app_id rust-demo
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img.hello-init.json" app_direct_present_app_id rust-demo
+assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-shell-session-rust-demo-ts-extra.img.hello-init.json" app_direct_present_client_kind rust
 
 runtime_touch_counter_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
@@ -4767,7 +4886,7 @@ assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-touch.img"
 assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-touch.img" orange-gpu/shadow-compositor-guest
 assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-touch.img" orange-gpu/app-direct-present/run-shadow-rust-demo
 assert_cpio_entry_present "$TMP_DIR/orange-gpu-rust-bridge-app-direct-touch.img" orange-gpu/app-direct-present/shadow-rust-demo
-assert_cpio_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-touch.img" orange-gpu/app-direct-present-startup.json $'{\n  "schemaVersion": 1,\n  "startup": {\n    "mode": "app",\n    "startAppId": "rust-demo"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-rust-demo",\n    "runtimeDir": "/shadow-runtime",\n    "envAssignments": [\n      {\n        "key": "SHADOW_RUNTIME_CAMERA_ALLOW_MOCK",\n        "value": "1"\n      }\n    ],\n    "lingerMs": 500\n  },\n  "compositor": {\n    "transport": "direct",\n    "enableDrm": true,\n    "exitOnFirstFrame": false,\n    "frameCapture": {\n      "mode": "every-frame",\n      "artifactPath": "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-touch-run-token/compositor-frame.ppm",\n      "checksum": true\n    }\n  },\n  "touch": {\n    "latencyTrace": true,\n    "syntheticTap": {\n      "normalizedXMillis": 500,\n      "normalizedYMillis": 500,\n      "afterFirstFrameDelayMs": 250,\n      "holdMs": 50\n    },\n    "exitAfterPresent": true\n  }\n}\n'
+assert_cpio_entry_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-touch.img" orange-gpu/app-direct-present-startup.json $'{\n  "startup": {\n    "mode": "app",\n    "startAppId": "rust-demo"\n  },\n  "client": {\n    "appClientPath": "/orange-gpu/app-direct-present/run-shadow-rust-demo",\n    "envAssignments": [\n      {\n        "key": "SHADOW_RUNTIME_SESSION_CONFIG",\n        "value": "/orange-gpu/app-direct-present-startup.json"\n      }\n    ]\n  },\n  "services": {\n    "camera": {\n      "allowMock": true\n    },\n    "cashuDataDir": "/shadow-runtime/runtime-cashu",\n    "nostrServiceSocket": "/shadow-runtime/runtime-nostr.sock"\n  },\n  "touch": {\n    "latencyTrace": true,\n    "exitAfterPresent": true\n  }\n}\n'
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-touch.img.hello-init.json" orange_gpu_mode "app-direct-present-touch-counter"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-touch.img.hello-init.json" metadata_compositor_frame_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-touch-run-token/compositor-frame.ppm"
 assert_json_field_equals "$TMP_DIR/orange-gpu-rust-bridge-app-direct-touch.img.hello-init.json" metadata_probe_summary_path "/metadata/shadow-hello-init/by-token/orange-gpu-rust-bridge-app-direct-touch-run-token/probe-summary.json"

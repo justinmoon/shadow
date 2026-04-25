@@ -36,6 +36,7 @@ winit = "0.30.13"
 anyrender_vello = { path = "third_party/anyrender_vello" }
 debug_timer = { git = "https://github.com/DioxusLabs/blitz", rev = "781ae63fdb6e76baa0969ba8cbce557327c7dfca", package = "debug_timer" }
 softbuffer_window_renderer = { path = "third_party/softbuffer_window_renderer" }
+masonry_winit = { path = "third_party/masonry_winit" }
 wgpu_context = { path = "third_party/wgpu_context" }
 winit = { path = "third_party/winit" }
 xilem = { path = "../rust/vendor/xilem" }

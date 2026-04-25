@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use masonry::core::{ArcStr, NewWidget, Properties, StyleProperty};
-use masonry::parley::FontWeight;
+use masonry::parley::style::{FontStack, FontWeight};
 use masonry::properties::{ContentColor, DisabledContentColor, LineBreaking};
 use masonry::widgets;
 
@@ -19,6 +19,7 @@ pub fn prose(content: impl Into<ArcStr>) -> Prose {
         text_size: masonry::theme::TEXT_SIZE_NORMAL,
         line_break_mode: LineBreaking::WordWrap,
         weight: FontWeight::NORMAL,
+        font: FontStack::List(std::borrow::Cow::Borrowed(&[])),
     }
 }
 
@@ -43,6 +44,7 @@ pub struct Prose {
     text_size: f32,
     line_break_mode: LineBreaking,
     weight: FontWeight,
+    font: FontStack<'static>,
     // TODO: disabled: bool,
     // TODO: add more attributes of `masonry::widgets::Prose`
 }
@@ -88,6 +90,12 @@ impl Prose {
         self.weight = weight;
         self
     }
+
+    /// Set the [font stack](FontStack) this prose will use.
+    pub fn font(mut self, font: impl Into<FontStack<'static>>) -> Self {
+        self.font = font.into();
+        self
+    }
 }
 
 fn line_break_clips(linebreaking: LineBreaking) -> bool {
@@ -104,6 +112,7 @@ impl<State, Action> View<State, Action, ViewCtx> for Prose {
             .with_text_alignment(self.text_alignment)
             .with_style(StyleProperty::FontSize(self.text_size))
             .with_style(StyleProperty::FontWeight(self.weight))
+            .with_style(StyleProperty::FontStack(self.font.clone()))
             .with_word_wrap(self.line_break_mode == LineBreaking::WordWrap);
 
         // TODO - Replace this with properties on the Prose view
@@ -164,6 +173,12 @@ impl<State, Action> View<State, Action, ViewCtx> for Prose {
         }
         if prev.weight != self.weight {
             widgets::TextArea::insert_style(&mut text_area, StyleProperty::FontWeight(self.weight));
+        }
+        if prev.font != self.font {
+            widgets::TextArea::insert_style(
+                &mut text_area,
+                StyleProperty::FontStack(self.font.clone()),
+            );
         }
         if prev.line_break_mode != self.line_break_mode {
             widgets::TextArea::set_word_wrap(

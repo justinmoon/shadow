@@ -20,6 +20,9 @@ use super::{
     theme::Theme,
 };
 
+const SHADOW_UI_FONT_STACK: &str =
+    "Roboto, 'Droid Sans', 'Noto Sans', 'Noto Color Emoji', sans-serif";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
     Neutral,
@@ -59,6 +62,10 @@ pub fn maybe<State: 'static, Action: 'static>(
     }
 }
 
+fn shadow_label(text: impl Into<String>) -> xilem::view::Label {
+    label(text.into()).font(SHADOW_UI_FONT_STACK)
+}
+
 pub(super) fn screen<State: Send + Sync + 'static, Action: Send + Sync + 'static>(
     metrics: AppWindowMetrics,
     theme: Theme,
@@ -89,7 +96,7 @@ pub(super) fn eyebrow_text<State: 'static, Action: 'static>(
     text: impl Into<String>,
     theme: Theme,
 ) -> impl WidgetView<State, Action> {
-    label(text.into())
+    shadow_label(text)
         .text_size(11.0)
         .weight(FontWeight::SEMI_BOLD)
         .color(theme.text_muted)
@@ -99,7 +106,7 @@ pub(super) fn headline_text<State: 'static, Action: 'static>(
     text: impl Into<String>,
     theme: Theme,
 ) -> impl WidgetView<State, Action> {
-    label(text.into())
+    shadow_label(text)
         .text_size(28.0)
         .weight(FontWeight::BOLD)
         .color(theme.text_primary)
@@ -115,7 +122,7 @@ pub(super) fn top_bar<State: 'static, Action: 'static>(
         theme,
         column((
             eyebrow_text(eyebrow, theme),
-            label(title.into())
+            shadow_label(title)
                 .text_size(22.0)
                 .weight(FontWeight::BOLD)
                 .color(theme.text_primary),
@@ -138,7 +145,7 @@ pub(super) fn top_bar_with_back<State: 'static>(
             secondary_button("Back", theme, on_back),
             column((
                 eyebrow_text(eyebrow, theme),
-                label(title.into())
+                shadow_label(title)
                     .text_size(22.0)
                     .weight(FontWeight::BOLD)
                     .color(theme.text_primary),
@@ -164,6 +171,7 @@ pub(super) fn prose_text<State: 'static, Action: 'static>(
     theme: Theme,
 ) -> impl WidgetView<State, Action> {
     prose(text.into())
+        .font(SHADOW_UI_FONT_STACK)
         .text_size(text_size)
         .text_color(theme.text_primary)
 }
@@ -172,7 +180,7 @@ pub(super) fn caption_text<State: 'static, Action: 'static>(
     text: impl Into<String>,
     theme: Theme,
 ) -> impl WidgetView<State, Action> {
-    label(text.into()).text_size(12.0).color(theme.text_muted)
+    shadow_label(text).text_size(12.0).color(theme.text_muted)
 }
 
 pub(super) fn primary_button<State: 'static>(
@@ -202,7 +210,7 @@ pub(super) fn primary_button_state<State: 'static>(
     };
 
     button(
-        label(label_text.into())
+        shadow_label(label_text)
             .text_size(14.0)
             .weight(FontWeight::SEMI_BOLD)
             .color(foreground),
@@ -246,7 +254,7 @@ pub(super) fn secondary_button_state<State: 'static>(
     };
 
     button(
-        label(label_text.into())
+        shadow_label(label_text)
             .text_size(14.0)
             .weight(FontWeight::SEMI_BOLD)
             .color(foreground),
@@ -266,7 +274,7 @@ pub(super) fn status_chip<State: 'static, Action: 'static>(
 ) -> impl WidgetView<State, Action> {
     let (background, foreground) = tone_colors(tone, theme);
     sized_box(
-        label(text.into())
+        shadow_label(text)
             .text_size(12.0)
             .weight(FontWeight::SEMI_BOLD)
             .color(foreground),
@@ -284,6 +292,7 @@ pub(super) fn text_field<State: 'static>(
 ) -> impl WidgetView<State> {
     sized_box(
         text_input(value.into(), on_change)
+            .font(SHADOW_UI_FONT_STACK)
             .placeholder(placeholder.into())
             .text_color(theme.text_primary)
             .placeholder_color(theme.text_muted),
@@ -303,6 +312,7 @@ pub(super) fn multiline_editor<State: 'static>(
 ) -> impl WidgetView<State> {
     sized_box(
         text_input(value.into(), on_change)
+            .font(SHADOW_UI_FONT_STACK)
             .insert_newline(InsertNewline::OnEnter)
             .clip(false)
             .placeholder(placeholder.into())
