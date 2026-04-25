@@ -59,6 +59,8 @@ WIFI_HELPER_PROFILE="${PIXEL_ORANGE_GPU_WIFI_HELPER_PROFILE:-full}"
 WIFI_SUPPLICANT_PROBE="${PIXEL_ORANGE_GPU_WIFI_SUPPLICANT_PROBE:-true}"
 WIFI_ASSOCIATION_PROBE="${PIXEL_ORANGE_GPU_WIFI_ASSOCIATION_PROBE:-false}"
 WIFI_IP_PROBE="${PIXEL_ORANGE_GPU_WIFI_IP_PROBE:-false}"
+WIFI_RUNTIME_NETWORK="${PIXEL_ORANGE_GPU_WIFI_RUNTIME_NETWORK:-false}"
+WIFI_RUNTIME_CLOCK_UNIX_SECS="${PIXEL_ORANGE_GPU_WIFI_RUNTIME_CLOCK_UNIX_SECS:-}"
 WIFI_CREDENTIALS_PATH="${PIXEL_ORANGE_GPU_WIFI_CREDENTIALS_PATH:-}"
 WIFI_DHCP_CLIENT_BINARY="${PIXEL_ORANGE_GPU_WIFI_DHCP_CLIENT_BIN:-}"
 FIRMWARE_BOOTSTRAP="${PIXEL_ORANGE_GPU_FIRMWARE_BOOTSTRAP:-none}"
@@ -185,6 +187,8 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--wifi-supplicant-probe true|false]
                                                     [--wifi-association-probe true|false]
                                                     [--wifi-ip-probe true|false]
+                                                    [--wifi-runtime-network true|false]
+                                                    [--wifi-runtime-clock-unix-secs SECONDS]
                                                     [--wifi-credentials-path DEVICE_PATH]
                                                     [--wifi-dhcp-client BIN]
                                                     [--wifi-module-dir DIR]
@@ -1190,10 +1194,16 @@ EOF
   if [[ "$WIFI_IP_PROBE" != "false" ]]; then
     printf 'wifi_ip_probe=%s\n' "$WIFI_IP_PROBE" >>"$output_path"
   fi
+  if [[ "$WIFI_RUNTIME_NETWORK" != "false" ]]; then
+    printf 'wifi_runtime_network=%s\n' "$WIFI_RUNTIME_NETWORK" >>"$output_path"
+  fi
+  if [[ -n "$WIFI_RUNTIME_CLOCK_UNIX_SECS" ]]; then
+    printf 'wifi_runtime_clock_unix_secs=%s\n' "$WIFI_RUNTIME_CLOCK_UNIX_SECS" >>"$output_path"
+  fi
   if [[ -n "$WIFI_CREDENTIALS_PATH" ]]; then
     printf 'wifi_credentials_path=%s\n' "$WIFI_CREDENTIALS_PATH" >>"$output_path"
   fi
-  if [[ "$WIFI_IP_PROBE" == "true" ]]; then
+  if [[ "$WIFI_IP_PROBE" == "true" || "$WIFI_RUNTIME_NETWORK" == "true" ]]; then
     printf 'wifi_dhcp_client_path=/orange-gpu/busybox\n' >>"$output_path"
   fi
   if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
@@ -1517,6 +1527,7 @@ print(json.dumps(entries, separators=(",", ":")))
     "$ORANGE_GPU_MODE" \
     "$APP_DIRECT_PRESENT_MANUAL_TOUCH" \
     "$SHELL_SESSION_APP_PROFILE" \
+    "$SHELL_SESSION_STARTUP_CONFIG_PATH" \
     "$extra_env_json" <<'PY'
 import json
 import sys
@@ -1539,8 +1550,9 @@ from pathlib import Path
     orange_gpu_mode,
     manual_touch_value,
     session_app_profile,
+    session_config_path,
     extra_env_json,
-) = sys.argv[1:18]
+) = sys.argv[1:19]
 touch_counter_mode = orange_gpu_mode == "shell-session-runtime-touch-counter"
 held_mode = orange_gpu_mode == "shell-session-held"
 manual_touch_mode = manual_touch_value.lower() in {"1", "true", "yes", "on"}
@@ -1569,6 +1581,10 @@ elif client_kind == "typescript":
             {
                 "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",
                 "value": stage_library_path,
+            },
+            {
+                "key": "SHADOW_RUNTIME_SESSION_CONFIG",
+                "value": session_config_path,
             },
         ]
     )
@@ -1657,7 +1673,18 @@ if touch_counter_mode or (
     touch["exitAfterPresent"] = touch_counter_mode
     payload["touch"] = touch
 if enable_audio_value == "true":
-    payload["services"] = {"audioBackend": "linux_bridge"}
+    services = {
+        "audioBackend": "linux_bridge",
+    }
+else:
+    services = {}
+services.update(
+    {
+        "nostrDbPath": f"{runtime_dir}/runtime-nostr.sqlite3",
+        "nostrServiceSocket": f"{runtime_dir}/runtime-nostr.sock",
+    }
+)
+payload["services"] = services
 Path(output_path).write_text(
     json.dumps(payload, indent=2, sort_keys=False) + "\n",
     encoding="utf-8",
@@ -2934,6 +2961,14 @@ while [[ $# -gt 0 ]]; do
       WIFI_IP_PROBE="${2:?missing value for --wifi-ip-probe}"
       shift 2
       ;;
+    --wifi-runtime-network)
+      WIFI_RUNTIME_NETWORK="${2:?missing value for --wifi-runtime-network}"
+      shift 2
+      ;;
+    --wifi-runtime-clock-unix-secs)
+      WIFI_RUNTIME_CLOCK_UNIX_SECS="${2:?missing value for --wifi-runtime-clock-unix-secs}"
+      shift 2
+      ;;
     --wifi-credentials-path)
       WIFI_CREDENTIALS_PATH="${2:?missing value for --wifi-credentials-path}"
       shift 2
@@ -3119,6 +3154,11 @@ assert_bundle_archive_source_word "$ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE"
 assert_bool_word wifi-supplicant-probe "$WIFI_SUPPLICANT_PROBE"
 assert_bool_word wifi-association-probe "$WIFI_ASSOCIATION_PROBE"
 assert_bool_word wifi-ip-probe "$WIFI_IP_PROBE"
+assert_bool_word wifi-runtime-network "$WIFI_RUNTIME_NETWORK"
+if [[ -n "$WIFI_RUNTIME_CLOCK_UNIX_SECS" && ! "$WIFI_RUNTIME_CLOCK_UNIX_SECS" =~ ^[0-9]+$ ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi runtime clock unix seconds must be an unsigned integer" >&2
+  exit 1
+fi
 
 if [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" && "$MOUNT_SYS" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: c-kgsl-open-readonly-firmware-helper-smoke requires --mount-sys true so hello-init can service /sys/class/firmware requests" >&2
@@ -3141,8 +3181,8 @@ if [[ "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" && "$ORANGE_GPU_METADATA_
   exit 1
 fi
 if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
-  if [[ "$ORANGE_GPU_MODE" != "camera-hal-link-probe" && "$ORANGE_GPU_MODE" != "wifi-linux-surface-probe" ]]; then
-    echo "pixel_boot_build_orange_gpu: linker capsule is only supported with camera-hal-link-probe or wifi-linux-surface-probe" >&2
+  if [[ "$ORANGE_GPU_MODE" != "camera-hal-link-probe" && "$ORANGE_GPU_MODE" != "wifi-linux-surface-probe" && "$WIFI_RUNTIME_NETWORK" != "true" ]]; then
+    echo "pixel_boot_build_orange_gpu: linker capsule is only supported with camera-hal-link-probe, wifi-linux-surface-probe, or wifi runtime network" >&2
     exit 1
   fi
   if [[ ! -d "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
@@ -3215,6 +3255,24 @@ if [[ "$WIFI_IP_PROBE" == "true" ]]; then
     exit 1
   fi
   assert_static_device_binary "$WIFI_DHCP_CLIENT_BINARY" "wifi DHCP client"
+fi
+if [[ "$WIFI_RUNTIME_NETWORK" == "true" && "$WIFI_BOOTSTRAP" != "sunfish-wlan0" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi runtime network requires --wifi-bootstrap sunfish-wlan0" >&2
+  exit 1
+fi
+if [[ "$WIFI_RUNTIME_NETWORK" == "true" && "$WIFI_CREDENTIALS_PATH" != /metadata/shadow-wifi-credentials/by-token/* ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi runtime network requires a metadata credentials path under /metadata/shadow-wifi-credentials/by-token" >&2
+  exit 1
+fi
+if [[ "$WIFI_RUNTIME_NETWORK" == "true" ]]; then
+  if [[ ! -x "$WIFI_DHCP_CLIENT_BINARY" ]]; then
+    echo "pixel_boot_build_orange_gpu: wifi runtime network requires --wifi-dhcp-client with an executable static busybox" >&2
+    exit 1
+  fi
+  assert_static_device_binary "$WIFI_DHCP_CLIENT_BINARY" "wifi runtime DHCP client"
+  if [[ -z "$WIFI_RUNTIME_CLOCK_UNIX_SECS" ]]; then
+    WIFI_RUNTIME_CLOCK_UNIX_SECS="$(date +%s)"
+  fi
 fi
 case "$WIFI_HELPER_PROFILE" in
   full|no-service-managers|no-pm|no-modem-svc|no-rfs-storage|no-pd-mapper|no-cnss|qrtr-only|qrtr-pd|qrtr-pd-tftp|qrtr-pd-rfs|qrtr-pd-rfs-cnss|qrtr-pd-rfs-modem|qrtr-pd-rfs-modem-cnss|qrtr-pd-rfs-modem-pm|qrtr-pd-rfs-modem-pm-cnss|aidl-sm-core|vnd-sm-core|vnd-sm-core-binder-node|all-sm-core|none) ;;
@@ -3371,7 +3429,7 @@ if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   fi
 else
   if [[ -z "$HELLO_INIT_BINARY" ]]; then
-    if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" || "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" ]]; then
+    if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" || "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" || "$WIFI_RUNTIME_NETWORK" == "true" ]]; then
       HELLO_INIT_BINARY="$(default_rust_hello_init_binary)"
       build_or_copy_rust_hello_init_binary \
         "$(default_rust_hello_init_package_ref)" \
@@ -3397,7 +3455,7 @@ if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   assert_rust_hello_variant "$HELLO_INIT_BINARY"
   assert_rust_hello_variant "$HELLO_INIT_RUST_SHIM_BINARY"
 else
-  if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" || "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" ]]; then
+  if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" || "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" || "$WIFI_RUNTIME_NETWORK" == "true" ]]; then
     assert_rust_hello_variant "$HELLO_INIT_BINARY"
   else
     assert_hello_variant "$HELLO_INIT_BINARY"
@@ -3425,7 +3483,7 @@ if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" ]]; then
     chmod 0755 "$CAMERA_HAL_BIONIC_PROBE_BINARY" 2>/dev/null || true
   fi
 fi
-if [[ "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" && -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
+if [[ ( "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" || "$WIFI_RUNTIME_NETWORK" == "true" ) && -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
   if [[ -z "$SHADOW_PROPERTY_SHIM_BINARY" && -z "${MOCK_BOOT_RAMDISK:-}" ]]; then
     SHADOW_PROPERTY_SHIM_BINARY="$(default_shadow_property_shim_binary)"
     "$SCRIPT_DIR/pixel/pixel_build_shadow_property_shim.sh" \
@@ -3556,7 +3614,7 @@ if orange_gpu_mode_uses_ramdisk_gpu_bundle; then
     cp "$CAMERA_HAL_BIONIC_PROBE_BINARY" "$STAGED_GPU_BUNDLE_DIR/camera-hal-bionic-probe"
     chmod 0755 "$STAGED_GPU_BUNDLE_DIR/camera-hal-bionic-probe"
   fi
-  if [[ "$WIFI_IP_PROBE" == "true" ]]; then
+  if [[ "$WIFI_IP_PROBE" == "true" || "$WIFI_RUNTIME_NETWORK" == "true" ]]; then
     cp "$WIFI_DHCP_CLIENT_BINARY" "$STAGED_GPU_BUNDLE_DIR/busybox"
     chmod 0755 "$STAGED_GPU_BUNDLE_DIR/busybox"
   fi
@@ -3783,7 +3841,7 @@ if ! payload_partition_probe_mode; then
   printf 'GPU loader path: %s/lib/ld-linux-aarch64.so.1\n' "$PAYLOAD_IMAGE_PATH"
 fi
 if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
-  if [[ "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" ]]; then
+  if [[ "$ORANGE_GPU_MODE" == "wifi-linux-surface-probe" || "$WIFI_RUNTIME_NETWORK" == "true" ]]; then
     printf 'Wi-Fi linker capsule dir: %s\n' "$CAMERA_LINKER_CAPSULE_DIR"
   else
     printf 'Camera linker capsule dir: %s\n' "$CAMERA_LINKER_CAPSULE_DIR"

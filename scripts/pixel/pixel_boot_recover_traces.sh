@@ -1940,7 +1940,7 @@ elif expected_app_direct_present_app_id == "counter":
     }
 elif expected_app_direct_present_app_id == "timeline":
     required_app_direct_present_frame_samples = {
-        "311f09",
+        "f4f1ee",
         "2b180e",
         "322008",
     }

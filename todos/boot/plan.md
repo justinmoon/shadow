@@ -67,8 +67,12 @@ Related docs:
   - supporting a small service-manager program is acceptable because vendor chipsets are a distributed system and need a name registry to talk to each other; `vndservicemanager` is a tiny, maintainable registry, not the Android init system
   - latest association proof: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/wifi-boot/20260425T001740Z-0B191JEC203253-association-v3/status.json`
   - latest IP proof: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/wifi-boot/20260425T003122Z-0B191JEC203253-ip-v2/status.json`
+  - latest boot-owned runtime app proof: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/runs/boot-full-shadow-demo/full-shadow-demo-20260425T034946Z/device-run/recover-traces-rerun2/status.json`
+    - recovered frame: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/runs/boot-full-shadow-demo/full-shadow-demo-20260425T034946Z/analysis/metadata-compositor-frame.png`
+    - result: rust-booted `shell-session-held` launched the TypeScript `timeline` app over boot-owned Wi-Fi and the frame shows `Fetched 12 notes, imported 12.` from public relays
   - association/IP credentials are staged as root-only one-shot metadata files, read and unlinked by PID 1 only after the supplicant socket is usable, and represented in artifacts only by length/hash/kind metadata
   - the IP proof currently uses static BusyBox `udhcpc` as a prototype DHCP client, requires the DHCP command to succeed in the current run, clears stale wlan0 IPv4/default-route/DNS state before and after the proof, and proves DNS plus outbound TCP
+  - runtime Wi-Fi is now stricter than the one-shot IP proof: configured wall-clock set must succeed, DHCP must provide DNS, the default route must exist, `relay.damus.io:443` must connect by hostname, and `wpa_supplicant` must still be alive before Shadow launches apps
   - do not bake Qualcomm CNSS assumptions into core Shadow design; contain this as the Pixel 4a module/firmware/helper recipe so future Pixels can swap a different chip-specific module behind the same proof shape
   - keep chip bring-up separate from product networking: Pixel 4a owns Qualcomm CNSS/PM assets, while WPA control, DHCP/static IP, DNS, routing, time, status, and app sockets should be reusable across Pixel targets
   - BusyBox `udhcpc` or another small DHCP tool is acceptable for rapid hardware prototyping, but the shippable direction is a Shadow-owned Rust network manager with its own DHCP/rtnetlink control and clearer failure reporting
@@ -571,10 +575,13 @@ Related docs:
     - `bash -n scripts/pixel/pixel_boot_build_orange_gpu.sh`
     - rooted Pixel one-shot on the primary free device, with confirmation if the first proof reaches `surfaceReady=true`
   - blocked_by: none
-- [ ] `wifi-association-proof`
+- [x] `wifi-association-proof`
   - task_id: boot-wifi-association-proof
   - priority: 15
   - why next: scan proves the device, firmware, driver, and vendor supplicant path; the next Wi-Fi rung is AP association using a deliberate non-logged credential source
+  - result:
+    - landed association proof with one-shot root-only metadata credentials and redacted WPA control artifacts
+    - latest proof: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/wifi-boot/20260425T001740Z-0B191JEC203253-association-v3/status.json`
   - owned paths:
     - `rust/init-wrapper/src/bin/hello-init.rs`
     - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
@@ -587,10 +594,14 @@ Related docs:
   - validation:
     - rooted Pixel one-shot on the primary Wi-Fi device after credentials are intentionally supplied through a non-logged local source
   - blocked_by: none
-- [ ] `wifi-ip-dns-time-proof`
+- [x] `wifi-ip-dns-time-proof`
   - task_id: boot-wifi-ip-dns-time-proof
   - priority: 16
   - why next: apps need a normal IP stack, not just 802.11 association
+  - result:
+    - landed prototype IP proof with BusyBox `udhcpc`, stale-state cleanup, IPv4/default-route/DNS capture, and outbound TCP probes
+    - runtime mode now also sets a build-time wall clock before app launch and treats clock-set failure as fatal when configured
+    - latest proof: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/wifi-boot/20260425T003122Z-0B191JEC203253-ip-v2/status.json`
   - owned paths:
     - `rust/init-wrapper/src/bin/hello-init.rs`
     - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
@@ -604,10 +615,14 @@ Related docs:
     - rooted Pixel one-shot on the primary Wi-Fi device with association credentials supplied through the same non-logged path
   - blocked_by:
     - `wifi-association-proof`
-- [ ] `wifi-runtime-network-proof`
+- [x] `wifi-runtime-network-proof`
   - task_id: boot-wifi-runtime-network-proof
   - priority: 17
   - why next: Shadow runtime service hosts must see the boot-owned Wi-Fi route as ordinary Linux networking
+  - result:
+    - added `wifi_runtime_network` to PID 1 so the shell session launches only after association, DHCP, DNS, route, relay-host TCP, clock, and supplicant liveness checks pass
+    - shell startup config now exports `SHADOW_RUNTIME_SESSION_CONFIG` and carries Nostr service socket/DB paths so TypeScript apps can spawn the system Nostr service from boot userspace
+    - latest proof: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/runs/boot-full-shadow-demo/full-shadow-demo-20260425T034946Z/device-run/recover-traces-rerun2/status.json`
   - owned paths:
     - `scripts/lib/pixel_runtime_linux_bundle_common.sh`
     - `scripts/lib/pixel_runtime_session_common.sh`
@@ -635,7 +650,8 @@ Related docs:
     - `runtime/apps.json`
     - `todos/boot/plan.md`
   - acceptance:
-    - Nostr timeline syncs from a LAN relay over Wi-Fi and persists notes in the configured SQLite cache without `adb reverse`
+    - Nostr public-relay timeline demo is proven on Pixel 4a boot userspace: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/runs/boot-full-shadow-demo/full-shadow-demo-20260425T034946Z/analysis/metadata-compositor-frame.png`
+    - Nostr timeline syncs from public or LAN relays over Wi-Fi and persists notes in the configured SQLite cache without `adb reverse`
     - Cashu wallet talks to a LAN fake mint over Wi-Fi and completes the existing wallet smoke shape without a USB tunnel
     - podcast URL playback fetches media from a LAN HTTP server over Wi-Fi and reaches the existing `linux_spike` validation summary
     - app metadata or session config can express network requirements so offline-capable apps and network-required apps get different readiness behavior

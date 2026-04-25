@@ -198,6 +198,8 @@ mod linux {
         wifi_supplicant_probe: bool,
         wifi_association_probe: bool,
         wifi_ip_probe: bool,
+        wifi_runtime_network: bool,
+        wifi_runtime_clock_unix_secs: u64,
         wifi_credentials_path: String,
         wifi_dhcp_client_path: String,
         mount_dev: bool,
@@ -249,6 +251,8 @@ mod linux {
                 wifi_supplicant_probe: true,
                 wifi_association_probe: false,
                 wifi_ip_probe: false,
+                wifi_runtime_network: false,
+                wifi_runtime_clock_unix_secs: 0,
                 wifi_credentials_path: String::new(),
                 wifi_dhcp_client_path: "/orange-gpu/busybox".to_string(),
                 mount_dev: true,
@@ -1027,6 +1031,16 @@ mod linux {
                 "wifi_ip_probe" => {
                     if let Some(parsed) = parse_bool(value) {
                         config.wifi_ip_probe = parsed;
+                    }
+                }
+                "wifi_runtime_network" => {
+                    if let Some(parsed) = parse_bool(value) {
+                        config.wifi_runtime_network = parsed;
+                    }
+                }
+                "wifi_runtime_clock_unix_secs" => {
+                    if let Ok(parsed) = value.trim().parse::<u64>() {
+                        config.wifi_runtime_clock_unix_secs = parsed;
                     }
                 }
                 "wifi_credentials_path" => {
@@ -3288,6 +3302,29 @@ mod linux {
         network_id: Option<u32>,
     }
 
+    struct WifiRuntimeNetwork {
+        child: Child,
+        socket_path: PathBuf,
+        busybox_path: PathBuf,
+        network_id: u32,
+    }
+
+    struct WifiRuntimeNetworkStart {
+        json: String,
+        completed: bool,
+        network: Option<WifiRuntimeNetwork>,
+    }
+
+    struct WifiRuntimeClockSet {
+        json: String,
+        ready: bool,
+    }
+
+    struct WifiChildLiveness {
+        json: String,
+        alive: bool,
+    }
+
     struct TcpConnectProbe {
         json: String,
         connected: bool,
@@ -3880,6 +3917,17 @@ mod linux {
         })
     }
 
+    fn resolv_conf_has_nameserver(text: &str) -> bool {
+        text.lines().any(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                return false;
+            }
+            let fields = trimmed.split_whitespace().collect::<Vec<_>>();
+            fields.len() >= 2 && fields[0] == "nameserver" && !fields[1].is_empty()
+        })
+    }
+
     fn wlan0_has_ipv4_address(ifconfig_text: &str) -> bool {
         ifconfig_text.contains("inet addr:") || ifconfig_text.contains("inet ")
     }
@@ -4032,6 +4080,470 @@ mod linux {
         )
     }
 
+    fn wifi_runtime_clock_json(config: &Config) -> WifiRuntimeClockSet {
+        let secs = config.wifi_runtime_clock_unix_secs;
+        if secs == 0 {
+            return WifiRuntimeClockSet {
+                json: "{\"attempted\":false,\"reason\":\"disabled\"}".to_string(),
+                ready: true,
+            };
+        }
+        let timespec = libc::timespec {
+            tv_sec: secs as libc::time_t,
+            tv_nsec: 0,
+        };
+        let rc = unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &timespec) };
+        if rc == 0 {
+            WifiRuntimeClockSet {
+                json: format!("{{\"attempted\":true,\"ok\":true,\"unixSecs\":{secs}}}"),
+                ready: true,
+            }
+        } else {
+            WifiRuntimeClockSet {
+                json: format!(
+                    "{{\"attempted\":true,\"ok\":false,\"unixSecs\":{},\"error\":{}}}",
+                    secs,
+                    json_string(&io::Error::last_os_error().to_string())
+                ),
+                ready: false,
+            }
+        }
+    }
+
+    fn start_wifi_runtime_network(
+        config: &Config,
+        probe_stage_path: Option<&Path>,
+        probe_stage_prefix: Option<&str>,
+    ) -> WifiRuntimeNetworkStart {
+        let clock = wifi_runtime_clock_json(config);
+        let clock_json = clock.json;
+        if !clock.ready {
+            return WifiRuntimeNetworkStart {
+                json: format!(
+                    "{{\"attempted\":true,\"completed\":false,\"reason\":\"clock-set-failed\",\"clock\":{clock_json}}}"
+                ),
+                completed: false,
+                network: None,
+            };
+        }
+        let binary_path = Path::new("/vendor/bin/hw/wpa_supplicant");
+        let socket_path = Path::new("/data/vendor/wifi/wpa/sockets/wlan0");
+        if !Path::new("/sys/class/net/wlan0").exists() {
+            return WifiRuntimeNetworkStart {
+                json: format!(
+                    "{{\"attempted\":true,\"completed\":false,\"reason\":\"missing-wlan0\",\"clock\":{clock_json}}}"
+                ),
+                completed: false,
+                network: None,
+            };
+        }
+        if !binary_path.is_file() {
+            return WifiRuntimeNetworkStart {
+                json: format!(
+                    "{{\"attempted\":true,\"completed\":false,\"reason\":\"missing-binary\",\"clock\":{},\"binary\":{}}}",
+                    clock_json,
+                    wifi_boot_path_status_json("/vendor/bin/hw/wpa_supplicant")
+                ),
+                completed: false,
+                network: None,
+            };
+        }
+        if let Err(error) = ensure_sunfish_wpa_supplicant_config() {
+            return WifiRuntimeNetworkStart {
+                json: format!(
+                    "{{\"attempted\":true,\"completed\":false,\"reason\":\"config-setup-failed\",\"clock\":{},\"error\":{}}}",
+                    clock_json,
+                    json_string(&error.to_string())
+                ),
+                completed: false,
+                network: None,
+            };
+        }
+
+        thread::sleep(Duration::from_secs(2));
+        let _ = fs::remove_file(socket_path);
+        write_payload_probe_stage(
+            probe_stage_path,
+            probe_stage_prefix,
+            "wifi-runtime-wpa-supplicant-start",
+        );
+        let mut child = spawn_sunfish_wifi_android_helper(
+            "wpa_supplicant",
+            &[
+                "-iwlan0",
+                "-Dnl80211",
+                "-c/data/vendor/wifi/wpa/wpa_supplicant.conf",
+                "-O/data/vendor/wifi/wpa/sockets",
+                "-puse_p2p_group_interface=1",
+                "-dd",
+            ],
+            probe_stage_path,
+            probe_stage_prefix,
+        );
+        let Some(mut child) = child.take() else {
+            return WifiRuntimeNetworkStart {
+                json: format!(
+                    "{{\"attempted\":true,\"completed\":false,\"started\":false,\"reason\":\"spawn-failed\",\"clock\":{clock_json}}}"
+                ),
+                completed: false,
+                network: None,
+            };
+        };
+
+        let start = Instant::now();
+        let mut early_exit_status = String::new();
+        while start.elapsed() < Duration::from_secs(12) {
+            if socket_path.exists() {
+                break;
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    early_exit_status = status.to_string();
+                    break;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    early_exit_status = format!("status-error: {error}");
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(250));
+        }
+
+        let socket_ready = socket_path.exists();
+        if !socket_ready {
+            write_payload_probe_stage(
+                probe_stage_path,
+                probe_stage_prefix,
+                "wifi-runtime-wpa-supplicant-socket-missing",
+            );
+            let child_pid = child.id();
+            let cleanup = stop_wifi_child_json(&mut child);
+            return WifiRuntimeNetworkStart {
+                json: format!(
+                    concat!(
+                        "{{\"attempted\":true,\"completed\":false,\"reason\":\"socket-missing\",",
+                        "\"clock\":{},\"started\":true,\"pid\":{},\"socketReady\":false,",
+                        "\"earlyExit\":{},\"socket\":{},\"cleanup\":{},\"logExcerpt\":{}}}"
+                    ),
+                    clock_json,
+                    child_pid,
+                    json_string(&early_exit_status),
+                    wifi_boot_path_status_json("/data/vendor/wifi/wpa/sockets/wlan0"),
+                    cleanup,
+                    json_string(&redact_wifi_sensitive_text(&read_file_excerpt(
+                        "/orange-gpu/wifi-helper-wpa_supplicant.log",
+                        8192
+                    )))
+                ),
+                completed: false,
+                network: None,
+            };
+        }
+
+        write_payload_probe_stage(
+            probe_stage_path,
+            probe_stage_prefix,
+            "wifi-runtime-wpa-ping",
+        );
+        let ping = wpa_ctrl_command_result_json(socket_path, "PING", Duration::from_secs(2));
+        let status_before_scan =
+            wpa_ctrl_command_result_json(socket_path, "STATUS", Duration::from_secs(2));
+        write_payload_probe_stage(
+            probe_stage_path,
+            probe_stage_prefix,
+            "wifi-runtime-wpa-scan",
+        );
+        let scan = wpa_ctrl_command_result_json(socket_path, "SCAN", Duration::from_secs(2));
+        thread::sleep(Duration::from_secs(6));
+        let scan_results = wpa_scan_results_json(socket_path, Duration::from_secs(2));
+        let status_after_scan =
+            wpa_ctrl_command_result_json(socket_path, "STATUS", Duration::from_secs(2));
+        let credentials = read_wifi_credentials_once(&config.wifi_credentials_path);
+        write_payload_probe_stage(
+            probe_stage_path,
+            probe_stage_prefix,
+            "wifi-runtime-association-start",
+        );
+        let association = run_wifi_association(socket_path, &credentials, false);
+        write_payload_probe_stage(
+            probe_stage_path,
+            probe_stage_prefix,
+            "wifi-runtime-association-done",
+        );
+        let Some(network_id) = association.network_id else {
+            let cleanup = stop_wifi_child_json(&mut child);
+            return WifiRuntimeNetworkStart {
+                json: format!(
+                    concat!(
+                        "{{\"attempted\":true,\"completed\":false,\"reason\":\"association-setup-failed\",",
+                        "\"clock\":{},\"started\":true,\"pid\":{},\"socketReady\":true,",
+                        "\"earlyExit\":{},\"ping\":{},\"statusBeforeScan\":{},\"scan\":{},",
+                        "\"scanResults\":{},\"statusAfterScan\":{},\"association\":{},\"cleanup\":{}}}"
+                    ),
+                    clock_json,
+                    child.id(),
+                    json_string(&early_exit_status),
+                    ping,
+                    status_before_scan,
+                    scan,
+                    scan_results,
+                    status_after_scan,
+                    association.json,
+                    cleanup
+                ),
+                completed: false,
+                network: None,
+            };
+        };
+        if !association.completed {
+            let association_cleanup = wifi_association_cleanup_json(socket_path, network_id);
+            let child_cleanup = stop_wifi_child_json(&mut child);
+            return WifiRuntimeNetworkStart {
+                json: format!(
+                    concat!(
+                        "{{\"attempted\":true,\"completed\":false,\"reason\":\"association-failed\",",
+                        "\"clock\":{},\"started\":true,\"pid\":{},\"socketReady\":true,",
+                        "\"earlyExit\":{},\"ping\":{},\"statusBeforeScan\":{},\"scan\":{},",
+                        "\"scanResults\":{},\"statusAfterScan\":{},\"association\":{},",
+                        "\"associationCleanup\":{},\"cleanup\":{}}}"
+                    ),
+                    clock_json,
+                    child.id(),
+                    json_string(&early_exit_status),
+                    ping,
+                    status_before_scan,
+                    scan,
+                    scan_results,
+                    status_after_scan,
+                    association.json,
+                    association_cleanup,
+                    child_cleanup
+                ),
+                completed: false,
+                network: None,
+            };
+        }
+
+        let busybox_path = Path::new(&config.wifi_dhcp_client_path);
+        if !busybox_path.is_file() {
+            let association_cleanup = wifi_association_cleanup_json(socket_path, network_id);
+            let child_cleanup = stop_wifi_child_json(&mut child);
+            return WifiRuntimeNetworkStart {
+                json: format!(
+                    concat!(
+                        "{{\"attempted\":true,\"completed\":false,\"reason\":\"missing-dhcp-client\",",
+                        "\"clock\":{},\"association\":{},\"associationCleanup\":{},\"cleanup\":{}}}"
+                    ),
+                    clock_json, association.json, association_cleanup, child_cleanup
+                ),
+                completed: false,
+                network: None,
+            };
+        }
+
+        let script_path = Path::new("/orange-gpu/udhcpc-script");
+        if let Err(error) = write_udhcpc_script(script_path, &config.wifi_dhcp_client_path) {
+            let association_cleanup = wifi_association_cleanup_json(socket_path, network_id);
+            let child_cleanup = stop_wifi_child_json(&mut child);
+            return WifiRuntimeNetworkStart {
+                json: format!(
+                    concat!(
+                        "{{\"attempted\":true,\"completed\":false,\"reason\":\"dhcp-script-failed\",",
+                        "\"clock\":{},\"association\":{},\"dhcpScriptError\":{},",
+                        "\"associationCleanup\":{},\"cleanup\":{}}}"
+                    ),
+                    clock_json,
+                    association.json,
+                    json_string(&error.to_string()),
+                    association_cleanup,
+                    child_cleanup
+                ),
+                completed: false,
+                network: None,
+            };
+        }
+
+        write_payload_probe_stage(
+            probe_stage_path,
+            probe_stage_prefix,
+            "wifi-runtime-dhcp-start",
+        );
+        let pre_dhcp_cleanup = wifi_ip_state_cleanup_json(busybox_path);
+        let dhcp_output = Command::new(busybox_path)
+            .args([
+                "udhcpc",
+                "-i",
+                "wlan0",
+                "-n",
+                "-q",
+                "-t",
+                "5",
+                "-T",
+                "3",
+                "-s",
+                "/orange-gpu/udhcpc-script",
+            ])
+            .output();
+        let dhcp_success = command_success(&dhcp_output);
+        let busybox_label = busybox_path.display().to_string();
+        let dhcp_json = command_output_json(
+            &format!(
+                "{busybox_label} udhcpc -i wlan0 -n -q -t 5 -T 3 -s /orange-gpu/udhcpc-script"
+            ),
+            dhcp_output,
+        );
+        let ifconfig_output = Command::new(busybox_path)
+            .args(["ifconfig", "wlan0"])
+            .output();
+        let ifconfig_text = ifconfig_output
+            .as_ref()
+            .ok()
+            .map(|output| wifi_command_text(&output.stdout, 8192))
+            .unwrap_or_default();
+        let ifconfig_json =
+            command_output_json(&format!("{busybox_label} ifconfig wlan0"), ifconfig_output);
+        let route_text = read_file_excerpt("/proc/net/route", 8192);
+        let resolv_conf = read_file_excerpt("/etc/resolv.conf", 4096);
+        let default_route = proc_net_route_has_default_wlan0(&route_text);
+        let ipv4_address = wlan0_has_ipv4_address(&ifconfig_text);
+        let dns_ready = resolv_conf_has_nameserver(&resolv_conf);
+        let relay_connect = tcp_connect_probe("relay.damus.io", 443);
+        let fallback_connect = tcp_connect_probe("1.1.1.1", 53);
+        let supplicant_liveness = wifi_child_liveness_json(&mut child);
+        let connected = relay_connect.connected;
+        let completed = dhcp_success
+            && ipv4_address
+            && default_route
+            && dns_ready
+            && connected
+            && supplicant_liveness.alive;
+        write_payload_probe_stage(
+            probe_stage_path,
+            probe_stage_prefix,
+            "wifi-runtime-dhcp-done",
+        );
+
+        if !completed {
+            let post_dhcp_cleanup = wifi_ip_state_cleanup_json(busybox_path);
+            let association_cleanup = wifi_association_cleanup_json(socket_path, network_id);
+            let child_cleanup = stop_wifi_child_json(&mut child);
+            return WifiRuntimeNetworkStart {
+                json: format!(
+                    concat!(
+                        "{{\"attempted\":true,\"completed\":false,\"reason\":\"runtime-network-failed\",",
+                        "\"clock\":{},\"started\":true,\"pid\":{},\"socketReady\":true,",
+                        "\"earlyExit\":{},\"ping\":{},\"statusBeforeScan\":{},\"scan\":{},",
+                        "\"scanResults\":{},\"statusAfterScan\":{},\"association\":{},",
+                        "\"preDhcpCleanup\":{},\"dhcp\":{},\"dhcpSuccess\":{},\"ifconfig\":{},",
+                        "\"ipv4AddressPresent\":{},\"defaultRoutePresent\":{},\"dnsReady\":{},",
+                        "\"procNetRoute\":{},\"resolvConf\":{},\"tcpConnect\":[{},{}],",
+                        "\"supplicant\":{},\"postDhcpCleanup\":{},\"associationCleanup\":{},",
+                        "\"cleanup\":{}}}"
+                    ),
+                    clock_json,
+                    child.id(),
+                    json_string(&early_exit_status),
+                    ping,
+                    status_before_scan,
+                    scan,
+                    scan_results,
+                    status_after_scan,
+                    association.json,
+                    pre_dhcp_cleanup,
+                    dhcp_json,
+                    bool_word(dhcp_success),
+                    ifconfig_json,
+                    bool_word(ipv4_address),
+                    bool_word(default_route),
+                    bool_word(dns_ready),
+                    json_string(&route_text),
+                    json_string(&resolv_conf),
+                    relay_connect.json,
+                    fallback_connect.json,
+                    supplicant_liveness.json,
+                    post_dhcp_cleanup,
+                    association_cleanup,
+                    child_cleanup
+                ),
+                completed: false,
+                network: None,
+            };
+        }
+
+        let child_pid = child.id();
+        WifiRuntimeNetworkStart {
+            json: format!(
+                concat!(
+                    "{{\"attempted\":true,\"completed\":true,\"reason\":\"\",",
+                    "\"clock\":{},\"started\":true,\"pid\":{},\"socketReady\":true,",
+                    "\"earlyExit\":{},\"ping\":{},\"statusBeforeScan\":{},\"scan\":{},",
+                    "\"scanResults\":{},\"statusAfterScan\":{},\"association\":{},",
+                    "\"preDhcpCleanup\":{},\"dhcp\":{},\"dhcpSuccess\":true,\"ifconfig\":{},",
+                    "\"ipv4AddressPresent\":true,\"defaultRoutePresent\":true,\"dnsReady\":true,",
+                    "\"procNetRoute\":{},\"resolvConf\":{},\"tcpConnect\":[{},{}],",
+                    "\"supplicant\":{},\"cleanup\":[]}}"
+                ),
+                clock_json,
+                child_pid,
+                json_string(&early_exit_status),
+                ping,
+                status_before_scan,
+                scan,
+                scan_results,
+                status_after_scan,
+                association.json,
+                pre_dhcp_cleanup,
+                dhcp_json,
+                ifconfig_json,
+                json_string(&route_text),
+                json_string(&resolv_conf),
+                relay_connect.json,
+                fallback_connect.json,
+                supplicant_liveness.json
+            ),
+            completed: true,
+            network: Some(WifiRuntimeNetwork {
+                child,
+                socket_path: socket_path.to_path_buf(),
+                busybox_path: busybox_path.to_path_buf(),
+                network_id,
+            }),
+        }
+    }
+
+    fn stop_wifi_runtime_network_json(network: &mut WifiRuntimeNetwork, reason: &str) -> String {
+        let ip_cleanup = wifi_ip_state_cleanup_json(&network.busybox_path);
+        let association_cleanup =
+            wifi_association_cleanup_json(&network.socket_path, network.network_id);
+        let child_cleanup = stop_wifi_child_json(&mut network.child);
+        format!(
+            "{{\"attempted\":true,\"reason\":{},\"ipCleanup\":{},\"associationCleanup\":{},\"childCleanup\":{}}}",
+            json_string(reason),
+            ip_cleanup,
+            association_cleanup,
+            child_cleanup
+        )
+    }
+
+    fn stop_wifi_runtime_network(
+        network: &mut Option<WifiRuntimeNetwork>,
+        probe_stage_path: Option<&Path>,
+        probe_stage_prefix: Option<&str>,
+        reason: &str,
+    ) {
+        let Some(mut network) = network.take() else {
+            return;
+        };
+        write_payload_probe_stage(
+            probe_stage_path,
+            probe_stage_prefix,
+            "wifi-runtime-network-stop",
+        );
+        let cleanup = stop_wifi_runtime_network_json(&mut network, reason);
+        append_wrapper_log(&format!("wifi-runtime-network-cleanup {cleanup}"));
+    }
+
     fn wpa_scan_results_json(socket_path: &Path, timeout: Duration) -> String {
         let client_path = format!(
             "/data/vendor/wifi/wpa/sockets/shadow-wpa-{}-scanresults",
@@ -4103,6 +4615,29 @@ mod linux {
         };
         let _ = fs::remove_file(client_path);
         result
+    }
+
+    fn wifi_child_liveness_json(child: &mut Child) -> WifiChildLiveness {
+        match child.try_wait() {
+            Ok(Some(status)) => WifiChildLiveness {
+                json: format!(
+                    "{{\"alive\":false,\"status\":{},\"error\":\"\"}}",
+                    json_string(&status.to_string())
+                ),
+                alive: false,
+            },
+            Ok(None) => WifiChildLiveness {
+                json: "{\"alive\":true,\"status\":\"\",\"error\":\"\"}".to_string(),
+                alive: true,
+            },
+            Err(error) => WifiChildLiveness {
+                json: format!(
+                    "{{\"alive\":false,\"status\":\"\",\"error\":{}}}",
+                    json_string(&error.to_string())
+                ),
+                alive: false,
+            },
+        }
     }
 
     fn stop_wifi_child_json(child: &mut Child) -> String {
@@ -6365,6 +6900,18 @@ mod linux {
             log_line("wifi_ip_probe requires wifi_dhcp_client_path");
             return false;
         }
+        if config.wifi_runtime_network && config.wifi_bootstrap != "sunfish-wlan0" {
+            log_line("wifi_runtime_network requires wifi_bootstrap=sunfish-wlan0");
+            return false;
+        }
+        if config.wifi_runtime_network && config.wifi_credentials_path.is_empty() {
+            log_line("wifi_runtime_network requires wifi_credentials_path");
+            return false;
+        }
+        if config.wifi_runtime_network && config.wifi_dhcp_client_path.is_empty() {
+            log_line("wifi_runtime_network requires wifi_dhcp_client_path");
+            return false;
+        }
         if config.orange_gpu_mode == "payload-partition-probe"
             && !config.orange_gpu_metadata_stage_breadcrumb
         {
@@ -6795,6 +7342,7 @@ mod linux {
                 | "c-kgsl-open-readonly-firmware-helper-smoke"
         );
 
+        let mut wifi_runtime_network: Option<WifiRuntimeNetwork> = None;
         let mut command = if child_mode {
             let resolved_self_exec_path = self_exec_path
                 .map(Path::to_path_buf)
@@ -6825,6 +7373,35 @@ mod linux {
                     helper.stop();
                 }
                 return 1;
+            }
+            if config.wifi_runtime_network {
+                write_payload_probe_stage(
+                    probe_stage_path.as_deref(),
+                    probe_stage_prefix.as_deref(),
+                    "wifi-runtime-network-start",
+                );
+                let runtime_start = start_wifi_runtime_network(
+                    config,
+                    probe_stage_path.as_deref(),
+                    probe_stage_prefix.as_deref(),
+                );
+                append_wrapper_log(&format!(
+                    "wifi-runtime-network-start {}",
+                    runtime_start.json
+                ));
+                if !runtime_start.completed {
+                    log_line("wifi runtime network failed before payload launch");
+                    if let Some(helper) = firmware_helper {
+                        helper.stop();
+                    }
+                    return 1;
+                }
+                wifi_runtime_network = runtime_start.network;
+                write_payload_probe_stage(
+                    probe_stage_path.as_deref(),
+                    probe_stage_prefix.as_deref(),
+                    "wifi-runtime-network-ready",
+                );
             }
 
             if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode) {
@@ -6902,6 +7479,12 @@ mod linux {
             Ok(child) => child,
             Err(error) => {
                 log_line(&format!("failed to spawn orange-gpu payload: {error}"));
+                stop_wifi_runtime_network(
+                    &mut wifi_runtime_network,
+                    probe_stage_path.as_deref(),
+                    probe_stage_prefix.as_deref(),
+                    "payload-spawn-failed",
+                );
                 if let Some(helper) = firmware_helper {
                     helper.stop();
                 }
@@ -6948,6 +7531,12 @@ mod linux {
             Ok(result) => result,
             Err(error) => {
                 log_line(&format!("orange-gpu wait failed: {error}"));
+                stop_wifi_runtime_network(
+                    &mut wifi_runtime_network,
+                    probe_stage_path.as_deref(),
+                    probe_stage_prefix.as_deref(),
+                    "payload-wait-failed",
+                );
                 if let Some(helper) = firmware_helper {
                     helper.stop();
                 }
@@ -6982,6 +7571,12 @@ mod linux {
                 config,
                 "child-exit-nonzero",
                 ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+            );
+            stop_wifi_runtime_network(
+                &mut wifi_runtime_network,
+                probe_stage_path.as_deref(),
+                probe_stage_prefix.as_deref(),
+                "held-shell-exited-before-watchdog",
             );
             return 125;
         }
@@ -7087,6 +7682,12 @@ mod linux {
                         "child-exit-nonzero",
                         ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
                     );
+                    stop_wifi_runtime_network(
+                        &mut wifi_runtime_network,
+                        probe_stage_path.as_deref(),
+                        probe_stage_prefix.as_deref(),
+                        "session-frame-summary-failed",
+                    );
                     return 1;
                 }
                 write_payload_probe_stage(
@@ -7114,6 +7715,12 @@ mod linux {
                             "child-exit-nonzero",
                             ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
                         );
+                        stop_wifi_runtime_network(
+                            &mut wifi_runtime_network,
+                            probe_stage_path.as_deref(),
+                            probe_stage_prefix.as_deref(),
+                            "gpu-render-summary-missing",
+                        );
                         return 1;
                     };
                     if let Err(reason) = validate_gpu_render_summary(summary_text) {
@@ -7124,6 +7731,12 @@ mod linux {
                             config,
                             "child-exit-nonzero",
                             ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+                        );
+                        stop_wifi_runtime_network(
+                            &mut wifi_runtime_network,
+                            probe_stage_path.as_deref(),
+                            probe_stage_prefix.as_deref(),
+                            "gpu-render-summary-invalid",
                         );
                         return 1;
                     }
@@ -7137,6 +7750,12 @@ mod linux {
                             "child-exit-nonzero",
                             ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
                         );
+                        stop_wifi_runtime_network(
+                            &mut wifi_runtime_network,
+                            probe_stage_path.as_deref(),
+                            probe_stage_prefix.as_deref(),
+                            "orange-gpu-loop-summary-missing",
+                        );
                         return 1;
                     };
                     if let Err(reason) = validate_orange_gpu_loop_summary(summary_text) {
@@ -7147,6 +7766,12 @@ mod linux {
                             config,
                             "child-exit-nonzero",
                             ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
+                        );
+                        stop_wifi_runtime_network(
+                            &mut wifi_runtime_network,
+                            probe_stage_path.as_deref(),
+                            probe_stage_prefix.as_deref(),
+                            "orange-gpu-loop-summary-invalid",
                         );
                         return 1;
                     }
@@ -7196,9 +7821,21 @@ mod linux {
                         );
                         hold_for_observation(config.hold_seconds);
                     }
+                    stop_wifi_runtime_network(
+                        &mut wifi_runtime_network,
+                        probe_stage_path.as_deref(),
+                        probe_stage_prefix.as_deref(),
+                        "held-shell-watchdog-proved",
+                    );
                     return 0;
                 }
             }
+            stop_wifi_runtime_network(
+                &mut wifi_runtime_network,
+                probe_stage_path.as_deref(),
+                probe_stage_prefix.as_deref(),
+                "payload-timed-out",
+            );
             let timeout_classification = classify_orange_gpu_timeout(config, metadata_stage);
             let _ = run_orange_gpu_checkpoint(
                 config,
@@ -7226,6 +7863,12 @@ mod linux {
             } else if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode) {
                 hold_for_observation(config.hold_seconds);
             }
+            stop_wifi_runtime_network(
+                &mut wifi_runtime_network,
+                probe_stage_path.as_deref(),
+                probe_stage_prefix.as_deref(),
+                "payload-exited",
+            );
             return exit_status;
         }
         if let Some(signal) = watch_result.signal {
@@ -7234,8 +7877,20 @@ mod linux {
                 "child-signal",
                 ORANGE_GPU_CHECKPOINT_HOLD_SECONDS,
             );
+            stop_wifi_runtime_network(
+                &mut wifi_runtime_network,
+                probe_stage_path.as_deref(),
+                probe_stage_prefix.as_deref(),
+                "payload-signaled",
+            );
             return 128 + signal;
         }
+        stop_wifi_runtime_network(
+            &mut wifi_runtime_network,
+            probe_stage_path.as_deref(),
+            probe_stage_prefix.as_deref(),
+            "payload-unknown-result",
+        );
         1
     }
 
@@ -8712,7 +9367,7 @@ mod linux {
         }
 
         append_wrapper_log(&format!(
-            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_metadata_prune_token_root={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} payload_probe_strategy={} payload_probe_source={} payload_probe_root={} payload_probe_manifest_path={} payload_probe_fallback_path={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} wifi_bootstrap={} wifi_helper_profile={} wifi_supplicant_probe={} wifi_association_probe={} wifi_ip_probe={} wifi_credentials_path_configured={} wifi_dhcp_client_path_configured={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
+            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_metadata_prune_token_root={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} payload_probe_strategy={} payload_probe_source={} payload_probe_root={} payload_probe_manifest_path={} payload_probe_fallback_path={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} wifi_bootstrap={} wifi_helper_profile={} wifi_supplicant_probe={} wifi_association_probe={} wifi_ip_probe={} wifi_runtime_network={} wifi_runtime_clock_unix_secs_configured={} wifi_credentials_path_configured={} wifi_dhcp_client_path_configured={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
             config.payload,
             config.prelude,
             config.orange_gpu_mode,
@@ -8743,6 +9398,8 @@ mod linux {
             bool_word(config.wifi_supplicant_probe),
             bool_word(config.wifi_association_probe),
             bool_word(config.wifi_ip_probe),
+            bool_word(config.wifi_runtime_network),
+            bool_word(config.wifi_runtime_clock_unix_secs != 0),
             bool_word(!config.wifi_credentials_path.is_empty()),
             bool_word(!config.wifi_dhcp_client_path.is_empty()),
             bool_word(config.mount_dev),
