@@ -3263,7 +3263,11 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --shell-session-extra-app-ids)
-      SHELL_SESSION_EXTRA_APP_IDS="${2:?missing value for --shell-session-extra-app-ids}"
+      if (($# < 2)); then
+        echo "pixel_boot_build_orange_gpu: missing value for --shell-session-extra-app-ids" >&2
+        exit 1
+      fi
+      SHELL_SESSION_EXTRA_APP_IDS="$2"
       shift 2
       ;;
     --keep-work-dir)

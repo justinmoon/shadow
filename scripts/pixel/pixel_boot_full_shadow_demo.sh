@@ -233,7 +233,11 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --extra-apps)
-      extra_apps="${2:?missing value for --extra-apps}"
+      if (($# < 2)); then
+        echo "pixel_boot_full_shadow_demo: missing value for --extra-apps" >&2
+        exit 64
+      fi
+      extra_apps="$2"
       extra_apps_explicit=1
       shift 2
       ;;

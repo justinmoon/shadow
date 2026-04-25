@@ -57,7 +57,11 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
   - `just pixel-ci <subset>`
 - For suite staging, run-only semantics, and the contract for adding app-specific validation lanes, read [App testing](app-testing.md).
 - `just pixel-ci`, `just pixel-stage`, and `just pixel-run` are thin convenience wrappers around `shadowctl` Pixel CI commands.
-- The plugged-in Pixel lane is real hardware validation, not part of the default `pre-merge` or `nightly` branch gate. Treat it as a manual or explicitly scheduled lane.
+- The plugged-in Pixel lane is real hardware validation and `just pre-merge`
+  now requires one leased Pixel proof. The pre-merge proof builds and boots the
+  full Shadow shell demo on one ready device, recovers the trace bundle, and
+  requires `proof_ok=true`; if no Pixel can be leased, the gate fails instead of
+  skipping or falling back.
 - Setup and recovery still matter for the real-device lane:
   - [Pixel prep](pixel-prep.md)
   - `sc -t pixel prep-settings`
@@ -86,7 +90,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
    The VM lane now consumes packaged Linux `shadow-compositor` / `shadow-blitz-demo` artifacts built through Nix; `.#ui-vm-ci` is the canonical artifact-consumer runner package.
    The branch gate also resolves a filtered `.#vm-smoke-inputs` derivation so the VM smoke is keyed by logical lane inputs instead of branch/worktree names.
    `just ui-check [suite...]` resolves host-system `checks.<system>.uiCheck*` derivations through the flake instead of running ad hoc cargo commands in a dev shell.
-   `just pre-merge` is now a split gate: `just pre-commit` stays local and cheap while still enforcing first-party Rust formatting plus runtime TypeScript formatting/script typechecks, and the canonical heavy lane targets `checks.x86_64-linux.preMergeCheck` plus the Linux/KVM VM smoke on a Linux executor.
+   `just pre-merge` is now a split gate: `just pre-commit` stays local and cheap while still enforcing first-party Rust formatting plus runtime TypeScript formatting/script typechecks, the local Mac-hosted Pixel proof leases one real device from the shared pool and requires recovered Shadow shell evidence, and the canonical heavy lane targets `checks.x86_64-linux.preMergeCheck` plus the Linux/KVM VM smoke on a Linux executor.
    `just nightly` reuses that same x86_64-linux gate, then resolves `legacyPackages.x86_64-linux.ci.pixelBootCheck` plus the Pixel artifact cross-build helpers there.
    Those boot/tooling checks stay in nightly because they exercise private boot-lab tooling rather than the supported operator surface, and the default branch gate now has an explicit CI-system contract instead of inheriting the current host.
    That makes the lane reproducible and cacheable, and it removes the Mac-hosted VM path from the default branch gate.
@@ -119,7 +123,7 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
 - The supported rooted-Pixel camera lane is live-or-fail only: it stages the on-device camera broker and does not expose `PIXEL_CAMERA_ALLOW_MOCK` on the supported launcher surface.
 - VM and Pixel are the validation targets that matter for cleanup work. Linux desktop host smokes and other historical bring-up paths are secondary.
 - The default branch gate now assumes an x86_64-linux executor with KVM for the VM smoke. The local macOS VM lane remains a supported developer workflow, but it is no longer the required CI substrate.
-- `just pre-merge` still proves the VM smoke imperatively, and it still reuses a shared success record when the current `vm-smoke-inputs` store path already passed or matches landed `master`.
+- `just pre-merge` still proves the VM smoke imperatively, and it still reuses a shared success record when the current `vm-smoke-inputs` store path already passed or matches landed `master`. It also runs `scripts/ci/pixel_pre_merge_proof.sh` locally before dispatching the Linux executor work, so the remote GPU-less executor cannot silently turn real hardware coverage into host-only skips.
 - Hermetic Pixel boot/tooling coverage is still derivation-backed, but nightly owns it because that lane validates private boot-lab helpers instead of the supported operator contract.
 - The remaining VM impurity is intentional: host-prepared runtime app artifacts. The branch gate should keep that seam clean, manifest-driven, offline-safe for fixtures, and never built inside the guest.
 - This repo is still a bring-up repo, not a polished product repo. The cleanup goal is to make the supported system explicit and to stop advertising accidental operator surface.
