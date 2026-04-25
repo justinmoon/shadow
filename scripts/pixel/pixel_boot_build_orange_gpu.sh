@@ -27,6 +27,7 @@ APP_DIRECT_PRESENT_CLIENT_LAUNCHER_BINARY="${PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT
 KEY_PATH="${AVB_TEST_KEY_PATH:-}"
 OUTPUT_IMAGE="${PIXEL_BOOT_ORANGE_GPU_IMAGE:-}"
 HELLO_INIT_MODE="${PIXEL_HELLO_INIT_MODE:-direct}"
+BOOT_MODE="${PIXEL_SHADOW_BOOT_MODE:-${PIXEL_HELLO_INIT_BOOT_MODE:-lab}}"
 HOLD_SECS="${PIXEL_HELLO_INIT_HOLD_SECS:-3}"
 PRELUDE="${PIXEL_ORANGE_GPU_PRELUDE:-none}"
 PRELUDE_HOLD_SECS="${PIXEL_ORANGE_GPU_PRELUDE_HOLD_SECS:-0}"
@@ -151,6 +152,7 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--gpu-bundle DIR] [--key PATH]
                                                     [--output PATH] [--hold-secs N]
                                                     [--hello-init-mode direct|rust-bridge]
+                                                    [--boot-mode lab|product]
                                                     [--prelude none|orange-init]
                                                     [--prelude-hold-secs N]
                                                     [--orange-gpu-mode gpu-render|orange-gpu-loop|bundle-smoke|vulkan-instance-smoke|raw-vulkan-instance-smoke|firmware-probe-only|timeout-control-smoke|camera-hal-link-probe|wifi-linux-surface-probe|c-kgsl-open-readonly-smoke|c-kgsl-open-readonly-firmware-helper-smoke|c-kgsl-open-readonly-pid1-smoke|raw-kgsl-open-readonly-smoke|raw-kgsl-getproperties-smoke|raw-vulkan-physical-device-count-query-exit-smoke|raw-vulkan-physical-device-count-query-no-destroy-smoke|raw-vulkan-physical-device-count-query-smoke|raw-vulkan-physical-device-count-smoke|vulkan-enumerate-adapters-count-smoke|vulkan-enumerate-adapters-smoke|vulkan-adapter-smoke|vulkan-device-request-smoke|vulkan-device-smoke|vulkan-offscreen|compositor-scene|shell-session|shell-session-held|shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter|payload-partition-probe]
@@ -920,6 +922,20 @@ assert_prelude_word() {
   esac
 }
 
+assert_boot_mode_word() {
+  local value
+  value="${1:?assert_boot_mode_word requires a value}"
+
+  case "$value" in
+    lab|product)
+      ;;
+    *)
+      echo "pixel_boot_build_orange_gpu: boot mode must be lab or product: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
 assert_orange_gpu_mode_word() {
   local value
   value="${1:?assert_orange_gpu_mode_word requires a value}"
@@ -1164,6 +1180,9 @@ reboot_target=$REBOOT_TARGET
 run_token=$RUN_TOKEN
 EOF
 
+  if [[ "$BOOT_MODE" != "lab" ]]; then
+    printf 'boot_mode=%s\n' "$BOOT_MODE" >>"$output_path"
+  fi
   if [[ "$ORANGE_GPU_LAUNCH_DELAY_SECS" != "0" ]]; then
     printf 'orange_gpu_launch_delay_secs=%s\n' "$ORANGE_GPU_LAUNCH_DELAY_SECS" >>"$output_path"
   fi
@@ -2598,6 +2617,7 @@ write_metadata() {
     "$metadata_path" \
     "$OUTPUT_IMAGE" \
     "$GPU_BUNDLE_DIR" \
+    "$BOOT_MODE" \
     "$HOLD_SECS" \
     "$PRELUDE" \
     "$PRELUDE_HOLD_SECS" \
@@ -2672,6 +2692,7 @@ from pathlib import Path
     metadata_path,
     image_path,
     bundle_dir,
+    boot_mode,
     hold_seconds,
     prelude,
     prelude_hold_seconds,
@@ -2749,6 +2770,7 @@ payload_json = {
     "kind": "orange_gpu_build",
     "image": image_path,
     "payload": "orange-gpu",
+    "boot_mode": boot_mode,
     "orange_gpu_mode": orange_gpu_mode,
     "orange_gpu_launch_delay_secs": int(orange_gpu_launch_delay_secs),
     "orange_gpu_parent_probe_attempts": int(orange_gpu_parent_probe_attempts),
@@ -3053,6 +3075,10 @@ while [[ $# -gt 0 ]]; do
       HELLO_INIT_MODE="${2:?missing value for --hello-init-mode}"
       shift 2
       ;;
+    --boot-mode)
+      BOOT_MODE="${2:?missing value for --boot-mode}"
+      shift 2
+      ;;
     --prelude)
       PRELUDE="${2:?missing value for --prelude}"
       shift 2
@@ -3317,6 +3343,7 @@ if (( PRELUDE_HOLD_SECS > 3600 )); then
   exit 1
 fi
 assert_safe_word reboot-target "$REBOOT_TARGET" 31
+assert_boot_mode_word "$BOOT_MODE"
 assert_prelude_word "$PRELUDE"
 assert_orange_gpu_mode_word "$ORANGE_GPU_MODE"
 if [[ "$ORANGE_GPU_MODE" =~ ^(shell-session-runtime-touch-counter|app-direct-present-runtime-touch-counter)$ && "$APP_DIRECT_PRESENT_APP_ID_EXPLICIT" == "0" ]]; then
@@ -3431,6 +3458,10 @@ if [[ "$ORANGE_GPU_TIMEOUT_ACTION" == "hold" && "$HELLO_INIT_MODE" != "rust-brid
   exit 1
 fi
 assert_hello_init_mode_word "$HELLO_INIT_MODE"
+if [[ "$BOOT_MODE" == "product" && "$HELLO_INIT_MODE" != "rust-bridge" ]]; then
+  echo "pixel_boot_build_orange_gpu: --boot-mode product requires --hello-init-mode rust-bridge so Rust hello-init owns product profile validation" >&2
+  exit 1
+fi
 if payload_partition_probe_mode && [[ "$HELLO_INIT_MODE" != "rust-bridge" ]]; then
   echo "pixel_boot_build_orange_gpu: payload-partition-probe requires --hello-init-mode rust-bridge because the payload verifier is implemented in Rust hello-init" >&2
   exit 1
@@ -3968,6 +3999,7 @@ assert_built_boot_image_init_payload
 write_metadata
 
 printf 'Owned userspace mode: orange-gpu\n'
+printf 'Shadow boot mode: %s\n' "$BOOT_MODE"
 printf 'Root init path: preserve stock /init -> /system/bin/init symlink\n'
 if [[ "$HELLO_INIT_MODE" == "rust-bridge" ]]; then
   printf 'System init mutation: replace system/bin/init with rust no_std PID1 shim\n'

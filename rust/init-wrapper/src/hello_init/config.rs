@@ -19,6 +19,19 @@ pub(super) fn load_config(config_path: &str) -> Config {
             continue;
         };
         match key.trim() {
+            "boot_mode" | "boot-mode" => match value.trim() {
+                "lab" => {
+                    config.boot_mode = BootMode::Lab;
+                    config.boot_mode_invalid = false;
+                }
+                "product" => {
+                    config.boot_mode = BootMode::Product;
+                    config.boot_mode_invalid = false;
+                }
+                _ => {
+                    config.boot_mode_invalid = true;
+                }
+            },
             "payload" => config.payload = value.trim().to_string(),
             "prelude" => {
                 if let Some(parsed) = parse_allowed(value, &["none", "orange-init"]) {

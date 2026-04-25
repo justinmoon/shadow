@@ -80,7 +80,7 @@ Acceptance:
 
 ### 2. Add Boot Profiles
 
-[ ] Add `boot_mode=lab|product` to `shadow-init.cfg` parsing.
+[x] Add `boot_mode=lab|product` to `shadow-init.cfg` parsing.
 
 Acceptance:
 
@@ -209,6 +209,7 @@ Acceptance:
 
 - Sibling worktrees are actively changing `hello-init.rs` for demo app, camera, and Wi-Fi work. The module split should happen before adding much product behavior.
 - Module split landed as a behavior-preserving first seam. Product behavior starts with boot profile parsing next.
+- Boot profile parsing landed with `lab` as the implicit default. `product` is accepted only on the Rust hello-init path and fails explicitly until the product supervisor is implemented.
 - Camera remains lab/probe-only for the first product seam.
 - The current full-demo runner is useful as a source of payload/profile requirements, but product success must not depend on held observation or recovered proof artifacts.
 - Settings app Wi-Fi and live shell status are product-quality improvements, but they should not block the conference demo.

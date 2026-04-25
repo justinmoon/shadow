@@ -2675,17 +2675,17 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'watch_result
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-launch-delay"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-launch-delay-complete"'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" '"orange-gpu-parent-probe-start"'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'probe-summary.json'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'probe-fingerprint.txt'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'probe-timeout-class.txt'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '\"scene\":\"flat-orange\"'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"success-solid"'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"timeout-control-smoke"'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"c-kgsl-open-readonly-smoke"'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"raw-kgsl-getproperties-smoke"'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"function_graph\n"'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"parent-probe-result=skipped"'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'ensure_char_device(Path::new("/dev/ion"), 0o666, 10, 63)'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/storage.rs" 'probe-summary.json'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/storage.rs" 'probe-fingerprint.txt'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/storage.rs" 'probe-timeout-class.txt'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/proof.rs" '\"scene\":\"flat-orange\"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/payload.rs" '"success-solid"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/payload.rs" '"timeout-control-smoke"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/payload.rs" '"c-kgsl-open-readonly-smoke"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/payload.rs" '"raw-kgsl-getproperties-smoke"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/diagnostics.rs" '"function_graph\n"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/payload.rs" '"parent-probe-result=skipped"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/bootstrap.rs" 'ensure_char_device(Path::new("/dev/ion"), 0o666, 10, 63)'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_hello_init.c" 'ensure_char_device("/dev/ion", 0666, 10U, 63U)'
 assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" 'code-orange-'
 assert_file_contains "$REPO_ROOT/rust/drm-rect/src/lib.rs" '"solid-red"'
@@ -2843,10 +2843,10 @@ assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" '--input-module-dir'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'input-bootstrap sunfish-touch-event2 requires --mount-dev true'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" 'input-bootstrap sunfish-touch-event2 requires --dev-mount tmpfs'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'app_direct_present_manual_touch'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" '"physical-touch"'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'profile.injection'
-assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/bin/hello-init.rs" 'sunfish touch input bootstrap requires dev_mount=tmpfs'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/payload.rs" 'app_direct_present_manual_touch'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/payload.rs" '"physical-touch"'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/proof.rs" 'profile.injection'
+assert_file_contains "$REPO_ROOT/rust/init-wrapper/src/hello_init/bootstrap.rs" 'sunfish touch input bootstrap requires dev_mount=tmpfs'
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Prelude: %s\\n' \"\$PRELUDE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU mode: %s\\n' \"\$ORANGE_GPU_MODE\""
 assert_file_contains "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" "printf 'Orange GPU launch delay seconds: %s\\n' \"\$ORANGE_GPU_LAUNCH_DELAY_SECS\""
@@ -2894,6 +2894,7 @@ default_orange_gpu_boot_output="$(
 )"
 
 assert_contains "$default_orange_gpu_boot_output" "Owned userspace mode: orange-gpu"
+assert_contains "$default_orange_gpu_boot_output" "Shadow boot mode: lab"
 assert_contains "$default_orange_gpu_boot_output" "Payload contract: hello-init executes the staged shadow-gpu-smoke bundle from /orange-gpu"
 assert_contains "$default_orange_gpu_boot_output" "Orange GPU mode: gpu-render"
 assert_contains "$default_orange_gpu_boot_output" "GPU scene: flat-orange"
@@ -2903,6 +2904,7 @@ assert_contains "$default_orange_gpu_boot_output" "Derived success postlude: non
 assert_cpio_entry_absent "$DEFAULT_OUTPUT_IMAGE" orange-init
 assert_cpio_entry_equals "$DEFAULT_OUTPUT_IMAGE" shadow-init.cfg $'# Generated by pixel_boot_build_orange_gpu.sh\npayload=orange-gpu\norange_gpu_mode=gpu-render\nhold_seconds=7\nreboot_target=bootloader\nrun_token=orange-gpu-default-run-token\ndev_mount=tmpfs\nmount_sys=false\nlog_kmsg=false\nlog_pmsg=false\ndri_bootstrap=sunfish-card0-renderD128-kgsl3d0\n'
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" prelude "none"
+assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" boot_mode "lab"
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" prelude_hold_seconds "0"
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_mode "gpu-render"
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_scene "flat-orange"
@@ -2912,6 +2914,32 @@ assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_laun
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_parent_probe_attempts "0"
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_parent_probe_interval_secs "0"
 assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_watchdog_timeout_secs "0"
+
+product_boot_profile_output="$(
+  env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
+    PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
+      --input "$BOOT_BUILD_INPUT" \
+      --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
+      --rust-shim "$HELLO_INIT_RUST_EXEC_SHIM_OUTPUT" \
+      --gpu-bundle "$GPU_BUNDLE_DIR" \
+      --key "$AVB_KEY_PATH" \
+      --output "$TMP_DIR/orange-gpu-product-profile.img" \
+      --hello-init-mode rust-bridge \
+      --boot-mode product \
+      --hold-secs 7 \
+      --reboot-target bootloader \
+      --run-token orange-gpu-product-profile-run-token \
+      --dev-mount tmpfs \
+      --mount-sys false \
+      --log-kmsg false \
+      --log-pmsg false
+)"
+
+assert_contains "$product_boot_profile_output" "Shadow boot mode: product"
+assert_cpio_entry_contains "$TMP_DIR/orange-gpu-product-profile.img" shadow-init.cfg $'boot_mode=product\n'
+assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" boot_mode "product"
+assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" hello_init_mode "rust-bridge"
 
 launch_delay_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

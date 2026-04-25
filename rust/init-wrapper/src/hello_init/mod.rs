@@ -146,8 +146,25 @@ const SUNFISH_TOUCH_MODULES: [&str; 2] = ["heatmap.ko", "ftm5.ko"];
 static LOG_KMSG_ENABLED: AtomicBool = AtomicBool::new(true);
 static LOG_PMSG_ENABLED: AtomicBool = AtomicBool::new(true);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BootMode {
+    Lab,
+    Product,
+}
+
+impl BootMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Lab => "lab",
+            Self::Product => "product",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Config {
+    boot_mode: BootMode,
+    boot_mode_invalid: bool,
     payload: String,
     prelude: String,
     orange_gpu_mode: String,
@@ -201,6 +218,8 @@ struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            boot_mode: BootMode::Lab,
+            boot_mode_invalid: false,
             payload: "hello".to_string(),
             prelude: "none".to_string(),
             orange_gpu_mode: "gpu-render".to_string(),

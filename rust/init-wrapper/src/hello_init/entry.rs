@@ -9,6 +9,40 @@ pub(super) fn log_observability_status(config: &Config) {
     ));
 }
 
+fn validate_boot_profile(config: &Config) -> bool {
+    if config.boot_mode_invalid {
+        log_line("invalid boot_mode; expected lab or product");
+        return false;
+    }
+    match config.boot_mode {
+        BootMode::Lab => true,
+        BootMode::Product => {
+            if config.orange_gpu_timeout_action != "reboot" {
+                log_line("product boot mode rejects lab-only orange_gpu_timeout_action");
+                return false;
+            }
+            if config.orange_gpu_watchdog_timeout_secs != 0 {
+                log_line("product boot mode rejects lab-only orange_gpu_watchdog_timeout_secs");
+                return false;
+            }
+            if config.orange_gpu_metadata_stage_breadcrumb {
+                log_line("product boot mode rejects lab-only orange_gpu_metadata_stage_breadcrumb");
+                return false;
+            }
+            if config.orange_gpu_metadata_prune_token_root {
+                log_line("product boot mode rejects lab-only orange_gpu_metadata_prune_token_root");
+                return false;
+            }
+            if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode) {
+                log_line("product boot mode rejects lab-only session frame capture modes");
+                return false;
+            }
+            log_line("product boot mode selected but product PID1 runtime is not implemented yet");
+            false
+        }
+    }
+}
+
 pub fn main_linux_raw(argc: libc::c_int, argv: *const *const libc::c_char) -> ! {
     let args = parse_args_raw(argc, argv);
     if !args.selftest && !args.owned_child && process::id() != 1 {
@@ -56,6 +90,10 @@ pub fn main_linux_raw(argc: libc::c_int, argv: *const *const libc::c_char) -> ! 
         run_token_or_unset(&config)
     ));
     log_observability_status(&config);
+    if !validate_boot_profile(&config) {
+        hold_for_observation(config.hold_seconds);
+        reboot_from_config(&config);
+    }
 
     if config.mount_proc {
         let _ = ensure_directory(Path::new("/proc"), 0o555);
@@ -126,7 +164,8 @@ pub fn main_linux_raw(argc: libc::c_int, argv: *const *const libc::c_char) -> ! 
     }
 
     append_wrapper_log(&format!(
-        "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_metadata_prune_token_root={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} payload_probe_strategy={} payload_probe_source={} payload_probe_root={} payload_probe_manifest_path={} payload_probe_fallback_path={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} wifi_bootstrap={} wifi_helper_profile={} wifi_supplicant_probe={} wifi_association_probe={} wifi_ip_probe={} wifi_runtime_network={} wifi_runtime_clock_unix_secs_configured={} wifi_credentials_path_configured={} wifi_dhcp_client_path_configured={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
+        "config boot_mode={} payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_metadata_prune_token_root={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} payload_probe_strategy={} payload_probe_source={} payload_probe_root={} payload_probe_manifest_path={} payload_probe_fallback_path={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} wifi_bootstrap={} wifi_helper_profile={} wifi_supplicant_probe={} wifi_association_probe={} wifi_ip_probe={} wifi_runtime_network={} wifi_runtime_clock_unix_secs_configured={} wifi_credentials_path_configured={} wifi_dhcp_client_path_configured={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
+        config.boot_mode.as_str(),
         config.payload,
         config.prelude,
         config.orange_gpu_mode,
