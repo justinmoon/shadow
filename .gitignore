@@ -12,3 +12,6 @@ result
 node_modules/
 .agents/dispatch/state/
 tmp/
+# Local credentials and other device-specific operator state.
+wifi.env
+.shadow-local/

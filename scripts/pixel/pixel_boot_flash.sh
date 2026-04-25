@@ -15,12 +15,14 @@ EXPERIMENTAL_ACK=0
 ALLOW_ACTIVE_SLOT=0
 ACTIVATE_TARGET=0
 REBOOT_AFTER_FLASH=1
+WAIT_AFTER_REBOOT=1
 DRY_RUN=0
 
 usage() {
   cat <<'EOF'
 Usage: scripts/pixel/pixel_boot_flash.sh --experimental [--image PATH] [--slot inactive|active|a|b]
-                                        [--activate-target] [--allow-active-slot] [--no-reboot] [--dry-run]
+                                        [--activate-target] [--allow-active-slot] [--no-reboot]
+                                        [--no-wait] [--dry-run]
 
 Stage or boot a custom stock-init sunfish boot image with safety rails around the working Magisk lane.
 
@@ -87,6 +89,10 @@ while [[ $# -gt 0 ]]; do
       REBOOT_AFTER_FLASH=0
       shift
       ;;
+    --no-wait)
+      WAIT_AFTER_REBOOT=0
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -146,6 +152,7 @@ target_slot=$target_slot
 target_partition=$boot_partition
 activate_target=$(bool_word "$ACTIVATE_TARGET")
 reboot=$(bool_word "$REBOOT_AFTER_FLASH")
+wait_after_reboot=$(bool_word "$WAIT_AFTER_REBOOT")
 current_magisk_lane_preserved=$(if [[ "$target_slot" != "$current_slot" && "$ACTIVATE_TARGET" != "1" ]]; then printf true; else printf false; fi)
 metadata_path=$METADATA_PATH
 EOF
@@ -191,6 +198,7 @@ pixel_write_status_json \
   target_slot="$target_slot" \
   activate_target="$(bool_word "$ACTIVATE_TARGET")" \
   reboot="$(bool_word "$REBOOT_AFTER_FLASH")" \
+  wait_after_reboot="$(bool_word "$WAIT_AFTER_REBOOT")" \
   current_magisk_lane_preserved="$(if [[ "$target_slot" != "$current_slot" && "$ACTIVATE_TARGET" != "1" ]]; then printf true; else printf false; fi)"
 
 if [[ "$REBOOT_AFTER_FLASH" != "1" ]]; then
@@ -200,6 +208,12 @@ if [[ "$REBOOT_AFTER_FLASH" != "1" ]]; then
 fi
 
 pixel_fastboot "$serial" reboot
+if [[ "$WAIT_AFTER_REBOOT" != "1" ]]; then
+  printf 'Boot image flash completed on %s; not waiting for adb after reboot.\n' "$serial"
+  printf 'Metadata: %s\n' "$METADATA_PATH"
+  exit 0
+fi
+
 pixel_wait_for_adb "$serial" "$ADB_TIMEOUT_SECS"
 pixel_wait_for_boot_completed "$serial" "$BOOT_TIMEOUT_SECS"
 

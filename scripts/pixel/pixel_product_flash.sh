@@ -10,6 +10,8 @@ cd "$REPO_ROOT"
 
 serial="${PIXEL_SERIAL:-}"
 run_token="${RUN_TOKEN:-product-$(date -u +%Y%m%dT%H%M%SZ)}"
+run_token_explicit=0
+[[ -n "${RUN_TOKEN:-}" ]] && run_token_explicit=1
 run_root="${OUTPUT_ROOT:-build/pixel/runs/product-flash}"
 requested_slot="${PIXEL_PRODUCT_FLASH_SLOT:-inactive}"
 wifi_enabled="${WIFI:-0}"
@@ -18,6 +20,12 @@ wifi_assets_dir="${PIXEL_PRODUCT_WIFI_ASSETS_DIR:-${PIXEL_WIFI_BOOT_ASSETS_DIR:-
 wifi_linker_capsule_dir="${PIXEL_PRODUCT_WIFI_LINKER_CAPSULE_DIR:-${PIXEL_WIFI_LINKER_CAPSULE_DIR:-${PIXEL_CAMERA_LINKER_CAPSULE_DIR:-}}}"
 wifi_dhcp_client_binary="${PIXEL_PRODUCT_WIFI_DHCP_CLIENT_BIN:-${PIXEL_BOOT_WIFI_DHCP_CLIENT_BIN:-}}"
 wifi_helper_profile="${PIXEL_PRODUCT_WIFI_HELPER_PROFILE:-vnd-sm-core-binder-node}"
+wifi_assets_dir_provided=0
+wifi_linker_capsule_dir_provided=0
+[[ -n "$wifi_assets_dir" ]] && wifi_assets_dir_provided=1
+[[ -n "$wifi_linker_capsule_dir" ]] && wifi_linker_capsule_dir_provided=1
+wifi_assets_auto_collect=0
+wifi_linker_capsule_auto_collect=0
 allow_active_slot=0
 reuse_image=0
 build_only=0
@@ -109,18 +117,27 @@ device_shell_quote() {
 }
 
 find_wifi_dhcp_client() {
+  local candidate file_output
   if [[ -n "$wifi_dhcp_client_binary" ]]; then
     printf '%s\n' "$wifi_dhcp_client_binary"
     return 0
   fi
-  find /nix/store -maxdepth 3 -type f \
-    -path '*busybox-static-aarch64-unknown-linux-musl-*/bin/busybox' \
-    -perm -111 -print 2>/dev/null | sort | sed -n '1p'
+  while IFS= read -r candidate; do
+    file_output="$(file "$candidate" 2>/dev/null || true)"
+    if [[ "$file_output" == *ELF* && "$file_output" == *"ARM aarch64"* && "$file_output" != *"dynamically linked"* ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <(
+    find /nix/store -maxdepth 4 -type f \
+      -path '*/bin/busybox' \
+      -perm -111 -print 2>/dev/null | sort
+  )
 }
 
 validate_wifi_dhcp_client() {
   local binary_path file_output
-  binary_path="${1:?validate_wifi_dhcp_client requires a binary path}"
+  binary_path="${1:-}"
   if [[ ! -x "$binary_path" ]]; then
     return 1
   fi
@@ -156,6 +173,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run-token)
       run_token="${2:?missing value for --run-token}"
+      run_token_explicit=1
       shift 2
       ;;
     --output-root)
@@ -177,10 +195,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --wifi-assets)
       wifi_assets_dir="${2:?missing value for --wifi-assets}"
+      wifi_assets_dir_provided=1
       shift 2
       ;;
     --wifi-linker-capsule)
       wifi_linker_capsule_dir="${2:?missing value for --wifi-linker-capsule}"
+      wifi_linker_capsule_dir_provided=1
       shift 2
       ;;
     --wifi-dhcp-client)
@@ -224,8 +244,8 @@ case "$requested_slot" in
     ;;
 esac
 
-if bool_true "$wifi_enabled" && [[ "$reuse_image" == "1" ]]; then
-  echo "pixel_product_flash: --reuse-image is disabled for --wifi runs; rebuild so Wi-Fi runtime config and clock match this run" >&2
+if bool_true "$wifi_enabled" && [[ "$reuse_image" == "1" && "$run_token_explicit" != "1" ]]; then
+  echo "pixel_product_flash: --reuse-image with --wifi requires an explicit --run-token so credentials match the built image" >&2
   exit 64
 fi
 
@@ -255,6 +275,8 @@ image="$run_dir/product-shadow.img"
 payload="$image.orange-gpu.tar.xz"
 stage_dir="$run_dir/payload-stage-logical"
 flash_metadata="$run_dir/product-flash.json"
+wifi_assets_output_path="$run_dir/wifi-assets-output.txt"
+wifi_linker_capsule_output_path="$run_dir/wifi-linker-capsule-output.txt"
 all_apps="counter,camera,timeline,podcast,cashu,rust-demo,rust-timeline"
 needs_build=0
 if [[ "$reuse_image" != "1" || ! -f "$image" || ! -f "$payload" ]]; then
@@ -282,6 +304,14 @@ if bool_true "$wifi_enabled"; then
       "$wifi_linker_capsule_dir" \
       "$(latest_existing_dir "build/pixel/wifi-boot" "*/wifi-linker-capsule" || true)" || true
   )"
+  if [[ -z "$wifi_assets_dir" && "$wifi_assets_dir_provided" == "0" && "$dry_run" != "1" && "$build_only" != "1" ]]; then
+    wifi_assets_dir="$run_dir/wifi-assets"
+    wifi_assets_auto_collect=1
+  fi
+  if [[ -z "$wifi_linker_capsule_dir" && "$wifi_linker_capsule_dir_provided" == "0" && "$dry_run" != "1" && "$build_only" != "1" ]]; then
+    wifi_linker_capsule_dir="$run_dir/wifi-linker-capsule"
+    wifi_linker_capsule_auto_collect=1
+  fi
   wifi_dhcp_client_binary="$(find_wifi_dhcp_client)"
   wifi_credentials_device_path="/metadata/shadow-wifi-credentials/by-token/$run_token.env"
   wifi_credentials_tmp_device_path="$wifi_credentials_device_path.tmp"
@@ -313,11 +343,11 @@ if bool_true "$wifi_enabled" && [[ "$dry_run" != "1" ]]; then
     echo "pixel_product_flash: --wifi requires --wifi-credentials FILE" >&2
     exit 66
   fi
-  if [[ "$needs_build" == "1" && ( -z "$wifi_assets_dir" || ! -d "$wifi_assets_dir/modules" || ! -d "$wifi_assets_dir/firmware" ) ]]; then
+  if [[ "$needs_build" == "1" && "$wifi_assets_auto_collect" != "1" && ( -z "$wifi_assets_dir" || ! -d "$wifi_assets_dir/modules" || ! -d "$wifi_assets_dir/firmware" ) ]]; then
     echo "pixel_product_flash: --wifi requires Wi-Fi assets with modules/ and firmware/" >&2
     exit 66
   fi
-  if [[ "$needs_build" == "1" && ( -z "$wifi_linker_capsule_dir" || ! -d "$wifi_linker_capsule_dir" ) ]]; then
+  if [[ "$needs_build" == "1" && "$wifi_linker_capsule_auto_collect" != "1" && ( -z "$wifi_linker_capsule_dir" || ! -d "$wifi_linker_capsule_dir" ) ]]; then
     echo "pixel_product_flash: --wifi requires a Wi-Fi linker capsule directory" >&2
     exit 66
   fi
@@ -328,6 +358,44 @@ if bool_true "$wifi_enabled" && [[ "$dry_run" != "1" ]]; then
 fi
 
 mkdir -p "$run_dir"
+if [[ "$dry_run" != "1" && "$build_only" != "1" ]]; then
+  lease_args=(
+    "$SCRIPT_DIR/shadowctl" lease acquire "$serial" \
+    --owner "${USER:-codex}" \
+    --lane product-flash \
+    --ttl 7200
+  )
+  if bool_true "${SHADOW_DEVICE_LEASE_FORCE:-0}"; then
+    lease_args+=(--force)
+  fi
+  "${lease_args[@]}"
+fi
+
+if bool_true "$wifi_enabled" && [[ "$needs_build" == "1" && "$dry_run" != "1" ]]; then
+  if [[ "$wifi_assets_auto_collect" == "1" ]]; then
+    echo
+    echo "collecting Wi-Fi module/firmware assets..."
+    rm -rf "$wifi_assets_dir"
+    if ! PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel/pixel_wifi_collect_boot_assets.sh" \
+      --output "$wifi_assets_dir" \
+      >"$wifi_assets_output_path" 2>&1; then
+      cat "$wifi_assets_output_path" >&2 || true
+      exit 66
+    fi
+  fi
+  if [[ "$wifi_linker_capsule_auto_collect" == "1" ]]; then
+    echo
+    echo "collecting Wi-Fi linker capsule..."
+    rm -rf "$wifi_linker_capsule_dir"
+    if ! PIXEL_SERIAL="$serial" "$SCRIPT_DIR/pixel/pixel_wifi_collect_capsule.sh" \
+      --output "$wifi_linker_capsule_dir" \
+      >"$wifi_linker_capsule_output_path" 2>&1; then
+      cat "$wifi_linker_capsule_output_path" >&2 || true
+      exit 66
+    fi
+  fi
+fi
+
 effective_firmware_dir="$firmware_dir"
 combined_firmware_dir="$run_dir/combined-firmware"
 if bool_true "$wifi_enabled"; then
@@ -393,6 +461,7 @@ flash_cmd=(
   --experimental
   --slot "$target_slot"
   --activate-target
+  --no-wait
   --image "$image"
 )
 if [[ "$allow_active_slot" == "1" ]]; then
@@ -405,9 +474,11 @@ if [[ "$dry_run" == "1" ]]; then
     "$run_token" "$run_dir" "$image" "$payload" "$requested_slot" "$target_slot" "$all_apps"
   printf 'firmware_dir=%s\ninput_module_dir=%s\n' "$effective_firmware_dir" "$input_module_dir"
   if bool_true "$wifi_enabled"; then
-    printf 'wifi_enabled=true\nwifi_assets_dir=%s\nwifi_linker_capsule_dir=%s\nwifi_dhcp_client=%s\nwifi_credentials_device_path=%s\n' \
+    printf 'wifi_enabled=true\nwifi_assets_dir=%s\nwifi_assets_auto_collect=%s\nwifi_linker_capsule_dir=%s\nwifi_linker_capsule_auto_collect=%s\nwifi_dhcp_client=%s\nwifi_credentials_device_path=%s\n' \
       "$wifi_assets_dir" \
+      "$wifi_assets_auto_collect" \
       "$wifi_linker_capsule_dir" \
+      "$wifi_linker_capsule_auto_collect" \
       "$wifi_dhcp_client_binary" \
       "$wifi_credentials_device_path"
   fi
@@ -459,12 +530,6 @@ else
   echo "wifi: disabled"
 fi
 echo
-
-"$SCRIPT_DIR/shadowctl" lease acquire "$serial" \
-  --owner "${USER:-codex}" \
-  --lane product-flash \
-  --ttl 7200
-
 if [[ "$needs_build" == "1" ]]; then
   echo
   echo "building product Shadow image..."

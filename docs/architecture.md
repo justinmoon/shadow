@@ -55,6 +55,8 @@ Anything outside that surface is bring-up history, probe infrastructure, or an i
   - `just product-flash target=pixel [--wifi-credentials <file>]`
   - `sc -t pixel product flash [--wifi-credentials <file>]`
   - `just pixel-ci <subset>`
+- Keep local Wi-Fi credential files out of git. The repo-local convention is `.shadow-local/wifi.env`, for example:
+  `just product-flash target=<serial> --wifi-credentials .shadow-local/wifi.env`.
 - For suite staging, run-only semantics, and the contract for adding app-specific validation lanes, read [App testing](app-testing.md).
 - `just pixel-ci`, `just pixel-stage`, and `just pixel-run` are thin convenience wrappers around `shadowctl` Pixel CI commands.
 - The plugged-in Pixel lane is real hardware validation and `just pre-merge`
