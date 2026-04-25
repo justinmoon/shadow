@@ -783,6 +783,44 @@ if expected_substring not in text:
 PY
 }
 
+assert_cpio_tar_xz_entry_not_contains() {
+  local archive_path cpio_entry tar_entry unexpected_substring
+  archive_path="$1"
+  cpio_entry="$2"
+  tar_entry="$3"
+  unexpected_substring="$4"
+
+  PYTHONPATH="$REPO_ROOT/scripts/lib" python3 - "$archive_path" "$cpio_entry" "$tar_entry" "$unexpected_substring" <<'PY'
+from pathlib import Path
+import io
+import sys
+import tarfile
+
+from cpio_edit import read_cpio
+
+archive_path, cpio_entry, tar_entry, unexpected_substring = sys.argv[1:5]
+entries = {
+    entry.name: entry.data
+    for entry in read_cpio(Path(archive_path)).without_trailer()
+}
+payload = entries.get(cpio_entry)
+if payload is None:
+    raise SystemExit(f"missing cpio entry: {cpio_entry}")
+with tarfile.open(fileobj=io.BytesIO(payload), mode="r:xz") as archive:
+    members = {member.name.removeprefix("./"): member for member in archive.getmembers()}
+    member = members.get(tar_entry)
+    if member is None:
+        raise SystemExit(f"missing tar.xz entry: {tar_entry}")
+    extracted = archive.extractfile(member)
+    data = b"" if extracted is None else extracted.read()
+text = data.decode("utf-8")
+if unexpected_substring in text:
+    raise SystemExit(
+        f"expected tar.xz entry {tar_entry} not to contain {unexpected_substring!r}: {text!r}"
+    )
+PY
+}
+
 assert_tar_xz_entry_present() {
   local archive_path tar_entry
   archive_path="$1"
@@ -2918,6 +2956,11 @@ assert_json_field_equals "$DEFAULT_OUTPUT_IMAGE.hello-init.json" orange_gpu_watc
 product_boot_profile_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \
     PIXEL_ROOT_STOCK_BOOT_IMG="$BOOT_BUILD_INPUT" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_APP_ID=rust-demo \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_BUNDLE_DIR="$APP_DIRECT_PRESENT_BUNDLE_DIR" \
+    PIXEL_ORANGE_GPU_APP_DIRECT_PRESENT_LAUNCHER_BIN="$APP_DIRECT_PRESENT_LAUNCHER_OUTPUT" \
+    PIXEL_SHADOW_SESSION_BIN="$SHADOW_SESSION_OUTPUT" \
+    PIXEL_SHADOW_COMPOSITOR_GUEST_DYNAMIC_BIN="$SHADOW_COMPOSITOR_DYNAMIC_OUTPUT" \
     "$REPO_ROOT/scripts/pixel/pixel_boot_build_orange_gpu.sh" \
       --input "$BOOT_BUILD_INPUT" \
       --init "$HELLO_INIT_RUST_CHILD_OUTPUT" \
@@ -2927,6 +2970,7 @@ product_boot_profile_output="$(
       --output "$TMP_DIR/orange-gpu-product-profile.img" \
       --hello-init-mode rust-bridge \
       --boot-mode product \
+      --orange-gpu-mode shell-session \
       --hold-secs 7 \
       --reboot-target bootloader \
       --run-token orange-gpu-product-profile-run-token \
@@ -2937,9 +2981,19 @@ product_boot_profile_output="$(
 )"
 
 assert_contains "$product_boot_profile_output" "Shadow boot mode: product"
+assert_contains "$product_boot_profile_output" "Payload contract: hello-init launches /orange-gpu/shadow-session in product shell-session mode"
 assert_cpio_entry_contains "$TMP_DIR/orange-gpu-product-profile.img" shadow-init.cfg $'boot_mode=product\n'
+assert_cpio_entry_contains "$TMP_DIR/orange-gpu-product-profile.img" shadow-init.cfg $'orange_gpu_mode=shell-session\n'
 assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" boot_mode "product"
 assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" hello_init_mode "rust-bridge"
+assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" orange_gpu_mode "shell-session"
+assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" orange_gpu_metadata_stage_breadcrumb "false"
+assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" orange_gpu_watchdog_timeout_secs "0"
+assert_json_field_equals "$TMP_DIR/orange-gpu-product-profile.img.hello-init.json" metadata_compositor_frame_path ""
+assert_cpio_tar_xz_entry_contains "$TMP_DIR/orange-gpu-product-profile.img" orange-gpu.tar.xz shell-session-startup.json '"exitOnFirstFrame": false'
+assert_cpio_tar_xz_entry_not_contains "$TMP_DIR/orange-gpu-product-profile.img" orange-gpu.tar.xz shell-session-startup.json '"frameCapture"'
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-product-profile.img" orange-gpu.tar.xz shadow-session
+assert_cpio_tar_xz_entry_present "$TMP_DIR/orange-gpu-product-profile.img" orange-gpu.tar.xz shadow-compositor-guest
 
 launch_delay_boot_output="$(
   env PATH="$MOCK_BIN:$PATH" SHADOW_BOOTIMG_SHELL=1 MOCK_BOOT_RAMDISK="$BOOT_BUILD_RAMDISK" \

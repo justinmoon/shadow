@@ -16,30 +16,7 @@ fn validate_boot_profile(config: &Config) -> bool {
     }
     match config.boot_mode {
         BootMode::Lab => true,
-        BootMode::Product => {
-            if config.orange_gpu_timeout_action != "reboot" {
-                log_line("product boot mode rejects lab-only orange_gpu_timeout_action");
-                return false;
-            }
-            if config.orange_gpu_watchdog_timeout_secs != 0 {
-                log_line("product boot mode rejects lab-only orange_gpu_watchdog_timeout_secs");
-                return false;
-            }
-            if config.orange_gpu_metadata_stage_breadcrumb {
-                log_line("product boot mode rejects lab-only orange_gpu_metadata_stage_breadcrumb");
-                return false;
-            }
-            if config.orange_gpu_metadata_prune_token_root {
-                log_line("product boot mode rejects lab-only orange_gpu_metadata_prune_token_root");
-                return false;
-            }
-            if orange_gpu_mode_uses_session_frame_capture(&config.orange_gpu_mode) {
-                log_line("product boot mode rejects lab-only session frame capture modes");
-                return false;
-            }
-            log_line("product boot mode selected but product PID1 runtime is not implemented yet");
-            false
-        }
+        BootMode::Product => true,
     }
 }
 
@@ -206,6 +183,10 @@ pub fn main_linux_raw(argc: libc::c_int, argv: *const *const libc::c_char) -> ! 
         bool_word(config.log_kmsg),
         bool_word(config.log_pmsg),
     ));
+
+    if config.boot_mode == BootMode::Product {
+        run_product_orange_gpu_runtime(&config);
+    }
 
     if config.payload == "orange-init" {
         let status =

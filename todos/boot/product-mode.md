@@ -91,7 +91,7 @@ Acceptance:
 
 ### 3. Product PID1 Runtime
 
-[ ] Implement product mode as a long-running supervisor.
+[x] Implement product mode as a long-running supervisor.
 
 Behavior:
 
@@ -214,3 +214,5 @@ Acceptance:
 - The current full-demo runner is useful as a source of payload/profile requirements, but product success must not depend on held observation or recovered proof artifacts.
 - Settings app Wi-Fi and live shell status are product-quality improvements, but they should not block the conference demo.
 - Avoid renaming every `orange_gpu` key in the first pass; stabilize behavior first, then clean up naming with compatibility shims.
+- Product PID1 runtime is being added as a separate `product` module so lab watchdog/proof semantics stay under the existing payload runner.
+- Product runtime software seam is implemented. Hardware kill/restart validation remains in the Part 1 hardware product run item.

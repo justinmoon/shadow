@@ -1690,6 +1690,7 @@ print(json.dumps(entries, separators=(",", ":")))
     "$APP_DIRECT_PRESENT_RUNTIME_BUNDLE_PATH" \
     "$SHELL_SESSION_STARTUP_CONFIG_PATH" \
     "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" \
+    "$BOOT_MODE" \
     "$ORANGE_GPU_MODE" \
     "$APP_DIRECT_PRESENT_MANUAL_TOUCH" \
     "$SHELL_SESSION_APP_PROFILE" \
@@ -1716,12 +1717,14 @@ from pathlib import Path
     runtime_bundle_path,
     runtime_session_config_path,
     frame_artifact_path,
+    boot_mode,
     orange_gpu_mode,
     manual_touch_value,
     session_app_profile,
     session_config_path,
     extra_env_json,
-) = sys.argv[1:22]
+) = sys.argv[1:23]
+product_mode = boot_mode == "product"
 touch_counter_mode = orange_gpu_mode == "shell-session-runtime-touch-counter"
 held_mode = orange_gpu_mode == "shell-session-held"
 manual_touch_mode = manual_touch_value.lower() in {"1", "true", "yes", "on"}
@@ -1836,14 +1839,17 @@ payload = {
         "strictGpuResident": True,
         "dmabufGlobalEnabled": True,
         "dmabufFeedbackEnabled": True,
-        "exitOnFirstFrame": not touch_counter_mode and not held_mode,
-        "frameCapture": {
-            "mode": "every-frame",
-            "artifactPath": frame_artifact_path,
-            "checksum": True,
-        },
+        "exitOnFirstFrame": False
+        if product_mode
+        else not touch_counter_mode and not held_mode,
     },
 }
+if not product_mode:
+    payload["compositor"]["frameCapture"] = {
+        "mode": "every-frame",
+        "artifactPath": frame_artifact_path,
+        "checksum": True,
+    }
 if session_app_profile:
     payload["session"] = {
         "launchEnvAssignments": [
@@ -3442,11 +3448,11 @@ if [[ -n "$CAMERA_LINKER_CAPSULE_DIR" ]]; then
     exit 1
   fi
 fi
-if [[ "$ORANGE_GPU_MODE" =~ ^(compositor-scene|shell-session|shell-session-held|shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ && "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" != "true" ]]; then
+if [[ "$BOOT_MODE" != "product" && "$ORANGE_GPU_MODE" =~ ^(compositor-scene|shell-session|shell-session-held|shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ && "$ORANGE_GPU_METADATA_STAGE_BREADCRUMB" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: $ORANGE_GPU_MODE requires --orange-gpu-metadata-stage-breadcrumb true so the captured frame survives recovery" >&2
   exit 1
 fi
-if [[ "$ORANGE_GPU_MODE" =~ ^(compositor-scene|shell-session|shell-session-held|shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ && "$ORANGE_GPU_FIRMWARE_HELPER" != "true" ]]; then
+if [[ "$BOOT_MODE" != "product" && "$ORANGE_GPU_MODE" =~ ^(compositor-scene|shell-session|shell-session-held|shell-session-runtime-touch-counter|app-direct-present|app-direct-present-touch-counter|app-direct-present-runtime-touch-counter)$ && "$ORANGE_GPU_FIRMWARE_HELPER" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: $ORANGE_GPU_MODE requires --orange-gpu-firmware-helper true so the session stays on the signed-off GPU seam" >&2
   exit 1
 fi
@@ -4033,7 +4039,11 @@ elif [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-pid1-smoke" ]]; then
 elif [[ "$ORANGE_GPU_MODE" == "compositor-scene" ]]; then
   printf 'Payload contract: hello-init launches /orange-gpu/shadow-session in shell-only compositor mode and requires a durable captured frame under %s\n' "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")"
 elif [[ "$ORANGE_GPU_MODE" == "shell-session" ]]; then
-  printf 'Payload contract: hello-init launches /orange-gpu/shadow-session in shell-session mode, starts %s from the shell, and requires a durable captured app frame under %s\n' "$SHELL_SESSION_START_APP_ID" "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")"
+  if [[ "$BOOT_MODE" == "product" ]]; then
+    printf 'Payload contract: hello-init launches /orange-gpu/shadow-session in product shell-session mode, starts %s from the shell, and supervises it without lab watchdog reboot\n' "$SHELL_SESSION_START_APP_ID"
+  else
+    printf 'Payload contract: hello-init launches /orange-gpu/shadow-session in shell-session mode, starts %s from the shell, and requires a durable captured app frame under %s\n' "$SHELL_SESSION_START_APP_ID" "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")"
+  fi
 elif [[ "$ORANGE_GPU_MODE" == "shell-session-held" ]]; then
   printf 'Payload contract: hello-init launches /orange-gpu/shadow-session in held shell-session mode, starts %s from the shell, and treats watchdog recovery as success only after durable shell/app frame proof under %s\n' "$SHELL_SESSION_START_APP_ID" "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")"
 elif [[ "$ORANGE_GPU_MODE" == "shell-session-runtime-touch-counter" ]]; then
