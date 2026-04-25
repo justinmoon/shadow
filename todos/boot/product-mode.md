@@ -111,7 +111,7 @@ Acceptance:
 
 ### 4. Product Display And Power Controls
 
-[ ] Add physical power-button short press handling in the compositor input path.
+[x] Add physical power-button short press handling in the compositor input path.
 
 Behavior:
 
@@ -216,3 +216,5 @@ Acceptance:
 - Avoid renaming every `orange_gpu` key in the first pass; stabilize behavior first, then clean up naming with compatibility shims.
 - Product PID1 runtime is being added as a separate `product` module so lab watchdog/proof semantics stay under the existing payload runner.
 - Product runtime software seam is implemented. Hardware kill/restart validation remains in the Part 1 hardware product run item.
+- Power-button work starts in `shadow-compositor-guest`: extend the existing input-device key reader, then add a KMS display power toggle with DPMS/CRTC fallback.
+- Power-button software path is implemented in the guest compositor. Hardware screen off/on validation remains in the Part 1 hardware product run item.

@@ -24,6 +24,8 @@ const BYTES_PER_PIXEL: usize = 4;
 const BACKGROUND_PIXEL: [u8; 4] = [0x18, 0x12, 0x10, 0xFF];
 const BOOT_SPLASH_WIDTH: u32 = 384;
 const BOOT_SPLASH_HEIGHT: u32 = 720;
+const DRM_MODE_DPMS_ON: u64 = 0;
+const DRM_MODE_DPMS_OFF: u64 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScanoutFormatCandidate {
@@ -326,6 +328,7 @@ pub struct KmsDisplay {
     height: u32,
     strict_gpu_resident: bool,
     scanout_candidates: Vec<ScanoutFormatCandidate>,
+    power_enabled: bool,
 }
 
 struct ImportedFramebuffer {
@@ -431,6 +434,7 @@ impl KmsDisplay {
             height,
             strict_gpu_resident,
             scanout_candidates,
+            power_enabled: true,
         };
 
         display.clear()?;
@@ -470,6 +474,10 @@ impl KmsDisplay {
     }
 
     pub fn present_frame_view(&mut self, frame: CapturedFrameView<'_>) -> Result<()> {
+        if !self.power_enabled {
+            tracing::debug!("[shadow-guest-compositor] kms-present-frame-view-skipped display=off");
+            return Ok(());
+        }
         note_cpu_dumb_buffer_present(self.strict_gpu_resident)?;
         self.release_imported_framebuffer()?;
         let present_started = Instant::now();
@@ -503,6 +511,10 @@ impl KmsDisplay {
     }
 
     pub fn present_dmabuf(&mut self, dmabuf: &Dmabuf) -> Result<()> {
+        if !self.power_enabled {
+            tracing::debug!("[shadow-guest-compositor] kms-present-dmabuf-skipped display=off");
+            return Ok(());
+        }
         let import_started = Instant::now();
         let imported = self.import_dmabuf_framebuffer(dmabuf)?;
         let import_elapsed = import_started.elapsed();
@@ -527,6 +539,64 @@ impl KmsDisplay {
             );
         }
         Ok(())
+    }
+
+    pub fn set_power_enabled(&mut self, enabled: bool) -> Result<()> {
+        if self.power_enabled == enabled {
+            return Ok(());
+        }
+
+        if enabled {
+            if let Err(error) = self.set_dpms_enabled(true) {
+                tracing::warn!("[shadow-guest-compositor] kms-dpms-on-failed: {error:#}");
+            }
+            self.program_crtc()?;
+        } else {
+            self.release_imported_framebuffer()?;
+            match self.set_dpms_enabled(false) {
+                Ok(()) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        "[shadow-guest-compositor] kms-dpms-off-failed; disabling crtc: {error:#}"
+                    );
+                    self.disable_crtc()?;
+                }
+            }
+        }
+
+        self.power_enabled = enabled;
+        Ok(())
+    }
+
+    fn set_dpms_enabled(&self, enabled: bool) -> Result<()> {
+        let properties = self
+            .card
+            .get_properties(self.connector_handle)
+            .context("failed to query connector properties")?;
+        for (property_handle, _) in properties.iter() {
+            let property = self
+                .card
+                .get_property(*property_handle)
+                .context("failed to query connector property")?;
+            if property.name().to_bytes() == b"DPMS" {
+                let value = if enabled {
+                    DRM_MODE_DPMS_ON
+                } else {
+                    DRM_MODE_DPMS_OFF
+                };
+                self.card
+                    .set_property(self.connector_handle, *property_handle, value)
+                    .context("failed to set connector DPMS property")?;
+                return Ok(());
+            }
+        }
+        Err(anyhow!("connector does not expose DPMS property"))
+    }
+
+    fn disable_crtc(&self) -> Result<()> {
+        self.card
+            .set_crtc(self.crtc_handle, None, (0, 0), &[], None)
+            .context("failed to disable CRTC")
     }
 
     fn clear(&mut self) -> Result<()> {

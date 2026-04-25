@@ -180,6 +180,7 @@ struct ShadowGuestCompositor {
     exit_on_first_dma_buffer: bool,
     boot_splash_drm: bool,
     kms_display: Option<kms::KmsDisplay>,
+    display_power_enabled: bool,
     strict_gpu_resident: bool,
     last_frame_size: Option<(u32, u32)>,
     last_published_frame: Option<kms::CapturedFrame>,
@@ -328,6 +329,7 @@ impl ShadowGuestCompositor {
             exit_on_first_dma_buffer: config.exit_on_first_dma_buffer,
             boot_splash_drm: config.boot_splash_drm,
             kms_display: None,
+            display_power_enabled: true,
             strict_gpu_resident: config.strict_gpu_resident,
             last_frame_size: None,
             last_published_frame: None,
@@ -1024,7 +1026,7 @@ impl ShadowGuestCompositor {
         event_loop
             .handle()
             .insert_source(receiver, |event, _, state| match event {
-                channel::Event::Msg(event) => state.handle_media_key_input(event),
+                channel::Event::Msg(event) => state.handle_system_key_input(event),
                 channel::Event::Closed => {
                     tracing::warn!("[shadow-guest-compositor] media-key-source closed")
                 }
@@ -1033,8 +1035,51 @@ impl ShadowGuestCompositor {
         media_keys::spawn_media_key_readers(devices, sender);
     }
 
-    fn handle_media_key_input(&mut self, event: media_keys::MediaKeyEvent) {
-        self.dispatch_control_media_async(event.action);
+    fn handle_system_key_input(&mut self, event: media_keys::SystemKeyEvent) {
+        match event {
+            media_keys::SystemKeyEvent::Media(action) => {
+                self.dispatch_control_media_async(action);
+            }
+            media_keys::SystemKeyEvent::PowerButton => {
+                self.toggle_display_power();
+            }
+        }
+    }
+
+    fn toggle_display_power(&mut self) {
+        if !self.drm_enabled {
+            tracing::warn!("[shadow-guest-compositor] display-power-toggle ignored drm=disabled");
+            return;
+        }
+
+        let enabled = !self.display_power_enabled;
+        let result = self
+            .ensure_kms_display_with_timeout(Duration::from_secs(2))
+            .ok_or_else(|| String::from("kms display unavailable"))
+            .and_then(|display| {
+                display
+                    .set_power_enabled(enabled)
+                    .map_err(|error| format!("{error:#}"))
+            });
+
+        match result {
+            Ok(()) => {
+                self.display_power_enabled = enabled;
+                tracing::info!(
+                    "[shadow-guest-compositor] display-power state={}",
+                    if enabled { "on" } else { "off" }
+                );
+                if enabled {
+                    self.publish_visible_shell_frame("display-power-on");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "[shadow-guest-compositor] display-power-toggle-failed target={} error={error}",
+                    if enabled { "on" } else { "off" }
+                );
+            }
+        }
     }
 
     fn surface_under(
