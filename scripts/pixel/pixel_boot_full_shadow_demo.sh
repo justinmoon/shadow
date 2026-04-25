@@ -96,8 +96,8 @@ bool_true() {
 }
 
 validate_run_token() {
-  if [[ ! "$run_token" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ ]]; then
-    echo "pixel_boot_full_shadow_demo: run token must be 1-63 safe characters and start with an alphanumeric character: $run_token" >&2
+  if [[ ! "$run_token" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{7,62}$ ]]; then
+    echo "pixel_boot_full_shadow_demo: run token must be 8-63 safe characters and start with an alphanumeric character: $run_token" >&2
     exit 64
   fi
 }

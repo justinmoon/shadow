@@ -3435,17 +3435,18 @@ mod linux {
     }
 
     fn wpa_ctrl_result_json(result: &WpaCtrlCommandResult) -> String {
+        let command_label = redact_wifi_sensitive_text(&result.command_label);
         if result.error.is_empty() {
             format!(
                 "{{\"command\":{},\"ok\":{},\"response\":{}}}",
-                json_string(&result.command_label),
+                json_string(&command_label),
                 bool_word(result.ok),
                 json_string(&wifi_command_text(result.response.as_bytes(), 8192))
             )
         } else {
             format!(
                 "{{\"command\":{},\"ok\":false,\"error\":{}}}",
-                json_string(&result.command_label),
+                json_string(&command_label),
                 json_string(&result.error)
             )
         }
@@ -4048,9 +4049,12 @@ mod linux {
         let default_route = proc_net_route_has_default_wlan0(&route_text);
         let ipv4_address = wlan0_has_ipv4_address(&ifconfig_text);
         let relay_connect = tcp_connect_probe("relay.damus.io", 443);
+        let primal_connect = tcp_connect_probe("relay.primal.net", 443);
         let fallback_connect = tcp_connect_probe("1.1.1.1", 53);
-        let connected = relay_connect.connected || fallback_connect.connected;
-        let completed = dhcp_success && ipv4_address && default_route && connected;
+        let dns_ready = resolv_conf_has_nameserver(&resolv_conf);
+        let hostname_tcp_ready = relay_connect.connected || primal_connect.connected;
+        let completed =
+            dhcp_success && ipv4_address && default_route && dns_ready && hostname_tcp_ready;
         let post_dhcp_cleanup = wifi_ip_state_cleanup_json(busybox_path);
         let cleanup = wifi_association_cleanup_json(socket_path, network_id);
 
@@ -4059,8 +4063,8 @@ mod linux {
                 "{{\"attempted\":true,\"completed\":{},\"reason\":{},",
                 "\"association\":{},\"preDhcpCleanup\":{},\"dhcp\":{},\"dhcpSuccess\":{},",
                 "\"ifconfig\":{},\"ipv4AddressPresent\":{},\"defaultRoutePresent\":{},",
-                "\"procNetRoute\":{},\"resolvConf\":{},",
-                "\"tcpConnect\":[{},{}],\"postDhcpCleanup\":{},\"cleanup\":{}}}"
+                "\"dnsReady\":{},\"hostnameTcpReady\":{},\"procNetRoute\":{},\"resolvConf\":{},",
+                "\"tcpConnect\":[{},{},{}],\"postDhcpCleanup\":{},\"cleanup\":{}}}"
             ),
             bool_word(completed),
             json_string(if completed { "" } else { "ip-proof-failed" }),
@@ -4071,9 +4075,12 @@ mod linux {
             ifconfig_json,
             bool_word(ipv4_address),
             bool_word(default_route),
+            bool_word(dns_ready),
+            bool_word(hostname_tcp_ready),
             json_string(&route_text),
             json_string(&resolv_conf),
             relay_connect.json,
+            primal_connect.json,
             fallback_connect.json,
             post_dhcp_cleanup,
             cleanup
@@ -4217,6 +4224,10 @@ mod linux {
                 "wifi-runtime-wpa-supplicant-socket-missing",
             );
             let child_pid = child.id();
+            let log_excerpt = redact_wifi_sensitive_text(&read_file_excerpt(
+                "/orange-gpu/wifi-helper-wpa_supplicant.log",
+                8192,
+            ));
             let cleanup = stop_wifi_runtime_child_json(&mut child);
             return WifiRuntimeNetworkStart {
                 json: format!(
@@ -4230,10 +4241,7 @@ mod linux {
                     json_string(&early_exit_status),
                     wifi_boot_path_status_json("/data/vendor/wifi/wpa/sockets/wlan0"),
                     cleanup,
-                    json_string(&redact_wifi_sensitive_text(&read_file_excerpt(
-                        "/orange-gpu/wifi-helper-wpa_supplicant.log",
-                        8192
-                    )))
+                    json_string(&log_excerpt)
                 ),
                 completed: false,
                 network: None,
@@ -4408,14 +4416,15 @@ mod linux {
         let ipv4_address = wlan0_has_ipv4_address(&ifconfig_text);
         let dns_ready = resolv_conf_has_nameserver(&resolv_conf);
         let relay_connect = tcp_connect_probe("relay.damus.io", 443);
+        let primal_connect = tcp_connect_probe("relay.primal.net", 443);
         let fallback_connect = tcp_connect_probe("1.1.1.1", 53);
         let supplicant_liveness = wifi_child_liveness_json(&mut child);
-        let connected = relay_connect.connected || fallback_connect.connected;
+        let hostname_tcp_ready = relay_connect.connected || primal_connect.connected;
         let completed = dhcp_success
             && ipv4_address
             && default_route
             && dns_ready
-            && connected
+            && hostname_tcp_ready
             && supplicant_liveness.alive;
         write_payload_probe_stage(
             probe_stage_path,
@@ -4436,7 +4445,8 @@ mod linux {
                         "\"scanResults\":{},\"statusAfterScan\":{},\"association\":{},",
                         "\"preDhcpCleanup\":{},\"dhcp\":{},\"dhcpSuccess\":{},\"ifconfig\":{},",
                         "\"ipv4AddressPresent\":{},\"defaultRoutePresent\":{},\"dnsReady\":{},",
-                        "\"procNetRoute\":{},\"resolvConf\":{},\"tcpConnect\":[{},{}],",
+                        "\"hostnameTcpReady\":{},\"procNetRoute\":{},\"resolvConf\":{},",
+                        "\"tcpConnect\":[{},{},{}],",
                         "\"supplicant\":{},\"postDhcpCleanup\":{},\"associationCleanup\":{},",
                         "\"cleanup\":{}}}"
                     ),
@@ -4456,9 +4466,11 @@ mod linux {
                     bool_word(ipv4_address),
                     bool_word(default_route),
                     bool_word(dns_ready),
+                    bool_word(hostname_tcp_ready),
                     json_string(&route_text),
                     json_string(&resolv_conf),
                     relay_connect.json,
+                    primal_connect.json,
                     fallback_connect.json,
                     supplicant_liveness.json,
                     post_dhcp_cleanup,
@@ -4480,7 +4492,8 @@ mod linux {
                     "\"scanResults\":{},\"statusAfterScan\":{},\"association\":{},",
                     "\"preDhcpCleanup\":{},\"dhcp\":{},\"dhcpSuccess\":true,\"ifconfig\":{},",
                     "\"ipv4AddressPresent\":true,\"defaultRoutePresent\":true,\"dnsReady\":true,",
-                    "\"procNetRoute\":{},\"resolvConf\":{},\"tcpConnect\":[{},{}],",
+                    "\"hostnameTcpReady\":true,\"procNetRoute\":{},\"resolvConf\":{},",
+                    "\"tcpConnect\":[{},{},{}],",
                     "\"supplicant\":{},\"cleanup\":[]}}"
                 ),
                 clock_json,
@@ -4498,6 +4511,7 @@ mod linux {
                 json_string(&route_text),
                 json_string(&resolv_conf),
                 relay_connect.json,
+                primal_connect.json,
                 fallback_connect.json,
                 supplicant_liveness.json
             ),
@@ -4545,7 +4559,7 @@ mod linux {
     }
 
     fn stop_wifi_runtime_child_json(child: &mut Child) -> String {
-        let child_cleanup = stop_wifi_child_json(child);
+        let child_cleanup = stop_child_json(child);
         let log_cleanup = remove_wifi_helper_log_json("wpa_supplicant");
         format!("{{\"child\":{},\"log\":{}}}", child_cleanup, log_cleanup)
     }
@@ -4664,7 +4678,7 @@ mod linux {
         }
     }
 
-    fn stop_wifi_child_json(child: &mut Child) -> String {
+    fn stop_child_json(child: &mut Child) -> String {
         match child.try_wait() {
             Ok(Some(status)) => format!(
                 "{{\"attempted\":true,\"alreadyExited\":true,\"status\":{}}}",
@@ -4768,7 +4782,7 @@ mod linux {
                 "wifi-wpa-supplicant-socket-missing",
             );
             let child_pid = child.id();
-            let cleanup = stop_wifi_child_json(child);
+            let cleanup = stop_child_json(child);
             return format!(
                 concat!(
                     "{{\"attempted\":true,\"started\":true,\"pid\":{},",
@@ -4839,7 +4853,7 @@ mod linux {
         };
         write_payload_probe_stage(probe_stage_path, probe_stage_prefix, "wifi-wpa-probe-done");
         let child_pid = child.id();
-        let cleanup = stop_wifi_child_json(child);
+        let cleanup = stop_child_json(child);
 
         format!(
             concat!(
@@ -5874,6 +5888,7 @@ mod linux {
         startup_mode: &str,
         app_id: Option<&str>,
         touch_counter_profile: Option<TouchCounterEvidenceProfile>,
+        wifi_runtime_network_summary: Option<&str>,
     ) -> Result<(), &'static str> {
         if !runtime.enabled || runtime.write_failed || !runtime.prepared {
             return Err("metadata-disabled");
@@ -5951,6 +5966,13 @@ mod linux {
                 evidence.touch_latency_present,
                 evidence.post_touch_frame_captured,
                 evidence.ok()
+            );
+        }
+        if let Some(wifi_summary) = wifi_runtime_network_summary {
+            let _ = write!(
+                payload,
+                "  \"wifi_runtime_network\": {},\n  \"wifi_runtime_network_ok\": true,\n",
+                wifi_summary
             );
         }
         let _ = write!(
@@ -7367,6 +7389,7 @@ mod linux {
         );
 
         let mut wifi_runtime_network: Option<WifiRuntimeNetwork> = None;
+        let mut wifi_runtime_network_summary: Option<String> = None;
         let mut command = if child_mode {
             let resolved_self_exec_path = self_exec_path
                 .map(Path::to_path_buf)
@@ -7420,6 +7443,7 @@ mod linux {
                     }
                     return 1;
                 }
+                wifi_runtime_network_summary = Some(runtime_start.json.clone());
                 wifi_runtime_network = runtime_start.network;
                 write_payload_probe_stage(
                     probe_stage_path.as_deref(),
@@ -7697,6 +7721,7 @@ mod linux {
                     startup_mode,
                     app_id,
                     touch_counter_profile,
+                    wifi_runtime_network_summary.as_deref(),
                 ) {
                     log_line(&format!(
                         "{summary_kind} frame missing or could not be summarized: {reason}"
@@ -7829,6 +7854,7 @@ mod linux {
                     "shell",
                     Some(config.shell_session_start_app_id.as_str()),
                     touch_counter_profile,
+                    wifi_runtime_network_summary.as_deref(),
                 ) {
                     log_line(&format!(
                         "{summary_kind} watchdog proof missing or could not be summarized: {reason}"
@@ -7845,6 +7871,8 @@ mod linux {
                         );
                         hold_for_observation(config.hold_seconds);
                     }
+                    let payload_cleanup = stop_child_json(&mut child);
+                    append_wrapper_log(&format!("held-shell-payload-cleanup {payload_cleanup}"));
                     stop_wifi_runtime_network(
                         &mut wifi_runtime_network,
                         probe_stage_path.as_deref(),
@@ -7853,6 +7881,10 @@ mod linux {
                     );
                     return 0;
                 }
+            }
+            if config.orange_gpu_timeout_action == "hold" {
+                let payload_cleanup = stop_child_json(&mut child);
+                append_wrapper_log(&format!("timed-out-payload-cleanup {payload_cleanup}"));
             }
             stop_wifi_runtime_network(
                 &mut wifi_runtime_network,
@@ -9478,6 +9510,38 @@ mod linux {
         }
 
         reboot_from_config(&config);
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn wpa_command_labels_redact_credentials() {
+            let ssid = "ExampleNetwork";
+            let psk = "example-passphrase";
+            let raw = format!("SET_NETWORK 7 ssid {}\nSET_NETWORK 7 psk \"{}\"", ssid, psk);
+            let redacted = wpa_ctrl_command_label(&raw);
+
+            assert!(!redacted.contains(ssid));
+            assert!(!redacted.contains(psk));
+            assert!(redacted.contains("SET_NETWORK 7 ssid <redacted>"));
+            assert!(redacted.contains("SET_NETWORK 7 psk <redacted>"));
+        }
+
+        #[test]
+        fn wpa_result_json_defensively_redacts_raw_command_label() {
+            let result = WpaCtrlCommandResult {
+                command_label: "SET_NETWORK 3 psk \"example-passphrase\"".to_string(),
+                ok: true,
+                response: "OK".to_string(),
+                error: String::new(),
+            };
+            let json = wpa_ctrl_result_json(&result);
+
+            assert!(!json.contains("example-passphrase"));
+            assert!(json.contains("SET_NETWORK 3 psk <redacted>"));
+        }
     }
 }
 

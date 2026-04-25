@@ -419,6 +419,29 @@ EOF
         exit 0
       elif [[ "$TRACE_MODE" == "shell-session-success" ]]; then
         trace_app_id="${MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID:-counter}"
+        wifi_runtime_network_summary=""
+        if [[ "${MOCK_TRACE_WIFI_RUNTIME_NETWORK:-0}" == "1" ]]; then
+          wifi_runtime_network_summary="$(cat <<'EOF'
+  "wifi_runtime_network": {
+    "completed": true,
+    "clock": {
+      "attempted": true,
+      "ok": true,
+      "unixSecs": 1777075200
+    },
+    "dhcpSuccess": true,
+    "dnsReady": true,
+    "hostnameTcpReady": true,
+    "ipv4AddressPresent": true,
+    "defaultRoutePresent": true,
+    "supplicant": {
+      "alive": true
+    }
+  },
+  "wifi_runtime_network_ok": true,
+EOF
+)"
+        fi
         cat <<EOF
 {
   "kind": "shell-session",
@@ -435,6 +458,7 @@ EOF
     "app_frame_captured": true
   },
   "shell_session_probe_ok": true,
+$wifi_runtime_network_summary
   "frame_path": "/metadata/shadow-hello-init/by-token/$TRACE_RUN_TOKEN/compositor-frame.ppm",
   "frame_bytes": 20
 }
@@ -442,6 +466,29 @@ EOF
         exit 0
       elif [[ "$TRACE_MODE" == "shell-session-held-success" ]]; then
         trace_app_id="${MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID:-counter}"
+        wifi_runtime_network_summary=""
+        if [[ "${MOCK_TRACE_WIFI_RUNTIME_NETWORK:-0}" == "1" ]]; then
+          wifi_runtime_network_summary="$(cat <<'EOF'
+  "wifi_runtime_network": {
+    "completed": true,
+    "clock": {
+      "attempted": true,
+      "ok": true,
+      "unixSecs": 1777075200
+    },
+    "dhcpSuccess": true,
+    "dnsReady": true,
+    "hostnameTcpReady": true,
+    "ipv4AddressPresent": true,
+    "defaultRoutePresent": true,
+    "supplicant": {
+      "alive": true
+    }
+  },
+  "wifi_runtime_network_ok": true,
+EOF
+)"
+        fi
         cat <<EOF
 {
   "kind": "shell-session-held",
@@ -469,6 +516,7 @@ EOF
     "post_touch_frame_captured": true
   },
   "touch_counter_probe_ok": true,
+$wifi_runtime_network_summary
   "frame_path": "/metadata/shadow-hello-init/by-token/$TRACE_RUN_TOKEN/compositor-frame.ppm",
   "frame_bytes": 20
 }
@@ -634,7 +682,7 @@ EOF
             printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'
             ;;
           timeline)
-            printf 'P6\n3 1\n255\n\x31\x1f\x09\x2b\x18\x0e\x32\x20\x08'
+            printf 'P6\n3 1\n255\n\xf4\xf1\xee\x2b\x18\x0e\x32\x20\x08'
             ;;
           *)
             if [[ "$TRACE_MODE" == "shell-session-held-success" ]]; then
@@ -654,7 +702,7 @@ EOF
             printf 'P6\n3 1\n255\n\x0b\x16\x30\x10\x24\x3b\x2f\xb8\xff'
             ;;
           timeline)
-            printf 'P6\n3 1\n255\n\x31\x1f\x09\x2b\x18\x0e\x32\x20\x08'
+            printf 'P6\n3 1\n255\n\xf4\xf1\xee\x2b\x18\x0e\x32\x20\x08'
             ;;
           *)
             printf 'P6\n3 1\n255\n\x17\x36\x2c\x74\xd3\xae\xf7\xfa\xfc'
@@ -772,12 +820,14 @@ write_recover_context() {
   local app_direct_present_client_kind app_direct_present_runtime_bundle_env
   local app_direct_present_runtime_bundle_path app_direct_present_typescript_renderer
   local app_direct_present_metadata_shape app_direct_present_contract_metadata
+  local wifi_runtime_network
   parent_dir="$1"
   image_path="$2"
   run_token="$3"
   orange_gpu_mode="${4:-gpu-render}"
   app_direct_present_app_id="${5:-rust-demo}"
   app_direct_present_metadata_shape="${6:-current}"
+  wifi_runtime_network="${7:-false}"
   app_direct_present_client_kind=rust
   app_direct_present_runtime_bundle_env=""
   app_direct_present_runtime_bundle_path=""
@@ -844,6 +894,8 @@ EOF
   "shell_session_start_app_id": "$app_direct_present_app_id",
   "log_kmsg": true,
   "log_pmsg": true,
+  "wifi_runtime_network": $wifi_runtime_network,
+  "wifi_runtime_clock_unix_secs_configured": $wifi_runtime_network,
 $app_direct_present_contract_metadata
   "orange_gpu_metadata_stage_breadcrumb": true,
   "metadata_stage_path": "/metadata/shadow-hello-init/by-token/$run_token/stage.txt",
@@ -1480,6 +1532,43 @@ assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summar
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_touch_counter_touch_latency_present true
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_probe_summary_touch_counter_post_touch_frame_captured true
 assert_json_field "$SHELL_SESSION_HELD_OUTPUT/status.json" metadata_compositor_frame_distinct_color_count 3
+
+SHELL_SESSION_HELD_WIFI_PARENT="$TMP_DIR/output-shell-session-held-wifi"
+SHELL_SESSION_HELD_WIFI_IMAGE="$TMP_DIR/output-shell-session-held-wifi.img"
+SHELL_SESSION_HELD_WIFI_OUTPUT="$SHELL_SESSION_HELD_WIFI_PARENT/recover-traces"
+write_recover_context "$SHELL_SESSION_HELD_WIFI_PARENT" "$SHELL_SESSION_HELD_WIFI_IMAGE" "$RUN_TOKEN" shell-session-held counter current true
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=shell-session-held-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID=counter \
+  MOCK_TRACE_WIFI_RUNTIME_NETWORK=1 \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$SHELL_SESSION_HELD_WIFI_OUTPUT" >/dev/null
+
+assert_json_field "$SHELL_SESSION_HELD_WIFI_OUTPUT/status.json" expected_wifi_runtime_network true
+assert_json_field "$SHELL_SESSION_HELD_WIFI_OUTPUT/status.json" expected_wifi_runtime_clock_unix_secs_configured true
+assert_json_field "$SHELL_SESSION_HELD_WIFI_OUTPUT/status.json" wifi_runtime_network_proof_ok true
+assert_json_field "$SHELL_SESSION_HELD_WIFI_OUTPUT/status.json" metadata_probe_summary_wifi_runtime_network_ok true
+assert_json_field "$SHELL_SESSION_HELD_WIFI_OUTPUT/status.json" proof_ok true
+
+SHELL_SESSION_HELD_WIFI_MISSING_PARENT="$TMP_DIR/output-shell-session-held-wifi-missing"
+SHELL_SESSION_HELD_WIFI_MISSING_IMAGE="$TMP_DIR/output-shell-session-held-wifi-missing.img"
+SHELL_SESSION_HELD_WIFI_MISSING_OUTPUT="$SHELL_SESSION_HELD_WIFI_MISSING_PARENT/recover-traces"
+write_recover_context "$SHELL_SESSION_HELD_WIFI_MISSING_PARENT" "$SHELL_SESSION_HELD_WIFI_MISSING_IMAGE" "$RUN_TOKEN" shell-session-held counter current true
+env \
+  PATH="$MOCK_BIN:$PATH" \
+  PIXEL_SERIAL=TESTSERIAL \
+  MOCK_TRACE_MODE=shell-session-held-success \
+  MOCK_TRACE_RUN_TOKEN="$RUN_TOKEN" \
+  MOCK_TRACE_APP_DIRECT_PRESENT_APP_ID=counter \
+  "$REPO_ROOT/scripts/pixel/pixel_boot_recover_traces.sh" \
+  --output "$SHELL_SESSION_HELD_WIFI_MISSING_OUTPUT" >/dev/null
+
+assert_json_field "$SHELL_SESSION_HELD_WIFI_MISSING_OUTPUT/status.json" expected_wifi_runtime_network true
+assert_json_field "$SHELL_SESSION_HELD_WIFI_MISSING_OUTPUT/status.json" wifi_runtime_network_proof_ok false
+assert_json_field "$SHELL_SESSION_HELD_WIFI_MISSING_OUTPUT/status.json" proof_ok false
 
 SHELL_SESSION_TIMELINE_PARENT="$TMP_DIR/output-shell-session-timeline"
 SHELL_SESSION_TIMELINE_IMAGE="$TMP_DIR/output-shell-session-timeline.img"

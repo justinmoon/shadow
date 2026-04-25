@@ -941,6 +941,41 @@ assert_safe_word() {
   fi
 }
 
+assert_run_token() {
+  local value
+  value="${1:?assert_run_token requires a value}"
+
+  if [[ ! "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{7,62}$ ]]; then
+    echo "pixel_boot_build_orange_gpu: run token must be 8-63 safe characters and start with an alphanumeric character: $value" >&2
+    exit 1
+  fi
+}
+
+assert_config_path_value() {
+  local label value
+  label="${1:?assert_config_path_value requires a label}"
+  value="${2:?assert_config_path_value requires a value}"
+
+  if [[ "$value" != /* ]]; then
+    echo "pixel_boot_build_orange_gpu: $label must be an absolute device path: $value" >&2
+    exit 1
+  fi
+  python3 - "$label" "$value" <<'PY'
+import sys
+
+label, value = sys.argv[1:3]
+if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+    raise SystemExit(
+        f"pixel_boot_build_orange_gpu: {label} contains control characters"
+    )
+parts = value.split("/")
+if any(part in {"", "."} for part in parts[1:]) or ".." in parts:
+    raise SystemExit(
+        f"pixel_boot_build_orange_gpu: {label} must not contain empty, '.', or '..' path segments: {value}"
+    )
+PY
+}
+
 assert_bool_word() {
   local label value
   label="${1:?assert_bool_word requires a label}"
@@ -1357,6 +1392,7 @@ render_app_direct_present_startup_config() {
     "$APP_DIRECT_PRESENT_BUNDLE_ROOT_PATH" \
     "$ORANGE_GPU_MODE" \
     "$(metadata_compositor_frame_path_for_token "$RUN_TOKEN")" \
+    "$APP_DIRECT_PRESENT_STARTUP_CONFIG_PATH" \
     "$APP_DIRECT_PRESENT_MANUAL_TOUCH" <<'PY'
 import json
 import sys
@@ -1377,8 +1413,9 @@ from pathlib import Path
     runtime_bundle_dir,
     orange_gpu_mode,
     frame_artifact_path,
+    session_config_path,
     manual_touch_value,
-) = sys.argv[1:16]
+) = sys.argv[1:17]
 touch_counter_mode = orange_gpu_mode in {
     "app-direct-present-touch-counter",
     "app-direct-present-runtime-touch-counter",
@@ -1410,6 +1447,10 @@ elif client_kind == "typescript":
             {
                 "key": "SHADOW_SYSTEM_STAGE_LIBRARY_PATH",
                 "value": stage_library_path,
+            },
+            {
+                "key": "SHADOW_RUNTIME_SESSION_CONFIG",
+                "value": session_config_path,
             },
         ]
     )
@@ -1481,8 +1522,18 @@ if interactive_touch_mode:
     if touch_counter_mode:
         touch["exitAfterPresent"] = True
     payload["touch"] = touch
+services = {}
 if enable_audio_value == "true":
-    payload["services"] = {"audioBackend": "linux_bridge"}
+    services["audioBackend"] = "linux_bridge"
+if client_kind == "typescript":
+    services.update(
+        {
+            "nostrDbPath": f"{runtime_dir}/runtime-nostr.sqlite3",
+            "nostrServiceSocket": f"{runtime_dir}/runtime-nostr.sock",
+        }
+    )
+if services:
+    payload["services"] = services
 Path(output_path).write_text(
     json.dumps(payload, indent=2, sort_keys=False) + "\n",
     encoding="utf-8",
@@ -2434,6 +2485,12 @@ write_metadata() {
     "$WIFI_MODULE_DIR" \
     "${STAGED_WIFI_MODULE_DIR:-}" \
     "$FIRMWARE_BOOTSTRAP" \
+    "$WIFI_ASSOCIATION_PROBE" \
+    "$WIFI_IP_PROBE" \
+    "$WIFI_RUNTIME_NETWORK" \
+    "$WIFI_RUNTIME_CLOCK_UNIX_SECS" \
+    "$WIFI_CREDENTIALS_PATH" \
+    "$WIFI_DHCP_CLIENT_BINARY" \
     "$GPU_FIRMWARE_DIR" \
     "${STAGED_GPU_FIRMWARE_DIR:-}" \
     "$(gpu_scene_value)" \
@@ -2502,6 +2559,12 @@ from pathlib import Path
     wifi_module_dir,
     wifi_module_staged_dir,
     firmware_bootstrap,
+    wifi_association_probe,
+    wifi_ip_probe,
+    wifi_runtime_network,
+    wifi_runtime_clock_unix_secs,
+    wifi_credentials_path,
+    wifi_dhcp_client_path,
     gpu_firmware_dir,
     gpu_firmware_staged_dir,
     orange_gpu_scene,
@@ -2580,6 +2643,12 @@ payload_json = {
     "wifi_bootstrap": wifi_bootstrap,
     "wifi_helper_profile": wifi_helper_profile,
     "wifi_supplicant_probe": parse_bool(wifi_supplicant_probe),
+    "wifi_association_probe": parse_bool(wifi_association_probe),
+    "wifi_ip_probe": parse_bool(wifi_ip_probe),
+    "wifi_runtime_network": parse_bool(wifi_runtime_network),
+    "wifi_runtime_clock_unix_secs_configured": bool(wifi_runtime_clock_unix_secs),
+    "wifi_credentials_path_configured": bool(wifi_credentials_path),
+    "wifi_dhcp_client_path_configured": bool(wifi_dhcp_client_path),
     "wifi_module_dir": wifi_module_dir,
     "wifi_module_staged_dir": wifi_module_staged_dir,
     "firmware_bootstrap": firmware_bootstrap,
@@ -3046,6 +3115,11 @@ EOF
   exit 1
 }
 
+if [[ -z "$RUN_TOKEN" ]]; then
+  RUN_TOKEN="$(generate_run_token)"
+fi
+assert_run_token "$RUN_TOKEN"
+
 if [[ ! "$HOLD_SECS" =~ ^[0-9]+$ ]]; then
   echo "pixel_boot_build_orange_gpu: hold seconds must be an integer: $HOLD_SECS" >&2
   exit 1
@@ -3155,6 +3229,9 @@ assert_bool_word wifi-supplicant-probe "$WIFI_SUPPLICANT_PROBE"
 assert_bool_word wifi-association-probe "$WIFI_ASSOCIATION_PROBE"
 assert_bool_word wifi-ip-probe "$WIFI_IP_PROBE"
 assert_bool_word wifi-runtime-network "$WIFI_RUNTIME_NETWORK"
+if [[ -n "$WIFI_CREDENTIALS_PATH" ]]; then
+  assert_config_path_value wifi-credentials-path "$WIFI_CREDENTIALS_PATH"
+fi
 if [[ -n "$WIFI_RUNTIME_CLOCK_UNIX_SECS" && ! "$WIFI_RUNTIME_CLOCK_UNIX_SECS" =~ ^[0-9]+$ ]]; then
   echo "pixel_boot_build_orange_gpu: wifi runtime clock unix seconds must be an unsigned integer" >&2
   exit 1
@@ -3237,16 +3314,17 @@ if [[ "$WIFI_ASSOCIATION_PROBE" == "true" && "$WIFI_SUPPLICANT_PROBE" != "true" 
   echo "pixel_boot_build_orange_gpu: wifi association probe requires --wifi-supplicant-probe true" >&2
   exit 1
 fi
-if [[ "$WIFI_ASSOCIATION_PROBE" == "true" && "$WIFI_CREDENTIALS_PATH" != /metadata/shadow-wifi-credentials/by-token/* ]]; then
-  echo "pixel_boot_build_orange_gpu: wifi association probe requires a metadata credentials path under /metadata/shadow-wifi-credentials/by-token" >&2
+expected_wifi_credentials_path="/metadata/shadow-wifi-credentials/by-token/$RUN_TOKEN.env"
+if [[ "$WIFI_ASSOCIATION_PROBE" == "true" && "$WIFI_CREDENTIALS_PATH" != "$expected_wifi_credentials_path" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi association probe requires credentials at $expected_wifi_credentials_path" >&2
   exit 1
 fi
 if [[ "$WIFI_IP_PROBE" == "true" && "$WIFI_SUPPLICANT_PROBE" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: wifi IP probe requires --wifi-supplicant-probe true" >&2
   exit 1
 fi
-if [[ "$WIFI_IP_PROBE" == "true" && "$WIFI_CREDENTIALS_PATH" != /metadata/shadow-wifi-credentials/by-token/* ]]; then
-  echo "pixel_boot_build_orange_gpu: wifi IP probe requires a metadata credentials path under /metadata/shadow-wifi-credentials/by-token" >&2
+if [[ "$WIFI_IP_PROBE" == "true" && "$WIFI_CREDENTIALS_PATH" != "$expected_wifi_credentials_path" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi IP probe requires credentials at $expected_wifi_credentials_path" >&2
   exit 1
 fi
 if [[ "$WIFI_IP_PROBE" == "true" ]]; then
@@ -3260,8 +3338,8 @@ if [[ "$WIFI_RUNTIME_NETWORK" == "true" && "$WIFI_BOOTSTRAP" != "sunfish-wlan0" 
   echo "pixel_boot_build_orange_gpu: wifi runtime network requires --wifi-bootstrap sunfish-wlan0" >&2
   exit 1
 fi
-if [[ "$WIFI_RUNTIME_NETWORK" == "true" && "$WIFI_CREDENTIALS_PATH" != /metadata/shadow-wifi-credentials/by-token/* ]]; then
-  echo "pixel_boot_build_orange_gpu: wifi runtime network requires a metadata credentials path under /metadata/shadow-wifi-credentials/by-token" >&2
+if [[ "$WIFI_RUNTIME_NETWORK" == "true" && "$WIFI_CREDENTIALS_PATH" != "$expected_wifi_credentials_path" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi runtime network requires credentials at $expected_wifi_credentials_path" >&2
   exit 1
 fi
 if [[ "$WIFI_RUNTIME_NETWORK" == "true" ]]; then
@@ -3320,6 +3398,21 @@ fi
 if [[ "$PAYLOAD_PROBE_SOURCE" == "metadata" && "$(payload_probe_root_for_token "$RUN_TOKEN")" == "/shadow-payload" ]]; then
   echo "pixel_boot_build_orange_gpu: /shadow-payload requires --payload-probe-source shadow-logical-partition" >&2
   exit 1
+fi
+if payload_probe_config_enabled; then
+  payload_probe_root_value="$(payload_probe_root_for_token "$RUN_TOKEN")"
+  payload_probe_manifest_path_value="$(payload_probe_manifest_path_for_token "$RUN_TOKEN")"
+  assert_config_path_value payload-probe-root "$payload_probe_root_value"
+  assert_config_path_value payload-probe-manifest-path "$payload_probe_manifest_path_value"
+  assert_config_path_value payload-probe-fallback-path "$PAYLOAD_PROBE_FALLBACK_PATH"
+  case "$PAYLOAD_PROBE_SOURCE:$payload_probe_root_value:$payload_probe_manifest_path_value" in
+    "metadata:/metadata/shadow-payload/by-token/$RUN_TOKEN:/metadata/shadow-payload/by-token/$RUN_TOKEN/manifest.env"|"metadata:/data/local/tmp/shadow-payload/by-token/$RUN_TOKEN:/metadata/shadow-payload/by-token/$RUN_TOKEN/manifest.env"|"shadow-logical-partition:/shadow-payload:/shadow-payload/manifest.env")
+      ;;
+    *)
+      echo "pixel_boot_build_orange_gpu: payload probe paths must use the active run token and source-specific roots" >&2
+      exit 1
+      ;;
+  esac
 fi
 if [[ "$INPUT_BOOTSTRAP" == "sunfish-touch-event2" && "$MOUNT_DEV" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: input-bootstrap sunfish-touch-event2 requires --mount-dev true so hello-init can create /dev/input/event* from sysfs" >&2
@@ -3394,11 +3487,6 @@ if [[ -z "$DRI_BOOTSTRAP" ]]; then
 fi
 assert_dri_bootstrap_word "$DRI_BOOTSTRAP"
 assert_input_bootstrap_word "$INPUT_BOOTSTRAP"
-if [[ -z "$RUN_TOKEN" ]]; then
-  RUN_TOKEN="$(generate_run_token)"
-fi
-assert_safe_word run-token "$RUN_TOKEN" 63
-
 if [[ -z "$KEY_PATH" ]]; then
   KEY_PATH="$(ensure_cached_avb_testkey)"
 fi

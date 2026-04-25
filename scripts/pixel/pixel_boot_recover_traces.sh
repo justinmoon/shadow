@@ -126,7 +126,7 @@ flag_enabled() {
 }
 
 run_token_is_safe() {
-  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ ]]
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{7,62}$ ]]
 }
 
 device_shell_quote() {
@@ -1091,7 +1091,31 @@ record_channel_result() {
     matched=false
   fi
 
-  if [[ -n "$EXPECTED_RUN_TOKEN" ]] && grep -aF "$EXPECTED_RUN_TOKEN" "$output_path" >"$run_token_status_path"; then
+  if [[ -n "$EXPECTED_RUN_TOKEN" ]] && python3 - "$output_path" "$run_token_status_path" "$EXPECTED_RUN_TOKEN" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+output_path = Path(sys.argv[1])
+status_path = Path(sys.argv[2])
+token = sys.argv[3]
+escaped = re.escape(token)
+token_tail = r"(?![A-Za-z0-9._-])"
+patterns = [
+    re.compile(rf"\brun_token={escaped}{token_tail}"),
+    re.compile(rf"\bshadow-owned-init-run-token:{escaped}{token_tail}"),
+    re.compile(rf"/by-token/{escaped}(?:/|$)"),
+]
+matches = []
+with output_path.open("rb") as fh:
+    for raw_line in fh:
+        line = raw_line.decode("utf-8", errors="replace")
+        if any(pattern.search(line) for pattern in patterns):
+            matches.append(line)
+status_path.write_text("".join(matches), encoding="utf-8")
+raise SystemExit(0 if matches else 1)
+PY
+  then
     run_token_match_count="$(wc -l <"$run_token_status_path" | tr -d '[:space:]')"
     matched_run_token=true
   else
@@ -1478,6 +1502,8 @@ expected_app_direct_present_runtime_bundle_path = ""
 expected_app_direct_present_typescript_renderer = ""
 expected_app_direct_present_manual_touch = False
 expected_metadata_compositor_frame_path = ""
+expected_wifi_runtime_network = False
+expected_wifi_runtime_clock_unix_secs_configured = False
 expected_payload_probe_strategy = ""
 expected_payload_probe_source = ""
 expected_payload_probe_root = ""
@@ -1550,6 +1576,12 @@ if source_image_metadata_path:
         compositor_frame_path_value = metadata.get("metadata_compositor_frame_path")
         if isinstance(compositor_frame_path_value, str):
             expected_metadata_compositor_frame_path = compositor_frame_path_value
+        wifi_runtime_network_value = metadata.get("wifi_runtime_network")
+        if isinstance(wifi_runtime_network_value, bool):
+            expected_wifi_runtime_network = wifi_runtime_network_value
+        wifi_runtime_clock_value = metadata.get("wifi_runtime_clock_unix_secs_configured")
+        if isinstance(wifi_runtime_clock_value, bool):
+            expected_wifi_runtime_clock_unix_secs_configured = wifi_runtime_clock_value
         payload_probe_strategy_value = metadata.get("payload_probe_strategy")
         if isinstance(payload_probe_strategy_value, str):
             expected_payload_probe_strategy = payload_probe_strategy_value
@@ -1844,6 +1876,8 @@ summary_touch_counter_probe = recovered_probe_summary.get("touch_counter_probe")
 summary_touch_counter_probe_ok = recovered_probe_summary.get("touch_counter_probe_ok")
 summary_shell_session_probe = recovered_probe_summary.get("shell_session_probe")
 summary_shell_session_probe_ok = recovered_probe_summary.get("shell_session_probe_ok")
+summary_wifi_runtime_network = recovered_probe_summary.get("wifi_runtime_network")
+summary_wifi_runtime_network_ok = recovered_probe_summary.get("wifi_runtime_network_ok")
 summary_adapter_backend = (
     summary_adapter.get("backend")
     if isinstance(summary_adapter, dict)
@@ -2250,6 +2284,40 @@ probe_summary_proves_app_direct_present_runtime_touch_counter = (
     and summary_touch_counter_touch_latency_present is True
     and summary_touch_counter_post_touch_frame_captured is True
 )
+wifi_runtime_network_proof_ok = (not expected_wifi_runtime_network) or (
+    recovered_metadata_probe_summary_present
+    and recovered_probe_summary_parse_error is None
+    and summary_wifi_runtime_network_ok is True
+    and isinstance(summary_wifi_runtime_network, dict)
+    and summary_wifi_runtime_network.get("completed") is True
+    and summary_wifi_runtime_network.get("dhcpSuccess") is True
+    and summary_wifi_runtime_network.get("dnsReady") is True
+    and summary_wifi_runtime_network.get("hostnameTcpReady") is True
+    and summary_wifi_runtime_network.get("ipv4AddressPresent") is True
+    and summary_wifi_runtime_network.get("defaultRoutePresent") is True
+    and isinstance(summary_wifi_runtime_network.get("supplicant"), dict)
+    and summary_wifi_runtime_network["supplicant"].get("alive") is True
+    and (
+        not expected_wifi_runtime_clock_unix_secs_configured
+        or (
+            isinstance(summary_wifi_runtime_network.get("clock"), dict)
+            and summary_wifi_runtime_network["clock"].get("ok") is True
+        )
+    )
+)
+def token_segment_from_by_token_path(path: str, prefix: str):
+    if not isinstance(path, str) or not path.startswith(prefix):
+        return None
+    suffix = path[len(prefix) :]
+    return suffix.split("/", 1)[0] if suffix else None
+
+
+metadata_payload_token = token_segment_from_by_token_path(
+    expected_payload_probe_root, "/metadata/shadow-payload/by-token/"
+)
+data_payload_token = token_segment_from_by_token_path(
+    expected_payload_probe_root, "/data/local/tmp/shadow-payload/by-token/"
+)
 payload_probe_root_is_metadata = isinstance(
     expected_payload_probe_root, str
 ) and expected_payload_probe_root.startswith("/metadata/shadow-payload/by-token/")
@@ -2259,6 +2327,16 @@ payload_probe_root_is_data = isinstance(
 payload_probe_root_is_shadow_logical = (
     isinstance(expected_payload_probe_root, str)
     and expected_payload_probe_root == "/shadow-payload"
+)
+payload_probe_root_token_matches = (
+    payload_probe_root_is_shadow_logical
+    or (
+        bool(expected_run_token)
+        and (
+            (payload_probe_root_is_metadata and metadata_payload_token == expected_run_token)
+            or (payload_probe_root_is_data and data_payload_token == expected_run_token)
+        )
+    )
 )
 payload_probe_source_matches_root = (
     (
@@ -2312,6 +2390,7 @@ probe_summary_proves_payload_partition = (
     and expected_payload_probe_strategy == "metadata-shadow-payload-v1"
     and expected_payload_probe_source in ("metadata", "shadow-logical-partition")
     and payload_probe_source_matches_root
+    and payload_probe_root_token_matches
     and (
         payload_probe_root_is_metadata
         or payload_probe_root_is_data
@@ -2534,6 +2613,7 @@ elif expected_orange_gpu_mode == "payload-partition-probe":
     proof_ok = probe_summary_proves_payload_partition
 else:
     proof_ok = matched_any_correlated_shadow_tags or probe_report_proves_child_success
+proof_ok = proof_ok and wifi_runtime_network_proof_ok
 
 payload = {
     "kind": "boot_trace_recovery",
@@ -2557,6 +2637,8 @@ payload = {
     "app_direct_present_proof_contract_required": app_direct_present_proof_contract_required,
     "app_direct_present_proof_contract": app_direct_present_proof_contract,
     "app_direct_present_proof_contract_summary": app_direct_present_proof_contract_summary,
+    "wifi_runtime_network_proof_ok": wifi_runtime_network_proof_ok,
+    "metadata_probe_summary_wifi_runtime_network_ok": summary_wifi_runtime_network_ok,
     "shell_session_requires_app_direct_frame_samples": shell_session_requires_app_direct_frame_samples,
     "shell_session_held_requires_touch_counter": shell_session_held_requires_touch_counter,
         "metadata_compositor_frame_proves_scene": compositor_frame_proves_scene,
@@ -2591,11 +2673,14 @@ payload = {
     "expected_metadata_probe_timeout_class_path": expected_metadata_probe_timeout_class_path,
     "expected_metadata_probe_summary_path": expected_metadata_probe_summary_path,
     "expected_metadata_compositor_frame_path": expected_metadata_compositor_frame_path,
+    "expected_wifi_runtime_network": expected_wifi_runtime_network,
+    "expected_wifi_runtime_clock_unix_secs_configured": expected_wifi_runtime_clock_unix_secs_configured,
     "expected_payload_probe_strategy": expected_payload_probe_strategy,
     "expected_payload_probe_source": expected_payload_probe_source,
     "expected_payload_probe_root": expected_payload_probe_root,
     "expected_payload_probe_manifest_path": expected_payload_probe_manifest_path,
     "expected_payload_probe_fallback_path": expected_payload_probe_fallback_path,
+    "payload_probe_root_token_matches": payload_probe_root_token_matches,
     "metadata_stage_present": recovered_metadata_stage_present,
     "metadata_stage_value": recovered_metadata_stage_value,
     "metadata_stage_actual_access_mode": recovered_metadata_stage_actual_access_mode,

@@ -71,6 +71,15 @@ assert_safe_token() {
   fi
 }
 
+assert_safe_run_token() {
+  local value
+  value="${1:?assert_safe_run_token requires a value}"
+  if [[ ! "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{7,62}$ ]]; then
+    echo "pixel_boot_stage_metadata_payload: run token must be 8-63 safe characters and start with an alphanumeric character: $value" >&2
+    exit 1
+  fi
+}
+
 assert_payload_root() {
   local value
   value="${1:?assert_payload_root requires a value}"
@@ -268,7 +277,7 @@ if [[ -z "$RUN_TOKEN" ]]; then
   echo "pixel_boot_stage_metadata_payload: --run-token or PIXEL_HELLO_INIT_RUN_TOKEN is required" >&2
   exit 1
 fi
-assert_safe_token run-token "$RUN_TOKEN"
+assert_safe_run_token "$RUN_TOKEN"
 assert_safe_token version "$PAYLOAD_VERSION"
 assert_safe_token label "$PAYLOAD_LABEL"
 assert_safe_token source "$PAYLOAD_SOURCE"
@@ -308,6 +317,15 @@ if [[ "$PAYLOAD_SOURCE" == "shadow-logical-partition" ]]; then
 elif [[ "$PAYLOAD_ROOT" == "/shadow-payload" || "$MANIFEST_ROOT" == "/shadow-payload" ]]; then
   echo "pixel_boot_stage_metadata_payload: /shadow-payload requires --source shadow-logical-partition" >&2
   exit 1
+else
+  case "$PAYLOAD_ROOT:$MANIFEST_ROOT" in
+    "/metadata/shadow-payload/by-token/$RUN_TOKEN:/metadata/shadow-payload/by-token/$RUN_TOKEN"|"/data/local/tmp/shadow-payload/by-token/$RUN_TOKEN:/metadata/shadow-payload/by-token/$RUN_TOKEN")
+      ;;
+    *)
+      echo "pixel_boot_stage_metadata_payload: metadata payload roots must use the active run token" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 if [[ -z "$OUTPUT_DIR" ]]; then

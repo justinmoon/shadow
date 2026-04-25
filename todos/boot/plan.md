@@ -621,6 +621,7 @@ Related docs:
   - why next: Shadow runtime service hosts must see the boot-owned Wi-Fi route as ordinary Linux networking
   - result:
     - added `wifi_runtime_network` to PID 1 so the shell session launches only after association, DHCP, DNS, route, relay-host TCP, clock, and supplicant liveness checks pass
+    - recovery now requires the durable Wi-Fi summary when the image metadata says runtime Wi-Fi was expected; raw-IP TCP is diagnostic only and cannot satisfy the proof
     - shell startup config now exports `SHADOW_RUNTIME_SESSION_CONFIG` and carries Nostr service socket/DB paths so TypeScript apps can spawn the system Nostr service from boot userspace
     - latest proof: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/runs/boot-full-shadow-demo/full-shadow-demo-20260425T034946Z/device-run/recover-traces-rerun2/status.json`
   - owned paths:
@@ -633,8 +634,11 @@ Related docs:
     - a boot-owned or rooted-Pixel runtime process resolves DNS and opens TCP over Wi-Fi without USB reverse, Android networking APIs, or host-local tunnel assumptions
     - runtime/session config has a clear network-readiness status so networked apps can fail early instead of hanging on missing DNS/route/time
     - DHCP-provided DNS replaces hard-coded resolver assumptions where the Pixel runtime bundle needs resolver state
+    - recovered metadata remains redacted: no plaintext SSID, PSK, passphrase, or WPA `SET_NETWORK` credential values appear in wrapper logs or summaries
   - validation:
-    - a bounded runtime-network smoke that records DNS lookup, TCP connect, and HTTP or WebSocket success over Wi-Fi
+    - bounded recovery smoke asserts the Wi-Fi proof succeeds only with DHCP success, DNS, relay-host TCP, clock, route, IPv4, and supplicant liveness fields
+    - `scripts/ci/pixel_boot_recover_traces_smoke.sh`
+    - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
   - blocked_by:
     - `wifi-ip-dns-time-proof`
 - [ ] `wifi-app-network-smokes`
@@ -650,8 +654,9 @@ Related docs:
     - `runtime/apps.json`
     - `todos/boot/plan.md`
   - acceptance:
-    - Nostr public-relay timeline demo is proven on Pixel 4a boot userspace: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/runs/boot-full-shadow-demo/full-shadow-demo-20260425T034946Z/analysis/metadata-compositor-frame.png`
-    - remaining Nostr work is suite coverage: promote the public-relay proof into a bounded Pixel CI smoke and record the configured SQLite cache evidence without `adb reverse`
+    - Nostr public-relay timeline demo is proven on Pixel 4a boot userspace without `adb reverse`: the proof must include WSS/TLS relay connect, `nostr.sync` success, and nonzero fetched/imported notes written during the boot run
+    - timeline frame proof must be post-sync evidence, not just the initial cached or empty render
+    - once the public-relay proof is real, promote it into a bounded Pixel CI smoke and record configured SQLite cache evidence without leaking relay credentials or user data
     - Cashu wallet talks to a LAN fake mint over Wi-Fi and completes the existing wallet smoke shape without a USB tunnel
     - podcast URL playback fetches media from a LAN HTTP server over Wi-Fi and reaches the existing `linux_spike` validation summary
     - app metadata or session config can express network requirements so offline-capable apps and network-required apps get different readiness behavior
