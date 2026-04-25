@@ -57,6 +57,10 @@ else
 fi
 WIFI_HELPER_PROFILE="${PIXEL_ORANGE_GPU_WIFI_HELPER_PROFILE:-full}"
 WIFI_SUPPLICANT_PROBE="${PIXEL_ORANGE_GPU_WIFI_SUPPLICANT_PROBE:-true}"
+WIFI_ASSOCIATION_PROBE="${PIXEL_ORANGE_GPU_WIFI_ASSOCIATION_PROBE:-false}"
+WIFI_IP_PROBE="${PIXEL_ORANGE_GPU_WIFI_IP_PROBE:-false}"
+WIFI_CREDENTIALS_PATH="${PIXEL_ORANGE_GPU_WIFI_CREDENTIALS_PATH:-}"
+WIFI_DHCP_CLIENT_BINARY="${PIXEL_ORANGE_GPU_WIFI_DHCP_CLIENT_BIN:-}"
 FIRMWARE_BOOTSTRAP="${PIXEL_ORANGE_GPU_FIRMWARE_BOOTSTRAP:-none}"
 GPU_FIRMWARE_DIR="${PIXEL_ORANGE_GPU_FIRMWARE_DIR:-}"
 INPUT_MODULE_DIR="${PIXEL_ORANGE_GPU_INPUT_MODULE_DIR:-}"
@@ -179,6 +183,10 @@ Usage: scripts/pixel/pixel_boot_build_orange_gpu.sh [--input PATH] [--init PATH]
                                                     [--wifi-bootstrap none|sunfish-wlan0]
                                                     [--wifi-helper-profile full|no-service-managers|no-pm|no-modem-svc|no-rfs-storage|no-pd-mapper|no-cnss|qrtr-only|qrtr-pd|qrtr-pd-tftp|qrtr-pd-rfs|qrtr-pd-rfs-cnss|qrtr-pd-rfs-modem|qrtr-pd-rfs-modem-cnss|qrtr-pd-rfs-modem-pm|qrtr-pd-rfs-modem-pm-cnss|aidl-sm-core|vnd-sm-core|vnd-sm-core-binder-node|all-sm-core|none]
                                                     [--wifi-supplicant-probe true|false]
+                                                    [--wifi-association-probe true|false]
+                                                    [--wifi-ip-probe true|false]
+                                                    [--wifi-credentials-path DEVICE_PATH]
+                                                    [--wifi-dhcp-client BIN]
                                                     [--wifi-module-dir DIR]
                                                     [--firmware-bootstrap none|ramdisk-lib-firmware]
                                                     [--firmware-dir DIR]
@@ -1175,6 +1183,18 @@ EOF
   fi
   if [[ "$WIFI_SUPPLICANT_PROBE" != "true" ]]; then
     printf 'wifi_supplicant_probe=%s\n' "$WIFI_SUPPLICANT_PROBE" >>"$output_path"
+  fi
+  if [[ "$WIFI_ASSOCIATION_PROBE" != "false" ]]; then
+    printf 'wifi_association_probe=%s\n' "$WIFI_ASSOCIATION_PROBE" >>"$output_path"
+  fi
+  if [[ "$WIFI_IP_PROBE" != "false" ]]; then
+    printf 'wifi_ip_probe=%s\n' "$WIFI_IP_PROBE" >>"$output_path"
+  fi
+  if [[ -n "$WIFI_CREDENTIALS_PATH" ]]; then
+    printf 'wifi_credentials_path=%s\n' "$WIFI_CREDENTIALS_PATH" >>"$output_path"
+  fi
+  if [[ "$WIFI_IP_PROBE" == "true" ]]; then
+    printf 'wifi_dhcp_client_path=/orange-gpu/busybox\n' >>"$output_path"
   fi
   if [[ -n "$STAGED_GPU_BUNDLE_ARCHIVE" ]]; then
     printf 'orange_gpu_bundle_archive_path=%s\n' "$ORANGE_GPU_BUNDLE_ARCHIVE_PATH" >>"$output_path"
@@ -2906,6 +2926,22 @@ while [[ $# -gt 0 ]]; do
       WIFI_SUPPLICANT_PROBE="${2:?missing value for --wifi-supplicant-probe}"
       shift 2
       ;;
+    --wifi-association-probe)
+      WIFI_ASSOCIATION_PROBE="${2:?missing value for --wifi-association-probe}"
+      shift 2
+      ;;
+    --wifi-ip-probe)
+      WIFI_IP_PROBE="${2:?missing value for --wifi-ip-probe}"
+      shift 2
+      ;;
+    --wifi-credentials-path)
+      WIFI_CREDENTIALS_PATH="${2:?missing value for --wifi-credentials-path}"
+      shift 2
+      ;;
+    --wifi-dhcp-client)
+      WIFI_DHCP_CLIENT_BINARY="${2:?missing value for --wifi-dhcp-client}"
+      shift 2
+      ;;
     --wifi-module-dir)
       WIFI_MODULE_DIR="${2:?missing value for --wifi-module-dir}"
       shift 2
@@ -3081,6 +3117,8 @@ assert_bool_word orange-gpu-enable-linux-audio "$ORANGE_GPU_ENABLE_LINUX_AUDIO"
 assert_bool_word orange-gpu-metadata-prune-token-root "$ORANGE_GPU_METADATA_PRUNE_TOKEN_ROOT"
 assert_bundle_archive_source_word "$ORANGE_GPU_BUNDLE_ARCHIVE_SOURCE"
 assert_bool_word wifi-supplicant-probe "$WIFI_SUPPLICANT_PROBE"
+assert_bool_word wifi-association-probe "$WIFI_ASSOCIATION_PROBE"
+assert_bool_word wifi-ip-probe "$WIFI_IP_PROBE"
 
 if [[ "$ORANGE_GPU_MODE" == "c-kgsl-open-readonly-firmware-helper-smoke" && "$MOUNT_SYS" != "true" ]]; then
   echo "pixel_boot_build_orange_gpu: c-kgsl-open-readonly-firmware-helper-smoke requires --mount-sys true so hello-init can service /sys/class/firmware requests" >&2
@@ -3154,6 +3192,29 @@ case "$WIFI_BOOTSTRAP" in
 esac
 if [[ "$WIFI_BOOTSTRAP" == "sunfish-wlan0" && "$WIFI_HELPER_PROFILE_EXPLICIT" == "0" ]]; then
   WIFI_HELPER_PROFILE="vnd-sm-core-binder-node"
+fi
+if [[ "$WIFI_ASSOCIATION_PROBE" == "true" && "$WIFI_SUPPLICANT_PROBE" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi association probe requires --wifi-supplicant-probe true" >&2
+  exit 1
+fi
+if [[ "$WIFI_ASSOCIATION_PROBE" == "true" && "$WIFI_CREDENTIALS_PATH" != /metadata/shadow-wifi-credentials/by-token/* ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi association probe requires a metadata credentials path under /metadata/shadow-wifi-credentials/by-token" >&2
+  exit 1
+fi
+if [[ "$WIFI_IP_PROBE" == "true" && "$WIFI_SUPPLICANT_PROBE" != "true" ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi IP probe requires --wifi-supplicant-probe true" >&2
+  exit 1
+fi
+if [[ "$WIFI_IP_PROBE" == "true" && "$WIFI_CREDENTIALS_PATH" != /metadata/shadow-wifi-credentials/by-token/* ]]; then
+  echo "pixel_boot_build_orange_gpu: wifi IP probe requires a metadata credentials path under /metadata/shadow-wifi-credentials/by-token" >&2
+  exit 1
+fi
+if [[ "$WIFI_IP_PROBE" == "true" ]]; then
+  if [[ ! -x "$WIFI_DHCP_CLIENT_BINARY" ]]; then
+    echo "pixel_boot_build_orange_gpu: wifi IP probe requires --wifi-dhcp-client with an executable static busybox" >&2
+    exit 1
+  fi
+  assert_static_device_binary "$WIFI_DHCP_CLIENT_BINARY" "wifi DHCP client"
 fi
 case "$WIFI_HELPER_PROFILE" in
   full|no-service-managers|no-pm|no-modem-svc|no-rfs-storage|no-pd-mapper|no-cnss|qrtr-only|qrtr-pd|qrtr-pd-tftp|qrtr-pd-rfs|qrtr-pd-rfs-cnss|qrtr-pd-rfs-modem|qrtr-pd-rfs-modem-cnss|qrtr-pd-rfs-modem-pm|qrtr-pd-rfs-modem-pm-cnss|aidl-sm-core|vnd-sm-core|vnd-sm-core-binder-node|all-sm-core|none) ;;
@@ -3494,6 +3555,10 @@ if orange_gpu_mode_uses_ramdisk_gpu_bundle; then
   if [[ "$ORANGE_GPU_MODE" == "camera-hal-link-probe" && -n "$CAMERA_HAL_BIONIC_PROBE_BINARY" ]]; then
     cp "$CAMERA_HAL_BIONIC_PROBE_BINARY" "$STAGED_GPU_BUNDLE_DIR/camera-hal-bionic-probe"
     chmod 0755 "$STAGED_GPU_BUNDLE_DIR/camera-hal-bionic-probe"
+  fi
+  if [[ "$WIFI_IP_PROBE" == "true" ]]; then
+    cp "$WIFI_DHCP_CLIENT_BINARY" "$STAGED_GPU_BUNDLE_DIR/busybox"
+    chmod 0755 "$STAGED_GPU_BUNDLE_DIR/busybox"
   fi
 
   strip_staged_elf_files "$STAGED_GPU_BUNDLE_DIR"

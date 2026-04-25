@@ -13,6 +13,7 @@ mod linux {
     use std::fmt::Write as _;
     use std::fs::{self, File, OpenOptions};
     use std::io::{self, BufReader, BufWriter, Read, Write};
+    use std::net::{TcpStream, ToSocketAddrs};
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
     use std::os::unix::io::AsRawFd;
@@ -195,6 +196,10 @@ mod linux {
         wifi_bootstrap: String,
         wifi_helper_profile: String,
         wifi_supplicant_probe: bool,
+        wifi_association_probe: bool,
+        wifi_ip_probe: bool,
+        wifi_credentials_path: String,
+        wifi_dhcp_client_path: String,
         mount_dev: bool,
         mount_proc: bool,
         mount_sys: bool,
@@ -242,6 +247,10 @@ mod linux {
                 wifi_bootstrap: "none".to_string(),
                 wifi_helper_profile: "vnd-sm-core-binder-node".to_string(),
                 wifi_supplicant_probe: true,
+                wifi_association_probe: false,
+                wifi_ip_probe: false,
+                wifi_credentials_path: String::new(),
+                wifi_dhcp_client_path: "/orange-gpu/busybox".to_string(),
                 mount_dev: true,
                 mount_proc: true,
                 mount_sys: true,
@@ -1009,6 +1018,22 @@ mod linux {
                     if let Some(parsed) = parse_bool(value) {
                         config.wifi_supplicant_probe = parsed;
                     }
+                }
+                "wifi_association_probe" => {
+                    if let Some(parsed) = parse_bool(value) {
+                        config.wifi_association_probe = parsed;
+                    }
+                }
+                "wifi_ip_probe" => {
+                    if let Some(parsed) = parse_bool(value) {
+                        config.wifi_ip_probe = parsed;
+                    }
+                }
+                "wifi_credentials_path" => {
+                    config.wifi_credentials_path = value.trim().to_string();
+                }
+                "wifi_dhcp_client_path" => {
+                    config.wifi_dhcp_client_path = value.trim().to_string();
                 }
                 "mount_proc" => {
                     if let Some(parsed) = parse_bool(value) {
@@ -2660,17 +2685,6 @@ mod linux {
         names
     }
 
-    fn json_string_array(values: &[String]) -> String {
-        format!(
-            "[{}]",
-            values
-                .iter()
-                .map(|value| json_string(value))
-                .collect::<Vec<_>>()
-                .join(",")
-        )
-    }
-
     const WIFI_HELPER_PROCESS_NAMES: &[&str] = &[
         "servicemanager",
         "hwservicemanager",
@@ -3013,7 +3027,9 @@ mod linux {
                     }
                 }
             }
-            let line = redacted_line.unwrap_or_else(|| redact_mac_like_tokens(line));
+            let line = redacted_line.unwrap_or_else(|| {
+                redact_mac_like_tokens(&redact_inline_wifi_sensitive_tokens(line))
+            });
             lines.push(line);
         }
         let mut output = lines.join("\n");
@@ -3040,6 +3056,36 @@ mod linux {
             network_id,
             field
         ))
+    }
+
+    fn redact_inline_wifi_sensitive_tokens(line: &str) -> String {
+        let mut output = line.to_string();
+        for marker in ["ssid:", "SSID:"] {
+            let mut cursor = 0_usize;
+            while cursor < output.len() {
+                let Some(relative_start) = output[cursor..].find(marker) else {
+                    break;
+                };
+                let start = cursor + relative_start;
+                let value_start = start + marker.len();
+                let rest = &output[value_start..];
+                let value_len = [
+                    " bssid",
+                    " BSSID",
+                    " rssi",
+                    " RSSI",
+                    " channel",
+                    " country_code",
+                ]
+                .iter()
+                .filter_map(|terminator| rest.find(terminator))
+                .min()
+                .unwrap_or(rest.len());
+                output.replace_range(value_start..value_start + value_len, "<redacted>");
+                cursor = value_start + "<redacted>".len();
+            }
+        }
+        output
     }
 
     fn redact_mac_like_tokens(text: &str) -> String {
@@ -3214,6 +3260,39 @@ mod linux {
             .to_string()
     }
 
+    struct WpaCtrlCommandResult {
+        command_label: String,
+        ok: bool,
+        response: String,
+        error: String,
+    }
+
+    struct WifiCredentials {
+        ssid: Vec<u8>,
+        psk_config_value: String,
+        psk_kind: &'static str,
+    }
+
+    struct WifiCredentialLoad {
+        attempted: bool,
+        path_configured: bool,
+        read_ok: bool,
+        remove_ok: bool,
+        error: String,
+        credentials: Option<WifiCredentials>,
+    }
+
+    struct WifiAssociationRun {
+        json: String,
+        completed: bool,
+        network_id: Option<u32>,
+    }
+
+    struct TcpConnectProbe {
+        json: String,
+        connected: bool,
+    }
+
     fn wpa_ctrl_command_label(command: &str) -> String {
         let redacted = redact_wifi_sensitive_text(command.trim());
         if redacted.is_empty() {
@@ -3227,77 +3306,730 @@ mod linux {
         truncated
     }
 
-    fn wpa_ctrl_command_result_json(
+    fn wpa_ctrl_client_suffix(command_label: &str) -> String {
+        let suffix = command_label
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric())
+            .take(48)
+            .collect::<String>()
+            .to_ascii_lowercase();
+        if suffix.is_empty() {
+            "cmd".to_string()
+        } else {
+            suffix
+        }
+    }
+
+    fn wpa_ctrl_command_ok(command: &str, response: &str) -> bool {
+        let command_word = command.split_whitespace().next().unwrap_or_default();
+        match command_word {
+            "PING" => response == "PONG",
+            "SCAN" => response == "OK",
+            "STATUS" => !response.is_empty(),
+            "ADD_NETWORK" => response.parse::<u32>().is_ok(),
+            _ => !response.starts_with("FAIL") && !response.is_empty(),
+        }
+    }
+
+    fn wpa_ctrl_command(
         socket_path: &Path,
         command: &str,
         timeout: Duration,
-    ) -> String {
+    ) -> WpaCtrlCommandResult {
         let command_label = wpa_ctrl_command_label(command);
-        let client_path = format!(
+        let client_path = PathBuf::from(format!(
             "/data/vendor/wifi/wpa/sockets/shadow-wpa-{}-{}",
             process::id(),
-            command_label
-                .chars()
-                .filter(|ch| ch.is_ascii_alphanumeric())
-                .collect::<String>()
-                .to_ascii_lowercase()
-        );
-        let client_path = Path::new(&client_path);
-        let _ = fs::remove_file(client_path);
-        let socket = match UnixDatagram::bind(client_path) {
+            wpa_ctrl_client_suffix(&command_label)
+        ));
+        let _ = fs::remove_file(&client_path);
+        let socket = match UnixDatagram::bind(&client_path) {
             Ok(socket) => socket,
             Err(error) => {
-                return format!(
-                    "{{\"command\":{},\"ok\":false,\"error\":{}}}",
-                    json_string(&command_label),
-                    json_string(&format!("bind {client_path:?}: {error}"))
-                )
+                return WpaCtrlCommandResult {
+                    command_label,
+                    ok: false,
+                    response: String::new(),
+                    error: format!("bind {client_path:?}: {error}"),
+                }
             }
         };
-        let _ = fs::set_permissions(client_path, fs::Permissions::from_mode(0o770));
+        let _ = fs::set_permissions(&client_path, fs::Permissions::from_mode(0o770));
         if let Ok(c_client_path) = CString::new(client_path.as_os_str().as_bytes()) {
             let _ = unsafe { libc::chown(c_client_path.as_ptr(), 1010, 1010) };
         }
         let _ = socket.set_read_timeout(Some(timeout));
         let result = if let Err(error) = socket.connect(socket_path) {
-            format!(
-                "{{\"command\":{},\"ok\":false,\"error\":{}}}",
-                json_string(&command_label),
-                json_string(&format!("connect {socket_path:?}: {error}"))
-            )
+            WpaCtrlCommandResult {
+                command_label,
+                ok: false,
+                response: String::new(),
+                error: format!("connect {socket_path:?}: {error}"),
+            }
         } else if let Err(error) = socket.send(command.as_bytes()) {
-            format!(
-                "{{\"command\":{},\"ok\":false,\"error\":{}}}",
-                json_string(&command_label),
-                json_string(&format!("send: {error}"))
-            )
+            WpaCtrlCommandResult {
+                command_label,
+                ok: false,
+                response: String::new(),
+                error: format!("send: {error}"),
+            }
         } else {
             let mut buf = vec![0_u8; 65536];
             match socket.recv(&mut buf) {
                 Ok(size) => {
                     let response = wpa_ctrl_response_text(&buf[..size]);
-                    let ok = match command {
-                        "PING" => response == "PONG",
-                        "SCAN" => response == "OK",
-                        "STATUS" => !response.is_empty(),
-                        _ => !response.starts_with("FAIL") && !response.is_empty(),
-                    };
-                    format!(
-                        "{{\"command\":{},\"ok\":{},\"response\":{}}}",
-                        json_string(&command_label),
-                        bool_word(ok),
-                        json_string(&wifi_command_text(response.as_bytes(), 8192))
-                    )
+                    WpaCtrlCommandResult {
+                        command_label,
+                        ok: wpa_ctrl_command_ok(command, &response),
+                        response,
+                        error: String::new(),
+                    }
                 }
-                Err(error) => format!(
-                    "{{\"command\":{},\"ok\":false,\"error\":{}}}",
-                    json_string(&command_label),
-                    json_string(&format!("recv: {error}"))
-                ),
+                Err(error) => WpaCtrlCommandResult {
+                    command_label,
+                    ok: false,
+                    response: String::new(),
+                    error: format!("recv: {error}"),
+                },
             }
         };
-        let _ = fs::remove_file(client_path);
+        let _ = fs::remove_file(&client_path);
         result
+    }
+
+    fn wpa_ctrl_result_json(result: &WpaCtrlCommandResult) -> String {
+        if result.error.is_empty() {
+            format!(
+                "{{\"command\":{},\"ok\":{},\"response\":{}}}",
+                json_string(&result.command_label),
+                bool_word(result.ok),
+                json_string(&wifi_command_text(result.response.as_bytes(), 8192))
+            )
+        } else {
+            format!(
+                "{{\"command\":{},\"ok\":false,\"error\":{}}}",
+                json_string(&result.command_label),
+                json_string(&result.error)
+            )
+        }
+    }
+
+    fn wpa_ctrl_command_result_json(
+        socket_path: &Path,
+        command: &str,
+        timeout: Duration,
+    ) -> String {
+        wpa_ctrl_result_json(&wpa_ctrl_command(socket_path, command, timeout))
+    }
+
+    fn hex_encode(bytes: &[u8]) -> String {
+        let mut output = String::with_capacity(bytes.len() * 2);
+        for byte in bytes {
+            let _ = write!(&mut output, "{byte:02x}");
+        }
+        output
+    }
+
+    fn sha256_hex_digest(bytes: &[u8]) -> String {
+        hex_encode(&sha256_bytes(bytes))
+    }
+
+    fn parse_hex_bytes(value: &str) -> Option<Vec<u8>> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.len() % 2 != 0 {
+            return None;
+        }
+        let mut output = Vec::with_capacity(trimmed.len() / 2);
+        let bytes = trimmed.as_bytes();
+        let mut index = 0_usize;
+        while index < bytes.len() {
+            let pair = std::str::from_utf8(&bytes[index..index + 2]).ok()?;
+            output.push(u8::from_str_radix(pair, 16).ok()?);
+            index += 2;
+        }
+        Some(output)
+    }
+
+    fn is_hex_psk(value: &str) -> bool {
+        value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }
+
+    fn wpa_config_quote(value: &str) -> String {
+        let mut output = String::with_capacity(value.len() + 2);
+        output.push('"');
+        for ch in value.chars() {
+            if ch == '"' || ch == '\\' {
+                output.push('\\');
+            }
+            output.push(ch);
+        }
+        output.push('"');
+        output
+    }
+
+    fn parse_wifi_credentials_text(text: &str) -> Result<WifiCredentials, String> {
+        let mut ssid_text = None;
+        let mut ssid_hex = None;
+        let mut psk_text = None;
+
+        for raw_line in text.lines() {
+            let line = raw_line.trim_start();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let value = value.trim_end_matches('\r').to_string();
+            match key.trim().to_ascii_lowercase().as_str() {
+                "ssid" => ssid_text = Some(value),
+                "ssid_hex" => ssid_hex = Some(value),
+                "psk" | "password" | "passphrase" => psk_text = Some(value),
+                _ => {}
+            }
+        }
+
+        let ssid = if let Some(value) = ssid_hex {
+            parse_hex_bytes(&value).ok_or_else(|| "invalid-ssid-hex".to_string())?
+        } else {
+            ssid_text
+                .ok_or_else(|| "missing-ssid".to_string())?
+                .into_bytes()
+        };
+        if ssid.is_empty() || ssid.len() > 32 {
+            return Err("invalid-ssid-length".to_string());
+        }
+
+        let psk = psk_text.ok_or_else(|| "missing-psk".to_string())?;
+        let (psk_config_value, psk_kind) = if is_hex_psk(&psk) {
+            (psk, "raw-psk")
+        } else {
+            let psk_len = psk.as_bytes().len();
+            if !(8..=63).contains(&psk_len) {
+                return Err("invalid-passphrase-length".to_string());
+            }
+            (wpa_config_quote(&psk), "passphrase")
+        };
+
+        Ok(WifiCredentials {
+            ssid,
+            psk_config_value,
+            psk_kind,
+        })
+    }
+
+    fn read_wifi_credentials_once(path: &str) -> WifiCredentialLoad {
+        let path = path.trim();
+        if path.is_empty() {
+            return WifiCredentialLoad {
+                attempted: true,
+                path_configured: false,
+                read_ok: false,
+                remove_ok: false,
+                error: "missing-credentials-path".to_string(),
+                credentials: None,
+            };
+        }
+
+        let read_result = fs::read_to_string(path);
+        let remove_ok = fs::remove_file(path).is_ok();
+        match read_result {
+            Ok(text) => match parse_wifi_credentials_text(&text) {
+                Ok(credentials) => WifiCredentialLoad {
+                    attempted: true,
+                    path_configured: true,
+                    read_ok: true,
+                    remove_ok,
+                    error: String::new(),
+                    credentials: Some(credentials),
+                },
+                Err(error) => WifiCredentialLoad {
+                    attempted: true,
+                    path_configured: true,
+                    read_ok: true,
+                    remove_ok,
+                    error,
+                    credentials: None,
+                },
+            },
+            Err(error) => WifiCredentialLoad {
+                attempted: true,
+                path_configured: true,
+                read_ok: false,
+                remove_ok,
+                error: format!("read-failed:{error}"),
+                credentials: None,
+            },
+        }
+    }
+
+    fn wifi_credential_load_json(load: &WifiCredentialLoad) -> String {
+        let (ssid_len, ssid_sha256, psk_kind) = match &load.credentials {
+            Some(credentials) => (
+                credentials.ssid.len().to_string(),
+                format!("sha256:{}", sha256_hex_digest(&credentials.ssid)),
+                credentials.psk_kind.to_string(),
+            ),
+            None => ("null".to_string(), String::new(), String::new()),
+        };
+        format!(
+            concat!(
+                "{{\"attempted\":{},\"pathConfigured\":{},\"readOk\":{},",
+                "\"removeOk\":{},\"error\":{},\"ssidLen\":{},",
+                "\"ssidSha256\":{},\"pskKind\":{}}}"
+            ),
+            bool_word(load.attempted),
+            bool_word(load.path_configured),
+            bool_word(load.read_ok),
+            bool_word(load.remove_ok),
+            json_string(&load.error),
+            ssid_len,
+            json_string(&ssid_sha256),
+            json_string(&psk_kind)
+        )
+    }
+
+    fn wpa_status_value(status: &str, key: &str) -> Option<String> {
+        let prefix = format!("{key}=");
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix).map(|value| value.to_string()))
+    }
+
+    fn wifi_association_status_poll_json(attempt: u32, result: &WpaCtrlCommandResult) -> String {
+        let state = wpa_status_value(&result.response, "wpa_state").unwrap_or_default();
+        format!(
+            "{{\"attempt\":{},\"state\":{},\"result\":{}}}",
+            attempt,
+            json_string(&state),
+            wpa_ctrl_result_json(result)
+        )
+    }
+
+    fn wifi_association_cleanup_json(socket_path: &Path, network_id: u32) -> String {
+        let mut cleanup = Vec::new();
+        let cleanup_disconnect =
+            wpa_ctrl_command(socket_path, "DISCONNECT", Duration::from_secs(2));
+        cleanup.push(format!(
+            "{{\"step\":\"disconnect\",\"result\":{}}}",
+            wpa_ctrl_result_json(&cleanup_disconnect)
+        ));
+        let cleanup_remove = wpa_ctrl_command(
+            socket_path,
+            &format!("REMOVE_NETWORK {network_id}"),
+            Duration::from_secs(2),
+        );
+        cleanup.push(format!(
+            "{{\"step\":\"remove-network\",\"result\":{}}}",
+            wpa_ctrl_result_json(&cleanup_remove)
+        ));
+        let cleanup_status = wpa_ctrl_command(socket_path, "STATUS", Duration::from_secs(2));
+        cleanup.push(format!(
+            "{{\"step\":\"status\",\"result\":{}}}",
+            wpa_ctrl_result_json(&cleanup_status)
+        ));
+        format!("[{}]", cleanup.join(","))
+    }
+
+    fn run_wifi_association(
+        socket_path: &Path,
+        credential_load: &WifiCredentialLoad,
+        cleanup_after: bool,
+    ) -> WifiAssociationRun {
+        let credentials_json = wifi_credential_load_json(credential_load);
+        let Some(credentials) = credential_load.credentials.as_ref() else {
+            return WifiAssociationRun {
+                json: format!(
+                    "{{\"attempted\":false,\"reason\":\"credentials-unavailable\",\"credentials\":{credentials_json}}}"
+                ),
+                completed: false,
+                network_id: None,
+            };
+        };
+        if !credential_load.remove_ok {
+            return WifiAssociationRun {
+                json: format!(
+                    "{{\"attempted\":false,\"reason\":\"credentials-not-removed\",\"credentials\":{credentials_json}}}"
+                ),
+                completed: false,
+                network_id: None,
+            };
+        }
+
+        let mut steps = Vec::new();
+        let disconnect = wpa_ctrl_command(socket_path, "DISCONNECT", Duration::from_secs(2));
+        steps.push(format!(
+            "{{\"step\":\"disconnect\",\"result\":{}}}",
+            wpa_ctrl_result_json(&disconnect)
+        ));
+        let remove_all =
+            wpa_ctrl_command(socket_path, "REMOVE_NETWORK all", Duration::from_secs(2));
+        steps.push(format!(
+            "{{\"step\":\"remove-all\",\"result\":{}}}",
+            wpa_ctrl_result_json(&remove_all)
+        ));
+        let add_network = wpa_ctrl_command(socket_path, "ADD_NETWORK", Duration::from_secs(2));
+        steps.push(format!(
+            "{{\"step\":\"add-network\",\"result\":{}}}",
+            wpa_ctrl_result_json(&add_network)
+        ));
+        let network_id = add_network.response.trim().parse::<u32>().ok();
+        let Some(network_id) = network_id else {
+            return WifiAssociationRun {
+                json: format!(
+                    concat!(
+                        "{{\"attempted\":true,\"completed\":false,\"reason\":\"add-network-failed\",",
+                        "\"credentials\":{},\"steps\":[{}],\"polls\":[],\"cleanup\":[]}}"
+                    ),
+                    credentials_json,
+                    steps.join(",")
+                ),
+                completed: false,
+                network_id: None,
+            };
+        };
+
+        let set_commands = [
+            (
+                "set-ssid",
+                format!(
+                    "SET_NETWORK {network_id} ssid {}",
+                    hex_encode(&credentials.ssid)
+                ),
+            ),
+            (
+                "set-key-mgmt",
+                format!("SET_NETWORK {network_id} key_mgmt WPA-PSK"),
+            ),
+            (
+                "set-mem-only-psk",
+                format!("SET_NETWORK {network_id} mem_only_psk 1"),
+            ),
+            (
+                "set-psk",
+                format!(
+                    "SET_NETWORK {network_id} psk {}",
+                    credentials.psk_config_value
+                ),
+            ),
+            ("select-network", format!("SELECT_NETWORK {network_id}")),
+        ];
+        let mut setup_ok = true;
+        for (step, command) in set_commands {
+            let result = wpa_ctrl_command(socket_path, &command, Duration::from_secs(2));
+            setup_ok = setup_ok && result.ok;
+            steps.push(format!(
+                "{{\"step\":{},\"result\":{}}}",
+                json_string(step),
+                wpa_ctrl_result_json(&result)
+            ));
+            if !setup_ok {
+                break;
+            }
+        }
+
+        let mut polls = Vec::new();
+        let mut completed = false;
+        let mut final_state = String::new();
+        if setup_ok {
+            for attempt in 0..60_u32 {
+                if attempt > 0 {
+                    thread::sleep(Duration::from_millis(500));
+                }
+                let status = wpa_ctrl_command(socket_path, "STATUS", Duration::from_secs(2));
+                final_state = wpa_status_value(&status.response, "wpa_state").unwrap_or_default();
+                completed = status.ok && final_state == "COMPLETED";
+                polls.push(wifi_association_status_poll_json(attempt, &status));
+                if completed {
+                    break;
+                }
+            }
+        }
+
+        let cleanup = if cleanup_after {
+            wifi_association_cleanup_json(socket_path, network_id)
+        } else {
+            "[]".to_string()
+        };
+
+        WifiAssociationRun {
+            json: format!(
+                concat!(
+                    "{{\"attempted\":true,\"completed\":{},\"reason\":{},",
+                    "\"networkId\":{},\"finalState\":{},\"credentials\":{},",
+                    "\"steps\":[{}],\"polls\":[{}],\"cleanup\":{}}}"
+                ),
+                bool_word(completed),
+                json_string(if completed {
+                    ""
+                } else if setup_ok {
+                    "association-timeout"
+                } else {
+                    "network-setup-failed"
+                }),
+                network_id,
+                json_string(&final_state),
+                credentials_json,
+                steps.join(","),
+                polls.join(","),
+                cleanup
+            ),
+            completed,
+            network_id: Some(network_id),
+        }
+    }
+
+    fn wifi_association_probe_json(
+        socket_path: &Path,
+        credential_load: &WifiCredentialLoad,
+    ) -> String {
+        run_wifi_association(socket_path, credential_load, true).json
+    }
+
+    fn write_udhcpc_script(script_path: &Path, busybox_path: &str) -> io::Result<()> {
+        let script = format!(
+            concat!(
+                "#!{} sh\n",
+                "set -eu\n",
+                "bb={}\n",
+                "case \"${{1:-}}\" in\n",
+                "  deconfig)\n",
+                "    \"$bb\" ifconfig \"${{interface:-wlan0}}\" 0.0.0.0 || true\n",
+                "    ;;\n",
+                "  bound|renew)\n",
+                "    \"$bb\" ifconfig \"$interface\" \"$ip\" netmask \"$subnet\"\n",
+                "    \"$bb\" route del default dev \"$interface\" 2>/dev/null || true\n",
+                "    for r in ${{router:-}}; do \"$bb\" route add default gw \"$r\" dev \"$interface\"; break; done\n",
+                "    \"$bb\" mkdir -p /etc\n",
+                "    : > /etc/resolv.conf\n",
+                "    for d in ${{dns:-}}; do echo \"nameserver $d\" >> /etc/resolv.conf; done\n",
+                "    ;;\n",
+                "esac\n"
+            ),
+            busybox_path, busybox_path
+        );
+        fs::write(script_path, script)?;
+        fs::set_permissions(script_path, fs::Permissions::from_mode(0o755))
+    }
+
+    fn command_output_json(command: &str, output: io::Result<std::process::Output>) -> String {
+        match output {
+            Ok(output) => format!(
+                "{{\"command\":{},\"exitCode\":{},\"success\":{},\"stdout\":{},\"stderr\":{}}}",
+                json_string(command),
+                output
+                    .status
+                    .code()
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "null".to_string()),
+                bool_word(output.status.success()),
+                json_string(&wifi_command_text(&output.stdout, 8192)),
+                json_string(&wifi_command_text(&output.stderr, 8192))
+            ),
+            Err(error) => format!(
+                "{{\"command\":{},\"exitCode\":null,\"success\":false,\"spawnError\":{}}}",
+                json_string(command),
+                json_string(&error.to_string())
+            ),
+        }
+    }
+
+    fn command_success(output: &io::Result<std::process::Output>) -> bool {
+        output
+            .as_ref()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    fn wifi_ip_state_cleanup_json(busybox_path: &Path) -> String {
+        let busybox_label = busybox_path.display().to_string();
+        let route_del = Command::new(busybox_path)
+            .args(["route", "del", "default", "dev", "wlan0"])
+            .output();
+        let ifconfig_clear = Command::new(busybox_path)
+            .args(["ifconfig", "wlan0", "0.0.0.0"])
+            .output();
+        let resolv_remove = Command::new(busybox_path)
+            .args(["rm", "-f", "/etc/resolv.conf"])
+            .output();
+        format!(
+            concat!(
+                "[{{\"step\":\"route-del-default\",\"result\":{}}},",
+                "{{\"step\":\"ifconfig-clear\",\"result\":{}}},",
+                "{{\"step\":\"resolv-conf-remove\",\"result\":{}}}]"
+            ),
+            command_output_json(
+                &format!("{busybox_label} route del default dev wlan0"),
+                route_del
+            ),
+            command_output_json(
+                &format!("{busybox_label} ifconfig wlan0 0.0.0.0"),
+                ifconfig_clear
+            ),
+            command_output_json(
+                &format!("{busybox_label} rm -f /etc/resolv.conf"),
+                resolv_remove
+            )
+        )
+    }
+
+    fn proc_net_route_has_default_wlan0(text: &str) -> bool {
+        text.lines().skip(1).any(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            fields.len() > 2 && fields[0] == "wlan0" && fields[1] == "00000000"
+        })
+    }
+
+    fn wlan0_has_ipv4_address(ifconfig_text: &str) -> bool {
+        ifconfig_text.contains("inet addr:") || ifconfig_text.contains("inet ")
+    }
+
+    fn tcp_connect_probe(host: &str, port: u16) -> TcpConnectProbe {
+        let target = format!("{host}:{port}");
+        let mut resolved = Vec::new();
+        let mut connected = false;
+        let mut error = String::new();
+        match target.to_socket_addrs() {
+            Ok(addrs) => {
+                for addr in addrs.take(8) {
+                    resolved.push(addr.to_string());
+                    match TcpStream::connect_timeout(&addr, Duration::from_secs(4)) {
+                        Ok(_) => {
+                            connected = true;
+                            break;
+                        }
+                        Err(connect_error) => {
+                            if error.is_empty() {
+                                error = connect_error.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+            Err(resolve_error) => error = resolve_error.to_string(),
+        }
+        TcpConnectProbe {
+            json: format!(
+                "{{\"target\":{},\"resolved\":{},\"connected\":{},\"error\":{}}}",
+                json_string(&target),
+                json_string_array(&resolved),
+                bool_word(connected),
+                json_string(&error)
+            ),
+            connected,
+        }
+    }
+
+    fn wifi_ip_probe_json(
+        config: &Config,
+        socket_path: &Path,
+        credential_load: &WifiCredentialLoad,
+    ) -> String {
+        let association = run_wifi_association(socket_path, credential_load, false);
+        let Some(network_id) = association.network_id else {
+            return format!(
+                "{{\"attempted\":true,\"completed\":false,\"reason\":\"association-setup-failed\",\"association\":{},\"dhcp\":null,\"cleanup\":[]}}",
+                association.json
+            );
+        };
+        if !association.completed {
+            let cleanup = wifi_association_cleanup_json(socket_path, network_id);
+            return format!(
+                "{{\"attempted\":true,\"completed\":false,\"reason\":\"association-failed\",\"association\":{},\"dhcp\":null,\"cleanup\":{}}}",
+                association.json, cleanup
+            );
+        }
+
+        let busybox_path = Path::new(&config.wifi_dhcp_client_path);
+        if !busybox_path.is_file() {
+            let cleanup = wifi_association_cleanup_json(socket_path, network_id);
+            return format!(
+                "{{\"attempted\":true,\"completed\":false,\"reason\":\"missing-dhcp-client\",\"association\":{},\"dhcp\":null,\"cleanup\":{}}}",
+                association.json, cleanup
+            );
+        }
+
+        let script_path = Path::new("/orange-gpu/udhcpc-script");
+        let script_result = write_udhcpc_script(script_path, &config.wifi_dhcp_client_path);
+        if let Err(error) = script_result {
+            let cleanup = wifi_association_cleanup_json(socket_path, network_id);
+            return format!(
+                "{{\"attempted\":true,\"completed\":false,\"reason\":\"dhcp-script-failed\",\"association\":{},\"dhcpScriptError\":{},\"dhcp\":null,\"cleanup\":{}}}",
+                association.json,
+                json_string(&error.to_string()),
+                cleanup
+            );
+        }
+
+        let pre_dhcp_cleanup = wifi_ip_state_cleanup_json(busybox_path);
+        let dhcp_output = Command::new(busybox_path)
+            .args([
+                "udhcpc",
+                "-i",
+                "wlan0",
+                "-n",
+                "-q",
+                "-t",
+                "5",
+                "-T",
+                "3",
+                "-s",
+                "/orange-gpu/udhcpc-script",
+            ])
+            .output();
+        let dhcp_success = command_success(&dhcp_output);
+        let busybox_label = busybox_path.display().to_string();
+        let dhcp_json = command_output_json(
+            &format!(
+                "{busybox_label} udhcpc -i wlan0 -n -q -t 5 -T 3 -s /orange-gpu/udhcpc-script"
+            ),
+            dhcp_output,
+        );
+        let ifconfig_output = Command::new(busybox_path)
+            .args(["ifconfig", "wlan0"])
+            .output();
+        let ifconfig_text = ifconfig_output
+            .as_ref()
+            .ok()
+            .map(|output| wifi_command_text(&output.stdout, 8192))
+            .unwrap_or_default();
+        let ifconfig_json =
+            command_output_json(&format!("{busybox_label} ifconfig wlan0"), ifconfig_output);
+        let route_text = read_file_excerpt("/proc/net/route", 8192);
+        let resolv_conf = read_file_excerpt("/etc/resolv.conf", 4096);
+        let default_route = proc_net_route_has_default_wlan0(&route_text);
+        let ipv4_address = wlan0_has_ipv4_address(&ifconfig_text);
+        let relay_connect = tcp_connect_probe("relay.damus.io", 443);
+        let fallback_connect = tcp_connect_probe("1.1.1.1", 53);
+        let connected = relay_connect.connected || fallback_connect.connected;
+        let completed = dhcp_success && ipv4_address && default_route && connected;
+        let post_dhcp_cleanup = wifi_ip_state_cleanup_json(busybox_path);
+        let cleanup = wifi_association_cleanup_json(socket_path, network_id);
+
+        format!(
+            concat!(
+                "{{\"attempted\":true,\"completed\":{},\"reason\":{},",
+                "\"association\":{},\"preDhcpCleanup\":{},\"dhcp\":{},\"dhcpSuccess\":{},",
+                "\"ifconfig\":{},\"ipv4AddressPresent\":{},\"defaultRoutePresent\":{},",
+                "\"procNetRoute\":{},\"resolvConf\":{},",
+                "\"tcpConnect\":[{},{}],\"postDhcpCleanup\":{},\"cleanup\":{}}}"
+            ),
+            bool_word(completed),
+            json_string(if completed { "" } else { "ip-proof-failed" }),
+            association.json,
+            pre_dhcp_cleanup,
+            dhcp_json,
+            bool_word(dhcp_success),
+            ifconfig_json,
+            bool_word(ipv4_address),
+            bool_word(default_route),
+            json_string(&route_text),
+            json_string(&resolv_conf),
+            relay_connect.json,
+            fallback_connect.json,
+            post_dhcp_cleanup,
+            cleanup
+        )
     }
 
     fn wpa_scan_results_json(socket_path: &Path, timeout: Duration) -> String {
@@ -3402,6 +4134,7 @@ mod linux {
     }
 
     fn wifi_supplicant_probe_json(
+        config: &Config,
         probe_stage_path: Option<&Path>,
         probe_stage_prefix: Option<&str>,
     ) -> String {
@@ -3504,6 +4237,47 @@ mod linux {
         let scan_results = wpa_scan_results_json(socket_path, Duration::from_secs(2));
         let status_after_scan =
             wpa_ctrl_command_result_json(socket_path, "STATUS", Duration::from_secs(2));
+        let association_credentials = if config.wifi_association_probe || config.wifi_ip_probe {
+            Some(read_wifi_credentials_once(&config.wifi_credentials_path))
+        } else {
+            None
+        };
+        let association = if config.wifi_association_probe
+            && !config.wifi_ip_probe
+            && association_credentials.is_some()
+        {
+            let credentials = association_credentials.as_ref().expect("checked is_some");
+            write_payload_probe_stage(
+                probe_stage_path,
+                probe_stage_prefix,
+                "wifi-wpa-association-start",
+            );
+            let association = wifi_association_probe_json(socket_path, credentials);
+            write_payload_probe_stage(
+                probe_stage_path,
+                probe_stage_prefix,
+                "wifi-wpa-association-done",
+            );
+            association
+        } else {
+            "{\"attempted\":false,\"reason\":\"disabled\"}".to_string()
+        };
+        let ip = if config.wifi_ip_probe {
+            if let Some(credentials) = association_credentials.as_ref() {
+                write_payload_probe_stage(
+                    probe_stage_path,
+                    probe_stage_prefix,
+                    "wifi-wpa-ip-start",
+                );
+                let ip = wifi_ip_probe_json(config, socket_path, credentials);
+                write_payload_probe_stage(probe_stage_path, probe_stage_prefix, "wifi-wpa-ip-done");
+                ip
+            } else {
+                "{\"attempted\":false,\"reason\":\"credentials-unavailable\"}".to_string()
+            }
+        } else {
+            "{\"attempted\":false,\"reason\":\"disabled\"}".to_string()
+        };
         write_payload_probe_stage(probe_stage_path, probe_stage_prefix, "wifi-wpa-probe-done");
         let child_pid = child.id();
         let cleanup = stop_wifi_child_json(child);
@@ -3513,7 +4287,8 @@ mod linux {
                 "{{\"attempted\":true,\"started\":true,\"pid\":{},",
                 "\"socketReady\":true,\"earlyExit\":{},\"socket\":{},",
                 "\"ping\":{},\"statusBeforeScan\":{},\"scan\":{},",
-                "\"scanResults\":{},\"statusAfterScan\":{},\"cleanup\":{},\"logExcerpt\":{}}}"
+                "\"scanResults\":{},\"statusAfterScan\":{},\"association\":{},\"ip\":{},",
+                "\"cleanup\":{},\"logExcerpt\":{}}}"
             ),
             child_pid,
             json_string(&early_exit_status),
@@ -3523,6 +4298,8 @@ mod linux {
             scan,
             scan_results,
             status_after_scan,
+            association,
+            ip,
             cleanup,
             json_string(&redact_wifi_sensitive_text(&read_file_excerpt(
                 "/orange-gpu/wifi-helper-wpa_supplicant.log",
@@ -3566,7 +4343,7 @@ mod linux {
         let activation_probe =
             wifi_interface_activation_probe_json(probe_stage_path, probe_stage_prefix);
         let supplicant_probe = if config.wifi_supplicant_probe {
-            wifi_supplicant_probe_json(probe_stage_path, probe_stage_prefix)
+            wifi_supplicant_probe_json(config, probe_stage_path, probe_stage_prefix)
         } else {
             "{\"attempted\":false,\"reason\":\"disabled\"}".to_string()
         };
@@ -3618,6 +4395,10 @@ mod linux {
                 "  \"wifiBootstrap\": {},\n",
                 "  \"wifiHelperProfile\": {},\n",
                 "  \"wifiSupplicantProbe\": {},\n",
+                "  \"wifiAssociationProbe\": {},\n",
+                "  \"wifiIpProbe\": {},\n",
+                "  \"wifiCredentialsPathConfigured\": {},\n",
+                "  \"wifiDhcpClientPathConfigured\": {},\n",
                 "  \"androidWifiApiUse\": {{\"WifiManager\": false, \"wificond\": false, \"wpaSupplicantService\": false, \"vendorWpaSupplicantControlSocket\": {}, \"rootedAndroidShellWifiApi\": false, \"rootedAndroidShellRecoveryOnly\": true}},\n",
                 "  \"pathStatus\": [\n    {}\n  ],\n",
                 "  \"interfaces\": [\n    {}\n  ],\n",
@@ -3649,6 +4430,10 @@ mod linux {
             json_string(&config.wifi_bootstrap),
             json_string(&config.wifi_helper_profile),
             bool_word(config.wifi_supplicant_probe),
+            bool_word(config.wifi_association_probe),
+            bool_word(config.wifi_ip_probe),
+            bool_word(!config.wifi_credentials_path.is_empty()),
+            bool_word(!config.wifi_dhcp_client_path.is_empty()),
             bool_word(config.wifi_supplicant_probe),
             path_statuses,
             net_interfaces,
@@ -5558,6 +6343,26 @@ mod linux {
             && !config.orange_gpu_metadata_stage_breadcrumb
         {
             log_line("wifi-linux-surface-probe requires orange_gpu_metadata_stage_breadcrumb=true");
+            return false;
+        }
+        if config.wifi_association_probe && !config.wifi_supplicant_probe {
+            log_line("wifi_association_probe requires wifi_supplicant_probe=true");
+            return false;
+        }
+        if config.wifi_association_probe && config.wifi_credentials_path.is_empty() {
+            log_line("wifi_association_probe requires wifi_credentials_path");
+            return false;
+        }
+        if config.wifi_ip_probe && !config.wifi_supplicant_probe {
+            log_line("wifi_ip_probe requires wifi_supplicant_probe=true");
+            return false;
+        }
+        if config.wifi_ip_probe && config.wifi_credentials_path.is_empty() {
+            log_line("wifi_ip_probe requires wifi_credentials_path");
+            return false;
+        }
+        if config.wifi_ip_probe && config.wifi_dhcp_client_path.is_empty() {
+            log_line("wifi_ip_probe requires wifi_dhcp_client_path");
             return false;
         }
         if config.orange_gpu_mode == "payload-partition-probe"
@@ -7907,7 +8712,7 @@ mod linux {
         }
 
         append_wrapper_log(&format!(
-            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_metadata_prune_token_root={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} payload_probe_strategy={} payload_probe_source={} payload_probe_root={} payload_probe_manifest_path={} payload_probe_fallback_path={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} wifi_bootstrap={} wifi_helper_profile={} wifi_supplicant_probe={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
+            "config payload={} prelude={} orange_gpu_mode={} orange_gpu_launch_delay_secs={} orange_gpu_parent_probe_attempts={} orange_gpu_parent_probe_interval_secs={} orange_gpu_metadata_stage_breadcrumb={} orange_gpu_metadata_prune_token_root={} orange_gpu_firmware_helper={} orange_gpu_timeout_action={} orange_gpu_watchdog_timeout_secs={} payload_probe_strategy={} payload_probe_source={} payload_probe_root={} payload_probe_manifest_path={} payload_probe_fallback_path={} app_direct_present_manual_touch={} hold_seconds={} prelude_hold_seconds={} reboot_target={} run_token={} dev_mount={} dri_bootstrap={} input_bootstrap={} firmware_bootstrap={} wifi_bootstrap={} wifi_helper_profile={} wifi_supplicant_probe={} wifi_association_probe={} wifi_ip_probe={} wifi_credentials_path_configured={} wifi_dhcp_client_path_configured={} mount_dev={} mount_proc={} mount_sys={} log_kmsg={} log_pmsg={}",
             config.payload,
             config.prelude,
             config.orange_gpu_mode,
@@ -7936,6 +8741,10 @@ mod linux {
             config.wifi_bootstrap,
             config.wifi_helper_profile,
             bool_word(config.wifi_supplicant_probe),
+            bool_word(config.wifi_association_probe),
+            bool_word(config.wifi_ip_probe),
+            bool_word(!config.wifi_credentials_path.is_empty()),
+            bool_word(!config.wifi_dhcp_client_path.is_empty()),
             bool_word(config.mount_dev),
             bool_word(config.mount_proc),
             bool_word(config.mount_sys),

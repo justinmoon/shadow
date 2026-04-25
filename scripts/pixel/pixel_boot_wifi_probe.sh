@@ -14,6 +14,8 @@ HOLD_SECS="${PIXEL_BOOT_WIFI_HOLD_SECS:-2}"
 WATCHDOG_TIMEOUT_SECS="${PIXEL_BOOT_WIFI_WATCHDOG_TIMEOUT_SECS:-180}"
 PROOF_MODE="${PIXEL_BOOT_WIFI_PROOF_MODE:-scan}"
 WIFI_HELPER_PROFILE="${PIXEL_BOOT_WIFI_HELPER_PROFILE:-vnd-sm-core-binder-node}"
+WIFI_CREDENTIALS_FILE="${PIXEL_BOOT_WIFI_CREDENTIALS_FILE:-}"
+WIFI_DHCP_CLIENT_BINARY="${PIXEL_BOOT_WIFI_DHCP_CLIENT_BIN:-}"
 WIFI_ASSETS_MODE="${PIXEL_BOOT_WIFI_ASSETS_MODE:-auto}"
 WIFI_ASSETS_DIR="${PIXEL_WIFI_BOOT_ASSETS_DIR:-}"
 WIFI_LINKER_CAPSULE_MODE="${PIXEL_BOOT_WIFI_LINKER_CAPSULE_MODE:-auto}"
@@ -41,6 +43,9 @@ oneshot_attempted=false
 oneshot_status=""
 probe_summary_present=false
 scan_proof_ok=false
+wifi_credentials_device_path=""
+wifi_credentials_remote_tmp=""
+wifi_credentials_tmp_device_path=""
 
 usage() {
   cat <<'EOF'
@@ -49,8 +54,10 @@ Usage: scripts/pixel/pixel_boot_wifi_probe.sh [--output DIR]
                                                [--boot-timeout SECONDS]
                                                [--hold-secs SECONDS]
                                                [--watchdog-timeout SECONDS]
-                                               [--proof-mode surface|scan]
+                                               [--proof-mode surface|scan|association|ip]
                                                [--wifi-helper-profile full|no-service-managers|no-pm|no-modem-svc|no-rfs-storage|no-pd-mapper|no-cnss|qrtr-only|qrtr-pd|qrtr-pd-tftp|qrtr-pd-rfs|qrtr-pd-rfs-cnss|qrtr-pd-rfs-modem|qrtr-pd-rfs-modem-cnss|qrtr-pd-rfs-modem-pm|qrtr-pd-rfs-modem-pm-cnss|aidl-sm-core|vnd-sm-core|vnd-sm-core-binder-node|all-sm-core|none]
+                                               [--wifi-credentials FILE]
+                                               [--wifi-dhcp-client BIN]
                                                [--wifi-assets DIR]
                                                [--wifi-linker-capsule DIR]
                                                [--no-wifi-linker-capsule]
@@ -74,6 +81,67 @@ validate_int() {
 
 safe_path_component() {
   tr -c 'A-Za-z0-9._-' '_' <<<"$1" | sed 's/_$//'
+}
+
+device_shell_quote() {
+  local value
+  value="${1:?device_shell_quote requires a value}"
+  printf "'%s'" "${value//\'/\'\\\'\'}"
+}
+
+stage_wifi_credentials() {
+  local command
+
+  timeout "$ADB_TIMEOUT_SECS" adb -s "$serial" push "$WIFI_CREDENTIALS_FILE" "$wifi_credentials_remote_tmp" >/dev/null
+  command=$(
+    cat <<EOF
+set -eu
+trap 'rm -f $(device_shell_quote "$wifi_credentials_remote_tmp") $(device_shell_quote "$wifi_credentials_tmp_device_path")' EXIT
+umask 077
+mkdir -p /metadata/shadow-wifi-credentials/by-token
+cp $(device_shell_quote "$wifi_credentials_remote_tmp") $(device_shell_quote "$wifi_credentials_tmp_device_path")
+chmod 0600 $(device_shell_quote "$wifi_credentials_tmp_device_path")
+chown 0:0 $(device_shell_quote "$wifi_credentials_tmp_device_path") 2>/dev/null || true
+mv $(device_shell_quote "$wifi_credentials_tmp_device_path") $(device_shell_quote "$wifi_credentials_device_path")
+rm -f $(device_shell_quote "$wifi_credentials_remote_tmp")
+trap - EXIT
+EOF
+  )
+  pixel_root_shell_timeout "$ADB_TIMEOUT_SECS" "$serial" "$command" >/dev/null
+}
+
+cleanup_wifi_credentials_best_effort() {
+  local command timeout_secs
+  if [[ -z "$wifi_credentials_device_path" && -z "$wifi_credentials_remote_tmp" && -z "$wifi_credentials_tmp_device_path" ]]; then
+    return 0
+  fi
+  timeout_secs="${PIXEL_BOOT_WIFI_CREDENTIAL_CLEANUP_TIMEOUT_SECS:-10}"
+  command=$(
+    cat <<EOF
+rm -f $(device_shell_quote "$wifi_credentials_device_path") $(device_shell_quote "$wifi_credentials_tmp_device_path") $(device_shell_quote "$wifi_credentials_remote_tmp")
+EOF
+  )
+  pixel_root_shell_timeout "$timeout_secs" "$serial" "$command" >/dev/null 2>&1 || true
+}
+
+find_wifi_dhcp_client() {
+  if [[ -n "$WIFI_DHCP_CLIENT_BINARY" ]]; then
+    printf '%s\n' "$WIFI_DHCP_CLIENT_BINARY"
+    return 0
+  fi
+  find /nix/store -maxdepth 3 -type f \
+    -path '*busybox-static-aarch64-unknown-linux-musl-*/bin/busybox' \
+    -perm -111 -print 2>/dev/null | sort | sed -n '1p'
+}
+
+validate_wifi_dhcp_client() {
+  local binary_path file_output
+  binary_path="${1:?validate_wifi_dhcp_client requires a binary path}"
+  if [[ ! -x "$binary_path" ]]; then
+    return 1
+  fi
+  file_output="$(file "$binary_path" 2>/dev/null || true)"
+  [[ "$file_output" == *ELF* && "$file_output" == *"ARM aarch64"* && "$file_output" != *"dynamically linked"* ]]
 }
 
 resolve_serial_for_mode() {
@@ -106,7 +174,7 @@ prepare_output_dir() {
 default_run_token() {
   local safe_serial token
   safe_serial="$(safe_path_component "$serial")"
-  token="wifi-scan-$(date -u +%Y%m%dT%H%M%SZ)-$safe_serial"
+  token="wifi-$PROOF_MODE-$(date -u +%Y%m%dT%H%M%SZ)-$safe_serial"
   printf '%.63s\n' "$token"
 }
 
@@ -126,15 +194,16 @@ copy_if_present() {
 write_blocker_probe_json() {
   local reason
   reason="$1"
-  python3 - "$probe_json_path" "$run_token" "$reason" <<'PY'
+  python3 - "$probe_json_path" "$run_token" "$reason" "$PROOF_MODE" <<'PY'
 import json
 import sys
 
-output, run_token, reason = sys.argv[1:4]
+output, run_token, reason, proof_mode = sys.argv[1:5]
 payload = {
     "schemaVersion": 1,
-    "kind": "wifi-linux-surface-probe",
+    "kind": f"wifi-{proof_mode}-probe",
     "mode": "wifi-linux-surface-probe",
+    "proofMode": proof_mode,
     "runToken": run_token,
     "surfaceReady": False,
     "blockerStage": "host-wrapper",
@@ -156,19 +225,26 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
 proof_mode = sys.argv[2]
 supplicant = payload.get("supplicantProbe") or {}
 scan_results = supplicant.get("scanResults") or {}
+association = supplicant.get("association") or {}
+ip = supplicant.get("ip") or {}
 activation = payload.get("activationProbe") or {}
+scan_ok = (
+    payload.get("surfaceReady") is True
+    and activation.get("success") is True
+    and supplicant.get("socketReady") is True
+    and (supplicant.get("ping") or {}).get("ok") is True
+    and (supplicant.get("scan") or {}).get("ok") is True
+    and scan_results.get("ok") is True
+    and int(scan_results.get("bssCount") or 0) > 0
+)
 if proof_mode == "surface":
     ok = payload.get("surfaceReady") is True and payload.get("blocker", "") == ""
+elif proof_mode == "association":
+    ok = scan_ok and association.get("completed") is True
+elif proof_mode == "ip":
+    ok = scan_ok and ip.get("completed") is True
 else:
-    ok = (
-        payload.get("surfaceReady") is True
-        and activation.get("success") is True
-        and supplicant.get("socketReady") is True
-        and (supplicant.get("ping") or {}).get("ok") is True
-        and (supplicant.get("scan") or {}).get("ok") is True
-        and scan_results.get("ok") is True
-        and int(scan_results.get("bssCount") or 0) > 0
-    )
+    ok = scan_ok
 print("true" if ok else "false")
 PY
 }
@@ -305,6 +381,7 @@ PY
 finish() {
   local exit_code=$?
   trap - EXIT
+  cleanup_wifi_credentials_best_effort
   write_status_json "$exit_code"
   exit "$exit_code"
 }
@@ -337,6 +414,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --wifi-helper-profile)
       WIFI_HELPER_PROFILE="${2:?missing value for --wifi-helper-profile}"
+      shift 2
+      ;;
+    --wifi-credentials)
+      WIFI_CREDENTIALS_FILE="${2:?missing value for --wifi-credentials}"
+      shift 2
+      ;;
+    --wifi-dhcp-client)
+      WIFI_DHCP_CLIENT_BINARY="${2:?missing value for --wifi-dhcp-client}"
       shift 2
       ;;
     --wifi-assets)
@@ -375,12 +460,25 @@ validate_int boot-timeout "$BOOT_TIMEOUT_SECS"
 validate_int hold-secs "$HOLD_SECS"
 validate_int watchdog-timeout "$WATCHDOG_TIMEOUT_SECS"
 case "$PROOF_MODE" in
-  surface|scan) ;;
+  surface|scan|association|ip) ;;
   *)
-    echo "pixel_boot_wifi_probe: proof mode must be surface or scan: $PROOF_MODE" >&2
+    echo "pixel_boot_wifi_probe: proof mode must be surface, scan, association, or ip: $PROOF_MODE" >&2
     exit 1
     ;;
 esac
+if [[ ("$PROOF_MODE" == "association" || "$PROOF_MODE" == "ip") && "$DRY_RUN" != "1" ]]; then
+  if [[ -z "$WIFI_CREDENTIALS_FILE" || ! -r "$WIFI_CREDENTIALS_FILE" ]]; then
+    echo "pixel_boot_wifi_probe: $PROOF_MODE proof requires --wifi-credentials FILE" >&2
+    exit 1
+  fi
+fi
+if [[ "$PROOF_MODE" == "ip" ]]; then
+  WIFI_DHCP_CLIENT_BINARY="$(find_wifi_dhcp_client)"
+  if [[ -z "$WIFI_DHCP_CLIENT_BINARY" ]] || ! validate_wifi_dhcp_client "$WIFI_DHCP_CLIENT_BINARY"; then
+    echo "pixel_boot_wifi_probe: ip proof requires --wifi-dhcp-client with an executable static aarch64 busybox" >&2
+    exit 1
+  fi
+fi
 case "$WIFI_HELPER_PROFILE" in
   full|no-service-managers|no-pm|no-modem-svc|no-rfs-storage|no-pd-mapper|no-cnss|qrtr-only|qrtr-pd|qrtr-pd-tftp|qrtr-pd-rfs|qrtr-pd-rfs-cnss|qrtr-pd-rfs-modem|qrtr-pd-rfs-modem-cnss|qrtr-pd-rfs-modem-pm|qrtr-pd-rfs-modem-pm-cnss|aidl-sm-core|vnd-sm-core|vnd-sm-core-binder-node|all-sm-core|none) ;;
   *)
@@ -394,6 +492,9 @@ pixel_prepare_dirs
 prepare_output_dir
 
 run_token="${PIXEL_BOOT_WIFI_RUN_TOKEN:-$(default_run_token)}"
+wifi_credentials_device_path="/metadata/shadow-wifi-credentials/by-token/$run_token.env"
+wifi_credentials_tmp_device_path="$wifi_credentials_device_path.tmp"
+wifi_credentials_remote_tmp="/data/local/tmp/shadow-wifi-credentials-$run_token.env"
 image_path="$OUTPUT_DIR/orange-gpu.img"
 status_path="$OUTPUT_DIR/status.json"
 build_output_path="$OUTPUT_DIR/build-output.txt"
@@ -421,6 +522,12 @@ if [[ "$DRY_RUN" == "1" ]]; then
   if [[ "$PROOF_MODE" == "surface" ]]; then
     dry_run_build_command+=" --wifi-supplicant-probe false"
   fi
+  if [[ "$PROOF_MODE" == "association" ]]; then
+    dry_run_build_command+=" --wifi-association-probe true --wifi-credentials-path \"$wifi_credentials_device_path\""
+  fi
+  if [[ "$PROOF_MODE" == "ip" ]]; then
+    dry_run_build_command+=" --wifi-ip-probe true --wifi-credentials-path \"$wifi_credentials_device_path\" --wifi-dhcp-client \"$WIFI_DHCP_CLIENT_BINARY\""
+  fi
   if [[ "$WIFI_ASSETS_MODE" == "auto" ]]; then
     dry_run_assets_command="$SCRIPT_DIR/pixel/pixel_wifi_collect_boot_assets.sh --output \"$WIFI_ASSETS_DIR\""
   fi
@@ -442,6 +549,8 @@ hold_secs=$HOLD_SECS
 watchdog_timeout_secs=$WATCHDOG_TIMEOUT_SECS
 proof_mode=$PROOF_MODE
 wifi_helper_profile=$WIFI_HELPER_PROFILE
+wifi_credentials_path_configured=$([[ "$PROOF_MODE" == "association" || "$PROOF_MODE" == "ip" ]] && printf true || printf false)
+wifi_dhcp_client=${WIFI_DHCP_CLIENT_BINARY:-}
 wifi_assets_mode=$WIFI_ASSETS_MODE
 wifi_assets_dir=$WIFI_ASSETS_DIR
 wifi_linker_capsule_mode=$WIFI_LINKER_CAPSULE_MODE
@@ -511,6 +620,19 @@ build_args=(
 if [[ "$PROOF_MODE" == "surface" ]]; then
   build_args+=(--wifi-supplicant-probe false)
 fi
+if [[ "$PROOF_MODE" == "association" ]]; then
+  build_args+=(
+    --wifi-association-probe true
+    --wifi-credentials-path "$wifi_credentials_device_path"
+  )
+fi
+if [[ "$PROOF_MODE" == "ip" ]]; then
+  build_args+=(
+    --wifi-ip-probe true
+    --wifi-credentials-path "$wifi_credentials_device_path"
+    --wifi-dhcp-client "$WIFI_DHCP_CLIENT_BINARY"
+  )
+fi
 if [[ "$WIFI_LINKER_CAPSULE_MODE" != "none" ]]; then
   build_args+=(--wifi-linker-capsule "$WIFI_LINKER_CAPSULE_DIR")
 fi
@@ -521,6 +643,14 @@ if ! "${build_args[@]}" >"$build_output_path" 2>&1; then
   exit 1
 fi
 build_succeeded=true
+
+if [[ "$PROOF_MODE" == "association" || "$PROOF_MODE" == "ip" ]]; then
+  if ! stage_wifi_credentials; then
+    failure_stage="stage-wifi-credentials"
+    write_blocker_probe_json "failed to stage Wi-Fi credentials into metadata"
+    exit 1
+  fi
+fi
 
 oneshot_attempted=true
 set +e

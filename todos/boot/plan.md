@@ -65,9 +65,14 @@ Related docs:
   - helper contract processes are `vndservicemanager`, `qrtr-ns`, `rmt_storage`, `tftp_server`, `modem_svc`, `pd-mapper`, `pm-service`, `pm-proxy`, and `cnss-daemon`; the scan proof then starts vendor `wpa_supplicant` separately
   - there is no Android Wi-Fi framework, `wificond`, rooted Android shell Wi-Fi API, system `servicemanager`, or `hwservicemanager`
   - supporting a small service-manager program is acceptable because vendor chipsets are a distributed system and need a name registry to talk to each other; `vndservicemanager` is a tiny, maintainable registry, not the Android init system
+  - latest association proof: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/wifi-boot/20260425T001740Z-0B191JEC203253-association-v3/status.json`
+  - latest IP proof: `/Users/justin/code/shadow/worktrees/wifi/build/pixel/wifi-boot/20260425T003122Z-0B191JEC203253-ip-v2/status.json`
+  - association/IP credentials are staged as root-only one-shot metadata files, read and unlinked by PID 1 only after the supplicant socket is usable, and represented in artifacts only by length/hash/kind metadata
+  - the IP proof currently uses static BusyBox `udhcpc` as a prototype DHCP client, requires the DHCP command to succeed in the current run, clears stale wlan0 IPv4/default-route/DNS state before and after the proof, and proves DNS plus outbound TCP
   - do not bake Qualcomm CNSS assumptions into core Shadow design; contain this as the Pixel 4a module/firmware/helper recipe so future Pixels can swap a different chip-specific module behind the same proof shape
   - keep chip bring-up separate from product networking: Pixel 4a owns Qualcomm CNSS/PM assets, while WPA control, DHCP/static IP, DNS, routing, time, status, and app sockets should be reusable across Pixel targets
   - BusyBox `udhcpc` or another small DHCP tool is acceptable for rapid hardware prototyping, but the shippable direction is a Shadow-owned Rust network manager with its own DHCP/rtnetlink control and clearer failure reporting
+  - next Wi-Fi product seam is not another proof reboot; it is a runtime network bring-up mode that keeps `wpa_supplicant`, DHCP state, DNS, route, and time alive long enough for shell-launched apps to use ordinary sockets
   - Wi-Fi probes must prune stale `/metadata/shadow-hello-init/by-token` entries before writing summaries; the previous 0-byte/empty summary failures were `/metadata` ENOSPC, not a recovery parser regression
 - The top-level one-shot wrapper can still end at `fastboot-return-auto-rebooted`. Treat `recover-traces/status.json` as truth.
 - The stock-init trigger / imported-rc / preflight seams are no longer peer execution streams:
