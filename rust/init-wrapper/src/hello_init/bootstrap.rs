@@ -1072,6 +1072,9 @@ pub(super) fn bootstrap_tmpfs_input_runtime(config: &Config) -> io::Result<()> {
                 "input-bootstrap-ready mode={} device={} major={} minor={} attempts={}",
                 config.input_bootstrap, event_name, major, minor, attempt
             ));
+            if config.boot_mode == BootMode::Product {
+                ensure_sunfish_product_key_input_nodes()?;
+            }
             firmware_stop.store(true, Ordering::Relaxed);
             let _ = firmware_helper.join();
             return Ok(());
@@ -1089,6 +1092,60 @@ pub(super) fn bootstrap_tmpfs_input_runtime(config: &Config) -> io::Result<()> {
         io::ErrorKind::TimedOut,
         "sunfish touch input event did not appear",
     ))
+}
+
+fn ensure_sunfish_product_key_input_nodes() -> io::Result<()> {
+    const PRODUCT_KEY_INPUT_NAMES: [&str; 3] = [
+        "qpnp_pon",
+        "gpio-keys",
+        "sm6150-bolero-snd-card Button Jack",
+    ];
+
+    let entries = match fs::read_dir("/sys/class/input") {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+
+    let mut ready = 0_u32;
+    for entry in entries {
+        let entry = entry?;
+        let event_name = entry.file_name();
+        let Some(event_name) = event_name.to_str() else {
+            continue;
+        };
+        if !event_name.starts_with("event") {
+            continue;
+        }
+
+        let event_path = entry.path();
+        let name = read_trimmed(&event_path.join("device/name")).unwrap_or_default();
+        if !PRODUCT_KEY_INPUT_NAMES.contains(&name.as_str()) {
+            continue;
+        }
+
+        let device_path = Path::new("/dev/input").join(event_name);
+        match ensure_char_device_from_sysfs(&event_path.join("dev"), &device_path, 0o660) {
+            Ok((major, minor)) => {
+                ready += 1;
+                append_wrapper_log(&format!(
+                    "input-bootstrap-product-key-ready name={} device={} major={} minor={}",
+                    name, event_name, major, minor
+                ));
+            }
+            Err(error) => {
+                append_wrapper_log(&format!(
+                    "input-bootstrap-product-key-failed name={} device={} error={}",
+                    name, event_name, error
+                ));
+            }
+        }
+    }
+
+    append_wrapper_log(&format!(
+        "input-bootstrap-product-key-summary ready={ready}"
+    ));
+    Ok(())
 }
 
 pub(super) fn bootstrap_tmpfs_wifi_runtime(
