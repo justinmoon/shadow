@@ -20,7 +20,6 @@ When the user asks to land the current worktree branch:
 - rebases the current branch onto root `master`
 - runs `just pre-merge`
 - fast-forwards the root repo's `master` branch only if the gate passes
-- after the fast-forward, lints and imports checked-in dispatch plans from root `master`
 
 When a rooted Pixel is available and the diff clearly touches device-specific lanes, recommend a matching `just pixel-ci <subset>` run before landing, but do not make it a hard requirement. Examples:
 

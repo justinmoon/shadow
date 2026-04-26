@@ -193,7 +193,7 @@ Related docs:
   - result:
     - promoted TypeScript app proof identity into recovered `status.json`
     - status now exposes app id, client kind, TypeScript renderer, runtime bundle env/path, expected frame path, and a grouped `app_direct_present_proof_contract`
-    - `frontier.md` now names `touch-counter-gpu` as the next product rung without relying on the legacy queue task
+    - `frontier.md` now names `touch-counter-gpu` as the next product rung without relying on stale planning state
   - owned paths:
     - `scripts/pixel/pixel_boot_build_orange_gpu.sh`
     - `scripts/pixel/pixel_boot_recover_traces.sh`
@@ -203,7 +203,7 @@ Related docs:
     - `todos/boot/frontier.md`
   - acceptance:
     - recovered proof status explicitly distinguishes TypeScript app id, client kind, renderer, runtime bundle, and captured frame path
-    - docs/frontier identify `ts-app-minimal` as signed off and name the next product rung without relying on the old legacy queue task
+    - docs/frontier identify `ts-app-minimal` as signed off and name the next product rung without relying on stale planning state
     - if no code change is needed, land the minimal docs/contract cleanup that makes the proof contract unambiguous for the next worker
   - validation:
     - `scripts/ci/pixel_boot_orange_gpu_smoke.sh`
@@ -432,7 +432,6 @@ Related docs:
     - recovered proof identifies payload source, payload version/fingerprint, mounted roots, fallback path, and exact blocker if the first mount strategy fails
     - create follow-up implementation cards only for the chosen path, not another broad architecture backlog
   - validation:
-    - `python3 scripts/debug/dispatch.py plan-lint --project boot`
     - `scripts/ci/pixel_boot_orange_gpu_smoke.sh` if boot image staging changes
     - canonical rooted proof recipe for the first mounted payload probe if the boot image contract changes
   - blocked_by: none
@@ -797,10 +796,10 @@ Related docs:
 - [~] Rooted KGSL falsification matrices.
   - use as falsifiers only, not as the execution plan
 
-## Retired Dispatch Records
+## Retired Planning Records
 
-These cards exist so dispatch definitions live in `todos/` instead of runtime
-queue JSON. Do not claim them.
+These historical cards are kept only to explain superseded boot work. Do not use
+them as current implementation slices.
 
 - [x] `ts-app-minimal-mainline`
   - task_id: boot-ts-app-minimal-mainline
@@ -811,7 +810,7 @@ queue JSON. Do not claim them.
     - `scripts/pixel/`
     - `todos/boot/`
   - validation:
-    - migrated to plan truth
+    - migrated to the current boot plan
   - blocked_by: none
 - [x] `camera-boot-owned-probe`
   - task_id: boot-camera-boot-owned-probe
@@ -823,7 +822,7 @@ queue JSON. Do not claim them.
     - `scripts/pixel/`
     - `todos/boot/camera-linux-api-recon.md`
   - validation:
-    - migrate to the direct-HAL boot probe contract before claiming more camera work
+    - migrate to the direct-HAL boot probe contract before doing more camera work
   - blocked_by: none
 - [x] `touch-rust-counter-probe`
   - task_id: boot-touch-rust-counter-probe

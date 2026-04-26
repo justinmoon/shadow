@@ -28,11 +28,7 @@ scripts/runtime/generate_app_metadata.py	runtime	Generates checked Rust app meta
 scripts/runtime/generate_sound_demo_fixture.sh	runtime	Private sound demo fixture generator.
 scripts/land.sh	public	Canonical local landing gate.
 scripts/nightly.sh	public	Slow nightly gate that prefers the local Linux canonical path and otherwise dispatches the x86 CI gate remotely.
-scripts/dis	public	Short devshell alias entrypoint for the private interactive dispatch controller.
-scripts/overnight/launch-planner	debug	Private Codex overnight planner launcher documented in docs/overnight-agents.md.
-scripts/overnight/planner-prompt.md	data	Private prompt injected only into dedicated overnight planner Codex sessions.
 scripts/ci/operator_cli_smoke.sh	ci	Dry-run smoke coverage for the public just/shadowctl routing surface.
-scripts/ci/overnight_agents_smoke.sh	ci	Fast smoke for the minimal interactive dispatch queue, claim ledger, and landed-branch auto-advance flow.
 scripts/pixel/pixel_build.sh	pixel	Private Pixel build delegate used by rooted device staging.
 scripts/pixel/pixel_build_local_turnip.sh	pixel	Private local Turnip override builder for direct-GPU probe work.
 scripts/pixel/pixel_build_openlog_preload.sh	pixel	Private Pixel preload build delegate.
@@ -125,7 +121,6 @@ scripts/ci/pixel_shell_keyboard_smoke.sh	ci	Rooted-Pixel shell keyboard smoke he
 scripts/ci/pixel_shell_timeline_smoke.sh	ci	Rooted-Pixel shell timeline smoke used by pixel-ci.
 scripts/ci/pixel_kgsl_cold_matrix_smoke.sh	ci	Dry-run smoke for the rooted cold-boot KGSL matrix runner.
 scripts/debug/pixel_shell_scroll_latency_probe.sh	debug	Rooted-Pixel shell scroll benchmark exposed as shadowctl debug scroll-latency and summarized by pixel_runtime_summary.py.
-scripts/debug/dispatch.py	debug	Private interactive dispatch queue controller documented in docs/overnight-agents.md and used by the repo-local `/groom` and `/next` skills.
 scripts/debug/pixel_touch_latency_probe.sh	debug	Pixel latency probe exposed as shadowctl debug latency and documented in docs/latency.md.
 scripts/pixel/pixel_verify.sh	pixel	Private rooted-Pixel session verification helper.
 scripts/pixel/pixel_kgsl_cold_matrix.sh	pixel	Private rooted-Pixel cold-boot KGSL timing matrix runner.
@@ -134,7 +129,6 @@ scripts/pre_merge.sh	public	Required branch gate wrapper that prefers the local 
 scripts/runtime/prepare_podcast_player_demo_assets.sh	runtime	Private podcast host/device smoke fixture helper.
 scripts/runtime/prepare_sound_demo_assets.sh	runtime	Private sound host/device smoke fixture helper.
 scripts/lib/remote_guest_build_common.sh	lib	Shared remote/Linux guest build fallback helpers.
-scripts/lib/overnight_common.py	lib	Shared queue, claims, plan-import, and git-state helpers for the private interactive dispatch controller.
 scripts/ci/runtime_app_camera_smoke.sh	ci	Host runtime camera app smoke.
 scripts/ci/runtime_app_cashu_wallet_smoke.sh	ci	Host runtime Cashu wallet app smoke.
 scripts/ci/runtime_app_host_smokes.sh	ci	Aggregate runner behind just runtime-app-host-smokes.

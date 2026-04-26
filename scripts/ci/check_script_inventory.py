@@ -20,7 +20,6 @@ PUBLIC_ALLOWLIST = {
     "scripts/agent-brief",
     "scripts/land.sh",
     "scripts/nightly.sh",
-    "scripts/dis",
     "scripts/pre_commit.sh",
     "scripts/pre_merge.sh",
     "scripts/runtime_build_artifacts.sh",

@@ -31,7 +31,6 @@ help:
 	'  sc -t pixel prep-settings' \
 	'  sc -t pixel debug latency' \
 	'  just shadowctl ...    # same CLI without relying on devshell PATH' \
-	'  dis interactive-status --project boot  # interactive dispatch queue CLI in devshell' \
 	'' \
 	'Pixel CI and setup:' \
 	'  just product-flash target=pixel [--wifi-credentials FILE]  # conference-ready persistent Shadow boot' \
